@@ -10,13 +10,13 @@
 #include "nsAttrValueInlines.h"
 #include "nsRuleData.h"
 #include "nsHTMLStyleSheet.h"
+#include "nsMappedAttributes.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/HTMLCollectionBinding.h"
 #include "mozilla/dom/HTMLTableElementBinding.h"
 #include "nsContentUtils.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Table)
-DOMCI_NODE_DATA(HTMLTableElement, mozilla::dom::HTMLTableElement)
 
 namespace mozilla {
 namespace dom {
@@ -51,11 +51,9 @@ public:
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(TableRowsCollection)
 
   // nsWrapperCache
-  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
-                               bool *triedToWrap)
+  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope) MOZ_OVERRIDE
   {
-    return mozilla::dom::HTMLCollectionBinding::Wrap(cx, scope, this,
-                                                     triedToWrap);
+    return mozilla::dom::HTMLCollectionBinding::Wrap(cx, scope, this);
   }
 
 protected:
@@ -104,7 +102,6 @@ NS_INTERFACE_TABLE_HEAD(TableRowsCollection)
   NS_INTERFACE_TABLE2(TableRowsCollection, nsIHTMLCollection,
                       nsIDOMHTMLCollection)
   NS_INTERFACE_TABLE_TO_MAP_SEGUE_CYCLE_COLLECTION(TableRowsCollection)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(HTMLCollection)
 NS_INTERFACE_MAP_END
 
 // Macro that can be used to avoid copy/pasting code to iterate over the
@@ -322,9 +319,9 @@ HTMLTableElement::~HTMLTableElement()
 }
 
 JSObject*
-HTMLTableElement::WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap)
+HTMLTableElement::WrapNode(JSContext *aCx, JSObject *aScope)
 {
-  return HTMLTableElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return HTMLTableElementBinding::Wrap(aCx, aScope, this);
 }
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLTableElement, nsGenericHTMLElement)
@@ -348,7 +345,7 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLTableElement)
   NS_HTML_CONTENT_INTERFACE_TABLE1(HTMLTableElement, nsIDOMHTMLTableElement)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLTableElement,
                                                nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLTableElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 
 NS_IMPL_ELEMENT_CLONE(HTMLTableElement)
@@ -1211,6 +1208,15 @@ HTMLTableElement::BuildInheritedAttributes()
     mTableInheritedAttributes = newAttrs;
     NS_IF_ADDREF(mTableInheritedAttributes);
   }
+}
+
+void
+HTMLTableElement::ReleaseInheritedAttributes()
+{
+  if (mTableInheritedAttributes &&
+      mTableInheritedAttributes != TABLE_ATTRS_DIRTY)
+    NS_RELEASE(mTableInheritedAttributes);
+  mTableInheritedAttributes = TABLE_ATTRS_DIRTY;
 }
 
 nsresult

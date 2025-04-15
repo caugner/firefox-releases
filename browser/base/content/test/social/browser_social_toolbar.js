@@ -23,7 +23,7 @@ var tests = {
     // check dom values
     let portrait = document.getElementsByClassName("social-statusarea-user-portrait")[0].getAttribute("src");
     // this is the default image for the profile area when not logged in.
-    is(portrait, "chrome://global/skin/icons/information-32.png", "portrait is empty");
+    ok(!portrait, "portrait is empty");
     let userDetailsBroadcaster = document.getElementById("socialBroadcaster_userDetails");
     let notLoggedInStatusValue = userDetailsBroadcaster.getAttribute("notLoggedInLabel");
     let userButton = document.getElementsByClassName("social-statusarea-loggedInStatus")[0];
@@ -103,9 +103,9 @@ var tests = {
     Social.provider.setAmbientNotification(ambience2);
     Social.provider.setAmbientNotification(ambience3);
 
-    let statusIcon = document.querySelector("#social-toolbar-item > .social-notification-container > .toolbarbutton-1");
+    let statusIcon = document.getElementById("social-provider-button").nextSibling;
     waitForCondition(function() {
-      statusIcon = document.querySelector("#social-toolbar-item > .social-notification-container > .toolbarbutton-1");
+      statusIcon = document.getElementById("social-provider-button").nextSibling;
       return !!statusIcon;
     }, function () {
       let badge = statusIcon.getAttribute("badge");
@@ -157,8 +157,6 @@ var tests = {
     is(toggleDesktopNotificationsMenuitems.length, 2, "Toggle notifications menuitems exist");
     let toggleSocialMenuitems = document.getElementsByClassName("social-toggle-menuitem");
     is(toggleSocialMenuitems.length, 2, "Toggle Social menuitems exist");
-    let removeSocialMenuitems = document.getElementsByClassName("social-remove-menuitem");
-    is(removeSocialMenuitems.length, 2, "Remove Social menuitems exist");
     next();
   },
   testToggleNotifications: function(next) {

@@ -65,8 +65,8 @@ public:
   // forward to window that don't come from nsIDOMHTMLBodyElement.
 #define EVENT(name_, id_, type_, struct_) /* nothing; handled by the shim */
 #define FORWARDED_EVENT(name_, id_, type_, struct_)                     \
-  NS_IMETHOD GetOn##name_(JSContext *cx, jsval *vp);                    \
-  NS_IMETHOD SetOn##name_(JSContext *cx, const jsval &v);
+  NS_IMETHOD GetOn##name_(JSContext *cx, JS::Value *vp);                \
+  NS_IMETHOD SetOn##name_(JSContext *cx, const JS::Value &v);
 #define WINDOW_EVENT_HELPER(name_, type_)                               \
   type_* GetOn##name_();                                                \
   void SetOn##name_(type_* handler, ErrorResult& error);
@@ -141,7 +141,6 @@ public:
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const;
   virtual already_AddRefed<nsIEditor> GetAssociatedEditor();
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-  virtual nsXPCClassInfo* GetClassInfo();
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   virtual bool IsEventAttributeName(nsIAtom* aName) MOZ_OVERRIDE;
@@ -150,8 +149,7 @@ private:
   nsresult GetColorHelper(nsIAtom* aAtom, nsAString& aColor);
 
 protected:
-  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope,
-                             bool *aTriedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
 
   nsRefPtr<BodyRule> mContentStyleRule;
 };

@@ -13,6 +13,7 @@
 #include "nsPoint.h"
 #include "nsRect.h"
 #include "nsString.h"
+#include "nsTArray.h"
 #include "mozilla/gfx/Rect.h"
 
 //#define FORCE_ALOG 1
@@ -191,12 +192,17 @@ public:
     float GetX(JNIEnv *env);
     float GetY(JNIEnv *env);
     float GetScale(JNIEnv *env);
+    void GetFixedLayerMargins(JNIEnv *env, gfx::Margin &aFixedLayerMargins);
 
 private:
     static jclass jViewTransformClass;
     static jfieldID jXField;
     static jfieldID jYField;
     static jfieldID jScaleField;
+    static jfieldID jFixedLayerMarginLeft;
+    static jfieldID jFixedLayerMarginTop;
+    static jfieldID jFixedLayerMarginRight;
+    static jfieldID jFixedLayerMarginBottom;
 };
 
 class AndroidProgressiveUpdateData : public WrappedJavaObject {
@@ -257,7 +263,8 @@ public:
     void SetFirstPaintViewport(const nsIntPoint& aOffset, float aZoom, const nsIntRect& aPageRect, const gfx::Rect& aCssPageRect);
     void SetPageRect(const gfx::Rect& aCssPageRect);
     void SyncViewportInfo(const nsIntRect& aDisplayPort, float aDisplayResolution, bool aLayersUpdated,
-                          nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY);
+                          nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY,
+                          gfx::Margin& aFixedLayerMargins);
     bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent, const gfx::Rect& aDisplayPort, float aDisplayResolution, bool aDrawingCritical, gfx::Rect& aViewport, float& aScaleX, float& aScaleY);
     bool CreateFrame(AutoLocalJNIFrame *jniFrame, AndroidLayerRendererFrame& aFrame);
     bool ActivateProgram(AutoLocalJNIFrame *jniFrame);
@@ -281,47 +288,6 @@ public:
     static jmethodID jViewportCtor;
     static jfieldID jDisplayportPosition;
     static jfieldID jDisplayportResolution;
-};
-
-class AndroidGeckoSurfaceView : public WrappedJavaObject
-{
-public:
-    static void InitGeckoSurfaceViewClass(JNIEnv *jEnv);
-
-    AndroidGeckoSurfaceView() { }
-    AndroidGeckoSurfaceView(jobject jobj) {
-        Init(jobj);
-    }
-
-    void Init(jobject jobj);
-
-    enum {
-        DRAW_ERROR = 0,
-        DRAW_GLES_2 = 1,
-        DRAW_2D = 2,
-        DRAW_DISABLED = 3
-    };
-
-    int BeginDrawing();
-    jobject GetSoftwareDrawBitmap(AutoLocalJNIFrame *jniFrame);
-    jobject GetSoftwareDrawBuffer(AutoLocalJNIFrame *jniFrame);
-    void EndDrawing();
-    void Draw2D(jobject bitmap, int width, int height);
-    void Draw2D(jobject buffer, int stride);
-
-    jobject GetSurface(AutoLocalJNIFrame *jniFrame);
-    jobject GetSurfaceHolder(AutoLocalJNIFrame *jniFrame);
-
-protected:
-    static jclass jGeckoSurfaceViewClass;
-    static jmethodID jBeginDrawingMethod;
-    static jmethodID jEndDrawingMethod;
-    static jmethodID jDraw2DBitmapMethod;
-    static jmethodID jDraw2DBufferMethod;
-    static jmethodID jGetSoftwareDrawBitmapMethod;
-    static jmethodID jGetSoftwareDrawBufferMethod;
-    static jmethodID jGetSurfaceMethod;
-    static jmethodID jGetHolderMethod;
 };
 
 class AndroidKeyEvent
@@ -674,6 +640,7 @@ public:
     bool IsMetaPressed() const { return (mMetaState & AndroidKeyEvent::META_META_MASK) != 0; }
     int Flags() { return mFlags; }
     int UnicodeChar() { return mUnicodeChar; }
+    int BaseUnicodeChar() { return mBaseUnicodeChar; }
     int RepeatCount() const { return mRepeatCount; }
     int Count() { return mCount; }
     int Start() { return mStart; }
@@ -691,6 +658,8 @@ public:
     bool CanBeMetered() { return mCanBeMetered; }
     short ScreenOrientation() { return mScreenOrientation; }
     RefCountedJavaObject* ByteBuffer() { return mByteBuffer; }
+    int Width() { return mWidth; }
+    int Height() { return mHeight; }
 
 protected:
     int mAction;
@@ -705,7 +674,7 @@ protected:
     nsIntRect mRect;
     int mFlags, mMetaState;
     int mDomKeyLocation;
-    int mKeyCode, mUnicodeChar;
+    int mKeyCode, mUnicodeChar, mBaseUnicodeChar;
     int mRepeatCount;
     int mCount;
     int mStart, mEnd;
@@ -720,6 +689,7 @@ protected:
     bool mCanBeMetered;
     short mScreenOrientation;
     nsRefPtr<RefCountedJavaObject> mByteBuffer;
+    int mWidth, mHeight;
 
     void ReadIntArray(nsTArray<int> &aVals,
                       JNIEnv *jenv,
@@ -765,6 +735,7 @@ protected:
     static jfieldID jEndField;
     static jfieldID jPointerIndexField;
     static jfieldID jUnicodeCharField;
+    static jfieldID jBaseUnicodeCharField;
     static jfieldID jRepeatCountField;
     static jfieldID jRangeTypeField;
     static jfieldID jRangeStylesField;
@@ -781,6 +752,9 @@ protected:
     static jfieldID jScreenOrientationField;
     static jfieldID jByteBufferField;
 
+    static jfieldID jWidthField;
+    static jfieldID jHeightField;
+
 public:
     enum {
         NATIVE_POKE = 0,
@@ -791,29 +765,30 @@ public:
         IME_EVENT = 6,
         DRAW = 7,
         SIZE_CHANGED = 8,
-        ACTIVITY_STOPPING = 9,
-        ACTIVITY_PAUSING = 10,
-        ACTIVITY_SHUTDOWN = 11,
+        APP_BACKGROUNDING = 9,
+        APP_FOREGROUNDING = 10,
         LOAD_URI = 12,
-        SURFACE_CREATED = 13,   // used by XUL fennec only
-        SURFACE_DESTROYED = 14, // used by XUL fennec only
         NOOP = 15,
         FORCED_RESIZE = 16, // used internally in nsAppShell/nsWindow
-        ACTIVITY_START = 17,
         BROADCAST = 19,
         VIEWPORT = 20,
         VISITED = 21,
         NETWORK_CHANGED = 22,
-        ACTIVITY_RESUMING = 24,
         THUMBNAIL = 25,
         SCREENORIENTATION_CHANGED = 27,
-        COMPOSITOR_PAUSE = 28,
-        COMPOSITOR_RESUME = 29,
-        NATIVE_GESTURE_EVENT = 30,
+        COMPOSITOR_CREATE = 28,
+        COMPOSITOR_PAUSE = 29,
+        COMPOSITOR_RESUME = 30,
+        NATIVE_GESTURE_EVENT = 31,
+        IME_KEY_EVENT = 32,
         dummy_java_enum_list_end
     };
 
     enum {
+        // Internal Gecko events
+        IME_FLUSH_CHANGES = -2,
+        IME_UPDATE_CONTEXT = -1,
+        // Events from Java to Gecko
         IME_SYNCHRONIZE = 0,
         IME_REPLACE_TEXT = 1,
         IME_SET_SELECTION = 2,
@@ -821,7 +796,7 @@ public:
         IME_UPDATE_COMPOSITION = 4,
         IME_REMOVE_COMPOSITION = 5,
         IME_ACKNOWLEDGE_FOCUS = 6,
-        IME_FLUSH_CHANGES = 7
+        dummy_ime_enum_list_end
     };
 };
 

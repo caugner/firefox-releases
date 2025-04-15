@@ -15,10 +15,14 @@
 #include "nsIAppStartup.h"
 #include "../resource.h"
 #include "nsIWidgetListener.h"
+#include "nsIPresShell.h"
 #include "nsPrintfCString.h"
 #include "nsWindowDefs.h"
 #include "FrameworkView.h"
 #include "nsTextStore.h"
+#include "Layers.h"
+#include "BasicLayers.h"
+#include "Windows.Graphics.Display.h"
 
 using namespace Microsoft::WRL;
 using namespace Microsoft::WRL::Wrappers;
@@ -36,6 +40,7 @@ using namespace ABI::Windows::Devices::Input;
 using namespace ABI::Windows::UI::Core;
 using namespace ABI::Windows::System;
 using namespace ABI::Windows::Foundation;
+using namespace ABI::Windows::Graphics::Display;
 
 #ifdef PR_LOGGING
 extern PRLogModuleInfo* gWindowsLog;
@@ -114,7 +119,10 @@ namespace {
     // processed.
     Log(L"  Inputs sent. Waiting for input messages to clear");
     MSG msg;
-    while (::PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+    while (WinUtils::PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+      if (nsTextStore::ProcessRawKeyMessage(msg)) {
+        continue;  // the message is consumed by TSF
+      }
       ::TranslateMessage(&msg);
       ::DispatchMessage(&msg);
       Log(L"    Dispatched 0x%x 0x%x 0x%x", msg.message, msg.wParam, msg.lParam);
@@ -129,6 +137,7 @@ MetroWidget::MetroWidget() :
   mTransparencyMode(eTransparencyOpaque),
   mWnd(NULL),
   mMetroWndProc(NULL),
+  mTempBasicLayerInUse(false),
   nsWindowBase()
 {
   // Global initialization
@@ -752,27 +761,98 @@ MetroWidget::RemoveSubclass()
   RemovePropW(mWnd, kMetroSubclassThisProp);
 }
 
+bool
+MetroWidget::ShouldUseOffMainThreadCompositing()
+{
+  // Either we're not initialized yet, or this is the toolkit widget
+  if (!mView) {
+    return false;
+  }
+  // toolkit or test widgets can't use omtc, they don't have ICoreWindow.
+  return (CompositorParent::CompositorLoop() && mWindowType == eWindowType_toplevel);
+}
+
+bool
+MetroWidget::ShouldUseMainThreadD3D10Manager()
+{
+  // Either we're not initialized yet, or this is the toolkit widget
+  if (!mView) {
+    return false;
+  }
+  return (!CompositorParent::CompositorLoop() && mWindowType == eWindowType_toplevel);
+}
+
+bool
+MetroWidget::ShouldUseBasicManager()
+{
+  // toolkit or test widgets fall back on empty shadow layers
+  return (mWindowType != eWindowType_toplevel);
+}
+
 LayerManager*
 MetroWidget::GetLayerManager(PLayersChild* aShadowManager,
                              LayersBackend aBackendHint,
                              LayerManagerPersistence aPersistence,
                              bool* aAllowRetaining)
 {
-  if (!mView) {
-    Log(L"Attempting to initialize layermanager for a window that has no view!");
-    return nsBaseWidget::GetLayerManager(aShadowManager, aBackendHint, aPersistence, aAllowRetaining);
+  bool retaining = true;
+
+  // If we initialized earlier than the view, recreate the layer manager now
+  if (mLayerManager &&
+      mTempBasicLayerInUse &&
+      ShouldUseOffMainThreadCompositing()) {
+    mLayerManager = nullptr;
+    mTempBasicLayerInUse = false;
+    retaining = false;
+  }
+
+  // If the backend device has changed, create a new manager (pulled from nswindow)
+  if (mLayerManager) {
+    if (mLayerManager->GetBackendType() == LAYERS_D3D10) {
+      LayerManagerD3D10 *layerManagerD3D10 =
+        static_cast<LayerManagerD3D10*>(mLayerManager.get());
+      if (layerManagerD3D10->device() !=
+          gfxWindowsPlatform::GetPlatform()->GetD3D10Device()) {
+        MOZ_ASSERT(!mLayerManager->IsInTransaction());
+
+        mLayerManager->Destroy();
+        mLayerManager = nullptr;
+        retaining = false;
+      }
+    }
+  }
+
+  // Create a layer manager: try to use an async compositor first, if enabled.
+  // Otherwise fall back on the main thread d3d manager.
+  if (!mLayerManager) {
+    if (ShouldUseOffMainThreadCompositing()) {
+      NS_ASSERTION(aShadowManager == nullptr, "Async Compositor not supported with e10s");
+      CreateCompositor();
+    } else if (ShouldUseMainThreadD3D10Manager()) {
+      nsRefPtr<mozilla::layers::LayerManagerD3D10> layerManager =
+        new mozilla::layers::LayerManagerD3D10(this);
+      if (layerManager->Initialize(true)) {
+        mLayerManager = layerManager;
+      }
+    } else if (ShouldUseBasicManager()) {
+      mLayerManager = CreateBasicLayerManager();
+    }
+
+    // Either we're not ready to initialize yet due to a missing view pointer,
+    // or something has gone wrong.
+    if (!mLayerManager) {
+      if (!mView) {
+        NS_WARNING("Using temporary basic layer manager.");
+        mLayerManager = new BasicShadowLayerManager(this);
+        mTempBasicLayerInUse = true;
+      } else {
+        NS_RUNTIMEABORT("Couldn't create layer manager");
+      }
+    }
   }
 
   if (aAllowRetaining) {
-    *aAllowRetaining = true;
-  }
-
-  if (!mLayerManager) {
-    nsRefPtr<mozilla::layers::LayerManagerD3D10> layerManager =
-      new mozilla::layers::LayerManagerD3D10(this);
-    if (layerManager->Initialize(true)) {
-      mLayerManager = layerManager;
-    }
+    *aAllowRetaining = retaining;
   }
 
   return mLayerManager;
@@ -867,9 +947,11 @@ MetroWidget::InitEvent(nsGUIEvent& event, nsIntPoint* aPoint)
 {
   if (!aPoint) {
     event.refPoint.x = event.refPoint.y = 0;
-  } else {  
-    event.refPoint.x = aPoint->x;
-    event.refPoint.y = aPoint->y;
+  } else {
+    // convert CSS pixels to device pixels for event.refPoint
+    double scale = GetDefaultScale(); 
+    event.refPoint.x = int32_t(NS_round(aPoint->x * scale));
+    event.refPoint.y = int32_t(NS_round(aPoint->y * scale));
   }
   event.time = ::GetMessageTime();
 }
@@ -941,6 +1023,21 @@ MetroWidget::GetRootAccessible()
 }
 #endif
 
+double MetroWidget::GetDefaultScaleInternal()
+{
+  // Return the resolution scale factor reported by the metro environment.
+  // XXX TODO: also consider the desktop resolution setting, as IE appears to do?
+  ComPtr<IDisplayPropertiesStatics> dispProps;
+  if (SUCCEEDED(GetActivationFactory(HStringReference(RuntimeClass_Windows_Graphics_Display_DisplayProperties).Get(),
+                                     dispProps.GetAddressOf()))) {
+    ResolutionScale scale;
+    if (SUCCEEDED(dispProps->get_ResolutionScale(&scale))) {
+      return (double)scale / 100.0;
+    }
+  }
+  return 1.0;
+}
+
 float MetroWidget::GetDPI()
 {
   LogFunction();
@@ -948,6 +1045,16 @@ float MetroWidget::GetDPI()
     return 96.0;
   }
   return mView->GetDPI();
+}
+
+void MetroWidget::ChangedDPI()
+{
+  if (mWidgetListener) {
+    nsIPresShell* presShell = mWidgetListener->GetPresShell();
+    if (presShell) {
+      presShell->BackingScaleFactorChanged();
+    }
+  }
 }
 
 NS_IMETHODIMP
@@ -1025,11 +1132,9 @@ MetroWidget::GetNativeData(uint32_t aDataType)
       }
       break;
    case NS_NATIVE_TSF_THREAD_MGR:
-     return nsTextStore::GetThreadMgr();
    case NS_NATIVE_TSF_CATEGORY_MGR:
-     return nsTextStore::GetCategoryMgr();
    case NS_NATIVE_TSF_DISPLAY_ATTR_MGR:
-     return nsTextStore::GetDisplayAttrMgr();
+     return nsTextStore::GetNativeData(aDataType);
   }
   return nullptr;
 }
@@ -1063,7 +1168,7 @@ MetroWidget::SetInputContext(const InputContext& aContext,
                              const InputContextAction& aAction)
 {
   mInputContext = aContext;
-  nsTextStore::SetInputContext(mInputContext);
+  nsTextStore::SetInputContext(this, mInputContext, aAction);
   bool enable = (mInputContext.mIMEState.mEnabled == IMEState::ENABLED ||
                  mInputContext.mIMEState.mEnabled == IMEState::PLUGIN);
   if (enable &&
@@ -1080,18 +1185,26 @@ MetroWidget::GetInputContext()
 }
 
 NS_IMETHODIMP
-MetroWidget::ResetInputState()
+MetroWidget::NotifyIME(NotificationToIME aNotification)
 {
-  nsTextStore::CommitComposition(false);
-  return NS_OK;
-}
-
-
-NS_IMETHODIMP
-MetroWidget::CancelIMEComposition()
-{
-  nsTextStore::CommitComposition(true);
-  return NS_OK;
+  switch (aNotification) {
+    case REQUEST_TO_COMMIT_COMPOSITION:
+      nsTextStore::CommitComposition(false);
+      return NS_OK;
+    case REQUEST_TO_CANCEL_COMPOSITION:
+      nsTextStore::CommitComposition(true);
+      return NS_OK;
+    case NOTIFY_IME_OF_FOCUS:
+      return nsTextStore::OnFocusChange(true, this,
+                                        mInputContext.mIMEState.mEnabled);
+    case NOTIFY_IME_OF_BLUR:
+      return nsTextStore::OnFocusChange(false, this,
+                                        mInputContext.mIMEState.mEnabled);
+    case NOTIFY_IME_OF_SELECTION_CHANGE:
+      return nsTextStore::OnSelectionChange();
+    default:
+      return NS_ERROR_NOT_IMPLEMENTED;
+  }
 }
 
 NS_IMETHODIMP
@@ -1103,24 +1216,17 @@ MetroWidget::GetToggledKeyState(uint32_t aKeyCode, bool* aLEDState)
 }
 
 NS_IMETHODIMP
-MetroWidget::OnIMEFocusChange(bool aFocus)
-{
-  return nsTextStore::OnFocusChange(aFocus, this,
-                                    mInputContext.mIMEState.mEnabled);
-}
-
-NS_IMETHODIMP
-MetroWidget::OnIMETextChange(uint32_t aStart,
-                             uint32_t aOldEnd,
-                             uint32_t aNewEnd)
+MetroWidget::NotifyIMEOfTextChange(uint32_t aStart,
+                                   uint32_t aOldEnd,
+                                   uint32_t aNewEnd)
 {
   return nsTextStore::OnTextChange(aStart, aOldEnd, aNewEnd);
 }
 
-NS_IMETHODIMP
-MetroWidget::OnIMESelectionChange(void)
+nsIMEUpdatePreference
+MetroWidget::GetIMEUpdatePreference()
 {
-  return nsTextStore::OnSelectionChange();
+  return nsTextStore::GetIMEUpdatePreference();
 }
 
 NS_IMETHODIMP

@@ -14,6 +14,7 @@
 #include "nsString.h"
 #include "nsINameSpaceManager.h"
 #include "nsIDOMHTMLInputElement.h"
+#include "nsIDOMHTMLProgressElement.h"
 #include "nsIDOMXULMenuListElement.h"
 #include "nsThemeConstants.h"
 #include "nsIComponentManager.h"
@@ -21,6 +22,7 @@
 #include "nsProgressFrame.h"
 #include "nsMeterFrame.h"
 #include "nsMenuFrame.h"
+#include "nsRangeFrame.h"
 #include "mozilla/dom/Element.h"
 #include <algorithm>
 
@@ -101,6 +103,7 @@ nsNativeTheme::GetContentState(nsIFrame* aFrame, uint8_t aWidgetType)
   return flags;
 }
 
+/* static */
 bool
 nsNativeTheme::CheckBooleanAttr(nsIFrame* aFrame, nsIAtom* aAtom)
 {
@@ -121,6 +124,7 @@ nsNativeTheme::CheckBooleanAttr(nsIFrame* aFrame, nsIAtom* aAtom)
                               NS_LITERAL_STRING("true"), eCaseMatters);
 }
 
+/* static */
 int32_t
 nsNativeTheme::CheckIntAttr(nsIFrame* aFrame, nsIAtom* aAtom, int32_t defaultValue)
 {
@@ -135,6 +139,44 @@ nsNativeTheme::CheckIntAttr(nsIFrame* aFrame, nsIAtom* aAtom, int32_t defaultVal
     return defaultValue;
 
   return value;
+}
+
+/* static */
+double
+nsNativeTheme::GetProgressValue(nsIFrame* aFrame)
+{
+  // When we are using the HTML progress element,
+  // we can get the value from the IDL property.
+  if (aFrame) {
+    nsCOMPtr<nsIDOMHTMLProgressElement> progress =
+      do_QueryInterface(aFrame->GetContent());
+    if (progress) {
+      double value;
+      progress->GetValue(&value);
+      return value;
+    }
+  }
+
+  return (double)nsNativeTheme::CheckIntAttr(aFrame, nsGkAtoms::value, 0);
+}
+
+/* static */
+double
+nsNativeTheme::GetProgressMaxValue(nsIFrame* aFrame)
+{
+  // When we are using the HTML progress element,
+  // we can get the max from the IDL property.
+  if (aFrame) {
+    nsCOMPtr<nsIDOMHTMLProgressElement> progress =
+      do_QueryInterface(aFrame->GetContent());
+    if (progress) {
+      double max;
+      progress->GetMax(&max);
+      return max;
+    }
+  }
+
+  return (double)std::max(nsNativeTheme::CheckIntAttr(aFrame, nsGkAtoms::max, 100), 1);
 }
 
 bool
@@ -263,6 +305,21 @@ nsNativeTheme::IsWidgetStyled(nsPresContext* aPresContext, nsIFrame* aFrame,
     }
   }
 
+  /**
+   * An nsRangeFrame and its children are treated atomically when it
+   * comes to native theming (either all parts, or no parts, are themed).
+   * nsRangeFrame owns the logic and will tell us what we should do.
+   */
+  if (aWidgetType == NS_THEME_RANGE ||
+      aWidgetType == NS_THEME_RANGE_THUMB) {
+    nsRangeFrame* rangeFrame =
+      do_QueryFrame(aWidgetType == NS_THEME_RANGE_THUMB
+                      ? aFrame->GetParent() : aFrame);
+    if (rangeFrame) {
+      return !rangeFrame->ShouldUseNativeStyle();
+    }
+  }
+
   return (aWidgetType == NS_THEME_BUTTON ||
           aWidgetType == NS_THEME_TEXTFIELD ||
           aWidgetType == NS_THEME_TEXTFIELD_MULTILINE ||
@@ -302,6 +359,17 @@ nsNativeTheme::IsFrameRTL(nsIFrame* aFrame)
 {
   return aFrame && aFrame->StyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL;
 }
+
+bool
+nsNativeTheme::IsHTMLContent(nsIFrame *aFrame)
+{
+  if (!aFrame) {
+    return false;
+  }
+  nsIContent* content = aFrame->GetContent();
+  return content && content->IsHTML();
+}
+
 
 // scrollbar button:
 int32_t
@@ -596,4 +664,16 @@ nsNativeTheme::GetAdjacentSiblingFrameWithSameAppearance(nsIFrame* aFrame,
        aFrame->GetRect().XMost() != sibling->GetRect().x))
     return nullptr;
   return sibling;
+}
+
+bool
+nsNativeTheme::IsRangeHorizontal(nsIFrame* aFrame)
+{
+  nsIFrame* rangeFrame = aFrame;
+  if (rangeFrame->GetType() != nsGkAtoms::rangeFrame) {
+    rangeFrame = aFrame->GetParent();
+  }
+  MOZ_ASSERT(rangeFrame->GetType() == nsGkAtoms::rangeFrame);
+
+  return static_cast<nsRangeFrame*>(rangeFrame)->IsHorizontal();
 }

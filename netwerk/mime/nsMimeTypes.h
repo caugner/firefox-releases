@@ -78,6 +78,7 @@
 #define AUDIO_WEBM                          "audio/webm"
 #define AUDIO_MP3                           "audio/mpeg"
 #define AUDIO_MP4                           "audio/mp4"
+#define AUDIO_AMR                           "audio/amr"
 
 #define BINARY_OCTET_STREAM                 "binary/octet-stream"
 
@@ -101,6 +102,7 @@
 #define IMAGE_MNG                           "video/x-mng"
 #define IMAGE_JNG                           "image/x-jng"
 #define IMAGE_SVG_XML                       "image/svg+xml"
+#define IMAGE_WBMP                          "image/vnd.wap.wbmp"
 
 #define MESSAGE_EXTERNAL_BODY               "message/external-body"
 #define MESSAGE_NEWS                        "message/news"

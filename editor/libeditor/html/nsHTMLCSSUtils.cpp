@@ -589,7 +589,6 @@ nsHTMLCSSUtils::GetComputedStyle(dom::Element* aElement)
   NS_ENSURE_TRUE(doc, nullptr);
 
   nsIPresShell* presShell = doc->GetShell();
-  NS_ASSERTION(presShell, "Trying to compute style without PresShell");
   NS_ENSURE_TRUE(presShell, nullptr);
 
   nsRefPtr<nsComputedDOMStyle> style =
@@ -964,7 +963,22 @@ nsHTMLCSSUtils::RemoveCSSEquivalentToHTMLStyle(nsIDOMNode * aNode,
                                                bool aSuppressTransaction)
 {
   nsCOMPtr<dom::Element> element = do_QueryInterface(aNode);
-  if (!element || !IsCSSEditableProperty(element, aHTMLProperty, aAttribute)) {
+  NS_ENSURE_TRUE(element, NS_OK);
+
+  return RemoveCSSEquivalentToHTMLStyle(element, aHTMLProperty, aAttribute,
+                                        aValue, aSuppressTransaction);
+}
+
+nsresult
+nsHTMLCSSUtils::RemoveCSSEquivalentToHTMLStyle(dom::Element* aElement,
+                                               nsIAtom* aHTMLProperty,
+                                               const nsAString* aAttribute,
+                                               const nsAString* aValue,
+                                               bool aSuppressTransaction)
+{
+  MOZ_ASSERT(aElement);
+
+  if (!IsCSSEditableProperty(aElement, aHTMLProperty, aAttribute)) {
     return NS_OK;
   }
 
@@ -974,11 +988,11 @@ nsHTMLCSSUtils::RemoveCSSEquivalentToHTMLStyle(nsIDOMNode * aNode,
   // Find the CSS equivalence to the HTML style
   nsTArray<nsIAtom*> cssPropertyArray;
   nsTArray<nsString> cssValueArray;
-  GenerateCSSDeclarationsFromHTMLStyle(element, aHTMLProperty, aAttribute,
+  GenerateCSSDeclarationsFromHTMLStyle(aElement, aHTMLProperty, aAttribute,
                                        aValue, cssPropertyArray, cssValueArray,
                                        true);
 
-  nsCOMPtr<nsIDOMElement> domElement = do_QueryInterface(element);
+  nsCOMPtr<nsIDOMElement> domElement = do_QueryInterface(aElement);
   // remove the individual CSS inline styles
   int32_t count = cssPropertyArray.Length();
   for (int32_t index = 0; index < count; index++) {

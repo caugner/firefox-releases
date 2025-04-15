@@ -84,6 +84,8 @@ Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js", this);
 
 XPCOMUtils.defineLazyServiceGetter(this, "gSessionStartup",
   "@mozilla.org/browser/sessionstartup;1", "nsISessionStartup");
+XPCOMUtils.defineLazyServiceGetter(this, "gScreenManager",
+  "@mozilla.org/gfx/screenmanager;1", "nsIScreenManager");
 
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
   "resource://gre/modules/NetUtil.jsm");
@@ -229,10 +231,6 @@ let SessionStoreInternal = {
     Ci.nsIObserver,
     Ci.nsISupportsWeakReference
   ]),
-
-  // xul:tab attributes to (re)store (extensions might want to hook in here);
-  // the favicon is always saved for the about:sessionrestore page
-  xulAttributes: {"image": true},
 
   // set default load state
   _loadState: STATE_STOPPED,
@@ -1274,7 +1272,7 @@ let SessionStoreInternal = {
       this._windows[aWindow.__SSi]._closedTabs.unshift({
         state: tabState,
         title: tabTitle,
-        image: aTab.getAttribute("image"),
+        image: tabbrowser.getIcon(aTab),
         pos: aTab._tPos
       });
       var length = this._windows[aWindow.__SSi]._closedTabs.length;
@@ -1660,11 +1658,9 @@ let SessionStoreInternal = {
   },
 
   persistTabAttribute: function ssi_persistTabAttribute(aName) {
-    if (aName in this.xulAttributes)
-      return; // this attribute is already being tracked
-
-    this.xulAttributes[aName] = true;
-    this.saveStateDelayed();
+    if (TabAttributes.persist(aName)) {
+      this.saveStateDelayed();
+    }
   },
 
   /**
@@ -1967,11 +1963,12 @@ let SessionStoreInternal = {
     else if (tabData.disallow)
       delete tabData.disallow;
 
-    tabData.attributes = {};
-    for (let name in this.xulAttributes) {
-      if (aTab.hasAttribute(name))
-        tabData.attributes[name] = aTab.getAttribute(name);
-    }
+    // Save tab attributes.
+    tabData.attributes = TabAttributes.get(aTab);
+
+    // Store the tab icon.
+    let tabbrowser = aTab.ownerDocument.defaultView.gBrowser;
+    tabData.image = tabbrowser.getIcon(aTab);
 
     if (aTab.__SS_extdata)
       tabData.extData = aTab.__SS_extdata;
@@ -2968,8 +2965,10 @@ let SessionStoreInternal = {
       else
         tabbrowser.showTab(tab);
 
-      for (let name in tabData.attributes)
-        this.xulAttributes[name] = true;
+      if ("attributes" in tabData) {
+        // Ensure that we persist tab attributes restored from previous sessions.
+        Object.keys(tabData.attributes).forEach(a => TabAttributes.persist(a));
+      }
 
       browser.__SS_tabStillLoading = true;
 
@@ -3094,10 +3093,16 @@ let SessionStoreInternal = {
     CAPABILITIES.forEach(function(aCapability) {
       browser.docShell["allow" + aCapability] = disallow.indexOf(aCapability) == -1;
     });
-    for (let name in this.xulAttributes)
-      tab.removeAttribute(name);
-    for (let name in tabData.attributes)
-      tab.setAttribute(name, tabData.attributes[name]);
+
+    // Restore tab attributes.
+    if ("attributes" in tabData) {
+      TabAttributes.set(tab, tabData.attributes);
+    }
+
+    // Restore the tab icon.
+    if ("image" in tabData) {
+      aWindow.gBrowser.setIcon(tab, tabData.image);
+    }
 
     if (tabData.storage && browser.docShell instanceof Ci.nsIDocShell)
       SessionStorage.deserialize(browser.docShell, tabData.storage);
@@ -3520,9 +3525,11 @@ let SessionStoreInternal = {
 
     var _this = this;
     aWindow.setTimeout(function() {
-      _this.restoreDimensions.apply(_this, [aWindow, aWinData.width || 0,
-        aWinData.height || 0, "screenX" in aWinData ? aWinData.screenX : NaN,
-        "screenY" in aWinData ? aWinData.screenY : NaN,
+      _this.restoreDimensions.apply(_this, [aWindow,
+        +aWinData.width || 0,
+        +aWinData.height || 0,
+        "screenX" in aWinData ? +aWinData.screenX : NaN,
+        "screenY" in aWinData ? +aWinData.screenY : NaN,
         aWinData.sizemode || "", aWinData.sidebar || ""]);
     }, 0);
   },
@@ -3546,6 +3553,31 @@ let SessionStoreInternal = {
     var win = aWindow;
     var _this = this;
     function win_(aName) { return _this._getWindowDimension(win, aName); }
+
+    // find available space on the screen where this window is being placed
+    let screen = gScreenManager.screenForRect(aLeft, aTop, aWidth, aHeight);
+    if (screen) {
+      let screenLeft = {}, screenTop = {}, screenWidth = {}, screenHeight = {};
+      screen.GetAvailRectDisplayPix(screenLeft, screenTop, screenWidth, screenHeight);
+      // constrain the dimensions to the actual space available
+      if (aWidth > screenWidth.value) {
+        aWidth = screenWidth.value;
+      }
+      if (aHeight > screenHeight.value) {
+        aHeight = screenHeight.value;
+      }
+      // and then pull the window within the screen's bounds
+      if (aLeft < screenLeft.value) {
+        aLeft = screenLeft.value;
+      } else if (aLeft + aWidth > screenLeft.value + screenWidth.value) {
+        aLeft = screenLeft.value + screenWidth.value - aWidth;
+      }
+      if (aTop < screenTop.value) {
+        aTop = screenTop.value;
+      } else if (aTop + aHeight > screenTop.value + screenHeight.value) {
+        aTop = screenTop.value + screenHeight.value - aHeight;
+      }
+    }
 
     // only modify those aspects which aren't correct yet
     if (aWidth && aHeight && (aWidth != win_("width") || aHeight != win_("height"))) {
@@ -3662,7 +3694,7 @@ let SessionStoreInternal = {
 
 #ifndef XP_MACOSX
     // Don't save invalid states.
-    // Looks we currently have private windows, only.
+    // Looks like we currently have private windows, only.
     if (oState.windows.length == 0) {
       TelemetryStopwatch.cancel("FX_SESSION_RESTORE_COLLECT_DATA_MS");
       TelemetryStopwatch.cancel("FX_SESSION_RESTORE_COLLECT_DATA_LONGEST_OP_MS");
@@ -4444,6 +4476,52 @@ let SessionStoreInternal = {
       browser.webNavigation.sessionHistory.
                             removeSHistoryListener(browser.__SS_shistoryListener);
       delete browser.__SS_shistoryListener;
+    }
+  }
+};
+
+// A set of tab attributes to persist. We will read a given list of tab
+// attributes when collecting tab data and will re-set those attributes when
+// the given tab data is restored to a new tab.
+let TabAttributes = {
+  _attrs: new Set(),
+
+  // We never want to directly read or write those attributes.
+  // 'image' should not be accessed directly but handled by using the
+  //         gBrowser.getIcon()/setIcon() methods.
+  // 'pending' is used internal by sessionstore and managed accordingly.
+  _skipAttrs: new Set(["image", "pending"]),
+
+  persist: function (name) {
+    if (this._attrs.has(name) || this._skipAttrs.has(name)) {
+      return false;
+    }
+
+    this._attrs.add(name);
+    return true;
+  },
+
+  get: function (tab) {
+    let data = {};
+
+    for (let name of this._attrs) {
+      if (tab.hasAttribute(name)) {
+        data[name] = tab.getAttribute(name);
+      }
+    }
+
+    return data;
+  },
+
+  set: function (tab, data = {}) {
+    // Clear attributes.
+    for (let name of this._attrs) {
+      tab.removeAttribute(name);
+    }
+
+    // Set attributes.
+    for (let name in data) {
+      tab.setAttribute(name, data[name]);
     }
   }
 };

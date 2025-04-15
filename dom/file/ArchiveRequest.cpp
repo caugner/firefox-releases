@@ -6,6 +6,7 @@
 
 #include "ArchiveRequest.h"
 
+#include "mozilla/dom/ArchiveRequestBinding.h"
 #include "nsContentUtils.h"
 #include "nsLayoutStatics.h"
 #include "nsEventDispatcher.h"
@@ -51,6 +52,8 @@ ArchiveRequest::ArchiveRequest(nsIDOMWindow* aWindow,
 : DOMRequest(aWindow),
   mArchiveReader(aReader)
 {
+  MOZ_ASSERT(aReader);
+
   MOZ_COUNT_CTOR(ArchiveRequest);
   nsLayoutStatics::AddRef();
 
@@ -73,14 +76,18 @@ ArchiveRequest::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-ArchiveRequest::GetReader(nsIDOMArchiveReader** aArchiveReader)
+/* virtual */ JSObject*
+ArchiveRequest::WrapObject(JSContext* aCx, JSObject* aScope)
+{
+  return ArchiveRequestBinding::Wrap(aCx, aScope, this);
+}
+
+ArchiveReader*
+ArchiveRequest::Reader() const
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
 
-  nsCOMPtr<nsIDOMArchiveReader> archiveReader(mArchiveReader);
-  archiveReader.forget(aArchiveReader);
-  return NS_OK;
+  return mArchiveReader;
 }
 
 // Here the request is processed:
@@ -129,7 +136,7 @@ ArchiveRequest::ReaderReady(nsTArray<nsCOMPtr<nsIDOMFile> >& aFileList,
   nsIScriptContext* sc = GetContextForEventHandlers(&rv);
   NS_ENSURE_STATE(sc);
 
-  JSContext* cx = sc->GetNativeContext();
+  AutoPushJSContext cx(sc->GetNativeContext());
   NS_ASSERTION(cx, "Failed to get a context!");
 
   JSObject* global = sc->GetNativeGlobal();
@@ -267,8 +274,6 @@ NS_IMPL_CYCLE_COLLECTION_INHERITED_1(ArchiveRequest, DOMRequest,
                                      mArchiveReader)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(ArchiveRequest)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMArchiveRequest)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(ArchiveRequest)
 NS_INTERFACE_MAP_END_INHERITING(DOMRequest)
 
 NS_IMPL_ADDREF_INHERITED(ArchiveRequest, DOMRequest)

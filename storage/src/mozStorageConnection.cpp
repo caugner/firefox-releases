@@ -35,7 +35,7 @@
 #include "SQLCollations.h"
 #include "FileSystemModule.h"
 #include "mozStorageHelper.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 #include "prlog.h"
 #include "prprf.h"
@@ -43,12 +43,8 @@
 
 #define MIN_AVAILABLE_BYTES_PER_CHUNKED_GROWTH 524288000 // 500 MiB
 
-// Maximum size of the pages cache per connection.  If the default cache_size
-// value evaluates to a larger size, it will be reduced to save memory.
-#define MAX_CACHE_SIZE_BYTES 4194304 // 4 MiB
-
-// Default maximum number of pages to allow in the connection pages cache.
-#define DEFAULT_CACHE_SIZE_PAGES 2000
+// Maximum size of the pages cache per connection.
+#define MAX_CACHE_SIZE_KIBIBYTES 2048 // 2 MiB
 
 #ifdef PR_LOGGING
 PRLogModuleInfo* gStorageLog = nullptr;
@@ -476,7 +472,7 @@ nsresult
 Connection::initialize()
 {
   NS_ASSERTION (!mDBConn, "Initialize called on already opened database!");
-  SAMPLE_LABEL("storage", "Connection::initialize");
+  PROFILER_LABEL("storage", "Connection::initialize");
 
   // in memory database requested, sqlite uses a magic file name
   int srv = ::sqlite3_open_v2(":memory:", &mDBConn, mFlags, NULL);
@@ -493,7 +489,7 @@ Connection::initialize(nsIFile *aDatabaseFile)
 {
   NS_ASSERTION (aDatabaseFile, "Passed null file!");
   NS_ASSERTION (!mDBConn, "Initialize called on already opened database!");
-  SAMPLE_LABEL("storage", "Connection::initialize");
+  PROFILER_LABEL("storage", "Connection::initialize");
 
   mDatabaseFile = aDatabaseFile;
 
@@ -521,7 +517,7 @@ Connection::initialize(nsIFileURL *aFileURL)
 {
   NS_ASSERTION (aFileURL, "Passed null file URL!");
   NS_ASSERTION (!mDBConn, "Initialize called on already opened database!");
-  SAMPLE_LABEL("storage", "Connection::initialize");
+  PROFILER_LABEL("storage", "Connection::initialize");
 
   nsCOMPtr<nsIFile> databaseFile;
   nsresult rv = aFileURL->GetFile(getter_AddRefs(databaseFile));
@@ -576,26 +572,13 @@ Connection::initializeInternal(nsIFile* aDatabaseFile)
   nsresult rv = ExecuteSimpleSQL(pageSizeQuery);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Get the current page_size, since it may differ from the specified value.
-  sqlite3_stmt *stmt;
-  NS_NAMED_LITERAL_CSTRING(pragma_page_size,
-                           MOZ_STORAGE_UNIQUIFY_QUERY_STR "PRAGMA page_size");
-  int srv = prepareStatement(pragma_page_size, &stmt);
-  if (srv == SQLITE_OK) {
-    if (SQLITE_ROW == stepStatement(stmt)) {
-      pageSize = ::sqlite3_column_int64(stmt, 0);
-    }
-    (void)::sqlite3_finalize(stmt);
-  }
-
   // Setting the cache_size forces the database open, verifying if it is valid
   // or corrupt.  So this is executed regardless it being actually needed.
   // The cache_size is calculated from the actual page_size, to save memory.
   nsAutoCString cacheSizeQuery(MOZ_STORAGE_UNIQUIFY_QUERY_STR
                                "PRAGMA cache_size = ");
-  cacheSizeQuery.AppendInt(std::min(DEFAULT_CACHE_SIZE_PAGES,
-                                  int32_t(MAX_CACHE_SIZE_BYTES / pageSize)));
-  srv = executeSql(cacheSizeQuery.get());
+  cacheSizeQuery.AppendInt(-MAX_CACHE_SIZE_KIBIBYTES);
+  int srv = executeSql(cacheSizeQuery.get());
   if (srv != SQLITE_OK) {
     ::sqlite3_close(mDBConn);
     mDBConn = nullptr;
@@ -1003,7 +986,7 @@ NS_IMETHODIMP
 Connection::Clone(bool aReadOnly,
                   mozIStorageConnection **_connection)
 {
-  SAMPLE_LABEL("storage", "Connection::Clone");
+  PROFILER_LABEL("storage", "Connection::Clone");
   if (!mDBConn)
     return NS_ERROR_NOT_INITIALIZED;
   if (!mDatabaseFile)

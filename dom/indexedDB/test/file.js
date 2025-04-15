@@ -49,12 +49,12 @@ function compareBuffers(buffer1, buffer2)
 
 function getBlob(type, view)
 {
-  return utils.getBlob([view], {type: type});
+  return SpecialPowers.unwrap(utils.getBlob([view], {type: type}));
 }
 
 function getFile(name, type, view)
 {
-  return utils.getFile(name, [view], {type: type});
+  return SpecialPowers.unwrap(utils.getFile(name, [view], {type: type}));
 }
 
 function getRandomBlob(size)
@@ -173,8 +173,8 @@ function grabFileUsageAndContinueHandler(usage, fileUsage)
 function getUsage(usageHandler)
 {
   let comp = SpecialPowers.wrap(Components);
-  let idbManager = comp.classes["@mozilla.org/dom/indexeddb/manager;1"]
-                       .getService(comp.interfaces.nsIIndexedDatabaseManager);
+  let quotaManager = comp.classes["@mozilla.org/dom/quota/manager;1"]
+                         .getService(comp.interfaces.nsIQuotaManager);
 
   let uri = SpecialPowers.getDocumentURIObject(window.document);
   let callback = {
@@ -183,7 +183,7 @@ function getUsage(usageHandler)
     }
   };
 
-  idbManager.getUsageForURI(uri, callback);
+  quotaManager.getUsageForURI(uri, callback);
 }
 
 function scheduleGC()

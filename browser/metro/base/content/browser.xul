@@ -57,21 +57,23 @@
 
   <commandset id="mainCommandSet">
     <!-- basic navigation -->
-    <command id="cmd_back" label="&back.label;" disabled="true" oncommand="CommandUpdater.doCommand(this.id);"/>
-    <command id="cmd_forward" label="&forward.label;" disabled="true" oncommand="CommandUpdater.doCommand(this.id);" observes="bcast_urlbarState"/>
+    <command id="cmd_back" disabled="true" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_forward" disabled="true" oncommand="CommandUpdater.doCommand(this.id);" observes="bcast_urlbarState"/>
     <command id="cmd_handleBackspace" oncommand="BrowserUI.handleBackspace();" />
     <command id="cmd_handleShiftBackspace" oncommand="BrowserUI.handleShiftBackspace();" />
-    <command id="cmd_reload" label="&reload.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_reload" oncommand="CommandUpdater.doCommand(this.id);"/>
     <command id="cmd_forceReload" oncommand="CommandUpdater.doCommand(this.id);"/>
-    <command id="cmd_stop" label="&stop.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
-    <command id="cmd_go" label="&go.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_stop" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_go" oncommand="CommandUpdater.doCommand(this.id);"/>
     <command id="cmd_openLocation" oncommand="CommandUpdater.doCommand(this.id);"/>
     <command id="cmd_home" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_openFile" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_savePage" oncommand="CommandUpdater.doCommand(this.id);"/>
 
     <!-- tabs -->
-    <command id="cmd_newTab" label="&newtab.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
-    <command id="cmd_closeTab" label="&closetab.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
-    <command id="cmd_undoCloseTab" label="&undoclosetab.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_newTab" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_closeTab" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_undoCloseTab" oncommand="CommandUpdater.doCommand(this.id);"/>
 #ifdef MOZ_SERVICES_SYNC
     <command id="cmd_remoteTabs" oncommand="CommandUpdater.doCommand(this.id);"/>
 #endif
@@ -101,12 +103,12 @@
     <command id="cmd_scrollPageDown" oncommand="CommandUpdater.doCommand(this.id);"/>
 
     <!-- editing -->
-    <command id="cmd_cut" label="&cut.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
-    <command id="cmd_copy" label="&copy.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
-    <command id="cmd_copylink" label="&copylink.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
-    <command id="cmd_paste" label="&paste.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
-    <command id="cmd_delete" label="&delete.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
-    <command id="cmd_selectAll" label="&selectAll.label;" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_cut" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_copy" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_copylink" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_paste" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_delete" oncommand="CommandUpdater.doCommand(this.id);"/>
+    <command id="cmd_selectAll" oncommand="CommandUpdater.doCommand(this.id);"/>
 
     <!-- forms navigation -->
     <command id="cmd_formPrevious" oncommand="FormHelperUI.goToPrevious();"/>
@@ -133,6 +135,8 @@
     <key id="key_focusURL" key="l" modifiers="accel" command="cmd_openLocation"/>
     <key id="key_focusURL2" key="&urlbar.accesskey;" modifiers="alt" command="cmd_openLocation"/>
     <key id="key_home" keycode="VK_HOME" modifiers="accel" command="cmd_home"/>
+    <key id="key_open" key="o" modifiers="accel" command="cmd_openFile"/>
+    <key id="key_save" key="s" modifiers="accel" command="cmd_savePage"/>
 
     <!-- misc -->
     <key id="key_zoomin" key="+" modifiers="accel" command="cmd_zoomin"/>
@@ -145,6 +149,8 @@
     <key id="key_findPrevious2" key="g" modifiers="accel,shift" command="cmd_findPrevious"/>
     <key id="key_quit" key="q" modifiers="accel" command="cmd_quit"/>
     <key id="key_addBoomkark" key="d" modifiers="accel" command="cmd_addBookmark"/>
+    <key id="key_console" key="j" modifiers="accel,shift" oncommand="PanelUI.show('console-container')"/>
+    <key id="key_options" key="o" modifiers="accel,shift" oncommand="Elements.prefsFlyout.show()"/>
 
     <!-- manage tabs -->
     <key id="key_newTab" key="t" modifiers="accel" command="cmd_newTab"/>
@@ -195,10 +201,10 @@
                forwarddisabled="true"
                title="Back/Forward">
               <toolbarbutton id="back-button" class="toolbarbutton"
-                             label="Back"
+                             label="&back.label;"
                              command="cmd_back"/>
               <toolbarbutton id="forward-button" class="toolbarbutton"
-                             label="Forward"
+                             label="&forward.label;"
                              command="cmd_forward"/>
               <dummyobservertarget hidden="true"
                                    onbroadcast="if (this.getAttribute('disabled') == 'true')
@@ -211,15 +217,9 @@
 
             <hbox id="urlbar-container" flex="1" observes="bcast_urlbarState">
               <hbox id="urlbar" flex="1">
-                <box id="identity-box" role="button"
-                     onclick="IdentityUI.handleIdentityButtonEvent();"
-                     onkeypress="IdentityUI.handleIdentityButtonEvent();">
+                <box id="identity-box" role="button">
                   <hbox id="identity-box-inner" align="center" mousethrough="always">
                     <image id="identity-icon"/>
-                    <hbox id="identity-icon-labels">
-                      <label id="identity-icon-label" class="plain" flex="1"/>
-                      <label id="identity-icon-country-label" class="plain"/>
-                    </hbox>
                   </hbox>
                 </box>
 
@@ -245,7 +245,7 @@
           </toolbar>
 
           <box id="toolbar-transition" observes="bcast_windowState" >
-            <toolbarbutton id="tool-new-tab" command="cmd_newTab"/>
+            <toolbarbutton id="tool-new-tab" command="cmd_newTab" label="&newtab.label;"/>
           </box>
         </hbox>
 
@@ -258,23 +258,21 @@
             <scrollbox id="start-scrollbox" orient="horizontal" flex="1">
             <vbox id="start-topsites" class="meta-section">
               <label class="meta-section-title" value="&startTopSitesHeader.label;"/>
-              <richgrid id="start-topsites-grid" seltype="single" flex="1"/>
+              <richgrid id="start-topsites-grid" seltype="multiple" flex="1"/>
             </vbox>
-
             <vbox id="start-bookmarks" class="meta-section">
               <label class="meta-section-title" value="&startBookmarksHeader.label;"
                 onclick="PanelUI.show('bookmarks-container');"/>
-              <richgrid id="start-bookmarks-grid" seltype="single" flex="1"/>
+              <richgrid id="start-bookmarks-grid" seltype="multiple" flex="1"/>
             </vbox>
-
             <vbox id="start-history" class="meta-section">
               <label class="meta-section-title" value="&startHistoryHeader.label;"/>
-              <richgrid id="start-history-grid" seltype="single" flex="1"/>
+              <richgrid id="start-history-grid" seltype="multiple" flex="1"/>
             </vbox>
             <vbox id="start-remotetabs" class="meta-section">
               <label class="meta-section-title" value="&startRemoteTabsHeader.label;"
                 onclick="PanelUI.show('remotetabs-container');"/>
-              <richgrid id="start-remotetabs-grid" seltype="single" flex="1"/>
+              <richgrid id="start-remotetabs-grid" seltype="multiple" flex="1"/>
             </vbox>
             </scrollbox>
           </hbox>
@@ -313,7 +311,7 @@
 
     <!-- Windows 8 Appbar -->
     <appbar id="appbar" mousethrough="never" observes="bcast_windowState">
-      <!-- contextual actions temporarily hidden, pending #800996, #831918 -->
+      <!-- contextual actions temporarily hidden, pending #800996 -->
       <hbox id="contextualactions-tray" flex="1" hidden="true">
         <toolbarbutton id="delete-selected-button" hidden="true" oncommand="Appbar.dispatchContextualAction('delete')"/>
         <toolbarbutton id="restore-selected-button" hidden="true" oncommand="Appbar.dispatchContextualAction('restore')"/>
@@ -333,38 +331,6 @@
         <toolbarbutton id="pin-button" type="checkbox" oncommand="Appbar.onPinButton()"/>
       </hbox>
     </appbar>
-
-    <!-- popup for site identity information -->
-    <arrowbox id="identity-container" hidden="true" mode="unknownIdentity" offset="18" flex="1" type="dialog" observes="bcast_urlbarState">
-      <box id="identity-popup-container" flex="1" align="top">
-        <image id="identity-popup-icon"/>
-        <vbox id="identity-popup-content-box" flex="1">
-          <box id="identity-popup-connected-box" flex="1">
-            <label id="identity-popup-connectedToLabel" value="&identity.connectedTo2;"/>
-            <label id="identity-popup-connectedToLabel2" flex="1">&identity.unverifiedsite2;</label>
-            <description id="identity-popup-content-host" flex="1"/>
-          </box>
-          <box id="identity-popup-runBy-box">
-            <label id="identity-popup-runByLabel" value="&identity.runBy2;"/>
-            <description id="identity-popup-content-owner"/>
-            <description id="identity-popup-content-supplemental"/>
-          </box>
-          <description id="identity-popup-content-verifier"/>
-        </vbox>
-        <box id="identity-popup-encryption-box">
-          <image id="identity-popup-encryption-icon"/>
-          <description id="identity-popup-encryption-label"/>
-        </box>
-      </box>
-
-      <hbox id="pageactions-container" hidden="true">
-        <pageaction id="pageaction-password" title="&pageactions.password.forget;"
-          onclick="PageActions.forgetPassword(event);"/>
-        <pageaction id="pageaction-reset" title="&pageactions.reset;"
-          onclick="PageActions.clearPagePermissions(event);"/>
-        <pageaction id="pageaction-charset" title="&pageactions.charEncoding;" onclick="CharsetMenu.show();"/>
-      </hbox>
-    </arrowbox>
 
     <vbox id="panel-container" hidden="true" class="window-width window-height meta">
       <hbox id="panel-header">
@@ -418,50 +384,82 @@
       </deck>
     </vbox>
 
-    <flyoutpanel id="about-flyoutpanel" headertext="&aboutHeader.label;">
-        <label id="about-product-label" value="&aboutHeaderProduct.label;"/>
-        <label value="&aboutHeaderCompany.label;"/>
+  <!-- Selection overlay - this should be below any content that can have selectable text -->
+  <!-- onclick addresses dom bug 835175, str in bug 832957 -->
+  <box onclick="false" class="selection-overlay-hidden" id="selection-overlay"/>
+
+  <flyoutpanel id="about-flyoutpanel" headertext="&aboutHeader.title;">
+        <label id="about-product-label" value="&aboutHeader.product.label;"/>
+        <label value="&aboutHeader.company.label;"/>
 #expand <label id="about-version-label">__MOZ_APP_VERSION__</label>
         <label id="about-policy-label"
                onclick="if (event.button == 0) { Browser.onAboutPolicyClick(); }"
-               class="text-link" value="&aboutHeaderPolicy.label;"/>
+               class="text-link" value="&aboutHeader.policy.label;"/>
     </flyoutpanel>
 
-    <flyoutpanel id="prefs-flyoutpanel" headertext="&optionsHeader.label;">
-      <settings id="prefs-startup" label="&startup.title;">
-        <setting id="prefs-homepage" title="&homepage.title;" type="menulist" pref="browser.startup.sessionRestore" class="setting-expanded">
+    <flyoutpanel id="sync-flyoutpanel" headertext="&syncHeader.title;">
+      <setting id="sync-connect" title="&sync.notconnected;" type="control">
+        <button label="&sync.connect;" oncommand="WeaveGlue.tryConnect();" />
+      </setting>
+      <setting id="sync-connected" class="setting-group" title="&sync.connected;" type="control" collapsed="true">
+        <button id="sync-pairdevice" label="&sync.pair.button;" oncommand="SyncPairDevice.open();" />
+      </setting>
+      <setting id="sync-sync" class="setting-subgroup" type="control" collapsed="true">
+        <button id="sync-syncButton" label="&sync.syncNow2;" oncommand="WeaveGlue.sync();"/>
+      </setting>
+      <setting id="sync-device" class="setting-subgroup" type="string" title="&sync.deviceName;" onchange="WeaveGlue.changeName(this);" collapsed="true"/>
+      <setting id="sync-disconnect" class="setting-subgroup" type="control" collapsed="true">
+        <button label="&sync.disconnect;" oncommand="WeaveGlue.disconnect();" />
+      </setting>
+    </flyoutpanel>
+
+    <flyoutpanel id="prefs-flyoutpanel" headertext="&optionsHeader.title;">
+      <settings id="prefs-startup" label="&optionsHeader.startup.title;"> <!-- note, this element has a custom margin-top -->
+        <setting id="prefs-homepage" title="&optionsHeader.homepage.title;" type="menulist" pref="browser.startup.sessionRestore" class="setting-expanded">
           <menulist id="prefs-homepage-options">
-            <menupopup position="after_end">
-              <menuitem id="prefs-homepage-default" label="&homepage.startPage;" value="false"/>
-              <menuitem id="prefs-homepage-session" label="&homepage.sessionRestore;" value="true"/>
+            <menupopup id="prefs-homepage-popup" position="after_end">
+              <menuitem id="prefs-homepage-default" label="&optionsHeader.homepage.startPage.button;" value="false"/>
+              <menuitem id="prefs-homepage-session" label="&optionsHeader.homepage.sessionRestore.button;" value="true"/>
             </menupopup>
           </menulist>
         </setting>
       </settings>
-      <setting pref="browser.tabs.tabsOnly" title="&toggleTabsOnly.label;" type="bool"/>
-      <settings id="prefs-sync" label="&sync.title;">
-        <setting id="sync-connect" title="&sync.notconnected;" type="control">
-          <button label="&sync.connect;" oncommand="WeaveGlue.tryConnect();" />
-        </setting>
-        <setting id="sync-connected" class="setting-group" title="&sync.connected;" type="control" collapsed="true">
-          <button id="sync-pairdevice" label="&sync.pair.title;" oncommand="SyncPairDevice.open();" />
-          <button id="sync-details" label="&sync.details;" type="checkbox" autocheck="false" checked="false" oncommand="WeaveGlue.showDetails();" />
-        </setting>
-        <setting id="sync-sync" class="setting-subgroup" type="control" collapsed="true">
-          <button id="sync-syncButton" label="&sync.syncNow;" oncommand="WeaveGlue.sync();"/>
-        </setting>
-        <setting id="sync-device" class="setting-subgroup" type="string" title="&sync.deviceName;" onchange="WeaveGlue.changeName(this);" collapsed="true"/>
-        <setting id="sync-disconnect" class="setting-subgroup" type="control" collapsed="true">
-          <button label="&sync.disconnect;" oncommand="WeaveGlue.disconnect();" />
-        </setting>
+      <setting pref="browser.tabs.tabsOnly" title="&optionsHeader.tabs.title;" type="bool"/>
+      <settings id="prefs-charencoding" label="&optionsHeader.char.title;">
+        <setting pref="browser.menu.showCharacterEncoding" title="&optionsHeader.char.options.label;" type="bool"/>
       </settings>
-      <settings id="prefs-privacy" label="&privacy.title;">
-        <setting pref="signon.rememberSignons" title="&rememberPasswords.title;" type="bool"/>
-        <setting pref="privacy.donottrackheader.enabled" title="&doNotTrack.title;" type="bool"/>
-        <setting id="prefs-master-password" title="&masterPassword.title;" type="bool" oncommand="MasterPasswordUI.show(this.value);"/>
-        <setting title="&clearPrivateData2.title;" type="control">
-          <button id="prefs-clear-data" label="&clearPrivateData.button;" command="cmd_sanitize"/>
-        </setting>
+      <settings id="prefs-privdata" label="&clearPrivateData.title;">
+        <description>&clearPrivateData.label;</description>
+
+        <checkbox id="prefs-privdata-history" itemName="history" label="&clearPrivateData.history;" checked="true" />
+
+        <checkbox id="prefs-privdata-other" label="&clearPrivateData.otherdata;"/>
+        <hbox id="prefs-privdata-subitems" >
+          <checkbox class="privdata-subitem-item" checked="true" itemName="downloads" label="&clearPrivateData.downloadHist;"/>
+          <checkbox class="privdata-subitem-item" checked="true" itemName="formdata" label="&clearPrivateData.formSearchHist;"/>
+          <checkbox class="privdata-subitem-item" checked="true" itemName="cookies" label="&clearPrivateData.cookies;"/>
+          <checkbox class="privdata-subitem-item" checked="true" itemName="passwords" label="&clearPrivateData.passwords;"/>
+          <checkbox class="privdata-subitem-item" checked="true" itemName="cache" label="&clearPrivateData.cache;"/>
+          <checkbox class="privdata-subitem-item" checked="true" itemName="offlineApps" label="&clearPrivateData.offline;"/>
+          <checkbox class="privdata-subitem-item" checked="true" itemName="siteSettings" label="&clearPrivateData.sitePref;"/>
+          <checkbox class="privdata-subitem-item" checked="true" itemName="sessions" label="&clearPrivateData.logins;"/>
+        </hbox>
+
+        <hbox align="center">
+          <button id="prefs-clear-data" label="&clearPrivateData.button;" command="cmd_sanitize" flex="1" />
+          <deck id="clear-notification" flex="2" selectedIndex="0" align="center">
+            <spacer id="clear-notification-empty"/>
+            <hbox id="clear-notification-clearing" align="center">
+              <!-- TODO: we need a more metro-y throbber. See bug 852622 -->
+              <image src="chrome://browser/skin/images/throbber.png" />
+            </hbox>
+            <description id="clear-notification-done">&clearPrivateData.done;</description>
+          </deck>
+        </hbox>
+      </settings>
+      <setting pref="signon.rememberSignons" title="&optionsHeader.privacy.passwords.label;" type="bool"/>
+      <settings id="prefs-donottrack" label="&optionsHeader.privacy.doNotTrack.title;">
+        <setting pref="privacy.donottrackheader.enabled" title="&optionsHeader.privacy.doNotTrack.label;" type="bool"/>
       </settings>
     </flyoutpanel>
 
@@ -479,7 +477,7 @@
           </hbox>
           <vbox id="syncsetup-simple" class="syncsetup-page" flex="1">
             <scrollbox id="sync-message" class="prompt-message" orient="vertical" flex="1">
-              <description class="syncsetup-desc" flex="1">&sync.setup.pair;</description>
+              <description class="syncsetup-desc" flex="1">&sync.setup.pair2;</description>
               <description class="link" flex="1" onclick="WeaveGlue.openTutorial();">&sync.setup.tutorial;</description>
               <separator/>
               <vbox flex="1" pack="center" align="start">
@@ -556,86 +554,98 @@
     </box>
 #endif
 
-    <box id="context-container" class="menu-container" hidden="true">
+    <box onclick="event.stopPropagation();" id="context-container" class="menu-container" hidden="true">
+      <!-- onclick is dom bug 835175 -->
       <vbox id="context-popup" class="menu-popup">
         <richlistbox id="context-commands" bindingType="contextmenu" flex="1">
+          <!-- priority="low" items are hidden by default when a context is being displayed
+               for two or more media types. (e.g. a linked image) -->
+          <!-- content types preceeded by '!' act as exclusion rules, the menu item will not
+               be displayed if the content type is present. -->
+          <!-- Note the order of richlistitem here is important as it is reflected in the
+               menu itself. -->
+          <!-- ux spec: https://bug782810.bugzilla.mozilla.org/attachment.cgi?id=714804 -->
+
           <!-- Text related -->
+          <!-- for text inputs, this will cut selected text -->
+          <richlistitem id="context-cut" type="cut" onclick="ContextCommands.cut();">
+            <label value="&contextTextCut.label;"/>
+          </richlistitem>
+          <!-- for text inputs, this will copy selected text -->
           <richlistitem id="context-copy" type="copy" onclick="ContextCommands.copy();">
-            <label value="&copy.label;"/>
+            <label value="&contextTextCopy.label;"/>
           </richlistitem>
-          <richlistitem id="context-copy-all" type="copy-all" onclick="ContextCommands.copy();">
-            <label value="&copyAll.label;"/>
-          </richlistitem>
+          <!-- only displayed if there is text on the clipboard -->
           <richlistitem id="context-paste" type="paste" onclick="ContextCommands.paste();">
-            <label value="&paste.label;"/>
+            <label value="&contextTextPaste.label;"/>
           </richlistitem>
+          <!-- Search Bing for "(text..)", displayed on selected content text only -->
+          <richlistitem id="context-search" type="selected-text,!input-text" onclick="ContextCommands.searchText(this);">
+            <label id="context-search-label" value=""/>
+          </richlistitem>
+          <!-- only display if there is text on the clipboard and the target is the urlbar -->
           <richlistitem id="context-paste-n-go" type="paste-url" onclick="ContextCommands.pasteAndGo();">
-            <label value="&pasteAndGo.label;"/>
+            <label value="&contextTextPasteAndGo.label;"/>
           </richlistitem>
-          <richlistitem id="context-select-all" type="select-all" onclick="ContextCommands.selectAll();">
-            <label value="&selectAll.label;"/>
+          <!-- only displayed in inputs with text that do not have selection -->
+          <richlistitem id="context-select" type="selectable" onclick="ContextCommands.select();">
+            <label value="&contextTextSelect.label;"/>
+          </richlistitem>
+          <!-- only displayed in inputs with text that do not have selection -->
+          <richlistitem id="context-select-all" type="selectable" onclick="ContextCommands.selectAll();">
+            <label value="&contextTextSelectAll.label;"/>
           </richlistitem>
 
           <!-- Image related -->
-          <richlistitem id="context-viewinnewtab" type="image" onclick="ContextCommands.openInNewTab();">
-            <label value="&contextViewInNewTab.label;"/>
+          <!-- save image to user pictures library -->
+          <richlistitem id="context-save-image-lib" type="image" onclick="ContextCommands.saveImageToLib();">
+            <label value="&contextSaveImageLib.label;"/>
           </richlistitem>
-          <richlistitem id="context-copy-image" type="image-loaded" onclick="ContextCommands.copyImage();">
+          <!-- copy image data to clipboard -->
+          <richlistitem id="context-copy-image" type="image" onclick="ContextCommands.copyImage();">
             <label value="&contextCopyImage.label;"/>
           </richlistitem>
-          <richlistitem id="context-save-image" type="image-loaded" onclick="ContextCommands.saveImage();">
-            <label value="&contextSaveImage.label;"/>
+          <!-- copy the uri of the image src -->
+          <richlistitem id="context-copy-image-loc" type="image" onclick="ContextCommands.copyImageSrc();">
+            <label value="&contextCopyImageLocation.label;"/>
           </richlistitem>
-          <richlistitem id="context-save-image-to" type="image-loaded" onclick="ContextCommands.saveImageTo();">
-            <label value="&contextSaveImageTo.label;"/>
-          </richlistitem>
-
-          <!-- Link related -->
-          <richlistitem id="context-openinnewtab" type="link-openable" onclick="ContextCommands.openInNewTab();">
-            <label value="&contextOpenInNewTab.label;"/>
-          </richlistitem>
-          <richlistitem id="context-bookmark-link" type="link" onclick="ContextCommands.bookmarkLink();">
-            <label value="&contextBookmarkLink.label;"/>
-          </richlistitem>
-          <richlistitem id="context-copy-link" type="link" onclick="ContextCommands.copyLink();">
-            <label value="&contextCopyLink.label;"/>
-          </richlistitem>
-          <richlistitem id="context-copy-email" type="mailto" onclick="ContextCommands.copyEmail();">
-            <label value="&contextCopyEmail.label;"/>
-          </richlistitem>
-          <richlistitem id="context-copy-phone" type="callto" onclick="ContextCommands.copyPhone();">
-            <label value="&contextCopyPhone.label;"/>
+          <!-- open the uri of the image src in a new tab -->
+          <richlistitem id="context-open-image-tab" type="image" priority="low" onclick="ContextCommands.openImageInNewTab();">
+            <label value="&contextOpenImageTab.label;"/>
           </richlistitem>
 
           <!-- Video related -->
-          <richlistitem id="context-play-media" type="media-paused" onclick="ContextCommands.sendCommand('play');">
-            <label value="&contextPlayMedia.label;"/>
+          <!-- save video to user videos library -->
+          <richlistitem id="context-save-video-lib" type="video" onclick="ContextCommands.saveVideoToLib();">
+            <label value="&contextSaveVideoLib.label;"/>
           </richlistitem>
-          <richlistitem id="context-pause-video" type="media-playing" onclick="ContextCommands.sendCommand('pause');">
-            <label value="&contextPauseMedia.label;"/>
+          <!-- copy the uri of the video src -->
+          <richlistitem id="context-copy-video-loc" type="video" onclick="ContextCommands.copyVideoSrc();">
+            <label value="&contextCopyVideoLocation.label;"/>
           </richlistitem>
-          <richlistitem id="context-videotab" type="video" onclick="ContextCommands.sendCommand('videotab');">
-            <label value="&contextVideoTab.label;"/>
-          </richlistitem>
-          <richlistitem id="context-save-video" type="video" onclick="ContextCommands.saveVideo();">
-            <label value="&contextSaveVideo.label;"/>
-          </richlistitem>
-          <richlistitem id="context-save-video-to" type="video" onclick="ContextCommands.saveVideoTo();">
-            <label value="&contextSaveVideoTo.label;"/>
+          <!-- open the uri of the video src in a new tab -->
+          <richlistitem id="context-open-video-tab" type="video" priority="low" onclick="ContextCommands.openVideoInNewTab();">
+            <label value="&contextOpenVideoTab.label;"/>
           </richlistitem>
 
-          <!-- Misc. related -->
-          <richlistitem id="context-editbookmark" type="edit-bookmark" onclick="ContextCommands.editBookmark();">
-            <label value="&contextEditBookmark.label;"/>
+          <!-- Link related -->
+          <!-- all of these apply to underlying link href values -->
+          <richlistitem id="context-open-in-new-tab" type="link" onclick="ContextCommands.openLinkInNewTab();">
+            <label value="&contextOpenLinkTab.label;"/>
           </richlistitem>
-          <richlistitem id="context-removebookmark" type="edit-bookmark" onclick="ContextCommands.removeBookmark();">
-            <label value="&contextRemoveBookmark.label;"/>
+          <richlistitem id="context-copy-link" type="link" onclick="ContextCommands.copyLink();">
+            <label value="&contextCopyLinkHref.label;"/>
           </richlistitem>
+          <richlistitem id="context-bookmark-link" type="link" priority="low" onclick="ContextCommands.bookmarkLink();">
+            <label value="&contextBookmarkLinkHref.label;"/>
+          </richlistitem>
+
+          <!-- App bar: 'more' button context menu -->
           <richlistitem id="context-findinpage" type="find-in-page" onclick="ContextCommands.findInPage();">
-          <label value="&appbarFindInPage.label;"/>
+          <label value="&appbarFindInPage2.label;"/>
           </richlistitem>
           <richlistitem id="context-viewondesktop" type="view-on-desktop" onclick="ContextCommands.viewOnDesktop();">
-          <label value="&appbarViewOnDesktop.label;"/>
+          <label value="&appbarViewOnDesktop2.label;"/>
           </richlistitem>
         </richlistbox>
       </vbox>
@@ -667,9 +677,6 @@
         <description id="alerts-text" flex="1"/>
       </vbox>
     </hbox>
-
-    <!-- Selection overlay - this should be below any content that can have selectable text -->
-    <box class="selection-overlay-hidden" id="selection-overlay"/>
   </stack>
 
   <svg:svg height="0">

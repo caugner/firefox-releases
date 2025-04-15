@@ -17,7 +17,11 @@ class HTMLLegendElement : public nsGenericHTMLElement,
                           public nsIDOMHTMLLegendElement
 {
 public:
-  HTMLLegendElement(already_AddRefed<nsINodeInfo> aNodeInfo);
+  HTMLLegendElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+    : nsGenericHTMLElement(aNodeInfo)
+  {
+    SetIsDOMBinding();
+  }
   virtual ~HTMLLegendElement();
 
   NS_IMPL_FROMCONTENT_HTML_WITH_TAG(HTMLLegendElement, legend)
@@ -74,8 +78,6 @@ public:
     return fieldsetControl ? fieldsetControl->GetFormElement() : nullptr;
   }
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   /**
@@ -97,8 +99,7 @@ public:
   }
 
 protected:
-  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope,
-                             bool* aTriedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
 
   /**
    * Get the fieldset content element that contains this legend.

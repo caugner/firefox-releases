@@ -88,12 +88,9 @@ nsScreen::~nsScreen()
 }
 
 
-DOMCI_DATA(Screen, nsScreen)
-
 // QueryInterface implementation for nsScreen
 NS_INTERFACE_MAP_BEGIN(nsScreen)
   NS_INTERFACE_MAP_ENTRY(nsIDOMScreen)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(Screen)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)
 
 NS_IMPL_ADDREF_INHERITED(nsScreen, nsDOMEventTargetHelper)
@@ -286,7 +283,7 @@ nsScreen::MozLockOrientation(const JS::Value& aOrientation, JSContext* aCx,
         return NS_ERROR_FAILURE;
       }
 
-      js::RootedString jsString(aCx, JS_ValueToString(aCx, temp));
+      JS::RootedString jsString(aCx, JS_ValueToString(aCx, temp));
       if (!jsString) {
         return NS_ERROR_FAILURE;
       }
@@ -304,7 +301,7 @@ nsScreen::MozLockOrientation(const JS::Value& aOrientation, JSContext* aCx,
     return rv.ErrorCode();
   }
 
-  js::RootedString jsString(aCx, JS_ValueToString(aCx, aOrientation));
+  JS::RootedString jsString(aCx, JS_ValueToString(aCx, aOrientation));
   if (!jsString) {
     return NS_ERROR_FAILURE;
   }
@@ -412,9 +409,9 @@ nsScreen::SlowMozUnlockOrientation()
 
 /* virtual */
 JSObject*
-nsScreen::WrapObject(JSContext* aCx, JSObject* aScope, bool* aTriedToWrap)
+nsScreen::WrapObject(JSContext* aCx, JSObject* aScope)
 {
-  return ScreenBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return ScreenBinding::Wrap(aCx, aScope, this);
 }
 
 NS_IMPL_ISUPPORTS1(nsScreen::FullScreenEventListener, nsIDOMEventListener)

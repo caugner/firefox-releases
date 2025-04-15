@@ -8,46 +8,22 @@ dump("### ContextMenuHandler.js loaded\n");
 
 var ContextMenuHandler = {
   _types: [],
+  _previousState: null,
 
   init: function ch_init() {
     // Events we catch from content during the bubbling phase
     addEventListener("contextmenu", this, false);
     addEventListener("pagehide", this, false);
-    addEventListener("select", this, false);
 
     // Messages we receive from browser
+    // Command sent over from browser that only we can handle.
     addMessageListener("Browser:ContextCommand", this, false);
+    // InvokeContextAtPoint is sent to us from browser's selection
+    // overlay when it traps a contextmenu event. In response we
+    // should invoke context menu logic at the point specified.
+    addMessageListener("Browser:InvokeContextAtPoint", this, false);
 
     this.popupNode = null;
-  },
-
-  _getLinkURL: function ch_getLinkURL(aLink) {
-    let href = aLink.href;
-    if (href)
-      return href;
-
-    href = aLink.getAttributeNS(kXLinkNamespace, "href");
-    if (!href || !href.match(/\S/)) {
-      // Without this we try to save as the current doc,
-      // for example, HTML case also throws if empty
-      throw "Empty href";
-    }
-
-    return Util.makeURLAbsolute(aLink.baseURI, href);
-  },
-
-  _getURI: function ch_getURI(aURL) {
-    try {
-      return Util.makeURI(aURL);
-    } catch (ex) { }
-
-    return null;
-  },
-
-  _getProtocol: function ch_getProtocol(aURI) {
-    if (aURI)
-      return aURI.scheme;
-    return null;
   },
 
   handleEvent: function ch_handleEvent(aEvent) {
@@ -58,16 +34,41 @@ var ContextMenuHandler = {
       case "pagehide":
         this.reset();
         break;
-      case "select":
-        break;
     }
   },
 
   receiveMessage: function ch_receiveMessage(aMessage) {
+    switch (aMessage.name) {
+      case "Browser:ContextCommand":
+        this._onContextCommand(aMessage);
+      break;
+      case "Browser:InvokeContextAtPoint":
+        this._onContextAtPoint(aMessage);
+      break;
+    }
+  },
+
+  /*
+   * Handler for commands send over from browser's ContextCommands.js
+   * in response to certain context menu actions only we can handle.
+   */
+  _onContextCommand: function _onContextCommand(aMessage) {
     let node = this.popupNode;
     let command = aMessage.json.command;
 
     switch (command) {
+      case "cut":
+        this._onCut();
+        break;
+
+      case "copy":
+        this._onCopy();
+        break;
+
+      case "paste":
+        this._onPaste();
+        break;
+
       case "play":
       case "pause":
         if (node instanceof Ci.nsIDOMHTMLMediaElement)
@@ -87,14 +88,22 @@ var ContextMenuHandler = {
         this._onSelectAll();
         break;
 
-      case "paste":
-        this._onPaste();
-        break;
-
       case "copy-image-contents":
         this._onCopyImage();
         break;
     }
+  },
+
+  /*
+   * Handler for selection overlay context menu events.
+   */
+  _onContextAtPoint: function _onContextAtPoint(aMessage) {
+    // we need to find popupNode as if the context menu were
+    // invoked on underlying content.
+    let { element, frameX, frameY } =
+      elementFromPoint(aMessage.json.xPos, aMessage.json.yPos);
+    this._processPopupNode(element, frameX, frameY,
+                           Ci.nsIDOMMouseEvent.MOZ_SOURCE_TOUCH);
   },
 
   /******************************************************
@@ -106,7 +115,7 @@ var ContextMenuHandler = {
     this._target = null;
   },
 
-  // content contextmenu
+  // content contextmenu handler
   _onContentContextMenu: function _onContentContextMenu(aEvent) {
     if (aEvent.defaultPrevented)
       return;
@@ -115,6 +124,118 @@ var ContextMenuHandler = {
     aEvent.stopPropagation();
     aEvent.preventDefault();
 
+    this._processPopupNode(aEvent.originalTarget, aEvent.clientX,
+                           aEvent.clientY, aEvent.mozInputSource);
+  },
+
+  /******************************************************
+   * ContextCommand handlers
+   */
+
+  _onSelectAll: function _onSelectAll() {
+    if (Util.isTextInput(this._target)) {
+      // select all text in the input control
+      this._target.select();
+    } else {
+      // select the entire document
+      content.getSelection().selectAllChildren(content.document);
+    }
+    this.reset();
+  },
+
+  _onPaste: function _onPaste() {
+    // paste text if this is an input control
+    if (Util.isTextInput(this._target)) {
+      let edit = this._target.QueryInterface(Ci.nsIDOMNSEditableElement);
+      if (edit) {
+        edit.editor.paste(Ci.nsIClipboard.kGlobalClipboard);
+      } else {
+        Util.dumpLn("error: target element does not support nsIDOMNSEditableElement");
+      }
+    }
+    this.reset();
+  },
+
+  _onCopyImage: function _onCopyImage() {
+    Util.copyImageToClipboard(this._target);
+  },
+
+  _onCut: function _onCut() {
+    if (Util.isTextInput(this._target)) {
+      let edit = this._target.QueryInterface(Ci.nsIDOMNSEditableElement);
+      if (edit) {
+        edit.editor.cut();
+      } else {
+        Util.dumpLn("error: target element does not support nsIDOMNSEditableElement");
+      }
+    }
+    this.reset();
+  },
+
+  _onCopy: function _onCopy() {
+    if (Util.isTextInput(this._target)) {
+      let edit = this._target.QueryInterface(Ci.nsIDOMNSEditableElement);
+      if (edit) {
+        edit.editor.copy();
+      } else {
+        Util.dumpLn("error: target element does not support nsIDOMNSEditableElement");
+      }
+    } else {
+      let selectionText = this._previousState.string;
+
+      Cc["@mozilla.org/widget/clipboardhelper;1"]
+        .getService(Ci.nsIClipboardHelper).copyString(selectionText);
+    }
+    this.reset();
+  },
+
+  /******************************************************
+   * Utility routines
+   */
+
+   /*
+    * _translateToTopLevelWindow - Given a potential coordinate set within
+    * a subframe, translate up to the parent window which is what front
+    * end code expect.
+    */
+  _translateToTopLevelWindow: function _translateToTopLevelWindow(aPopupNode) {
+    let offsetX = 0;
+    let offsetY = 0;
+    let element = aPopupNode;
+    while (element &&
+           element.ownerDocument &&
+           element.ownerDocument.defaultView != content) {
+      element = element.ownerDocument.defaultView.frameElement;
+      let rect = element.getBoundingClientRect();
+      offsetX += rect.left;
+      offsetY += rect.top;
+    }
+    let win = null;
+    if (element == aPopupNode)
+      win = content;
+    else
+      win = element.contentDocument.defaultView;
+    return { targetWindow: win, offsetX: offsetX, offsetY: offsetY };
+  },
+
+  /*
+   * _processPopupNode - Generate and send a Content:ContextMenu message
+   * to browser detailing the underlying content types at this.popupNode.
+   * Note the event we receive targets the sub frame (if there is one) of
+   * the page.
+   */
+  _processPopupNode: function _processPopupNode(aPopupNode, aX, aY, aInputSrc) {
+    if (!aPopupNode)
+      return;
+
+    let { targetWindow: targetWindow,
+          offsetX: offsetX,
+          offsetY: offsetY } =
+      this._translateToTopLevelWindow(aPopupNode);
+
+    let popupNode = this.popupNode = aPopupNode;
+    let imageUrl = "";
+
     let state = {
       types: [],
       label: "",
@@ -122,12 +243,10 @@ var ContextMenuHandler = {
       linkTitle: "",
       linkProtocol: null,
       mediaURL: "",
-      x: aEvent.x,
-      y: aEvent.y
+      contentType: "",
+      contentDisposition: "",
+      string: "",
     };
-
-    let popupNode = this.popupNode = aEvent.originalTarget;
-    let imageUrl = "";
 
     // Do checks for nodes that never have children.
     if (popupNode.nodeType == Ci.nsIDOMNode.ELEMENT_NODE) {
@@ -162,7 +281,7 @@ var ContextMenuHandler = {
     while (elem) {
       if (elem.nodeType == Ci.nsIDOMNode.ELEMENT_NODE) {
         // is the target a link or a descendant of a link?
-        if (this._isLink(elem)) {
+        if (Util.isLink(elem)) {
           // If this is an image that links to itself, don't include both link and
           // image otpions.
           if (imageUrl == this._getLinkURL(elem)) {
@@ -175,8 +294,10 @@ var ContextMenuHandler = {
           linkUrl = state.linkURL;
           state.linkTitle = popupNode.textContent || popupNode.title;
           state.linkProtocol = this._getProtocol(this._getURI(state.linkURL));
+          // mark as text so we can pickup on selection below
+          isText = true;
           break;
-        } else if (this._isTextInput(elem)) {
+        } else if (Util.isTextInput(elem)) {
           let selectionStart = elem.selectionStart;
           let selectionEnd = elem.selectionEnd;
 
@@ -186,16 +307,14 @@ var ContextMenuHandler = {
           // Don't include "copy" for password fields.
           if (!(elem instanceof Ci.nsIDOMHTMLInputElement) || elem.mozIsTextField(true)) {
             if (selectionStart != selectionEnd) {
+              state.types.push("cut");
               state.types.push("copy");
               state.string = elem.value.slice(selectionStart, selectionEnd);
-            } else if (elem.value) {
-              state.types.push("copy-all");
+            }
+            if (elem.value && (selectionStart > 0 || selectionEnd < elem.textLength)) {
+              state.types.push("selectable");
               state.string = elem.value;
             }
-          }
-
-          if (selectionStart > 0 || selectionEnd < elem.textLength) {
-            state.types.push("select-all");
           }
 
           if (!elem.textLength) {
@@ -211,7 +330,7 @@ var ContextMenuHandler = {
             state.types.push("paste");
           }
           break;
-        } else if (this._isText(elem)) {
+        } else if (Util.isText(elem)) {
           isText = true;
         } else if (elem instanceof Ci.nsIDOMHTMLMediaElement ||
                    elem instanceof Ci.nsIDOMHTMLVideoElement) {
@@ -227,12 +346,13 @@ var ContextMenuHandler = {
       elem = elem.parentNode;
     }
 
+    // Over arching text tests
     if (isText) {
       // If this is text and has a selection, we want to bring
       // up the copy option on the context menu.
-      if (content && content.getSelection() &&
-          content.getSelection().toString().length > 0) {
-        state.string = content.getSelection().toString();
+      let selection = targetWindow.getSelection();
+      if (selection && selection.toString().length > 0) {
+        state.string = targetWindow.getSelection().toString();
         state.types.push("copy");
         state.types.push("selected-text");
       } else {
@@ -248,71 +368,46 @@ var ContextMenuHandler = {
     }
 
     // populate position and event source
-    state.xPos = aEvent.clientX;
-    state.yPos = aEvent.clientY;
-    state.source = aEvent.mozInputSource;
+    state.xPos = offsetX + aX;
+    state.yPos = offsetY + aY;
+    state.source = aInputSrc;
 
     for (let i = 0; i < this._types.length; i++)
       if (this._types[i].handler(state, popupNode))
         state.types.push(this._types[i].name);
 
+    this._previousState = state;
+
     sendAsyncMessage("Content:ContextMenu", state);
   },
 
-  _onSelectAll: function _onSelectAll() {
-    if (this._isTextInput(this._target)) {
-      // select all text in the input control
-      this._target.select();
-    } else {
-      // select the entire document
-      content.getSelection().selectAllChildren(content.document);
+  _getLinkURL: function ch_getLinkURL(aLink) {
+    let href = aLink.href;
+    if (href)
+      return href;
+
+    href = aLink.getAttributeNS(kXLinkNamespace, "href");
+    if (!href || !href.match(/\S/)) {
+      // Without this we try to save as the current doc,
+      // for example, HTML case also throws if empty
+      throw "Empty href";
     }
-    this.reset();
+
+    return Util.makeURLAbsolute(aLink.baseURI, href);
   },
 
-  _onPaste: function _onPaste() {
-    // paste text if this is an input control
-    if (this._isTextInput(this._target)) {
-      let edit = this._target.QueryInterface(Ci.nsIDOMNSEditableElement);
-      if (edit) {
-        edit.editor.paste(Ci.nsIClipboard.kGlobalClipboard);
-      } else {
-        Util.dumpLn("error: target element does not support nsIDOMNSEditableElement");
-      }
-    }
-    this.reset();
+  _getURI: function ch_getURI(aURL) {
+    try {
+      return Util.makeURI(aURL);
+    } catch (ex) { }
+
+    return null;
   },
 
-  _onCopyImage: function _onCopyImage() {
-    Util.copyImageToClipboard(this._target);
-  },
-
-  /*
-   * Utility routines used in testing for various
-   * HTML element types.
-   */
-
-  _isTextInput: function _isTextInput(element) {
-    return ((element instanceof Ci.nsIDOMHTMLInputElement &&
-             element.mozIsTextField(false)) ||
-            element instanceof Ci.nsIDOMHTMLTextAreaElement);
-  },
-
-  _isLink: function _isLink(element) {
-    return ((element instanceof Ci.nsIDOMHTMLAnchorElement && element.href) ||
-            (element instanceof Ci.nsIDOMHTMLAreaElement && element.href) ||
-            element instanceof Ci.nsIDOMHTMLLinkElement ||
-            element.getAttributeNS(kXLinkNamespace, "type") == "simple");
-  },
-
-  _isText: function _isText(element) {
-    return (element instanceof Ci.nsIDOMHTMLParagraphElement ||
-            element instanceof Ci.nsIDOMHTMLDivElement ||
-            element instanceof Ci.nsIDOMHTMLLIElement ||
-            element instanceof Ci.nsIDOMHTMLPreElement ||
-            element instanceof Ci.nsIDOMHTMLHeadingElement ||
-            element instanceof Ci.nsIDOMHTMLTableCellElement ||
-            element instanceof Ci.nsIDOMHTMLBodyElement);
+  _getProtocol: function ch_getProtocol(aURI) {
+    if (aURI)
+      return aURI.scheme;
+    return null;
   },
 
   /**
@@ -334,36 +429,3 @@ var ContextMenuHandler = {
 };
 
 ContextMenuHandler.init();
-
-ContextMenuHandler.registerType("mailto", function(aState, aElement) {
-  return aState.linkProtocol == "mailto";
-});
-
-ContextMenuHandler.registerType("callto", function(aState, aElement) {
-  let protocol = aState.linkProtocol;
-  return protocol == "tel" || protocol == "callto" || protocol == "sip" || protocol == "voipto";
-});
-
-ContextMenuHandler.registerType("link-openable", function(aState, aElement) {
-  return Util.isOpenableScheme(aState.linkProtocol);
-});
-
-["image", "video"].forEach(function(aType) {
-  ContextMenuHandler.registerType(aType+"-shareable", function(aState, aElement) {
-    if (aState.types.indexOf(aType) == -1)
-      return false;
-
-    let protocol = ContextMenuHandler._getProtocol(ContextMenuHandler._getURI(aState.mediaURL));
-    return Util.isShareableScheme(protocol);
-  });
-});
-
-ContextMenuHandler.registerType("image-loaded", function(aState, aElement) {
-  if (aState.types.indexOf("image") != -1) {
-    let request = aElement.getRequest(Ci.nsIImageLoadingContent.CURRENT_REQUEST);
-    if (request && (request.imageStatus & request.STATUS_SIZE_AVAILABLE))
-      return true;
-  }
-  return false;
-});
-

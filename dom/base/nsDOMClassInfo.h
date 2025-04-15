@@ -15,6 +15,7 @@
 #include "nsDOMJSUtils.h" // for GetScriptContextFromJSContext
 #include "nsIScriptGlobalObject.h"
 #include "xpcpublic.h"
+#include "nsIRunnable.h"
 
 #ifdef XP_WIN
 #undef GetClassName
@@ -28,6 +29,8 @@ class nsIDOMWindow;
 class nsIForm;
 class nsIHTMLDocument;
 class nsNPAPIPluginInstance;
+class nsObjectLoadingContent;
+class nsIObjectLoadingContent;
 
 class nsIDOMCrypto;
 #ifndef MOZ_DISABLE_CRYPTOLEGACY
@@ -188,7 +191,6 @@ protected:
 
   static bool sIsInitialized;
   static bool sDisableDocumentAllSupport;
-  static bool sDisableGlobalScopePollutionSupport;
 
 public:
   static jsid sParent_id;
@@ -299,6 +301,31 @@ public:
   }
 };
 
+// Makes sure that the wrapper is preserved if new properties are added.
+class nsEventSH : public nsDOMGenericSH
+{
+protected:
+  nsEventSH(nsDOMClassInfoData* aData) : nsDOMGenericSH(aData)
+  {
+  }
+
+  virtual ~nsEventSH()
+  {
+  }
+public:
+  NS_IMETHOD PreCreate(nsISupports* aNativeObj, JSContext* aCx,
+                       JSObject* aGlobalObj, JSObject** aParentObj);
+  NS_IMETHOD AddProperty(nsIXPConnectWrappedNative* aWrapper, JSContext* aCx,
+                         JSObject* aObj, jsid Id, jsval* aVp, bool* aRetval);
+
+  virtual void PreserveWrapper(nsISupports *aNative);
+
+  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
+  {
+    return new nsEventSH(aData);
+  }
+};
+
 // Window scriptable helper
 
 class nsWindowSH : public nsDOMGenericSH
@@ -335,8 +362,6 @@ public:
            nsIXPCScriptable::WANT_POSTCREATE;
   }
 #endif
-  NS_IMETHOD GetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                         JSObject *obj, jsid id, jsval *vp, bool *_retval);
   NS_IMETHOD Enumerate(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                        JSObject *obj, bool *_retval);
   NS_IMETHOD NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
@@ -353,8 +378,7 @@ public:
   static JSBool GlobalScopePolluterGetProperty(JSContext *cx, JSHandleObject obj,
                                                JSHandleId id, JSMutableHandleValue vp);
   static JSBool InvalidateGlobalScopePolluter(JSContext *cx, JSObject *obj);
-  static nsresult InstallGlobalScopePolluter(JSContext *cx, JSObject *obj,
-                                             nsIHTMLDocument *doc);
+  static nsresult InstallGlobalScopePolluter(JSContext *cx, JSObject *obj);
   static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
   {
     return new nsWindowSH(aData);
@@ -414,29 +438,6 @@ public:
   static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
   {
     return new nsNavigatorSH(aData);
-  }
-};
-
-// scriptable helper for new-binding objects without wrapper caches
-
-class nsNewDOMBindingNoWrapperCacheSH : public nsDOMGenericSH
-{
-protected:
-  nsNewDOMBindingNoWrapperCacheSH(nsDOMClassInfoData* aData) : nsDOMGenericSH(aData)
-  {
-  }
-
-  virtual ~nsNewDOMBindingNoWrapperCacheSH()
-  {
-  }
-
-public:
-  NS_IMETHOD PreCreate(nsISupports *nativeObj, JSContext *cx,
-                       JSObject *globalObj, JSObject **parentObj);
-
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
-  {
-    return new nsNewDOMBindingNoWrapperCacheSH(aData);
   }
 };
 
@@ -634,7 +635,6 @@ public:
   }
 
 public:
-  NS_IMETHOD PostCreatePrototype(JSContext * cx, JSObject * proto);
   NS_IMETHOD NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                         JSObject *obj, jsid id, uint32_t flags,
                         JSObject **objp, bool *_retval);
@@ -689,6 +689,9 @@ public:
                         JSObject **objp, bool *_retval);
   NS_IMETHOD GetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                          JSObject *obj, jsid id, jsval *vp, bool *_retval);
+
+  static nsresult TryResolveAll(JSContext* cx, nsHTMLDocument* doc,
+                                JSObject* obj);
 
   static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
   {
@@ -780,6 +783,7 @@ protected:
   {
   }
 
+  // Passing a null aWrapper is fine for WebIDL objects
   static nsresult GetPluginInstanceIfSafe(nsIXPConnectWrappedNative *aWrapper,
                                           JSObject *obj,
                                           JSContext *cx,
@@ -809,13 +813,41 @@ public:
                   bool *_retval);
 
 
-  static nsresult SetupProtoChain(nsIXPConnectWrappedNative *wrapper,
-                                  JSContext *cx, JSObject *obj);
+  static nsresult SetupProtoChain(JSContext *cx, JSObject *obj,
+                                  nsIXPConnectWrappedNative *wrapper = nullptr,
+                                  JSObject *aCanonicalProto = nullptr);
+
+  // The actual implementation of Call.  This allows the caller to
+  // pass in an explicit "this" value and does not make any
+  // assumptions about negative indices into argv.
+  static nsresult DoCall(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
+                         JSObject *obj, uint32_t argc, jsval *argv, jsval *vp,
+                         jsval thisVal, bool *_retval);
 
   static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
   {
     return new nsHTMLPluginObjElementSH(aData);
   }
+
+  class SetupProtoChainRunner MOZ_FINAL : public nsIRunnable
+  {
+  public:
+    NS_DECL_ISUPPORTS
+
+    // wrapper can be null, but then aContent must be non-null
+    SetupProtoChainRunner(nsIXPConnectWrappedNative* aWrapper,
+                          nsIScriptContext* aScriptContext,
+                          nsObjectLoadingContent* aContent);
+
+    NS_IMETHOD Run();
+
+  private:
+    nsCOMPtr<nsIXPConnectWrappedNative> mWrapper;
+    nsCOMPtr<nsIScriptContext> mContext;
+    // We store an nsIObjectLoadingContent because we can
+    // unambiguously refcount that.
+    nsRefPtr<nsIObjectLoadingContent> mContent;
+  };
 };
 
 
@@ -1283,28 +1315,6 @@ public:
   static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
   {
     return new nsSVGStringListSH(aData);
-  }
-};
-
-template<class T, class BaseType = T>
-class nsNewDOMBindingSH : public nsDOMGenericSH
-{
-protected:
-  nsNewDOMBindingSH(nsDOMClassInfoData* aData) : nsDOMGenericSH(aData)
-  {
-  }
-
-  virtual ~nsNewDOMBindingSH()
-  {
-  }
-
-public:
-  NS_IMETHOD PreCreate(nsISupports *nativeObj, JSContext *cx,
-                       JSObject *globalObj, JSObject **parentObj);
-
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
-  {
-    return new nsNewDOMBindingSH<T, BaseType>(aData);
   }
 };
 

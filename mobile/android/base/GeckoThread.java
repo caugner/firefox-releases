@@ -89,6 +89,7 @@ public class GeckoThread extends Thread implements GeckoEventListener {
         return (args != null ? args : "") + profile;
     }
 
+    @Override
     public void run() {
         String path = initGeckoEnvironment();
 
@@ -103,6 +104,7 @@ public class GeckoThread extends Thread implements GeckoEventListener {
         GeckoAppShell.runGecko(path, args, mUri, type);
     }
 
+    @Override
     public void handleMessage(String event, JSONObject message) {
         if ("Gecko:Ready".equals(event)) {
             GeckoAppShell.getEventDispatcher().unregisterEventListener(event, this);

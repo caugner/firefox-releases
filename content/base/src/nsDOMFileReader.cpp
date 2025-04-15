@@ -12,6 +12,7 @@
 #include "nsError.h"
 #include "nsICharsetConverterManager.h"
 #include "nsIConverterInputStream.h"
+#include "nsIDocument.h"
 #include "nsIFile.h"
 #include "nsIFileStreams.h"
 #include "nsIInputStream.h"
@@ -97,9 +98,7 @@ NS_IMPL_FORWARD_EVENT_HANDLER(nsDOMFileReader, error, FileIOObject)
 void
 nsDOMFileReader::RootResultArrayBuffer()
 {
-  nsContentUtils::PreserveWrapper(
-    static_cast<nsIDOMEventTarget*>(
-      static_cast<nsDOMEventTargetHelper*>(this)), this);
+  NS_HOLD_JS_OBJECTS(this, nsDOMFileReader);
 }
 
 //nsDOMFileReader constructors/initializers
@@ -116,7 +115,8 @@ nsDOMFileReader::nsDOMFileReader()
 nsDOMFileReader::~nsDOMFileReader()
 {
   FreeFileData();
-
+  mResultArrayBuffer = nullptr;
+  NS_DROP_JS_OBJECTS(this, nsDOMFileReader);
   nsLayoutStatics::Release();
 }
 
@@ -139,7 +139,7 @@ nsDOMFileReader::Init()
 
 NS_IMETHODIMP
 nsDOMFileReader::Initialize(nsISupports* aOwner, JSContext* cx, JSObject* obj,
-                            uint32_t argc, jsval *argv)
+                            uint32_t argc, JS::Value *argv)
 {
   nsCOMPtr<nsPIDOMWindow> owner = do_QueryInterface(aOwner);
   if (!owner) {
@@ -175,7 +175,7 @@ nsDOMFileReader::GetReadyState(uint16_t *aReadyState)
 }
 
 NS_IMETHODIMP
-nsDOMFileReader::GetResult(JSContext* aCx, jsval* aResult)
+nsDOMFileReader::GetResult(JSContext* aCx, JS::Value* aResult)
 {
   if (mDataFormat == FILE_AS_ARRAYBUFFER) {
     if (mReadyState == nsIDOMFileReader::DONE && mResultArrayBuffer) {

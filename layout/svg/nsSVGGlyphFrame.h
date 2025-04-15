@@ -18,7 +18,6 @@
 class CharacterIterator;
 class gfxContext;
 class nsDisplaySVGGlyphs;
-class nsIDOMSVGRect;
 class nsRenderingContext;
 class nsSVGGlyphFrame;
 class nsSVGTextFrame;
@@ -28,6 +27,10 @@ class gfxTextObjectPaint;
 struct CharacterPosition;
 
 namespace mozilla {
+
+namespace dom {
+class SVGIRect;
+}
 
 // Slightly horrible callback for deferring application of opacity
 struct SVGTextObjectPaint : public gfxTextObjectPaint {
@@ -135,7 +138,7 @@ public:
   // These do not use the global transform if NS_STATE_NONDISPLAY_CHILD
   nsresult GetStartPositionOfChar(uint32_t charnum, nsISupports **_retval);
   nsresult GetEndPositionOfChar(uint32_t charnum, nsISupports **_retval);
-  nsresult GetExtentOfChar(uint32_t charnum, nsIDOMSVGRect **_retval);
+  nsresult GetExtentOfChar(uint32_t charnum, dom::SVGIRect **_retval);
   nsresult GetRotationOfChar(uint32_t charnum, float *_retval);
   /**
    * @param aForceGlobalTransform controls whether to use the
@@ -193,11 +196,9 @@ public:
 
   virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext);
 
-  NS_IMETHOD  IsSelectable(bool* aIsSelectable, uint8_t* aSelectStyle) const;
-
-  NS_IMETHOD Init(nsIContent*      aContent,
-                  nsIFrame*        aParent,
-                  nsIFrame*        aPrevInFlow);
+  virtual void Init(nsIContent*      aContent,
+                    nsIFrame*        aParent,
+                    nsIFrame*        aPrevInFlow) MOZ_OVERRIDE;
 
   /**
    * Get the "type" of the frame
@@ -315,8 +316,6 @@ private:
 
   void NotifyGlyphMetricsChange();
   void SetupGlobalTransform(gfxContext *aContext, uint32_t aFor);
-  nsresult GetHighlight(uint32_t *charnum, uint32_t *nchars,
-                        nscolor *foreground, nscolor *background);
   float GetSubStringAdvance(uint32_t charnum, uint32_t fragmentChars,
                             float aMetricsScale);
   gfxFloat GetBaselineOffset(float aMetricsScale);

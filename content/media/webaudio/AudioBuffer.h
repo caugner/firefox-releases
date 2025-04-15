@@ -53,8 +53,7 @@ public:
     return mContext;
   }
 
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope,
-                               bool* aTriedToWrap);
+  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
 
   float SampleRate() const
   {
@@ -109,7 +108,7 @@ protected:
 
   nsRefPtr<AudioContext> mContext;
   // Float32Arrays
-  nsAutoTArray<JSObject*,2> mJSChannels;
+  AutoFallibleTArray<JSObject*,2> mJSChannels;
 
   // mSharedChannels aggregates the data from mJSChannels. This is non-null
   // if and only if the mJSChannels are neutered.

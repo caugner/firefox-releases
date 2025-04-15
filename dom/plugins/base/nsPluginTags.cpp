@@ -24,6 +24,15 @@
 using namespace mozilla;
 using mozilla::TimeStamp;
 
+// These legacy flags are used in the plugin registry. The states are now
+// stored in prefs, but we still need to be able to import them.
+#define NS_PLUGIN_FLAG_ENABLED      0x0001    // is this plugin enabled?
+// no longer used                   0x0002    // reuse only if regenerating pluginreg.dat
+#define NS_PLUGIN_FLAG_FROMCACHE    0x0004    // this plugintag info was loaded from cache
+// no longer used                   0x0008    // reuse only if regenerating pluginreg.dat
+#define NS_PLUGIN_FLAG_BLOCKLISTED  0x0010    // this is a blocklisted plugin
+#define NS_PLUGIN_FLAG_CLICKTOPLAY  0x0020    // this is a click-to-play plugin
+
 inline char* new_str(const char* str)
 {
   if (str == nullptr)
@@ -35,13 +44,37 @@ inline char* new_str(const char* str)
   return result;
 }
 
+static nsCString
+MakePrefNameForPlugin(const char* const subname, nsPluginTag* aTag)
+{
+  nsCString pref;
+
+  pref.AssignLiteral("plugin.");
+  pref.Append(subname);
+  pref.Append('.');
+  pref.Append(aTag->GetNiceFileName());
+
+  return pref;
+}
+
+static nsCString
+GetStatePrefNameForPlugin(nsPluginTag* aTag)
+{
+  return MakePrefNameForPlugin("state", aTag);
+}
+
+static nsCString
+GetBlocklistedPrefNameForPlugin(nsPluginTag* aTag)
+{
+  return MakePrefNameForPlugin("blocklisted", aTag);
+}
+
 NS_IMPL_ISUPPORTS1(DOMMimeTypeImpl, nsIDOMMimeType)
 
 /* nsPluginTag */
 
 nsPluginTag::nsPluginTag(nsPluginTag* aPluginTag)
-: mPluginHost(nullptr),
-mName(aPluginTag->mName),
+: mName(aPluginTag->mName),
 mDescription(aPluginTag->mDescription),
 mMimeTypes(aPluginTag->mMimeTypes),
 mMimeDescriptions(aPluginTag->mMimeDescriptions),
@@ -53,14 +86,12 @@ mFileName(aPluginTag->mFileName),
 mFullPath(aPluginTag->mFullPath),
 mVersion(aPluginTag->mVersion),
 mLastModifiedTime(0),
-mFlags(NS_PLUGIN_FLAG_ENABLED),
 mNiceFileName()
 {
 }
 
 nsPluginTag::nsPluginTag(nsPluginInfo* aPluginInfo)
-: mPluginHost(nullptr),
-mName(aPluginInfo->fName),
+: mName(aPluginInfo->fName),
 mDescription(aPluginInfo->fDescription),
 mLibrary(nullptr),
 mIsJavaPlugin(false),
@@ -69,7 +100,6 @@ mFileName(aPluginInfo->fFileName),
 mFullPath(aPluginInfo->fFullPath),
 mVersion(aPluginInfo->fVersion),
 mLastModifiedTime(0),
-mFlags(NS_PLUGIN_FLAG_ENABLED),
 mNiceFileName()
 {
   InitMime(aPluginInfo->fMimeTypeArray,
@@ -90,8 +120,7 @@ nsPluginTag::nsPluginTag(const char* aName,
                          int32_t aVariants,
                          int64_t aLastModifiedTime,
                          bool aArgsAreUTF8)
-: mPluginHost(nullptr),
-mName(aName),
+: mName(aName),
 mDescription(aDescription),
 mLibrary(nullptr),
 mIsJavaPlugin(false),
@@ -100,7 +129,6 @@ mFileName(aFileName),
 mFullPath(aFullPath),
 mVersion(aVersion),
 mLastModifiedTime(aLastModifiedTime),
-mFlags(0), // Caller will read in our flags from cache
 mNiceFileName()
 {
   InitMime(aMimeTypes, aMimeDescriptions, aExtensions, static_cast<uint32_t>(aVariants));
@@ -245,11 +273,6 @@ nsresult nsPluginTag::EnsureMembersAreUTF8()
 #endif
 }
 
-void nsPluginTag::SetHost(nsPluginHost * aHost)
-{
-  mPluginHost = aHost;
-}
-
 NS_IMETHODIMP
 nsPluginTag::GetDescription(nsACString& aDescription)
 {
@@ -285,70 +308,129 @@ nsPluginTag::GetName(nsACString& aName)
   return NS_OK;
 }
 
+bool
+nsPluginTag::IsActive()
+{
+  return IsEnabled() && !IsBlocklisted();
+}
+
+bool
+nsPluginTag::IsEnabled()
+{
+  const PluginState state = GetPluginState();
+  return (state == ePluginState_Enabled) || (state == ePluginState_Clicktoplay);
+}
+
+void
+nsPluginTag::SetEnabled(bool enabled)
+{
+  if (enabled == IsEnabled()) {
+    return;
+  }
+
+  PluginState state = GetPluginState();
+
+  if (!enabled) {
+    SetPluginState(ePluginState_Disabled);
+  } else if (state != ePluginState_Clicktoplay) {
+    SetPluginState(ePluginState_Enabled);
+  }
+
+  if (nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst()) {
+    host->UpdatePluginInfo(this);
+  }
+}
+
 NS_IMETHODIMP
 nsPluginTag::GetDisabled(bool* aDisabled)
 {
-  *aDisabled = !HasFlag(NS_PLUGIN_FLAG_ENABLED);
+  *aDisabled = !IsEnabled();
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsPluginTag::SetDisabled(bool aDisabled)
 {
-  if (HasFlag(NS_PLUGIN_FLAG_ENABLED) == !aDisabled)
-    return NS_OK;
-  
-  if (aDisabled)
-    UnMark(NS_PLUGIN_FLAG_ENABLED);
-  else
-    Mark(NS_PLUGIN_FLAG_ENABLED);
-
+  SetEnabled(!aDisabled);
   return NS_OK;
+}
+
+bool
+nsPluginTag::IsBlocklisted()
+{
+  return Preferences::GetBool(GetBlocklistedPrefNameForPlugin(this).get(), false);
 }
 
 NS_IMETHODIMP
 nsPluginTag::GetBlocklisted(bool* aBlocklisted)
 {
-  *aBlocklisted = HasFlag(NS_PLUGIN_FLAG_BLOCKLISTED);
+  *aBlocklisted = IsBlocklisted();
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsPluginTag::SetBlocklisted(bool aBlocklisted)
+nsPluginTag::SetBlocklisted(bool blocklisted)
 {
-  if (HasFlag(NS_PLUGIN_FLAG_BLOCKLISTED) == aBlocklisted)
+  if (blocklisted == IsBlocklisted()) {
     return NS_OK;
-  
-  if (aBlocklisted)
-    Mark(NS_PLUGIN_FLAG_BLOCKLISTED);
-  else
-    UnMark(NS_PLUGIN_FLAG_BLOCKLISTED);
+  }
 
+  const nsCString pref = GetBlocklistedPrefNameForPlugin(this);
+  if (blocklisted) {
+    Preferences::SetBool(pref.get(), true);
+  } else {
+    Preferences::ClearUser(pref.get());
+  }
+
+  if (nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst()) {
+    host->UpdatePluginInfo(this);
+  }
   return NS_OK;
+}
+
+bool
+nsPluginTag::IsClicktoplay()
+{
+  const PluginState state = GetPluginState();
+  return (state == ePluginState_Clicktoplay);
 }
 
 NS_IMETHODIMP
 nsPluginTag::GetClicktoplay(bool *aClicktoplay)
 {
-  *aClicktoplay = HasFlag(NS_PLUGIN_FLAG_CLICKTOPLAY);
+  *aClicktoplay = IsClicktoplay();
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsPluginTag::SetClicktoplay(bool aClicktoplay)
+nsPluginTag::SetClicktoplay(bool clicktoplay)
 {
-  if (HasFlag(NS_PLUGIN_FLAG_CLICKTOPLAY) == aClicktoplay) {
+  if (clicktoplay == IsClicktoplay()) {
     return NS_OK;
   }
-  
-  if (aClicktoplay) {
-    Mark(NS_PLUGIN_FLAG_CLICKTOPLAY);
-  } else {
-    UnMark(NS_PLUGIN_FLAG_CLICKTOPLAY);
+
+  const PluginState state = GetPluginState();
+  if (state != ePluginState_Disabled) {
+    SetPluginState(ePluginState_Clicktoplay);
   }
-  
-  mPluginHost->UpdatePluginInfo(nullptr);
+
+  if (nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst()) {
+    host->UpdatePluginInfo(this);
+  }
   return NS_OK;
+}
+
+nsPluginTag::PluginState
+nsPluginTag::GetPluginState()
+{
+  return (PluginState)Preferences::GetInt(GetStatePrefNameForPlugin(this).get(),
+                                          ePluginState_Enabled);
+}
+
+void
+nsPluginTag::SetPluginState(PluginState state)
+{
+  Preferences::SetInt(GetStatePrefNameForPlugin(this).get(), state);
 }
 
 NS_IMETHODIMP
@@ -368,41 +450,6 @@ nsPluginTag::GetMimeTypes(uint32_t* aCount, nsIDOMMimeType*** aResults)
   }
 
   return NS_OK;
-}
-
-void nsPluginTag::Mark(uint32_t mask)
-{
-  bool wasEnabled = IsEnabled();
-  mFlags |= mask;
-
-  if (mPluginHost && wasEnabled != IsEnabled()) {
-    mPluginHost->UpdatePluginInfo(this);
-  }
-}
-
-void nsPluginTag::UnMark(uint32_t mask)
-{
-  bool wasEnabled = IsEnabled();
-  mFlags &= ~mask;
-
-  if (mPluginHost && wasEnabled != IsEnabled()) {
-    mPluginHost->UpdatePluginInfo(this);
-  }
-}
-
-bool nsPluginTag::HasFlag(uint32_t flag)
-{
-  return (mFlags & flag) != 0;
-}
-
-uint32_t nsPluginTag::Flags()
-{
-  return mFlags;
-}
-
-bool nsPluginTag::IsEnabled()
-{
-  return HasFlag(NS_PLUGIN_FLAG_ENABLED) && !HasFlag(NS_PLUGIN_FLAG_BLOCKLISTED);
 }
 
 bool
@@ -443,6 +490,16 @@ nsCString nsPluginTag::GetNiceFileName() {
     return mNiceFileName;
   }
 
+  if (mIsFlashPlugin) {
+    mNiceFileName.Assign(NS_LITERAL_CSTRING("flash"));
+    return mNiceFileName;
+  }
+
+  if (mIsJavaPlugin) {
+    mNiceFileName.Assign(NS_LITERAL_CSTRING("java"));
+    return mNiceFileName;
+  }
+
   mNiceFileName.Assign(mFileName);
   int32_t niceNameLength = mFileName.RFind(".");
   NS_ASSERTION(niceNameLength != kNotFound, "mFileName doesn't have a '.'?");
@@ -460,5 +517,17 @@ nsCString nsPluginTag::GetNiceFileName() {
     mNiceFileName.Truncate(niceNameLength);
   }
 
+  ToLowerCase(mNiceFileName);
   return mNiceFileName;
+}
+
+void nsPluginTag::ImportFlagsToPrefs(uint32_t flags)
+{
+  if (!(flags & NS_PLUGIN_FLAG_ENABLED)) {
+    SetPluginState(ePluginState_Disabled);
+  }
+
+  if (flags & NS_PLUGIN_FLAG_BLOCKLISTED) {
+    Preferences::SetBool(GetBlocklistedPrefNameForPlugin(this).get(), true);
+  }
 }

@@ -16,7 +16,11 @@
   font-size: @font_normal@;
 }
 
-button,
+.text-link {
+  text-decoration: none;
+  color: #1167bd;
+}
+
 textbox,
 menulist {
   -moz-appearance: none;
@@ -34,18 +38,78 @@ menulist {
   border-radius: 0;
 }
 
-button[disabled="true"],
-textbox[disabled="true"],
-menulist[disabled="true"] {
+textbox[disabled],
+menulist[disabled] {
   border-color: @field_disabled_foreground_color@ !important;
   color: @field_disabled_foreground_color@;
 }
 
-button:not([disabled]):hover:active,
-button:not([disabled])[checked="true"],
 menulist:not([disabled]):hover:active {
   color: @field_background_color@;
   background: @field_foreground_color@;
+}
+
+/* Button ------------------------------------------------------------------ */
+
+button {
+  -moz-appearance: none;
+  border: 1px solid;
+  font-size: @metro_font_normal@;
+  font-weight: normal;
+  margin: @metro_spacing_small@;
+  min-width: @field_sizing@;
+  min-height: 32px;
+  padding: 3px 16px;
+}
+
+/* Non-default button colors */
+
+button {
+  background: linear-gradient(to bottom, hsl(210, 5%, 89%), hsl(210, 5%, 87%));
+  border-color: hsl(220, 5%, 86%);
+  color: hsl(0, 0%, 10%);
+}
+
+button:not([disabled]):hover {
+  background: linear-gradient(to bottom, hsl(210, 5%, 75%), hsl(210, 5%, 73%));
+  border-color: hsl(210, 5%, 71%);
+  color: hsl(0, 0%, 10%);
+}
+
+/* Default button colors */
+
+.button-default,
+.notification-button-default {
+  background: linear-gradient(to bottom, hsl(35, 100%, 50%), hsl(30, 100%, 50%));
+  border-color: hsl(30, 100%, 48%);
+  color: white;
+}
+
+.button-default:not([disabled]):hover,
+.notification-button-default:not([disabled]):hover {
+  background: linear-gradient(to bottom, hsl(25, 100%, 47%), hsl(25, 100%, 45%));
+  border-color: hsl(25, 100%, 43%);
+  color: white;
+}
+
+/* Pushed button colors (both default and non-default */
+
+/* Note: these need enough specificity to override all the :hover rules above. */
+button:not([disabled]):hover:active,
+button:not([disabled])[checked="true"],
+.button-default:not([disabled])[checked="true"],
+.notification-button-default:not([disabled])[checked="true"] {
+  background: linear-gradient(to bottom, hsl(210, 5%, 28%), hsl(210, 5%, 25%));
+  border-color: hsl(216, 4%, 27%);
+  color: white;
+}
+
+/* Disabled button colors (both default and non-default */
+
+button[disabled] {
+  background: linear-gradient(to bottom, hsl(210, 3%, 93%), hsl(210, 3%, 92%));
+  border-color: hsl(210, 3%, 91%);
+  color: hsl(0, 0%, 60%);
 }
 
 /* Textbox ----------------------------------------------------------------- */
@@ -107,7 +171,7 @@ menulist {
   transform: translateY(-@metro_spacing_normal@);
 }
 
-.menu-container[showing="true"] {
+.menu-container[showing] {
   opacity: 1;
   transform: none;
   transition: all ease-out 0.2s;
@@ -186,6 +250,7 @@ toolbarbutton[open="true"] {
 checkbox.toggleswitch {
   margin: @metro_spacing_small@;
   min-height: @metro_spacing_normal@;
+  font-weight: bold;
 }
 
 checkbox.toggleswitch hbox {
@@ -287,28 +352,28 @@ richlistitem description.normal-bold {
   font-weight: bold;
 }
 
-richlistitem[selected="true"] {
+richlistitem[selected] {
   color: black;
   background-color: white;
 }
 
-richlistitem:hover:active:not([selected="true"]):not([nohighlight="true"]) {
+richlistitem:hover:active:not([selected]) {
   background-color: #8db8d8;
 }
 
 richlistitem.section-header,
-richlistitem[selected="true"].section-header {
+richlistitem[selected].section-header {
   font-weight: bold;
   color: #000;
   background-color: lightgray;
 }
 
-richlistitem[selected="true"] .hide-on-select,
+richlistitem[selected] .hide-on-select,
 richlistitem .show-on-select {
   visibility: collapse;
 }
 
-richlistitem[selected="true"] .show-on-select,
+richlistitem[selected] .show-on-select,
 richlistitem .hide-on-select {
   visibility: visible;
 }
@@ -316,6 +381,67 @@ richlistitem .hide-on-select {
 richlistitem[typeName="message"] {
   border-bottom: 0;
 }
+
+/* Notification box ("info app bar") ---------------------------------------- */
+
+notification {
+  background: hsl(0, 0%, 98%);
+  border-bottom: 1px solid hsla(0, 0%, 0%, .07);
+  box-shadow: 0 0 10px hsla(0, 0%, 0%, .1);
+  min-height: 64px;
+}
+
+.notification-inner {
+  border-style: none;
+}
+
+.notification-button {
+  -moz-margin-start: 0;
+  -moz-margin-end: 20px;
+}
+
+.messageImage {
+  width: 32px;
+  height: 32px;
+  -moz-margin-start: 40px;
+  -moz-margin-end: 16px;
+}
+
+/* If there is no image set, collapse the image but keep the starting margin */
+.messageImage:not([src]) {
+  width: 0;
+  -moz-margin-end: 0;
+}
+
+.messageText {
+  margin: 0;
+}
+
+.messageCloseButton {
+  list-style-image: url("chrome://browser/skin/images/infobar-close.png");
+  padding: 0;
+  -moz-margin-start: 0;
+  -moz-margin-end: 40px;
+  -moz-image-region: rect(0, 40px, 40px, 0);
+}
+
+.messageCloseButton > .toolbarbutton-icon {
+  margin: 0;
+}
+
+.messageCloseButton:hover {
+  -moz-image-region: rect(0, 80px, 40px, 40px);
+}
+
+.messageCloseButton:hover:active {
+  -moz-image-region: rect(0, 120px, 40px, 80px);
+}
+
+.notification-link {
+  /* Make the link take up all the space before the buttons. */
+  -moz-box-flex: 9999;
+}
+
 
 /* Rich Grid ---------------------------------------------------------------- */
 
@@ -337,13 +463,13 @@ richgriditem .richgrid-item-content {
   box-shadow: 0 0 @metro_spacing_snormal@ rgba(0, 0, 0, 0.1);
   -moz-box-sizing: border-box;
   padding: 10px 8px 6px 8px;
+  position: relative;
 }
-
-richgriditem:not([customColorPresent]) .richgrid-item-content {
+.richgrid-item-content {
   background: #fff;
 }
 
-richgriditem[selected="true"] .richgrid-item-content {
+richgriditem[selected] .richgrid-item-content {
   border: @metro_border_xthick@ solid @selected_color@;
   padding: @metro_spacing_xxsmall@;
 }
@@ -357,21 +483,58 @@ richgriditem .richgrid-icon-box {
   background: #fff;
   opacity: 1.0;
 }
-
-richgriditem[customColorPresent="true"] description {
+/* <sfoster> placeholder pinned-state indication, tracked as 854960 */
+richgriditem[pinned] .richgrid-item-content:after {
+    content: "\2193";
+    text-align: center;
+    position: absolute;
+    width: 16px;
+    right: 0;
+    top: 0;
+    outline: 1px solid rgb(255,153,0);
+    background-color: rgba(255,153,0,0.6);
+    color: rgb(153,51,0);
+}
+richgriditem[customColor] {
   color: #f1f1f1;
 }
+richgriditem[customImage] {
+  color: #1a1a1a;
+}
 
-richgriditem[customColorPresent="true"] .richgrid-icon-box {
+
+richgriditem[customColor] .richgrid-icon-box {
   opacity: 0.8;
   background-color: #fff;
 }
 
-richgriditem description {
+.richgrid-item-content[customImage] {
+  height: 120px;
+  width: 200px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  -moz-box-pack: end;
+  padding: 0px;
+}
+
+/* hide icon if there is an image background */
+.richgrid-icon-container[customImage] {
+  visibility: collapse;
+}
+
+.richgrid-item-desc {
   width: @tile_width@;
   font-size: @metro_font_normal@;
   margin-left: 0px !important;
   padding-left: 0px !important;
+}
+
+.richgrid-item-content[customImage] > .richgrid-item-desc {
+  background: hsla(0,2%,98%,.95);
+  /*margin-bottom: 0px;
+  margin-right: 0px;*/
+  margin: 0px;
 }
 
 richgriditem image {

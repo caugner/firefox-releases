@@ -8,8 +8,6 @@ package org.mozilla.gecko.gfx;
 import android.opengl.GLES20;
 import android.util.Log;
 
-import java.util.concurrent.SynchronousQueue;
-
 import javax.microedition.khronos.egl.EGL10;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.egl.EGLContext;
@@ -88,6 +86,7 @@ public class GfxInfoThread extends Thread {
         return mData;
     }
 
+    @Override
     public void run() {
         // initialize EGL
         EGL10 egl = (EGL10) EGLContext.getEGL();

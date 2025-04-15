@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/DebugOnly.h"
+#include "mozilla/MathAlgorithms.h"
 
 #ifdef MOZ_LOGGING
 #define FORCE_PR_LOG /* Allow logging in the release build */
@@ -45,11 +46,9 @@
 #include "harfbuzz/hb.h"
 
 #include "nsCRT.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 #include <algorithm>
-#include <cstdlib> // for std::abs(int/long)
-#include <cmath> // for std::abs(float/double)
 
 using namespace mozilla;
 using namespace mozilla::gfx;
@@ -57,6 +56,9 @@ using namespace mozilla::unicode;
 using mozilla::services::GetObserverService;
 
 gfxFontCache *gfxFontCache::gGlobalCache = nullptr;
+
+static const PRUnichar kEllipsisChar[] = { 0x2026, 0x0 };
+static const PRUnichar kASCIIPeriodsChar[] = { '.', '.', '.', 0x0 };
 
 #ifdef DEBUG_roc
 #define DEBUG_TEXT_RUN_STORAGE_METRICS
@@ -277,11 +279,8 @@ gfxFontEntry::TryGetSVGData()
 class gfxFontEntry::FontTableBlobData {
 public:
     // Adopts the content of aBuffer.
-    // Pass a non-null aHashEntry only if it should be cleared if/when this
-    // FontTableBlobData is deleted.
-    FontTableBlobData(FallibleTArray<uint8_t>& aBuffer,
-                      FontTableHashEntry *aHashEntry)
-        : mHashEntry(aHashEntry), mHashtable()
+    FontTableBlobData(FallibleTArray<uint8_t>& aBuffer)
+        : mHashtable(nullptr), mHashKey(0)
     {
         MOZ_COUNT_CTOR(FontTableBlobData);
         mTableData.SwapElements(aBuffer);
@@ -289,12 +288,8 @@ public:
 
     ~FontTableBlobData() {
         MOZ_COUNT_DTOR(FontTableBlobData);
-        if (mHashEntry) {
-            if (mHashtable) {
-                mHashtable->RemoveEntry(mHashEntry->GetKey());
-            } else {
-                mHashEntry->Clear();
-            }
+        if (mHashtable && mHashKey) {
+            mHashtable->RemoveEntry(mHashKey);
         }
     }
 
@@ -307,16 +302,19 @@ public:
 
     // Tell this FontTableBlobData to remove the HashEntry when this is
     // destroyed.
-    void ManageHashEntry(nsTHashtable<FontTableHashEntry> *aHashtable)
+    void ManageHashEntry(nsTHashtable<FontTableHashEntry> *aHashtable,
+                         uint32_t aHashKey)
     {
         mHashtable = aHashtable;
+        mHashKey = aHashKey;
     }
 
     // Disconnect from the HashEntry (because the blob has already been
     // removed from the hashtable).
     void ForgetHashEntry()
     {
-        mHashEntry = nullptr;
+        mHashtable = nullptr;
+        mHashKey = 0;
     }
 
     size_t SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const {
@@ -329,25 +327,15 @@ public:
 private:
     // The font table data block, owned (via adoption)
     FallibleTArray<uint8_t> mTableData;
-    // The blob destroy function needs to know the hashtable entry,
-    FontTableHashEntry *mHashEntry;
-    // and the owning hashtable, so that it can remove the entry.
+
+    // The blob destroy function needs to know the owning hashtable
+    // and the hashtable key, so that it can remove the entry.
     nsTHashtable<FontTableHashEntry> *mHashtable;
+    uint32_t                          mHashKey;
 
     // not implemented
     FontTableBlobData(const FontTableBlobData&);
 };
-
-void
-gfxFontEntry::FontTableHashEntry::SaveTable(FallibleTArray<uint8_t>& aTable)
-{
-    Clear();
-    // adopts elements of aTable
-    FontTableBlobData *data = new FontTableBlobData(aTable, nullptr);
-    mBlob = hb_blob_create(data->GetTable(), data->GetTableLength(),
-                           HB_MEMORY_MODE_READONLY,
-                           data, DeleteFontTableBlobData);    
-}
 
 hb_blob_t *
 gfxFontEntry::FontTableHashEntry::
@@ -356,7 +344,7 @@ ShareTableAndGetBlob(FallibleTArray<uint8_t>& aTable,
 {
     Clear();
     // adopts elements of aTable
-    mSharedBlobData = new FontTableBlobData(aTable, this);
+    mSharedBlobData = new FontTableBlobData(aTable);
     mBlob = hb_blob_create(mSharedBlobData->GetTable(),
                            mSharedBlobData->GetTableLength(),
                            HB_MEMORY_MODE_READONLY,
@@ -370,7 +358,7 @@ ShareTableAndGetBlob(FallibleTArray<uint8_t>& aTable,
 
     // Tell the FontTableBlobData to remove this hash entry when destroyed.
     // The hashtable does not keep a strong reference.
-    mSharedBlobData->ManageHashEntry(aHashtable);
+    mSharedBlobData->ManageHashEntry(aHashtable, GetKey());
     return mBlob;
 }
 
@@ -445,7 +433,6 @@ gfxFontEntry::ShareFontTableAndGetBlob(uint32_t aTag,
     return entry->ShareTableAndGetBlob(*aBuffer, &mFontTableCache);
 }
 
-#ifdef MOZ_GRAPHITE
 void
 gfxFontEntry::CheckForGraphiteTables()
 {
@@ -453,7 +440,6 @@ gfxFontEntry::CheckForGraphiteTables()
     mHasGraphiteTables =
         NS_SUCCEEDED(GetFontTable(TRUETYPE_TAG('S','i','l','f'), buffer));
 }
-#endif
 
 /* static */ size_t
 gfxFontEntry::FontTableHashEntry::SizeOfEntryExcludingThis
@@ -804,7 +790,7 @@ CalcStyleMatch(gfxFontEntry *aFontEntry, const gfxFontStyle *aStyle)
          }
 
         // measure of closeness of weight to the desired value
-        rank += 9 - abs(aFontEntry->Weight() / 100 - aStyle->ComputeWeight());
+        rank += 9 - DeprecatedAbs(aFontEntry->Weight() / 100 - aStyle->ComputeWeight());
     } else {
         // if no font to match, prefer non-bold, non-italic fonts
         if (!aFontEntry->IsItalic()) {
@@ -1550,7 +1536,7 @@ struct GlyphBuffer {
                 FlushStroke(aCR, aObjectPaint, aGlobalMatrix);
             }
             if (aDrawMode & gfxFont::GLYPH_FILL) {
-                SAMPLE_LABEL("GlyphBuffer", "cairo_show_glyphs");
+                PROFILER_LABEL("GlyphBuffer", "cairo_show_glyphs");
                 nsRefPtr<gfxPattern> pattern;
                 if (aObjectPaint &&
                     !!(pattern = aObjectPaint->GetFillPattern(aGlobalMatrix))) {
@@ -2465,13 +2451,19 @@ gfxFont::GetShapedWord(gfxContext *aContext,
     }
     gfxShapedWord *sw = entry->mShapedWord;
 
+    bool isContent = !mStyle.systemFont;
+
     if (sw) {
         sw->ResetAge();
-        Telemetry::Accumulate(Telemetry::WORD_CACHE_HITS, aLength);
+        Telemetry::Accumulate((isContent ? Telemetry::WORD_CACHE_HITS_CONTENT :
+                                   Telemetry::WORD_CACHE_HITS_CHROME),
+                              aLength);
         return sw;
     }
 
-    Telemetry::Accumulate(Telemetry::WORD_CACHE_MISSES, aLength);
+    Telemetry::Accumulate((isContent ? Telemetry::WORD_CACHE_MISSES_CONTENT :
+                               Telemetry::WORD_CACHE_MISSES_CHROME),
+                          aLength);
     sw = entry->mShapedWord = gfxShapedWord::Create(aText, aLength,
                                                     aRunScript,
                                                     aAppUnitsPerDevUnit,
@@ -2556,12 +2548,10 @@ gfxFont::ShapeText(gfxContext      *aContext,
 {
     bool ok = false;
 
-#ifdef MOZ_GRAPHITE
     if (mGraphiteShaper && gfxPlatform::GetPlatform()->UseGraphiteShaping()) {
         ok = mGraphiteShaper->ShapeText(aContext, aText, aOffset, aLength,
                                         aScript, aShapedText);
     }
-#endif
 
     if (!ok && mHarfBuzzShaper && !aPreferPlatformShaping) {
         if (gfxPlatform::GetPlatform()->UseHarfBuzzForScript(aScript)) {
@@ -2976,8 +2966,8 @@ gfxFont::InitMetricsFromSfntTables(Metrics& aMetrics)
             uint16_t(os2->version) >= 2) {
             // version 2 and later includes the x-height field
             SET_SIGNED(xHeight, os2->sxHeight);
-            // std::abs because of negative xHeight seen in Kokonor (Tibetan) font
-            aMetrics.xHeight = std::abs(aMetrics.xHeight);
+            // Abs because of negative xHeight seen in Kokonor (Tibetan) font
+            aMetrics.xHeight = Abs(aMetrics.xHeight);
         }
         // this should always be present
         if (os2data.Length() >= offsetof(OS2Table, yStrikeoutPosition) +
@@ -3466,7 +3456,8 @@ gfxFontGroup::HasFont(const gfxFontEntry *aFontEntry)
     return false;
 }
 
-gfxFontGroup::~gfxFontGroup() {
+gfxFontGroup::~gfxFontGroup()
+{
     mFonts.Clear();
     SetUserFontSet(nullptr);
 }
@@ -4043,6 +4034,39 @@ gfxFontGroup::InitScriptRun(gfxContext *aContext,
     }
 }
 
+gfxTextRun *
+gfxFontGroup::GetEllipsisTextRun(int32_t aAppUnitsPerDevPixel,
+                                 LazyReferenceContextGetter& aRefContextGetter)
+{
+    if (mCachedEllipsisTextRun &&
+        mCachedEllipsisTextRun->GetAppUnitsPerDevUnit() == aAppUnitsPerDevPixel) {
+        return mCachedEllipsisTextRun;
+    }
+
+    // Use a Unicode ellipsis if the font supports it,
+    // otherwise use three ASCII periods as fallback.
+    gfxFont* firstFont = GetFontAt(0);
+    nsString ellipsis = firstFont->HasCharacter(kEllipsisChar[0])
+        ? nsDependentString(kEllipsisChar,
+                            ArrayLength(kEllipsisChar) - 1)
+        : nsDependentString(kASCIIPeriodsChar,
+                            ArrayLength(kASCIIPeriodsChar) - 1);
+
+    nsRefPtr<gfxContext> refCtx = aRefContextGetter.GetRefContext();
+    Parameters params = {
+        refCtx, nullptr, nullptr, nullptr, 0, aAppUnitsPerDevPixel
+    };
+    gfxTextRun* textRun =
+        MakeTextRun(ellipsis.get(), ellipsis.Length(), &params, TEXT_IS_PERSISTENT);
+    if (!textRun) {
+        return nullptr;
+    }
+    mCachedEllipsisTextRun = textRun;
+    textRun->ReleaseFontGroup(); // don't let the presence of a cached ellipsis
+                                 // textrun prolong the fontgroup's life
+    return textRun;
+}
+
 already_AddRefed<gfxFont>
 gfxFontGroup::TryAllFamilyMembers(gfxFontFamily* aFamily, uint32_t aCh)
 {
@@ -4294,6 +4318,7 @@ gfxFontGroup::UpdateFontList()
         ForEachFont(FindPlatformFont, this);
 #endif
         mCurrGeneration = GetGeneration();
+        mCachedEllipsisTextRun = nullptr;
     }
 }
 
@@ -4768,6 +4793,7 @@ gfxTextRun::gfxTextRun(const gfxTextRunFactory::Parameters *aParams,
     : gfxShapedText(aLength, aFlags, aParams->mAppUnitsPerDevUnit)
     , mUserData(aParams->mUserData)
     , mFontGroup(aFontGroup)
+    , mReleasedFontGroup(false)
 {
     NS_ASSERTION(mAppUnitsPerDevUnit > 0, "Invalid app unit scale");
     MOZ_COUNT_CTOR(gfxTextRun);
@@ -4796,8 +4822,22 @@ gfxTextRun::~gfxTextRun()
     mFlags = 0xFFFFFFFF;
 #endif
 
-    NS_RELEASE(mFontGroup);
+    // The cached ellipsis textrun (if any) in a fontgroup will have already
+    // been told to release its reference to the group, so we mustn't do that
+    // again here.
+    if (!mReleasedFontGroup) {
+        NS_RELEASE(mFontGroup);
+    }
+
     MOZ_COUNT_DTOR(gfxTextRun);
+}
+
+void
+gfxTextRun::ReleaseFontGroup()
+{
+    NS_ASSERTION(!mReleasedFontGroup, "doubly released!");
+    NS_RELEASE(mFontGroup);
+    mReleasedFontGroup = true;
 }
 
 bool

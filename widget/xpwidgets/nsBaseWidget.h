@@ -111,12 +111,23 @@ public:
                                           bool* aAllowRetaining = nullptr);
 
   virtual void            CreateCompositor();
+  virtual void            CreateCompositor(int aWidth, int aHeight);
   virtual void            DrawWindowUnderlay(LayerManager* aManager, nsIntRect aRect) {}
   virtual void            DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect) {}
   virtual void            UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries) {}
   virtual gfxASurface*    GetThebesSurface();
   NS_IMETHOD              SetModal(bool aModal); 
   NS_IMETHOD              SetWindowClass(const nsAString& xulWinType);
+  // Return whether this widget interprets parameters to Move and Resize APIs
+  // as "global display pixels" rather than "device pixels", and therefore
+  // applies its GetDefaultScale() value to them before using them as mBounds
+  // etc (which are always stored in device pixels).
+  // Note that APIs that -get- the widget's position/size/bounds, rather than
+  // -setting- them (i.e. moving or resizing the widget) will always return
+  // values in the widget's device pixels.
+  bool                    BoundsUseDisplayPixels() const {
+    return mWindowType <= eWindowType_popup;
+  }
   NS_IMETHOD              MoveClient(double aX, double aY);
   NS_IMETHOD              ResizeClient(double aWidth, double aHeight, bool aRepaint);
   NS_IMETHOD              ResizeClient(double aX, double aY, double aWidth, double aHeight, bool aRepaint);
@@ -140,18 +151,18 @@ public:
   NS_IMETHOD              BeginMoveDrag(nsMouseEvent* aEvent);
   virtual nsresult        ActivateNativeMenuItemAt(const nsAString& indexString) { return NS_ERROR_NOT_IMPLEMENTED; }
   virtual nsresult        ForceUpdateNativeMenuAt(const nsAString& indexString) { return NS_ERROR_NOT_IMPLEMENTED; }
-  NS_IMETHOD              ResetInputState() { return NS_OK; }
-  NS_IMETHOD              CancelIMEComposition() { return NS_OK; }
+  NS_IMETHOD              NotifyIME(NotificationToIME aNotification) MOZ_OVERRIDE { return NS_ERROR_NOT_IMPLEMENTED; }
   NS_IMETHOD              SetLayersAcceleration(bool aEnabled);
   virtual bool            GetLayersAcceleration() { return mUseLayersAcceleration; }
   virtual bool            ComputeShouldAccelerate(bool aDefault);
   NS_IMETHOD              GetToggledKeyState(uint32_t aKeyCode, bool* aLEDState) { return NS_ERROR_NOT_IMPLEMENTED; }
-  NS_IMETHOD              OnIMEFocusChange(bool aFocus) { return NS_ERROR_NOT_IMPLEMENTED; }
-  NS_IMETHOD              OnIMETextChange(uint32_t aStart, uint32_t aOldEnd, uint32_t aNewEnd) { return NS_ERROR_NOT_IMPLEMENTED; }
-  NS_IMETHOD              OnIMESelectionChange(void) { return NS_ERROR_NOT_IMPLEMENTED; }
+  NS_IMETHOD              NotifyIMEOfTextChange(uint32_t aStart, uint32_t aOldEnd, uint32_t aNewEnd) MOZ_OVERRIDE { return NS_ERROR_NOT_IMPLEMENTED; }
   virtual nsIMEUpdatePreference GetIMEUpdatePreference() { return nsIMEUpdatePreference(false, false); }
   NS_IMETHOD              OnDefaultButtonLoaded(const nsIntRect &aButtonRect) { return NS_ERROR_NOT_IMPLEMENTED; }
-  NS_IMETHOD              OverrideSystemMouseScrollSpeed(int32_t aOriginalDelta, bool aIsHorizontal, int32_t &aOverriddenDelta);
+  NS_IMETHOD              OverrideSystemMouseScrollSpeed(double aOriginalDeltaX,
+                                                         double aOriginalDeltaY,
+                                                         double& aOverriddenDeltaX,
+                                                         double& aOverriddenDeltaY);
   virtual already_AddRefed<nsIWidget>
   CreateChild(const nsIntRect  &aRect,
               nsDeviceContext *aContext,
@@ -234,7 +245,7 @@ public:
 
   nsWindowType            GetWindowType() { return mWindowType; }
 
-  virtual bool            UseOffMainThreadCompositing();
+  virtual bool            ShouldUseOffMainThreadCompositing();
 
   static nsIRollupListener* GetActiveRollupListener();
 

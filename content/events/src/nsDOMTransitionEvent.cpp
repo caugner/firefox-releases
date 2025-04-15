@@ -9,12 +9,13 @@
 #include "nsIClassInfo.h"
 #include "nsIXPCScriptable.h"
 
-nsDOMTransitionEvent::nsDOMTransitionEvent(nsPresContext *aPresContext,
+nsDOMTransitionEvent::nsDOMTransitionEvent(mozilla::dom::EventTarget* aOwner,
+                                           nsPresContext *aPresContext,
                                            nsTransitionEvent *aEvent)
-  : nsDOMEvent(aPresContext, aEvent ? aEvent
-                                    : new nsTransitionEvent(false, 0,
-                                                            EmptyString(),
-                                                            0.0))
+  : nsDOMEvent(aOwner, aPresContext,
+               aEvent ? aEvent : new nsTransitionEvent(false, 0,
+                                                       EmptyString(),
+                                                       0.0))
 {
   if (aEvent) {
     mEventIsInternal = false;
@@ -23,6 +24,7 @@ nsDOMTransitionEvent::nsDOMTransitionEvent(nsPresContext *aPresContext,
     mEventIsInternal = true;
     mEvent->time = PR_Now();
   }
+  SetIsDOMBinding();
 }
 
 nsDOMTransitionEvent::~nsDOMTransitionEvent()
@@ -53,7 +55,7 @@ nsDOMTransitionEvent::GetPropertyName(nsAString & aPropertyName)
 NS_IMETHODIMP
 nsDOMTransitionEvent::GetElapsedTime(float *aElapsedTime)
 {
-  *aElapsedTime = TransitionEvent()->elapsedTime;
+  *aElapsedTime = ElapsedTime();
   return NS_OK;
 }
 
@@ -75,9 +77,11 @@ nsDOMTransitionEvent::InitTransitionEvent(const nsAString & typeArg,
 
 nsresult
 NS_NewDOMTransitionEvent(nsIDOMEvent **aInstancePtrResult,
+                         mozilla::dom::EventTarget* aOwner,
                          nsPresContext *aPresContext,
                          nsTransitionEvent *aEvent)
 {
-  nsDOMTransitionEvent *it = new nsDOMTransitionEvent(aPresContext, aEvent);
+  nsDOMTransitionEvent *it =
+    new nsDOMTransitionEvent(aOwner, aPresContext, aEvent);
   return CallQueryInterface(it, aInstancePtrResult);
 }

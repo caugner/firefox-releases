@@ -11,6 +11,7 @@
 #include "nsSVGEnum.h"
 #include "nsSVGLength2.h"
 #include "SVGGraphicsElement.h"
+#include "SVGImageContext.h"
 #include "nsSVGViewBox.h"
 #include "SVGPreserveAspectRatio.h"
 #include "SVGAnimatedPreserveAspectRatio.h"
@@ -30,11 +31,13 @@ namespace mozilla {
 class DOMSVGAnimatedPreserveAspectRatio;
 class DOMSVGTransform;
 class SVGFragmentIdentifier;
+class AutoSVGRenderingState;
 
 namespace dom {
 class SVGAngle;
 class SVGMatrix;
 class SVGViewElement;
+class SVGIRect;
 
 class SVGSVGElement;
 
@@ -78,17 +81,16 @@ public:
 
 typedef SVGGraphicsElement SVGSVGElementBase;
 
-class SVGSVGElement MOZ_FINAL : public SVGSVGElementBase,
-                                public nsIDOMSVGElement
+class SVGSVGElement MOZ_FINAL : public SVGSVGElementBase
 {
   friend class ::nsSVGOuterSVGFrame;
   friend class ::nsSVGInnerSVGFrame;
-  friend class ::nsSVGImageFrame;
   friend class mozilla::SVGFragmentIdentifier;
+  friend class mozilla::AutoSVGRenderingState;
 
   SVGSVGElement(already_AddRefed<nsINodeInfo> aNodeInfo,
                 FromParser aFromParser);
-  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
 
   friend nsresult (::NS_NewSVGSVGElement(nsIContent **aResult,
                                          already_AddRefed<nsINodeInfo> aNodeInfo,
@@ -98,11 +100,6 @@ public:
   // interfaces:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(SVGSVGElement, SVGSVGElementBase)
-
-  // xxx I wish we could use virtual inheritance
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-  NS_FORWARD_NSIDOMSVGELEMENT(SVGSVGElementBase::)
 
   /**
    * For use by zoom controls to allow currentScale, currentTranslate.x and
@@ -154,19 +151,19 @@ public:
    * Note also that this method does not pay attention to whether the width or
    * height values of the viewBox rect are positive!
    */
-  bool HasViewBox() const;
+  bool HasViewBoxRect() const;
 
   /**
    * Returns true if we should synthesize a viewBox for ourselves (that is, if
    * we're the root element in an image document, and we're not currently being
    * painted for an <svg:image> element).
    *
-   * Only call this method if HasViewBox() returns false.
+   * Only call this method if HasViewBoxRect() returns false.
    */
   bool ShouldSynthesizeViewBox() const;
 
   bool HasViewBoxOrSyntheticViewBox() const {
-    return HasViewBox() || ShouldSynthesizeViewBox();
+    return HasViewBoxRect() || ShouldSynthesizeViewBox();
   }
 
   gfxMatrix GetViewBoxTransform() const;
@@ -215,8 +212,6 @@ public:
     mViewportHeight = aSize.height;
   }
 
-  virtual nsIDOMNode* AsDOMNode() { return this; }
-
   // WebIDL
   already_AddRefed<SVGAnimatedLength> X();
   already_AddRefed<SVGAnimatedLength> Y();
@@ -245,7 +240,7 @@ public:
   already_AddRefed<SVGAngle> CreateSVGAngle();
   already_AddRefed<nsISVGPoint> CreateSVGPoint();
   already_AddRefed<SVGMatrix> CreateSVGMatrix();
-  already_AddRefed<nsIDOMSVGRect> CreateSVGRect();
+  already_AddRefed<SVGIRect> CreateSVGRect();
   already_AddRefed<DOMSVGTransform> CreateSVGTransform();
   already_AddRefed<DOMSVGTransform> CreateSVGTransformFromMatrix(SVGMatrix& matrix);
   Element* GetElementById(const nsAString& elementId, ErrorResult& rv);
@@ -267,7 +262,7 @@ private:
   SVGViewElement* GetCurrentViewElement() const;
 
   // Methods for <image> elements to override my "PreserveAspectRatio" value.
-  // These are private so that only our friends (nsSVGImageFrame in
+  // These are private so that only our friends (AutoSVGRenderingState in
   // particular) have access.
   void SetImageOverridePreserveAspectRatio(const SVGPreserveAspectRatio& aPAR);
   void ClearImageOverridePreserveAspectRatio();
@@ -389,6 +384,48 @@ private:
 };
 
 } // namespace dom
+
+// Helper class to automatically manage temporary changes to an SVG document's
+// state for rendering purposes.
+class NS_STACK_CLASS AutoSVGRenderingState
+{
+public:
+  AutoSVGRenderingState(const SVGImageContext* aSVGContext,
+                        float aFrameTime,
+                        dom::SVGSVGElement* aRootElem
+                        MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+    : mHaveOverrides(!!aSVGContext)
+    , mRootElem(aRootElem)
+  {
+    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+    MOZ_ASSERT(mRootElem, "No SVG node to manage?");
+    if (mHaveOverrides) {
+      // Override preserveAspectRatio in our helper document.
+      // XXXdholbert We should technically be overriding the helper doc's clip
+      // and overflow properties here, too. See bug 272288 comment 36.
+      mRootElem->SetImageOverridePreserveAspectRatio(
+          aSVGContext->GetPreserveAspectRatio());
+    }
+
+    mOriginalTime = mRootElem->GetCurrentTime();
+    mRootElem->SetCurrentTime(aFrameTime); // Does nothing if there's no change.
+  }
+
+  ~AutoSVGRenderingState()
+  {
+    mRootElem->SetCurrentTime(mOriginalTime);
+    if (mHaveOverrides) {
+      mRootElem->ClearImageOverridePreserveAspectRatio();
+    }
+  }
+
+private:
+  const bool mHaveOverrides;
+  float mOriginalTime;
+  const nsRefPtr<dom::SVGSVGElement> mRootElem;
+  MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
+};
+
 } // namespace mozilla
 
 #endif // SVGSVGElement_h

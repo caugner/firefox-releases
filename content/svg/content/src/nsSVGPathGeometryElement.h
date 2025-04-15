@@ -6,9 +6,10 @@
 #ifndef __NS_SVGPATHGEOMETRYELEMENT_H__
 #define __NS_SVGPATHGEOMETRYELEMENT_H__
 
-#include "gfxMatrix.h"
 #include "SVGGraphicsElement.h"
-#include "nsTArray.h"
+
+struct gfxMatrix;
+template <class E> class nsTArray;
 
 struct nsSVGMark {
   float x, y, angle;
@@ -24,9 +25,6 @@ class nsSVGPathGeometryElement : public nsSVGPathGeometryElementBase
 {
 public:
   nsSVGPathGeometryElement(already_AddRefed<nsINodeInfo> aNodeInfo);
-
-  // interfaces:
-  NS_DECL_ISUPPORTS_INHERITED
 
   virtual bool AttributeDefinesGeometry(const nsIAtom *aName);
   virtual bool IsMarkable();

@@ -8,9 +8,6 @@ srcdir           = @srcdir@
 VPATH            = @srcdir@
 relativesrcdir   = @relativesrcdir@
 
-MODULE           = test_osfile
-DIRS = mochi
-
 XPCSHELL_TESTS = xpcshell
 
 include $(DEPTH)/config/autoconf.mk

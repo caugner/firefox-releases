@@ -74,6 +74,9 @@ extern "C" {
 #ifndef EWOULDBLOCK
 #define EWOULDBLOCK  WSAEWOULDBLOCK
 #endif
+#ifndef EINPROGRESS
+#define EINPROGRESS  WSAEINPROGRESS
+#endif
 #define SHUT_RD    1
 #define SHUT_WR    2
 #define SHUT_RDWR  3
@@ -847,7 +850,7 @@ struct sctp_timeouts {
 void
 usrsctp_init(uint16_t,
              int (*)(void *addr, void *buffer, size_t length, uint8_t tos, uint8_t set_df),
-             void (*)(const char *, ...));
+             void (*)(const char *format, ...));
 
 struct socket *
 usrsctp_socket(int domain, int type, int protocol,

@@ -7,7 +7,6 @@
 #include "nsSVGOuterSVGFrame.h"
 
 // Keep others in (case-insensitive) order:
-#include "DOMSVGTests.h"
 #include "gfxMatrix.h"
 #include "nsDisplayList.h"
 #include "nsIDocument.h"
@@ -144,7 +143,7 @@ nsSVGOuterSVGFrame::nsSVGOuterSVGFrame(nsStyleContext* aContext)
   RemoveStateBits(NS_FRAME_SVG_LAYOUT);
 }
 
-NS_IMETHODIMP
+void
 nsSVGOuterSVGFrame::Init(nsIContent* aContent,
                          nsIFrame* aParent,
                          nsIFrame* aPrevInFlow)
@@ -169,7 +168,7 @@ nsSVGOuterSVGFrame::Init(nsIContent* aContent,
     AddStateBits(NS_STATE_SVG_NONDISPLAY_CHILD);
   }
 
-  nsresult rv = nsSVGOuterSVGFrameBase::Init(aContent, aParent, aPrevInFlow);
+  nsSVGOuterSVGFrameBase::Init(aContent, aParent, aPrevInFlow);
 
   nsIDocument* doc = mContent->GetCurrentDoc();
   if (doc) {
@@ -181,8 +180,6 @@ nsSVGOuterSVGFrame::Init(nsIContent* aContent,
     // not need to be removed
     doc->AddMutationObserverUnlessExists(&sSVGMutationObserver);
   }
-
-  return rv;
 }
 
 //----------------------------------------------------------------------
@@ -287,9 +284,9 @@ nsSVGOuterSVGFrame::GetIntrinsicRatio()
   const nsSVGViewBoxRect* viewbox = nullptr;
 
   // The logic here should match HasViewBox().
-  if (viewElement && viewElement->mViewBox.IsExplicitlySet()) {
+  if (viewElement && viewElement->mViewBox.HasRect()) {
     viewbox = &viewElement->mViewBox.GetAnimValue();
-  } else if (content->mViewBox.IsExplicitlySet()) {
+  } else if (content->mViewBox.HasRect()) {
     viewbox = &content->mViewBox.GetAnimValue();
   }
 
@@ -754,7 +751,7 @@ nsSVGOuterSVGFrame::NotifyViewportOrTransformChanged(uint32_t aFlags)
   SVGSVGElement *content = static_cast<SVGSVGElement*>(mContent);
 
   if (aFlags & COORD_CONTEXT_CHANGED) {
-    if (content->HasViewBox()) {
+    if (content->HasViewBoxRect()) {
       // Percentage lengths on children resolve against the viewBox rect so we
       // don't need to notify them of the viewport change, but the viewBox
       // transform will have changed, so we need to notify them of that instead.
@@ -922,14 +919,14 @@ NS_NewSVGOuterSVGAnonChildFrame(nsIPresShell* aPresShell,
 NS_IMPL_FRAMEARENA_HELPERS(nsSVGOuterSVGAnonChildFrame)
 
 #ifdef DEBUG
-NS_IMETHODIMP
+void
 nsSVGOuterSVGAnonChildFrame::Init(nsIContent* aContent,
                                   nsIFrame* aParent,
                                   nsIFrame* aPrevInFlow)
 {
   NS_ABORT_IF_FALSE(aParent->GetType() == nsGkAtoms::svgOuterSVGFrame,
                     "Unexpected parent");
-  return nsSVGOuterSVGAnonChildFrameBase::Init(aContent, aParent, aPrevInFlow);
+  nsSVGOuterSVGAnonChildFrameBase::Init(aContent, aParent, aPrevInFlow);
 }
 #endif
 

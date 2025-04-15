@@ -1458,8 +1458,8 @@ nsGenericHTMLElement::ParseScrollingValue(const nsAString& aString,
  * Handle attributes common to all html elements
  */
 void
-nsGenericHTMLElement::MapCommonAttributesExceptHiddenInto(const nsMappedAttributes* aAttributes,
-                                                          nsRuleData* aData)
+nsGenericHTMLElement::MapCommonAttributesInto(const nsMappedAttributes* aAttributes,
+                                              nsRuleData* aData)
 {
   if (aData->mSIDs & NS_STYLE_INHERIT_BIT(UserInterface)) {
     nsCSSValue* userModify = aData->ValueForUserModify();
@@ -1487,13 +1487,6 @@ nsGenericHTMLElement::MapCommonAttributesExceptHiddenInto(const nsMappedAttribut
                                             eCSSUnit_Ident);
     }
   }
-}
-
-void
-nsGenericHTMLElement::MapCommonAttributesInto(const nsMappedAttributes* aAttributes,
-                                              nsRuleData* aData)
-{
-  nsGenericHTMLElement::MapCommonAttributesExceptHiddenInto(aAttributes, aData);
 
   if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Display)) {
     nsCSSValue* display = aData->ValueForDisplay();
@@ -1570,7 +1563,7 @@ nsGenericHTMLElement::MapImageAlignAttributeInto(const nsMappedAttributes* aAttr
     if (value && value->Type() == nsAttrValue::eEnum) {
       int32_t align = value->GetEnumValue();
       if (aRuleData->mSIDs & NS_STYLE_INHERIT_BIT(Display)) {
-        nsCSSValue* cssFloat = aRuleData->ValueForCssFloat();
+        nsCSSValue* cssFloat = aRuleData->ValueForFloat();
         if (cssFloat->GetUnit() == eCSSUnit_Null) {
           if (align == NS_STYLE_TEXT_ALIGN_LEFT) {
             cssFloat->SetIntValue(NS_STYLE_FLOAT_LEFT, eCSSUnit_Enumerated);
@@ -2137,20 +2130,9 @@ nsGenericHTMLElement::SetUndoScopeInternal(bool aUndoScope)
 
 // static
 bool
-nsGenericHTMLElement::PrefEnabled()
+nsGenericHTMLElement::TouchEventsEnabled(JSContext* /* unused */, JSObject* /* unused */)
 {
-  // This is a bit of a hack because we don't support non-bool prefs to enable
-  // properties. This function will be called every time a HTMLElement interface
-  // prototype object is created. The first time this is called we set a boolean
-  // pref (dom.w3c_touch_events.expose) which controls the touch event
-  // properties on HTMLElement.
-  static bool sDidSetPref = false;
-  if (!sDidSetPref) {
-    sDidSetPref = true;
-    Preferences::SetBool("dom.w3c_touch_events.expose",
-                         nsDOMTouchEvent::PrefEnabled());
-  }
-  return true;
+  return nsDOMTouchEvent::PrefEnabled();
 }
 
 //----------------------------------------------------------------------

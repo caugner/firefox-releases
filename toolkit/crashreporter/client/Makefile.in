@@ -11,8 +11,6 @@ relativesrcdir = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE = crashreporter
-
 # Don't use the STL wrappers in the crashreporter clients; they don't
 # link with -lmozalloc, and it really doesn't matter here anyway.
 STL_FLAGS =
@@ -111,7 +109,7 @@ libs::
 endif
 
 ifeq (,$(filter-out Linux SunOS,$(OS_ARCH)))
-libs:: $(topsrcdir)/toolkit/themes/winstripe/global/throbber/Throbber-small.gif
+libs:: $(topsrcdir)/toolkit/themes/windows/global/throbber/Throbber-small.gif
 	$(INSTALL) $^ $(DIST)/bin
 endif
 

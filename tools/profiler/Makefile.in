@@ -14,24 +14,26 @@ XPCSHELL_TESTS = tests
 
 include $(DEPTH)/config/autoconf.mk
 
-EXPORTS = sampler.h
+EXPORTS = GeckoProfiler.h
 
 ifdef MOZ_ENABLE_PROFILER_SPS
 EXPORTS += \
-  sps_sampler.h \
+  GeckoProfilerImpl.h \
+  GeckoProfilerFunc.h \
+  PseudoStack.h \
   shared-libraries.h \
   $(NULL)
 
 LOCAL_INCLUDES += \
   -I$(topsrcdir)/mozglue/linker \
   -I$(topsrcdir)/ipc/chromium/src \
+  -I$(topsrcdir)/toolkit/crashreporter/google-breakpad/src \
   $(NULL)
 
 ifneq (,$(filter armeabi,$(ANDROID_CPU_ARCH)))
 DEFINES += -DARCH_ARMV6
 endif
 
-MODULE          = profiler
 MODULE_NAME     = nsProfilerModule
 LIBRARY_NAME    = profiler
 EXPORT_LIBRARY  = 1
@@ -42,15 +44,16 @@ FAIL_ON_WARNINGS = 1
 endif # !_MSC_VER
 
 CPPSRCS		= \
+  platform.cpp \
   nsProfilerFactory.cpp \
   nsProfiler.cpp \
   TableTicker.cpp \
+  BreakpadSampler.cpp \
+  UnwinderThread2.cpp \
+  ProfileEntry.cpp \
+  local_debug_info_symbolizer.cc \
   JSObjectBuilder.cpp \
   JSCustomObjectBuilder.cpp \
-  $(NULL)
-
-XPIDLSRCS = \
-  nsIProfiler.idl \
   $(NULL)
 
 EXTRA_JS_MODULES = \
@@ -69,6 +72,8 @@ CPPSRCS += \
   shared-libraries-macos.cc \
   platform-macos.cc \
   $(NULL)
+CMMSRCS += \
+  shim_mac_dump_syms.mm
 endif
 
 ifeq ($(OS_TARGET),WINNT)

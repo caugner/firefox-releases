@@ -38,7 +38,7 @@
 #include "google_breakpad/processor/call_stack.h"
 #include "google_breakpad/processor/memory_region.h"
 #include "google_breakpad/processor/stack_frame_cpu.h"
-#include "processor/logging.h"
+#include "common/logging.h"
 
 namespace google_breakpad {
 
@@ -102,7 +102,7 @@ StackFrame* StackwalkerPPC::GetCallerFrame(const CallStack* stack) {
   // A caller frame must reside higher in memory than its callee frames.
   // Anything else is an error, or an indication that we've reached the
   // end of the stack.
-  u_int32_t stack_pointer;
+  uint32_t stack_pointer;
   if (!memory_->GetMemoryAtAddress(last_frame->context.gpr[1],
                                    &stack_pointer) ||
       stack_pointer <= last_frame->context.gpr[1]) {
@@ -114,7 +114,7 @@ StackFrame* StackwalkerPPC::GetCallerFrame(const CallStack* stack) {
   // documentation on this, but 0 or 1 would be bogus return addresses,
   // so check for them here and return false (end of stack) when they're
   // hit to avoid having a phantom frame.
-  u_int32_t instruction;
+  uint32_t instruction;
   if (!memory_->GetMemoryAtAddress(stack_pointer + 8, &instruction) ||
       instruction <= 1) {
     return NULL;

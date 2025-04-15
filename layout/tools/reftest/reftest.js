@@ -1110,11 +1110,13 @@ function Focus()
 
     var fm = CC["@mozilla.org/focus-manager;1"].getService(CI.nsIFocusManager);
     fm.focusedWindow = gContainingWindow;
+#ifdef XP_MACOSX
     try {
         var dock = CC["@mozilla.org/widget/macdocksupport;1"].getService(CI.nsIMacDockSupport);
         dock.activateApplication(true);
     } catch(ex) {
     }
+#endif // XP_MACOSX
     return true;
 }
 
@@ -1351,7 +1353,7 @@ function DoDrawWindow(ctx, x, y, w, h)
         } else {
             // Output a special warning because we need to be able to detect
             // this whenever it happens.
-            gDumpLog("REFTEST INFO | WARNING: USE_WIDGET_LAYERS disabled\n");
+            gDumpLog("REFTEST TEST-UNEXPECTED-FAIL | WARNING: USE_WIDGET_LAYERS disabled\n");
         }
         gDumpLog("REFTEST INFO | drawWindow flags = " + flagsStr +
                  "; window size = " + gContainingWindow.innerWidth + "," + gContainingWindow.innerHeight +

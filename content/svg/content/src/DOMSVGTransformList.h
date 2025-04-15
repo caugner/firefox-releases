@@ -67,8 +67,7 @@ public:
     }
   }
 
-  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
-                               bool *triedToWrap);
+  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope) MOZ_OVERRIDE;
 
   nsISupports* GetParentObject()
   {
@@ -161,7 +160,7 @@ private:
 
   // Weak refs to our DOMSVGTransform items. The items are friends and take care
   // of clearing our pointer to them when they die.
-  nsTArray<DOMSVGTransform*> mItems;
+  FallibleTArray<DOMSVGTransform*> mItems;
 
   nsRefPtr<DOMSVGAnimatedTransformList> mAList;
 };

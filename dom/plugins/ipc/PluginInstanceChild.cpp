@@ -415,6 +415,11 @@ PluginInstanceChild::NPN_GetValue(NPNVariable aVar,
         return NPERR_NO_ERROR;
     }
 
+    case NPNVsupportsCompositingCoreAnimationPluginsBool: {
+        *((NPBool*)aValue) = true;
+        return NPERR_NO_ERROR;
+    }
+
     case NPNVsupportsCocoaBool: {
         *((NPBool*)aValue) = true;
         return NPERR_NO_ERROR;
@@ -2661,8 +2666,6 @@ PluginInstanceChild::NPN_SetCurrentAsyncSurface(NPAsyncSurface *surface, NPRect 
 #ifdef XP_WIN
         case NPDrawingModelAsyncWindowsDXGISurface:
             {
-                AsyncBitmapData *bitmapData;
-              
                 CrossProcessMutexAutoLock autoLock(*mRemoteImageDataMutex);
                 data->mType = RemoteImageData::DXGI_TEXTURE_HANDLE;
                 data->mSize = gfxIntSize(surface->size.width, surface->size.height);
@@ -3832,13 +3835,9 @@ PluginInstanceChild::RecvUpdateBackground(const SurfaceDescriptor& aBackground,
     // XXX refactor me
     mAccumulatedInvalidRect.UnionRect(aRect, mAccumulatedInvalidRect);
 
-    // The browser is limping along with a stale copy of our pixels.
-    // Try to repaint ASAP.  This will ClearCurrentBackground() if we
-    // needed it.
-    if (!ShowPluginFrame()) {
-        NS_WARNING("Couldn't immediately repaint plugin instance");
-        AsyncShowPluginFrame();
-    }
+    // This must be asynchronous, because we may be nested within RPC messages
+    // which do not expect to receiving paint events.
+    AsyncShowPluginFrame();
 
     return true;
 }

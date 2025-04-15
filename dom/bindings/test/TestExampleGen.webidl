@@ -7,8 +7,10 @@
  Constructor(DOMString str),
  Constructor(unsigned long num, boolean? boolArg),
  Constructor(TestInterface? iface),
- Constructor(long arg1, IndirectlyImplementedInterface iface)
- // , Constructor(long arg1, long arg2, (TestInterface or OnlyForUseInConstructor) arg3)
+ Constructor(long arg1, IndirectlyImplementedInterface iface),
+ // Constructor(long arg1, long arg2, (TestInterface or OnlyForUseInConstructor) arg3),
+ NamedConstructor=Example,
+ NamedConstructor=Example(DOMString str)
  ]
 interface TestExampleInterface {
   // Integer types
@@ -230,6 +232,8 @@ interface TestExampleInterface {
   sequence<any> receiveAnySequence();
   sequence<any>? receiveNullableAnySequence();
 
+  void passSequenceOfSequences(sequence<sequence<long>> arg);
+
   // Typed array types
   void passArrayBuffer(ArrayBuffer arg);
   void passNullableArrayBuffer(ArrayBuffer? arg);
@@ -365,6 +369,46 @@ interface TestExampleInterface {
   // Variadic handling
   void passVariadicThirdArg(DOMString arg1, long arg2, TestInterface... arg3);
 
+  // Conditionally exposed methods/attributes
+  [Pref="abc.def"]
+  readonly attribute boolean prefable1;
+  [Pref="abc.def"]
+  readonly attribute boolean prefable2;
+  [Pref="ghi.jkl"]
+  readonly attribute boolean prefable3;
+  [Pref="ghi.jkl"]
+  readonly attribute boolean prefable4;
+  [Pref="abc.def"]
+  readonly attribute boolean prefable5;
+  [Pref="abc.def", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  readonly attribute boolean prefable6;
+  [Pref="abc.def", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  readonly attribute boolean prefable7;
+  [Pref="ghi.jkl", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  readonly attribute boolean prefable8;
+  [Pref="abc.def", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  readonly attribute boolean prefable9;
+  [Pref="abc.def"]
+  void prefable10();
+  [Pref="abc.def", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  void prefable11();
+  [Pref="abc.def", Func="TestFuncControlledMember"]
+  readonly attribute boolean prefable12;
+  [Pref="abc.def", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  void prefable13();
+  [Pref="abc.def", Func="TestFuncControlledMember"]
+  readonly attribute boolean prefable14;
+  [Func="TestFuncControlledMember"]
+  readonly attribute boolean prefable15;
+  [Func="TestFuncControlledMember"]
+  readonly attribute boolean prefable16;
+  [Pref="abc.def", Func="TestFuncControlledMember"]
+  void prefable17();
+  [Func="TestFuncControlledMember"]
+  void prefable18();
+  [Func="TestFuncControlledMember"]
+  void prefable19();
+
   // Miscellania
   [LenientThis] attribute long attrWithLenientThis;
   [Unforgeable] readonly attribute long unforgeableAttr;
@@ -378,8 +422,9 @@ interface TestExampleInterface {
   [Throws] attribute boolean throwingAttr;
   [GetterThrows] attribute boolean throwingGetterAttr;
   [SetterThrows] attribute boolean throwingSetterAttr;
+  legacycaller short(unsigned long arg1, TestInterface arg2);
 
-  // If you add things here, add them to TestCodeGen as well
+  // If you add things here, add them to TestCodeGen and TestJSImplGen as well
 };
 
 interface TestExampleProxyInterface {

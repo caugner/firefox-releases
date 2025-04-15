@@ -320,12 +320,13 @@ public:
   }
 
 private:
-  static bool gPropertyEnabled[eCSSProperty_COUNT];
+  static bool gPropertyEnabled[eCSSProperty_COUNT_with_aliases];
 
 public:
 
   static bool IsEnabled(nsCSSProperty aProperty) {
-    NS_ABORT_IF_FALSE(0 <= aProperty && aProperty < eCSSProperty_COUNT,
+    NS_ABORT_IF_FALSE(0 <= aProperty &&
+                      aProperty < eCSSProperty_COUNT_with_aliases,
                       "out of range");
     return gPropertyEnabled[aProperty];
   }
@@ -374,6 +375,7 @@ public:
   static const int32_t kTextAnchorKTable[];
   static const int32_t kTextRenderingKTable[];
   static const int32_t kColorInterpolationKTable[];
+  static const int32_t kColumnFillKTable[];
   static const int32_t kBoxPropSourceKTable[];
   static const int32_t kBoxShadowTypeKTable[];
   static const int32_t kBoxSizingKTable[];

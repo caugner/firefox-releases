@@ -994,8 +994,7 @@ nsWindow::Show(bool aState)
 NS_IMETHODIMP
 nsWindow::Resize(double aWidth, double aHeight, bool aRepaint)
 {
-    double scale =
-        mWindowType <= eWindowType_popup ? GetDefaultScale() : 1.0;
+    double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
     int32_t width = NSToIntRound(scale * aWidth);
     int32_t height = NSToIntRound(scale * aHeight);
     ConstrainSize(&width, &height);
@@ -1075,8 +1074,7 @@ NS_IMETHODIMP
 nsWindow::Resize(double aX, double aY, double aWidth, double aHeight,
                  bool aRepaint)
 {
-    double scale =
-        mWindowType <= eWindowType_popup ? GetDefaultScale() : 1.0;
+    double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
     int32_t width = NSToIntRound(scale * aWidth);
     int32_t height = NSToIntRound(scale * aHeight);
     ConstrainSize(&width, &height);
@@ -1164,8 +1162,7 @@ nsWindow::Move(double aX, double aY)
     LOG(("nsWindow::Move [%p] %f %f\n", (void *)this,
          aX, aY));
 
-    double scale =
-        mWindowType <= eWindowType_popup ? GetDefaultScale() : 1.0;
+    double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
     int32_t x = NSToIntRound(aX * scale);
     int32_t y = NSToIntRound(aY * scale);
 
@@ -5851,9 +5848,38 @@ nsChildWindow::~nsChildWindow()
 }
 
 NS_IMETHODIMP
-nsWindow::ResetInputState()
+nsWindow::NotifyIME(NotificationToIME aNotification)
 {
-    return mIMModule ? mIMModule->ResetInputState(this) : NS_OK;
+    if (MOZ_UNLIKELY(!mIMModule)) {
+        switch (aNotification) {
+            case NOTIFY_IME_OF_CURSOR_POS_CHANGED:
+            case REQUEST_TO_COMMIT_COMPOSITION:
+            case REQUEST_TO_CANCEL_COMPOSITION:
+            case NOTIFY_IME_OF_FOCUS:
+            case NOTIFY_IME_OF_BLUR:
+              return NS_ERROR_NOT_AVAILABLE;
+            default:
+              break;
+        }
+    }
+    switch (aNotification) {
+        // TODO: We should replace NOTIFY_IME_OF_CURSOR_POS_CHANGED with
+        //       NOTIFY_IME_OF_SELECTION_CHANGE.  The required behavior is
+        //       really different from committing composition.
+        case NOTIFY_IME_OF_CURSOR_POS_CHANGED:
+        case REQUEST_TO_COMMIT_COMPOSITION:
+            return mIMModule->CommitIMEComposition(this);
+        case REQUEST_TO_CANCEL_COMPOSITION:
+            return mIMModule->CancelIMEComposition(this);
+        case NOTIFY_IME_OF_FOCUS:
+            mIMModule->OnFocusChangeInGecko(true);
+            return NS_OK;
+        case NOTIFY_IME_OF_BLUR:
+            mIMModule->OnFocusChangeInGecko(false);
+            return NS_OK;
+        default:
+            return NS_ERROR_NOT_IMPLEMENTED;
+    }
 }
 
 NS_IMETHODIMP_(void)
@@ -5882,21 +5908,6 @@ nsWindow::GetInputContext()
       context.mNativeIMEContext = mIMModule;
   }
   return context;
-}
-
-NS_IMETHODIMP
-nsWindow::CancelIMEComposition()
-{
-    return mIMModule ? mIMModule->CancelIMEComposition(this) : NS_OK;
-}
-
-NS_IMETHODIMP
-nsWindow::OnIMEFocusChange(bool aFocus)
-{
-    if (mIMModule) {
-      mIMModule->OnFocusChangeInGecko(aFocus);
-    }
-    return NS_OK;
 }
 
 NS_IMETHODIMP

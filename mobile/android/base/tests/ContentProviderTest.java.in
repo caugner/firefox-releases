@@ -1,10 +1,7 @@
 #filter substitution
 package @ANDROID_PACKAGE_NAME@.tests;
 
-import @ANDROID_PACKAGE_NAME@.*;
-
 import android.content.ContentProvider;
-import android.content.ContentProviderClient;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.ContentProviderResult;
@@ -18,18 +15,13 @@ import android.database.Cursor;
 import android.database.ContentObserver;
 import android.os.Build;
 import android.net.Uri;
-import android.test.AndroidTestCase;
 import android.test.IsolatedContext;
-import android.test.ProviderTestCase2;
 import android.test.RenamingDelegatingContext;
 import android.test.mock.MockContentResolver;
 import android.test.mock.MockContext;
-import android.util.Log;
-
 import java.io.File;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedList;
 
 /*
@@ -235,6 +227,7 @@ abstract class ContentProviderTest extends BaseTest {
         mAsserter.setTestName(this.getClass().getName() + " - " + testName);
     }
 
+    @Override
     public void setUp() throws Exception {
         throw new Exception("You should call setUp(providerClassName, authorityUriField) instead");
     }
@@ -249,6 +242,7 @@ abstract class ContentProviderTest extends BaseTest {
         setUpContentProvider();
     }
 
+    @Override
     public void tearDown() throws Exception {
         if (Build.VERSION.SDK_INT >= 11) {
             mProvider.shutdown();

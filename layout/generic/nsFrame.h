@@ -87,8 +87,8 @@
 // memory is allocated for a frame object).
 
 #define NS_DECL_FRAMEARENA_HELPERS                                \
-  NS_MUST_OVERRIDE void* operator new(size_t, nsIPresShell*);     \
-  virtual NS_MUST_OVERRIDE nsQueryFrame::FrameIID GetFrameId();
+  void* operator new(size_t, nsIPresShell*) MOZ_MUST_OVERRIDE;    \
+  virtual nsQueryFrame::FrameIID GetFrameId() MOZ_MUST_OVERRIDE;
 
 #define NS_IMPL_FRAMEARENA_HELPERS(class)                         \
   void* class::operator new(size_t sz, nsIPresShell* aShell)      \
@@ -142,9 +142,9 @@ public:
   NS_DECL_FRAMEARENA_HELPERS
 
   // nsIFrame
-  NS_IMETHOD  Init(nsIContent*      aContent,
-                   nsIFrame*        aParent,
-                   nsIFrame*        asPrevInFlow);
+  virtual void Init(nsIContent*      aContent,
+                    nsIFrame*        aParent,
+                    nsIFrame*        asPrevInFlow) MOZ_OVERRIDE;
   NS_IMETHOD  SetInitialChildList(ChildListID        aListID,
                                   nsFrameList&       aChildList);
   NS_IMETHOD  AppendFrames(ChildListID     aListID,
@@ -327,14 +327,22 @@ public:
   NS_IMETHOD  DidReflow(nsPresContext*           aPresContext,
                         const nsHTMLReflowState*  aReflowState,
                         nsDidReflowStatus         aStatus);
+
+  /**
+   * NOTE: aStatus is assumed to be already-initialized. The reflow statuses of
+   * any reflowed absolute children will be merged into aStatus; aside from
+   * that, this method won't modify aStatus.
+   */
   void ReflowAbsoluteFrames(nsPresContext*           aPresContext,
                             nsHTMLReflowMetrics&     aDesiredSize,
                             const nsHTMLReflowState& aReflowState,
-                            nsReflowStatus&          aStatus);
+                            nsReflowStatus&          aStatus,
+                            bool                     aConstrainHeight = true);
   void FinishReflowWithAbsoluteFrames(nsPresContext*           aPresContext,
                                       nsHTMLReflowMetrics&     aDesiredSize,
                                       const nsHTMLReflowState& aReflowState,
-                                      nsReflowStatus&          aStatus);
+                                      nsReflowStatus&          aStatus,
+                                      bool                     aConstrainHeight = true);
   virtual bool CanContinueTextRun() const;
 
   virtual bool UpdateOverflow();
@@ -807,7 +815,9 @@ public:
 
   struct DR_init_offsets_cookie {
     DR_init_offsets_cookie(nsIFrame* aFrame, nsCSSOffsetState* aState,
-                           nscoord aCBWidth, const nsMargin* aBorder,
+                           nscoord aHorizontalPercentBasis,
+                           nscoord aVerticalPercentBasis,
+                           const nsMargin* aBorder,
                            const nsMargin* aPadding);
     ~DR_init_offsets_cookie();
 
@@ -845,8 +855,8 @@ public:
                                  dr_bdr, dr_pad)                           \
   DR_init_constraints_cookie dr_cookie(dr_frame, dr_state, dr_cbw, dr_cbh, \
                                        dr_bdr, dr_pad)
-#define DISPLAY_INIT_OFFSETS(dr_frame, dr_state, dr_cbw, dr_bdr, dr_pad)  \
-  DR_init_offsets_cookie dr_cookie(dr_frame, dr_state, dr_cbw, dr_bdr, dr_pad)
+#define DISPLAY_INIT_OFFSETS(dr_frame, dr_state, dr_hpb, dr_vpb, dr_bdr, dr_pad)  \
+  DR_init_offsets_cookie dr_cookie(dr_frame, dr_state, dr_hpb, dr_vpb, dr_bdr, dr_pad)
 #define DISPLAY_INIT_TYPE(dr_frame, dr_result) \
   DR_init_type_cookie dr_cookie(dr_frame, dr_result)
 
@@ -863,7 +873,7 @@ public:
 #define DISPLAY_INIT_CONSTRAINTS(dr_frame, dr_state, dr_cbw, dr_cbh,       \
                                  dr_bdr, dr_pad)                           \
   PR_BEGIN_MACRO PR_END_MACRO
-#define DISPLAY_INIT_OFFSETS(dr_frame, dr_state, dr_cbw, dr_bdr, dr_pad)  \
+#define DISPLAY_INIT_OFFSETS(dr_frame, dr_state, dr_hpb, dr_vpb, dr_bdr, dr_pad)  \
   PR_BEGIN_MACRO PR_END_MACRO
 #define DISPLAY_INIT_TYPE(dr_frame, dr_result) PR_BEGIN_MACRO PR_END_MACRO
 

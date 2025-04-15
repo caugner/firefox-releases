@@ -530,6 +530,14 @@ nsPrintEngine::DoCommonPrint(bool                    aIsPrintPreview,
   NS_ENSURE_SUCCESS(rv, rv);
 
   {
+    if (aIsPrintPreview) {
+      nsCOMPtr<nsIContentViewer> viewer;
+      webContainer->GetContentViewer(getter_AddRefs(viewer));
+      if (viewer && viewer->GetDocument() && viewer->GetDocument()->IsShowing()) {
+        viewer->GetDocument()->OnPageHide(false, nullptr);
+      }
+    }
+
     nsAutoScriptBlocker scriptBlocker;
     mPrt->mPrintObject = new nsPrintObject();
     NS_ENSURE_TRUE(mPrt->mPrintObject, NS_ERROR_OUT_OF_MEMORY);
@@ -616,13 +624,16 @@ nsPrintEngine::DoCommonPrint(bool                    aIsPrintPreview,
         // ShowPrintDialog triggers an event loop which means we can't assume
         // that the state of this->{anything} matches the state we've checked
         // above. Including that a given {thing} is non null.
+        if (!mPrt) {
+          return NS_ERROR_FAILURE;
+        }
 
         if (NS_SUCCEEDED(rv)) {
           // since we got the dialog and it worked then make sure we 
           // are telling GFX we want to print silent
           printSilently = true;
 
-          if (mPrt && mPrt->mPrintSettings) {
+          if (mPrt->mPrintSettings) {
             // The user might have changed shrink-to-fit in the print dialog, so update our copy of its state
             mPrt->mPrintSettings->GetShrinkToFit(&mPrt->mShrinkToFit);
           }
@@ -633,7 +644,8 @@ nsPrintEngine::DoCommonPrint(bool                    aIsPrintPreview,
           rv = NS_OK;
         }
       } else {
-        rv = NS_ERROR_GFX_NO_PRINTROMPTSERVICE;
+        // No dialog service available
+        rv = NS_ERROR_NOT_IMPLEMENTED;
       }
     } else {
       // Call any code that requires a run of the event loop.
@@ -784,7 +796,7 @@ nsPrintEngine::PrintPreview(nsIPrintSettings* aPrintSettings,
   if (NS_FAILED(docShell->GetBusyFlags(&busyFlags)) ||
       busyFlags != nsIDocShell::BUSY_FLAGS_NONE) {
     CloseProgressDialog(aWebProgressListener);
-    ShowPrintErrorDialog(NS_ERROR_GFX_PRINTER_DOC_IS_BUSY_PP, false);
+    ShowPrintErrorDialog(NS_ERROR_GFX_PRINTER_DOC_IS_BUSY, false);
     return NS_ERROR_FAILURE;
   }
 
@@ -1568,76 +1580,65 @@ nsresult nsPrintEngine::CleanupOnFailure(nsresult aResult, bool aIsPrinting)
 void
 nsPrintEngine::ShowPrintErrorDialog(nsresult aPrintError, bool aIsPrinting)
 {
-
-  PR_PL(("nsPrintEngine::ShowPrintErrorDialog(nsresult aPrintError=%lx, bool aIsPrinting=%d)\n", (long)aPrintError, (int)aIsPrinting));
-
   nsAutoCString stringName;
+  nsXPIDLString msg, title;
+  nsresult rv = NS_OK;
 
   switch(aPrintError)
   {
-#define NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(nserr) case nserr: stringName.AssignLiteral(#nserr); break;
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_CMD_NOT_FOUND)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_CMD_FAILURE)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_NO_PRINTER_AVAILABLE)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_NAME_NOT_FOUND)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_ACCESS_DENIED)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_INVALID_ATTRIBUTE)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_PRINTER_NOT_READY)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_OUT_OF_PAPER)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_PRINTER_IO_ERROR)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_COULD_NOT_OPEN_FILE)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_FILE_IO_ERROR)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_PRINTPREVIEW)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_UNEXPECTED)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_OUT_OF_MEMORY)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_NOT_IMPLEMENTED)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_NOT_AVAILABLE)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_ABORT)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_STARTDOC)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_ENDDOC)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_STARTPAGE)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_ENDPAGE)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_PRINT_WHILE_PREVIEW)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_PAPER_SIZE_NOT_SUPPORTED)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_ORIENTATION_NOT_SUPPORTED)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_COLORSPACE_NOT_SUPPORTED)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_TOO_MANY_COPIES)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_DRIVER_CONFIGURATION_ERROR)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_DOC_IS_BUSY_PP)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_DOC_WAS_DESTORYED)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_NO_PRINTDIALOG_IN_TOOLKIT)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_NO_PRINTROMPTSERVICE)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_NO_XUL)   // Temporary code for Bug 136185 / bug 240490
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_PLEX_NOT_SUPPORTED)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_DOC_IS_BUSY)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTING_NOT_IMPLEMENTED)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_COULD_NOT_LOAD_PRINT_MODULE)
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_GFX_PRINTER_RESOLUTION_NOT_SUPPORTED)
+#define ENTITY_FOR_ERROR(label) \
+    case NS_ERROR_##label: stringName.AssignLiteral("PERR_" #label); break
+
+    ENTITY_FOR_ERROR(GFX_PRINTER_NO_PRINTER_AVAILABLE);
+    ENTITY_FOR_ERROR(GFX_PRINTER_NAME_NOT_FOUND);
+    ENTITY_FOR_ERROR(GFX_PRINTER_COULD_NOT_OPEN_FILE);
+    ENTITY_FOR_ERROR(GFX_PRINTER_STARTDOC);
+    ENTITY_FOR_ERROR(GFX_PRINTER_ENDDOC);
+    ENTITY_FOR_ERROR(GFX_PRINTER_STARTPAGE);
+    ENTITY_FOR_ERROR(GFX_PRINTER_DOC_IS_BUSY);
+    ENTITY_FOR_ERROR(GFX_PRINTER_NO_XUL);  // bug 136185 / bug 240490
+
+    ENTITY_FOR_ERROR(ABORT);
+    ENTITY_FOR_ERROR(NOT_AVAILABLE);
+    ENTITY_FOR_ERROR(NOT_IMPLEMENTED);
+    ENTITY_FOR_ERROR(OUT_OF_MEMORY);
+    ENTITY_FOR_ERROR(UNEXPECTED);
 
     default:
-      NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG(NS_ERROR_FAILURE)
-#undef NS_ERROR_TO_LOCALIZED_PRINT_ERROR_MSG
+    ENTITY_FOR_ERROR(FAILURE);
+
+#undef ENTITY_FOR_ERROR
   }
 
-  PR_PL(("ShowPrintErrorDialog:  stringName='%s'\n", stringName.get()));
-
-  nsXPIDLString msg, title;
-  nsresult rv =
-    nsContentUtils::GetLocalizedString(nsContentUtils::ePRINTING_PROPERTIES,
-                                       stringName.get(), msg);
+  if (!aIsPrinting) {
+    // Try first with _PP suffix.
+    stringName.AppendLiteral("_PP");
+    rv = nsContentUtils::GetLocalizedString(
+             nsContentUtils::ePRINTING_PROPERTIES, stringName.get(), msg);
+    if (NS_FAILED(rv)) {
+      stringName.Truncate(stringName.Length() - 3);
+    }
+  }
+  if (aIsPrinting || NS_FAILED(rv)) {
+    rv = nsContentUtils::GetLocalizedString(
+             nsContentUtils::ePRINTING_PROPERTIES, stringName.get(), msg);
+  }
   if (NS_FAILED(rv)) {
-    PR_PL(("GetLocalizedString failed\n"));
     return;
   }
 
-  rv = nsContentUtils::GetLocalizedString(nsContentUtils::ePRINTING_PROPERTIES,
-      aIsPrinting ? "print_error_dialog_title"
-                  : "printpreview_error_dialog_title",
-      title);
-
-  nsCOMPtr<nsIWindowWatcher> wwatch = do_GetService(NS_WINDOWWATCHER_CONTRACTID, &rv);
+  rv = nsContentUtils::GetLocalizedString(
+           nsContentUtils::ePRINTING_PROPERTIES,
+           aIsPrinting ? "print_error_dialog_title"
+                       : "printpreview_error_dialog_title",
+           title);
   if (NS_FAILED(rv)) {
-    PR_PL(("ShowPrintErrorDialog(): wwatch==nullptr\n"));
+    return;
+  }
+
+  nsCOMPtr<nsIWindowWatcher> wwatch =
+    do_GetService(NS_WINDOWWATCHER_CONTRACTID, &rv);
+  if (NS_FAILED(rv)) {
     return;
   }
 
@@ -1645,16 +1646,14 @@ nsPrintEngine::ShowPrintErrorDialog(nsresult aPrintError, bool aIsPrinting)
   wwatch->GetActiveWindow(getter_AddRefs(active));
 
   nsCOMPtr<nsIPrompt> dialog;
-  /* |GetNewPrompter| allows that |active| is |nullptr| 
+  /* |GetNewPrompter| allows that |active| is |nullptr|
    * (see bug 234982 ("nsPrintEngine::ShowPrintErrorDialog() fails in many cases")) */
   wwatch->GetNewPrompter(active, getter_AddRefs(dialog));
   if (!dialog) {
-    PR_PL(("ShowPrintErrorDialog(): dialog==nullptr\n"));
     return;
   }
 
   dialog->Alert(title.get(), msg.get());
-  PR_PL(("ShowPrintErrorDialog(): alert displayed successfully.\n"));
 }
 
 //-----------------------------------------------------------------
@@ -2441,8 +2440,11 @@ CloneRangeToSelection(nsRange* aRange, nsIDocument* aDoc,
   nsCOMPtr<nsIDOMNode> newEnd = GetEqualNodeInCloneTree(endContainer, aDoc);
   NS_ENSURE_TRUE_VOID(newStart && newEnd);
 
-  nsRefPtr<nsRange> range = new nsRange();
-  nsresult rv = range->SetStart(newStart, startOffset);
+  nsCOMPtr<nsINode> newStartNode = do_QueryInterface(newStart);
+  NS_ENSURE_TRUE_VOID(newStartNode);
+
+  nsRefPtr<nsRange> range = new nsRange(newStartNode);
+  nsresult rv = range->SetStart(newStartNode, startOffset);
   NS_ENSURE_SUCCESS_VOID(rv);
   rv = range->SetEnd(newEnd, endOffset);
   NS_ENSURE_SUCCESS_VOID(rv);

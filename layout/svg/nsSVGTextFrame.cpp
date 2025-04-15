@@ -8,7 +8,7 @@
 
 // Keep others in (case-insensitive) order:
 #include "nsGkAtoms.h"
-#include "nsIDOMSVGRect.h"
+#include "mozilla/dom/SVGIRect.h"
 #include "nsISVGGlyphFragmentNode.h"
 #include "nsSVGGlyphFrame.h"
 #include "nsSVGIntegrationUtils.h"
@@ -33,7 +33,7 @@ NS_IMPL_FRAMEARENA_HELPERS(nsSVGTextFrame)
 //----------------------------------------------------------------------
 // nsIFrame methods
 #ifdef DEBUG
-NS_IMETHODIMP
+void
 nsSVGTextFrame::Init(nsIContent* aContent,
                      nsIFrame* aParent,
                      nsIFrame* aPrevInFlow)
@@ -41,7 +41,7 @@ nsSVGTextFrame::Init(nsIContent* aContent,
   NS_ASSERTION(aContent->IsSVG(nsGkAtoms::text),
                "Content is not an SVG text");
 
-  return nsSVGTextFrameBase::Init(aContent, aParent, aPrevInFlow);
+  nsSVGTextFrameBase::Init(aContent, aParent, aPrevInFlow);
 }
 #endif /* DEBUG */
 
@@ -136,7 +136,7 @@ nsSVGTextFrame::GetEndPositionOfChar(uint32_t charnum, nsISupports **_retval)
 }
 
 NS_IMETHODIMP
-nsSVGTextFrame::GetExtentOfChar(uint32_t charnum, nsIDOMSVGRect **_retval)
+nsSVGTextFrame::GetExtentOfChar(uint32_t charnum, dom::SVGIRect **_retval)
 {
   UpdateGlyphPositioning(false);
 

@@ -35,7 +35,7 @@
 
 #include "gfxCrashReporterUtils.h"
 
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 #ifdef MOZ_WIDGET_ANDROID
 #include <android/log.h>
@@ -64,6 +64,7 @@ int32_t
 LayerManagerOGL::GetMaxTextureSize() const
 {
   int32_t maxSize;
+  mGLContext->MakeCurrent();
   mGLContext->fGetIntegerv(LOCAL_GL_MAX_TEXTURE_SIZE, &maxSize);
   return maxSize;
 }
@@ -930,7 +931,7 @@ static uint16_t sFrameCount = 0;
 void
 FPSState::DrawFrameCounter(GLContext* context)
 {
-  SAMPLER_FRAME_NUMBER(sFrameCount);
+  profiler_set_frame_number(sFrameCount);
 
   context->fEnable(LOCAL_GL_SCISSOR_TEST);
 
@@ -1037,7 +1038,7 @@ LayerManagerOGL::NotifyShadowTreeTransaction()
 void
 LayerManagerOGL::Render()
 {
-  SAMPLE_LABEL("LayerManagerOGL", "Render");
+  PROFILER_LABEL("LayerManagerOGL", "Render");
   if (mDestroyed) {
     NS_WARNING("Call on destroyed layer manager");
     return;
@@ -1448,7 +1449,7 @@ GetFrameBufferInternalFormat(GLContext* gl,
   return LOCAL_GL_RGBA;
 }
 
-void
+bool
 LayerManagerOGL::CreateFBOWithTexture(const nsIntRect& aRect, InitMode aInit,
                                       GLuint aCurrentFrameBuffer,
                                       GLuint *aFBO, GLuint *aTexture)
@@ -1541,7 +1542,12 @@ LayerManagerOGL::CreateFBOWithTexture(const nsIntRect& aRect, InitMode aInit,
     msg.AppendInt(aRect.width);
     msg.Append(", aRect.height ");
     msg.AppendInt(aRect.height);
-    NS_RUNTIMEABORT(msg.get());
+    NS_WARNING(msg.get());
+
+    mGLContext->fBindFramebuffer(LOCAL_GL_FRAMEBUFFER, 0);
+    mGLContext->fDeleteFramebuffers(1, &fbo);
+    mGLContext->fDeleteTextures(1, &tex);
+    return false;
   }
 
   SetupPipeline(aRect.width, aRect.height, DontApplyWorldTransform);
@@ -1554,6 +1560,7 @@ LayerManagerOGL::CreateFBOWithTexture(const nsIntRect& aRect, InitMode aInit,
 
   *aFBO = fbo;
   *aTexture = tex;
+  return true;
 }
 
 already_AddRefed<ShadowThebesLayer>

@@ -142,7 +142,10 @@ public:
                                           bool* aAllowRetaining = nullptr);
   gfxASurface             *GetThebesSurface();
   NS_IMETHOD              OnDefaultButtonLoaded(const nsIntRect &aButtonRect);
-  NS_IMETHOD              OverrideSystemMouseScrollSpeed(int32_t aOriginalDelta, bool aIsHorizontal, int32_t &aOverriddenDelta);
+  NS_IMETHOD              OverrideSystemMouseScrollSpeed(double aOriginalDeltaX,
+                                                         double aOriginalDeltaY,
+                                                         double& aOverriddenDeltaX,
+                                                         double& aOverriddenDeltaY);
 
   virtual nsresult        SynthesizeNativeKeyEvent(int32_t aNativeKeyboardLayout,
                                                    int32_t aNativeKeyCode,
@@ -163,11 +166,10 @@ public:
                                                            double aDeltaZ,
                                                            uint32_t aModifierFlags,
                                                            uint32_t aAdditionalFlags);
-  NS_IMETHOD              ResetInputState();
+  NS_IMETHOD              NotifyIME(NotificationToIME aNotification) MOZ_OVERRIDE;
   NS_IMETHOD_(void)       SetInputContext(const InputContext& aContext,
                                           const InputContextAction& aAction);
   NS_IMETHOD_(InputContext) GetInputContext();
-  NS_IMETHOD              CancelIMEComposition();
   NS_IMETHOD              GetToggledKeyState(uint32_t aKeyCode, bool* aLEDState);
   NS_IMETHOD              RegisterTouchWindow();
   NS_IMETHOD              UnregisterTouchWindow();
@@ -176,12 +178,10 @@ public:
   virtual nsTransparencyMode GetTransparencyMode();
   virtual void            UpdateOpaqueRegion(const nsIntRegion& aOpaqueRegion);
 #endif // MOZ_XUL
-#ifdef NS_ENABLE_TSF
-  NS_IMETHOD              OnIMEFocusChange(bool aFocus);
-  NS_IMETHOD              OnIMETextChange(uint32_t aStart, uint32_t aOldEnd, uint32_t aNewEnd);
-  NS_IMETHOD              OnIMESelectionChange(void);
+  NS_IMETHOD              NotifyIMEOfTextChange(uint32_t aStart,
+                                                uint32_t aOldEnd,
+                                                uint32_t aNewEnd) MOZ_OVERRIDE;
   virtual nsIMEUpdatePreference GetIMEUpdatePreference();
-#endif // NS_ENABLE_TSF
   NS_IMETHOD              GetNonClientMargins(nsIntMargin &margins);
   NS_IMETHOD              SetNonClientMargins(nsIntMargin &margins);
   void                    SetDrawsInTitlebar(bool aState);
@@ -281,7 +281,7 @@ public:
 
   static void             SetupKeyModifiersSequence(nsTArray<KeyPair>* aArray, uint32_t aModifiers);
 
-  virtual bool            UseOffMainThreadCompositing();
+  virtual bool            ShouldUseOffMainThreadCompositing();
 protected:
 
   // A magic number to identify the FAKETRACKPOINTSCROLLABLE window created

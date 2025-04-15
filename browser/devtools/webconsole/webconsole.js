@@ -15,15 +15,6 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Services",
                                   "resource://gre/modules/Services.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "DebuggerServer",
-                                  "resource://gre/modules/devtools/dbg-server.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "DebuggerClient",
-                                  "resource://gre/modules/devtools/dbg-client.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "debuggerSocketConnect",
-                                  "resource://gre/modules/devtools/dbg-client.jsm");
-
 XPCOMUtils.defineLazyServiceGetter(this, "clipboardHelper",
                                    "@mozilla.org/widget/clipboardhelper;1",
                                    "nsIClipboardHelper");
@@ -38,7 +29,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "NetworkPanel",
                                   "resource:///modules/NetworkPanel.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "AutocompletePopup",
-                                  "resource:///modules/AutocompletePopup.jsm");
+                                  "resource:///modules/devtools/AutocompletePopup.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "WebConsoleUtils",
                                   "resource://gre/modules/devtools/WebConsoleUtils.jsm");
@@ -2419,6 +2410,10 @@ WebConsoleFrame.prototype = {
       else if (locationNode.parentNode.category == CATEGORY_CSS) {
         this.owner.viewSourceInStyleEditor(aSourceURL, aSourceLine);
       }
+      else if (locationNode.parentNode.category == CATEGORY_JS ||
+               locationNode.parentNode.category == CATEGORY_WEBDEV) {
+        this.owner.viewSourceInDebugger(aSourceURL, aSourceLine);
+      }
       else {
         this.owner.viewSource(aSourceURL, aSourceLine);
       }
@@ -2736,9 +2731,18 @@ JSTerm.prototype = {
   init: function JST_init()
   {
     let chromeDocument = this.hud.owner.chromeDocument;
-    this.autocompletePopup = new AutocompletePopup(chromeDocument);
-    this.autocompletePopup.onSelect = this.onAutocompleteSelect.bind(this);
-    this.autocompletePopup.onClick = this.acceptProposedCompletion.bind(this);
+    let autocompleteOptions = {
+      onSelect: this.onAutocompleteSelect.bind(this),
+      onClick: this.acceptProposedCompletion.bind(this),
+      panelId: "webConsole_autocompletePopup",
+      listBoxId: "webConsole_autocompletePopupListBox",
+      position: "before_start",
+      theme: "light",
+      direction: "ltr",
+      autoSelect: true
+    };
+    this.autocompletePopup = new AutocompletePopup(chromeDocument,
+                                                   autocompleteOptions);
 
     let doc = this.hud.document;
     this.completeNode = doc.querySelector(".jsterm-complete-node");
@@ -3115,6 +3119,10 @@ JSTerm.prototype = {
       switch (aEvent.charCode) {
         case 97:
           // control-a
+          if (Services.appinfo.OS == "WINNT") {
+            closePopup = true;
+            break;
+          }
           let lineBeginPos = 0;
           if (this.hasMultilineInput()) {
             // find index of closest newline <= to cursor
@@ -3132,6 +3140,9 @@ JSTerm.prototype = {
           break;
         case 101:
           // control-e
+          if (Services.appinfo.OS == "WINNT") {
+            break;
+          }
           let lineEndPos = inputNode.value.length;
           if (this.hasMultilineInput()) {
             // find index of closest newline >= cursor
@@ -3477,13 +3488,14 @@ JSTerm.prototype = {
     }
 
     let matches = aMessage.matches;
+    let lastPart = aMessage.matchProp;
     if (!matches.length) {
       this.clearCompletion();
       return;
     }
 
-    let items = matches.map(function(aMatch) {
-      return { label: aMatch };
+    let items = matches.reverse().map(function(aMatch) {
+      return { preLabel: lastPart, label: aMatch };
     });
 
     let popup = this.autocompletePopup;
@@ -3492,7 +3504,7 @@ JSTerm.prototype = {
     let completionType = this.lastCompletion.completionType;
     this.lastCompletion = {
       value: inputValue,
-      matchProp: aMessage.matchProp,
+      matchProp: lastPart,
     };
 
     if (items.length > 1 && !popup.isOpen) {
@@ -3981,7 +3993,6 @@ function WebConsoleConnectionProxy(aWebConsole, aTarget)
   this._onNetworkEventUpdate = this._onNetworkEventUpdate.bind(this);
   this._onFileActivity = this._onFileActivity.bind(this);
   this._onTabNavigated = this._onTabNavigated.bind(this);
-  this._onListTabs = this._onListTabs.bind(this);
   this._onAttachTab = this._onAttachTab.bind(this);
   this._onAttachConsole = this._onAttachConsole.bind(this);
   this._onCachedMessages = this._onCachedMessages.bind(this);
@@ -4066,17 +4077,6 @@ WebConsoleConnectionProxy.prototype = {
   _hasNativeConsoleAPI: false,
 
   /**
-   * Initialize the debugger server.
-   */
-  initServer: function WCCP_initServer()
-  {
-    if (!DebuggerServer.initialized) {
-      DebuggerServer.init();
-      DebuggerServer.addBrowserActors();
-    }
-  },
-
-  /**
    * Initialize a debugger client and connect it to the debugger server.
    *
    * @return object
@@ -4104,16 +4104,7 @@ WebConsoleConnectionProxy.prototype = {
       this._connectTimer = null;
     }.bind(this));
 
-    // TODO: convert the non-remote path to use the target API as well.
-    let transport, client;
-    if (this.target.isRemote) {
-      client = this.client = this.target.client;
-    }
-    else {
-      this.initServer();
-      transport = DebuggerServer.connectPipe();
-      client = this.client = new DebuggerClient(transport);
-    }
+    let client = this.client = this.target.client;
 
     client.addListener("pageError", this._onPageError);
     client.addListener("consoleAPICall", this._onConsoleAPICall);
@@ -4122,21 +4113,14 @@ WebConsoleConnectionProxy.prototype = {
     client.addListener("fileActivity", this._onFileActivity);
     client.addListener("tabNavigated", this._onTabNavigated);
 
-    if (this.target.isRemote) {
-      if (!this.target.chrome) {
-        // target.form is a TabActor grip
-        this._attachTab(this.target.form);
-      }
-      else {
-        // target.form is a RootActor grip
-        this._consoleActor = this.target.form.consoleActor;
-        this._attachConsole();
-      }
+    if (!this.target.chrome) {
+      // target.form is a TabActor grip
+      this._attachTab(this.target.form);
     }
     else {
-      client.connect(function(aType, aTraits) {
-        client.listTabs(this._onListTabs);
-      }.bind(this));
+      // target.form is a RootActor grip
+      this._consoleActor = this.target.form.consoleActor;
+      this._attachConsole();
     }
 
     return promise;
@@ -4154,25 +4138,6 @@ WebConsoleConnectionProxy.prototype = {
     };
 
     this._connectDefer.reject(error);
-  },
-
-  /**
-   * The "listTabs" response handler.
-   *
-   * @private
-   * @param object aResponse
-   *        The JSON response object received from the server.
-   */
-  _onListTabs: function WCCP__onListTabs(aResponse)
-  {
-    if (aResponse.error) {
-      Cu.reportError("listTabs failed: " + aResponse.error + " " +
-                     aResponse.message);
-      this._connectDefer.reject(aResponse);
-      return;
-    }
-
-    this._attachTab(aResponse.tabs[aResponse.selected]);
   },
 
   /**
@@ -4426,21 +4391,6 @@ WebConsoleConnectionProxy.prototype = {
       return this._disconnecter.promise;
     }
 
-    let onDisconnect = function() {
-      if (timer) {
-        timer.cancel();
-        timer = null;
-        this._disconnecter.resolve(null);
-      }
-    }.bind(this);
-
-    let timer = null;
-    let remoteTarget = this.target.isRemote;
-    if (!remoteTarget) {
-      timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-      timer.initWithCallback(onDisconnect, 1500, Ci.nsITimer.TYPE_ONE_SHOT);
-    }
-
     this.client.removeListener("pageError", this._onPageError);
     this.client.removeListener("consoleAPICall", this._onConsoleAPICall);
     this.client.removeListener("networkEvent", this._onNetworkEvent);
@@ -4448,28 +4398,13 @@ WebConsoleConnectionProxy.prototype = {
     this.client.removeListener("fileActivity", this._onFileActivity);
     this.client.removeListener("tabNavigated", this._onTabNavigated);
 
-    let client = this.client;
-
     this.client = null;
     this.webConsoleClient = null;
     this.tabClient = null;
     this.target = null;
     this.connected = false;
     this.owner = null;
-
-    if (!remoteTarget) {
-      try {
-        client.close(onDisconnect);
-      }
-      catch (ex) {
-        Cu.reportError("Web Console disconnect exception: " + ex);
-        Cu.reportError(ex.stack);
-        onDisconnect();
-      }
-    }
-    else {
-      onDisconnect();
-    }
+    this._disconnecter.resolve(null);
 
     return this._disconnecter.promise;
   },

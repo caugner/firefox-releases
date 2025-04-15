@@ -3,9 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/DebugOnly.h"
-
 #include "HTMLTableAccessible.h"
+
+#include "mozilla/DebugOnly.h"
 
 #include "Accessible-inl.h"
 #include "nsAccessibilityService.h"
@@ -18,6 +18,7 @@
 #include "States.h"
 #include "TreeWalker.h"
 
+#include "mozilla/dom/HTMLTableElement.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMRange.h"
@@ -25,10 +26,6 @@
 #include "nsINameSpaceManager.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMHTMLCollection.h"
-#include "nsIDOMHTMLTableCellElement.h"
-#include "nsIDOMHTMLTableElement.h"
-#include "nsIDOMHTMLTableRowElement.h"
-#include "nsIDOMHTMLTableSectionElement.h"
 #include "nsIDocument.h"
 #include "nsIMutableArray.h"
 #include "nsIPresShell.h"
@@ -455,7 +452,7 @@ HTMLTableAccessible::Caption()
 void
 HTMLTableAccessible::Summary(nsString& aSummary)
 {
-  nsCOMPtr<nsIDOMHTMLTableElement> table(do_QueryInterface(mContent));
+  dom::HTMLTableElement* table = dom::HTMLTableElement::FromContent(mContent);
 
   if (table)
     table->GetSummary(aSummary);
@@ -716,7 +713,7 @@ HTMLTableAccessible::IsCellSelected(uint32_t aRowIdx, uint32_t aColIdx)
 void
 HTMLTableAccessible::SelectRow(uint32_t aRowIdx)
 {
-  nsresult rv =
+  DebugOnly<nsresult> rv =
     RemoveRowsOrColumnsFromSelection(aRowIdx,
                                      nsISelectionPrivate::TABLESELECTION_ROW,
                                      true);
@@ -729,7 +726,7 @@ HTMLTableAccessible::SelectRow(uint32_t aRowIdx)
 void
 HTMLTableAccessible::SelectCol(uint32_t aColIdx)
 {
-  nsresult rv =
+  DebugOnly<nsresult> rv =
     RemoveRowsOrColumnsFromSelection(aColIdx,
                                      nsISelectionPrivate::TABLESELECTION_COLUMN,
                                      true);

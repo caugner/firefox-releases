@@ -21,6 +21,7 @@ this.EXPORTED_SYMBOLS = [
   "AppInfoProvider",
   "CrashDirectoryService",
   "CrashesProvider",
+  "HealthReportProvider",
   "PlacesProvider",
   "SearchesProvider",
   "SessionsProvider",
@@ -98,7 +99,6 @@ AppInfoMeasurement.prototype = Object.freeze({
   },
 });
 
-
 /**
  * Legacy version of app info before Telemetry was added.
  *
@@ -170,7 +170,7 @@ AppInfoProvider.prototype = Object.freeze({
     AppInfoMeasurement,
     AppInfoMeasurement1,
     AppVersionMeasurement1,
-    AppVersionMeasurement2
+    AppVersionMeasurement2,
   ],
 
   pullOnly: true,
@@ -683,6 +683,29 @@ AddonCountsMeasurement.prototype = Object.freeze({
   __proto__: Metrics.Measurement.prototype,
 
   name: "counts",
+  version: 2,
+
+  fields: {
+    theme: DAILY_LAST_NUMERIC_FIELD,
+    lwtheme: DAILY_LAST_NUMERIC_FIELD,
+    plugin: DAILY_LAST_NUMERIC_FIELD,
+    extension: DAILY_LAST_NUMERIC_FIELD,
+    service: DAILY_LAST_NUMERIC_FIELD,
+  },
+});
+
+
+/**
+ * Legacy version of addons counts before services was added.
+ */
+function AddonCountsMeasurement1() {
+  Metrics.Measurement.call(this);
+}
+
+AddonCountsMeasurement1.prototype = Object.freeze({
+  __proto__: Metrics.Measurement.prototype,
+
+  name: "counts",
   version: 1,
 
   fields: {
@@ -720,12 +743,14 @@ AddonsProvider.prototype = Object.freeze({
   FULL_DETAIL_TYPES: [
     "plugin",
     "extension",
+    "service",
   ],
 
   name: "org.mozilla.addons",
 
   measurementTypes: [
     ActiveAddonsMeasurement,
+    AddonCountsMeasurement1,
     AddonCountsMeasurement,
   ],
 
@@ -771,7 +796,8 @@ AddonsProvider.prototype = Object.freeze({
 
       let now = new Date();
       let active = this.getMeasurement("active", 1);
-      let counts = this.getMeasurement("counts", 1);
+      let counts = this.getMeasurement(AddonCountsMeasurement.prototype.name,
+                                       AddonCountsMeasurement.prototype.version);
 
       this.enqueueStorageOperation(function storageAddons() {
         for (let type in data.counts) {
@@ -885,13 +911,17 @@ CrashesProvider.prototype = Object.freeze({
     let pending = yield service.getPendingFiles();
     let submitted = yield service.getSubmittedFiles();
 
+    function getAgeLimit() {
+      return 0;
+    }
+
     let lastCheck = yield this.getState("lastCheck");
     if (!lastCheck) {
-      lastCheck = 0;
+      lastCheck = getAgeLimit();
     } else {
       lastCheck = parseInt(lastCheck, 10);
       if (Number.isNaN(lastCheck)) {
-        lastCheck = 0;
+        lastCheck = getAgeLimit();
       }
     }
 
@@ -1353,3 +1383,41 @@ this.SearchesProvider.prototype = Object.freeze({
   },
 });
 
+function HealthReportSubmissionMeasurement1() {
+  Metrics.Measurement.call(this);
+}
+
+HealthReportSubmissionMeasurement1.prototype = Object.freeze({
+  __proto__: Metrics.Measurement.prototype,
+
+  name: "submissions",
+  version: 1,
+
+  fields: {
+    firstDocumentUploadAttempt: DAILY_COUNTER_FIELD,
+    continuationUploadAttempt: DAILY_COUNTER_FIELD,
+    uploadSuccess: DAILY_COUNTER_FIELD,
+    uploadTransportFailure: DAILY_COUNTER_FIELD,
+    uploadServerFailure: DAILY_COUNTER_FIELD,
+    uploadClientFailure: DAILY_COUNTER_FIELD,
+  },
+});
+
+this.HealthReportProvider = function () {
+  Metrics.Provider.call(this);
+}
+
+HealthReportProvider.prototype = Object.freeze({
+  __proto__: Metrics.Provider.prototype,
+
+  name: "org.mozilla.healthreport",
+
+  measurementTypes: [HealthReportSubmissionMeasurement1],
+
+  recordEvent: function (event, date=new Date()) {
+    let m = this.getMeasurement("submissions", 1);
+    return this.enqueueStorageOperation(function recordCounter() {
+      return m.incrementDailyCounter(event, date);
+    });
+  },
+});

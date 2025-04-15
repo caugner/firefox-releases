@@ -63,11 +63,12 @@
 @BINPATH@/@DLL_PREFIX@mozjs@DLL_SUFFIX@
 #endif
 #ifndef MOZ_NATIVE_NSPR
+#ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@nspr4@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@plc4@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@plds4@DLL_SUFFIX@
 #endif
-@BINPATH@/@DLL_PREFIX@xpcom@DLL_SUFFIX@
+#endif
 #ifdef XP_MACOSX
 @BINPATH@/XUL
 #else
@@ -120,7 +121,9 @@
 @BINPATH@/platform.ini
 #ifndef XP_OS2
 #ifndef MOZ_NATIVE_SQLITE
+#ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@mozsqlite3@DLL_SUFFIX@
+#endif
 #endif
 #else
 @BINPATH@/mozsqlt3@DLL_SUFFIX@
@@ -194,24 +197,30 @@
 @BINPATH@/components/dom_indexeddb.xpt
 @BINPATH@/components/dom_offline.xpt
 @BINPATH@/components/dom_json.xpt
+@BINPATH@/components/dom_push.xpt
 #ifdef MOZ_B2G_RIL
 @BINPATH@/components/dom_mms.xpt
 #endif
 @BINPATH@/components/dom_browserelement.xpt
 @BINPATH@/components/dom_power.xpt
+@BINPATH@/components/dom_quota.xpt
 @BINPATH@/components/dom_range.xpt
 @BINPATH@/components/dom_settings.xpt
 @BINPATH@/components/dom_permissionsettings.xpt
 @BINPATH@/components/dom_sidebar.xpt
 @BINPATH@/components/dom_mobilemessage.xpt
-@BINPATH@/components/dom_sms.xpt
 @BINPATH@/components/dom_storage.xpt
 @BINPATH@/components/dom_stylesheets.xpt
 @BINPATH@/components/dom_traversal.xpt
+#ifdef MOZ_WEBSPEECH
+@BINPATH@/components/dom_webspeech.xpt
+#endif
 @BINPATH@/components/dom_xbl.xpt
 @BINPATH@/components/dom_xpath.xpt
 @BINPATH@/components/dom_xul.xpt
-@BINPATH@/components/dom_loadsave.xpt
+#ifdef MOZ_GAMEPAD
+@BINPATH@/components/dom_gamepad.xpt
+#endif
 @BINPATH@/components/downloads.xpt
 @BINPATH@/components/editor.xpt
 @BINPATH@/components/embed_base.xpt
@@ -240,7 +249,6 @@
 @BINPATH@/components/jsdebugger.xpt
 @BINPATH@/components/jsinspector.xpt
 @BINPATH@/components/layout_base.xpt
-@BINPATH@/components/layout_forms.xpt
 #ifdef NS_PRINTING
 @BINPATH@/components/layout_printing.xpt
 #endif
@@ -349,8 +357,6 @@
 @BINPATH@/browser/components/DownloadsUI.js
 @BINPATH@/browser/components/BrowserPlaces.manifest
 @BINPATH@/components/BrowserPageThumbs.manifest
-@BINPATH@/browser/components/nsPrivateBrowsingServiceObsolete.manifest
-@BINPATH@/browser/components/nsPrivateBrowsingServiceObsolete.js
 @BINPATH@/components/SiteSpecificUserAgent.js
 @BINPATH@/components/SiteSpecificUserAgent.manifest
 @BINPATH@/components/toolkitsearch.manifest
@@ -424,8 +430,6 @@
 @BINPATH@/components/nsHandlerService.js
 @BINPATH@/components/nsWebHandlerApp.manifest
 @BINPATH@/components/nsWebHandlerApp.js
-@BINPATH@/components/nsBadCertHandler.manifest
-@BINPATH@/components/nsBadCertHandler.js
 @BINPATH@/components/satchel.manifest
 @BINPATH@/components/nsFormAutoComplete.js
 @BINPATH@/components/nsFormHistory.js
@@ -457,7 +461,6 @@
 #endif
 #ifdef XP_MACOSX
 @BINPATH@/browser/components/SafariProfileMigrator.js
-@BINPATH@/components/libalerts.dylib
 #endif
 #ifdef MOZ_ENABLE_DBUS
 @BINPATH@/components/@DLL_PREFIX@dbusservice@DLL_SUFFIX@
@@ -468,7 +471,7 @@
 #ifdef MOZ_ENABLE_GNOMEVFS
 @BINPATH@/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 #endif
-#if defined(XP_MACOSX) || defined(MOZ_ENABLE_DBUS) || defined(MOZ_ENABLE_GNOME_COMPONENT) || defined(MOZ_ENABLE_GNOMEVFS)
+#if defined(MOZ_ENABLE_DBUS) || defined(MOZ_ENABLE_GNOME_COMPONENT) || defined(MOZ_ENABLE_GNOMEVFS)
 @BINPATH@/components/components.manifest
 #endif
 @BINPATH@/components/nsINIProcessor.manifest
@@ -502,9 +505,15 @@
 @BINPATH@/components/Webapps.manifest
 @BINPATH@/components/AppsService.js
 @BINPATH@/components/AppsService.manifest
+@BINPATH@/components/Push.js
+@BINPATH@/components/Push.manifest
+@BINPATH@/components/PushService.js
+@BINPATH@/components/PushService.manifest
 @BINPATH@/components/nsDOMIdentity.js
 @BINPATH@/components/nsIDService.js
 @BINPATH@/components/Identity.manifest
+@BINPATH@/components/recording-cmdline.js
+@BINPATH@/components/recording-cmdline.manifest
 
 @BINPATH@/components/PermissionSettings.js
 @BINPATH@/components/PermissionSettings.manifest
@@ -515,6 +524,9 @@
 @BINPATH@/components/TCPSocket.js
 @BINPATH@/components/TCPSocketParentIntermediary.js
 @BINPATH@/components/TCPSocket.manifest
+
+@BINPATH@/components/AppProtocolHandler.js
+@BINPATH@/components/AppProtocolHandler.manifest
 
 #ifdef MOZ_WEBRTC
 @BINPATH@/components/PeerConnection.js
@@ -561,6 +573,8 @@
 #endif
 @BINPATH@/chrome/toolkit@JAREXT@
 @BINPATH@/chrome/toolkit.manifest
+@BINPATH@/chrome/recording.manifest
+@BINPATH@/chrome/recording/*
 #ifdef MOZ_GTK2
 @BINPATH@/browser/chrome/icons/default/default16.png
 @BINPATH@/browser/chrome/icons/default/default32.png
@@ -662,10 +676,12 @@
 #ifndef NSS_DISABLE_DBM
 @BINPATH@/@DLL_PREFIX@nssdbm3@DLL_SUFFIX@
 #endif
+#ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@nssutil3@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@smime3@DLL_SUFFIX@
-@BINPATH@/@DLL_PREFIX@softokn3@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@ssl3@DLL_SUFFIX@
+#endif
+@BINPATH@/@DLL_PREFIX@softokn3@DLL_SUFFIX@
 #endif
 @BINPATH@/chrome/pippki@JAREXT@
 @BINPATH@/chrome/pippki.manifest
@@ -747,6 +763,7 @@ bin/libfreebl_32int64_3.so
 
 #ifdef MOZ_METRO
 @BINPATH@/components/MetroUIUtils.js
+@BINPATH@/components/MetroUIUtils.manifest
 [metro]
 ; gre resources
 @BINPATH@/CommandExecuteHandler@BIN_SUFFIX@

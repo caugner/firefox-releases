@@ -46,8 +46,6 @@ public:
   bool ParseAttribute(int32_t aNamespaceID, nsIAtom* aAttribute,
                       const nsAString& aValue, nsAttrValue& aResult);
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   // WebIDL
@@ -95,8 +93,7 @@ public:
   }
 
 protected:
-  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope,
-                             bool* aTriedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
 
 private:
 

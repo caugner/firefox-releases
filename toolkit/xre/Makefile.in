@@ -17,19 +17,10 @@ include $(topsrcdir)/config/makefiles/makeutils.mk
 
 milestone_txt = $(topsrcdir)/config/milestone.txt
 
-MODULE = xulapp
 LIBRARY_NAME = xulapp_s
 LIBXUL_LIBRARY = 1
 
 FORCE_STATIC_LIB = 1
-
-XPIDLSRCS = \
-  nsINativeAppSupport.idl \
-  $(NULL)
-
-ifeq ($(OS_ARCH),WINNT)
-XPIDLSRCS += nsIWinAppHelper.idl
-endif
 
 CPPSRCS = \
   nsAppRunner.cpp \
@@ -127,6 +118,29 @@ SHARED_LIBRARY_LIBS += $(DEPTH)/widget/xremoteclient/$(LIB_PREFIX)xremote_client
 LOCAL_INCLUDES += -I$(topsrcdir)/widget/xremoteclient
 endif
 
+ifneq (,$(MOZ_CRASHREPORTER)$(MOZ_ENABLE_PROFILER_SPS))
+SHARED_LIBRARY_LIBS += \
+  $(DEPTH)/toolkit/crashreporter/google-breakpad/src/common/$(LIB_PREFIX)breakpad_common_s.$(LIB_SUFFIX) \
+  $(NULL)
+
+ifeq ($(OS_ARCH),Darwin)
+SHARED_LIBRARY_LIBS += \
+  $(DEPTH)/toolkit/crashreporter/google-breakpad/src/common/mac/$(LIB_PREFIX)breakpad_mac_common_s.$(LIB_SUFFIX)
+  $(NULL)
+endif
+ifeq ($(OS_ARCH),Linux)
+SHARED_LIBRARY_LIBS += \
+  $(DEPTH)/toolkit/crashreporter/google-breakpad/src/common/linux/$(LIB_PREFIX)breakpad_linux_common_s.$(LIB_SUFFIX) \
+  $(NULL)
+endif
+endif
+
+ifdef MOZ_ENABLE_PROFILER_SPS
+SHARED_LIBRARY_LIBS += \
+  $(DEPTH)/toolkit/crashreporter/google-breakpad/src/processor/$(LIB_PREFIX)breakpad_sps_common_s.$(LIB_SUFFIX) \
+  $(NULL)
+endif
+
 ifdef MOZ_CRASHREPORTER
 SHARED_LIBRARY_LIBS += $(DEPTH)/toolkit/crashreporter/$(LIB_PREFIX)exception_handler_s.$(LIB_SUFFIX)
 ifeq ($(OS_ARCH),WINNT)
@@ -139,8 +153,7 @@ SHARED_LIBRARY_LIBS += \
   $(DEPTH)/toolkit/crashreporter/google-breakpad/src/client/$(LIB_PREFIX)minidump_file_writer_s.$(LIB_SUFFIX) \
   $(DEPTH)/toolkit/crashreporter/google-breakpad/src/client/mac/crash_generation/$(LIB_PREFIX)crash_generation_s.$(LIB_SUFFIX) \
   $(DEPTH)/toolkit/crashreporter/google-breakpad/src/client/mac/handler/$(LIB_PREFIX)exception_handler_s.$(LIB_SUFFIX) \
-  $(DEPTH)/toolkit/crashreporter/google-breakpad/src/common/$(LIB_PREFIX)breakpad_common_s.$(LIB_SUFFIX) \
-  $(DEPTH)/toolkit/crashreporter/google-breakpad/src/common/mac/$(LIB_PREFIX)breakpad_mac_common_s.$(LIB_SUFFIX)
+  $(NULL)
 endif
 
 ifeq ($(OS_ARCH),Linux)
@@ -149,8 +162,6 @@ SHARED_LIBRARY_LIBS += \
   $(DEPTH)/toolkit/crashreporter/google-breakpad/src/client/linux/handler/$(LIB_PREFIX)exception_handler_s.$(LIB_SUFFIX) \
   $(DEPTH)/toolkit/crashreporter/google-breakpad/src/client/linux/minidump_writer/$(LIB_PREFIX)minidump_writer_s.$(LIB_SUFFIX) \
   $(DEPTH)/toolkit/crashreporter/google-breakpad/src/client/$(LIB_PREFIX)minidump_file_writer_s.$(LIB_SUFFIX) \
-  $(DEPTH)/toolkit/crashreporter/google-breakpad/src/common/$(LIB_PREFIX)breakpad_common_s.$(LIB_SUFFIX) \
-  $(DEPTH)/toolkit/crashreporter/google-breakpad/src/common/linux/$(LIB_PREFIX)breakpad_linux_common_s.$(LIB_SUFFIX) \
   $(NULL)
 endif
 
@@ -164,13 +175,12 @@ SHARED_LIBRARY_LIBS += \
 endif
 endif
 
-TEST_DIRS += test
-
 include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/ipc/chromium/chromium-config.mk
 include $(topsrcdir)/config/rules.mk
 
 LOCAL_INCLUDES += \
+  -I$(topsrcdir)/testing/gtest/mozilla \
   -I$(srcdir)/../profile \
   -I$(topsrcdir)/dom/ipc \
   -I$(topsrcdir)/toolkit/crashreporter \

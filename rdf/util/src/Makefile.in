@@ -14,13 +14,10 @@ include $(DEPTH)/config/autoconf.mk
 # used by frozen (dependent) linkage components. The internal-linkage code should use
 # rdfutil_s which is built in the internal/ subdirectory. 
 
-DIRS = internal
-
 include $(srcdir)/objs.mk
 
 EXTRA_DEPS += $(srcdir)/objs.mk
 
-MODULE		= rdfutil
 LIBRARY_NAME	= rdfutil_external_s
 DIST_INSTALL = 1
 

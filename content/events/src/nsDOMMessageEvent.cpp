@@ -9,18 +9,15 @@
 #include "nsDOMClassInfoID.h"
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsDOMMessageEvent, nsDOMEvent)
-  if (tmp->mDataRooted) {
-    tmp->UnrootData();
-  }
+  tmp->mData = JSVAL_VOID;
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSource)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsDOMMessageEvent, nsDOMEvent)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSource)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsDOMMessageEvent)
+NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(nsDOMMessageEvent, nsDOMEvent)
   NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mData)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
@@ -34,39 +31,23 @@ NS_INTERFACE_MAP_END_INHERITING(nsDOMEvent)
 NS_IMPL_ADDREF_INHERITED(nsDOMMessageEvent, nsDOMEvent)
 NS_IMPL_RELEASE_INHERITED(nsDOMMessageEvent, nsDOMEvent)
 
-nsDOMMessageEvent::nsDOMMessageEvent(nsPresContext* aPresContext,
+nsDOMMessageEvent::nsDOMMessageEvent(mozilla::dom::EventTarget* aOwner,
+                                     nsPresContext* aPresContext,
                                      nsEvent* aEvent)
-  : nsDOMEvent(aPresContext, aEvent),
-    mData(JSVAL_VOID),
-    mDataRooted(false)
+  : nsDOMEvent(aOwner, aPresContext, aEvent),
+    mData(JSVAL_VOID)
 {
+  SetIsDOMBinding();
 }
 
 nsDOMMessageEvent::~nsDOMMessageEvent()
 {
-  if (mDataRooted)
-    UnrootData();
-}
-
-void
-nsDOMMessageEvent::RootData()
-{
-  NS_ASSERTION(!mDataRooted, "...");
-  NS_HOLD_JS_OBJECTS(this, nsDOMMessageEvent);
-  mDataRooted = true;
-}
-
-void
-nsDOMMessageEvent::UnrootData()
-{
-  NS_ASSERTION(mDataRooted, "...");
-  mDataRooted = false;
   mData = JSVAL_VOID;
   NS_DROP_JS_OBJECTS(this, nsDOMMessageEvent);
 }
 
 NS_IMETHODIMP
-nsDOMMessageEvent::GetData(JSContext* aCx, jsval* aData)
+nsDOMMessageEvent::GetData(JSContext* aCx, JS::Value* aData)
 {
   *aData = mData;
   if (!JS_WrapValue(aCx, aData))
@@ -99,7 +80,7 @@ NS_IMETHODIMP
 nsDOMMessageEvent::InitMessageEvent(const nsAString& aType,
                                     bool aCanBubble,
                                     bool aCancelable,
-                                    const jsval& aData,
+                                    const JS::Value& aData,
                                     const nsAString& aOrigin,
                                     const nsAString& aLastEventId,
                                     nsIDOMWindow* aSource)
@@ -107,12 +88,8 @@ nsDOMMessageEvent::InitMessageEvent(const nsAString& aType,
   nsresult rv = nsDOMEvent::InitEvent(aType, aCanBubble, aCancelable);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Allowing double-initialization seems a little silly, but we have a test
-  // for it so it might be important ...
-  if (mDataRooted)
-    UnrootData();
   mData = aData;
-  RootData();
+  NS_HOLD_JS_OBJECTS(this, nsDOMMessageEvent);
   mOrigin = aOrigin;
   mLastEventId = aLastEventId;
   mSource = aSource;
@@ -122,10 +99,11 @@ nsDOMMessageEvent::InitMessageEvent(const nsAString& aType,
 
 nsresult
 NS_NewDOMMessageEvent(nsIDOMEvent** aInstancePtrResult,
+                      mozilla::dom::EventTarget* aOwner,
                       nsPresContext* aPresContext,
                       nsEvent* aEvent) 
 {
-  nsDOMMessageEvent* it = new nsDOMMessageEvent(aPresContext, aEvent);
+  nsDOMMessageEvent* it = new nsDOMMessageEvent(aOwner, aPresContext, aEvent);
 
   return CallQueryInterface(it, aInstancePtrResult);
 }

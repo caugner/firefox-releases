@@ -9,14 +9,9 @@ import org.mozilla.gecko.widget.IconTabWidget;
 
 import android.content.Context;
 import android.content.res.Resources;
-import android.content.res.TypedArray;
-import android.graphics.Color;
 import android.graphics.Rect;
-import android.graphics.drawable.ColorDrawable;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -41,6 +36,7 @@ public class TabsPanel extends LinearLayout
         public void setTabsPanel(TabsPanel panel);
         public void show();
         public void hide();
+        public boolean shouldExpand();
     }
 
     public static interface TabsLayoutChangeListener {
@@ -49,6 +45,7 @@ public class TabsPanel extends LinearLayout
 
     private Context mContext;
     private GeckoApp mActivity;
+    private TabsListContainer mTabsContainer;
     private PanelView mPanel;
     private PanelView mPanelNormal;
     private PanelView mPanelPrivate;
@@ -75,15 +72,15 @@ public class TabsPanel extends LinearLayout
         mCurrentPanel = Panel.NORMAL_TABS;
         mVisible = false;
 
-        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.TabsPanel);
-        mIsSideBar = a.getBoolean(R.styleable.TabsPanel_sidebar, false);
-        a.recycle();
+        mIsSideBar = false;
 
         LayoutInflater.from(context).inflate(R.layout.tabs_panel, this);
         initialize();
     }
 
     private void initialize() {
+        mTabsContainer = (TabsListContainer) findViewById(R.id.tabs_container);
+
         mPanelNormal = (TabsTray) findViewById(R.id.normal_tabs);
         mPanelNormal.setTabsPanel(this);
 
@@ -97,6 +94,7 @@ public class TabsPanel extends LinearLayout
 
         mAddTab = (ImageButton) findViewById(R.id.add_tab);
         mAddTab.setOnClickListener(new Button.OnClickListener() {
+            @Override
             public void onClick(View v) {
                 TabsPanel.this.addTab();
             }
@@ -131,22 +129,28 @@ public class TabsPanel extends LinearLayout
     @Override
     public void onTabChanged(int index) {
         if (index == 0)
-            show(Panel.NORMAL_TABS);
+            show(Panel.NORMAL_TABS, false);
         else if (index == 1)
-            show(Panel.PRIVATE_TABS);
+            show(Panel.PRIVATE_TABS, false);
         else
-            show(Panel.REMOTE_TABS);
+            show(Panel.REMOTE_TABS, false);
     }
 
-    private static int getTabContainerHeight(View view) {
-        Context context = view.getContext();
+    private static int getTabContainerHeight(TabsListContainer listContainer) {
+        Resources resources = listContainer.getContext().getResources();
 
-        int actionBarHeight = context.getResources().getDimensionPixelSize(R.dimen.browser_toolbar_height);
-        int screenHeight = context.getResources().getDisplayMetrics().heightPixels;
+        PanelView panelView = listContainer.getCurrentPanelView();
+        if (panelView != null && !panelView.shouldExpand()) {
+            return resources.getDimensionPixelSize(R.dimen.tabs_tray_horizontal_height);
+        }
+
+        int actionBarHeight = resources.getDimensionPixelSize(R.dimen.browser_toolbar_height);
+        int screenHeight = resources.getDisplayMetrics().heightPixels;
 
         Rect windowRect = new Rect();
-        view.getWindowVisibleDisplayFrame(windowRect);
+        listContainer.getWindowVisibleDisplayFrame(windowRect);
         int windowHeight = windowRect.bottom - windowRect.top;
+
 
         // The web content area should have at least 1.5x the height of the action bar.
         // The tabs panel shouldn't take less than 50% of the screen height and can take
@@ -169,7 +173,7 @@ public class TabsPanel extends LinearLayout
     
     @Override
     public void onLightweightThemeChanged() {
-        int background = mActivity.getResources().getColor(R.color.background_tabs_light);
+        int background = mActivity.getResources().getColor(R.color.background_tabs);
         LightweightThemeDrawable drawable = mActivity.getLightweightTheme().getColorDrawable(this, background, true);
         if (drawable == null)
             return;
@@ -180,7 +184,7 @@ public class TabsPanel extends LinearLayout
 
     @Override
     public void onLightweightThemeReset() {
-        setBackgroundColor(getContext().getResources().getColor(R.color.background_tabs_light));
+        setBackgroundColor(getContext().getResources().getColor(R.color.background_tabs));
     }
 
     @Override
@@ -196,6 +200,20 @@ public class TabsPanel extends LinearLayout
         public TabsListContainer(Context context, AttributeSet attrs) {
             super(context, attrs);
             mContext = context;
+        }
+
+        public PanelView getCurrentPanelView() {
+            final int childCount = getChildCount();
+            for (int i = 0; i < childCount; i++) {
+                View child = getChildAt(i);
+                if (!(child instanceof PanelView))
+                    continue;
+
+                if (child.getVisibility() == View.VISIBLE)
+                    return (PanelView) child;
+            }
+
+            return null;
         }
 
         @Override
@@ -238,7 +256,7 @@ public class TabsPanel extends LinearLayout
     
         @Override
         public void onLightweightThemeChanged() {
-            int background = mActivity.getResources().getColor(R.color.background_tabs_dark);
+            int background = mActivity.getResources().getColor(R.color.background_tabs);
             LightweightThemeDrawable drawable = mActivity.getLightweightTheme().getColorDrawable(this, background);
             if (drawable == null)
                 return;
@@ -249,7 +267,7 @@ public class TabsPanel extends LinearLayout
 
         @Override
         public void onLightweightThemeReset() {
-            setBackgroundColor(getContext().getResources().getColor(R.color.background_tabs_dark));
+            setBackgroundColor(getContext().getResources().getColor(R.color.background_tabs));
         }
 
         @Override
@@ -260,6 +278,13 @@ public class TabsPanel extends LinearLayout
     }
 
     public void show(Panel panel) {
+        show(panel, true);
+    }
+
+    public void show(Panel panel, boolean shouldResize) {
+        if (!isShown())
+            setVisibility(View.VISIBLE);
+
         if (mPanel != null) {
             // Hide the old panel.
             mPanel.hide();
@@ -295,13 +320,15 @@ public class TabsPanel extends LinearLayout
             mAddTab.setImageLevel(index);
         }
 
-        if (isSideBar()) {
-            if (showAnimation)
-                dispatchLayoutChange(getWidth(), getHeight());
-        } else {
-            int actionBarHeight = mContext.getResources().getDimensionPixelSize(R.dimen.browser_toolbar_height);
-            int height = actionBarHeight + getTabContainerHeight(this);
-            dispatchLayoutChange(getWidth(), height);
+        if (shouldResize) {
+            if (isSideBar()) {
+                if (showAnimation)
+                    dispatchLayoutChange(getWidth(), getHeight());
+            } else {
+                int actionBarHeight = mContext.getResources().getDimensionPixelSize(R.dimen.browser_toolbar_height);
+                int height = actionBarHeight + getTabContainerHeight(mTabsContainer);
+                dispatchLayoutChange(getWidth(), height);
+            }
         }
     }
 
@@ -338,6 +365,10 @@ public class TabsPanel extends LinearLayout
 
     public boolean isSideBar() {
         return mIsSideBar;
+    }
+
+    public void setIsSideBar(boolean isSideBar) {
+        mIsSideBar = isSideBar;
     }
 
     public Panel getCurrentPanel() {

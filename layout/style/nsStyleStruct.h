@@ -26,17 +26,13 @@
 #include "nsCOMArray.h"
 #include "nsTArray.h"
 #include "nsIAtom.h"
-#include "nsIURI.h"
 #include "nsCSSValue.h"
-#include "nsStyleTransformMatrix.h"
-#include "nsAlgorithm.h"
 #include "imgRequestProxy.h"
-#include "gfxRect.h"
 #include <algorithm>
 
 class nsIFrame;
+class nsIURI;
 class imgIContainer;
-struct nsCSSValueList;
 
 // Includes nsStyleStructID.
 #include "nsStyleStructFwd.h"
@@ -1111,19 +1107,7 @@ struct nsStylePosition {
   nsStyleCoord  mZIndex;                // [reset] integer, auto
 
   bool WidthDependsOnContainer() const
-    {
-      return mWidth.GetUnit() == eStyleUnit_Auto ||
-        WidthCoordDependsOnContainer(mWidth);
-    }
-
-  // NOTE: For a flex item, "min-width:auto" is supposed to behave like
-  // "min-content", which does depend on the container, so you might think we'd
-  // need a special case for "flex item && min-width:auto" here.  However,
-  // we don't actually need that special-case code, because flex items are
-  // explicitly supposed to *ignore* their min-width (i.e. behave like it's 0)
-  // until the flex container explicitly considers it.  So -- since the flex
-  // container doesn't rely on this method, we don't need to worry about
-  // special behavior for flex items' "min-width:auto" values here.
+    { return WidthCoordDependsOnContainer(mWidth); }
   bool MinWidthDependsOnContainer() const
     { return WidthCoordDependsOnContainer(mMinWidth); }
   bool MaxWidthDependsOnContainer() const
@@ -1136,13 +1120,7 @@ struct nsStylePosition {
   // FIXME: We should probably change the assumption to be the other way
   // around.
   bool HeightDependsOnContainer() const
-    {
-      return mHeight.GetUnit() == eStyleUnit_Auto || // CSS 2.1, 10.6.4, item (5)
-        HeightCoordDependsOnContainer(mHeight);
-    }
-
-  // NOTE: The comment above MinWidthDependsOnContainer about flex items
-  // applies here, too.
+    { return HeightCoordDependsOnContainer(mHeight); }
   bool MinHeightDependsOnContainer() const
     { return HeightCoordDependsOnContainer(mMinHeight); }
   bool MaxHeightDependsOnContainer() const
@@ -1156,7 +1134,10 @@ struct nsStylePosition {
 private:
   static bool WidthCoordDependsOnContainer(const nsStyleCoord &aCoord);
   static bool HeightCoordDependsOnContainer(const nsStyleCoord &aCoord)
-    { return aCoord.HasPercent(); }
+  {
+    return aCoord.GetUnit() == eStyleUnit_Auto || // CSS 2.1, 10.6.4, item (5)
+           aCoord.HasPercent();
+  }
 };
 
 struct nsStyleTextOverflowSide {
@@ -1340,19 +1321,22 @@ struct nsStyleText {
            mWhiteSpace == NS_STYLE_WHITESPACE_PRE_DISCARD_NEWLINES;
   }
 
-  bool WhiteSpaceCanWrap() const {
+  bool WhiteSpaceCanWrapStyle() const {
     return mWhiteSpace == NS_STYLE_WHITESPACE_NORMAL ||
            mWhiteSpace == NS_STYLE_WHITESPACE_PRE_WRAP ||
            mWhiteSpace == NS_STYLE_WHITESPACE_PRE_LINE;
   }
 
-  bool WordCanWrap() const {
-    return WhiteSpaceCanWrap() && mWordWrap == NS_STYLE_WORDWRAP_BREAK_WORD;
+  bool WordCanWrapStyle() const {
+    return WhiteSpaceCanWrapStyle() &&
+           mWordWrap == NS_STYLE_WORDWRAP_BREAK_WORD;
   }
 
   // These are defined in nsStyleStructInlines.h.
   inline bool HasTextShadow(const nsIFrame* aFrame) const;
   inline nsCSSShadowArray* GetTextShadow(const nsIFrame* aFrame) const;
+  inline bool WhiteSpaceCanWrap(const nsIFrame* aFrame) const;
+  inline bool WordCanWrap(const nsIFrame* aFrame) const;
 };
 
 struct nsStyleVisibility {
@@ -2139,6 +2123,8 @@ struct nsStyleColumn {
 
   nscolor      mColumnRuleColor;  // [reset]
   uint8_t      mColumnRuleStyle;  // [reset]
+  uint8_t      mColumnFill;  // [reset] see nsStyleConsts.h
+
   // See https://bugzilla.mozilla.org/show_bug.cgi?id=271586#c43 for why
   // this is hard to replace with 'currentColor'.
   bool mColumnRuleColorIsForeground;

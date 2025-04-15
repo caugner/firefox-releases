@@ -19,12 +19,12 @@
 #include "nsNPAPIPlugin.h"
 #include "nsNPAPIPluginStreamListener.h"
 #include "nsPluginHost.h"
-#include "nsPluginSafety.h"
 #include "nsPluginLogging.h"
 #include "nsContentUtils.h"
 #include "nsPluginInstanceOwner.h"
 
 #include "nsIDocument.h"
+#include "nsIDocShell.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptContext.h"
 #include "nsDirectoryServiceDefs.h"
@@ -82,7 +82,9 @@ static nsRefPtr<GLContext> sPluginContext = nullptr;
 static bool EnsureGLContext()
 {
   if (!sPluginContext) {
-    sPluginContext = GLContextProvider::CreateOffscreen(gfxIntSize(16, 16));
+    gfxIntSize dummySize(16, 16);
+    GLContext::SurfaceCaps dummyCaps;
+    sPluginContext = GLContextProvider::CreateOffscreen(dummySize, dummyCaps);
   }
 
   return sPluginContext != nullptr;
@@ -1413,6 +1415,25 @@ nsNPAPIPluginInstance::PrivateModeStateChanged(bool enabled)
   return (error == NPERR_NO_ERROR) ? NS_OK : NS_ERROR_FAILURE;
 }
 
+nsresult
+nsNPAPIPluginInstance::IsPrivateBrowsing(bool* aEnabled)
+{
+  if (!mOwner)
+    return NS_ERROR_FAILURE;
+
+  nsCOMPtr<nsIDocument> doc;
+  mOwner->GetDocument(getter_AddRefs(doc));
+  NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
+
+  nsCOMPtr<nsPIDOMWindow> domwindow = doc->GetWindow();
+  NS_ENSURE_TRUE(domwindow, NS_ERROR_FAILURE);
+
+  nsCOMPtr<nsIDocShell> docShell = domwindow->GetDocShell();
+  nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(docShell);
+  *aEnabled = (loadContext && loadContext->UsePrivateBrowsing());
+  return NS_OK;
+}
+
 static void
 PluginTimerCallback(nsITimer *aTimer, void *aClosure)
 {
@@ -1765,8 +1786,7 @@ nsNPAPIPluginInstance::CheckJavaC2PJSObjectQuirk(uint16_t paramCount,
     return;
   }
 
-  nsRefPtr<nsPluginHost> pluginHost =
-    already_AddRefed<nsPluginHost>(nsPluginHost::GetInst());
+  nsRefPtr<nsPluginHost> pluginHost = nsPluginHost::GetInst();
   if (!pluginHost) {
     return;
   }

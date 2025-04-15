@@ -272,7 +272,7 @@ nsXBLDocGlobalObject::EnsureScriptEnvironment()
 
   mScriptContext = newCtx;
 
-  JSContext *cx = mScriptContext->GetNativeContext();
+  AutoPushJSContext cx(mScriptContext->GetNativeContext());
   JSAutoRequest ar(cx);
 
   // nsJSEnvironment set the error reporter to NS_ScriptErrorReporter so
@@ -281,7 +281,8 @@ nsXBLDocGlobalObject::EnsureScriptEnvironment()
   JS_SetErrorReporter(cx, XBL_ProtoErrorReporter);
 
   mJSObject = JS_NewGlobalObject(cx, &gSharedGlobalClass,
-                                 nsJSPrincipals::get(GetPrincipal()));
+                                 nsJSPrincipals::get(GetPrincipal()),
+                                 JS::SystemZone);
   if (!mJSObject)
       return NS_OK;
 

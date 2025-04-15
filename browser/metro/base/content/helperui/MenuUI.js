@@ -75,6 +75,13 @@ var AutofillMenuUI = {
 var ContextMenuUI = {
   _popupState: null,
   __menuPopup: null,
+  _defaultPositionOptions: {
+    forcePosition: true,
+    bottomAligned: true,
+    rightAligned: false,
+    centerHorizontally: true,
+    moveBelowToFit: true
+  },
 
   get _panel() { return document.getElementById("context-container"); },
   get _popup() { return document.getElementById("context-popup"); },
@@ -118,14 +125,58 @@ var ContextMenuUI = {
     this._popupState.target = aMessage.target;
     let contentTypes = this._popupState.types;
 
-    let optionsAvailable = false;
-    for (let i = 0; i < this._commands.childElementCount; i++) {
-      let command = this._commands.childNodes[i];
-      command.hidden = true;
+    /*
+     * Types in ContextMenuHandler:
+     * image
+     * link
+     * input-text     - generic form input control
+     * copy           - form input that has some selected text
+     * selectable     - form input with text that can be selected
+     * input-empty    - form input (empty)
+     * paste          - form input and there's text on the clipboard
+     * selected-text  - generic content text that is selected
+     * content-text   - generic content text
+     * video
+     * media-paused, media-playing
+     * paste-url      - url bar w/text on the clipboard
+     */
 
-      let types = command.getAttribute("type").split(/\s+/);
+    Util.dumpLn("contentTypes:", contentTypes);
+
+    // Defines whether or not low priority items in images, text, and
+    // links are displayed.
+    let multipleMediaTypes = false;
+    if (contentTypes.indexOf("link") != -1 &&
+        (contentTypes.indexOf("image") != -1  ||
+         contentTypes.indexOf("video") != -1 ||
+         contentTypes.indexOf("selected-text") != -1))
+      multipleMediaTypes = true;
+
+    for (let command of Array.slice(this._commands.childNodes)) {
+      command.hidden = true;
+    }
+
+    let optionsAvailable = false;
+    for (let command of Array.slice(this._commands.childNodes)) {
+      let types = command.getAttribute("type").split(",");
+      let lowPriority = (command.hasAttribute("priority") &&
+        command.getAttribute("priority") == "low");
+      let searchTextItem = (command.id == "context-search");
+
+      // filter low priority items if we have more than one media type.
+      if (multipleMediaTypes && lowPriority)
+        continue;
+
       for (let i = 0; i < types.length; i++) {
+        // If one of the item's types has '!' before it, treat it as an exclusion rule. 
+        if (types[i].charAt(0) == '!' && contentTypes.indexOf(types[i].substring(1)) != -1) {
+          break;
+        }
         if (contentTypes.indexOf(types[i]) != -1) {
+          // If this is the special search text item, we need to set its label dynamically.
+          if (searchTextItem && !ContextCommands.searchTextSetup(command, this._popupState.string)) {
+            break;
+          }
           optionsAvailable = true;
           command.hidden = false;
           break;
@@ -138,14 +189,11 @@ var ContextMenuUI = {
       return false;
     }
 
-
-    this._menuPopup.show(this._popupState);
-
-    let event = document.createEvent("Events");
-    event.initEvent("CancelTouchSequence", true, false);
-    if (this._popupState.target) {
-      this._popupState.target.dispatchEvent(event);
-    }
+    this._menuPopup.show(Util.extend({}, this._defaultPositionOptions, {
+      xPos: aMessage.json.xPos,
+      yPos: aMessage.json.yPos,
+      source: aMessage.json.source
+    }));
     return true;
   },
 
@@ -295,6 +343,7 @@ MenuPopup.prototype = {
 
     window.addEventListener("keypress", this, true);
     window.addEventListener("mousedown", this, true);
+    Elements.stack.addEventListener("PopupChanged", this, false);
 
     this._panel.hidden = false;
     this._position(aPositionOptions || {});
@@ -303,6 +352,10 @@ MenuPopup.prototype = {
     this._panel.addEventListener("transitionend", function () {
       self._panel.removeEventListener("transitionend", arguments.callee);
       self._panel.removeAttribute("showingfrom");
+
+      let event = document.createEvent("Events");
+      event.initEvent("popupshown", true, false);
+      document.dispatchEvent(event);
     });
 
     let popupFrom = (aPositionOptions.forcePosition && !aPositionOptions.bottomAligned) ? "above" : "below";
@@ -320,12 +373,16 @@ MenuPopup.prototype = {
 
     window.removeEventListener("keypress", this, true);
     window.removeEventListener("mousedown", this, true);
+    Elements.stack.removeEventListener("PopupChanged", this, false);
 
     let self = this;
     this._panel.addEventListener("transitionend", function () {
       self._panel.removeEventListener("transitionend", arguments.callee);
       self._panel.hidden = true;
       self._popupState = null;
+      let event = document.createEvent("Events");
+      event.initEvent("popuphidden", true, false);
+      document.dispatchEvent(event);
     });
 
     this._panel.removeAttribute("showing");
@@ -335,9 +392,6 @@ MenuPopup.prototype = {
     let aX = aPositionOptions.xPos;
     let aY = aPositionOptions.yPos;
     let aSource = aPositionOptions.source;
-    let forcePosition = aPositionOptions.forcePosition || false;
-    let isRightAligned = aPositionOptions.rightAligned || false;
-    let isBottomAligned = aPositionOptions.bottomAligned || false;
 
     let width = this._popup.boxObject.width;
     let height = this._popup.boxObject.height;
@@ -346,12 +400,15 @@ MenuPopup.prototype = {
     let screenWidth = ContentAreaObserver.width;
     let screenHeight = ContentAreaObserver.height;
 
-    if (forcePosition) {
-      if (isRightAligned)
+    if (aPositionOptions.forcePosition) {
+      if (aPositionOptions.rightAligned)
         aX -= width;
 
-      if (isBottomAligned)
+      if (aPositionOptions.bottomAligned)
         aY -= height;
+
+      if (aPositionOptions.centerHorizontally)
+        aX -= halfWidth;
     } else {
       let leftHand = MetroUtils.handPreference == MetroUtils.handPreferenceLeft;
 
@@ -399,11 +456,18 @@ MenuPopup.prototype = {
       }
     }
 
-    if (aX < 0)
+    if (aX < 0) {
       aX = 0;
+    } else if (aX + width + kPositionPadding > screenWidth){
+      aX = screenWidth - width - kPositionPadding;
+    }
 
-    if (aY < 0)
+    if (aY < 0 && aPositionOptions.moveBelowToFit) {
+      // show context menu below when it doesn't fit.
+      aY = aPositionOptions.yPos;
+    } else if (aY < 0) {
       aY = 0;
+    }
 
     this._panel.left = aX;
     this._panel.top = aY;
@@ -429,6 +493,11 @@ MenuPopup.prototype = {
       case "mousedown":
         if (!this._popup.contains(aEvent.target)) {
           aEvent.stopPropagation();
+          this.hide();
+        }
+        break;
+      case "PopupChanged":
+        if (aEvent.detail) {
           this.hide();
         }
         break;

@@ -13,11 +13,14 @@
 #include "nsIClassInfo.h"
 #include "nsIXPCScriptable.h"
 
-nsDOMScrollAreaEvent::nsDOMScrollAreaEvent(nsPresContext *aPresContext,
+nsDOMScrollAreaEvent::nsDOMScrollAreaEvent(mozilla::dom::EventTarget* aOwner,
+                                           nsPresContext *aPresContext,
                                            nsScrollAreaEvent *aEvent)
-  : nsDOMUIEvent(aPresContext, aEvent)
+  : nsDOMUIEvent(aOwner, aPresContext, aEvent)
+  , mClientArea(nullptr)
 {
   mClientArea.SetLayoutRect(aEvent ? aEvent->mArea : nsRect());
+  SetIsDOMBinding();
 }
 
 nsDOMScrollAreaEvent::~nsDOMScrollAreaEvent()
@@ -41,29 +44,18 @@ NS_INTERFACE_MAP_BEGIN(nsDOMScrollAreaEvent)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMUIEvent)
 
 
-NS_IMETHODIMP
-nsDOMScrollAreaEvent::GetX(float *aX)
-{
-  return mClientArea.GetLeft(aX);
-}
+#define FORWARD_GETTER(_name)                                                   \
+  NS_IMETHODIMP                                                                 \
+  nsDOMScrollAreaEvent::Get ## _name(float* aResult)                            \
+  {                                                                             \
+    *aResult = _name();                                                         \
+    return NS_OK;                                                               \
+  }
 
-NS_IMETHODIMP
-nsDOMScrollAreaEvent::GetY(float *aY)
-{
-  return mClientArea.GetTop(aY);
-}
-
-NS_IMETHODIMP
-nsDOMScrollAreaEvent::GetWidth(float *aWidth)
-{
-  return mClientArea.GetWidth(aWidth);
-}
-
-NS_IMETHODIMP
-nsDOMScrollAreaEvent::GetHeight(float *aHeight)
-{
-  return mClientArea.GetHeight(aHeight);
-}
+FORWARD_GETTER(X)
+FORWARD_GETTER(Y)
+FORWARD_GETTER(Width)
+FORWARD_GETTER(Height)
 
 NS_IMETHODIMP
 nsDOMScrollAreaEvent::InitScrollAreaEvent(const nsAString &aEventType,
@@ -92,15 +84,10 @@ nsDOMScrollAreaEvent::Serialize(IPC::Message* aMsg,
 
   nsDOMEvent::Serialize(aMsg, false);
 
-  float val;
-  mClientArea.GetLeft(&val);
-  IPC::WriteParam(aMsg, val);
-  mClientArea.GetTop(&val);
-  IPC::WriteParam(aMsg, val);
-  mClientArea.GetWidth(&val);
-  IPC::WriteParam(aMsg, val);
-  mClientArea.GetHeight(&val);
-  IPC::WriteParam(aMsg, val);
+  IPC::WriteParam(aMsg, X());
+  IPC::WriteParam(aMsg, Y());
+  IPC::WriteParam(aMsg, Width());
+  IPC::WriteParam(aMsg, Height());
 }
 
 NS_IMETHODIMP_(bool)
@@ -120,9 +107,11 @@ nsDOMScrollAreaEvent::Deserialize(const IPC::Message* aMsg, void** aIter)
 
 nsresult
 NS_NewDOMScrollAreaEvent(nsIDOMEvent **aInstancePtrResult,
+                         mozilla::dom::EventTarget* aOwner,
                          nsPresContext *aPresContext,
                          nsScrollAreaEvent *aEvent)
 {
-  nsDOMScrollAreaEvent *ev = new nsDOMScrollAreaEvent(aPresContext, aEvent);
+  nsDOMScrollAreaEvent* ev =
+    new nsDOMScrollAreaEvent(aOwner, aPresContext, aEvent);
   return CallQueryInterface(ev, aInstancePtrResult);
 }

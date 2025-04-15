@@ -125,6 +125,7 @@ public:
     PAINTING,
     EVENT_DELIVERY,
     PLUGIN_GEOMETRY,
+    IMAGE_VISIBILITY,
     OTHER
   };
   nsDisplayListBuilder(nsIFrame* aReferenceFrame, Mode aMode, bool aBuildCaret);
@@ -158,6 +159,11 @@ public:
    * @return true if the display list is being built for painting.
    */
   bool IsForPainting() { return mMode == PAINTING; }
+  /**
+   * @return true if the display list is being built for determining image
+   * visibility.
+   */
+  bool IsForImageVisibility() { return mMode == IMAGE_VISIBILITY; }
   bool WillComputePluginGeometry() { return mWillComputePluginGeometry; }
   /**
    * @return true if "painting is suppressed" during page load and we
@@ -857,6 +863,28 @@ public:
   }
 
   /**
+   * An alternative default implementation of ComputeInvalidationRegion,
+   * that instead invalidates only the changed area between the two items.
+   */
+  void ComputeInvalidationRegionDifference(nsDisplayListBuilder* aBuilder,
+                                           const nsDisplayItemBoundsGeometry* aGeometry,
+                                           nsRegion* aInvalidRegion)
+  {
+    bool snap;
+    nsRect bounds = GetBounds(aBuilder, &snap);
+
+    if (!aGeometry->mBounds.IsEqualInterior(bounds)) {
+      nscoord radii[8];
+      if (aGeometry->mHasRoundedCorners ||
+          GetUnderlyingFrame()->GetBorderRadii(radii)) {
+        aInvalidRegion->Or(aGeometry->mBounds, bounds);
+      } else {
+        aInvalidRegion->Xor(aGeometry->mBounds, bounds);
+      }
+    }
+  }
+
+  /**
    * Called when the area rendered by this display item has changed (been
    * invalidated or changed geometry) since the last paint. This includes
    * when the display item was not rendered at all in the last paint.
@@ -938,6 +966,12 @@ public:
                                    LayerManager* aManager,
                                    const ContainerParameters& aParameters)
   { return mozilla::LAYER_NONE; }
+  /**
+   * Return true to indicate the layer should be constructed even if it's
+   * completely invisible.
+   */
+  virtual bool ShouldBuildLayerEvenIfInvisible(nsDisplayListBuilder* aBuilder)
+  { return false; }
   /**
    * Actually paint this item to some rendering context.
    * Content outside mVisibleRect need not be painted.
@@ -1809,6 +1843,19 @@ public:
 
   virtual void Paint(nsDisplayListBuilder* aBuilder, nsRenderingContext* aCtx) MOZ_OVERRIDE;
 
+  virtual nsDisplayItemGeometry* AllocateGeometry(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE
+  {
+    return new nsDisplayItemBoundsGeometry(this, aBuilder);
+  }
+
+  virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
+                                         const nsDisplayItemGeometry* aGeometry,
+                                         nsRegion* aInvalidRegion)
+  {
+    const nsDisplayItemBoundsGeometry* geometry = static_cast<const nsDisplayItemBoundsGeometry*>(aGeometry);
+    ComputeInvalidationRegionDifference(aBuilder, geometry, aInvalidRegion);
+  }
+
   NS_DISPLAY_DECL_NAME("SolidColor", TYPE_SOLID_COLOR)
 
 private:
@@ -1957,6 +2004,19 @@ public:
   {
     *aSnap = true;
     return nsRect(ToReferenceFrame(), GetUnderlyingFrame()->GetSize());
+  }
+
+  virtual nsDisplayItemGeometry* AllocateGeometry(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE
+  {
+    return new nsDisplayItemBoundsGeometry(this, aBuilder);
+  }
+
+  virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
+                                         const nsDisplayItemGeometry* aGeometry,
+                                         nsRegion* aInvalidRegion)
+  {
+    const nsDisplayItemBoundsGeometry* geometry = static_cast<const nsDisplayItemBoundsGeometry*>(aGeometry);
+    ComputeInvalidationRegionDifference(aBuilder, geometry, aInvalidRegion);
   }
 
   NS_DISPLAY_DECL_NAME("BackgroundColor", TYPE_BACKGROUND_COLOR)
@@ -2479,7 +2539,8 @@ public:
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
                                    LayerManager* aManager,
                                    const ContainerParameters& aParameters) MOZ_OVERRIDE;
-
+  virtual bool ShouldBuildLayerEvenIfInvisible(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE
+  { return true; }
   virtual bool TryMerge(nsDisplayListBuilder* aBuilder,
                           nsDisplayItem* aItem) MOZ_OVERRIDE;
 
@@ -2735,6 +2796,7 @@ public:
   virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
                                              LayerManager* aManager,
                                              const ContainerParameters& aContainerParameters) MOZ_OVERRIDE;
+  virtual bool ShouldBuildLayerEvenIfInvisible(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE;
   virtual bool ComputeVisibility(nsDisplayListBuilder *aBuilder,
                                    nsRegion *aVisibleRegion,
                                    const nsRect& aAllowVisibleRegionExpansion) MOZ_OVERRIDE;

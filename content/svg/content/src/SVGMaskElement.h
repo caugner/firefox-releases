@@ -22,8 +22,7 @@ namespace dom {
 
 typedef nsSVGElement SVGMaskElementBase;
 
-class SVGMaskElement MOZ_FINAL : public SVGMaskElementBase,
-                                 public nsIDOMSVGElement
+class SVGMaskElement MOZ_FINAL : public SVGMaskElementBase
 {
   friend class ::nsSVGMaskFrame;
 
@@ -31,21 +30,12 @@ protected:
   friend nsresult (::NS_NewSVGMaskElement(nsIContent **aResult,
                                           already_AddRefed<nsINodeInfo> aNodeInfo));
   SVGMaskElement(already_AddRefed<nsINodeInfo> aNodeInfo);
-  virtual JSObject* WrapNode(JSContext *cx, JSObject *scope, bool *triedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext *cx, JSObject *scope) MOZ_OVERRIDE;
 
 public:
-  // interfaces:
-  NS_DECL_ISUPPORTS_INHERITED
-
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-  NS_FORWARD_NSIDOMSVGELEMENT(nsSVGElement::)
-
   // nsIContent interface
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const;
-
-  virtual nsIDOMNode* AsDOMNode() { return this; }
 
   // nsSVGSVGElement methods:
   virtual bool HasValidDimensions() const;

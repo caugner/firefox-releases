@@ -302,7 +302,7 @@ CSPRep.fromString = function(aStr, self, docRequest, csp) {
     // parse "allow" as equivalent to "default-src", at least until the spec
     // stabilizes, at which time we can stop parsing "allow"
     if (dirname === CSPRep.ALLOW_DIRECTIVE) {
-      cspWarn(aCSPR, CSPLocalizer.getStr("allowDirectiveDeprecated"));
+      cspWarn(aCSPR, CSPLocalizer.getStr("allowDirectiveIsDeprecated"));
       if (aCSPR._directives.hasOwnProperty(SD.DEFAULT_SRC)) {
         // Check for duplicate default-src and allow directives
         cspError(aCSPR, CSPLocalizer.getFormatStr("duplicateDirective",
@@ -1909,7 +1909,14 @@ CSPViolationReportListener.prototype = {
   function(request, context) { },
 
   onDataAvailable:
-  function(request, context, inputStream, offset, count) { },
+  function(request, context, inputStream, offset, count) {
+    // We MUST read equal to count from the inputStream to avoid an assertion.
+    var input = Components.classes['@mozilla.org/scriptableinputstream;1']
+                .createInstance(Ci.nsIScriptableInputStream);
+
+    input.init(inputStream);
+    input.read(count);
+  },
 
 };
 

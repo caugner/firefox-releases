@@ -114,6 +114,8 @@ using namespace mozilla::system;
 #include "BluetoothService.h"
 #endif
 
+#include "Crypto.h"
+
 static NS_DEFINE_CID(kCClipboardCID, NS_CLIPBOARD_CID);
 static const char* sClipboardTextFlavors[] = { kUnicodeMime };
 
@@ -123,8 +125,9 @@ using namespace mozilla::dom::bluetooth;
 using namespace mozilla::dom::devicestorage;
 using namespace mozilla::dom::indexedDB;
 using namespace mozilla::dom::power;
-using namespace mozilla::dom::sms;
+using namespace mozilla::dom::mobilemessage;
 using namespace mozilla::hal;
+using namespace mozilla::idl;
 using namespace mozilla::ipc;
 using namespace mozilla::layers;
 using namespace mozilla::net;
@@ -407,10 +410,7 @@ PrivilegesForApp(mozIApplication* aApp)
     const SpecialPermission specialPermissions[] = {
         // FIXME/bug 785592: implement a CameraBridge so we don't have
         // to hack around with OS permissions
-        { "camera", base::PRIVILEGES_CAMERA },
-        // FIXME/bug 793034: change our video architecture so that we
-        // can stream video from remote processes
-        { "deprecated-hwvideo", base::PRIVILEGES_VIDEO }
+        { "camera", base::PRIVILEGES_CAMERA }
     };
     for (size_t i = 0; i < ArrayLength(specialPermissions); ++i) {
         const char* const permission = specialPermissions[i].perm;
@@ -1505,7 +1505,8 @@ ContentParent::Observe(nsISupports* aSubject,
     }
     // listening for alert notifications
     else if (!strcmp(aTopic, "alertfinished") ||
-             !strcmp(aTopic, "alertclickcallback") ) {
+             !strcmp(aTopic, "alertclickcallback") ||
+             !strcmp(aTopic, "alertshow") ) {
         if (!SendNotifyAlertsObserver(nsDependentCString(aTopic),
                                       nsDependentString(aData)))
             return NS_ERROR_NOT_AVAILABLE;
@@ -2167,6 +2168,22 @@ ContentParent::RecvShowFilePicker(const int16_t& mode,
 }
 
 bool
+ContentParent::RecvGetRandomValues(const uint32_t& length,
+                                   InfallibleTArray<uint8_t>* randomValues)
+{
+    uint8_t* buf = Crypto::GetRandomValues(length);
+
+    randomValues->SetCapacity(length);
+    randomValues->SetLength(length);
+
+    memcpy(randomValues->Elements(), buf, length);
+
+    NS_Free(buf);
+
+    return true;
+}
+
+bool
 ContentParent::RecvLoadURIExternal(const URIParams& uri)
 {
     nsCOMPtr<nsIExternalProtocolService> extProtService(do_GetService(NS_EXTERNALPROTOCOLSERVICE_CONTRACTID));
@@ -2223,7 +2240,8 @@ ContentParent::AfterProcessNextEvent(nsIThreadInternal *thread,
 bool
 ContentParent::RecvShowAlertNotification(const nsString& aImageUrl, const nsString& aTitle,
                                          const nsString& aText, const bool& aTextClickable,
-                                         const nsString& aCookie, const nsString& aName)
+                                         const nsString& aCookie, const nsString& aName,
+                                         const nsString& aBidi, const nsString& aLang)
 {
     if (!AssertAppProcessPermission(this, "desktop-notification")) {
         return false;
@@ -2231,8 +2249,39 @@ ContentParent::RecvShowAlertNotification(const nsString& aImageUrl, const nsStri
     nsCOMPtr<nsIAlertsService> sysAlerts(do_GetService(NS_ALERTSERVICE_CONTRACTID));
     if (sysAlerts) {
         sysAlerts->ShowAlertNotification(aImageUrl, aTitle, aText, aTextClickable,
-                                         aCookie, this, aName);
+                                         aCookie, this, aName, aBidi, aLang);
     }
+
+    return true;
+}
+
+bool
+ContentParent::RecvCloseAlert(const nsString& aName)
+{
+    if (!AssertAppProcessPermission(this, "desktop-notification")) {
+        return false;
+    }
+    nsCOMPtr<nsIAlertsService> sysAlerts(do_GetService(NS_ALERTSERVICE_CONTRACTID));
+    if (sysAlerts) {
+        sysAlerts->CloseAlert(aName);
+    }
+
+    return true;
+}
+
+bool
+ContentParent::RecvTestPermissionFromPrincipal(const IPC::Principal& aPrincipal,
+                                               const nsCString& aType,
+                                               uint32_t* permission)
+{
+    nsCOMPtr<nsIPermissionManager> permissionManager =
+        do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
+    NS_ENSURE_TRUE(permissionManager, false);
+
+    nsresult rv = permissionManager->TestPermissionFromPrincipal(aPrincipal,
+                                                                 aType.get(),
+                                                                 permission);
+    NS_ENSURE_SUCCESS(rv, false);
 
     return true;
 }
@@ -2283,8 +2332,24 @@ ContentParent::RecvFilePathUpdateNotify(const nsString& aType, const nsString& a
     return true;
 }
 
+static int32_t
+AddGeolocationListener(nsIDOMGeoPositionCallback* watcher, bool highAccuracy)
+{
+  nsCOMPtr<nsIGeolocation> geo = do_GetService("@mozilla.org/geolocation;1");
+  if (!geo) {
+    return -1;
+  }
+
+  GeoPositionOptions* options = new GeoPositionOptions();
+  options->enableHighAccuracy = highAccuracy;
+  int32_t retval = 1;
+  geo->WatchPosition(watcher, nullptr, options, &retval);
+  return retval;
+}
+
 bool
-ContentParent::RecvAddGeolocationListener(const IPC::Principal& aPrincipal)
+ContentParent::RecvAddGeolocationListener(const IPC::Principal& aPrincipal,
+                                          const bool& aHighAccuracy)
 {
 #ifdef MOZ_PERMISSIONS
   if (Preferences::GetBool("geo.testing.ignore_ipc_principal", false) == false) {
@@ -2336,17 +2401,7 @@ ContentParent::RecvAddGeolocationListener(const IPC::Principal& aPrincipal)
   // To ensure no geolocation updates are skipped, we always force the
   // creation of a new listener.
   RecvRemoveGeolocationListener();
-
-  nsCOMPtr<nsIDOMGeoGeolocation> geo = do_GetService("@mozilla.org/geolocation;1");
-  if (!geo) {
-    return true;
-  }
-
-  nsRefPtr<nsGeolocation> geosvc = static_cast<nsGeolocation*>(geo.get());
-  nsAutoPtr<mozilla::idl::GeoPositionOptions> options(new mozilla::idl::GeoPositionOptions());
-  jsval null = JS::NullValue();
-  options->Init(nullptr, &null);
-  geosvc->WatchPosition(this, nullptr, options.forget(), &mGeolocationWatchID);
+  mGeolocationWatchID = AddGeolocationListener(this, aHighAccuracy);
   return true;
 }
 
@@ -2367,10 +2422,13 @@ ContentParent::RecvRemoveGeolocationListener()
 bool
 ContentParent::RecvSetGeolocationHigherAccuracy(const bool& aEnable)
 {
-    nsRefPtr<nsGeolocationService> geoSvc =
-        nsGeolocationService::GetGeolocationService();
-    geoSvc->SetHigherAccuracy(aEnable);
-    return true;
+  // This should never be called without a listener already present,
+  // so this check allows us to forgo securing privileges.
+  if (mGeolocationWatchID != -1) {
+    RecvRemoveGeolocationListener();
+    mGeolocationWatchID = AddGeolocationListener(this, aEnable);
+  }
+  return true;
 }
 
 NS_IMETHODIMP

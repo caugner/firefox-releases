@@ -38,7 +38,7 @@
 #include "PluginHangUIParent.h"
 #include "mozilla/widget/AudioSession.h"
 #endif
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 using base::KillProcess;
 
@@ -116,7 +116,7 @@ PluginModuleParent::PluginModuleParent(const char* aFilePath)
     , mGetSitesWithDataSupported(false)
     , mNPNIface(NULL)
     , mPlugin(NULL)
-    , mTaskFactory(this)
+    , ALLOW_THIS_IN_INITIALIZER_LIST(mTaskFactory(this))
 #ifdef XP_WIN
     , mPluginCpuUsageOnHang()
     , mHangUIParent(nullptr)
@@ -194,7 +194,7 @@ PluginModuleParent::WriteExtraDataForMinidump(AnnotationTable& notes)
     nsCString pluginName;
     nsCString pluginVersion;
 
-    nsRefPtr<nsPluginHost> ph = already_AddRefed<nsPluginHost>(nsPluginHost::GetInst());
+    nsRefPtr<nsPluginHost> ph = nsPluginHost::GetInst();
     if (ph) {
         nsPluginTag* tag = ph->TagForPlugin(mPlugin);
         if (tag) {
@@ -457,15 +457,18 @@ PluginModuleParent::TerminateChildProcess(MessageLoop* aMsgLoop)
     // collect cpu usage for plugin processes
 
     InfallibleTArray<base::ProcessHandle> processHandles;
-    base::ProcessHandle handle;
 
     processHandles.AppendElement(OtherProcess());
+
 #ifdef MOZ_CRASHREPORTER_INJECTOR
-    if (mFlashProcess1 && base::OpenProcessHandle(mFlashProcess1, &handle)) {
-      processHandles.AppendElement(handle);
-    }
-    if (mFlashProcess2 && base::OpenProcessHandle(mFlashProcess2, &handle)) {
-      processHandles.AppendElement(handle);
+    {
+      base::ProcessHandle handle;
+      if (mFlashProcess1 && base::OpenProcessHandle(mFlashProcess1, &handle)) {
+        processHandles.AppendElement(handle);
+      }
+      if (mFlashProcess2 && base::OpenProcessHandle(mFlashProcess2, &handle)) {
+        processHandles.AppendElement(handle);
+      }
     }
 #endif
 
@@ -533,8 +536,7 @@ PluginModuleParent::EvaluateHangUIState(const bool aReset)
 bool
 PluginModuleParent::GetPluginName(nsAString& aPluginName)
 {
-    nsRefPtr<nsPluginHost> host = 
-        dont_AddRef<nsPluginHost>(nsPluginHost::GetInst());
+    nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst();
     if (!host) {
         return false;
     }
@@ -858,7 +860,7 @@ PluginModuleParent::NPP_NewStream(NPP instance, NPMIMEType type,
                                   NPStream* stream, NPBool seekable,
                                   uint16_t* stype)
 {
-    SAMPLE_LABEL("PluginModuleParent", "NPP_NewStream");
+    PROFILER_LABEL("PluginModuleParent", "NPP_NewStream");
     PluginInstanceParent* i = InstCast(instance);
     if (!i)
         return NPERR_GENERIC_ERROR;

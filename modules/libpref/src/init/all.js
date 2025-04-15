@@ -180,7 +180,11 @@ pref("media.gstreamer.enabled", true);
 #endif
 #ifdef MOZ_WEBRTC
 pref("media.navigator.enabled", true);
-pref("media.peerconnection.enabled", false);
+pref("media.navigator.video.default_width",640);
+pref("media.navigator.video.default_height",480);
+pref("media.navigator.video.default_fps",30);
+pref("media.navigator.video.default_minfps",10);
+pref("media.peerconnection.enabled", true);
 pref("media.navigator.permission.disabled", false);
 pref("media.peerconnection.default_iceservers", "[{\"url\": \"stun:23.21.150.121\"}]");
 pref("media.peerconnection.use_document_iceservers", true);
@@ -197,6 +201,10 @@ pref("media.peerconnection.noise", 1);
 #ifdef ANDROID
 pref("media.navigator.enabled", true);
 #endif
+#endif
+
+#ifdef MOZ_WEBSPEECH
+pref("media.webspeech.recognition.enable", false);
 #endif
 
 // Whether to enable Web Audio support
@@ -232,9 +240,7 @@ pref("gfx.filter.nearest.force-enabled", false);
 // whether to always search all font cmaps during system font fallback
 pref("gfx.font_rendering.fallback.always_use_cmaps", false);
 
-#ifdef MOZ_GRAPHITE
-pref("gfx.font_rendering.graphite.enabled", false);
-#endif
+pref("gfx.font_rendering.graphite.enabled", true);
 
 // Check intl/unicharutil/util/nsUnicodeProperties.h for definitions of script bits
 // in the ShapingType enumeration
@@ -325,6 +331,16 @@ pref("accessibility.tabfocus_applies_to_xul", true);
 // further checks.
 pref("accessibility.force_disabled", 0);
 
+#ifdef XP_WIN
+// Some accessibility tools poke at windows in the plugin process during setup
+// which can cause hangs.  To hack around this set accessibility.delay_plugins
+// to true, you can also try increasing accessibility.delay_plugin_time if your
+// machine is slow and you still experience hangs.
+// See bug 781791.
+pref("accessibility.delay_plugins", false);
+pref("accessibility.delay_plugin_time", 10000);
+#endif
+
 pref("focusmanager.testmode", false);
 
 pref("accessibility.usetexttospeech", "");
@@ -376,7 +392,7 @@ pref("toolkit.telemetry.server", "https://data.mozilla.com");
 // Telemetry server owner. Please change if you set toolkit.telemetry.server to a different server
 pref("toolkit.telemetry.server_owner", "Mozilla");
 // Information page about telemetry (temporary ; will be about:telemetry in the end)
-pref("toolkit.telemetry.infoURL", "http://www.mozilla.com/legal/privacy/firefox.html#telemetry");
+pref("toolkit.telemetry.infoURL", "https://www.mozilla.org/legal/privacy/firefox.html#telemetry");
 // Determines whether full SQL strings are returned when they might contain sensitive info
 // i.e. dynamically constructed SQL strings or SQL executed by addons against addon DBs
 pref("toolkit.telemetry.debugSlowSql", false);
@@ -404,6 +420,9 @@ pref("view_source.editor.path", "");
 // allows to add further arguments to the editor; use the %LINE% placeholder
 // for jumping to a specific line (e.g. "/line:%LINE%" or "--goto %LINE%")
 pref("view_source.editor.args", "");
+
+// When true this will word-wrap plain text documents.
+pref("plain_text.wrap_long_lines", false);
 
 // dispatch left clicks only to content in browser (still allows clicks to chrome/xul)
 pref("nglayout.events.dispatchLeftClickOnly", true);
@@ -707,12 +726,11 @@ pref("dom.min_timeout_value", 4);
 // And for background windows
 pref("dom.min_background_timeout_value", 1000);
 
-// Use the new DOM bindings (only affects any scopes created after the pref is
-// changed)
-pref("dom.experimental_bindings", true);
-
 // Run content XBL in a separate scope.
 pref("dom.xbl_scopes", true);
+
+// Stop defining the Components object in content.
+pref("dom.omit_components_in_content", true);
 
 // Don't use new input types
 pref("dom.experimental_forms", false);
@@ -751,6 +769,7 @@ pref("javascript.options.strict.debug",     true);
 pref("javascript.options.methodjit.content", true);
 pref("javascript.options.methodjit.chrome",  true);
 pref("javascript.options.ion.content",      true);
+pref("javascript.options.asmjs",            true);
 pref("javascript.options.ion.parallel_compilation", true);
 pref("javascript.options.pccounts.content", false);
 pref("javascript.options.pccounts.chrome",  false);
@@ -782,6 +801,8 @@ pref("javascript.options.mem.gc_dynamic_mark_slice", true);
 pref("javascript.options.mem.gc_allocation_threshold_mb", 30);
 
 pref("javascript.options.mem.analysis_purge_mb", 100);
+
+pref("javascript.options.showInConsole", false);
 
 // advanced prefs
 pref("advanced.mailftp",                    false);
@@ -1043,21 +1064,27 @@ pref("dom.server-events.default-reconnection-time", 5000); // in milliseconds
 // by the jar channel.
 pref("network.jar.open-unsafe-types", false);
 
-// This preference controls whether or not internationalized domain names (IDN)
-// are handled.  IDN requires a nsIIDNService implementation.
-pref("network.enableIDN", true);
-
 // This preference, if true, causes all UTF-8 domain names to be normalized to
 // punycode.  The intention is to allow UTF-8 domain names as input, but never
 // generate them from punycode.
 pref("network.IDN_show_punycode", false);
 
-// TLDs with "network.IDN.whitelist.tld" explicitly set to true are treated as 
+// If "network.IDN.use_whitelist" is set to true, TLDs with
+// "network.IDN.whitelist.tld" explicitly set to true are treated as
 // IDN-safe. Otherwise, they're treated as unsafe and punycode will be used
-// for displaying them in the UI (e.g. URL bar). Note that these preferences
-// are referred to ONLY when "network.IDN_show_punycode" is false. In other
-// words, all IDNs will be shown in punycode if "network.IDN_show_punycode"
-// is true.
+// for displaying them in the UI (e.g. URL bar), unless they conform to one of
+// the profiles specified in
+// http://www.unicode.org/reports/tr36/proposed.html#Security_Levels_and_Alerts
+// If "network.IDN.restriction_profile" is "high", the Highly Restrictive
+// profile is used.
+// If "network.IDN.restriction_profile" is "moderate", the Moderately
+// Restrictive profile is used.
+// In all other cases, the ASCII-Only profile is used.
+// Note that these preferences are referred to ONLY when
+// "network.IDN_show_punycode" is false. In other words, all IDNs will be shown
+// in punycode if "network.IDN_show_punycode" is true.
+pref("network.IDN.restriction_profile", "moderate");
+pref("network.IDN.use_whitelist", true);
 
 // ccTLDs
 pref("network.IDN.whitelist.ac", true);
@@ -1147,11 +1174,8 @@ pref("network.IDN.whitelist.xn--kprw13d", true);  // Simplified
 pref("network.IDN.whitelist.asia", true);
 pref("network.IDN.whitelist.biz", true);
 pref("network.IDN.whitelist.cat", true);
-pref("network.IDN.whitelist.com", true);
 pref("network.IDN.whitelist.info", true);
 pref("network.IDN.whitelist.museum", true);
-pref("network.IDN.whitelist.name", true);
-pref("network.IDN.whitelist.net", true);
 pref("network.IDN.whitelist.org", true);
 pref("network.IDN.whitelist.tel", true);
 
@@ -1288,7 +1312,13 @@ pref("network.proxy.socks_remote_dns",      false);
 pref("network.proxy.no_proxies_on",         "localhost, 127.0.0.1");
 pref("network.proxy.failover_timeout",      1800); // 30 minutes
 pref("network.online",                      true); //online/offline
-pref("network.cookie.cookieBehavior",       0); // 0-Accept, 1-dontAcceptForeign, 2-dontUse
+pref("network.cookie.cookieBehavior",       0); // 0-Accept, 1-dontAcceptForeign, 2-dontUse, 3-limitForeign
+#ifdef ANDROID
+pref("network.cookie.cookieBehavior",       0); // Keep the old default of accepting all cookies
+#endif
+#ifdef MOZ_WIDGET_GONK
+pref("network.cookie.cookieBehavior",       0); // Keep the old default of accepting all cookies
+#endif
 pref("network.cookie.thirdparty.sessionOnly", false);
 pref("network.cookie.lifetimePolicy",       0); // accept normally, 1-askBeforeAccepting, 2-acceptForSession,3-acceptForNDays
 pref("network.cookie.alwaysAcceptSessionCookies", false);
@@ -1411,7 +1441,7 @@ pref("security.checkloaduri", true);
 pref("security.xpconnect.plugin.unrestricted", true);
 // security-sensitive dialogs should delay button enabling. In milliseconds.
 pref("security.dialog_enable_delay", 2000);
-pref("security.notification_enable_delay", 0);
+pref("security.notification_enable_delay", 500);
 
 pref("security.csp.enable", true);
 pref("security.csp.debug", false);
@@ -1678,18 +1708,10 @@ pref("layout.css.masking.enabled", true);
 #endif
 
 // Is support for the the @supports rule enabled?
-#ifdef RELEASE_BUILD
-pref("layout.css.supports-rule.enabled", false);
-#else
 pref("layout.css.supports-rule.enabled", true);
-#endif
 
 // Is support for CSS Flexbox enabled?
-#ifdef RELEASE_BUILD
-pref("layout.css.flexbox.enabled", false);
-#else
 pref("layout.css.flexbox.enabled", true);
-#endif
 
 // Are sets of prefixed properties supported?
 pref("layout.css.prefixes.border-image", true);
@@ -2457,10 +2479,6 @@ pref("ui.window_class_override", "");
 // and 1 is on.  Set this to 1 if three-finger swipe gestures do not cause
 // page back/forward actions, or if pinch-to-zoom does not work.
 pref("ui.elantech_gesture_hacks.enabled", -1);
-
-// Disable auto-configuration of devPixelsPerPx until we're ready to turn
-// it on.
-pref("layout.css.devPixelsPerPx", "1.0");
 
 # WINNT
 #endif
@@ -3828,6 +3846,10 @@ pref("image.high_quality_downscaling.enabled", true);
 // interpreted as a floating-point number / 1000.
 pref("image.high_quality_downscaling.min_factor", 1000);
 
+// The maximum memory size which we'll use high-quality uspcaling on,
+// interpreted as number of decoded bytes.
+pref("image.high_quality_upscaling.max_size", 20971520);
+
 //
 // Image memory management prefs
 //
@@ -3859,14 +3881,25 @@ pref("image.mem.max_ms_before_yield", 5);
 // might keep around more than this, but we'll try to get down to this value).
 pref("image.mem.max_decoded_image_kb", 51200);
 
+// Whether we decode images on multiple background threads rather than the
+// foreground thread.
+pref("image.multithreaded_decoding.enabled", true);
+
+// How many threads we'll use for multithreaded decoding. If < 0, will be
+// automatically determined based on the system's number of cores.
+pref("image.multithreaded_decoding.limit", -1);
+
+// Try to discard images in the current tab that not visible.
+pref("layout.imagevisibility.enabled", false);
+
 // WebGL prefs
+pref("gl.msaa-level", 2);
 pref("webgl.force-enabled", false);
 pref("webgl.disabled", false);
 pref("webgl.shader_validator", true);
 pref("webgl.prefer-native-gl", false);
 pref("webgl.min_capability_mode", false);
 pref("webgl.disable-extensions", false);
-pref("webgl.msaa-level", 2);
 pref("webgl.msaa-force", false);
 pref("webgl.prefer-16bpp", false);
 pref("webgl.default-no-alpha", false);
@@ -3973,13 +4006,16 @@ pref("network.buffer.cache.size",  32768);
 // Desktop Notification
 pref("notification.feature.enabled", false);
 
+// Web Notification
+pref("dom.webnotifications.enabled", true);
+
 // Alert animation effect, name is disableSlidingEffect for backwards-compat.
 pref("alerts.disableSlidingEffect", false);
 
 // DOM full-screen API.
 pref("full-screen-api.enabled", false);
 pref("full-screen-api.allow-trusted-requests-only", true);
-pref("full-screen-api.exit-on-deactivate", true);
+pref("full-screen-api.content-only", false);
 pref("full-screen-api.pointer-lock.enabled", true);
 
 // DOM idle observers API
@@ -4106,6 +4142,14 @@ pref("dom.placeholder.show_on_focus", true);
 // UAProfile settings
 pref("wap.UAProf.url", "");
 pref("wap.UAProf.tagname", "x-wap-profile");
+
+//Retrieval mode for MMS
+//manual: Manual retrieval mode.
+//automatic: Automatic retrieval mode.
+//never: Never retrieval mode.
+pref("dom.mms.retrieval_mode", "manual");
+pref("dom.mms.retrievalRetryCount", 3);
+pref("dom.mms.retrievalRetryInterval", 300000);
 
 // If the user puts a finger down on an element and we think the user
 // might be executing a pan gesture, how long do we wait before

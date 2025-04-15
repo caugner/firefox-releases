@@ -4,11 +4,8 @@
 
 import ConfigParser
 import os
-import re
 import sys
 import tempfile
-import time
-import urllib
 import traceback
 
 # We need to know our current directory so that we can serve our test files from it.
@@ -21,13 +18,7 @@ from runreftest import RefTest
 from runreftest import ReftestOptions
 from remotereftest import ReftestServer
 
-from mozprofile import Profile
-from mozrunner import Runner
-
-import devicemanager
-import devicemanagerADB
-import manifestparser
-
+from mozdevice import DeviceManagerADB, DMError
 from marionette import Marionette
 
 
@@ -245,7 +236,7 @@ class B2GReftest(RefTest):
             try:
                 self._devicemanager._checkCmdAs(['shell', 'rm', '-rf',
                                                  os.path.join(self.bundlesDir, filename)])
-            except devicemanager.DMError:
+            except DMError:
                 pass
 
         # Restore the original profiles.ini.
@@ -264,10 +255,7 @@ class B2GReftest(RefTest):
 
             # Restore the original user.js.
             self._devicemanager._checkCmdAs(['shell', 'rm', '-f', self.userJS])
-            if self._devicemanager._useDDCopy:
-                self._devicemanager._checkCmdAs(['shell', 'dd', 'if=%s.orig' % self.userJS, 'of=%s' % self.userJS])
-            else:
-                self._devicemanager._checkCmdAs(['shell', 'cp', '%s.orig' % self.userJS, self.userJS])
+            self._devicemanager._checkCmdAs(['shell', 'dd', 'if=%s.orig' % self.userJS, 'of=%s' % self.userJS])
 
             # We've restored the original profile, so reboot the device so that
             # it gets picked up.
@@ -366,7 +354,7 @@ class B2GReftest(RefTest):
     def restoreProfilesIni(self):
         # restore profiles.ini on the device to its previous state
         if not self.originalProfilesIni or not os.access(self.originalProfilesIni, os.F_OK):
-            raise devicemanager.DMError('Unable to install original profiles.ini; file not found: %s',
+            raise DMError('Unable to install original profiles.ini; file not found: %s',
                           self.originalProfilesIni)
 
         self._devicemanager.pushFile(self.originalProfilesIni, self.remoteProfilesIniPath)
@@ -434,7 +422,7 @@ user_pref("capability.principal.codebase.p2.id", "http://%s:%s");
         self._devicemanager.removeDir(self.remoteProfile)
         try:
             self._devicemanager.pushDir(profileDir, self.remoteProfile)
-        except devicemanager.DMError:
+        except DMError:
             print "Automation Error: Unable to copy profile to device."
             raise
 
@@ -447,17 +435,14 @@ user_pref("capability.principal.codebase.p2.id", "http://%s:%s");
                                              os.path.join(self.bundlesDir, filename)])
         try:
             self._devicemanager.pushDir(extensionDir, self.bundlesDir)
-        except devicemanager.DMError:
+        except DMError:
             print "Automation Error: Unable to copy extensions to device."
             raise
 
         # In B2G, user.js is always read from /data/local, not the profile
         # directory.  Backup the original user.js first so we can restore it.
         self._devicemanager._checkCmdAs(['shell', 'rm', '-f', '%s.orig' % self.userJS])
-        if self._devicemanager._useDDCopy:
-            self._devicemanager._checkCmdAs(['shell', 'dd', 'if=%s' % self.userJS, 'of=%s.orig' % self.userJS])
-        else:
-            self._devicemanager._checkCmdAs(['shell', 'cp', self.userJS, '%s.orig' % self.userJS])
+        self._devicemanager._checkCmdAs(['shell', 'dd', 'if=%s' % self.userJS, 'of=%s.orig' % self.userJS])
         self._devicemanager.pushFile(os.path.join(profileDir, "user.js"), self.userJS)
 
         self.updateProfilesIni(self.remoteProfile)
@@ -469,7 +454,7 @@ user_pref("capability.principal.codebase.p2.id", "http://%s:%s");
         RefTest.copyExtraFilesToProfile(self, options, profileDir)
         try:
             self._devicemanager.pushDir(profileDir, options.remoteProfile)
-        except devicemanager.DMError:
+        except DMError:
             print "Automation Error: Failed to copy extra files to device"
             raise
 
@@ -495,6 +480,8 @@ def main(args=sys.argv[1:]):
             kwargs['logcat_dir'] = options.logcat_dir
         if options.busybox:
             kwargs['busybox'] = options.busybox
+        if options.symbolsPath:
+            kwargs['symbols_path'] = options.symbolsPath
     if options.emulator_res:
         kwargs['emulator_res'] = options.emulator_res
     if options.b2gPath:
@@ -512,7 +499,7 @@ def main(args=sys.argv[1:]):
     if options.deviceIP:
         kwargs.update({'host': options.deviceIP,
                        'port': options.devicePort})
-    dm = devicemanagerADB.DeviceManagerADB(**kwargs)
+    dm = DeviceManagerADB(**kwargs)
     auto.setDeviceManager(dm)
 
     options = parser.verifyRemoteOptions(options)

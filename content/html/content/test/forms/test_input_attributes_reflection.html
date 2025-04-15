@@ -109,7 +109,16 @@ reflectUnsignedInt({
 
 // .indeterminate doesn't reflect a content attribute.
 
-// TODO: .inputMode
+// .inputmode
+if (SpecialPowers.getBoolPref("dom.forms.inputmode")) {
+reflectLimitedEnumerated({
+  element: document.createElement("input"),
+  attribute: "inputMode",
+  validValues: [ "numeric", "digit", "uppercase", "lowercase", "titlecase", "autocapitalized", "auto" ],
+  invalidValues: [ "", "foo", "tulip" ],
+  defaultValue: "auto"
+});
+}
 
 // TODO: list (HTMLElement)
 
@@ -197,7 +206,7 @@ reflectLimitedEnumerated({
   attribute: "type",
   validValues: [ "hidden", "text", "search", "tel", "url", "email", "password",
                  "checkbox", "radio", "file", "submit", "image", "reset",
-                 "button", "date", "time", "number", "range" ],
+                 "button", "date", "time", "number" ], // "range" is disabled on branch
   invalidValues: [ "this-is-probably-a-wrong-type", "", "tulip" ],
   defaultValue: "text",
   unsupportedValues: [ "datetime", "month", "week", "datetime-local",

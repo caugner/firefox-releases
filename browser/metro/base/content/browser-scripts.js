@@ -25,6 +25,15 @@ XPCOMUtils.defineLazyModuleGetter(this, "PdfJs",
 XPCOMUtils.defineLazyModuleGetter(this, "DownloadUtils",
                                   "resource://gre/modules/DownloadUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "NewTabUtils",
+                                  "resource://gre/modules/NewTabUtils.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "Promise",
+                                  "resource://gre/modules/commonjs/sdk/core/promise.js");
+
+XPCOMUtils.defineLazyModuleGetter(this, "Task",
+                                  "resource://gre/modules/Task.jsm");
+
 /*
  * Services
  */
@@ -79,25 +88,21 @@ XPCOMUtils.defineLazyServiceGetter(this, "CrashReporter",
  * so it is not possible to set a lazy getter for Geometry.jsm.
  */
 Cu.import("resource://gre/modules/Geometry.jsm");
-
 /*
  * Browser scripts
  */
+let ScriptContexts = {};
 [
   ["WebProgress", "chrome://browser/content/WebProgress.js"],
   ["FindHelperUI", "chrome://browser/content/helperui/FindHelperUI.js"],
   ["FormHelperUI", "chrome://browser/content/helperui/FormHelperUI.js"],
   ["BrowserTouchHandler", "chrome://browser/content/BrowserTouchHandler.js"],
   ["AlertsHelper", "chrome://browser/content/helperui/AlertsHelper.js"],
-  ["CapturePickerUI", "chrome://browser/content/helperui/CapturePickerUI.js"],
-  ["CharsetMenu", "chrome://browser/content/helperui/CharsetMenu.js"],
   ["AutofillMenuUI", "chrome://browser/content/helperui/MenuUI.js"],
   ["ContextMenuUI", "chrome://browser/content/helperui/MenuUI.js"],
   ["MenuControlUI", "chrome://browser/content/helperui/MenuUI.js"],
   ["MenuPopup", "chrome://browser/content/helperui/MenuUI.js"],
-  ["IdentityUI", "chrome://browser/content/helperui/IdentityUI.js"],
   ["IndexedDB", "chrome://browser/content/helperui/IndexedDB.js"],
-  ["MasterPasswordUI", "chrome://browser/content/helperui/MasterPasswordUI.js"],
   ["OfflineApps", "chrome://browser/content/helperui/OfflineApps.js"],
   ["SelectHelperUI", "chrome://browser/content/helperui/SelectHelperUI.js"],
   ["SelectionHelperUI", "chrome://browser/content/helperui/SelectionHelperUI.js"],
@@ -117,12 +122,13 @@ Cu.import("resource://gre/modules/Geometry.jsm");
   ["HistoryView", "chrome://browser/content/history.js"],
   ["HistoryStartView", "chrome://browser/content/history.js"],
   ["HistoryPanelView", "chrome://browser/content/history.js"],
+  ["Site", "chrome://browser/content/Site.js"],
+  ["TopSites", "chrome://browser/content/TopSites.js"],
   ["TopSitesView", "chrome://browser/content/TopSites.js"],
   ["TopSitesSnappedView", "chrome://browser/content/TopSites.js"],
   ["TopSitesStartView", "chrome://browser/content/TopSites.js"],
-  ["InputSourceHelper", "chrome://browser/content/input.js"],
-  ["PageActions", "chrome://browser/content/PageActions.js"],
   ["Sanitizer", "chrome://browser/content/sanitize.js"],
+  ["SanitizeUI", "chrome://browser/content/sanitizeUI.js"],
   ["SSLExceptions", "chrome://browser/content/exceptions.js"],
 #ifdef MOZ_SERVICES_SYNC
   ["WeaveGlue", "chrome://browser/content/sync.js"],
@@ -134,12 +140,16 @@ Cu.import("resource://gre/modules/Geometry.jsm");
 ].forEach(function (aScript) {
   let [name, script] = aScript;
   XPCOMUtils.defineLazyGetter(window, name, function() {
-    let sandbox = {};
-    Services.scriptloader.loadSubScript(script, sandbox);
+    let sandbox;
+    if (script in ScriptContexts) {
+      sandbox = ScriptContexts[script];
+    } else {
+      sandbox = ScriptContexts[script] = {};
+      Services.scriptloader.loadSubScript(script, sandbox);
+    }
     return sandbox[name];
   });
 });
-
 #ifdef MOZ_SERVICES_SYNC
 XPCOMUtils.defineLazyGetter(this, "Weave", function() {
   Components.utils.import("resource://services-sync/main.js");

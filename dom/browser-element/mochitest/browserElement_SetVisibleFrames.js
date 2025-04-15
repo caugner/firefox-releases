@@ -11,20 +11,19 @@
 "use strict";
 
 SimpleTest.waitForExplicitFinish();
+browserElementTestHelpers.setEnabledPref(true);
+browserElementTestHelpers.addPermission();
 
 var iframe;
 
 function runTest() {
-  browserElementTestHelpers.setEnabledPref(true);
-  browserElementTestHelpers.addPermission();
-
   var principal = SpecialPowers.wrap(SpecialPowers.getNodePrincipal(document));
   SpecialPowers.addPermission("browser", true, { url: SpecialPowers.wrap(principal.URI).spec,
                                                  appId: principal.appId,
                                                  isInBrowserElement: true });
 
   iframe = document.createElement('iframe');
-  iframe.mozbrowser = true;
+  SpecialPowers.wrap(iframe).mozbrowser = true;
 
   // Our test involves three <iframe mozbrowser>'s, parent, child1, and child2.
   // child1 and child2 are contained inside parent.  child1 is visibile, and
@@ -99,4 +98,4 @@ function checkMessage(e) {
   }
 }
 
-runTest();
+addEventListener('testready', runTest);

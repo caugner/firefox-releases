@@ -5,7 +5,6 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.gfx.Layer;
-import org.mozilla.gecko.gfx.Layer.RenderContext;
 import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.util.EventDispatcher;
 import org.mozilla.gecko.util.FloatUtils;
@@ -69,8 +68,10 @@ class TextSelection extends Layer implements GeckoEventListener {
         }
     }
 
+    @Override
     public void handleMessage(final String event, final JSONObject message) {
         mActivity.runOnUiThread(new Runnable() {
+            @Override
             public void run() {
                 try {
                     if (event.equals("TextSelection:ShowHandles")) {
@@ -88,16 +89,14 @@ class TextSelection extends Layer implements GeckoEventListener {
                             layerView.addLayer(TextSelection.this);
                         }
                     } else if (event.equals("TextSelection:HideHandles")) {
-                        final JSONArray handles = message.getJSONArray("handles");
                         LayerView layerView = mActivity.getLayerView();
                         if (layerView != null) {
                             layerView.removeLayer(TextSelection.this);
                         }
 
-                        for (int i=0; i < handles.length(); i++) {
-                            String handle = handles.getString(i);
-                            getHandle(handle).setVisibility(View.GONE);
-                        }
+                        mStartHandle.setVisibility(View.GONE);
+                        mMiddleHandle.setVisibility(View.GONE);
+                        mEndHandle.setVisibility(View.GONE);
                     } else if (event.equals("TextSelection:PositionHandles")) {
                         final boolean rtl = message.getBoolean("rtl");
                         final JSONArray positions = message.getJSONArray("positions");
@@ -133,6 +132,7 @@ class TextSelection extends Layer implements GeckoEventListener {
         mViewZoom = context.zoomFactor;
 
         mActivity.runOnUiThread(new Runnable() {
+            @Override
             public void run() {
                 mStartHandle.repositionWithViewport(context.viewport.left, context.viewport.top, context.zoomFactor);
                 mMiddleHandle.repositionWithViewport(context.viewport.left, context.viewport.top, context.zoomFactor);

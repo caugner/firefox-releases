@@ -83,7 +83,7 @@ GlobalPCList.prototype = {
         this._list[winID].forEach(function(pcref) {
           let pc = pcref.get();
           if (pc !== null) {
-            pc._pc.close(false);
+            pc._pc.close();
             delete pc._observer;
             pc._pc = null;
           }
@@ -92,8 +92,10 @@ GlobalPCList.prototype = {
       }
     } else if (topic == "profile-change-net-teardown" ||
                topic == "network:offline-about-to-go-offline") {
-      // Delete all peerconnections on shutdown - synchronously (we need
-      // them to be done deleting transports before we return)!
+      // Delete all peerconnections on shutdown - mostly synchronously (we
+      // need them to be done deleting transports and streams before we
+      // return)!  All socket operations must be queued to STS thread
+      // before we return to here.
       // Also kill them if "Work Offline" is selected - more can be created
       // while offline, but attempts to connect them should fail.
       let array;
@@ -101,7 +103,7 @@ GlobalPCList.prototype = {
         array.forEach(function(pcref) {
           let pc = pcref.get();
           if (pc !== null) {
-            pc._pc.close(true);
+            pc._pc.close();
             delete pc._observer;
             pc._pc = null;
           }
@@ -143,7 +145,7 @@ IceCandidate.prototype = {
 
   constructor: function(win, candidateInitDict) {
     if (this._win) {
-      throw new Error("Constructor already called");
+      throw new Components.Exception("Constructor already called");
     }
     this._win = win;
     if (candidateInitDict !== undefined) {
@@ -178,7 +180,7 @@ SessionDescription.prototype = {
 
   constructor: function(win, descriptionInitDict) {
     if (this._win) {
-      throw new Error("Constructor already called");
+      throw new Components.Exception("Constructor already called");
     }
     this._win = win;
     if (descriptionInitDict !== undefined) {
@@ -250,10 +252,10 @@ PeerConnection.prototype = {
   // Constructor is an explicit function, because of nsIDOMGlobalObjectConstructor.
   constructor: function(win, rtcConfig) {
     if (!Services.prefs.getBoolPref("media.peerconnection.enabled")) {
-      throw new Error("PeerConnection not enabled (did you set the pref?)");
+      throw new Components.Exception("PeerConnection not enabled (did you set the pref?)");
     }
     if (this._win) {
-      throw new Error("RTCPeerConnection constructor already called");
+      throw new Components.Exception("RTCPeerConnection constructor already called");
     }
     if (!rtcConfig ||
         !Services.prefs.getBoolPref("media.peerconnection.use_document_iceservers")) {
@@ -263,12 +265,18 @@ PeerConnection.prototype = {
     this._mustValidateRTCConfiguration(rtcConfig,
         "RTCPeerConnection constructor passed invalid RTCConfiguration");
     if (_globalPCList._networkdown) {
-      throw new Error("Can't create RTCPeerConnections when the network is down");
+      throw new Components.Exception("Can't create RTCPeerConnections when the network is down");
     }
 
     this._pc = Cc["@mozilla.org/peerconnection;1"].
              createInstance(Ci.IPeerConnection);
     this._observer = new PeerConnectionObserver(this);
+    this._win = win;
+    this._winID = this._win.QueryInterface(Ci.nsIInterfaceRequestor)
+                           .getInterface(Ci.nsIDOMWindowUtils).currentInnerWindowID;
+
+    // Add a reference to the PeerConnection to global list (before init).
+    _globalPCList.addPC(this);
 
     // Nothing starts until ICE gathering completes.
     this._queueOrRun({
@@ -276,13 +284,6 @@ PeerConnection.prototype = {
       args: [this._observer, win, rtcConfig, Services.tm.currentThread],
       wait: true
     });
-
-    this._win = win;
-    this._winID = this._win.QueryInterface(Ci.nsIInterfaceRequestor)
-                           .getInterface(Ci.nsIDOMWindowUtils).currentInnerWindowID;
-
-    // Add a reference to the PeerConnection to global list.
-    _globalPCList.addPC(this);
   },
 
   /**
@@ -344,23 +345,26 @@ PeerConnection.prototype = {
       try {
         return ios.newURI(uriStr, null, null);
       } catch (e if (e.result == Cr.NS_ERROR_MALFORMED_URI)) {
-        throw new Error(errorMsg + " - malformed URI: " + uriStr);
+        throw new Components.Exception(errorMsg + " - malformed URI: " + uriStr,
+                                       Cr.NS_ERROR_MALFORMED_URI);
       }
     }
     function mustValidateServer(server) {
       let url = nicerNewURI(server.url, errorMsg);
       if (!(url.scheme in { stun:1, stuns:1, turn:1, turns:1 })) {
-        throw new Error (errorMsg + " - improper scheme: " + url.scheme);
+        throw new Components.Exception(errorMsg + " - improper scheme: " + url.scheme,
+                                       Cr.NS_ERROR_MALFORMED_URI);
       }
       if (server.credential && isObject(server.credential)) {
-        throw new Error (errorMsg + " - invalid credential");
+        throw new Components.Exception(errorMsg + " - invalid credential");
       }
     }
     if (!isObject(rtcConfig)) {
-      throw new Error (errorMsg);
+      throw new Components.Exception(errorMsg);
     }
     if (!isArraylike(rtcConfig.iceServers)) {
-      throw new Error (errorMsg + " - iceServers [] property not present");
+      throw new Components.Exception(errorMsg +
+                                     " - iceServers [] property not present");
     }
     let len = rtcConfig.iceServers.length;
     for (let i=0; i < len; i++) {
@@ -400,40 +404,42 @@ PeerConnection.prototype = {
     // Parse-aid: Testing for pilot error of missing outer block avoids
     // otherwise silent no-op since both mandatory and optional are optional
     if (!isObject(constraints) || Array.isArray(constraints)) {
-      throw new Error(errorMsg);
+      throw new Components.Exception(errorMsg);
     }
     if (constraints.mandatory) {
       // Testing for pilot error of using [] on mandatory here throws nicer msg
       // (arrays would throw in loop below regardless but with more cryptic msg)
       if (!isObject(constraints.mandatory) || Array.isArray(constraints.mandatory)) {
-        throw new Error(errorMsg + " - malformed mandatory constraints");
+        throw new Components.Exception(errorMsg + " - malformed mandatory constraints");
       }
       for (let constraint in constraints.mandatory) {
         if (!(constraint in SUPPORTED_CONSTRAINTS) &&
             constraints.mandatory.hasOwnProperty(constraint)) {
-          throw new Error (errorMsg + " - " +
-                           ((constraint in OTHER_KNOWN_CONSTRAINTS)?
-                            "unsupported" : "unknown") +
-                           " mandatory constraint: " + constraint);
+          throw new Components.Exception(errorMsg + " - " +
+                                         ((constraint in OTHER_KNOWN_CONSTRAINTS)?
+                                          "unsupported" : "unknown") +
+                                         " mandatory constraint: " + constraint);
         }
       }
     }
     if (constraints.optional) {
       if (!isArraylike(constraints.optional)) {
-        throw new Error(errorMsg + " - malformed optional constraint array");
+        throw new Components.Exception(errorMsg +
+                                       " - malformed optional constraint array");
       }
       let len = constraints.optional.length;
       for (let i = 0; i < len; i += 1) {
         if (!isObject(constraints.optional[i])) {
-          throw new Error(errorMsg + " - malformed optional constraint: " +
-                          constraints.optional[i]);
+          throw new Components.Exception(errorMsg +
+                                         " - malformed optional constraint: " +
+                                         constraints.optional[i]);
         }
         let constraints_per_entry = 0;
         for (let constraint in constraints.optional[i]) {
           if (constraints.optional[i].hasOwnProperty(constraint)) {
             if (constraints_per_entry) {
-              throw new Error (errorMsg +
-                               " - optional constraint must be single key/value pair");
+              throw new Components.Exception(errorMsg +
+                  " - optional constraint must be single key/value pair");
             }
             constraints_per_entry += 1;
           }
@@ -448,7 +454,7 @@ PeerConnection.prototype = {
   // spec. See Bug 831756.
   _checkClosed: function() {
     if (this._closed) {
-      throw new Error ("Peer connection is closed");
+      throw new Components.Exception("Peer connection is closed");
     }
   },
 
@@ -473,26 +479,16 @@ PeerConnection.prototype = {
     this._onCreateAnswerFailure = onError;
 
     if (!this.remoteDescription) {
-      this._observer.onCreateAnswerError(3); // PC_INVALID_REMOTE_SDP
-      /*
-        This needs to be matched to spec -- see bug 834270. The final
-        code will be of the form:
 
-      this._observer.onCreateAnswerError(ci.IPeerConnection.kInvalidState,
+      this._observer.onCreateAnswerError(Ci.IPeerConnection.kInvalidState,
                                          "setRemoteDescription not called");
-      */
       return;
     }
 
     if (this.remoteDescription.type != "offer") {
-      this._observer.onCreateAnswerError(3); // PC_INVALID_REMOTE_SDP
-      /*
-        This needs to be matched to spec -- see bug 834270. The final
-        code will be of the form:
 
-      this._observer.onCreateAnswerError(ci.IPeerConnection.kInvalidState,
+      this._observer.onCreateAnswerError(Ci.IPeerConnection.kInvalidState,
                                          "No outstanding offer");
-      */
       return;
     }
 
@@ -535,9 +531,8 @@ PeerConnection.prototype = {
         type = Ci.IPeerConnection.kActionAnswer;
         break;
       default:
-        throw new Error(
-          "Invalid type " + desc.type + " provided to setLocalDescription"
-        );
+        throw new Components.Exception("Invalid type " + desc.type +
+                                       " provided to setLocalDescription");
         break;
     }
 
@@ -565,9 +560,8 @@ PeerConnection.prototype = {
         type = Ci.IPeerConnection.kActionAnswer;
         break;
       default:
-        throw new Error(
-          "Invalid type " + desc.type + " provided to setRemoteDescription"
-        );
+        throw new Components.Exception("Invalid type " + desc.type +
+                                       " provided to setRemoteDescription");
         break;
     }
 
@@ -585,11 +579,11 @@ PeerConnection.prototype = {
 
   addIceCandidate: function(cand, onSuccess, onError) {
     if (!cand) {
-      throw new Error ("NULL candidate passed to addIceCandidate!");
+      throw new Components.Exception("NULL candidate passed to addIceCandidate!");
     }
 
     if (!cand.candidate || !cand.sdpMLineIndex) {
-      throw new Error ("Invalid candidate passed to addIceCandidate!");
+      throw new Components.Exception("Invalid candidate passed to addIceCandidate!");
     }
 
     this._onAddIceCandidateSuccess = onSuccess;
@@ -612,11 +606,8 @@ PeerConnection.prototype = {
   },
 
   removeStream: function(stream) {
-    this._queueOrRun({
-      func: this._pc.removeStream,
-      args: [stream],
-      wait: false
-    });
+     //Bug844295: Not implemeting this functionality.
+     return Cr.NS_ERROR_NOT_IMPLEMENTED;
   },
 
   close: function() {
@@ -662,12 +653,62 @@ PeerConnection.prototype = {
     };
   },
 
+  get readyState() {
+    // checking for our local pc closed indication
+    // before invoking the pc methods.
+    if(this._closed) {
+      return "closed";
+    }
+
+    var state="undefined";
+    switch (this._pc.readyState) {
+      case Ci.IPeerConnection.kNew:
+        state = "new";
+        break;
+      case Ci.IPeerConnection.kNegotiating:
+        state = "negotiating";
+        break;
+      case Ci.IPeerConnection.kActive:
+        state = "active";
+        break;
+      case Ci.IPeerConnection.kClosing:
+        state = "closing";
+        break;
+      case Ci.IPeerConnection.kClosed:
+        state = "closed";
+        break;
+    }
+    return state;
+  },
+
   createDataChannel: function(label, dict) {
     this._checkClosed();
-    if (dict &&
-        dict.maxRetransmitTime != undefined &&
+    if (dict == undefined) {
+	dict = {};
+    }
+    // can't throw warnings easily; mozilla 24+ will warn
+    if (dict.maxRetransmitNum != undefined) {
+      dict.maxRetransmits = dict.maxRetransmitNum;
+    }
+    if (dict.outOfOrderAllowed != undefined) {
+      dict.ordered = !dict.outOfOrderAllowed; // the meaning is swapped with the name change
+    }
+    if (dict.preset != undefined) {
+      dict.negotiated = dict.preset;
+    }
+    if (dict.stream != undefined) {
+      dict.id = dict.stream;
+    }
+
+    if (dict.maxRetransmitTime != undefined &&
         dict.maxRetransmitNum != undefined) {
-      throw new Error("Both maxRetransmitTime and maxRetransmitNum cannot be provided");
+      throw new Components.Exception("Both maxRetransmitTime and maxRetransmitNum cannot be provided");
+    }
+    let protocol;
+    if (dict.protocol == undefined) {
+      protocol = "";
+    } else {
+      protocol = dict.protocol;
     }
 
     // Must determine the type where we still know if entries are undefined.
@@ -681,11 +722,10 @@ PeerConnection.prototype = {
     }
 
     // Synchronous since it doesn't block.
-    // TODO -- this may need to be revisited, based on how the
-    // spec ends up defining data channel handling
     let channel = this._pc.createDataChannel(
-      label, type, dict.outOfOrderAllowed, dict.maxRetransmitTime,
-      dict.maxRetransmitNum
+      label, protocol, type, dict.outOfOrderAllowed, dict.maxRetransmitTime,
+      dict.maxRetransmitNum, dict.preset ? true : false,
+      dict.stream != undefined ? dict.stream : 0xFFFF
     );
     return channel;
   },
@@ -702,6 +742,27 @@ PeerConnection.prototype = {
   }
 };
 
+function RTCError(code, message) {
+  this.name = this.reasonName[Math.min(code, this.reasonName.length - 1)];
+  this.message = (typeof message === "string")? message : this.name;
+  this.__exposedProps__ = { name: "rw", message: "rw" };
+}
+RTCError.prototype = {
+  // These strings must match those defined in the WebRTC spec.
+  reasonName: [
+    "NO_ERROR", // Should never happen -- only used for testing
+    "INVALID_CONSTRAINTS_TYPE",
+    "INVALID_CANDIDATE_TYPE",
+    "INVALID_MEDIASTREAM_TRACK",
+    "INVALID_STATE",
+    "INVALID_SESSION_DESCRIPTION",
+    "INCOMPATIBLE_SESSION_DESCRIPTION",
+    "INCOMPATIBLE_CONSTRAINTS",
+    "INCOMPATIBLE_MEDIASTREAMTRACK",
+    "INTERNAL_ERROR"
+  ]
+};
+
 // This is a separate object because we don't want to expose it to DOM.
 function PeerConnectionObserver(dompc) {
   this._dompc = dompc;
@@ -710,101 +771,151 @@ PeerConnectionObserver.prototype = {
   QueryInterface: XPCOMUtils.generateQI([Ci.IPeerConnectionObserver,
                                          Ci.nsISupportsWeakReference]),
 
-  onCreateOfferSuccess: function(offer) {
-    if (this._dompc._onCreateOfferSuccess) {
+  callCB: function(callback, arg) {
+    if (callback) {
       try {
-        this._dompc._onCreateOfferSuccess.onCallback({
-          type: "offer", sdp: offer,
-          __exposedProps__: { type: "rw", sdp: "rw" }
-        });
-      } catch(e) {}
+        callback.onCallback(arg);
+      } catch(e) {
+        // A content script (user-provided) callback threw an error. We don't
+        // want this to take down peerconnection, but we still want the user
+        // to see it, so we catch it, report it, and move on.
+        //
+        // We do stack parsing in two different places for different reasons:
+
+        var msg;
+        if (e.result == Cr.NS_ERROR_XPC_JS_THREW_JS_OBJECT) {
+          // TODO(jib@mozilla.com): Revisit once bug 862153 is fixed.
+          //
+          // The actual content script frame is unavailable due to bug 862153,
+          // so users see file and line # into this file, which is not helpful.
+          //
+          // 1) Fix up the error message itself to differentiate between the
+          //    22 places we call callCB() in this file, using plain JS stack.
+          //
+          // Tweak the existing NS_ERROR_XPC_JS_THREW_JS_OBJECT message:
+          // -'Error: x' when calling method: [RTCPeerConCallback::onCallback]
+          // +'Error: x' when calling method: [RTCPeerConCallback::onCreateOfferError]
+
+          let caller = Error().stack.split("\n")[1].split("@")[0];
+          // caller ~= "PeerConnectionObserver.prototype.onCreateOfferError"
+
+          msg = e.message.replace("::onCallback", "::" + caller.split(".")[2]);
+        } else {
+          msg = e.message;
+        }
+
+        // Log error message to web console and window.onerror, if present.
+        //
+        // 2) nsIScriptError doesn't understand the nsIStackFrame format, so
+        //    do the translation by extracting file and line from XPCOM stack:
+        //
+        // e.location ~= "JS frame :: file://.js :: RTCPCCb::onCallback :: line 1"
+
+        let stack = e.location.toString().split(" :: ");
+        let file = stack[1];
+        let line = parseInt(stack[3].split(" ")[1]);
+
+        let scriptErrorClass = Cc["@mozilla.org/scripterror;1"];
+        let scriptError = scriptErrorClass.createInstance(Ci.nsIScriptError);
+        scriptError.initWithWindowID(msg, file, null, line, 0,
+                                     Ci.nsIScriptError.exceptionFlag,
+                                     "content javascript",
+                                     this._dompc._winID);
+        let console = Cc["@mozilla.org/consoleservice;1"].
+            getService(Ci.nsIConsoleService);
+        console.logMessage(scriptError);
+
+        // Safely call onerror directly if present (necessary for testing)
+        try {
+          if (typeof this._dompc._win.onerror === "function") {
+            this._dompc._win.onerror(msg, file, line);
+          }
+        } catch(e) {
+          // If onerror itself throws, service it.
+          try {
+            let scriptError = scriptErrorClass.createInstance(Ci.nsIScriptError);
+            scriptError.initWithWindowID(e.message, e.fileName, null,
+                                         e.lineNumber, 0,
+                                         Ci.nsIScriptError.exceptionFlag,
+                                         "content javascript",
+                                         this._dompc._winID);
+            console.logMessage(scriptError);
+          } catch(e) {}
+        }
+      }
     }
+  },
+
+  onCreateOfferSuccess: function(offer) {
+    this.callCB(this._dompc._onCreateOfferSuccess,
+                { type: "offer", sdp: offer,
+                __exposedProps__: { type: "rw", sdp: "rw" } });
     this._dompc._executeNext();
   },
 
-  onCreateOfferError: function(code) {
-    if (this._dompc._onCreateOfferFailure) {
-      try {
-        this._dompc._onCreateOfferFailure.onCallback(code);
-      } catch(e) {}
-    }
+  onCreateOfferError: function(code, message) {
+    this.callCB(this._dompc._onCreateOfferFailure, new RTCError(code, message));
     this._dompc._executeNext();
   },
 
   onCreateAnswerSuccess: function(answer) {
-    if (this._dompc._onCreateAnswerSuccess) {
-      try {
-        this._dompc._onCreateAnswerSuccess.onCallback({
-          type: "answer", sdp: answer,
-          __exposedProps__: { type: "rw", sdp: "rw" }
-        });
-      } catch(e) {}
-    }
+    this.callCB (this._dompc._onCreateAnswerSuccess,
+                 { type: "answer", sdp: answer,
+                 __exposedProps__: { type: "rw", sdp: "rw" } });
     this._dompc._executeNext();
   },
 
-  onCreateAnswerError: function(code) {
-    if (this._dompc._onCreateAnswerFailure) {
-      try {
-        this._dompc._onCreateAnswerFailure.onCallback(code);
-      } catch(e) {}
-    }
+  onCreateAnswerError: function(code, message) {
+    this.callCB(this._dompc._onCreateAnswerFailure, new RTCError(code, message));
     this._dompc._executeNext();
   },
 
-  onSetLocalDescriptionSuccess: function(code) {
+  onSetLocalDescriptionSuccess: function() {
     this._dompc._localType = this._dompc._pendingType;
     this._dompc._pendingType = null;
-    if (this._dompc._onSetLocalDescriptionSuccess) {
-      try {
-        this._dompc._onSetLocalDescriptionSuccess.onCallback(code);
-      } catch(e) {}
-    }
+    this.callCB(this._dompc._onSetLocalDescriptionSuccess);
+
+    // Until we support generating trickle ICE candidates,
+    // we go ahead and trigger a call of onicecandidate here.
+    // This is to provide some level of compatibility with
+    // scripts that expect this behavior (which is how Chrome
+    // signals that no further trickle candidates will be sent).
+    // TODO: This needs to be removed when Bug 842459 lands.
+    this.foundIceCandidate(null);
+
     this._dompc._executeNext();
   },
 
-  onSetRemoteDescriptionSuccess: function(code) {
+  onSetRemoteDescriptionSuccess: function() {
     this._dompc._remoteType = this._dompc._pendingType;
     this._dompc._pendingType = null;
-    if (this._dompc._onSetRemoteDescriptionSuccess) {
-      try {
-        this._dompc._onSetRemoteDescriptionSuccess.onCallback(code);
-      } catch(e) {}
-    }
+    this.callCB(this._dompc._onSetRemoteDescriptionSuccess);
     this._dompc._executeNext();
   },
 
-  onSetLocalDescriptionError: function(code) {
+  onSetLocalDescriptionError: function(code, message) {
     this._dompc._pendingType = null;
-    if (this._dompc._onSetLocalDescriptionFailure) {
-      try {
-        this._dompc._onSetLocalDescriptionFailure.onCallback(code);
-      } catch(e) {}
-    }
+    this.callCB(this._dompc._onSetLocalDescriptionFailure,
+                new RTCError(code, message));
     this._dompc._executeNext();
   },
 
-  onSetRemoteDescriptionError: function(code) {
+  onSetRemoteDescriptionError: function(code, message) {
     this._dompc._pendingType = null;
-    if (this._dompc._onSetRemoteDescriptionFailure) {
-      this._dompc._onSetRemoteDescriptionFailure.onCallback(code);
-    }
+    this.callCB(this._dompc._onSetRemoteDescriptionFailure,
+                new RTCError(code, message));
     this._dompc._executeNext();
   },
 
-  onAddIceCandidateSuccess: function(code) {
+  onAddIceCandidateSuccess: function() {
     this._dompc._pendingType = null;
-    if (this._dompc._onAddIceCandidateSuccess) {
-      this._dompc._onAddIceCandidateSuccess.onCallback(code);
-    }
+    this.callCB(this._dompc._onAddIceCandidateSuccess);
     this._dompc._executeNext();
   },
 
-  onAddIceCandidateError: function(code) {
+  onAddIceCandidateError: function(code, message) {
     this._dompc._pendingType = null;
-    if (this._dompc._onAddIceCandidateError) {
-      this._dompc._onAddIceCandidateError.onCallback(code);
-    }
+    this.callCB(this._dompc._onAddIceCandidateError, new RTCError(code, message));
     this._dompc._executeNext();
   },
 
@@ -813,42 +924,24 @@ PeerConnectionObserver.prototype = {
       return;
     }
 
-    let self = this;
-    let iceCb = function() {};
-    let iceGatherCb = function() {};
-    if (this._dompc.onicechange) {
-      iceCb = function(args) {
-        try {
-          self._dompc.onicechange(args);
-        } catch(e) {}
-      };
-    }
-    if (this._dompc.ongatheringchange) {
-      iceGatherCb = function(args) {
-        try {
-          self._dompc.ongatheringchange(args);
-        } catch(e) {}
-      };
-    }
-
     switch (this._dompc._pc.iceState) {
       case Ci.IPeerConnection.kIceGathering:
-        iceGatherCb("gathering");
+        this.callCB(this._dompc.ongatheringchange, "gathering");
         break;
       case Ci.IPeerConnection.kIceWaiting:
-        iceCb("starting");
+        this.callCB(this._dompc.onicechange, "starting");
         this._dompc._executeNext();
         break;
       case Ci.IPeerConnection.kIceChecking:
-        iceCb("checking");
+        this.callCB(this._dompc.onicechange, "checking");
         break;
       case Ci.IPeerConnection.kIceConnected:
         // ICE gathering complete.
-        iceCb("connected");
-        iceGatherCb("complete");
+        this.callCB(this._dompc.onicechange, "connected");
+        this.callCB(this._dompc.ongatheringchange, "complete");
         break;
       case Ci.IPeerConnection.kIceFailed:
-        iceCb("failed");
+        this.callCB(this._dompc.onicechange, "failed");
         break;
       default:
         // Unknown state!
@@ -857,60 +950,33 @@ PeerConnectionObserver.prototype = {
   },
 
   onAddStream: function(stream, type) {
-    if (this._dompc.onaddstream) {
-      try {
-        this._dompc.onaddstream.onCallback({
-          stream: stream, type: type,
-          __exposedProps__: { stream: "r", type: "r" }
-        });
-      } catch(e) {}
-    }
+    this.callCB(this._dompc.onaddstream,
+                { stream: stream, type: type,
+                __exposedProps__: { stream: "r", type: "r" } });
   },
 
   onRemoveStream: function(stream, type) {
-    if (this._dompc.onremovestream) {
-      try {
-        this._dompc.onremovestream.onCallback({
-          stream: stream, type: type,
-          __exposedProps__: { stream: "r", type: "r" }
-        });
-      } catch(e) {}
-    }
+    this.callCB(this._dompc.onremovestream,
+                { stream: stream, type: type,
+                __exposedProps__: { stream: "r", type: "r" } });
   },
 
   foundIceCandidate: function(cand) {
-    if (this._dompc.onicecandidate) {
-      try {
-        this._dompc.onicecandidate.onCallback({
-          candidate: cand,
-          __exposedProps__: { candidate: "rw" }
-        });
-      } catch(e) {}
-    }
+    this.callCB(this._dompc.onicecandidate,
+                {candidate: cand, __exposedProps__: { candidate: "rw" } });
   },
 
   notifyDataChannel: function(channel) {
-    if (this._dompc.ondatachannel) {
-      try {
-        this._dompc.ondatachannel.onCallback(channel);
-      } catch(e) {}
-    }
+    this.callCB(this._dompc.ondatachannel,
+                { channel: channel, __exposedProps__: { channel: "r" } });
   },
 
   notifyConnection: function() {
-    if (this._dompc.onconnection) {
-      try {
-        this._dompc.onconnection.onCallback();
-      } catch(e) {}
-    }
+    this.callCB (this._dompc.onconnection);
   },
 
   notifyClosedConnection: function() {
-    if (this._dompc.onclosedconnection) {
-      try {
-        this._dompc.onclosedconnection.onCallback();
-      } catch(e) {}
-    }
+    this.callCB (this._dompc.onclosedconnection);
   }
 };
 

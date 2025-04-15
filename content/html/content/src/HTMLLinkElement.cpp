@@ -25,7 +25,6 @@
 #include "nsAsyncDOMEvent.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Link)
-DOMCI_NODE_DATA(HTMLLinkElement, mozilla::dom::HTMLLinkElement)
 
 namespace mozilla {
 namespace dom {
@@ -64,49 +63,40 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLLinkElement)
                                    Link)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLLinkElement,
                                                nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLLinkElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 
 NS_IMPL_ELEMENT_CLONE(HTMLLinkElement)
 
 bool
-HTMLLinkElement::GetDisabled(ErrorResult& aRv)
+HTMLLinkElement::Disabled()
 {
-  nsCOMPtr<nsIDOMStyleSheet> ss = do_QueryInterface(GetSheet());
-  if (!ss) {
-    return false;
-  }
-
-  bool disabled = false;
-  aRv = ss->GetDisabled(&disabled);
-  return disabled;
+  nsCSSStyleSheet* ss = GetSheet();
+  return ss && ss->Disabled();
 }
 
 NS_IMETHODIMP
-HTMLLinkElement::GetDisabled(bool* aDisabled)
+HTMLLinkElement::GetMozDisabled(bool* aDisabled)
 {
-  ErrorResult rv;
-  *aDisabled = GetDisabled(rv);
-  return rv.ErrorCode();
+  *aDisabled = Disabled();
+  return NS_OK;
 }
 
 void
-HTMLLinkElement::SetDisabled(bool aDisabled, ErrorResult& aRv)
+HTMLLinkElement::SetDisabled(bool aDisabled)
 {
-  nsCOMPtr<nsIDOMStyleSheet> ss = do_QueryInterface(GetSheet());
-  if (!ss) {
-    return;
+  nsCSSStyleSheet* ss = GetSheet();
+  if (ss) {
+    ss->SetDisabled(aDisabled);
   }
 
-  aRv = ss->SetDisabled(aDisabled);
 }
 
 NS_IMETHODIMP
-HTMLLinkElement::SetDisabled(bool aDisabled)
+HTMLLinkElement::SetMozDisabled(bool aDisabled)
 {
-  ErrorResult rv;
-  SetDisabled(aDisabled, rv);
-  return rv.ErrorCode();
+  SetDisabled(aDisabled);
+  return NS_OK;
 }
 
 
@@ -427,9 +417,9 @@ HTMLLinkElement::SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const
 }
 
 JSObject*
-HTMLLinkElement::WrapNode(JSContext* aCx, JSObject* aScope, bool* aTriedToWrap)
+HTMLLinkElement::WrapNode(JSContext* aCx, JSObject* aScope)
 {
-  return HTMLLinkElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return HTMLLinkElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom

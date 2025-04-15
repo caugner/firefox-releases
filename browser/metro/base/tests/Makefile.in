@@ -9,21 +9,16 @@ VPATH     = @srcdir@
 relativesrcdir  = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
-include $(topsrcdir)/config/rules.mk
 
-_BROWSER_FILES = \
-  head.js \
-  browser_test.js \
-  browser_canonizeURL.js \
-  browser_context_ui.js \
-  browser_onscreen_keyboard.js \
-  browser_onscreen_keyboard.html \
-  browser_remotetabs.js \
-  browser_downloads.js \
-  browser_plugin_input.html \
-  browser_plugin_input_mouse.js \
-  browser_plugin_input_keyboard.js \
+XPCSHELL_TESTS = unit
+
+# For now we're copying the actual Util code.
+# We should make this into a jsm module. See bug 848137
+XPCSHELL_RESOURCES = \
+  $(DEPTH)/browser/metro/base/content/Util.js \
   $(NULL)
 
-libs:: $(_BROWSER_FILES)
-	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/metro/
+libs:: $(XPCSHELL_RESOURCES)
+	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/xpcshell/$(relativesrcdir)/unit/
+
+include $(topsrcdir)/config/rules.mk

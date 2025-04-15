@@ -6,8 +6,10 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.db.BrowserDB;
-import org.mozilla.gecko.util.GeckoBackgroundThread;
+import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.util.GeckoJarReader;
+import org.mozilla.gecko.util.ThreadUtils;
+import org.mozilla.gecko.util.UiAsyncTask;
 
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.HttpGet;
@@ -16,10 +18,8 @@ import org.apache.http.entity.BufferedHttpEntity;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.drawable.BitmapDrawable;
 import android.net.http.AndroidHttpClient;
-import android.os.AsyncTask;
+import android.os.Handler;
 import android.support.v4.util.LruCache;
 import android.util.Log;
 
@@ -83,7 +83,8 @@ public class Favicons {
             putFaviconInMemCache(pageUrl, image);
 
         // We want to always run the listener on UI thread
-        GeckoAppShell.getMainHandler().post(new Runnable() {
+        ThreadUtils.postToUiThread(new Runnable() {
+            @Override
             public void run() {
                 if (listener != null)
                     listener.onFaviconLoaded(pageUrl, image);
@@ -111,7 +112,7 @@ public class Favicons {
             return -1;
         }
 
-        LoadFaviconTask task = new LoadFaviconTask(pageUrl, faviconUrl, persist, listener);
+        LoadFaviconTask task = new LoadFaviconTask(ThreadUtils.getBackgroundHandler(), pageUrl, faviconUrl, persist, listener);
 
         long taskId = task.getId();
         mLoadTasks.put(taskId, task);
@@ -122,6 +123,12 @@ public class Favicons {
     }
 
     public Bitmap getFaviconFromMemCache(String pageUrl) {
+        // If for some reason the key is null, simply return null
+        // and avoid an exception on the mem cache (see bug 813546)
+        if (pageUrl == null) {
+            return null;
+        }
+
         return mFaviconsCache.get(pageUrl);
     }
 
@@ -198,15 +205,18 @@ public class Favicons {
         }
     }
 
-    private class LoadFaviconTask extends AsyncTask<Void, Void, Bitmap> {
+    private class LoadFaviconTask extends UiAsyncTask<Void, Void, Bitmap> {
         private long mId;
         private String mPageUrl;
         private String mFaviconUrl;
         private OnFaviconLoadedListener mListener;
         private boolean mPersist;
 
-        public LoadFaviconTask(String pageUrl, String faviconUrl, boolean persist,
-                OnFaviconLoadedListener listener) {
+        public LoadFaviconTask(Handler backgroundThreadHandler,
+                               String pageUrl, String faviconUrl, boolean persist,
+                               OnFaviconLoadedListener listener) {
+            super(backgroundThreadHandler);
+
             synchronized(this) {
                 mId = ++mNextFaviconLoadId;
             }
@@ -229,15 +239,8 @@ public class Favicons {
                 return;
             }
 
-            // Even though this code is in a background thread, all DB writes
-            // should happen in GeckoBackgroundThread or we could get locked
-            // databases.
-            GeckoBackgroundThread.post(new Runnable() {
-                public void run() {
-                    ContentResolver resolver = mContext.getContentResolver();
-                    BrowserDB.updateFaviconForUrl(resolver, mPageUrl, favicon, mFaviconUrl);
-                }
-            });
+            ContentResolver resolver = mContext.getContentResolver();
+            BrowserDB.updateFaviconForUrl(resolver, mPageUrl, favicon, mFaviconUrl);
         }
 
         // Runs in background thread
@@ -267,7 +270,8 @@ public class Favicons {
                 HttpEntity entity = getHttpClient().execute(request).getEntity();
                 BufferedHttpEntity bufferedEntity = new BufferedHttpEntity(entity);
                 InputStream contentStream = bufferedEntity.getContent();
-                image = BitmapFactory.decodeStream(contentStream);
+                image = BitmapUtils.decodeStream(contentStream);
+                contentStream.close();
             } catch (Exception e) {
                 Log.e(LOGTAG, "Error reading favicon", e);
             }

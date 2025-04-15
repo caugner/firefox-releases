@@ -14,7 +14,12 @@ let gDevTools = temp.gDevTools;
 Cu.import("resource://gre/modules/devtools/dbg-server.jsm", temp);
 let DebuggerServer = temp.DebuggerServer;
 
+// Import the GCLI test helper
+let testDir = gTestPath.substr(0, gTestPath.lastIndexOf("/"));
+Services.scriptloader.loadSubScript(testDir + "../../../commandline/test/helpers.js", this);
+
 registerCleanupFunction(function () {
+  helpers = null;
   Services.prefs.clearUserPref(PROFILER_ENABLED);
   Services.prefs.clearUserPref(REMOTE_ENABLED);
   DebuggerServer.destroy();
@@ -54,10 +59,8 @@ function openProfiler(tab, callback) {
 
 function closeProfiler(tab, callback) {
   let target = TargetFactory.forTab(tab);
-  let panel = gDevTools.getToolbox(target).getPanel("jsprofiler");
-  panel.once("destroyed", callback);
-
-  gDevTools.closeToolbox(target);
+  let toolbox = gDevTools.getToolbox(target);
+  toolbox.destroy().then(callback);
 }
 
 function setUp(url, callback=function(){}) {

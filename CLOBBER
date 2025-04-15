@@ -15,4 +15,8 @@
 #
 # Note: The description below will be part of the error message shown to users.
 #
-Bug 836654 - IndexedDB test failures without clobber
+#  *** Important! ***
+#  If changing this file you must manually clobber immediately before landing,
+#  (due to bug 837323), using: https://secure.pub.build.mozilla.org/clobberer/
+#
+Bug 737100 broke Windows builds.

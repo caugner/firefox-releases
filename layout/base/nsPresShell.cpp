@@ -49,7 +49,6 @@
 #include "prinrval.h"
 #include "nsTArray.h"
 #include "nsCOMArray.h"
-#include "nsHashtable.h"
 #include "nsContainerFrame.h"
 #include "nsDOMEvent.h"
 #include "nsHTMLParts.h"
@@ -117,7 +116,7 @@
 #include "gfxImageSurface.h"
 #include "gfxContext.h"
 #ifdef MOZ_MEDIA
-#include "nsHTMLMediaElement.h"
+#include "mozilla/dom/HTMLMediaElement.h"
 #endif
 #include "nsSMILAnimationController.h"
 #include "SVGContentUtils.h"
@@ -175,13 +174,14 @@
 
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 #include "mozilla/css/ImageLoader.h"
 
 #include "Layers.h"
 #include "nsTransitionManager.h"
 #include "LayerTreeInvalidation.h"
 #include "nsAsyncDOMEvent.h"
+#include "nsIImageLoadingContent.h"
 
 #define ANCHOR_SCROLL_FLAGS \
   (nsIPresShell::SCROLL_OVERFLOW_HIDDEN | nsIPresShell::SCROLL_NO_PARENT_FRAMES)
@@ -1001,6 +1001,10 @@ PresShell::Destroy()
 
   mSynthMouseMoveEvent.Revoke();
 
+  mUpdateImageVisibilityEvent.Revoke();
+
+  ClearVisibleImagesList();
+
   if (mCaret) {
     mCaret->Terminate();
     mCaret = nullptr;
@@ -1697,7 +1701,7 @@ PresShell::Initialize(nscoord aWidth, nscoord aHeight)
   if (!rootFrame) {
     nsAutoScriptBlocker scriptBlocker;
     mFrameConstructor->BeginUpdate();
-    mFrameConstructor->ConstructRootFrame(&rootFrame);
+    rootFrame = mFrameConstructor->ConstructRootFrame();
     mFrameConstructor->SetRootFrame(rootFrame);
     mFrameConstructor->EndUpdate();
   }
@@ -2881,6 +2885,13 @@ PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll)
   nsIContent *anchorTarget = content;
 #endif
 
+  nsIScrollableFrame* rootScroll = GetRootScrollFrameAsScrollable();
+  if (rootScroll && rootScroll->DidHistoryRestore()) {
+    // Scroll position restored from history trumps scrolling to anchor.
+    aScroll = false;
+    rootScroll->ClearDidHistoryRestore();
+  }
+
   if (content) {
     if (aScroll) {
       rv = ScrollContentIntoView(content,
@@ -2903,7 +2914,7 @@ PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll)
     // Even if select anchor pref is false, we must still move the
     // caret there. That way tabbing will start from the new
     // location
-    nsRefPtr<nsIDOMRange> jumpToRange = new nsRange();
+    nsRefPtr<nsIDOMRange> jumpToRange = new nsRange(mDocument);
     while (content && content->GetFirstChild()) {
       content = content->GetFirstChild();
     }
@@ -2969,16 +2980,16 @@ PresShell::GoToAnchor(const nsAString& aAnchorName, bool aScroll)
 nsresult
 PresShell::ScrollToAnchor()
 {
-  if (!mLastAnchorScrolledTo)
+  if (!mLastAnchorScrolledTo) {
     return NS_OK;
-
+  }
   NS_ASSERTION(mDidInitialize, "should have done initial reflow by now");
 
   nsIScrollableFrame* rootScroll = GetRootScrollFrameAsScrollable();
   if (!rootScroll ||
-      mLastAnchorScrollPositionY != rootScroll->GetScrollPosition().y)
+      mLastAnchorScrollPositionY != rootScroll->GetScrollPosition().y) {
     return NS_OK;
-
+  }
   nsresult rv = ScrollContentIntoView(mLastAnchorScrolledTo,
                                       ScrollAxis(SCROLL_TOP, SCROLL_ALWAYS),
                                       ScrollAxis(),
@@ -3613,8 +3624,10 @@ PresShell::UnsuppressAndInvalidate()
   if (win)
     win->SetReadyForFocus();
 
-  if (!mHaveShutDown)
+  if (!mHaveShutDown) {
     SynthesizeMouseMove(false);
+    ScheduleImageVisibilityUpdate();
+  }
 }
 
 void
@@ -3792,7 +3805,7 @@ PresShell::FlushPendingNotifications(mozilla::ChangesToFlush aFlush)
   // Make sure that we don't miss things added to mozFlushType!
   MOZ_ASSERT(static_cast<uint32_t>(flushType) <= ArrayLength(flushTypeNames));
 
-  SAMPLE_LABEL_PRINTF("layout", "Flush", "(Flush_%s)",
+  PROFILER_LABEL_PRINTF("layout", "Flush", "(Flush_%s)",
                       flushTypeNames[flushType - 1]);
 #endif
 
@@ -4756,8 +4769,7 @@ PresShell::PaintRangePaintInfo(nsTArray<nsAutoPtr<RangePaintInfo> >* aItems,
   // selection.
   nsRefPtr<nsFrameSelection> frameSelection;
   if (aSelection) {
-    nsCOMPtr<nsISelectionPrivate> selpriv = do_QueryInterface(aSelection);
-    selpriv->GetFrameSelection(getter_AddRefs(frameSelection));
+    frameSelection = static_cast<Selection*>(aSelection)->GetFrameSelection();
   }
   else {
     frameSelection = FrameSelection();
@@ -4804,7 +4816,7 @@ PresShell::RenderNode(nsIDOMNode* aNode,
   if (!node->IsInDoc())
     return nullptr;
   
-  nsRefPtr<nsRange> range = new nsRange();
+  nsRefPtr<nsRange> range = new nsRange(node);
   if (NS_FAILED(range->SelectNode(aNode)))
     return nullptr;
 
@@ -5278,6 +5290,190 @@ PresShell::ProcessSynthMouseMoveEvent(bool aFromScroll)
   }
 }
 
+/* static */ void
+PresShell::MarkImagesInListVisible(const nsDisplayList& aList)
+{
+  for (nsDisplayItem* item = aList.GetBottom(); item; item = item->GetAbove()) {
+    nsDisplayList* sublist = item->GetChildren();
+    if (sublist) {
+      MarkImagesInListVisible(*sublist);
+      continue;
+    }
+    nsIFrame* f = item->GetUnderlyingFrame();
+    // We could check the type of the display item, only a handful can hold an
+    // image loading content.
+    if (f) {
+      // dont bother nscomptr here, it is wasteful
+      nsCOMPtr<nsIImageLoadingContent> content(do_QueryInterface(f->GetContent()));
+      if (content) {
+        // use the presshell containing the image
+        PresShell* presShell = static_cast<PresShell*>(f->PresContext()->PresShell());
+        if (presShell) {
+          content->IncrementVisibleCount();
+          presShell->mVisibleImages.AppendElement(content);
+        }
+      }
+    }
+  }
+}
+
+void
+PresShell::RebuildImageVisibility(const nsDisplayList& aList)
+{
+  MOZ_ASSERT(!mImageVisibilityVisited, "already visited?");
+  mImageVisibilityVisited = true;
+  nsTArray< nsCOMPtr<nsIImageLoadingContent > > beforeimagelist;
+  beforeimagelist.SwapElements(mVisibleImages);
+  MarkImagesInListVisible(aList);
+  for (uint32_t i = 0; i < beforeimagelist.Length(); ++i) {
+    beforeimagelist[i]->DecrementVisibleCount();
+  }
+}
+
+/* static */ void
+PresShell::ClearImageVisibilityVisited(nsView* aView, bool aClear)
+{
+  nsViewManager* vm = aView->GetViewManager();
+  if (aClear) {
+    PresShell* presShell = static_cast<PresShell*>(vm->GetPresShell());
+    if (!presShell->mImageVisibilityVisited) {
+      presShell->ClearVisibleImagesList();
+    }
+    presShell->mImageVisibilityVisited = false;
+  }
+  for (nsView* v = aView->GetFirstChild(); v; v = v->GetNextSibling()) {
+    ClearImageVisibilityVisited(v, v->GetViewManager() != vm);
+  }
+}
+
+void
+PresShell::ClearVisibleImagesList()
+{
+  for (uint32_t i = 0; i < mVisibleImages.Length(); ++i) {
+    mVisibleImages[i]->DecrementVisibleCount();
+  }
+  mVisibleImages.Clear();
+}
+
+void
+PresShell::UpdateImageVisibility()
+{
+  MOZ_ASSERT(!mPresContext || mPresContext->IsRootContentDocument(),
+    "updating image visibility on a non-root content document?");
+
+  mUpdateImageVisibilityEvent.Revoke();
+
+  if (mHaveShutDown || mIsDestroying) {
+    return;
+  }
+
+  // call update on that frame
+  nsIFrame* rootFrame = GetRootFrame();
+  if (!rootFrame) {
+    ClearVisibleImagesList();
+    return;
+  }
+
+  // We could walk the frame tree directly and skip creating a display list for
+  // better perf.
+  nsRect updateRect(nsPoint(0, 0), rootFrame->GetSize());
+  nsDisplayListBuilder builder(rootFrame, nsDisplayListBuilder::IMAGE_VISIBILITY, true);
+  builder.IgnorePaintSuppression();
+  builder.EnterPresShell(rootFrame, updateRect);
+  nsDisplayList list;
+  rootFrame->BuildDisplayListForStackingContext(&builder, updateRect, &list);
+  builder.LeavePresShell(rootFrame, updateRect);
+
+  RebuildImageVisibility(list);
+
+  ClearImageVisibilityVisited(rootFrame->GetView(), true);
+
+  list.DeleteAll();
+}
+
+static bool
+AssumeAllImagesVisible(nsPresContext* aPresContext, nsIDocument* aDocument)
+{
+  static bool sImageVisibilityEnabled = true;
+  static bool sImageVisibilityPrefCached = false;
+
+  if (!sImageVisibilityPrefCached) {
+    Preferences::AddBoolVarCache(&sImageVisibilityEnabled,
+                                 "layout.imagevisibility.enabled", true);
+    sImageVisibilityPrefCached = true;
+  }
+
+
+  if (!sImageVisibilityEnabled || !aPresContext || !aDocument)
+    return true;
+
+  // We assume all images are visible in print, print preview, chrome, xul, and
+  // resource docs and don't keep track of them.
+  if (aPresContext->Type() == nsPresContext::eContext_PrintPreview ||
+      aPresContext->Type() == nsPresContext::eContext_Print ||
+      aPresContext->IsChrome() ||
+      aDocument->IsResourceDoc() ||
+      aDocument->IsXUL()) {
+    return true;
+  }
+
+  return false;
+}
+
+void
+PresShell::ScheduleImageVisibilityUpdate()
+{
+  if (AssumeAllImagesVisible(mPresContext, mDocument))
+    return;
+
+  if (!mPresContext->IsRootContentDocument()) {
+    nsPresContext* presContext = mPresContext->GetToplevelContentDocumentPresContext();
+    if (!presContext)
+      return;
+    MOZ_ASSERT(presContext->IsRootContentDocument(),
+      "Didn't get a root prescontext from GetToplevelContentDocumentPresContext?");
+    presContext->PresShell()->ScheduleImageVisibilityUpdate();
+    return;
+  }
+
+  if (mHaveShutDown || mIsDestroying)
+    return;
+
+  if (mUpdateImageVisibilityEvent.IsPending())
+    return;
+
+  nsRefPtr<nsRunnableMethod<PresShell> > ev = 
+    NS_NewRunnableMethod(this, &PresShell::UpdateImageVisibility);
+  if (NS_SUCCEEDED(NS_DispatchToCurrentThread(ev))) {
+    mUpdateImageVisibilityEvent = ev;
+  }
+}
+
+void
+PresShell::EnsureImageInVisibleList(nsIImageLoadingContent* aImage)
+{
+  if (AssumeAllImagesVisible(mPresContext, mDocument)) {
+    aImage->IncrementVisibleCount();
+    return;
+  }
+
+#ifdef DEBUG
+  // if it has a frame make sure its in this presshell
+  nsCOMPtr<nsIContent> content = do_QueryInterface(aImage);
+  if (content) {
+    PresShell* shell = static_cast<PresShell*>(content->OwnerDoc()->GetShell());
+    MOZ_ASSERT(!shell || shell == this, "wrong shell");
+  }
+#endif
+
+  // nsImageLoadingContent doesn't call this function if it has a positive
+  // visible count so the image shouldn't be in mVisibleImages. Either way it
+  // doesn't hurt to put it in multiple times.
+  MOZ_ASSERT(!mVisibleImages.Contains(aImage), "image already in the array");
+  mVisibleImages.AppendElement(aImage);
+  aImage->IncrementVisibleCount();
+}
+
 class nsAutoNotifyDidPaint
 {
 public:
@@ -5300,9 +5496,11 @@ PresShell::Paint(nsView*        aViewToPaint,
                  const nsRegion& aDirtyRegion,
                  uint32_t        aFlags)
 {
-  SAMPLE_LABEL("Paint", "PresShell::Paint");
+  PROFILER_LABEL("Paint", "PresShell::Paint");
   NS_ASSERTION(!mIsDestroying, "painting a destroyed PresShell");
   NS_ASSERTION(aViewToPaint, "null view");
+
+  MOZ_ASSERT(!mImageVisibilityVisited, "should have been cleared");
 
   if (!mIsActive || mIsZombie) {
     return;
@@ -5861,6 +6059,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
   nsIFrame* frame = aFrame;
 
   if (aEvent->eventStructType == NS_TOUCH_EVENT) {
+    nsIDocument::UnlockPointer();
     FlushPendingNotifications(Flush_Layout);
     frame = GetNearestFrameContainingPresShell(this);
   }
@@ -6405,6 +6604,7 @@ PresShell::HandleEventWithTarget(nsEvent* aEvent, nsIFrame* aFrame,
     NS_ASSERTION(!doc || doc->GetShell() == this, "wrong shell");
   }
 #endif
+  NS_ENSURE_STATE(!aContent || aContent->GetCurrentDoc() == mDocument);
 
   PushCurrentEventInfo(aFrame, aContent);
   nsresult rv = HandleEventInternal(aEvent, aStatus);
@@ -6460,21 +6660,38 @@ PresShell::HandleEventInternal(nsEvent* aEvent, nsEventStatus* aStatus)
       case NS_KEY_UP: {
         nsIDocument* doc = GetCurrentEventContent() ?
                            mCurrentEventContent->OwnerDoc() : nullptr;
-        nsIDocument* root = nullptr;
-        if (static_cast<const nsKeyEvent*>(aEvent)->keyCode == NS_VK_ESCAPE &&
-            (root = nsContentUtils::GetRootDocument(doc)) &&
-            root->IsFullScreenDoc()) {
-          // Prevent default action on ESC key press when exiting
-          // DOM full-screen mode. This prevents the browser ESC key
-          // handler from stopping all loads in the document, which
-          // would cause <video> loads to stop.
-          aEvent->mFlags.mDefaultPrevented = true;
-          aEvent->mFlags.mOnlyChromeDispatch = true;
+        nsIDocument* fullscreenAncestor = nullptr;
+        if (static_cast<const nsKeyEvent*>(aEvent)->keyCode == NS_VK_ESCAPE) {
+          if ((fullscreenAncestor = nsContentUtils::GetFullscreenAncestor(doc))) {
+            // Prevent default action on ESC key press when exiting
+            // DOM fullscreen mode. This prevents the browser ESC key
+            // handler from stopping all loads in the document, which
+            // would cause <video> loads to stop.
+            aEvent->mFlags.mDefaultPrevented = true;
+            aEvent->mFlags.mOnlyChromeDispatch = true;
 
-          if (aEvent->message == NS_KEY_UP) {
-             // ESC key released while in DOM full-screen mode.
-             // Exit full-screen mode.
-            nsIDocument::ExitFullScreen(true);
+            if (aEvent->message == NS_KEY_UP) {
+              // ESC key released while in DOM fullscreen mode.
+              // If fullscreen is running in content-only mode, exit the target
+              // doctree branch from fullscreen, otherwise fully exit all
+              // browser windows and documents from fullscreen mode.
+              // Note: in the content-only fullscreen case, we pass the
+              // fullscreenAncestor since |doc| may not actually be fullscreen
+              // here, and ExitFullscreen() has no affect when passed a
+              // non-fullscreen document.
+              nsIDocument::ExitFullscreen(
+                nsContentUtils::IsFullscreenApiContentOnly() ? fullscreenAncestor : nullptr,
+                /* async */ true);
+            }
+          }
+          nsCOMPtr<nsIDocument> pointerLockedDoc =
+            do_QueryReferent(nsEventStateManager::sPointerLockedDoc);
+          if (pointerLockedDoc) {
+            aEvent->mFlags.mDefaultPrevented = true;
+            aEvent->mFlags.mOnlyChromeDispatch = true;
+            if (aEvent->message == NS_KEY_UP) {
+              nsIDocument::UnlockPointer();
+            }
           }
         }
         // Else not full-screen mode or key code is unrestricted, fall
@@ -6741,6 +6958,10 @@ PresShell::DispatchTouchEvent(nsEvent *aEvent,
                                 &newEvent, nullptr, &tmpStatus, aEventCB);
     if (nsEventStatus_eConsumeNoDefault == tmpStatus) {
       preventDefault = true;
+    }
+
+    if (newEvent.mFlags.mMultipleActionsPrevented) {
+      touchEvent->mFlags.mMultipleActionsPrevented = true;
     }
 
     if (contentPresShell) {
@@ -7309,6 +7530,8 @@ FreezeSubDocument(nsIDocument *aDocument, void *aData)
 void
 PresShell::Freeze()
 {
+  mUpdateImageVisibilityEvent.Revoke();
+
   MaybeReleaseCapturingContent();
 
   mDocument->EnumerateFreezableElements(FreezeElement, nullptr);
@@ -7538,7 +7761,7 @@ PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
   nsIURI *uri = mDocument->GetDocumentURI();
   if (uri)
     uri->GetSpec(docURL);
-  SAMPLE_LABEL_PRINTF("layout", "DoReflow", "(%s)", docURL.get());
+  PROFILER_LABEL_PRINTF("layout", "DoReflow", "(%s)", docURL.get());
 
   if (mReflowContinueTimer) {
     mReflowContinueTimer->Cancel();
@@ -9256,6 +9479,18 @@ PresShell::SizeOfTextRuns(nsMallocSizeOfFun aMallocSizeOf) const
 }
 
 void
+nsIPresShell::MarkFixedFramesForReflow(IntrinsicDirty aIntrinsicDirty)
+{
+  nsIFrame* rootFrame = mFrameConstructor->GetRootFrame();
+  if (rootFrame) {
+    const nsFrameList& childList = rootFrame->GetChildList(nsIFrame::kFixedList);
+    for (nsFrameList::Enumerator e(childList); !e.AtEnd(); e.Next()) {
+      FrameNeedsReflow(e.get(), aIntrinsicDirty, NS_FRAME_IS_DIRTY);
+    }
+  }
+}
+
+void
 nsIPresShell::SetScrollPositionClampingScrollPortSize(nscoord aWidth, nscoord aHeight)
 {
   if (!mScrollPositionClampingScrollPortSizeSet ||
@@ -9265,16 +9500,20 @@ nsIPresShell::SetScrollPositionClampingScrollPortSize(nscoord aWidth, nscoord aH
     mScrollPositionClampingScrollPortSize.width = aWidth;
     mScrollPositionClampingScrollPortSize.height = aHeight;
 
-    // Reflow fixed position children.
-    nsIFrame* rootFrame = mFrameConstructor->GetRootFrame();
-    if (rootFrame) {
-      const nsFrameList& childList = rootFrame->GetChildList(nsIFrame::kFixedList);
-      for (nsIFrame* child = childList.FirstChild(); child;
-           child = child->GetNextSibling()) {
-        FrameNeedsReflow(child, eResize, NS_FRAME_IS_DIRTY);
-      }
-    }
+    MarkFixedFramesForReflow(eResize);
   }
+}
+
+void
+nsIPresShell::SetContentDocumentFixedPositionMargins(const nsMargin& aMargins)
+{
+  if (mContentDocumentFixedPositionMargins == aMargins) {
+    return;
+  }
+
+  mContentDocumentFixedPositionMargins = aMargins;
+
+  MarkFixedFramesForReflow(eResize);
 }
 
 void

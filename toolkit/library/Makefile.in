@@ -12,16 +12,9 @@ include $(DEPTH)/config/autoconf.mk
 include $(topsrcdir)/rdf/util/src/objs.mk
 include $(topsrcdir)/intl/unicharutil/util/objs.mk
 
-MODULE = libxul
 LIBRARY_NAME = xul
 FORCE_SHARED_LIB = 1
 MOZILLA_INTERNAL_API = 1
-
-ifdef MOZ_METRO
-ifeq ($(OS_ARCH),WINNT)
-DIRS += winvccorlib
-endif
-endif
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
 # This is going to be a framework named "XUL", not an ordinary library named
@@ -302,6 +295,10 @@ endif
 
 STATIC_LIBS += thebes gl ycbcr
 
+ifdef MOZ_ENABLE_GTEST
+COMPONENT_LIBS += gtest
+endif
+
 ifdef MOZ_ENABLE_PROFILER_SPS
 COMPONENT_LIBS += profiler
 endif
@@ -428,7 +425,7 @@ endif
 endif
 
 
-ifneq (,$(MOZ_CUBEB)$(MOZ_SYDNEYAUDIO))
+ifdef MOZ_CUBEB
 ifdef MOZ_ALSA
 EXTRA_DSO_LDOPTS += $(MOZ_ALSA_LIBS)
 endif
@@ -455,12 +452,12 @@ OS_LIBS += \
   -lcutils \
   -lsysutils \
   -lcamera_client \
-  -lbinder \
   -lsensorservice \
   -ldbus \
   -lstagefright \
   -lstagefright_omx \
   -lbinder \
+  -lgui \
   $(NULL)
 endif
 
@@ -520,27 +517,6 @@ OS_LIBS += \
   -F/System/Library/PrivateFrameworks -framework CoreUI \
   $(TK_LIBS) \
   $(NULL)
-endif
-
-ifeq ($(OS_ARCH),Darwin)
-ifdef MOZ_SYDNEYAUDIO
-OS_LIBS += \
-  -framework Carbon \
-  -framework CoreAudio \
-  -framework AudioToolbox \
-  -framework AudioUnit \
-  -framework IOKit \
-  -framework Foundation \
-  -framework AppKit \
-  -framework Security \
-  $(NULL)
-endif
-endif
-
-ifneq (,$(filter NetBSD OpenBSD,$(OS_ARCH)))
-ifdef MOZ_SYDNEYAUDIO
-EXTRA_DSO_LDOPTS += -lossaudio
-endif
 endif
 
 ifeq (OpenBSD,$(OS_ARCH))
@@ -606,7 +582,7 @@ ifdef ACCESSIBILITY
 OS_LIBS += $(call EXPAND_LIBNAME,oleacc)
 endif
 ifdef MOZ_METRO
-OS_LIBS += $(call EXPAND_LIBNAME,uiautomationcore)
+OS_LIBS += $(call EXPAND_LIBNAME,uiautomationcore runtimeobject)
 endif
 ifdef _MSC_VER
 OS_LIBS += $(call EXPAND_LIBNAME,delayimp)
@@ -636,6 +612,20 @@ endif
 ifdef ACCESSIBILITY
 EXTRA_DSO_LDOPTS += -DELAYLOAD:oleacc.dll
 endif
+ifdef MOZ_WEBRTC_IN_LIBXUL
+EXTRA_DSO_LDOPTS += -DELAYLOAD:msdmo.dll
+endif
+endif
+ifdef MOZ_GAMEPAD
+ifndef GNU_CC
+DXSDK := $(subst \,/,$(MOZ_DIRECTX_SDK_PATH))/Lib/$(MOZ_DIRECTX_SDK_CPU_SUFFIX)
+OS_LIBS += \
+  "$(DXSDK)/dxguid.lib" \
+  "$(DXSDK)/dinput8.lib" \
+  $(NULL)
+else
+OS_LIBS += $(call EXPAND_LIBNAME,dxguid dinput8)
+endif
 endif
 endif # WINNT
 
@@ -649,6 +639,17 @@ endif
 
 ifdef MOZ_GSTREAMER
 EXTRA_DSO_LDOPTS += $(GSTREAMER_LIBS)
+endif
+
+# Generate GDB pretty printer-autoload files only on Linux. OSX's GDB is
+# too old to support Python pretty-printers; if this changes, we could make
+# this 'ifdef GNU_CC'.
+ifeq (Linux,$(OS_ARCH))
+# Create a GDB Python auto-load file alongside the libxul shared library in
+# the build directory.
+PP_TARGETS += LIBXUL_AUTOLOAD
+LIBXUL_AUTOLOAD = libxul.so-gdb.py.in
+LIBXUL_AUTOLOAD_FLAGS := -Dtopsrcdir=$(abspath $(topsrcdir))
 endif
 
 include $(topsrcdir)/config/rules.mk
@@ -677,11 +678,6 @@ ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
 OS_LIBS += $(call EXPAND_LIBNAME,usp10 oleaut32)
 endif
 
-ifeq ($(OS_ARCH),OpenBSD)
-# Needed by nsAuthGSSAPI
-EXTRA_DSO_LDOPTS += -lkrb5 -lcrypto
-endif
-
 ifdef MOZ_DEBUG
 ifdef ENABLE_TESTS
 DEFINES += -DENABLE_LAYOUTDEBUG
@@ -692,3 +688,8 @@ ifeq (WINNT_1,$(OS_TARGET)_$(MOZ_PROFILE_USE))
 # Wrap linker to measure peak virtual memory usage.
 LD := $(PYTHON) $(topsrcdir)/build/link.py $(CURDIR)/linker-vsize $(LD)
 endif
+
+libs:: $(FINAL_TARGET)/dependentlibs.list
+
+$(FINAL_TARGET)/dependentlibs.list: dependentlibs.py $(SHARED_LIBRARY) $(wildcard $(if $(wildcard $(FINAL_TARGET)/dependentlibs.list),$(addprefix $(FINAL_TARGET)/,$(shell cat $(FINAL_TARGET)/dependentlibs.list))))
+	$(PYTHON) $< $(SHARED_LIBRARY) -L $(FINAL_TARGET) $(if $(TOOLCHAIN_PREFIX),$(addprefix -p ,$(TOOLCHAIN_PREFIX))) > $@

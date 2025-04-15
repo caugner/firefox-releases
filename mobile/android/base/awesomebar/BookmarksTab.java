@@ -10,7 +10,8 @@ import org.mozilla.gecko.db.BrowserContract.Bookmarks;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
-import org.mozilla.gecko.util.GeckoBackgroundThread;
+import org.mozilla.gecko.util.GamepadUtils;
+import org.mozilla.gecko.util.ThreadUtils;
 
 import android.app.Activity;
 import android.content.Context;
@@ -41,10 +42,12 @@ public class BookmarksTab extends AwesomeBarTab {
     private BookmarksQueryTask mQueryTask = null;
     private boolean mShowReadingList = false;
 
+    @Override
     public int getTitleStringId() {
         return R.string.awesomebar_bookmarks_title;
     }
 
+    @Override
     public String getTag() {
         return TAG;
     }
@@ -53,6 +56,7 @@ public class BookmarksTab extends AwesomeBarTab {
         super(context);
     }
 
+    @Override
     public View getView() {
         if (mView == null) {
             mView = (LayoutInflater.from(mContext).inflate(R.layout.awesomebar_list, null));
@@ -65,10 +69,12 @@ public class BookmarksTab extends AwesomeBarTab {
             list.setAdapter(null);
             list.setAdapter(getCursorAdapter());
             list.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+                @Override
                 public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
                     handleItemClick(parent, view, position, id);
                 }
             });
+            list.setOnKeyListener(GamepadUtils.getListItemClickDispatcher());
 
             if (mShowReadingList) {
                 String title = getResources().getString(R.string.bookmarks_folder_reading_list);
@@ -85,6 +91,7 @@ public class BookmarksTab extends AwesomeBarTab {
         mShowReadingList = showReadingList;
     }
 
+    @Override
     public void destroy() {
         // Can't use getters for adapter. It will create one if null.
         if (mCursorAdapter != null && mView != null) {
@@ -93,7 +100,8 @@ public class BookmarksTab extends AwesomeBarTab {
             final Cursor cursor = mCursorAdapter.getCursor();
             // Gingerbread locks the DB when closing a cursor, so do it in the
             // background.
-            GeckoBackgroundThread.getHandler().post(new Runnable() {
+            ThreadUtils.postToBackgroundThread(new Runnable() {
+                @Override
                 public void run() {
                     if (cursor != null && !cursor.isClosed())
                         cursor.close();
@@ -102,6 +110,7 @@ public class BookmarksTab extends AwesomeBarTab {
         }
     }
 
+    @Override
     public boolean onBackPressed() {
         // If the soft keyboard is visible in the bookmarks or history tab, the user
         // must have explictly brought it up, so we should try hiding it instead of
@@ -258,6 +267,7 @@ public class BookmarksTab extends AwesomeBarTab {
             return (folderPair.first == Bookmarks.FIXED_READING_LIST_ID);
         }
 
+        @Override
         public int getItemViewType(int position) {
             Cursor c = getCursor();
  
@@ -368,7 +378,8 @@ public class BookmarksTab extends AwesomeBarTab {
         @Override
         protected void onPostExecute(final Cursor cursor) {
             // Hack: force this to the main thread, even though it should already be on it
-            GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+            ThreadUtils.postToUiThread(new Runnable() {
+                @Override
                 public void run() {
                     // this will update the cursorAdapter to use the new one if it already exists
                     // We need to add the header before we set the adapter, hence make it null
@@ -402,6 +413,7 @@ public class BookmarksTab extends AwesomeBarTab {
         return mCursorAdapter.isInReadingList();
     }
 
+    @Override
     public ContextMenuSubject getSubject(ContextMenu menu, View view, ContextMenuInfo menuInfo) {
         ContextMenuSubject subject = null;
 

@@ -12,18 +12,10 @@ namespace mozilla {
 namespace dom {
 
 JSObject*
-SVGMetadataElement::WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap)
+SVGMetadataElement::WrapNode(JSContext *aCx, JSObject *aScope)
 {
-  return SVGMetadataElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return SVGMetadataElementBinding::Wrap(aCx, aScope, this);
 }
-
-//----------------------------------------------------------------------
-// nsISupports methods
-
-NS_IMPL_ISUPPORTS_INHERITED3(SVGMetadataElement, SVGMetadataElementBase,
-                             nsIDOMNode, nsIDOMElement,
-                             nsIDOMSVGElement)
-
 
 //----------------------------------------------------------------------
 // Implementation
@@ -31,7 +23,6 @@ NS_IMPL_ISUPPORTS_INHERITED3(SVGMetadataElement, SVGMetadataElementBase,
 SVGMetadataElement::SVGMetadataElement(already_AddRefed<nsINodeInfo> aNodeInfo)
   : SVGMetadataElementBase(aNodeInfo)
 {
-  SetIsDOMBinding();
 }
 
 

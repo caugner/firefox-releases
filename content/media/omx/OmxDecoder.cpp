@@ -8,11 +8,10 @@
 
 #include "base/basictypes.h"
 #include <cutils/properties.h>
-#include <stagefright/DataSource.h>
 #include <stagefright/MediaExtractor.h>
 #include <stagefright/MetaData.h>
+#include <stagefright/OMXClient.h>
 #include <stagefright/OMXCodec.h>
-#include <OMX.h>
 
 #include "mozilla/Preferences.h"
 #include "mozilla/Types.h"
@@ -20,6 +19,7 @@
 #include "prlog.h"
 
 #include "GonkNativeWindow.h"
+#include "GonkNativeWindowClient.h"
 #include "OmxDecoder.h"
 
 #ifdef PR_LOGGING
@@ -39,8 +39,8 @@ VideoGraphicBuffer::VideoGraphicBuffer(const android::wp<android::OmxDecoder> aO
                                        android::MediaBuffer *aBuffer,
                                        SurfaceDescriptor *aDescriptor)
   : GraphicBufferLocked(*aDescriptor),
-    mOmxDecoder(aOmxDecoder),
-    mMediaBuffer(aBuffer)
+    mMediaBuffer(aBuffer),
+    mOmxDecoder(aOmxDecoder)
 {
   mMediaBuffer->add_ref();
 }
@@ -74,7 +74,7 @@ namespace android {
 
 MediaStreamSource::MediaStreamSource(MediaResource *aResource,
                                      AbstractMediaDecoder *aDecoder) :
-  mDecoder(aDecoder), mResource(aResource)
+  mResource(aResource), mDecoder(aDecoder)
 {
 }
 
@@ -127,8 +127,8 @@ using namespace android;
 
 OmxDecoder::OmxDecoder(MediaResource *aResource,
                        AbstractMediaDecoder *aDecoder) :
-  mResource(aResource),
   mDecoder(aDecoder),
+  mResource(aResource),
   mVideoWidth(0),
   mVideoHeight(0),
   mVideoColorFormat(0),
@@ -169,14 +169,6 @@ public:
     mMediaSource->stop();
   }
 };
-
-static sp<IOMX> sOMX = nullptr;
-static sp<IOMX> GetOMX() {
-  if(sOMX.get() == nullptr) {
-    sOMX = new OMX;
-    }
-  return sOMX;
-}
 
 bool OmxDecoder::Init() {
 #ifdef PR_LOGGING
@@ -236,6 +228,14 @@ bool OmxDecoder::Init() {
   int64_t totalDurationUs = 0;
 
   mNativeWindow = new GonkNativeWindow();
+  mNativeWindowClient = new GonkNativeWindowClient(mNativeWindow);
+
+  // OMXClient::connect() always returns OK and abort's fatally if
+  // it can't connect.
+  OMXClient client;
+  DebugOnly<status_t> err = client.connect();
+  NS_ASSERTION(err == OK, "Failed to connect to OMX in mediaserver.");
+  sp<IOMX> omx = client.interface();
 
   sp<MediaSource> videoTrack;
   sp<MediaSource> videoSource;
@@ -246,13 +246,13 @@ bool OmxDecoder::Init() {
     // for (h.264).  So if we don't get a hardware decoder, just give
     // up.
     int flags = kHardwareCodecsOnly;
-    videoSource = OMXCodec::Create(GetOMX(),
+    videoSource = OMXCodec::Create(omx,
                                    videoTrack->getFormat(),
                                    false, // decoder
                                    videoTrack,
                                    nullptr,
                                    flags,
-                                   mNativeWindow);
+                                   mNativeWindowClient);
     if (videoSource == nullptr) {
       NS_WARNING("Couldn't create OMX video source");
       return false;
@@ -296,7 +296,7 @@ bool OmxDecoder::Init() {
     if (!strcasecmp(audioMime, "audio/raw")) {
       audioSource = audioTrack;
     } else {
-      audioSource = OMXCodec::Create(GetOMX(),
+      audioSource = OMXCodec::Create(omx,
                                      audioTrack->getFormat(),
                                      false, // decoder
                                      audioTrack);
@@ -506,7 +506,6 @@ bool OmxDecoder::ReadVideo(VideoFrame *aFrame, int64_t aTimeUs,
 
   if (err == OK && mVideoBuffer->range_length() > 0) {
     int64_t timeUs;
-    int64_t durationUs;
     int32_t unreadable;
     int32_t keyFrame;
 
@@ -529,10 +528,16 @@ bool OmxDecoder::ReadVideo(VideoFrame *aFrame, int64_t aTimeUs,
     }
 
     if (descriptor) {
-      aFrame->mGraphicBuffer = new mozilla::layers::VideoGraphicBuffer(this, mVideoBuffer, descriptor);
+      // Change the descriptor's size to video's size. There are cases that
+      // GraphicBuffer's size and actual video size is different.
+      // See Bug 850566.
+      const mozilla::layers::SurfaceDescriptorGralloc& grallocDesc = descriptor->get_SurfaceDescriptorGralloc();
+      mozilla::layers::SurfaceDescriptor newDescriptor = mozilla::layers::SurfaceDescriptorGralloc(grallocDesc.bufferParent(),
+                                                               grallocDesc.bufferChild(), nsIntSize(mVideoWidth, mVideoHeight), grallocDesc.external());
+
+      aFrame->mGraphicBuffer = new mozilla::layers::VideoGraphicBuffer(this, mVideoBuffer, &newDescriptor);
       aFrame->mRotation = mVideoRotation;
       aFrame->mTimeUs = timeUs;
-      aFrame->mEndTimeUs = timeUs + durationUs;
       aFrame->mKeyFrame = keyFrame;
       aFrame->Y.mWidth = mVideoWidth;
       aFrame->Y.mHeight = mVideoHeight;
@@ -547,8 +552,6 @@ bool OmxDecoder::ReadVideo(VideoFrame *aFrame, int64_t aTimeUs,
       if (!ToVideoFrame(aFrame, timeUs, data, length, keyFrame)) {
         return false;
       }
-
-      aFrame->mEndTimeUs = timeUs + durationUs;
     }
 
     if (aKeyframeSkip && timeUs < aTimeUs) {

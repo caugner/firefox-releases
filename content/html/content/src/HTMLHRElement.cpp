@@ -7,7 +7,6 @@
 #include "mozilla/dom/HTMLHRElementBinding.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(HR)
-DOMCI_NODE_DATA(HTMLHRElement, mozilla::dom::HTMLHRElement)
 
 namespace mozilla {
 namespace dom {
@@ -31,7 +30,7 @@ NS_INTERFACE_TABLE_HEAD(HTMLHRElement)
                                    nsIDOMHTMLHRElement)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLHRElement,
                                                nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLHRElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 
 NS_IMPL_ELEMENT_CLONE(HTMLHRElement)
@@ -268,10 +267,9 @@ HTMLHRElement::GetAttributeMappingFunction() const
 }
 
 JSObject*
-HTMLHRElement::WrapNode(JSContext* aCx, JSObject* aScope,
-                        bool* aTriedToWrap)
+HTMLHRElement::WrapNode(JSContext* aCx, JSObject* aScope)
 {
-  return HTMLHRElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return HTMLHRElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace mozilla

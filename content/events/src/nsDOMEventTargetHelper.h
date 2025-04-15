@@ -18,6 +18,10 @@
 
 class nsDOMEvent;
 
+#define NS_DOMEVENTTARGETHELPER_IID \
+{ 0xda0e6d40, 0xc17b, 0x4937, \
+  { 0x8e, 0xa2, 0x99, 0xca, 0x1c, 0x81, 0xea, 0xbe } }
+
 class nsDOMEventTargetHelper : public mozilla::dom::EventTarget
 {
 public:
@@ -27,6 +31,8 @@ public:
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS(nsDOMEventTargetHelper)
 
   NS_DECL_NSIDOMEVENTTARGET
+
+  NS_DECLARE_STATIC_IID_ACCESSOR(NS_DOMEVENTTARGETHELPER_IID)
 
   void GetParentObject(nsIScriptGlobalObject **aParentObject)
   {
@@ -112,6 +118,9 @@ private:
   bool                       mHasOrHasHadOwner;
 };
 
+NS_DEFINE_STATIC_IID_ACCESSOR(nsDOMEventTargetHelper,
+                              NS_DOMEVENTTARGETHELPER_IID)
+
 // XPIDL event handlers
 #define NS_IMPL_EVENT_HANDLER(_class, _event)                                 \
     NS_IMETHODIMP _class::GetOn##_event(JSContext* aCx, JS::Value* aValue)    \
@@ -169,10 +178,10 @@ private:
   NS_IMETHOD DispatchEvent(nsIDOMEvent *evt, bool *_retval) { \
     return _to DispatchEvent(evt, _retval); \
   } \
-  virtual nsIDOMEventTarget * GetTargetForDOMEvent(void) { \
+  virtual mozilla::dom::EventTarget* GetTargetForDOMEvent() { \
     return _to GetTargetForDOMEvent(); \
   } \
-  virtual nsIDOMEventTarget * GetTargetForEventTargetChain(void) { \
+  virtual mozilla::dom::EventTarget* GetTargetForEventTargetChain() { \
     return _to GetTargetForEventTargetChain(); \
   } \
   virtual nsresult WillHandleEvent(nsEventChainPostVisitor & aVisitor) { \

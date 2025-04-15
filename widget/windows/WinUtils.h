@@ -52,7 +52,17 @@ public:
   // Retrieves the Service Pack version number.
   // Returns true on success, false on failure.
   static bool GetWindowsServicePackVersion(UINT& aOutMajor, UINT& aOutMinor);
-  
+
+  /**
+   * PeekMessage() and GetMessage() are wrapper methods for PeekMessageW(),
+   * GetMessageW(), ITfMessageMgr::PeekMessageW() and
+   * ITfMessageMgr::GetMessageW().
+   * Don't call the native APIs directly.  You MUST use these methods instead.
+   */
+  static bool PeekMessage(LPMSG aMsg, HWND aWnd, UINT aFirstMessage,
+                          UINT aLastMessage, UINT aOption);
+  static bool GetMessage(LPMSG aMsg, HWND aWnd, UINT aFirstMessage,
+                         UINT aLastMessage);
   /**
    * Gets the value of a string-typed registry value.
    *
@@ -194,12 +204,19 @@ public:
 
   /**
    * SHCreateItemFromParsingName() calls native SHCreateItemFromParsingName()
-   * API.  Note that you must call VistaCreateItemFromParsingNameInit() before
-   * calling this.  And the result must be TRUE.  Otherwise, returns E_FAIL.
+   * API which is available on Vista and up.
    */
   static HRESULT SHCreateItemFromParsingName(PCWSTR pszPath, IBindCtx *pbc,
                                              REFIID riid, void **ppv);
 
+  /**
+   * SHGetKnownFolderPath() calls native SHGetKnownFolderPath()
+   * API which is available on Vista and up.
+   */
+  static HRESULT SHGetKnownFolderPath(REFKNOWNFOLDERID rfid,
+                                      DWORD dwFlags,
+                                      HANDLE hToken,
+                                      PWSTR *ppszPath);
   /**
    * GetShellItemPath return the file or directory path of a shell item.
    * Internally calls IShellItem's GetDisplayName.
@@ -233,13 +250,11 @@ private:
                                                             REFIID riid,
                                                             void **ppv);
   static SHCreateItemFromParsingNamePtr sCreateItemFromParsingName;
-
-  /**
-   * VistaCreateItemFromParsingNameInit() initializes the static pointer for
-   * SHCreateItemFromParsingName() API which is usable only on Vista and later.
-   * This returns TRUE if the API is available.  Otherwise, FALSE.
-   */
-  static bool VistaCreateItemFromParsingNameInit();
+  typedef HRESULT (WINAPI * SHGetKnownFolderPathPtr)(REFKNOWNFOLDERID rfid,
+                                                     DWORD dwFlags,
+                                                     HANDLE hToken,
+                                                     PWSTR *ppszPath);
+  static SHGetKnownFolderPathPtr sGetKnownFolderPath;
 };
 
 #ifdef MOZ_PLACES
@@ -263,27 +278,30 @@ private:
 /**
   * Asynchronously tries add the list to the build
   */
-class AsyncWriteIconToDisk : public nsIRunnable
+class AsyncEncodeAndWriteIcon : public nsIRunnable
 {
 public:
   const bool mURLShortcut;
   NS_DECL_ISUPPORTS
   NS_DECL_NSIRUNNABLE
 
-  // Warning: AsyncWriteIconToDisk assumes ownership of the aData buffer passed in
-  AsyncWriteIconToDisk(const nsAString &aIconPath,
-                       const nsACString &aMimeTypeOfInputData,
-                       uint8_t *aData, 
-                       uint32_t aDataLen,
-                       const bool aURLShortcut);
-  virtual ~AsyncWriteIconToDisk();
+  // Warning: AsyncEncodeAndWriteIcon assumes ownership of the aData buffer passed in
+  AsyncEncodeAndWriteIcon(const nsAString &aIconPath,
+                          uint8_t *aData, uint32_t aDataLen, uint32_t aStride,
+                          uint32_t aWidth, uint32_t aHeight,
+                          const bool aURLShortcut);
+  virtual ~AsyncEncodeAndWriteIcon();
 
 private:
   nsAutoString mIconPath;
   nsAutoCString mMimeTypeOfInputData;
   nsAutoArrayPtr<uint8_t> mBuffer;
   uint32_t mBufferLength;
+  uint32_t mStride;
+  uint32_t mWidth;
+  uint32_t mHeight;
 };
+
 
 class AsyncDeleteIconFromDisk : public nsIRunnable
 {

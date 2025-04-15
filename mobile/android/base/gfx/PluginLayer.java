@@ -6,6 +6,7 @@ package org.mozilla.gecko.gfx;
 
 import org.mozilla.gecko.GeckoApp;
 import org.mozilla.gecko.util.FloatUtils;
+import org.mozilla.gecko.util.ThreadUtils;
 
 import android.graphics.Rect;
 import android.graphics.RectF;
@@ -60,7 +61,8 @@ public class PluginLayer extends TileLayer {
 
     private void hideView() {
         if (mViewVisible) {
-            GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+            ThreadUtils.postToUiThread(new Runnable() {
+                @Override
                 public void run() {
                     mView.setVisibility(View.GONE);
                     mViewVisible = false;
@@ -70,7 +72,8 @@ public class PluginLayer extends TileLayer {
     }
 
     public void showView() {
-        GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+        ThreadUtils.postToUiThread(new Runnable() {
+            @Override
             public void run() {
                 if (mContainer.indexOfChild(mView) < 0) {
                     mContainer.addView(mView, mLayoutParams);
@@ -83,6 +86,7 @@ public class PluginLayer extends TileLayer {
         });
     }
 
+    @Override
     public void destroy() {
         mDestroyed = true;
 

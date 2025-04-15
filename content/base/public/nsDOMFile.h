@@ -394,20 +394,9 @@ protected:
       : mData(aMemoryBuffer)
       , mLength(aLength)
     {
-      if (!sDataOwners) {
-        sDataOwners = new mozilla::LinkedList<DataOwner>();
-        EnsureMemoryReporterRegistered();
-      }
-      sDataOwners->insertBack(this);
     }
 
     ~DataOwner() {
-      remove();
-      if (sDataOwners->isEmpty()) {
-        // Free the linked list if it's empty.
-        sDataOwners = nullptr;
-      }
-
       moz_free(mData);
     }
 
@@ -437,8 +426,7 @@ public:
 
   NS_DECL_NSIDOMFILELIST
 
-  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
-                               bool *triedToWrap);
+  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope) MOZ_OVERRIDE;
 
   nsISupports* GetParentObject()
   {

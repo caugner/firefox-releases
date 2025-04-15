@@ -6,7 +6,6 @@
 #ifndef mozilla_dom_SVGMPathElement_h
 #define mozilla_dom_SVGMPathElement_h
 
-#include "nsIDOMSVGURIReference.h"
 #include "nsSVGElement.h"
 #include "nsStubMutationObserver.h"
 #include "nsSVGString.h"
@@ -22,8 +21,6 @@ namespace dom {
 class SVGPathElement;
 
 class SVGMPathElement MOZ_FINAL : public SVGMPathElementBase,
-                                  public nsIDOMSVGElement,
-                                  public nsIDOMSVGURIReference,
                                   public nsStubMutationObserver
 {
 protected:
@@ -32,22 +29,16 @@ protected:
   SVGMPathElement(already_AddRefed<nsINodeInfo> aNodeInfo);
   ~SVGMPathElement();
 
-  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
 
 public:
   // interfaces:
   NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_NSIDOMSVGURIREFERENCE
 
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(SVGMPathElement,
                                            SVGMPathElementBase)
 
   NS_DECL_NSIMUTATIONOBSERVER_ATTRIBUTECHANGED
-
-  // Forward interface implementations to base class
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-  NS_FORWARD_NSIDOMSVGELEMENT(SVGMPathElementBase::)
 
   // nsIContent interface
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
@@ -68,8 +59,6 @@ public:
   // element, this method returns a pointer to that element. Otherwise,
   // this returns nullptr.
   SVGPathElement* GetReferencedPath();
-
-  virtual nsIDOMNode* AsDOMNode() { return this; }
 
   // WebIDL
   already_AddRefed<nsIDOMSVGAnimatedString> Href();

@@ -55,6 +55,8 @@ const PREF_APP_UPDATE_RETRY_TIMEOUT       = "app.update.socket.retryTimeout";
 const PREF_APP_DISTRIBUTION               = "distribution.id";
 const PREF_APP_DISTRIBUTION_VERSION       = "distribution.version";
 
+const PREF_APP_B2G_VERSION                = "b2g.version";
+
 const PREF_EM_HOTFIX_ID                   = "extensions.hotfix.id";
 
 const URI_UPDATE_PROMPT_DIALOG  = "chrome://mozapps/content/update/updates.xul";
@@ -134,6 +136,7 @@ const SERVICE_STILL_APPLYING_ON_FAILURE    = 30;
 const SERVICE_UPDATER_NOT_FIXED_DRIVE      = 31;
 const SERVICE_COULD_NOT_LOCK_UPDATER       = 32;
 const SERVICE_INSTALLDIR_ERROR             = 33;
+const SERVICE_COULD_NOT_COPY_UPDATER       = 49;
 
 const WRITE_ERROR_ACCESS_DENIED                     = 35;
 // const WRITE_ERROR_SHARING_VIOLATION                 = 36; // Replaced with errors 46-48
@@ -149,7 +152,6 @@ const FOTA_UNKNOWN_ERROR                            = 45;
 const WRITE_ERROR_SHARING_VIOLATION_SIGNALED        = 46;
 const WRITE_ERROR_SHARING_VIOLATION_NOPROCESSFORPID = 47;
 const WRITE_ERROR_SHARING_VIOLATION_NOPID           = 48;
-
 
 const CERT_ATTR_CHECK_FAILED_NO_UPDATE  = 100;
 const CERT_ATTR_CHECK_FAILED_HAS_UPDATE = 101;
@@ -1183,6 +1185,7 @@ function handleUpdateFailure(update, errorCode) {
       update.errorCode == SERVICE_STILL_APPLYING_ON_FAILURE ||
       update.errorCode == SERVICE_UPDATER_NOT_FIXED_DRIVE ||
       update.errorCode == SERVICE_COULD_NOT_LOCK_UPDATER ||
+      update.errorCode == SERVICE_COULD_NOT_COPY_UPDATER ||
       update.errorCode == SERVICE_INSTALLDIR_ERROR) {
 
     var failCount = getPref("getIntPref",
@@ -3025,6 +3028,7 @@ Checker.prototype = {
 
 #ifdef MOZ_WIDGET_GONK
     url = url.replace(/%PRODUCT_MODEL%/g, gProductModel);
+    url = url.replace(/%B2G_VERSION%/g, getPref("getCharPref", PREF_APP_B2G_VERSION, null));
 #endif
 
     if (force)
@@ -3496,9 +3500,6 @@ Downloader.prototype = {
     try {
       updateArchive = FileUtils.getDir(KEY_UPDATE_ARCHIVE_DIR, [], true);
     } catch (e) {
-      if (e == Cr.NS_ERROR_FILE_TOO_BIG) {
-        this._update.errorCode = FILE_ERROR_TOO_BIG;
-      }
       return null;
     }
 #else

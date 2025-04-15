@@ -68,6 +68,8 @@ Turn on/off screen, cpu, device power, etc. Listen and inspect resource lock eve
 
 push
 {}
+Push Notifications, 822712
+Notify application about updates to things it registers interest in.
 
 settings
 {read, write}
@@ -95,9 +97,9 @@ network-events
 Network Events, 795136
 Receive events when a packet is downloaded or uploaded from the device.
 
-network-http
+systemXHR
 {}
-old name: systemXHR
+Allow XMLHtppRequest from any source
 
 network-tcp
 {}

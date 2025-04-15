@@ -14,6 +14,7 @@
 #include "nsIDOMClientInformation.h"
 #include "nsINavigatorBattery.h"
 #include "nsIDOMNavigatorSms.h"
+#include "nsIDOMNavigatorMobileMessage.h"
 #include "nsIDOMNavigatorNetwork.h"
 #include "nsIObserver.h"
 #ifdef MOZ_AUDIO_CHANNEL_MANAGER
@@ -65,9 +66,8 @@ namespace battery {
 class BatteryManager;
 } // namespace battery
 
-namespace sms {
 class SmsManager;
-} // namespace sms
+class MobileMessageManager;
 
 namespace network {
 class Connection;
@@ -97,6 +97,7 @@ class Navigator : public nsIDOMNavigator
                 , public nsIDOMNavigatorDesktopNotification
                 , public nsINavigatorBattery
                 , public nsIDOMMozNavigatorSms
+                , public nsIDOMMozNavigatorMobileMessage
                 , public nsIObserver
 #ifdef MOZ_MEDIA_NAVIGATOR
                 , public nsINavigatorUserMedia
@@ -135,6 +136,7 @@ public:
   NS_DECL_NSIDOMNAVIGATORDESKTOPNOTIFICATION
   NS_DECL_NSINAVIGATORBATTERY
   NS_DECL_NSIDOMMOZNAVIGATORSMS
+  NS_DECL_NSIDOMMOZNAVIGATORMOBILEMESSAGE
   NS_DECL_NSIOBSERVER
 #ifdef MOZ_MEDIA_NAVIGATOR
   NS_DECL_NSINAVIGATORUSERMEDIA
@@ -197,7 +199,8 @@ private:
   nsRefPtr<nsDesktopNotificationCenter> mNotification;
   nsRefPtr<battery::BatteryManager> mBatteryManager;
   nsRefPtr<power::PowerManager> mPowerManager;
-  nsRefPtr<sms::SmsManager> mSmsManager;
+  nsRefPtr<SmsManager> mSmsManager;
+  nsRefPtr<MobileMessageManager> mMobileMessageManager;
 #ifdef MOZ_B2G_RIL
   nsCOMPtr<nsIDOMTelephony> mTelephony;
   nsCOMPtr<nsIDOMMozVoicemail> mVoicemail;

@@ -43,8 +43,6 @@ public:
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   // XPCOM GetName is fine.
@@ -69,7 +67,7 @@ public:
   }
 
   virtual JSObject*
-  WrapNode(JSContext* aCx, JSObject* aScope, bool* aTriedToWrap) MOZ_OVERRIDE;
+  WrapNode(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
 
 protected:
   virtual void GetItemValueText(nsAString& text);

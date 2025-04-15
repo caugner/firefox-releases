@@ -23,6 +23,7 @@ using mozilla::null_t;
 using mozilla::WindowsHandle;
 using mozilla::gl::SharedTextureHandle;
 using mozilla::gl::GLContext::SharedTextureShareType;
+using mozilla::gfx::SurfaceStreamHandle;
 
 namespace mozilla {
 namespace layers {
@@ -45,6 +46,12 @@ struct SharedTextureDescriptor {
 
 struct SurfaceDescriptorGralloc {
   PGrallocBuffer buffer;
+  /**
+   * android::GraphicBuffer has a size information. But there are cases
+   * that GraphicBuffer's size and actual video's size are different.
+   * Extra size member is necessary. See Bug 850566.
+   */
+  nsIntSize size;
 
   /**
    * We can have one source producing gralloc buffers and sharing them
@@ -60,12 +67,18 @@ struct SharedImageID {
   uint64_t id;
 };
 
+struct SurfaceStreamDescriptor {
+  SurfaceStreamHandle handle;
+  bool yflip;
+};
+
 union SurfaceDescriptor {
   Shmem;
   SurfaceDescriptorD3D10;
   SurfaceDescriptorGralloc;
   SurfaceDescriptorX11;
   SharedTextureDescriptor;
+  SurfaceStreamDescriptor;
 };
 
 struct YCbCrImage {

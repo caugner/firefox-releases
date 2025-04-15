@@ -37,12 +37,14 @@ namespace mozilla {
 #endif
 
 #include "nricectx.h"
+#include "nriceresolver.h"
 #include "nricemediastream.h"
 #include "MediaPipeline.h"
 
 namespace sipcc {
 
 class PeerConnectionImpl;
+class PeerConnectionMedia;
 
 /* Temporary for providing audio data */
 class Fake_AudioGenerator {
@@ -160,14 +162,18 @@ class Fake_VideoGenerator {
 };
 #endif
 
+
+// TODO(ekr@rtfm.com): Refactor {Local,Remote}SourceStreamInfo
+// bug 837539.
 class LocalSourceStreamInfo {
 public:
   typedef mozilla::DOMMediaStream DOMMediaStream;
 
-  LocalSourceStreamInfo(DOMMediaStream* aMediaStream)
-    : mMediaStream(aMediaStream) {
-      MOZ_ASSERT(aMediaStream);
-    }
+  LocalSourceStreamInfo(DOMMediaStream* aMediaStream, PeerConnectionMedia *aParent)
+      : mMediaStream(aMediaStream), mParent(aParent) {
+    MOZ_ASSERT(aMediaStream);
+  }
+
   ~LocalSourceStreamInfo() {
     mMediaStream = NULL;
   }
@@ -181,16 +187,8 @@ public:
   void ExpectVideo(const mozilla::TrackID);
   unsigned AudioTrackCount();
   unsigned VideoTrackCount();
-
-  void Detach() {
-    // walk through all the MediaPipelines and disconnect them.
-    for (std::map<int, mozilla::RefPtr<mozilla::MediaPipeline> >::iterator it =
-           mPipelines.begin(); it != mPipelines.end();
-         ++it) {
-      it->second->Shutdown();
-    }
-    mMediaStream = NULL;
-  }
+  void DetachTransport_s();
+  void DetachMedia_m();
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(LocalSourceStreamInfo)
 private:
@@ -198,16 +196,20 @@ private:
   nsRefPtr<DOMMediaStream> mMediaStream;
   nsTArray<mozilla::TrackID> mAudioTracks;
   nsTArray<mozilla::TrackID> mVideoTracks;
+  PeerConnectionMedia *mParent;
 };
 
 class RemoteSourceStreamInfo {
  public:
   typedef mozilla::DOMMediaStream DOMMediaStream;
 
-  RemoteSourceStreamInfo(DOMMediaStream* aMediaStream) :
-    mMediaStream(already_AddRefed<DOMMediaStream>(aMediaStream)),
-    mPipelines() {
-      MOZ_ASSERT(aMediaStream);
+RemoteSourceStreamInfo(already_AddRefed<DOMMediaStream> aMediaStream,
+                       PeerConnectionMedia *aParent)
+    : mTrackTypeHints(0),
+      mMediaStream(aMediaStream),
+      mPipelines(),
+      mParent(aParent) {
+      MOZ_ASSERT(mMediaStream);
     }
 
   DOMMediaStream* GetMediaStream() {
@@ -216,37 +218,26 @@ class RemoteSourceStreamInfo {
   void StorePipeline(int aTrack, bool aIsVideo,
                      mozilla::RefPtr<mozilla::MediaPipeline> aPipeline);
 
-  void Detach() {
-    // walk through all the MediaPipelines and disconnect them.
-    // XXX we should clear the mTypes map
-    for (std::map<int, mozilla::RefPtr<mozilla::MediaPipeline> >::iterator it =
-           mPipelines.begin(); it != mPipelines.end();
-         ++it) {
-      it->second->Shutdown();
-    }
-    mMediaStream = NULL;
-  }
+  void DetachTransport_s();
+  void DetachMedia_m();
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(RemoteSourceStreamInfo)
+
+public:
+  DOMMediaStream::TrackTypeHints mTrackTypeHints;
  private:
   nsRefPtr<DOMMediaStream> mMediaStream;
   std::map<int, mozilla::RefPtr<mozilla::MediaPipeline> > mPipelines;
   std::map<int, bool> mTypes;
+  PeerConnectionMedia *mParent;
 };
 
 class PeerConnectionMedia : public sigslot::has_slots<> {
  public:
-  PeerConnectionMedia(PeerConnectionImpl *parent)
-      : mParent(parent),
-      mLocalSourceStreamsLock(PR_NewLock()),
-      mIceCtx(NULL) {}
-
-  ~PeerConnectionMedia() {
-    PR_DestroyLock(mLocalSourceStreamsLock);
-  }
+  PeerConnectionMedia(PeerConnectionImpl *parent);
+  ~PeerConnectionMedia() {}
 
   nsresult Init(const std::vector<mozilla::NrIceStunServer>& stun_servers);
-
   // WARNING: This destroys the object!
   void SelfDestruct();
 
@@ -283,7 +274,10 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
 
   // Add a remote stream. Returns the index in index
   nsresult AddRemoteStream(nsRefPtr<RemoteSourceStreamInfo> aInfo, int *aIndex);
+  nsresult AddRemoteStreamHint(int aIndex, bool aIsVideo);
 
+  const nsCOMPtr<nsIThread>& GetMainThread() const { return mMainThread; }
+  const nsCOMPtr<nsIEventTarget>& GetSTSThread() const { return mSTSThread; }
 
   // Get a transport flow either RTP/RTCP for a particular stream
   // A stream can be of audio/video/datachannel/budled(?) types
@@ -327,34 +321,38 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
   // ICE state signals
   sigslot::signal1<mozilla::NrIceCtx *> SignalIceGatheringCompleted;  // Done gathering
   sigslot::signal1<mozilla::NrIceCtx *> SignalIceCompleted;  // Done handshaking
+  sigslot::signal1<mozilla::NrIceCtx *> SignalIceFailed;  // Self explanatory
 
  private:
-  // Disconnect the media streams. Must be called on the
-  // main thread.
-  void DisconnectMediaStreams();
-
   // Shutdown media transport. Must be called on STS thread.
-  void ShutdownMediaTransport();
+  void ShutdownMediaTransport_s();
+
+  // Final destruction of the media stream. Must be called on the main
+  // thread.
+  void SelfDestruct_m();
 
   // ICE events
   void IceGatheringCompleted(mozilla::NrIceCtx *aCtx);
   void IceCompleted(mozilla::NrIceCtx *aCtx);
+  void IceFailed(mozilla::NrIceCtx *aCtx);
   void IceStreamReady(mozilla::NrIceMediaStream *aStream);
 
   // The parent PC
   PeerConnectionImpl *mParent;
 
   // A list of streams returned from GetUserMedia
-  PRLock *mLocalSourceStreamsLock;
+  mozilla::Mutex mLocalSourceStreamsLock;
   nsTArray<nsRefPtr<LocalSourceStreamInfo> > mLocalSourceStreams;
 
   // A list of streams provided by the other side
-  PRLock *mRemoteSourceStreamsLock;
   nsTArray<nsRefPtr<RemoteSourceStreamInfo> > mRemoteSourceStreams;
 
   // ICE objects
   mozilla::RefPtr<mozilla::NrIceCtx> mIceCtx;
   std::vector<mozilla::RefPtr<mozilla::NrIceMediaStream> > mIceStreams;
+
+  // DNS
+  nsRefPtr<mozilla::NrIceResolver> mDNSResolver;
 
   // Transport flows: even is RTP, odd is RTCP
   std::map<int, mozilla::RefPtr<mozilla::TransportFlow> > mTransportFlows;
@@ -362,6 +360,12 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
   // Conduits: even is receive, odd is transmit (for easier correlation with
   // flows)
   std::map<int, mozilla::RefPtr<mozilla::AudioSessionConduit> > mAudioConduits;
+
+  // The main thread.
+  nsCOMPtr<nsIThread> mMainThread;
+
+  // The STS thread.
+  nsCOMPtr<nsIEventTarget> mSTSThread;
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(PeerConnectionMedia)
 };

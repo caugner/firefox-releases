@@ -13,7 +13,7 @@
 /* Sliding Toolbar/Tab Tray ------------------------------------------------- */
 
 #tray {
-  transition: transform 0.2s ease-out;
+  transition: transform @metro_animation_duration@ @metro_animation_easing@;
   transform: translateY(-@tray_slide_height@);
   width: 100%;
 }
@@ -43,7 +43,7 @@
 
 /* in non-tabsonly mode the navigation bar and tab tray float over content. In
    tabsonly mode they are always visible and offset content. */
-#tray:not([tabsonly=true]) {
+#tray:not([tabsonly]) {
   position: fixed;
 }
 
@@ -96,7 +96,7 @@
 #tabs > .tabs-scrollbox > .scrollbutton-up:active {
   -moz-image-region: rect(14px 152px 62px 108px) !important;
 }
-#tabs > .tabs-scrollbox > .scrollbutton-up[disabled="true"] {
+#tabs > .tabs-scrollbox > .scrollbutton-up[disabled] {
   -moz-image-region: rect(15px 196px 63px 152px) !important;
 }
 
@@ -110,7 +110,7 @@
 #tabs > .tabs-scrollbox > .scrollbutton-down:active {
   -moz-image-region: rect(72px 152px 120px 108px) !important;
 }
-#tabs > .tabs-scrollbox > .scrollbutton-down[disabled="true"] {
+#tabs > .tabs-scrollbox > .scrollbutton-down[disabled] {
   -moz-image-region: rect(73px 196px 121px 152px) !important;
 }
 
@@ -127,13 +127,13 @@
   }
 }
 
-#tray:not([tabsonly=true]) documenttab > .documenttab-container {
+#tray:not([tabsonly]) documenttab > .documenttab-container {
   animation: open-documenttab;
   animation-duration: 0.4s;
   animation-timing-function: ease-out;
 }
 
-#tray:not([tabsonly=true]) .documenttab-favicon {
+#tray:not([tabsonly]) .documenttab-favicon {
   visibility: collapse;
 }
 
@@ -166,7 +166,7 @@
   background: transparent -moz-image-rect(url("chrome://browser/skin/images/tab-overlay.png"), 0%, 100%, 50%, 0%) 50% 50% no-repeat;
 }
 
-documenttab[selected=true] .documenttab-selection {
+documenttab[selected] .documenttab-selection {
   background: transparent -moz-image-rect(url("chrome://browser/skin/images/tab-overlay.png"), 50%, 100%, 100%, 0%) 50% 50% no-repeat;
 }
 
@@ -179,58 +179,62 @@ documenttab[selected=true] .documenttab-selection {
   list-style-image: url("chrome://browser/skin/images/closetab-default.png");
 }
 
-#tray[tabsonly=true] {
+.documenttab-close > .button-box > .button-text {
+  display: none;
+}
+
+#tray[tabsonly] {
   transform: none !important;
 }
 
-#tray[tabsonly=true] #tabs {
+#tray[tabsonly] #tabs {
   -moz-padding-start: @metro_spacing_small@;
 }
 
-#tray[tabsonly=true] #tabs-controls {
+#tray[tabsonly] #tabs-controls {
   -moz-box-align: center;
   -moz-box-orient: horizontal;
   -moz-box-pack: end;
   margin: 0;
 }
 
-#tray[tabsonly=true] #tabs-controls toolbarbutton {
+#tray[tabsonly] #tabs-controls toolbarbutton {
   margin-top: 0;
   margin-bottom: 0;
 }
 
-#tray[tabsonly=true] documenttab {
+#tray[tabsonly] documenttab {
   height: @toolbar_height@;
   margin: 0 -@tab_compression@;
 }
 
-#tray[tabsonly=true] documenttab:first-child {
+#tray[tabsonly] documenttab:first-child {
   -moz-margin-start: 0;
 }
 
-#tray[tabsonly=true] documenttab:last-child {
+#tray[tabsonly] documenttab:last-child {
   -moz-margin-end: 0;
 }
 
-#tray[tabsonly=true] .documenttab-thumbnail,
-#tray[tabsonly=true] .documenttab-selection,
-#tray[tabsonly=true] .documenttab-crop {
+#tray[tabsonly] .documenttab-thumbnail,
+#tray[tabsonly] .documenttab-selection,
+#tray[tabsonly] .documenttab-crop {
   visibility: collapse;
 }
 
-#tray[tabsonly=true] .documenttab-container {
+#tray[tabsonly] .documenttab-container {
   display: -moz-box;
   -moz-box-orient: horizontal;
   -moz-box-align: center;
   padding: 0 @tab_spacing@;
 }
 
-#tray[tabsonly=true] .documenttab-favicon {
+#tray[tabsonly] .documenttab-favicon {
   -moz-margin-start: @metro_spacing_normal@;
   -moz-margin-end: @metro_spacing_snormal@;
 }
 
-#tray[tabsonly=true] .documenttab-title {
+#tray[tabsonly] .documenttab-title {
   padding: 0;
   margin: 0;
   height: auto;
@@ -240,14 +244,14 @@ documenttab[selected=true] .documenttab-selection {
   width: @tab_inner_width@;
 }
 
-#tray[tabsonly=true] .documenttab-close {
+#tray[tabsonly] .documenttab-close {
   list-style-image: url("chrome://browser/skin/images/closetab-tab.png");
   position: relative;
   padding: 0 !important;
   z-index: 1;
 }
 
-#tray[tabsonly=true] documenttab[selected=true] {
+#tray[tabsonly] documenttab[selected=true] {
   background-color: @panel_light_color@;
   background-image: url("chrome://browser/skin/images/tab-selection-left.png"),
                     url("chrome://browser/skin/images/tab-selection-right.png"),
@@ -256,7 +260,7 @@ documenttab[selected=true] .documenttab-selection {
   background-repeat: no-repeat, no-repeat, repeat;
 }
 
-#tray[tabsonly=true] documenttab[selected=true] .documenttab-close {
+#tray[tabsonly] documenttab[selected=true] .documenttab-close {
   list-style-image: url("chrome://browser/skin/images/closetab-tabselected.png");
 }
 
@@ -273,7 +277,7 @@ documenttab[selected=true] .documenttab-selection {
   display: none;
 }
 
-#tray[tabsonly=true] documenttab[selected=true] .documenttab-title {
+#tray[tabsonly] documenttab[selected=true] .documenttab-title {
   color: #000;
 }
 
@@ -352,7 +356,7 @@ documenttab[selected=true] .documenttab-selection {
   max-height: 48px !important;
 }
 
-#back-button[disabled="true"] {
+#back-button[disabled] {
   -moz-image-region: rect(0 96px 48px 48px);
 }
 
@@ -373,7 +377,7 @@ documenttab[selected=true] .documenttab-selection {
   margin: -1px 0 1px 0 !important;
 }
 
-#unified-back-forward-button > #forward-button[disabled="true"] {
+#unified-back-forward-button > #forward-button[disabled] {
   opacity: 0;
 }
 
@@ -398,12 +402,12 @@ documenttab[selected=true] .documenttab-selection {
   transition: margin-left @forward_transition_length@ ease-out;
 }
 
-#unified-back-forward-button[forwarddisabled="true"] + #urlbar-container {
+#unified-back-forward-button[forwarddisabled] + #urlbar-container {
   clip-path: url("chrome://browser/content/browser.xul#back-button-clip-path");
   padding-left: @clipped_url_back_width@;
 }
 
-#unified-back-forward-button[forwarddisabled="true"] + #urlbar-container > #urlbar {
+#unified-back-forward-button[forwarddisabled] + #urlbar-container > #urlbar {
   margin-left: -@forward_width@;
 }
 
@@ -477,18 +481,18 @@ documenttab[selected=true] .documenttab-selection {
 
 /* Hide the tab toggle if we're showing classic tabs or we're snap-viewed. */
 #toolbar[viewstate="snapped"],
-#tray[tabsonly=true] #toolbar {
+#tray[tabsonly] #toolbar {
   background: @panel_light_color@ @panel_light_background@;
   -moz-padding-end: 0;
 }
 
 #toolbar-container[viewstate="snapped"],
-#tray[tabsonly=true] #toolbar-container {
+#tray[tabsonly] #toolbar-container {
   -moz-padding-end: 0;
 }
 
 #toolbar-transition[viewstate="snapped"],
-#tray[tabsonly=true] #toolbar-transition {
+#tray[tabsonly] #toolbar-transition {
   visibility: collapse;
 }
 
@@ -513,7 +517,7 @@ appbar {
   height: @toolbar_height@;
   bottom: 0;
   transform: translateY(@toolbar_height@);
-  transition: transform 0.2s ease-out;
+  transition: transform @metro_animation_duration@ @metro_animation_easing@;
   width: 100%;
 }
 
@@ -536,7 +540,7 @@ appbar toolbarbutton {
   background-color: transparent;
 }
 
-appbar toolbarbutton[disabled="true"] {
+appbar toolbarbutton[disabled] {
   visibility: collapse;
 }
 
@@ -553,33 +557,6 @@ appbar toolbarbutton[disabled="true"] {
 }
 #appbar toolbarbutton:active {
   -moz-image-region: rect(80px, 200px, 120px, 160px);
-}
-
-/* About flyout pane */
-
-#about-flyoutpanel {
-  width: 350px;
-  background-image:url('chrome://browser/skin/images/about-footer.png');
-  background-repeat: no-repeat;
-  background-attachment: fixed;
-  background-position: right bottom;
-}
-
-#about-flyoutpanel label.text-link {
-  text-decoration: none;
-  color: #1167bd;
-}
-
-#about-product-label {
- font-weight: bold;
-}
-
-#about-version-label {
- margin-top: 11pt;
-}
-
-#about-policy-label {
- margin-top: 24pt;
 }
 
 /* Application-Specific */
@@ -633,7 +610,7 @@ appbar toolbarbutton[disabled="true"] {
 #pin-button:active {
   -moz-image-region: rect(80px, 240px, 120px, 200px) !important;
 }
-#pin-button[checked="true"] {
+#pin-button[checked] {
   -moz-image-region: rect(0px, 280px, 40px, 240px) !important;
 }
 
@@ -644,91 +621,75 @@ appbar toolbarbutton[disabled="true"] {
   -moz-image-region: rect(40px, 360px, 80px, 320px) !important;
 }
 #star-button:active,
-#star-button[checked="true"] {
+#star-button[checked] {
   -moz-image-region: rect(80px, 360px, 120px, 320px) !important;
 }
-
-/* Start UI (Autocomplete + New Tab Page) ----------------------------------- */
-
-#start-container {
-  display: none;
+/* Tile-selection-Specific */
+#pin-selected-button {
+  -moz-image-region: rect(0px, 240px, 40px, 200px) !important;
+}
+#pin-selected-button:hover {
+  -moz-image-region: rect(40px, 240px, 80px, 200px) !important;
+}
+#pin-selected-button:active {
+  -moz-image-region: rect(80px, 240px, 120px, 200px) !important;
 }
 
-#start-container[startpage],
-#start-container[filtering] {
-  display: -moz-box;
+#unpin-selected-button {
+  -moz-image-region: rect(80px, 240px, 120px, 200px) !important;
+}
+#unpin-selected-button:hover {
+  -moz-image-region: rect(40px, 240px, 80px, 200px) !important;
+}
+#unpin-selected-button:active {
+  -moz-image-region: rect(0px, 240px, 40px, 200px) !important;
 }
 
-#start-scrollbox {
-  overflow: hidden;
+#delete-selected-button {
+  -moz-image-region: rect(0px, 480px, 40px, 440px) !important;
+}
+#delete-selected-button:hover {
+  -moz-image-region: rect(40px, 480px, 80px, 440px) !important;
+}
+#delete-selected-button:active {
+  -moz-image-region: rect(80px, 480px, 120px, 440px) !important;
 }
 
-/* if autocomplete is set, hide both start pages,
- *  else hide the autocomplete screen */
-#start-container[filtering] > .start-page,
-#start-container:not([filtering]) > #start-autocomplete {
-  visibility: collapse;
+/* Flyouts ---------------------------------------------------------------- */
+/* don't add a margin to the very top settings entry in flyouts */
+flyoutpanel > settings:first-child {
+  margin-top: 0px;
 }
 
-/* if snapped, hide the fullscreen awesome screen, if viewstate is anything
- *  other than snapped, hide the snapped awesome screen */
-#start[viewstate="snapped"],
-#snapped-start:not([viewstate="snapped"]) {
-  visibility: collapse;
+/* Sync flyout pane */
+
+#sync-flyoutpanel {
+  width: 400px;
 }
 
-/* Browser Content Ares ----------------------------------------------------- */
+/* About flyout pane */
 
-/* Hide the browser while the start UI is visible */
-#content-viewport[startpage],
-#content-viewport[filtering] {
-  visibility: collapse;
+#about-flyoutpanel {
+  width: 350px;
+  background-image:url('chrome://browser/skin/images/about-footer.png');
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  background-position: right bottom;
 }
 
-#browsers {
-  background: white;
+#about-product-label {
+ font-weight: bold;
 }
 
-/* Panel UI ---------------------------------------------------------------- */
-
-#panel-container {
-  padding: 60px 40px;
+#about-version-label {
+ margin-top: 11pt;
 }
 
-#panel-close-button {
-  background: transparent;
-  border: 0 none;
-  -moz-appearance: none;
-  margin: 0;
-  -moz-margin-end: 40px;
-  list-style-image: url(chrome://browser/skin/images/back.png);
-  -moz-image-region: rect(0 48px 48px 0);
-  padding: 0;
-  min-height: 48px;
-  max-height: 48px;
-  -moz-box-pack: center;
+#about-policy-label {
+ margin-top: 24pt;
 }
 
-#panel-close-button[disabled="true"] {
-  -moz-image-region: rect(0 96px 48px 48px);
-}
-
-#panel-view-switcher {
-  border: 0 none !important;
-  color: #000 !important;
-  background: transparent;
-  padding: 0;
-  font-size: @metro_font_xlarge@;
-  font-weight: 100;
-  margin: 0;
-}
-
-#panel-items {
-  padding-top: 20px;
-  -moz-padding-start: 88px;
-}
-
-/* Preferences Section - Panel UI ------------------------------------------ */
+/* Preferences flyout */
 
 #prefs-flyoutpanel {
   width: 400px;
@@ -760,11 +721,13 @@ settings {
 }
 
 /* <setting> elements that are not in a <settings> group get special treatment */
-#prefs-flyoutpanel > setting {
+#prefs-flyoutpanel > setting,
+#sync-flyoutpanel > setting {
   margin-top: 16px;
 }
+
 #prefs-flyoutpanel > setting .preferences-title {
-  font-weight: bold
+  font-weight: bold;
 }
 
 setting[type="integer"] > .preferences-alignment,
@@ -775,6 +738,10 @@ setting[type="string"] > .preferences-alignment {
 setting[type="file"] > .preferences-alignment,
 setting[type="directory"] > .preferences-alignment {
   -moz-box-align: center;
+}
+
+#prefs-homepage-options, #prefs-homepage-popup {
+  min-width: 200px;
 }
 
 .options-box {
@@ -792,6 +759,111 @@ setting[type="directory"] > .preferences-alignment {
 
 .preferences-description:empty {
   display: none;
+}
+
+/* Clear private data prefs */
+
+/* hide subitems when other data checkbox is not checked */
+#prefs-privdata-other:not([checked]) + #prefs-privdata-subitems {
+  display: none;
+}
+
+#prefs-privdata-subitems {
+  display: block;
+  padding-left: @metro_spacing_xnormal@;
+  font-size: @metro_font_snormal@;
+}
+
+/* arrange sub-items in two columns */
+.privdata-subitem-item {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0;
+  width: 50%;
+}
+
+#clear-notification-done {
+  font-weight: bold;
+}
+
+/* Start UI (Autocomplete + New Tab Page) ----------------------------------- */
+
+#start-container {
+  display: none;
+}
+
+#start-container[startpage],
+#start-container[filtering] {
+  display: -moz-box;
+}
+
+#start-scrollbox {
+  overflow: hidden;
+}
+
+/* if autocomplete is set, hide both start pages,
+ *  else hide the autocomplete screen */
+#start-container[filtering] > .start-page,
+#start-container:not([filtering]) > #start-autocomplete {
+  visibility: collapse;
+}
+
+/* if snapped, hide the fullscreen awesome screen, if viewstate is anything
+ *  other than snapped, hide the snapped awesome screen */
+#start[viewstate="snapped"],
+#snapped-start:not([viewstate="snapped"]) {
+  visibility: collapse;
+}
+
+/* Browser Content Areas ----------------------------------------------------- */
+
+/* Hide the browser while the start UI is visible */
+#content-viewport[startpage],
+#content-viewport[filtering] {
+  visibility: collapse;
+}
+
+#browsers {
+  background: white;
+}
+
+/* Panel UI ---------------------------------------------------------------- */
+
+#panel-container {
+  padding: 60px 40px;
+}
+
+#panel-close-button {
+  background: transparent;
+  border: 0 none;
+  -moz-appearance: none;
+  margin: 0;
+  -moz-margin-end: 40px;
+  list-style-image: url(chrome://browser/skin/images/back.png);
+  -moz-image-region: rect(0 48px 48px 0);
+  padding: 0;
+  min-height: 48px;
+  max-height: 48px;
+  -moz-box-pack: center;
+}
+
+#panel-close-button[disabled] {
+  -moz-image-region: rect(0 96px 48px 48px);
+}
+
+#panel-view-switcher {
+  border: 0 none !important;
+  color: #000 !important;
+  background: transparent;
+  padding: 0;
+  font-size: @metro_font_xlarge@;
+  font-weight: 100;
+  margin: 0;
+}
+
+#panel-items {
+  padding-top: 20px;
+  -moz-padding-start: 88px;
 }
 
 /* Console Section - Panel UI ---------------------------------------------- */
@@ -813,194 +885,10 @@ setting[type="directory"] > .preferences-alignment {
   white-space: pre-wrap;
 }
 
-/* Identity popup   -------------------------------------------------------- */
-
-#identity-popup-container {
-  padding: @padding_normal@; /* core spacing */
-  padding-bottom: @padding_xxxnormal@;
-}
-
-/* Popup Icons */
-#identity-popup-icon {
-  padding: 0;
-  list-style-image: url("chrome://browser/skin/images/identity-default-hdpi.png");
-}
-
-#identity-container[mode="verifiedIdentity"] > box > #identity-popup-icon {
-  list-style-image: url("chrome://browser/skin/images/identity-ev-hdpi.png");
-}
-
-#identity-container[mode="verifiedDomain"] > box > #identity-popup-icon {
-  list-style-image: url("chrome://browser/skin/images/identity-ssl-hdpi.png");
-}
-
-/* Popup Body Text */
-#identity-popup-content-box {
-  -moz-padding-start: @padding_normal@; /* core spacing */
-  font-size: @font_small@ !important;
-  white-space: pre-wrap;
-}
-
-/* let the text flow into a second row, if needed */
-#identity-popup-runBy-box {
-  display: block;
-}
-
-#identity-popup-content-box.unknownIdentity > box > #identity-popup-connectedToLabel,
-#identity-popup-content-box.unknownIdentity > #identity-popup-runBy-box,
-#identity-popup-content-box.unknownIdentity > box > #identity-popup-content-host,
-#identity-popup-content-box.verifiedIdentity > box > #identity-popup-connectedToLabel2,
-#identity-popup-content-box.verifiedDomain > box > #identity-popup-connectedToLabel2 {
-  display: none;
-}
-
-#identity-popup-encryption-label,
-#identity-popup-content-verifier {
-  font-size: @font_tiny@ !important;
-}
-
-#identity-popup-content-host,
-#identity-popup-content-owner {
-  font-weight: bold;
-}
-
-#identity-popup-encryption-icon {
-  list-style-image: url("chrome://browser/skin/images/unlocked-hdpi.png");
-}
-
-#identity-container[mode="verifiedIdentity"] > hbox > vbox > #identity-popup-encryption-icon ,
-#identity-container[mode="verifiedDomain"] > hbox > vbox > #identity-popup-encryption-icon {
-  list-style-image: url("chrome://browser/skin/images/locked-hdpi.png");
-}
-
-#identity-popup-encryption-box {
-  -moz-box-orient: vertical;
-  -moz-box-align: center;
-  -moz-box-pack: start;
-}
-
-#identity-popup-connected-box {
-  -moz-box-orient: horizontal;
-}
-
-#identity-popup-content-supplemental {
-  white-space: normal;
-}
-
 /* Context Menu ------------------------------------------------------------ */
 
-#context-commands richlistitem[disabled="true"] {
+#context-commands richlistitem[disabled] {
   display: none;
-}
-
-/* Page Actions and Prompt ------------------------------------------------- */
-
-.action-buttons,
-#pageactions-container {
-  background: transparent;
-  border-top: @border_width_tiny@ solid rgb(205,205,205);
-  padding: 0;
-  -moz-user-focus: ignore;
-}
-
-.action-buttons,
-#pageactions-container {
-  display: inline-block;
-}
-
-.action-button,
-pageaction {
-  -moz-border-top-colors: white;
-  -moz-border-right-colors: rgb(175,175,175);
-  -moz-border-bottom-colors: rgb(175,175,175);
-  -moz-border-left-colors: white;
-  border-style: solid;
-  border-width: @border_width_tiny@ !important;
-  height: @touch_button_xlarge@;
-  min-height: @touch_button_xlarge@;
-  width: 100%;
-  min-width: @touch_action_minwidth@; /* keep the button from being too narrow */
-}
-
-.action-button {
-  -moz-box-align: center;
-}
-
-.action-button[disabled="true"] {
-  pointer-events: none;
-  color: #aaa !important;
-}
-
-.action-button[selected="true"] {
-  background: transparent;
-}
-
-/* Override button styles */
-.action-button {
-  margin: 0;
-  -moz-border-image: none !important;
-  border-radius: 0;
-  margin: 0;
-  background: transparent;
-}
-
-.action-button > .button-box {
-  padding: 0 @padding_small@ @padding_tiny@ @padding_xsmall@ !important;
-}
-
-.action-button > .button-box > .button-icon {
-  -moz-margin-end: @margin_normal@;
-}
-
-@media (min-width: 500px) {
-  .action-button,
-  pageaction {
-    width: 50%;
-  }
-
-  .action-button:last-child:nth-child(odd),
-  pageaction.odd.last-child {
-    width: 100%;
-  }
-}
-
-.action-button:not([disabled]):hover:active,
-pageaction:not([disabled]):hover:active {
-  background: url("chrome://browser/skin/images/popup-selected-item-hdpi.png") repeat-x !important;
-  background-origin: border-box !important;
-  background-clip: border-box !important;
-  -moz-border-top-colors: transparent;
-  -moz-border-left-colors: transparent;
-}
-
-pageaction > hbox > .pageaction-image {
-  width: 32px;
-  height: 32px;
-  -moz-margin-end: @margin_normal@;
-}
-
-pageaction:not([image]) > hbox >.pageaction-image {
-  width: 0;
-}
-
-.action-button,
-.pageaction-title {
-  font-size: @font_normal@ !important;
-  color: #414141 !important;
-}
-
-.pageaction-desc {
-  font-size: @font_tiny@ !important;
-  color: #414141;
-}
-
-.pageaction-desc[value=""] {
-  display: none;
-}
-
-#share-title {
-  font-size: @font_small@;
-  padding: @padding_small@;
 }
 
 /* Alert Popup -------------------------------------------------------------- */
@@ -1082,7 +970,7 @@ pageaction:not([image]) > hbox >.pageaction-image {
   border: @border_width_tiny@ solid rgba(255, 255, 255, 0.4) !important;
 }
 
-.scroller[panning="true"] {
+.scroller[panning] {
   opacity: 1;
 }
 
@@ -1100,19 +988,18 @@ pageaction:not([image]) > hbox >.pageaction-image {
 
 /* Text selection handles */
 
-#selectionhandle-start,
-#selectionhandle-end {
+#selectionhandle-mark1,
+#selectionhandle-mark2,
+#selectionhandle-mark3 {
   border: 0px solid gray;
   padding: 0px;
   margin-top: -30px;
   margin-left: -18px;
 }
 
-#selectionhandle-start {
-  list-style-image: url("chrome://browser/skin/images/selection-monocle.png");
-}
-
-#selectionhandle-end {
+#selectionhandle-mark1,
+#selectionhandle-mark2,
+#selectionhandle-mark3 {
   list-style-image: url("chrome://browser/skin/images/selection-monocle.png");
 }
 

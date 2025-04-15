@@ -5,10 +5,12 @@
 "use strict";
 
 SimpleTest.waitForExplicitFinish();
+browserElementTestHelpers.setEnabledPref(true);
+browserElementTestHelpers.addPermission();
 
 function makeAllAppsLaunchable() {
   var Webapps = {};
-  SpecialPowers.wrap(Components).utils.import("resource://gre/modules/Webapps.jsm", Webapps);
+  SpecialPowers.Cu.import("resource://gre/modules/Webapps.jsm", Webapps);
   var appRegistry = SpecialPowers.wrap(Webapps.DOMApplicationRegistry);
 
   var originalValue = appRegistry.allAppsLaunchable;
@@ -26,7 +28,7 @@ makeAllAppsLaunchable();
 
 function testAppElement(expectAnApp, callback) {
   var iframe = document.createElement('iframe');
-  iframe.mozbrowser = true;
+  SpecialPowers.wrap(iframe).mozbrowser = true;
   iframe.setAttribute('mozapp', 'http://example.org/manifest.webapp');
   iframe.addEventListener('mozbrowsershowmodalprompt', function(e) {
     is(e.detail.message == 'app', expectAnApp, e.detail.message);
@@ -37,9 +39,6 @@ function testAppElement(expectAnApp, callback) {
 }
 
 function runTest() {
-  browserElementTestHelpers.setEnabledPref(true);
-  browserElementTestHelpers.addPermission();
-
   SpecialPowers.addPermission("embed-apps", true, document);
   testAppElement(true, function() {
     SpecialPowers.removePermission("embed-apps", document);
@@ -49,4 +48,4 @@ function runTest() {
   });
 }
 
-runTest();
+addEventListener('testready', runTest);

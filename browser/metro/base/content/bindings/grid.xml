@@ -32,12 +32,12 @@
             // as richgrid is adopting multi-select behavior, but select/selected are already being
             // used to describe triggering the default action of a tile
             if (this._selectedItem){
-              this._selectedItem.selected = false;
+              this._selectedItem.removeAttribute("selected");
               this._selectedItem = null;
             }
 
             for (let childItem of this.selectedItems) {
-              childItem.selected = false;
+              childItem.removeAttribute("selected");
             }
             // reset context actions
             this._contextActions = null;
@@ -49,7 +49,16 @@
         <parameter name="anItem"/>
         <body>
           <![CDATA[
-            anItem.selected = !anItem.selected;
+            let wasSelected = anItem.selected;
+            if ("single" == this.getAttribute("seltype")) {
+              this.clearSelection();
+            }
+            this._selectedItem = wasSelected ? null : anItem;
+            if(anItem.selected) {
+              anItem.removeAttribute("selected");
+            } else {
+              anItem.setAttribute("selected", true);
+            }
             this._fireOnSelectionChange();
           ]]>
         </body>
@@ -59,11 +68,20 @@
         <parameter name="anItem"/>
         <body>
           <![CDATA[
-            this.clearSelection();
+            let wasSelected = anItem.selected,
+                isSingleMode = ("single" == this.getAttribute("seltype"));
+            if (isSingleMode) {
+              this.clearSelection();
+            }
             this._selectedItem = anItem;
-            this._selectedItem.selected = true;
-
-            this._fireOnSelect();
+            anItem.selected = true;
+            if (isSingleMode) {
+              if (!wasSelected) {
+                this._fireOnSelect();
+              }
+            } else {
+              this._fireOnSelectionChange();
+            }
           ]]>
         </body>
       </method>
@@ -178,11 +196,13 @@
       <method name="appendItem">
         <parameter name="aLabel"/>
         <parameter name="aValue"/>
+        <parameter name="aSkipArrange"/>
         <body>
           <![CDATA[
             let addition = this._createItemElement(aLabel, aValue);
             this.appendChild(addition);
-            this.arrangeItems();
+            if (!aSkipArrange)
+              this.arrangeItems();
             return addition;
           ]]>
         </body>
@@ -204,6 +224,7 @@
         <parameter name="anIndex"/>
         <parameter name="aLabel"/>
         <parameter name="aValue"/>
+        <parameter name="aSkipArrange"/>
         <body>
           <![CDATA[
             let existing = this.getItemAtIndex(anIndex);
@@ -213,19 +234,21 @@
             } else {
               this.appendChild(addition);
             }
-            this.arrangeItems();
+            if (!aSkipArrange)
+              this.arrangeItems();
             return addition;
           ]]>
         </body>
       </method>
-
       <method name="removeItemAt">
         <parameter name="anIndex"/>
+        <parameter name="aSkipArrange"/>
         <body>
           <![CDATA[
             let removal = this.getItemAtIndex(anIndex);
             this.removeChild(removal);
-            this.arrangeItems();
+            if (!aSkipArrange)
+              this.arrangeItems();
             return removal;
           ]]>
         </body>
@@ -432,11 +455,6 @@
             item.setAttribute("label", aLabel);
             if (aValue)
               item.setAttribute("value", aValue);
-
-            // copy over the richgrid's data-contextactions as each child is created
-            if (this.hasAttribute("data-contextactions")) {
-              item.setAttribute("data-contextactions", this.getAttribute("data-contextactions"));
-            }
             return item;
           ]]>
         </body>
@@ -476,30 +494,58 @@
 
   <binding id="richgrid-item">
     <content>
-      <xul:vbox anonid="anon-richgrid-item" class="richgrid-item-content">
-        <xul:hbox class="richgrid-icon-container">
-          <xul:box class="richgrid-icon-box"><xul:image xbl:inherits="src=iconURI"/></xul:box>
+      <xul:vbox anonid="anon-richgrid-item" class="richgrid-item-content" xbl:inherits="customImage">
+        <xul:hbox class="richgrid-icon-container" xbl:inherits="customImage">
+          <xul:box class="richgrid-icon-box"><xul:image anonid="anon-richgrid-item-icon" xbl:inherits="src=iconURI"/></xul:box>
           <xul:box flex="1" />
         </xul:hbox>
-        <xul:description xbl:inherits="value=label" crop="end"/>
+        <xul:description anonid="anon-richgrid-item-label" class="richgrid-item-desc" xbl:inherits="value=label" crop="end"/>
       </xul:vbox>
     </content>
 
     <implementation>
       <property name="_box" onget="return document.getAnonymousElementByAttribute(this, 'anonid', 'anon-richgrid-item');"/>
-      <property name="color" onset="this._color = val; this.setColor();" onget="return this._color;"/>
-      <property name="selected"
-                onget="return this.getAttribute('selected') == 'true';"
-                onset="this.setAttribute('selected', val);"/>
+      <property name="_icon" onget="return document.getAnonymousElementByAttribute(this, 'anonid', 'anon-richgrid-item-icon');"/>
+      <property name="_label" onget="return document.getAnonymousElementByAttribute(this, 'anonid', 'anon-richgrid-item-label');"/>
+      <property name="iconSrc"
+                onset="this._icon.src = val; this.setAttribute('iconURI', val);"
+                onget="return this._icon.src;" />
+
+      <property name="selected" onget="return this.hasAttribute('selected');" />
+      <property name="url"
+                onget="return this.getAttribute('value')"
+                onset="this.setAttribute('value', val);"/>
+      <property name="label"
+                onget="return this._label.getAttribute('value')"
+                onset="this.setAttribute('label', val); this._label.setAttribute('value', val);"/>
+      <property name="pinned"
+                onget="return this.hasAttribute('pinned')"
+                onset="if (val) { this.setAttribute('pinned', val) } else this.removeAttribute('pinned');"/>
 
       <constructor>
         <![CDATA[
-          // Bindings don't get bound until the item is displayed,
-          // so we have to reset the background color when we get
-          // created.
-          this.setColor();
+            this.refresh();
         ]]>
       </constructor>
+      <method name="refresh">
+        <body>
+          <![CDATA[
+            // Seed the binding properties from bound-node attribute values
+            // Usage: node.refresh()
+            //        - reinitializes all binding properties from their associated attributes
+
+            this.iconSrc = this.getAttribute('iconURI');
+            this.color = this.getAttribute("customColor");
+            this.label = this.getAttribute('label');
+            // url getter just looks directly at attribute
+            // selected getter just looks directly at attribute
+            // pinned getter just looks directly at attribute
+            // value getter just looks directly at attribute
+            this.refreshBackgroundImage();
+            this._contextActions = null;
+          ]]>
+        </body>
+      </method>
 
       <property name="control">
         <getter><![CDATA[
@@ -513,17 +559,37 @@
         ]]></getter>
       </property>
 
-      <method name="setColor">
-        <body>
-          <![CDATA[
-            if (this.color != undefined) {
-              this._box.parentNode.setAttribute("customColorPresent", "true");
-              this._box.style.backgroundColor = this.color;
-            } else {
-              this._box.parentNode.removeAttribute("customColorPresent");
-            }
-          ]]>
-        </body>
+      <property name="color" onget="return this.getAttribute('customColor');">
+        <setter><![CDATA[
+          if (val) {
+            this.setAttribute("customColor", val);
+            this._box.style.backgroundColor = val;
+          } else {
+            this.removeAttribute("customColor");
+            this._box.style.removeProperty("background-color");
+          }
+        ]]></setter>
+      </property>
+
+      <property name="backgroundImage" onget="return this.getAttribute('customImage');">
+        <setter><![CDATA[
+          if (val) {
+            this.setAttribute("customImage", val);
+            this._box.style.backgroundImage = val;
+          } else {
+            this.removeAttribute("customImage");
+            this._box.style.removeProperty("background-image");
+          }
+        ]]></setter>
+      </property>
+
+      <method name="refreshBackgroundImage">
+        <body><![CDATA[
+          if (this.backgroundImage) {
+            this._box.style.removeProperty("background-image");
+            this._box.style.setProperty("background-image", this.backgroundImage);
+          }
+        ]]></body>
       </method>
 
       <field name="_contextActions">null</field>
@@ -543,8 +609,19 @@
             return this._contextActions;
           ]]>
         </getter>
+        <setter>
+          <![CDATA[
+            let actionSet = this._contextActions = new Set();
+            let actions = val;
+            if (actions) {
+              actions.split(/[,\s]+/).forEach(function(verb){
+                actionSet.add(verb);
+              });
+            }
+            return this._contextActions;
+          ]]>
+        </setter>
       </property>
-
     </implementation>
 
     <handlers>

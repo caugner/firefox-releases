@@ -16,15 +16,14 @@ namespace dom {
 
 typedef SVGGraphicsElement SVGSwitchElementBase;
 
-class SVGSwitchElement MOZ_FINAL : public SVGSwitchElementBase,
-                                   public nsIDOMSVGElement
+class SVGSwitchElement MOZ_FINAL : public SVGSwitchElementBase
 {
   friend class nsSVGSwitchFrame;
 protected:
   friend nsresult (::NS_NewSVGSwitchElement(nsIContent **aResult,
                                             already_AddRefed<nsINodeInfo> aNodeInfo));
   SVGSwitchElement(already_AddRefed<nsINodeInfo> aNodeInfo);
-  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
 
 public:
   nsIContent * GetActiveChild() const
@@ -36,11 +35,6 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(SVGSwitchElement,
                                            SVGSwitchElementBase)
-  // xxx I wish we could use virtual inheritance
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-  NS_FORWARD_NSIDOMSVGELEMENT(SVGSwitchElementBase::)
-
   // nsINode
   virtual nsresult InsertChildAt(nsIContent* aKid, uint32_t aIndex,
                                  bool aNotify);
@@ -50,8 +44,6 @@ public:
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const;
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-
-  virtual nsIDOMNode* AsDOMNode() { return this; }
 private:
   void UpdateActiveChild()
   { mActiveChild = FindActiveChild(); }

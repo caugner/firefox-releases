@@ -124,6 +124,16 @@ let reference_compare_files = function reference_compare_files(a, b, test) {
   is(a_contents, b_contents, "Contents of files " + a + " and " + b + " match");
 };
 
+let reference_dir_contents = function reference_dir_contents(path) {
+  let result = [];
+  let entries = new FileUtils.File(path).directoryEntries;
+  while (entries.hasMoreElements()) {
+    let entry = entries.getNext().QueryInterface(Components.interfaces.nsILocalFile);
+    result.push(entry.path);
+  }
+  return result;
+};
+
 let test = maketest("Main", function main(test) {
   return Task.spawn(function() {
     SimpleTest.waitForExplicitFinish();
@@ -141,6 +151,8 @@ let test = maketest("Main", function main(test) {
     yield test_iter();
     yield test_exists();
     yield test_debug_test();
+    yield test_system_shutdown();
+    yield test_duration();
     info("Test is over");
     SimpleTest.finish();
   });
@@ -399,8 +411,74 @@ let test_read_write_all = maketest("read_write_all", function read_write_all(tes
       test.ok(true, "Without a tmpPath, writeAtomic has failed as expected");
     }
 
+    // Write strings, default encoding
+    let ARBITRARY_STRING = "aeiouyâêîôûçß•";
+    yield OS.File.writeAtomic(pathDest, ARBITRARY_STRING, {tmpPath: tmpPath});
+    let array = yield OS.File.read(pathDest);
+    let IN_STRING = (new TextDecoder()).decode(array);
+    test.is(ARBITRARY_STRING, IN_STRING, "String write + read with default encoding works");
+
+    yield OS.File.writeAtomic(pathDest, ARBITRARY_STRING, {tmpPath: tmpPath, encoding: "utf-16"});
+    array = yield OS.File.read(pathDest);
+    IN_STRING = (new TextDecoder("utf-16")).decode(array);
+    test.is(ARBITRARY_STRING, IN_STRING, "String write + read with utf-16 encoding works");
+
     // Cleanup.
     OS.File.remove(pathDest);
+
+    // Same tests with |flush: false|
+    // Check that read + writeAtomic performs a correct copy
+    options = {tmpPath: tmpPath, flush: false};
+    optionsBackup = {tmpPath: tmpPath, flush: false};
+    bytesWritten = yield OS.File.writeAtomic(pathDest, contents, options);
+    test.is(contents.byteLength, bytesWritten, "Wrote the correct number of bytes (without flush)");
+
+    // Check that options are not altered
+    test.is(Object.keys(options).length, Object.keys(optionsBackup).length,
+            "The number of options was not changed (without flush)");
+    for (let k in options) {
+      test.is(options[k], optionsBackup[k], "Option was not changed (without flush)");
+    }
+    yield reference_compare_files(pathSource, pathDest, test);
+
+    // Check that temporary file was removed
+    test.info("Compare complete (without flush)");
+    test.ok(!(new FileUtils.File(tmpPath).exists()), "Temporary file was removed (without flush)");
+
+    // Check that writeAtomic fails if noOverwrite is true and the destination
+    // file already exists!
+    view = new Uint8Array(contents.buffer, 10, 200);
+    try {
+      options = {tmpPath: tmpPath, noOverwrite: true, flush: false};
+      yield OS.File.writeAtomic(pathDest, view, options);
+      test.fail("With noOverwrite, writeAtomic should have refused to overwrite file (without flush)");
+    } catch (err) {
+      test.info("With noOverwrite, writeAtomic correctly failed (without flush)");
+      test.ok(err instanceof OS.File.Error, "writeAtomic correctly failed with a file error (without flush)");
+      test.ok(err.becauseExists, "writeAtomic file error confirmed that the file already exists (without flush)");
+    }
+    yield reference_compare_files(pathSource, pathDest, test);
+    test.ok(!(new FileUtils.File(tmpPath).exists()), "Temporary file was removed (without flush)");
+
+    // Now write a subset
+    START = 10;
+    LENGTH = 100;
+    view = new Uint8Array(contents.buffer, START, LENGTH);
+    bytesWritten = yield OS.File.writeAtomic(pathDest, view, {tmpPath: tmpPath, flush: false});
+    test.is(bytesWritten, LENGTH, "Partial write wrote the correct number of bytes (without flush)");
+    array2 = yield OS.File.read(pathDest);
+    view1 = new Uint8Array(contents.buffer, START, LENGTH);
+    test.is(view1.length, array2.length, "Re-read partial write with the correct number of bytes (without flush)");
+    for (let i = 0; i < LENGTH; ++i) {
+      if (view1[i] != array2[i]) {
+        test.is(view1[i], array2[i], "Offset " + i + " is correct (without flush)");
+      }
+      test.ok(true, "Compared re-read of partial write (without flush)");
+    }
+
+    // Cleanup.
+    OS.File.remove(pathDest);
+
   });
 });
 
@@ -476,7 +554,7 @@ let test_copy = maketest("copy", function copy(test) {
 });
 
 /**
- * Test OS.File.prototype.{removeEmptyDir, makeDir}
+ * Test OS.File.{removeEmptyDir, makeDir}
  */
 let test_mkdir = maketest("mkdir", function mkdir(test) {
   return Task.spawn(function() {
@@ -557,6 +635,17 @@ let test_iter = maketest("iter", function iter(test) {
     test.info("Obtained all files through nextBatch");
     test.isnot(allFiles1.length, 0, "There is at least one file");
     test.isnot(allFiles1[0].path, null, "Files have a path");
+
+    // Ensure that we have the same entries with |reference_dir_contents|
+    let referenceEntries = new Set();
+    for (let entry of reference_dir_contents(currentDir)) {
+      referenceEntries.add(entry);
+    }
+    test.is(referenceEntries.size, allFiles1.length, "All the entries in the directory have been listed");
+    for (let entry of allFiles1) {
+      test.ok(referenceEntries.has(entry.path), "File " + entry.path + " effectively exists");
+    }
+
     yield iterator.close();
     test.info("Closed iterator");
 
@@ -614,9 +703,34 @@ let test_iter = maketest("iter", function iter(test) {
     try {
       let files = yield iterator.nextBatch();
       is(files.length, allFiles1.length + 1, "The directory iterator has noticed the new file");
+      let exists = yield iterator.exists();
+      test.ok(exists, "After nextBatch, iterator detects that the directory exists");
     } finally {
       yield iterator.close();
     }
+
+    // Ensuring that opening a non-existing directory fails consistently
+    // once iteration starts.
+    try {
+      iterator = null;
+      iterator = new OS.File.DirectoryIterator("/I do not exist");
+      let exists = yield iterator.exists();
+      test.ok(!exists, "Before any iteration, iterator detects that the directory doesn't exist");
+      let exn = null;
+      try {
+        yield iterator.next();
+      } catch (ex if ex instanceof OS.File.Error && ex.becauseNoSuchFile) {
+        exn = ex;
+        let exists = yield iterator.exists();
+        test.ok(!exists, "After one iteration, iterator detects that the directory doesn't exist");
+      }
+      test.ok(exn, "Iterating through a directory that does not exist has failed with becauseNoSuchFile");
+    } finally {
+      if (iterator) {
+        iterator.close();
+      }
+    }
+    test.ok(!!iterator, "The directory iterator for a non-existing directory was correctly created");
   });
 });
 
@@ -690,5 +804,131 @@ let test_debug_test = maketest("debug_test", function debug_test(test) {
     toggleDebugTest(false);
     // Restore DEBUG to its original.
     OS.Shared.DEBUG = originalPref;
+  });
+});
+
+/**
+ * Test logging of file descriptors leaks.
+ */
+let test_system_shutdown = maketest("system_shutdown", function system_shutdown(test) {
+  return Task.spawn(function () {
+    // Save original DEBUG value.
+    let originalDebug = OS.Shared.DEBUG;
+    // Create a console listener.
+    function getConsoleListener(resource) {
+      let consoleListener = {
+        observe: function (aMessage) {
+          // Ignore unexpected messages.
+          if (!(aMessage instanceof Components.interfaces.nsIConsoleMessage)) {
+            return;
+          }
+          if (aMessage.message.indexOf("TEST OS Controller WARNING") < 0) {
+            return;
+          }
+          test.ok(aMessage.message.indexOf("WARNING: File descriptors leaks " +
+            "detected.") >= 0, "File descriptors leaks are logged correctly.");
+          test.ok(aMessage.message.indexOf(resource) >= 0,
+            "Leaked resource is correctly listed in the log.");
+          toggleDebugTest(false, resource, consoleListener);
+        }
+      };
+      return consoleListener;
+    }
+    // Set/Unset testing flags and Services.console listener.
+    function toggleDebugTest(startDebug, resource, consoleListener) {
+      Services.console[startDebug ? "registerListener" : "unregisterListener"](
+        consoleListener || getConsoleListener(resource));
+      OS.Shared.TEST = startDebug;
+      // If pref is false, restore DEBUG to its original.
+      OS.Shared.DEBUG = startDebug || originalDebug;
+    }
+
+    let currentDir = yield OS.File.getCurrentDirectory();
+    let iterator = new OS.File.DirectoryIterator(currentDir);
+    toggleDebugTest(true, currentDir);
+    Services.obs.notifyObservers(null, "test.osfile.web-workers-shutdown",
+      null);
+    yield iterator.close();
+
+    let openedFile = yield OS.File.open(EXISTING_FILE);
+    toggleDebugTest(true, EXISTING_FILE);
+    Services.obs.notifyObservers(null, "test.osfile.web-workers-shutdown",
+      null);
+    yield openedFile.close();
+  });
+});
+
+/**
+ * Test optional duration reporting that can be used for telemetry.
+ */
+let test_duration = maketest("duration", function duration(test) {
+  return Task.spawn(function() {
+    // Options structure passed to a OS.File copy method.
+    let copyOptions = {
+      // This field should be overridden with the actual duration
+      // measurement.
+      outExecutionDuration: null
+    };
+    let currentDir = yield OS.File.getCurrentDirectory();
+    let pathSource = OS.Path.join(currentDir, EXISTING_FILE);
+    let copyFile = pathSource + ".bak";
+    let testOptions = function testOptions(options) {
+      test.info("Gathered method duration time: " +
+        options.outExecutionDuration + " MS");
+      // Making sure that duration was updated.
+      test.ok(typeof options.outExecutionDuration === "number" &&
+        options.outExecutionDuration >= 0,
+        "Operation duration time was updated correctly with a numeric value.");
+    };
+    // Testing duration of OS.File.copy.
+    yield OS.File.copy(pathSource, copyFile, copyOptions);
+    testOptions(copyOptions);
+    yield OS.File.remove(copyFile);
+
+    // Trying an operation where options are cloned.
+    let pathDest = OS.Path.join(OS.Constants.Path.tmpDir,
+      "osfile async test read writeAtomic.tmp");
+    let tmpPath = pathDest + ".tmp";
+    let contents = yield OS.File.read(pathSource);
+    // Options structure passed to a OS.File writeAtomic method.
+    let writeAtomicOptions = {
+      // This field should be first initialized with the actual
+      // duration measurement then progressively incremented.
+      outExecutionDuration: null,
+      tmpPath: tmpPath
+    };
+    yield OS.File.writeAtomic(pathDest, contents, writeAtomicOptions);
+    testOptions(writeAtomicOptions);
+    yield OS.File.remove(pathDest);
+
+    test.info("Ensuring that we can use outExecutionDuration to accumulate durations");
+
+    let ARBITRARY_BASE_DURATION = 5;
+    copyOptions = {
+      // This field should now be incremented with the actual duration
+      // measurement.
+      outExecutionDuration: ARBITRARY_BASE_DURATION
+    };
+    let backupDuration = ARBITRARY_BASE_DURATION;
+    // Testing duration of OS.File.copy.
+    yield OS.File.copy(pathSource, copyFile, copyOptions);
+    test.ok(copyOptions.outExecutionDuration >= backupDuration);
+
+    backupDuration = copyOptions.outExecutionDuration;
+    yield OS.File.remove(copyFile, copyOptions);
+    test.ok(copyOptions.outExecutionDuration >= backupDuration);
+
+    // Trying an operation where options are cloned.
+    // Options structure passed to a OS.File writeAtomic method.
+    writeAtomicOptions = {
+      // This field should be overridden with the actual duration
+      // measurement.
+      outExecutionDuration: copyOptions.outExecutionDuration,
+      tmpPath: tmpPath
+    };
+    backupDuration = writeAtomicOptions.outExecutionDuration;
+    yield OS.File.writeAtomic(pathDest, contents, writeAtomicOptions);
+    test.ok(copyOptions.outExecutionDuration >= backupDuration);
+    OS.File.remove(pathDest);
   });
 });

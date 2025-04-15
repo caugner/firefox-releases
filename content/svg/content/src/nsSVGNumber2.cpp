@@ -6,7 +6,6 @@
 #include "nsError.h"
 #include "nsSVGAttrTearoffTable.h"
 #include "nsSVGNumber2.h"
-#include "nsTextFormatter.h"
 #include "prdtoa.h"
 #include "nsMathUtils.h"
 #include "nsContentUtils.h" // NS_ENSURE_FINITE
@@ -185,7 +184,7 @@ nsSVGNumber2::ToSMILAttr(nsSVGElement *aSVGElement)
 
 nsresult
 nsSVGNumber2::SMILNumber::ValueFromString(const nsAString& aStr,
-                                          const nsISMILAnimationElement* /*aSrcElement*/,
+                                          const mozilla::dom::SVGAnimationElement* /*aSrcElement*/,
                                           nsSMILValue& aValue,
                                           bool& aPreventCachingOfSandwich) const
 {

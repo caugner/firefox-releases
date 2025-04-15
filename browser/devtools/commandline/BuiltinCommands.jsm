@@ -4,11 +4,18 @@
 
 const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 
+const BRAND_SHORT_NAME = Cc["@mozilla.org/intl/stringbundle;1"]
+                           .getService(Ci.nsIStringBundleService)
+                           .createBundle("chrome://branding/locale/brand.properties")
+                           .GetStringFromName("brandShortName");
+
 this.EXPORTED_SYMBOLS = [ "CmdAddonFlags", "CmdCommands" ];
 
 Cu.import("resource:///modules/devtools/gcli.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
+Cu.import("resource://gre/modules/osfile.jsm")
+Cu.import("resource:///modules/devtools/EventEmitter.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "gDevTools",
                                   "resource:///modules/devtools/gDevTools.jsm");
@@ -305,180 +312,6 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
   });
 }(this));
 
-/* CmdBreak ---------------------------------------------------------------- */
-(function(module) {
-  XPCOMUtils.defineLazyModuleGetter(this, "HUDService",
-                                    "resource:///modules/HUDService.jsm");
-
-  XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
-                                    "resource:///modules/devtools/Target.jsm");
-
-  /**
-  * 'break' command
-  */
-  gcli.addCommand({
-    name: "break",
-    description: gcli.lookup("breakDesc"),
-    manual: gcli.lookup("breakManual")
-  });
-
-  /**
-  * 'break list' command
-  */
-  gcli.addCommand({
-    name: "break list",
-    description: gcli.lookup("breaklistDesc"),
-    returnType: "html",
-    exec: function(args, context) {
-      let dbg = getPanel(context, "jsdebugger");
-      if (!dbg) {
-        return gcli.lookup("debuggerStopped");
-      }
-
-      let breakpoints = dbg.getAllBreakpoints();
-
-      if (Object.keys(breakpoints).length === 0) {
-        return gcli.lookup("breaklistNone");
-      }
-
-      let reply = gcli.lookup("breaklistIntro");
-      reply += "<ol>";
-      for each (let breakpoint in breakpoints) {
-        let text = gcli.lookupFormat("breaklistLineEntry",
-                                    [breakpoint.location.url,
-                                      breakpoint.location.line]);
-        reply += "<li>" + text + "</li>";
-      };
-      reply += "</ol>";
-      return reply;
-    }
-  });
-
-  /**
-  * 'break add' command
-  */
-  gcli.addCommand({
-    name: "break add",
-    description: gcli.lookup("breakaddDesc"),
-    manual: gcli.lookup("breakaddManual")
-  });
-
-  /**
-  * 'break add line' command
-  */
-  gcli.addCommand({
-    name: "break add line",
-    description: gcli.lookup("breakaddlineDesc"),
-    params: [
-      {
-        name: "file",
-        type: {
-          name: "selection",
-          data: function(args, context) {
-            let files = [];
-            let dbg = getPanel(context, "jsdebugger");
-            if (dbg) {
-              let sourcesView = dbg.panelWin.DebuggerView.Sources;
-              for (let item in sourcesView) {
-                files.push(item.value);
-              }
-            }
-            return files;
-          }
-        },
-        description: gcli.lookup("breakaddlineFileDesc")
-      },
-      {
-        name: "line",
-        type: { name: "number", min: 1, step: 10 },
-        description: gcli.lookup("breakaddlineLineDesc")
-      }
-    ],
-    returnType: "html",
-    exec: function(args, context) {
-      args.type = "line";
-
-      let dbg = getPanel(context, "jsdebugger");
-      if (!dbg) {
-        return gcli.lookup("debuggerStopped");
-      }
-      var deferred = context.defer();
-      let position = { url: args.file, line: args.line };
-      dbg.addBreakpoint(position, function(aBreakpoint, aError) {
-        if (aError) {
-          deferred.resolve(gcli.lookupFormat("breakaddFailed", [aError]));
-          return;
-        }
-        deferred.resolve(gcli.lookup("breakaddAdded"));
-      });
-      return deferred.promise;
-    }
-  });
-
-
-  /**
-  * 'break del' command
-  */
-  gcli.addCommand({
-    name: "break del",
-    description: gcli.lookup("breakdelDesc"),
-    params: [
-      {
-        name: "breakid",
-        type: {
-          name: "number",
-          min: 0,
-          max: function(args, context) {
-            let dbg = getPanel(context, "jsdebugger");
-            return dbg == null ?
-                null :
-                Object.keys(dbg.getAllBreakpoints()).length - 1;
-          },
-        },
-        description: gcli.lookup("breakdelBreakidDesc")
-      }
-    ],
-    returnType: "html",
-    exec: function(args, context) {
-      let dbg = getPanel(context, "jsdebugger");
-      if (!dbg) {
-        return gcli.lookup("debuggerStopped");
-      }
-
-      let breakpoints = dbg.getAllBreakpoints();
-      let id = Object.keys(breakpoints)[args.breakid];
-      if (!id || !(id in breakpoints)) {
-        return gcli.lookup("breakNotFound");
-      }
-
-      let deferred = context.defer();
-      try {
-        dbg.removeBreakpoint(breakpoints[id], function() {
-          deferred.resolve(gcli.lookup("breakdelRemoved"));
-        });
-      } catch (ex) {
-        // If the debugger has been closed already, don't scare the user.
-        deferred.resolve(gcli.lookup("breakdelRemoved"));
-      }
-      return deferred.promise;
-    }
-  });
-
-  /**
-  * A helper to go from a command context to a debugger panel
-  */
-  function getPanel(context, id) {
-    if (context == null) {
-      return undefined;
-    }
-
-    let gBrowser = context.environment.chromeDocument.defaultView.gBrowser;
-    let target = TargetFactory.forTab(gBrowser.selectedTab);
-    let toolbox = gDevTools.getToolbox(target);
-    return toolbox == null ? undefined : toolbox.getPanel(id);
-  }
-}(this));
-
 /* CmdCalllog -------------------------------------------------------------- */
 
 (function(module) {
@@ -768,59 +601,96 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
         return;
       }
 
-      let dir = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
-      dir.initWithPath(dirName);
-      if (!dir.exists() || !dir.isDirectory()) {
-        throw new Error('\'' + dirName + '\' is not a directory.');
+      // replaces ~ with the home directory path in unix and windows
+      if (dirName.indexOf("~") == 0) {
+        let dirService = Cc["@mozilla.org/file/directory_service;1"]
+                          .getService(Ci.nsIProperties);
+        let homeDirFile = dirService.get("Home", Ci.nsIFile);
+        let homeDir = homeDirFile.path;
+        dirName = dirName.substr(1);
+        dirName = homeDir + dirName;
       }
 
-      let en = dir.directoryEntries.QueryInterface(Ci.nsIDirectoryEnumerator);
+      let promise = OS.File.stat(dirName);
+      promise = promise.then(
+        function onSuccess(stat) {
+          if (!stat.isDir) {
+            throw new Error('\'' + dirName + '\' is not a directory.');
+          } else {
+            return dirName;
+          }
+        },
+        function onFailure(reason) {
+          if (reason instanceof OS.File.Error && reason.becauseNoSuchFile) {
+            throw new Error('\'' + dirName + '\' does not exist.');
+          } else {
+            throw reason;
+          }
+        }
+      );
 
-      while (true) {
-        let file = en.nextFile;
-        if (!file) {
-          break;
+      promise.then(
+        function onSuccess() {
+          let iterator = new OS.File.DirectoryIterator(dirName);
+          let iterPromise = iterator.forEach(
+            function onEntry(entry) {
+              if (entry.name.match(/.*\.mozcmd$/) && !entry.isDir) {
+                loadCommandFile(entry, aSandboxPrincipal);
+              }
+            }
+          );
+
+          iterPromise.then(
+            function onSuccess() {
+              iterator.close();
+            },
+            function onFailure(reason) {
+              iterator.close();
+              throw reason;
+            }
+          );
         }
-        if (file.leafName.match(/.*\.mozcmd$/) && file.isFile() && file.isReadable()) {
-          loadCommandFile(file, aSandboxPrincipal);
-        }
-      }
-    },
+      );
+    }
   };
 
   /**
   * Load the commands from a single file
-  * @param nsIFile aFile The file containing the commands that we should read
+  * @param OS.File.DirectoryIterator.Entry aFileEntry The DirectoryIterator
+  * Entry of the file containing the commands that we should read
   * @param nsIPrincipal aSandboxPrincipal Scope object for the Sandbox in which
   * we eval the script from the .mozcmd file. This should be a chrome window.
   */
-  function loadCommandFile(aFile, aSandboxPrincipal) {
-    NetUtil.asyncFetch(aFile, function refresh_fetch(aStream, aStatus) {
-      if (!Components.isSuccessCode(aStatus)) {
-        console.error("NetUtil.asyncFetch(" + aFile.path + ",..) failed. Status=" + aStatus);
-        return;
+  function loadCommandFile(aFileEntry, aSandboxPrincipal) {
+    let promise = OS.File.read(aFileEntry.path);
+    promise = promise.then(
+      function onSuccess(array) {
+        let decoder = new TextDecoder();
+        let source = decoder.decode(array);
+
+        let sandbox = new Cu.Sandbox(aSandboxPrincipal, {
+          sandboxPrototype: aSandboxPrincipal,
+          wantXrays: false,
+          sandboxName: aFileEntry.path
+        });
+        let data = Cu.evalInSandbox(source, sandbox, "1.8", aFileEntry.name, 1);
+
+        if (!Array.isArray(data)) {
+          console.error("Command file '" + aFileEntry.name + "' does not have top level array.");
+          return;
+        }
+
+        data.forEach(function(commandSpec) {
+          gcli.addCommand(commandSpec);
+          commands.push(commandSpec.name);
+        });
+
+      },
+      function onError(reason) {
+        console.error("OS.File.read(" + aFileEntry.path + ") failed.");
+        throw reason;
       }
-
-      let source = NetUtil.readInputStreamToString(aStream, aStream.available());
-      aStream.close();
-
-      let sandbox = new Cu.Sandbox(aSandboxPrincipal, {
-        sandboxPrototype: aSandboxPrincipal,
-        wantXrays: false,
-        sandboxName: aFile.path
-      });
-      let data = Cu.evalInSandbox(source, sandbox, "1.8", aFile.leafName, 1);
-
-      if (!Array.isArray(data)) {
-        console.error("Command file '" + aFile.leafName + "' does not have top level array.");
-        return;
-      }
-
-      data.forEach(function(commandSpec) {
-        gcli.addCommand(commandSpec);
-        commands.push(commandSpec.name);
-      });
-    }.bind(this));
+    );
   }
 
   /**
@@ -910,69 +780,71 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
   XPCOMUtils.defineLazyModuleGetter(this, "console",
                                     "resource://gre/modules/devtools/Console.jsm");
 
-  // We should really be using nsICookieManager so we can read more than just the
-  // key/value of cookies. The difficulty is filtering the cookies that are
-  // relevant to the current page. See
-  // https://github.com/firebug/firebug/blob/master/extension/content/firebug/cookies/cookieObserver.js#L123
-  // For details on how this is done with Firebug
+  const cookieMgr = Cc["@mozilla.org/cookiemanager;1"]
+                      .getService(Ci.nsICookieManager2);
 
   /**
-  * 'cookie' command
-  */
-  gcli.addCommand({
-    name: "cookie",
-    description: gcli.lookup("cookieDesc"),
-    manual: gcli.lookup("cookieManual")
-  });
-
-  /**
-  * The template for the 'cookie list' command.
-  */
-  var cookieListHtml = "" +
-    "<table>" +
-    "  <tr>" +
-    "    <th>" + gcli.lookup("cookieListOutKey") + "</th>" +
-    "    <th>" + gcli.lookup("cookieListOutValue") + "</th>" +
-    "    <th>" + gcli.lookup("cookieListOutActions") + "</th>" +
-    "  </tr>" +
-    "  <tr foreach='cookie in ${cookies}'>" +
-    "    <td>${cookie.key}</td>" +
-    "    <td>${cookie.value}</td>" +
-    "    <td>" +
-    "      <span class='gcli-out-shortcut' onclick='${onclick}'" +
-    "          data-command='cookie set ${cookie.key} '" +
-    "          >" + gcli.lookup("cookieListOutEdit") + "</span>" +
-    "      <span class='gcli-out-shortcut'" +
-    "          onclick='${onclick}' ondblclick='${ondblclick}'" +
-    "          data-command='cookie remove ${cookie.key}'" +
-    "          >" + gcli.lookup("cookieListOutRemove") + "</span>" +
-    "    </td>" +
-    "  </tr>" +
-    "</table>" +
+   * The template for the 'cookie list' command.
+   */
+  let cookieListHtml = "" +
+    "<ul class='gcli-cookielist-list'>" +
+    "  <li foreach='cookie in ${cookies}'>" +
+    "    <div>${cookie.name}=${cookie.value}</div>" +
+    "    <table class='gcli-cookielist-detail'>" +
+    "      <tr>" +
+    "        <td>" + gcli.lookup("cookieListOutHost") + "</td>" +
+    "        <td>${cookie.host}</td>" +
+    "      </tr>" +
+    "      <tr>" +
+    "        <td>" + gcli.lookup("cookieListOutPath") + "</td>" +
+    "        <td>${cookie.path}</td>" +
+    "      </tr>" +
+    "      <tr>" +
+    "        <td>" + gcli.lookup("cookieListOutExpires") + "</td>" +
+    "        <td>${cookie.expires}</td>" +
+    "      </tr>" +
+    "      <tr>" +
+    "        <td>" + gcli.lookup("cookieListOutAttributes") + "</td>" +
+    "        <td>${cookie.attrs}</td>" +
+    "      </tr>" +
+    "      <tr><td colspan='2'>" +
+    "        <span class='gcli-out-shortcut' onclick='${onclick}'" +
+    "            data-command='cookie set ${cookie.name} '" +
+    "            >" + gcli.lookup("cookieListOutEdit") + "</span>" +
+    "        <span class='gcli-out-shortcut'" +
+    "            onclick='${onclick}' ondblclick='${ondblclick}'" +
+    "            data-command='cookie remove ${cookie.name}'" +
+    "            >" + gcli.lookup("cookieListOutRemove") + "</span>" +
+    "      </td></tr>" +
+    "    </table>" +
+    "  </li>" +
+    "</ul>" +
     "";
 
-  /**
-  * 'cookie list' command
-  */
-  gcli.addCommand({
-    name: "cookie list",
-    description: gcli.lookup("cookieListDesc"),
-    manual: gcli.lookup("cookieListManual"),
-    returnType: "string",
-    exec: function Command_cookieList(args, context) {
-      // Parse out an array of { key:..., value:... } objects for each cookie
-      var doc = context.environment.contentDocument;
-      var cookies = doc.cookie.split("; ").map(function(cookieStr) {
-        var equalsPos = cookieStr.indexOf("=");
-        return {
-          key: cookieStr.substring(0, equalsPos),
-          value: cookieStr.substring(equalsPos + 1)
-        };
-      });
+  gcli.addConverter({
+    from: "cookies",
+    to: "view",
+    exec: function(cookies, context) {
+      if (cookies.length == 0) {
+        let host = context.environment.document.location.host;
+        let msg = gcli.lookupFormat("cookieListOutNoneHost", [ host ]);
+        return context.createView({ html: "<span>" + msg + "</span>" });
+      }
+
+      for (let cookie of cookies) {
+        cookie.expires = translateExpires(cookie.expires);
+
+        let noAttrs = !cookie.secure && !cookie.httpOnly && !cookie.sameDomain;
+        cookie.attrs = (cookie.secure ? 'secure' : ' ') +
+                       (cookie.httpOnly ? 'httpOnly' : ' ') +
+                       (cookie.sameDomain ? 'sameDomain' : ' ') +
+                       (noAttrs ? gcli.lookup("cookieListOutNone") : ' ');
+      }
 
       return context.createView({
         html: cookieListHtml,
         data: {
+          options: { allowEval: true },
           cookies: cookies,
           onclick: createUpdateHandler(context),
           ondblclick: createExecuteHandler(context),
@@ -982,37 +854,116 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
   });
 
   /**
-  * 'cookie remove' command
-  */
+   * The cookie 'expires' value needs converting into something more readable
+   */
+  function translateExpires(expires) {
+    if (expires == 0) {
+      return gcli.lookup("cookieListOutSession");
+    }
+    return new Date(expires).toLocaleString();
+  }
+
+  /**
+   * Check if a given cookie matches a given host
+   */
+  function isCookieAtHost(cookie, host) {
+    if (cookie.host == null) {
+      return host == null;
+    }
+    if (cookie.host.startsWith(".")) {
+      return cookie.host === "." + host;
+    }
+    else {
+      return cookie.host == host;
+    }
+  }
+
+  /**
+   * 'cookie' command
+   */
+  gcli.addCommand({
+    name: "cookie",
+    description: gcli.lookup("cookieDesc"),
+    manual: gcli.lookup("cookieManual")
+  });
+
+  /**
+   * 'cookie list' command
+   */
+  gcli.addCommand({
+    name: "cookie list",
+    description: gcli.lookup("cookieListDesc"),
+    manual: gcli.lookup("cookieListManual"),
+    returnType: "cookies",
+    exec: function Command_cookieList(args, context) {
+      let host = context.environment.document.location.host;
+      if (host == null) {
+        throw new Error(gcli.lookup("cookieListOutNonePage"));
+      }
+
+      let enm = cookieMgr.getCookiesFromHost(host);
+
+      let cookies = [];
+      while (enm.hasMoreElements()) {
+        let cookie = enm.getNext().QueryInterface(Ci.nsICookie);
+        if (isCookieAtHost(cookie, host)) {
+          cookies.push({
+            host: cookie.host,
+            name: cookie.name,
+            value: cookie.value,
+            path: cookie.path,
+            expires: cookie.expires,
+            secure: cookie.secure,
+            httpOnly: cookie.httpOnly,
+            sameDomain: cookie.sameDomain
+          });
+        }
+      }
+
+      return cookies;
+    }
+  });
+
+  /**
+   * 'cookie remove' command
+   */
   gcli.addCommand({
     name: "cookie remove",
     description: gcli.lookup("cookieRemoveDesc"),
     manual: gcli.lookup("cookieRemoveManual"),
     params: [
       {
-        name: "key",
+        name: "name",
         type: "string",
         description: gcli.lookup("cookieRemoveKeyDesc"),
       }
     ],
     exec: function Command_cookieRemove(args, context) {
-      let document = context.environment.contentDocument;
-      let expDate = new Date();
-      expDate.setDate(expDate.getDate() - 1);
-      document.cookie = escape(args.key) + "=; expires=" + expDate.toGMTString();
+      let host = context.environment.document.location.host;
+      let enm = cookieMgr.getCookiesFromHost(host);
+
+      let cookies = [];
+      while (enm.hasMoreElements()) {
+        let cookie = enm.getNext().QueryInterface(Components.interfaces.nsICookie);
+        if (isCookieAtHost(cookie, host)) {
+          if (cookie.name == args.name) {
+            cookieMgr.remove(cookie.host, cookie.name, cookie.path, false);
+          }
+        }
+      }
     }
   });
 
   /**
-  * 'cookie set' command
-  */
+   * 'cookie set' command
+   */
   gcli.addCommand({
     name: "cookie set",
     description: gcli.lookup("cookieSetDesc"),
     manual: gcli.lookup("cookieSetManual"),
     params: [
       {
-        name: "key",
+        name: "name",
         type: "string",
         description: gcli.lookup("cookieSetKeyDesc")
       },
@@ -1040,26 +991,47 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
             name: "secure",
             type: "boolean",
             description: gcli.lookup("cookieSetSecureDesc")
-          }
+          },
+          {
+            name: "httpOnly",
+            type: "boolean",
+            description: gcli.lookup("cookieSetHttpOnlyDesc")
+          },
+          {
+            name: "session",
+            type: "boolean",
+            description: gcli.lookup("cookieSetSessionDesc")
+          },
+          {
+            name: "expires",
+            type: "string",
+            defaultValue: "Jan 17, 2038",
+            description: gcli.lookup("cookieSetExpiresDesc")
+          },
         ]
       }
     ],
     exec: function Command_cookieSet(args, context) {
-      let document = context.environment.contentDocument;
+      let host = context.environment.document.location.host;
+      let time = Date.parse(args.expires) / 1000;
 
-      document.cookie = escape(args.key) + "=" + escape(args.value) +
-              (args.domain ? "; domain=" + args.domain : "") +
-              (args.path ? "; path=" + args.path : "") +
-              (args.secure ? "; secure" : ""); 
+      cookieMgr.add(args.domain ? "." + args.domain : host,
+                    args.path ? args.path : "/",
+                    args.name,
+                    args.value,
+                    args.secure,
+                    args.httpOnly,
+                    args.session,
+                    time);
     }
   });
 
   /**
-  * Helper to find the 'data-command' attribute and call some action on it.
-  * @see |updateCommand()| and |executeCommand()|
-  */
+   * Helper to find the 'data-command' attribute and call some action on it.
+   * @see |updateCommand()| and |executeCommand()|
+   */
   function withCommand(element, action) {
-    var command = element.getAttribute("data-command");
+    let command = element.getAttribute("data-command");
     if (!command) {
       command = element.querySelector("*[data-command]")
               .getAttribute("data-command");
@@ -1074,11 +1046,11 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
   }
 
   /**
-  * Create a handler to update the requisition to contain the text held in the
-  * first matching data-command attribute under the currentTarget of the event.
-  * @param context Either a Requisition or an ExecutionContext or another object
-  * that contains an |update()| function that follows a similar contract.
-  */
+   * Create a handler to update the requisition to contain the text held in the
+   * first matching data-command attribute under the currentTarget of the event.
+   * @param context Either a Requisition or an ExecutionContext or another object
+   * that contains an |update()| function that follows a similar contract.
+   */
   function createUpdateHandler(context) {
     return function(ev) {
       withCommand(ev.currentTarget, function(command) {
@@ -1088,11 +1060,11 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
   }
 
   /**
-  * Create a handler to execute the text held in the data-command attribute
-  * under the currentTarget of the event.
-  * @param context Either a Requisition or an ExecutionContext or another object
-  * that contains an |update()| function that follows a similar contract.
-  */
+   * Create a handler to execute the text held in the data-command attribute
+   * under the currentTarget of the event.
+   * @param context Either a Requisition or an ExecutionContext or another object
+   * that contains an |update()| function that follows a similar contract.
+   */
   function createExecuteHandler(context) {
     return function(ev) {
       withCommand(ev.currentTarget, function(command) {
@@ -1102,206 +1074,6 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
         });
       });
     }
-  }
-}(this));
-
-/* CmdDbg ------------------------------------------------------------------ */
-
-(function(module) {
-  /**
-  * 'dbg' command
-  */
-  gcli.addCommand({
-    name: "dbg",
-    description: gcli.lookup("dbgDesc"),
-    manual: gcli.lookup("dbgManual")
-  });
-
-  /**
-  * 'dbg open' command
-  */
-  gcli.addCommand({
-    name: "dbg open",
-    description: gcli.lookup("dbgOpen"),
-    params: [],
-    exec: function (args, context) {
-      let gBrowser = context.environment.chromeDocument.defaultView.gBrowser;
-      let target = TargetFactory.forTab(gBrowser.selectedTab);
-      return gDevTools.showToolbox(target, "jsdebugger");
-    }
-  });
-
-  /**
-  * 'dbg close' command
-  */
-  gcli.addCommand({
-    name: "dbg close",
-    description: gcli.lookup("dbgClose"),
-    params: [],
-    exec: function (args, context) {
-      let gBrowser = context.environment.chromeDocument.defaultView.gBrowser;
-      let target = TargetFactory.forTab(gBrowser.selectedTab);
-      return gDevTools.closeToolbox(target);
-    }
-  });
-
-  /**
-  * 'dbg interrupt' command
-  */
-  gcli.addCommand({
-    name: "dbg interrupt",
-    description: gcli.lookup("dbgInterrupt"),
-    params: [],
-    exec: function(args, context) {
-      let dbg = getPanel(context, "jsdebugger");
-      if (!dbg) {
-        return gcli.lookup("debuggerStopped");
-      }
-
-      let controller = dbg._controller;
-      let thread = controller.activeThread;
-      if (!thread.paused) {
-        thread.interrupt();
-      }
-    }
-  });
-
-  /**
-  * 'dbg continue' command
-  */
-  gcli.addCommand({
-    name: "dbg continue",
-    description: gcli.lookup("dbgContinue"),
-    params: [],
-    exec: function(args, context) {
-      let dbg = getPanel(context, "jsdebugger");
-      if (!dbg) {
-        return gcli.lookup("debuggerStopped");
-      }
-
-      let controller = dbg._controller;
-      let thread = controller.activeThread;
-      if (thread.paused) {
-        thread.resume();
-      }
-    }
-  });
-
-  /**
-  * 'dbg step' command
-  */
-  gcli.addCommand({
-    name: "dbg step",
-    description: gcli.lookup("dbgStepDesc"),
-    manual: gcli.lookup("dbgStepManual")
-  });
-
-  /**
-  * 'dbg step over' command
-  */
-  gcli.addCommand({
-    name: "dbg step over",
-    description: gcli.lookup("dbgStepOverDesc"),
-    params: [],
-    exec: function(args, context) {
-      let dbg = getPanel(context, "jsdebugger");
-      if (!dbg) {
-        return gcli.lookup("debuggerStopped");
-      }
-
-      let controller = dbg._controller;
-      let thread = controller.activeThread;
-      if (thread.paused) {
-        thread.stepOver();
-      }
-    }
-  });
-
-  /**
-  * 'dbg step in' command
-  */
-  gcli.addCommand({
-    name: 'dbg step in',
-    description: gcli.lookup("dbgStepInDesc"),
-    params: [],
-    exec: function(args, context) {
-      let dbg = getPanel(context, "jsdebugger");
-      if (!dbg) {
-        return gcli.lookup("debuggerStopped");
-      }
-
-      let controller = dbg._controller;
-      let thread = controller.activeThread;
-      if (thread.paused) {
-        thread.stepIn();
-      }
-    }
-  });
-
-  /**
-  * 'dbg step over' command
-  */
-  gcli.addCommand({
-    name: 'dbg step out',
-    description: gcli.lookup("dbgStepOutDesc"),
-    params: [],
-    exec: function(args, context) {
-      let dbg = getPanel(context, "jsdebugger");
-      if (!dbg) {
-        return gcli.lookup("debuggerStopped");
-      }
-
-      let controller = dbg._controller;
-      let thread = controller.activeThread;
-      if (thread.paused) {
-        thread.stepOut();
-      }
-    }
-  });
-
-  /**
-  * 'dbg list' command
-  */
-  gcli.addCommand({
-    name: "dbg list",
-    description: gcli.lookup("dbgListSourcesDesc"),
-    params: [],
-    returnType: "html",
-    exec: function(args, context) {
-      let dbg = getPanel(context, "jsdebugger");
-      let doc = context.environment.chromeDocument;
-      if (!dbg) {
-        return gcli.lookup("debuggerClosed");
-      }
-      let sources = dbg._view.Sources.values;
-      let div = createXHTMLElement(doc, "div");
-      let ol = createXHTMLElement(doc, "ol");
-      sources.forEach(function(src) {
-        let li = createXHTMLElement(doc, "li");
-        li.textContent = src;
-        ol.appendChild(li);
-      });
-      div.appendChild(ol);
-
-      return div;
-    }
-  });
-
-  /**
-  * A helper to create xhtml namespaced elements
-  */
-  function createXHTMLElement(document, tagname) {
-    return document.createElementNS("http://www.w3.org/1999/xhtml", tagname);
-  }
-
-  /**
-  * A helper to go from a command context to a debugger panel
-  */
-  function getPanel(context, id) {
-    let gBrowser = context.environment.chromeDocument.defaultView.gBrowser;
-    let target = TargetFactory.forTab(gBrowser.selectedTab);
-    let toolbox = gDevTools.getToolbox(target);
-    return toolbox == null ? undefined : toolbox.getPanel(id);
   }
 }(this));
 
@@ -1348,10 +1120,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
     name: "export html",
     description: gcli.lookup("exportHtmlDesc"),
     exec: function(args, context) {
-      let document = context.environment.contentDocument;
-      let window = document.defaultView;
-      let page = document.documentElement.outerHTML;
-      window.open('data:text/plain;charset=utf8,' + encodeURIComponent(page));
+      let html = context.environment.document.documentElement.outerHTML;
+      let url = 'data:text/plain;charset=utf8,' + encodeURIComponent(html);
+      context.environment.window.open(url);
     }
   });
 }(this));
@@ -1425,8 +1196,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
               name: 'selection',
               data: ['collapse', 'expand', 'end-expand', 'expand-strict']
             },
-            description: gcli.lookup('jsbBraceStyleDesc'),
-            manual: gcli.lookup('jsbBraceStyleManual'),
+            description: gcli.lookup('jsbBraceStyleDesc2'),
+            manual: gcli.lookup('jsbBraceStyleManual2'),
             defaultValue: "collapse"
           },
           {
@@ -1763,14 +1534,15 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
   * >> restart --nocache
   * - restarts immediately and starts Firefox without using cache
   */
+
   gcli.addCommand({
     name: "restart",
-    description: gcli.lookup("restartFirefoxDesc"),
+    description: gcli.lookupFormat("restartBrowserDesc", [BRAND_SHORT_NAME]),
     params: [
       {
         name: "nocache",
         type: "boolean",
-        description: gcli.lookup("restartFirefoxNocacheDesc")
+        description: gcli.lookup("restartBrowserNocacheDesc")
       }
     ],
     returnType: "string",
@@ -1779,7 +1551,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
                       .createInstance(Ci.nsISupportsPRBool);
       Services.obs.notifyObservers(canceled, "quit-application-requested", "restart");
       if (canceled.data) {
-        return gcli.lookup("restartFirefoxRequestCancelled");
+        return gcli.lookup("restartBrowserRequestCancelled");
       }
 
       // disable loading content from cache.
@@ -1791,7 +1563,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
       Cc['@mozilla.org/toolkit/app-startup;1']
         .getService(Ci.nsIAppStartup)
         .quit(Ci.nsIAppStartup.eAttemptQuit | Ci.nsIAppStartup.eRestart);
-      return gcli.lookup("restartFirefoxRestarting");
+      return gcli.lookupFormat("restartBrowserRestarting", [BRAND_SHORT_NAME]);
     }
   });
 }(this));
@@ -1834,8 +1606,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
           {
             name: "chrome",
             type: "boolean",
-            description: gcli.lookup("screenshotChromeDesc"),
-            manual: gcli.lookup("screenshotChromeManual")
+            description: gcli.lookupFormat("screenshotChromeDesc2", [BRAND_SHORT_NAME]),
+            manual: gcli.lookupFormat("screenshotChromeManual2", [BRAND_SHORT_NAME])
           },
           {
             name: "delay",
@@ -2026,4 +1798,123 @@ XPCOMUtils.defineLazyModuleGetter(this, "TargetFactory",
       return div;
     }
   });
+}(this));
+
+/* CmdPaintFlashing ------------------------------------------------------- */
+
+(function(module) {
+  /**
+  * 'paintflashing' command
+  */
+
+  gcli.addCommand({
+    name: 'paintflashing',
+    description: gcli.lookup('paintflashingDesc')
+  });
+
+  gcli.addCommand({
+    name: 'paintflashing on',
+    description: gcli.lookup('paintflashingOnDesc'),
+    manual: gcli.lookup('paintflashingManual'),
+    params: [{
+      group: "options",
+      params: [
+        {
+          type: "boolean",
+          name: "chrome",
+          get hidden() gcli.hiddenByChromePref(),
+          description: gcli.lookup("paintflashingChromeDesc"),
+        }
+      ]
+    }],
+    exec: function(args, context) {
+      var window;
+      if (args.chrome) {
+        window = context.environment.chromeDocument.defaultView;
+      } else {
+        window = context.environment.contentDocument.defaultView;
+      }
+      window.QueryInterface(Ci.nsIInterfaceRequestor).
+             getInterface(Ci.nsIDOMWindowUtils).
+             paintFlashing = true;
+      onPaintFlashingChanged(context);
+    }
+  });
+
+  gcli.addCommand({
+    name: 'paintflashing off',
+    description: gcli.lookup('paintflashingOffDesc'),
+    manual: gcli.lookup('paintflashingManual'),
+    params: [{
+      group: "options",
+      params: [
+        {
+          type: "boolean",
+          name: "chrome",
+          get hidden() gcli.hiddenByChromePref(),
+          description: gcli.lookup("paintflashingChromeDesc"),
+        }
+      ]
+    }],
+    exec: function(args, context) {
+      if (args.chrome) {
+        var window = context.environment.chromeDocument.defaultView;
+      } else {
+        var window = context.environment.contentDocument.defaultView;
+      }
+      window.QueryInterface(Ci.nsIInterfaceRequestor).
+             getInterface(Ci.nsIDOMWindowUtils).
+             paintFlashing = false;
+      onPaintFlashingChanged(context);
+    }
+  });
+
+  gcli.addCommand({
+    name: 'paintflashing toggle',
+    hidden: true,
+    buttonId: "command-button-paintflashing",
+    buttonClass: "command-button",
+    state: {
+      isChecked: function(aTarget) {
+        if (aTarget.isLocalTab) {
+          let window = aTarget.tab.linkedBrowser.contentWindow;
+          let wUtils = window.QueryInterface(Ci.nsIInterfaceRequestor).
+                              getInterface(Ci.nsIDOMWindowUtils);
+          return wUtils.paintFlashing;
+        } else {
+          throw new Error("Unsupported target");
+        }
+      },
+      onChange: function(aTarget, aChangeHandler) {
+        eventEmitter.on("changed", aChangeHandler);
+      },
+      offChange: function(aTarget, aChangeHandler) {
+        eventEmitter.off("changed", aChangeHandler);
+      },
+    },
+    tooltipText: gcli.lookup("paintflashingTooltip"),
+    description: gcli.lookup('paintflashingOnDesc'),
+    manual: gcli.lookup('paintflashingManual'),
+    exec: function(args, context) {
+      var gBrowser = context.environment.chromeDocument.defaultView.gBrowser;
+      var window = gBrowser.contentWindow;
+      var wUtils = window.QueryInterface(Ci.nsIInterfaceRequestor).
+                   getInterface(Ci.nsIDOMWindowUtils);
+      wUtils.paintFlashing = !wUtils.paintFlashing;
+      onPaintFlashingChanged(context);
+    }
+  });
+
+  let eventEmitter = new EventEmitter();
+  function onPaintFlashingChanged(context) {
+    var gBrowser = context.environment.chromeDocument.defaultView.gBrowser;
+    var tab = gBrowser.selectedTab;
+    eventEmitter.emit("changed", tab);
+    function fireChange() {
+      eventEmitter.emit("changed", tab);
+    }
+    var target = TargetFactory.forTab(tab);
+    target.off("navigate", fireChange);
+    target.once("navigate", fireChange);
+  }
 }(this));

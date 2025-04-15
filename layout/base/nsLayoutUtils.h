@@ -18,7 +18,6 @@ class nsDisplayItem;
 class nsFontMetrics;
 class nsClientRectList;
 class nsFontFaceList;
-class nsHTMLVideoElement;
 class nsIImageLoadingContent;
 
 #include "nsChangeHint.h"
@@ -44,10 +43,12 @@ class nsBlockFrame;
 class gfxDrawable;
 
 namespace mozilla {
+class SVGImageContext;
 namespace dom {
 class Element;
 class HTMLImageElement;
 class HTMLCanvasElement;
+class HTMLVideoElement;
 } // namespace dom
 } // namespace mozilla
 
@@ -775,10 +776,9 @@ public:
 
   struct RectListBuilder : public RectCallback {
     nsClientRectList* mRectList;
-    nsresult          mRV;
 
     RectListBuilder(nsClientRectList* aList);
-     virtual void AddRect(const nsRect& aRect);
+    virtual void AddRect(const nsRect& aRect);
   };
 
   static nsIFrame* GetContainingBlockForClientRect(nsIFrame* aFrame);
@@ -938,11 +938,12 @@ public:
 
   /*
    * Convert nsStyleCoord to nscoord when percentages depend on the
-   * containing block width.
+   * containing block size.
+   * @param aPercentBasis The width or height of the containing block
+   * (whichever the client wants to use for resolving percentages).
    */
-  static nscoord ComputeWidthDependentValue(
-                   nscoord              aContainingBlockWidth,
-                   const nsStyleCoord&  aCoord);
+  static nscoord ComputeCBDependentValue(nscoord aPercentBasis,
+                                         const nsStyleCoord& aCoord);
 
   /*
    * Convert nsStyleCoord to nscoord when percentages depend on the
@@ -1286,19 +1287,25 @@ public:
    *   @param aImage            The image.
    *   @param aDest             The area that the image should fill
    *   @param aDirty            Pixels outside this area may be skipped.
+   *   @param aSVGContext       If non-null, SVG-related rendering context
+   *                            such as overridden attributes on the image
+   *                            document's root <svg> node. Ignored for
+   *                            raster images.
+   *   @param aImageFlags       Image flags of the imgIContainer::FLAG_*
+   *                            variety.
    *   @param aSourceArea       If non-null, this area is extracted from
    *                            the image and drawn in aDest. It's
    *                            in appunits. For best results it should
    *                            be aligned with image pixels.
-   *   @param aImageFlags       Image flags of the imgIContainer::FLAG_* variety
    */
-  static nsresult DrawSingleImage(nsRenderingContext* aRenderingContext,
-                                  imgIContainer*       aImage,
-                                  GraphicsFilter       aGraphicsFilter,
-                                  const nsRect&        aDest,
-                                  const nsRect&        aDirty,
-                                  uint32_t             aImageFlags,
-                                  const nsRect*        aSourceArea = nullptr);
+  static nsresult DrawSingleImage(nsRenderingContext*    aRenderingContext,
+                                  imgIContainer*         aImage,
+                                  GraphicsFilter         aGraphicsFilter,
+                                  const nsRect&          aDest,
+                                  const nsRect&          aDirty,
+                                  const mozilla::SVGImageContext* aSVGContext,
+                                  uint32_t               aImageFlags,
+                                  const nsRect*          aSourceArea = nullptr);
 
   /**
    * Given an imgIContainer, this method attempts to obtain an intrinsic
@@ -1502,7 +1509,7 @@ public:
                                                      uint32_t aSurfaceFlags = 0);
   static SurfaceFromElementResult SurfaceFromElement(mozilla::dom::HTMLCanvasElement *aElement,
                                                      uint32_t aSurfaceFlags = 0);
-  static SurfaceFromElementResult SurfaceFromElement(nsHTMLVideoElement *aElement,
+  static SurfaceFromElementResult SurfaceFromElement(mozilla::dom::HTMLVideoElement *aElement,
                                                      uint32_t aSurfaceFlags = 0);
 
   /**

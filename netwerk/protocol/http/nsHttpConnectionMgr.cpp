@@ -20,6 +20,7 @@
 #include "nsISSLSocketControl.h"
 #include "prnetdb.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/VisualEventTracer.h"
 #include <algorithm>
 
 using namespace mozilla;
@@ -807,7 +808,7 @@ nsHttpConnectionMgr::ProcessAllTransactionsCB(const nsACString &key,
     return PL_DHASH_NEXT;
 }
 
-// If the global number of idle connections is preventing the opening of
+// If the global number of connections is preventing the opening of
 // new connections to a host without idle connections, then
 // close them regardless of their TTL
 PLDHashOperator
@@ -830,6 +831,30 @@ nsHttpConnectionMgr::PurgeExcessIdleConnectionsCB(const nsACString &key,
         self->ConditionallyStopPruneDeadConnectionsTimer();
     }
     return PL_DHASH_STOP;
+}
+
+// If the global number of connections is preventing the opening of
+// new connections to a host without idle connections, then
+// close any spdy asap
+PLDHashOperator
+nsHttpConnectionMgr::PurgeExcessSpdyConnectionsCB(const nsACString &key,
+                                                  nsAutoPtr<nsConnectionEntry> &ent,
+                                                  void *closure)
+{
+    if (!ent->mUsingSpdy)
+        return PL_DHASH_NEXT;
+
+    nsHttpConnectionMgr *self = static_cast<nsHttpConnectionMgr *>(closure);
+    for (uint32_t index = 0; index < ent->mActiveConns.Length(); ++index) {
+        nsHttpConnection *conn = ent->mActiveConns[index];
+        if (conn->UsingSpdy() && conn->CanReuse()) {
+            conn->DontReuse();
+            // stop on <= (particularly =) beacuse this dontreuse causes async close
+            if (self->mNumIdleConns + self->mNumActiveConns + 1 <= self->mMaxConns)
+                return PL_DHASH_STOP;
+        }
+    }
+    return PL_DHASH_NEXT;
 }
 
 PLDHashOperator
@@ -1318,6 +1343,10 @@ nsHttpConnectionMgr::MakeNewConnection(nsConnectionEntry *ent,
 
     if ((mNumIdleConns + mNumActiveConns + 1 >= mMaxConns) && mNumIdleConns)
         mCT.Enumerate(PurgeExcessIdleConnectionsCB, this);
+
+    if ((mNumIdleConns + mNumActiveConns + 1 >= mMaxConns) &&
+        mNumActiveConns && gHttpHandler->IsSpdyEnabled())
+        mCT.Enumerate(PurgeExcessSpdyConnectionsCB, this);
 
     if (AtActiveConnectionLimit(ent, trans->Caps()))
         return NS_ERROR_NOT_AVAILABLE;

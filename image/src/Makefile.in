@@ -10,11 +10,9 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= imglib2
 LIBRARY_NAME	= imglib2_s
 FORCE_STATIC_LIB = 1
 MODULE_NAME	= nsImageLib2Module
-GRE_MODULE	= 1
 LIBXUL_LIBRARY  = 1
 FAIL_ON_WARNINGS = 1
 
@@ -27,8 +25,11 @@ EXPORTS		=  imgLoader.h \
 CPPSRCS		= \
 			Image.cpp \
 			ImageFactory.cpp \
+                        ImageMetadata.cpp \
+			ImageWrapper.cpp \
 			Decoder.cpp \
 			DiscardTracker.cpp \
+			FrozenImage.cpp \
 			RasterImage.cpp \
 			ScriptedNotificationObserver.cpp \
 			SVGDocumentWrapper.cpp \

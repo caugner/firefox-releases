@@ -171,7 +171,7 @@ nsDOMMultipartFile::Initialize(nsISupports* aOwner,
                                JSContext* aCx,
                                JSObject* aObj,
                                uint32_t aArgc,
-                               jsval* aArgv)
+                               JS::Value* aArgv)
 {
   if (!mIsFile) {
     return InitBlob(aCx, aArgc, aArgv, GetXPConnectNative);
@@ -182,7 +182,7 @@ nsDOMMultipartFile::Initialize(nsISupports* aOwner,
 nsresult
 nsDOMMultipartFile::InitBlob(JSContext* aCx,
                              uint32_t aArgc,
-                             jsval* aArgv,
+                             JS::Value* aArgv,
                              UnwrapFuncPtr aUnwrapFunc)
 {
   bool nativeEOL = false;
@@ -219,7 +219,7 @@ nsDOMMultipartFile::InitBlob(JSContext* aCx,
     uint32_t length;
     JS_ALWAYS_TRUE(JS_GetArrayLength(aCx, &obj, &length));
     for (uint32_t i = 0; i < length; ++i) {
-      jsval element;
+      JS::Value element;
       if (!JS_GetElement(aCx, &obj, i, &element))
         return NS_ERROR_TYPE_ERR;
 
@@ -268,7 +268,7 @@ nsDOMMultipartFile::InitBlob(JSContext* aCx,
 nsresult
 nsDOMMultipartFile::InitFile(JSContext* aCx,
                              uint32_t aArgc,
-                             jsval* aArgv)
+                             JS::Value* aArgv)
 {
   nsresult rv;
 
@@ -290,10 +290,11 @@ nsDOMMultipartFile::InitFile(JSContext* aCx,
     mContentType = d.mType;
   }
 
-  // We expect to get a path to represent as a File object,
-  // an nsIFile, or an nsIDOMFile.
+
+  // We expect to get a path to represent as a File object or
+  // Blob object, an nsIFile, or an nsIDOMFile.
   nsCOMPtr<nsIFile> file;
-  nsCOMPtr<nsIDOMFile> domFile;
+  nsCOMPtr<nsIDOMBlob> blob;
   if (!aArgv[0].isString()) {
     // Lets see if it's an nsIFile
     if (!aArgv[0].isObject()) {
@@ -308,9 +309,9 @@ nsDOMMultipartFile::InitFile(JSContext* aCx,
       return NS_ERROR_UNEXPECTED;
     }
 
-    domFile = do_QueryInterface(supports);
+    blob = do_QueryInterface(supports);
     file = do_QueryInterface(supports);
-    if (!domFile && !file) {
+    if (!blob && !file) {
       return NS_ERROR_UNEXPECTED;
     }
   } else {
@@ -342,16 +343,16 @@ nsDOMMultipartFile::InitFile(JSContext* aCx,
       file->GetLeafName(mName);
     }
 
-    domFile = new nsDOMFileFile(file);
+    blob = new nsDOMFileFile(file);
   }
-  
+
   // XXXkhuey this is terrible
   if (mContentType.IsEmpty()) {
-    domFile->GetType(mContentType);
+    blob->GetType(mContentType);
   }
 
   BlobSet blobSet;
-  blobSet.AppendBlob(domFile);
+  blobSet.AppendBlob(blob);
   mBlobs = blobSet.GetBlobs();
 
   return NS_OK;

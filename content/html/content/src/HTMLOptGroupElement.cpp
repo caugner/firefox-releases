@@ -16,7 +16,6 @@
 #include "nsHTMLSelectElement.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(OptGroup)
-DOMCI_NODE_DATA(HTMLOptGroupElement, mozilla::dom::HTMLOptGroupElement)
 
 namespace mozilla {
 namespace dom {
@@ -52,7 +51,7 @@ NS_INTERFACE_TABLE_HEAD(HTMLOptGroupElement)
                                    nsIDOMHTMLOptGroupElement)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLOptGroupElement,
                                                nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLOptGroupElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 
 NS_IMPL_ELEMENT_CLONE(HTMLOptGroupElement)
@@ -158,10 +157,9 @@ HTMLOptGroupElement::IntrinsicState() const
 }
 
 JSObject*
-HTMLOptGroupElement::WrapNode(JSContext* aCx, JSObject* aScope,
-                              bool* aTriedToWrap)
+HTMLOptGroupElement::WrapNode(JSContext* aCx, JSObject* aScope)
 {
-  return HTMLOptGroupElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return HTMLOptGroupElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom

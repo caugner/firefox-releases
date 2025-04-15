@@ -12,11 +12,10 @@ import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.gfx.PanZoomController;
 import org.mozilla.gecko.mozglue.GeckoLoader;
 import org.mozilla.gecko.util.EventDispatcher;
-import org.mozilla.gecko.util.GeckoBackgroundThread;
 import org.mozilla.gecko.util.GeckoEventListener;
+import org.mozilla.gecko.util.ThreadUtils;
 
 import android.app.ActivityManager;
-import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
@@ -28,7 +27,6 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.TypedArray;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ImageFormat;
@@ -49,11 +47,9 @@ import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.MessageQueue;
-import android.os.StatFs;
 import android.os.SystemClock;
 import android.os.Vibrator;
 import android.provider.Settings;
@@ -73,6 +69,7 @@ import java.io.BufferedReader;
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -81,12 +78,15 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.URL;
 import java.nio.ByteBuffer;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.StringTokenizer;
+import java.util.TreeMap;
 import java.util.concurrent.SynchronousQueue;
 import java.net.ProxySelector;
 import java.net.Proxy;
@@ -106,6 +106,9 @@ public class GeckoAppShell
 
     static private GeckoEditableListener mEditableListener = null;
 
+    static private final HashMap<String, String>
+        mAlertCookies = new HashMap<String, String>();
+
     /* Keep in sync with constants found here:
       http://mxr.mozilla.org/mozilla-central/source/uriloader/base/nsIWebProgressListener.idl
     */
@@ -119,7 +122,6 @@ public class GeckoAppShell
 
     static private final boolean LOGGING = false;
 
-    static File sHomeDir = null;
     static private int sDensityDpi = 0;
 
     private static final EventDispatcher sEventDispatcher = new EventDispatcher();
@@ -147,9 +149,7 @@ public class GeckoAppShell
 
     private static boolean mLocationHighAccuracy = false;
 
-    private static Handler sGeckoHandler;
-
-    static ActivityHandlerHelper sActivityHelper = new ActivityHandlerHelper();
+    public static ActivityHandlerHelper sActivityHelper = new ActivityHandlerHelper();
     static NotificationClient sNotificationClient;
 
     /* The Android-side API: API methods that Android calls */
@@ -170,6 +170,7 @@ public class GeckoAppShell
 
     public static void registerGlobalExceptionHandler() {
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
             public void uncaughtException(Thread thread, Throwable e) {
                 Log.e(LOGTAG, ">>> REPORTING UNCAUGHT EXCEPTION FROM THREAD "
                               + thread.getId() + " (\"" + thread.getName() + "\")", e);
@@ -242,10 +243,12 @@ public class GeckoAppShell
             mScanner.connect();
         }
 
+        @Override
         public void onMediaScannerConnected() {
             mScanner.scanFile(mFile, mMimeType);
         }
 
+        @Override
         public void onScanCompleted(String path, Uri uri) {
             if(path.equals(mFile)) {
                 mScanner.disconnect();
@@ -254,22 +257,8 @@ public class GeckoAppShell
         }
     }
 
-    // Get a Handler for the main java thread
-    public static Handler getMainHandler() {
-        return GeckoApp.mAppContext.mMainHandler;
-    }
-
-    public static Handler getGeckoHandler() {
-        return sGeckoHandler;
-    }
-
-    public static Handler getHandler() {
-        return GeckoBackgroundThread.getHandler();
-    }
-
     public static void runGecko(String apkPath, String args, String url, String type) {
         Looper.prepare();
-        sGeckoHandler = new Handler();
 
         // run gecko -- it will spawn its own thread
         GeckoAppShell.nativeInit();
@@ -290,6 +279,7 @@ public class GeckoAppShell
         combinedArgs += " -width " + metrics.widthPixels + " -height " + metrics.heightPixels;
 
         GeckoApp.mAppContext.runOnUiThread(new Runnable() {
+                @Override
                 public void run() {
                     geckoLoaded();
                 }
@@ -330,21 +320,16 @@ public class GeckoAppShell
     /*
      *  The Gecko-side API: API methods that Gecko calls
      */
-    public static void notifyIME(int type, int state) {
+    public static void notifyIME(int type) {
         if (mEditableListener != null) {
-            mEditableListener.notifyIME(type, state);
+            mEditableListener.notifyIME(type);
         }
     }
 
-    public static void notifyIMEEnabled(int state, String typeHint,
-                                        String modeHint, String actionHint,
-                                        boolean landscapeFS) {
-        // notifyIMEEnabled() still needs the landscapeFS parameter
-        // because it is called from JNI code that assumes it has the
-        // same signature as XUL Fennec's (which does use landscapeFS).
-        // Bug 807124 will eliminate the need for landscapeFS
+    public static void notifyIMEContext(int state, String typeHint,
+                                        String modeHint, String actionHint) {
         if (mEditableListener != null) {
-            mEditableListener.notifyIMEEnabled(state, typeHint,
+            mEditableListener.notifyIMEContext(state, typeHint,
                                                modeHint, actionHint);
         }
     }
@@ -365,7 +350,7 @@ public class GeckoAppShell
         e.setAckNeeded(true);
 
         long time = SystemClock.uptimeMillis();
-        boolean isMainThread = (GeckoApp.mAppContext.getMainLooper().getThread() == Thread.currentThread());
+        boolean isUiThread = ThreadUtils.isOnUiThread();
 
         synchronized (sEventAckLock) {
             if (sWaitingForEventAck) {
@@ -387,7 +372,7 @@ public class GeckoAppShell
                 }
                 long waited = SystemClock.uptimeMillis() - time;
                 Log.d(LOGTAG, "Gecko event sync taking too long: " + waited + "ms");
-                if (isMainThread && waited >= 4000) {
+                if (isUiThread && waited >= 4000) {
                     Log.w(LOGTAG, "Gecko event sync took too long, aborting!", new Exception());
                     sWaitingForEventAck = false;
                     break;
@@ -405,7 +390,8 @@ public class GeckoAppShell
     }
 
     public static void enableLocation(final boolean enable) {
-        getMainHandler().post(new Runnable() { 
+        ThreadUtils.postToUiThread(new Runnable() {
+                @Override
                 public void run() {
                     LocationManager lm = (LocationManager)
                         GeckoApp.mAppContext.getSystemService(Context.LOCATION_SERVICE);
@@ -562,16 +548,22 @@ public class GeckoAppShell
         gRestartScheduled = true;
     }
 
-    public static File installWebApp(String aTitle, String aURI, String aUniqueURI, String aIconURL) {
-        int index = WebAppAllocator.getInstance(GeckoApp.mAppContext).findAndAllocateIndex(aUniqueURI, aTitle, aIconURL);
+    public static File preInstallWebApp(String aTitle, String aURI, String aUniqueURI) {
+        int index = WebAppAllocator.getInstance(GeckoApp.mAppContext).findAndAllocateIndex(aUniqueURI, aTitle, (String) null);
         GeckoProfile profile = GeckoProfile.get(GeckoApp.mAppContext, "webapp" + index);
-        createShortcut(aTitle, aURI, aUniqueURI, aIconURL, "webapp");
         return profile.getDir();
+    }
+
+    public static void postInstallWebApp(String aTitle, String aURI, String aUniqueURI, String aIconURL) {
+    	WebAppAllocator allocator = WebAppAllocator.getInstance(GeckoApp.mAppContext);
+		int index = allocator.getIndexForApp(aUniqueURI);
+    	assert index != -1 && aIconURL != null;
+    	allocator.updateAppAllocation(aUniqueURI, index, BitmapUtils.getBitmapFromDataURI(aIconURL));
+    	createShortcut(aTitle, aURI, aUniqueURI, aIconURL, "webapp");
     }
 
     public static Intent getWebAppIntent(String aURI, String aUniqueURI, String aTitle, Bitmap aIcon) {
         int index;
-
         if (aIcon != null && !TextUtils.isEmpty(aTitle))
             index = WebAppAllocator.getInstance(GeckoApp.mAppContext).findAndAllocateIndex(aUniqueURI, aTitle, aIcon);
         else
@@ -614,7 +606,8 @@ public class GeckoAppShell
     public static void createShortcut(final String aTitle, final String aURI, final String aUniqueURI,
                                       final Bitmap aIcon, final String aType)
     {
-        getHandler().post(new Runnable() {
+        ThreadUtils.postToBackgroundThread(new Runnable() {
+            @Override
             public void run() {
                 // the intent to be launched by the shortcut
                 Intent shortcutIntent;
@@ -650,7 +643,8 @@ public class GeckoAppShell
     }
 
     public static void removeShortcut(final String aTitle, final String aURI, final String aUniqueURI, final String aType) {
-        getHandler().post(new Runnable() {
+        ThreadUtils.postToBackgroundThread(new Runnable() {
+            @Override
             public void run() {
                 // the intent to be launched by the shortcut
                 Intent shortcutIntent;
@@ -684,7 +678,8 @@ public class GeckoAppShell
         // On uninstall, we need to do a couple of things:
         //   1. nuke the running app process.
         //   2. nuke the profile that was assigned to that webapp
-        getHandler().post(new Runnable() {
+        ThreadUtils.postToBackgroundThread(new Runnable() {
+            @Override
             public void run() {
                 int index = WebAppAllocator.getInstance(GeckoApp.mAppContext).releaseIndexForApp(uniqueURI);
 
@@ -761,12 +756,12 @@ public class GeckoAppShell
         }
 
         // draw the overlay
-        Bitmap overlay = BitmapFactory.decodeResource(GeckoApp.mAppContext.getResources(), R.drawable.home_bg);
+        Bitmap overlay = BitmapUtils.decodeResource(GeckoApp.mAppContext, R.drawable.home_bg);
         canvas.drawBitmap(overlay, null, new Rect(0, 0, size, size), null);
 
         // draw the favicon
         if (aSource == null)
-            aSource = BitmapFactory.decodeResource(GeckoApp.mAppContext.getResources(), R.drawable.home_star);
+            aSource = BitmapUtils.decodeResource(GeckoApp.mAppContext, R.drawable.home_star);
 
         // by default, we scale the icon to this size
         int sWidth = insetSize / 2;
@@ -1065,7 +1060,16 @@ public class GeckoAppShell
         }
 
         final String scheme = uri.getScheme();
-        final Intent intent = getIntentForActionString(action);
+
+        final Intent intent;
+        if ("vnd.youtube".equals(scheme) && getHandlersForURL(targetURI, action).length == 0) {
+            // Special case youtube to fallback to our own player
+            intent = new Intent(VideoPlayer.VIDEO_ACTION);
+            intent.setClassName(GeckoApp.mAppContext.getPackageName(),
+                                "org.mozilla.gecko.VideoPlayer");
+        } else {
+            intent = getIntentForActionString(action);
+        }
 
         // Start with the original URI. If we end up modifying it,
         // we'll overwrite it.
@@ -1111,40 +1115,51 @@ public class GeckoAppShell
         return intent;
     }
 
-    static SynchronousQueue<String> sClipboardQueue =
-        new SynchronousQueue<String>();
+    /* On some devices, access to the clipboard service needs to happen
+     * on a thread with a looper, so this function requires a looper is
+     * present on the thread. */
+    @SuppressWarnings("deprecation")
+    private static String getClipboardTextImpl() {
+        Context context = GeckoApp.mAppContext;
+        if (android.os.Build.VERSION.SDK_INT >= 11) {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)context.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm.hasPrimaryClip()) {
+                ClipData clip = cm.getPrimaryClip();
+                if (clip != null) {
+                    ClipData.Item item = clip.getItemAt(0);
+                    return item.coerceToText(context).toString();
+                }
+            }
+        } else {
+            android.text.ClipboardManager cm = (android.text.ClipboardManager)context.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm.hasText()) {
+                return cm.getText().toString();
+            }
+        }
+        return null;
+    }
+
+    private static SynchronousQueue<String> sClipboardQueue = new SynchronousQueue<String>();
     private static String EMPTY_STRING = new String();
 
-    // On some devices, access to the clipboard service needs to happen
-    // on a thread with a looper, so dispatch this to our looper thread
-    // Note: the main looper won't work because it may be blocked on the
-    // gecko thread, which is most likely this thread
     static String getClipboardText() {
-        getHandler().post(new Runnable() { 
-            @SuppressWarnings("deprecation")
+        // If we're on the UI thread or the background thread, we have a looper on the thread
+        // and can just call this directly. For any other threads, post the call to the
+        // background thread.
+
+        if (ThreadUtils.isOnUiThread() || ThreadUtils.isOnBackgroundThread()) {
+            return getClipboardTextImpl();
+        }
+
+        ThreadUtils.postToBackgroundThread(new Runnable() { 
+            @Override
             public void run() {
-                Context context = GeckoApp.mAppContext;
-                String text = null;
-                if (android.os.Build.VERSION.SDK_INT >= 11) {
-                    android.content.ClipboardManager cm = (android.content.ClipboardManager)
-                        context.getSystemService(Context.CLIPBOARD_SERVICE);
-                    if (cm.hasPrimaryClip()) {
-                        ClipData clip = cm.getPrimaryClip();
-                        if (clip != null) {
-                            ClipData.Item item = clip.getItemAt(0);
-                            text = item.coerceToText(context).toString();
-                        }
-                    }
-                } else {
-                    android.text.ClipboardManager cm = (android.text.ClipboardManager)
-                        context.getSystemService(Context.CLIPBOARD_SERVICE);
-                    if (cm.hasText())
-                        text = cm.getText().toString();
-                }
+                String text = getClipboardTextImpl();
                 try {
                     sClipboardQueue.put(text != null ? text : EMPTY_STRING);
                 } catch (InterruptedException ie) {}
-            }});
+            }
+        });
         try {
             String ret = sClipboardQueue.take();
             return (EMPTY_STRING.equals(ret) ? null : ret);
@@ -1152,21 +1167,34 @@ public class GeckoAppShell
         return null;
     }
 
-    static void setClipboardText(final String text) {
-        getHandler().post(new Runnable() { 
+    static void setClipboardText(String copiedText) {
+        // Copy an empty string instead of null to avoid clipboard crashes.
+        // AndroidBridge::EmptyClipboard() passes null to clear the clipboard's current contents.
+        final String text = (copiedText != null) ? copiedText : "";
+
+        ThreadUtils.postToBackgroundThread(new Runnable() {
+            @Override
             @SuppressWarnings("deprecation")
             public void run() {
                 Context context = GeckoApp.mAppContext;
                 if (android.os.Build.VERSION.SDK_INT >= 11) {
                     android.content.ClipboardManager cm = (android.content.ClipboardManager)
                         context.getSystemService(Context.CLIPBOARD_SERVICE);
-                    cm.setPrimaryClip(ClipData.newPlainText("Text", text));
+                    ClipData clip = ClipData.newPlainText("Text", text);
+                    try {
+                        cm.setPrimaryClip(clip);
+                    } catch (NullPointerException e) {
+                        // Bug 776223: This is a Samsung clipboard bug. setPrimaryClip() can throw
+                        // a NullPointerException if Samsung's /data/clipboard directory is full.
+                        // Fortunately, the text is still successfully copied to the clipboard.
+                    }
                 } else {
                     android.text.ClipboardManager cm = (android.text.ClipboardManager)
                         context.getSystemService(Context.CLIPBOARD_SERVICE);
                     cm.setText(text);
                 }
-            }});
+            }
+        });
     }
 
     public static void setNotificationClient(NotificationClient client) {
@@ -1204,6 +1232,9 @@ public class GeckoAppShell
         PendingIntent contentIntent = PendingIntent.getActivity(
                 GeckoApp.mAppContext, 0, notificationIntent, PendingIntent.FLAG_UPDATE_CURRENT);
 
+        mAlertCookies.put(aAlertName, aAlertCookie);
+        callObserver(aAlertName, "alertshow", aAlertCookie);
+
         sNotificationClient.add(notificationID, aImageUrl, aAlertTitle, aAlertText, contentIntent);
     }
 
@@ -1217,11 +1248,17 @@ public class GeckoAppShell
         }
     }
 
-    public static void alertsProgressListener_OnCancel(String aAlertName) {
+    public static void closeNotification(String aAlertName) {
+        String alertCookie = mAlertCookies.get(aAlertName);
+        if (alertCookie != null) {
+            callObserver(aAlertName, "alertfinished", alertCookie);
+            mAlertCookies.remove(aAlertName);
+        }
+
         removeObserver(aAlertName);
 
         int notificationID = aAlertName.hashCode();
-        removeNotification(notificationID);
+        sNotificationClient.remove(notificationID);
     }
 
     public static void handleNotification(String aAction, String aAlertName, String aAlertCookie) {
@@ -1236,19 +1273,12 @@ public class GeckoAppShell
             }
         }
 
-        callObserver(aAlertName, "alertfinished", aAlertCookie);
         // Also send a notification to the observer service
         // New listeners should register for these notifications since they will be called even if
         // Gecko has been killed and restared between when your notification was shown and when the
         // user clicked on it.
         sendEventToGecko(GeckoEvent.createBroadcastEvent("Notification:Clicked", aAlertCookie));
-        removeObserver(aAlertName);
-
-        removeNotification(notificationID);
-    }
-
-    private static void removeNotification(int notificationID) {
-        sNotificationClient.remove(notificationID);
+        closeNotification(aAlertName);
     }
 
     public static int getDpi() {
@@ -1321,6 +1351,7 @@ public class GeckoAppShell
 
     public static void setKeepScreenOn(final boolean on) {
         GeckoApp.mAppContext.runOnUiThread(new Runnable() {
+            @Override
             public void run() {
                 // TODO
             }
@@ -1328,7 +1359,8 @@ public class GeckoAppShell
     }
 
     public static void notifyDefaultPrevented(final boolean defaultPrevented) {
-        getMainHandler().post(new Runnable() {
+        ThreadUtils.postToUiThread(new Runnable() {
+            @Override
             public void run() {
                 LayerView view = GeckoApp.mAppContext.getLayerView();
                 PanZoomController controller = (view == null ? null : view.getPanZoomController());
@@ -1425,6 +1457,7 @@ public class GeckoAppShell
 
     public static void killAnyZombies() {
         GeckoProcessesVisitor visitor = new GeckoProcessesVisitor() {
+            @Override
             public boolean callback(int pid) {
                 if (pid != android.os.Process.myPid())
                     android.os.Process.killProcess(pid);
@@ -1439,6 +1472,7 @@ public class GeckoAppShell
 
         class GeckoPidCallback implements GeckoProcessesVisitor {
             public boolean otherPidExist = false;
+            @Override
             public boolean callback(int pid) {
                 if (pid != android.os.Process.myPid()) {
                     otherPidExist = true;
@@ -1456,12 +1490,11 @@ public class GeckoAppShell
         boolean callback(int pid);
     }
 
-    static int sPidColumn = -1;
-    static int sUserColumn = -1;
     private static void EnumerateGeckoProcesses(GeckoProcessesVisitor visiter) {
+        int pidColumn = -1;
+        int userColumn = -1;
 
         try {
-
             // run ps and parse its output
             java.lang.Process ps = Runtime.getRuntime().exec("ps");
             BufferedReader in = new BufferedReader(new InputStreamReader(ps.getInputStream()),
@@ -1470,30 +1503,28 @@ public class GeckoAppShell
             String headerOutput = in.readLine();
 
             // figure out the column offsets.  We only care about the pid and user fields
-            if (sPidColumn == -1 || sUserColumn == -1) {
-                StringTokenizer st = new StringTokenizer(headerOutput);
-                
-                int tokenSoFar = 0;
-                while(st.hasMoreTokens()) {
-                    String next = st.nextToken();
-                    if (next.equalsIgnoreCase("PID"))
-                        sPidColumn = tokenSoFar;
-                    else if (next.equalsIgnoreCase("USER"))
-                        sUserColumn = tokenSoFar;
-                    tokenSoFar++;
-                }
+            StringTokenizer st = new StringTokenizer(headerOutput);
+            
+            int tokenSoFar = 0;
+            while (st.hasMoreTokens()) {
+                String next = st.nextToken();
+                if (next.equalsIgnoreCase("PID"))
+                    pidColumn = tokenSoFar;
+                else if (next.equalsIgnoreCase("USER"))
+                    userColumn = tokenSoFar;
+                tokenSoFar++;
             }
 
             // alright, the rest are process entries.
             String psOutput = null;
             while ((psOutput = in.readLine()) != null) {
                 String[] split = psOutput.split("\\s+");
-                if (split.length <= sPidColumn || split.length <= sUserColumn)
+                if (split.length <= pidColumn || split.length <= userColumn)
                     continue;
-                int uid = android.os.Process.getUidForName(split[sUserColumn]);
+                int uid = android.os.Process.getUidForName(split[userColumn]);
                 if (uid == android.os.Process.myUid() &&
                     !split[split.length - 1].equalsIgnoreCase("ps")) {
-                    int pid = Integer.parseInt(split[sPidColumn]);
+                    int pid = Integer.parseInt(split[pidColumn]);
                     boolean keepGoing = visiter.callback(pid);
                     if (keepGoing == false)
                         break;
@@ -1514,15 +1545,24 @@ public class GeckoAppShell
             } catch (InterruptedException ie) {}
         }
     }
-
-    public static String getAppNameByPID(Context context, int pid) {
-        ActivityManager manager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-        for (ActivityManager.RunningAppProcessInfo processInfo : manager.getRunningAppProcesses()) {
-            if (processInfo.pid == pid) {
-                return processInfo.processName;
+    public static String getAppNameByPID(int pid) {
+        BufferedReader cmdlineReader = null;
+        String path = "/proc/" + pid + "/cmdline";
+        try {
+            File cmdlineFile = new File(path);
+            if (!cmdlineFile.exists())
+                return "";
+            cmdlineReader = new BufferedReader(new FileReader(cmdlineFile));
+            return cmdlineReader.readLine().trim();
+        } catch (Exception ex) {
+            return "";
+        } finally {
+            if (null != cmdlineReader) {
+                try {
+                    cmdlineReader.close();
+                } catch (Exception e) {}
             }
         }
-        return "";
     }
 
     public static void listOfOpenFiles() {
@@ -1530,6 +1570,9 @@ public class GeckoAppShell
         int nameColumn = -1;
 
         try {
+            String filter = GeckoProfile.get(GeckoApp.mAppContext).getDir().toString();
+            Log.i(LOGTAG, "[OPENFILE] Filter: " + filter);
+
             // run lsof and parse its output
             java.lang.Process lsof = Runtime.getRuntime().exec("lsof");
             BufferedReader in = new BufferedReader(new InputStreamReader(lsof.getInputStream()), 2048);
@@ -1547,14 +1590,21 @@ public class GeckoAppShell
             }
 
             // alright, the rest are open file entries.
+            Map<Integer, String> pidNameMap = new TreeMap<Integer, String>();
             String output = null;
             while ((output = in.readLine()) != null) {
                 String[] split = output.split("\\s+");
                 if (split.length <= pidColumn || split.length <= nameColumn)
                     continue;
-                String name = getAppNameByPID(GeckoApp.mAppContext, Integer.parseInt(split[pidColumn]));
-                if (!TextUtils.isEmpty(name) && name.startsWith("org.mozilla"))
-                    Log.i(LOGTAG, "[OPENFILE] " + name + "(" + split[pidColumn] + ") : " + split[nameColumn]);
+                Integer pid = new Integer(split[pidColumn]);
+                String name = pidNameMap.get(pid);
+                if (name == null) {
+                    name = getAppNameByPID(pid.intValue());
+                    pidNameMap.put(pid, name);
+                }
+                String file = split[nameColumn];
+                if (!TextUtils.isEmpty(name) && !TextUtils.isEmpty(file) && file.startsWith(filter))
+                    Log.i(LOGTAG, "[OPENFILE] " + name + "(" + split[pidColumn] + ") : " + file);
             }
             in.close();
         } catch (Exception e) { }
@@ -1664,7 +1714,7 @@ public class GeckoAppShell
     static byte[] sCameraBuffer = null;
 
     static int[] initCamera(String aContentType, int aCamera, int aWidth, int aHeight) {
-        getMainHandler().post(new Runnable() {
+        ThreadUtils.postToUiThread(new Runnable() {
                 @Override
                 public void run() {
                     try {
@@ -1735,6 +1785,7 @@ public class GeckoAppShell
             sCameraBuffer = new byte[(bufferSize * 12) / 8];
             sCamera.addCallbackBuffer(sCameraBuffer);
             sCamera.setPreviewCallbackWithBuffer(new android.hardware.Camera.PreviewCallback() {
+                @Override
                 public void onPreviewFrame(byte[] data, android.hardware.Camera camera) {
                     cameraCallbackBridge(data);
                     if (sCamera != null)
@@ -1755,7 +1806,7 @@ public class GeckoAppShell
     }
 
     static synchronized void closeCamera() {
-        getMainHandler().post(new Runnable() {
+        ThreadUtils.postToUiThread(new Runnable() {
                 @Override
                 public void run() {
                     try {
@@ -1825,7 +1876,8 @@ public class GeckoAppShell
     }
 
     static void markUriVisited(final String uri) {    // invoked from native JNI code
-        getHandler().post(new Runnable() { 
+        ThreadUtils.postToBackgroundThread(new Runnable() {
+            @Override
             public void run() {
                 GlobalHistory.getInstance().add(uri);
             }
@@ -1833,7 +1885,8 @@ public class GeckoAppShell
     }
 
     static void setUriTitle(final String uri, final String title) {    // invoked from native JNI code
-        getHandler().post(new Runnable() {
+        ThreadUtils.postToBackgroundThread(new Runnable() {
+            @Override
             public void run() {
                 GlobalHistory.getInstance().update(uri, title);
             }
@@ -1897,6 +1950,14 @@ public class GeckoAppShell
 
     public static boolean isTablet() {
         return GeckoApp.mAppContext.isTablet();
+    }
+
+    public static boolean isLargeTablet() {
+        return GeckoApp.mAppContext.isLargeTablet();
+    }
+
+    public static boolean isSmallTablet() {
+        return GeckoApp.mAppContext.isSmallTablet();
     }
 
     public static void viewSizeChanged() {
@@ -2068,6 +2129,7 @@ public class GeckoAppShell
             mId = id;
         }
 
+        @Override
         public void onActivityResult(int resultCode, Intent data) {
             GeckoAppShell.notifyFilePickerResult(handleActivityResult(resultCode, data), mId);
         }
@@ -2093,6 +2155,7 @@ public class GeckoAppShell
 
     public static void registerSurfaceTextureFrameListener(Object surfaceTexture, final int id) {
         ((SurfaceTexture)surfaceTexture).setOnFrameAvailableListener(new SurfaceTexture.OnFrameAvailableListener() {
+            @Override
             public void onFrameAvailable(SurfaceTexture surfaceTexture) {
                 GeckoAppShell.onSurfaceTextureFrameAvailable(surfaceTexture, id);
             }
@@ -2101,11 +2164,6 @@ public class GeckoAppShell
 
     public static void unregisterSurfaceTextureFrameListener(Object surfaceTexture) {
         ((SurfaceTexture)surfaceTexture).setOnFrameAvailableListener(null);
-    }
-
-    public static void notifyCheckUpdateResult(boolean result) {
-        if (GeckoApp.mAppContext != null)
-            GeckoApp.mAppContext.notifyCheckUpdateResult(result);
     }
 
     public static boolean unlockProfile() {

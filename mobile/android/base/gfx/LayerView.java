@@ -5,12 +5,12 @@
 
 package org.mozilla.gecko.gfx;
 
+import org.mozilla.gecko.GeckoAccessibility;
 import org.mozilla.gecko.GeckoApp;
-import org.mozilla.gecko.OnInterceptTouchListener;
 import org.mozilla.gecko.R;
+import org.mozilla.gecko.TouchEventInterceptor;
 import org.mozilla.gecko.ZoomConstraints;
 import org.mozilla.gecko.util.EventDispatcher;
-import org.mozilla.gecko.GeckoAccessibility;
 
 import android.content.Context;
 import android.graphics.Bitmap;
@@ -20,6 +20,7 @@ import android.graphics.PixelFormat;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
+import android.os.Build;
 import android.os.Handler;
 import android.util.AttributeSet;
 import android.util.Log;
@@ -58,7 +59,7 @@ public class LayerView extends FrameLayout {
     private TextureView mTextureView;
 
     private Listener mListener;
-    private OnInterceptTouchListener mTouchIntercepter;
+    private TouchEventInterceptor mTouchInterceptor;
 
     /* Flags used to determine when to show the painted surface. */
     public static final int PAINT_START = 0;
@@ -128,12 +129,13 @@ public class LayerView extends FrameLayout {
         }
     }
 
-    public void setTouchIntercepter(final OnInterceptTouchListener touchIntercepter) {
+    public void setTouchIntercepter(final TouchEventInterceptor touchInterceptor) {
         // this gets run on the gecko thread, but for thread safety we want the assignment
         // on the UI thread.
         post(new Runnable() {
+            @Override
             public void run() {
-                mTouchIntercepter = touchIntercepter;
+                mTouchInterceptor = touchInterceptor;
             }
         });
     }
@@ -144,13 +146,13 @@ public class LayerView extends FrameLayout {
             requestFocus();
         }
 
-        if (mTouchIntercepter != null && mTouchIntercepter.onInterceptTouchEvent(this, event)) {
+        if (mTouchInterceptor != null && mTouchInterceptor.onInterceptTouchEvent(this, event)) {
             return true;
         }
         if (mPanZoomController != null && mPanZoomController.onTouchEvent(event)) {
             return true;
         }
-        if (mTouchIntercepter != null && mTouchIntercepter.onTouch(this, event)) {
+        if (mTouchInterceptor != null && mTouchInterceptor.onTouch(this, event)) {
             return true;
         }
         return false;
@@ -158,7 +160,7 @@ public class LayerView extends FrameLayout {
 
     @Override
     public boolean onHoverEvent(MotionEvent event) {
-        if (mTouchIntercepter != null && mTouchIntercepter.onTouch(this, event)) {
+        if (mTouchInterceptor != null && mTouchInterceptor.onTouch(this, event)) {
             return true;
         }
         return false;
@@ -181,7 +183,12 @@ public class LayerView extends FrameLayout {
         if (shouldUseTextureView()) {
             mTextureView = new TextureView(getContext());
             mTextureView.setSurfaceTextureListener(new SurfaceTextureListener());
-            mTextureView.setBackgroundColor(Color.WHITE);
+
+            // The background is set to this color when the LayerView is
+            // created, and it will be shown immediately at startup. Shortly
+            // after, the tab's background color will be used before any content
+            // is shown.
+            mTextureView.setBackgroundResource(R.color.background_normal);
             addView(mTextureView, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         } else {
             // This will stop PropertyAnimator from creating a drawing cache (i.e. a bitmap)
@@ -189,7 +196,7 @@ public class LayerView extends FrameLayout {
             setWillNotCacheDrawing(false);
 
             mSurfaceView = new LayerSurfaceView(getContext(), this);
-            mSurfaceView.setBackgroundColor(Color.WHITE);
+            mSurfaceView.setBackgroundResource(R.color.background_normal);
             addView(mSurfaceView, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
 
             SurfaceHolder holder = mSurfaceView.getHolder();
@@ -206,7 +213,9 @@ public class LayerView extends FrameLayout {
     }
 
     public void abortPanning() {
-        mLayerClient.getPanZoomController().abortPanning();
+        if (mPanZoomController != null) {
+            mPanZoomController.abortPanning();
+        }
     }
 
     public PointF convertViewPointToLayerPoint(PointF viewPoint) {
@@ -217,6 +226,7 @@ public class LayerView extends FrameLayout {
         return mBackgroundColor;
     }
 
+    @Override
     public void setBackgroundColor(int newColor) {
         mBackgroundColor = newColor;
         requestRender();
@@ -247,36 +257,44 @@ public class LayerView extends FrameLayout {
 
     @Override
     public boolean onKeyPreIme(int keyCode, KeyEvent event) {
-        if (mInputConnectionHandler != null)
-            return mInputConnectionHandler.onKeyPreIme(keyCode, event);
+        if (mInputConnectionHandler != null && mInputConnectionHandler.onKeyPreIme(keyCode, event)) {
+            return true;
+        }
         return false;
     }
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (mInputConnectionHandler != null)
-            return mInputConnectionHandler.onKeyDown(keyCode, event);
+        if (mPanZoomController != null && mPanZoomController.onKeyEvent(event)) {
+            return true;
+        }
+        if (mInputConnectionHandler != null && mInputConnectionHandler.onKeyDown(keyCode, event)) {
+            return true;
+        }
         return false;
     }
 
     @Override
     public boolean onKeyLongPress(int keyCode, KeyEvent event) {
-        if (mInputConnectionHandler != null)
-            return mInputConnectionHandler.onKeyLongPress(keyCode, event);
+        if (mInputConnectionHandler != null && mInputConnectionHandler.onKeyLongPress(keyCode, event)) {
+            return true;
+        }
         return false;
     }
 
     @Override
     public boolean onKeyMultiple(int keyCode, int repeatCount, KeyEvent event) {
-        if (mInputConnectionHandler != null)
-            return mInputConnectionHandler.onKeyMultiple(keyCode, repeatCount, event);
+        if (mInputConnectionHandler != null && mInputConnectionHandler.onKeyMultiple(keyCode, repeatCount, event)) {
+            return true;
+        }
         return false;
     }
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
-        if (mInputConnectionHandler != null)
-            return mInputConnectionHandler.onKeyUp(keyCode, event);
+        if (mInputConnectionHandler != null && mInputConnectionHandler.onKeyUp(keyCode, event)) {
+            return true;
+        }
         return false;
     }
 
@@ -338,7 +356,7 @@ public class LayerView extends FrameLayout {
     private Bitmap getDrawable(int resId) {
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inScaled = false;
-        return BitmapFactory.decodeResource(getContext().getResources(), resId, options);
+        return BitmapUtils.decodeResource(getContext(), resId, options);
     }
 
     Bitmap getShadowPattern() {
@@ -417,14 +435,17 @@ public class LayerView extends FrameLayout {
     }
 
     private class SurfaceListener implements SurfaceHolder.Callback {
+        @Override
         public void surfaceChanged(SurfaceHolder holder, int format, int width,
                                                 int height) {
             onSizeChanged(width, height);
         }
 
+        @Override
         public void surfaceCreated(SurfaceHolder holder) {
         }
 
+        @Override
         public void surfaceDestroyed(SurfaceHolder holder) {
             onDestroyed();
         }
@@ -441,6 +462,7 @@ public class LayerView extends FrameLayout {
             mParent = aParent;
         }
 
+        @Override
         protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
             if (changed) {
                 mParent.surfaceChanged(right - left, bottom - top);
@@ -449,21 +471,25 @@ public class LayerView extends FrameLayout {
     }
 
     private class SurfaceTextureListener implements TextureView.SurfaceTextureListener {
+        @Override
         public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
             // We don't do this for surfaceCreated above because it is always followed by a surfaceChanged,
             // but that is not the case here.
             onSizeChanged(width, height);
         }
 
+        @Override
         public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
             onDestroyed();
             return true; // allow Android to call release() on the SurfaceTexture, we are done drawing to it
         }
 
+        @Override
         public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
             onSizeChanged(width, height);
         }
 
+        @Override
         public void onSurfaceTextureUpdated(SurfaceTexture surface) {
 
         }
@@ -471,16 +497,24 @@ public class LayerView extends FrameLayout {
 
     @Override
     public void setOverScrollMode(int overscrollMode) {
-        super.setOverScrollMode(overscrollMode);
-        if (mLayerClient != null)
-            mLayerClient.getPanZoomController().setOverScrollMode(overscrollMode);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.GINGERBREAD) {
+            super.setOverScrollMode(overscrollMode);
+        }
+        if (mPanZoomController != null) {
+            mPanZoomController.setOverScrollMode(overscrollMode);
+        }
     }
 
     @Override
     public int getOverScrollMode() {
-        if (mLayerClient != null)
-            return mLayerClient.getPanZoomController().getOverScrollMode();
-        return super.getOverScrollMode();
+        if (mPanZoomController != null) {
+            return mPanZoomController.getOverScrollMode();
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.GINGERBREAD) {
+            return super.getOverScrollMode();
+        }
+        return View.OVER_SCROLL_ALWAYS;
     }
 
     @Override

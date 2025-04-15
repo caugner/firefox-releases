@@ -3,13 +3,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "HTMLFrameElement.h"
+#include "mozilla/dom/HTMLFrameElement.h"
 #include "mozilla/dom/HTMLFrameElementBinding.h"
+#include "mozilla/Util.h"
 
 class nsIDOMDocument;
 
 NS_IMPL_NS_NEW_HTML_ELEMENT_CHECK_PARSER(Frame)
-DOMCI_NODE_DATA(HTMLFrameElement, mozilla::dom::HTMLFrameElement)
 
 namespace mozilla {
 namespace dom {
@@ -35,7 +35,7 @@ NS_INTERFACE_TABLE_HEAD(HTMLFrameElement)
   NS_HTML_CONTENT_INTERFACE_TABLE1(HTMLFrameElement, nsIDOMHTMLFrameElement)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLFrameElement,
                                                nsGenericHTMLFrameElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLFrameElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 
 NS_IMPL_ELEMENT_CLONE(HTMLFrameElement)
@@ -116,38 +116,10 @@ HTMLFrameElement::GetAttributeMappingFunction() const
   return &MapAttributesIntoRule;
 }
 
-already_AddRefed<nsIDocument>
-HTMLFrameElement::GetContentDocument(ErrorResult& aRv)
-{
-  nsCOMPtr<nsIDOMDocument> doc;
-  nsresult rv = nsGenericHTMLFrameElement::GetContentDocument(getter_AddRefs(doc));
-  if (NS_FAILED(rv)) {
-    aRv.Throw(rv);
-    return nullptr;
-  }
-
-  nsCOMPtr<nsIDocument> ret = do_QueryInterface(doc);
-  return ret.forget();
-}
-
-already_AddRefed<nsIDOMWindow>
-HTMLFrameElement::GetContentWindow(ErrorResult& aRv)
-{
-  nsCOMPtr<nsIDOMWindow> win;
-  nsresult rv = nsGenericHTMLFrameElement::GetContentWindow(getter_AddRefs(win));
-  if (NS_FAILED(rv)) {
-    aRv.Throw(rv);
-    return nullptr;
-  }
-
-  return win.forget();
-}
-
 JSObject*
-HTMLFrameElement::WrapNode(JSContext* aCx, JSObject* aScope,
-                           bool* aTriedToWrap)
+HTMLFrameElement::WrapNode(JSContext* aCx, JSObject* aScope)
 {
-  return HTMLFrameElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return HTMLFrameElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace mozilla

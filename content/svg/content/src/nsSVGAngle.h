@@ -6,16 +6,14 @@
 #ifndef __NS_SVGANGLE_H__
 #define __NS_SVGANGLE_H__
 
-#include "nsAutoPtr.h"
-#include "nsCycleCollectionParticipant.h"
+#include "nsCOMPtr.h"
 #include "nsError.h"
 #include "nsISMILAttr.h"
-#include "nsSVGElement.h"
-#include "nsWrapperCache.h"
 #include "mozilla/Attributes.h"
 
-class nsISMILAnimationElement;
+class nsISupports;
 class nsSMILValue;
+class nsSVGElement;
 
 namespace mozilla {
 
@@ -30,6 +28,7 @@ namespace dom {
 class nsSVGOrientType;
 class SVGAngle;
 class SVGAnimatedAngle;
+class SVGAnimationElement;
 }
 }
 
@@ -117,7 +116,7 @@ public:
 
     // nsISMILAttr methods
     virtual nsresult ValueFromString(const nsAString& aStr,
-                                     const nsISMILAnimationElement* aSrcElement,
+                                     const mozilla::dom::SVGAnimationElement* aSrcElement,
                                      nsSMILValue& aValue,
                                      bool& aPreventCachingOfSandwich) const;
     virtual nsSMILValue GetBaseValue() const;

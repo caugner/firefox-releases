@@ -71,9 +71,21 @@ nsStyleText::GetTextShadow(const nsIFrame* aFrame) const
 }
 
 bool
+nsStyleText::WhiteSpaceCanWrap(const nsIFrame* aFrame) const
+{
+  return WhiteSpaceCanWrapStyle() && !aFrame->IsSVGText();
+}
+
+bool
+nsStyleText::WordCanWrap(const nsIFrame* aFrame) const
+{
+  return WordCanWrapStyle() && !aFrame->IsSVGText();
+}
+
+bool
 nsStyleDisplay::IsBlockInside(const nsIFrame* aFrame) const
 {
-  if (aFrame->GetStateBits() & NS_FRAME_IS_SVG_TEXT) {
+  if (aFrame->IsSVGText()) {
     return aFrame->GetType() == nsGkAtoms::blockFrame;
   }
   return IsBlockInsideStyle();
@@ -82,7 +94,7 @@ nsStyleDisplay::IsBlockInside(const nsIFrame* aFrame) const
 bool
 nsStyleDisplay::IsBlockOutside(const nsIFrame* aFrame) const
 {
-  if (aFrame->GetStateBits() & NS_FRAME_IS_SVG_TEXT) {
+  if (aFrame->IsSVGText()) {
     return aFrame->GetType() == nsGkAtoms::blockFrame;
   }
   return IsBlockOutsideStyle();
@@ -91,7 +103,7 @@ nsStyleDisplay::IsBlockOutside(const nsIFrame* aFrame) const
 bool
 nsStyleDisplay::IsInlineOutside(const nsIFrame* aFrame) const
 {
-  if (aFrame->GetStateBits() & NS_FRAME_IS_SVG_TEXT) {
+  if (aFrame->IsSVGText()) {
     return aFrame->GetType() != nsGkAtoms::blockFrame;
   }
   return IsInlineOutsideStyle();
@@ -100,7 +112,7 @@ nsStyleDisplay::IsInlineOutside(const nsIFrame* aFrame) const
 bool
 nsStyleDisplay::IsOriginalDisplayInlineOutside(const nsIFrame* aFrame) const
 {
-  if (aFrame->GetStateBits() & NS_FRAME_IS_SVG_TEXT) {
+  if (aFrame->IsSVGText()) {
     return aFrame->GetType() != nsGkAtoms::blockFrame;
   }
   return IsOriginalDisplayInlineOutsideStyle();
@@ -109,7 +121,7 @@ nsStyleDisplay::IsOriginalDisplayInlineOutside(const nsIFrame* aFrame) const
 uint8_t
 nsStyleDisplay::GetDisplay(const nsIFrame* aFrame) const
 {
-  if ((aFrame->GetStateBits() & NS_FRAME_IS_SVG_TEXT) &&
+  if (aFrame->IsSVGText() &&
       mDisplay != NS_STYLE_DISPLAY_NONE) {
     return aFrame->GetType() == nsGkAtoms::blockFrame ?
              NS_STYLE_DISPLAY_BLOCK :

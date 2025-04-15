@@ -16,6 +16,8 @@
 #include "../TestCodeGenBinding.h"
 #include "mozilla/dom/UnionTypes.h"
 
+extern bool TestFuncControlledMember(JSContext*, JSObject*);
+
 namespace mozilla {
 namespace dom {
 
@@ -115,7 +117,25 @@ public:
     Constructor(const GlobalObject&, uint32_t, uint32_t,
                 const TestInterfaceOrOnlyForUseInConstructor&, ErrorResult&);
   */
-  
+
+  static
+  already_AddRefed<TestInterface> Test(const GlobalObject&, ErrorResult&);
+  static
+  already_AddRefed<TestInterface> Test(const GlobalObject&, const nsAString&,
+                                       ErrorResult&);
+  static
+  already_AddRefed<TestInterface> Test2(const GlobalObject&,
+                                        JSContext*,
+                                        const DictForConstructor&,
+                                        JS::Value,
+                                        JSObject&,
+                                        JSObject*,
+                                        const Sequence<Dict>&,
+                                        const Optional<JS::Value>&,
+                                        const Optional<NonNull<JSObject> >&,
+                                        const Optional<JSObject*>&,
+                                        ErrorResult&);
+
   // Integer types
   int8_t ReadonlyByte();
   int8_t WritableByte();
@@ -329,6 +349,8 @@ public:
   void ReceiveAnySequence(JSContext*, nsTArray<JS::Value>&);
   void ReceiveNullableAnySequence(JSContext*, Nullable<nsTArray<JS::Value> >);
 
+  void PassSequenceOfSequences(const Sequence< Sequence<int32_t> >&);
+
   // Typed array types
   void PassArrayBuffer(ArrayBuffer&);
   void PassNullableArrayBuffer(ArrayBuffer*);
@@ -470,6 +492,27 @@ public:
   void PassVariadicThirdArg(const nsAString&, int32_t,
                             const Sequence<OwningNonNull<TestInterface> >&);
 
+  // Conditionally exposed methods/attributes
+  bool Prefable1();
+  bool Prefable2();
+  bool Prefable3();
+  bool Prefable4();
+  bool Prefable5();
+  bool Prefable6();
+  bool Prefable7();
+  bool Prefable8();
+  bool Prefable9();
+  void Prefable10();
+  void Prefable11();
+  bool Prefable12();
+  void Prefable13();
+  bool Prefable14();
+  bool Prefable15();
+  bool Prefable16();
+  void Prefable17();
+  void Prefable18();
+  void Prefable19();
+
   // Miscellania
   int32_t AttrWithLenientThis();
   void SetAttrWithLenientThis(int32_t);
@@ -487,6 +530,7 @@ public:
   void SetThrowingGetterAttr(bool arg);
   bool ThrowingSetterAttr() const;
   void SetThrowingSetterAttr(bool arg, ErrorResult& aRv);
+  int16_t LegacyCall(JS::Value, uint32_t, TestInterface&);
 
   // Methods and properties imported via "implements"
   bool ImplementedProperty();
@@ -855,10 +899,18 @@ public:
   void GetSupportedNames(nsTArray<nsString>&);
 };
 
-class TestChildInterface : public TestInterface
+class TestParentInterface : public nsISupports,
+                            public nsWrapperCache
 {
 public:
   NS_DECL_ISUPPORTS
+
+  // We need a GetParentObject to make binding codegen happy
+  virtual nsISupports* GetParentObject();
+};
+
+class TestChildInterface : public TestParentInterface
+{
 };
 
 } // namespace dom

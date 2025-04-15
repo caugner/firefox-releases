@@ -14,8 +14,6 @@
 
 #filter substitution
 
-@BINPATH@/chrome/chrome/content/branding/favicon64.png
-
 [@AB_CD@]
 @BINPATH@/chrome/@AB_CD@@JAREXT@
 @BINPATH@/chrome/@AB_CD@.manifest
@@ -37,10 +35,11 @@
 #ifndef MOZ_STATIC_JS
 @BINPATH@/@DLL_PREFIX@mozjs@DLL_SUFFIX@
 #endif
+#ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@plc4@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@plds4@DLL_SUFFIX@
-@BINPATH@/@DLL_PREFIX@xpcom@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@nspr4@DLL_SUFFIX@
+#endif
 @BINPATH@/@DLL_PREFIX@mozalloc@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@mozglue@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@omxplugin@DLL_SUFFIX@
@@ -73,7 +72,9 @@
 #endif
 @BINPATH@/application.ini
 @BINPATH@/platform.ini
+#ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@mozsqlite3@DLL_SUFFIX@
+#endif
 @BINPATH@/blocklist.xml
 #ifdef XP_UNIX
 @BINPATH@/run-mozilla.sh
@@ -127,23 +128,26 @@
 @BINPATH@/components/dom_indexeddb.xpt
 @BINPATH@/components/dom_offline.xpt
 @BINPATH@/components/dom_json.xpt
+@BINPATH@/components/dom_push.xpt
 @BINPATH@/components/dom_browserelement.xpt
 @BINPATH@/components/dom_power.xpt
+@BINPATH@/components/dom_quota.xpt
 @BINPATH@/components/dom_range.xpt
 @BINPATH@/components/dom_settings.xpt
 @BINPATH@/components/dom_sidebar.xpt
 @BINPATH@/components/dom_mobilemessage.xpt
-@BINPATH@/components/dom_sms.xpt
 @BINPATH@/components/dom_storage.xpt
 @BINPATH@/components/dom_stylesheets.xpt
 @BINPATH@/components/dom_system.xpt
 @BINPATH@/components/dom_threads.xpt
 @BINPATH@/components/dom_traversal.xpt
 @BINPATH@/components/dom_views.xpt
+#ifdef MOZ_WEBSPEECH
+@BINPATH@/components/dom_webspeech.xpt
+#endif
 @BINPATH@/components/dom_xbl.xpt
 @BINPATH@/components/dom_xpath.xpt
 @BINPATH@/components/dom_xul.xpt
-@BINPATH@/components/dom_loadsave.xpt
 @BINPATH@/components/downloads.xpt
 @BINPATH@/components/editor.xpt
 @BINPATH@/components/embed_base.xpt
@@ -165,12 +169,10 @@
 @BINPATH@/components/inspector.xpt
 @BINPATH@/components/intl.xpt
 @BINPATH@/components/jar.xpt
-@BINPATH@/components/jetpack.xpt
 @BINPATH@/components/jsdservice.xpt
 @BINPATH@/components/jsdebugger.xpt
 @BINPATH@/components/jsinspector.xpt
 @BINPATH@/components/layout_base.xpt
-@BINPATH@/components/layout_forms.xpt
 #ifdef NS_PRINTING
 @BINPATH@/components/layout_printing.xpt
 #endif
@@ -279,8 +281,6 @@
 @BINPATH@/components/nsBrowserGlue.js
 @BINPATH@/components/nsSetDefaultBrowser.manifest
 @BINPATH@/components/nsSetDefaultBrowser.js
-@BINPATH@/components/nsPrivateBrowsingService.manifest
-@BINPATH@/components/nsPrivateBrowsingService.js
 @BINPATH@/components/toolkitsearch.manifest
 @BINPATH@/components/nsSearchService.js
 @BINPATH@/components/nsSearchSuggestions.js
@@ -341,8 +341,6 @@
 @BINPATH@/components/nsHandlerService.js
 @BINPATH@/components/nsWebHandlerApp.manifest
 @BINPATH@/components/nsWebHandlerApp.js
-@BINPATH@/components/nsBadCertHandler.manifest
-@BINPATH@/components/nsBadCertHandler.js
 @BINPATH@/components/satchel.manifest
 @BINPATH@/components/nsFormAutoComplete.js
 @BINPATH@/components/nsFormHistory.js
@@ -368,6 +366,12 @@
 @BINPATH@/components/Webapps.manifest
 @BINPATH@/components/AppsService.js
 @BINPATH@/components/AppsService.manifest
+@BINPATH@/components/Push.js
+@BINPATH@/components/Push.manifest
+@BINPATH@/components/PushService.js
+@BINPATH@/components/PushService.manifest
+@BINPATH@/components/AppProtocolHandler.js
+@BINPATH@/components/AppProtocolHandler.manifest
 
 @BINPATH@/components/TCPSocket.js
 @BINPATH@/components/TCPSocketParentIntermediary.js
@@ -484,11 +488,13 @@
 @BINPATH@/components/pipnss.xpt
 @BINPATH@/components/pippki.xpt
 @BINPATH@/@DLL_PREFIX@nss3@DLL_SUFFIX@
+#ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@nssutil3@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@smime3@DLL_SUFFIX@
+@BINPATH@/@DLL_PREFIX@ssl3@DLL_SUFFIX@
+#endif
 @BINPATH@/@DLL_PREFIX@softokn3@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@freebl3@DLL_SUFFIX@
-@BINPATH@/@DLL_PREFIX@ssl3@DLL_SUFFIX@
 #ifndef CROSS_COMPILE
 @BINPATH@/@DLL_PREFIX@freebl3.chk
 @BINPATH@/@DLL_PREFIX@softokn3.chk
@@ -558,12 +564,12 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/PromptService.js
 @BINPATH@/components/SessionStore.js
 @BINPATH@/components/Sidebar.js
+@BINPATH@/components/SiteSpecificUserAgent.js
 #ifdef MOZ_SAFE_BROWSING
 @BINPATH@/components/SafeBrowsing.jsm
 #endif
 @BINPATH@/components/XPIDialogService.js
 @BINPATH@/components/browsercomps.xpt
-@BINPATH@/extensions/feedback@mobile.mozilla.org.xpi
 
 #ifdef ENABLE_MARIONETTE
 @BINPATH@/chrome/marionette@JAREXT@ 

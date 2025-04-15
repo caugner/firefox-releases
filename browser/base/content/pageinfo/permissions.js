@@ -7,11 +7,11 @@ const ALLOW = nsIPermissionManager.ALLOW_ACTION;       // 1
 const BLOCK = nsIPermissionManager.DENY_ACTION;        // 2
 const SESSION = nsICookiePermission.ACCESS_SESSION;    // 8
 
-const nsIIndexedDatabaseManager =
-  Components.interfaces.nsIIndexedDatabaseManager;
+const nsIQuotaManager = Components.interfaces.nsIQuotaManager;
 
 var gPermURI;
 var gPrefs;
+var gUsageRequest;
 
 var gPermObj = {
   image: function getImageDefaultPermission()
@@ -28,6 +28,10 @@ var gPermObj = {
     if (gPrefs.getIntPref("network.cookie.lifetimePolicy") == 2)
       return SESSION;
     return ALLOW;
+  },
+  "desktop-notification": function getNotificationDefaultPermission()
+  {
+    return BLOCK;
   },
   popup: function getPopupDefaultPermission()
   {
@@ -60,7 +64,11 @@ var gPermObj = {
   fullscreen: function getFullscreenDefaultPermissions()
   {
     return UNKNOWN;  
-  }
+  },
+  pointerLock: function getPointerLockPermissions()
+  {
+    return BLOCK;
+  },
 };
 
 var permissionObserver = {
@@ -108,9 +116,10 @@ function onUnloadPermission()
                      .getService(Components.interfaces.nsIObserverService);
   os.removeObserver(permissionObserver, "perm-changed");
 
-  var dbManager = Components.classes["@mozilla.org/dom/indexeddb/manager;1"]
-                            .getService(nsIIndexedDatabaseManager);
-  dbManager.cancelGetUsageForURI(gPermURI, onIndexedDBUsageCallback);
+  if (gUsageRequest) {
+    gUsageRequest.cancel();
+    gUsageRequest = null;
+  }
 }
 
 function initRow(aPartId)
@@ -125,9 +134,13 @@ function initRow(aPartId)
 
   var checkbox = document.getElementById(aPartId + "Def");
   var command  = document.getElementById("cmd_" + aPartId + "Toggle");
-  // Geolocation permission consumers use testExactPermission, not testPermission. 
-  var perm = aPartId == "geo" ? permissionManager.testExactPermission(gPermURI, aPartId) :
-                                permissionManager.testPermission(gPermURI, aPartId);
+  // Geolocation and PointerLock permission consumers use testExactPermission, not testPermission.
+  var perm;
+  if (aPartId == "geo" || aPartId == "pointerLock")
+    perm = permissionManager.testExactPermission(gPermURI, aPartId);
+  else
+    perm = permissionManager.testPermission(gPermURI, aPartId);
+
   if (perm) {
     checkbox.checked = false;
     command.removeAttribute("disabled");
@@ -193,9 +206,10 @@ function setRadioState(aPartId, aValue)
 
 function initIndexedDBRow()
 {
-  var dbManager = Components.classes["@mozilla.org/dom/indexeddb/manager;1"]
-                            .getService(nsIIndexedDatabaseManager);
-  dbManager.getUsageForURI(gPermURI, onIndexedDBUsageCallback);
+  var quotaManager = Components.classes["@mozilla.org/dom/quota/manager;1"]
+                               .getService(nsIQuotaManager);
+  gUsageRequest =
+    quotaManager.getUsageForURI(gPermURI, onIndexedDBUsageCallback);
 
   var status = document.getElementById("indexedDBStatus");
   var button = document.getElementById("indexedDBClear");
@@ -207,9 +221,9 @@ function initIndexedDBRow()
 
 function onIndexedDBClear()
 {
-  Components.classes["@mozilla.org/dom/indexeddb/manager;1"]
-            .getService(nsIIndexedDatabaseManager)
-            .clearDatabasesForURI(gPermURI);
+  Components.classes["@mozilla.org/dom/quota/manager;1"]
+            .getService(nsIQuotaManager)
+            .clearStoragesForURI(gPermURI);
 
   var permissionManager = Components.classes[PERMISSION_CONTRACTID]
                                     .getService(nsIPermissionManager);

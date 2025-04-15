@@ -32,6 +32,7 @@
 #include "WorkerFeature.h"
 
 class JSAutoStructuredCloneBuffer;
+class nsIChannel;
 class nsIDocument;
 class nsIMemoryMultiReporter;
 class nsIPrincipal;
@@ -132,6 +133,34 @@ protected:
 
   virtual bool
   DispatchInternal();
+};
+
+class MainThreadSyncRunnable : public WorkerSyncRunnable
+{
+public:
+  MainThreadSyncRunnable(WorkerPrivate* aWorkerPrivate,
+                         ClearingBehavior aClearingBehavior,
+                         uint32_t aSyncQueueKey,
+                         bool aBypassSyncEventQueue)
+  : WorkerSyncRunnable(aWorkerPrivate, aSyncQueueKey, aBypassSyncEventQueue,
+                       aClearingBehavior)
+  {
+    AssertIsOnMainThread();
+  }
+
+  bool
+  PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate) MOZ_OVERRIDE
+  {
+    AssertIsOnMainThread();
+    return true;
+  }
+
+  void
+  PostDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
+               bool aDispatchResult) MOZ_OVERRIDE
+  {
+    AssertIsOnMainThread();
+  }
 };
 
 class WorkerControlRunnable : public WorkerRunnable
@@ -237,6 +266,7 @@ private:
   nsCOMPtr<nsIURI> mBaseURI;
   nsCOMPtr<nsIURI> mScriptURI;
   nsCOMPtr<nsIPrincipal> mPrincipal;
+  nsCOMPtr<nsIChannel> mChannel;
   nsCOMPtr<nsIContentSecurityPolicy> mCSP;
 
   // Only used for top level workers.
@@ -254,6 +284,7 @@ private:
   bool mPrincipalIsSystem;
   bool mMainThreadObjectsForgotten;
   bool mEvalAllowed;
+  bool mReportCSPViolations;
 
 protected:
   WorkerPrivateParent(JSContext* aCx, JSObject* aObject, WorkerPrivate* aParent,
@@ -263,8 +294,10 @@ protected:
                       nsCOMPtr<nsIScriptContext>& aScriptContext,
                       nsCOMPtr<nsIURI>& aBaseURI,
                       nsCOMPtr<nsIPrincipal>& aPrincipal,
+                      nsCOMPtr<nsIChannel>& aChannel,
                       nsCOMPtr<nsIContentSecurityPolicy>& aCSP,
-                      bool aEvalAllowed);
+                      bool aEvalAllowed,
+                      bool aReportCSPViolations);
 
   ~WorkerPrivateParent();
 
@@ -349,7 +382,7 @@ public:
   ForgetMainThreadObjects(nsTArray<nsCOMPtr<nsISupports> >& aDoomed);
 
   bool
-  PostMessage(JSContext* aCx, jsval aMessage, jsval aTransferable);
+  PostMessage(JSContext* aCx, JS::Value aMessage, JS::Value aTransferable);
 
   uint64_t
   GetInnerWindowId();
@@ -482,6 +515,13 @@ public:
     return mPrincipalIsSystem;
   }
 
+  nsIChannel*
+  GetChannel() const
+  {
+    AssertIsOnMainThread();
+    return mChannel;
+  }
+
   nsIDocument*
   GetDocument() const
   {
@@ -520,6 +560,12 @@ public:
   SetEvalAllowed(bool aEvalAllowed)
   {
     mEvalAllowed = aEvalAllowed;
+  }
+
+  bool
+  GetReportCSPViolations() const
+  {
+    return mReportCSPViolations;
   }
 
   LocationInfo&
@@ -854,8 +900,9 @@ private:
                 nsCOMPtr<nsPIDOMWindow>& aWindow,
                 nsCOMPtr<nsIScriptContext>& aScriptContext,
                 nsCOMPtr<nsIURI>& aBaseURI, nsCOMPtr<nsIPrincipal>& aPrincipal,
+                nsCOMPtr<nsIChannel>& aChannel,
                 nsCOMPtr<nsIContentSecurityPolicy>& aCSP, bool aEvalAllowed,
-                bool aXHRParamsAllowed);
+                bool aReportCSPViolations, bool aXHRParamsAllowed);
 
   static bool
   GetContentSecurityPolicy(JSContext *aCx,

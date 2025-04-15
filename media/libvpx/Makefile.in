@@ -12,7 +12,6 @@ include $(DEPTH)/config/autoconf.mk
 
 DEFINES += -DHAVE_CONFIG_H=vpx_config.h
 
-MODULE = vpx
 LIBRARY_NAME = vpx
 FORCE_STATIC_LIB= 1
 ifeq (WINNT,$(OS_TARGET))
@@ -285,11 +284,11 @@ DEFINES += -D__linux__
 
 # For cpu-features.h
 LOCAL_INCLUDES += -I$(ANDROID_NDK)/sources/android/cpufeatures
+ifndef MOZ_WEBRTC
 # For cpu-features.c
 VPATH += $(ANDROID_NDK)/sources/android/cpufeatures
-
 CSRCS += cpu-features.c
-
+endif
 endif
 
 CSRCS += \

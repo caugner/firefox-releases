@@ -70,6 +70,7 @@ var Browser = {
     ScrollwheelModule.init(Elements.browsers);
     GestureModule.init();
     BrowserTouchHandler.init();
+    PopupBlockerObserver.init();
 
     // Warning, total hack ahead. All of the real-browser related scrolling code
     // lies in a pretend scrollbox here. Let's not land this as-is. Maybe it's time
@@ -132,35 +133,6 @@ var Browser = {
     if (window.arguments && window.arguments[0])
       commandURL = window.arguments[0];
 
-    // Should we restore the previous session (crash or some other event)
-    let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
-    if (ss.shouldRestore() || Services.prefs.getBoolPref("browser.startup.sessionRestore")) {
-      let bringFront = false;
-      // First open any commandline URLs, except the homepage
-      if (commandURL && commandURL != this.getHomePage()) {
-        this.addTab(commandURL, true);
-      } else {
-        bringFront = true;
-        // Initial window resizes call functions that assume a tab is in the tab list
-        // and restored tabs are added too late. We add a dummy to to satisfy the resize
-        // code and then remove the dummy after the session has been restored.
-        let dummy = this.addTab("about:blank", true);
-        let dummyCleanup = {
-          observe: function(aSubject, aTopic, aData) {
-            Services.obs.removeObserver(dummyCleanup, "sessionstore-windows-restored");
-            if (aData == "fail")
-              Browser.addTab(commandURL || Browser.getHomePage(), true);
-            dummy.chromeTab.ignoreUndo = true;
-            Browser.closeTab(dummy, { forceClose: true });
-          }
-        };
-        Services.obs.addObserver(dummyCleanup, "sessionstore-windows-restored", false);
-      }
-      ss.restoreLastSession(bringFront);
-    } else {
-      this.addTab(commandURL || this.getHomePage(), true);
-    }
-
     messageManager.addMessageListener("DOMLinkAdded", this);
     messageManager.addMessageListener("MozScrolledAreaChanged", this);
     messageManager.addMessageListener("Browser:ViewportMetadata", this);
@@ -178,10 +150,59 @@ var Browser = {
     // starting with:
     InputSourceHelper.fireUpdate();
 
-    // Broadcast a UIReady message so add-ons know we are finished with startup
-    let event = document.createEvent("Events");
-    event.initEvent("UIReady", true, false);
-    window.dispatchEvent(event);
+    Task.spawn(function() {
+      // Activation URIs come from protocol activations, secondary tiles, and file activations
+      let activationURI = yield this.getShortcutOrURI(MetroUtils.activationURI);
+
+      let self = this;
+      function loadStartupURI() {
+        let uri = activationURI || commandURL || Browser.getHomePage();
+        if (StartUI.isStartURI(uri)) {
+          self.addTab(uri, true);
+          StartUI.show(); // This makes about:start load a lot faster
+        } else if (activationURI) {
+          self.addTab(uri, true, null, { flags: Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP });
+        } else {
+          self.addTab(uri, true);
+        }
+      }
+
+      // Should we restore the previous session (crash or some other event)
+      let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
+      if (ss.shouldRestore() || Services.prefs.getBoolPref("browser.startup.sessionRestore")) {
+        let bringFront = false;
+        // First open any commandline URLs, except the homepage
+        if (activationURI && !StartUI.isStartURI(activationURI)) {
+          this.addTab(activationURI, true, null, { flags: Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP });
+        } else if (commandURL && !StartUI.isStartURI(commandURL)) {
+          this.addTab(commandURL, true);
+        } else {
+          bringFront = true;
+          // Initial window resizes call functions that assume a tab is in the tab list
+          // and restored tabs are added too late. We add a dummy to to satisfy the resize
+          // code and then remove the dummy after the session has been restored.
+          let dummy = this.addTab("about:blank", true);
+          let dummyCleanup = {
+            observe: function(aSubject, aTopic, aData) {
+              Services.obs.removeObserver(dummyCleanup, "sessionstore-windows-restored");
+              if (aData == "fail")
+                loadStartupURI();
+              dummy.chromeTab.ignoreUndo = true;
+              Browser.closeTab(dummy, { forceClose: true });
+            }
+          };
+          Services.obs.addObserver(dummyCleanup, "sessionstore-windows-restored", false);
+        }
+        ss.restoreLastSession(bringFront);
+      } else {
+        loadStartupURI();
+      }
+
+      // Broadcast a UIReady message so add-ons know we are finished with startup
+      let event = document.createEvent("Events");
+      event.initEvent("UIReady", true, false);
+      window.dispatchEvent(event);
+    }.bind(this));
   },
 
   quit: function quit() {
@@ -329,74 +350,80 @@ var Browser = {
    * Determine if the given URL is a shortcut/keyword and, if so, expand it
    * @param aURL String
    * @param aPostDataRef Out param contains any required post data for a search
-   * @returns the expanded shortcut, or the original URL if not a shortcut
+   * @return {Promise}
+   * @result the expanded shortcut, or the original URL if not a shortcut
    */
   getShortcutOrURI: function getShortcutOrURI(aURL, aPostDataRef) {
-    let shortcutURL = null;
-    let keyword = aURL;
-    let param = "";
+    return Task.spawn(function() {
+      if (!aURL)
+        throw new Task.Result(aURL);
 
-    let offset = aURL.indexOf(" ");
-    if (offset > 0) {
-      keyword = aURL.substr(0, offset);
-      param = aURL.substr(offset + 1);
-    }
+      let shortcutURL = null;
+      let keyword = aURL;
+      let param = "";
 
-    if (!aPostDataRef)
-      aPostDataRef = {};
-
-    let engine = Services.search.getEngineByAlias(keyword);
-    if (engine) {
-      let submission = engine.getSubmission(param);
-      aPostDataRef.value = submission.postData;
-      return submission.uri.spec;
-    }
-
-    try {
-      [shortcutURL, aPostDataRef.value] = PlacesUtils.getURLAndPostDataForKeyword(keyword);
-    } catch (e) {}
-
-    if (!shortcutURL)
-      return aURL;
-
-    let postData = "";
-    if (aPostDataRef.value)
-      postData = unescape(aPostDataRef.value);
-
-    if (/%s/i.test(shortcutURL) || /%s/i.test(postData)) {
-      let charset = "";
-      const re = /^(.*)\&mozcharset=([a-zA-Z][_\-a-zA-Z0-9]+)\s*$/;
-      let matches = shortcutURL.match(re);
-      if (matches)
-        [, shortcutURL, charset] = matches;
-      else {
-        // Try to get the saved character-set.
-        try {
-          // makeURI throws if URI is invalid.
-          // Will return an empty string if character-set is not found.
-          charset = PlacesUtils.history.getCharsetForURI(Util.makeURI(shortcutURL));
-        } catch (e) { dump("--- error " + e + "\n"); }
+      let offset = aURL.indexOf(" ");
+      if (offset > 0) {
+        keyword = aURL.substr(0, offset);
+        param = aURL.substr(offset + 1);
       }
 
-      let encodedParam = "";
-      if (charset)
-        encodedParam = escape(convertFromUnicode(charset, param));
-      else // Default charset is UTF-8
-        encodedParam = encodeURIComponent(param);
+      if (!aPostDataRef)
+        aPostDataRef = {};
 
-      shortcutURL = shortcutURL.replace(/%s/g, encodedParam).replace(/%S/g, param);
+      let engine = Services.search.getEngineByAlias(keyword);
+      if (engine) {
+        let submission = engine.getSubmission(param);
+        aPostDataRef.value = submission.postData;
+        throw new Task.Result(submission.uri.spec);
+      }
 
-      if (/%s/i.test(postData)) // POST keyword
-        aPostDataRef.value = getPostDataStream(postData, param, encodedParam, "application/x-www-form-urlencoded");
-    } else if (param) {
-      // This keyword doesn't take a parameter, but one was provided. Just return
-      // the original URL.
-      aPostDataRef.value = null;
+      try {
+        [shortcutURL, aPostDataRef.value] = PlacesUtils.getURLAndPostDataForKeyword(keyword);
+      } catch (e) {}
 
-      return aURL;
-    }
+      if (!shortcutURL)
+        throw new Task.Result(aURL);
 
-    return shortcutURL;
+      let postData = "";
+      if (aPostDataRef.value)
+        postData = unescape(aPostDataRef.value);
+
+      if (/%s/i.test(shortcutURL) || /%s/i.test(postData)) {
+        let charset = "";
+        const re = /^(.*)\&mozcharset=([a-zA-Z][_\-a-zA-Z0-9]+)\s*$/;
+        let matches = shortcutURL.match(re);
+        if (matches)
+          [, shortcutURL, charset] = matches;
+        else {
+          // Try to get the saved character-set.
+          try {
+            // makeURI throws if URI is invalid.
+            // Will return an empty string if character-set is not found.
+            charset = yield PlacesUtils.getCharsetForURI(Util.makeURI(shortcutURL));
+          } catch (e) { dump("--- error " + e + "\n"); }
+        }
+
+        let encodedParam = "";
+        if (charset)
+          encodedParam = escape(convertFromUnicode(charset, param));
+        else // Default charset is UTF-8
+          encodedParam = encodeURIComponent(param);
+
+        shortcutURL = shortcutURL.replace(/%s/g, encodedParam).replace(/%S/g, param);
+
+        if (/%s/i.test(postData)) // POST keyword
+          aPostDataRef.value = getPostDataStream(postData, param, encodedParam, "application/x-www-form-urlencoded");
+      } else if (param) {
+        // This keyword doesn't take a parameter, but one was provided. Just return
+        // the original URL.
+        aPostDataRef.value = null;
+
+        throw new Task.Result(aURL);
+      }
+
+      throw new Task.Result(shortcutURL);
+    });
   },
 
   /**
@@ -474,6 +501,10 @@ var Browser = {
     }
 
     tab.browser.messageManager.sendAsyncMessage("Browser:CanUnload", {});
+  },
+
+  savePage: function() {
+    ContentAreaUtils.saveDocument(this.selectedBrowser.contentWindow.document);
   },
 
   _doCloseTab: function _doCloseTab(aTab) {
@@ -560,7 +591,6 @@ var Browser = {
     } else {
       // Update all of our UI to reflect the new tab's location
       BrowserUI.updateURI();
-      IdentityUI.checkIdentity();
 
       let event = document.createEvent("Events");
       event.initEvent("TabSelect", true, false);
@@ -967,7 +997,7 @@ var Browser = {
 
       case "Browser:TapOnSelection":
         if (!InputSourceHelper.isPrecise) {
-          if (SelectionHelperUI.isActive()) {
+          if (SelectionHelperUI.isActive) {
             SelectionHelperUI.shutdown();
           }
           if (SelectionHelperUI.canHandle(aMessage)) {
@@ -1220,8 +1250,22 @@ nsBrowserAccess.prototype = {
  * Handler for blocked popups, triggered by DOMUpdatePageReport events in browser.xml
  */
 var PopupBlockerObserver = {
-  onUpdatePageReport: function onUpdatePageReport(aEvent)
-  {
+  init: function init() {
+    Elements.browsers.addEventListener("mousedown", this, true);
+  },
+
+  handleEvent: function handleEvent(aEvent) {
+    switch (aEvent.type) {
+      case "mousedown":
+        let box = Browser.getNotificationBox();
+        let notification = box.getNotificationWithValue("popup-blocked");
+        if (notification && !notification.contains(aEvent.target))
+          box.removeNotification(notification);
+        break;
+    }
+  },
+
+  onUpdatePageReport: function onUpdatePageReport(aEvent) {
     var cBrowser = Browser.selectedBrowser;
     if (aEvent.originalTarget != cBrowser)
       return;
@@ -1239,14 +1283,12 @@ var PopupBlockerObserver = {
     if (!cBrowser.pageReport.reported) {
       if (Services.prefs.getBoolPref("privacy.popups.showBrowserMessage")) {
         var brandShortName = Strings.brand.GetStringFromName("brandShortName");
-        var message;
         var popupCount = cBrowser.pageReport.length;
 
         let strings = Strings.browser;
-        if (popupCount > 1)
-          message = strings.formatStringFromName("popupWarningMultiple", [brandShortName, popupCount], 2);
-        else
-          message = strings.formatStringFromName("popupWarning", [brandShortName], 1);
+        let message = PluralForm.get(popupCount, strings.GetStringFromName("popupWarning.message"))
+                                .replace("#1", brandShortName)
+                                .replace("#2", popupCount);
 
         var notificationBox = Browser.getNotificationBox();
         var notification = notificationBox.getNotificationWithValue("popup-blocked");
@@ -1256,25 +1298,26 @@ var PopupBlockerObserver = {
         else {
           var buttons = [
             {
-              label: strings.GetStringFromName("popupButtonAllowOnce"),
-              accessKey: null,
+              isDefault: false,
+              label: strings.GetStringFromName("popupButtonAllowOnce2"),
+              accessKey: "",
               callback: function() { PopupBlockerObserver.showPopupsForSite(); }
             },
             {
-              label: strings.GetStringFromName("popupButtonAlwaysAllow2"),
-              accessKey: null,
+              label: strings.GetStringFromName("popupButtonAlwaysAllow3"),
+              accessKey: "",
               callback: function() { PopupBlockerObserver.allowPopupsForSite(true); }
             },
             {
-              label: strings.GetStringFromName("popupButtonNeverWarn2"),
-              accessKey: null,
+              label: strings.GetStringFromName("popupButtonNeverWarn3"),
+              accessKey: "",
               callback: function() { PopupBlockerObserver.allowPopupsForSite(false); }
             }
           ];
 
           const priority = notificationBox.PRIORITY_WARNING_MEDIUM;
           notificationBox.appendNotification(message, "popup-blocked",
-                                             "",
+                                             "chrome://browser/skin/images/infobar-popup.png",
                                              priority, buttons);
         }
       }
@@ -1887,7 +1930,7 @@ var ContentAreaObserver = {
       let [scrollbox, scrollInterface] = ScrollUtils.getScrollboxFromElement(currentElement);
       if (scrollbox && scrollInterface && currentElement && currentElement != scrollbox) {
         // retrieve the direct child of the scrollbox
-        while (currentElement.parentNode != scrollbox)
+        while (currentElement && currentElement.parentNode != scrollbox)
           currentElement = currentElement.parentNode;
   
         setTimeout(function() { scrollInterface.ensureElementIsVisible(currentElement) }, 0);

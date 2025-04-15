@@ -17,7 +17,7 @@
 namespace {
 
 void UpdateListIndicesFromIndex(
-  nsTArray<mozilla::DOMSVGTransform*>& aItemsArray,
+  FallibleTArray<mozilla::DOMSVGTransform*>& aItemsArray,
   uint32_t aStartingIndex)
 {
   uint32_t length = aItemsArray.Length();
@@ -68,11 +68,9 @@ NS_INTERFACE_MAP_END
 // DOMSVGTransformList methods:
 
 JSObject*
-DOMSVGTransformList::WrapObject(JSContext *cx, JSObject *scope,
-                                bool *triedToWrap)
+DOMSVGTransformList::WrapObject(JSContext *cx, JSObject *scope)
 {
-  return mozilla::dom::SVGTransformListBinding::Wrap(cx, scope, this,
-                                                     triedToWrap);
+  return mozilla::dom::SVGTransformListBinding::Wrap(cx, scope, this);
 }
 
 void

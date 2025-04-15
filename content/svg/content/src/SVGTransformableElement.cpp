@@ -11,17 +11,12 @@
 #include "nsIDOMMutationEvent.h"
 #include "nsIFrame.h"
 #include "nsISVGChildFrame.h"
-#include "nsSVGRect.h"
+#include "mozilla/dom/SVGRect.h"
 #include "nsSVGUtils.h"
 #include "SVGContentUtils.h"
 
 namespace mozilla {
 namespace dom {
-
-//----------------------------------------------------------------------
-// nsISupports methods
-
-NS_IMPL_ISUPPORTS_INHERITED0(SVGTransformableElement, nsSVGElement)
 
 already_AddRefed<DOMSVGAnimatedTransformList>
 SVGTransformableElement::Transform()
@@ -162,7 +157,7 @@ SVGTransformableElement::GetFarthestViewportElement()
   return SVGContentUtils::GetOuterSVGElement(this);
 }
 
-already_AddRefed<nsIDOMSVGRect>
+already_AddRefed<SVGIRect>
 SVGTransformableElement::GetBBox(ErrorResult& rv)
 {
   nsIFrame* frame = GetPrimaryFrame(Flush_Layout);
@@ -178,7 +173,7 @@ SVGTransformableElement::GetBBox(ErrorResult& rv)
     return nullptr;
   }
 
-  nsCOMPtr<nsIDOMSVGRect> rect;
+  nsRefPtr<SVGRect> rect;
   rv = NS_NewSVGRect(getter_AddRefs(rect), nsSVGUtils::GetBBox(frame));
   return rect.forget();
 }
@@ -192,7 +187,7 @@ SVGTransformableElement::GetCTM()
     currentDoc->FlushPendingNotifications(Flush_Layout);
   }
   gfxMatrix m = SVGContentUtils::GetCTM(this, false);
-  nsCOMPtr<SVGMatrix> mat = m.IsSingular() ? nullptr : new SVGMatrix(m);
+  nsRefPtr<SVGMatrix> mat = m.IsSingular() ? nullptr : new SVGMatrix(m);
   return mat.forget();
 }
 
@@ -205,7 +200,7 @@ SVGTransformableElement::GetScreenCTM()
     currentDoc->FlushPendingNotifications(Flush_Layout);
   }
   gfxMatrix m = SVGContentUtils::GetCTM(this, true);
-  nsCOMPtr<SVGMatrix> mat = m.IsSingular() ? nullptr : new SVGMatrix(m);
+  nsRefPtr<SVGMatrix> mat = m.IsSingular() ? nullptr : new SVGMatrix(m);
   return mat.forget();
 }
 
@@ -214,16 +209,16 @@ SVGTransformableElement::GetTransformToElement(SVGGraphicsElement& aElement,
                                                ErrorResult& rv)
 {
   // the easiest way to do this (if likely to increase rounding error):
-  nsCOMPtr<SVGMatrix> ourScreenCTM = GetScreenCTM();
-  nsCOMPtr<SVGMatrix> targetScreenCTM = aElement.GetScreenCTM();
+  nsRefPtr<SVGMatrix> ourScreenCTM = GetScreenCTM();
+  nsRefPtr<SVGMatrix> targetScreenCTM = aElement.GetScreenCTM();
   if (!ourScreenCTM || !targetScreenCTM) {
     rv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return nullptr;
   }
-  nsCOMPtr<SVGMatrix> tmp = targetScreenCTM->Inverse(rv);
+  nsRefPtr<SVGMatrix> tmp = targetScreenCTM->Inverse(rv);
   if (rv.Failed()) return nullptr;
 
-  nsCOMPtr<SVGMatrix> mat = tmp->Multiply(*ourScreenCTM);
+  nsRefPtr<SVGMatrix> mat = tmp->Multiply(*ourScreenCTM);
   return mat.forget();
 }
 

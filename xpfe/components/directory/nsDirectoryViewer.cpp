@@ -51,6 +51,7 @@
 #include "nsXPCOMCID.h"
 #include "nsIDocument.h"
 #include "mozilla/Preferences.h"
+#include "nsContentUtils.h"
 
 using namespace mozilla;
 
@@ -157,13 +158,13 @@ nsHTTPIndex::OnFTPControlLog(bool server, const char *msg)
     nsIScriptContext *context = scriptGlobal->GetContext();
     NS_ENSURE_TRUE(context, NS_OK);
 
-    JSContext* cx = context->GetNativeContext();
+    AutoPushJSContext cx(context->GetNativeContext());
     NS_ENSURE_TRUE(cx, NS_OK);
 
     JSObject* global = JS_GetGlobalObject(cx);
     NS_ENSURE_TRUE(global, NS_OK);
 
-    jsval params[2];
+    JS::Value params[2];
 
     nsString unicodeMsg;
     unicodeMsg.AssignWithConversion(msg);
@@ -174,7 +175,7 @@ nsHTTPIndex::OnFTPControlLog(bool server, const char *msg)
     params[0] = BOOLEAN_TO_JSVAL(server);
     params[1] = STRING_TO_JSVAL(jsMsgStr);
     
-    jsval val;
+    JS::Value val;
     JS_CallFunctionName(cx,
                         global, 
                         "OnFTPControlLog",
@@ -235,7 +236,7 @@ nsHTTPIndex::OnStartRequest(nsIRequest *request, nsISupports* aContext)
     nsIScriptContext *context = scriptGlobal->GetContext();
     NS_ENSURE_TRUE(context, NS_ERROR_FAILURE);
 
-    JSContext* cx = context->GetNativeContext();
+    AutoPushJSContext cx(context->GetNativeContext());
     JSObject* global = JS_GetGlobalObject(cx);
 
     // Using XPConnect, wrap the HTTP index object...
@@ -259,7 +260,7 @@ nsHTTPIndex::OnStartRequest(nsIRequest *request, nsISupports* aContext)
                  "unable to get jsobj from xpconnect wrapper");
     if (NS_FAILED(rv)) return rv;
 
-    jsval jslistener = OBJECT_TO_JSVAL(jsobj);
+    JS::Value jslistener = OBJECT_TO_JSVAL(jsobj);
 
     // ...and stuff it into the global context
     JSAutoRequest ar(cx);

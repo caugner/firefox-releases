@@ -8,13 +8,23 @@
 
 #include "nsIDOMBeforeUnloadEvent.h"
 #include "nsDOMEvent.h"
+#include "mozilla/dom/BeforeUnloadEventBinding.h"
 
 class nsDOMBeforeUnloadEvent : public nsDOMEvent,
                                public nsIDOMBeforeUnloadEvent
 {
 public:
-  nsDOMBeforeUnloadEvent(nsPresContext* aPresContext, nsEvent* aEvent)
-  : nsDOMEvent(aPresContext, aEvent) {}
+  nsDOMBeforeUnloadEvent(mozilla::dom::EventTarget* aOwner,
+                         nsPresContext* aPresContext, nsEvent* aEvent)
+  : nsDOMEvent(aOwner, aPresContext, aEvent)
+  {
+    SetIsDOMBinding();
+  }
+
+  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope)
+  {
+    return mozilla::dom::BeforeUnloadEventBinding::Wrap(aCx, aScope, this);
+  }
 
   NS_DECL_ISUPPORTS_INHERITED
 

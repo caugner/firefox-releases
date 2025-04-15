@@ -25,6 +25,8 @@
 #include "plstr.h"
 #include "sdp_private.h"
 
+static const char* logTag = "gsm_sdp";
+
 //TODO Need to place this in a portable location
 #define MULTICAST_START_ADDRESS 0xe1000000
 #define MULTICAST_END_ADDRESS   0xefffffff
@@ -147,16 +149,7 @@ static const cc_media_cap_table_t *gsmsdp_get_media_capability (fsmdef_dcb_t *dc
 
         dcb_p->media_cap_tbl->cap[CC_AUDIO_1].enabled = FALSE;
         dcb_p->media_cap_tbl->cap[CC_VIDEO_1].enabled = FALSE;
-        /*
-         * This really should be set to FALSE unless we have added
-         * a data channel using createDataChannel(). Right now,
-         * though, those operations are not queued (and, in fact,
-         * the W3C hasn't specified the proper behavior here anyway, so
-         * we would only be implementing speculatively) -- so we'll
-         * always offer data channels until the standard is
-         * a bit more set.
-         */
-        dcb_p->media_cap_tbl->cap[CC_DATACHANNEL_1].enabled = TRUE;
+        dcb_p->media_cap_tbl->cap[CC_DATACHANNEL_1].enabled = FALSE;
 
         dcb_p->media_cap_tbl->cap[CC_AUDIO_1].support_security = TRUE;
         dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_security = TRUE;
@@ -532,7 +525,12 @@ gsmsdp_init_media (fsmdef_media_t *media)
     media->video = NULL;
     media->candidate_ct = 0;
     media->rtcp_mux = FALSE;
-    media->protocol = NULL;
+
+    media->local_datachannel_port = 0;
+    media->remote_datachannel_port = 0;
+    media->datachannel_streams = WEBRTC_DATACHANNEL_STREAMS_DEFAULT;
+    sstrncpy(media->datachannel_protocol, WEBRTC_DATA_CHANNEL_PROT, SDP_MAX_STRING_LEN);
+
     media->payloads = NULL;
     media->num_payloads = 0;
 }
@@ -1454,11 +1452,11 @@ gsmsdp_set_sctp_attributes (void *sdp_p, uint16_t level, fsmdef_media_t *media)
     }
 
     /* Use SCTP port in place of fmtp payload type */
-    (void) sdp_attr_set_fmtp_payload_type(sdp_p, level, 0, a_inst, media->sctp_port);
+    (void) sdp_attr_set_fmtp_payload_type(sdp_p, level, 0, a_inst, media->local_datachannel_port);
 
-    sdp_attr_set_fmtp_data_channel_protocol (sdp_p, level, 0, a_inst, WEBRTC_DATA_CHANNEL_PROT);
+    sdp_attr_set_fmtp_data_channel_protocol (sdp_p, level, 0, a_inst, media->datachannel_protocol);
 
-    sdp_attr_set_fmtp_streams (sdp_p, level, 0, a_inst, 16);
+    sdp_attr_set_fmtp_streams (sdp_p, level, 0, a_inst, media->datachannel_streams);
 }
 
 /*
@@ -2444,7 +2442,7 @@ gsmsdp_update_local_sdp_media (fsmdef_dcb_t *dcb_p, cc_sdp_t *cc_sdp_p,
     (void) sdp_set_media_type(sdp_p, level, media->type);
 
 
-    (void) sdp_set_media_portnum(sdp_p, level, port, media->sctp_port);
+    (void) sdp_set_media_portnum(sdp_p, level, port, media->local_datachannel_port);
 
     /* Set media transport and crypto attributes if it is for SRTP */
     gsmsdp_update_local_sdp_media_transport(dcb_p, sdp_p, media, transport,
@@ -3251,15 +3249,15 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
 
 
                 found_codec = TRUE;
-                if(media->num_payloads >= payload_types_count) {
-                    /* We maxed our allocated memory -- processing is done. */
-                    return codec;
-                }
 
                 /* Incrementing this number serves as a "commit" for the
                    payload_info. If we bail out of the loop before this
                    happens, then the collected information is abandoned. */
                 media->num_payloads++;
+                if(media->num_payloads >= payload_types_count) {
+                    /* We maxed our allocated memory -- processing is done. */
+                    return codec;
+                }
 
                 if(offer) {
                     /* If we are creating an answer, return after the first match.
@@ -3303,27 +3301,37 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
     return (RTP_NONE);
 }
 
+/*
+ * gsmsdp_negotiate_datachannel_attribs
+ *
+ * dcb_p - a pointer to the current dcb
+ * sdp_p - the sdp we are analyzing
+ * media - the media info
+ * offer - Boolean indicating if the remote SDP came in an OFFER.
+ */
 static void
-gsmsdp_negotiate_datachannel_attribs(fsmdef_dcb_t* dcb_p, cc_sdp_t* sdp_p, uint16_t level, fsmdef_media_t* media)
+gsmsdp_negotiate_datachannel_attribs(fsmdef_dcb_t* dcb_p, cc_sdp_t* sdp_p, uint16_t level,
+    fsmdef_media_t* media, boolean offer)
 {
     uint32          num_streams;
     char           *protocol;
 
     sdp_attr_get_fmtp_streams (sdp_p->dest_sdp, level, 0, 1, &num_streams);
 
-    media->streams = num_streams;
+    media->datachannel_streams = num_streams;
 
-    if(media->protocol == NULL) {
-        media->protocol = cpr_malloc(SDP_MAX_STRING_LEN+1);
-        if (media->protocol == NULL)
-        	return;
+    sdp_attr_get_fmtp_data_channel_protocol(sdp_p->dest_sdp, level, 0, 1, media->datachannel_protocol);
+
+    media->remote_datachannel_port = sdp_get_media_sctp_port(sdp_p->dest_sdp, level);
+
+    /*
+     * TODO: remove the following block when SCTP code is updated
+     * See bug 837035 comment #5
+     */
+    if (offer) {
+        /* Increment port for answer SDP */
+        media->local_datachannel_port = media->remote_datachannel_port + 1;
     }
-    sdp_attr_get_fmtp_data_channel_protocol(sdp_p->dest_sdp, level, 0, 1, media->protocol);
-
-    media->sctp_port = sdp_attr_get_fmtp_payload_type (sdp_p->dest_sdp, level, 0, 1);
-
-    /* Increment port for answer SDP */
-    media->sctp_port++;
 }
 
 /*
@@ -4299,6 +4307,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p, boolean initial
     tinybool        rtcp_mux = FALSE;
     sdp_result_e    sdp_res;
     boolean         created_media_stream = FALSE;
+    int             lsm_rc;
 
     config_get_value(CFGID_SDPMODE, &sdpmode, sizeof(sdpmode));
 
@@ -4516,7 +4525,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p, boolean initial
                     break;
                 }
             } else {
-                gsmsdp_negotiate_datachannel_attribs(dcb_p, sdp_p, i, media);
+                gsmsdp_negotiate_datachannel_attribs(dcb_p, sdp_p, i, media, offer);
             }
 
             /*
@@ -4614,38 +4623,33 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p, boolean initial
                              TODO(ekr@rtfm.com): revisit when we have media
                              assigned to streams in the SDP */
                           if (!created_media_stream){
-                              lsm_add_remote_stream (dcb_p->line,
-                                                     dcb_p->call_id,
-                                                     media,
-                                                     &pc_stream_id);
-                              MOZ_ASSERT(pc_stream_id == 0);
-                              /* Use index 0 because we only have one stream */
-                              result = gsmsdp_add_remote_stream(0,
-                                                                pc_stream_id,
-                                                                dcb_p);
-                              MOZ_ASSERT(result);  /* TODO(ekr@rtfm.com)
-                                                      add real error checking,
-                                                      but this "can't fail" */
-                              created_media_stream = TRUE;
+                              lsm_rc = lsm_add_remote_stream (dcb_p->line,
+                                                              dcb_p->call_id,
+                                                              media,
+                                                              &pc_stream_id);
+                              if (lsm_rc) {
+                                return (CC_CAUSE_NO_MEDIA);
+                              } else {
+                                MOZ_ASSERT(pc_stream_id == 0);
+                                /* Use index 0 because we only have one stream */
+                                result = gsmsdp_add_remote_stream(0,
+                                                                  pc_stream_id,
+                                                                  dcb_p);
+                                MOZ_ASSERT(result);  /* TODO(ekr@rtfm.com)
+                                                        add real error checking,
+                                                        but this "can't fail" */
+                                created_media_stream = TRUE;
+                              }
                           }
 
-                          /* Now add the track to the single media stream.
-                             use index 0 because we only have one stream */
-                          result = gsmsdp_add_remote_track(0, i, dcb_p, media);
-                          MOZ_ASSERT(result);  /* TODO(ekr@rtfm.com) add real
-                                                 error checking, but this
-                                                 "can't fail" */
-                      } else {
-                          /*
-                           * Inform VCM that a Data Channel has been negotiated
-                           */
-                          int pc_stream_id; /* Set but unused. Provided to
-                                                fulfill the API contract
-                                                TODO(adam@nostrum.com):
-                                                use or remove */
-
-                          lsm_data_channel_negotiated(dcb_p->line, dcb_p->call_id,
-                                                      media, &pc_stream_id);
+                          if (created_media_stream) {
+                                /* Now add the track to the single media stream.
+                                   use index 0 because we only have one stream */
+                                result = gsmsdp_add_remote_track(0, i, dcb_p, media);
+                                MOZ_ASSERT(result);  /* TODO(ekr@rtfm.com) add real
+                                                       error checking, but this
+                                                       "can't fail" */
+                          }
                       }
                   }
               }
@@ -5066,7 +5070,7 @@ gsmsdp_add_media_line (fsmdef_dcb_t *dcb_p, const cc_media_cap_t *media_cap,
 
           if(media_cap->type == SDP_MEDIA_APPLICATION) {
             config_get_value(CFGID_SCTP_PORT, &sctp_port, sizeof(sctp_port));
-            media->sctp_port = sctp_port;
+            media->local_datachannel_port = sctp_port;
           }
 
           /*
@@ -6712,6 +6716,8 @@ static boolean gsmsdp_add_remote_track(uint16_t idx, uint16_t track,
                                        fsmdef_dcb_t *dcb_p,
                                        fsmdef_media_t *media) {
   cc_media_remote_track_table_t *stream;
+  int vcm_ret;
+
   PR_ASSERT(idx < CC_MAX_STREAMS);
   if (idx >= CC_MAX_STREAMS)
     return FALSE;
@@ -6731,6 +6737,24 @@ static boolean gsmsdp_add_remote_track(uint16_t idx, uint16_t track,
       (media->type == SDP_MEDIA_VIDEO) ? TRUE : FALSE;
 
   ++stream->num_tracks;
+
+  if (media->type == SDP_MEDIA_VIDEO) {
+    vcm_ret = vcmAddRemoteStreamHint(dcb_p->peerconnection, idx, TRUE);
+  } else if (media->type == SDP_MEDIA_AUDIO) {
+    vcm_ret = vcmAddRemoteStreamHint(dcb_p->peerconnection, idx, FALSE);
+  } else {
+    // No other track types should be valid here
+    MOZ_ASSERT(FALSE);
+    // Not setting a hint for this track type will simply cause the
+    // onaddstream callback not to wait for the track to be ready.
+    vcm_ret = 0;
+  }
+
+  if (vcm_ret) {
+      CSFLogError(logTag, "%s: vcmAddRemoteStreamHint returned error: %d",
+          __FUNCTION__, vcm_ret);
+      return FALSE;
+  }
 
   return TRUE;
 }

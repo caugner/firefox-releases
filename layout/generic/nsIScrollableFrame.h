@@ -233,6 +233,16 @@ public:
    * completely redrawn.
    */
   virtual void ResetScrollPositionForLayerPixelAlignment() = 0;
+  /**
+   * Was the current presentation state for this frame restored from history?
+   */
+  virtual bool DidHistoryRestore() = 0;
+  /**
+   * Clear the flag so that DidHistoryRestore() returns false until the next
+   * RestoreState call.
+   * @see nsIStatefulFrame::RestoreState
+   */
+  virtual void ClearDidHistoryRestore() = 0;
 };
 
 #endif

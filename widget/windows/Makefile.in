@@ -10,17 +10,12 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= widget
 LIBRARY_NAME	= widget_windows
 EXPORT_LIBRARY	= 1
 IS_COMPONENT	= 1
 RESFILE		= widget.res
 MODULE_NAME	= nsWidgetWinModule
 LIBXUL_LIBRARY = 1
-
-ifdef MOZ_METRO
-DIRS = winrt
-endif
 
 CPPSRCS = \
   nsWindow.cpp \
@@ -52,6 +47,7 @@ CPPSRCS = \
   nsWidgetFactory.cpp \
   WinUtils.cpp \
   WinMouseScrollHandler.cpp \
+  WinIMEHandler.cpp \
   $(NULL)
 
 ifdef MOZ_CRASHREPORTER
@@ -116,10 +112,6 @@ FORCE_STATIC_LIB = 1
 
 include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/ipc/chromium/chromium-config.mk
-
-ifdef ENABLE_TESTS
-TOOL_DIRS  += tests
-endif
 
 include $(topsrcdir)/config/rules.mk
 

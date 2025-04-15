@@ -6,169 +6,171 @@
 
 /* A namespace class for static layout utilities. */
 
-#include "mozilla/DebugOnly.h"
-#include "mozilla/Util.h"
-#include "mozilla/Likely.h"
+#include "nsContentUtils.h"
 
+#include <algorithm>
+#include <math.h>
+
+#include "DecoderTraits.h"
+#include "harfbuzz/hb.h"
+#include "imgICache.h"
+#include "imgIContainer.h"
+#include "imgINotificationObserver.h"
+#include "imgLoader.h"
+#include "imgRequestProxy.h"
 #include "jsapi.h"
 #include "jsdbgapi.h"
 #include "jsfriendapi.h"
-
-#include <math.h>
-
+#include "js/Value.h"
 #include "Layers.h"
-#include "nsJSUtils.h"
-#include "nsCOMPtr.h"
-#include "nsAString.h"
-#include "nsPrintfCString.h"
-#include "nsIScriptGlobalObject.h"
-#include "nsIScriptContext.h"
-#include "nsDOMCID.h"
-#include "nsContentUtils.h"
-#include "nsIXPConnect.h"
-#include "nsIContent.h"
+#include "MediaDecoder.h"
+#include "mozAutoDocUpdate.h"
+#include "mozilla/Attributes.h"
+#include "mozilla/Base64.h"
+#include "mozilla/DebugOnly.h"
+#include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/dom/Element.h"
-#include "nsIDocument.h"
-#include "nsINodeInfo.h"
-#include "nsIIdleService.h"
-#include "nsIDOMDocument.h"
-#include "nsIDOMNodeList.h"
-#include "nsIDOMNode.h"
-#include "nsIIOService.h"
-#include "nsNetCID.h"
-#include "nsNetUtil.h"
-#include "nsIScriptSecurityManager.h"
-#include "nsPIDOMWindow.h"
-#include "nsIJSContextStack.h"
-#include "nsIDocShell.h"
-#include "nsParserCIID.h"
-#include "nsIParser.h"
-#include "nsIFragmentContentSink.h"
-#include "nsIContentSink.h"
+#include "mozilla/dom/HTMLTemplateElement.h"
+#include "mozilla/dom/TextDecoderBase.h"
+#include "mozilla/Likely.h"
+#include "mozilla/Preferences.h"
+#include "mozilla/Selection.h"
+#include "mozilla/Util.h"
+#include "nsAString.h"
+#include "nsAttrName.h"
+#include "nsAttrValue.h"
+#include "nsAttrValueInlines.h"
+#include "nsBindingManager.h"
+#include "nsCCUncollectableMarker.h"
+#include "nsChannelPolicy.h"
+#include "nsCharSeparatedTokenizer.h"
+#include "nsCOMPtr.h"
+#include "nsContentCreatorFunctions.h"
+#include "nsContentDLF.h"
 #include "nsContentList.h"
-#include "nsIHTMLDocument.h"
-#include "nsIDOMHTMLFormElement.h"
-#include "nsIDOMHTMLElement.h"
-#include "nsIForm.h"
-#include "nsIFormControl.h"
-#include "nsGkAtoms.h"
-#include "imgINotificationObserver.h"
-#include "imgRequestProxy.h"
-#include "imgIContainer.h"
-#include "imgLoader.h"
+#include "nsContentPolicyUtils.h"
+#include "nsCPrefetchService.h"
+#include "nsCRT.h"
+#include "nsCycleCollectionParticipant.h"
+#include "nsDataHashtable.h"
 #include "nsDocShellCID.h"
+#include "nsDOMCID.h"
+#include "nsDOMDataTransfer.h"
+#include "nsDOMJSUtils.h"
+#include "nsDOMMutationObserver.h"
+#include "nsDOMTouchEvent.h"
+#include "nsError.h"
+#include "nsEventDispatcher.h"
+#include "nsEventListenerManager.h"
+#include "nsEventStateManager.h"
+#include "nsFocusManager.h"
+#include "nsGenericHTMLElement.h"
+#include "nsGkAtoms.h"
+#include "nsHtml5Module.h"
+#include "nsHtml5StringParser.h"
+#include "nsIAsyncVerifyRedirectCallback.h"
+#include "nsICategoryManager.h"
+#include "nsIChannelEventSink.h"
+#include "nsIChannelPolicy.h"
+#include "nsICharsetConverterManager.h"
+#include "nsICharsetDetectionObserver.h"
+#include "nsICharsetDetector.h"
+#include "nsIChromeRegistry.h"
+#include "nsIConsoleService.h"
+#include "nsIContent.h"
+#include "nsIContentSecurityPolicy.h"
+#include "nsIContentSink.h"
+#include "nsIContentViewer.h"
+#include "nsIDocShell.h"
+#include "nsIDocument.h"
+#include "nsIDOMDocument.h"
+#include "nsIDOMDocumentType.h"
+#include "nsIDOMEvent.h"
+#include "nsIDOMEventTarget.h"
+#include "nsIDOMHTMLElement.h"
+#include "nsIDOMHTMLFormElement.h"
+#include "nsIDOMHTMLInputElement.h"
+#include "nsIDOMNode.h"
+#include "nsIDOMNodeList.h"
+#include "nsIDOMScriptObjectFactory.h"
+#include "nsIDOMUserDataHandler.h"
+#include "nsIDOMXULCommandEvent.h"
+#include "nsIDragService.h"
+#include "nsIEditor.h"
+#include "nsIFormControl.h"
+#include "nsIForm.h"
+#include "nsIFragmentContentSink.h"
+#include "nsIHTMLDocument.h"
+#include "nsIIdleService.h"
 #include "nsIImageLoadingContent.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
+#include "nsIIOService.h"
+#include "nsIJSContextStack.h"
+#include "nsIJSRuntimeService.h"
+#include "nsILineBreaker.h"
+#include "nsILoadContext.h"
 #include "nsILoadGroup.h"
+#include "nsIMEStateManager.h"
+#include "nsIMIMEService.h"
+#include "nsINativeKeyBindings.h"
+#include "nsINode.h"
+#include "nsINodeInfo.h"
+#include "nsIObjectLoadingContent.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
-#include "nsContentPolicyUtils.h"
-#include "nsNodeInfoManager.h"
-#include "nsCRT.h"
-#include "nsIDOMEvent.h"
-#include "nsIDOMEventTarget.h"
-#include "nsIMIMEService.h"
-#include "nsLWBrkCIID.h"
-#include "nsILineBreaker.h"
-#include "nsIWordBreaker.h"
-#include "nsUnicodeProperties.h"
-#include "harfbuzz/hb.h"
-#include "nsIJSRuntimeService.h"
-#include "nsBindingManager.h"
+#include "nsIOfflineCacheUpdate.h"
+#include "nsIParser.h"
+#include "nsIParserService.h"
+#include "nsIPermissionManager.h"
+#include "nsIPlatformCharset.h"
+#include "nsIPluginHost.h"
+#include "nsIRunnable.h"
+#include "nsIScriptContext.h"
+#include "nsIScriptError.h"
+#include "nsIScriptGlobalObject.h"
+#include "nsIScriptObjectPrincipal.h"
+#include "nsIScriptSecurityManager.h"
+#include "nsIStringBundle.h"
 #include "nsIURI.h"
 #include "nsIURL.h"
-#include "nsICharsetConverterManager.h"
-#include "nsEventListenerManager.h"
-#include "nsAttrName.h"
-#include "nsIDOMUserDataHandler.h"
-#include "nsContentCreatorFunctions.h"
-#include "nsMutationEvent.h"
-#include "nsIMEStateManager.h"
-#include "nsError.h"
-#include "nsUnicharUtilCIID.h"
-#include "nsINativeKeyBindings.h"
-#include "nsXULPopupManager.h"
-#include "nsIPermissionManager.h"
-#include "nsIScriptObjectPrincipal.h"
-#include "nsNullPrincipal.h"
-#include "nsIRunnable.h"
-#include "nsDOMJSUtils.h"
-#include "nsGenericHTMLElement.h"
-#include "nsAttrValue.h"
-#include "nsAttrValueInlines.h"
-#include "nsReferencedElement.h"
-#include "nsIDragService.h"
-#include "nsIChannelEventSink.h"
-#include "nsIAsyncVerifyRedirectCallback.h"
-#include "nsIOfflineCacheUpdate.h"
-#include "nsCPrefetchService.h"
-#include "nsIChromeRegistry.h"
-#include "nsEventDispatcher.h"
-#include "nsIDOMXULCommandEvent.h"
-#include "nsDOMDataTransfer.h"
-#include "nsHtml5Module.h"
-#include "nsPresContext.h"
-#include "nsLayoutStatics.h"
-#include "nsFocusManager.h"
-#include "nsTextEditorState.h"
-#include "nsIPluginHost.h"
-#include "nsICategoryManager.h"
-#include "nsViewManager.h"
-#include "nsEventStateManager.h"
-#include "nsIDOMHTMLInputElement.h"
-#include "nsParserConstants.h"
 #include "nsIWebNavigation.h"
-#include "nsILoadContext.h"
+#include "nsIWordBreaker.h"
+#include "nsIXPConnect.h"
+#include "nsJSUtils.h"
+#include "nsLayoutStatics.h"
+#include "nsLWBrkCIID.h"
+#include "nsMutationEvent.h"
+#include "nsNetCID.h"
+#include "nsNetUtil.h"
+#include "nsNodeInfoManager.h"
+#include "nsNullPrincipal.h"
+#include "nsParserCIID.h"
+#include "nsParserConstants.h"
+#include "nsPIDOMWindow.h"
+#include "nsPresContext.h"
+#include "nsPrintfCString.h"
+#include "nsReferencedElement.h"
+#include "nsSandboxFlags.h"
+#include "nsScriptSecurityManager.h"
+#include "nsSVGFeatures.h"
+#include "nsTextEditorState.h"
 #include "nsTextFragment.h"
-#include "mozilla/Selection.h"
-#include <algorithm>
+#include "nsThreadUtils.h"
+#include "nsUnicharUtilCIID.h"
+#include "nsUnicodeProperties.h"
+#include "nsViewManager.h"
+#include "nsViewportInfo.h"
+#include "nsWrapperCacheInlines.h"
+#include "nsXULPopupManager.h"
+#include "xpcprivate.h" // nsXPConnect
 
 #ifdef IBMBIDI
 #include "nsIBidiKeyboard.h"
 #endif
-#include "nsCycleCollectionParticipant.h"
-
-// for ReportToConsole
-#include "nsIStringBundle.h"
-#include "nsIScriptError.h"
-#include "nsIConsoleService.h"
-
-#include "mozAutoDocUpdate.h"
-#include "imgICache.h"
-#include "imgLoader.h"
-#include "xpcprivate.h" // nsXPConnect
-#include "nsScriptSecurityManager.h"
-#include "nsIChannelPolicy.h"
-#include "nsChannelPolicy.h"
-#include "nsIContentSecurityPolicy.h"
-#include "nsContentDLF.h"
 #ifdef MOZ_MEDIA
-#include "nsHTMLMediaElement.h"
+#include "mozilla/dom/HTMLMediaElement.h"
 #endif
-#include "nsDOMTouchEvent.h"
-#include "nsIContentViewer.h"
-#include "nsIObjectLoadingContent.h"
-#include "nsCCUncollectableMarker.h"
-#include "mozilla/Base64.h"
-#include "mozilla/Preferences.h"
-#include "nsDOMMutationObserver.h"
-#include "nsIDOMDocumentType.h"
-#include "nsCharSeparatedTokenizer.h"
-#include "nsICharsetDetector.h"
-#include "nsICharsetDetectionObserver.h"
-#include "nsIPlatformCharset.h"
-#include "nsIEditor.h"
-#include "mozilla/Attributes.h"
-#include "nsIParserService.h"
-#include "nsIDOMScriptObjectFactory.h"
-#include "nsSandboxFlags.h"
-#include "nsSVGFeatures.h"
-#include "MediaDecoder.h"
-#include "DecoderTraits.h"
-
-#include "nsWrapperCacheInlines.h"
-#include "nsViewportInfo.h"
 
 extern "C" int MOZ_XMLTranslateEntity(const char* ptr, const char* end,
                                       const char** next, PRUnichar* result);
@@ -230,6 +232,7 @@ nsString* nsContentUtils::sModifierSeparator = nullptr;
 bool nsContentUtils::sInitialized = false;
 bool nsContentUtils::sIsFullScreenApiEnabled = false;
 bool nsContentUtils::sTrustedFullScreenOnly = true;
+bool nsContentUtils::sFullscreenApiIsContentOnly = false;
 bool nsContentUtils::sIsIdleObserverAPIEnabled = false;
 
 uint32_t nsContentUtils::sHandlingInputTimeout = 1000;
@@ -416,6 +419,12 @@ nsContentUtils::Init()
 
   Preferences::AddBoolVarCache(&sIsFullScreenApiEnabled,
                                "full-screen-api.enabled");
+
+  // Note: We deliberately read this pref here because this code runs
+  // before the profile loads, so users' changes to this pref in about:config
+  // won't have any effect on behaviour. We don't really want users messing
+  // with this pref, as it affects the security model of the fullscreen API.
+  sFullscreenApiIsContentOnly = Preferences::GetBool("full-screen-api.content-only", false);
 
   Preferences::AddBoolVarCache(&sTrustedFullScreenOnly,
                                "full-screen-api.allow-trusted-requests-only");
@@ -1193,6 +1202,13 @@ nsContentUtils::IsHTMLWhitespace(PRUnichar aChar)
 
 /* static */
 bool
+nsContentUtils::IsHTMLWhitespaceOrNBSP(PRUnichar aChar)
+{
+  return IsHTMLWhitespace(aChar) || aChar == PRUnichar(0xA0);
+}
+
+/* static */
+bool
 nsContentUtils::IsHTMLBlock(nsIAtom* aLocalName)
 {
   return
@@ -1580,6 +1596,15 @@ nsContentUtils::CanCallerAccess(nsIPrincipal* aSubjectPrincipal,
 bool
 nsContentUtils::CanCallerAccess(nsIDOMNode *aNode)
 {
+  nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
+  NS_ENSURE_TRUE(node, false);
+  return CanCallerAccess(node);
+}
+
+// static
+bool
+nsContentUtils::CanCallerAccess(nsINode* aNode)
+{
   // XXXbz why not check the IsCapabilityEnabled thing up front, and not bother
   // with the system principal games?  But really, there should be a simpler
   // API here, dammit.
@@ -1593,10 +1618,7 @@ nsContentUtils::CanCallerAccess(nsIDOMNode *aNode)
     return true;
   }
 
-  nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
-  NS_ENSURE_TRUE(node, false);
-
-  return CanCallerAccess(subjectPrincipal, node->NodePrincipal());
+  return CanCallerAccess(subjectPrincipal, aNode->NodePrincipal());
 }
 
 // static
@@ -1671,7 +1693,7 @@ nsContentUtils::TraceSafeJSContext(JSTracer* aTrc)
     return;
   }
   if (JSObject* global = JS_GetGlobalObject(cx)) {
-    JS_CALL_OBJECT_TRACER(aTrc, global, "safe context");
+    JS_CallObjectTracer(aTrc, global, "safe context");
   }
 }
 
@@ -1833,6 +1855,27 @@ nsContentUtils::ContentIsDescendantOf(const nsINode* aPossibleDescendant,
   return false;
 }
 
+bool
+nsContentUtils::ContentIsHostIncludingDescendantOf(
+  const nsINode* aPossibleDescendant, const nsINode* aPossibleAncestor)
+{
+  NS_PRECONDITION(aPossibleDescendant, "The possible descendant is null!");
+  NS_PRECONDITION(aPossibleAncestor, "The possible ancestor is null!");
+
+  do {
+    if (aPossibleDescendant == aPossibleAncestor)
+      return true;
+    if (aPossibleDescendant->NodeType() == nsIDOMNode::DOCUMENT_FRAGMENT_NODE) {
+      aPossibleDescendant =
+        static_cast<const DocumentFragment*>(aPossibleDescendant)->GetHost();
+    } else {
+      aPossibleDescendant = aPossibleDescendant->GetParentNode();
+    }
+  } while (aPossibleDescendant);
+
+  return false;
+}
+
 // static
 bool
 nsContentUtils::ContentIsCrossDocDescendantOf(nsINode* aPossibleDescendant,
@@ -1959,6 +2002,16 @@ nsContentUtils::GetCommonAncestor(nsINode* aNode1,
   }
 
   return parent;
+}
+
+/* static */
+bool
+nsContentUtils::PositionIsBefore(nsINode* aNode1, nsINode* aNode2)
+{
+  return (aNode2->CompareDocumentPosition(*aNode1) &
+    (nsIDOMNode::DOCUMENT_POSITION_PRECEDING |
+     nsIDOMNode::DOCUMENT_POSITION_DISCONNECTED)) ==
+    nsIDOMNode::DOCUMENT_POSITION_PRECEDING;
 }
 
 /* static */
@@ -2135,6 +2188,9 @@ nsContentUtils::TrimWhitespace<nsCRT::IsAsciiSpace>(const nsAString&, bool);
 template
 const nsDependentSubstring
 nsContentUtils::TrimWhitespace<nsContentUtils::IsHTMLWhitespace>(const nsAString&, bool);
+template
+const nsDependentSubstring
+nsContentUtils::TrimWhitespace<nsContentUtils::IsHTMLWhitespaceOrNBSP>(const nsAString&, bool);
 
 static inline void KeyAppendSep(nsACString& aKey)
 {
@@ -2866,6 +2922,21 @@ nsContentUtils::IsDraggableLink(const nsIContent* aContent) {
   return aContent->IsLink(getter_AddRefs(absURI));
 }
 
+// static
+nsresult
+nsContentUtils::NameChanged(nsINodeInfo* aNodeInfo, nsIAtom* aName,
+                            nsINodeInfo** aResult)
+{
+  nsNodeInfoManager *niMgr = aNodeInfo->NodeInfoManager();
+
+  *aResult = niMgr->GetNodeInfo(aName, aNodeInfo->GetPrefixAtom(),
+                                aNodeInfo->NamespaceID(),
+                                aNodeInfo->NodeType(),
+                                aNodeInfo->GetExtraName()).get();
+  return *aResult ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+}
+
+
 static bool
 TestSitePerm(nsIPrincipal* aPrincipal, const char* aType, uint32_t aPerm, bool aExactHostMatch)
 {
@@ -3016,19 +3087,14 @@ nsCxPusher::Push(nsIDOMEventTarget *aCurrentTarget)
     return true;
   }
 
-  JSContext* cx = nullptr;
-
-  if (scx) {
-    cx = scx->GetNativeContext();
-    // Bad, no JSContext from script context!
-    NS_ENSURE_TRUE(cx, false);
-  }
+  JSContext* cx = scx ? scx->GetNativeContext() : nullptr;
 
   // If there's no native context in the script context it must be
   // in the process or being torn down. We don't want to notify the
   // script context about scripts having been evaluated in such a
   // case, calling with a null cx is fine in that case.
-  return Push(cx);
+  Push(cx);
+  return true;
 }
 
 bool
@@ -3059,37 +3125,26 @@ nsCxPusher::RePush(nsIDOMEventTarget *aCurrentTarget)
   return Push(aCurrentTarget);
 }
 
-bool
-nsCxPusher::Push(JSContext *cx, bool aRequiresScriptContext)
+void
+nsCxPusher::Push(JSContext *cx)
 {
-  if (mPushedSomething) {
-    NS_ERROR("Whaaa! No double pushing with nsCxPusher::Push()!");
-
-    return false;
-  }
-
-  if (!cx) {
-    return false;
-  }
+  MOZ_ASSERT(!mPushedSomething, "No double pushing with nsCxPusher::Push()!");
+  MOZ_ASSERT(cx);
 
   // Hold a strong ref to the nsIScriptContext, just in case
   // XXXbz do we really need to?  If we don't get one of these in Pop(), is
   // that really a problem?  Or do we need to do this to effectively root |cx|?
   mScx = GetScriptContextFromJSContext(cx);
-  if (!mScx && aRequiresScriptContext) {
-    // Should probably return false. See bug 416916.
-    return true;
-  }
 
-  return DoPush(cx);
+  DoPush(cx);
 }
 
-bool
+void
 nsCxPusher::DoPush(JSContext* cx)
 {
   nsIThreadJSContextStack* stack = nsContentUtils::ThreadJSContextStack();
   if (!stack) {
-    return true;
+    return;
   }
 
   if (cx && IsContextOnStack(stack, cx)) {
@@ -3099,9 +3154,7 @@ nsCxPusher::DoPush(JSContext* cx)
   }
 
   if (NS_FAILED(stack->Push(cx))) {
-    mScriptIsRunning = false;
-    mScx = nullptr;
-    return false;
+    MOZ_CRASH();
   }
 
   mPushedSomething = true;
@@ -3110,13 +3163,12 @@ nsCxPusher::DoPush(JSContext* cx)
   if (cx)
     mCompartmentDepthOnEntry = js::GetEnterCompartmentDepth(cx);
 #endif
-  return true;
 }
 
-bool
+void
 nsCxPusher::PushNull()
 {
-  return DoPush(nullptr);
+  DoPush(nullptr);
 }
 
 void
@@ -3333,6 +3385,20 @@ nsContentUtils::IsChildOfSameType(nsIDocument* aDoc)
     docShellAsItem->GetSameTypeParent(getter_AddRefs(sameTypeParent));
   }
   return sameTypeParent != nullptr;
+}
+
+bool
+nsContentUtils::IsPlainTextType(const nsACString& aContentType)
+{
+  return aContentType.EqualsLiteral(TEXT_PLAIN) ||
+         aContentType.EqualsLiteral(TEXT_CSS) ||
+         aContentType.EqualsLiteral(TEXT_CACHE_MANIFEST) ||
+         aContentType.EqualsLiteral(APPLICATION_JAVASCRIPT) ||
+         aContentType.EqualsLiteral(APPLICATION_XJAVASCRIPT) ||
+         aContentType.EqualsLiteral(TEXT_ECMASCRIPT) ||
+         aContentType.EqualsLiteral(APPLICATION_ECMASCRIPT) ||
+         aContentType.EqualsLiteral(TEXT_JAVASCRIPT) ||
+         aContentType.EqualsLiteral(APPLICATION_JSON);
 }
 
 bool
@@ -3627,39 +3693,17 @@ nsContentUtils::ConvertStringFromCharset(const nsACString& aCharset,
     return NS_OK;
   }
 
-  nsresult rv;
-  nsCOMPtr<nsICharsetConverterManager> ccm =
-    do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);
-  if (NS_FAILED(rv))
-    return rv;
+  ErrorResult rv;
+  TextDecoderBase decoder;
+  decoder.Init(NS_ConvertUTF8toUTF16(aCharset), false, rv);
+  if (rv.Failed()) {
+    rv.ClearMessage();
+    return rv.ErrorCode();
+  }
 
-  nsCOMPtr<nsIUnicodeDecoder> decoder;
-  rv = ccm->GetUnicodeDecoder(PromiseFlatCString(aCharset).get(),
-                              getter_AddRefs(decoder));
-  if (NS_FAILED(rv))
-    return rv;
-
-  nsPromiseFlatCString flatInput(aInput);
-  int32_t length = flatInput.Length();
-  int32_t outLen;
-  rv = decoder->GetMaxLength(flatInput.get(), length, &outLen);
-  if (NS_FAILED(rv))
-    return rv;
-
-  PRUnichar *ustr = (PRUnichar *)nsMemory::Alloc((outLen + 1) *
-                                                 sizeof(PRUnichar));
-  if (!ustr)
-    return NS_ERROR_OUT_OF_MEMORY;
-
-  const char* data = flatInput.get();
-  aOutput.Truncate();
-  rv = decoder->Convert(data, &length, ustr, &outLen);
-  MOZ_ASSERT(rv != NS_ERROR_ILLEGAL_INPUT);
-  ustr[outLen] = 0;
-  aOutput.Append(ustr, outLen);
-
-  nsMemory::Free(ustr);
-  return rv;
+  decoder.Decode(aInput.BeginReading(), aInput.Length(), false,
+                 aOutput, rv);
+  return rv.ErrorCode();
 }
 
 /* static */
@@ -4065,8 +4109,22 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
                                          bool aPreventScriptExecution,
                                          nsIDOMDocumentFragment** aReturn)
 {
-  *aReturn = nullptr;
-  NS_ENSURE_ARG(aContextNode);
+  ErrorResult rv;
+  *aReturn = CreateContextualFragment(aContextNode, aFragment,
+                                      aPreventScriptExecution, rv).get();
+  return rv.ErrorCode();
+}
+
+already_AddRefed<DocumentFragment>
+nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
+                                         const nsAString& aFragment,
+                                         bool aPreventScriptExecution,
+                                         ErrorResult& aRv)
+{
+  if (!aContextNode) {
+    aRv.Throw(NS_ERROR_INVALID_ARG);
+    return nullptr;
+  }
 
   // If we don't have a document here, we can't get the right security context
   // for compiling event handlers... so just bail out.
@@ -4078,8 +4136,8 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
 #endif
 
   if (isHTML) {
-    nsCOMPtr<nsIDOMDocumentFragment> frag;
-    NS_NewDocumentFragment(getter_AddRefs(frag), document->NodeInfoManager());
+    nsRefPtr<DocumentFragment> frag =
+      NS_NewDocumentFragment(document->NodeInfoManager(), aRv);
     
     nsCOMPtr<nsIContent> contextAsContent = do_QueryInterface(aContextNode);
     if (contextAsContent && !contextAsContent->IsElement()) {
@@ -4090,28 +4148,23 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
       }
     }
     
-    nsresult rv;
-    nsCOMPtr<nsIContent> fragment = do_QueryInterface(frag);
     if (contextAsContent && !contextAsContent->IsHTML(nsGkAtoms::html)) {
-      rv = ParseFragmentHTML(aFragment,
-                             fragment,
-                             contextAsContent->Tag(),
-                             contextAsContent->GetNameSpaceID(),
-                             (document->GetCompatibilityMode() ==
+      aRv = ParseFragmentHTML(aFragment, frag,
+                              contextAsContent->Tag(),
+                              contextAsContent->GetNameSpaceID(),
+                              (document->GetCompatibilityMode() ==
                                eCompatibility_NavQuirks),
-                             aPreventScriptExecution);
+                              aPreventScriptExecution);
     } else {
-      rv = ParseFragmentHTML(aFragment,
-                             fragment,
-                             nsGkAtoms::body,
-                             kNameSpaceID_XHTML,
-                             (document->GetCompatibilityMode() ==
+      aRv = ParseFragmentHTML(aFragment, frag,
+                              nsGkAtoms::body,
+                              kNameSpaceID_XHTML,
+                              (document->GetCompatibilityMode() ==
                                eCompatibility_NavQuirks),
-                             aPreventScriptExecution);
+                              aPreventScriptExecution);
     }
 
-    frag.forget(aReturn);
-    return rv;
+    return frag.forget();
   }
 
   nsAutoTArray<nsString, 32> tagStack;
@@ -4123,7 +4176,10 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
 
   while (content && content->IsElement()) {
     nsString& tagName = *tagStack.AppendElement();
-    NS_ENSURE_TRUE(&tagName, NS_ERROR_OUT_OF_MEMORY);
+    if (!&tagName) {
+      aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
+      return nullptr;
+    }
 
     tagName = content->NodeInfo()->QualifiedName();
 
@@ -4169,11 +4225,10 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
     content = content->GetParent();
   }
 
-  return ParseFragmentXML(aFragment,
-                          document,
-                          tagStack,
-                          aPreventScriptExecution,
-                          aReturn);
+  nsCOMPtr<nsIDOMDocumentFragment> frag;
+  aRv = ParseFragmentXML(aFragment, document, tagStack,
+                         aPreventScriptExecution, getter_AddRefs(frag));
+  return static_cast<DocumentFragment*>(frag.forget().get());
 }
 
 /* static */
@@ -5226,8 +5281,8 @@ nsContentUtils::SetDataTransferInEvent(nsDragEvent* aDragEvent)
     // means, for instance calling the drag service directly, or a drag
     // from another application. In either case, a new dataTransfer should
     // be created that reflects the data.
-    initialDataTransfer =
-      new nsDOMDataTransfer(aDragEvent->message);
+    initialDataTransfer = new nsDOMDataTransfer(aDragEvent->message, true);
+
     NS_ENSURE_TRUE(initialDataTransfer, NS_ERROR_OUT_OF_MEMORY);
 
     // now set it in the drag session so we don't need to create it again
@@ -5309,7 +5364,7 @@ bool
 nsContentUtils::CheckForSubFrameDrop(nsIDragSession* aDragSession, nsDragEvent* aDropEvent)
 {
   nsCOMPtr<nsIContent> target = do_QueryInterface(aDropEvent->originalTarget);
-  if (!target && !target->OwnerDoc()) {
+  if (!target) {
     return true;
   }
   
@@ -5806,9 +5861,9 @@ nsresult
 nsContentTypeParser::GetParameter(const char* aParameterName, nsAString& aResult)
 {
   NS_ENSURE_TRUE(mService, NS_ERROR_FAILURE);
-  return mService->GetParameter(mString, aParameterName,
-                                EmptyCString(), false, nullptr,
-                                aResult);
+  return mService->GetParameterHTTP(mString, aParameterName,
+                                    EmptyCString(), false, nullptr,
+                                    aResult);
 }
 
 /* static */
@@ -5858,7 +5913,7 @@ nsContentUtils::DispatchXULCommand(nsIContent* aTarget,
 // static
 nsresult
 nsContentUtils::WrapNative(JSContext *cx, JSObject *scope, nsISupports *native,
-                           nsWrapperCache *cache, const nsIID* aIID, jsval *vp,
+                           nsWrapperCache *cache, const nsIID* aIID, JS::Value *vp,
                            nsIXPConnectJSObjectHolder **aHolder,
                            bool aAllowWrapping)
 {
@@ -5945,7 +6000,7 @@ nsContentUtils::CreateArrayBuffer(JSContext *aCx, const nsACString& aData,
 nsresult
 nsContentUtils::CreateBlobBuffer(JSContext* aCx,
                                  const nsACString& aData,
-                                 jsval& aBlob)
+                                 JS::Value& aBlob)
 {
   uint32_t blobLen = aData.Length();
   void* blobData = moz_malloc(blobLen);
@@ -6371,77 +6426,13 @@ nsContentUtils::FindInternalContentViewer(const char* aType,
   }
 
 #ifdef MOZ_MEDIA
-#ifdef MOZ_OGG
-  if (DecoderTraits::IsOggType(nsDependentCString(aType))) {
+  if (DecoderTraits::IsSupportedInVideoDocument(nsDependentCString(aType))) {
     docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
     if (docFactory && aLoaderType) {
       *aLoaderType = TYPE_CONTENT;
     }
     return docFactory.forget();
   }
-#endif
-
-#ifdef MOZ_WIDGET_GONK
-  if (DecoderTraits::IsOmxSupportedType(nsDependentCString(aType))) {
-    docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
-    if (docFactory && aLoaderType) {
-      *aLoaderType = TYPE_CONTENT;
-    }
-    return docFactory.forget();
-  }
-#endif
-
-#ifdef MOZ_WEBM
-  if (DecoderTraits::IsWebMType(nsDependentCString(aType))) {
-    docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
-    if (docFactory && aLoaderType) {
-      *aLoaderType = TYPE_CONTENT;
-    }
-    return docFactory.forget();
-  }
-#endif
-
-#ifdef MOZ_DASH
-  if (DecoderTraits::IsDASHMPDType(nsDependentCString(aType))) {
-    docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
-    if (docFactory && aLoaderType) {
-      *aLoaderType = TYPE_CONTENT;
-    }
-    return docFactory.forget();
-  }
-#endif
-
-#ifdef MOZ_GSTREAMER
-  if (DecoderTraits::IsGStreamerSupportedType(nsDependentCString(aType))) {
-    docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
-    if (docFactory && aLoaderType) {
-      *aLoaderType = TYPE_CONTENT;
-    }
-    return docFactory.forget();
-  }
-#endif
-
-#ifdef MOZ_MEDIA_PLUGINS
-  if (mozilla::MediaDecoder::IsMediaPluginsEnabled() &&
-      DecoderTraits::IsMediaPluginsType(nsDependentCString(aType))) {
-    docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
-    if (docFactory && aLoaderType) {
-      *aLoaderType = TYPE_CONTENT;
-    }
-    return docFactory.forget();
-  }
-#endif // MOZ_MEDIA_PLUGINS
-
-#ifdef MOZ_WMF
-  if (DecoderTraits::IsWMFSupportedType(nsDependentCString(aType))) {
-    docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
-    if (docFactory && aLoaderType) {
-      *aLoaderType = TYPE_CONTENT;
-    }
-    return docFactory.forget();
-  }
-#endif
-
 #endif // MOZ_MEDIA
 
   return NULL;
@@ -6455,8 +6446,8 @@ nsContentUtils::IsPatternMatching(nsAString& aValue, nsAString& aPattern,
   NS_ASSERTION(aDocument, "aDocument should be a valid pointer (not null)");
   NS_ENSURE_TRUE(aDocument->GetScriptGlobalObject(), true);
 
-  JSContext* cx = aDocument->GetScriptGlobalObject()->
-                                  GetContext()->GetNativeContext();
+  AutoPushJSContext cx(aDocument->GetScriptGlobalObject()->
+                       GetContext()->GetNativeContext());
   NS_ENSURE_TRUE(cx, true);
 
   JSAutoRequest ar(cx);
@@ -6563,18 +6554,27 @@ nsContentUtils::SetUpChannelOwner(nsIPrincipal* aLoadingPrincipal,
   return false;
 }
 
+/* static */
 bool
 nsContentUtils::IsFullScreenApiEnabled()
 {
   return sIsFullScreenApiEnabled;
 }
 
+/* static */
 bool
 nsContentUtils::IsRequestFullScreenAllowed()
 {
   return !sTrustedFullScreenOnly ||
          nsEventStateManager::IsHandlingUserInput() ||
          IsCallerChrome();
+}
+
+/* static */
+bool
+nsContentUtils::IsFullscreenApiContentOnly()
+{
+  return sFullscreenApiIsContentOnly;
 }
 
 /* static */
@@ -6663,16 +6663,39 @@ nsContentUtils::HasPluginWithUncontrolledEventDispatch(nsIContent* aContent)
 
 /* static */
 nsIDocument*
-nsContentUtils::GetRootDocument(nsIDocument* aDoc)
+nsContentUtils::GetFullscreenAncestor(nsIDocument* aDoc)
 {
-  if (!aDoc) {
-    return nullptr;
-  }
   nsIDocument* doc = aDoc;
-  while (doc->GetParentDocument()) {
+  while (doc) {
+    if (doc->IsFullScreenDoc()) {
+      return doc;
+    }
     doc = doc->GetParentDocument();
   }
-  return doc;
+  return nullptr;
+}
+
+/* static */
+bool
+nsContentUtils::IsInPointerLockContext(nsIDOMWindow* aWin)
+{
+  if (!aWin) {
+    return false;
+  }
+
+  nsCOMPtr<nsIDocument> pointerLockedDoc =
+    do_QueryReferent(nsEventStateManager::sPointerLockedDoc);
+  if (!pointerLockedDoc || !pointerLockedDoc->GetWindow()) {
+    return false;
+  }
+
+  nsCOMPtr<nsIDOMWindow> lockTop;
+  pointerLockedDoc->GetWindow()->GetScriptableTop(getter_AddRefs(lockTop));
+
+  nsCOMPtr<nsIDOMWindow> top;
+  aWin->GetScriptableTop(getter_AddRefs(top));
+
+  return top == lockTop;
 }
 
 // static
@@ -6704,46 +6727,6 @@ nsContentUtils::TraceWrapper(nsWrapperCache* aCache, TraceCallback aCallback,
       aCallback(wrapper, "Preserved wrapper", aClosure);
     }
   }
-}
-
-nsresult
-nsContentUtils::JSArrayToAtomArray(JSContext* aCx, const JS::Value& aJSArray,
-                                   nsCOMArray<nsIAtom>& aRetVal)
-{
-  JSAutoRequest ar(aCx);
-  if (!aJSArray.isObject()) {
-    return NS_ERROR_ILLEGAL_VALUE;
-  }
-  
-  JSObject* obj = &aJSArray.toObject();
-  JSAutoCompartment ac(aCx, obj);
-  
-  uint32_t length;
-  if (!JS_IsArrayObject(aCx, obj) || !JS_GetArrayLength(aCx, obj, &length)) {
-    return NS_ERROR_ILLEGAL_VALUE;
-  }
-
-  JSString* str = nullptr;
-  JS::Anchor<JSString *> deleteProtector(str);
-  for (uint32_t i = 0; i < length; ++i) {
-    jsval v;
-    if (!JS_GetElement(aCx, obj, i, &v) ||
-        !(str = JS_ValueToString(aCx, v))) {
-      return NS_ERROR_ILLEGAL_VALUE;
-    }
-
-    nsDependentJSString depStr;
-    if (!depStr.init(aCx, str)) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    nsCOMPtr<nsIAtom> a = do_GetAtom(depStr);
-    if (!a) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-    aRetVal.AppendObject(a);
-  }
-  return NS_OK;
 }
 
 // static
@@ -6862,10 +6845,7 @@ AutoJSContext::Init(bool aSafe MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
 
   if (!mCx) {
     mCx = nsContentUtils::GetSafeJSContext();
-    bool result = mPusher.Push(mCx);
-    if (!result || !mCx) {
-      MOZ_CRASH();
-    }
+    mPusher.Push(mCx);
   }
 }
 

@@ -7,7 +7,7 @@
 #include "gfxUtils.h"
 #include "nsIWidget.h"
 #include "RenderTrace.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 #include "prprf.h"
 
@@ -86,7 +86,7 @@ BasicThebesLayer::PaintThebes(gfxContext* aContext,
                               void* aCallbackData,
                               ReadbackProcessor* aReadback)
 {
-  SAMPLE_LABEL("BasicThebesLayer", "PaintThebes");
+  PROFILER_LABEL("BasicThebesLayer", "PaintThebes");
   NS_ASSERTION(BasicManager()->InDrawing(),
                "Can only draw in drawing phase");
   nsRefPtr<gfxASurface> targetSurface = aContext->CurrentSurface();
@@ -188,6 +188,7 @@ BasicThebesLayer::PaintThebes(gfxContext* aContext,
                   state.mRegionToDraw, extendedDrawRegion, state.mRegionToInvalidate,
                   state.mDidSelfCopy,
                   aCallback, aCallbackData);
+      MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) PaintThebes", this));
       Mutated();
 
       RenderTraceInvalidateEnd(this, "FFFF00");
@@ -461,7 +462,8 @@ BasicShadowableThebesLayer::CreateBuffer(Buffer::ContentType aType,
     PR_snprintf(buf, buflen,
                 "creating ThebesLayer 'back buffer' failed! width=%d, height=%d, type=%x",
                 aSize.width, aSize.height, int(aType));
-    NS_RUNTIMEABORT(buf);
+    NS_ERROR(buf);
+    return nullptr;
   }
 
   NS_ABORT_IF_FALSE(!mIsNewBuffer,

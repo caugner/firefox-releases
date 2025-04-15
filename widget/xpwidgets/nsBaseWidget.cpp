@@ -30,6 +30,7 @@
 #include "nsIGfxInfo.h"
 #include "npapi.h"
 #include "base/thread.h"
+#include "prdtoa.h"
 #include "prenv.h"
 #include "mozilla/Attributes.h"
 #include "nsContentUtils.h"
@@ -380,18 +381,26 @@ float nsBaseWidget::GetDPI()
 
 double nsIWidget::GetDefaultScale()
 {
+  double devPixelsPerCSSPixel = DefaultScaleOverride();
+
+  if (devPixelsPerCSSPixel <= 0.0) {
+    devPixelsPerCSSPixel = GetDefaultScaleInternal();
+  }
+
+  return devPixelsPerCSSPixel;
+}
+
+/* static */
+double nsIWidget::DefaultScaleOverride()
+{
   // The number of device pixels per CSS pixel. A value <= 0 means choose
   // automatically based on the DPI. A positive value is used as-is. This effectively
   // controls the size of a CSS "px".
-  float devPixelsPerCSSPixel = -1.0;
+  double devPixelsPerCSSPixel = -1.0;
 
   nsAdoptingCString prefString = Preferences::GetCString("layout.css.devPixelsPerPx");
   if (!prefString.IsEmpty()) {
-    devPixelsPerCSSPixel = static_cast<float>(atof(prefString));
-  }
-
-  if (devPixelsPerCSSPixel <= 0) {
-    devPixelsPerCSSPixel = GetDefaultScaleInternal();
+    devPixelsPerCSSPixel = PR_strtod(prefString, nullptr);
   }
 
   return devPixelsPerCSSPixel;
@@ -700,6 +709,12 @@ NS_IMETHODIMP nsBaseWidget::MakeFullScreen(bool aFullScreen)
     if (!mOriginalBounds)
       mOriginalBounds = new nsIntRect();
     GetScreenBounds(*mOriginalBounds);
+    // convert dev pix to display pix for window manipulation 
+    double scale = GetDefaultScale();
+    mOriginalBounds->x = NSToIntRound(mOriginalBounds->x / scale);
+    mOriginalBounds->y = NSToIntRound(mOriginalBounds->y / scale);
+    mOriginalBounds->width = NSToIntRound(mOriginalBounds->width / scale);
+    mOriginalBounds->height = NSToIntRound(mOriginalBounds->height / scale);
 
     // Move to top-left corner of screen and size to the screen dimensions
     nsCOMPtr<nsIScreenManager> screenManager;
@@ -707,16 +722,14 @@ NS_IMETHODIMP nsBaseWidget::MakeFullScreen(bool aFullScreen)
     NS_ASSERTION(screenManager, "Unable to grab screenManager.");
     if (screenManager) {
       nsCOMPtr<nsIScreen> screen;
-      // convert dev pix to display/CSS pix for ScreenForRect
-      double scale = GetDefaultScale();
-      screenManager->ScreenForRect(mOriginalBounds->x / scale,
-                                   mOriginalBounds->y / scale,
-                                   mOriginalBounds->width / scale,
-                                   mOriginalBounds->height / scale,
+      screenManager->ScreenForRect(mOriginalBounds->x,
+                                   mOriginalBounds->y,
+                                   mOriginalBounds->width,
+                                   mOriginalBounds->height,
                                    getter_AddRefs(screen));
       if (screen) {
         int32_t left, top, width, height;
-        if (NS_SUCCEEDED(screen->GetRect(&left, &top, &width, &height))) {
+        if (NS_SUCCEEDED(screen->GetRectDisplayPix(&left, &top, &width, &height))) {
           Resize(left, top, width, height, true);
         }
       }
@@ -858,14 +871,19 @@ nsBaseWidget::ComputeShouldAccelerate(bool aDefault)
 
 void nsBaseWidget::CreateCompositor()
 {
+  nsIntRect rect;
+  GetBounds(rect);
+  CreateCompositor(rect.width, rect.height);
+}
+
+void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
+{
   bool renderToEGLSurface = false;
 #ifdef MOZ_ANDROID_OMTC
   renderToEGLSurface = true;
 #endif
-  nsIntRect rect;
-  GetBounds(rect);
   mCompositorParent =
-    new CompositorParent(this, renderToEGLSurface, rect.width, rect.height);
+    new CompositorParent(this, renderToEGLSurface, aWidth, aHeight);
   LayerManager* lm = CreateBasicLayerManager();
   MessageLoop *childMessageLoop = CompositorParent::CompositorLoop();
   mCompositorChild = new CompositorChild(lm);
@@ -900,7 +918,7 @@ void nsBaseWidget::CreateCompositor()
   }
 }
 
-bool nsBaseWidget::UseOffMainThreadCompositing()
+bool nsBaseWidget::ShouldUseOffMainThreadCompositing()
 {
   bool isSmallPopup = ((mWindowType == eWindowType_popup) &&
                       (mPopupType != ePopupTypePanel));
@@ -917,7 +935,7 @@ LayerManager* nsBaseWidget::GetLayerManager(PLayersChild* aShadowManager,
     mUseLayersAcceleration = ComputeShouldAccelerate(mUseLayersAcceleration);
 
     // Try to use an async compositor first, if possible
-    if (UseOffMainThreadCompositing()) {
+    if (ShouldUseOffMainThreadCompositing()) {
       // e10s uses the parameter to pass in the shadow manager from the TabChild
       // so we don't expect to see it there since this doesn't support e10s.
       NS_ASSERTION(aShadowManager == nullptr, "Async Compositor not supported with e10s");
@@ -1011,8 +1029,13 @@ NS_METHOD nsBaseWidget::SetWindowClass(const nsAString& xulWinType)
 NS_METHOD nsBaseWidget::MoveClient(double aX, double aY)
 {
   nsIntPoint clientOffset(GetClientOffset());
-  aX -= clientOffset.x;
-  aY -= clientOffset.y;
+
+  // GetClientOffset returns device pixels; scale back to display pixels
+  // if that's what this widget uses for the Move/Resize APIs
+  double scale = BoundsUseDisplayPixels() ? 1.0 / GetDefaultScale() : 1.0;
+  aX -= clientOffset.x * scale;
+  aY -= clientOffset.y * scale;
+
   return Move(aX, aY);
 }
 
@@ -1025,8 +1048,12 @@ NS_METHOD nsBaseWidget::ResizeClient(double aWidth,
 
   nsIntRect clientBounds;
   GetClientBounds(clientBounds);
-  aWidth = mBounds.width + (aWidth - clientBounds.width);
-  aHeight = mBounds.height + (aHeight - clientBounds.height);
+
+  // GetClientBounds and mBounds are device pixels; scale back to display pixels
+  // if that's what this widget uses for the Move/Resize APIs
+  double scale = BoundsUseDisplayPixels() ? 1.0 / GetDefaultScale() : 1.0;
+  aWidth = mBounds.width * scale + (aWidth - clientBounds.width * scale);
+  aHeight = mBounds.height * scale + (aHeight - clientBounds.height * scale);
 
   return Resize(aWidth, aHeight, aRepaint);
 }
@@ -1042,12 +1069,14 @@ NS_METHOD nsBaseWidget::ResizeClient(double aX,
 
   nsIntRect clientBounds;
   GetClientBounds(clientBounds);
-  aWidth = mBounds.width + (aWidth - clientBounds.width);
-  aHeight = mBounds.height + (aHeight - clientBounds.height);
+
+  double scale = BoundsUseDisplayPixels() ? 1.0 / GetDefaultScale() : 1.0;
+  aWidth = mBounds.width * scale + (aWidth - clientBounds.width * scale);
+  aHeight = mBounds.height * scale + (aHeight - clientBounds.height * scale);
 
   nsIntPoint clientOffset(GetClientOffset());
-  aX -= clientOffset.x;
-  aY -= clientOffset.y;
+  aX -= clientOffset.x * scale;
+  aY -= clientOffset.y * scale;
 
   return Resize(aX, aY, aWidth, aHeight, aRepaint);
 }
@@ -1197,36 +1226,45 @@ NS_METHOD nsBaseWidget::UnregisterTouchWindow()
 }
 
 NS_IMETHODIMP
-nsBaseWidget::OverrideSystemMouseScrollSpeed(int32_t aOriginalDelta,
-                                             bool aIsHorizontal,
-                                             int32_t &aOverriddenDelta)
+nsBaseWidget::OverrideSystemMouseScrollSpeed(double aOriginalDeltaX,
+                                             double aOriginalDeltaY,
+                                             double& aOverriddenDeltaX,
+                                             double& aOverriddenDeltaY)
 {
-  aOverriddenDelta = aOriginalDelta;
+  aOverriddenDeltaX = aOriginalDeltaX;
+  aOverriddenDeltaY = aOriginalDeltaY;
 
-  const char* kPrefNameOverrideEnabled =
-    "mousewheel.system_scroll_override_on_root_content.enabled";
-  bool isOverrideEnabled =
-    Preferences::GetBool(kPrefNameOverrideEnabled, false);
-  if (!isOverrideEnabled) {
+  static bool sInitialized = false;
+  static bool sIsOverrideEnabled = false;
+  static int32_t sIntFactorX = 0;
+  static int32_t sIntFactorY = 0;
+
+  if (!sInitialized) {
+    Preferences::AddBoolVarCache(&sIsOverrideEnabled,
+      "mousewheel.system_scroll_override_on_root_content.enabled", false);
+    Preferences::AddIntVarCache(&sIntFactorX,
+      "mousewheel.system_scroll_override_on_root_content.horizontal.factor", 0);
+    Preferences::AddIntVarCache(&sIntFactorY,
+      "mousewheel.system_scroll_override_on_root_content.vertical.factor", 0);
+    sIntFactorX = std::max(sIntFactorX, 0);
+    sIntFactorY = std::max(sIntFactorY, 0);
+    sInitialized = true;
+  }
+
+  if (!sIsOverrideEnabled) {
     return NS_OK;
   }
 
-  nsAutoCString factorPrefName(
-    "mousewheel.system_scroll_override_on_root_content.");
-  if (aIsHorizontal) {
-    factorPrefName.AppendLiteral("horizontal.");
-  } else {
-    factorPrefName.AppendLiteral("vertical.");
-  }
-  factorPrefName.AppendLiteral("factor");
-  int32_t iFactor = Preferences::GetInt(factorPrefName.get(), 0);
   // The pref value must be larger than 100, otherwise, we don't override the
   // delta value.
-  if (iFactor <= 100) {
-    return NS_OK;
+  if (sIntFactorX > 100) {
+    double factor = static_cast<double>(sIntFactorX) / 100;
+    aOverriddenDeltaX *= factor;
   }
-  double factor = (double)iFactor / 100;
-  aOverriddenDelta = int32_t(NS_round((double)aOriginalDelta * factor));
+  if (sIntFactorY > 100) {
+    double factor = static_cast<double>(sIntFactorY) / 100;
+    aOverriddenDeltaY *= factor;
+  }
 
   return NS_OK;
 }

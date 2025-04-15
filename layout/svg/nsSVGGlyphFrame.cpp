@@ -16,12 +16,11 @@
 #include "nsBidiPresUtils.h"
 #include "nsDisplayList.h"
 #include "nsError.h"
-#include "nsIDOMSVGRect.h"
 #include "nsRenderingContext.h"
 #include "nsSVGEffects.h"
 #include "nsSVGIntegrationUtils.h"
 #include "nsSVGPaintServerFrame.h"
-#include "nsSVGRect.h"
+#include "mozilla/dom/SVGRect.h"
 #include "nsSVGTextPathFrame.h"
 #include "nsSVGUtils.h"
 #include "nsTextFragment.h"
@@ -313,18 +312,7 @@ nsSVGGlyphFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
   }
 }
 
-NS_IMETHODIMP
-nsSVGGlyphFrame::IsSelectable(bool* aIsSelectable,
-                              uint8_t* aSelectStyle) const
-{
-  nsresult rv = nsSVGGlyphFrameBase::IsSelectable(aIsSelectable, aSelectStyle);
-#if defined(DEBUG) && defined(SVG_DEBUG_SELECTION)
-  printf("nsSVGGlyphFrame(%p)::IsSelectable()=(%d,%d)\n", this, *aIsSelectable, aSelectStyle);
-#endif
-  return rv;
-}
-
-NS_IMETHODIMP
+void
 nsSVGGlyphFrame::Init(nsIContent* aContent,
                       nsIFrame* aParent,
                       nsIFrame* aPrevInFlow)
@@ -343,7 +331,7 @@ nsSVGGlyphFrame::Init(nsIContent* aContent,
                "trying to construct an SVGGlyphFrame for wrong content element");
 #endif /* DEBUG */
 
-  return nsSVGGlyphFrameBase::Init(aContent, aParent, aPrevInFlow);
+  nsSVGGlyphFrameBase::Init(aContent, aParent, aPrevInFlow);
 }
 
 nsIAtom *
@@ -1165,125 +1153,6 @@ mozilla::SVGTextObjectPaint::Paint::GetPattern(float aOpacity,
 }
 
 //----------------------------------------------------------------------
-
-// Utilities for converting from indices in the uncompressed content
-// element strings to compressed frame string and back:
-static int
-CompressIndex(int index, const nsTextFragment*fragment)
-{
-  int ci=0;
-  if (fragment->Is2b()) {
-    const PRUnichar *data=fragment->Get2b();
-    while(*data && index) {
-      if (dom::IsSpaceCharacter(*data)){
-        do {
-          ++data;
-          --index;
-        }while(dom::IsSpaceCharacter(*data) && index);
-      }
-      else {
-        ++data;
-        --index;
-      }
-      ++ci;
-    }
-  }
-  else {
-    const char *data=fragment->Get1b();
-    while(*data && index) {
-      if (dom::IsSpaceCharacter(*data)){
-        do {
-          ++data;
-          --index;
-        }while(dom::IsSpaceCharacter(*data) && index);
-      }
-      else {
-        ++data;
-        --index;
-      }
-      ++ci;
-    }
-  }
-    
-  return ci;
-}
-
-nsresult
-nsSVGGlyphFrame::GetHighlight(uint32_t *charnum, uint32_t *nchars,
-                              nscolor *foreground, nscolor *background)
-{
-  *foreground = NS_RGB(255,255,255);
-  *background = NS_RGB(0,0,0); 
-  *charnum=0;
-  *nchars=0;
-
-  bool hasHighlight = IsSelected();
-  if (!hasHighlight) {
-    NS_ERROR("nsSVGGlyphFrame::GetHighlight() called by renderer when there is no highlight");
-    return NS_ERROR_FAILURE;
-  }
-
-  nsPresContext *presContext = PresContext();
-
-  // The selection ranges are relative to the uncompressed text in
-  // the content element. We'll need the text fragment:
-  const nsTextFragment *fragment = mContent->GetText();
-  NS_ASSERTION(fragment, "no text");
-  
-  // get the selection details 
-  SelectionDetails *details = nullptr;
-  {
-    nsRefPtr<nsFrameSelection> frameSelection = presContext->PresShell()->FrameSelection();
-    if (!frameSelection) {
-      NS_ERROR("no frameselection interface");
-      return NS_ERROR_FAILURE;
-    }
-
-    details = frameSelection->LookUpSelection(
-      mContent, 0, fragment->GetLength(), false
-      );
-  }
-
-#if defined(DEBUG) && defined(SVG_DEBUG_SELECTION)
-  {
-    SelectionDetails *dp = details;
-    printf("nsSVGGlyphFrame(%p)::GetHighlight() [\n", this);
-    while (dp) {
-      printf("selection detail: %d(%d)->%d(%d) type %d\n",
-             dp->mStart, CompressIndex(dp->mStart, fragment),
-             dp->mEnd, CompressIndex(dp->mEnd, fragment),
-             dp->mType);
-      dp = dp->mNext;
-    }
-    printf("]\n");
-      
-  }
-#endif
-  
-  if (details) {
-    NS_ASSERTION(details->mNext==nullptr, "can't do multiple selection ranges");
-
-    *charnum=CompressIndex(details->mStart, fragment);
-    *nchars=CompressIndex(details->mEnd, fragment)-*charnum;  
-
-    LookAndFeel::GetColor(LookAndFeel::eColorID_TextSelectBackground,
-                          background);
-    LookAndFeel::GetColor(LookAndFeel::eColorID_TextSelectForeground,
-                          foreground);
-
-    SelectionDetails *dp = details;
-    while ((dp=details->mNext) != nullptr) {
-      delete details;
-      details = dp;
-    }
-    delete details;
-  }
-  
-  return NS_OK;
-}
-
-
-//----------------------------------------------------------------------
 // Internal methods
 
 void
@@ -1386,7 +1255,7 @@ nsSVGGlyphFrame::GetEndPositionOfChar(uint32_t charnum,
 }
 
 nsresult
-nsSVGGlyphFrame::GetExtentOfChar(uint32_t charnum, nsIDOMSVGRect **_retval)
+nsSVGGlyphFrame::GetExtentOfChar(uint32_t charnum, dom::SVGIRect **_retval)
 {
   *_retval = nullptr;
 
@@ -1415,7 +1284,13 @@ nsSVGGlyphFrame::GetExtentOfChar(uint32_t charnum, nsIDOMSVGRect **_retval)
                             metrics.mAdvanceWidth,
                             metrics.mAscent + metrics.mDescent));
   tmpCtx->IdentityMatrix();
-  return NS_NewSVGRect(_retval, tmpCtx->GetUserPathExtent());
+
+  nsRefPtr<dom::SVGRect> rect;
+  nsresult rv = NS_NewSVGRect(getter_AddRefs(rect), tmpCtx->GetUserPathExtent());
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rect.forget(_retval);
+  return NS_OK;
 }
 
 nsresult

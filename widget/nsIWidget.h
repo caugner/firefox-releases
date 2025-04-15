@@ -92,8 +92,8 @@ typedef nsEventStatus (* EVENT_CALLBACK)(nsGUIEvent *event);
 #endif
 
 #define NS_IWIDGET_IID \
-  { 0xDAEE334D, 0x9031, 0x4928, \
-    { 0x9D, 0xD7, 0x75, 0x2E, 0x8B, 0x6B, 0xF7, 0x0E } }
+  { 0xdaac8d94, 0x14f3, 0x4bc4, \
+    { 0xa8, 0xc, 0xf0, 0xe6, 0x46, 0x1e, 0xad, 0x40 } }
 
 /*
  * Window shadow styles
@@ -188,11 +188,12 @@ enum nsTopLevelWidgetZPlacement { // for PlaceBehind()
  * Preference for receiving IME updates
  *
  * If mWantUpdates is true, nsTextStateManager will observe text change and
- * selection change and call nsIWidget::OnIMETextChange() and
- * nsIWidget::OnIMESelectionChange(). The observing cost is very expensive.
+ * selection change and call nsIWidget::NotifyIMEOfTextChange() and
+ * nsIWidget::NotifyIME(NOTIFY_IME_OF_SELECTION_CHANGE). The observing cost is
+ * very expensive.
  * If the IME implementation on a particular platform doesn't care about
- * OnIMETextChange and OnIMESelectionChange, they should set mWantUpdates to
- * false to avoid the cost.
+ * NotifyIMEOfTextChange and NotifyIME(NOTIFY_IME_OF_SELECTION_CHANGE), they
+ * should set mWantUpdates to false to avoid the cost.
  *
  * If mWantHints is true, PuppetWidget will forward the content of text fields
  * to the chrome process to be cached. This way we return the cached content
@@ -419,6 +420,7 @@ class nsIWidget : public nsISupports {
     typedef mozilla::layers::LayerManager LayerManager;
     typedef mozilla::layers::LayersBackend LayersBackend;
     typedef mozilla::layers::PLayersChild PLayersChild;
+    typedef mozilla::widget::NotificationToIME NotificationToIME;
     typedef mozilla::widget::IMEState IMEState;
     typedef mozilla::widget::InputContext InputContext;
     typedef mozilla::widget::InputContextAction InputContextAction;
@@ -604,6 +606,19 @@ class nsIWidget : public nsISupports {
      * overriding the system setting.
      */
     double GetDefaultScale();
+
+    /**
+     * Return the Gecko override of the system default scale, if any;
+     * returns <= 0.0 if the system scale should be used as-is.
+     * nsIWidget::GetDefaultScale() [above] takes this into account.
+     * It is exposed here so that code that wants to check for a
+     * default-scale override without having a widget on hand can
+     * easily access the same value.
+     * Note that any scale override is a browser-wide value, whereas
+     * the default GetDefaultScale value (when no override is present)
+     * may vary between widgets (or screens).
+     */
+    static double DefaultScaleOverride();
 
     /**
      * Return the first child of this widget.  Will return null if
@@ -1486,25 +1501,10 @@ class nsIWidget : public nsISupports {
      */
     virtual nsresult ForceUpdateNativeMenuAt(const nsAString& indexString) = 0;
 
-    /*
-     * Force Input Method Editor to commit the uncommitted input
+    /**
+     * Notify IME of the specified notification.
      */
-    NS_IMETHOD ResetInputState()=0;
-
-    /*
-     * Following methods relates to IME 'Opened'/'Closed' state.
-     * 'Opened' means the user can input any character. I.e., users can input Japanese  
-     * and other characters. The user can change the state to 'Closed'.
-     * 'Closed' means the user can input ASCII characters only. This is the same as a
-     * non-IME environment. The user can change the state to 'Opened'.
-     * For more information is here.
-     * http://bugzilla.mozilla.org/show_bug.cgi?id=16940#c48
-     */
-
-    /*
-     * Destruct and don't commit the IME composition string.
-     */
-    NS_IMETHOD CancelIMEComposition() = 0;
+    NS_IMETHOD NotifyIME(NotificationToIME aNotification) = 0;
 
     /*
      * Notifies the input context changes.
@@ -1534,27 +1534,14 @@ class nsIWidget : public nsISupports {
     NS_IMETHOD GetToggledKeyState(uint32_t aKeyCode, bool* aLEDState) = 0;
 
     /*
-     * An editable node (i.e. input/textarea/design mode document)
-     *  is receiving or giving up focus
-     * aFocus is true if node is receiving focus
-     * aFocus is false if node is giving up focus (blur)
-     */
-    NS_IMETHOD OnIMEFocusChange(bool aFocus) = 0;
-
-    /*
      * Text content of the focused node has changed
      * aStart is the starting offset of the change
      * aOldEnd is the ending offset of the change
      * aNewEnd is the caret offset after the change
      */
-    NS_IMETHOD OnIMETextChange(uint32_t aStart,
-                               uint32_t aOldEnd,
-                               uint32_t aNewEnd) = 0;
-
-    /*
-     * Selection has changed in the focused node
-     */
-    NS_IMETHOD OnIMESelectionChange(void) = 0;
+    NS_IMETHOD NotifyIMEOfTextChange(uint32_t aStart,
+                                     uint32_t aOldEnd,
+                                     uint32_t aNewEnd) = 0;
 
     /*
      * Retrieves preference for IME updates
@@ -1579,16 +1566,19 @@ class nsIWidget : public nsISupports {
      * actions.  And also this isn't called when the user doesn't use the
      * system wheel speed settings.
      *
-     * @param aOriginalDelta   The delta value of the current mouse wheel
-     *                         scrolling event.
-     * @param aIsHorizontal    If TRUE, the scrolling direction is horizontal.
-     *                         Otherwise, it's vertical.
-     * @param aOverriddenDelta The overridden mouse scrolling speed.  This value
-     *                         may be same as aOriginalDelta.
+     * @param aOriginalDeltaX   The X delta value of the current mouse wheel
+     *                          scrolling event.
+     * @param aOriginalDeltaX   The Y delta value of the current mouse wheel
+     *                          scrolling event.
+     * @param aOverriddenDeltaX The overridden mouse scrolling speed along X
+     *                          axis. This value may be same as aOriginalDeltaX.
+     * @param aOverriddenDeltaY The overridden mouse scrolling speed along Y
+     *                          axis. This value may be same as aOriginalDeltaY.
      */
-    NS_IMETHOD OverrideSystemMouseScrollSpeed(int32_t aOriginalDelta,
-                                              bool aIsHorizontal,
-                                              int32_t &aOverriddenDelta) = 0;
+    NS_IMETHOD OverrideSystemMouseScrollSpeed(double aOriginalDeltaX,
+                                              double aOriginalDeltaY,
+                                              double& aOverriddenDeltaX,
+                                              double& aOverriddenDeltaY) = 0;
 
     /**
      * Return true if this process shouldn't use platform widgets, and

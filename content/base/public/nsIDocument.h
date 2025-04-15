@@ -76,6 +76,7 @@ class nsWindowSizes;
 class nsSmallVoidArray;
 class nsDOMCaretPosition;
 class nsViewportInfo;
+class nsDOMEvent;
 
 namespace mozilla {
 class ErrorResult;
@@ -92,18 +93,25 @@ class DocumentFragment;
 class DocumentType;
 class DOMImplementation;
 class Element;
+struct ElementRegistrationOptions;
 class GlobalObject;
 class HTMLBodyElement;
 class Link;
+class NodeFilter;
+class NodeIterator;
 class ProcessingInstruction;
+class TreeWalker;
 class UndoManager;
 template<typename> class Sequence;
+
+template<typename, typename> class CallbackObjectHolder;
+typedef CallbackObjectHolder<NodeFilter, nsIDOMNodeFilter> NodeFilterHolder;
 } // namespace dom
 } // namespace mozilla
 
 #define NS_IDOCUMENT_IID \
-{ 0x4e6f7d97, 0x091e, 0x4eda, \
-  { 0xb7, 0xd6, 0xfe, 0xb0, 0xb8, 0x01, 0x2a, 0x93 } }
+{ 0x699e0649, 0x55f2, 0x47f1, \
+ { 0x93, 0x38, 0xcd, 0x67, 0xf3, 0x2b, 0x04, 0xe9 } }
 
 // Flag for AddStyleSheet().
 #define NS_STYLESHEET_FROM_CATALOG                (1 << 0)
@@ -864,10 +872,15 @@ public:
   virtual Element* GetFullScreenElement() = 0;
 
   /**
-   * Asynchronously requests that the document make aElement the full-screen
-   * element, and move into full-screen mode. The current full-screen element
-   * (if any) is pushed onto the full-screen element stack, and it can be
-   * returned to full-screen status by calling RestorePreviousFullScreenState().
+   * Asynchronously requests that the document make aElement the fullscreen
+   * element, and move into fullscreen mode. The current fullscreen element
+   * (if any) is pushed onto the fullscreen element stack, and it can be
+   * returned to fullscreen status by calling RestorePreviousFullScreenState().
+   *
+   * Note that requesting fullscreen in a document also makes the element which
+   * contains this document in this document's parent document fullscreen. i.e.
+   * the <iframe> or <browser> that contains this document is also mode
+   * fullscreen. This happens recursively in all ancestor documents.
    */
   virtual void AsyncRequestFullScreen(Element* aElement) = 0;
 
@@ -886,7 +899,7 @@ public:
    * so that all its fullscreen element stacks are empty; we must continue the
    * rollback in this parent process' doc tree branch which is fullscreen.
    * Note that only one branch of the document tree can have its documents in
-   * fullscreen state at one time. We're in inconsistent state if the a 
+   * fullscreen state at one time. We're in inconsistent state if a
    * fullscreen document has a parent and that parent isn't fullscreen. We
    * preserve this property across process boundaries.
    */
@@ -905,6 +918,25 @@ public:
   virtual bool IsFullScreenDoc() = 0;
 
   /**
+   * Returns true if this document is a fullscreen leaf document, i.e. it
+   * is in fullscreen mode and has no fullscreen children.
+   */
+  virtual bool IsFullscreenLeaf() = 0;
+
+  /**
+   * Returns the document which is at the root of this document's branch
+   * in the in-process document tree. Returns nullptr if the document isn't
+   * fullscreen.
+   */
+  virtual nsIDocument* GetFullscreenRoot() = 0;
+
+  /**
+   * Sets the fullscreen root to aRoot. This stores a weak reference to aRoot
+   * in this document.
+   */
+  virtual void SetFullscreenRoot(nsIDocument* aRoot) = 0;
+
+  /**
    * Sets whether this document is approved for fullscreen mode.
    * Documents aren't approved for fullscreen until chrome has sent a
    * "fullscreen-approved" notification with a subject which is a pointer
@@ -913,16 +945,31 @@ public:
   virtual void SetApprovedForFullscreen(bool aIsApproved) = 0;
 
   /**
-   * Exits all documents from DOM full-screen mode, and moves the top-level
-   * browser window out of full-screen mode. If aRunAsync is true, this runs
-   * asynchronously.
+   * Exits documents out of DOM fullscreen mode.
+   *
+   * If aDocument is null, all fullscreen documents in all browser windows
+   * exit fullscreen.
+   *
+   * If aDocument is non null, all documents from aDocument's fullscreen root
+   * to the fullscreen leaf exit fullscreen. 
+   *
+   * Note that the fullscreen leaf is the bottom-most document which is
+   * fullscreen, it may have non-fullscreen child documents. The fullscreen
+   * root is usually the chrome document, but if fullscreen is content-only,
+   * (see the comment in nsContentUtils.h on IsFullscreenApiContentOnly())
+   * the fullscreen root will be a direct child of the chrome document, and
+   * there may be other branches of the same doctree that are fullscreen.
+   *
+   * If aRunAsync is true, fullscreen is executed asynchronously.
+   *
+   * Note if aDocument is not fullscreen this function has no effect, even if
+   * aDocument has fullscreen ancestors.
    */
-  static void ExitFullScreen(bool aRunAsync);
-
+  static void ExitFullscreen(nsIDocument* aDocument, bool aRunAsync);
 
   virtual void RequestPointerLock(Element* aElement) = 0;
 
-  static void UnlockPointer();
+  static void UnlockPointer(nsIDocument* aDoc = nullptr);
 
 
   //----------------------------------------------------------------------
@@ -1259,7 +1306,9 @@ public:
    * Get the box object for an element. This is not exposed through a
    * scriptable interface except for XUL documents.
    */
-  NS_IMETHOD GetBoxObjectFor(nsIDOMElement* aElement, nsIBoxObject** aResult) = 0;
+  virtual already_AddRefed<nsIBoxObject>
+    GetBoxObjectFor(mozilla::dom::Element* aElement,
+                    mozilla::ErrorResult& aRv) = 0;
 
   /**
    * Get the compatibility mode for this document
@@ -1504,6 +1553,13 @@ public:
    * OnPageHide having been called and OnPageShow not yet having been called)
    */
   bool IsVisible() const { return mVisible; }
+
+  /**
+   * Return whether the document and all its ancestors are visible in the sense of
+   * pageshow / hide.
+   */
+  bool IsVisibleConsideringAncestors() const;
+
   /**
    * Return true when this document is active, i.e., the active document
    * in a content viewer.
@@ -1575,6 +1631,12 @@ public:
   void ForceEnableXULXBL() {
     mAllowXULXBL = eTriTrue;
   }
+
+  /**
+   * Returns the template content owner document that owns the content of
+   * HTMLTemplateElement.
+   */
+  virtual nsIDocument* GetTemplateContentsOwner() = 0;
 
   /**
    * true when this document is a static clone of a normal document.
@@ -1781,11 +1843,13 @@ public:
   void FlushPendingLinkUpdates();
 
 #define DEPRECATED_OPERATION(_op) e##_op,
+#define DEPRECATED_OPERATION_WITH_HARDCODED_STRING(_op, _str) e##_op,
   enum DeprecatedOperations {
 #include "nsDeprecatedOperationList.h"
     eDeprecatedOperationCount
   };
 #undef DEPRECATED_OPERATION
+#undef DEPRECATED_OPERATION_WITH_HARDCODED_STRING
   void WarnOnceAbout(DeprecatedOperations aOperation, bool asError = false);
 
   virtual void PostVisibilityUpdateEvent() = 0;
@@ -1865,6 +1929,10 @@ public:
   {
     return GetRootElement();
   }
+  virtual JSObject*
+  Register(JSContext* aCx, const nsAString& aName,
+           const mozilla::dom::ElementRegistrationOptions& aOptions,
+           mozilla::ErrorResult& rv) = 0;
   already_AddRefed<nsContentList>
   GetElementsByTagName(const nsAString& aTagName)
   {
@@ -1893,15 +1961,24 @@ public:
   already_AddRefed<nsINode>
     ImportNode(nsINode& aNode, bool aDeep, mozilla::ErrorResult& rv) const;
   nsINode* AdoptNode(nsINode& aNode, mozilla::ErrorResult& rv);
-  already_AddRefed<nsIDOMEvent> CreateEvent(const nsAString& aEventType,
-                                            mozilla::ErrorResult& rv) const;
+  already_AddRefed<nsDOMEvent> CreateEvent(const nsAString& aEventType,
+                                           mozilla::ErrorResult& rv) const;
   already_AddRefed<nsRange> CreateRange(mozilla::ErrorResult& rv);
-  already_AddRefed<nsIDOMNodeIterator>
+  already_AddRefed<mozilla::dom::NodeIterator>
     CreateNodeIterator(nsINode& aRoot, uint32_t aWhatToShow,
-                       nsIDOMNodeFilter* aFilter, mozilla::ErrorResult& rv) const;
-  already_AddRefed<nsIDOMTreeWalker>
+                       mozilla::dom::NodeFilter* aFilter,
+                       mozilla::ErrorResult& rv) const;
+  already_AddRefed<mozilla::dom::NodeIterator>
+    CreateNodeIterator(nsINode& aRoot, uint32_t aWhatToShow,
+                       const mozilla::dom::NodeFilterHolder& aFilter,
+                       mozilla::ErrorResult& rv) const;
+  already_AddRefed<mozilla::dom::TreeWalker>
     CreateTreeWalker(nsINode& aRoot, uint32_t aWhatToShow,
-                     nsIDOMNodeFilter* aFilter, mozilla::ErrorResult& rv) const;
+                     mozilla::dom::NodeFilter* aFilter, mozilla::ErrorResult& rv) const;
+  already_AddRefed<mozilla::dom::TreeWalker>
+    CreateTreeWalker(nsINode& aRoot, uint32_t aWhatToShow,
+                     const mozilla::dom::NodeFilterHolder& aFilter,
+                     mozilla::ErrorResult& rv) const;
 
   // Deprecated WebIDL bits
   already_AddRefed<mozilla::dom::CDATASection>
@@ -1939,6 +2016,10 @@ public:
   void ReleaseCapture() const;
   virtual void MozSetImageElement(const nsAString& aImageElementId,
                                   Element* aElement) = 0;
+  nsIURI* GetDocumentURIObject()
+  {
+    return GetDocumentURI();
+  }
   // Not const because all the full-screen goop is not const
   virtual bool MozFullScreenEnabled() = 0;
   virtual Element* GetMozFullScreenElement(mozilla::ErrorResult& rv) = 0;
@@ -1950,7 +2031,7 @@ public:
   Element* GetMozPointerLockElement();
   void MozExitPointerLock()
   {
-    UnlockPointer();
+    UnlockPointer(this);
   }
   bool Hidden() const
   {
@@ -2074,6 +2155,10 @@ protected:
     mDirectionality = aDir;
   }
 
+  // All document WrapNode implementations MUST call this method.  A
+  // false return value means an exception was thrown.
+  bool PostCreateWrapper(JSContext* aCx, JSObject *aNewObject);
+
   nsCString mReferrer;
   nsString mLastModified;
 
@@ -2151,7 +2236,7 @@ protected:
   // as scripts and plugins, disabled.
   bool mLoadedAsData;
 
-  // This flag is only set in nsXMLDocument, for e.g. documents used in XBL. We
+  // This flag is only set in XMLDocument, for e.g. documents used in XBL. We
   // don't want animations to play in such documents, so we need to store the
   // flag here so that we can check it in nsDocument::GetAnimationController.
   bool mLoadedAsInteractiveData;
@@ -2407,6 +2492,10 @@ NS_NewImageDocument(nsIDocument** aInstancePtrResult);
 nsresult
 NS_NewVideoDocument(nsIDocument** aInstancePtrResult);
 #endif
+
+already_AddRefed<mozilla::dom::DocumentFragment>
+NS_NewDocumentFragment(nsNodeInfoManager* aNodeInfoManager,
+                       mozilla::ErrorResult& aRv);
 
 nsresult
 NS_NewDocumentFragment(nsIDOMDocumentFragment** aInstancePtrResult,

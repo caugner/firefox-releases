@@ -5,6 +5,7 @@
 
 #include "nsISupports.idl"
 
+interface nsFrameLoader;
 interface nsIDocShell;
 interface nsIURI;
 interface nsIFrame;
@@ -249,6 +250,10 @@ interface nsIFrameLoader : nsISupports
    */
   readonly attribute nsIDOMElement ownerElement;
 };
+
+%{C++
+class nsFrameLoader;
+%}
 
 native alreadyAddRefed_nsFrameLoader(already_AddRefed<nsFrameLoader>);
 

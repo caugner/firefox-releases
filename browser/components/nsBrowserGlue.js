@@ -504,7 +504,7 @@ BrowserGlue.prototype = {
     if (WINTASKBAR_CONTRACTID in Cc &&
         Cc[WINTASKBAR_CONTRACTID].getService(Ci.nsIWinTaskbar).available) {
       let temp = {};
-      Cu.import("resource://gre/modules/WindowsJumpLists.jsm", temp);
+      Cu.import("resource:///modules/WindowsJumpLists.jsm", temp);
       temp.WinTaskbarJumpList.startup();
     }
 #endif
@@ -1223,7 +1223,7 @@ BrowserGlue.prototype = {
   },
 
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 9;
+    const UI_VERSION = 10;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul#";
     let currentUIVersion = 0;
     try {
@@ -1366,6 +1366,21 @@ BrowserGlue.prototype = {
       Services.prefs.clearUserPref("browser.library.useNewDownloadsView");
     }
 
+#ifdef XP_WIN
+    if (currentUIVersion < 10) {
+      // For Windows systems with display set to > 96dpi (i.e. systemDefaultScale
+      // will return a value > 1.0), we want to discard any saved full-zoom settings,
+      // as we'll now be scaling the content according to the system resolution
+      // scale factor (Windows "logical DPI" setting)
+      let sm = Cc["@mozilla.org/gfx/screenmanager;1"].getService(Ci.nsIScreenManager);
+      if (sm.systemDefaultScale > 1.0) {
+        let cps2 = Cc["@mozilla.org/content-pref/service;1"].
+                   getService(Ci.nsIContentPrefService2);
+        cps2.removeByName("browser.content.full-zoom", null);
+      }
+    }
+#endif
+
     if (this._dirty)
       this._dataSource.QueryInterface(Ci.nsIRDFRemoteDataSource).Flush();
 
@@ -1398,7 +1413,7 @@ BrowserGlue.prototype = {
       }
 
       // Add the entry to the persisted set for this document if it's not there.
-      // This code is mostly borrowed from nsXULDocument::Persist.
+      // This code is mostly borrowed from XULDocument::Persist.
       let docURL = aSource.ValueUTF8.split("#")[0];
       let docResource = this._rdf.GetResource(docURL);
       let persistResource = this._rdf.GetResource("http://home.netscape.com/NC-rdf#persist");
@@ -1613,9 +1628,247 @@ ContentPermissionPrompt.prototype = {
 
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIContentPermissionPrompt]),
 
+  _getChromeWindow: function CPP_getChromeWindow(aWindow) {
+    var chromeWin = aWindow
+      .QueryInterface(Ci.nsIInterfaceRequestor)
+      .getInterface(Ci.nsIWebNavigation)
+      .QueryInterface(Ci.nsIDocShellTreeItem)
+      .rootTreeItem
+      .QueryInterface(Ci.nsIInterfaceRequestor)
+      .getInterface(Ci.nsIDOMWindow)
+      .QueryInterface(Ci.nsIDOMChromeWindow);
+    return chromeWin;
+  },
+
+  /**
+   * Show a permission prompt.
+   *
+   * @param aRequest               The permission request.
+   * @param aMessage               The message to display on the prompt.
+   * @param aPermission            The type of permission to prompt.
+   * @param aActions               An array of actions of the form:
+   *                               [main action, secondary actions, ...]
+   *                               Actions are of the form { stringId, action, expireType, callback }
+   *                               Permission is granted if action is null or ALLOW_ACTION.
+   * @param aNotificationId        The id of the PopupNotification.
+   * @param aAnchorId              The id for the PopupNotification anchor.
+   */
+  _showPrompt: function CPP_showPrompt(aRequest, aMessage, aPermission, aActions,
+                                       aNotificationId, aAnchorId) {
+    function onFullScreen() {
+      popup.remove();
+    }
+
+    var browserBundle = Services.strings.createBundle("chrome://browser/locale/browser.properties");
+
+    var requestingWindow = aRequest.window.top;
+    var chromeWin = this._getChromeWindow(requestingWindow).wrappedJSObject;
+    var browser = chromeWin.gBrowser.getBrowserForDocument(requestingWindow.document);
+    var requestPrincipal = aRequest.principal;
+
+    // Transform the prompt actions into PopupNotification actions.
+    var popupNotificationActions = [];
+    for (var i = 0; i < aActions.length; i++) {
+      let promptAction = aActions[i];
+
+      // Don't offer action in PB mode if the action remembers permission for more than a session.
+      if (PrivateBrowsingUtils.isWindowPrivate(chromeWin) &&
+          promptAction.expireType != Ci.nsIPermissionManager.EXPIRE_SESSION &&
+          promptAction.action) {
+        continue;
+      }
+
+      var action = {
+        label: browserBundle.GetStringFromName(promptAction.stringId),
+        accessKey: browserBundle.GetStringFromName(promptAction.stringId + ".accesskey"),
+        callback: function() {
+          if (promptAction.callback) {
+            promptAction.callback();
+          }
+
+          // Remember permissions.
+          if (promptAction.action) {
+            Services.perms.addFromPrincipal(requestPrincipal, aPermission,
+                                            promptAction.action, promptAction.expireType);
+          }
+
+          // Grant permission if action is null or ALLOW_ACTION.
+          if (!promptAction.action || promptAction.action == Ci.nsIPermissionManager.ALLOW_ACTION) {
+            aRequest.allow();
+          } else {
+            aRequest.cancel();
+          }
+        },
+      };
+
+      popupNotificationActions.push(action);
+    }
+
+    var mainAction = popupNotificationActions.length ?
+                       popupNotificationActions[0] : null;
+    var secondaryActions = popupNotificationActions.splice(1);
+    var options = null;
+
+    if (aRequest.type == "pointerLock") {
+      // If there's no mainAction, this is the autoAllow warning prompt.
+      let autoAllow = !mainAction;
+      options = { removeOnDismissal: autoAllow,
+                  eventCallback: function (type) {
+                                   if (type == "removed") {
+                                     browser.removeEventListener("mozfullscreenchange", onFullScreen, true);
+                                     if (autoAllow)
+                                       aRequest.allow();
+                                   }
+                                 },
+                };
+    }
+
+    var popup = chromeWin.PopupNotifications.show(browser, aNotificationId, aMessage, aAnchorId,
+                                                  mainAction, secondaryActions, options);
+    if (aRequest.type == "pointerLock") {
+      // pointerLock is automatically allowed in fullscreen mode (and revoked
+      // upon exit), so if the page enters fullscreen mode after requesting
+      // pointerLock (but before the user has granted permission), we should
+      // remove the now-impotent notification.
+      browser.addEventListener("mozfullscreenchange", onFullScreen, true);
+    }
+  },
+
+  _promptGeo : function(aRequest) {
+    var secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
+    var browserBundle = Services.strings.createBundle("chrome://browser/locale/browser.properties");
+    var requestingURI = aRequest.principal.URI;
+
+    var message;
+
+    // Share location action.
+    var actions = [{
+      stringId: "geolocation.shareLocation",
+      action: null,
+      expireType: null,
+      callback: function() {
+        secHistogram.add(Ci.nsISecurityUITelemetry.WARNING_GEOLOCATION_REQUEST_SHARE_LOCATION);
+      },
+    }];
+
+    if (requestingURI.schemeIs("file")) {
+      message = browserBundle.formatStringFromName("geolocation.shareWithFile",
+                                                   [requestingURI.path], 1);
+    } else {
+      message = browserBundle.formatStringFromName("geolocation.shareWithSite",
+                                                   [requestingURI.host], 1);
+      // Always share location action.
+      actions.push({
+        stringId: "geolocation.alwaysShareLocation",
+        action: Ci.nsIPermissionManager.ALLOW_ACTION,
+        expireType: null,
+        callback: function() {
+          secHistogram.add(Ci.nsISecurityUITelemetry.WARNING_GEOLOCATION_REQUEST_ALWAYS_SHARE);
+        },
+      });
+
+      // Never share location action.
+      actions.push({
+        stringId: "geolocation.neverShareLocation",
+        action: Ci.nsIPermissionManager.DENY_ACTION,
+        expireType: null,
+        callback: function() {
+          secHistogram.add(Ci.nsISecurityUITelemetry.WARNING_GEOLOCATION_REQUEST_NEVER_SHARE);
+        },
+      });
+    }
+
+    var requestingWindow = aRequest.window.top;
+    var chromeWin = this._getChromeWindow(requestingWindow).wrappedJSObject;
+    var link = chromeWin.document.getElementById("geolocation-learnmore-link");
+    link.value = browserBundle.GetStringFromName("geolocation.learnMore");
+    link.href = Services.urlFormatter.formatURLPref("browser.geolocation.warning.infoURL");
+
+    secHistogram.add(Ci.nsISecurityUITelemetry.WARNING_GEOLOCATION_REQUEST);
+
+    this._showPrompt(aRequest, message, "geo", actions, "geolocation", "geo-notification-icon");
+  },
+
+  _promptWebNotifications : function(aRequest) {
+    var browserBundle = Services.strings.createBundle("chrome://browser/locale/browser.properties");
+    var requestingURI = aRequest.principal.URI;
+
+    var message = browserBundle.formatStringFromName("webNotifications.showFromSite",
+                                                     [requestingURI.host], 1);
+
+    var actions = [
+      {
+        stringId: "webNotifications.showForSession",
+        action: Ci.nsIPermissionManager.ALLOW_ACTION,
+        expireType: Ci.nsIPermissionManager.EXPIRE_SESSION,
+        callback: function() {},
+      },
+      {
+        stringId: "webNotifications.alwaysShow",
+        action: Ci.nsIPermissionManager.ALLOW_ACTION,
+        expireType: null,
+        callback: function() {},
+      },
+      {
+        stringId: "webNotifications.neverShow",
+        action: Ci.nsIPermissionManager.DENY_ACTION,
+        expireType: null,
+        callback: function() {},
+      },
+    ];
+
+    this._showPrompt(aRequest, message, "desktop-notification", actions,
+                     "web-notifications",
+                     "web-notifications-notification-icon");
+  },
+
+  _promptPointerLock: function CPP_promtPointerLock(aRequest, autoAllow) {
+
+    let browserBundle = Services.strings.createBundle("chrome://browser/locale/browser.properties");
+    let requestingURI = aRequest.principal.URI;
+
+    let originString = requestingURI.schemeIs("file") ? requestingURI.path : requestingURI.host;
+    let message = browserBundle.formatStringFromName(autoAllow ?
+                                  "pointerLock.autoLock.title" : "pointerLock.title",
+                                  [originString], 1);
+    // If this is an autoAllow info prompt, offer no actions.
+    // _showPrompt() will allow the request when it's dismissed.
+    let actions = [];
+    if (!autoAllow) {
+      actions = [
+        {
+          stringId: "pointerLock.allow",
+          action: null,
+          expireType: null,
+          callback: function() {},
+        },
+        {
+          stringId: "pointerLock.alwaysAllow",
+          action: Ci.nsIPermissionManager.ALLOW_ACTION,
+          expireType: null,
+          callback: function() {},
+        },
+        {
+          stringId: "pointerLock.neverAllow",
+          action: Ci.nsIPermissionManager.DENY_ACTION,
+          expireType: null,
+          callback: function() {},
+        },
+      ];
+    }
+
+    this._showPrompt(aRequest, message, "pointerLock", actions, "pointerLock", "pointerLock-notification-icon");
+  },
+
   prompt: function CPP_prompt(request) {
 
-    if (request.type != "geolocation") {
+    const kFeatureKeys = { "geolocation" : "geo",
+                           "desktop-notification" : "desktop-notification",
+                           "pointerLock" : "pointerLock",
+                         };
+
+    // Make sure that we support the request.
+    if (!(request.type in kFeatureKeys)) {
         return;
     }
 
@@ -1626,90 +1879,38 @@ ContentPermissionPrompt.prototype = {
     if (!(requestingURI instanceof Ci.nsIStandardURL))
       return;
 
-    var result = Services.perms.testExactPermissionFromPrincipal(requestingPrincipal, "geo");
-
-    if (result == Ci.nsIPermissionManager.ALLOW_ACTION) {
-      request.allow();
-      return;
-    }
+    var autoAllow = false;
+    var permissionKey = kFeatureKeys[request.type];
+    var result = Services.perms.testExactPermissionFromPrincipal(requestingPrincipal, permissionKey);
 
     if (result == Ci.nsIPermissionManager.DENY_ACTION) {
       request.cancel();
       return;
     }
 
-    function getChromeWindow(aWindow) {
-      var chromeWin = aWindow 
-        .QueryInterface(Ci.nsIInterfaceRequestor)
-        .getInterface(Ci.nsIWebNavigation)
-        .QueryInterface(Ci.nsIDocShellTreeItem)
-        .rootTreeItem
-        .QueryInterface(Ci.nsIInterfaceRequestor)
-        .getInterface(Ci.nsIDOMWindow)
-        .QueryInterface(Ci.nsIDOMChromeWindow);
-      return chromeWin;
-    }
-
-    var browserBundle = Services.strings.createBundle("chrome://browser/locale/browser.properties");
-    let secHistogram = Components.classes["@mozilla.org/base/telemetry;1"].
-                                  getService(Ci.nsITelemetry).
-                                  getHistogramById("SECURITY_UI");
-
-    var mainAction = {
-      label: browserBundle.GetStringFromName("geolocation.shareLocation"),
-      accessKey: browserBundle.GetStringFromName("geolocation.shareLocation.accesskey"),
-      callback: function() {
-        secHistogram.add(Ci.nsISecurityUITelemetry.WARNING_GEOLOCATION_REQUEST_SHARE_LOCATION);
+    if (result == Ci.nsIPermissionManager.ALLOW_ACTION) {
+      autoAllow = true;
+      // For pointerLock, we still want to show a warning prompt.
+      if (request.type != "pointerLock") {
         request.allow();
-      },
-    };
-
-    var message;
-    var secondaryActions = [];
-    var requestingWindow = request.window.top;
-    var chromeWin = getChromeWindow(requestingWindow).wrappedJSObject;
-
-    // Different message/options if it is a local file
-    if (requestingURI.schemeIs("file")) {
-      message = browserBundle.formatStringFromName("geolocation.shareWithFile",
-                                                   [requestingURI.path], 1);
-    } else {
-      message = browserBundle.formatStringFromName("geolocation.shareWithSite",
-                                                   [requestingURI.host], 1);
-
-      // Don't offer to "always/never share" in PB mode
-      if (!PrivateBrowsingUtils.isWindowPrivate(chromeWin)) {
-        secondaryActions.push({
-          label: browserBundle.GetStringFromName("geolocation.alwaysShareLocation"),
-          accessKey: browserBundle.GetStringFromName("geolocation.alwaysShareLocation.accesskey"),
-          callback: function () {
-            Services.perms.addFromPrincipal(requestingPrincipal, "geo", Ci.nsIPermissionManager.ALLOW_ACTION);
-            secHistogram.add(Ci.nsISecurityUITelemetry.WARNING_GEOLOCATION_REQUEST_ALWAYS_SHARE);
-            request.allow();
-          }
-        });
-        secondaryActions.push({
-          label: browserBundle.GetStringFromName("geolocation.neverShareLocation"),
-          accessKey: browserBundle.GetStringFromName("geolocation.neverShareLocation.accesskey"),
-          callback: function () {
-            Services.perms.addFromPrincipal(requestingPrincipal, "geo", Ci.nsIPermissionManager.DENY_ACTION);
-            secHistogram.add(Ci.nsISecurityUITelemetry.WARNING_GEOLOCATION_REQUEST_NEVER_SHARE);
-            request.cancel();
-          }
-        });
+        return;
       }
     }
 
-    var link = chromeWin.document.getElementById("geolocation-learnmore-link");
-    link.value = browserBundle.GetStringFromName("geolocation.learnMore");
-    link.href = Services.urlFormatter.formatURLPref("browser.geolocation.warning.infoURL");
+    // Show the prompt.
+    switch (request.type) {
+    case "geolocation":
+      this._promptGeo(request);
+      break;
+    case "desktop-notification":
+      this._promptWebNotifications(request);
+      break;
+    case "pointerLock":
+      this._promptPointerLock(request, autoAllow);
+      break;
+    }
+  },
 
-    var browser = chromeWin.gBrowser.getBrowserForDocument(requestingWindow.document);
-
-    secHistogram.add(Ci.nsISecurityUITelemetry.WARNING_GEOLOCATION_REQUEST);
-    chromeWin.PopupNotifications.show(browser, "geolocation", message, "geo-notification-icon",
-                                      mainAction, secondaryActions);
-  }
 };
 
 var components = [BrowserGlue, ContentPermissionPrompt];

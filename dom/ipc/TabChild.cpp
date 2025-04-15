@@ -1973,7 +1973,7 @@ public:
   NS_IMETHOD Run()
   {
     nsCOMPtr<nsIDOMEvent> event;
-    NS_NewDOMEvent(getter_AddRefs(event), nullptr, nullptr);
+    NS_NewDOMEvent(getter_AddRefs(event), mTabChildGlobal, nullptr, nullptr);
     if (event) {
       event->InitEvent(NS_LITERAL_STRING("unload"), false, false);
       event->SetTrusted(true);
@@ -2060,7 +2060,8 @@ TabChild::InitTabChildGlobal(FrameScriptLoading aScriptLoading)
 
     nsISupports* scopeSupports = NS_ISUPPORTS_CAST(nsIDOMEventTarget*, scope);
 
-    NS_ENSURE_TRUE(InitTabChildGlobalInternal(scopeSupports), false); 
+    NS_NAMED_LITERAL_CSTRING(globalId, "outOfProcessTabChildGlobal");
+    NS_ENSURE_TRUE(InitTabChildGlobalInternal(scopeSupports, globalId), false);
 
     scope->Init();
 

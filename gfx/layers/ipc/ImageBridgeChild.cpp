@@ -202,7 +202,7 @@ bool ImageBridgeChild::StartUpOnThread(Thread* aThread)
     }
     sImageBridgeChildSingleton = new ImageBridgeChild();
     ImageBridgeParent* imageBridgeParent = new ImageBridgeParent(
-      CompositorParent::CompositorLoop());
+      CompositorParent::CompositorLoop(), nullptr);
     sImageBridgeChildSingleton->ConnectAsync(imageBridgeParent);
     return true;
   } else {
@@ -370,7 +370,7 @@ ImageBridgeChild::AllocSurfaceDescriptorGrallocNow(const gfxIntSize& aSize,
   GrallocBufferActor* gba = static_cast<GrallocBufferActor*>(gc);
   gba->InitFromHandle(handle.get_MagicGrallocBufferHandle());
 
-  *aBuffer = SurfaceDescriptorGralloc(nullptr, gc, /* external */ false);
+  *aBuffer = SurfaceDescriptorGralloc(nullptr, gc, aSize, /* external */ false);
   return true;
 #else
   NS_RUNTIMEABORT("No gralloc buffers for you");

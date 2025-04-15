@@ -11,6 +11,7 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/dom/quota/QuotaManager.h"
 
 #include "AsyncConnectionHelper.h"
 #include "DatabaseInfo.h"
@@ -19,11 +20,11 @@
 #include "IDBIndex.h"
 #include "IDBObjectStore.h"
 #include "IDBTransaction.h"
-#include "IndexedDatabaseManager.h"
 
 USING_INDEXEDDB_NAMESPACE
 
 using namespace mozilla::dom;
+using mozilla::dom::quota::QuotaManager;
 
 namespace {
 
@@ -91,8 +92,8 @@ public:
   virtual nsresult
   DoDatabaseWork(mozIStorageConnection* aConnection) MOZ_OVERRIDE;
 
-  virtual already_AddRefed<nsDOMEvent>
-  CreateSuccessEvent() MOZ_OVERRIDE;
+  virtual already_AddRefed<nsIDOMEvent>
+  CreateSuccessEvent(mozilla::dom::EventTarget* aOwner) MOZ_OVERRIDE;
 
   virtual nsresult
   GetSuccessResult(JSContext* aCx, jsval* aVal) MOZ_OVERRIDE;
@@ -140,7 +141,7 @@ public:
     }
 
     nsRefPtr<nsDOMEvent> event =
-      IDBVersionChangeEvent::Create(mOldVersion, mNewVersion);
+      IDBVersionChangeEvent::Create(mDatabase, mOldVersion, mNewVersion);
     MOZ_ASSERT(event);
 
     bool dummy;
@@ -285,8 +286,7 @@ IndexedDBDatabaseChild::EnsureDatabase(
     databaseId = mDatabase->Id();
   }
   else {
-    databaseId =
-      IndexedDatabaseManager::GetDatabaseId(aDBInfo.origin, aDBInfo.name);
+    databaseId = QuotaManager::GetStorageId(aDBInfo.origin, aDBInfo.name);
   }
   NS_ENSURE_TRUE(databaseId, false);
 
@@ -386,7 +386,7 @@ IndexedDBDatabaseChild::RecvSuccess(
     openHelper = new IPCOpenDatabaseHelper(mDatabase, request);
   }
 
-  MainThreadEventTarget target;
+  ImmediateRunEventTarget target;
   if (NS_FAILED(openHelper->Dispatch(&target))) {
     NS_WARNING("Dispatch of IPCOpenDatabaseHelper failed!");
     return false;
@@ -418,7 +418,7 @@ IndexedDBDatabaseChild::RecvError(const nsresult& aRv)
 
   openHelper->SetError(aRv);
 
-  MainThreadEventTarget target;
+  ImmediateRunEventTarget target;
   if (NS_FAILED(openHelper->Dispatch(&target))) {
     NS_WARNING("Dispatch of IPCOpenDatabaseHelper failed!");
     return false;
@@ -434,10 +434,9 @@ IndexedDBDatabaseChild::RecvBlocked(const uint64_t& aOldVersion)
   MOZ_ASSERT(!mDatabase);
 
   nsCOMPtr<nsIRunnable> runnable =
-    IDBVersionChangeEvent::CreateBlockedRunnable(aOldVersion, mVersion,
-                                                 mRequest);
+    IDBVersionChangeEvent::CreateBlockedRunnable(mRequest, aOldVersion, mVersion);
 
-  MainThreadEventTarget target;
+  ImmediateRunEventTarget target;
   if (NS_FAILED(target.Dispatch(runnable, NS_DISPATCH_NORMAL))) {
     NS_WARNING("Dispatch of blocked event failed!");
   }
@@ -454,7 +453,7 @@ IndexedDBDatabaseChild::RecvVersionChange(const uint64_t& aOldVersion,
   nsCOMPtr<nsIRunnable> runnable =
     new VersionChangeRunnable(mDatabase, aOldVersion, aNewVersion);
 
-  MainThreadEventTarget target;
+  ImmediateRunEventTarget target;
   if (NS_FAILED(target.Dispatch(runnable, NS_DISPATCH_NORMAL))) {
     NS_WARNING("Dispatch of versionchange event failed!");
   }
@@ -522,13 +521,13 @@ IndexedDBDatabaseChild::RecvPIndexedDBTransactionConstructor(
   mDatabase->EnterSetVersionTransaction();
   mDatabase->mPreviousDatabaseInfo->version = oldVersion;
 
-  MainThreadEventTarget target;
+  actor->SetTransaction(transaction);
+
+  ImmediateRunEventTarget target;
   if (NS_FAILED(versionHelper->Dispatch(&target))) {
     NS_WARNING("Dispatch of IPCSetVersionHelper failed!");
     return false;
   }
-
-  actor->SetTransaction(transaction);
 
   mOpenHelper = helper.forget();
   return true;
@@ -605,7 +604,7 @@ IndexedDBTransactionChild::FireCompleteEvent(nsresult aRv)
 
   nsRefPtr<CommitHelper> helper = new CommitHelper(transaction, aRv);
 
-  MainThreadEventTarget target;
+  ImmediateRunEventTarget target;
   if (NS_FAILED(target.Dispatch(helper, NS_DISPATCH_NORMAL))) {
     NS_WARNING("Dispatch of CommitHelper failed!");
   }
@@ -1241,7 +1240,7 @@ IndexedDBDeleteDatabaseRequestChild::Recv__delete__(const nsresult& aRv)
     helper->SetError(aRv);
   }
 
-  MainThreadEventTarget target;
+  ImmediateRunEventTarget target;
   if (NS_FAILED(helper->Dispatch(&target))) {
     NS_WARNING("Dispatch of IPCSetVersionHelper failed!");
     return false;
@@ -1257,10 +1256,10 @@ IndexedDBDeleteDatabaseRequestChild::RecvBlocked(
   MOZ_ASSERT(mOpenRequest);
 
   nsCOMPtr<nsIRunnable> runnable =
-    IDBVersionChangeEvent::CreateBlockedRunnable(aCurrentVersion, 0,
-                                                 mOpenRequest);
+    IDBVersionChangeEvent::CreateBlockedRunnable(mOpenRequest,
+                                                 aCurrentVersion, 0);
 
-  MainThreadEventTarget target;
+  ImmediateRunEventTarget target;
   if (NS_FAILED(target.Dispatch(runnable, NS_DISPATCH_NORMAL))) {
     NS_WARNING("Dispatch of blocked event failed!");
   }
@@ -1323,10 +1322,11 @@ IPCSetVersionHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
   return NS_ERROR_FAILURE;
 }
 
-already_AddRefed<nsDOMEvent>
-IPCSetVersionHelper::CreateSuccessEvent()
+already_AddRefed<nsIDOMEvent>
+IPCSetVersionHelper::CreateSuccessEvent(mozilla::dom::EventTarget* aOwner)
 {
-  return IDBVersionChangeEvent::CreateUpgradeNeeded(mOldVersion,
+  return IDBVersionChangeEvent::CreateUpgradeNeeded(aOwner,
+                                                    mOldVersion,
                                                     mRequestedVersion);
 }
 

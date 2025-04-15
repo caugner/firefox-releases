@@ -61,6 +61,7 @@
 %define metro_border_thick 2px
 %define metro_border_xthick 4px
 
+%define metro_font_snormal 14px
 %define metro_font_normal 15px
 %define metro_font_large 25px
 %define metro_font_xlarge 45px
@@ -118,3 +119,7 @@
 %define shadow_width_xlarge 7px
 %define shadow_width_large 4px
 %define shadow_width_small 1px
+
+% easing function and duration for animations match winJS showPanel method
+%define metro_animation_duration 550ms
+%define metro_animation_easing cubic-bezier(0.1, 0.9, 0.2, 1)

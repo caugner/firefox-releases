@@ -7,6 +7,7 @@
 Components.utils.import("resource://gre/modules/Services.jsm");
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 Components.utils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+Components.utils.import("resource:///modules/RecentWindow.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "BROWSER_NEW_TAB_URL", function () {
   const PREF = "browser.newtab.url";
@@ -58,12 +59,9 @@ function getTopWin(skipPopups) {
       (!skipPopups || top.toolbar.visible))
     return top;
 
-  if (skipPopups) {
-    return Components.classes["@mozilla.org/browser/browserglue;1"]
-                     .getService(Components.interfaces.nsIBrowserGlue)
-                     .getMostRecentBrowserWindow();
-  }
-  return Services.wm.getMostRecentWindow("navigator:browser");
+  let isPrivate = PrivateBrowsingUtils.isWindowPrivate(window);
+  return RecentWindow.getMostRecentBrowserWindow({private: isPrivate,
+                                                  allowPopups: !skipPopups});
 }
 
 function openTopWin(url) {
@@ -295,6 +293,10 @@ function openLinkIn(url, where, params) {
     }
   }
 
+  // Raise the target window before loading the URI, since loading it may
+  // result in a new frontmost window (e.g. "javascript:window.open('');").
+  w.focus();
+
   switch (where) {
   case "current":
     let flags = Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
@@ -322,16 +324,9 @@ function openLinkIn(url, where, params) {
     break;
   }
 
-  // If this window is active, focus the target window. Otherwise, focus the
-  // content but don't raise the window, since the URI we just loaded may have
-  // resulted in a new frontmost window (e.g. "javascript:window.open('');").
-  var fm = Components.classes["@mozilla.org/focus-manager;1"].
-             getService(Components.interfaces.nsIFocusManager);
-  if (window == fm.activeWindow)
-    w.focus();
   w.gBrowser.selectedBrowser.focus();
 
-  if (!loadInBackground && isBlankPageURL(url))
+  if (!loadInBackground && w.isBlankPageURL(url))
     w.focusAndSelectUrlBar();
 }
 
@@ -534,7 +529,7 @@ function openHealthReport()
  */
 function openFeedbackPage()
 {
-  openUILinkIn("http://input.mozilla.com/feedback", "tab");
+  openUILinkIn("https://input.mozilla.org/feedback", "tab");
 }
 
 function buildHelpMenu()

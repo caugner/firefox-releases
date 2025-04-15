@@ -167,32 +167,38 @@ const ElementTouchHelper = {
  */
 
 /*
- * elementFromPoint
+ * elementFromPoint - find the closes element at a point. searches
+ * sub-frames.
  *
- * @param x,y Browser coordinates
- * @return Element at position, null if no active browser or no element found
+ * @param aX, aY browser coordinates
+ * @return
+ *  element - element at the position, or null if no active browser or
+ *            element was found.
+ *  frameX - x position within the subframe element was found. aX if no
+ *           sub-frame was found.
+ *  frameY - y position within the subframe element was found. aY if no
+ *           sub-frame was found.
  */
-function elementFromPoint(x, y) {
+function elementFromPoint(aX, aY) {
   // browser's elementFromPoint expect browser-relative client coordinates.
   // subtract browser's scroll values to adjust
   let cwu = Util.getWindowUtils(content);
-  let elem = ElementTouchHelper.getClosest(cwu, x, y);
+  let elem = ElementTouchHelper.getClosest(cwu, aX, aY);
 
   // step through layers of IFRAMEs and FRAMES to find innermost element
   while (elem && (elem instanceof HTMLIFrameElement ||
                   elem instanceof HTMLFrameElement)) {
     // adjust client coordinates' origin to be top left of iframe viewport
     let rect = elem.getBoundingClientRect();
-    x -= rect.left;
-    y -= rect.top;
+    aX -= rect.left;
+    aY -= rect.top;
     let windowUtils = elem.contentDocument
                           .defaultView
                           .QueryInterface(Ci.nsIInterfaceRequestor)
                           .getInterface(Ci.nsIDOMWindowUtils);
-    elem = ElementTouchHelper.getClosest(windowUtils, x, y);
+    elem = ElementTouchHelper.getClosest(windowUtils, aX, aY);
   }
-
-  return elem;
+  return { element: elem, frameX: aX, frameY: aY };
 }
 
 /*
@@ -328,13 +334,13 @@ let Content = {
 
       case "click":
         if (aEvent.eventPhase == aEvent.BUBBLING_PHASE)
-          this._onClick(aEvent);
+          this._onClickBubble(aEvent);
         else
-          this._genericMouseClick(aEvent);
+          this._onClickCapture(aEvent);
         break;
       
       case "DOMContentLoaded":
-        this._maybeNotifyErroPage();
+        this._maybeNotifyErrorPage();
         break;
 
       case "pagehide":
@@ -344,7 +350,7 @@ let Content = {
 
       case "touchstart":
         let touch = aEvent.changedTouches[0];
-        this._genericMouseDown(touch.clientX, touch.clientY);
+        this._onTouchStart(touch.clientX, touch.clientY);
         break;
     }
   },
@@ -379,6 +385,7 @@ let Content = {
       }
 
       case "Browser:SetCharset": {
+        docShell.gatherCharsetMenuTelemetry();
         docShell.charset = json.charset;
 
         let webNav = docShell.QueryInterface(Ci.nsIWebNavigation);
@@ -393,14 +400,11 @@ let Content = {
   },
 
   /******************************************************
-   * generic input handlers
-   *
-   * regardless of whether the input was received via
-   * message manager or sent directly via dispatch.
+   * Event handlers
    */
 
-  _genericMouseDown: function _genericMouseDown(x, y) {
-    let element = elementFromPoint(x, y);
+  _onTouchStart: function _onTouchStart(x, y) {
+    let { element } = elementFromPoint(x, y);
     if (!element)
       return;
 
@@ -414,10 +418,10 @@ let Content = {
     this._doTapHighlight(element);
   },
 
-  _genericMouseClick: function _genericMouseClick(aEvent) {
+  _onClickCapture: function _onClickCapture(aEvent) {
     ContextMenuHandler.reset();
 
-    let element = elementFromPoint(aEvent.clientX, aEvent.clientY);
+    let { element: element } = elementFromPoint(aEvent.clientX, aEvent.clientY);
     if (!element)
       return;
 
@@ -431,32 +435,22 @@ let Content = {
     }
 
     this.formAssistant.focusSync = true;
-
-    // The form manager handles focus related changes on form elements.
-    // If it returns false, it didn't find anything to act on. If the
-    // target element doesn't match the current focus element, clear
-    // focus. This allows users to remove focus from form elements by
-    // taping on white space content.
-    if (!this.formAssistant.open(element, aEvent)) {
-      if (gFocusManager.focusedElement &&
-          gFocusManager.focusedElement != element) {
-        gFocusManager.focusedElement.blur();
-      }
-      // This may not have any effect if element is unfocusable.
-      gFocusManager.setFocus(element, Ci.nsIFocusManager.FLAG_NOSCROLL);
-      sendAsyncMessage("FindAssist:Hide", { });
-    }
-
+    this.formAssistant.open(element, aEvent);
     this._cancelTapHighlight();
     this.formAssistant.focusSync = false;
+
+    // A tap on a form input triggers touch input caret selection
+    if (Util.isTextInput(element) &&
+        aEvent.mozInputSource == Ci.nsIDOMMouseEvent.MOZ_SOURCE_TOUCH) {
+      sendAsyncMessage("Content:SelectionCaret", {
+        xPos: aEvent.clientX,
+        yPos: aEvent.clientY
+      });
+    }
   },
 
-  /******************************************************
-   * Event handlers
-   */
-
   // Checks clicks we care about - events bubbling up from about pages.
-  _onClick: function _onClick(aEvent) {
+  _onClickBubble: function _onClickBubble(aEvent) {
     // Don't trust synthetic events
     if (!aEvent.isTrusted)
       return;
@@ -492,7 +486,7 @@ let Content = {
         // This is the "Why is this site blocked" button.  For malware,
         // we can fetch a site-specific report, for phishing, we redirect
         // to the generic page describing phishing protection.
-        let action = isMalware ? "report-malware" : "report-phising";
+        let action = isMalware ? "report-malware" : "report-phishing";
         sendAsyncMessage("Browser:BlockedSite",
                          { url: errorDoc.location.href, action: action });
       } else if (ot == errorDoc.getElementById("ignoreWarningButton")) {
@@ -539,7 +533,7 @@ let Content = {
     return result;
   },
 
-  _maybeNotifyErroPage: function _maybeNotifyErroPage() {
+  _maybeNotifyErrorPage: function _maybeNotifyErrorPage() {
     // Notify browser that an error page is being shown instead
     // of the target location. Necessary to get proper thumbnail
     // updates on chrome for error pages.

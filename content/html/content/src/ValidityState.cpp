@@ -15,7 +15,7 @@ DOMCI_DATA(ValidityState, mozilla::dom::ValidityState)
 namespace mozilla {
 namespace dom {
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_0(ValidityState)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_1(ValidityState, mConstraintValidation)
 NS_IMPL_CYCLE_COLLECTING_ADDREF(ValidityState)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(ValidityState)
 
@@ -96,10 +96,9 @@ ValidityState::GetValid(bool* aValid)
 }
 
 JSObject*
-ValidityState::WrapObject(JSContext* aCx, JSObject* aScope,
-                          bool* aTriedToWrap)
+ValidityState::WrapObject(JSContext* aCx, JSObject* aScope)
 {
-  return ValidityStateBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return ValidityStateBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom

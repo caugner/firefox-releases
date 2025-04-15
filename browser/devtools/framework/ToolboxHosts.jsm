@@ -68,6 +68,7 @@ BottomHost.prototype = {
       deferred.resolve(this.frame);
     }.bind(this);
 
+    this.frame.tooltip = "aHTMLTooltip";
     this.frame.addEventListener("DOMContentLoaded", frameLoad, true);
 
     // we have to load something so we can switch documents if we have to
@@ -83,6 +84,13 @@ BottomHost.prototype = {
    */
   raise: function BH_raise() {
     focusTab(this.hostTab);
+  },
+
+  /**
+   * Set the toolbox title.
+   */
+  setTitle: function BH_setTitle(title) {
+    // Nothing to do for this host type.
   },
 
   /**
@@ -144,6 +152,7 @@ SidebarHost.prototype = {
     }.bind(this);
 
     this.frame.addEventListener("DOMContentLoaded", frameLoad, true);
+    this.frame.tooltip = "aHTMLTooltip";
     this.frame.setAttribute("src", "about:blank");
 
     focusTab(this.hostTab);
@@ -156,6 +165,13 @@ SidebarHost.prototype = {
    */
   raise: function SH_raise() {
     focusTab(this.hostTab);
+  },
+
+  /**
+   * Set the toolbox title.
+   */
+  setTitle: function SH_setTitle(title) {
+    // Nothing to do for this host type.
   },
 
   /**
@@ -233,6 +249,13 @@ WindowHost.prototype = {
    */
   raise: function RH_raise() {
     this._window.focus();
+  },
+
+  /**
+   * Set the toolbox title.
+   */
+  setTitle: function WH_setTitle(title) {
+    this._window.document.title = title;
   },
 
   /**

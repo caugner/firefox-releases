@@ -5,10 +5,10 @@
 
 package org.mozilla.gecko.gfx;
 
-import org.mozilla.gecko.GeckoApp;
 import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.GeckoEvent;
 import org.mozilla.gecko.GeckoThread;
+import org.mozilla.gecko.util.ThreadUtils;
 
 import android.util.Log;
 
@@ -75,7 +75,7 @@ public class GLController {
     }
 
     synchronized void surfaceDestroyed() {
-        GeckoApp.assertOnUiThread();
+        ThreadUtils.assertOnUiThread();
 
         mSurfaceValid = false;
         mEGLSurface = null;
@@ -94,7 +94,7 @@ public class GLController {
     }
 
     synchronized void surfaceChanged(int newWidth, int newHeight) {
-        GeckoApp.assertOnUiThread();
+        ThreadUtils.assertOnUiThread();
 
         mWidth = newWidth;
         mHeight = newHeight;
@@ -119,6 +119,7 @@ public class GLController {
         // doing its thing.
 
         mView.post(new Runnable() {
+            @Override
             public void run() {
                 // If we haven't yet created the compositor, and the GfxInfoThread
                 // isn't done it's data gathering activities, then postpone creating
@@ -160,7 +161,7 @@ public class GLController {
     }
 
     void createCompositor() {
-        GeckoApp.assertOnUiThread();
+        ThreadUtils.assertOnUiThread();
 
         if (mCompositorCreated) {
             // If the compositor has already been created, just resume it instead. We don't need
@@ -175,7 +176,7 @@ public class GLController {
         // happen without needing to block anyhwere. Do it with a sync gecko event so that the
         // android doesn't have a chance to destroy our surface in between.
         if (mEGLSurface != null && GeckoThread.checkLaunchState(GeckoThread.LaunchState.GeckoRunning)) {
-            GeckoAppShell.sendEventToGeckoSync(GeckoEvent.createCompositorResumeEvent());
+            GeckoAppShell.sendEventToGeckoSync(GeckoEvent.createCompositorCreateEvent(mWidth, mHeight));
         }
     }
 

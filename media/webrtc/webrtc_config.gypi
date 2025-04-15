@@ -16,12 +16,23 @@
     'enable_protobuf': 0,
     'include_pulse_audio': 0,
     'include_tests': 0,
+    'enable_android_opensl': 1,
 # use_system_lib* still seems to be in use in trunk/build
     'use_system_libjpeg': 0,
     'use_system_libvpx': 0,
     'build_libjpeg': 0,
     'build_libvpx': 0,
 
+    #if "-D build_with_gonk=1", then set moz_widget_toolkit_gonk to 1
+    'moz_widget_toolkit_gonk': 0,
+    'variables': {
+      'build_with_gonk%': 0,
+    },
+    'conditions': [
+      ['build_with_gonk==1', {
+         'moz_widget_toolkit_gonk': 1,
+      }],
+    ],
 # (for vp8) chromium sets to 0 also
     'use_temporal_layers': 0,
 # Creates AEC internal sample dump files in current directory

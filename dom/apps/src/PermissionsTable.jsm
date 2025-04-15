@@ -124,6 +124,11 @@ this.PermissionsTable =  { geolocation: {
                              privileged: DENY_ACTION,
                              certified: ALLOW_ACTION
                            },
+                           push: {
+                            app: ALLOW_ACTION,
+                            privileged: ALLOW_ACTION,
+                            certified: ALLOW_ACTION
+                           },
                            settings: {
                              app: DENY_ACTION,
                              privileged: DENY_ACTION,
@@ -137,7 +142,7 @@ this.PermissionsTable =  { geolocation: {
                              certified: ALLOW_ACTION
                            },
                            fmradio: {
-                             app: ALLOW_ACTION,
+                             app: DENY_ACTION,
                              privileged: ALLOW_ACTION,
                              certified: ALLOW_ACTION
                            },

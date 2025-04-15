@@ -259,6 +259,7 @@ typedef NSInteger NSEventGestureAxis;
   float mCumulativeRotation;
 
   BOOL mDidForceRefreshOpenGL;
+  BOOL mWaitingForPaint;
 
   // Support for fluid swipe tracking.
 #ifdef __LP64__
@@ -428,7 +429,7 @@ public:
   NS_IMETHOD              DispatchEvent(nsGUIEvent* event, nsEventStatus & aStatus);
 
   virtual bool            ComputeShouldAccelerate(bool aDefault);
-  virtual bool            UseOffMainThreadCompositing();
+  virtual bool            ShouldUseOffMainThreadCompositing();
 
   NS_IMETHOD        SetCursor(nsCursor aCursor);
   NS_IMETHOD        SetCursor(imgIContainer* aCursor, uint32_t aHotspotX, uint32_t aHotspotY);
@@ -443,14 +444,12 @@ public:
   NS_IMETHOD        ActivateNativeMenuItemAt(const nsAString& indexString);
   NS_IMETHOD        ForceUpdateNativeMenuAt(const nsAString& indexString);
 
-  NS_IMETHOD        ResetInputState();
+  NS_IMETHOD        NotifyIME(NotificationToIME aNotification) MOZ_OVERRIDE;
   NS_IMETHOD_(void) SetInputContext(const InputContext& aContext,
                                     const InputContextAction& aAction);
   NS_IMETHOD_(InputContext) GetInputContext();
-  NS_IMETHOD        CancelIMEComposition();
   NS_IMETHOD        GetToggledKeyState(uint32_t aKeyCode,
                                        bool* aLEDState);
-  NS_IMETHOD        OnIMEFocusChange(bool aFocus);
 
   // nsIPluginWidget
   // outClipRect and outOrigin are in display pixels (not device pixels)
@@ -559,6 +558,9 @@ protected:
     return widget.forget();
   }
 
+  void MaybeDrawResizeIndicator(mozilla::layers::LayerManagerOGL* aManager, nsIntRect aRect);
+  void MaybeDrawRoundedBottomCorners(mozilla::layers::LayerManagerOGL* aManager, nsIntRect aRect);
+
   nsIWidget* GetWidgetForListenerEvents();
 
 protected:
@@ -578,6 +580,7 @@ protected:
 
   nsRefPtr<gfxASurface> mTempThebesSurface;
   nsRefPtr<mozilla::gl::TextureImage> mResizerImage;
+  nsRefPtr<mozilla::gl::TextureImage> mCornerMaskImage;
 
   nsRefPtr<gfxQuartzSurface> mTitlebarSurf;
   gfxSize mTitlebarSize;
@@ -588,6 +591,8 @@ protected:
   // ** We'll need to reinitialize this if the backing resolution changes. **
   CGFloat               mBackingScaleFactor;
 
+  bool                  mFailedResizerImage;
+  bool                  mFailedCornerMaskImage;
   bool                  mVisible;
   bool                  mDrawing;
   bool                  mPluginDrawing;

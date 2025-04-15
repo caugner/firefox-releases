@@ -54,11 +54,11 @@
  **************************************************************
  **************************************************************/
 
+#include "mozilla/MathAlgorithms.h"
+#include "mozilla/Util.h"
+
 #include "mozilla/ipc/RPCChannel.h"
 #include <algorithm>
-
-/* This must occur *after* ipc/RPCChannel.h to avoid typedefs conflicts. */
-#include "mozilla/Util.h"
 
 #include "nsWindow.h"
 
@@ -119,8 +119,6 @@
 #include "WidgetUtils.h"
 #include "nsIWidgetListener.h"
 #include "nsDOMTouchEvent.h"
-#include <cstdlib> // for std::abs(int/long)
-#include <cmath> // for std::abs(float/double)
 
 #ifdef MOZ_ENABLE_D3D9_LAYER
 #include "LayerManagerD3D9.h"
@@ -153,10 +151,6 @@
 #include "nsIWinTaskbar.h"
 #define NS_TASKBAR_CONTRACTID "@mozilla.org/windows-taskbar;1"
 
-#if defined(NS_ENABLE_TSF)
-#include "nsTextStore.h"
-#endif // defined(NS_ENABLE_TSF)
-
 // Windowless plugin support
 #include "npapi.h"
 
@@ -168,7 +162,7 @@
 #include "nsIContent.h"
 
 #include "mozilla/HangMonitor.h"
-#include "nsIMM32Handler.h"
+#include "WinIMEHandler.h"
 
 using namespace mozilla::widget;
 using namespace mozilla::layers;
@@ -362,11 +356,7 @@ nsWindow::nsWindow() : nsWindowBase()
     // WinTaskbar.cpp for details.
     mozilla::widget::WinTaskbar::RegisterAppUserModelID();
     gKbdLayout.LoadLayout(::GetKeyboardLayout(0));
-    // Init IME handler
-    nsIMM32Handler::Initialize();
-#ifdef NS_ENABLE_TSF
-    nsTextStore::Initialize();
-#endif
+    IMEHandler::Initialize();
     if (SUCCEEDED(::OleInitialize(NULL))) {
       sIsOleInitialized = TRUE;
     }
@@ -406,17 +396,13 @@ nsWindow::~nsWindow()
 
   // Global shutdown
   if (sInstanceCount == 0) {
-#ifdef NS_ENABLE_TSF
-    nsTextStore::Terminate();
-#endif
+    IMEHandler::Terminate();
     NS_IF_RELEASE(sCursorImgContainer);
     if (sIsOleInitialized) {
       ::OleFlushClipboard();
       ::OleUninitialize();
       sIsOleInitialized = FALSE;
     }
-    // delete any of the IME structures that we allocated
-    nsIMM32Handler::Terminate();
   }
 
   NS_IF_RELEASE(mNativeDragTarget);
@@ -596,16 +582,7 @@ nsWindow::Create(nsIWidget *aParent,
 
   SubclassWindow(TRUE);
 
-  // NOTE: mNativeIMEContext may be null if IMM module isn't installed.
-  nsIMEContext IMEContext(mWnd);
-  mInputContext.mNativeIMEContext = static_cast<void*>(IMEContext.get());
-  MOZ_ASSERT(mInputContext.mNativeIMEContext ||
-             !nsIMM32Handler::IsIMEAvailable());
-  // If no IME context is available, we should set this widget's pointer since
-  // nullptr indicates there is only one context per process on the platform.
-  if (!mInputContext.mNativeIMEContext) {
-    mInputContext.mNativeIMEContext = this;
-  }
+  IMEHandler::InitInputContext(this, mInputContext);
 
   // If the internal variable set by the config.trim_on_minimize pref has not
   // been initialized, and if this is the hidden window (conveniently created
@@ -981,15 +958,7 @@ float nsWindow::GetDPI()
 
 double nsWindow::GetDefaultScaleInternal()
 {
-  HDC dc = ::GetDC(mWnd);
-  if (!dc)
-    return 1.0;
-
-  // LOGPIXELSY returns the number of logical pixels per inch. This is based
-  // on font DPI settings rather than the actual screen DPI.
-  double pixelsPerInch = ::GetDeviceCaps(dc, LOGPIXELSY);
-  ::ReleaseDC(mWnd, dc);
-  return pixelsPerInch/96.0;
+  return gfxWindowsPlatform::GetPlatform()->GetDPIScale();
 }
 
 nsWindow* nsWindow::GetParentWindow(bool aIncludeOwner)
@@ -1345,8 +1314,7 @@ NS_METHOD nsWindow::Move(double aX, double aY)
 
   // for top-level windows only, convert coordinates from global display pixels
   // (the "parent" coordinate space) to the window's device pixel space
-  double scale =
-    (mWindowType <= eWindowType_popup) ? GetDefaultScale() : 1.0;
+  double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
   int32_t x = NSToIntRound(aX * scale);
   int32_t y = NSToIntRound(aY * scale);
 
@@ -1399,8 +1367,7 @@ NS_METHOD nsWindow::Resize(double aWidth, double aHeight, bool aRepaint)
 {
   // for top-level windows only, convert coordinates from global display pixels
   // (the "parent" coordinate space) to the window's device pixel space
-  double scale =
-    (mWindowType <= eWindowType_popup) ? GetDefaultScale() : 1.0;
+  double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
   int32_t width = NSToIntRound(aWidth * scale);
   int32_t height = NSToIntRound(aHeight * scale);
 
@@ -1450,8 +1417,7 @@ NS_METHOD nsWindow::Resize(double aX, double aY, double aWidth, double aHeight, 
 {
   // for top-level windows only, convert coordinates from global display pixels
   // (the "parent" coordinate space) to the window's device pixel space
-  double scale =
-    (mWindowType <= eWindowType_popup) ? GetDefaultScale() : 1.0;
+  double scale = BoundsUseDisplayPixels() ? GetDefaultScale() : 1.0;
   int32_t x = NSToIntRound(aX * scale);
   int32_t y = NSToIntRound(aY * scale);
   int32_t width = NSToIntRound(aWidth * scale);
@@ -1655,11 +1621,18 @@ NS_IMETHODIMP nsWindow::SetSizeMode(int32_t aMode) {
 }
 
 // Constrain a potential move to fit onscreen
+// Position (aX, aY) is specified in Windows screen (logical) pixels
 NS_METHOD nsWindow::ConstrainPosition(bool aAllowSlop,
                                       int32_t *aX, int32_t *aY)
 {
   if (!mIsTopWidgetWindow) // only a problem for top-level windows
     return NS_OK;
+
+  double dpiScale = GetDefaultScale();
+
+  // we need to use the window size in logical screen pixels
+  int32_t logWidth = std::max<int32_t>(NSToIntRound(mBounds.width / dpiScale), 1);
+  int32_t logHeight = std::max<int32_t>(NSToIntRound(mBounds.height / dpiScale), 1);
 
   bool doConstrain = false; // whether we have enough info to do anything
 
@@ -1672,23 +1645,20 @@ NS_METHOD nsWindow::ConstrainPosition(bool aAllowSlop,
     nsCOMPtr<nsIScreen> screen;
     int32_t left, top, width, height;
 
-    // zero size rects confuse the screen manager
-    width = mBounds.width > 0 ? mBounds.width : 1;
-    height = mBounds.height > 0 ? mBounds.height : 1;
-    screenmgr->ScreenForRect(*aX, *aY, width, height,
+    screenmgr->ScreenForRect(*aX, *aY, logWidth, logHeight,
                              getter_AddRefs(screen));
     if (screen) {
       if (mSizeMode != nsSizeMode_Fullscreen) {
         // For normalized windows, use the desktop work area.
-        screen->GetAvailRect(&left, &top, &width, &height);
+        screen->GetAvailRectDisplayPix(&left, &top, &width, &height);
       } else {
         // For full screen windows, use the desktop.
-        screen->GetRect(&left, &top, &width, &height);
+        screen->GetRectDisplayPix(&left, &top, &width, &height);
       }
       screenRect.left = left;
-      screenRect.right = left+width;
+      screenRect.right = left + width;
       screenRect.top = top;
-      screenRect.bottom = top+height;
+      screenRect.bottom = top + height;
       doConstrain = true;
     }
   } else {
@@ -1711,13 +1681,13 @@ NS_METHOD nsWindow::ConstrainPosition(bool aAllowSlop,
   }
 
   if (aAllowSlop) {
-    if (*aX < screenRect.left - mBounds.width + kWindowPositionSlop)
-      *aX = screenRect.left - mBounds.width + kWindowPositionSlop;
+    if (*aX < screenRect.left - logWidth + kWindowPositionSlop)
+      *aX = screenRect.left - logWidth + kWindowPositionSlop;
     else if (*aX >= screenRect.right - kWindowPositionSlop)
       *aX = screenRect.right - kWindowPositionSlop;
 
-    if (*aY < screenRect.top - mBounds.height + kWindowPositionSlop)
-      *aY = screenRect.top - mBounds.height + kWindowPositionSlop;
+    if (*aY < screenRect.top - logHeight + kWindowPositionSlop)
+      *aY = screenRect.top - logHeight + kWindowPositionSlop;
     else if (*aY >= screenRect.bottom - kWindowPositionSlop)
       *aY = screenRect.bottom - kWindowPositionSlop;
 
@@ -1725,13 +1695,13 @@ NS_METHOD nsWindow::ConstrainPosition(bool aAllowSlop,
 
     if (*aX < screenRect.left)
       *aX = screenRect.left;
-    else if (*aX >= screenRect.right - mBounds.width)
-      *aX = screenRect.right - mBounds.width;
+    else if (*aX >= screenRect.right - logWidth)
+      *aX = screenRect.right - logWidth;
 
     if (*aY < screenRect.top)
       *aY = screenRect.top;
-    else if (*aY >= screenRect.bottom - mBounds.height)
-      *aY = screenRect.bottom - mBounds.height;
+    else if (*aY >= screenRect.bottom - logHeight)
+      *aY = screenRect.bottom - logHeight;
   }
 
   return NS_OK;
@@ -1872,7 +1842,6 @@ NS_METHOD nsWindow::GetBounds(nsIntRect &aRect)
   } else {
     aRect = mBounds;
   }
-
   return NS_OK;
 }
 
@@ -1935,8 +1904,8 @@ nsWindow::SetDrawsInTitlebar(bool aState)
   }
 
   if (aState) {
-     // left, top, right, bottom for nsIntMargin
-    nsIntMargin margins(-1, 0, -1, -1);
+    // top, right, bottom, left for nsIntMargin
+    nsIntMargin margins(0, -1, -1, -1);
     SetNonClientMargins(margins);
   }
   else {
@@ -2867,14 +2836,10 @@ void* nsWindow::GetNativeData(uint32_t aDataType)
       return (void*)::GetDC(mWnd);
 #endif
 
-#ifdef NS_ENABLE_TSF
     case NS_NATIVE_TSF_THREAD_MGR:
-      return nsTextStore::GetThreadMgr();
     case NS_NATIVE_TSF_CATEGORY_MGR:
-      return nsTextStore::GetCategoryMgr();
     case NS_NATIVE_TSF_DISPLAY_ATTR_MGR:
-      return nsTextStore::GetDisplayAttrMgr();
-#endif //NS_ENABLE_TSF
+      return IMEHandler::GetNativeData(aDataType);
 
     default:
       break;
@@ -3236,7 +3201,7 @@ GetLayerManagerPrefs(LayerManagerPrefs* aManagerPrefs)
 }
 
 bool
-nsWindow::UseOffMainThreadCompositing()
+nsWindow::ShouldUseOffMainThreadCompositing()
 {
   // OMTC doesn't work on Windows right now.
   return false;
@@ -3343,7 +3308,7 @@ nsWindow::GetLayerManager(PLayersChild* aShadowManager,
     // Fall back to software if we couldn't use any hardware backends.
     if (!mLayerManager) {
       // Try to use an async compositor first, if possible
-      if (UseOffMainThreadCompositing()) {
+      if (ShouldUseOffMainThreadCompositing()) {
         // e10s uses the parameter to pass in the shadow manager from the TabChild
         // so we don't expect to see it there since this doesn't support e10s.
         NS_ASSERTION(aShadowManager == nullptr, "Async Compositor not supported with e10s");
@@ -3453,26 +3418,32 @@ nsWindow::OnDefaultButtonLoaded(const nsIntRect &aButtonRect)
 }
 
 NS_IMETHODIMP
-nsWindow::OverrideSystemMouseScrollSpeed(int32_t aOriginalDelta,
-                                         bool aIsHorizontal,
-                                         int32_t &aOverriddenDelta)
+nsWindow::OverrideSystemMouseScrollSpeed(double aOriginalDeltaX,
+                                         double aOriginalDeltaY,
+                                         double& aOverriddenDeltaX,
+                                         double& aOverriddenDeltaY)
 {
   // The default vertical and horizontal scrolling speed is 3, this is defined
   // on the document of SystemParametersInfo in MSDN.
   const uint32_t kSystemDefaultScrollingSpeed = 3;
 
-  int32_t absOriginDelta = std::abs(aOriginalDelta);
+  double absOriginDeltaX = Abs(aOriginalDeltaX);
+  double absOriginDeltaY = Abs(aOriginalDeltaY);
 
   // Compute the simple overridden speed.
-  int32_t absComputedOverriddenDelta;
+  double absComputedOverriddenDeltaX, absComputedOverriddenDeltaY;
   nsresult rv =
-    nsBaseWidget::OverrideSystemMouseScrollSpeed(absOriginDelta, aIsHorizontal,
-                                                 absComputedOverriddenDelta);
+    nsBaseWidget::OverrideSystemMouseScrollSpeed(absOriginDeltaX,
+                                                 absOriginDeltaY,
+                                                 absComputedOverriddenDeltaX,
+                                                 absComputedOverriddenDeltaY);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  aOverriddenDelta = aOriginalDelta;
+  aOverriddenDeltaX = aOriginalDeltaX;
+  aOverriddenDeltaY = aOriginalDeltaY;
 
-  if (absComputedOverriddenDelta == absOriginDelta) {
+  if (absComputedOverriddenDeltaX == absOriginDeltaX &&
+      absComputedOverriddenDeltaY == absOriginDeltaY) {
     // We don't override now.
     return NS_OK;
   }
@@ -3506,23 +3477,29 @@ nsWindow::OverrideSystemMouseScrollSpeed(int32_t aOriginalDelta,
   // driver might accelerate the scrolling speed already.  If so, we shouldn't
   // override the scrolling speed for preventing the unexpected high speed
   // scrolling.
-  int32_t absDeltaLimit;
+  double absDeltaLimitX, absDeltaLimitY;
   rv =
     nsBaseWidget::OverrideSystemMouseScrollSpeed(kSystemDefaultScrollingSpeed,
-                                                 aIsHorizontal, absDeltaLimit);
+                                                 kSystemDefaultScrollingSpeed,
+                                                 absDeltaLimitX,
+                                                 absDeltaLimitY);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // If the given delta is larger than our computed limitation value, the delta
   // was accelerated by the mouse driver.  So, we should do nothing here.
-  if (absDeltaLimit <= absOriginDelta) {
+  if (absDeltaLimitX <= absOriginDeltaX || absDeltaLimitY <= absOriginDeltaY) {
     return NS_OK;
   }
 
-  absComputedOverriddenDelta =
-    std::min(absComputedOverriddenDelta, absDeltaLimit);
+  aOverriddenDeltaX = std::min(absComputedOverriddenDeltaX, absDeltaLimitX);
+  aOverriddenDeltaY = std::min(absComputedOverriddenDeltaY, absDeltaLimitY);
 
-  aOverriddenDelta = (aOriginalDelta > 0) ? absComputedOverriddenDelta :
-                                            -absComputedOverriddenDelta;
+  if (aOriginalDeltaX < 0) {
+    aOverriddenDeltaX *= -1;
+  }
+  if (aOriginalDeltaY < 0) {
+    aOverriddenDeltaY *= -1;
+  }
   return NS_OK;
 }
 
@@ -3821,7 +3798,7 @@ void nsWindow::RemoveMessageAndDispatchPluginEvent(UINT aFirstMsg,
     }
     msg = aFakeCharMessage->GetCharMessage(mWnd);
   } else {
-    ::GetMessageW(&msg, mWnd, aFirstMsg, aLastMsg);
+    WinUtils::GetMessage(&msg, mWnd, aFirstMsg, aLastMsg);
   }
   DispatchPluginEvent(msg);
 }
@@ -3889,8 +3866,8 @@ bool nsWindow::DispatchMouseEvent(uint32_t aEventType, WPARAM wParam,
     sLastMouseMovePoint.y = mpScreen.y;
   }
 
-  bool insideMovementThreshold = (abs(sLastMousePoint.x - eventPoint.x) < (short)::GetSystemMetrics(SM_CXDOUBLECLK)) &&
-                                   (abs(sLastMousePoint.y - eventPoint.y) < (short)::GetSystemMetrics(SM_CYDOUBLECLK));
+  bool insideMovementThreshold = (DeprecatedAbs(sLastMousePoint.x - eventPoint.x) < (short)::GetSystemMetrics(SM_CXDOUBLECLK)) &&
+                                   (DeprecatedAbs(sLastMousePoint.y - eventPoint.y) < (short)::GetSystemMetrics(SM_CYDOUBLECLK));
 
   BYTE eventButton;
   switch (aButton) {
@@ -4509,8 +4486,8 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
 #endif
 
   bool eatMessage;
-  if (nsIMM32Handler::ProcessMessage(this, msg, wParam, lParam, aRetValue,
-                                     eatMessage)) {
+  if (IMEHandler::ProcessMessage(this, msg, wParam, lParam, aRetValue,
+                                 eatMessage)) {
     return mWnd ? eatMessage : true;
   }
 
@@ -5433,11 +5410,6 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
 
     default:
     {
-#ifdef NS_ENABLE_TSF
-      if (msg == WM_USER_TSF_TEXTCHANGE) {
-        nsTextStore::OnTextChangeMsg();
-      }
-#endif //NS_ENABLE_TSF
       if (msg == nsAppShell::GetTaskbarButtonCreatedMessage())
         SetHasTaskbarIconBeenCreated();
       if (msg == sOOPPPluginFocusEvent) {
@@ -5542,14 +5514,14 @@ nsWindow::ClientMarginHitTestPoint(int32_t mx, int32_t my)
 
   // Ensure being accessible to borders of window.  Even if contents are in
   // this area, the area must behave as border.
-  nsIntMargin nonClientSize(std::max(mHorResizeMargin - mNonClientOffset.left,
-                                   kResizableBorderMinSize),
-                            std::max(mCaptionHeight - mNonClientOffset.top,
-                                   kResizableBorderMinSize),
+  nsIntMargin nonClientSize(std::max(mCaptionHeight - mNonClientOffset.top,
+                                     kResizableBorderMinSize),
                             std::max(mHorResizeMargin - mNonClientOffset.right,
-                                   kResizableBorderMinSize),
+                                     kResizableBorderMinSize),
                             std::max(mVertResizeMargin - mNonClientOffset.bottom,
-                                   kResizableBorderMinSize));
+                                     kResizableBorderMinSize),
+                            std::max(mHorResizeMargin - mNonClientOffset.left,
+                                     kResizableBorderMinSize));
 
   bool allowContentOverride = mSizeMode == nsSizeMode_Maximized ||
                               (mx >= winRect.left + nonClientSize.left &&
@@ -5562,10 +5534,10 @@ nsWindow::ClientMarginHitTestPoint(int32_t mx, int32_t my)
   // contents under the mouse cursor should be able to override the behavior.
   // E.g., user must expect that Firefox button always opens the popup menu
   // even when the user clicks on the above edge of it.
-  nsIntMargin borderSize(std::max(nonClientSize.left, mHorResizeMargin),
-                         std::max(nonClientSize.top, mVertResizeMargin),
-                         std::max(nonClientSize.right, mHorResizeMargin),
-                         std::max(nonClientSize.bottom, mVertResizeMargin));
+  nsIntMargin borderSize(std::max(nonClientSize.top,    mVertResizeMargin),
+                         std::max(nonClientSize.right,  mHorResizeMargin),
+                         std::max(nonClientSize.bottom, mVertResizeMargin),
+                         std::max(nonClientSize.left,   mHorResizeMargin));
 
   bool top    = false;
   bool bottom = false;
@@ -5660,10 +5632,10 @@ void nsWindow::PostSleepWakeNotification(const bool aIsSleepMode)
 void nsWindow::RemoveNextCharMessage(HWND aWnd)
 {
   MSG msg;
-  if (::PeekMessageW(&msg, aWnd,
-                     WM_KEYFIRST, WM_KEYLAST, PM_NOREMOVE | PM_NOYIELD) &&
+  if (WinUtils::PeekMessage(&msg, aWnd, WM_KEYFIRST, WM_KEYLAST,
+                            PM_NOREMOVE | PM_NOYIELD) &&
       (msg.message == WM_CHAR || msg.message == WM_SYSCHAR)) {
-    ::GetMessageW(&msg, aWnd, msg.message, msg.message);
+    WinUtils::GetMessage(&msg, aWnd, msg.message, msg.message);
   }
 }
 
@@ -5708,7 +5680,7 @@ LRESULT nsWindow::ProcessKeyUpMessage(const MSG &aMsg, bool *aEventDispatched)
     return FALSE;
   }
 
-  if (!nsIMM32Handler::IsComposingOn(this)) {
+  if (!IMEHandler::IsComposingOn(this)) {
     return OnKeyUp(aMsg, modKeyState, aEventDispatched);
   }
 
@@ -5747,7 +5719,7 @@ LRESULT nsWindow::ProcessKeyDownMessage(const MSG &aMsg,
     return FALSE;
 
   LRESULT result = 0;
-  if (!nsIMM32Handler::IsComposingOn(this)) {
+  if (!IMEHandler::IsComposingOn(this)) {
     result = OnKeyDown(aMsg, modKeyState, aEventDispatched, nullptr);
     // OnKeyDown cleaned up the redirected message information itself, so,
     // we should do nothing.
@@ -6426,10 +6398,10 @@ bool nsWindow::OnGesture(WPARAM wParam, LPARAM lParam)
 
     if (mDisplayPanFeedback) {
       mGesture.UpdatePanFeedbackX(mWnd,
-                                  std::abs(RoundDown(wheelEvent.overflowDeltaX)),
+                                  DeprecatedAbs(RoundDown(wheelEvent.overflowDeltaX)),
                                   endFeedback);
       mGesture.UpdatePanFeedbackY(mWnd,
-                                  std::abs(RoundDown(wheelEvent.overflowDeltaY)),
+                                  DeprecatedAbs(RoundDown(wheelEvent.overflowDeltaY)),
                                   endFeedback);
       mGesture.PanFeedbackFinalize(mWnd, endFeedback);
     }
@@ -6502,7 +6474,7 @@ LRESULT nsWindow::OnKeyDown(const MSG &aMsg,
   static bool sRedirectedKeyDownEventPreventedDefault = false;
   bool noDefault;
   if (aFakeCharMessage || !IsRedirectedKeyDownMessage(aMsg)) {
-    nsIMEContext IMEContext(mWnd);
+    bool isIMEEnabled = IMEHandler::IsIMEEnabled(mInputContext);
     nsKeyEvent keydownEvent(true, NS_KEY_DOWN, this);
     keydownEvent.keyCode = DOMKeyCode;
     InitKeyEvent(keydownEvent, nativeKey, aModKeyState);
@@ -6520,9 +6492,8 @@ LRESULT nsWindow::OnKeyDown(const MSG &aMsg,
     // application, we shouldn't redirect the message to it because the keydown
     // message is processed by us, so, nobody shouldn't process it.
     HWND focusedWnd = ::GetFocus();
-    nsIMEContext newIMEContext(mWnd);
     if (!noDefault && !aFakeCharMessage && focusedWnd && !PluginHasFocus() &&
-        !IMEContext.get() && newIMEContext.get()) {
+        !isIMEEnabled && IMEHandler::IsIMEEnabled(mInputContext)) {
       RemoveNextCharMessage(focusedWnd);
 
       INPUT keyinput;
@@ -6586,7 +6557,8 @@ LRESULT nsWindow::OnKeyDown(const MSG &aMsg,
   extraFlags.mDefaultPrevented = noDefault;
   MSG msg;
   BOOL gotMsg = aFakeCharMessage ||
-    ::PeekMessageW(&msg, mWnd, WM_KEYFIRST, WM_KEYLAST, PM_NOREMOVE | PM_NOYIELD);
+    WinUtils::PeekMessage(&msg, mWnd, WM_KEYFIRST, WM_KEYLAST,
+                          PM_NOREMOVE | PM_NOYIELD);
   // Enter and backspace are always handled here to avoid for example the
   // confusion between ctrl-enter and ctrl-J.
   if (DOMKeyCode == NS_VK_RETURN || DOMKeyCode == NS_VK_BACK ||
@@ -6613,12 +6585,13 @@ LRESULT nsWindow::OnKeyDown(const MSG &aMsg,
         RemoveMessageAndDispatchPluginEvent(WM_KEYFIRST, WM_KEYLAST);
         anyCharMessagesRemoved = true;
 
-        gotMsg = ::PeekMessageW (&msg, mWnd, WM_KEYFIRST, WM_KEYLAST, PM_NOREMOVE | PM_NOYIELD);
+        gotMsg = WinUtils::PeekMessage(&msg, mWnd, WM_KEYFIRST, WM_KEYLAST,
+                                       PM_NOREMOVE | PM_NOYIELD);
       }
     }
 
     if (!anyCharMessagesRemoved && DOMKeyCode == NS_VK_BACK &&
-        nsIMM32Handler::IsDoingKakuteiUndo(mWnd)) {
+        IMEHandler::IsDoingKakuteiUndo(mWnd)) {
       NS_ASSERTION(!aFakeCharMessage,
                    "We shouldn't be touching the real msg queue");
       RemoveMessageAndDispatchPluginEvent(WM_CHAR, WM_CHAR);
@@ -6655,7 +6628,7 @@ LRESULT nsWindow::OnKeyDown(const MSG &aMsg,
     }
 
     // If prevent default set for keydown, do same for keypress
-    ::GetMessageW(&msg, mWnd, msg.message, msg.message);
+    WinUtils::GetMessage(&msg, mWnd, msg.message, msg.message);
 
     if (msg.message == WM_DEADCHAR) {
       if (!PluginHasFocus())
@@ -6892,8 +6865,8 @@ LRESULT nsWindow::OnChar(const MSG &aMsg,
     modKeyState.Unset(MODIFIER_ALT | MODIFIER_CONTROL);
   }
 
-  if (nsIMM32Handler::IsComposingOn(this)) {
-    ResetInputState();
+  if (IMEHandler::IsComposingOn(this)) {
+    IMEHandler::NotifyIME(this, REQUEST_TO_COMMIT_COMPOSITION);
   }
 
   wchar_t uniChar;
@@ -7213,8 +7186,7 @@ void nsWindow::OnDestroy()
     CaptureRollupEvents(nullptr, false);
   }
 
-  // Restore the IM context.
-  AssociateDefaultIMC(true);
+  IMEHandler::OnDestroyWindow(this);
 
   // Turn off mouse trails if enabled.
   MouseTrailer* mtrailer = nsToolkit::gMouseTrailer;
@@ -7395,96 +7367,31 @@ nsWindow::OnSysColorChanged()
  **************************************************************
  **************************************************************/
 
-NS_IMETHODIMP nsWindow::ResetInputState()
+NS_IMETHODIMP
+nsWindow::NotifyIME(NotificationToIME aNotification)
 {
-#ifdef DEBUG_KBSTATE
-  PR_LOG(gWindowsLog, PR_LOG_ALWAYS, ("ResetInputState\n"));
-#endif
-
-#ifdef NS_ENABLE_TSF
-  nsTextStore::CommitComposition(false);
-#endif //NS_ENABLE_TSF
-
-  nsIMM32Handler::CommitComposition(this);
-  return NS_OK;
+  return IMEHandler::NotifyIME(this, aNotification);
 }
 
 NS_IMETHODIMP_(void)
 nsWindow::SetInputContext(const InputContext& aContext,
                           const InputContextAction& aAction)
 {
-#ifdef NS_ENABLE_TSF
-  nsTextStore::SetInputContext(aContext);
-#endif //NS_ENABLE_TSF
-  if (nsIMM32Handler::IsComposing()) {
-    ResetInputState();
-  }
-  void* nativeIMEContext = mInputContext.mNativeIMEContext;
-  mInputContext = aContext;
-  mInputContext.mNativeIMEContext = nullptr;
-  bool enable = (mInputContext.mIMEState.mEnabled == IMEState::ENABLED ||
-                 mInputContext.mIMEState.mEnabled == IMEState::PLUGIN);
-
-  AssociateDefaultIMC(enable);
-
-  if (enable) {
-    nsIMEContext IMEContext(mWnd);
-    mInputContext.mNativeIMEContext = static_cast<void*>(IMEContext.get());
-  }
-  // Restore the latest associated context when we cannot get actual context.
-  if (!mInputContext.mNativeIMEContext) {
-    mInputContext.mNativeIMEContext = nativeIMEContext;
-  }
-
-  if (enable &&
-      mInputContext.mIMEState.mOpen != IMEState::DONT_CHANGE_OPEN_STATE) {
-    bool open = (mInputContext.mIMEState.mOpen == IMEState::OPEN);
-#ifdef NS_ENABLE_TSF
-    nsTextStore::SetIMEOpenState(open);
-#endif //NS_ENABLE_TSF
-    nsIMEContext IMEContext(mWnd);
-    if (IMEContext.IsValid()) {
-      ::ImmSetOpenStatus(IMEContext.get(), open);
-    }
-  }
+  InputContext newInputContext = aContext;
+  IMEHandler::SetInputContext(this, newInputContext, aAction);
+  mInputContext = newInputContext;
 }
 
 NS_IMETHODIMP_(InputContext)
 nsWindow::GetInputContext()
 {
   mInputContext.mIMEState.mOpen = IMEState::CLOSED;
-  switch (mInputContext.mIMEState.mEnabled) {
-    case IMEState::ENABLED:
-    case IMEState::PLUGIN: {
-      nsIMEContext IMEContext(mWnd);
-      if (IMEContext.IsValid()) {
-        mInputContext.mIMEState.mOpen =
-          ::ImmGetOpenStatus(IMEContext.get()) ? IMEState::OPEN :
-                                                 IMEState::CLOSED;
-      }
-#ifdef NS_ENABLE_TSF
-      if (mInputContext.mIMEState.mOpen == IMEState::CLOSED &&
-          nsTextStore::GetIMEOpenState()) {
-        mInputContext.mIMEState.mOpen = IMEState::OPEN;
-      }
-#endif //NS_ENABLE_TSF
-    }
+  if (IMEHandler::IsIMEEnabled(mInputContext) && IMEHandler::GetOpenState(this)) {
+    mInputContext.mIMEState.mOpen = IMEState::OPEN;
+  } else {
+    mInputContext.mIMEState.mOpen = IMEState::CLOSED;
   }
   return mInputContext;
-}
-
-NS_IMETHODIMP nsWindow::CancelIMEComposition()
-{
-#ifdef DEBUG_KBSTATE
-  PR_LOG(gWindowsLog, PR_LOG_ALWAYS, ("CancelIMEComposition\n"));
-#endif 
-
-#ifdef NS_ENABLE_TSF
-  nsTextStore::CommitComposition(true);
-#endif //NS_ENABLE_TSF
-
-  nsIMM32Handler::CancelComposition(this);
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -7498,73 +7405,18 @@ nsWindow::GetToggledKeyState(uint32_t aKeyCode, bool* aLEDState)
   return NS_OK;
 }
 
-#ifdef NS_ENABLE_TSF
 NS_IMETHODIMP
-nsWindow::OnIMEFocusChange(bool aFocus)
+nsWindow::NotifyIMEOfTextChange(uint32_t aStart,
+                                uint32_t aOldEnd,
+                                uint32_t aNewEnd)
 {
-  nsresult rv = nsTextStore::OnFocusChange(aFocus, this,
-                                           mInputContext.mIMEState.mEnabled);
-  if (rv == NS_ERROR_NOT_AVAILABLE)
-    rv = NS_OK; // TSF is not enabled, maybe.
-  return rv;
-}
-
-NS_IMETHODIMP
-nsWindow::OnIMETextChange(uint32_t aStart,
-                          uint32_t aOldEnd,
-                          uint32_t aNewEnd)
-{
-  return nsTextStore::OnTextChange(aStart, aOldEnd, aNewEnd);
-}
-
-NS_IMETHODIMP
-nsWindow::OnIMESelectionChange(void)
-{
-  return nsTextStore::OnSelectionChange();
+  return IMEHandler::NotifyIMEOfTextChange(aStart, aOldEnd, aNewEnd);
 }
 
 nsIMEUpdatePreference
 nsWindow::GetIMEUpdatePreference()
 {
-  return nsTextStore::GetIMEUpdatePreference();
-}
-
-#endif //NS_ENABLE_TSF
-
-bool nsWindow::AssociateDefaultIMC(bool aAssociate)
-{
-  nsIMEContext IMEContext(mWnd);
-
-  if (aAssociate) {
-    BOOL ret = ::ImmAssociateContextEx(mWnd, NULL, IACE_DEFAULT);
-#ifdef DEBUG
-    // Note that if IME isn't available with current keyboard layout,
-    // IMM might not be installed on the system such as English Windows.
-    // On such system, IMM APIs always fail.
-    NS_ASSERTION(ret || !nsIMM32Handler::IsIMEAvailable(),
-                 "ImmAssociateContextEx failed to restore default IMC");
-    if (ret) {
-      nsIMEContext newIMEContext(mWnd);
-      NS_ASSERTION(!IMEContext.get() || newIMEContext.get() == IMEContext.get(),
-                   "Unknown IMC had been associated");
-    }
-#endif
-    return ret && !IMEContext.get();
-  }
-
-  if (mOnDestroyCalled) {
-    // If OnDestroy() has been called, we shouldn't disassociate the default
-    // IMC at destroying the window.
-    return false;
-  }
-
-  if (!IMEContext.get()) {
-    return false; // already disassociated
-  }
-
-  BOOL ret = ::ImmAssociateContextEx(mWnd, NULL, 0);
-  NS_ASSERTION(ret, "ImmAssociateContextEx failed to disassociate the IMC");
-  return ret != FALSE;
+  return IMEHandler::GetUpdatePreference();
 }
 
 #ifdef ACCESSIBILITY

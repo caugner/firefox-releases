@@ -16,8 +16,8 @@
 #include "nsIAccessibleSelectable.h"
 #include "nsIAccessibleValue.h"
 #include "nsIAccessibleStates.h"
-#include "nsIContent.h"
 
+#include "nsIContent.h"
 #include "nsStringGlue.h"
 #include "nsTArray.h"
 #include "nsRefPtrHashtable.h"
@@ -25,7 +25,6 @@
 struct nsRoleMapEntry;
 
 struct nsRect;
-class nsIContent;
 class nsIFrame;
 class nsIAtom;
 class nsView;
@@ -46,6 +45,7 @@ class Relation;
 class TableAccessible;
 class TableCellAccessible;
 class TextLeafAccessible;
+class XULLabelAccessible;
 class XULTreeAccessible;
 
 /**
@@ -332,7 +332,8 @@ public:
   /**
    * Append/insert/remove a child. Return true if operation was successful.
    */
-  virtual bool AppendChild(Accessible* aChild);
+  bool AppendChild(Accessible* aChild)
+    { return InsertChildAt(mChildren.Length(), aChild); }
   virtual bool InsertChildAt(uint32_t aIndex, Accessible* aChild);
   virtual bool RemoveChild(Accessible* aChild);
 
@@ -522,6 +523,9 @@ public:
 
   bool IsTextLeaf() const { return mType == eTextLeafType; }
   TextLeafAccessible* AsTextLeaf();
+
+  bool IsXULLabel() const { return mType == eXULLabelType; }
+  XULLabelAccessible* AsXULLabel();
 
   bool IsXULTabpanels() const { return mType == eXULTabpanelsType; }
 
@@ -892,7 +896,7 @@ protected:
 
   static const uint8_t kChildrenFlagsBits = 2;
   static const uint8_t kStateFlagsBits = 5;
-  static const uint8_t kTypeBits = 5;
+  static const uint8_t kTypeBits = 6;
   static const uint8_t kGenericTypesBits = 12;
 
   /**

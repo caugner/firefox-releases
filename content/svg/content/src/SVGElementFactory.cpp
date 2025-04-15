@@ -4,10 +4,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "SVGElementFactory.h"
-#include "mozilla/Util.h"
-#include "nsContentCreatorFunctions.h"
 #include "nsGkAtoms.h"
+#include "nsIContent.h"
 #include "nsINodeInfo.h"
+#include "mozilla/dom/FromParser.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -43,8 +43,8 @@ NS_NewSVG##_classname##Element(nsIContent** aResult, \
 #undef SVG_FROM_PARSER_TAG
 
 nsresult
-NS_NewSVGUnknownElement(nsIContent** aResult,
-                        already_AddRefed<nsINodeInfo> aNodeInfo);
+NS_NewSVGElement(nsIContent** aResult,
+                 already_AddRefed<nsINodeInfo> aNodeInfo);
 
 typedef nsresult
   (*contentCreatorCallback)(nsIContent** aResult,
@@ -127,5 +127,5 @@ NS_NewSVGElement(nsIContent** aResult, already_AddRefed<nsINodeInfo> aNodeInfo,
   }
 
   // if we don't know what to create, just create a standard svg element:
-  return NS_NewSVGUnknownElement(aResult, aNodeInfo);
+  return NS_NewSVGElement(aResult, aNodeInfo);
 }

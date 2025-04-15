@@ -18,6 +18,7 @@ Cu.import('resource://gre/modules/Payment.jsm');
 Cu.import("resource://gre/modules/AppsUtils.jsm");
 Cu.import('resource://gre/modules/UserAgentOverrides.jsm');
 Cu.import('resource://gre/modules/Keyboard.jsm');
+Cu.import('resource://gre/modules/ErrorPage.jsm');
 #ifdef MOZ_B2G_RIL
 Cu.import('resource://gre/modules/NetworkStatsService.jsm');
 #endif
@@ -308,6 +309,7 @@ var shell = {
     ppmm.addMessageListener("sms-handler", this);
     ppmm.addMessageListener("mail-handler", this);
     ppmm.addMessageListener("app-notification-send", AlertsHelper);
+    ppmm.addMessageListener("file-picker", this);
   },
 
   stop: function shell_stop() {
@@ -405,7 +407,7 @@ var shell = {
   needBufferSysMsgs: true,
   bufferedSysMsgs: [],
   timer: null,
-  visibleAudioActive: false,
+  visibleNormalAudioActive: false,
 
   handleEvent: function shell_handleEvent(evt) {
     let content = this.contentBrowser.contentWindow;
@@ -423,7 +425,7 @@ var shell = {
           Services.fm.focusedWindow = window;
         break;
       case 'sizemodechange':
-        if (window.windowState == window.STATE_MINIMIZED && !this.visibleAudioActive) {
+        if (window.windowState == window.STATE_MINIMIZED && !this.visibleNormalAudioActive) {
           this.contentBrowser.setVisible(false);
         } else {
           this.contentBrowser.setVisible(true);
@@ -532,19 +534,34 @@ var shell = {
   },
 
   receiveMessage: function shell_receiveMessage(message) {
-    var names = { 'content-handler': 'view',
-                  'dial-handler'   : 'dial',
-                  'mail-handler'   : 'new',
-                  'sms-handler'    : 'new' }
+    var activities = { 'content-handler': { name: 'view', response: null },
+                       'dial-handler':    { name: 'dial', response: null },
+                       'mail-handler':    { name: 'new',  response: null },
+                       'sms-handler':     { name: 'new',  response: null },
+                       'file-picker':     { name: 'pick', response: 'file-picked' } };
 
-    if (!(message.name in names))
+    if (!(message.name in activities))
       return;
 
     let data = message.data;
-    new MozActivity({
-      name: names[message.name],
+    let activity = activities[message.name];
+
+    let a = new MozActivity({
+      name: activity.name,
       data: data
     });
+
+    if (activity.response) {
+      a.onsuccess = function() {
+        let sender = message.target.QueryInterface(Ci.nsIMessageSender);
+        sender.sendAsyncMessage(activity.response, { success: true,
+                                                     result:  a.result });
+      }
+      a.onerror = function() {
+        let sender = message.target.QueryInterface(Ci.nsIMessageSender);
+        sender.sendAsyncMessage(activity.response, { success: false });
+      }
+    }
   }
 };
 
@@ -636,6 +653,7 @@ var CustomEventManager = {
     dump('XXX FIXME : Got a mozContentEvent: ' + detail.type + "\n");
 
     switch(detail.type) {
+      case 'desktop-notification-show':
       case 'desktop-notification-click':
       case 'desktop-notification-close':
         AlertsHelper.handleEvent(detail);
@@ -673,8 +691,16 @@ var AlertsHelper = {
     if (!listener)
      return;
 
-    let topic = detail.type == "desktop-notification-click" ? "alertclickcallback"
-                           /* desktop-notification-close */ : "alertfinished";
+    let topic;
+    if (detail.type == "desktop-notification-click") {
+      topic = "alertclickcallback";
+    } else if (detail.type == "desktop-notification-show") {
+      topic = "alertshow";
+    } else {
+      /* desktop-notification-close */
+      topic = "alertfinished";
+    }
+
     if (uid.startsWith("app-notif")) {
       try {
         listener.mm.sendAsyncMessage("app-notification-return", {
@@ -707,10 +733,8 @@ var AlertsHelper = {
     }
   },
 
-  registerListener: function alert_registerListener(cookie, alertListener) {
-    let uid = "alert" + this._count++;
-    this._listeners[uid] = { observer: alertListener, cookie: cookie };
-    return uid;
+  registerListener: function alert_registerListener(alertId, cookie, alertListener) {
+    this._listeners[alertId] = { observer: alertListener, cookie: cookie };
   },
 
   registerAppListener: function alert_registerAppListener(uid, listener) {
@@ -745,7 +769,8 @@ var AlertsHelper = {
                                                     textClickable,
                                                     cookie,
                                                     uid,
-                                                    name,
+                                                    bidi,
+                                                    lang,
                                                     manifestUrl) {
     function send(appName, appIcon) {
       shell.sendChromeEvent({
@@ -754,6 +779,8 @@ var AlertsHelper = {
         icon: imageUrl,
         title: title,
         text: text,
+        bidi: bidi,
+        lang: lang,
         appName: appName,
         appIcon: appIcon,
         manifestURL: manifestUrl
@@ -779,10 +806,24 @@ var AlertsHelper = {
                                                               textClickable,
                                                               cookie,
                                                               alertListener,
-                                                              name) {
-    let uid = this.registerListener(null, alertListener);
+                                                              name,
+                                                              bidi,
+                                                              lang) {
+    let currentListener = this._listeners[name];
+    if (currentListener) {
+      currentListener.observer.observe(null, "alertfinished", currentListener.cookie);
+    }
+
+    this.registerListener(name, cookie, alertListener);
     this.showNotification(imageUrl, title, text, textClickable, cookie,
-                          uid, name, null);
+                          name, bidi, lang, null);
+  },
+
+  closeAlert: function alert_closeAlert(name) {
+    shell.sendChromeEvent({
+      type: "desktop-notification-close",
+      id: name
+    });
   },
 
   receiveMessage: function alert_receiveMessage(aMessage) {
@@ -804,7 +845,7 @@ var AlertsHelper = {
 
     this.showNotification(data.imageURL, data.title, data.text,
                           data.textClickable, null,
-                          data.uid, null, data.manifestURL);
+                          data.uid, null, null, data.manifestURL);
   },
 }
 
@@ -1087,7 +1128,7 @@ window.addEventListener('ContentStart', function update_onContentStart() {
       type: 'visible-audio-channel-changed',
       channel: aData
     });
-    shell.visibleAudioActive = (aData !== 'none');
+    shell.visibleNormalAudioActive = (aData == 'normal');
 }, "visible-audio-channel-changed", false);
 })();
 

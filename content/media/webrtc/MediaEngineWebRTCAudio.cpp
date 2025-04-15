@@ -85,7 +85,7 @@ MediaEngineWebRTCAudioSource::Config(bool aEchoOn, uint32_t aEcho,
       mEchoCancel = (webrtc::EcModes) aEcho;
     mVoEProcessing->SetEcStatus(mEchoOn, aEcho);
 #else
-    (void) aEcho; (void) aEchoOn; // suppress warnings
+    (void) aEcho; (void) aEchoOn; (void) mEchoCancel; // suppress warnings
 #endif
 
     if (update_agc &&
@@ -101,7 +101,7 @@ MediaEngineWebRTCAudioSource::Config(bool aEchoOn, uint32_t aEcho,
 }
 
 nsresult
-MediaEngineWebRTCAudioSource::Allocate()
+MediaEngineWebRTCAudioSource::Allocate(const MediaEnginePrefs &aPrefs)
 {
   if (mState == kReleased && mInitDone) {
     webrtc::VoEHardware* ptrVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
@@ -144,7 +144,7 @@ MediaEngineWebRTCAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
   }
 
   {
-    ReentrantMonitorAutoEnter enter(mMonitor);
+    MonitorAutoLock lock(mMonitor);
     mSources.AppendElement(aStream);
   }
 
@@ -181,7 +181,7 @@ nsresult
 MediaEngineWebRTCAudioSource::Stop(SourceMediaStream *aSource, TrackID aID)
 {
   {
-    ReentrantMonitorAutoEnter enter(mMonitor);
+    MonitorAutoLock lock(mMonitor);
 
     if (!mSources.RemoveElement(aSource)) {
       // Already stopped - this is allowed
@@ -350,7 +350,7 @@ MediaEngineWebRTCAudioSource::Process(const int channel,
   const webrtc::ProcessingTypes type, sample* audio10ms,
   const int length, const int samplingFreq, const bool isStereo)
 {
-  ReentrantMonitorAutoEnter enter(mMonitor);
+  MonitorAutoLock lock(mMonitor);
   if (mState != kStarted)
     return;
 

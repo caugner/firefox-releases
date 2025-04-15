@@ -7,7 +7,7 @@
 #ifndef AudioParam_h_
 #define AudioParam_h_
 
-#include "AudioEventTimeline.h"
+#include "AudioParamTimeline.h"
 #include "nsWrapperCache.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsCOMPtr.h"
@@ -16,7 +16,7 @@
 #include "AudioNode.h"
 #include "mozilla/dom/TypedArray.h"
 #include "mozilla/Util.h"
-#include "mozilla/ErrorResult.h"
+#include "WebAudioUtils.h"
 
 struct JSContext;
 class nsIDOMWindow;
@@ -24,8 +24,6 @@ class nsIDOMWindow;
 namespace mozilla {
 
 namespace dom {
-
-typedef AudioEventTimeline<ErrorResult> AudioParamTimeline;
 
 class AudioParam MOZ_FINAL : public nsWrapperCache,
                              public EnableWebAudioCheck,
@@ -49,8 +47,7 @@ public:
     return mNode->Context();
   }
 
-  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope,
-                               bool* aTriedToWrap);
+  virtual JSObject* WrapObject(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
 
   // We override SetValueCurveAtTime to convert the Float32Array to the wrapper
   // object.
@@ -65,6 +62,11 @@ public:
   // sure that the callback is called every time that this object gets mutated.
   void SetValue(float aValue)
   {
+    // Optimize away setting the same value on an AudioParam
+    if (HasSimpleValue() &&
+        WebAudioUtils::FuzzyEqual(GetValue(), aValue)) {
+      return;
+    }
     AudioParamTimeline::SetValue(aValue);
     mCallback(mNode);
   }

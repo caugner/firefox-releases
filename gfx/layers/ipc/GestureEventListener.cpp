@@ -20,7 +20,7 @@ namespace layers {
  * to be considered a tap. This also applies to double taps, except that it is
  * used twice.
  */
-static const int MAX_TAP_TIME = 300;
+static const uint32_t MAX_TAP_TIME = 300;
 
 /**
  * Amount of change in span needed to take us from the GESTURE_WAITING_PINCH
@@ -88,8 +88,7 @@ nsEventStatus GestureEventListener::HandleInputEvent(const InputData& aEvent)
         mLongTapTimeoutTask =
           NewRunnableMethod(this, &GestureEventListener::TimeoutLongTap);
 
-        MessageLoop::current()->PostDelayedTask(
-          FROM_HERE,
+        mAsyncPanZoomController->PostDelayedTask(
           mLongTapTimeoutTask,
           Preferences::GetInt("ui.click_hold_context_menus.delay", 500));
       }
@@ -169,8 +168,7 @@ nsEventStatus GestureEventListener::HandleInputEvent(const InputData& aEvent)
         mDoubleTapTimeoutTask =
           NewRunnableMethod(this, &GestureEventListener::TimeoutDoubleTap);
 
-        MessageLoop::current()->PostDelayedTask(
-          FROM_HERE,
+        mAsyncPanZoomController->PostDelayedTask(
           mDoubleTapTimeoutTask,
           MAX_TAP_TIME);
       }

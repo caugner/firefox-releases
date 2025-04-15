@@ -13,6 +13,16 @@
     'chromium_code': 1,
   },
 
+  'target_defaults': {
+    'conditions': [
+      ['moz_widget_toolkit_gonk==1', {
+        'defines' : [
+          'WEBRTC_GONK',
+       ],
+      }],
+    ],
+  },
+
   'targets': [
 
     #
@@ -44,6 +54,7 @@
         '../../../xpcom/base',
         '$(DEPTH)/dist/include',
         '../../../dom/base',
+        '../../../content/media',
         '../../../media/mtransport',
         '../trunk/webrtc',
         '../trunk/webrtc/video_engine/include',

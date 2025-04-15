@@ -14,6 +14,7 @@ import org.mozilla.gecko.sqlite.SQLiteBridge;
 import org.mozilla.gecko.sqlite.SQLiteBridgeException;
 import org.mozilla.gecko.sync.setup.SyncAccounts;
 import org.mozilla.gecko.sync.setup.SyncAccounts.SyncAccountParameters;
+import org.mozilla.gecko.util.ThreadUtils;
 
 import android.accounts.Account;
 import android.content.ContentProviderOperation;
@@ -609,7 +610,8 @@ public class ProfileMigrator {
             final String clientName = mSyncSettingsMap.get("services.sync.client.name");
             final String clientGuid = mSyncSettingsMap.get("services.sync.client.GUID");
 
-            GeckoAppShell.getHandler().post(new Runnable() {
+            ThreadUtils.postToBackgroundThread(new Runnable() {
+                @Override
                 public void run() {
                     if (userName == null || syncKey == null || syncPass == null) {
                         // This isn't going to work. Give up.
@@ -636,7 +638,8 @@ public class ProfileMigrator {
         }
 
         protected void registerAndRequest() {
-            GeckoAppShell.getHandler().post(new Runnable() {
+            ThreadUtils.postToBackgroundThread(new Runnable() {
+                @Override
                 public void run() {
                     requestValues();
                 }
@@ -650,7 +653,8 @@ public class ProfileMigrator {
                 @Override
                 protected void onPostExecute(Boolean result) {
                     if (result.booleanValue()) {
-                        GeckoAppShell.getHandler().post(new Runnable() {
+                        ThreadUtils.postToBackgroundThread(new Runnable() {
+                            @Override
                             public void run() {
                                 Log.i(LOGTAG, "Sync account already configured, skipping.");
                                 setMigratedSync();
@@ -930,7 +934,8 @@ public class ProfileMigrator {
 
             // GlobalHistory access communicates with Gecko
             // and must run on its thread.
-            GeckoAppShell.getHandler().post(new Runnable() {
+            ThreadUtils.postToBackgroundThread(new Runnable() {
+                    @Override
                     public void run() {
                         for (String url : placesHistory) {
                             GlobalHistory.getInstance().addToGeckoOnly(url);

@@ -130,7 +130,7 @@ var Addons = {
   _createItem: function _createItem(aAddon) {
     let outer = document.createElement("div");
     outer.setAttribute("addonID", aAddon.id);
-    outer.className = "addon-item";
+    outer.className = "addon-item list-item";
     outer.setAttribute("role", "button");
     outer.setAttribute("contextmenu", "addonmenu");
     outer.addEventListener("click", function() {
@@ -139,7 +139,7 @@ var Addons = {
     }.bind(this), true);
 
     let img = document.createElement("img");
-    img.className = "favicon";
+    img.className = "icon";
     img.setAttribute("src", aAddon.iconURL);
     outer.appendChild(img);
 
@@ -242,6 +242,7 @@ var Addons = {
         addon.version = "";
         addon.description = engine.description || defaultDescription;
         addon.iconURL = engine.iconURI ? engine.iconURI.spec : "";
+        addon.optionsURL = "";
         addon.appDisabled = false;
         addon.scope = isDefault(engine) ? AddonManager.SCOPE_APPLICATION : AddonManager.SCOPE_PROFILE;
         addon.engine = engine;
@@ -250,6 +251,7 @@ var Addons = {
         item.setAttribute("isDisabled", engine.hidden);
         item.setAttribute("updateable", "false");
         item.setAttribute("opType", "");
+        item.setAttribute("optionsURL", "");
         item.addon = addon;
         list.appendChild(item);
       }
@@ -289,7 +291,7 @@ var Addons = {
     detailItem.setAttribute("optionsURL", aListItem.getAttribute("optionsURL"));
     let addon = detailItem.addon = aListItem.addon;
 
-    let favicon = document.querySelector("#addons-details > .addon-item .favicon");
+    let favicon = document.querySelector("#addons-details > .addon-item .icon");
     if (addon.iconURL)
       favicon.setAttribute("src", addon.iconURL);
     else
@@ -302,7 +304,7 @@ var Addons = {
     detailItem.querySelector(".status-uninstalled").textContent =
       gStringBundle.formatStringFromName("addonStatus.uninstalled", [addon.name], 1);
 
-    let enableBtn = document.getElementById("uninstall-btn");
+    let enableBtn = document.getElementById("enable-btn");
     if (addon.appDisabled)
       enableBtn.setAttribute("disabled", "true");
     else
@@ -326,28 +328,30 @@ var Addons = {
       if (xhr.responseXML) {
         // Only allow <setting> for now
         let settings = xhr.responseXML.querySelectorAll(":root > setting");
-        for (let i = 0; i < settings.length; i++) {
-          var setting = settings[i];
-          var desc = stripTextNodes(setting).trim();
-          if (!setting.hasAttribute("desc"))
-            setting.setAttribute("desc", desc);
-          box.appendChild(setting);
+        if (settings.length > 0) {
+          for (let i = 0; i < settings.length; i++) {
+            var setting = settings[i];
+            var desc = stripTextNodes(setting).trim();
+            if (!setting.hasAttribute("desc"))
+              setting.setAttribute("desc", desc);
+            box.appendChild(setting);
+          }
+          // Send an event so add-ons can prepopulate any non-preference based
+          // settings
+          let event = document.createEvent("Events");
+          event.initEvent("AddonOptionsLoad", true, false);
+          window.dispatchEvent(event);
+  
+          // Also send a notification to match the behavior of desktop Firefox
+          let id = aListItem.getAttribute("addonID");
+          Services.obs.notifyObservers(document, AddonManager.OPTIONS_NOTIFICATION_DISPLAYED, id);
+        } else {
+          // No options, so hide the header and reset the list item
+          detailItem.setAttribute("optionsURL", "");
+          aListItem.setAttribute("optionsURL", "");
         }
-        // Send an event so add-ons can prepopulate any non-preference based
-        // settings
-        let event = document.createEvent("Events");
-        event.initEvent("AddonOptionsLoad", true, false);
-        window.dispatchEvent(event);
-
-        // Also send a notification to match the behavior of desktop Firefox
-        let id = aListItem.getAttribute("addonID");
-        Services.obs.notifyObservers(document,
-                                     AddonManager.OPTIONS_NOTIFICATION_DISPLAYED,
-                                     id);
       }
-    } catch (e) {
-      Cu.reportError(e)
-    }
+    } catch (e) { }
 
     let list = document.querySelector("#addons-list");
     list.style.display = "none";

@@ -83,6 +83,7 @@
 #include "mozilla/gfx/PathHelpers.h"
 #include "mozilla/ipc/DocumentRendererParent.h"
 #include "mozilla/ipc/PDocumentRendererParent.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/unused.h"
@@ -92,10 +93,14 @@
 #include "XPCQuickStubs.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/HTMLImageElement.h"
-#include "nsHTMLVideoElement.h"
+#include "mozilla/dom/HTMLVideoElement.h"
 #include "mozilla/dom/CanvasRenderingContext2DBinding.h"
-#include <cstdlib> // for std::abs(int/long)
-#include <cmath> // for std::abs(float/double)
+
+#ifdef USE_SKIA_GPU
+#include "GLContext.h"
+#include "GLContextProvider.h"
+#include "SurfaceTypes.h"
+#endif
 
 #ifdef XP_WIN
 #include "gfxWindowsPlatform.h"
@@ -299,10 +304,10 @@ public:
 
     // We need to enlarge and possibly offset our temporary surface
     // so that things outside of the canvas may cast shadows.
-    mTempRect.Inflate(Margin(blurRadius + std::max<Float>(state.shadowOffset.x, 0),
-                             blurRadius + std::max<Float>(state.shadowOffset.y, 0),
+    mTempRect.Inflate(Margin(blurRadius + std::max<Float>(state.shadowOffset.y, 0),
                              blurRadius + std::max<Float>(-state.shadowOffset.x, 0),
-                             blurRadius + std::max<Float>(-state.shadowOffset.y, 0)));
+                             blurRadius + std::max<Float>(-state.shadowOffset.y, 0),
+                             blurRadius + std::max<Float>(state.shadowOffset.x, 0)));
 
     if (aBounds) {
       // We actually include the bounds of the shadow blur, this makes it
@@ -461,6 +466,20 @@ public:
       mContext->mUserDatas.RemoveElement(this);
     }
   }
+
+#ifdef USE_SKIA_GPU
+  static void PreTransactionCallback(void* aData)
+  {
+    CanvasRenderingContext2DUserData* self =
+      static_cast<CanvasRenderingContext2DUserData*>(aData);
+    CanvasRenderingContext2D* context = self->mContext;
+    if (self->mContext && context->mGLContext) {
+      context->mGLContext->MakeCurrent();
+      context->mGLContext->PublishFrame();
+    }
+  }
+#endif
+
   static void DidTransactionCallback(void* aData)
   {
     CanvasRenderingContext2DUserData* self =
@@ -550,10 +569,9 @@ CanvasRenderingContext2D::~CanvasRenderingContext2D()
 }
 
 JSObject*
-CanvasRenderingContext2D::WrapObject(JSContext *cx, JSObject *scope,
-                                     bool *triedToWrap)
+CanvasRenderingContext2D::WrapObject(JSContext *cx, JSObject *scope)
 {
-  return CanvasRenderingContext2DBinding::Wrap(cx, scope, this, triedToWrap);
+  return CanvasRenderingContext2DBinding::Wrap(cx, scope, this);
 }
 
 bool
@@ -781,7 +799,16 @@ CanvasRenderingContext2D::EnsureTarget()
     }
 
      if (layerManager) {
-       mTarget = layerManager->CreateDrawTarget(size, format);
+#ifdef USE_SKIA_GPU
+       if (gfxPlatform::GetPlatform()->UseAcceleratedSkiaCanvas()) {
+         mGLContext = mozilla::gl::GLContextProvider::CreateOffscreen(gfxIntSize(size.width,
+                                                                                 size.height),
+                                                                      SurfaceCaps::ForRGBA(),
+                                                                      mozilla::gl::GLContext::ContextFlagsNone);
+         mTarget = gfxPlatform::GetPlatform()->CreateDrawTargetForFBO(0, mGLContext, size, format);
+       } else
+#endif
+         mTarget = layerManager->CreateDrawTarget(size, format);
      } else {
        mTarget = gfxPlatform::GetPlatform()->CreateOffscreenDrawTarget(size, format);
      }
@@ -1121,7 +1148,7 @@ CanvasRenderingContext2D::SetTransform(double m11, double m12,
 JSObject*
 MatrixToJSObject(JSContext* cx, const Matrix& matrix, ErrorResult& error)
 {
-  jsval elts[] = {
+  JS::Value elts[] = {
     DOUBLE_TO_JSVAL(matrix._11), DOUBLE_TO_JSVAL(matrix._12),
     DOUBLE_TO_JSVAL(matrix._21), DOUBLE_TO_JSVAL(matrix._22),
     DOUBLE_TO_JSVAL(matrix._31), DOUBLE_TO_JSVAL(matrix._32)
@@ -1148,7 +1175,7 @@ ObjectToMatrix(JSContext* cx, JSObject& obj, Matrix& matrix, ErrorResult& error)
   Float* elts[] = { &matrix._11, &matrix._12, &matrix._21, &matrix._22,
                     &matrix._31, &matrix._32 };
   for (uint32_t i = 0; i < 6; ++i) {
-    jsval elt;
+    JS::Value elt;
     double d;
     if (!JS_GetElement(cx, &obj, i, &elt)) {
       error.Throw(NS_ERROR_FAILURE);
@@ -1420,7 +1447,7 @@ CanvasRenderingContext2D::CreatePattern(const HTMLImageOrCanvasOrVideoElement& e
   } else if (element.IsHTMLImageElement()) {
     htmlElement = &element.GetAsHTMLImageElement();
   } else {
-    htmlElement = element.GetAsHTMLVideoElement();
+    htmlElement = &element.GetAsHTMLVideoElement();
   }
 
   // The canvas spec says that createPattern should use the first frame
@@ -2300,7 +2327,7 @@ struct NS_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcesso
 
     uint32_t numRuns;
     const gfxTextRun::GlyphRun *runs = mTextRun->GetGlyphRuns(&numRuns);
-    const uint32_t appUnitsPerDevUnit = mAppUnitsPerDevPixel;
+    const int32_t appUnitsPerDevUnit = mAppUnitsPerDevPixel;
     const double devUnitsPerAppUnit = 1.0/double(appUnitsPerDevUnit);
     Point baselineOrigin =
       Point(point.x * devUnitsPerAppUnit, point.y * devUnitsPerAppUnit);
@@ -2355,7 +2382,16 @@ struct NS_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcesso
           mTextRun->GetDetailedGlyphs(i);
 
         if (glyphs[i].IsMissing()) {
+          newGlyph.mIndex = 0;
+          if (mTextRun->IsRightToLeft()) {
+            newGlyph.mPosition.x = baselineOrigin.x - advanceSum -
+              detailedGlyphs[0].mAdvance * devUnitsPerAppUnit;
+          } else {
+            newGlyph.mPosition.x = baselineOrigin.x + advanceSum;
+          }
+          newGlyph.mPosition.y = baselineOrigin.y;
           advanceSum += detailedGlyphs[0].mAdvance * devUnitsPerAppUnit;
+          glyphBuf.push_back(newGlyph);
           continue;
         }
 
@@ -2424,7 +2460,7 @@ struct NS_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcesso
   gfxFontGroup* mFontgrp;
 
   // dev pixel conversion factor
-  uint32_t mAppUnitsPerDevPixel;
+  int32_t mAppUnitsPerDevPixel;
 
   // operation (fill or stroke)
   CanvasRenderingContext2D::TextDrawOperation mOp;
@@ -2904,7 +2940,7 @@ CanvasRenderingContext2D::DrawImage(const HTMLImageOrCanvasOrVideoElement& image
       HTMLImageElement* img = &image.GetAsHTMLImageElement();
       element = img;
     } else {
-      nsHTMLVideoElement* video = image.GetAsHTMLVideoElement();
+      HTMLVideoElement* video = &image.GetAsHTMLVideoElement();
       element = video;
     }
 
@@ -3680,8 +3716,8 @@ CanvasRenderingContext2D::CreateImageData(JSContext* cx, double sw,
   int32_t wi = JS_DoubleToInt32(sw);
   int32_t hi = JS_DoubleToInt32(sh);
 
-  uint32_t w = std::abs(wi);
-  uint32_t h = std::abs(hi);
+  uint32_t w = Abs(wi);
+  uint32_t h = Abs(hi);
   return mozilla::dom::CreateImageData(cx, this, w, h, error);
 }
 
@@ -3750,8 +3786,17 @@ CanvasRenderingContext2D::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
   canvasLayer->SetUserData(&g2DContextLayerUserData, userData);
 
   CanvasLayer::Data data;
+#ifdef USE_SKIA_GPU
+  if (mGLContext) {
+    canvasLayer->SetPreTransactionCallback(
+            CanvasRenderingContext2DUserData::PreTransactionCallback, userData);
+    data.mGLContext = mGLContext;
+  } else
+#endif
+  {
+    data.mDrawTarget = mTarget;
+  }
 
-  data.mDrawTarget = mTarget;
   data.mSize = nsIntSize(mWidth, mHeight);
 
   canvasLayer->Initialize(data);

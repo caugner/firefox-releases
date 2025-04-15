@@ -542,10 +542,11 @@
                             key="focusChatBar"
                             command="Social:FocusChat"
                             class="show-only-for-keyboard"/>
+                  <menuitem class="social-toggle-menuitem" command="Social:Toggle"/>
                   <menuseparator class="social-statusarea-separator"/>
                   <menuseparator class="social-provider-menu" hidden="true"/>
-                  <menuitem class="social-toggle-menuitem" command="Social:Toggle"/>
-                  <menuitem class="social-remove-menuitem" command="Social:Remove"/>
+                  <menuitem class="social-addons-menuitem" command="Social:Addons"
+                            label="&social.addons.label;"/>
                 </menupopup>
               </menu>
 #ifdef MOZ_SERVICES_SYNC

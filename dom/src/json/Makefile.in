@@ -11,7 +11,6 @@ FAIL_ON_WARNINGS := 1
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE         = dom
 LIBRARY_NAME   = json_s
 LIBXUL_LIBRARY = 1
 
@@ -30,7 +29,5 @@ LOCAL_INCLUDES = \
 		-I$(topsrcdir)/content/events/src
 
 DEFINES += -D_IMPL_NS_LAYOUT
-
-TEST_DIRS += test
 
 include $(topsrcdir)/config/rules.mk

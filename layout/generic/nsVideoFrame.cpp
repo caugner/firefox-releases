@@ -12,9 +12,10 @@
 #include "nsGkAtoms.h"
 
 #include "nsVideoFrame.h"
-#include "nsHTMLVideoElement.h"
+#include "mozilla/dom/HTMLVideoElement.h"
 #include "nsIDOMHTMLVideoElement.h"
 #include "nsIDOMHTMLImageElement.h"
+#include "nsIDOMHTMLElement.h"
 #include "nsDisplayList.h"
 #include "gfxContext.h"
 #include "gfxImageSurface.h"
@@ -63,6 +64,8 @@ nsVideoFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
 {
   nsNodeInfoManager *nodeInfoManager = GetContent()->GetCurrentDoc()->NodeInfoManager();
   nsCOMPtr<nsINodeInfo> nodeInfo;
+  Element *element;
+
   if (HasVideoElement()) {
     // Create an anonymous image element as a child to hold the poster
     // image. We may not have a poster image now, but one could be added
@@ -72,7 +75,7 @@ nsVideoFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
                                             kNameSpaceID_XHTML,
                                             nsIDOMNode::ELEMENT_NODE);
     NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
-    Element* element = NS_NewHTMLImageElement(nodeInfo.forget());
+    element = NS_NewHTMLImageElement(nodeInfo.forget());
     mPosterImage = element;
     NS_ENSURE_TRUE(mPosterImage, NS_ERROR_OUT_OF_MEMORY);
 
@@ -98,6 +101,18 @@ nsVideoFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
 
     if (!aElements.AppendElement(mPosterImage))
       return NS_ERROR_OUT_OF_MEMORY;
+
+    // Set up the caption overlay div for showing any TextTrack data
+    nodeInfo = nodeInfoManager->GetNodeInfo(nsGkAtoms::div,
+                                            nullptr,
+                                            kNameSpaceID_XHTML,
+                                            nsIDOMNode::ELEMENT_NODE);
+    NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
+    mCaptionDiv = NS_NewHTMLDivElement(nodeInfo.forget());
+    NS_ENSURE_TRUE(mCaptionDiv, NS_ERROR_OUT_OF_MEMORY);
+
+    if (!aElements.AppendElement(mCaptionDiv))
+      return NS_ERROR_OUT_OF_MEMORY;
   }
 
   // Set up "videocontrols" XUL element which will be XBL-bound to the
@@ -121,11 +136,13 @@ nsVideoFrame::AppendAnonymousContentTo(nsBaseContentList& aElements,
 {
   aElements.MaybeAppendElement(mPosterImage);
   aElements.MaybeAppendElement(mVideoControls);
+  aElements.MaybeAppendElement(mCaptionDiv);
 }
 
 void
 nsVideoFrame::DestroyFrom(nsIFrame* aDestructRoot)
 {
+  nsContentUtils::DestroyAnonymousContent(&mCaptionDiv);
   nsContentUtils::DestroyAnonymousContent(&mVideoControls);
   nsContentUtils::DestroyAnonymousContent(&mPosterImage);
   nsContainerFrame::DestroyFrom(aDestructRoot);
@@ -160,7 +177,7 @@ nsVideoFrame::BuildLayer(nsDisplayListBuilder* aBuilder,
                          const ContainerParameters& aContainerParameters)
 {
   nsRect area = GetContentRect() - GetPosition() + aItem->ToReferenceFrame();
-  nsHTMLVideoElement* element = static_cast<nsHTMLVideoElement*>(GetContent());
+  HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
   nsIntSize videoSize;
   if (NS_FAILED(element->GetVideoSize(&videoSize)) || area.IsEmpty()) {
     return nullptr;
@@ -246,7 +263,7 @@ nsVideoFrame::Reflow(nsPresContext*           aPresContext,
   for (nsIFrame *child = mFrames.FirstChild();
        child;
        child = child->GetNextSibling()) {
-    if (child->GetType() == nsGkAtoms::imageFrame) {
+    if (child->GetContent() == mPosterImage) {
       // Reflow the poster frame.
       nsImageFrame* imageFrame = static_cast<nsImageFrame*>(child);
       nsHTMLReflowMetrics kidDesiredSize;
@@ -286,7 +303,7 @@ nsVideoFrame::Reflow(nsPresContext*           aPresContext,
                         posterTopLeft.x, posterTopLeft.y, 0, aStatus);
       FinishReflowChild(imageFrame, aPresContext, &kidReflowState, kidDesiredSize,
                         posterTopLeft.x, posterTopLeft.y, 0);
-    } else if (child->GetType() == nsGkAtoms::boxFrame) {
+    } else if (child->GetContent() == mVideoControls) {
       // Reflow the video controls frame.
       nsBoxLayoutState boxState(PresContext(), aReflowState.rendContext);
       nsBoxFrame::LayoutChildAt(boxState,
@@ -295,6 +312,29 @@ nsVideoFrame::Reflow(nsPresContext*           aPresContext,
                                        mBorderPadding.top,
                                        aReflowState.ComputedWidth(),
                                        aReflowState.ComputedHeight()));
+    } else if (child->GetContent() == mCaptionDiv) {
+      // Reflow to caption div
+      nsHTMLReflowMetrics kidDesiredSize;
+      nsSize availableSize = nsSize(aReflowState.availableWidth,
+                                    aReflowState.availableHeight);
+      nsHTMLReflowState kidReflowState(aPresContext,
+                                       aReflowState,
+                                       child,
+                                       availableSize,
+                                       aMetrics.width,
+                                       aMetrics.height);
+      nsSize size(aReflowState.ComputedWidth(), aReflowState.ComputedHeight());
+      size.width -= kidReflowState.mComputedBorderPadding.LeftRight();
+      size.height -= kidReflowState.mComputedBorderPadding.TopBottom();
+
+      kidReflowState.SetComputedWidth(std::max(size.width, 0));
+      kidReflowState.SetComputedHeight(std::max(size.height, 0));
+
+      ReflowChild(child, aPresContext, kidDesiredSize, kidReflowState,
+                  mBorderPadding.left, mBorderPadding.top, 0, aStatus);
+      FinishReflowChild(child, aPresContext,
+                        &kidReflowState, kidDesiredSize,
+                        mBorderPadding.left, mBorderPadding.top, 0);
     }
   }
   aMetrics.SetOverflowAreasToDesiredBounds();
@@ -359,8 +399,8 @@ public:
       // cheap (i.e. hardware accelerated).
       return LAYER_ACTIVE;
     }
-    nsHTMLMediaElement* elem =
-      static_cast<nsHTMLMediaElement*>(mFrame->GetContent());
+    HTMLMediaElement* elem =
+      static_cast<HTMLMediaElement*>(mFrame->GetContent());
     return elem->IsPotentiallyPlaying() ? LAYER_ACTIVE_FORCE : LAYER_INACTIVE;
   }
 };
@@ -384,12 +424,13 @@ nsVideoFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       new (aBuilder) nsDisplayVideo(aBuilder, this));
   }
 
-  // Add child frames to display list. We expect up to two children, an image
-  // frame for the poster, and the box frame for the video controls.
+  // Add child frames to display list. We expect various children,
+  // but only want to draw mPosterImage conditionally. Others we
+  // always add to the display list.
   for (nsIFrame *child = mFrames.FirstChild();
        child;
        child = child->GetNextSibling()) {
-    if (child->GetType() == nsGkAtoms::imageFrame && ShouldDisplayPoster()) {
+    if (child->GetContent() != mPosterImage || ShouldDisplayPoster()) {
       child->BuildDisplayListForStackingContext(aBuilder,
                                                 aDirtyRect - child->GetOffsetTo(this),
                                                 &replacedContent);
@@ -475,7 +516,7 @@ bool nsVideoFrame::ShouldDisplayPoster()
   if (!HasVideoElement())
     return false;
 
-  nsHTMLVideoElement* element = static_cast<nsHTMLVideoElement*>(GetContent());
+  HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
   if (element->GetPlayedOrSeeked() && HasVideoData())
     return false;
 
@@ -517,7 +558,7 @@ nsVideoFrame::GetVideoIntrinsicSize(nsRenderingContext *aRenderingContext)
     return nsSize(nsPresContext::CSSPixelsToAppUnits(size.width), prefHeight);
   }
 
-  nsHTMLVideoElement* element = static_cast<nsHTMLVideoElement*>(GetContent());
+  HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
   if (NS_FAILED(element->GetVideoSize(&size)) && ShouldDisplayPoster()) {
     // Use the poster image frame's size.
     nsIFrame *child = mPosterImage->GetPrimaryFrame();
@@ -536,7 +577,7 @@ nsresult
 nsVideoFrame::UpdatePosterSource(bool aNotify)
 {
   NS_ASSERTION(HasVideoElement(), "Only call this on <video> elements.");
-  nsHTMLVideoElement* element = static_cast<nsHTMLVideoElement*>(GetContent());
+  HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
 
   nsAutoString posterStr;
   element->GetPoster(posterStr);
@@ -571,7 +612,7 @@ bool nsVideoFrame::HasVideoData()
 {
   if (!HasVideoElement())
     return false;
-  nsHTMLVideoElement* element = static_cast<nsHTMLVideoElement*>(GetContent());
+  HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
   nsIntSize size(0, 0);
   element->GetVideoSize(&size);
   return size != nsIntSize(0,0);

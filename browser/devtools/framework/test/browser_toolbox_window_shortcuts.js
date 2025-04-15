@@ -11,10 +11,17 @@ let toolbox, toolIDs, idIndex;
 function test() {
   waitForExplicitFinish();
 
+  if (window.navigator.userAgent.indexOf("Mac OS X 10.8") != -1 ||
+      window.navigator.userAgent.indexOf("Windows NT 5.1") != -1) {
+    info("Skipping Mac OSX 10.8 and Windows xp, see bug 838069");
+    finish();
+    return;
+  }
   addTab("about:blank", function() {
     toolIDs = [];
     for (let [id, definition] of gDevTools._tools) {
-      if (definition.key) {
+      // Skipping Profiler due to bug 838069. Re-enable when bug 845752 is fixed
+      if (definition.key && id != "jsprofiler") {
         toolIDs.push(id);
       }
     }
@@ -65,9 +72,10 @@ function selectCB(event, id) {
 }
 
 function tidyUp() {
-  toolbox.destroy();
-  gBrowser.removeCurrentTab();
+  toolbox.destroy().then(function() {
+    gBrowser.removeCurrentTab();
 
-  toolbox = toolIDs = idIndex = Toolbox = null;
-  finish();
+    toolbox = toolIDs = idIndex = Toolbox = null;
+    finish();
+  });
 }

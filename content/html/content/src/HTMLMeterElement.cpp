@@ -7,8 +7,6 @@
 #include "mozilla/dom/HTMLMeterElementBinding.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Meter)
-DOMCI_NODE_DATA(HTMLMeterElement, mozilla::dom::HTMLMeterElement)
-
 
 namespace mozilla {
 namespace dom {
@@ -37,7 +35,7 @@ NS_INTERFACE_TABLE_HEAD(HTMLMeterElement)
                                    nsIDOMHTMLMeterElement)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLMeterElement,
                                                nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLMeterElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLMeterElement)
 
@@ -352,10 +350,9 @@ HTMLMeterElement::GetOptimumState() const
 }
 
 JSObject*
-HTMLMeterElement::WrapNode(JSContext* aCx, JSObject* aScope,
-                           bool* aTriedToWrap)
+HTMLMeterElement::WrapNode(JSContext* aCx, JSObject* aScope)
 {
-  return HTMLMeterElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return HTMLMeterElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom

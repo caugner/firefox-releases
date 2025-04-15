@@ -577,17 +577,15 @@ public:
    * frame (the frame that was split).
    *
    * If you want a view associated with your frame, you should create the view
-   * now.
+   * after Init() has returned.
    *
    * @param   aContent the content object associated with the frame
-   * @param   aGeometricParent  the geometric parent frame
-   * @param   aContentParent  the content parent frame
-   * @param   aContext the style context associated with the frame
+   * @param   aParent the parent frame
    * @param   aPrevInFlow the prev-in-flow frame
    */
-  NS_IMETHOD  Init(nsIContent*      aContent,
-                   nsIFrame*        aParent,
-                   nsIFrame*        aPrevInFlow) = 0;
+  virtual void Init(nsIContent*      aContent,
+                    nsIFrame*        aParent,
+                    nsIFrame*        aPrevInFlow) = 0;
 
   /**
    * Destroys this frame and each of its child frames (recursively calls
@@ -2956,6 +2954,18 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
 
   void CreateOwnLayerIfNeeded(nsDisplayListBuilder* aBuilder, nsDisplayList* aList);
 
+  /**
+   * Adds the NS_FRAME_IN_POPUP state bit to aFrame, and
+   * all descendant frames (including cross-doc ones).
+   */
+  static void AddInPopupStateBitToDescendants(nsIFrame* aFrame);
+  /**
+   * Removes the NS_FRAME_IN_POPUP state bit from aFrame and
+   * all descendant frames (including cross-doc ones), unless
+   * the frame is a popup itself.
+   */
+  static void RemoveInPopupStateBitFromDescendants(nsIFrame* aFrame);
+
 protected:
   // Members
   nsRect           mRect;
@@ -3247,6 +3257,44 @@ private:
   nsWeakFrame*  mPrev;
   nsIFrame*     mFrame;
 };
+
+inline bool
+nsFrameList::ContinueRemoveFrame(nsIFrame* aFrame)
+{
+  MOZ_ASSERT(!aFrame->GetPrevSibling() || !aFrame->GetNextSibling(),
+             "Forgot to call StartRemoveFrame?");
+  if (aFrame == mLastChild) {
+    MOZ_ASSERT(!aFrame->GetNextSibling(), "broken frame list");
+    nsIFrame* prevSibling = aFrame->GetPrevSibling();
+    if (!prevSibling) {
+      MOZ_ASSERT(aFrame == mFirstChild, "broken frame list");
+      mFirstChild = mLastChild = nullptr;
+      return true;
+    }
+    MOZ_ASSERT(prevSibling->GetNextSibling() == aFrame, "Broken frame linkage");
+    prevSibling->SetNextSibling(nullptr);
+    mLastChild = prevSibling;
+    return true;
+  }
+  if (aFrame == mFirstChild) {
+    MOZ_ASSERT(!aFrame->GetPrevSibling(), "broken frame list");
+    mFirstChild = aFrame->GetNextSibling();
+    aFrame->SetNextSibling(nullptr);
+    MOZ_ASSERT(mFirstChild, "broken frame list");
+    return true;
+  }
+  return false;
+}
+
+inline bool
+nsFrameList::StartRemoveFrame(nsIFrame* aFrame)
+{
+  if (aFrame->GetPrevSibling() && aFrame->GetNextSibling()) {
+    UnhookFrameFromSiblings(aFrame);
+    return true;
+  }
+  return ContinueRemoveFrame(aFrame);
+}
 
 inline void
 nsFrameList::Enumerator::Next()

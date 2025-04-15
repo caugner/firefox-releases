@@ -353,6 +353,13 @@ function PluginWrapper(aId, aName, aDescription, aTags) {
     return libs;
   });
 
+  this.__defineGetter__("pluginFullpath", function() {
+    let paths = [];
+    for (let tag of aTags)
+      paths.push(tag.fullpath);
+    return paths;
+  })
+
   this.__defineGetter__("pluginMimeTypes", function() {
     let types = [];
     for (let tag of aTags)
@@ -413,7 +420,7 @@ function PluginWrapper(aId, aName, aDescription, aTags) {
 }
 
 PluginWrapper.prototype = {
-  optionsType: AddonManager.OPTIONS_TYPE_INLINE,
+  optionsType: AddonManager.OPTIONS_TYPE_INLINE_INFO,
   optionsURL: "chrome://mozapps/content/extensions/pluginPrefs.xul",
 
   get updateDate() {

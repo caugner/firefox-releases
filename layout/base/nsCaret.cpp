@@ -35,6 +35,7 @@
 #include "nsThemeConstants.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
+#include "mozilla/Selection.h"
 #include <algorithm>
 
 // The bidi indicator hangs off the caret to one side, to show which
@@ -219,7 +220,7 @@ nsCaret::Metrics nsCaret::ComputeMetrics(nsIFrame* aFrame, int32_t aOffset, nsco
 
   // Round them to device pixels. Always round down, except that anything
   // between 0 and 1 goes up to 1 so we don't let the caret disappear.
-  uint32_t tpp = aFrame->PresContext()->AppUnitsPerDevPixel();
+  int32_t tpp = aFrame->PresContext()->AppUnitsPerDevPixel();
   Metrics result;
   result.mCaretWidth = NS_ROUND_BORDER_TO_PIXELS(caretWidth, tpp);
   result.mBidiIndicatorSize = NS_ROUND_BORDER_TO_PIXELS(bidiIndicatorSize, tpp);
@@ -1127,15 +1128,14 @@ void nsCaret::CaretBlinkCallback(nsITimer *aTimer, void *aClosure)
 
 
 //-----------------------------------------------------------------------------
-already_AddRefed<nsFrameSelection>
+nsFrameSelection*
 nsCaret::GetFrameSelection()
 {
-  nsCOMPtr<nsISelectionPrivate> privateSelection(do_QueryReferent(mDomSelectionWeak));
-  if (!privateSelection)
+  nsCOMPtr<nsISelection> sel = do_QueryReferent(mDomSelectionWeak);
+  if (!sel)
     return nullptr;
-  nsFrameSelection* frameSelection = nullptr;
-  privateSelection->GetFrameSelection(&frameSelection);
-  return frameSelection;
+
+  return static_cast<Selection*>(sel.get())->GetFrameSelection();
 }
 
 void

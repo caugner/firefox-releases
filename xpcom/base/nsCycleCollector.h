@@ -6,8 +6,6 @@
 #ifndef nsCycleCollector_h__
 #define nsCycleCollector_h__
 
-//#define DEBUG_CC
-
 class nsISupports;
 class nsICycleCollectorListener;
 class nsCycleCollectionParticipant;
@@ -27,7 +25,14 @@ public:
     uint32_t mFreedGCed;
 };
 
-nsresult nsCycleCollector_startup();
+bool nsCycleCollector_init();
+
+enum CCThreadingModel {
+    CCSingleThread,
+    CCWithTraverseThread,
+};
+
+nsresult nsCycleCollector_startup(CCThreadingModel aThreadingModel);
 
 typedef void (*CC_BeforeUnlinkCallback)(void);
 void nsCycleCollector_setBeforeUnlinkCallback(CC_BeforeUnlinkCallback aCB);
@@ -36,12 +41,6 @@ typedef void (*CC_ForgetSkippableCallback)(void);
 void nsCycleCollector_setForgetSkippableCallback(CC_ForgetSkippableCallback aCB);
 
 void nsCycleCollector_forgetSkippable(bool aRemoveChildlessNodes = false);
-
-#ifdef DEBUG_CC
-void nsCycleCollector_logPurpleAddition(void* aObject,
-                                        nsCycleCollectionParticipant* cp);
-void nsCycleCollector_logPurpleRemoval(void* aObject);
-#endif
 
 void nsCycleCollector_collect(bool aMergeCompartments,
                               nsCycleCollectorResults *aResults,
@@ -54,7 +53,6 @@ void nsCycleCollector_shutdown();
 struct nsCycleCollectionJSRuntime
 {
     virtual nsresult BeginCycleCollection(nsCycleCollectionTraversalCallback &cb) = 0;
-    virtual nsresult FinishTraverse() = 0;
 
     /**
      * Called before/after transitioning to/from the main thread.

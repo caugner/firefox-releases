@@ -6,7 +6,6 @@
 
 #include "vcm.h"
 #include "CSFLog.h"
-#include "CSFLogStream.h"
 #include "ccapi_call_info.h"
 #include "CC_SIPCCCallInfo.h"
 #include "ccapi_device_info.h"
@@ -35,9 +34,11 @@
 #include "PeerConnectionImpl.h"
 #include "nsPIDOMWindow.h"
 #include "nsDOMDataChannel.h"
+
 #ifdef MOZILLA_INTERNAL_API
 #include "nsContentUtils.h"
 #include "nsDOMJSUtils.h"
+#include "nsIDocument.h"
 #include "nsIScriptError.h"
 #include "nsPrintfCString.h"
 #include "nsURLHelper.h"
@@ -47,6 +48,7 @@
 #include "MediaStreamList.h"
 #include "nsIScriptGlobalObject.h"
 #include "jsapi.h"
+#include "DOMMediaStream.h"
 #endif
 
 #ifndef USE_FAKE_MEDIA_STREAMS
@@ -123,7 +125,8 @@ public:
                                  IPeerConnectionObserver* aObserver)
       : mPC(aPC),
         mObserver(aObserver),
-        mCode(static_cast<StatusCode>(aInfo->getStatusCode())),
+        mCode(static_cast<PeerConnectionImpl::Error>(aInfo->getStatusCode())),
+        mReason(aInfo->getStatus()),
         mSdpStr(),
         mCallState(aInfo->getCallState()),
         mStateStr(aInfo->callStateToString(mCallState)) {
@@ -140,7 +143,63 @@ public:
 
   ~PeerConnectionObserverDispatch(){}
 
+#ifdef MOZILLA_INTERNAL_API
+  class TracksAvailableCallback : public DOMMediaStream::OnTracksAvailableCallback
+  {
+  public:
+    TracksAvailableCallback(DOMMediaStream::TrackTypeHints aTrackTypeHints,
+                            nsCOMPtr<IPeerConnectionObserver> aObserver)
+      : DOMMediaStream::OnTracksAvailableCallback(aTrackTypeHints),
+        mObserver(aObserver) {}
+
+    virtual void NotifyTracksAvailable(DOMMediaStream* aStream) MOZ_OVERRIDE
+    {
+      MOZ_ASSERT(NS_IsMainThread());
+
+      // Start currentTime from the point where this stream was successfully
+      // returned.
+      aStream->SetLogicalStreamStartTime(aStream->GetStream()->GetCurrentTime());
+
+      CSFLogInfo(logTag, "Returning success for OnAddStream()");
+      // We are running on main thread here so we shouldn't have a race
+      // on this callback
+
+      // We provide a type field because it is in the IDL
+      // and we want code that looks at it not to crash.
+      // We use "video" so that if an app looks for
+      // that string it has some chance of working.
+      // TODO(ekr@rtfm.com): Bug 834847
+      // The correct way for content JS to know stream type
+      // is via get{Audio,Video}Tracks. See Bug 834835.
+      mObserver->OnAddStream(aStream, "video");
+    }
+
+    nsCOMPtr<IPeerConnectionObserver> mObserver;
+  };
+#endif
+
   NS_IMETHOD Run() {
+
+    CSFLogInfo(logTag, "PeerConnectionObserverDispatch processing "
+                       "mCallState = %d (%s)", mCallState, mStateStr.c_str());
+
+    if (mCallState == SETLOCALDESCERROR || mCallState == SETREMOTEDESCERROR) {
+      const std::vector<std::string> &errors = mPC->GetSdpParseErrors();
+      std::vector<std::string>::const_iterator i;
+      for (i = errors.begin(); i != errors.end(); ++i) {
+        mReason += " | SDP Parsing Error: " + *i;
+      }
+      if (errors.size()) {
+        mCode = PeerConnectionImpl::kInvalidSessionDescription;
+      }
+      mPC->ClearSdpParseErrorMessages();
+    }
+
+    if (mReason.length()) {
+      CSFLogInfo(logTag, "Message contains error: %d: %s",
+                 mCode, mReason.c_str());
+    }
+
     switch (mCallState) {
       case CREATEOFFER:
         mObserver->OnCreateOfferSuccess(mSdpStr.c_str());
@@ -151,35 +210,47 @@ public:
         break;
 
       case CREATEOFFERERROR:
-        mObserver->OnCreateOfferError(mCode);
+        mObserver->OnCreateOfferError(mCode, mReason.c_str());
         break;
 
       case CREATEANSWERERROR:
-        mObserver->OnCreateAnswerError(mCode);
+        mObserver->OnCreateAnswerError(mCode, mReason.c_str());
         break;
 
       case SETLOCALDESC:
-        mObserver->OnSetLocalDescriptionSuccess(mCode);
+        // TODO: The SDP Parse error list should be copied out and sent up
+        // to the Javascript layer before being cleared here. Even though
+        // there was not a failure, it is possible that the SDP parse generated
+        // warnings. The WebRTC spec does not currently have a mechanism for
+        // providing non-fatal warnings.
+        mPC->ClearSdpParseErrorMessages();
+        mObserver->OnSetLocalDescriptionSuccess();
         break;
 
       case SETREMOTEDESC:
-        mObserver->OnSetRemoteDescriptionSuccess(mCode);
+        // TODO: The SDP Parse error list should be copied out and sent up
+        // to the Javascript layer before being cleared here. Even though
+        // there was not a failure, it is possible that the SDP parse generated
+        // warnings. The WebRTC spec does not currently have a mechanism for
+        // providing non-fatal warnings.
+        mPC->ClearSdpParseErrorMessages();
+        mObserver->OnSetRemoteDescriptionSuccess();
         break;
 
       case SETLOCALDESCERROR:
-        mObserver->OnSetLocalDescriptionError(mCode);
+        mObserver->OnSetLocalDescriptionError(mCode, mReason.c_str());
         break;
 
       case SETREMOTEDESCERROR:
-        mObserver->OnSetRemoteDescriptionError(mCode);
+        mObserver->OnSetRemoteDescriptionError(mCode, mReason.c_str());
         break;
 
       case ADDICECANDIDATE:
-        mObserver->OnAddIceCandidateSuccess(mCode);
+        mObserver->OnAddIceCandidateSuccess();
         break;
 
       case ADDICECANDIDATEERROR:
-        mObserver->OnAddIceCandidateError(mCode);
+        mObserver->OnAddIceCandidateError(mCode, mReason.c_str());
         break;
 
       case REMOTESTREAMADD:
@@ -195,6 +266,12 @@ public:
           if (!stream) {
             CSFLogError(logTag, "%s: GetMediaStream returned NULL", __FUNCTION__);
           } else {
+#ifdef MOZILLA_INTERNAL_API
+            TracksAvailableCallback* tracksAvailableCallback =
+              new TracksAvailableCallback(mRemoteStream->mTrackTypeHints, mObserver);
+
+            stream->OnTracksAvailable(tracksAvailableCallback);
+#else
             // We provide a type field because it is in the IDL
             // and we want code that looks at it not to crash.
             // We use "video" so that if an app looks for
@@ -203,6 +280,7 @@ public:
             // The correct way for content JS to know stream type
             // is via get{Audio,Video}Tracks. See Bug 834835.
             mObserver->OnAddStream(stream, "video");
+#endif
           }
           break;
         }
@@ -212,7 +290,8 @@ public:
         break;
 
       default:
-        CSFLogDebugS(logTag, ": **** UNHANDLED CALL STATE : " << mStateStr);
+        CSFLogError(logTag, ": **** UNHANDLED CALL STATE : %d (%s)",
+                    mCallState, mStateStr.c_str());
         break;
     }
 
@@ -222,7 +301,8 @@ public:
 private:
   nsRefPtr<PeerConnectionImpl> mPC;
   nsCOMPtr<IPeerConnectionObserver> mObserver;
-  StatusCode mCode;
+  PeerConnectionImpl::Error mCode;
+  std::string mReason;
   std::string mSdpStr;
   cc_call_state_t mCallState;
   std::string mStateStr;
@@ -240,10 +320,15 @@ PeerConnectionImpl::PeerConnectionImpl()
   , mWindow(NULL)
   , mIdentity(NULL)
   , mSTSThread(NULL)
-  , mMedia(new PeerConnectionMedia(this)) {
+  , mMedia(NULL)
+  , mNumAudioStreams(0)
+  , mNumVideoStreams(0)
+  , mHaveDataStream(false) {
 #ifdef MOZILLA_INTERNAL_API
   MOZ_ASSERT(NS_IsMainThread());
 #endif
+  CSFLogInfo(logTag, "%s: PeerConnectionImpl constructor for %p",
+             __FUNCTION__, (void *) this);
 }
 
 PeerConnectionImpl::~PeerConnectionImpl()
@@ -256,7 +341,9 @@ PeerConnectionImpl::~PeerConnectionImpl()
     CSFLogError(logTag, "PeerConnectionCtx is already gone. Ignoring...");
   }
 
-  CloseInt(false);
+  CSFLogInfo(logTag, "%s: PeerConnectionImpl destructor invoked for %p",
+             __FUNCTION__, (void *) this);
+  CloseInt();
 
 #ifdef MOZILLA_INTERNAL_API
   // Deregister as an NSS Shutdown Object
@@ -278,21 +365,24 @@ PeerConnectionImpl::~PeerConnectionImpl()
   */
 }
 
-// One level of indirection so we can use WrapRunnable in CreateMediaStream.
-nsresult
-PeerConnectionImpl::MakeMediaStream(nsIDOMWindow* aWindow,
-                                    uint32_t aHint, nsIDOMMediaStream** aRetval)
+already_AddRefed<DOMMediaStream>
+PeerConnectionImpl::MakeMediaStream(nsPIDOMWindow* aWindow,
+                                    uint32_t aHint)
 {
-  MOZ_ASSERT(aRetval);
-
   nsRefPtr<DOMMediaStream> stream =
     DOMMediaStream::CreateSourceStream(aWindow, aHint);
-  NS_ADDREF(*aRetval = stream);
+#ifdef MOZILLA_INTERNAL_API
+  nsIDocument* doc = aWindow->GetExtantDoc();
+  if (!doc) {
+    return nullptr;
+  }
+  // Make the stream data (audio/video samples) accessible to the receiving page.
+  stream->CombineWithPrincipal(doc->NodePrincipal());
+#endif
 
-  CSFLogDebugS(logTag, "Created media stream " << static_cast<void*>(stream)
-    << " inner: " << static_cast<void*>(stream->GetStream()));
+  CSFLogDebug(logTag, "Created media stream %p, inner: %p", stream.get(), stream->GetStream());
 
-  return NS_OK;
+  return stream.forget();
 }
 
 nsresult
@@ -302,22 +392,19 @@ PeerConnectionImpl::CreateRemoteSourceStreamInfo(nsRefPtr<RemoteSourceStreamInfo
   MOZ_ASSERT(aInfo);
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
 
-  nsIDOMMediaStream* stream;
-
   // We need to pass a dummy hint here because FakeMediaStream currently
   // needs to actually propagate a hint for local streams.
   // TODO(ekr@rtfm.com): Clean up when we have explicit track lists.
   // See bug 834835.
-  nsresult res = MakeMediaStream(mWindow, 0, &stream);
-  if (NS_FAILED(res)) {
-    return res;
+  nsRefPtr<DOMMediaStream> stream = MakeMediaStream(mWindow, 0);
+  if (!stream) {
+    return NS_ERROR_FAILURE;
   }
 
-  DOMMediaStream* comstream = static_cast<DOMMediaStream*>(stream);
-  static_cast<mozilla::SourceMediaStream*>(comstream->GetStream())->SetPullEnabled(true);
+  static_cast<mozilla::SourceMediaStream*>(stream->GetStream())->SetPullEnabled(true);
 
   nsRefPtr<RemoteSourceStreamInfo> remote;
-  remote = new RemoteSourceStreamInfo(comstream);
+  remote = new RemoteSourceStreamInfo(stream.forget(), mMedia);
   *aInfo = remote;
 
   return NS_OK;
@@ -326,7 +413,7 @@ PeerConnectionImpl::CreateRemoteSourceStreamInfo(nsRefPtr<RemoteSourceStreamInfo
 #ifdef MOZILLA_INTERNAL_API
 static void
 Warn(JSContext* aCx, const nsCString& aMsg) {
-  CSFLogErrorS(logTag, "Warning: " << aMsg.get());
+  CSFLogError(logTag, "Warning: %s", aMsg.get());
   nsIScriptContext* sc = GetScriptContextFromJSContext(aCx);
   if (sc) {
     nsCOMPtr<nsIDocument> doc;
@@ -481,9 +568,12 @@ PeerConnectionImpl::Initialize(IPeerConnectionObserver* aObserver,
     return NS_ERROR_FAILURE;
   }
 
+  mMedia = new PeerConnectionMedia(this);
+
   // Connect ICE slots.
   mMedia->SignalIceGatheringCompleted.connect(this, &PeerConnectionImpl::IceGatheringCompleted);
   mMedia->SignalIceCompleted.connect(this, &PeerConnectionImpl::IceCompleted);
+  mMedia->SignalIceFailed.connect(this, &PeerConnectionImpl::IceFailed);
 
   // Initialize the media object.
   if (aRTCConfiguration) {
@@ -538,16 +628,16 @@ PeerConnectionImpl::Initialize(IPeerConnectionObserver* aObserver,
                                       &fingerprint_length);
 
   if (NS_FAILED(res)) {
-    CSFLogErrorS(logTag, __FUNCTION__ << ": ComputeFingerprint failed: " <<
-        static_cast<uint32_t>(res));
+    CSFLogError(logTag, "%s: ComputeFingerprint failed: %u",
+      __FUNCTION__, static_cast<uint32_t>(res));
     return res;
   }
 
   mFingerprint = "sha-1 " + mIdentity->FormatFingerprint(fingerprint,
                                                          fingerprint_length);
   if (NS_FAILED(res)) {
-    CSFLogErrorS(logTag, __FUNCTION__ << ": do_GetService failed: " <<
-        static_cast<uint32_t>(res));
+    CSFLogError(logTag, "%s: do_GetService failed: %u",
+      __FUNCTION__, static_cast<uint32_t>(res));
     return res;
   }
 
@@ -576,78 +666,99 @@ PeerConnectionImpl::CreateFakeMediaStream(uint32_t aHint, nsIDOMMediaStream** aR
     aHint &= ~MEDIA_STREAM_MUTE;
   }
 
-  nsresult res;
-  if (!mThread || NS_IsMainThread()) {
-    res = MakeMediaStream(mWindow, aHint, aRetval);
-  } else {
-    mThread->Dispatch(WrapRunnableNMRet(
-        &PeerConnectionImpl::MakeMediaStream, mWindow, aHint, aRetval, &res
-    ), NS_DISPATCH_SYNC);
-  }
-
-  if (NS_FAILED(res)) {
-    return res;
+  nsRefPtr<DOMMediaStream> stream = MakeMediaStream(mWindow, aHint);
+  if (!stream) {
+    return NS_ERROR_FAILURE;
   }
 
   if (!mute) {
     if (aHint & DOMMediaStream::HINT_CONTENTS_AUDIO) {
-      new Fake_AudioGenerator(static_cast<DOMMediaStream*>(*aRetval));
+      new Fake_AudioGenerator(stream);
     } else {
 #ifdef MOZILLA_INTERNAL_API
-    new Fake_VideoGenerator(static_cast<DOMMediaStream*>(*aRetval));
+    new Fake_VideoGenerator(stream);
 #endif
     }
   }
 
+  *aRetval = stream.forget().get();
   return NS_OK;
+}
+
+// Stubbing this call out for now.
+// We can remove it when we are confident of datachannels being started
+// correctly on SDP negotiation (bug 852908)
+NS_IMETHODIMP
+PeerConnectionImpl::ConnectDataConnection(uint16_t aLocalport,
+                                          uint16_t aRemoteport,
+                                          uint16_t aNumstreams)
+{
+  return NS_OK; // InitializeDataChannel(aLocalport, aRemoteport, aNumstreams);
 }
 
 // Data channels won't work without a window, so in order for the C++ unit
 // tests to work (it doesn't have a window available) we ifdef the following
 // two implementations.
 NS_IMETHODIMP
-PeerConnectionImpl::ConnectDataConnection(uint16_t aLocalport,
-                                          uint16_t aRemoteport,
-                                          uint16_t aNumstreams)
+PeerConnectionImpl::EnsureDataConnection(uint16_t aNumstreams)
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
 
 #ifdef MOZILLA_INTERNAL_API
   if (mDataConnection) {
-    CSFLogError(logTag,"%s DataConnection already connected",__FUNCTION__);
+    CSFLogDebug(logTag,"%s DataConnection already connected",__FUNCTION__);
     // Ignore the request to connect when already connected.  This entire
     // implementation is temporary.  Ignore aNumstreams as it's merely advisory
     // and we increase the number of streams dynamically as needed.
     return NS_OK;
   }
   mDataConnection = new mozilla::DataChannelConnection(this);
-  if (!mDataConnection->Init(aLocalport, aNumstreams, true)) {
+  if (!mDataConnection->Init(5000, aNumstreams, true)) {
     CSFLogError(logTag,"%s DataConnection Init Failed",__FUNCTION__);
     return NS_ERROR_FAILURE;
   }
-  // XXX Fix! Get the correct flow for DataChannel. Also error handling.
-  for (int i = 2; i >= 0; i--) {
-    nsRefPtr<TransportFlow> flow = mMedia->GetTransportFlow(i,false).get();
-    CSFLogDebugS(logTag, "Transportflow[" << i << "] = " << flow.get());
-    if (flow) {
-      if (!mDataConnection->ConnectDTLS(flow, aLocalport, aRemoteport)) {
-        return NS_ERROR_FAILURE;
-      }
-      break;
-    }
-  }
-  return NS_OK;
-#else
-    return NS_ERROR_FAILURE;
+  CSFLogDebug(logTag,"%s DataChannelConnection %p attached to %p",
+              __FUNCTION__, (void*) mDataConnection.get(), (void *) this);
 #endif
+  return NS_OK;
+}
+
+nsresult
+PeerConnectionImpl::InitializeDataChannel(int track_id,
+                                          uint16_t aLocalport,
+                                          uint16_t aRemoteport,
+                                          uint16_t aNumstreams)
+{
+  PC_AUTO_ENTER_API_CALL_NO_CHECK();
+
+#ifdef MOZILLA_INTERNAL_API
+  nsresult rv = EnsureDataConnection(aNumstreams);
+  if (NS_SUCCEEDED(rv)) {
+    // use the specified TransportFlow
+    nsRefPtr<TransportFlow> flow = mMedia->GetTransportFlow(track_id, false).get();
+    CSFLogDebug(logTag, "Transportflow[%d] = %p", track_id, flow.get());
+    if (flow) {
+      if (mDataConnection->ConnectViaTransportFlow(flow, aLocalport, aRemoteport)) {
+        return NS_OK;
+      }
+    }
+    // If we inited the DataConnection, call Destroy() before releasing it
+    mDataConnection->Destroy();
+  }
+  mDataConnection = nullptr;
+#endif
+  return NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP
 PeerConnectionImpl::CreateDataChannel(const nsACString& aLabel,
+                                      const nsACString& aProtocol,
                                       uint16_t aType,
                                       bool outOfOrderAllowed,
                                       uint16_t aMaxTime,
                                       uint16_t aMaxNum,
+                                      bool aExternalNegotiated,
+                                      uint16_t aStream,
                                       nsIDOMDataChannel** aRetval)
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
@@ -658,21 +769,25 @@ PeerConnectionImpl::CreateDataChannel(const nsACString& aLabel,
   mozilla::DataChannelConnection::Type theType =
     static_cast<mozilla::DataChannelConnection::Type>(aType);
 
-  if (!mDataConnection) {
-    return NS_ERROR_FAILURE;
+  nsresult rv = EnsureDataConnection(WEBRTC_DATACHANNEL_STREAMS_DEFAULT);
+  if (NS_FAILED(rv)) {
+    return rv;
   }
   dataChannel = mDataConnection->Open(
-    aLabel, theType, !outOfOrderAllowed,
+    aLabel, aProtocol, theType, !outOfOrderAllowed,
     aType == mozilla::DataChannelConnection::PARTIAL_RELIABLE_REXMIT ? aMaxNum :
     (aType == mozilla::DataChannelConnection::PARTIAL_RELIABLE_TIMED ? aMaxTime : 0),
-    nullptr, nullptr
+    nullptr, nullptr, aExternalNegotiated, aStream
   );
   NS_ENSURE_TRUE(dataChannel,NS_ERROR_FAILURE);
 
   CSFLogDebug(logTag, "%s: making DOMDataChannel", __FUNCTION__);
 
-  // TODO -- need something like "mCall->addStream(stream_id, 0, DATA);" so
-  // the SDP can be generated correctly
+  if (!mHaveDataStream) {
+    // XXX stream_id of 0 might confuse things...
+    mCall->addStream(0, 2, DATA);
+    mHaveDataStream = true;
+  }
 
   return NS_NewDOMDataChannel(dataChannel.forget(), mWindow, aRetval);
 #else
@@ -736,7 +851,7 @@ PeerConnectionImpl::NotifyDataChannel(already_AddRefed<mozilla::DataChannel> aCh
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
   MOZ_ASSERT(aChannel.get());
 
-  CSFLogDebugS(logTag, __FUNCTION__ << ": channel: " << static_cast<void*>(aChannel.get()));
+  CSFLogDebug(logTag, "%s: channel: %p", __FUNCTION__, aChannel.get());
 
 #ifdef MOZILLA_INTERNAL_API
   nsCOMPtr<nsIDOMDataChannel> domchannel;
@@ -953,6 +1068,8 @@ PeerConnectionImpl::CloseStreams() {
     ChangeReadyState(PeerConnectionImpl::kClosing);
   }
 
+  CSFLogInfo(logTag, "%s: Ending associated call", __FUNCTION__);
+
   mCall->endCall();
   return NS_OK;
 }
@@ -961,21 +1078,48 @@ NS_IMETHODIMP
 PeerConnectionImpl::AddStream(nsIDOMMediaStream* aMediaStream) {
   PC_AUTO_ENTER_API_CALL(true);
 
+  if (!aMediaStream) {
+    CSFLogError(logTag, "%s: Attempt to add null stream",__FUNCTION__);
+    return NS_ERROR_FAILURE;
+  }
+
+  DOMMediaStream* stream = static_cast<DOMMediaStream*>(aMediaStream);
+  uint32_t hints = stream->GetHintContents();
+
+  // XXX Remove this check once addStream has an error callback
+  // available and/or we have plumbing to handle multiple
+  // local audio streams.
+  if ((hints & DOMMediaStream::HINT_CONTENTS_AUDIO) &&
+      mNumAudioStreams > 0) {
+    CSFLogError(logTag, "%s: Only one local audio stream is supported for now",
+                __FUNCTION__);
+    return NS_ERROR_FAILURE;
+  }
+
+  // XXX Remove this check once addStream has an error callback
+  // available and/or we have plumbing to handle multiple
+  // local video streams.
+  if ((hints & DOMMediaStream::HINT_CONTENTS_VIDEO) &&
+      mNumVideoStreams > 0) {
+    CSFLogError(logTag, "%s: Only one local video stream is supported for now",
+                __FUNCTION__);
+    return NS_ERROR_FAILURE;
+  }
+
   uint32_t stream_id;
   nsresult res = mMedia->AddStream(aMediaStream, &stream_id);
   if (NS_FAILED(res))
     return res;
 
-  DOMMediaStream* stream = static_cast<DOMMediaStream*>(aMediaStream);
-  uint32_t hints = stream->GetHintContents();
-
   // TODO(ekr@rtfm.com): these integers should be the track IDs
   if (hints & DOMMediaStream::HINT_CONTENTS_AUDIO) {
     mCall->addStream(stream_id, 0, AUDIO);
+    mNumAudioStreams++;
   }
 
   if (hints & DOMMediaStream::HINT_CONTENTS_VIDEO) {
     mCall->addStream(stream_id, 1, VIDEO);
+    mNumVideoStreams++;
   }
 
   return NS_OK;
@@ -996,10 +1140,14 @@ PeerConnectionImpl::RemoveStream(nsIDOMMediaStream* aMediaStream) {
 
   if (hints & DOMMediaStream::HINT_CONTENTS_AUDIO) {
     mCall->removeStream(stream_id, 0, AUDIO);
+    MOZ_ASSERT(mNumAudioStreams > 0);
+    mNumAudioStreams--;
   }
 
   if (hints & DOMMediaStream::HINT_CONTENTS_VIDEO) {
     mCall->removeStream(stream_id, 1, VIDEO);
+    MOZ_ASSERT(mNumVideoStreams > 0);
+    mNumVideoStreams--;
   }
 
   return NS_OK;
@@ -1014,7 +1162,7 @@ PeerConnectionImpl::SetRemoteFingerprint(const char* hash, const char* fingerpri
 
   if (fingerprint != NULL && (strcmp(hash, "sha-1") == 0)) {
     mRemoteFingerprint = std::string(fingerprint);
-    CSFLogDebugS(logTag, "Setting remote fingerprint to " << mRemoteFingerprint);
+    CSFLogDebug(logTag, "Setting remote fingerprint to %s", mRemoteFingerprint.c_str());
     return NS_OK;
   } else {
     CSFLogError(logTag, "%s: Invalid Remote Finger Print", __FUNCTION__);
@@ -1113,30 +1261,35 @@ PeerConnectionImpl::CheckApiState(bool assert_ice_ready) const
 }
 
 NS_IMETHODIMP
-PeerConnectionImpl::Close(bool aIsSynchronous)
+PeerConnectionImpl::Close()
 {
-  CSFLogDebug(logTag, __FUNCTION__);
+  CSFLogDebug(logTag, "%s: for %p", __FUNCTION__, (void *) this);
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
 
-  return CloseInt(aIsSynchronous);
+  return CloseInt();
 }
 
 
 nsresult
-PeerConnectionImpl::CloseInt(bool aIsSynchronous)
+PeerConnectionImpl::CloseInt()
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
 
-  if (mCall != nullptr)
+  if (mCall) {
+    CSFLogInfo(logTag, "%s: Closing PeerConnectionImpl %p; "
+               "ending call", __FUNCTION__, (void *) this);
     mCall->endCall();
+  }
 #ifdef MOZILLA_INTERNAL_API
   if (mDataConnection) {
+    CSFLogInfo(logTag, "%s: Destroying DataChannelConnection %p for %p",
+               __FUNCTION__, (void *) mDataConnection.get(), (void *) this);
     mDataConnection->Destroy();
     mDataConnection = nullptr; // it may not go away until the runnables are dead
   }
 #endif
 
-  ShutdownMedia(aIsSynchronous);
+  ShutdownMedia();
 
   // DataConnection will need to stay alive until all threads/runnables exit
 
@@ -1144,26 +1297,16 @@ PeerConnectionImpl::CloseInt(bool aIsSynchronous)
 }
 
 void
-PeerConnectionImpl::ShutdownMedia(bool aIsSynchronous)
+PeerConnectionImpl::ShutdownMedia()
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
 
   if (!mMedia)
     return;
 
-  // Post back to our own thread to shutdown the media objects.
-  // This avoids reentrancy issues with the garbage collector.
-  // Note that no media calls may be made after this point
-  // because we have removed the pointer.
-  // For the aIsSynchronous case, we *know* the PeerConnection is
-  // still alive, and are shutting it down on network teardown/etc, so
-  // recursive GC isn't an issue. (Recursive GC should assert)
-
   // Forget the reference so that we can transfer it to
   // SelfDestruct().
-  RUN_ON_THREAD(mThread, WrapRunnable(mMedia.forget().get(),
-                                      &PeerConnectionMedia::SelfDestruct),
-                aIsSynchronous ? NS_DISPATCH_SYNC : NS_DISPATCH_NORMAL);
+  mMedia.forget().get()->SelfDestruct();
 }
 
 #ifdef MOZILLA_INTERNAL_API
@@ -1174,26 +1317,24 @@ void
 PeerConnectionImpl::virtualDestroyNSSReference()
 {
   MOZ_ASSERT(NS_IsMainThread());
-  CSFLogDebugS(logTag, __FUNCTION__ << ": "
-               << "NSS shutting down; freeing our DtlsIdentity.");
+  CSFLogDebug(logTag, "%s: NSS shutting down; freeing our DtlsIdentity.", __FUNCTION__);
   mIdentity = nullptr;
 }
 #endif
 
 void
 PeerConnectionImpl::onCallEvent(ccapi_call_event_e aCallEvent,
-                                CSF::CC_CallPtr aCall, CSF::CC_CallInfoPtr aInfo)
+                                CSF::CC_CallInfoPtr aInfo)
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
-  MOZ_ASSERT(aCall.get());
   MOZ_ASSERT(aInfo.get());
 
   cc_call_state_t event = aInfo->getCallState();
   std::string statestr = aInfo->callStateToString(event);
 
   if (CCAPI_CALL_EV_CREATED != aCallEvent && CCAPI_CALL_EV_STATE != aCallEvent) {
-    CSFLogDebugS(logTag, ": **** CALL HANDLE IS: " << mHandle <<
-      ": **** CALL STATE IS: " << statestr);
+    CSFLogDebug(logTag, "%s: **** CALL HANDLE IS: %s, **** CALL STATE IS: %s",
+      __FUNCTION__, mHandle.c_str(), statestr.c_str());
     return;
   }
 
@@ -1283,32 +1424,9 @@ PeerConnectionImpl::IceGatheringCompleted(NrIceCtx *aCtx)
   nsRefPtr<PeerConnectionImpl> pc(this);
   RUN_ON_THREAD(mThread,
                 WrapRunnable(pc,
-                             &PeerConnectionImpl::IceGatheringCompleted_m),
+                             &PeerConnectionImpl::IceStateChange_m,
+                             kIceWaiting),
                 NS_DISPATCH_NORMAL);
-}
-
-nsresult
-PeerConnectionImpl::IceGatheringCompleted_m()
-{
-  PC_AUTO_ENTER_API_CALL(false);
-
-  CSFLogDebug(logTag, __FUNCTION__);
-
-  mIceState = kIceWaiting;
-
-#ifdef MOZILLA_INTERNAL_API
-  nsCOMPtr<IPeerConnectionObserver> pco = do_QueryReferent(mPCObserver);
-  if (!pco) {
-    return NS_OK;
-  }
-  RUN_ON_THREAD(mThread,
-                WrapRunnable(pco,
-                             &IPeerConnectionObserver::OnStateChange,
-                             // static_cast required to work around old C++ compiler on Android NDK r5c
-                             static_cast<int>(IPeerConnectionObserver::kIceState)),
-                NS_DISPATCH_NORMAL);
-#endif
-  return NS_OK;
 }
 
 void
@@ -1319,18 +1437,32 @@ PeerConnectionImpl::IceCompleted(NrIceCtx *aCtx)
   nsRefPtr<PeerConnectionImpl> pc(this);
   RUN_ON_THREAD(mThread,
                 WrapRunnable(pc,
-                             &PeerConnectionImpl::IceCompleted_m),
+                             &PeerConnectionImpl::IceStateChange_m,
+                             kIceConnected),
+                NS_DISPATCH_NORMAL);
+}
+
+void
+PeerConnectionImpl::IceFailed(NrIceCtx *aCtx)
+{
+  (void) aCtx;
+  // Do an async call here to unwind the stack. refptr keeps the PC alive.
+  nsRefPtr<PeerConnectionImpl> pc(this);
+  RUN_ON_THREAD(mThread,
+                WrapRunnable(pc,
+                             &PeerConnectionImpl::IceStateChange_m,
+                             kIceFailed),
                 NS_DISPATCH_NORMAL);
 }
 
 nsresult
-PeerConnectionImpl::IceCompleted_m()
+PeerConnectionImpl::IceStateChange_m(IceState aState)
 {
   PC_AUTO_ENTER_API_CALL(false);
 
   CSFLogDebug(logTag, __FUNCTION__);
 
-  mIceState = kIceConnected;
+  mIceState = aState;
 
 #ifdef MOZILLA_INTERNAL_API
   nsCOMPtr<IPeerConnectionObserver> pco = do_QueryReferent(mPCObserver);
@@ -1353,7 +1485,24 @@ PeerConnectionImpl::IceStreamReady(NrIceMediaStream *aStream)
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
   MOZ_ASSERT(aStream);
 
-  CSFLogDebugS(logTag, __FUNCTION__ << ": "  << aStream->name().c_str());
+  CSFLogDebug(logTag, "%s: %s", __FUNCTION__, aStream->name().c_str());
+}
+
+void
+PeerConnectionImpl::OnSdpParseError(const char *message) {
+  CSFLogError(logTag, "%s SDP Parse Error: %s", __FUNCTION__, message);
+  // Save the parsing errors in the PC to be delivered with OnSuccess or OnError
+  mSDPParseErrorMessages.push_back(message);
+}
+
+void
+PeerConnectionImpl::ClearSdpParseErrorMessages() {
+  mSDPParseErrorMessages.clear();
+}
+
+const std::vector<std::string> &
+PeerConnectionImpl::GetSdpParseErrors() {
+  return mSDPParseErrorMessages;
 }
 
 
@@ -1362,18 +1511,24 @@ static nsresult
 GetStreams(JSContext* cx, PeerConnectionImpl* peerConnection,
            MediaStreamList::StreamType type, JS::Value* streams)
 {
-  nsAutoPtr<MediaStreamList> list(new MediaStreamList(peerConnection, type));
+  nsRefPtr<MediaStreamList> list(new MediaStreamList(peerConnection, type));
 
-  ErrorResult rv;
-  JSObject* obj = list->WrapObject(cx, rv);
-  if (rv.Failed()) {
+  nsCOMPtr<nsIScriptGlobalObject> global =
+    do_QueryInterface(peerConnection->GetWindow());
+  JS::Rooted<JSObject*> scope(cx, global->GetGlobalJSObject());
+  if (!scope) {
     streams->setNull();
-    return rv.ErrorCode();
+    return NS_ERROR_FAILURE;
   }
 
-  // Transfer ownership to the binding.
+  JSAutoCompartment ac(cx, scope);
+  JSObject* obj = list->WrapObject(cx, scope);
+  if (!obj) {
+    streams->setNull();
+    return NS_ERROR_FAILURE;
+  }
+
   streams->setObject(*obj);
-  list.forget();
   return NS_OK;
 }
 #endif

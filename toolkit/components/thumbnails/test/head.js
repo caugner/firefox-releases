@@ -3,8 +3,10 @@
 
 let tmp = {};
 Cu.import("resource://gre/modules/PageThumbs.jsm", tmp);
-let PageThumbs = tmp.PageThumbs;
-let PageThumbsStorage = tmp.PageThumbsStorage;
+Cu.import("resource:///modules/sessionstore/SessionStore.jsm", tmp);
+Cu.import("resource://gre/modules/FileUtils.jsm", tmp);
+Cu.import("resource://gre/modules/osfile.jsm", tmp);
+let {PageThumbs, PageThumbsStorage, SessionStore, FileUtils, OS} = tmp;
 
 Cu.import("resource://gre/modules/PlacesUtils.jsm");
 
@@ -29,12 +31,15 @@ let TestRunner = {
    */
   run: function () {
     waitForExplicitFinish();
-    this._iter = runTests();
 
-    if (this._iter)
-      this.next();
-    else
-      finish();
+    SessionStore.promiseInitialized.then(function () {
+      this._iter = runTests();
+      if (this._iter) {
+        this.next();
+      } else {
+        finish();
+      }
+    }.bind(this));
   },
 
   /**
@@ -42,7 +47,9 @@ let TestRunner = {
    */
   next: function () {
     try {
-      TestRunner._iter.next();
+      let value = TestRunner._iter.next();
+      if (value && typeof value.then == "function")
+        value.then(next);
     } catch (e if e instanceof StopIteration) {
       finish();
     }
@@ -82,10 +89,10 @@ function navigateTo(aURI) {
  * @param aElement The DOM element to listen on.
  * @param aCallback The function to call when the load event was dispatched.
  */
-function whenLoaded(aElement, aCallback) {
+function whenLoaded(aElement, aCallback = next) {
   aElement.addEventListener("load", function onLoad() {
     aElement.removeEventListener("load", onLoad, true);
-    executeSoon(aCallback || next);
+    executeSoon(aCallback);
   }, true);
 }
 
@@ -102,19 +109,20 @@ function captureAndCheckColor(aRed, aGreen, aBlue, aMessage) {
 
   // Capture the screenshot.
   PageThumbs.captureAndStore(browser, function () {
-    checkThumbnailColor(browser.currentURI.spec, aRed, aGreen, aBlue, aMessage);
+    retrieveImageDataForURL(browser.currentURI.spec, function ([r, g, b]) {
+      is("" + [r,g,b], "" + [aRed, aGreen, aBlue], aMessage);
+      next();
+    });
   });
 }
 
 /**
- * Retrieve a thumbnail from the cache and compare its pixel color values.
- * @param aURL The URL of the thumbnail's page.
- * @param aRed The red component's intensity.
- * @param aGreen The green component's intensity.
- * @param aBlue The blue component's intensity.
- * @param aMessage The info message to print when comparing the pixel color.
+ * For a given URL, loads the corresponding thumbnail
+ * to a canvas and passes its image data to the callback.
+ * @param aURL The url associated with the thumbnail.
+ * @param aCallback The function to pass the image data to.
  */
-function checkThumbnailColor(aURL, aRed, aGreen, aBlue, aMessage) {
+function retrieveImageDataForURL(aURL, aCallback) {
   let width = 100, height = 100;
   let thumb = PageThumbs.getThumbnailURL(aURL, width, height);
 
@@ -130,23 +138,8 @@ function checkThumbnailColor(aURL, aRed, aGreen, aBlue, aMessage) {
     // Draw the image to a canvas and compare the pixel color values.
     let ctx = canvas.getContext("2d");
     ctx.drawImage(img, 0, 0, width, height);
-    checkCanvasColor(ctx, aRed, aGreen, aBlue, aMessage);
-
-    next();
+    aCallback(ctx.getImageData(0, 0, 100, 100).data);
   });
-}
-
-/**
- * Checks the top-left pixel of a given canvas' 2d context for a given color.
- * @param aContext The 2D context of a canvas.
- * @param aRed The red component's intensity.
- * @param aGreen The green component's intensity.
- * @param aBlue The blue component's intensity.
- * @param aMessage The info message to print when comparing the pixel color.
- */
-function checkCanvasColor(aContext, aRed, aGreen, aBlue, aMessage) {
-  let [r, g, b] = aContext.getImageData(0, 0, 1, 1).data;
-  ok(r == aRed && g == aGreen && b == aBlue, aMessage);
 }
 
 /**
@@ -154,7 +147,7 @@ function checkCanvasColor(aContext, aRed, aGreen, aBlue, aMessage) {
  * @param aURL The url associated to the thumbnail.
  */
 function thumbnailExists(aURL) {
-  let file = PageThumbsStorage.getFileForURL(aURL);
+  let file = new FileUtils.File(PageThumbsStorage.getFilePathForURL(aURL));
   return file.exists() && file.fileSize;
 }
 
@@ -222,13 +215,13 @@ function addVisits(aPlaceInfo, aCallback) {
  * @param [optional] aCallback
  *        Function to be invoked on completion.
  */
-function whenFileExists(aURL, aCallback) {
+function whenFileExists(aURL, aCallback = next) {
   let callback = aCallback;
   if (!thumbnailExists(aURL)) {
     callback = function () whenFileExists(aURL, aCallback);
   }
 
-  executeSoon(callback || next);
+  executeSoon(callback);
 }
 
 /**

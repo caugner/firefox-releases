@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsIAtom.h"
+#include "nsIContent.h"
 #include "nsString.h"
 #include "nsJSUtils.h"
 #include "jsapi.h"
@@ -170,7 +171,7 @@ InstallXBLField(JSContext* cx,
   {
     JSAutoCompartment ac(cx, callee);
 
-    js::Rooted<JSObject*> xblProto(cx);
+    JS::Rooted<JSObject*> xblProto(cx);
     xblProto = &js::GetFunctionNativeReserved(callee, XBLPROTO_SLOT).toObject();
 
     JS::Value name = js::GetFunctionNativeReserved(callee, FIELD_SLOT);
@@ -220,7 +221,7 @@ FieldGetterImpl(JSContext *cx, JS::CallArgs args)
   const JS::Value &thisv = args.thisv();
   MOZ_ASSERT(ValueHasISupportsPrivate(thisv));
 
-  js::Rooted<JSObject*> thisObj(cx, &thisv.toObject());
+  JS::Rooted<JSObject*> thisObj(cx, &thisv.toObject());
 
   // We should be in the compartment of |this|. If we got here via nativeCall,
   // |this| is not same-compartment with |callee|, and it's possible via
@@ -228,8 +229,8 @@ FieldGetterImpl(JSContext *cx, JS::CallArgs args)
   // wrapper. In this case, we know we want to do an unsafe unwrap, and
   // InstallXBLField knows how to handle cross-compartment pointers.
   bool installed = false;
-  js::Rooted<JSObject*> callee(cx, js::UnwrapObject(&args.calleev().toObject()));
-  js::Rooted<jsid> id(cx);
+  JS::Rooted<JSObject*> callee(cx, js::UnwrapObject(&args.calleev().toObject()));
+  JS::Rooted<jsid> id(cx);
   if (!InstallXBLField(cx, callee, thisObj, id.address(), &installed)) {
     return false;
   }
@@ -239,7 +240,7 @@ FieldGetterImpl(JSContext *cx, JS::CallArgs args)
     return true;
   }
 
-  js::Rooted<JS::Value> v(cx);
+  JS::Rooted<JS::Value> v(cx);
   if (!JS_GetPropertyById(cx, thisObj, id, v.address())) {
     return false;
   }
@@ -261,7 +262,7 @@ FieldSetterImpl(JSContext *cx, JS::CallArgs args)
   const JS::Value &thisv = args.thisv();
   MOZ_ASSERT(ValueHasISupportsPrivate(thisv));
 
-  js::Rooted<JSObject*> thisObj(cx, &thisv.toObject());
+  JS::Rooted<JSObject*> thisObj(cx, &thisv.toObject());
 
   // We should be in the compartment of |this|. If we got here via nativeCall,
   // |this| is not same-compartment with |callee|, and it's possible via
@@ -269,14 +270,14 @@ FieldSetterImpl(JSContext *cx, JS::CallArgs args)
   // wrapper. In this case, we know we want to do an unsafe unwrap, and
   // InstallXBLField knows how to handle cross-compartment pointers.
   bool installed = false;
-  js::Rooted<JSObject*> callee(cx, js::UnwrapObject(&args.calleev().toObject()));
-  js::Rooted<jsid> id(cx);
+  JS::Rooted<JSObject*> callee(cx, js::UnwrapObject(&args.calleev().toObject()));
+  JS::Rooted<jsid> id(cx);
   if (!InstallXBLField(cx, callee, thisObj, id.address(), &installed)) {
     return false;
   }
 
   if (installed) {
-    js::Rooted<JS::Value> v(cx,
+    JS::Rooted<JS::Value> v(cx,
                             args.length() > 0 ? args[0] : JS::UndefinedValue());
     if (!::JS_SetPropertyById(cx, thisObj, id, v.address())) {
       return false;
@@ -301,6 +302,7 @@ nsXBLProtoImplField::InstallAccessors(JSContext* aCx,
   MOZ_ASSERT(js::IsObjectInContextCompartment(aTargetClassObject, aCx));
   JSObject* globalObject = JS_GetGlobalForObject(aCx, aTargetClassObject);
   JSObject* scopeObject = xpc::GetXBLScope(aCx, globalObject);
+  NS_ENSURE_TRUE(scopeObject, NS_ERROR_OUT_OF_MEMORY);
 
   // Don't install it if the field is empty; see also InstallField which also must
   // implement the not-empty requirement.
@@ -400,7 +402,7 @@ nsXBLProtoImplField::InstallField(nsIScriptContext* aContext,
   nsAutoCString uriSpec;
   aBindingDocURI->GetSpec(uriSpec);
   
-  JSContext* cx = aContext->GetNativeContext();
+  AutoPushJSContext cx(aContext->GetNativeContext());
   NS_ASSERTION(!::JS_IsExceptionPending(cx),
                "Shouldn't get here when an exception is pending!");
   
@@ -412,8 +414,9 @@ nsXBLProtoImplField::InstallField(nsIScriptContext* aContext,
   // First, enter the xbl scope, wrap the node, and use that as the scope for
   // the evaluation.
   JSObject* scopeObject = xpc::GetXBLScope(cx, aBoundNode);
+  NS_ENSURE_TRUE(scopeObject, NS_ERROR_OUT_OF_MEMORY);
   JSAutoCompartment ac(cx, scopeObject);
-  jsval result = JSVAL_NULL;
+  JS::Value result = JSVAL_NULL;
 
   JSObject* wrappedNode = aBoundNode;
   if (!JS_WrapObject(cx, &wrappedNode))

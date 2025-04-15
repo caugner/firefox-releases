@@ -73,13 +73,7 @@ function testSimpleCall() {
 function testLocationChange()
 {
   gDebugger.DebuggerController.activeThread.resume(function() {
-    gDebugger.DebuggerController.client.addListener("tabNavigated", function onTabNavigated(aEvent, aPacket) {
-      dump("tabNavigated state " + aPacket.state + "\n");
-      if (aPacket.state == "start") {
-        return;
-      }
-      gDebugger.DebuggerController.client.removeListener("tabNavigated", onTabNavigated);
-
+    gDebugger.DebuggerController._target.once("navigate", function onTabNavigated(aEvent, aPacket) {
       ok(true, "tabNavigated event was fired.");
       info("Still attached to the tab.");
 
@@ -92,7 +86,7 @@ function testLocationChange()
           "The source editor should have some text displayed.");
 
         let menulist = gDebugger.DebuggerView.Sources._container;
-        let noScripts = gDebugger.L10N.getStr("noScriptsText");
+        let noScripts = gDebugger.L10N.getStr("noSourcesText");
         isnot(menulist.getAttribute("label"), noScripts,
           "The menulist should not display a notice that there are no scripts availalble.");
         isnot(menulist.getAttribute("tooltiptext"), "",

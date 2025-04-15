@@ -10,7 +10,6 @@
 #include "nsIDOMCryptoLegacy.h"
 #endif
 
-#define NS_DOMCRYPTO_CLASSNAME "Crypto JavaScript Class"
 #define NS_DOMCRYPTO_CID \
   {0x929d9320, 0x251e, 0x11d4, { 0x8a, 0x7c, 0x00, 0x60, 0x08, 0xc8, 0x44, 0xc3} }
 
@@ -25,6 +24,9 @@ public:
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIDOMCRYPTO
+
+  static uint8_t*
+  GetRandomValues(uint32_t aLength);
 };
 
 } // namespace dom

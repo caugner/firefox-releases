@@ -25,6 +25,7 @@
 #include "nsIContent.h"
 #include "nsPluginInstanceOwner.h"
 #include "mozilla/HashFunctions.h"
+#include "nsWrapperCacheInlines.h"
 
 #define NPRUNTIME_JSCLASS_NAME "NPObject JS wrapper class"
 
@@ -1621,7 +1622,7 @@ NPObjWrapper_NewResolve(JSContext *cx, JSHandleObject obj, JSHandleId id, unsign
     NS_ASSERTION(JSID_IS_STRING(id) || JSID_IS_INT(id),
                  "id must be either string or int!\n");
     if (!::JS_DefinePropertyById(cx, obj, id, JSVAL_VOID, nullptr,
-                                 nullptr, JSPROP_ENUMERATE)) {
+                                 nullptr, JSPROP_ENUMERATE | JSPROP_SHARED)) {
         return JS_FALSE;
     }
 
@@ -2225,19 +2226,18 @@ NPObjectMember_Trace(JSTracer *trc, JSObject *obj)
 
   // Our NPIdentifier is not always interned, so we must root it explicitly.
   jsid id = NPIdentifierToJSId(memberPrivate->methodName);
-  if (JSID_IS_STRING(id))
-    JS_CALL_STRING_TRACER(trc, JSID_TO_STRING(id), "NPObjectMemberPrivate.methodName");
+  JS_CallIdTracer(trc, id, "NPObjectMemberPrivate.methodName");
 
   if (!JSVAL_IS_PRIMITIVE(memberPrivate->fieldValue)) {
-    JS_CALL_VALUE_TRACER(trc, memberPrivate->fieldValue,
-                         "NPObject Member => fieldValue");
+    JS_CallValueTracer(trc, memberPrivate->fieldValue,
+                       "NPObject Member => fieldValue");
   }
 
   // There's no strong reference from our private data to the
   // NPObject, so make sure to mark the NPObject wrapper to keep the
   // NPObject alive as long as this NPObjectMember is alive.
   if (memberPrivate->npobjWrapper) {
-    JS_CALL_OBJECT_TRACER(trc, memberPrivate->npobjWrapper,
-                          "NPObject Member => npobjWrapper");
+    JS_CallObjectTracer(trc, memberPrivate->npobjWrapper,
+                        "NPObject Member => npobjWrapper");
   }
 }

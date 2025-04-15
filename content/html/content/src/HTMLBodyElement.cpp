@@ -23,7 +23,6 @@
 #include "nsGlobalWindow.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Body)
-DOMCI_NODE_DATA(HTMLBodyElement, mozilla::dom::HTMLBodyElement)
 
 namespace mozilla {
 namespace dom {
@@ -195,9 +194,9 @@ HTMLBodyElement::~HTMLBodyElement()
 }
 
 JSObject*
-HTMLBodyElement::WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap)
+HTMLBodyElement::WrapNode(JSContext *aCx, JSObject *aScope)
 {
-  return HTMLBodyElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return HTMLBodyElementBinding::Wrap(aCx, aScope, this);
 }
 
 NS_IMPL_ADDREF_INHERITED(HTMLBodyElement, Element)
@@ -208,7 +207,7 @@ NS_INTERFACE_TABLE_HEAD(HTMLBodyElement)
   NS_HTML_CONTENT_INTERFACE_TABLE1(HTMLBodyElement, nsIDOMHTMLBodyElement)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLBodyElement,
                                                nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLBodyElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLBodyElement)
 
@@ -498,14 +497,14 @@ HTMLBodyElement::IsEventAttributeName(nsIAtom *aName)
 // EventHandlerNonNull*, so allow passing in the type to use here.
 #define FORWARDED_EVENT_HELPER(name_, forwardto_, type_, getter_type_)         \
   NS_IMETHODIMP                                                                \
-  HTMLBodyElement::GetOn##name_(JSContext *cx, jsval *vp)                      \
+  HTMLBodyElement::GetOn##name_(JSContext *cx, JS::Value *vp)                  \
   {                                                                            \
     getter_type_ h = forwardto_::GetOn##name_();                               \
     vp->setObjectOrNull(h ? h->Callable() : nullptr);                          \
     return NS_OK;                                                              \
   }                                                                            \
   NS_IMETHODIMP                                                                \
-  HTMLBodyElement::SetOn##name_(JSContext *cx, const jsval &v)                 \
+  HTMLBodyElement::SetOn##name_(JSContext *cx, const JS::Value &v)             \
   {                                                                            \
     JSObject *obj = GetWrapper();                                              \
     if (!obj) {                                                                \

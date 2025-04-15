@@ -159,7 +159,27 @@ static nr_ice_crypto_vtbl nr_ice_crypto_nss_vtbl = {
 
 
 
-// NrIceCtx
+
+nsresult NrIceStunServer::ToNicerStruct(nr_ice_stun_server *server) const {
+  int r;
+
+  if (has_addr_) {
+    r = nr_praddr_to_transport_addr(&addr_, &server->u.addr, 0);
+    if (r) {
+      return NS_ERROR_FAILURE;
+    }
+    server->type=NR_ICE_STUN_SERVER_TYPE_ADDR;
+  }
+  else {
+    MOZ_ASSERT(sizeof(server->u.dnsname.host) > host_.size());
+    PL_strncpyz(server->u.dnsname.host, host_.c_str(),
+                sizeof(server->u.dnsname.host));
+    server->u.dnsname.port = port_;
+    server->type=NR_ICE_STUN_SERVER_TYPE_DNSNAME;
+  }
+
+  return NS_OK;
+}
 
 // Handler callbacks
 int NrIceCtx::select_pair(void *obj,nr_ice_media_stream *stream,
@@ -208,9 +228,6 @@ int NrIceCtx::ice_completed(void *obj, nr_ice_peer_ctx *pctx) {
   NrIceCtx *ctx = static_cast<NrIceCtx *>(obj);
 
   ctx->SetState(ICE_CTX_OPEN);
-
-  // Signal that we are done
-  ctx->SignalCompleted(ctx);
 
   return 0;
 }
@@ -364,17 +381,15 @@ nsresult NrIceCtx::SetStunServers(const std::vector<NrIceStunServer>&
   ScopedDeleteArray<nr_ice_stun_server> servers(
       new nr_ice_stun_server[stun_servers.size()]);
 
-  int r;
   for (size_t i=0; i < stun_servers.size(); ++i) {
-    r = nr_praddr_to_transport_addr(&stun_servers[i].addr(),
-                                    &servers[i].addr, 0);
-    if (r) {
+    nsresult rv = stun_servers[i].ToNicerStruct(&servers[i]);
+    if (NS_FAILED(rv)) {
       MOZ_MTLOG(PR_LOG_ERROR, "Couldn't set STUN server for '" << name_ << "'");
       return NS_ERROR_FAILURE;
     }
   }
 
-  r = nr_ice_ctx_set_stun_servers(ctx_, servers, stun_servers.size());
+  int r = nr_ice_ctx_set_stun_servers(ctx_, servers, stun_servers.size());
   if (r) {
     MOZ_MTLOG(PR_LOG_ERROR, "Couldn't set STUN server for '" << name_ << "'");
     return NS_ERROR_FAILURE;
@@ -383,13 +398,33 @@ nsresult NrIceCtx::SetStunServers(const std::vector<NrIceStunServer>&
   return NS_OK;
 }
 
+nsresult NrIceCtx::SetResolver(nr_resolver *resolver) {
+  int r = nr_ice_ctx_set_resolver(ctx_, resolver);
+
+  if (r) {
+    MOZ_MTLOG(PR_LOG_ERROR, "Couldn't set resolver for '" << name_ << "'");
+    return NS_ERROR_FAILURE;
+  }
+
+  return NS_OK;
+}
+
 nsresult NrIceCtx::StartGathering() {
+  MOZ_ASSERT(ctx_->state == ICE_CTX_INIT);
+  if (ctx_->state != ICE_CTX_INIT) {
+    MOZ_MTLOG(PR_LOG_ERROR, "ICE ctx in the wrong state for gathering: '"
+      << name_ << "'");
+    SetState(ICE_CTX_FAILED);
+    return NS_ERROR_FAILURE;
+  }
+
   int r = nr_ice_initialize(ctx_, &NrIceCtx::initialized_cb,
                             this);
 
   if (r && r != R_WOULDBLOCK) {
       MOZ_MTLOG(PR_LOG_ERROR, "Couldn't gather ICE candidates for '"
            << name_ << "'");
+      SetState(ICE_CTX_FAILED);
       return NS_ERROR_FAILURE;
   }
 
@@ -405,8 +440,6 @@ void NrIceCtx::EmitAllCandidates() {
   for(size_t i=0; i<streams_.size(); ++i) {
     streams_[i]->EmitAllCandidates();
   }
-
-  SignalGatheringCompleted(this);
 }
 
 RefPtr<NrIceMediaStream> NrIceCtx::FindStream(
@@ -469,6 +502,7 @@ nsresult NrIceCtx::StartChecks() {
   if (r) {
     MOZ_MTLOG(PR_LOG_ERROR, "Couldn't pair candidates on "
          << name_ << "'");
+    SetState(ICE_CTX_FAILED);
     return NS_ERROR_FAILURE;
   }
 
@@ -480,6 +514,7 @@ nsresult NrIceCtx::StartChecks() {
     } else {
       MOZ_MTLOG(PR_LOG_ERROR, "Couldn't start peer checks on "
            << name_ << "'");
+      SetState(ICE_CTX_FAILED);
       return NS_ERROR_FAILURE;
     }
   } else {
@@ -493,10 +528,9 @@ nsresult NrIceCtx::StartChecks() {
 void NrIceCtx::initialized_cb(NR_SOCKET s, int h, void *arg) {
   NrIceCtx *ctx = static_cast<NrIceCtx *>(arg);
 
-  ctx->SetState(ICE_CTX_GATHERED);
-
-  // Report that we are done gathering
   ctx->EmitAllCandidates();
+
+  ctx->SetState(ICE_CTX_GATHERED);
 }
 
 nsresult NrIceCtx::Finalize() {
@@ -512,12 +546,29 @@ nsresult NrIceCtx::Finalize() {
 }
 
 void NrIceCtx::SetState(State state) {
-  MOZ_MTLOG(PR_LOG_DEBUG, "NrIceCtx(" << name_ << "): state " <<
-       state_ << "->" << state);
-  state_ = state;
-}
-}  // close namespace
+  if (state == state_)
+    return;
 
+  MOZ_MTLOG(PR_LOG_DEBUG, "NrIceCtx(" << name_ << "): state " <<
+    state_ << "->" << state);
+  state_ = state;
+
+  switch(state_) {
+    case ICE_CTX_GATHERED:
+      SignalGatheringCompleted(this);
+      break;
+    case ICE_CTX_OPEN:
+      SignalCompleted(this);
+      break;
+    case ICE_CTX_FAILED:
+      SignalFailed(this);
+      break;
+    default:
+      break;
+  }
+}
+
+}  // close namespace
 
 
 extern "C" {

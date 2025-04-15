@@ -185,9 +185,12 @@ let FormAssistant = {
     addEventListener("resize", this, true, false);
     addEventListener("submit", this, true, false);
     addEventListener("pagehide", this, true, false);
+    addEventListener("input", this, true, false);
+    addEventListener("keydown", this, true, false);
     addMessageListener("Forms:Select:Choice", this);
     addMessageListener("Forms:Input:Value", this);
     addMessageListener("Forms:Select:Blur", this);
+    addMessageListener("Forms:SetSelectionRange", this);
   },
 
   ignoredInputTypes: new Set([
@@ -195,10 +198,11 @@ let FormAssistant = {
   ]),
 
   isKeyboardOpened: false,
-  selectionStart: 0,
-  selectionEnd: 0,
+  selectionStart: -1,
+  selectionEnd: -1,
   scrollIntoViewTimeout: null,
   _focusedElement: null,
+  _documentEncoder: null,
 
   get focusedElement() {
     if (this._focusedElement && Cu.isDeadWrapper(this._focusedElement))
@@ -223,18 +227,27 @@ let FormAssistant = {
       }
     }
 
+    this._documentEncoder = null;
+
     if (element) {
       element.addEventListener('mousedown', this);
       element.addEventListener('mouseup', this);
+      if (isContentEditable(element)) {
+        this._documentEncoder = getDocumentEncoder(element);
+      }
     }
 
     this.focusedElement = element;
   },
 
+  get documentEncoder() {
+    return this._documentEncoder;
+  },
+
   handleEvent: function fa_handleEvent(evt) {
-    let focusedElement = this.focusedElement;
     let target = evt.target;
 
+    let range = null;
     switch (evt.type) {
       case "focus":
         if (!target) {
@@ -247,25 +260,35 @@ let FormAssistant = {
 
         if (isContentEditable(target)) {
           this.showKeyboard(this.getTopLevelEditable(target));
+          this.updateSelection();
           break;
         }
 
-        if (this.isFocusableElement(target))
+        if (this.isFocusableElement(target)) {
           this.showKeyboard(target);
+          this.updateSelection();
+        }
         break;
 
+      case "pagehide":
+        // We are only interested to the pagehide event from the root document.
+        if (target && target != content.document) {
+          break;
+        }
+        // fall through
       case "blur":
       case "submit":
-      case "pagehide":
-        if (this.focusedElement)
+        if (this.focusedElement) {
           this.hideKeyboard();
+          this.selectionStart = -1;
+          this.selectionEnd = -1;
+        }
         break;
 
       case 'mousedown':
         // We only listen for this event on the currently focused element.
         // When the mouse goes down, note the cursor/selection position
-        this.selectionStart = this.focusedElement.selectionStart;
-        this.selectionEnd = this.focusedElement.selectionEnd;
+        this.updateSelection();
         break;
 
       case 'mouseup':
@@ -273,9 +296,11 @@ let FormAssistant = {
         // When the mouse goes up, see if the cursor has moved (or the
         // selection changed) since the mouse went down. If it has, we
         // need to tell the keyboard about it
-        if (this.focusedElement.selectionStart !== this.selectionStart ||
-            this.focusedElement.selectionEnd !== this.selectionEnd) {
+        range = getSelectionRange(this.focusedElement);
+        if (range[0] !== this.selectionStart ||
+            range[1] !== this.selectionEnd) {
           this.sendKeyboardState(this.focusedElement);
+          this.updateSelection();
         }
         break;
 
@@ -298,6 +323,19 @@ let FormAssistant = {
             }
           }.bind(this), RESIZE_SCROLL_DELAY);
         }
+        break;
+
+      case "input":
+        // When the text content changes, notify the keyboard
+        this.updateSelection();
+        break;
+
+      case "keydown":
+        // We use 'setTimeout' to wait until the input element accomplishes the
+        // change in selection range
+        content.setTimeout(function() {
+          this.updateSelection();
+        }.bind(this), 0);
         break;
     }
   },
@@ -349,6 +387,14 @@ let FormAssistant = {
         this.setFocusedElement(null);
         break;
       }
+
+      case "Forms:SetSelectionRange":  {
+        let start = json.selectionStart;
+        let end =  json.selectionEnd;
+        setSelectionRange(target, start, end);
+        this.updateSelection();
+        break;
+      }
     }
   },
 
@@ -359,11 +405,11 @@ let FormAssistant = {
     if (target instanceof HTMLOptionElement)
       target = target.parentNode;
 
+    this.setFocusedElement(target);
+
     let kbOpened = this.sendKeyboardState(target);
     if (this.isTextInputElement(target))
       this.isKeyboardOpened = kbOpened;
-
-    this.setFocusedElement(target);
   },
 
   hideKeyboard: function fa_hideKeyboard() {
@@ -425,11 +471,23 @@ let FormAssistant = {
 
     sendAsyncMessage("Forms:Input", getJSON(element));
     return true;
+  },
+
+  // Notify when the selection range changes
+  updateSelection: function fa_updateSelection() {
+    let range =  getSelectionRange(this.focusedElement);
+    if (range[0] != this.selectionStart || range[1] != this.selectionEnd) {
+      this.selectionStart = range[0];
+      this.selectionEnd = range[1];
+      sendAsyncMessage("Forms:SelectionChange", {
+        selectionStart: range[0],
+        selectionEnd: range[1]
+      });
+    }
   }
 };
 
 FormAssistant.init();
-
 
 function isContentEditable(element) {
   if (element.isContentEditable || element.designMode == "on")
@@ -448,12 +506,14 @@ function isContentEditable(element) {
 
 function getJSON(element) {
   let type = element.type || "";
-  let value = element.value || ""
+  let value = element.value || "";
+  let max = element.max || "";
+  let min = element.min || "";
 
-  // Treat contenteditble element as a special text field
+  // Treat contenteditble element as a special text area field
   if (isContentEditable(element)) {
-    type = "text";
-    value = element.textContent;
+    type = "textarea";
+    value = getContentEditableText(element);
   }
 
   // Until the input type=date/datetime/range have been implemented
@@ -484,13 +544,17 @@ function getJSON(element) {
     inputmode = '';
   }
 
+  let range = getSelectionRange(element);
+
   return {
     "type": type.toLowerCase(),
     "choices": getListForElement(element),
     "value": value,
     "inputmode": inputmode,
-    "selectionStart": element.selectionStart,
-    "selectionEnd": element.selectionEnd
+    "selectionStart": range[0],
+    "selectionEnd": range[1],
+    "max": max,
+    "min": min
   };
 }
 
@@ -545,4 +609,114 @@ function getListForElement(element) {
 
   return result;
 };
+
+// Create a plain text document encode from the focused element.
+function getDocumentEncoder(element) {
+  let encoder = Cc["@mozilla.org/layout/documentEncoder;1?type=text/plain"]
+                .createInstance(Ci.nsIDocumentEncoder);
+  let flags = Ci.nsIDocumentEncoder.SkipInvisibleContent |
+              Ci.nsIDocumentEncoder.OutputRaw |
+              Ci.nsIDocumentEncoder.OutputLFLineBreak |
+              Ci.nsIDocumentEncoder.OutputDropInvisibleBreak;
+  encoder.init(element.ownerDocument, "text/plain", flags);
+  return encoder;
+}
+
+// Get the visible content text of a content editable element
+function getContentEditableText(element) {
+  let doc = element.ownerDocument;
+  let range = doc.createRange();
+  range.selectNodeContents(element);
+  let encoder = FormAssistant.documentEncoder;
+  encoder.setRange(range);
+  return encoder.encodeToString();
+}
+
+function getSelectionRange(element) {
+  let start = 0;
+  let end = 0;
+  if (element instanceof HTMLInputElement ||
+      element instanceof HTMLTextAreaElement) {
+    // Get the selection range of <input> and <textarea> elements
+    start = element.selectionStart;
+    end = element.selectionEnd;
+  } else if (isContentEditable(element)){
+    // Get the selection range of contenteditable elements
+    let win = element.ownerDocument.defaultView;
+    let sel = win.getSelection();
+    start = getContentEditableSelectionStart(element, sel);
+    end = start + getContentEditableSelectionLength(element, sel);
+   }
+   return [start, end];
+ }
+
+function getContentEditableSelectionStart(element, selection) {
+  let doc = element.ownerDocument;
+  let range = doc.createRange();
+  range.setStart(element, 0);
+  range.setEnd(selection.anchorNode, selection.anchorOffset);
+  let encoder = FormAssistant.documentEncoder;
+  encoder.setRange(range);
+  return encoder.encodeToString().length;
+}
+
+function getContentEditableSelectionLength(element, selection) {
+  let encoder = FormAssistant.documentEncoder;
+  encoder.setRange(selection.getRangeAt(0));
+  return encoder.encodeToString().length;
+}
+
+function setSelectionRange(element, start, end) {
+  let isPlainTextField = element instanceof HTMLInputElement ||
+                        element instanceof HTMLTextAreaElement;
+
+  // Check the parameters
+
+  if (!isPlainTextField && !isContentEditable(element)) {
+    // Skip HTMLOptionElement and HTMLSelectElement elements, as they don't
+    // support the operation of setSelectionRange
+    return;
+  }
+
+  let text = isPlainTextField ? element.value : getContentEditableText(element);
+  let length = text.length;
+  if (start < 0) {
+    start = 0;
+  }
+  if (end > length) {
+    end = length;
+  }
+  if (start > end) {
+    start = end;
+  }
+
+  if (isPlainTextField) {
+    // Set the selection range of <input> and <textarea> elements
+    element.setSelectionRange(start, end, "forward");
+  } else {
+    // set the selection range of contenteditable elements
+    let win = element.ownerDocument.defaultView;
+    let sel = win.getSelection();
+
+    // Move the caret to the start position
+    sel.collapse(element, 0);
+    for (let i = 0; i < start; i++) {
+      sel.modify("move", "forward", "character");
+    }
+
+    while (getContentEditableSelectionStart(element, sel) < start) {
+      sel.modify("move", "forward", "character");
+    }
+
+    // Extend the selection to the end position
+    for (let i = start; i < end; i++) {
+      sel.modify("extend", "forward", "character");
+    }
+
+    let selectionLength = end - start;
+    while (getContentEditableSelectionLength(element, sel) < selectionLength) {
+      sel.modify("extend", "forward", "character");
+    }
+  }
+}
 

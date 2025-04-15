@@ -10,7 +10,6 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= xuldoc
 LIBRARY_NAME	= gkconxuldoc_s
 LIBXUL_LIBRARY	= 1
 
@@ -21,7 +20,7 @@ ifdef MOZ_XUL
 CPPSRCS		+= \
 		nsXULCommandDispatcher.cpp \
 		nsXULContentSink.cpp \
-		nsXULDocument.cpp \
+		XULDocument.cpp \
 		nsXULPrototypeCache.cpp \
 		nsXULPrototypeDocument.cpp \
 		$(NULL)

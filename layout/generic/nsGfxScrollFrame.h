@@ -299,6 +299,9 @@ public:
   nsCOMPtr<nsITimer> mScrollActivityTimer;
   nsPoint mScrollPosForLayerPixelAlignment;
 
+  // The scroll position where we last updated image visibility.
+  nsPoint mLastUpdateImagesPos;
+
   bool mNeverHasVerticalScrollbar:1;
   bool mNeverHasHorizontalScrollbar:1;
   bool mHasVerticalScrollbar:1;
@@ -406,6 +409,10 @@ public:
                     nsHTMLReflowMetrics&     aDesiredSize,
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus);
+
+  virtual bool UpdateOverflow() MOZ_OVERRIDE {
+    return mInner.UpdateOverflow();
+  }
 
   // Because there can be only one child frame, these two function return
   // NS_ERROR_FAILURE
@@ -527,8 +534,11 @@ public:
   virtual void ResetScrollPositionForLayerPixelAlignment() {
     mInner.ResetScrollPositionForLayerPixelAlignment();
   }
-  virtual bool UpdateOverflow() {
-    return mInner.UpdateOverflow();
+  virtual bool DidHistoryRestore() MOZ_OVERRIDE {
+    return mInner.mDidHistoryRestore;
+  }
+  virtual void ClearDidHistoryRestore() MOZ_OVERRIDE {
+    mInner.mDidHistoryRestore = false;
   }
 
   // nsIStatefulFrame
@@ -553,8 +563,6 @@ public:
 #ifdef DEBUG
   NS_IMETHOD GetFrameName(nsAString& aResult) const;
 #endif
-
-  bool DidHistoryRestore() { return mInner.mDidHistoryRestore; }
 
 #ifdef ACCESSIBILITY
   virtual mozilla::a11y::AccType AccessibleType() MOZ_OVERRIDE;
@@ -622,6 +630,10 @@ public:
 #if 0
   virtual nscoord GetMinWidth(nsRenderingContext *aRenderingContext) MOZ_OVERRIDE;
 #endif
+
+  virtual bool UpdateOverflow() MOZ_OVERRIDE {
+    return mInner.UpdateOverflow();
+  }
 
   // Because there can be only one child frame, these two function return
   // NS_ERROR_FAILURE
@@ -778,8 +790,11 @@ public:
   virtual void ResetScrollPositionForLayerPixelAlignment() {
     mInner.ResetScrollPositionForLayerPixelAlignment();
   }
-  virtual bool UpdateOverflow() {
-    return mInner.UpdateOverflow();
+  virtual bool DidHistoryRestore() MOZ_OVERRIDE {
+    return mInner.mDidHistoryRestore;
+  }
+  virtual void ClearDidHistoryRestore() MOZ_OVERRIDE {
+    mInner.mDidHistoryRestore = false;
   }
 
   // nsIStatefulFrame

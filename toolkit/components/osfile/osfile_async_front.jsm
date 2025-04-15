@@ -50,11 +50,12 @@ Components.utils.import("resource://gre/modules/commonjs/sdk/core/promise.js", t
 // The implementation of communications
 Components.utils.import("resource://gre/modules/osfile/_PromiseWorker.jsm", this);
 
+Components.utils.import("resource://gre/modules/Services.jsm", this);
+
 // If profileDir is not available, osfile.jsm has been imported before the
 // profile is setup. In this case, we need to observe "profile-do-change"
 // and set OS.Constants.Path.profileDir as soon as it becomes available.
 if (!("profileDir" in OS.Constants.Path) || !("localProfileDir" in OS.Constants.Path)) {
-  Components.utils.import("resource://gre/modules/Services.jsm", this);
   let observer = function observer() {
     Services.obs.removeObserver(observer, "profile-do-change");
 
@@ -68,16 +69,44 @@ if (!("profileDir" in OS.Constants.Path) || !("localProfileDir" in OS.Constants.
 }
 
 /**
+ * A global constant used as a default refs parameter value when cloning.
+ */
+const noRefs = [];
+
+/**
  * Return a shallow clone of the enumerable properties of an object.
  *
- * We use this whenever normalizing options requires making (shallow)
+ * Utility used whenever normalizing options requires making (shallow)
  * changes to an option object. The copy ensures that we do not modify
  * a client-provided object by accident.
+ *
+ * Note: to reference and not copy specific fields, provide an optional
+ * |refs| argument containing their names.
+ *
+ * @param {JSON} object Options to be cloned.
+ * @param {Array} refs An optional array of field names to be passed by
+ * reference instead of copying.
  */
-let clone = function clone(object) {
+let clone = function clone(object, refs = noRefs) {
   let result = {};
+  // Make a reference between result[key] and object[key].
+  let refer = function refer(result, key, object) {
+    Object.defineProperty(result, key, {
+        enumerable: true,
+        get: function() {
+            return object[key];
+        },
+        set: function(value) {
+            object[key] = value;
+        }
+    });
+  };
   for (let k in object) {
-    result[k] = object[k];
+    if (refs.indexOf(k) < 0) {
+      result[k] = object[k];
+    } else {
+      refer(result, k, object);
+    }
   }
   return result;
 };
@@ -87,14 +116,38 @@ let clone = function clone(object) {
  */
 const noOptions = {};
 
-
 let worker = new PromiseWorker(
   "resource://gre/modules/osfile/osfile_async_worker.js", LOG);
 let Scheduler = {
   post: function post(...args) {
+    // By convention, the last argument of any message may be an |options| object.
+    let methodArgs = args[1];
+    let options = methodArgs ? methodArgs[methodArgs.length - 1] : null;
     let promise = worker.post.apply(worker, args);
     return promise.then(
-      null,
+      function onSuccess(data) {
+        // Check for duration and return result.
+        if (!options) {
+          return data.ok;
+        }
+        // Check for options.outExecutionDuration.
+        if (typeof options !== "object" ||
+          !("outExecutionDuration" in options)) {
+          return data.ok;
+        }
+        // If data.durationMs is not present, return data.ok (there was an
+        // exception applying the method).
+        if (!("durationMs" in data)) {
+          return data.ok;
+        }
+        // Accumulate (or initialize) outExecutionDuration
+        if (typeof options.outExecutionDuration == "number") {
+          options.outExecutionDuration += data.durationMs;
+        } else {
+          options.outExecutionDuration = data.durationMs;
+        }
+        return data.ok;
+      },
       function onError(error) {
         // Decode any serialized error
         if (error instanceof PromiseWorker.WorkerError) {
@@ -124,6 +177,37 @@ Object.defineProperty(OS.Shared, "DEBUG", {
         DEBUG = newVal;
     }
 });
+
+/**
+ * An observer function to be used to monitor web-workers-shutdown events.
+ */
+let webWorkersShutdownObserver = function webWorkersShutdownObserver() {
+  // Send a "System_shutdown" message to the worker.
+  Scheduler.post("System_shutdown").then(function onSuccess(opened) {
+    let msg = "";
+    if (opened.openedFiles.length > 0) {
+      msg += "The following files are still opened:\n" +
+        opened.openedFiles.join("\n");
+    }
+    if (opened.openedDirectoryIterators.length > 0) {
+      msg += "The following directory iterators are still opened:\n" +
+        opened.openedDirectoryIterators.join("\n");
+    }
+    // Only log if file descriptors leaks detected.
+    if (msg) {
+      LOG("WARNING: File descriptors leaks detected.\n" + msg);
+    }
+  });
+};
+
+// Attaching an observer listening to the "web-workers-shutdown".
+Services.obs.addObserver(webWorkersShutdownObserver, "web-workers-shutdown",
+  false);
+// Attaching the same observer listening to the
+// "test.osfile.web-workers-shutdown".
+// Note: This is used for testing purposes.
+Services.obs.addObserver(webWorkersShutdownObserver,
+  "test.osfile.web-workers-shutdown", false);
 
 /**
  * Representation of a file, with asynchronous methods.
@@ -195,7 +279,9 @@ File.prototype = {
     // need to extract the |byteLength| now, as it will be lost by
     // communication
     if (isTypedArray(buffer) && (!options || !"bytes" in options)) {
-      options = clone(options || noOptions);
+      // Preserve the reference to |outExecutionDuration| option if it is
+      // passed.
+      options = clone(options || noOptions, ["outExecutionDuration"]);
       options.bytes = buffer.byteLength;
     }
     // Note: Type.void_t.out_ptr.toMsg ensures that
@@ -231,7 +317,9 @@ File.prototype = {
     // we need to extract the |byteLength| now, as it will be lost
     // by communication
     if (isTypedArray(buffer) && (!options || !"bytes" in options)) {
-      options = clone(options || noOptions);
+      // Preserve the reference to |outExecutionDuration| option if it is
+      // passed.
+      options = clone(options || noOptions, ["outExecutionDuration"]);
       options.bytes = buffer.byteLength;
     }
     // Note: Type.void_t.out_ptr.toMsg ensures that
@@ -525,8 +613,9 @@ File.exists = function exists(path) {
  * @resolves {number} The number of bytes actually written.
  */
 File.writeAtomic = function writeAtomic(path, buffer, options) {
-  // Copy |options| to avoid modifying the original object
-  options = clone(options || noOptions);
+  // Copy |options| to avoid modifying the original object but preserve the
+  // reference to |outExecutionDuration| option if it is passed.
+  options = clone(options || noOptions, ["outExecutionDuration"]);
   // As options.tmpPath is a path, we need to encode it as |Type.path| message
   if ("tmpPath" in options) {
     options.tmpPath = Type.path.toMsg(options.tmpPath);
@@ -595,6 +684,18 @@ let DirectoryIterator = function DirectoryIterator(path, options) {
   this._isClosed = false;
 };
 DirectoryIterator.prototype = {
+  /**
+   * Determine whether the directory exists.
+   *
+   * @resolves {boolean}
+   */
+  exists: function exists() {
+    return this._itmsg.then(
+      function onSuccess(iterator) {
+        return Scheduler.post("DirectoryIterator_prototype_exists", [iterator]);
+      }
+    );
+  },
   /**
    * Get the next entry in the directory.
    *
@@ -696,7 +797,6 @@ DirectoryIterator.prototype = {
    */
   _next: function _next(iterator) {
     if (this._isClosed) {
-      LOG("DirectoryIterator._next", "closed");
       return this._itmsg;
     }
     let self = this;

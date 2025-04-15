@@ -510,7 +510,7 @@ class ThreadLocalJSRuntime
   JSObject* mGlobal;
 
   static JSClass sGlobalClass;
-  static const unsigned sRuntimeHeapSize = 512 * 1024;
+  static const unsigned sRuntimeHeapSize = 768 * 1024;
 
   ThreadLocalJSRuntime()
   : mRuntime(NULL), mContext(NULL), mGlobal(NULL)
@@ -2691,22 +2691,25 @@ CopyData(nsIInputStream* aInputStream, nsIOutputStream* aOutputStream)
     char copyBuffer[FILE_COPY_BUFFER_SIZE];
 
     uint32_t numRead;
-    rv = aInputStream->Read(copyBuffer, FILE_COPY_BUFFER_SIZE, &numRead);
-    NS_ENSURE_SUCCESS(rv, rv);
+    rv = aInputStream->Read(copyBuffer, sizeof(copyBuffer), &numRead);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
 
-    if (numRead <= 0) {
+    if (!numRead) {
       break;
     }
 
     uint32_t numWrite;
     rv = aOutputStream->Write(copyBuffer, numRead, &numWrite);
-    NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
 
-    NS_ENSURE_TRUE(numWrite == numRead, NS_ERROR_FAILURE);
+    if (numWrite < numRead) {
+      // Must have hit the quota limit.
+      return NS_ERROR_DOM_INDEXEDDB_QUOTA_ERR;
+    }
   } while (true);
 
   rv = aOutputStream->Flush();
-  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
 
   return NS_OK;
 }
@@ -2914,7 +2917,7 @@ AddHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
         NS_ENSURE_TRUE(outputStream, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
 
         rv = CopyData(inputStream, outputStream);
-        NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
+        NS_ENSURE_SUCCESS(rv, rv);
 
         cloneFile.mFile->AddFileInfo(fileInfo);
       }
@@ -3936,14 +3939,11 @@ GetAllHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
   bool hasResult;
   while (NS_SUCCEEDED((rv = stmt->ExecuteStep(&hasResult))) && hasResult) {
     if (mCloneReadInfos.Capacity() == mCloneReadInfos.Length()) {
-      if (!mCloneReadInfos.SetCapacity(mCloneReadInfos.Capacity() * 2)) {
-        NS_ERROR("Out of memory!");
-        return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
-      }
+      mCloneReadInfos.SetCapacity(mCloneReadInfos.Capacity() * 2);
     }
 
     StructuredCloneReadInfo* readInfo = mCloneReadInfos.AppendElement();
-    NS_ASSERTION(readInfo, "Shouldn't fail if SetCapacity succeeded!");
+    NS_ASSERTION(readInfo, "Shouldn't fail since SetCapacity succeeded!");
 
     rv = IDBObjectStore::GetStructuredCloneReadInfoFromStatement(stmt, 0, 1,
       mDatabase, *readInfo);

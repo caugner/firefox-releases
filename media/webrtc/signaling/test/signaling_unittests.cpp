@@ -27,8 +27,13 @@ using namespace std;
 #include "runnable_utils.h"
 #include "nsStaticComponents.h"
 #include "nsIDOMRTCPeerConnection.h"
+#include "nsServiceManagerUtils.h"
+#include "nsNetUtil.h"
+#include "nsIIOService.h"
+#include "nsIDNSService.h"
 #include "nsWeakReference.h"
 #include "nricectx.h"
+#include "mozilla/SyncRunnable.h"
 
 #include "mtransport_test_utils.h"
 MtransportTestUtils *test_utils;
@@ -90,7 +95,7 @@ enum sdpTestFlags
   SHOULD_OMIT_VIDEO     = (1<<12),
   DONT_CHECK_VIDEO      = (1<<13),
 
-  SHOULD_OMIT_DATA      = (1 << 16),
+  SHOULD_INCLUDE_DATA   = (1 << 16),
   DONT_CHECK_DATA       = (1 << 17),
 
   SHOULD_SENDRECV_AUDIO = SHOULD_SEND_AUDIO | SHOULD_RECV_AUDIO,
@@ -124,7 +129,7 @@ static bool SetupGlobalThread() {
   if (!gThread) {
     nsIThread *thread;
 
-    nsresult rv = NS_NewThread(&thread);
+    nsresult rv = NS_NewNamedThread("pseudo-main",&thread);
     if (NS_FAILED(rv))
       return false;
 
@@ -170,7 +175,7 @@ public:
 
   ResponseState state;
   char *lastString;
-  uint32_t lastStatusCode;
+  sipcc::PeerConnectionImpl::Error lastStatusCode;
   uint32_t lastStateType;
   int addIceSuccessCount;
   bool onAddStreamCalled;
@@ -194,11 +199,12 @@ TestObserver::OnCreateOfferSuccess(const char* offer)
 }
 
 NS_IMETHODIMP
-TestObserver::OnCreateOfferError(uint32_t code)
+TestObserver::OnCreateOfferError(uint32_t code, const char *message)
 {
-  lastStatusCode = code;
+  lastStatusCode = static_cast<sipcc::PeerConnectionImpl::Error>(code);
   state = stateError;
-  cout << "onCreateOfferError" << endl;
+  cout << "onCreateOfferError = " << code
+    << " (" << message << ")" << endl;
   return NS_OK;
 }
 
@@ -212,47 +218,50 @@ TestObserver::OnCreateAnswerSuccess(const char* answer)
 }
 
 NS_IMETHODIMP
-TestObserver::OnCreateAnswerError(uint32_t code)
+TestObserver::OnCreateAnswerError(uint32_t code, const char *message)
 {
-  lastStatusCode = code;
-  cout << "onCreateAnswerError = " << code << endl;
+  lastStatusCode = static_cast<sipcc::PeerConnectionImpl::Error>(code);
+  cout << "onCreateAnswerError = " << code
+    << " (" << message << ")" << endl;
   state = stateError;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-TestObserver::OnSetLocalDescriptionSuccess(uint32_t code)
+TestObserver::OnSetLocalDescriptionSuccess()
 {
-  lastStatusCode = code;
+  lastStatusCode = sipcc::PeerConnectionImpl::kNoError;
   state = stateSuccess;
-  cout << "onSetLocalDescriptionSuccess = " << code << endl;
+  cout << "onSetLocalDescriptionSuccess" << endl;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-TestObserver::OnSetRemoteDescriptionSuccess(uint32_t code)
+TestObserver::OnSetRemoteDescriptionSuccess()
 {
-  lastStatusCode = code;
+  lastStatusCode = sipcc::PeerConnectionImpl::kNoError;
   state = stateSuccess;
-  cout << "onSetRemoteDescriptionSuccess = " << code << endl;
+  cout << "onSetRemoteDescriptionSuccess = " << endl;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-TestObserver::OnSetLocalDescriptionError(uint32_t code)
+TestObserver::OnSetLocalDescriptionError(uint32_t code, const char *message)
 {
-  lastStatusCode = code;
+  lastStatusCode = static_cast<sipcc::PeerConnectionImpl::Error>(code);
   state = stateError;
-  cout << "onSetLocalDescriptionError = " << code << endl;
+  cout << "onSetLocalDescriptionError = " << code
+    << " (" << message << ")" << endl;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-TestObserver::OnSetRemoteDescriptionError(uint32_t code)
+TestObserver::OnSetRemoteDescriptionError(uint32_t code, const char *message)
 {
-  lastStatusCode = code;
+  lastStatusCode = static_cast<sipcc::PeerConnectionImpl::Error>(code);
   state = stateError;
-  cout << "onSetRemoteDescriptionError = " << code << endl;
+  cout << "onSetRemoteDescriptionError = " << code
+    << " (" << message << ")" << endl;
   return NS_OK;
 }
 
@@ -368,20 +377,21 @@ TestObserver::FoundIceCandidate(const char* strCandidate)
 }
 
 NS_IMETHODIMP
-TestObserver::OnAddIceCandidateSuccess(uint32_t code)
+TestObserver::OnAddIceCandidateSuccess()
 {
-  lastStatusCode = code;
+  lastStatusCode = sipcc::PeerConnectionImpl::kNoError;
   state = stateSuccess;
   addIceSuccessCount++;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-TestObserver::OnAddIceCandidateError(uint32_t code)
+TestObserver::OnAddIceCandidateError(uint32_t code, const char *message)
 {
-  lastStatusCode = code;
+  lastStatusCode = static_cast<sipcc::PeerConnectionImpl::Error>(code);
   state = stateError;
-  cout << "onAddIceCandidateError = " << code << endl;
+  cout << "onAddIceCandidateError = " << code
+    << " (" << message << ")" << endl;
   return NS_OK;
 }
 
@@ -518,33 +528,30 @@ class ParsedSDP {
 
 class SignalingAgent {
  public:
-  SignalingAgent() : pc(nullptr) {}
+  SignalingAgent() : pc(nullptr) {
+    cfg_.addServer("23.21.150.121", 3478);
+
+    pc = sipcc::PeerConnectionImpl::CreatePeerConnection();
+    EXPECT_TRUE(pc);
+  }
 
   ~SignalingAgent() {
-    pc->GetMainThread()->Dispatch(
-      WrapRunnable(this, &SignalingAgent::Close),
-      NS_DISPATCH_SYNC);
+    mozilla::SyncRunnable::DispatchToThread(gThread,
+      WrapRunnable(this, &SignalingAgent::Close));
   }
 
   void Init_m(nsCOMPtr<nsIThread> thread)
   {
-    pc = sipcc::PeerConnectionImpl::CreatePeerConnection();
-    ASSERT_TRUE(pc);
-
     pObserver = new TestObserver(pc);
     ASSERT_TRUE(pObserver);
 
-    sipcc::IceConfiguration cfg;
-    cfg.addServer("23.21.150.121", 3478);
-    ASSERT_EQ(pc->Initialize(pObserver, nullptr, cfg, thread), NS_OK);
-
+    ASSERT_EQ(pc->Initialize(pObserver, nullptr, cfg_, thread), NS_OK);
   }
 
   void Init(nsCOMPtr<nsIThread> thread)
   {
-    thread->Dispatch(
-      WrapRunnable(this, &SignalingAgent::Init_m, thread),
-      NS_DISPATCH_SYNC);
+    mozilla::SyncRunnable::DispatchToThread(thread,
+      WrapRunnable(this, &SignalingAgent::Init_m, thread));
 
     ASSERT_TRUE_WAIT(sipcc_state() == sipcc::PeerConnectionImpl::kStarted,
                      kDefaultTimeout);
@@ -552,39 +559,22 @@ class SignalingAgent {
     cout << "Init Complete" << endl;
   }
 
-  bool InitAllowFail_m(nsCOMPtr<nsIThread> thread)
-  {
-    pc = sipcc::PeerConnectionImpl::CreatePeerConnection();
-    if (!pc)
-      return false;
-
-    pObserver = new TestObserver(pc);
-    if (!pObserver)
-      return false;
-
-    sipcc::IceConfiguration cfg;
-    cfg.addServer("23.21.150.121", 3478);
-    if (NS_FAILED(pc->Initialize(pObserver, nullptr, cfg, thread)))
-      return false;
-
-    return true;
-  }
-
   bool InitAllowFail(nsCOMPtr<nsIThread> thread)
   {
-    bool rv;
-
-    thread->Dispatch(
-        WrapRunnableRet(this, &SignalingAgent::InitAllowFail_m, thread, &rv),
-        NS_DISPATCH_SYNC);
-    if (!rv)
-      return false;
+    mozilla::SyncRunnable::DispatchToThread(thread,
+        WrapRunnable(this, &SignalingAgent::Init_m, thread));
 
     EXPECT_TRUE_WAIT(sipcc_state() == sipcc::PeerConnectionImpl::kStarted,
                      kDefaultTimeout);
-    EXPECT_TRUE_WAIT(ice_state() == sipcc::PeerConnectionImpl::kIceWaiting, 5000);
-    cout << "Init Complete" << endl;
+    EXPECT_TRUE_WAIT(ice_state() == sipcc::PeerConnectionImpl::kIceWaiting ||
+                     ice_state() == sipcc::PeerConnectionImpl::kIceFailed, 5000);
 
+    if (ice_state() == sipcc::PeerConnectionImpl::kIceFailed) {
+      cout << "Init Failed" << endl;
+      return false;
+    }
+
+    cout << "Init Complete" << endl;
     return true;
   }
 
@@ -606,10 +596,12 @@ class SignalingAgent {
 
   void Close()
   {
-    cout << "Close" << endl;
-
-    pc->Close(false);
-    pc = nullptr;
+    if (pc) {
+      cout << "Close" << endl;
+      
+      pc->Close();
+      pc = nullptr;
+    }
 
     // Shutdown is synchronous evidently.
     // ASSERT_TRUE(pObserver->WaitForObserverCall());
@@ -645,9 +637,9 @@ class SignalingAgent {
       new Fake_AudioStreamSource();
 
     nsresult ret;
-    test_utils->sts_target()->Dispatch(
-      WrapRunnableRet(audio_stream, &Fake_MediaStream::Start, &ret),
-        NS_DISPATCH_SYNC);
+    mozilla::SyncRunnable::DispatchToThread(
+      test_utils->sts_target(),
+      WrapRunnableRet(audio_stream, &Fake_MediaStream::Start, &ret));
 
     ASSERT_TRUE(NS_SUCCEEDED(ret));
 
@@ -746,20 +738,26 @@ void CreateAnswer(sipcc::MediaConstraints& constraints, std::string offer,
     offer_ = pObserver->lastString;
   }
 
-  void SetRemote(TestObserver::Action action, std::string remote) {
+  void SetRemote(TestObserver::Action action, std::string remote,
+                 bool ignoreError = false) {
     pObserver->state = TestObserver::stateNoResponse;
     ASSERT_EQ(pc->SetRemoteDescription(action, remote.c_str()), NS_OK);
     ASSERT_TRUE_WAIT(pObserver->state != TestObserver::stateNoResponse,
                      kDefaultTimeout);
-    ASSERT_TRUE(pObserver->state == TestObserver::stateSuccess);
+    if (!ignoreError) {
+      ASSERT_TRUE(pObserver->state == TestObserver::stateSuccess);
+    }
   }
 
-  void SetLocal(TestObserver::Action action, std::string local) {
+  void SetLocal(TestObserver::Action action, std::string local,
+                bool ignoreError = false) {
     pObserver->state = TestObserver::stateNoResponse;
     ASSERT_EQ(pc->SetLocalDescription(action, local.c_str()), NS_OK);
     ASSERT_TRUE_WAIT(pObserver->state != TestObserver::stateNoResponse,
                      kDefaultTimeout);
-    ASSERT_TRUE(pObserver->state == TestObserver::stateSuccess);
+    if (!ignoreError) {
+      ASSERT_TRUE(pObserver->state == TestObserver::stateSuccess);
+    }
   }
 
   void DoTrickleIce(ParsedSDP &sdp) {
@@ -852,6 +850,7 @@ public:
   char* offer_;
   char* answer_;
   nsRefPtr<DOMMediaStream> domMediaStream_;
+  sipcc::IceConfiguration cfg_;
 
 private:
   void SDPSanityCheck(std::string sdp, uint32_t flags, bool offer)
@@ -880,7 +879,7 @@ private:
          << ((flags & SHOULD_OMIT_VIDEO)?" SHOULD_OMIT_VIDEO":"")
          << ((flags & DONT_CHECK_VIDEO)?" DONT_CHECK_VIDEO":"")
 
-         << ((flags & SHOULD_OMIT_DATA)?" SHOULD_OMIT_DATA":"")
+         << ((flags & SHOULD_INCLUDE_DATA)?" SHOULD_INCLUDE_DATA":"")
          << ((flags & DONT_CHECK_DATA)?" DONT_CHECK_DATA":"")
          << endl;
 
@@ -958,10 +957,10 @@ private:
             ASSERT_FALSE("Missing case in switch statement");
     }
 
-    if (flags & SHOULD_OMIT_DATA) {
-      ASSERT_EQ(sdp.find("m=application"), std::string::npos);
-    } else if (!(flags & DONT_CHECK_DATA)) {
+    if (flags & SHOULD_INCLUDE_DATA) {
       ASSERT_NE(sdp.find("m=application"), std::string::npos);
+    } else if (!(flags & DONT_CHECK_DATA)) {
+      ASSERT_EQ(sdp.find("m=application"), std::string::npos);
     }
   }
 };
@@ -995,6 +994,19 @@ class SignalingAgentTest : public ::testing::Test {
     agents_.push_back(agent.forget());
 
     return true;
+  }
+
+  void CreateAgentNoInit() {
+    ScopedDeletePtr<SignalingAgent> agent(new SignalingAgent());
+    agents_.push_back(agent.forget());
+  }
+
+  bool InitAgent(size_t i) {
+    return agents_[i]->InitAllowFail(gThread);
+  }
+
+  SignalingAgent *agent(size_t i) {
+    return agents_[i];
   }
 
  private:
@@ -1134,7 +1146,6 @@ public:
   SignalingAgent a2_;  // Canonically "callee"
 };
 
-
 TEST_F(SignalingTest, JustInit)
 {
 }
@@ -1185,15 +1196,6 @@ TEST_F(SignalingTest, CreateOfferNoAudioStream)
   constraints.setBooleanConstraint("OfferToReceiveVideo", true, false);
   CreateOffer(constraints, OFFER_VIDEO,
               SHOULD_OMIT_AUDIO | SHOULD_SENDRECV_VIDEO);
-}
-
-TEST_F(SignalingTest, CreateOfferNoDataChannel)
-{
-  sipcc::MediaConstraints constraints;
-  constraints.setBooleanConstraint("OfferToReceiveAudio", true, false);
-  constraints.setBooleanConstraint("OfferToReceiveVideo", true, false);
-  constraints.setBooleanConstraint("MozDontOfferDataChannel", true, false);
-  CreateOffer(constraints, OFFER_AV, SHOULD_SENDRECV_AV | SHOULD_OMIT_DATA);
 }
 
 TEST_F(SignalingTest, CreateOfferDontReceiveAudio)
@@ -1922,6 +1924,57 @@ TEST_F(SignalingTest, ipAddrAnyOffer)
     ASSERT_NE(answer.find("a=sendrecv"), std::string::npos);
 }
 
+static void CreateSDPForBigOTests(std::string& offer, const char *number) {
+  offer =
+    "v=0\r\n"
+    "o=- ";
+  offer += number;
+  offer += " ";
+  offer += number;
+  offer += " IN IP4 127.0.0.1\r\n"
+    "s=-\r\n"
+    "b=AS:64\r\n"
+    "t=0 0\r\n"
+    "a=fingerprint:sha-256 F3:FA:20:C0:CD:48:C4:5F:02:5F:A5:D3:21:D0:2D:48:"
+      "7B:31:60:5C:5A:D8:0D:CD:78:78:6C:6D:CE:CC:0C:67\r\n"
+    "m=audio 9000 RTP/AVP 99\r\n"
+    "c=IN IP4 0.0.0.0\r\n"
+    "a=rtpmap:99 opus/48000/2\r\n"
+    "a=ice-ufrag:cYuakxkEKH+RApYE\r\n"
+    "a=ice-pwd:bwtpzLZD+3jbu8vQHvEa6Xuq\r\n"
+    "a=sendrecv\r\n";
+}
+
+TEST_F(SignalingTest, BigOValues)
+{
+  std::string offer;
+
+  CreateSDPForBigOTests(offer, "12345678901234567");
+
+  a2_.SetRemote(TestObserver::OFFER, offer);
+  ASSERT_TRUE(a2_.pObserver->state == TestObserver::stateSuccess);
+}
+
+TEST_F(SignalingTest, BigOValuesExtraChars)
+{
+  std::string offer;
+
+  CreateSDPForBigOTests(offer, "12345678901234567FOOBAR");
+
+  a2_.SetRemote(TestObserver::OFFER, offer, true);
+  ASSERT_TRUE(a2_.pObserver->state == TestObserver::stateError);
+}
+
+TEST_F(SignalingTest, BigOValuesTooBig)
+{
+  std::string offer;
+
+  CreateSDPForBigOTests(offer, "18446744073709551615");
+
+  a2_.SetRemote(TestObserver::OFFER, offer, true);
+  ASSERT_TRUE(a2_.pObserver->state == TestObserver::stateError);
+}
+
 TEST_F(SignalingAgentTest, CreateUntilFailThenWait) {
   int i;
 
@@ -1932,6 +1985,65 @@ TEST_F(SignalingAgentTest, CreateUntilFailThenWait) {
   }
   std::cerr << "Failed after creating " << i << " PCs " << std::endl;
   PR_Sleep(10000);  // Wait to see if we crash
+}
+
+// Test for bug 856433.
+TEST_F(SignalingAgentTest, CreateNoInit) {
+  CreateAgentNoInit();
+}
+
+/*
+ * Test for Bug 843595
+ */
+TEST_F(SignalingTest, missingUfrag)
+{
+  sipcc::MediaConstraints constraints;
+  std::string offer =
+    "v=0\r\n"
+    "o=Mozilla-SIPUA 2208 0 IN IP4 0.0.0.0\r\n"
+    "s=SIP Call\r\n"
+    "t=0 0\r\n"
+    "a=ice-pwd:4450d5a4a5f097855c16fa079893be18\r\n"
+    "a=fingerprint:sha-256 23:9A:2E:43:94:42:CF:46:68:FC:62:F9:F4:48:61:DB:"
+      "2F:8C:C9:FF:6B:25:54:9D:41:09:EF:83:A8:19:FC:B6\r\n"
+    "m=audio 56187 RTP/SAVPF 109 0 8 101\r\n"
+    "c=IN IP4 77.9.79.167\r\n"
+    "a=rtpmap:109 opus/48000/2\r\n"
+    "a=ptime:20\r\n"
+    "a=rtpmap:0 PCMU/8000\r\n"
+    "a=rtpmap:8 PCMA/8000\r\n"
+    "a=rtpmap:101 telephone-event/8000\r\n"
+    "a=fmtp:101 0-15\r\n"
+    "a=sendrecv\r\n"
+    "a=candidate:0 1 UDP 2113601791 192.168.178.20 56187 typ host\r\n"
+    "a=candidate:1 1 UDP 1694236671 77.9.79.167 56187 typ srflx raddr "
+      "192.168.178.20 rport 56187\r\n"
+    "a=candidate:0 2 UDP 2113601790 192.168.178.20 52955 typ host\r\n"
+    "a=candidate:1 2 UDP 1694236670 77.9.79.167 52955 typ srflx raddr "
+      "192.168.178.20 rport 52955\r\n"
+    "m=video 49929 RTP/SAVPF 120\r\n"
+    "c=IN IP4 77.9.79.167\r\n"
+    "a=rtpmap:120 VP8/90000\r\n"
+    "a=recvonly\r\n"
+    "a=candidate:0 1 UDP 2113601791 192.168.178.20 49929 typ host\r\n"
+    "a=candidate:1 1 UDP 1694236671 77.9.79.167 49929 typ srflx raddr "
+      "192.168.178.20 rport 49929\r\n"
+    "a=candidate:0 2 UDP 2113601790 192.168.178.20 50769 typ host\r\n"
+    "a=candidate:1 2 UDP 1694236670 77.9.79.167 50769 typ srflx raddr "
+      "192.168.178.20 rport 50769\r\n"
+    "m=application 54054 SCTP/DTLS 5000 \r\n"
+    "c=IN IP4 77.9.79.167\r\n"
+    "a=fmtp:HuRUu]Dtcl\\zM,7(OmEU%O$gU]x/z\tD protocol=webrtc-datachannel;"
+      "streams=16\r\n"
+    "a=sendrecv\r\n";
+
+  a1_.SetLocal(TestObserver::OFFER, offer, true);
+  a2_.SetRemote(TestObserver::OFFER, offer, true);
+  a2_.CreateAnswer(constraints, offer, OFFER_AV | ANSWER_AV);
+  a2_.SetLocal(TestObserver::ANSWER, a2_.answer(), true);
+  a1_.SetRemote(TestObserver::ANSWER, a2_.answer(), true);
+  // We don't check anything in particular for success here -- simply not
+  // crashing by now is enough to declare success.
 }
 
 } // End namespace test.

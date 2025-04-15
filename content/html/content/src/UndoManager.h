@@ -10,10 +10,10 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsCOMPtr.h"
 #include "nsCOMArray.h"
+#include "nsIContent.h"
 #include "nsTArray.h"
 #include "nsWrapperCache.h"
 #include "mozilla/dom/Nullable.h"
-#include "nsIContent.h"
 
 class nsITransactionManager;
 class nsIMutationObserver;
@@ -54,11 +54,9 @@ public:
     return mHostNode;
   }
 
-  JSObject* WrapObject(JSContext* aCx, JSObject* aScope,
-                       bool* aTriedToWrap)
+  JSObject* WrapObject(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE
   {
-    return mozilla::dom::UndoManagerBinding::Wrap(aCx, aScope, this,
-                                                  aTriedToWrap);
+    return mozilla::dom::UndoManagerBinding::Wrap(aCx, aScope, this);
   }
 
   nsITransactionManager* GetTransactionManager();

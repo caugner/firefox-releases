@@ -11,7 +11,6 @@
 #include "nsAttrValueInlines.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Menu)
-DOMCI_NODE_DATA(HTMLMenuElement, mozilla::dom::HTMLMenuElement)
 
 namespace mozilla {
 namespace dom {
@@ -64,7 +63,7 @@ NS_INTERFACE_TABLE_HEAD(HTMLMenuElement)
                                    nsIHTMLMenu)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLMenuElement,
                                                nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLMenuElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLMenuElement)
 
@@ -268,10 +267,9 @@ HTMLMenuElement::AddSeparator(nsIMenuBuilder* aBuilder, int8_t& aSeparator)
 }
 
 JSObject*
-HTMLMenuElement::WrapNode(JSContext* aCx, JSObject* aScope,
-                          bool* aTriedToWrap)
+HTMLMenuElement::WrapNode(JSContext* aCx, JSObject* aScope)
 {
-  return HTMLMenuElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return HTMLMenuElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom

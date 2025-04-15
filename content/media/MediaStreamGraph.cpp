@@ -22,6 +22,7 @@
 #include "AudioNodeEngine.h"
 #include "AudioNodeStream.h"
 #include <algorithm>
+#include "DOMMediaStream.h"
 
 using namespace mozilla::layers;
 using namespace mozilla::dom;
@@ -123,6 +124,14 @@ MediaStreamGraphImpl::ExtractPendingInput(SourceMediaStream* aStream,
                          MediaTimeToSeconds(aStream->mBuffer.GetEnd())));
       if (t > aStream->mBuffer.GetEnd()) {
         *aEnsureNextIteration = true;
+#ifdef DEBUG
+        if (aStream->mListeners.Length() == 0) {
+          LOG(PR_LOG_ERROR, ("No listeners in NotifyPull aStream=%p desired=%f current end=%f",
+                             aStream, MediaTimeToSeconds(t),
+                             MediaTimeToSeconds(aStream->mBuffer.GetEnd())));
+          aStream->DumpTrackInfo();
+        }
+#endif
         for (uint32_t j = 0; j < aStream->mListeners.Length(); ++j) {
           MediaStreamListener* l = aStream->mListeners[j];
           {
@@ -392,7 +401,16 @@ MediaStreamGraphImpl::WillUnderrun(MediaStream* aStream, GraphTime aTime,
   GraphTime bufferEnd =
     StreamTimeToGraphTime(aStream, aStream->GetBufferEnd(),
                           INCLUDE_TRAILING_BLOCKED_INTERVAL);
-  NS_ASSERTION(bufferEnd >= mCurrentTime, "Buffer underran");
+#ifdef DEBUG
+  if (bufferEnd < mCurrentTime) {
+    LOG(PR_LOG_ERROR, ("MediaStream %p underrun, "
+                       "bufferEnd %f < mCurrentTime %f (%lld < %lld), Streamtime %lld",
+                       aStream, MediaTimeToSeconds(bufferEnd), MediaTimeToSeconds(mCurrentTime),
+                       bufferEnd, mCurrentTime, aStream->GetBufferEnd()));
+    aStream->DumpTrackInfo();
+    NS_ASSERTION(bufferEnd >= mCurrentTime, "Buffer underran");
+  }
+#endif
   // We should block after bufferEnd.
   if (bufferEnd <= aTime) {
     LOG(PR_LOG_DEBUG, ("MediaStream %p will block due to data underrun, "
@@ -1120,6 +1138,7 @@ public:
   {
     NS_ASSERTION(mGraph->mDetectedNotRunning,
                  "We should know the graph thread control loop isn't running!");
+
     // mGraph's thread is not running so it's OK to do whatever here
     if (mGraph->IsEmpty()) {
       // mGraph is no longer needed, so delete it. If the graph is not empty
@@ -1127,6 +1146,13 @@ public:
       // detect that the manager has been emptied, and delete it.
       delete mGraph;
     } else {
+      for (uint32_t i = 0; i < mGraph->mStreams.Length(); ++i) {
+        DOMMediaStream* s = mGraph->mStreams[i]->GetWrapper();
+        if (s) {
+          s->NotifyMediaStreamGraphShutdown();
+        }
+      }
+
       NS_ASSERTION(mGraph->mForceShutDown, "Not in forced shutdown?");
       mGraph->mLifecycleState =
         MediaStreamGraphImpl::LIFECYCLE_WAITING_FOR_STREAM_DESTRUCTION;
@@ -1221,7 +1247,7 @@ MediaStreamGraphImpl::RunInStableState()
       // the graph might exit immediately on finding it has no streams. The
       // first message for a new graph must create a stream.
       nsCOMPtr<nsIRunnable> event = new MediaStreamGraphThreadRunnable(this);
-      NS_NewThread(getter_AddRefs(mThread), event);
+      NS_NewNamedThread("MediaStreamGrph", getter_AddRefs(mThread), event);
     }
 
     if (mCurrentTaskMessageQueue.IsEmpty()) {
@@ -1608,7 +1634,11 @@ MediaStream::RemoveListener(MediaStreamListener* aListener)
     }
     nsRefPtr<MediaStreamListener> mListener;
   };
-  GraphImpl()->AppendMessage(new Message(this, aListener));
+  // If the stream is destroyed the Listeners have or will be
+  // removed.
+  if (!IsDestroyed()) {
+    GraphImpl()->AppendMessage(new Message(this, aListener));
+  }
 }
 
 void
@@ -1727,6 +1757,7 @@ SourceMediaStream::AdvanceKnownTracksTime(StreamTime aKnownTime)
 void
 SourceMediaStream::FinishWithLockHeld()
 {
+  mMutex.AssertCurrentThreadOwns();
   mUpdateFinished = true;
   if (!mDestroyed) {
     GraphImpl()->EnsureNextIteration();
@@ -1736,12 +1767,10 @@ SourceMediaStream::FinishWithLockHeld()
 void
 SourceMediaStream::EndAllTrackAndFinish()
 {
-  {
-    MutexAutoLock lock(mMutex);
-    for (uint32_t i = 0; i < mUpdateTracks.Length(); ++i) {
-      SourceMediaStream::TrackData* data = &mUpdateTracks[i];
-      data->mCommands |= TRACK_END;
-    }
+  MutexAutoLock lock(mMutex);
+  for (uint32_t i = 0; i < mUpdateTracks.Length(); ++i) {
+    SourceMediaStream::TrackData* data = &mUpdateTracks[i];
+    data->mCommands |= TRACK_END;
   }
   FinishWithLockHeld();
   // we will call NotifyFinished() to let GetUserMedia know
@@ -1989,9 +2018,10 @@ MediaStreamGraph::CreateTrackUnionStream(DOMMediaStream* aWrapper)
 }
 
 AudioNodeStream*
-MediaStreamGraph::CreateAudioNodeStream(AudioNodeEngine* aEngine)
+MediaStreamGraph::CreateAudioNodeStream(AudioNodeEngine* aEngine,
+                                        AudioNodeStreamKind aKind)
 {
-  AudioNodeStream* stream = new AudioNodeStream(aEngine);
+  AudioNodeStream* stream = new AudioNodeStream(aEngine, aKind);
   NS_ADDREF(stream);
   MediaStreamGraphImpl* graph = static_cast<MediaStreamGraphImpl*>(this);
   stream->SetGraphImpl(graph);

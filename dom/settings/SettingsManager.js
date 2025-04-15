@@ -17,6 +17,7 @@ Cu.import("resource://gre/modules/SettingsQueue.jsm");
 Cu.import("resource://gre/modules/SettingsDB.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
+Cu.import("resource://gre/modules/ObjectWrapper.jsm")
 
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
                                    "@mozilla.org/childprocessmessagemanager;1",
@@ -40,6 +41,10 @@ SettingsLock.prototype = {
 
   get closed() {
     return !this._open;
+  },
+
+  _wrap: function _wrap(obj) {
+    return ObjectWrapper.wrap(obj, this._settingsManager._window);
   },
 
   process: function process() {
@@ -82,19 +87,9 @@ SettingsLock.prototype = {
                 if (DEBUG) debug("MOZSETTINGS-SET-WARNING: " + key + " is not in the database.\n");
               }
 
-              let setReq;
-              if (typeof(info.settings[key]) != 'object') {
-                let obj = {settingName: key, defaultValue: defaultValue, userValue: userValue};
-                if (DEBUG) debug("store1: " + JSON.stringify(obj));
-                setReq = store.put(obj);
-              } else {
-                //Workaround for cloning issues
-                let defaultVal = JSON.parse(JSON.stringify(defaultValue));
-                let userVal = JSON.parse(JSON.stringify(userValue));
-                let obj = {settingName: key, defaultValue: defaultVal, userValue: userVal};
-                if (DEBUG) debug("store2: " + JSON.stringify(obj));
-                setReq = store.put(obj);
-              }
+              let obj = {settingName: key, defaultValue: defaultValue, userValue: userValue};
+              if (DEBUG) debug("store1: " + JSON.stringify(obj));
+              let setReq = store.put(obj);
 
               setReq.onsuccess = function() {
                 lock._isBusy = false;
@@ -114,7 +109,7 @@ SettingsLock.prototype = {
                   Services.DOMRequest.fireError(request, setReq.error.name)
                 }
               };
-            }
+            };
             checkKeyRequest.onerror = function(event) {
               if (!request.error) {
                 Services.DOMRequest.fireError(request, checkKeyRequest.error.name)
@@ -127,35 +122,25 @@ SettingsLock.prototype = {
                                            : store.mozGetAll(info.name);
 
           getReq.onsuccess = function(event) {
-            if (DEBUG) debug("Request for '" + info.name + "' successful. " + 
-                  "Record count: " + event.target.result.length);
+            if (DEBUG) debug("Request for '" + info.name + "' successful. " +
+                             "Record count: " + event.target.result.length);
 
             if (event.target.result.length == 0) {
               if (DEBUG) debug("MOZSETTINGS-GET-WARNING: " + info.name + " is not in the database.\n");
             }
 
-            let results = {
-              __exposedProps__: {
-              }
-            };
+            let results = {};
 
             for (var i in event.target.result) {
               let result = event.target.result[i];
               var name = result.settingName;
               if (DEBUG) debug("VAL: " + result.userValue +", " + result.defaultValue + "\n");
               var value = result.userValue !== undefined ? result.userValue : result.defaultValue;
-              results[name] = value;
-              results.__exposedProps__[name] = "r";
-              // If the value itself is an object, expose the properties.
-              if (typeof value == "object" && value != null) {
-                var exposed = {};
-                Object.keys(value).forEach(function(key) { exposed[key] = 'r'; });
-                results[name].__exposedProps__ = exposed;
-              }
+              results[name] = this._wrap(value);
             }
 
             this._open = true;
-            Services.DOMRequest.fireSuccess(request, results);
+            Services.DOMRequest.fireSuccess(request, this._wrap(results));
             this._open = false;
           }.bind(lock);
 
@@ -205,6 +190,31 @@ SettingsLock.prototype = {
     }
   },
 
+  _serializePreservingBinaries: function _serializePreservingBinaries(aObject) {
+    // We need to serialize settings objects, otherwise they can change between
+    // the set() call and the enqueued request being processed. We can't simply
+    // parse(stringify(obj)) because that breaks things like Blobs, Files and
+    // Dates, so we use stringify's replacer and parse's reviver parameters to
+    // preserve binaries.
+    let binaries = Object.create(null);
+    let stringified = JSON.stringify(aObject, function(key, value) {
+      let kind = ObjectWrapper.getObjectKind(value);
+      if (kind == "file" || kind == "blob" || kind == "date") {
+        let uuid = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator)
+                                                      .generateUUID().toString();
+        binaries[uuid] = value;
+        return uuid;
+      }
+      return value;
+    });
+    return JSON.parse(stringified, function(key, value) {
+      if (value in binaries) {
+        return binaries[value];
+      }
+      return value;
+    });
+  },
+
   set: function set(aSettings) {
     if (!this._open) {
       dump("Settings lock not open!\n");
@@ -214,7 +224,7 @@ SettingsLock.prototype = {
     if (this._settingsManager.hasWritePrivileges) {
       let req = Services.DOMRequest.createRequest(this._settingsManager._window);
       if (DEBUG) debug("send: " + JSON.stringify(aSettings));
-      let settings = JSON.parse(JSON.stringify(aSettings));
+      let settings = this._serializePreservingBinaries(aSettings);
       this._requests.enqueue({request: req, intent: "set", settings: settings});
       this.createTransactionAndProcess();
       return req;
@@ -272,6 +282,10 @@ SettingsManager.prototype = {
   _onsettingchange: null,
   _callbacks: null,
 
+  _wrap: function _wrap(obj) {
+    return ObjectWrapper.wrap(obj, this._window);
+  },
+
   nextTick: function nextTick(aCallback, thisObj) {
     if (thisObj)
       aCallback = aCallback.bind(thisObj);
@@ -312,7 +326,6 @@ SettingsManager.prototype = {
 
     switch (aMessage.name) {
       case "Settings:Change:Return:OK":
-        if (DEBUG) debug("Settings:Change:Return:OK");
         if (this._onsettingchange || this._callbacks) {
           if (DEBUG) debug('data:' + msg.key + ':' + msg.value + '\n');
 
@@ -326,15 +339,14 @@ SettingsManager.prototype = {
           if (this._callbacks && this._callbacks[msg.key]) {
             if (DEBUG) debug("observe callback called! " + msg.key + " " + this._callbacks[msg.key].length);
             this._callbacks[msg.key].forEach(function(cb) {
-              cb({settingName: msg.key, settingValue: msg.value,
-                  __exposedProps__: {settingName: 'r', settingValue: 'r'}});
-            });
+              cb(this._wrap({settingName: msg.key, settingValue: msg.value}));
+            }.bind(this));
           }
         } else {
           if (DEBUG) debug("no observers stored!");
         }
         break;
-      default: 
+      default:
         if (DEBUG) debug("Wrong message: " + aMessage.name);
     }
   },

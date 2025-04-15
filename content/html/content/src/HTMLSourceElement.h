@@ -9,7 +9,7 @@
 
 #include "nsIDOMHTMLSourceElement.h"
 #include "nsGenericHTMLElement.h"
-#include "nsHTMLMediaElement.h"
+#include "mozilla/dom/HTMLMediaElement.h"
 
 namespace mozilla {
 namespace dom {
@@ -44,8 +44,6 @@ public:
                               nsIContent* aBindingParent,
                               bool aCompileEventHandlers);
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   // WebIDL
@@ -77,8 +75,7 @@ public:
   }
 
 protected:
-  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope,
-                             bool* aTriedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
 
 protected:
   virtual void GetItemValueText(nsAString& text);

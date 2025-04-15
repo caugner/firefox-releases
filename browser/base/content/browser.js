@@ -201,14 +201,14 @@ XPCOMUtils.defineLazyGetter(this, "PageMenu", function() {
 * We can avoid adding multiple load event listeners and save some time by adding
 * one listener that calls all real handlers.
 */
-function pageShowEventHandlers(event) {
+function pageShowEventHandlers(persisted) {
   charsetLoadListener();
   XULBrowserWindow.asyncUpdateUI();
 
   // The PluginClickToPlay events are not fired when navigating using the
-  // BF cache. |event.persisted| is true when the page is loaded from the
+  // BF cache. |persisted| is true when the page is loaded from the
   // BF cache, so this code reshows the notification if necessary.
-  if (event.persisted)
+  if (persisted)
     gPluginHandler.reshowClickToPlayNotification();
 }
 
@@ -416,7 +416,6 @@ var gPopupBlockerObserver = {
       if (gPrefService.getBoolPref("privacy.popups.showBrowserMessage")) {
         var brandBundle = document.getElementById("bundle_brand");
         var brandShortName = brandBundle.getString("brandShortName");
-        var message;
         var popupCount = gBrowser.pageReport.length;
 #ifdef XP_WIN
         var popupButtonText = gNavigatorBundle.getString("popupWarningButton");
@@ -425,10 +424,10 @@ var gPopupBlockerObserver = {
         var popupButtonText = gNavigatorBundle.getString("popupWarningButtonUnix");
         var popupButtonAccesskey = gNavigatorBundle.getString("popupWarningButtonUnix.accesskey");
 #endif
-        if (popupCount > 1)
-          message = gNavigatorBundle.getFormattedString("popupWarningMultiple", [brandShortName, popupCount]);
-        else
-          message = gNavigatorBundle.getFormattedString("popupWarning", [brandShortName]);
+        var messageBase = gNavigatorBundle.getString("popupWarning.message");
+        var message = PluralForm.get(popupCount, messageBase)
+                                .replace("#1", brandShortName)
+                                .replace("#2", popupCount);
 
         var notificationBox = gBrowser.getNotificationBox();
         var notification = notificationBox.getNotificationWithValue("popup-blocked");
@@ -769,7 +768,10 @@ let gGestureSupport = {
    *        The gesture event to handle
    */
   handleEvent: function GS_handleEvent(aEvent) {
-    aEvent.stopPropagation();
+    if (!Services.prefs.getBoolPref(
+           "dom.debug.propagate_gesture_events_through_content")) {
+      aEvent.stopPropagation();
+    }
 
     // Create a preference object with some defaults
     let def = function(aThreshold, aLatched)
@@ -1128,6 +1130,10 @@ var gBrowserInit = {
 
     var mustLoadSidebar = false;
 
+    Cc["@mozilla.org/eventlistenerservice;1"]
+      .getService(Ci.nsIEventListenerService)
+      .addSystemEventListener(gBrowser, "click", contentAreaClick, true);
+
     gBrowser.addEventListener("DOMUpdatePageReport", gPopupBlockerObserver, false);
 
     // Note that the XBL binding is untrusted
@@ -1137,9 +1143,6 @@ var gBrowserInit = {
     gBrowser.addEventListener("PluginOutdated",        gPluginHandler, true);
 
     gBrowser.addEventListener("NewPluginInstalled", gPluginHandler.newPluginInstalled, true);
-#ifdef XP_MACOSX
-    gBrowser.addEventListener("npapi-carbon-event-model-failure", gPluginHandler, true);
-#endif
 
     Services.obs.addObserver(gPluginHandler.pluginCrashed, "plugin-crashed", false);
 
@@ -1269,19 +1272,33 @@ var gBrowserInit = {
 
     // Set a sane starting width/height for all resolutions on new profiles.
     if (!document.documentElement.hasAttribute("width")) {
-      let defaultWidth = 994;
+      let defaultWidth;
       let defaultHeight;
+
+      // Very small: maximize the window
+      // Portrait  : use about full width and 3/4 height, to view entire pages
+      //             at once (without being obnoxiously tall)
+      // Widescreen: use about half width, to suggest side-by-side page view
+      // Otherwise : use 3/4 height and width
       if (screen.availHeight <= 600) {
         document.documentElement.setAttribute("sizemode", "maximized");
         defaultWidth = 610;
         defaultHeight = 450;
       }
       else {
-        // Create a narrower window for large or wide-aspect displays, to suggest
-        // side-by-side page view.
-        if (screen.availWidth >= 1600)
+        if (screen.availWidth <= screen.availHeight) {
+          defaultWidth = screen.availWidth * .9;
+          defaultHeight = screen.availHeight * .75;
+        }
+        else if (screen.availWidth >= 2048) {
           defaultWidth = (screen.availWidth / 2) - 20;
-        defaultHeight = screen.availHeight - 10;
+          defaultHeight = screen.availHeight - 10;
+        }
+        else {
+          defaultWidth = screen.availWidth * .75;
+          defaultHeight = screen.availHeight * .75;
+        }
+
 #ifdef MOZ_WIDGET_GTK2
         // On X, we're not currently able to account for the size of the window
         // border.  Use 28px as a guess (titlebar + bottom window border)
@@ -1337,6 +1354,14 @@ var gBrowserInit = {
     this._cancelDelayedStartup();
 
     var isLoadingBlank = isBlankPageURL(uriToLoad);
+
+    // This pageshow listener needs to be registered before we may call
+    // swapBrowsersAndCloseOther() to receive pageshow events fired by that.
+    gBrowser.addEventListener("pageshow", function(event) {
+      // Filter out events that are not about the document load we are interested in
+      if (content && event.target == content.document)
+        setTimeout(pageShowEventHandlers, 0, event.persisted);
+    }, true);
 
     if (uriToLoad && uriToLoad != "about:blank") {
       if (uriToLoad instanceof Ci.nsISupportsArray) {
@@ -1395,12 +1420,6 @@ var gBrowserInit = {
     SocialUI.init();
     AddonManager.addAddonListener(AddonsMgrListener);
     WebrtcIndicator.init();
-
-    gBrowser.addEventListener("pageshow", function(event) {
-      // Filter out events that are not about the document load we are interested in
-      if (content && event.target == content.document)
-        setTimeout(pageShowEventHandlers, 0, event);
-    }, true);
 
     // Ensure login manager is up and running.
     Services.logins;
@@ -1479,14 +1498,9 @@ var gBrowserInit = {
     // downloads will start right away, and getting the service again won't hurt.
     setTimeout(function() {
       Services.downloads;
-
-#ifdef XP_WIN
-      if (Win7Features) {
-        let DownloadTaskbarProgress =
-          Cu.import("resource://gre/modules/DownloadTaskbarProgress.jsm", {}).DownloadTaskbarProgress;
-        DownloadTaskbarProgress.onBrowserWindowLoad(window);
-      }
-#endif
+      let DownloadTaskbarProgress =
+        Cu.import("resource://gre/modules/DownloadTaskbarProgress.jsm", {}).DownloadTaskbarProgress;
+      DownloadTaskbarProgress.onBrowserWindowLoad(window);
     }, 10000);
 
     // The object handling the downloads indicator is also initialized here in the
@@ -1642,6 +1656,7 @@ var gBrowserInit = {
     }
 
     Services.obs.notifyObservers(window, "browser-delayed-startup-finished", "");
+    setTimeout(function () { BrowserChromeTest.markAsReady(); }, 0);
     TelemetryTimestamps.add("delayedStartupFinished");
   },
 
@@ -2635,6 +2650,7 @@ function BrowserOnAboutPageLoad(doc) {
     // Inject search engine and snippets URL.
     let docElt = doc.documentElement;
     docElt.setAttribute("snippetsURL", AboutHomeUtils.snippetsURL);
+    docElt.setAttribute("snippetsVersion", AboutHomeUtils.snippetsVersion);
     docElt.setAttribute("searchEngineName",
                         AboutHomeUtils.defaultSearchEngine.name);
     docElt.setAttribute("searchEngineURL",
@@ -2732,6 +2748,8 @@ let BrowserOnClick = {
     let isMalware = /e=malwareBlocked/.test(aOwnerDoc.documentURI);
     let bucketName = isMalware ? "WARNING_MALWARE_PAGE_":"WARNING_PHISHING_PAGE_";
     let nsISecTel = Ci.nsISecurityUITelemetry;
+    let isIframe = (aOwnerDoc.defaultView.parent === aOwnerDoc.defaultView);
+    bucketName += isIframe ? "TOP_" : "FRAME_";
 
     switch (elmId) {
       case "getMeOutButton":
@@ -3051,96 +3069,10 @@ function getMarkupDocumentViewer()
   return gBrowser.markupDocumentViewer;
 }
 
-/**
- * Content area tooltip.
- * XXX - this must move into XBL binding/equiv! Do not want to pollute
- *       browser.js with functionality that can be encapsulated into
- *       browser widget. TEMPORARY!
- *
- * NOTE: Any changes to this routine need to be mirrored in DefaultTooltipTextProvider::GetNodeText()
- *       (located in mozilla/embedding/browser/webBrowser/nsDocShellTreeOwner.cpp)
- *       which performs the same function, but for embedded clients that
- *       don't use a XUL/JS layer. It is important that the logic of
- *       these two routines be kept more or less in sync.
- *       (pinkerton)
- **/
+// This function is obsolete. Newer code should use <tooltip page="true"/> instead.
 function FillInHTMLTooltip(tipElement)
 {
-  var retVal = false;
-  // Don't show the tooltip if the tooltip node is a document or disconnected.
-  if (!tipElement.ownerDocument ||
-      (tipElement.ownerDocument.compareDocumentPosition(tipElement) & document.DOCUMENT_POSITION_DISCONNECTED))
-    return retVal;
-
-  const XLinkNS = "http://www.w3.org/1999/xlink";
-  const XULNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
-
-  var titleText = null;
-  var XLinkTitleText = null;
-  var SVGTitleText = null;
-  var lookingForSVGTitle = true;
-  var direction = tipElement.ownerDocument.dir;
-
-  // If the element is invalid per HTML5 Forms specifications and has no title,
-  // show the constraint validation error message.
-  if ((tipElement instanceof HTMLInputElement ||
-       tipElement instanceof HTMLTextAreaElement ||
-       tipElement instanceof HTMLSelectElement ||
-       tipElement instanceof HTMLButtonElement) &&
-      !tipElement.hasAttribute('title') &&
-      (!tipElement.form || !tipElement.form.noValidate)) {
-    // If the element is barred from constraint validation or valid,
-    // the validation message will be the empty string.
-    titleText = tipElement.validationMessage;
-  }
-
-  while (!titleText && !XLinkTitleText && !SVGTitleText && tipElement) {
-    if (tipElement.nodeType == Node.ELEMENT_NODE &&
-        tipElement.namespaceURI != XULNS) {
-      titleText = tipElement.getAttribute("title");
-      if ((tipElement instanceof HTMLAnchorElement ||
-           tipElement instanceof HTMLAreaElement ||
-           tipElement instanceof HTMLLinkElement ||
-           tipElement instanceof SVGAElement) && tipElement.href) {
-        XLinkTitleText = tipElement.getAttributeNS(XLinkNS, "title");
-      }
-      if (lookingForSVGTitle &&
-          (!(tipElement instanceof SVGElement) ||
-           tipElement.parentNode.nodeType == Node.DOCUMENT_NODE)) {
-        lookingForSVGTitle = false;
-      }
-      if (lookingForSVGTitle) {
-        for (let childNode of tipElement.childNodes) {
-          if (childNode instanceof SVGTitleElement) {
-            SVGTitleText = childNode.textContent;
-            break;
-          }
-        }
-      }
-      var defView = tipElement.ownerDocument.defaultView;
-      // XXX Work around bug 350679:
-      // "Tooltips can be fired in documents with no view".
-      if (!defView)
-        return retVal;
-      direction = defView.getComputedStyle(tipElement, "")
-        .getPropertyValue("direction");
-    }
-    tipElement = tipElement.parentNode;
-  }
-
-  var tipNode = document.getElementById("aHTMLTooltip");
-  tipNode.style.direction = direction;
-
-  [titleText, XLinkTitleText, SVGTitleText].forEach(function (t) {
-    if (t && /\S/.test(t)) {
-      // Make CRLF and CR render one line break each.
-      t = t.replace(/\r\n?/g, '\n');
-
-      tipNode.setAttribute("label", t);
-      retVal = true;
-    }
-  });
-  return retVal;
+  document.getElementById("aHTMLTooltip").fillInPageTooltip(tipElement);
 }
 
 var browserDragAndDrop = {
@@ -4265,49 +4197,22 @@ var XULBrowserWindow = {
       gFormSubmitObserver.panel.hidePopup();
     }
 
-    if (document.tooltipNode) {
+    let pageTooltip = document.getElementById("aHTMLTooltip");
+    let tooltipNode = pageTooltip.triggerNode;
+    if (tooltipNode) {
       // Optimise for the common case
       if (aWebProgress.DOMWindow == content) {
-        document.getElementById("aHTMLTooltip").hidePopup();
-        document.tooltipNode = null;
+        pageTooltip.hidePopup();
       }
       else {
-        for (let tooltipWindow =
-               document.tooltipNode.ownerDocument.defaultView;
+        for (let tooltipWindow = tooltipNode.ownerDocument.defaultView;
              tooltipWindow != tooltipWindow.parent;
              tooltipWindow = tooltipWindow.parent) {
           if (tooltipWindow == aWebProgress.DOMWindow) {
-            document.getElementById("aHTMLTooltip").hidePopup();
-            document.tooltipNode = null;
+            pageTooltip.hidePopup();
             break;
           }
         }
-      }
-    }
-
-    // This code here does not compare uris exactly when determining
-    // whether or not the message should be hidden since the message
-    // may be prematurely hidden when an install is invoked by a click
-    // on a link that looks like this:
-    //
-    // <a href="#" onclick="return install();">Install Foo</a>
-    //
-    // - which fires a onLocationChange message to uri + '#'...
-    var selectedBrowser = gBrowser.selectedBrowser;
-    if (selectedBrowser.lastURI) {
-      let oldSpec = selectedBrowser.lastURI.spec;
-      let oldIndexOfHash = oldSpec.indexOf("#");
-      if (oldIndexOfHash != -1)
-        oldSpec = oldSpec.substr(0, oldIndexOfHash);
-      let newSpec = location;
-      let newIndexOfHash = newSpec.indexOf("#");
-      if (newIndexOfHash != -1)
-        newSpec = newSpec.substr(0, newIndexOfHash);
-      if (newSpec != oldSpec) {
-        // Remove all the notifications, except for those which want to
-        // persist across the first location change.
-        let nBox = gBrowser.getNotificationBox(selectedBrowser);
-        nBox.removeTransientNotifications();
       }
     }
 
@@ -4377,7 +4282,7 @@ var XULBrowserWindow = {
         if (e.target.readyState != "interactive" && e.target.readyState != "complete")
           return;
 
-        e.target.removeEventListener("readystate", onContentRSChange);
+        e.target.removeEventListener("readystatechange", onContentRSChange);
         disableFindCommands(shouldDisableFind(e.target));
       }
 
@@ -4763,22 +4668,26 @@ var TabsProgressListener = {
 
   onLocationChange: function (aBrowser, aWebProgress, aRequest, aLocationURI,
                               aFlags) {
-    // Filter out any sub-frame loads
-    if (aBrowser.contentWindow == aWebProgress.DOMWindow) {
-      // Filter out any onLocationChanges triggered by anchor navigation
-      // or history.push/pop/replaceState.
-      if (aRequest) {
-        // Initialize the click-to-play state.
-        aBrowser._clickToPlayPluginsActivated = new Map();
-        aBrowser._clickToPlayAllPluginsActivated = false;
-        aBrowser._pluginScriptedState = gPluginHandler.PLUGIN_SCRIPTED_STATE_NONE;
+    // Filter out location changes caused by anchor navigation
+    // or history.push/pop/replaceState.
+    if (aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT)
+      return;
 
-        // Only need to call locationChange if the PopupNotifications object
-        // for this window has already been initialized (i.e. its getter no
-        // longer exists)
-        if (!Object.getOwnPropertyDescriptor(window, "PopupNotifications").get)
-          PopupNotifications.locationChange(aBrowser);
-      }
+    // Only need to call locationChange if the PopupNotifications object
+    // for this window has already been initialized (i.e. its getter no
+    // longer exists)
+    if (!Object.getOwnPropertyDescriptor(window, "PopupNotifications").get)
+      PopupNotifications.locationChange(aBrowser);
+
+    gBrowser.getNotificationBox(aBrowser).removeTransientNotifications();
+
+    // Filter out location changes in sub documents.
+    if (aBrowser.contentWindow == aWebProgress.DOMWindow) {
+      // Initialize the click-to-play state.
+      aBrowser._clickToPlayPluginsActivated = new Map();
+      aBrowser._clickToPlayAllPluginsActivated = false;
+      aBrowser._pluginScriptedState = gPluginHandler.PLUGIN_SCRIPTED_STATE_NONE;
+
       FullZoom.onLocationChange(aLocationURI, false, aBrowser);
     }
   },
@@ -5692,10 +5601,11 @@ function SelectDetector(event, doReload)
 
 function BrowserSetForcedCharacterSet(aCharset)
 {
+  gBrowser.docShell.gatherCharsetMenuTelemetry();
   gBrowser.docShell.charset = aCharset;
   // Save the forced character-set
   if (!PrivateBrowsingUtils.isWindowPrivate(window))
-    PlacesUtils.history.setCharsetForURI(getWebNavigation().currentURI, aCharset);
+    PlacesUtils.setCharsetForURI(getWebNavigation().currentURI, aCharset);
   BrowserCharsetReload();
 }
 
@@ -7108,25 +7018,27 @@ var gIdentityHandler = {
     this._identityPopup.hidePopup();
   },
 
-  _popupOpenTime : null,
-
   /**
    * Click handler for the identity-box element in primary chrome.
    */
   handleIdentityButtonEvent : function(event) {
-    this._popupOpenTime = new Date();
+    TelemetryStopwatch.start("FX_IDENTITY_POPUP_OPEN_MS");
     event.stopPropagation();
 
     if ((event.type == "click" && event.button != 0) ||
         (event.type == "keypress" && event.charCode != KeyEvent.DOM_VK_SPACE &&
-         event.keyCode != KeyEvent.DOM_VK_RETURN))
+         event.keyCode != KeyEvent.DOM_VK_RETURN)) {
+      TelemetryStopwatch.cancel("FX_IDENTITY_POPUP_OPEN_MS");
       return; // Left click, space or enter only
+    }
 
     // Don't allow left click, space or enter if the location
     // is chrome UI or the location has been modified.
     if (this._mode == this.IDENTITY_MODE_CHROMEUI ||
-        gURLBar.getAttribute("pageproxystate") != "valid")
+        gURLBar.getAttribute("pageproxystate") != "valid") {
+      TelemetryStopwatch.cancel("FX_IDENTITY_POPUP_OPEN_MS");
       return;
+    }
 
     // Make sure that the display:none style we set in xul is removed now that
     // the popup is actually needed
@@ -7148,13 +7060,7 @@ var gIdentityHandler = {
   },
 
   onPopupShown : function(event) {
-    let openingDuration = new Date() - this._popupOpenTime;
-    this._popupOpenTime = null;
-    try {
-      Services.telemetry.getHistogramById("FX_IDENTITY_POPUP_OPEN_MS").add(openingDuration);
-    } catch (ex) {
-      Components.utils.reportError("Unable to report telemetry for FX_IDENTITY_POPUP_OPEN_MS.");
-    }
+    TelemetryStopwatch.finish("FX_IDENTITY_POPUP_OPEN_MS");
     document.getElementById('identity-popup-more-info-button').focus();
   },
 
@@ -7541,4 +7447,20 @@ function focusNextFrame(event) {
   if (element.ownerDocument == document)
     focusAndSelectUrlBar();
 }
-
+let BrowserChromeTest = {
+  _cb: null,
+  _ready: false,
+  markAsReady: function () {
+    this._ready = true;
+    if (this._cb) {
+      this._cb();
+      this._cb = null;
+    }
+  },
+  runWhenReady: function (cb) {
+    if (this._ready)
+      cb();
+    else
+      this._cb = cb;
+  }
+};

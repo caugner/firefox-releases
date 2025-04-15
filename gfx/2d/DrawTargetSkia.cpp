@@ -7,6 +7,11 @@
 #include "SourceSurfaceSkia.h"
 #include "ScaledFontBase.h"
 #include "skia/SkDevice.h"
+
+#ifdef USE_SKIA_GPU
+#include "skia/SkGpuDevice.h"
+#endif
+
 #include "skia/SkTypeface.h"
 #include "skia/SkGradientShader.h"
 #include "skia/SkBlurDrawLooper.h"
@@ -248,6 +253,7 @@ struct AutoPaintSetup {
 void
 DrawTargetSkia::Flush()
 {
+  mCanvas->flush();
 }
 
 void
@@ -591,6 +597,30 @@ DrawTargetSkia::Init(const IntSize &aSize, SurfaceFormat aFormat)
   mFormat = aFormat;
   return true;
 }
+
+#ifdef USE_SKIA_GPU
+void
+DrawTargetSkia::InitWithFBO(unsigned int aFBOID, GrContext* aGrContext, const IntSize &aSize, SurfaceFormat aFormat)
+{
+  GrPlatformRenderTargetDesc targetDescriptor;
+
+  targetDescriptor.fWidth = aSize.width;
+  targetDescriptor.fHeight = aSize.height;
+  targetDescriptor.fConfig = GfxFormatToGrConfig(aFormat);
+  targetDescriptor.fSampleCnt = 0;
+  targetDescriptor.fRenderTargetHandle = aFBOID;
+
+  SkAutoTUnref<GrRenderTarget> target(aGrContext->createPlatformRenderTarget(targetDescriptor));
+
+  SkAutoTUnref<SkDevice> device(new SkGpuDevice(aGrContext, target.get()));
+  SkAutoTUnref<SkCanvas> canvas(new SkCanvas(device.get()));
+  mSize = aSize;
+
+  mDevice = device.get();
+  mCanvas = canvas.get();
+  mFormat = aFormat;
+}
+#endif
 
 void
 DrawTargetSkia::Init(unsigned char* aData, const IntSize &aSize, int32_t aStride, SurfaceFormat aFormat)

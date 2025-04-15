@@ -9,7 +9,6 @@ VPATH     = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE         = angle
 LIBRARY_NAME   = angle
 LIBXUL_LIBRARY = 1
 ifeq (WINNT,$(OS_TARGET))
@@ -129,9 +128,6 @@ CPPSRCS += \
 # src/libGLESv2/Makefile.in
 
 ifdef MOZ_ANGLE_RENDERER
-
-# libEGL depends on (links against!) libGLESv2!
-DIRS = src/libGLESv2 src/libEGL
 
 libs::
 ifdef MOZ_D3DCOMPILER_CAB

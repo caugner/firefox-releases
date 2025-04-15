@@ -67,6 +67,11 @@ public class RemoteTabs extends ExpandableListView
     }
 
     @Override
+    public boolean shouldExpand() {
+        return true;
+    }
+
+    @Override
     public boolean onGroupClick(ExpandableListView parent, View view, int position, long id) {
         // By default, the group collapses/expands. Consume the event.
         return true;

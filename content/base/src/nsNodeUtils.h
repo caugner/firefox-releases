@@ -157,6 +157,16 @@ public:
   }
 
   /**
+   * Clones aNode, its attributes and, if aDeep is true, its descendant nodes
+   */
+  static nsresult Clone(nsINode *aNode, bool aDeep, nsINode **aResult)
+  {
+    nsCOMArray<nsINode> dummyNodeWithProperties;
+    return CloneAndAdopt(aNode, true, aDeep, nullptr, nullptr, nullptr,
+                         dummyNodeWithProperties, aNode->GetParent(), aResult);
+  }
+
+  /**
    * Walks aNode, its attributes and descendant nodes. If aNewNodeInfoManager is
    * not null, it is used to create new nodeinfos for the nodes. Also reparents
    * the XPConnect wrappers for the nodes in aNewScope if aCx is not null.
@@ -237,6 +247,22 @@ public:
    * @param aNode the node to release the UserData and UserDataHandlers for
    */
   static void UnlinkUserData(nsINode *aNode);
+
+  /**
+   * Returns a true if the node is a HTMLTemplate element.
+   *
+   * @param aNode a node to test for HTMLTemplate elementness.
+   */
+  static bool IsTemplateElement(const nsINode *aNode);
+
+  /**
+   * Returns the first child of a node or the first child of
+   * a template element's content if the provided node is a
+   * template element.
+   *
+   * @param aNode A node from which to retrieve the first child.
+   */
+  static nsIContent* GetFirstChildOfTemplateOrNode(nsINode* aNode);
 
 private:
   /**

@@ -10,9 +10,6 @@ relativesrcdir = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE = test_identity
 XPCSHELL_TESTS = unit
-
-DIRS = chrome mochitest
 
 include $(topsrcdir)/config/rules.mk

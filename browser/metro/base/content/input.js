@@ -34,8 +34,6 @@ const kMaxVelocity = 6;
 // in metro. Fixing something in this mode does not insure the bug is
 // in metro.
 const kDebugMouseInputPref = "metro.debug.treatmouseastouch";
-// Colorizes the touch input overlay so you know when it is active.
-const kDebugMouseLayerPref = "metro.debug.colorizeInputOverlay";
 // Display rects around selection ranges. Useful in debugging
 // selection problems.
 const kDebugSelectionDisplayPref = "metro.debug.selection.displayRanges";
@@ -94,6 +92,7 @@ var TouchModule = {
 
     // capture phase events
     window.addEventListener("CancelTouchSequence", this, true);
+    window.addEventListener("dblclick", this, true);
 
     // bubble phase
     window.addEventListener("contextmenu", this, false);
@@ -142,6 +141,18 @@ var TouchModule = {
           case "touchend":
             this._onTouchEnd(aEvent);
             break;
+          case "dblclick":
+            // XXX This will get picked up somewhere below us for "double tap to zoom"
+            // once we get omtc and the apzc. Currently though dblclick is delivered to
+            // content and triggers selection of text, so fire up the SelectionHelperUI
+            // once selection is present.
+            if (!SelectionHelperUI.isActive && !FindHelperUI.isActive) {
+              setTimeout(function () {
+                SelectionHelperUI.attachEditSession(Browser.selectedTab.browser,
+                                                    aEvent.clientX, aEvent.clientY);
+              }, 50);
+            }
+            break;
         }
       }
     }
@@ -165,8 +176,6 @@ var TouchModule = {
 
     this._targetScrollbox = null;
     this._targetScrollInterface = null;
-
-    this._cleanClickBuffer();
   },
 
   _onContextMenu: function _onContextMenu(aEvent) {
@@ -221,7 +230,7 @@ var TouchModule = {
     this._targetScrollInterface = targetScrollInterface;
 
     if (!this._targetScrollbox) {
-      return false;
+      return;
     }
 
     // XXX shouldn't dragger always be valid here?
@@ -1145,20 +1154,8 @@ var GestureModule = {
  * versus an imprecise one (touch).
  */
 var InputSourceHelper = {
-  _isPrecise: false,
-  _treatMouseAsTouch: false,
-  
-  get isPrecise() {
-    return this._isPrecise;
-  },
-  
-  get treatMouseAsTouch() {
-    return this._treatMouseAsTouch;
-  },
-
-  set treatMouseAsTouch(aVal) {
-    this._treatMouseAsTouch = aVal;
-  },
+  isPrecise: false,
+  treatMouseAsTouch: false,
 
   init: function ish_init() {
     // debug feature, make all input imprecise
@@ -1177,15 +1174,15 @@ var InputSourceHelper = {
       case Ci.nsIDOMMouseEvent.MOZ_SOURCE_PEN:
       case Ci.nsIDOMMouseEvent.MOZ_SOURCE_ERASER:
       case Ci.nsIDOMMouseEvent.MOZ_SOURCE_CURSOR:
-        if (!this._isPrecise && !this.treatMouseAsTouch) {
-          this._isPrecise = true;
+        if (!this.isPrecise && !this.treatMouseAsTouch) {
+          this.isPrecise = true;
           this._fire("MozPrecisePointer");
         }
         break;
 
       case Ci.nsIDOMMouseEvent.MOZ_SOURCE_TOUCH:
-        if (this._isPrecise) {
-          this._isPrecise = false;
+        if (this.isPrecise) {
+          this.isPrecise = false;
           this._fire("MozImprecisePointer");
         }
         break;
@@ -1196,7 +1193,7 @@ var InputSourceHelper = {
     if (this.treatMouseAsTouch) {
       this._fire("MozImprecisePointer");
     } else {
-      if (this._isPrecise) {
+      if (this.isPrecise) {
         this._fire("MozPrecisePointer");
       } else {
         this._fire("MozImprecisePointer");

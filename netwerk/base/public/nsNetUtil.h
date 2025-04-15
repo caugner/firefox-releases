@@ -284,8 +284,7 @@ NS_OpenURI(nsIStreamListener     *listener,
 inline nsresult
 NS_MakeAbsoluteURI(nsACString       &result,
                    const nsACString &spec, 
-                   nsIURI           *baseURI, 
-                   nsIIOService     *unused = nullptr)
+                   nsIURI           *baseURI)
 {
     nsresult rv;
     if (!baseURI) {
@@ -303,8 +302,7 @@ NS_MakeAbsoluteURI(nsACString       &result,
 inline nsresult
 NS_MakeAbsoluteURI(char        **result,
                    const char   *spec, 
-                   nsIURI       *baseURI, 
-                   nsIIOService *unused = nullptr)
+                   nsIURI       *baseURI)
 {
     nsresult rv;
     nsAutoCString resultBuf;
@@ -320,8 +318,7 @@ NS_MakeAbsoluteURI(char        **result,
 inline nsresult
 NS_MakeAbsoluteURI(nsAString       &result,
                    const nsAString &spec, 
-                   nsIURI          *baseURI,
-                   nsIIOService    *unused = nullptr)
+                   nsIURI          *baseURI)
 {
     nsresult rv;
     if (!baseURI) {
@@ -387,8 +384,7 @@ NS_StringToACE(const nsACString &idn, nsACString &result)
  * concept of ports or if there was an error getting the port.
  */
 inline int32_t
-NS_GetRealPort(nsIURI* aURI,
-               nsIIOService* ioService = nullptr)     // pass in nsIIOService to optimize callers
+NS_GetRealPort(nsIURI* aURI)
 {
     int32_t port;
     nsresult rv = aURI->GetPort(&port);
@@ -661,13 +657,13 @@ NS_ImplementChannelOpen(nsIChannel      *channel,
 inline nsresult
 NS_NewRequestObserverProxy(nsIRequestObserver **result,
                            nsIRequestObserver  *observer,
-                           nsIEventTarget      *target = nullptr)
+                           nsISupports         *context)
 {
     nsresult rv;
     nsCOMPtr<nsIRequestObserverProxy> proxy =
         do_CreateInstance(NS_REQUESTOBSERVERPROXY_CONTRACTID, &rv);
     if (NS_SUCCEEDED(rv)) {
-        rv = proxy->Init(observer, target);
+        rv = proxy->Init(observer, context);
         if (NS_SUCCEEDED(rv))
             NS_ADDREF(*result = proxy);  // cannot use nsCOMPtr::swap
     }
@@ -1101,9 +1097,7 @@ NS_BufferOutputStream(nsIOutputStream *aOutputStream,
 inline nsresult
 NS_NewPostDataStream(nsIInputStream  **result,
                      bool              isFile,
-                     const nsACString &data,
-                     uint32_t          encodeFlags,
-                     nsIIOService     *unused = nullptr)
+                     const nsACString &data)
 {
     nsresult rv;
 
@@ -2045,8 +2039,8 @@ NS_GetContentDispositionFromHeader(const nsACString& aHeader, nsIChannel *aChan 
   }
 
   nsAutoString dispToken;
-  rv = mimehdrpar->GetParameter(aHeader, "", fallbackCharset, true, nullptr,
-                                dispToken);
+  rv = mimehdrpar->GetParameterHTTP(aHeader, "", fallbackCharset, true, nullptr,
+                                    dispToken);
 
   if (NS_FAILED(rv)) {
     // special case (see bug 272541): empty disposition type handled as "inline"
@@ -2083,9 +2077,9 @@ NS_GetFilenameFromDisposition(nsAString& aFilename,
   if (url)
     url->GetOriginCharset(fallbackCharset);
   // Get the value of 'filename' parameter
-  rv = mimehdrpar->GetParameter(aDisposition, "filename",
-                                fallbackCharset, true, nullptr,
-                                aFilename);
+  rv = mimehdrpar->GetParameterHTTP(aDisposition, "filename",
+                                    fallbackCharset, true, nullptr,
+                                    aFilename);
 
   if (NS_FAILED(rv)) {
     aFilename.Truncate();

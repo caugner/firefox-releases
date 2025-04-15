@@ -114,7 +114,7 @@ InsertViewsInReverseOrder(nsView* aSibling, nsView* aParent);
 static void
 EndSwapDocShellsForViews(nsView* aView);
 
-NS_IMETHODIMP
+void
 nsSubDocumentFrame::Init(nsIContent*     aContent,
                          nsIFrame*       aParent,
                          nsIFrame*       aPrevInFlow)
@@ -125,9 +125,7 @@ nsSubDocumentFrame::Init(nsIContent*     aContent,
     mIsInline = frameElem ? false : true;
   }
 
-  nsresult rv =  nsLeafFrame::Init(aContent, aParent, aPrevInFlow);
-  if (NS_FAILED(rv))
-    return rv;
+  nsLeafFrame::Init(aContent, aParent, aPrevInFlow);
 
   // We are going to create an inner view.  If we need a view for the
   // OuterFrame but we wait for the normal view creation path in
@@ -138,8 +136,7 @@ nsSubDocumentFrame::Init(nsIContent*     aContent,
   // really need it or not, and the inner view will get it as the
   // parent.
   if (!HasView()) {
-    rv = nsContainerFrame::CreateViewForFrame(this, true);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsContainerFrame::CreateViewForFrame(this, true);
   }
   EnsureInnerView();
 
@@ -170,7 +167,6 @@ nsSubDocumentFrame::Init(nsIContent*     aContent,
   }
 
   nsContentUtils::AddScriptRunner(new AsyncFrameInit(this));
-  return NS_OK;
 }
 
 inline int32_t ConvertOverflow(uint8_t aOverflow)
@@ -465,10 +461,15 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     childItems.AppendToTop(item);
   }
 
-  if (mIsInline) {
-    WrapReplacedContentForBorderRadius(aBuilder, &childItems, aLists);
+  if (aBuilder->IsForImageVisibility()) {
+    // We don't add the childItems to the return list as we're dealing with them here.
+    presShell->RebuildImageVisibility(childItems);
   } else {
-    aLists.Content()->AppendToTop(&childItems);
+    if (mIsInline) {
+      WrapReplacedContentForBorderRadius(aBuilder, &childItems, aLists);
+    } else {
+      aLists.Content()->AppendToTop(&childItems);
+    }
   }
 
   // delete childItems in case of OOM
@@ -1008,9 +1009,6 @@ nsSubDocumentFrame::BeginSwapDocShells(nsIFrame* aOther)
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
-  NS_ASSERTION(HasAnyStateBits(NS_FRAME_IN_POPUP) == other->HasAnyStateBits(NS_FRAME_IN_POPUP),
-               "Can't swap doc shells when only one is within a popup!");
-
   if (mInnerView && other->mInnerView) {
     nsView* ourSubdocViews = mInnerView->GetFirstChild();
     nsView* ourRemovedViews = ::BeginSwapDocShellsForViews(ourSubdocViews);
@@ -1066,11 +1064,18 @@ EndSwapDocShellsForViews(nsView* aSibling)
       ::EndSwapDocShellsForDocument(doc, nullptr);
     }
     nsIFrame *frame = aSibling->GetFrame();
-    if (frame && frame->HasInvalidFrameInSubtree()) {
-      nsIFrame *parent = nsLayoutUtils::GetCrossDocParentFrame(frame);
-      while (parent && !parent->HasAnyStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT)) {
-        parent->AddStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT);
-        parent = nsLayoutUtils::GetCrossDocParentFrame(parent);
+    if (frame) {
+      nsIFrame* parent = nsLayoutUtils::GetCrossDocParentFrame(frame);
+      if (parent->HasAnyStateBits(NS_FRAME_IN_POPUP)) {
+        nsIFrame::AddInPopupStateBitToDescendants(frame);
+      } else {
+        nsIFrame::RemoveInPopupStateBitFromDescendants(frame);
+      }
+      if (frame->HasInvalidFrameInSubtree()) {
+        while (parent && !parent->HasAnyStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT)) {
+          parent->AddStateBits(NS_FRAME_DESCENDANT_NEEDS_PAINT);
+          parent = nsLayoutUtils::GetCrossDocParentFrame(parent);
+        }
       }
     }
   }

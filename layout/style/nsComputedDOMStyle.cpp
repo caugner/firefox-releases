@@ -12,21 +12,18 @@
 
 #include "nsError.h"
 #include "nsDOMString.h"
-#include "nsIDOMElement.h"
 #include "nsIDOMCSSPrimitiveValue.h"
 #include "nsStyleContext.h"
 #include "nsIScrollableFrame.h"
 #include "nsContentUtils.h"
-#include "prprf.h"
+#include "nsIContent.h"
 
 #include "nsCSSProps.h"
-#include "nsCSSKeywords.h"
 #include "nsDOMCSSRect.h"
+#include "nsDOMCSSRGBColor.h"
 #include "nsDOMCSSValueList.h"
-#include "nsFlexContainerFrame.h"
 #include "nsGkAtoms.h"
 #include "nsHTMLReflowState.h"
-#include "nsThemeConstants.h"
 #include "nsStyleUtil.h"
 #include "nsStyleStructInlines.h"
 #include "nsROCSSPrimitiveValue.h"
@@ -38,14 +35,12 @@
 #include "nsStyleSet.h"
 #include "imgIRequest.h"
 #include "nsLayoutUtils.h"
-#include "nsFrameManager.h"
-#include "prlog.h"
 #include "nsCSSKeywords.h"
 #include "nsStyleCoord.h"
 #include "nsDisplayList.h"
 #include "nsDOMCSSDeclaration.h"
+#include "nsStyleTransformMatrix.h"
 #include "mozilla/dom/Element.h"
-#include "CSSCalc.h"
 #include "nsWrapperCacheInlines.h"
 #include <algorithm>
 
@@ -642,7 +637,7 @@ nsComputedDOMStyle::DoGetClear()
 }
 
 CSSValue*
-nsComputedDOMStyle::DoGetCssFloat()
+nsComputedDOMStyle::DoGetFloat()
 {
   nsROCSSPrimitiveValue* val = GetROCSSPrimitiveValue();
   val->SetIdent(nsCSSProps::ValueToKeywordEnum(StyleDisplay()->mFloats,
@@ -746,6 +741,16 @@ nsComputedDOMStyle::DoGetColumnGap()
     SetValueToCoord(val, StyleColumn()->mColumnGap, true);
   }
 
+  return val;
+}
+
+CSSValue*
+nsComputedDOMStyle::DoGetColumnFill()
+{
+  nsROCSSPrimitiveValue *val = GetROCSSPrimitiveValue();
+  val->SetIdent(
+    nsCSSProps::ValueToKeywordEnum(StyleColumn()->mColumnFill,
+                                   nsCSSProps::kColumnFillKTable));
   return val;
 }
 
@@ -3404,17 +3409,7 @@ CSSValue*
 nsComputedDOMStyle::DoGetMinHeight()
 {
   nsROCSSPrimitiveValue *val = GetROCSSPrimitiveValue();
-  nsStyleCoord minHeight = StylePosition()->mMinHeight;
-
-  if (eStyleUnit_Auto == minHeight.GetUnit()) {
-    // In non-flexbox contexts, "min-height: auto" means "min-height: 0"
-    // XXXdholbert For flex items, we should set |minHeight| to the
-    // -moz-min-content keyword, instead of 0, once we support -moz-min-content
-    // as a height value.
-    minHeight.SetCoordValue(0);
-  }
-
-  SetValueToCoord(val, minHeight, true,
+  SetValueToCoord(val, StylePosition()->mMinHeight, true,
                   &nsComputedDOMStyle::GetCBContentHeight);
   return val;
 }
@@ -3423,27 +3418,7 @@ CSSValue*
 nsComputedDOMStyle::DoGetMinWidth()
 {
   nsROCSSPrimitiveValue *val = GetROCSSPrimitiveValue();
-
-  nsStyleCoord minWidth = StylePosition()->mMinWidth;
-
-  if (eStyleUnit_Auto == minWidth.GetUnit()) {
-    // "min-width: auto" means "0", unless we're a flex item in a horizontal
-    // flex container, in which case it means "min-content"
-    minWidth.SetCoordValue(0);
-#ifdef MOZ_FLEXBOX
-    if (mOuterFrame && mOuterFrame->IsFlexItem()) {
-      nsIFrame* flexContainer = mOuterFrame->GetParent();
-      MOZ_ASSERT(flexContainer &&
-                 flexContainer->GetType() == nsGkAtoms::flexContainerFrame,
-                 "IsFlexItem() lied...?");
-
-      if (static_cast<nsFlexContainerFrame*>(flexContainer)->IsHorizontal()) {
-        minWidth.SetIntValue(NS_STYLE_WIDTH_MIN_CONTENT, eStyleUnit_Enumerated);
-      }
-    }
-#endif // MOZ_FLEXBOX
-  }
-  SetValueToCoord(val, minWidth, true,
+  SetValueToCoord(val, StylePosition()->mMinWidth, true,
                   &nsComputedDOMStyle::GetCBContentWidth,
                   nsCSSProps::kWidthKTable);
   return val;
@@ -4760,7 +4735,7 @@ nsComputedDOMStyle::GetQueryablePropertyMap(uint32_t* aLength)
     COMPUTED_STYLE_MAP_ENTRY(flex_grow,                     FlexGrow),
     COMPUTED_STYLE_MAP_ENTRY(flex_shrink,                   FlexShrink),
 #endif // MOZ_FLEXBOX
-    COMPUTED_STYLE_MAP_ENTRY(float,                         CssFloat),
+    COMPUTED_STYLE_MAP_ENTRY(float,                         Float),
     //// COMPUTED_STYLE_MAP_ENTRY(font,                     Font),
     COMPUTED_STYLE_MAP_ENTRY(font_family,                   FontFamily),
     COMPUTED_STYLE_MAP_ENTRY(font_size,                     FontSize),
@@ -4868,6 +4843,7 @@ nsComputedDOMStyle::GetQueryablePropertyMap(uint32_t* aLength)
     COMPUTED_STYLE_MAP_ENTRY(box_pack,                      BoxPack),
     COMPUTED_STYLE_MAP_ENTRY(box_sizing,                    BoxSizing),
     COMPUTED_STYLE_MAP_ENTRY(_moz_column_count,             ColumnCount),
+    COMPUTED_STYLE_MAP_ENTRY(_moz_column_fill,              ColumnFill),
     COMPUTED_STYLE_MAP_ENTRY(_moz_column_gap,               ColumnGap),
     //// COMPUTED_STYLE_MAP_ENTRY(_moz_column_rule,         ColumnRule),
     COMPUTED_STYLE_MAP_ENTRY(_moz_column_rule_color,        ColumnRuleColor),

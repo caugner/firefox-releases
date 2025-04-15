@@ -42,7 +42,7 @@ function check_mp3(v, enabled) {
 
   check("audio/mpeg", "maybe");
   check("audio/mp3", "maybe");
-  
+
   check("audio/mpeg; codecs=\"mp3\"", "probably");
   check("audio/mpeg; codecs=mp3", "probably");
 

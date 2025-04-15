@@ -58,17 +58,14 @@ nsHTMLButtonControlFrame::DestroyFrom(nsIFrame* aDestructRoot)
   nsContainerFrame::DestroyFrom(aDestructRoot);
 }
 
-NS_IMETHODIMP
+void
 nsHTMLButtonControlFrame::Init(
               nsIContent*      aContent,
               nsIFrame*        aParent,
               nsIFrame*        aPrevInFlow)
 {
-  nsresult  rv = nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
-  if (NS_SUCCEEDED(rv)) {
-    mRenderer.SetFrame(this, PresContext());
-  }
-  return rv;
+  nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
+  mRenderer.SetFrame(this, PresContext());
 }
 
 NS_QUERYFRAME_HEAD(nsHTMLButtonControlFrame)
@@ -323,14 +320,6 @@ nsresult nsHTMLButtonControlFrame::SetFormProperty(nsIAtom* aName, const nsAStri
     return mContent->SetAttr(kNameSpaceID_None, nsGkAtoms::value,
                              aValue, true);
   }
-  return NS_OK;
-}
-
-nsresult nsHTMLButtonControlFrame::GetFormProperty(nsIAtom* aName, nsAString& aValue) const
-{
-  if (nsGkAtoms::value == aName)
-    mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::value, aValue);
-
   return NS_OK;
 }
 

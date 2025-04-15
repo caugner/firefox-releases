@@ -71,11 +71,9 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(HTMLOutputElement,
                                            nsGenericHTMLFormElement)
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
   virtual nsIDOMNode* AsDOMNode() { return this; }
   virtual JSObject*
-  WrapNode(JSContext* aCx, JSObject* aScope, bool* aTriedToWrap) MOZ_OVERRIDE;
+  WrapNode(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
 
   // WebIDL
   nsDOMSettableTokenList* HtmlFor();

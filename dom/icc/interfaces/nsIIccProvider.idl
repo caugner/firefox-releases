@@ -1,0 +1,60 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "nsISupports.idl"
+
+interface nsIDOMWindow;
+interface nsIDOMDOMRequest;
+interface nsIDOMContact;
+
+[scriptable, uuid(f383a42b-0961-4bb0-b45e-dbc345d59237)]
+interface nsIIccListener : nsISupports
+{
+  void notifyStkCommand(in DOMString aMessage);
+  void notifyStkSessionEnd();
+};
+
+/**
+ * XPCOM component (in the content process) that provides the ICC information.
+ */
+[scriptable, uuid(c74b434a-fb2a-4e22-a6cd-1ac353e3f4ce)]
+interface nsIIccProvider : nsISupports
+{
+  /**
+   * Called when a content process registers receiving unsolicited messages from
+   * RadioInterfaceLayer in the chrome process. Only a content process that has
+   * the 'mobileconnection' permission is allowed to register.
+   */
+  void registerIccMsg(in nsIIccListener listener);
+  void unregisterIccMsg(in nsIIccListener listener);
+
+  void sendStkResponse(in nsIDOMWindow window,
+                       in jsval        command,
+                       in jsval        response);
+  void sendStkMenuSelection(in nsIDOMWindow   window,
+                            in unsigned short itemIdentifier,
+                            in boolean        helpRequested);
+  void sendStkTimerExpiration(in nsIDOMWindow window,
+                              in jsval        timer);
+  void sendStkEventDownload(in nsIDOMWindow window,
+                            in jsval        event);
+
+  nsIDOMDOMRequest updateContact(in nsIDOMWindow window,
+                                 in DOMString contactType,
+                                 in nsIDOMContact contact,
+                                 in DOMString pin2);
+
+  /**
+   * Secure Card Icc communication channel
+   */
+  nsIDOMDOMRequest iccOpenChannel(in nsIDOMWindow window,
+                                  in DOMString aid);
+
+  nsIDOMDOMRequest iccExchangeAPDU(in nsIDOMWindow window,
+                                   in long channel,
+                                   in jsval apdu);
+
+  nsIDOMDOMRequest iccCloseChannel(in nsIDOMWindow window,
+                                   in long channel);
+};

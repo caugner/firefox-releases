@@ -5,142 +5,10 @@
 
 /* rendering object for css3 multi-column layout */
 
-#include "nsContainerFrame.h"
-#include "nsIContent.h"
-#include "nsIFrame.h"
-#include "nsISupports.h"
-#include "nsIAtom.h"
-#include "nsPresContext.h"
-#include "nsHTMLParts.h"
-#include "nsGkAtoms.h"
-#include "nsStyleConsts.h"
-#include "nsCOMPtr.h"
-#include "nsLayoutUtils.h"
-#include "nsDisplayList.h"
-#include "nsCSSRendering.h"
-#include <algorithm>
+#include "nsColumnSetFrame.h"
 
 using namespace mozilla;
-
-class nsColumnSetFrame : public nsContainerFrame {
-public:
-  NS_DECL_FRAMEARENA_HELPERS
-
-  nsColumnSetFrame(nsStyleContext* aContext);
-
-  NS_IMETHOD SetInitialChildList(ChildListID     aListID,
-                                 nsFrameList&    aChildList);
-
-  NS_IMETHOD Reflow(nsPresContext* aPresContext,
-                    nsHTMLReflowMetrics& aDesiredSize,
-                    const nsHTMLReflowState& aReflowState,
-                    nsReflowStatus& aStatus);
-                               
-  NS_IMETHOD  AppendFrames(ChildListID     aListID,
-                           nsFrameList&    aFrameList);
-  NS_IMETHOD  InsertFrames(ChildListID     aListID,
-                           nsIFrame*       aPrevFrame,
-                           nsFrameList&    aFrameList);
-  NS_IMETHOD  RemoveFrame(ChildListID     aListID,
-                          nsIFrame*       aOldFrame);
-
-  virtual nscoord GetMinWidth(nsRenderingContext *aRenderingContext);  
-  virtual nscoord GetPrefWidth(nsRenderingContext *aRenderingContext);
-
-  virtual nsIFrame* GetContentInsertionFrame() {
-    nsIFrame* frame = GetFirstPrincipalChild();
-
-    // if no children return nullptr
-    if (!frame)
-      return nullptr;
-
-    return frame->GetContentInsertionFrame();
-  }
-
-  virtual nsresult StealFrame(nsPresContext* aPresContext,
-                              nsIFrame*      aChild,
-                              bool           aForceNormal)
-  { // nsColumnSetFrame keeps overflow containers in main child list
-    return nsContainerFrame::StealFrame(aPresContext, aChild, true);
-  }
-
-  virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                const nsRect&           aDirtyRect,
-                                const nsDisplayListSet& aLists) MOZ_OVERRIDE;
-
-  virtual nsIAtom* GetType() const;
-
-  virtual void PaintColumnRule(nsRenderingContext* aCtx,
-                               const nsRect&        aDirtyRect,
-                               const nsPoint&       aPt);
-
-#ifdef DEBUG
-  NS_IMETHOD GetFrameName(nsAString& aResult) const {
-    return MakeFrameName(NS_LITERAL_STRING("ColumnSet"), aResult);
-  }
-#endif
-
-protected:
-  nscoord        mLastBalanceHeight;
-  nsReflowStatus mLastFrameStatus;
-
-  /**
-   * These are the parameters that control the layout of columns.
-   */
-  struct ReflowConfig {
-    int32_t mBalanceColCount;
-    nscoord mColWidth;
-    nscoord mExpectedWidthLeftOver;
-    nscoord mColGap;
-    nscoord mColMaxHeight;
-  };
-
-  /**
-   * Some data that is better calculated during reflow
-   */
-  struct ColumnBalanceData {
-    // The maximum "content height" of any column
-    nscoord mMaxHeight;
-    // The sum of the "content heights" for all columns
-    nscoord mSumHeight;
-    // The "content height" of the last column
-    nscoord mLastHeight;
-    // The maximum "content height" of all columns that overflowed
-    // their available height
-    nscoord mMaxOverflowingHeight;
-    void Reset() {
-      mMaxHeight = mSumHeight = mLastHeight = mMaxOverflowingHeight = 0;
-    }
-  };
-  
-  /**
-   * Similar to nsBlockFrame::DrainOverflowLines. Locate any columns not
-   * handled by our prev-in-flow, and any columns sitting on our own
-   * overflow list, and put them in our primary child list for reflowing.
-   */
-  void DrainOverflowColumns();
-
-  /**
-   * The basic reflow strategy is to call this function repeatedly to
-   * obtain specific parameters that determine the layout of the
-   * columns. This function will compute those parameters from the CSS
-   * style. This function will also be responsible for implementing
-   * the state machine that controls column balancing.
-   */
-  ReflowConfig ChooseColumnStrategy(const nsHTMLReflowState& aReflowState);
-
-  /**
-   * Reflow column children. Returns true iff the content that was reflowed 
-   * fit into the mColMaxHeight.
-   */
-  bool ReflowChildren(nsHTMLReflowMetrics& aDesiredSize,
-                        const nsHTMLReflowState& aReflowState,
-                        nsReflowStatus& aStatus,
-                        const ReflowConfig& aConfig,
-                        bool aLastColumnUnbounded,
-                        nsCollapsingMargin* aCarriedOutBottomMargin,
-                        ColumnBalanceData& aColData);
-};
+using namespace mozilla::layout;
 
 /**
  * Tracking issues:
@@ -254,10 +122,14 @@ NS_IMETHODIMP
 nsColumnSetFrame::SetInitialChildList(ChildListID     aListID,
                                       nsFrameList&    aChildList)
 {
+  if (aListID == kAbsoluteList) {
+    return nsContainerFrame::SetInitialChildList(aListID, aChildList);
+  }
+
   NS_ASSERTION(aListID == kPrincipalList,
                "Only default child list supported");
   NS_ASSERTION(aChildList.OnlyChild(),
-               "initial child list must have exactly one child");
+               "initial child list must have exaisRevertingctly one child");
   // Queue up the frames for the content frame
   return nsContainerFrame::SetInitialChildList(kPrincipalList, aChildList);
 }
@@ -303,8 +175,15 @@ GetColumnGap(nsColumnSetFrame*    aFrame,
 }
 
 nsColumnSetFrame::ReflowConfig
-nsColumnSetFrame::ChooseColumnStrategy(const nsHTMLReflowState& aReflowState)
+nsColumnSetFrame::ChooseColumnStrategy(const nsHTMLReflowState& aReflowState,
+                                       bool aForceAuto = false,
+                                       nscoord aFeasibleHeight = NS_INTRINSICSIZE,
+                                       nscoord aInfeasibleHeight = 0)
+
 {
+  nscoord knownFeasibleHeight = aFeasibleHeight;
+  nscoord knownInfeasibleHeight = aInfeasibleHeight;
+
   const nsStyleColumn* colStyle = StyleColumn();
   nscoord availContentWidth = GetAvailableContentWidth(aReflowState);
   if (aReflowState.ComputedWidth() != NS_INTRINSICSIZE) {
@@ -320,7 +199,9 @@ nsColumnSetFrame::ChooseColumnStrategy(const nsHTMLReflowState& aReflowState)
   nscoord colGap = GetColumnGap(this, colStyle);
   int32_t numColumns = colStyle->mColumnCount;
 
-  const bool isBalancing = aReflowState.ComputedHeight() == NS_INTRINSICSIZE;
+  // If column-fill is set to 'balance', then we want to balance the columns.
+  const bool isBalancing = colStyle->mColumnFill == NS_STYLE_COLUMN_FILL_BALANCE
+                           && !aForceAuto;
   if (isBalancing) {
     const uint32_t MAX_NESTED_COLUMN_BALANCING = 2;
     uint32_t cnt = 0;
@@ -393,19 +274,59 @@ nsColumnSetFrame::ChooseColumnStrategy(const nsHTMLReflowState& aReflowState)
       // and balancing is required. Let's just use one column then.
       numColumns = 1;
     }
-    colHeight = std::min(mLastBalanceHeight, GetAvailableContentHeight(aReflowState));
+    colHeight = std::min(mLastBalanceHeight, colHeight);
   } else {
     // This is the case when the column-fill property is set to 'auto'.
     // No balancing, so don't limit the column count
     numColumns = INT32_MAX;
+
+    // XXX_jwir3: If a page's height is set to 0, we could continually
+    //            create continuations, resulting in an infinite loop, since
+    //            no progress is ever made. This is an issue with the spec
+    //            (css3-multicol, css3-page, and css3-break) that is
+    //            unresolved as of 27 Feb 2013. For the time being, we set this
+    //            to have a minimum of 1 css px. Once a resolution is made
+    //            on what minimum to have for a page height, we may need to
+    //            change this value to match the appropriate spec(s).
+    colHeight = std::max(colHeight, nsPresContext::CSSPixelsToAppUnits(1));
   }
 
 #ifdef DEBUG_roc
   printf("*** nsColumnSetFrame::ChooseColumnStrategy: numColumns=%d, colWidth=%d, expectedWidthLeftOver=%d, colHeight=%d, colGap=%d\n",
          numColumns, colWidth, expectedWidthLeftOver, colHeight, colGap);
 #endif
-  ReflowConfig config = { numColumns, colWidth, expectedWidthLeftOver, colGap, colHeight };
+  ReflowConfig config = { numColumns, colWidth, expectedWidthLeftOver, colGap,
+                          colHeight, isBalancing, knownFeasibleHeight,
+                          knownInfeasibleHeight };
   return config;
+}
+
+bool
+nsColumnSetFrame::ReflowColumns(nsHTMLReflowMetrics& aDesiredSize,
+                                const nsHTMLReflowState& aReflowState,
+                                nsReflowStatus& aReflowStatus,
+                                ReflowConfig& aConfig,
+                                bool aLastColumnUnbounded,
+                                nsCollapsingMargin* aCarriedOutBottomMargin,
+                                ColumnBalanceData& aColData)
+{
+  bool feasible = ReflowChildren(aDesiredSize, aReflowState,
+                                 aReflowStatus, aConfig, aLastColumnUnbounded,
+                                 aCarriedOutBottomMargin, aColData);
+
+  if (aColData.mHasExcessHeight) {
+    aConfig = ChooseColumnStrategy(aReflowState, true);
+
+    // We need to reflow our children again one last time, otherwise we might
+    // end up with a stale column height for some of our columns, since we
+    // bailed out of balancing.
+    // Return value doesn't matter when !mIsBalancing.
+    ReflowChildren(aDesiredSize, aReflowState, aReflowStatus,
+                   aConfig, aLastColumnUnbounded,
+                   aCarriedOutBottomMargin, aColData);
+  }
+
+  return feasible;
 }
 
 // XXX copied from nsBlockFrame, should this be moved to nsContainerFrame?
@@ -513,7 +434,7 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
 #endif
 
   DrainOverflowColumns();
-  
+
   if (mLastBalanceHeight != aConfig.mColMaxHeight) {
     mLastBalanceHeight = aConfig.mColMaxHeight;
     // XXX Seems like this could fire if incremental reflow pushed the column set
@@ -605,7 +526,7 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
       if (aUnboundedLastColumn && columnCount == aConfig.mBalanceColCount - 1) {
         availSize.height = GetAvailableContentHeight(aReflowState);
       }
-  
+
       if (reflowNext)
         child->AddStateBits(NS_FRAME_IS_DIRTY);
 
@@ -718,6 +639,15 @@ nsColumnSetFrame::ReflowChildren(nsHTMLReflowMetrics&     aDesiredSize,
         kidNextInFlow->RemoveStateBits(NS_FRAME_IS_OVERFLOW_CONTAINER);
       }
 
+      if ((contentBottom > aReflowState.mComputedMaxHeight ||
+           contentBottom > aReflowState.ComputedHeight()) &&
+           aConfig.mBalanceColCount < INT32_MAX) {
+        // We overflowed vertically, but have not exceeded the number of
+        // columns. We're going to go into overflow columns now, so balancing
+        // no longer applies.
+        aColData.mHasExcessHeight = true;
+      }
+
       if (columnCount >= aConfig.mBalanceColCount) {
         // No more columns allowed here. Stop.
         aStatus |= NS_FRAME_REFLOW_NEXTINFLOW;
@@ -824,11 +754,12 @@ nsColumnSetFrame::DrainOverflowColumns()
 {
   // First grab the prev-in-flows overflows and reparent them to this
   // frame.
+  nsPresContext* presContext = PresContext();
   nsColumnSetFrame* prev = static_cast<nsColumnSetFrame*>(GetPrevInFlow());
   if (prev) {
-    nsAutoPtr<nsFrameList> overflows(prev->StealOverflowFrames());
+    AutoFrameListPtr overflows(presContext, prev->StealOverflowFrames());
     if (overflows) {
-      nsContainerFrame::ReparentFrameViewList(PresContext(), *overflows,
+      nsContainerFrame::ReparentFrameViewList(presContext, *overflows,
                                               prev, this);
 
       mFrames.InsertFrames(this, nullptr, *overflows);
@@ -837,7 +768,7 @@ nsColumnSetFrame::DrainOverflowColumns()
   
   // Now pull back our own overflows and append them to our children.
   // We don't need to reparent them since we're already their parent.
-  nsAutoPtr<nsFrameList> overflows(StealOverflowFrames());
+  AutoFrameListPtr overflows(presContext, StealOverflowFrames());
   if (overflows) {
     // We're already the parent for these frames, so no need to set
     // their parent again.
@@ -873,7 +804,6 @@ nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
   //------------ Handle Incremental Reflow -----------------
 
   ReflowConfig config = ChooseColumnStrategy(aReflowState);
-  bool isBalancing = config.mBalanceColCount < INT32_MAX;
   
   // If balancing, then we allow the last column to grow to unbounded
   // height during the first reflow. This gives us a way to estimate
@@ -882,101 +812,108 @@ nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
   // if we have a next in flow because we don't want to suck all its
   // content back here and then have to push it out again!
   nsIFrame* nextInFlow = GetNextInFlow();
-  bool unboundedLastColumn = isBalancing && !nextInFlow;
+  bool unboundedLastColumn = config.mIsBalancing && !nextInFlow;
   nsCollapsingMargin carriedOutBottomMargin;
   ColumnBalanceData colData;
+  colData.mHasExcessHeight = false;
 
-  bool feasible = ReflowChildren(aDesiredSize, aReflowState,
-    aStatus, config, unboundedLastColumn, &carriedOutBottomMargin, colData);
+  bool feasible = ReflowColumns(aDesiredSize, aReflowState, aStatus, config,
+                                unboundedLastColumn, &carriedOutBottomMargin,
+                                colData);
 
-  if (isBalancing && !aPresContext->HasPendingInterrupt()) {
+  if (config.mIsBalancing && !aPresContext->HasPendingInterrupt()) {
     nscoord availableContentHeight = GetAvailableContentHeight(aReflowState);
 
     // Termination of the algorithm below is guaranteed because
-    // knownFeasibleHeight - knownInfeasibleHeight decreases in every
-    // iteration.
-    nscoord knownFeasibleHeight = NS_INTRINSICSIZE;
-    nscoord knownInfeasibleHeight = 0;
+    // config.mKnownFeasibleHeight - config.mKnownInfeasibleHeight decreases
+    // in every iteration.
+
     // We set this flag when we detect that we may contain a frame
     // that can break anywhere (thus foiling the linear decrease-by-one
     // search)
     bool maybeContinuousBreakingDetected = false;
 
     while (!aPresContext->HasPendingInterrupt()) {
-      nscoord lastKnownFeasibleHeight = knownFeasibleHeight;
+      nscoord lastKnownFeasibleHeight = config.mKnownFeasibleHeight;
 
       // Record what we learned from the last reflow
       if (feasible) {
         // maxHeight is feasible. Also, mLastBalanceHeight is feasible.
-        knownFeasibleHeight = std::min(knownFeasibleHeight, colData.mMaxHeight);
-        knownFeasibleHeight = std::min(knownFeasibleHeight, mLastBalanceHeight);
+        config.mKnownFeasibleHeight = std::min(config.mKnownFeasibleHeight,
+                                               colData.mMaxHeight);
+        config.mKnownFeasibleHeight = std::min(config.mKnownFeasibleHeight,
+                                               mLastBalanceHeight);
 
         // Furthermore, no height less than the height of the last
         // column can ever be feasible. (We might be able to reduce the
         // height of a non-last column by moving content to a later column,
         // but we can't do that with the last column.)
         if (mFrames.GetLength() == config.mBalanceColCount) {
-          knownInfeasibleHeight = std::max(knownInfeasibleHeight,
-                                         colData.mLastHeight - 1);
+          config.mKnownInfeasibleHeight =
+            std::max(config.mKnownInfeasibleHeight, colData.mLastHeight - 1);
         }
       } else {
-        knownInfeasibleHeight = std::max(knownInfeasibleHeight, mLastBalanceHeight);
+        config.mKnownInfeasibleHeight =
+          std::max(config.mKnownInfeasibleHeight, mLastBalanceHeight);
         // If a column didn't fit in its available height, then its current
         // height must be the minimum height for unbreakable content in
         // the column, and therefore no smaller height can be feasible.
-        knownInfeasibleHeight = std::max(knownInfeasibleHeight,
-                                       colData.mMaxOverflowingHeight - 1);
+        config.mKnownInfeasibleHeight =
+          std::max(config.mKnownInfeasibleHeight,
+                   colData.mMaxOverflowingHeight - 1);
 
         if (unboundedLastColumn) {
           // The last column is unbounded, so all content got reflowed, so the
           // mColMaxHeight is feasible.
-          knownFeasibleHeight = std::min(knownFeasibleHeight,
-                                       colData.mMaxHeight);
+          config.mKnownFeasibleHeight = std::min(config.mKnownFeasibleHeight,
+                                                 colData.mMaxHeight);
         }
       }
 
 #ifdef DEBUG_roc
       printf("*** nsColumnSetFrame::Reflow balancing knownInfeasible=%d knownFeasible=%d\n",
-             knownInfeasibleHeight, knownFeasibleHeight);
+             config.mKnownInfeasibleHeight, config.mKnownFeasibleHeight);
 #endif
 
 
-      if (knownInfeasibleHeight >= knownFeasibleHeight - 1) {
-        // knownFeasibleHeight is where we want to be
+      if (config.mKnownInfeasibleHeight >= config.mKnownFeasibleHeight - 1) {
+        // config.mKnownFeasibleHeight is where we want to be
         break;
+
       }
-      if (knownInfeasibleHeight >= availableContentHeight) {
+      if (config.mKnownInfeasibleHeight >= availableContentHeight) {
         break;
       }
 
-      if (lastKnownFeasibleHeight - knownFeasibleHeight == 1) {
+      if (lastKnownFeasibleHeight - config.mKnownFeasibleHeight == 1) {
         // We decreased the feasible height by one twip only. This could
         // indicate that there is a continuously breakable child frame
         // that we are crawling through.
         maybeContinuousBreakingDetected = true;
       }
 
-      nscoord nextGuess = (knownFeasibleHeight + knownInfeasibleHeight)/2;
+      nscoord nextGuess =
+        (config.mKnownFeasibleHeight + config.mKnownInfeasibleHeight)/2;
       // The constant of 600 twips is arbitrary. It's about two line-heights.
-      if (knownFeasibleHeight - nextGuess < 600 &&
+      if (config.mKnownFeasibleHeight - nextGuess < 600 &&
           !maybeContinuousBreakingDetected) {
         // We're close to our target, so just try shrinking just the
         // minimum amount that will cause one of our columns to break
         // differently.
-        nextGuess = knownFeasibleHeight - 1;
+        nextGuess = config.mKnownFeasibleHeight - 1;
       } else if (unboundedLastColumn) {
         // Make a guess by dividing that into N columns. Add some slop
         // to try to make it on the feasible side.  The constant of
         // 600 twips is arbitrary. It's about two line-heights.
         nextGuess = colData.mSumHeight/config.mBalanceColCount + 600;
         // Sanitize it
-        nextGuess = clamped(nextGuess, knownInfeasibleHeight + 1,
-                                       knownFeasibleHeight - 1);
-      } else if (knownFeasibleHeight == NS_INTRINSICSIZE) {
+        nextGuess = clamped(nextGuess, config.mKnownInfeasibleHeight + 1,
+                                       config.mKnownFeasibleHeight - 1);
+      } else if (config.mKnownFeasibleHeight == NS_INTRINSICSIZE) {
         // This can happen when we had a next-in-flow so we didn't
         // want to do an unbounded height measuring step. Let's just increase
         // from the infeasible height by some reasonable amount.
-        nextGuess = knownInfeasibleHeight*2 + 600;
+        nextGuess = config.mKnownInfeasibleHeight*2 + 600;
       }
       // Don't bother guessing more than our height constraint.
       nextGuess = std::min(availableContentHeight, nextGuess);
@@ -989,22 +926,28 @@ nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
 
       unboundedLastColumn = false;
       AddStateBits(NS_FRAME_IS_DIRTY);
-      feasible = ReflowChildren(aDesiredSize, aReflowState,
-                                aStatus, config, false,
-                                &carriedOutBottomMargin, colData);
+      feasible = ReflowColumns(aDesiredSize, aReflowState, aStatus, config, false,
+                               &carriedOutBottomMargin, colData);
+
+      if (!config.mIsBalancing) {
+        // Looks like we had excess height when balancing, so we gave up on
+        // trying to balance.
+        break;
+      }
     }
 
-    if (!feasible && !aPresContext->HasPendingInterrupt()) {
+    if (config.mIsBalancing && !feasible &&
+        !aPresContext->HasPendingInterrupt()) {
       // We may need to reflow one more time at the feasible height to
       // get a valid layout.
       bool skip = false;
-      if (knownInfeasibleHeight >= availableContentHeight) {
-        config.mColMaxHeight = availableContentHeight;
+      if (config.mKnownInfeasibleHeight >= availableContentHeight) {
+          config.mColMaxHeight = availableContentHeight;
         if (mLastBalanceHeight == availableContentHeight) {
           skip = true;
         }
       } else {
-        config.mColMaxHeight = knownFeasibleHeight;
+        config.mColMaxHeight = config.mKnownFeasibleHeight;
       }
       if (!skip) {
         // If our height is unconstrained, make sure that the last column is
@@ -1012,9 +955,9 @@ nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
         // Otherwise we'd have to split, and it's not clear what we'd do with
         // that.
         AddStateBits(NS_FRAME_IS_DIRTY);
-        ReflowChildren(aDesiredSize, aReflowState, aStatus, config,
-                       availableContentHeight == NS_UNCONSTRAINEDSIZE,
-                       &carriedOutBottomMargin, colData);
+        ReflowColumns(aDesiredSize, aReflowState, aStatus, config,
+                      availableContentHeight == NS_UNCONSTRAINEDSIZE,
+                      &carriedOutBottomMargin, colData);
       }
     }
   }
@@ -1026,10 +969,7 @@ nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
     aStatus = NS_FRAME_COMPLETE;
   }
 
-  // XXXjwir3: This call should be replaced with FinishWithAbsoluteFrames
-  //           when bug 724978 is fixed and nsColumnSetFrame is a full absolute
-  //           container.
-  FinishAndStoreOverflow(&aDesiredSize);
+  FinishReflowWithAbsoluteFrames(aPresContext, aDesiredSize, aReflowState, aStatus, false);
 
   aDesiredSize.mCarriedOutBottomMargin = carriedOutBottomMargin;
 
@@ -1062,8 +1002,12 @@ NS_IMETHODIMP
 nsColumnSetFrame::AppendFrames(ChildListID     aListID,
                                nsFrameList&    aFrameList)
 {
-  NS_NOTREACHED("AppendFrames not supported");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  if (aListID == kAbsoluteList) {
+    return nsContainerFrame::AppendFrames(aListID, aFrameList);
+  }
+
+  NS_ERROR("unexpected child list");
+  return NS_ERROR_INVALID_ARG;
 }
 
 NS_IMETHODIMP
@@ -1071,14 +1015,22 @@ nsColumnSetFrame::InsertFrames(ChildListID     aListID,
                                nsIFrame*       aPrevFrame,
                                nsFrameList&    aFrameList)
 {
-  NS_NOTREACHED("InsertFrames not supported");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  if (aListID == kAbsoluteList) {
+    return nsContainerFrame::InsertFrames(aListID, aPrevFrame, aFrameList);
+  }
+
+  NS_ERROR("unexpected child list");
+  return NS_ERROR_INVALID_ARG;
 }
 
 NS_IMETHODIMP
 nsColumnSetFrame::RemoveFrame(ChildListID     aListID,
                               nsIFrame*       aOldFrame)
 {
-  NS_NOTREACHED("RemoveFrame not supported");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  if (aListID == kAbsoluteList) {
+    return nsContainerFrame::RemoveFrame(aListID, aOldFrame);
+  }
+
+  NS_ERROR("unexpected child list");
+  return NS_ERROR_INVALID_ARG;
 }

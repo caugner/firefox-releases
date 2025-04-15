@@ -9,7 +9,6 @@
 
 // Keep others in (case-insensitive) order:
 #include "gfxMatrix.h"
-#include "mozilla/Preferences.h"
 #include "nsComputedDOMStyle.h"
 #include "nsFontMetrics.h"
 #include "nsIFrame.h"
@@ -273,22 +272,19 @@ SVGContentUtils::AngleBisect(float a1, float a2)
 }
 
 gfxMatrix
-SVGContentUtils::GetViewBoxTransform(const nsSVGElement* aElement,
-                                     float aViewportWidth, float aViewportHeight,
+SVGContentUtils::GetViewBoxTransform(float aViewportWidth, float aViewportHeight,
                                      float aViewboxX, float aViewboxY,
                                      float aViewboxWidth, float aViewboxHeight,
                                      const SVGAnimatedPreserveAspectRatio &aPreserveAspectRatio)
 {
-  return GetViewBoxTransform(aElement,
-                             aViewportWidth, aViewportHeight,
+  return GetViewBoxTransform(aViewportWidth, aViewportHeight,
                              aViewboxX, aViewboxY,
                              aViewboxWidth, aViewboxHeight,
                              aPreserveAspectRatio.GetAnimValue());
 }
 
 gfxMatrix
-SVGContentUtils::GetViewBoxTransform(const nsSVGElement* aElement,
-                                     float aViewportWidth, float aViewportHeight,
+SVGContentUtils::GetViewBoxTransform(float aViewportWidth, float aViewportHeight,
                                      float aViewboxX, float aViewboxY,
                                      float aViewboxWidth, float aViewboxHeight,
                                      const SVGPreserveAspectRatio &aPreserveAspectRatio)

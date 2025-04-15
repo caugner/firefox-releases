@@ -18,19 +18,13 @@
  */
 
 #include "nsHTMLStyleSheet.h"
-#include "nsINameSpaceManager.h"
-#include "nsIAtom.h"
-#include "nsIURL.h"
 #include "nsMappedAttributes.h"
-#include "nsILink.h"
-#include "nsStyleContext.h"
 #include "nsGkAtoms.h"
 #include "nsPresContext.h"
 #include "nsEventStates.h"
 #include "nsIDocument.h"
 #include "nsIPresShell.h"
 #include "nsStyleConsts.h"
-#include "nsCSSAnonBoxes.h"
 #include "nsRuleWalker.h"
 #include "nsRuleData.h"
 #include "nsError.h"
@@ -172,7 +166,7 @@ NS_IMPL_ISUPPORTS2(nsHTMLStyleSheet, nsIStyleSheet, nsIStyleRuleProcessor)
 nsHTMLStyleSheet::RulesMatching(ElementRuleProcessorData* aData)
 {
   nsRuleWalker *ruleWalker = aData->mRuleWalker;
-  if (aData->mElement->IsHTML()) {
+  if (aData->mElement->IsHTML() && !ruleWalker->AuthorStyleDisabled()) {
     nsIAtom* tag = aData->mElement->Tag();
 
     // if we have anchor colors, check if this is an anchor with an href
@@ -212,8 +206,12 @@ nsHTMLStyleSheet::RulesMatching(ElementRuleProcessorData* aData)
     }
   } // end html element
 
-    // just get the style rules from the content
-  aData->mElement->WalkContentStyleRules(ruleWalker);
+  // just get the style rules from the content.  For SVG we do this even if
+  // author style is disabled, because SVG presentational hints aren't
+  // considered style.
+  if (!ruleWalker->AuthorStyleDisabled() || aData->mElement->IsSVG()) {
+    aData->mElement->WalkContentStyleRules(ruleWalker);
+  }
 }
 
 // Test if style is dependent on content state

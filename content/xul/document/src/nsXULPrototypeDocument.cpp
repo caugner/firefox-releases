@@ -5,7 +5,7 @@
 
 
 #include "nsXULPrototypeDocument.h"
-#include "nsXULDocument.h"
+#include "XULDocument.h"
 
 #include "nsAString.h"
 #include "nsIObjectInputStream.h"
@@ -33,6 +33,8 @@
 #include "mozilla/dom/BindingUtils.h"
 
 using mozilla::dom::DestroyProtoAndIfaceCache;
+using mozilla::AutoPushJSContext;
+using mozilla::dom::XULDocument;
 
 static NS_DEFINE_CID(kDOMScriptObjectFactoryCID,
                      NS_DOM_SCRIPT_OBJECT_FACTORY_CID);
@@ -636,7 +638,7 @@ nsXULPrototypeDocument::GetNodeInfoManager()
 
 
 nsresult
-nsXULPrototypeDocument::AwaitLoadDone(nsXULDocument* aDocument, bool* aResult)
+nsXULPrototypeDocument::AwaitLoadDone(XULDocument* aDocument, bool* aResult)
 {
     nsresult rv = NS_OK;
 
@@ -757,11 +759,12 @@ nsXULPDGlobalObject::EnsureScriptEnvironment()
   // attach it as the global for this context.  Then, we
   // will re-fetch the global and set it up in our language globals array.
   {
-    JSContext *cx = ctxNew->GetNativeContext();
+    AutoPushJSContext cx(ctxNew->GetNativeContext());
     JSAutoRequest ar(cx);
 
     JSObject *newGlob = JS_NewGlobalObject(cx, &gSharedGlobalClass,
-                                           nsJSPrincipals::get(GetPrincipal()));
+                                           nsJSPrincipals::get(GetPrincipal()),
+                                           JS::SystemZone);
     if (!newGlob)
         return NS_OK;
 

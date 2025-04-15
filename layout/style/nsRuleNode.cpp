@@ -18,35 +18,27 @@
 
 #include "nsRuleNode.h"
 #include "nscore.h"
-#include "nsIServiceManager.h"
 #include "nsIWidget.h"
 #include "nsIPresShell.h"
 #include "nsFontMetrics.h"
 #include "gfxFont.h"
-#include "nsStyleUtil.h"
 #include "nsCSSPseudoElements.h"
 #include "nsThemeConstants.h"
-#include "nsITheme.h"
 #include "pldhash.h"
 #include "nsStyleContext.h"
 #include "nsStyleSet.h"
 #include "nsStyleStruct.h"
 #include "nsSize.h"
-#include "imgIRequest.h"
 #include "nsRuleData.h"
 #include "nsIStyleRule.h"
 #include "nsBidiUtils.h"
-#include "nsUnicharUtils.h"
 #include "nsStyleStructInlines.h"
-#include "nsStyleTransformMatrix.h"
-#include "nsCSSKeywords.h"
 #include "nsCSSProps.h"
 #include "nsTArray.h"
 #include "nsContentUtils.h"
 #include "CSSCalc.h"
 #include "nsPrintfCString.h"
 
-#include "mozilla/dom/Element.h"
 #include "mozilla/LookAndFeel.h"
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
@@ -4789,7 +4781,7 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
               NS_STYLE_PAGE_BREAK_AUTO, 0, 0, 0, 0);
 
   // float: enum, inherit, initial
-  SetDiscrete(*aRuleData->ValueForCssFloat(),
+  SetDiscrete(*aRuleData->ValueForFloat(),
               display->mFloats, canStoreInRuleTree,
               SETDSC_ENUMERATED, parentDisplay->mFloats,
               NS_STYLE_FLOAT_NONE, 0, 0, 0, 0);
@@ -6485,7 +6477,7 @@ nsRuleNode::ComputePositionData(void* aStartStruct,
            SETCOORD_LPAEH | SETCOORD_INITIAL_AUTO | SETCOORD_STORE_CALC,
            aContext, mPresContext, canStoreInRuleTree);
   SetCoord(*aRuleData->ValueForMinWidth(), pos->mMinWidth, parentPos->mMinWidth,
-           SETCOORD_LPAEH | SETCOORD_INITIAL_AUTO | SETCOORD_STORE_CALC,
+           SETCOORD_LPEH | SETCOORD_INITIAL_ZERO | SETCOORD_STORE_CALC,
            aContext, mPresContext, canStoreInRuleTree);
   SetCoord(*aRuleData->ValueForMaxWidth(), pos->mMaxWidth, parentPos->mMaxWidth,
            SETCOORD_LPOEH | SETCOORD_INITIAL_NONE | SETCOORD_STORE_CALC,
@@ -6495,7 +6487,7 @@ nsRuleNode::ComputePositionData(void* aStartStruct,
            SETCOORD_LPAH | SETCOORD_INITIAL_AUTO | SETCOORD_STORE_CALC,
            aContext, mPresContext, canStoreInRuleTree);
   SetCoord(*aRuleData->ValueForMinHeight(), pos->mMinHeight, parentPos->mMinHeight,
-           SETCOORD_LPAH | SETCOORD_INITIAL_AUTO | SETCOORD_STORE_CALC,
+           SETCOORD_LPH | SETCOORD_INITIAL_ZERO | SETCOORD_STORE_CALC,
            aContext, mPresContext, canStoreInRuleTree);
   SetCoord(*aRuleData->ValueForMaxHeight(), pos->mMaxHeight, parentPos->mMaxHeight,
            SETCOORD_LPOH | SETCOORD_INITIAL_NONE | SETCOORD_STORE_CALC,
@@ -7161,6 +7153,13 @@ nsRuleNode::ComputeColumnData(void* aStartStruct,
                     column->mColumnRuleColor, canStoreInRuleTree)) {
     column->mColumnRuleColorIsForeground = false;
   }
+
+  // column-fill: enum
+  SetDiscrete(*aRuleData->ValueForColumnFill(),
+                column->mColumnFill, canStoreInRuleTree,
+                SETDSC_ENUMERATED, parent->mColumnFill,
+                NS_STYLE_COLUMN_FILL_BALANCE,
+                0, 0, 0, 0);
 
   COMPUTE_END_RESET(Column, column)
 }

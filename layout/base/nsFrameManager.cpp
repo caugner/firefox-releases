@@ -63,7 +63,7 @@
 
 #include "nsFrameManager.h"
 #include "nsRuleProcessorData.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
@@ -1270,6 +1270,10 @@ nsFrameManager::ReResolveStyleContext(nsPresContext     *aPresContext,
       else {
         NS_ASSERTION(localContent,
                      "non pseudo-element frame without content node");
+        // Skip flex-item style fixup for anonymous subtrees:
+        TreeMatchContext::AutoFlexItemStyleFixupSkipper
+          flexFixupSkipper(aTreeMatchContext,
+                           element->IsRootOfNativeAnonymousSubtree());
         newContext = styleSet->ResolveStyleFor(element, parentContext,
                                                aTreeMatchContext);
       }
@@ -1654,7 +1658,7 @@ nsFrameManager::ComputeStyleChangeFor(nsIFrame          *aFrame,
                                       RestyleTracker&    aRestyleTracker,
                                       bool               aRestyleDescendants)
 {
-  SAMPLE_LABEL("CSS", "ComputeStyleChangeFor");
+  PROFILER_LABEL("CSS", "ComputeStyleChangeFor");
 
   nsIContent *content = aFrame->GetContent();
   if (aMinChange) {

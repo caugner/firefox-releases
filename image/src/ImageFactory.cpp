@@ -10,6 +10,8 @@
 #include "mozilla/Likely.h"
 
 #include "nsIHttpChannel.h"
+#include "nsIFileChannel.h"
+#include "nsIFile.h"
 #include "nsSimpleURI.h"
 #include "nsMimeTypes.h"
 #include "nsIURI.h"
@@ -19,7 +21,9 @@
 #include "imgStatusTracker.h"
 #include "RasterImage.h"
 #include "VectorImage.h"
+#include "FrozenImage.h"
 #include "Image.h"
+#include "nsMediaFragmentURIParser.h"
 
 #include "ImageFactory.h"
 
@@ -128,6 +132,56 @@ ImageFactory::CreateAnonymousImage(const nsCString& aMimeType)
   return newImage.forget();
 }
 
+int32_t
+SaturateToInt32(int64_t val)
+{
+  if (val > INT_MAX)
+    return INT_MAX;
+  if (val < INT_MIN)
+    return INT_MIN;
+
+  return static_cast<int32_t>(val);
+}
+
+uint32_t
+GetContentSize(nsIRequest* aRequest)
+{
+  // Use content-length as a size hint for http channels.
+  nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(aRequest));
+  if (httpChannel) {
+    nsAutoCString contentLength;
+    nsresult rv = httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("content-length"),
+                                                 contentLength);
+    if (NS_SUCCEEDED(rv)) {
+      return std::max(contentLength.ToInteger(&rv), 0);
+    }
+  }
+
+  // Use the file size as a size hint for file channels.
+  nsCOMPtr<nsIFileChannel> fileChannel(do_QueryInterface(aRequest));
+  if (fileChannel) {
+    nsCOMPtr<nsIFile> file;
+    nsresult rv = fileChannel->GetFile(getter_AddRefs(file));
+    if (NS_SUCCEEDED(rv)) {
+      int64_t filesize;
+      rv = file->GetFileSize(&filesize);
+      if (NS_SUCCEEDED(rv)) {
+        return std::max(SaturateToInt32(filesize), 0);
+      }
+    }
+  }
+
+  // Fallback - neither http nor file. We'll use dynamic allocation.
+  return 0;
+}
+
+/* static */ already_AddRefed<Image>
+ImageFactory::Freeze(Image* aImage)
+{
+  nsRefPtr<Image> frozenImage = new FrozenImage(aImage);
+  return frozenImage.forget();
+}
+
 /* static */ already_AddRefed<Image>
 ImageFactory::CreateRasterImage(nsIRequest* aRequest,
                                 imgStatusTracker* aStatusTracker,
@@ -145,32 +199,27 @@ ImageFactory::CreateRasterImage(nsIRequest* aRequest,
 
   newImage->SetInnerWindowID(aInnerWindowId);
 
-  // Use content-length as a size hint for http channels.
-  nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(aRequest));
-  if (httpChannel) {
-    nsAutoCString contentLength;
-    rv = httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("content-length"),
-                                        contentLength);
-    if (NS_SUCCEEDED(rv)) {
-      int32_t len = contentLength.ToInteger(&rv);
+  uint32_t len = GetContentSize(aRequest);
 
-      // Pass anything usable on so that the RasterImage can preallocate
-      // its source buffer.
-      if (len > 0) {
-        uint32_t sizeHint = (uint32_t) len;
-        sizeHint = std::min<uint32_t>(sizeHint, 20000000); // Bound by something reasonable
-        rv = newImage->SetSourceSizeHint(sizeHint);
-        if (NS_FAILED(rv)) {
-          // Flush memory, try to get some back, and try again.
-          rv = nsMemory::HeapMinimize(true);
-          nsresult rv2 = newImage->SetSourceSizeHint(sizeHint);
-          // If we've still failed at this point, things are going downhill.
-          if (NS_FAILED(rv) || NS_FAILED(rv2)) {
-            NS_WARNING("About to hit OOM in imagelib!");
-          }
-        }
+  // Pass anything usable on so that the RasterImage can preallocate
+  // its source buffer.
+  if (len > 0) {
+    uint32_t sizeHint = std::min<uint32_t>(len, 20000000); // Bound by something reasonable
+    rv = newImage->SetSourceSizeHint(sizeHint);
+    if (NS_FAILED(rv)) {
+      // Flush memory, try to get some back, and try again.
+      rv = nsMemory::HeapMinimize(true);
+      nsresult rv2 = newImage->SetSourceSizeHint(sizeHint);
+      // If we've still failed at this point, things are going downhill.
+      if (NS_FAILED(rv) || NS_FAILED(rv2)) {
+        NS_WARNING("About to hit OOM in imagelib!");
       }
     }
+  }
+
+  mozilla::net::nsMediaFragmentURIParser parser(aURI);
+  if (parser.HasResolution()) {
+    newImage->SetRequestedResolution(parser.GetResolution());
   }
 
   return newImage.forget();

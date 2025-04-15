@@ -11,7 +11,7 @@ const Cu = Components.utils;
 const Cc = Components.classes;
 const Ci = Components.interfaces;
 
-this.EXPORTED_SYMBOLS = ["DOMContactManager"];
+this.EXPORTED_SYMBOLS = [];
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
@@ -36,13 +36,10 @@ XPCOMUtils.defineLazyGetter(this, "mRIL", function () {
 
 let myGlobal = this;
 
-this.DOMContactManager = {
-  // maps children to their live cursors so we can cleanup on shutdown/crash
-  _liveCursors: {},
-
+let ContactService = {
   init: function() {
     if (DEBUG) debug("Init");
-    this._messages = ["Contacts:Find", "Contacts:GetAll", "Contacts:GetAll:Continue", "Contacts:Clear", "Contact:Save",
+    this._messages = ["Contacts:Find", "Contacts:GetAll", "Contacts:Clear", "Contact:Save",
                       "Contact:Remove", "Contacts:GetSimContacts",
                       "Contacts:RegisterForMessages", "child-process-shutdown"];
     this._children = [];
@@ -114,28 +111,11 @@ this.DOMContactManager = {
           return null;
         }
         this._db.getAll(
-          function(aContact) {
-            mm.sendAsyncMessage("Contacts:GetAll:Next", {cursorId: msg.cursorId, contact: aContact});
+          function(aContacts) {
+            mm.sendAsyncMessage("Contacts:GetAll:Next", {cursorId: msg.cursorId, contacts: aContacts});
           },
           function(aErrorMsg) { mm.sendAsyncMessage("Contacts:Find:Return:KO", { errorMsg: aErrorMsg }); },
-          msg.findOptions, msg.cursorId);
-        if (Array.isArray(this._liveCursors[mm])) {
-          this._liveCursors[mm].push(msg.cursorId);
-        } else {
-          this._liveCursors[mm] = [msg.cursorId];
-        }
-        break;
-      case "Contacts:GetAll:Continue":
-        this._db.getNext(
-          function(aContact) {
-            if (aContact == null) { // last contact, release the cursor
-              let cursors = this._liveCursors[mm];
-              cursors.splice(cursors.indexOf(msg.cursorId), 1);
-            }
-            mm.sendAsyncMessage("Contacts:GetAll:Next", {cursorId: msg.cursorId, contact: aContact});
-          }.bind(this),
-          function(aErrorMsg) { mm.sendAsyncMessage("Contacts:Find:Return:KO", { errorMsg: aErrorMsg }); },
-          msg.cursorId);
+          msg.findOptions);
         break;
       case "Contact:Save":
         if (msg.options.reason === "create") {
@@ -210,8 +190,6 @@ this.DOMContactManager = {
         break;
       case "child-process-shutdown":
         if (DEBUG) debug("Unregister");
-        this._db.releaseCursors(this._liveCursors[mm]);
-        delete this._liveCursors[mm];
         let index = this._children.indexOf(mm);
         if (index != -1) {
           if (DEBUG) debug("Unregister index: " + index);
@@ -224,4 +202,4 @@ this.DOMContactManager = {
   }
 }
 
-DOMContactManager.init();
+ContactService.init();

@@ -52,9 +52,9 @@ public:
                          nsGUIEvent* aEvent,
                          nsEventStatus* aEventStatus) MOZ_OVERRIDE;
 
-  NS_IMETHOD  Init(nsIContent*      aContent,
-                   nsIFrame*        aParent,
-                   nsIFrame*        asPrevInFlow) MOZ_OVERRIDE;
+  virtual void Init(nsIContent*      aContent,
+                    nsIFrame*        aParent,
+                    nsIFrame*        asPrevInFlow) MOZ_OVERRIDE;
 
   virtual nsStyleContext* GetAdditionalStyleContext(int32_t aIndex) const;
   virtual void SetAdditionalStyleContext(int32_t aIndex, 
@@ -87,7 +87,6 @@ public:
   // nsIFormControlFrame
   void SetFocus(bool aOn, bool aRepaint);
   virtual nsresult SetFormProperty(nsIAtom* aName, const nsAString& aValue) MOZ_OVERRIDE;
-  virtual nsresult GetFormProperty(nsIAtom* aName, nsAString& aValue) const MOZ_OVERRIDE; 
 
   // Inserted child content gets its frames parented by our child block
   virtual nsIFrame* GetContentInsertionFrame() {

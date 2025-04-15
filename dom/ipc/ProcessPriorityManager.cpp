@@ -95,17 +95,6 @@ GetContentChildID()
 }
 
 /**
- * Determine if the priority is a backround priority.
- */
-bool
-IsBackgroundPriority(ProcessPriority aPriority)
-{
-  return (aPriority == PROCESS_PRIORITY_BACKGROUND ||
-          aPriority == PROCESS_PRIORITY_BACKGROUND_HOMESCREEN ||
-          aPriority == PROCESS_PRIORITY_BACKGROUND_PERCEIVABLE);
-}
-
-/**
  * This class listens to various Gecko events and asks the hal back-end to
  * change this process's priority when it transitions between various states of
  * "importance".
@@ -161,15 +150,12 @@ public:
    * Recompute this process's priority and apply it, potentially after a brief
    * delay.
    *
-   * If the new priority is FOREGROUND*, it takes effect immediately.
+   * If we are transitioning to a priority that is lower than the current
+   * priority, that transition happens after a grace period.  Otherwise the
+   * transition happens immediately.
    *
-   * If the new priority is a BACKGROUND* priority and this process's priority
-   * is currently a BACKGROUND* priority, the new priority takes effect
-   * immediately.
-   *
-   * But if the new priority is a BACKGROUND* priority and this process is not
-   * currently in the background, we schedule a timer and run
-   * ResetPriorityNow() after a short period of time.
+   * Note that PROCESS_PRIORITY_UNKNOWN is considered the highest priority.
+   * Going from UNKNOWN to any other priority requires a grace period.
    */
   void ResetPriority();
 
@@ -188,39 +174,27 @@ private:
   bool IsCriticalProcessWithWakeLock();
 
   /**
-   * If this process were in the foreground, what priority would it have?
-   */
-  ProcessPriority GetForegroundPriority();
-
-  /**
-   * If this process were in the foreground, what priority would it have?
-   */
-  ProcessPriority GetBackgroundPriority();
-
-  /**
    * Compute whether this process is in the foreground and return the result.
    */
   bool ComputeIsInForeground();
 
   /**
-   * Set this process's priority to the appropriate FOREGROUND* priority
-   * immediately.
+   * Compute the priority this process ought to have, based on what we know at
+   * the moment.
    */
-  void SetIsForeground();
+  ProcessPriority ComputePriority();
 
   /**
-   * Set this process's priority to the appropriate BACKGROUND* priority
-   * immediately.
+   * Immediately set this process's priority to the given priority.
    */
-  void SetIsBackgroundNow();
+  void SetPriorityNow(ProcessPriority aPriority);
 
   /**
    * If mResetPriorityTimer is null (i.e., not running), create a timer and set
    * it to invoke ResetPriorityNow() after
    * dom.ipc.processPriorityManager.aTimeoutPref ms.
    */
-  void
-  ScheduleResetPriority(const char* aTimeoutPref);
+  void ScheduleResetPriority(const char* aTimeoutPref);
 
   // Tracks whether this process holds the "cpu" lock.
   bool mHoldsCPUWakeLock;
@@ -231,6 +205,10 @@ private:
   // mProcessPriority tracks the priority we've given this process in hal.
   ProcessPriority mProcessPriority;
 
+  // Have we seen at least one tab-child-created event yet?  Until this is
+  // true, ResetPriority() and ResetPriorityNow() do nothing.
+  bool mObservedTabChildCreated;
+
   nsTArray<nsWeakPtr> mWindows;
 
   // When this timer expires, we set mResetPriorityTimer to null and run
@@ -240,12 +218,16 @@ private:
   nsWeakPtr mMemoryMinimizerRunnable;
 };
 
-NS_IMPL_ISUPPORTS2(ProcessPriorityManager, nsIObserver, nsIDOMEventListener)
+NS_IMPL_ISUPPORTS3(ProcessPriorityManager,
+                   nsIObserver,
+                   nsIDOMEventListener,
+                   nsITimerCallback)
 
 ProcessPriorityManager::ProcessPriorityManager()
   : mHoldsCPUWakeLock(false)
   , mHoldsHighPriorityWakeLock(false)
   , mProcessPriority(ProcessPriority(-1))
+  , mObservedTabChildCreated(false)
 {
   // When our parent process forked us, it may have set our process's priority
   // to one of a few of the process priorities, depending on exactly why this
@@ -269,6 +251,7 @@ ProcessPriorityManager::Init()
   // because docshells don't fire an event when their visibility changes, but
   // windows do.
   nsCOMPtr<nsIObserverService> os = services::GetObserverService();
+  os->AddObserver(this, "tab-child-created", /* ownsWeak = */ false);
   os->AddObserver(this, "content-document-global-created", /* ownsWeak = */ false);
   os->AddObserver(this, "inner-window-destroyed", /* ownsWeak = */ false);
   os->AddObserver(this, "audio-channel-agent-changed", /* ownsWeak = */ false);
@@ -295,7 +278,10 @@ ProcessPriorityManager::Observe(
   const char* aTopic,
   const PRUnichar* aData)
 {
-  if (!strcmp(aTopic, "content-document-global-created")) {
+  if (!strcmp(aTopic, "tab-child-created")) {
+    mObservedTabChildCreated = true;
+    ResetPriority();
+  } else if (!strcmp(aTopic, "content-document-global-created")) {
     OnContentDocumentGlobalCreated(aSubject);
   } else if (!strcmp(aTopic, "inner-window-destroyed") ||
              !strcmp(aTopic, "audio-channel-agent-changed")) {
@@ -407,68 +393,35 @@ ProcessPriorityManager::IsCriticalProcessWithWakeLock()
   return false;
 }
 
-ProcessPriority
-ProcessPriorityManager::GetForegroundPriority()
-{
-  return IsCriticalProcessWithWakeLock() ? PROCESS_PRIORITY_FOREGROUND_HIGH :
-                                           PROCESS_PRIORITY_FOREGROUND;
-}
-
-/**
- * Get the appropriate backround priority for this process.
- */
-ProcessPriority
-ProcessPriorityManager::GetBackgroundPriority()
-{
-  AudioChannelService* service = AudioChannelService::GetAudioChannelService();
-  if (service->ContentOrNormalChannelIsActive()) {
-    return PROCESS_PRIORITY_BACKGROUND_PERCEIVABLE;
-  }
-
-  bool isHomescreen = false;
-
-  ContentChild* contentChild = ContentChild::GetSingleton();
-  if (contentChild) {
-    const InfallibleTArray<PBrowserChild*>& browsers =
-      contentChild->ManagedPBrowserChild();
-    for (uint32_t i = 0; i < browsers.Length(); i++) {
-      nsAutoString appType;
-      static_cast<TabChild*>(browsers[i])->GetAppType(appType);
-      if (appType.EqualsLiteral("homescreen")) {
-        isHomescreen = true;
-        break;
-      }
-    }
-  }
-
-  return isHomescreen ?
-         PROCESS_PRIORITY_BACKGROUND_HOMESCREEN :
-         PROCESS_PRIORITY_BACKGROUND;
-}
-
-
 void
 ProcessPriorityManager::ResetPriority()
 {
-  if (ComputeIsInForeground()) {
-    SetIsForeground();
-  } else if (IsBackgroundPriority(mProcessPriority)) {
-    // If we're already in the background, recompute our background priority
-    // and set it immediately.
-    SetIsBackgroundNow();
-  } else {
-    ScheduleResetPriority("backgroundGracePeriodMS");
+  if (!mObservedTabChildCreated) {
+    LOG("ResetPriority bailing because we haven't observed "
+        "a tab-child-created event.");
+    return;
   }
+
+  ProcessPriority processPriority = ComputePriority();
+  if (mProcessPriority == PROCESS_PRIORITY_UNKNOWN ||
+      mProcessPriority > processPriority) {
+    ScheduleResetPriority("backgroundGracePeriodMS");
+    return;
+  }
+
+  SetPriorityNow(processPriority);
 }
 
 void
 ProcessPriorityManager::ResetPriorityNow()
 {
-  if (ComputeIsInForeground()) {
-    SetIsForeground();
-  } else {
-    SetIsBackgroundNow();
+  if (!mObservedTabChildCreated) {
+    LOG("ResetPriorityNow bailing because we haven't observed "
+        "a tab-child-created event.");
+    return;
   }
+
+  SetPriorityNow(ComputePriority());
 }
 
 bool
@@ -524,53 +477,84 @@ ProcessPriorityManager::ComputeIsInForeground()
   return !allHidden;
 }
 
-void
-ProcessPriorityManager::SetIsForeground()
+ProcessPriority
+ProcessPriorityManager::ComputePriority()
 {
-  ProcessPriority foregroundPriority = GetForegroundPriority();
-  if (foregroundPriority == mProcessPriority) {
-    return;
+  if (ComputeIsInForeground()) {
+    if (IsCriticalProcessWithWakeLock()) {
+      return PROCESS_PRIORITY_FOREGROUND_HIGH;
+    }
+    return PROCESS_PRIORITY_FOREGROUND;
   }
 
-  // Cancel the memory minimization procedure we might have started.
-  nsCOMPtr<nsICancelableRunnable> runnable =
-    do_QueryReferent(mMemoryMinimizerRunnable);
-  if (runnable) {
-    runnable->Cancel();
+  AudioChannelService* service = AudioChannelService::GetAudioChannelService();
+  if (service->ContentOrNormalChannelIsActive()) {
+    return PROCESS_PRIORITY_BACKGROUND_PERCEIVABLE;
   }
 
-  mProcessPriority = foregroundPriority;
-  LOG("Setting priority to %s.", ProcessPriorityToString(mProcessPriority));
-  hal::SetProcessPriority(getpid(), mProcessPriority);
+  bool isHomescreen = false;
+
+  ContentChild* contentChild = ContentChild::GetSingleton();
+  if (contentChild) {
+    const InfallibleTArray<PBrowserChild*>& browsers =
+      contentChild->ManagedPBrowserChild();
+    for (uint32_t i = 0; i < browsers.Length(); i++) {
+      nsAutoString appType;
+      static_cast<TabChild*>(browsers[i])->GetAppType(appType);
+      if (appType.EqualsLiteral("homescreen")) {
+        isHomescreen = true;
+        break;
+      }
+    }
+  }
+
+  return isHomescreen ?
+         PROCESS_PRIORITY_BACKGROUND_HOMESCREEN :
+         PROCESS_PRIORITY_BACKGROUND;
 }
 
 void
-ProcessPriorityManager::SetIsBackgroundNow()
+ProcessPriorityManager::SetPriorityNow(ProcessPriority aPriority)
 {
-  ProcessPriority backgroundPriority = GetBackgroundPriority();
-  if (mProcessPriority == backgroundPriority) {
+  if (aPriority == PROCESS_PRIORITY_UNKNOWN) {
+    MOZ_ASSERT(false);
     return;
   }
 
-  mProcessPriority = backgroundPriority;
-  LOG("Setting priority to %s", ProcessPriorityToString(mProcessPriority));
+  if (mProcessPriority == aPriority) {
+    return;
+  }
+
+  LOG("Changing priority from %s to %s.",
+      ProcessPriorityToString(mProcessPriority),
+      ProcessPriorityToString(aPriority));
+  mProcessPriority = aPriority;
   hal::SetProcessPriority(getpid(), mProcessPriority);
 
-  // We're in the background; dump as much memory as we can.
-  nsCOMPtr<nsIMemoryReporterManager> mgr =
-    do_GetService("@mozilla.org/memory-reporter-manager;1");
-  if (mgr) {
+  if (aPriority >= PROCESS_PRIORITY_FOREGROUND) {
+    // Cancel the memory minimization procedure we might have started.
     nsCOMPtr<nsICancelableRunnable> runnable =
       do_QueryReferent(mMemoryMinimizerRunnable);
-
-    // Cancel the previous task if it's still pending
     if (runnable) {
       runnable->Cancel();
     }
+  } else {
+    // We're in the background; dump as much memory as we can.
+    nsCOMPtr<nsIMemoryReporterManager> mgr =
+      do_GetService("@mozilla.org/memory-reporter-manager;1");
+    if (mgr) {
+      nsCOMPtr<nsICancelableRunnable> runnable =
+        do_QueryReferent(mMemoryMinimizerRunnable);
 
-    mgr->MinimizeMemoryUsage(/* callback = */ nullptr,
-                             getter_AddRefs(runnable));
-    mMemoryMinimizerRunnable = do_GetWeakReference(runnable);
+      // Cancel the previous task if it's still pending
+      if (runnable) {
+        runnable->Cancel();
+      }
+
+      mgr->MinimizeMemoryUsage(/* callback = */ nullptr,
+                               getter_AddRefs(runnable));
+      mMemoryMinimizerRunnable = do_GetWeakReference(runnable);
+    }
   }
 }
 

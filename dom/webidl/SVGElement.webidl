@@ -12,13 +12,13 @@
 
 interface SVGAnimatedString;
 
-[PrefControlled]
 interface SVGElement : Element {
            attribute DOMString id;
 /*           [SetterThrows]
            attribute DOMString xmlbase; */
 
   readonly attribute SVGAnimatedString className;
+  [PutForwards=cssText, Constant]
   readonly attribute CSSStyleDeclaration style;
 
   // The CSSValue interface has been deprecated by the CSS WG.

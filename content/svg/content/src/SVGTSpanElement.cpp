@@ -13,18 +13,11 @@ namespace mozilla {
 namespace dom {
 
 JSObject*
-SVGTSpanElement::WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap)
+SVGTSpanElement::WrapNode(JSContext *aCx, JSObject *aScope)
 {
-  return SVGTSpanElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return SVGTSpanElementBinding::Wrap(aCx, aScope, this);
 }
 
-
-//----------------------------------------------------------------------
-// nsISupports methods
-
-NS_IMPL_ISUPPORTS_INHERITED3(SVGTSpanElement, SVGTSpanElementBase,
-                             nsIDOMNode, nsIDOMElement,
-                             nsIDOMSVGElement)
 
 //----------------------------------------------------------------------
 // Implementation
@@ -32,7 +25,6 @@ NS_IMPL_ISUPPORTS_INHERITED3(SVGTSpanElement, SVGTSpanElementBase,
 SVGTSpanElement::SVGTSpanElement(already_AddRefed<nsINodeInfo> aNodeInfo)
   : SVGTSpanElementBase(aNodeInfo)
 {
-  SetIsDOMBinding();
 }
 
 

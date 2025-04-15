@@ -12,7 +12,6 @@
 #include "mozilla/Util.h"
 
 #include "nsStyleSet.h"
-#include "nsNetUtil.h"
 #include "nsCSSStyleSheet.h"
 #include "nsIDocumentInlines.h"
 #include "nsRuleWalker.h"
@@ -30,7 +29,7 @@
 #include "nsEventStates.h"
 #include "nsStyleSheetService.h"
 #include "mozilla/dom/Element.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -314,9 +313,10 @@ nsStyleSet::GatherRuleProcessors(sheetType aType)
   }
   if (mAuthorStyleDisabled && (aType == eDocSheet || 
                                aType == eScopedDocSheet ||
-                               aType == ePresHintSheet ||
                                aType == eStyleAttrSheet)) {
-    //don't regather if this level is disabled
+    // Don't regather if this level is disabled.  Note that we gather
+    // preshint sheets no matter what, but then skip them for some
+    // elements later if mAuthorStyleDisabled.
     return NS_OK;
   }
   if (aType == eAnimationSheet) {
@@ -513,7 +513,7 @@ nsStyleSet::SetAuthorStyleDisabled(bool aStyleDisabled)
     mAuthorStyleDisabled = aStyleDisabled;
     BeginUpdate();
     mDirty |= 1 << eDocSheet |
-              1 << ePresHintSheet |
+              1 << eScopedDocSheet |
               1 << eStyleAttrSheet;
     return EndUpdate();
   }
@@ -767,13 +767,14 @@ nsStyleSet::GetContext(nsStyleContext* aParentContext,
 
   if (!result) {
     result = NS_NewStyleContext(aParentContext, aPseudoTag, aPseudoType,
-                                aRuleNode);
+                                aRuleNode, aFlags & eSkipFlexItemStyleFixup);
     if (!result)
       return nullptr;
     if (aVisitedRuleNode) {
       nsRefPtr<nsStyleContext> resultIfVisited =
         NS_NewStyleContext(parentIfVisited, aPseudoTag, aPseudoType,
-                           aVisitedRuleNode);
+                           aVisitedRuleNode,
+                           aFlags & eSkipFlexItemStyleFixup);
       if (!resultIfVisited) {
         return nullptr;
       }
@@ -910,7 +911,7 @@ nsStyleSet::FileRules(nsIStyleRuleProcessor::EnumFunc aCollectorFunc,
                       RuleProcessorData* aData, Element* aElement,
                       nsRuleWalker* aRuleWalker)
 {
-  SAMPLE_LABEL("nsStyleSet", "FileRules");
+  PROFILER_LABEL("nsStyleSet", "FileRules");
 
   // Cascading order:
   // [least important]
@@ -1148,7 +1149,7 @@ nsStyleSet::ResolveStyleFor(Element* aElement,
   NS_ENSURE_FALSE(mInShutdown, nullptr);
   NS_ASSERTION(aElement, "aElement must not be null");
 
-  nsRuleWalker ruleWalker(mRuleTree);
+  nsRuleWalker ruleWalker(mRuleTree, mAuthorStyleDisabled);
   aTreeMatchContext.ResetForUnvisitedMatching();
   ElementRuleProcessorData data(PresContext(), aElement, &ruleWalker,
                                 aTreeMatchContext);
@@ -1174,6 +1175,9 @@ nsStyleSet::ResolveStyleFor(Element* aElement,
                             HasState(NS_EVENT_STATE_VISITED)) {
     flags |= eIsVisitedLink;
   }
+  if (aTreeMatchContext.mSkippingFlexItemStyleFixup) {
+    flags |= eSkipFlexItemStyleFixup;
+  }
 
   return GetContext(aParentContext, ruleNode, visitedRuleNode,
                     nullptr, nsCSSPseudoElements::ePseudo_NotPseudoElement,
@@ -1186,7 +1190,7 @@ nsStyleSet::ResolveStyleForRules(nsStyleContext* aParentContext,
 {
   NS_ENSURE_FALSE(mInShutdown, nullptr);
 
-  nsRuleWalker ruleWalker(mRuleTree);
+  nsRuleWalker ruleWalker(mRuleTree, mAuthorStyleDisabled);
   // FIXME: Perhaps this should be passed in, but it probably doesn't
   // matter.
   ruleWalker.SetLevel(eDocSheet, false, false);
@@ -1204,7 +1208,7 @@ nsStyleSet::ResolveStyleForRules(nsStyleContext* aParentContext,
                                  nsStyleContext* aOldStyle,
                                  const nsTArray<RuleAndLevel>& aRules)
 {
-  nsRuleWalker ruleWalker(mRuleTree);
+  nsRuleWalker ruleWalker(mRuleTree, mAuthorStyleDisabled);
   for (int32_t i = aRules.Length() - 1; i >= 0; --i) {
     ruleWalker.SetLevel(aRules[i].mLevel, false, false);
     ruleWalker.ForwardOnPossiblyCSSRule(aRules[i].mRule);
@@ -1229,7 +1233,7 @@ nsStyleSet::ResolveStyleByAddingRules(nsStyleContext* aBaseContext,
 {
   NS_ENSURE_FALSE(mInShutdown, nullptr);
 
-  nsRuleWalker ruleWalker(mRuleTree);
+  nsRuleWalker ruleWalker(mRuleTree, mAuthorStyleDisabled);
   ruleWalker.SetCurrentNode(aBaseContext->RuleNode());
   // FIXME: Perhaps this should be passed in, but it probably doesn't
   // matter.
@@ -1296,7 +1300,7 @@ nsStyleSet::ResolvePseudoElementStyle(Element* aParentElement,
                "must have pseudo element type");
   NS_ASSERTION(aParentElement, "Must have parent element");
 
-  nsRuleWalker ruleWalker(mRuleTree);
+  nsRuleWalker ruleWalker(mRuleTree, mAuthorStyleDisabled);
   TreeMatchContext treeContext(true, nsRuleWalker::eRelevantLinkUnvisited,
                                aParentElement->OwnerDoc());
   PseudoElementRuleProcessorData data(PresContext(), aParentElement,
@@ -1319,7 +1323,10 @@ nsStyleSet::ResolvePseudoElementStyle(Element* aParentElement,
 
   // For pseudos, |data.IsLink()| being true means that
   // our parent node is a link.
-  uint32_t flags = eNoFlags;
+  // Also: Flex containers shouldn't have pseudo-elements, so given that we're
+  // looking up pseudo-element style, make sure we're not treating our node as
+  // a flex item.
+  uint32_t flags = eSkipFlexItemStyleFixup;
   if (aType == nsCSSPseudoElements::ePseudo_before ||
       aType == nsCSSPseudoElements::ePseudo_after) {
     flags |= eDoAnimation;
@@ -1354,7 +1361,7 @@ nsStyleSet::ProbePseudoElementStyle(Element* aParentElement,
   NS_ASSERTION(aParentElement, "aParentElement must not be null");
 
   nsIAtom* pseudoTag = nsCSSPseudoElements::GetPseudoAtom(aType);
-  nsRuleWalker ruleWalker(mRuleTree);
+  nsRuleWalker ruleWalker(mRuleTree, mAuthorStyleDisabled);
   aTreeMatchContext.ResetForUnvisitedMatching();
   PseudoElementRuleProcessorData data(PresContext(), aParentElement,
                                       &ruleWalker, aType, aTreeMatchContext);
@@ -1382,7 +1389,10 @@ nsStyleSet::ProbePseudoElementStyle(Element* aParentElement,
 
   // For pseudos, |data.IsLink()| being true means that
   // our parent node is a link.
-  uint32_t flags = eNoFlags;
+  // Also: Flex containers shouldn't have pseudo-elements, so given that we're
+  // looking up pseudo-element style, make sure we're not treating our node as
+  // a flex item.
+  uint32_t flags = eSkipFlexItemStyleFixup;
   if (aType == nsCSSPseudoElements::ePseudo_before ||
       aType == nsCSSPseudoElements::ePseudo_after) {
     flags |= eDoAnimation;
@@ -1426,7 +1436,7 @@ nsStyleSet::ResolveAnonymousBoxStyle(nsIAtom* aPseudoTag,
     NS_PRECONDITION(isAnonBox, "Unexpected pseudo");
 #endif
 
-  nsRuleWalker ruleWalker(mRuleTree);
+  nsRuleWalker ruleWalker(mRuleTree, mAuthorStyleDisabled);
   AnonBoxRuleProcessorData data(PresContext(), aPseudoTag, &ruleWalker);
   FileRules(EnumRulesMatching<AnonBoxRuleProcessorData>, &data, nullptr,
             &ruleWalker);
@@ -1467,7 +1477,7 @@ nsStyleSet::ResolveXULTreePseudoStyle(Element* aParentElement,
   NS_ASSERTION(nsCSSAnonBoxes::IsTreePseudoElement(aPseudoTag),
                "Unexpected pseudo");
 
-  nsRuleWalker ruleWalker(mRuleTree);
+  nsRuleWalker ruleWalker(mRuleTree, mAuthorStyleDisabled);
   TreeMatchContext treeContext(true, nsRuleWalker::eRelevantLinkUnvisited,
                                aParentElement->OwnerDoc());
   XULTreeRuleProcessorData data(PresContext(), aParentElement, &ruleWalker,

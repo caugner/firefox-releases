@@ -3,6 +3,10 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
+<!DOCTYPE bindings [
+<!ENTITY % browserDTD SYSTEM "chrome://browser/locale/browser.dtd">
+%browserDTD;
+]>
 
 <bindings
     xmlns="http://www.mozilla.org/xbl"
@@ -21,7 +25,8 @@
         <xul:box anonid="selection" class="documenttab-crop"/>
         <xul:box anonid="selection" class="documenttab-selection"/>
         <xul:button anonid="close" class="documenttab-close" observes="bcast_urlbarState" end="0" top="0"
-                    onclick="event.stopPropagation(); document.getBindingParent(this)._onClose()"/>
+                    onclick="event.stopPropagation(); document.getBindingParent(this)._onClose()"
+                    label="&closetab.label;"/>
       </xul:stack>
     </content>
 
@@ -106,7 +111,32 @@
       <handler event="dblclick" action="this._onDoubleClick();"/>
     </handlers>
 
-    <implementation>
+    <implementation implements="nsIDOMEventListener">
+      <constructor>
+        <![CDATA[
+          window.addEventListener("MozContextUIExpand", this, true);
+        ]]>
+      </constructor>
+
+      <destructor>
+        <![CDATA[
+          window.removeEventListener("MozContextUIExpand", this, true);
+        ]]>
+      </destructor>
+
+      <method name="handleEvent">
+        <parameter name="event"/>
+        <body>
+          <![CDATA[
+            switch (event.type) {
+              case "MozContextUIExpand":
+                this.strip.ensureElementIsVisible(this.selectedTab, false);
+                break;
+            }
+          ]]>
+        </body>
+      </method>
+
       <field name="strip">document.getAnonymousElementByAttribute(this, "anonid", "tabs-scrollbox");</field>
       <field name="_selectedTab">null</field>
 

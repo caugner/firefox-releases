@@ -7,8 +7,6 @@
 #include "MobileMessageDatabaseService.h"
 #include "AndroidBridge.h"
 
-using namespace mozilla::dom::sms;
-
 namespace mozilla {
 namespace dom {
 namespace mobilemessage {
@@ -16,7 +14,8 @@ namespace mobilemessage {
 NS_IMPL_ISUPPORTS1(MobileMessageDatabaseService, nsIMobileMessageDatabaseService)
 
 NS_IMETHODIMP
-MobileMessageDatabaseService::GetMessageMoz(int32_t aMessageId, nsISmsRequest* aRequest)
+MobileMessageDatabaseService::GetMessageMoz(int32_t aMessageId,
+                                            nsIMobileMessageCallback* aRequest)
 {
   if (!AndroidBridge::Bridge()) {
     return NS_OK;
@@ -27,7 +26,8 @@ MobileMessageDatabaseService::GetMessageMoz(int32_t aMessageId, nsISmsRequest* a
 }
 
 NS_IMETHODIMP
-MobileMessageDatabaseService::DeleteMessage(int32_t aMessageId, nsISmsRequest* aRequest)
+MobileMessageDatabaseService::DeleteMessage(int32_t aMessageId,
+                                            nsIMobileMessageCallback* aRequest)
 {
   if (!AndroidBridge::Bridge()) {
     return NS_OK;
@@ -39,7 +39,8 @@ MobileMessageDatabaseService::DeleteMessage(int32_t aMessageId, nsISmsRequest* a
 
 NS_IMETHODIMP
 MobileMessageDatabaseService::CreateMessageList(nsIDOMMozSmsFilter* aFilter,
-                                                bool aReverse, nsISmsRequest* aRequest)
+                                                bool aReverse,
+                                                nsIMobileMessageCallback* aRequest)
 {
   if (!AndroidBridge::Bridge()) {
     return NS_OK;
@@ -51,7 +52,8 @@ MobileMessageDatabaseService::CreateMessageList(nsIDOMMozSmsFilter* aFilter,
 }
 
 NS_IMETHODIMP
-MobileMessageDatabaseService::GetNextMessageInList(int32_t aListId, nsISmsRequest* aRequest)
+MobileMessageDatabaseService::GetNextMessageInList(int32_t aListId,
+                                                   nsIMobileMessageCallback* aRequest)
 {
   if (!AndroidBridge::Bridge()) {
     return NS_OK;
@@ -73,15 +75,16 @@ MobileMessageDatabaseService::ClearMessageList(int32_t aListId)
 }
 
 NS_IMETHODIMP
-MobileMessageDatabaseService::MarkMessageRead(int32_t aMessageId, bool aValue,
-                                              nsISmsRequest* aRequest)
+MobileMessageDatabaseService::MarkMessageRead(int32_t aMessageId,
+                                              bool aValue,
+                                              nsIMobileMessageCallback* aRequest)
 {
   // TODO: This would need to be implemented as part of Bug 748391
   return NS_OK;
 }
 
 NS_IMETHODIMP
-MobileMessageDatabaseService::GetThreadList(nsISmsRequest* aRequest)
+MobileMessageDatabaseService::GetThreadList(nsIMobileMessageCallback* aRequest)
 {
   NS_NOTYETIMPLEMENTED("Implement me!");
   return NS_ERROR_NOT_IMPLEMENTED;

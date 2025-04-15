@@ -39,7 +39,6 @@
 #include "nsIDOMDocumentFragment.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMHTMLAnchorElement.h"
-#include "nsIDOMHTMLBodyElement.h"
 #include "nsIDOMHTMLEmbedElement.h"
 #include "nsIDOMHTMLFrameElement.h"
 #include "nsIDOMHTMLIFrameElement.h"
@@ -48,9 +47,6 @@
 #include "nsIDOMHTMLLinkElement.h"
 #include "nsIDOMHTMLObjectElement.h"
 #include "nsIDOMHTMLScriptElement.h"
-#include "nsIDOMHTMLTableCellElement.h"
-#include "nsIDOMHTMLTableElement.h"
-#include "nsIDOMHTMLTableRowElement.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMRange.h"
 #include "nsIDocument.h"
@@ -156,6 +152,8 @@ NS_IMETHODIMP nsHTMLEditor::LoadHTML(const nsAString & aInputString)
 
   nsTextRulesInfo ruleInfo(EditAction::loadHTML);
   bool cancel, handled;
+  // Protect the edit rules object from dying
+  nsCOMPtr<nsIEditRules> kungFuDeathGrip(mRules);
   nsresult rv = mRules->WillDoAction(selection, &ruleInfo, &cancel, &handled);
   NS_ENSURE_SUCCESS(rv, rv);
   if (cancel) {
@@ -737,30 +735,24 @@ nsHTMLEditor::GetAttributeToModifyOnNode(nsIDOMNode *aNode, nsAString &aAttr)
   }
 
   NS_NAMED_LITERAL_STRING(bgStr, "background");
-  nsCOMPtr<nsIDOMHTMLBodyElement> nodeAsBody = do_QueryInterface(aNode);
-  if (nodeAsBody)
-  {
+  nsCOMPtr<dom::Element> element = do_QueryInterface(aNode);
+  if (element && element->IsHTML(nsGkAtoms::body)) {
     aAttr = bgStr;
     return NS_OK;
   }
 
-  nsCOMPtr<nsIDOMHTMLTableElement> nodeAsTable = do_QueryInterface(aNode);
-  if (nodeAsTable)
-  {
+  if (element && element->IsHTML(nsGkAtoms::table)) {
     aAttr = bgStr;
     return NS_OK;
   }
 
-  nsCOMPtr<nsIDOMHTMLTableRowElement> nodeAsTableRow = do_QueryInterface(aNode);
-  if (nodeAsTableRow)
-  {
+  if (element && element->IsHTML(nsGkAtoms::tr)) {
     aAttr = bgStr;
     return NS_OK;
   }
 
-  nsCOMPtr<nsIDOMHTMLTableCellElement> nodeAsTableCell = do_QueryInterface(aNode);
-  if (nodeAsTableCell)
-  {
+  if (element &&
+      (element->IsHTML(nsGkAtoms::td) || element->IsHTML(nsGkAtoms::th))) {
     aAttr = bgStr;
     return NS_OK;
   }
@@ -1712,6 +1704,8 @@ NS_IMETHODIMP nsHTMLEditor::PasteAsCitedQuotation(const nsAString & aCitation,
   // give rules a chance to handle or cancel
   nsTextRulesInfo ruleInfo(EditAction::insertElement);
   bool cancel, handled;
+  // Protect the edit rules object from dying
+  nsCOMPtr<nsIEditRules> kungFuDeathGrip(mRules);
   nsresult rv = mRules->WillDoAction(selection, &ruleInfo, &cancel, &handled);
   NS_ENSURE_SUCCESS(rv, rv);
   if (cancel || handled) {
@@ -1916,6 +1910,8 @@ nsHTMLEditor::InsertAsPlaintextQuotation(const nsAString & aQuotedText,
   // give rules a chance to handle or cancel
   nsTextRulesInfo ruleInfo(EditAction::insertElement);
   bool cancel, handled;
+  // Protect the edit rules object from dying
+  nsCOMPtr<nsIEditRules> kungFuDeathGrip(mRules);
   nsresult rv = mRules->WillDoAction(selection, &ruleInfo, &cancel, &handled);
   NS_ENSURE_SUCCESS(rv, rv);
   if (cancel || handled) {
@@ -2009,6 +2005,8 @@ nsHTMLEditor::InsertAsCitedQuotation(const nsAString & aQuotedText,
   // give rules a chance to handle or cancel
   nsTextRulesInfo ruleInfo(EditAction::insertElement);
   bool cancel, handled;
+  // Protect the edit rules object from dying
+  nsCOMPtr<nsIEditRules> kungFuDeathGrip(mRules);
   nsresult rv = mRules->WillDoAction(selection, &ruleInfo, &cancel, &handled);
   NS_ENSURE_SUCCESS(rv, rv);
   if (cancel || handled) {

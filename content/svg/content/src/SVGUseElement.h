@@ -7,7 +7,6 @@
 #define mozilla_dom_SVGUseElement_h
 
 #include "mozilla/dom/FromParser.h"
-#include "nsIDOMSVGURIReference.h"
 #include "nsReferencedElement.h"
 #include "nsStubMutationObserver.h"
 #include "mozilla/dom/SVGGraphicsElement.h"
@@ -32,8 +31,6 @@ namespace dom {
 typedef SVGGraphicsElement SVGUseElementBase;
 
 class SVGUseElement MOZ_FINAL : public SVGUseElementBase,
-                                public nsIDOMSVGElement,
-                                public nsIDOMSVGURIReference,
                                 public nsStubMutationObserver
 {
   friend class ::nsSVGUseFrame;
@@ -42,14 +39,13 @@ protected:
                                          already_AddRefed<nsINodeInfo> aNodeInfo));
   SVGUseElement(already_AddRefed<nsINodeInfo> aNodeInfo);
   virtual ~SVGUseElement();
-  virtual JSObject* WrapNode(JSContext *cx, JSObject *scope, bool *triedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext *cx, JSObject *scope) MOZ_OVERRIDE;
 
 public:
   // interfaces:
 
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(SVGUseElement, SVGUseElementBase)
-  NS_DECL_NSIDOMSVGURIREFERENCE
 
   NS_DECL_NSIMUTATIONOBSERVER_CHARACTERDATACHANGED
   NS_DECL_NSIMUTATIONOBSERVER_ATTRIBUTECHANGED
@@ -57,11 +53,6 @@ public:
   NS_DECL_NSIMUTATIONOBSERVER_CONTENTINSERTED
   NS_DECL_NSIMUTATIONOBSERVER_CONTENTREMOVED
   NS_DECL_NSIMUTATIONOBSERVER_NODEWILLBEDESTROYED
-
-  // xxx I wish we could use virtual inheritance
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-  NS_FORWARD_NSIDOMSVGELEMENT(SVGUseElementBase::)
 
   // for nsSVGUseFrame's nsIAnonymousContentCreator implementation.
   nsIContent* CreateAnonymousContent();
@@ -76,8 +67,6 @@ public:
   // nsIContent interface
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const;
-
-  virtual nsIDOMNode* AsDOMNode() { return this; }
 
   // WebIDL
   already_AddRefed<nsIDOMSVGAnimatedString> Href();

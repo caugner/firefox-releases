@@ -22,31 +22,23 @@
 #include "nsCSSStyleSheet.h"
 #include "mozilla/css/Declaration.h"
 #include "nsStyleConsts.h"
-#include "nsIURL.h"
 #include "nsNetUtil.h"
 #include "nsCOMPtr.h"
 #include "nsString.h"
 #include "nsReadableUtils.h"
-#include "nsUnicharUtils.h"
 #include "nsIAtom.h"
-#include "nsCOMArray.h"
 #include "nsColor.h"
 #include "nsCSSPseudoClasses.h"
 #include "nsCSSPseudoElements.h"
-#include "nsCSSAnonBoxes.h"
 #include "nsINameSpaceManager.h"
 #include "nsXMLNameSpaceMap.h"
-#include "nsThemeConstants.h"
 #include "nsError.h"
 #include "nsIMediaList.h"
-#include "mozilla/LookAndFeel.h"
 #include "nsStyleUtil.h"
 #include "nsIPrincipal.h"
 #include "prprf.h"
-#include "math.h"
 #include "nsContentUtils.h"
 #include "nsAutoPtr.h"
-#include "prlog.h"
 #include "CSSCalc.h"
 #include "nsMediaFeatures.h"
 #include "nsLayoutUtils.h"
@@ -1619,7 +1611,8 @@ CSSParserImpl::ParseAtRule(RuleAppendFunc aAppendFunc,
     parseFunc = &CSSParserImpl::ParsePageRule;
     newSection = eCSSSection_General;
 
-  } else if (mToken.mIdent.LowerCaseEqualsLiteral("-moz-keyframes") ||
+  } else if ((nsCSSProps::IsEnabled(eCSSPropertyAlias_MozAnimation) &&
+              mToken.mIdent.LowerCaseEqualsLiteral("-moz-keyframes")) ||
              mToken.mIdent.LowerCaseEqualsLiteral("keyframes")) {
     parseFunc = &CSSParserImpl::ParseKeyframesRule;
     newSection = eCSSSection_General;
@@ -6626,12 +6619,12 @@ CSSParserImpl::ParseBackgroundItem(CSSParserImpl::BackgroundParseState& aState)
   aState.mSize->mYValue.SetAutoValue();
 
   bool haveColor = false,
-         haveImage = false,
-         haveRepeat = false,
-         haveAttach = false,
-         havePositionAndSize = false,
-         haveOrigin = false,
-         haveSomething = false;
+       haveImage = false,
+       haveRepeat = false,
+       haveAttach = false,
+       havePositionAndSize = false,
+       haveOrigin = false,
+       haveSomething = false;
 
   while (GetToken(true)) {
     nsCSSTokenType tt = mToken.mType;
@@ -6706,6 +6699,17 @@ CSSParserImpl::ParseBackgroundItem(CSSParserImpl::BackgroundParseState& aState)
           NS_NOTREACHED("should be able to parse");
           return false;
         }
+
+        // The spec allows a second box value (for background-clip),
+        // immediately following the first one (for background-origin).
+
+        // 'background-clip' and 'background-origin' use the same keyword table
+        MOZ_ASSERT(nsCSSProps::kKeywordTableTable[
+                     eCSSProperty_background_origin] ==
+                   nsCSSProps::kBackgroundOriginKTable);
+        MOZ_ASSERT(nsCSSProps::kKeywordTableTable[
+                     eCSSProperty_background_clip] ==
+                   nsCSSProps::kBackgroundOriginKTable);
         MOZ_STATIC_ASSERT(NS_STYLE_BG_CLIP_BORDER ==
                           NS_STYLE_BG_ORIGIN_BORDER &&
                           NS_STYLE_BG_CLIP_PADDING ==
@@ -6714,7 +6718,13 @@ CSSParserImpl::ParseBackgroundItem(CSSParserImpl::BackgroundParseState& aState)
                           NS_STYLE_BG_ORIGIN_CONTENT,
                           "bg-clip and bg-origin style constants must agree");
 
-        aState.mClip->mValue = aState.mOrigin->mValue;
+        if (!ParseSingleValueProperty(aState.mClip->mValue,
+                                      eCSSProperty_background_clip)) {
+          // When exactly one <box> value is set, it is used for both
+          // 'background-origin' and 'background-clip'.
+          // See assertions above showing these values are compatible.
+          aState.mClip->mValue = aState.mOrigin->mValue;
+        }
       } else {
         if (haveColor)
           return false;

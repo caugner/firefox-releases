@@ -74,7 +74,7 @@
 #include "mozilla/ipc/TestShellParent.h"
 #include "mozilla/ipc/XPCShellEnvironment.h"
 
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 #ifdef MOZ_IPDL_TESTS
 #include "mozilla/_ipdltest/IPDLUnitTests.h"
@@ -282,8 +282,8 @@ XRE_InitChildProcess(int aArgc,
   NS_ENSURE_ARG_MIN(aArgc, 2);
   NS_ENSURE_ARG_POINTER(aArgv);
   NS_ENSURE_ARG_POINTER(aArgv[0]);
-  SAMPLER_INIT();
-  SAMPLE_LABEL("Startup", "XRE_InitChildProcess");
+  profiler_init();
+  PROFILER_LABEL("Startup", "XRE_InitChildProcess");
 
   sChildProcessType = aProcess;
 
@@ -726,7 +726,7 @@ XRE_SendTestShellCommand(JSContext* aCx,
         tsp->SendPTestShellCommandConstructor(command));
     NS_ENSURE_TRUE(callback, false);
 
-    jsval callbackVal = *reinterpret_cast<jsval*>(aCallback);
+    JS::Value callbackVal = *reinterpret_cast<JS::Value*>(aCallback);
     NS_ENSURE_TRUE(callback->SetCallback(aCx, callbackVal), false);
 
     return true;

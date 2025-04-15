@@ -207,6 +207,7 @@ class SmsIOThread extends Thread {
     return mHandler.post(r);
   }
 
+  @Override
   public void run() {
     Looper.prepare();
 
@@ -291,7 +292,7 @@ public class GeckoSmsManager
 
   /*
    * Make sure that the following error codes are in sync with |ErrorType| in:
-   * dom/sms/src/Types.h
+   * dom/mobilemessage/src/Types.h
    * The error code are owned by the DOM.
    */
   public final static int kNoError       = 0;
@@ -310,16 +311,19 @@ public class GeckoSmsManager
 
   /*
    * Keep the following state codes in syng with |DeliveryState| in:
-   * dom/sms/src/Types.h
+   * dom/mobilemessage/src/Types.h
    */
-  private final static int kDeliveryStateSent     = 0;
-  private final static int kDeliveryStateReceived = 1;
-  private final static int kDeliveryStateUnknown  = 2;
-  private final static int kDeliveryStateEndGuard = 3;
+  private final static int kDeliveryStateSent          = 0;
+  private final static int kDeliveryStateReceived      = 1;
+  private final static int kDeliveryStateSending       = 2;
+  private final static int kDeliveryStateError         = 3;
+  private final static int kDeliveryStateUnknown       = 4;
+  private final static int kDeliveryStateNotDownloaded = 5;
+  private final static int kDeliveryStateEndGuard      = 6;
 
   /*
    * Keep the following status codes in sync with |DeliveryStatus| in:
-   * dom/sms/src/Types.h
+   * dom/mobilemessage/src/Types.h
    */
   private final static int kDeliveryStatusNotApplicable = 0;
   private final static int kDeliveryStatusSuccess       = 1;
@@ -337,7 +341,7 @@ public class GeckoSmsManager
 
   /*
    * Keep the following values in sync with |MessageClass| in:
-   * dom/sms/src/Types.h
+   * dom/mobilemessage/src/Types.h
    */
   private final static int kMessageClassNormal  = 0;
   private final static int kMessageClassClass0  = 1;
@@ -351,6 +355,7 @@ public class GeckoSmsManager
     SmsIOThread.getInstance().start();
   }
 
+  @Override
   public void start() {
     IntentFilter smsFilter = new IntentFilter();
     smsFilter.addAction(GeckoSmsManager.ACTION_SMS_RECEIVED);
@@ -484,6 +489,7 @@ public class GeckoSmsManager
     }
   }
 
+  @Override
   public void send(String aNumber, String aMessage, int aRequestId) {
     int envelopeId = Postman.kUnknownEnvelopeId;
 
@@ -599,6 +605,7 @@ public class GeckoSmsManager
     }
   }
 
+  @Override
   public void getMessage(int aMessageId, int aRequestId) {
     class GetMessageRunnable implements Runnable {
       private int mMessageId;
@@ -683,6 +690,7 @@ public class GeckoSmsManager
     }
   }
 
+  @Override
   public void deleteMessage(int aMessageId, int aRequestId) {
     class DeleteMessageRunnable implements Runnable {
       private int mMessageId;
@@ -722,6 +730,7 @@ public class GeckoSmsManager
     }
   }
 
+  @Override
   public void createMessageList(long aStartDate, long aEndDate, String[] aNumbers, int aNumbersCount, int aDeliveryState, boolean aReverse, int aRequestId) {
     class CreateMessageListRunnable implements Runnable {
       private long     mStartDate;
@@ -844,6 +853,7 @@ public class GeckoSmsManager
     }
   }
 
+  @Override
   public void getNextMessageInList(int aListId, int aRequestId) {
     class GetNextMessageInListRunnable implements Runnable {
       private int mListId;
@@ -903,14 +913,17 @@ public class GeckoSmsManager
     }
   }
 
+  @Override
   public void clearMessageList(int aListId) {
     MessagesListManager.getInstance().remove(aListId);
   }
 
+  @Override
   public void stop() {
     GeckoApp.mAppContext.unregisterReceiver(this);
   }
 
+  @Override
   public void shutdown() {
     SmsIOThread.getInstance().interrupt();
     MessagesListManager.getInstance().clear();

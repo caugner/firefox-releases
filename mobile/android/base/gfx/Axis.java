@@ -5,6 +5,7 @@
 
 package org.mozilla.gecko.gfx;
 
+import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.PrefsHelper;
 import org.mozilla.gecko.util.FloatUtils;
 
@@ -99,7 +100,7 @@ abstract class Axis {
         FRICTION_SLOW = getFrameAdjustedFriction(getFloatPref(prefs, PREF_SCROLLING_FRICTION_SLOW, 850));
         FRICTION_FAST = getFrameAdjustedFriction(getFloatPref(prefs, PREF_SCROLLING_FRICTION_FAST, 970));
         VELOCITY_THRESHOLD = 10 / FRAMERATE_MULTIPLIER;
-        MAX_EVENT_ACCELERATION = getFloatPref(prefs, PREF_SCROLLING_MAX_EVENT_ACCELERATION, 12);
+        MAX_EVENT_ACCELERATION = getFloatPref(prefs, PREF_SCROLLING_MAX_EVENT_ACCELERATION, GeckoAppShell.getDpi() > 300 ? 100 : 40);
         OVERSCROLL_DECEL_RATE = getFrameAdjustedFriction(getFloatPref(prefs, PREF_SCROLLING_OVERSCROLL_DECEL_RATE, 40));
         SNAP_LIMIT = getFloatPref(prefs, PREF_SCROLLING_OVERSCROLL_SNAP_LIMIT, 300);
         MIN_SCROLLABLE_DISTANCE = getFloatPref(prefs, PREF_SCROLLING_MIN_SCROLLABLE_DISTANCE, 500);
@@ -138,7 +139,7 @@ abstract class Axis {
     private boolean mDisableSnap;           /* Whether overscroll snapping is disabled. */
     private float mDisplacement;
 
-    private FlingStates mFlingState;        /* The fling state we're in on this axis. */
+    private FlingStates mFlingState = FlingStates.STOPPED; /* The fling state we're in on this axis. */
 
     protected abstract float getOrigin();
     protected abstract float getViewportLength();
@@ -360,7 +361,7 @@ abstract class Axis {
         if (mFlingState == FlingStates.PANNING)
             mDisplacement += (mLastTouchPos - mTouchPos) * getEdgeResistance(false);
         else
-            mDisplacement += mVelocity;
+            mDisplacement += mVelocity * getEdgeResistance(false);
 
         // if overscroll is disabled and we're trying to overscroll, reset the displacement
         // to remove any excess. Using getExcess alone isn't enough here since it relies on
@@ -381,5 +382,13 @@ abstract class Axis {
         float d = mDisplacement;
         mDisplacement = 0.0f;
         return d;
+    }
+
+    void setAutoscrollVelocity(float velocity) {
+        if (mFlingState != FlingStates.STOPPED) {
+            Log.e(LOGTAG, "Setting autoscroll velocity while in a fling is not allowed!");
+            return;
+        }
+        mVelocity = velocity;
     }
 }

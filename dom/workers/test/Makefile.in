@@ -11,10 +11,6 @@ relativesrcdir   = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-DIRS = \
-  extensions \
-  $(NULL)
-
 MOCHITEST_FILES = \
   test_404.html \
   test_atob.html \
@@ -45,6 +41,7 @@ MOCHITEST_FILES = \
   test_resolveWorker-assignment.html \
   test_json.html \
   json_worker.js \
+  test_loadError.html \
   test_location.html \
   location_worker.js \
   test_longThread.html \

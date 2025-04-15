@@ -86,7 +86,7 @@ nsXBLProtoImpl::InstallImplementation(nsXBLPrototypeBinding* aPrototypeBinding,
   JSObject * targetScriptObject;
   holder->GetJSObject(&targetScriptObject);
 
-  JSContext *cx = context->GetNativeContext();
+  AutoPushJSContext cx(context->GetNativeContext());
   JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, targetClassObject);
   AutoVersionChecker avc(cx);
@@ -102,6 +102,7 @@ nsXBLProtoImpl::InstallImplementation(nsXBLPrototypeBinding* aPrototypeBinding,
   // the field accessors, so do this before installing them.
   JSObject* globalObject = JS_GetGlobalForObject(cx, targetClassObject);
   JSObject* scopeObject = xpc::GetXBLScope(cx, globalObject);
+  NS_ENSURE_TRUE(scopeObject, NS_ERROR_OUT_OF_MEMORY);
   if (scopeObject != globalObject) {
     JSAutoCompartment ac2(cx, scopeObject);
 
@@ -172,10 +173,10 @@ nsXBLProtoImpl::InitTargetObjects(nsXBLPrototypeBinding* aBinding,
 
   // Because our prototype implementation has a class, we need to build up a corresponding
   // class for the concrete implementation in the bound document.
-  JSContext* jscontext = aContext->GetNativeContext();
+  AutoPushJSContext jscontext(aContext->GetNativeContext());
   JSObject* global = sgo->GetGlobalJSObject();
   nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
-  jsval v;
+  JS::Value v;
   rv = nsContentUtils::WrapNative(jscontext, global, aBoundElement, &v,
                                   getter_AddRefs(wrapper));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -211,7 +212,7 @@ nsXBLProtoImpl::CompilePrototypeMembers(nsXBLPrototypeBinding* aBinding)
   nsIScriptContext *context = globalObject->GetContext();
   NS_ENSURE_TRUE(context, NS_ERROR_OUT_OF_MEMORY);
 
-  JSContext *cx = context->GetNativeContext();
+  AutoPushJSContext cx(context->GetNativeContext());
   JSObject *global = globalObject->GetGlobalJSObject();
   
 
@@ -302,7 +303,7 @@ nsXBLProtoImpl::ResolveAllFields(JSContext *cx, JSObject *obj) const
     // PRUnichar* for the property name.  Let's just use the public API and
     // all.
     nsDependentString name(f->GetName());
-    jsval dummy;
+    JS::Value dummy;
     if (!::JS_LookupUCProperty(cx, obj,
                                reinterpret_cast<const jschar*>(name.get()),
                                name.Length(), &dummy)) {
@@ -324,7 +325,7 @@ nsXBLProtoImpl::UndefineFields(JSContext *cx, JSObject *obj) const
     JSBool hasProp;
     if (::JS_AlreadyHasOwnUCProperty(cx, obj, s, name.Length(), &hasProp) &&
         hasProp) {
-      jsval dummy;
+      JS::Value dummy;
       ::JS_DeleteUCProperty2(cx, obj, s, name.Length(), &dummy);
     }
   }
@@ -348,7 +349,7 @@ nsXBLProtoImpl::Read(nsIScriptContext* aContext,
                      nsIScriptGlobalObject* aGlobal)
 {
   // Set up a class object first so that deserialization is possible
-  JSContext *cx = aContext->GetNativeContext();
+  AutoPushJSContext cx(aContext->GetNativeContext());
   JSObject *global = aGlobal->GetGlobalJSObject();
 
   JSObject* classObject;

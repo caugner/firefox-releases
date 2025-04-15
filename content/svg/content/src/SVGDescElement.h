@@ -16,29 +16,17 @@ typedef nsSVGElement SVGDescElementBase;
 namespace mozilla {
 namespace dom {
 
-class SVGDescElement MOZ_FINAL : public SVGDescElementBase,
-                                 public nsIDOMSVGElement
+class SVGDescElement MOZ_FINAL : public SVGDescElementBase
 {
 protected:
   friend nsresult (::NS_NewSVGDescElement(nsIContent **aResult,
                                           already_AddRefed<nsINodeInfo> aNodeInfo));
   SVGDescElement(already_AddRefed<nsINodeInfo> aNodeInfo);
 
-  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
 
 public:
-  // interfaces:
-
-  NS_DECL_ISUPPORTS_INHERITED
-
-  // xxx I wish we could use virtual inheritance
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-  NS_FORWARD_NSIDOMSVGELEMENT(SVGDescElementBase::)
-
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-
-  virtual nsIDOMNode* AsDOMNode() { return this; }
 };
 
 } // namespace dom

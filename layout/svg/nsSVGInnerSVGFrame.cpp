@@ -35,7 +35,7 @@ NS_QUERYFRAME_HEAD(nsSVGInnerSVGFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsSVGInnerSVGFrameBase)
 
 #ifdef DEBUG
-NS_IMETHODIMP
+void
 nsSVGInnerSVGFrame::Init(nsIContent* aContent,
                          nsIFrame* aParent,
                          nsIFrame* aPrevInFlow)
@@ -43,7 +43,7 @@ nsSVGInnerSVGFrame::Init(nsIContent* aContent,
   NS_ASSERTION(aContent->IsSVG(nsGkAtoms::svg),
                "Content is not an SVG 'svg' element!");
 
-  return nsSVGInnerSVGFrameBase::Init(aContent, aParent, aPrevInFlow);
+  nsSVGInnerSVGFrameBase::Init(aContent, aParent, aPrevInFlow);
 }
 #endif /* DEBUG */
 
@@ -136,11 +136,11 @@ nsSVGInnerSVGFrame::NotifySVGChanged(uint32_t aFlags)
 
     if (!(aFlags & TRANSFORM_CHANGED) &&
         (xOrYIsPercentage ||
-         (widthOrHeightIsPercentage && svg->HasViewBox()))) {
+         (widthOrHeightIsPercentage && svg->HasViewBoxRect()))) {
       aFlags |= TRANSFORM_CHANGED;
     }
 
-    if (svg->HasViewBox() || !widthOrHeightIsPercentage) {
+    if (svg->HasViewBoxRect() || !widthOrHeightIsPercentage) {
       // Remove COORD_CONTEXT_CHANGED, since we establish the coordinate
       // context for our descendants and this notification won't change its
       // dimensions:

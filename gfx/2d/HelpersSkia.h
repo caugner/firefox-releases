@@ -10,6 +10,9 @@
 #include "skia/SkCanvas.h"
 #include "skia/SkDashPathEffect.h"
 #include "skia/SkShader.h"
+#ifdef USE_SKIA_GPU
+#include "skia/GrTypes.h"
+#endif
 #include "mozilla/Assertions.h"
 #include <vector>
 
@@ -36,6 +39,27 @@ GfxFormatToSkiaConfig(SurfaceFormat format)
   return SkBitmap::kARGB_8888_Config;
 }
 
+#ifdef USE_SKIA_GPU
+static inline GrPixelConfig
+GfxFormatToGrConfig(SurfaceFormat format)
+{
+  switch (format)
+  {
+    case FORMAT_B8G8R8A8:
+      return kBGRA_8888_GrPixelConfig;
+    case FORMAT_B8G8R8X8:
+      // We probably need to do something here.
+      return kBGRA_8888_GrPixelConfig;
+    case FORMAT_R5G6B5:
+      return kRGB_565_GrPixelConfig;
+    case FORMAT_A8:
+      return kAlpha_8_GrPixelConfig;
+    default:
+      return kRGBA_8888_GrPixelConfig;
+  }
+
+}
+#endif
 static inline void
 GfxMatrixToSkiaMatrix(const Matrix& mat, SkMatrix& retval)
 {

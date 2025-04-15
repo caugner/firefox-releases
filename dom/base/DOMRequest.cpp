@@ -18,12 +18,14 @@
 using mozilla::dom::DOMRequest;
 using mozilla::dom::DOMRequestService;
 using mozilla::dom::DOMCursor;
+using mozilla::AutoPushJSContext;
 
 DOMRequest::DOMRequest(nsIDOMWindow* aWindow)
   : mResult(JSVAL_VOID)
   , mDone(false)
   , mRooted(false)
 {
+  SetIsDOMBinding();
   Init(aWindow);
 }
 
@@ -34,6 +36,7 @@ DOMRequest::DOMRequest()
   , mDone(false)
   , mRooted(false)
 {
+  SetIsDOMBinding();
 }
 
 void
@@ -74,14 +77,29 @@ NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)
 NS_IMPL_ADDREF_INHERITED(DOMRequest, nsDOMEventTargetHelper)
 NS_IMPL_RELEASE_INHERITED(DOMRequest, nsDOMEventTargetHelper)
 
+/* virtual */ JSObject*
+DOMRequest::WrapObject(JSContext* aCx, JSObject* aScope)
+{
+  return DOMRequestBinding::Wrap(aCx, aScope, this);
+}
+
 NS_IMPL_EVENT_HANDLER(DOMRequest, success)
 NS_IMPL_EVENT_HANDLER(DOMRequest, error)
 
 NS_IMETHODIMP
 DOMRequest::GetReadyState(nsAString& aReadyState)
 {
-  mDone ? aReadyState.AssignLiteral("done") :
-          aReadyState.AssignLiteral("pending");
+  DOMRequestReadyState readyState = ReadyState();
+  switch (readyState) {
+    case DOMRequestReadyStateValues::Pending:
+      aReadyState.AssignLiteral("pending");
+      break;
+    case DOMRequestReadyStateValues::Done:
+      aReadyState.AssignLiteral("done");
+      break;
+    default:
+      MOZ_NOT_REACHED("Unrecognized readyState.");
+  }
 
   return NS_OK;
 }
@@ -89,21 +107,14 @@ DOMRequest::GetReadyState(nsAString& aReadyState)
 NS_IMETHODIMP
 DOMRequest::GetResult(jsval* aResult)
 {
-  NS_ASSERTION(mDone || mResult == JSVAL_VOID,
-               "Result should be undefined when pending");
-  *aResult = mResult;
-
+  *aResult = Result();
   return NS_OK;
 }
 
 NS_IMETHODIMP
 DOMRequest::GetError(nsIDOMDOMError** aError)
 {
-  NS_ASSERTION(mDone || !mError,
-               "Error should be null when pending");
-
-  NS_IF_ADDREF(*aError = mError);
-
+  NS_IF_ADDREF(*aError = GetError());
   return NS_OK;
 }
 
@@ -156,7 +167,8 @@ DOMRequest::FireEvent(const nsAString& aType, bool aBubble, bool aCancelable)
     return;
   }
 
-  nsRefPtr<nsDOMEvent> event = new nsDOMEvent(nullptr, nullptr);
+  nsCOMPtr<nsIDOMEvent> event;
+  NS_NewDOMEvent(getter_AddRefs(event), this, nullptr, nullptr);
   nsresult rv = event->InitEvent(aType, aBubble, aCancelable);
   if (NS_FAILED(rv)) {
     return;
@@ -240,9 +252,10 @@ public:
     NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
     nsresult rv;
     nsIScriptContext* sc = mReq->GetContextForEventHandlers(&rv);
-    MOZ_ASSERT(NS_SUCCEEDED(rv) && sc->GetNativeContext());
-    JSAutoRequest ar(sc->GetNativeContext());
-    JS_AddValueRoot(sc->GetNativeContext(), &mResult);
+    AutoPushJSContext cx(sc->GetNativeContext());
+    MOZ_ASSERT(NS_SUCCEEDED(rv) && cx);
+    JSAutoRequest ar(cx);
+    JS_AddValueRoot(cx, &mResult);
   }
 
   NS_IMETHODIMP
@@ -257,12 +270,13 @@ public:
     NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
     nsresult rv;
     nsIScriptContext* sc = mReq->GetContextForEventHandlers(&rv);
-    MOZ_ASSERT(NS_SUCCEEDED(rv) && sc->GetNativeContext());
+    AutoPushJSContext cx(sc->GetNativeContext());
+    MOZ_ASSERT(NS_SUCCEEDED(rv) && cx);
 
     // We need to build a new request, otherwise we assert since there won't be
     // a request available yet.
-    JSAutoRequest ar(sc->GetNativeContext());
-    JS_RemoveValueRoot(sc->GetNativeContext(), &mResult);
+    JSAutoRequest ar(cx);
+    JS_RemoveValueRoot(cx, &mResult);
   }
 private:
   nsRefPtr<DOMRequest> mReq;

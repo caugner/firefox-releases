@@ -6,7 +6,6 @@
 #include "mozilla/Util.h"
 
 #include "nsCOMPtr.h"
-#include "mozilla/dom/SVGAnimatedLength.h"
 #include "mozilla/dom/SVGForeignObjectElement.h"
 #include "mozilla/dom/SVGForeignObjectElementBinding.h"
 
@@ -16,9 +15,9 @@ namespace mozilla {
 namespace dom {
 
 JSObject*
-SVGForeignObjectElement::WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap)
+SVGForeignObjectElement::WrapNode(JSContext *aCx, JSObject *aScope)
 {
-  return SVGForeignObjectElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return SVGForeignObjectElementBinding::Wrap(aCx, aScope, this);
 }
 
 nsSVGElement::LengthInfo SVGForeignObjectElement::sLengthInfo[4] =
@@ -30,19 +29,11 @@ nsSVGElement::LengthInfo SVGForeignObjectElement::sLengthInfo[4] =
 };
 
 //----------------------------------------------------------------------
-// nsISupports methods
-
-NS_IMPL_ISUPPORTS_INHERITED3(SVGForeignObjectElement, SVGGraphicsElement,
-                             nsIDOMNode, nsIDOMElement,
-                             nsIDOMSVGElement)
-
-//----------------------------------------------------------------------
 // Implementation
 
 SVGForeignObjectElement::SVGForeignObjectElement(already_AddRefed<nsINodeInfo> aNodeInfo)
   : SVGGraphicsElement(aNodeInfo)
 {
-  SetIsDOMBinding();
 }
 
 //----------------------------------------------------------------------

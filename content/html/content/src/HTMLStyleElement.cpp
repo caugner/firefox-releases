@@ -19,8 +19,6 @@
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Style)
 
-DOMCI_NODE_DATA(HTMLStyleElement, mozilla::dom::HTMLStyleElement)
-
 namespace mozilla {
 namespace dom {
 
@@ -57,14 +55,13 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLStyleElement)
                                    nsIMutationObserver)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLStyleElement,
                                                nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLStyleElement)
-
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLStyleElement)
 
 
 NS_IMETHODIMP
-HTMLStyleElement::GetDisabled(bool* aDisabled)
+HTMLStyleElement::GetMozDisabled(bool* aDisabled)
 {
   NS_ENSURE_ARG_POINTER(aDisabled);
 
@@ -75,36 +72,23 @@ HTMLStyleElement::GetDisabled(bool* aDisabled)
 bool
 HTMLStyleElement::Disabled()
 {
-  nsCOMPtr<nsIDOMStyleSheet> ss = do_QueryInterface(GetSheet());
-  if (!ss) {
-    return false;
-  }
-
-  bool disabled = false;
-  ss->GetDisabled(&disabled);
-
-  return disabled;
+  nsCSSStyleSheet* ss = GetSheet();
+  return ss && ss->Disabled();
 }
 
 NS_IMETHODIMP
-HTMLStyleElement::SetDisabled(bool aDisabled)
+HTMLStyleElement::SetMozDisabled(bool aDisabled)
 {
-  ErrorResult error;
-  SetDisabled(aDisabled, error);
-  return error.ErrorCode();
+  SetDisabled(aDisabled);
+  return NS_OK;
 }
 
 void
-HTMLStyleElement::SetDisabled(bool aDisabled, ErrorResult& aError)
+HTMLStyleElement::SetDisabled(bool aDisabled)
 {
-  nsCOMPtr<nsIDOMStyleSheet> ss = do_QueryInterface(GetSheet());
-  if (!ss) {
-    return;
-  }
-
-  nsresult result = ss->SetDisabled(aDisabled);
-  if (NS_FAILED(result)) {
-    aError.Throw(result);
+  nsCSSStyleSheet* ss = GetSheet();
+  if (ss) {
+    ss->SetDisabled(aDisabled);
   }
 }
 
@@ -285,10 +269,9 @@ HTMLStyleElement::GetStyleSheetInfo(nsAString& aTitle,
 }
 
 JSObject*
-HTMLStyleElement::WrapNode(JSContext *aCx, JSObject *aScope,
-                           bool *aTriedToWrap)
+HTMLStyleElement::WrapNode(JSContext *aCx, JSObject *aScope)
 {
-  return HTMLStyleElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return HTMLStyleElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom

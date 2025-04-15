@@ -32,15 +32,20 @@ const Cu = Components.utils;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyGetter(this, "Services", function() {
-  Cu.import("resource://gre/modules/Services.jsm");
-  return Services;
-});
+XPCOMUtils.defineLazyModuleGetter(this, "Services",
+                                  "resource://gre/modules/Services.jsm");
 
-XPCOMUtils.defineLazyGetter(this, "NetUtil", function() {
-  Cu.import("resource://gre/modules/NetUtil.jsm");
-  return NetUtil;
-});
+XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
+                                  "resource://gre/modules/NetUtil.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "Task",
+                                  "resource://gre/modules/Task.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "Promise",
+                                  "resource://gre/modules/commonjs/sdk/core/promise.js");
+
+XPCOMUtils.defineLazyModuleGetter(this, "Deprecated",
+                                  "resource://gre/modules/Deprecated.jsm");
 
 // The minimum amount of transactions before starting a batch. Usually we do
 // do incremental updates, a batch will cause views to completely
@@ -65,7 +70,12 @@ function QI_node(aNode, aIID) {
   }
   return result;
 }
-function asVisit(aNode) QI_node(aNode, Ci.nsINavHistoryVisitResultNode);
+function asVisit(aNode) {
+  Deprecated.warning(
+    "asVisit is deprecated and will be removed in a future version",
+    "https://bugzilla.mozilla.org/show_bug.cgi?id=561450");
+  return aNode;
+};
 function asContainer(aNode) QI_node(aNode, Ci.nsINavHistoryContainerResultNode);
 function asQuery(aNode) QI_node(aNode, Ci.nsINavHistoryQueryResultNode);
 
@@ -90,6 +100,7 @@ this.PlacesUtils = {
   LMANNO_SITEURI: "livemark/siteURI",
   POST_DATA_ANNO: "bookmarkProperties/POSTData",
   READ_ONLY_ANNO: "placesInternal/READ_ONLY",
+  CHARSET_ANNO: "URIProperties/characterSet",
 
   TOPIC_SHUTDOWN: "places-shutdown",
   TOPIC_INIT_COMPLETE: "places-init-complete",
@@ -168,8 +179,7 @@ this.PlacesUtils = {
    * @returns true if the node is a Bookmark separator, false otherwise
    */
   nodeIsSeparator: function PU_nodeIsSeparator(aNode) {
-
-    return (aNode.type == Ci.nsINavHistoryResultNode.RESULT_TYPE_SEPARATOR);
+    return aNode.type == Ci.nsINavHistoryResultNode.RESULT_TYPE_SEPARATOR;
   },
 
   /**
@@ -179,8 +189,13 @@ this.PlacesUtils = {
    * @returns true if the node is a visit item, false otherwise
    */
   nodeIsVisit: function PU_nodeIsVisit(aNode) {
-    var type = aNode.type;
-    return type == Ci.nsINavHistoryResultNode.RESULT_TYPE_VISIT;
+    Deprecated.warning(
+      "nodeIsVisit is deprecated ans will be removed in a future version",
+      "https://bugzilla.mozilla.org/show_bug.cgi?id=561450");
+    return this.nodeIsURI(aNode) && aNode.parent &&
+           this.nodeIsQuery(aNode.parent) &&
+           asQuery(aNode.parent).queryOptions.resultType ==
+             Ci.nsINavHistoryQueryOptions.RESULTS_AS_VISIT;
   },
 
   /**
@@ -189,10 +204,14 @@ this.PlacesUtils = {
    *          A result node
    * @returns true if the node is a URL item, false otherwise
    */
-  uriTypes: [Ci.nsINavHistoryResultNode.RESULT_TYPE_URI,
-             Ci.nsINavHistoryResultNode.RESULT_TYPE_VISIT],
+  get uriTypes() {
+    Deprecated.warning(
+      "uriTypes is deprecated ans will be removed in a future version",
+      "https://bugzilla.mozilla.org/show_bug.cgi?id=561450");
+    return [Ci.nsINavHistoryResultNode.RESULT_TYPE_URI];
+  },
   nodeIsURI: function PU_nodeIsURI(aNode) {
-    return this.uriTypes.indexOf(aNode.type) != -1;
+    return aNode.type == Ci.nsINavHistoryResultNode.RESULT_TYPE_URI;
   },
 
   /**
@@ -441,49 +460,6 @@ this.PlacesUtils = {
             resultType == Ci.nsINavHistoryQueryOptions.RESULTS_AS_SITE_QUERY ||
             this.nodeIsDay(aNode) ||
             this.nodeIsHost(aNode));
-  },
-
-  /**
-   * Determines if a container item id is a livemark.
-   * @param aItemId
-   *        The id of the potential livemark.
-   * @returns true if the item is a livemark.
-   * @deprecated see the new API in mozIAsyncLivemarks.
-   */
-  itemIsLivemark: function PU_itemIsLivemark(aItemId) {
-    Cu.reportError("Synchronous livemarks methods and PlacesUtils livemarks " +
-                   "utils (itemIsLivemark, nodeIsLivemarkContainer, " +
-                   "nodeIsLivemarkItem) are deprecated and will be removed " +
-                   "in a future release.");
-    // If the Livemark service hasn't yet been initialized then
-    // use the annotations service directly to avoid instanciating
-    // it on startup. (bug 398300)
-    if (Object.getOwnPropertyDescriptor(this, "livemarks").value === undefined)
-      return this.annotations.itemHasAnnotation(aItemId, this.LMANNO_FEEDURI);
-    // If the livemark service has already been instanciated, use it.
-    return this.livemarks.isLivemark(aItemId);
-  },
-
-  /**
-   * Determines whether a result node is a livemark container.
-   * @param aNode
-   *        A result Node
-   * @returns true if the node is a livemark container item
-   * @deprecated see the new API in mozIAsyncLivemarks.
-   */
-  nodeIsLivemarkContainer: function PU_nodeIsLivemarkContainer(aNode) {
-    return this.nodeIsFolder(aNode) && this.itemIsLivemark(aNode.itemId);
-  },
-
- /**
-  * Determines whether a result node is a livemark item
-  * @param aNode
-  *        A result node
-  * @returns true if the node is a livemark container item
-   * @deprecated see the new API in mozIAsyncLivemarks.
-  */
-  nodeIsLivemarkItem: function PU_nodeIsLivemarkItem(aNode) {
-    return aNode.parent && this.nodeIsLivemarkContainer(aNode.parent);
   },
 
   /**
@@ -1395,7 +1371,7 @@ this.PlacesUtils = {
             this.tagging.tagURI(this._uri(aData.uri), tags);
         }
         if (aData.charset) {
-            this.history.setCharsetForURI(this._uri(aData.uri), aData.charset);
+            this.setCharsetForURI(this._uri(aData.uri), aData.charset);
         }
         if (aData.uri.substr(0, 6) == "place:")
           searchIds.push(id);
@@ -2038,7 +2014,7 @@ this.PlacesUtils = {
   asyncGetBookmarkIds: function PU_asyncGetBookmarkIds(aURI, aCallback, aScope)
   {
     if (!this._asyncGetBookmarksStmt) {
-      let db = this.history.QueryInterface(Ci.nsPIPlacesDatabase).DBConnection;
+      let db = this.history.DBConnection;
       this._asyncGetBookmarksStmt = db.createAsyncStatement(
         "SELECT b.id "
       + "FROM moz_bookmarks b "
@@ -2119,6 +2095,63 @@ this.PlacesUtils = {
     if (index != -1) {
       this._bookmarksServiceObserversQueue.splice(index, 1);
     }
+  },
+
+  /**
+   * Sets the character-set for a URI.
+   *
+   * @param aURI nsIURI
+   * @param aCharset character-set value.
+   * @return {Promise}
+   */
+  setCharsetForURI: function PU_setCharsetForURI(aURI, aCharset) {
+    let deferred = Promise.defer();
+
+    // Delaying to catch issues with asynchronous behavior while waiting
+    // to implement asynchronous annotations in bug 699844.
+    Services.tm.mainThread.dispatch(function() {
+      if (aCharset && aCharset.length > 0) {
+        PlacesUtils.annotations.setPageAnnotation(
+          aURI, PlacesUtils.CHARSET_ANNO, aCharset, 0,
+          Ci.nsIAnnotationService.EXPIRE_NEVER);
+      } else {
+        PlacesUtils.annotations.removePageAnnotation(
+          aURI, PlacesUtils.CHARSET_ANNO);
+      }
+      deferred.resolve();
+    }, Ci.nsIThread.DISPATCH_NORMAL);
+
+    return deferred.promise;
+  },
+
+  /**
+   * Gets the last saved character-set for a URI.
+   *
+   * @param aURI nsIURI
+   * @param [optional] aCallback
+   *        the callback method that reruns a character-set or null.
+   * @return {Promise}
+   * @resolve a character-set or null.
+   */
+  getCharsetForURI: function PU_getCharsetForURI(aURI, aCallback) {
+    let deferred = Promise.defer();
+
+    Services.tm.mainThread.dispatch(function() {
+      let charset = null;
+
+      try {
+        charset = PlacesUtils.annotations.getPageAnnotation(aURI,
+                                                            PlacesUtils.CHARSET_ANNO);
+      } catch (ex) { }
+
+      if (aCallback) {
+        aCallback(charset);
+      }
+      deferred.resolve(charset);
+
+    }, Ci.nsIThread.DISPATCH_NORMAL);
+
+    return deferred.promise;
   }
 };
 
@@ -2157,20 +2190,19 @@ AsyncStatementCancelWrapper.prototype = {
   }
 }
 
-XPCOMUtils.defineLazyServiceGetter(PlacesUtils, "history",
-                                   "@mozilla.org/browser/nav-history-service;1",
-                                   "nsINavHistoryService");
+XPCOMUtils.defineLazyGetter(PlacesUtils, "history", function() {
+  return Cc["@mozilla.org/browser/nav-history-service;1"]
+           .getService(Ci.nsINavHistoryService)
+           .QueryInterface(Ci.nsIBrowserHistory)
+           .QueryInterface(Ci.nsPIPlacesDatabase);
+});
 
 XPCOMUtils.defineLazyServiceGetter(PlacesUtils, "asyncHistory",
                                    "@mozilla.org/browser/history;1",
                                    "mozIAsyncHistory");
 
 XPCOMUtils.defineLazyGetter(PlacesUtils, "bhistory", function() {
-  return PlacesUtils.history.QueryInterface(Ci.nsIBrowserHistory);
-});
-
-XPCOMUtils.defineLazyGetter(PlacesUtils, "ghistory2", function() {
-  return PlacesUtils.history.QueryInterface(Ci.nsIGlobalHistory2);
+  return PlacesUtils.history;
 });
 
 XPCOMUtils.defineLazyServiceGetter(PlacesUtils, "favicons",
@@ -2191,8 +2223,7 @@ XPCOMUtils.defineLazyServiceGetter(PlacesUtils, "tagging",
 
 XPCOMUtils.defineLazyGetter(PlacesUtils, "livemarks", function() {
   return Cc["@mozilla.org/browser/livemark-service;2"].
-         getService(Ci.nsILivemarkService).
-         QueryInterface(Ci.mozIAsyncLivemarks);
+         getService(Ci.mozIAsyncLivemarks);
 });
 
 XPCOMUtils.defineLazyGetter(PlacesUtils, "transactionManager", function() {

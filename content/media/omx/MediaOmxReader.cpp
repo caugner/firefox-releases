@@ -8,7 +8,7 @@
 
 #include "MediaDecoderStateMachine.h"
 #include "mozilla/TimeStamp.h"
-#include "nsTimeRanges.h"
+#include "mozilla/dom/TimeRanges.h"
 #include "MediaResource.h"
 #include "VideoUtils.h"
 #include "MediaOmxDecoder.h"
@@ -44,7 +44,7 @@ nsresult MediaOmxReader::Init(MediaDecoderReader* aCloneDonor)
 }
 
 nsresult MediaOmxReader::ReadMetadata(VideoInfo* aInfo,
-                                        MetadataTags** aTags)
+                                      MetadataTags** aTags)
 {
   NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
 
@@ -121,7 +121,7 @@ nsresult MediaOmxReader::ResetDecode()
 }
 
 bool MediaOmxReader::DecodeVideoFrame(bool &aKeyframeSkip,
-                                        int64_t aTimeThreshold)
+                                      int64_t aTimeThreshold)
 {
   // Record number of frames decoded and parsed. Automatically update the
   // stats counters using the AutoNotifyDecoded stack-based class.
@@ -328,7 +328,7 @@ static uint64_t BytesToTime(int64_t offset, uint64_t length, uint64_t durationUs
   return uint64_t(double(durationUs) * perc);
 }
 
-nsresult MediaOmxReader::GetBuffered(nsTimeRanges* aBuffered, int64_t aStartTime)
+nsresult MediaOmxReader::GetBuffered(mozilla::dom::TimeRanges* aBuffered, int64_t aStartTime)
 {
   if (!mOmxDecoder.get())
     return NS_OK;

@@ -16,40 +16,28 @@ const BrowserTouchHandler = {
 
     // Messages sent from content.js
     messageManager.addMessageListener("Content:ContextMenu", this);
+    messageManager.addMessageListener("Content:SelectionCaret", this);
   },
 
   // Content forwarding the contextmenu command
-  onContentContextMenu: function onContentContextMenu(aMessage) {
+  _onContentContextMenu: function _onContentContextMenu(aMessage) {
     // Note, target here is the target of the message manager message,
     // usually the browser.
-    let contextInfo = { name: aMessage.name,
-                        json: aMessage.json,
-                        target: aMessage.target };
     // Touch input selection handling
-    if (!InputSourceHelper.isPrecise) {
-      if (SelectionHelperUI.isActive()) {
-        // Selection handler is active.
-        if (aMessage.json.types.indexOf("selected-text") != -1) {
-          // long tap on existing selection. The incoming message has the
-          // string data, so reset the selection handler and invoke the
-          // context menu.
-          SelectionHelperUI.closeEditSession();
-        } else {
-          // Weird, context menu request with no selected text and
-          // SelectionHelperUI is active? Might be a bug, warn. Fall
-          // through anyway, the context menu handler will look in the
-          // incoming message for content types it knows how to handle.
-          Util.dumpLn("long tap on empty selection with SelectionHelperUI active?"); 
-          SelectionHelperUI.closeEditSession();
-        }
-      } else if (SelectionHelperUI.canHandle(aMessage)) {
-        SelectionHelperUI.openEditSession(aMessage);
-        return;
-      }
+    if (!InputSourceHelper.isPrecise &&
+        !SelectionHelperUI.isActive &&
+        SelectionHelperUI.canHandleContextMenuMsg(aMessage)) {
+      SelectionHelperUI.openEditSession(aMessage.target,
+                                        aMessage.json.xPos,
+                                        aMessage.json.yPos);
+      return;
     }
 
     // Check to see if we have context menu item(s) that apply to what
     // was clicked on.
+    let contextInfo = { name: aMessage.name,
+                        json: aMessage.json,
+                        target: aMessage.target };
     if (ContextMenuUI.showContextMenu(contextInfo)) {
       let event = document.createEvent("Events");
       event.initEvent("CancelTouchSequence", true, false);
@@ -61,6 +49,16 @@ const BrowserTouchHandler = {
       event.initEvent("MozEdgeUIGesture", true, false);
       window.dispatchEvent(event);
     }
+  },
+
+  /*
+   * Called when Content wants to initiate selection management
+   * due to a tap in a form input.
+   */
+  _onCaretSelectionStarted: function _onCaretSelectionStarted(aMessage) {
+    SelectionHelperUI.attachToCaret(aMessage.target,
+                                    aMessage.json.xPos,
+                                    aMessage.json.yPos);
   },
 
   /*
@@ -86,7 +84,10 @@ const BrowserTouchHandler = {
     switch (aMessage.name) {
       // Content forwarding the contextmenu command
       case "Content:ContextMenu":
-        this.onContentContextMenu(aMessage);
+        this._onContentContextMenu(aMessage);
+        break;
+      case "Content:SelectionCaret":
+        this._onCaretSelectionStarted(aMessage);
         break;
     }
   },

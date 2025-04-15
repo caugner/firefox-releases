@@ -7,12 +7,10 @@
 
 #include "nsTextFrame.h"
 
-#include <cmath> // for std::abs(float/double)
-#include <cstdlib> // for std::abs(int/long)
-
 #include "mozilla/Attributes.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Likely.h"
+#include "mozilla/MathAlgorithms.h"
 
 #include "nsCOMPtr.h"
 #include "nsBlockFrame.h"
@@ -81,7 +79,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/LookAndFeel.h"
 
-#include "sampler.h"
+#include "GeckoProfiler.h"
 
 #ifdef DEBUG
 #undef NOISY_BLINK
@@ -2274,12 +2272,13 @@ BuildTextRunsScanner::SetupBreakSinksForTextRun(gfxTextRun* aTextRun,
     if (!initialBreakController) {
       initialBreakController = mLineContainer;
     }
-    if (!initialBreakController->StyleText()->WhiteSpaceCanWrap()) {
+    if (!initialBreakController->StyleText()->
+                                 WhiteSpaceCanWrap(initialBreakController)) {
       flags |= nsLineBreaker::BREAK_SUPPRESS_INITIAL;
     }
     nsTextFrame* startFrame = mappedFlow->mStartFrame;
     const nsStyleText* textStyle = startFrame->StyleText();
-    if (!textStyle->WhiteSpaceCanWrap()) {
+    if (!textStyle->WhiteSpaceCanWrap(startFrame)) {
       flags |= nsLineBreaker::BREAK_SUPPRESS_INSIDE;
     }
     if (aTextRun->GetFlags() & nsTextFrameUtils::TEXT_NO_BREAKS) {
@@ -3110,7 +3109,7 @@ PropertyProvider::GetHyphenationBreaks(uint32_t aStart, uint32_t aLength,
   NS_PRECONDITION(IsInBounds(mStart, mLength, aStart, aLength), "Range out of bounds");
   NS_PRECONDITION(mLength != INT32_MAX, "Can't call this with undefined length");
 
-  if (!mTextStyle->WhiteSpaceCanWrap() ||
+  if (!mTextStyle->WhiteSpaceCanWrap(mFrame) ||
       mTextStyle->mHyphens == NS_STYLE_HYPHENS_NONE)
   {
     memset(aBreakBefore, false, aLength*sizeof(bool));
@@ -3914,7 +3913,7 @@ nsTextFrame::AccessibleType()
 
 
 //-----------------------------------------------------------------------------
-NS_IMETHODIMP
+void
 nsTextFrame::Init(nsIContent*      aContent,
                   nsIFrame*        aParent,
                   nsIFrame*        aPrevInFlow)
@@ -3935,7 +3934,7 @@ nsTextFrame::Init(nsIContent*      aContent,
 
   // We're not a continuing frame.
   // mContentOffset = 0; not necessary since we get zeroed out at init
-  return nsFrame::Init(aContent, aParent, aPrevInFlow);
+  nsFrame::Init(aContent, aParent, aPrevInFlow);
 }
 
 void
@@ -3977,9 +3976,9 @@ public:
 
   friend nsIFrame* NS_NewContinuingTextFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
-  NS_IMETHOD Init(nsIContent*      aContent,
-                  nsIFrame*        aParent,
-                  nsIFrame*        aPrevInFlow);
+  virtual void Init(nsIContent*      aContent,
+                    nsIFrame*        aParent,
+                    nsIFrame*        aPrevInFlow) MOZ_OVERRIDE;
 
   virtual void DestroyFrom(nsIFrame* aDestructRoot);
 
@@ -4028,14 +4027,14 @@ protected:
   nsIFrame* mPrevContinuation;
 };
 
-NS_IMETHODIMP
+void
 nsContinuingTextFrame::Init(nsIContent* aContent,
                             nsIFrame*   aParent,
                             nsIFrame*   aPrevInFlow)
 {
   NS_ASSERTION(aPrevInFlow, "Must be a continuation!");
   // NOTE: bypassing nsTextFrame::Init!!!
-  nsresult rv = nsFrame::Init(aContent, aParent, aPrevInFlow);
+  nsFrame::Init(aContent, aParent, aPrevInFlow);
 
 #ifdef IBMBIDI
   nsTextFrame* nextContinuation =
@@ -4094,8 +4093,6 @@ nsContinuingTextFrame::Init(nsIContent* aContent,
     mState |= NS_FRAME_IS_BIDI;
   } // prev frame is bidi
 #endif // IBMBIDI
-
-  return rv;
 }
 
 void
@@ -4595,7 +4592,7 @@ public:
 void
 nsDisplayText::Paint(nsDisplayListBuilder* aBuilder,
                      nsRenderingContext* aCtx) {
-  SAMPLE_LABEL("nsDisplayText", "Paint");
+  PROFILER_LABEL("nsDisplayText", "Paint");
   // Add 1 pixel of dirty area around mVisibleRect to allow us to paint
   // antialiased pixels beyond the measured text extents.
   // This is temporary until we do this in the actual calculation of text extents.
@@ -5392,7 +5389,7 @@ nsTextFrame::PaintOneShadow(uint32_t aOffset, uint32_t aLength,
                             const nsCharClipDisplayItem::ClipEdges& aClipEdges,
                             nscoord aLeftSideOffset, gfxRect& aBoundingBox)
 {
-  SAMPLE_LABEL("nsTextFrame", "PaintOneShadow");
+  PROFILER_LABEL("nsTextFrame", "PaintOneShadow");
   gfxPoint shadowOffset(aShadowDetails->mXOffset, aShadowDetails->mYOffset);
   nscoord blurRadius = std::max(aShadowDetails->mRadius, 0);
 
@@ -5648,7 +5645,7 @@ nsTextFrame::PaintTextSelectionDecorations(gfxContext* aCtx,
     if (type == aSelectionType) {
       pt.x = (aFramePt.x + xOffset -
              (mTextRun->IsRightToLeft() ? advance : 0)) / app;
-      gfxFloat width = std::abs(advance) / app;
+      gfxFloat width = Abs(advance) / app;
       gfxFloat xInFrame = pt.x - (aFramePt.x / app);
       DrawSelectionDecorations(aCtx, dirtyRect, aSelectionType, this,
                                aTextPaintStyle, selectedStyle, pt, xInFrame,
@@ -6830,7 +6827,8 @@ nsTextFrame::PeekOffsetWord(bool aForward, bool aWordSelectEatSpace, bool aIsKey
         // Japanese and Chinese.
         canBreak = true;
       } else {
-        canBreak = isWordBreakBefore && aState->mSawBeforeType;
+        canBreak = isWordBreakBefore && aState->mSawBeforeType &&
+          (aWordSelectEatSpace != isWhitespace);
       }
       if (canBreak) {
         *aOffset = cIter.GetBeforeOffset() - mContentOffset;
@@ -7489,15 +7487,12 @@ nsTextFrame::SetLength(int32_t aLength, nsLineLayout* aLineLayout,
       // resolution, so as not to create a new frame which doesn't appear in
       // the bidi resolver's list of frames
       nsPresContext* presContext = PresContext();
-      nsIFrame* newFrame;
-      nsresult rv = presContext->PresShell()->FrameConstructor()->
-        CreateContinuingFrame(presContext, this, GetParent(), &newFrame);
-      if (NS_SUCCEEDED(rv)) {
-        nsTextFrame* next = static_cast<nsTextFrame*>(newFrame);
-        nsFrameList temp(next, next);
-        GetParent()->InsertFrames(kNoReflowPrincipalList, this, temp);
-        f = next;
-      }
+      nsIFrame* newFrame = presContext->PresShell()->FrameConstructor()->
+        CreateContinuingFrame(presContext, this, GetParent());
+      nsTextFrame* next = static_cast<nsTextFrame*>(newFrame);
+      nsFrameList temp(next, next);
+      GetParent()->InsertFrames(kNoReflowPrincipalList, this, temp);
+      f = next;
     }
 
     f->mContentOffset = end;
@@ -7936,7 +7931,7 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
                                   canTrimTrailingWhitespace ? &trimmedWidth : nullptr,
                                   &textMetrics, boundingBoxType, ctx,
                                   &usedHyphenation, &transformedLastBreak,
-                                  textStyle->WordCanWrap(), &breakPriority);
+                                  textStyle->WordCanWrap(this), &breakPriority);
   if (!length && !textMetrics.mAscent && !textMetrics.mDescent) {
     // If we're measuring a zero-length piece of text, update
     // the height manually.

@@ -41,7 +41,7 @@ interface nsIDOMClientRect;
 interface nsIURI;
 interface nsIDOMEventTarget;
 
-[scriptable, uuid(16b3bdcc-75d4-11e2-8a20-aaff78957a39)]
+[scriptable, uuid(ab9e9c45-1910-458c-a043-79cbbfc89f4d)]
 interface nsIDOMWindowUtils : nsISupports {
 
   /**
@@ -652,7 +652,7 @@ interface nsIDOMWindowUtils : nsISupports {
    *
    * @param aFlushLayout flushes layout if true. Otherwise, no flush occurs.
    */
-  long getScrollbarWidth(in boolean aFlushLayout);
+  void getScrollbarSize(in boolean aFlushLayout, out long aWidth, out long aHeight);
 
   /**
    * Returns the bounds of the window's currently loaded document. This will
@@ -1138,6 +1138,12 @@ interface nsIDOMWindowUtils : nsISupports {
   void restoreNormalRefresh();
 
   /**
+   * Reports whether the current state is test-controlled refreshes
+   * (see advanceTimeAndRefresh and restoreNormalRefresh above).
+   */
+  readonly attribute bool isTestControllingRefreshes;
+
+  /**
    * Method for testing nsStyleAnimation::ComputeDistance.
    *
    * Returns the distance between the two values as reported by
@@ -1289,6 +1295,19 @@ interface nsIDOMWindowUtils : nsISupports {
   void setScrollPositionClampingScrollPortSize(in float aWidth, in float aHeight);
 
   /**
+   * Set margins for the layout of fixed position elements in the content
+   * document. These are used on mobile, where the viewable area can be
+   * temporarily obscured by the browser chrome. In this situation, we're ok
+   * with scrollable page content being obscured, but fixed position content
+   * cannot be revealed without removing the obscuring chrome, so we use these
+   * margins so that it can remain visible.
+   *
+   * The caller of this method must have chrome privileges.
+   */
+  void setContentDocumentFixedPositionMargins(in float aTop, in float aRight,
+                                              in float aBottom, in float aLeft);
+
+  /**
    * Prevent this window (and any child windows) from displaying any further
    * dialogs (e.g. window.alert()).
    */
@@ -1336,4 +1355,9 @@ interface nsIDOMWindowUtils : nsISupports {
     * attribute or -moz-user-input: none/disabled.
     */
    boolean isNodeDisabledForEvents(in nsIDOMNode aNode);
+
+   /**
+    * Setting paintFlashing to true will flash newly painted area.
+    */
+   attribute boolean paintFlashing;
 };

@@ -613,12 +613,12 @@ nsScriptLoader::ProcessScriptElement(nsIScriptElement *aElement)
 
   if (csp) {
     PR_LOG(gCspPRLog, PR_LOG_DEBUG, ("New ScriptLoader i ****with CSP****"));
-    bool inlineOK;
-    rv = csp->GetAllowsInlineScript(&inlineOK);
+    bool inlineOK = true;
+    bool reportViolations = false;
+    rv = csp->GetAllowsInlineScript(&reportViolations, &inlineOK);
     NS_ENSURE_SUCCESS(rv, false);
 
-    if (!inlineOK) {
-      PR_LOG(gCspPRLog, PR_LOG_DEBUG, ("CSP blocked inline scripts (2)"));
+    if (reportViolations) {
       // gather information to log with violation report
       nsIURI* uri = mDocument->GetDocumentURI();
       nsAutoCString asciiSpec;
@@ -636,6 +636,10 @@ nsScriptLoader::ProcessScriptElement(nsIScriptElement *aElement)
                                NS_ConvertUTF8toUTF16(asciiSpec),
                                scriptText,
                                aElement->GetScriptLineNumber());
+    }
+
+    if (!inlineOK) {
+      PR_LOG(gCspPRLog, PR_LOG_DEBUG, ("CSP blocked inline scripts (2)"));
       return false;
     }
   }
@@ -822,6 +826,7 @@ nsScriptLoader::EvaluateScript(nsScriptLoadRequest* aRequest,
   if (!context) {
     return NS_ERROR_FAILURE;
   }
+  AutoPushJSContext cx(context->GetNativeContext());
 
   bool oldProcessingScriptTag = context->GetProcessingScriptTag();
   context->SetProcessingScriptTag(true);
@@ -837,7 +842,7 @@ nsScriptLoader::EvaluateScript(nsScriptLoadRequest* aRequest,
 
   JSVersion version = JSVersion(aRequest->mJSVersion);
   if (version != JSVERSION_UNKNOWN) {
-    JS::CompileOptions options(context->GetNativeContext());
+    JS::CompileOptions options(cx);
     options.setFileAndLine(url.get(), aRequest->mLineNo)
            .setVersion(JSVersion(aRequest->mJSVersion));
     if (aRequest->mOriginPrincipal) {
@@ -850,8 +855,6 @@ nsScriptLoader::EvaluateScript(nsScriptLoadRequest* aRequest,
   // Put the old script back in case it wants to do anything else.
   mCurrentScript = oldCurrent;
 
-  JSContext *cx = nullptr; // Initialize this to keep GCC happy.
-  cx = context->GetNativeContext();
   JSAutoRequest ar(cx);
   context->SetProcessingScriptTag(oldProcessingScriptTag);
   return rv;
@@ -1025,7 +1028,8 @@ nsScriptLoader::ConvertToUTF16(nsIChannel* aChannel, const uint8_t* aData,
 
   if (!unicodeDecoder &&
       aChannel &&
-      NS_SUCCEEDED(aChannel->GetContentCharset(charset))) {
+      NS_SUCCEEDED(aChannel->GetContentCharset(charset)) &&
+      !charset.IsEmpty()) {
     charsetConv->GetUnicodeDecoder(charset.get(),
                                    getter_AddRefs(unicodeDecoder));
   }

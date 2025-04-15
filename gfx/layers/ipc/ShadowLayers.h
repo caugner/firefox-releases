@@ -219,6 +219,9 @@ public:
   void PaintedCanvas(ShadowableLayer* aCanvas,
                      bool aNeedYFlip,
                      const SurfaceDescriptor& aNewFrontSurface);
+  void PaintedCanvasNoSwap(ShadowableLayer* aCanvas,
+                           bool aNeedYFlip,
+                           const SurfaceDescriptor& aNewFrontSurface);
 
   /**
    * End the current transaction and forward it to ShadowLayerManager.
@@ -581,6 +584,7 @@ public:
    */
   virtual void SetValidRegion(const nsIntRegion& aRegion)
   {
+    MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) ValidRegion", this));
     mValidRegion = aRegion;
     Mutated();
   }

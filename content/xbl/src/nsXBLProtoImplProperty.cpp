@@ -9,6 +9,7 @@
 #include "nsIContent.h"
 #include "nsXBLProtoImplProperty.h"
 #include "nsUnicharUtils.h"
+#include "nsContentUtils.h"
 #include "nsReadableUtils.h"
 #include "nsIScriptContext.h"
 #include "nsJSUtils.h"
@@ -16,6 +17,8 @@
 #include "nsXBLPrototypeBinding.h"
 #include "nsXBLSerialize.h"
 #include "xpcpublic.h"
+
+using namespace mozilla;
 
 nsXBLProtoImplProperty::nsXBLProtoImplProperty(const PRUnichar* aName,
                                                const PRUnichar* aGetter, 
@@ -144,6 +147,7 @@ nsXBLProtoImplProperty::InstallMember(JSContext *aCx,
   MOZ_ASSERT(js::IsObjectInContextCompartment(aTargetClassObject, aCx));
   JSObject * globalObject = JS_GetGlobalForObject(aCx, aTargetClassObject);
   JSObject * scopeObject = xpc::GetXBLScope(aCx, globalObject);
+  NS_ENSURE_TRUE(scopeObject, NS_ERROR_OUT_OF_MEMORY);
 
   // now we want to reevaluate our property using aContext and the script object for this window...
   if (mJSGetterObject || mJSSetterObject) {
@@ -207,7 +211,7 @@ nsXBLProtoImplProperty::CompileMember(nsIScriptContext* aContext, const nsCStrin
     if (!getter.IsEmpty()) {
       // Compile into a temp object so we don't wipe out mGetterText
       JSObject* getterObject = nullptr;
-      JSContext* cx = aContext->GetNativeContext();
+      AutoPushJSContext cx(aContext->GetNativeContext());
       JSAutoRequest ar(cx);
       JSAutoCompartment ac(cx, aClassObject);
       JS::CompileOptions options(cx);
@@ -215,7 +219,7 @@ nsXBLProtoImplProperty::CompileMember(nsIScriptContext* aContext, const nsCStrin
              .setVersion(JSVERSION_LATEST)
              .setUserBit(true); // Flag us as XBL
       nsCString name = NS_LITERAL_CSTRING("get_") + NS_ConvertUTF16toUTF8(mName);
-      js::RootedObject rootedNull(cx, nullptr); // See bug 781070.
+      JS::RootedObject rootedNull(cx, nullptr); // See bug 781070.
       rv = nsJSUtils::CompileFunction(cx, rootedNull, options, name, 0, nullptr,
                                       getter, &getterObject);
 
@@ -257,7 +261,7 @@ nsXBLProtoImplProperty::CompileMember(nsIScriptContext* aContext, const nsCStrin
     if (!setter.IsEmpty()) {
       // Compile into a temp object so we don't wipe out mSetterText
       JSObject* setterObject = nullptr;
-      JSContext* cx = aContext->GetNativeContext();
+      AutoPushJSContext cx(aContext->GetNativeContext());
       JSAutoRequest ar(cx);
       JSAutoCompartment ac(cx, aClassObject);
       JS::CompileOptions options(cx);
@@ -265,7 +269,7 @@ nsXBLProtoImplProperty::CompileMember(nsIScriptContext* aContext, const nsCStrin
              .setVersion(JSVERSION_LATEST)
              .setUserBit(true); // Flag us as XBL
       nsCString name = NS_LITERAL_CSTRING("set_") + NS_ConvertUTF16toUTF8(mName);
-      js::RootedObject rootedNull(cx, nullptr); // See bug 781070.
+      JS::RootedObject rootedNull(cx, nullptr); // See bug 781070.
       rv = nsJSUtils::CompileFunction(cx, rootedNull, options, name, 1,
                                       gPropertyArgs, setter, &setterObject);
 

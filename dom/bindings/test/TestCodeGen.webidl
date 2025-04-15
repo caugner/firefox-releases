@@ -18,6 +18,8 @@ callback interface TestCallbackInterface {
   attribute DOMString bar;
   void doSomething();
   long doSomethingElse(DOMString arg, TestInterface otherArg);
+  void doSequenceLongArg(sequence<long> arg);
+  void doSequenceStringArg(sequence<DOMString> arg);
 };
 
 callback interface TestSingleOperationCallbackInterface {
@@ -89,8 +91,13 @@ interface OnlyForUseInConstructor {
  Constructor(DOMString str),
  Constructor(unsigned long num, boolean? boolArg),
  Constructor(TestInterface? iface),
- Constructor(long arg1, IndirectlyImplementedInterface iface)
- // , Constructor(long arg1, long arg2, (TestInterface or OnlyForUseInConstructor) arg3)
+ Constructor(long arg1, IndirectlyImplementedInterface iface),
+ // Constructor(long arg1, long arg2, (TestInterface or OnlyForUseInConstructor) arg3),
+ NamedConstructor=Test,
+ NamedConstructor=Test(DOMString str),
+ NamedConstructor=Test2(DictForConstructor dict, any any1, object obj1,
+                        object? obj2, sequence<Dict> seq, optional any any2,
+                        optional object obj3, optional object? obj4)
  ]
 interface TestInterface {
   // Integer types
@@ -312,6 +319,8 @@ interface TestInterface {
   sequence<any> receiveAnySequence();
   sequence<any>? receiveNullableAnySequence();
 
+  void passSequenceOfSequences(sequence<sequence<long>> arg);
+
   // Typed array types
   void passArrayBuffer(ArrayBuffer arg);
   void passNullableArrayBuffer(ArrayBuffer? arg);
@@ -449,6 +458,46 @@ interface TestInterface {
   // Variadic handling
   void passVariadicThirdArg(DOMString arg1, long arg2, TestInterface... arg3);
 
+  // Conditionally exposed methods/attributes
+  [Pref="abc.def"]
+  readonly attribute boolean prefable1;
+  [Pref="abc.def"]
+  readonly attribute boolean prefable2;
+  [Pref="ghi.jkl"]
+  readonly attribute boolean prefable3;
+  [Pref="ghi.jkl"]
+  readonly attribute boolean prefable4;
+  [Pref="abc.def"]
+  readonly attribute boolean prefable5;
+  [Pref="abc.def", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  readonly attribute boolean prefable6;
+  [Pref="abc.def", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  readonly attribute boolean prefable7;
+  [Pref="ghi.jkl", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  readonly attribute boolean prefable8;
+  [Pref="abc.def", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  readonly attribute boolean prefable9;
+  [Pref="abc.def"]
+  void prefable10();
+  [Pref="abc.def", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  void prefable11();
+  [Pref="abc.def", Func="TestFuncControlledMember"]
+  readonly attribute boolean prefable12;
+  [Pref="abc.def", Func="nsGenericHTMLElement::TouchEventsEnabled"]
+  void prefable13();
+  [Pref="abc.def", Func="TestFuncControlledMember"]
+  readonly attribute boolean prefable14;
+  [Func="TestFuncControlledMember"]
+  readonly attribute boolean prefable15;
+  [Func="TestFuncControlledMember"]
+  readonly attribute boolean prefable16;
+  [Pref="abc.def", Func="TestFuncControlledMember"]
+  void prefable17();
+  [Func="TestFuncControlledMember"]
+  void prefable18();
+  [Func="TestFuncControlledMember"]
+  void prefable19();
+
   // Miscellania
   [LenientThis] attribute long attrWithLenientThis;
   [Unforgeable] readonly attribute long unforgeableAttr;
@@ -462,16 +511,21 @@ interface TestInterface {
   [Throws] attribute boolean throwingAttr;
   [GetterThrows] attribute boolean throwingGetterAttr;
   [SetterThrows] attribute boolean throwingSetterAttr;
+  legacycaller short(unsigned long arg1, TestInterface arg2);
 
-  // If you add things here, add them to TestExampleGen as well
+  // If you add things here, add them to TestExampleGen and TestJSImplGen as well
 };
 
-interface TestChildInterface : TestInterface {
+interface TestParentInterface {
+};
+
+interface TestChildInterface : TestParentInterface {
 };
 
 interface TestNonWrapperCacheInterface {
 };
 
+[NoInterfaceObject]
 interface ImplementedInterfaceParent {
   void implementedParentMethod();
   attribute boolean implementedParentProperty;
@@ -489,6 +543,7 @@ interface IndirectlyImplementedInterface {
   const long indirectlyImplementedConstant = 9;
 };
 
+[NoInterfaceObject]
 interface ImplementedInterface : ImplementedInterfaceParent {
   void implementedMethod();
   attribute boolean implementedProperty;
@@ -496,15 +551,20 @@ interface ImplementedInterface : ImplementedInterfaceParent {
   const long implementedConstant = 5;
 };
 
+[NoInterfaceObject]
 interface DiamondImplements {
   readonly attribute long diamondImplementedProperty;
 };
+[NoInterfaceObject]
 interface DiamondBranch1A {
 };
+[NoInterfaceObject]
 interface DiamondBranch1B {
 };
+[NoInterfaceObject]
 interface DiamondBranch2A : DiamondImplements {
 };
+[NoInterfaceObject]
 interface DiamondBranch2B : DiamondImplements {
 };
 TestInterface implements DiamondBranch1A;
@@ -537,6 +597,7 @@ dictionary ParentDict : GrandparentDict {
   long c = 5;
   TestInterface someInterface;
   TestExternalInterface someExternalInterface;
+  any parentAny;
 };
 
 dictionary DictContainingDict {
@@ -546,6 +607,18 @@ dictionary DictContainingDict {
 dictionary DictContainingSequence {
   sequence<long> ourSequence;
   sequence<TestInterface> ourSequence2;
+};
+
+dictionary DictForConstructor {
+  Dict dict;
+  DictContainingDict dict2;
+  sequence<Dict> seq1;
+  sequence<sequence<Dict>>? seq2;
+  sequence<sequence<Dict>?> seq3;
+  // No support for sequences of "any" or "object" as return values yet.
+  object obj1;
+  object? obj2;
+  any any1 = null;
 };
 
 interface TestIndexedGetterInterface {

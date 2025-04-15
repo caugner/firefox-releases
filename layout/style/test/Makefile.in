@@ -11,11 +11,6 @@ relativesrcdir  = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= layout
-
-DIRS +=		chrome \
-		$(NULL)
-
 HOST_CPPSRCS	= \
 		ListCSSProperties.cpp \
 		$(NULL)
@@ -217,8 +212,6 @@ MOCHITEST_FILES +=	\
 		file_flexbox_layout.html \
 		test_flexbox_layout.html \
 		flexbox_layout_testcases.js \
-		file_flexbox_min_size_auto.html \
-		test_flexbox_min_size_auto.html \
 		file_flexbox_order.html \
 		test_flexbox_order.html \
 		file_flexbox_order_table.html \

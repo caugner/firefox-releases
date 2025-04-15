@@ -15,22 +15,16 @@
 #include "nsString.h"
 #include "nsPresContext.h"
 #include "nsIWidget.h"
-#include "nsIStyleRule.h"
 #include "nsCRTGlue.h"
 #include "nsCSSProps.h"
 
 #include "nsCOMPtr.h"
-#include "nsIFrame.h"
-#include "nsHTMLReflowState.h"
-#include "prenv.h"
 
-#include "nsSVGUtils.h"
 #include "nsBidiUtils.h"
 #include "nsLayoutUtils.h"
 
 #include "imgIRequest.h"
 #include "imgIContainer.h"
-#include "prlog.h"
 
 #include "mozilla/Likely.h"
 #include <algorithm>
@@ -742,6 +736,7 @@ nsStyleColumn::nsStyleColumn(nsPresContext* aPresContext)
   mColumnCount = NS_STYLE_COLUMN_COUNT_AUTO;
   mColumnWidth.SetAutoValue();
   mColumnGap.SetNormalValue();
+  mColumnFill = NS_STYLE_COLUMN_FILL_BALANCE;
 
   mColumnRuleWidth = (aPresContext->GetBorderWidthTable())[NS_STYLE_BORDER_WIDTH_MEDIUM];
   mColumnRuleStyle = NS_STYLE_BORDER_STYLE_NONE;
@@ -773,7 +768,8 @@ nsChangeHint nsStyleColumn::CalcDifference(const nsStyleColumn& aOther) const
     return NS_STYLE_HINT_FRAMECHANGE;
 
   if (mColumnWidth != aOther.mColumnWidth ||
-      mColumnGap != aOther.mColumnGap)
+      mColumnGap != aOther.mColumnGap ||
+      mColumnFill != aOther.mColumnFill)
     return NS_STYLE_HINT_REFLOW;
 
   if (GetComputedColumnRuleWidth() != aOther.GetComputedColumnRuleWidth() ||
@@ -1081,10 +1077,10 @@ nsStylePosition::nsStylePosition(void)
   mOffset.SetRight(autoCoord);
   mOffset.SetBottom(autoCoord);
   mWidth.SetAutoValue();
-  mMinWidth.SetAutoValue();
+  mMinWidth.SetCoordValue(0);
   mMaxWidth.SetNoneValue();
   mHeight.SetAutoValue();
-  mMinHeight.SetAutoValue();
+  mMinHeight.SetCoordValue(0);
   mMaxHeight.SetNoneValue();
 #ifdef MOZ_FLEXBOX
   mFlexBasis.SetAutoValue();
@@ -1193,7 +1189,8 @@ nsChangeHint nsStylePosition::CalcDifference(const nsStylePosition& aOther) cons
 /* static */ bool
 nsStylePosition::WidthCoordDependsOnContainer(const nsStyleCoord &aCoord)
 {
-  return aCoord.HasPercent() ||
+  return aCoord.GetUnit() == eStyleUnit_Auto ||
+         aCoord.HasPercent() ||
          (aCoord.GetUnit() == eStyleUnit_Enumerated &&
           (aCoord.GetIntValue() == NS_STYLE_WIDTH_FIT_CONTENT ||
            aCoord.GetIntValue() == NS_STYLE_WIDTH_AVAILABLE));

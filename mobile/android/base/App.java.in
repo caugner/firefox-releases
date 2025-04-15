@@ -10,26 +10,30 @@ import android.view.MenuItem;
 
 import org.mozilla.gecko.BrowserApp;
 import org.mozilla.gecko.GeckoAppShell;
-import org.mozilla.gecko.GeckoEvent;
 import org.mozilla.gecko.GeckoProfile;
 import org.mozilla.gecko.R;
 
 public class App extends BrowserApp {
+    @Override
     public int getLayout() { return R.layout.gecko_app; }
 
+    @Override
     public String getPackageName() {
         return "@ANDROID_PACKAGE_NAME@";
     }
 
+    @Override
     public String getContentProcessName() {
         return "@MOZ_CHILD_PROCESS_NAME@";
     }
 
+    @Override
     protected String getDefaultProfileName() {
         String profile = GeckoProfile.findDefaultProfile(this);
         return (profile != null ? profile : "default");
     }
 
+    @Override
     public String getDefaultUAString() {
         String deviceType = "Mobile";
         if (GeckoAppShell.isTablet())
@@ -37,6 +41,7 @@ public class App extends BrowserApp {
         return "Mozilla/5.0 (Android; " + deviceType + "; rv:@MOZ_APP_VERSION@) Gecko/@MOZ_APP_VERSION@ Firefox/@MOZ_APP_VERSION@";
     }
 
+    @Override
     public String getUAStringForHost(String host) {
         // With our standard UA String, we get a 200 response code and 
         // client-side redirect from t.co. This bot-like UA gives us a 
@@ -49,8 +54,9 @@ public class App extends BrowserApp {
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
 #ifdef MOZ_PROFILING
-        if (item.getItemId() == R.id.toggle_profiling) {
-            GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("ToggleProfiling", null));
+        if (item.getItemId() == org.mozilla.gecko.R.id.toggle_profiling) {
+            org.mozilla.gecko.GeckoAppShell.sendEventToGecko(
+                org.mozilla.gecko.GeckoEvent.createBroadcastEvent("ToggleProfiling", null));
             return true;
         }
 #endif

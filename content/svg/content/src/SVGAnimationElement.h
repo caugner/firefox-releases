@@ -6,8 +6,7 @@
 #ifndef mozilla_dom_SVGAnimationElement_h
 #define mozilla_dom_SVGAnimationElement_h
 
-#include "DOMSVGTests.h"
-#include "nsISMILAnimationElement.h"
+#include "mozilla/dom/SVGTests.h"
 #include "nsReferencedElement.h"
 #include "nsSMILTimedElement.h"
 #include "nsSVGElement.h"
@@ -17,9 +16,14 @@ typedef nsSVGElement SVGAnimationElementBase;
 namespace mozilla {
 namespace dom {
 
+enum nsSMILTargetAttrType {
+  eSMILTargetAttrType_auto,
+  eSMILTargetAttrType_CSS,
+  eSMILTargetAttrType_XML
+};
+
 class SVGAnimationElement : public SVGAnimationElementBase,
-                            public DOMSVGTests,
-                            public nsISMILAnimationElement
+                            public SVGTests
 {
 protected:
   SVGAnimationElement(already_AddRefed<nsINodeInfo> aNodeInfo);
@@ -31,6 +35,8 @@ public:
 
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(SVGAnimationElement,
                                            SVGAnimationElementBase)
+
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE = 0;
 
   // nsIContent specializations
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
@@ -51,19 +57,17 @@ public:
   virtual nsresult AfterSetAttr(int32_t aNamespaceID, nsIAtom* aName,
                                 const nsAttrValue* aValue, bool aNotify);
 
-  // nsISMILAnimationElement interface
-  virtual const Element& AsElement() const;
-  virtual Element& AsElement();
-  virtual bool PassesConditionalProcessingTests();
-  virtual const nsAttrValue* GetAnimAttr(nsIAtom* aName) const;
-  virtual bool GetAnimAttr(nsIAtom* aAttName, nsAString& aResult) const;
-  virtual bool HasAnimAttr(nsIAtom* aAttName) const;
-  virtual Element* GetTargetElementContent();
+  bool PassesConditionalProcessingTests();
+  const nsAttrValue* GetAnimAttr(nsIAtom* aName) const;
+  bool GetAnimAttr(nsIAtom* aAttName, nsAString& aResult) const;
+  bool HasAnimAttr(nsIAtom* aAttName) const;
+  Element* GetTargetElementContent();
   virtual bool GetTargetAttributeName(int32_t* aNamespaceID,
-                                        nsIAtom** aLocalName) const;
+                                      nsIAtom** aLocalName) const;
   virtual nsSMILTargetAttrType GetTargetAttributeType() const;
-  virtual nsSMILTimedElement& TimedElement();
-  virtual nsSMILTimeContainer* GetTimeContainer();
+  nsSMILTimedElement& TimedElement();
+  nsSMILTimeContainer* GetTimeContainer();
+  virtual nsSMILAnimationFunction& AnimationFunction() = 0;
 
   virtual bool IsEventAttributeName(nsIAtom* aName) MOZ_OVERRIDE;
 

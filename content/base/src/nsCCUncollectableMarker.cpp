@@ -9,7 +9,7 @@
 #include "nsServiceManagerUtils.h"
 #include "nsIContentViewer.h"
 #include "nsIDocument.h"
-#include "nsXULDocument.h"
+#include "XULDocument.h"
 #include "nsIWindowMediator.h"
 #include "nsPIDOMWindow.h"
 #include "nsIWebNavigation.h"
@@ -328,7 +328,7 @@ nsCCUncollectableMarker::Observe(nsISupports* aSubject, const char* aTopic,
     Element::ClearContentUnbinder();
   }
 
-  // Increase generation to effectivly unmark all current objects
+  // Increase generation to effectively unmark all current objects
   if (!++sGeneration) {
     ++sGeneration;
   }
@@ -420,12 +420,12 @@ TraceActiveWindowGlobal(const uint64_t& aId, nsGlobalWindow*& aWindow, void* aCl
   if (aWindow->GetDocShell() && aWindow->IsOuterWindow()) {
     TraceClosure* closure = static_cast<TraceClosure*>(aClosure);
     if (JSObject* global = aWindow->FastGetGlobalJSObject()) {
-      JS_CALL_OBJECT_TRACER(closure->mTrc, global, "active window global");
+      JS_CallObjectTracer(closure->mTrc, global, "active window global");
     }
 #ifdef MOZ_XUL
     nsIDocument* doc = aWindow->GetExtantDoc();
     if (doc && doc->IsXUL()) {
-      nsXULDocument* xulDoc = static_cast<nsXULDocument*>(doc);
+      XULDocument* xulDoc = static_cast<XULDocument*>(doc);
       xulDoc->TraceProtos(closure->mTrc, closure->mGCNumber);
     }
 #endif
@@ -434,8 +434,21 @@ TraceActiveWindowGlobal(const uint64_t& aId, nsGlobalWindow*& aWindow, void* aCl
 }
 
 void
-mozilla::dom::TraceBlackJS(JSTracer* aTrc, uint32_t aGCNumber)
+mozilla::dom::TraceBlackJS(JSTracer* aTrc, uint32_t aGCNumber, bool aIsShutdownGC)
 {
+#ifdef MOZ_XUL
+  // Mark the scripts held in the XULPrototypeCache. This is required to keep
+  // the JS script in the cache live across GC.
+  nsXULPrototypeCache* cache = nsXULPrototypeCache::MaybeGetInstance();
+  if (cache) {
+    if (aIsShutdownGC) {
+      cache->FlushScripts();
+    } else {
+      cache->MarkInGC(aTrc);
+    }
+  }
+#endif
+
   if (!nsCCUncollectableMarker::sGeneration) {
     return;
   }

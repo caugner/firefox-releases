@@ -26,6 +26,7 @@ nestegg_track_type
 nestegg_track_video_params
 nestegg_tstamp_scale
 nestegg_has_cues
+nestegg_sniff
 #endif
 #ifdef MOZ_VP8
 #ifndef MOZ_NATIVE_LIBVPX
@@ -81,19 +82,6 @@ vorbis_synthesis_init
 vorbis_synthesis_pcmout
 vorbis_synthesis_read
 vorbis_synthesis_restart
-#endif
-#ifdef MOZ_SYDNEYAUDIO
-sa_stream_create_pcm
-sa_stream_destroy
-sa_stream_drain
-sa_stream_get_min_write
-sa_stream_get_position
-sa_stream_get_write_size
-sa_stream_open
-sa_stream_pause
-sa_stream_resume
-sa_stream_write
-sa_stream_set_stream_type
 #endif
 #ifdef MOZ_SPEEX_RESAMPLER
 speex_resampler_init
@@ -222,6 +210,7 @@ MOZ_PNG_get_tRNS
 MOZ_PNG_get_valid
 MOZ_PNG_longjmp
 MOZ_PNG_process_data
+MOZ_PNG_process_data_pause
 MOZ_PNG_progressive_combine_row
 MOZ_PNG_read_update_info
 MOZ_PNG_set_cHRM

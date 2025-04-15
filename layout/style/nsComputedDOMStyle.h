@@ -8,23 +8,28 @@
 #ifndef nsComputedDOMStyle_h__
 #define nsComputedDOMStyle_h__
 
-#include "mozilla/Attributes.h"
-#include "nsDOMCSSDeclaration.h"
-
-#include "nsDOMCSSRGBColor.h"
-#include "nsCSSProps.h"
-
-#include "nsIContent.h"
-#include "nsCOMPtr.h"
-#include "nsWeakReference.h"
 #include "nsAutoPtr.h"
-#include "nsStyleStruct.h"
+#include "mozilla/Attributes.h"
+#include "nsCOMPtr.h"
+#include "nscore.h"
+#include "nsCSSProperty.h"
+#include "nsDOMCSSDeclaration.h"
 #include "nsStyleContext.h"
+#include "nsStyleStruct.h"
+#include "nsIWeakReferenceUtils.h"
+#include "nsIContent.h"
+
+namespace mozilla {
+namespace dom {
+class Element;
+}
+}
 
 class nsIFrame;
 class nsIPresShell;
 class nsDOMCSSValueList;
 class nsROCSSPrimitiveValue;
+class nsStyleContext;
 
 class nsComputedDOMStyle MOZ_FINAL : public nsDOMCSSDeclaration
 {
@@ -318,7 +323,7 @@ private:
   /* Display properties */
   mozilla::dom::CSSValue* DoGetBinding();
   mozilla::dom::CSSValue* DoGetClear();
-  mozilla::dom::CSSValue* DoGetCssFloat();
+  mozilla::dom::CSSValue* DoGetFloat();
   mozilla::dom::CSSValue* DoGetDisplay();
   mozilla::dom::CSSValue* DoGetPosition();
   mozilla::dom::CSSValue* DoGetClip();
@@ -348,6 +353,7 @@ private:
 
   /* Column properties */
   mozilla::dom::CSSValue* DoGetColumnCount();
+  mozilla::dom::CSSValue* DoGetColumnFill();
   mozilla::dom::CSSValue* DoGetColumnWidth();
   mozilla::dom::CSSValue* DoGetColumnGap();
   mozilla::dom::CSSValue* DoGetColumnRuleWidth();

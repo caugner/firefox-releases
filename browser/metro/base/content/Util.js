@@ -37,6 +37,44 @@ let Util = {
     Services.io.offline = false;
   },
 
+  // Pass several objects in and it will combine them all into the first object and return it.
+  // NOTE: Deep copy is not supported
+  extend: function extend() {
+    // copy reference to target object
+    let target = arguments[0] || {};
+    let length = arguments.length;
+
+    if (length === 1) {
+      return target;
+    }
+
+    // Handle case when target is a string or something
+    if (typeof target != "object" && typeof target != "function") {
+      target = {};
+    }
+
+    for (let i = 1; i < length; i++) {
+      // Only deal with non-null/undefined values
+      let options = arguments[i];
+      if (options != null) {
+        // Extend the base object
+        for (let name in options) {
+          let copy = options[name];
+
+          // Prevent never-ending loop
+          if (target === copy)
+            continue;
+
+          if (copy !== undefined)
+            target[name] = copy;
+        }
+      }
+    }
+
+    // Return the modified object
+    return target;
+  },
+
   /*
    * Timing utilties
    */
@@ -114,9 +152,38 @@ let Util = {
       return null;
   },
 
+  isTextInput: function isTextInput(aElement) {
+    return ((aElement instanceof Ci.nsIDOMHTMLInputElement &&
+             aElement.mozIsTextField(false)) ||
+            aElement instanceof Ci.nsIDOMHTMLTextAreaElement);
+  },
+
+  isLink: function isLink(aElement) {
+    return ((aElement instanceof Ci.nsIDOMHTMLAnchorElement && aElement.href) ||
+            (aElement instanceof Ci.nsIDOMHTMLAreaElement && aElement.href) ||
+            aElement instanceof Ci.nsIDOMHTMLLinkElement ||
+            aElement.getAttributeNS(kXLinkNamespace, "type") == "simple");
+  },
+
+  isText: function isText(aElement) {
+    return (aElement instanceof Ci.nsIDOMHTMLParagraphElement ||
+            aElement instanceof Ci.nsIDOMHTMLDivElement ||
+            aElement instanceof Ci.nsIDOMHTMLLIElement ||
+            aElement instanceof Ci.nsIDOMHTMLPreElement ||
+            aElement instanceof Ci.nsIDOMHTMLHeadingElement ||
+            aElement instanceof Ci.nsIDOMHTMLTableCellElement ||
+            aElement instanceof Ci.nsIDOMHTMLBodyElement);
+  },
+
   /*
    * Rect and nsIDOMRect utilities
    */
+
+  getCleanRect: function getCleanRect() {
+    return {
+      left: 0, top: 0, right: 0, bottom: 0
+    };
+  },
 
   pointWithinRect: function pointWithinRect(aX, aY, aRect) {
     return (aRect.left < aX && aRect.top < aY &&

@@ -6,7 +6,6 @@
 #ifndef mozilla_dom_HTMLFrameElement_h
 #define mozilla_dom_HTMLFrameElement_h
 
-#include "mozilla/Util.h"
 #include "nsIDOMHTMLFrameElement.h"
 #include "nsGenericHTMLFrameElement.h"
 #include "nsGkAtoms.h"
@@ -49,7 +48,6 @@ public:
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const;
   nsMapRuleToAttributesFunc GetAttributeMappingFunction() const;
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-  virtual nsXPCClassInfo* GetClassInfo();
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
   // WebIDL API
@@ -104,13 +102,11 @@ public:
     SetAttrHelper(nsGkAtoms::src, aSrc);
   }
 
-  already_AddRefed<nsIDocument> GetContentDocument(ErrorResult& aRv);
-
-  already_AddRefed<nsIDOMWindow> GetContentWindow(ErrorResult& aRv);
+  using nsGenericHTMLFrameElement::GetContentDocument;
+  using nsGenericHTMLFrameElement::GetContentWindow;
 
 protected:
-  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope,
-                             bool* aTriedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
 };
 
 } // namespace dom

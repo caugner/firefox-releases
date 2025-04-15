@@ -6,12 +6,11 @@
 
 /* utility functions for drawing borders and backgrounds */
 
-#include <cmath> // for std::abs(float/double)
-#include <cstdlib> // for std::abs(int/long)
 #include <ctime>
 
 #include "mozilla/DebugOnly.h"
 #include "mozilla/HashFunctions.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Types.h"
 
 #include "nsStyleConsts.h"
@@ -51,7 +50,7 @@
 #include "nsSVGEffects.h"
 #include "nsSVGIntegrationUtils.h"
 #include "gfxDrawable.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 #include "nsCSSRenderingBorders.h"
 #include "mozilla/css/ImageLoader.h"
 #include "ImageContainer.h"
@@ -584,7 +583,7 @@ nsCSSRendering::PaintBorder(nsPresContext* aPresContext,
                             nsStyleContext* aStyleContext,
                             int aSkipSides)
 {
-  SAMPLE_LABEL("nsCSSRendering", "PaintBorder");
+  PROFILER_LABEL("nsCSSRendering", "PaintBorder");
   nsStyleContext *styleIfVisited = aStyleContext->GetStyleIfVisited();
   const nsStyleBorder *styleBorder = aStyleContext->StyleBorder();
   // Don't check RelevantLinkVisited here, since we want to take the
@@ -1155,12 +1154,11 @@ FindElementBackground(nsIFrame* aForFrame, nsIFrame* aRootElementFrame,
 }
 
 bool
-nsCSSRendering::FindBackground(nsPresContext* aPresContext,
-                               nsIFrame* aForFrame,
+nsCSSRendering::FindBackground(nsIFrame* aForFrame,
                                nsStyleContext** aBackgroundSC)
 {
   nsIFrame* rootElementFrame =
-    aPresContext->PresShell()->FrameConstructor()->GetRootElementStyleFrame();
+    aForFrame->PresContext()->PresShell()->FrameConstructor()->GetRootElementStyleFrame();
   if (IsCanvasFrame(aForFrame)) {
     *aBackgroundSC = FindCanvasBackground(aForFrame, rootElementFrame);
     return true;
@@ -1242,8 +1240,8 @@ nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
     skipGfxRect = nsLayoutUtils::RectToGfxRect(paddingRect, twipsPerPixel);
   } else if (hasBorderRadius) {
     skipGfxRect.Deflate(gfxMargin(
-        0, std::max(borderRadii[C_TL].height, borderRadii[C_TR].height),
-        0, std::max(borderRadii[C_BL].height, borderRadii[C_BR].height)));
+        std::max(borderRadii[C_TL].height, borderRadii[C_TR].height), 0,
+        std::max(borderRadii[C_BL].height, borderRadii[C_BR].height), 0));
   }
 
   for (uint32_t i = shadows->Length(); i > 0; --i) {
@@ -1467,9 +1465,9 @@ nsCSSRendering::PaintBoxShadowInner(nsPresContext* aPresContext,
     skipRect.Deflate(blurMargin);
     gfxRect skipGfxRect = nsLayoutUtils::RectToGfxRect(skipRect, twipsPerPixel);
     if (hasBorderRadius) {
-      skipGfxRect.Deflate(
-          gfxMargin(0, std::max(clipRectRadii[C_TL].height, clipRectRadii[C_TR].height),
-                    0, std::max(clipRectRadii[C_BL].height, clipRectRadii[C_BR].height)));
+      skipGfxRect.Deflate(gfxMargin(
+          std::max(clipRectRadii[C_TL].height, clipRectRadii[C_TR].height), 0,
+          std::max(clipRectRadii[C_BL].height, clipRectRadii[C_BR].height), 0));
     }
 
     // When there's a blur radius, gfxAlphaBoxBlur leaves the skiprect area
@@ -1543,12 +1541,12 @@ nsCSSRendering::PaintBackground(nsPresContext* aPresContext,
                                 nsRect* aBGClipRect,
                                 int32_t aLayer)
 {
-  SAMPLE_LABEL("nsCSSRendering", "PaintBackground");
+  PROFILER_LABEL("nsCSSRendering", "PaintBackground");
   NS_PRECONDITION(aForFrame,
                   "Frame is expected to be provided to PaintBackground");
 
   nsStyleContext *sc;
-  if (!FindBackground(aPresContext, aForFrame, &sc)) {
+  if (!FindBackground(aForFrame, &sc)) {
     // We don't want to bail out if moz-appearance is set on a root
     // node. If it has a parent content node, bail because it's not
     // a root, otherwise keep going in order to let the theme stuff
@@ -1580,12 +1578,12 @@ nsCSSRendering::PaintBackgroundColor(nsPresContext* aPresContext,
                                      const nsRect& aBorderArea,
                                      uint32_t aFlags)
 {
-  SAMPLE_LABEL("nsCSSRendering", "PaintBackgroundColor");
+  PROFILER_LABEL("nsCSSRendering", "PaintBackgroundColor");
   NS_PRECONDITION(aForFrame,
                   "Frame is expected to be provided to PaintBackground");
 
   nsStyleContext *sc;
-  if (!FindBackground(aPresContext, aForFrame, &sc)) {
+  if (!FindBackground(aForFrame, &sc)) {
     // We don't want to bail out if moz-appearance is set on a root
     // node. If it has a parent content node, bail because it's not
     // a root, other wise keep going in order to let the theme stuff
@@ -1986,10 +1984,10 @@ ComputeRadialGradientLine(nsPresContext* aPresContext,
 
   // Compute gradient shape: the x and y radii of an ellipse.
   double radiusX, radiusY;
-  double leftDistance = std::abs(aLineStart->x);
-  double rightDistance = std::abs(aBoxSize.width - aLineStart->x);
-  double topDistance = std::abs(aLineStart->y);
-  double bottomDistance = std::abs(aBoxSize.height - aLineStart->y);
+  double leftDistance = Abs(aLineStart->x);
+  double rightDistance = Abs(aBoxSize.width - aLineStart->x);
+  double topDistance = Abs(aLineStart->y);
+  double bottomDistance = Abs(aBoxSize.height - aLineStart->y);
   switch (aGradient->mSize) {
   case NS_STYLE_GRADIENT_SIZE_CLOSEST_SIDE:
     radiusX = std::min(leftDistance, rightDistance);
@@ -2088,7 +2086,7 @@ nsCSSRendering::PaintGradient(nsPresContext* aPresContext,
                               const nsRect& aOneCellArea,
                               const nsRect& aFillArea)
 {
-  SAMPLE_LABEL("nsCSSRendering", "PaintGradient");
+  PROFILER_LABEL("nsCSSRendering", "PaintGradient");
   Telemetry::AutoTimer<Telemetry::GRADIENT_DURATION, Telemetry::Microsecond> gradientTimer;
   if (aOneCellArea.IsEmpty())
     return;
@@ -3342,8 +3340,8 @@ DrawBorderImageComponent(nsRenderingContext&  aRenderingContext,
       (aUnitSize.width == aFill.width &&
        aUnitSize.height == aFill.height)) {
     nsLayoutUtils::DrawSingleImage(&aRenderingContext, subImage,
-                                   graphicsFilter,
-                                   aFill, aDirtyRect, imgIContainer::FLAG_NONE);
+                                   graphicsFilter, aFill, aDirtyRect,
+                                   nullptr, imgIContainer::FLAG_NONE);
     return;
   }
 

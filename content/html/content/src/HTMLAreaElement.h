@@ -12,8 +12,9 @@
 #include "nsILink.h"
 #include "nsGkAtoms.h"
 #include "nsIURL.h"
-#include "nsIDocument.h"
 #include "Link.h"
+
+class nsIDocument;
 
 namespace mozilla {
 namespace dom {
@@ -77,8 +78,6 @@ public:
   virtual nsresult Clone(nsINodeInfo* aNodeInfo, nsINode** aResult) const;
 
   virtual nsEventStates IntrinsicState() const;
-
-  virtual nsXPCClassInfo* GetClassInfo();
 
   virtual nsIDOMNode* AsDOMNode() { return this; }
 
@@ -163,8 +162,7 @@ public:
   }
 
 protected:
-  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope,
-                             bool* aTriedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext* aCx, JSObject* aScope) MOZ_OVERRIDE;
 
   virtual void GetItemValueText(nsAString& text);
   virtual void SetItemValueText(const nsAString& text);

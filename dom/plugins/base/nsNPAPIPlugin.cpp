@@ -25,7 +25,6 @@
 #include "nsPluginInstanceOwner.h"
 
 #include "nsPluginsDir.h"
-#include "nsPluginSafety.h"
 #include "nsPluginLogging.h"
 
 #include "nsIJSContextStack.h"
@@ -250,7 +249,7 @@ void
 nsNPAPIPlugin::PluginCrashed(const nsAString& pluginDumpID,
                              const nsAString& browserDumpID)
 {
-  nsRefPtr<nsPluginHost> host = dont_AddRef(nsPluginHost::GetInst());
+  nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst();
   host->PluginCrashed(this, pluginDumpID, browserDumpID);
 }
 
@@ -663,20 +662,6 @@ GetJSContextFromNPP(NPP npp)
   return GetJSContextFromDoc(doc);
 }
 
-static nsresult
-GetPrivacyFromNPP(NPP npp, bool* aPrivate)
-{
-  nsCOMPtr<nsIDocument> doc = GetDocumentFromNPP(npp);
-  NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
-  nsCOMPtr<nsPIDOMWindow> domwindow = doc->GetWindow();
-  NS_ENSURE_TRUE(domwindow, NS_ERROR_FAILURE);
-
-  nsCOMPtr<nsIDocShell> docShell = domwindow->GetDocShell();
-  nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(docShell);
-  *aPrivate = loadContext && loadContext->UsePrivateBrowsing();
-  return NS_OK;
-}
-
 static already_AddRefed<nsIChannel>
 GetChannelFromNPP(NPP npp)
 {
@@ -903,7 +888,7 @@ _geturl(NPP npp, const char* relativeURL, const char* target)
 
     
     const char *name = nullptr;
-    nsRefPtr<nsPluginHost> host = dont_AddRef(nsPluginHost::GetInst());
+    nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst();
     host->GetPluginName(inst, &name);
 
     if (name && strstr(name, "Adobe") && strstr(name, "Acrobat")) {
@@ -1160,7 +1145,7 @@ _reloadplugins(NPBool reloadPages)
   if (!pluginHost)
     return;
 
-  pluginHost->ReloadPlugins(reloadPages);
+  pluginHost->ReloadPlugins();
 }
 
 void NP_CALLBACK
@@ -1222,7 +1207,7 @@ _getwindowobject(NPP npp)
     NPN_PLUGIN_LOG(PLUGIN_LOG_ALWAYS,("NPN_getwindowobject called from the wrong thread\n"));
     return nullptr;
   }
-  JSContext *cx = GetJSContextFromNPP(npp);
+  AutoPushJSContext cx(GetJSContextFromNPP(npp));
   NS_ENSURE_TRUE(cx, nullptr);
 
   // Using ::JS_GetGlobalObject(cx) is ok here since the window we
@@ -1249,7 +1234,7 @@ _getpluginelement(NPP npp)
   if (!element)
     return nullptr;
 
-  JSContext *cx = GetJSContextFromNPP(npp);
+  AutoPushJSContext cx(GetJSContextFromNPP(npp));
   NS_ENSURE_TRUE(cx, nullptr);
 
   nsCOMPtr<nsIXPConnect> xpc(do_GetService(nsIXPConnect::GetCID()));
@@ -1520,7 +1505,7 @@ _evaluate(NPP npp, NPObject* npobj, NPString *script, NPVariant *result)
   nsIDocument *doc = GetDocumentFromNPP(npp);
   NS_ENSURE_TRUE(doc, false);
 
-  JSContext *cx = GetJSContextFromDoc(doc);
+  AutoPushJSContext cx(GetJSContextFromDoc(doc));
   NS_ENSURE_TRUE(cx, false);
 
   nsCOMPtr<nsIScriptContext> scx = GetScriptContextFromJSContext(cx);
@@ -1638,7 +1623,7 @@ _getproperty(NPP npp, NPObject* npobj, NPIdentifier property,
   nsNPAPIPlugin* plugin = inst->GetPlugin();
   if (!plugin)
     return false;
-  nsRefPtr<nsPluginHost> host = dont_AddRef(nsPluginHost::GetInst());
+  nsRefPtr<nsPluginHost> host = nsPluginHost::GetInst();
   nsPluginTag* pluginTag = host->TagForPlugin(plugin);
   if (!pluginTag->mIsJavaPlugin)
     return true;
@@ -2075,7 +2060,11 @@ _getvalue(NPP npp, NPNVariable variable, void *result)
 
   case NPNVprivateModeBool: {
     bool privacy;
-    nsresult rv = GetPrivacyFromNPP(npp, &privacy);
+    nsNPAPIPluginInstance *inst = static_cast<nsNPAPIPluginInstance*>(npp->ndata);
+    if (!inst)
+      return NPERR_GENERIC_ERROR;
+
+    nsresult rv = inst->IsPrivateBrowsing(&privacy);
     if (NS_FAILED(rv))
       return NPERR_GENERIC_ERROR;
     *(NPBool*)result = (NPBool)privacy;
@@ -2152,18 +2141,23 @@ _getvalue(NPP npp, NPNVariable variable, void *result)
     return NPERR_NO_ERROR;
   }
 
-   case NPNVsupportsCoreAnimationBool: {
-     *(NPBool*)result = nsCocoaFeatures::SupportCoreAnimationPlugins();
+  case NPNVsupportsCoreAnimationBool: {
+    *(NPBool*)result = nsCocoaFeatures::SupportCoreAnimationPlugins();
 
-     return NPERR_NO_ERROR;
-   }
+    return NPERR_NO_ERROR;
+  }
 
-   case NPNVsupportsInvalidatingCoreAnimationBool: {
-     *(NPBool*)result = nsCocoaFeatures::SupportCoreAnimationPlugins();
+  case NPNVsupportsInvalidatingCoreAnimationBool: {
+    *(NPBool*)result = nsCocoaFeatures::SupportCoreAnimationPlugins();
 
-     return NPERR_NO_ERROR;
-   }
+    return NPERR_NO_ERROR;
+  }
 
+  case NPNVsupportsCompositingCoreAnimationPluginsBool: {
+    *(NPBool*)result = PR_TRUE;
+
+    return NPERR_NO_ERROR;
+  }
 
 #ifndef NP_NO_CARBON
   case NPNVsupportsCarbonBool: {
@@ -2773,8 +2767,13 @@ _getauthenticationinfo(NPP instance, const char *protocol, const char *host,
   if (!authManager)
     return NPERR_GENERIC_ERROR;
 
+  nsNPAPIPluginInstance *inst = static_cast<nsNPAPIPluginInstance*>(instance->ndata);
+  if (!inst)
+    return NPERR_GENERIC_ERROR;
+
   bool authPrivate = false;
-  GetPrivacyFromNPP(instance, &authPrivate);
+  if (NS_FAILED(inst->IsPrivateBrowsing(&authPrivate)))
+    return NPERR_GENERIC_ERROR;
 
   nsIDocument *doc = GetDocumentFromNPP(instance);
   NS_ENSURE_TRUE(doc, NPERR_GENERIC_ERROR);

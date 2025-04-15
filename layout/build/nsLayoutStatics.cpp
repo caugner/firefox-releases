@@ -52,9 +52,8 @@
 #include "nsHTMLDNSPrefetch.h"
 #include "nsHtml5Module.h"
 #include "nsFocusManager.h"
-#include "nsFrameList.h"
 #include "nsListControlFrame.h"
-#include "nsHTMLInputElement.h"
+#include "mozilla/dom/HTMLInputElement.h"
 #include "SVGElementFactory.h"
 #include "nsSVGUtils.h"
 #include "nsMathMLAtoms.h"
@@ -84,9 +83,11 @@
 #include "WMFDecoder.h"
 #endif
 
-#ifdef MOZ_SYDNEYAUDIO
-#include "AudioStream.h"
+#ifdef MOZ_GSTREAMER
+#include "GStreamerFormatHelper.h"
 #endif
+
+#include "AudioStream.h"
 
 #ifdef MOZ_WIDGET_GONK
 #include "nsVolumeService.h"
@@ -111,8 +112,9 @@ using namespace mozilla::system;
 #include "nsApplicationCacheService.h"
 #include "mozilla/dom/time/DateCacheCleaner.h"
 #include "nsIMEStateManager.h"
+#include "nsDocument.h"
 
-extern void NS_ShutdownChainItemPool();
+extern void NS_ShutdownEventTargetChainItemRecyclePool();
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -192,8 +194,6 @@ nsLayoutStatics::Initialize()
     return rv;
   }
 
-  inDOMView::InitAtoms();
-
 #endif
 
   nsMathMLOperators::AddRefTable();
@@ -244,9 +244,7 @@ nsLayoutStatics::Initialize()
     return rv;
   }
 
-#ifdef MOZ_SYDNEYAUDIO
   AudioStream::InitLibrary();
-#endif
 
   nsContentSink::InitializeStatics();
   nsHtml5Module::InitializeStatics();
@@ -255,8 +253,6 @@ nsLayoutStatics::Initialize()
   nsRefreshDriver::InitializeStatics();
 
   nsCORSListenerProxy::Startup();
-
-  nsFrameList::Init();
 
   NS_SealStaticAtomTable();
 
@@ -332,7 +328,6 @@ nsLayoutStatics::Shutdown()
 
   nsAttrValue::Shutdown();
   nsContentUtils::Shutdown();
-  nsNodeInfo::ClearCache();
   nsLayoutStylesheetCache::Shutdown();
   NS_NameSpaceManagerShutdown();
 
@@ -349,9 +344,11 @@ nsLayoutStatics::Shutdown()
   MediaPluginHost::Shutdown();
 #endif
 
-#ifdef MOZ_SYDNEYAUDIO
-  AudioStream::ShutdownLibrary();
+#ifdef MOZ_GSTREAMER
+  GStreamerFormatHelper::Shutdown();
 #endif
+
+  AudioStream::ShutdownLibrary();
 
 #ifdef MOZ_WMF
   WMFDecoder::UnloadDLLs();
@@ -371,11 +368,9 @@ nsLayoutStatics::Shutdown()
 
   nsRegion::ShutdownStatic();
 
-  NS_ShutdownChainItemPool();
+  NS_ShutdownEventTargetChainItemRecyclePool();
 
-  nsFrameList::Shutdown();
-
-  nsHTMLInputElement::DestroyUploadLastDir();
+  HTMLInputElement::DestroyUploadLastDir();
 
   nsLayoutUtils::Shutdown();
 
@@ -388,4 +383,6 @@ nsLayoutStatics::Shutdown()
   ContentParent::ShutDown();
 
   nsRefreshDriver::Shutdown();
+
+  nsDocument::XPCOMShutdown();
 }

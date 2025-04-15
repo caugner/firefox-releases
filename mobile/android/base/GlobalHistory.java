@@ -6,8 +6,8 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.util.ThreadUtils;
 
-import android.content.ContentResolver;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Handler;
@@ -40,10 +40,11 @@ class GlobalHistory {
     private boolean mProcessing; // = false             // whether or not the runnable is queued/working
 
     private GlobalHistory() {
-        mHandler = GeckoAppShell.getHandler();
+        mHandler = ThreadUtils.getBackgroundHandler();
         mPendingUris = new LinkedList<String>();
         mVisitedCache = new SoftReference<Set<String>>(null);
         mNotifierRunnable = new Runnable() {
+            @Override
             public void run() {
                 Set<String> visitedSet = mVisitedCache.get();
                 if (visitedSet == null) {
@@ -132,6 +133,7 @@ class GlobalHistory {
 
     public void checkUriVisited(final String uri) {
         mHandler.post(new Runnable() {
+            @Override
             public void run() {
                 // this runs on the same handler thread as the processing loop,
                 // so no synchronization needed

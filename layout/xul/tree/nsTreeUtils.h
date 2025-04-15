@@ -6,9 +6,13 @@
 #ifndef nsTreeUtils_h__
 #define nsTreeUtils_h__
 
+#include "nsError.h"
 #include "nsString.h"
-#include "nsISupportsArray.h"
-#include "nsIContent.h"
+#include "nsTreeStyleCache.h"
+
+class nsIAtom;
+class nsIContent;
+class nsISupportsArray;
 
 class nsTreeUtils
 {
@@ -18,7 +22,7 @@ class nsTreeUtils
      * of atoms.
      */
     static nsresult
-    TokenizeProperties(const nsAString& aProperties, nsISupportsArray* aPropertiesArray);
+    TokenizeProperties(const nsAString& aProperties, AtomArray & aPropertiesArray);
 
     static nsIContent*
     GetImmediateChild(nsIContent* aContainer, nsIAtom* aTag);

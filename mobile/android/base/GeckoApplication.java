@@ -7,7 +7,8 @@ package org.mozilla.gecko;
 import android.app.Application;
 import org.mozilla.gecko.db.BrowserContract;
 import org.mozilla.gecko.db.BrowserDB;
-import org.mozilla.gecko.util.GeckoBackgroundThread;
+import org.mozilla.gecko.mozglue.GeckoLoader;
+import org.mozilla.gecko.util.ThreadUtils;
 
 public class GeckoApplication extends Application {
 
@@ -47,10 +48,11 @@ public class GeckoApplication extends Application {
             // low memory killer subsequently kills us, the disk cache will
             // be left in a consistent state, avoiding costly cleanup and
             // re-creation. 
-            GeckoAppShell.sendEventToGecko(GeckoEvent.createPauseEvent(true));
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createAppBackgroundingEvent());
             mPausedGecko = true;
 
-            GeckoBackgroundThread.getHandler().post(new Runnable() {
+            ThreadUtils.postToBackgroundThread(new Runnable() {
+                @Override
                 public void run() {
                     BrowserDB.expireHistory(getContentResolver(),
                                             BrowserContract.ExpirePriority.NORMAL);
@@ -63,13 +65,19 @@ public class GeckoApplication extends Application {
 
     protected void onActivityResume(GeckoActivityStatus activity) {
         if (mPausedGecko) {
-            GeckoAppShell.sendEventToGecko(GeckoEvent.createResumeEvent(true));
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createAppForegroundingEvent());
             mPausedGecko = false;
         }
         GeckoConnectivityReceiver.getInstance().start();
         GeckoNetworkManager.getInstance().start();
 
         mInBackground = false;
+    }
+
+    @Override
+    public void onCreate() {
+        GeckoLoader.loadMozGlue(getApplicationContext());
+        super.onCreate();
     }
 
     public boolean isApplicationInBackground() {

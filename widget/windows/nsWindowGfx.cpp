@@ -608,12 +608,14 @@ nsresult nsWindowGfx::CreateIcon(imgIContainer *aContainer,
                                   HICON *aIcon) {
 
   // Get the image data
-  nsRefPtr<gfxImageSurface> frame;
-  aContainer->CopyFrame(imgIContainer::FRAME_CURRENT,
-                        imgIContainer::FLAG_SYNC_DECODE,
-                        getter_AddRefs(frame));
-  if (!frame)
-    return NS_ERROR_NOT_AVAILABLE;
+  nsRefPtr<gfxASurface> surface;
+  aContainer->GetFrame(imgIContainer::FRAME_CURRENT,
+                       imgIContainer::FLAG_SYNC_DECODE,
+                       getter_AddRefs(surface));
+  NS_ENSURE_TRUE(surface, NS_ERROR_NOT_AVAILABLE);
+
+  nsRefPtr<gfxImageSurface> frame(surface->GetAsReadableARGB32ImageSurface());
+  NS_ENSURE_TRUE(frame, NS_ERROR_NOT_AVAILABLE);
 
   int32_t width = frame->Width();
   int32_t height = frame->Height();
@@ -621,6 +623,8 @@ nsresult nsWindowGfx::CreateIcon(imgIContainer *aContainer,
     return NS_ERROR_FAILURE;
 
   uint8_t *data;
+  nsRefPtr<gfxImageSurface> dest;
+
   if ((aScaledSize.width == 0 && aScaledSize.height == 0) ||
       (aScaledSize.width == width && aScaledSize.height == height)) {
     // We're not scaling the image. The data is simply what's in the frame.
@@ -630,8 +634,7 @@ nsresult nsWindowGfx::CreateIcon(imgIContainer *aContainer,
     NS_ENSURE_ARG(aScaledSize.width > 0);
     NS_ENSURE_ARG(aScaledSize.height > 0);
     // Draw a scaled version of the image to a temporary surface
-    nsRefPtr<gfxImageSurface> dest = new gfxImageSurface(aScaledSize,
-                                                         gfxASurface::ImageFormatARGB32);
+    dest = new gfxImageSurface(aScaledSize, gfxASurface::ImageFormatARGB32);
     if (!dest)
       return NS_ERROR_OUT_OF_MEMORY;
 

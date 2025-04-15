@@ -26,11 +26,10 @@
 
 class nsAsyncInstantiateEvent;
 class nsStopPluginRunnable;
-class AutoNotifier;
-class AutoFallback;
 class AutoSetInstantiatingToFalse;
 class nsObjectFrame;
 class nsFrameLoader;
+class nsXULElement;
 
 class nsObjectLoadingContent : public nsImageLoadingContent
                              , public nsIStreamListener
@@ -41,7 +40,7 @@ class nsObjectLoadingContent : public nsImageLoadingContent
 {
   friend class AutoSetInstantiatingToFalse;
   friend class AutoSetLoadingToFalse;
-  friend class InDocCheckEvent;
+  friend class CheckPluginStopEvent;
   friend class nsStopPluginRunnable;
   friend class nsAsyncInstantiateEvent;
 
@@ -132,13 +131,82 @@ class nsObjectLoadingContent : public nsImageLoadingContent
     void NotifyOwnerDocumentActivityChanged();
 
     /**
-     * Used by pluginHost to know if we're loading with a channel, so it
-     * will not open its own.
+     * When a plug-in is instantiated, it can create a scriptable
+     * object that the page wants to interact with.  We expose this
+     * object by placing it on the prototype chain of our element,
+     * between the element itself and its most-derived DOM prototype.
+     *
+     * GetCanonicalPrototype returns this most-derived DOM prototype.
+     *
+     * SetupProtoChain handles actually inserting the plug-in
+     * scriptable object into the proto chain if needed.
+     *
+     * DoNewResolve is a hook that allows us to find out when the web
+     * page is looking up a property name on our object and make sure
+     * that our plug-in, if any, is instantiated.
      */
-    bool SrcStreamLoading() { return mSrcStreamLoading; }
+
+    /**
+     * Get the canonical prototype for this content for the given global.  Only
+     * returns non-null for objects that are on WebIDL bindings.
+     */
+    virtual JSObject* GetCanonicalPrototype(JSContext* aCx, JSObject* aGlobal);
+
+    // Helper for WebIDL node wrapping
+    void SetupProtoChain(JSContext* aCx, JSObject* aObject);
 
     // Remove plugin from protochain
     void TeardownProtoChain();
+
+    // Helper for WebIDL newResolve
+    bool DoNewResolve(JSContext* aCx, JSHandleObject aObject, JSHandleId aId,
+                      unsigned aFlags, JSMutableHandleObject aObjp);
+
+    // WebIDL API
+    nsIDocument* GetContentDocument();
+    void GetActualType(nsAString& aType) const
+    {
+      CopyUTF8toUTF16(mContentType, aType);
+    }
+    uint32_t DisplayedType() const
+    {
+      return mType;
+    }
+    uint32_t GetContentTypeForMIMEType(const nsAString& aMIMEType)
+    {
+      return GetTypeOfContent(NS_ConvertUTF16toUTF8(aMIMEType));
+    }
+    void PlayPlugin(mozilla::ErrorResult& aRv)
+    {
+      aRv = PlayPlugin();
+    }
+    bool Activated() const
+    {
+      return mActivated;
+    }
+    nsIURI* GetSrcURI() const
+    {
+      return mURI;
+    }
+    uint32_t PluginFallbackType() const
+    {
+      return mFallbackType;
+    }
+    bool HasRunningPlugin() const
+    {
+      return !!mInstanceOwner;
+    }
+    void CancelPlayPreview(mozilla::ErrorResult& aRv)
+    {
+      aRv = CancelPlayPreview();
+    }
+    void SwapFrameLoaders(nsXULElement& aOtherOwner, mozilla::ErrorResult& aRv)
+    {
+      aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
+    }
+    JS::Value LegacyCall(JSContext* aCx, JS::Value aThisVal,
+                         const mozilla::dom::Sequence<JS::Value>& aArguments,
+                         mozilla::ErrorResult& aRv);
 
   protected:
     /**
@@ -286,9 +354,9 @@ class nsObjectLoadingContent : public nsImageLoadingContent
     ParameterUpdateFlags UpdateObjectParameters();
 
     /**
-     * Queue a InDocCheckEvent
+     * Queue a CheckPluginStopEvent and track it in mPendingCheckPluginStopEvent
      */
-    void QueueInDocCheckEvent();
+    void QueueCheckPluginStopEvent();
 
     void NotifyContentObjectWrapper();
 
@@ -386,8 +454,11 @@ class nsObjectLoadingContent : public nsImageLoadingContent
     // Frame loader, for content documents we load.
     nsRefPtr<nsFrameLoader>     mFrameLoader;
 
-    // A pending nsAsyncInstantiateEvent (may be null).  This is a weak ref.
-    nsIRunnable                *mPendingInstantiateEvent;
+    // Track if we have a pending AsyncInstantiateEvent
+    nsCOMPtr<nsIRunnable>       mPendingInstantiateEvent;
+
+    // Tracks if we have a pending CheckPluginStopEvent
+    nsCOMPtr<nsIRunnable>       mPendingCheckPluginStopEvent;
 
     // The content type of our current load target, updated by
     // UpdateObjectParameters(). Takes the channel's type into account once
@@ -454,14 +525,6 @@ class nsObjectLoadingContent : public nsImageLoadingContent
     // For plugin stand-in types (click-to-play, play preview, ...) tracks
     // whether content js has tried to access the plugin script object.
     bool                        mScriptRequested : 1;
-
-    // Used to track when we might try to instantiate a plugin instance based on
-    // a src data stream being delivered to this object. When this is true we
-    // don't want plugin instance instantiation code to attempt to load src data
-    // again or we'll deliver duplicate streams. Should be cleared when we are
-    // not loading src data.
-    bool                        mSrcStreamLoading : 1;
-
 
     nsWeakFrame                 mPrintFrame;
 

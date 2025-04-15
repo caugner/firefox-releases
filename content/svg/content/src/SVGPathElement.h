@@ -24,28 +24,17 @@ class nsISVGPoint;
 
 namespace dom {
 
-class SVGPathElement MOZ_FINAL : public SVGPathElementBase,
-                                 public nsIDOMSVGElement
+class SVGPathElement MOZ_FINAL : public SVGPathElementBase
 {
 friend class nsSVGPathFrame;
 
 protected:
   friend nsresult (::NS_NewSVGPathElement(nsIContent **aResult,
                                           already_AddRefed<nsINodeInfo> aNodeInfo));
-  virtual JSObject* WrapNode(JSContext *cx, JSObject *scope, bool *triedToWrap) MOZ_OVERRIDE;
+  virtual JSObject* WrapNode(JSContext *cx, JSObject *scope) MOZ_OVERRIDE;
   SVGPathElement(already_AddRefed<nsINodeInfo> aNodeInfo);
 
 public:
-  typedef SVGAnimatedPathSegList SVGAnimatedPathSegList;
-  // interfaces:
-
-  NS_DECL_ISUPPORTS_INHERITED
-
-  // xxx I wish we could use virtual inheritance
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-  NS_FORWARD_NSIDOMSVGELEMENT(SVGPathElementBase::)
-
   // nsIContent interface
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* name) const;
 
@@ -62,8 +51,6 @@ public:
 
   // nsIContent interface
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-
-  virtual nsIDOMNode* AsDOMNode() { return this; }
 
   virtual SVGAnimatedPathSegList* GetAnimPathSegList() {
     return &mD;

@@ -10,11 +10,6 @@ VPATH = @srcdir@
 include $(DEPTH)/config/autoconf.mk
 include $(topsrcdir)/config/config.mk
 
-DIRS = \
-	content \
-	locales \
-	$(NULL)
-
 PREF_JS_EXPORTS = $(srcdir)/pref/firefox-branding.js
 
 # On Windows only do this step for browser, skip for metro.
@@ -68,5 +63,12 @@ endif
 BRANDING_DEST := $(DIST)/branding
 BRANDING_TARGET := export
 INSTALL_TARGETS += BRANDING
+
+ifeq ($(MOZ_WIDGET_TOOLKIT) $(DIST_SUBDIR),windows metro)
+VISUALMANIFEST := VisualElementsManifest.xml
+VISUALMANIFEST_FLAGS := -Fsubstitution -DMOZ_APP_DISPLAYNAME=${MOZ_APP_DISPLAYNAME}
+VISUALMANIFEST_PATH := $(DIST)/bin
+PP_TARGETS += VISUALMANIFEST
+endif
 
 include $(topsrcdir)/config/rules.mk

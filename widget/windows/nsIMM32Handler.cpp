@@ -107,41 +107,6 @@ nsIMM32Handler::IsTopLevelWindowOfComposition(nsWindow* aWindow)
 }
 
 /* static */ bool
-nsIMM32Handler::IsDoingKakuteiUndo(HWND aWnd)
-{
-  // This message pattern is "Kakutei-Undo" on ATOK and WXG.
-  // In this case, the message queue has following messages:
-  // ---------------------------------------------------------------------------
-  // WM_KEYDOWN              * n (wParam = VK_BACK, lParam = 0x1)
-  // WM_KEYUP                * 1 (wParam = VK_BACK, lParam = 0xC0000001) # ATOK
-  // WM_IME_STARTCOMPOSITION * 1 (wParam = 0x0, lParam = 0x0)
-  // WM_IME_COMPOSITION      * 1 (wParam = 0x0, lParam = 0x1BF)
-  // WM_CHAR                 * n (wParam = VK_BACK, lParam = 0x1)
-  // WM_KEYUP                * 1 (wParam = VK_BACK, lParam = 0xC00E0001)
-  // ---------------------------------------------------------------------------
-  // This message pattern does not match to the above case;
-  // i.e.,WM_KEYDOWN -> WM_CHAR -> WM_KEYDOWN -> WM_CHAR.
-  // For more information of this problem:
-  // https://bugzilla.mozilla.gr.jp/show_bug.cgi?id=2885 (written in Japanese)
-  // https://bugzilla.mozilla.org/show_bug.cgi?id=194559 (written in English)
-  MSG imeStartCompositionMsg, imeCompositionMsg, charMsg;
-  return ::PeekMessageW(&imeStartCompositionMsg, aWnd,
-                        WM_IME_STARTCOMPOSITION, WM_IME_STARTCOMPOSITION,
-                        PM_NOREMOVE | PM_NOYIELD) &&
-         ::PeekMessageW(&imeCompositionMsg, aWnd, WM_IME_COMPOSITION,
-                        WM_IME_COMPOSITION, PM_NOREMOVE | PM_NOYIELD) &&
-         ::PeekMessageW(&charMsg, aWnd, WM_CHAR, WM_CHAR,
-                        PM_NOREMOVE | PM_NOYIELD) &&
-         imeStartCompositionMsg.wParam == 0x0 &&
-         imeStartCompositionMsg.lParam == 0x0 &&
-         imeCompositionMsg.wParam == 0x0 &&
-         imeCompositionMsg.lParam == 0x1BF &&
-         charMsg.wParam == VK_BACK && charMsg.lParam == 0x1 &&
-         imeStartCompositionMsg.time <= imeCompositionMsg.time &&
-         imeCompositionMsg.time <= charMsg.time;
-}
-
-/* static */ bool
 nsIMM32Handler::ShouldDrawCompositionStringOurselves()
 {
   // If current IME has special UI or its composition window should not
@@ -172,7 +137,7 @@ nsIMM32Handler::GetKeyboardCodePage()
 }
 
 /* static */ bool
-nsIMM32Handler::CanOptimizeKeyAndIMEMessages(MSG *aNextKeyOrIMEMessage)
+nsIMM32Handler::CanOptimizeKeyAndIMEMessages()
 {
   // If IME is opening right now, we shouldn't optimize the key and IME message
   // order because ATOK (Japanese IME of third party) has some problem with the
@@ -212,12 +177,7 @@ nsresult
 nsIMM32Handler::EnsureClauseArray(int32_t aCount)
 {
   NS_ENSURE_ARG_MIN(aCount, 0);
-  if (!mClauseArray.SetCapacity(aCount + 32)) {
-    PR_LOG(gIMM32Log, PR_LOG_ALWAYS,
-      ("IMM32: EnsureClauseArray, aCount=%ld, FAILED to allocate\n",
-       aCount));
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
+  mClauseArray.SetCapacity(aCount + 32);
   return NS_OK;
 }
 
@@ -225,12 +185,7 @@ nsresult
 nsIMM32Handler::EnsureAttributeArray(int32_t aCount)
 {
   NS_ENSURE_ARG_MIN(aCount, 0);
-  if (!mAttributeArray.SetCapacity(aCount + 64)) {
-    PR_LOG(gIMM32Log, PR_LOG_ALWAYS,
-      ("IMM32: EnsureAttributeArray, aCount=%ld, FAILED to allocate\n",
-       aCount));
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
+  mAttributeArray.SetCapacity(aCount + 64);
   return NS_OK;
 }
 
@@ -249,19 +204,19 @@ nsIMM32Handler::CommitComposition(nsWindow* aWindow, bool aForce)
     return;
   }
 
-  bool associated = aWindow->AssociateDefaultIMC(true);
+  nsIMEContext IMEContext(aWindow->GetWindowHandle());
+  bool associated = IMEContext.AssociateDefaultContext();
   PR_LOG(gIMM32Log, PR_LOG_ALWAYS,
     ("IMM32: CommitComposition, associated=%s\n",
      associated ? "YES" : "NO"));
 
-  nsIMEContext IMEContext(aWindow->GetWindowHandle());
   if (IMEContext.IsValid()) {
     ::ImmNotifyIME(IMEContext.get(), NI_COMPOSITIONSTR, CPS_COMPLETE, 0);
     ::ImmNotifyIME(IMEContext.get(), NI_COMPOSITIONSTR, CPS_CANCEL, 0);
   }
 
   if (associated) {
-    aWindow->AssociateDefaultIMC(false);
+    IMEContext.Disassociate();
   }
 }
 
@@ -280,18 +235,18 @@ nsIMM32Handler::CancelComposition(nsWindow* aWindow, bool aForce)
     return;
   }
 
-  bool associated = aWindow->AssociateDefaultIMC(true);
+  nsIMEContext IMEContext(aWindow->GetWindowHandle());
+  bool associated = IMEContext.AssociateDefaultContext();
   PR_LOG(gIMM32Log, PR_LOG_ALWAYS,
     ("IMM32: CancelComposition, associated=%s\n",
      associated ? "YES" : "NO"));
 
-  nsIMEContext IMEContext(aWindow->GetWindowHandle());
   if (IMEContext.IsValid()) {
     ::ImmNotifyIME(IMEContext.get(), NI_COMPOSITIONSTR, CPS_CANCEL, 0);
   }
 
   if (associated) {
-    aWindow->AssociateDefaultIMC(false);
+    IMEContext.Disassociate();
   }
 }
 
@@ -497,7 +452,7 @@ nsIMM32Handler::OnInputLangChange(nsWindow* aWindow,
     ("IMM32: OnInputLangChange, hWnd=%08x, wParam=%08x, lParam=%08x\n",
      aWindow->GetWindowHandle(), wParam, lParam));
 
-  aWindow->ResetInputState();
+  aWindow->NotifyIME(REQUEST_TO_COMMIT_COMPOSITION);
   NS_ASSERTION(!mIsComposing, "ResetInputState failed");
 
   if (mIsComposing) {
@@ -561,9 +516,9 @@ nsIMM32Handler::OnIMEEndComposition(nsWindow* aWindow)
   // composition. Then, we should ignore the message and commit the composition
   // string at following WM_IME_COMPOSITION.
   MSG compositionMsg;
-  if (::PeekMessageW(&compositionMsg, aWindow->GetWindowHandle(),
-                     WM_IME_STARTCOMPOSITION, WM_IME_COMPOSITION,
-                     PM_NOREMOVE) &&
+  if (WinUtils::PeekMessage(&compositionMsg, aWindow->GetWindowHandle(),
+                            WM_IME_STARTCOMPOSITION, WM_IME_COMPOSITION,
+                            PM_NOREMOVE) &&
       compositionMsg.message == WM_IME_COMPOSITION &&
       IS_COMMITTING_LPARAM(compositionMsg.lParam)) {
     PR_LOG(gIMM32Log, PR_LOG_ALWAYS,
@@ -1047,11 +1002,11 @@ nsIMM32Handler::HandleComposition(nsWindow* aWindow,
   if (!mIsComposing) {
     MSG msg1, msg2;
     HWND wnd = aWindow->GetWindowHandle();
-    if (::PeekMessageW(&msg1, wnd, WM_IME_STARTCOMPOSITION, WM_IME_COMPOSITION,
-                       PM_NOREMOVE) &&
+    if (WinUtils::PeekMessage(&msg1, wnd, WM_IME_STARTCOMPOSITION,
+                              WM_IME_COMPOSITION, PM_NOREMOVE) &&
         msg1.message == WM_IME_STARTCOMPOSITION &&
-        ::PeekMessageW(&msg2, wnd, WM_IME_ENDCOMPOSITION, WM_IME_COMPOSITION,
-                       PM_NOREMOVE) &&
+        WinUtils::PeekMessage(&msg2, wnd, WM_IME_ENDCOMPOSITION,
+                              WM_IME_COMPOSITION, PM_NOREMOVE) &&
         msg2.message == WM_IME_COMPOSITION) {
       PR_LOG(gIMM32Log, PR_LOG_ALWAYS,
         ("IMM32: HandleComposition, Ignores due to find a WM_IME_STARTCOMPOSITION\n"));

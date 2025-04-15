@@ -135,7 +135,9 @@ MOCHITEST_FILES = \
 		test_streams_srcObject.html \
 		test_reset_src.html \
 		test_streams_gc.html \
+		test_streams_tracks.html \
 		$(filter disabled-for-intermittent-failures--bug-608634, test_error_in_video_document.html) \
+		test_timeupdate_small_files.html \
 		$(NULL)
 
 # Disabled on Windows for frequent intermittent failures
@@ -300,11 +302,6 @@ MOCHITEST_FILES += \
 		file_audio_event_adopt_iframe.html \
 		test_audio_event_adopt.html \
 		test_referer.html \
-		test_bug726904.html \
-		$(NULL)
-
-# Bug 759221
-MOCHITEST_FILES += \
 		test_bug686137.html \
 		test_contentDuration1.html \
 		test_contentDuration2.html \
@@ -324,6 +321,8 @@ MOCHITEST_FILES += \
 		test_seekable2.html \
 		test_chaining.html \
 		$(NULL)
+# Temporarily disabled for bug 754860
+#		test_bug726904.html
 else
 MOCHITEST_FILES += \
 		test_can_play_type_no_ogg.html \

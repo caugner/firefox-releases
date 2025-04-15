@@ -8,15 +8,10 @@ srcdir		= @srcdir@
 VPATH		= @srcdir@
 relativesrcdir  = @relativesrcdir@
 
-DIRS += \
-		newtab \
-		social \
-		$(NULL)
-
 include $(DEPTH)/config/autoconf.mk
 
 MOCHITEST_FILES = \
-		head.js \
+		head_plain.js \
 		test_feed_discovery.html \
 		feed_discovery.html \
 		test_bug395533.html \
@@ -93,7 +88,6 @@ _BROWSER_FILES = \
                  browser_bug435035.js \
                  browser_bug435325.js \
                  browser_bug441778.js \
-                 browser_popupNotification.js \
                  browser_bug455852.js \
                  browser_bug460146.js \
                  browser_bug462673.js \
@@ -132,6 +126,7 @@ _BROWSER_FILES = \
                  browser_bug581242.js \
                  browser_bug581253.js \
                  browser_bug581947.js \
+                 browser_bug585558.js \
                  browser_bug585785.js \
                  browser_bug585830.js \
                  browser_bug590206.js \
@@ -158,9 +153,11 @@ _BROWSER_FILES = \
                  browser_bug749738.js \
                  browser_bug763468_perwindowpb.js \
                  browser_bug767836_perwindowpb.js \
+                 browser_bug771331.js \
                  browser_bug783614.js \
                  browser_bug797677.js \
                  browser_bug816527.js \
+                 browser_bug817947.js \
                  browser_bug822367.js \
                  browser_bug832435.js \
                  browser_canonizeURL.js \
@@ -188,6 +185,7 @@ _BROWSER_FILES = \
                  browser_pluginnotification.js \
                  browser_plugins_added_dynamically.js \
                  browser_CTPScriptPlugin.js \
+                 browser_CTP_drag_drop.js \
                  browser_pluginplaypreview.js \
                  browser_pluginplaypreview2.js \
                  browser_private_browsing_window.js \
@@ -318,9 +316,17 @@ _BROWSER_FILES = \
                  browser_pluginCrashCommentAndURL.js \
                  pluginCrashCommentAndURL.html \
                  browser_private_no_prompt.js \
+                 browser_blob-channelname.js \
                  browser_aboutHealthReport.js \
                  healthreport_testRemoteCommands.html \
                  $(NULL)
+
+# Disable test on Windows due to frequent failures (bug 841341)
+ifneq (windows,$(MOZ_WIDGET_TOOLKIT))
+_BROWSER_FILES += \
+                browser_popupNotification.js \
+                $(NULL)
+endif
 
 ifneq (cocoa,$(MOZ_WIDGET_TOOLKIT))
 _BROWSER_FILES += \
@@ -330,15 +336,19 @@ else
 _BROWSER_FILES += \
 		browser_bug565667.js \
 		$(NULL)
-# TODO: Activate after carbon test plugin lands, bug 628651
-# 		browser_maconly_carbon_mismatch_plugin.js
 endif
 
-# bug 766546, disable browser_bug561636.js on Windows
-ifneq ($(OS_ARCH),WINNT)
+ifneq (cocoa,$(MOZ_WIDGET_TOOLKIT))
+# Bug 766546.
+BROWSER_FILES += \
+    browser_bug561636.js \
+		$(NULL)
+endif
+
+ifdef MOZ_DATA_REPORTING
 _BROWSER_FILES += \
-                 browser_bug561636.js \
-                 $(NULL)
+  browser_datareporting_notification.js \
+  $(NULL)
 endif
 
 include $(topsrcdir)/config/rules.mk

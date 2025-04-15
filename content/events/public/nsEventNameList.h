@@ -363,19 +363,19 @@ EVENT(wheel,
       NS_WHEEL_WHEEL,
       EventNameType_All,
       NS_WHEEL_EVENT)
-// Gecko-specific extensions that apply to elements
 EVENT(copy,
       NS_COPY,
       EventNameType_HTMLXUL,
-      NS_EVENT)
+      NS_CLIPBOARD_EVENT)
 EVENT(cut,
       NS_CUT,
       EventNameType_HTMLXUL,
-      NS_EVENT)
+      NS_CLIPBOARD_EVENT)
 EVENT(paste,
       NS_PASTE,
       EventNameType_HTMLXUL,
-      NS_EVENT)
+      NS_CLIPBOARD_EVENT)
+// Gecko-specific extensions that apply to elements
 EVENT(beforescriptexecute,
       NS_BEFORE_SCRIPT_EXECUTE,
       EventNameType_HTMLXUL,
@@ -671,27 +671,27 @@ NON_IDL_EVENT(underflow,
 NON_IDL_EVENT(SVGLoad,
               NS_SVG_LOAD,
               EventNameType_None,
-              NS_SVG_EVENT)
+              NS_EVENT)
 NON_IDL_EVENT(SVGUnload,
               NS_SVG_UNLOAD,
               EventNameType_None,
-              NS_SVG_EVENT)
+              NS_EVENT)
 NON_IDL_EVENT(SVGAbort,
               NS_SVG_ABORT,
               EventNameType_None,
-              NS_SVG_EVENT)
+              NS_EVENT)
 NON_IDL_EVENT(SVGError,
               NS_SVG_ERROR,
               EventNameType_None,
-              NS_SVG_EVENT)
+              NS_EVENT)
 NON_IDL_EVENT(SVGResize,
               NS_SVG_RESIZE,
               EventNameType_None,
-              NS_SVG_EVENT)
+              NS_EVENT)
 NON_IDL_EVENT(SVGScroll,
               NS_SVG_SCROLL,
               EventNameType_None,
-              NS_SVG_EVENT)
+              NS_EVENT)
 
 NON_IDL_EVENT(SVGZoom,
               NS_SVG_ZOOM,
@@ -753,6 +753,29 @@ NON_IDL_EVENT(MozScrolledAreaChanged,
               NS_SCROLLEDAREACHANGED,
               EventNameType_None,
               NS_SCROLLAREA_EVENT)
+
+#ifdef MOZ_GAMEPAD
+NON_IDL_EVENT(gamepadbuttondown,
+              NS_GAMEPAD_BUTTONDOWN,
+              EventNameType_None,
+              NS_EVENT_NULL)
+NON_IDL_EVENT(gamepadbuttonup,
+              NS_GAMEPAD_BUTTONUP,
+              EventNameType_None,
+              NS_EVENT_NULL)
+NON_IDL_EVENT(gamepadaxismove,
+              NS_GAMEPAD_AXISMOVE,
+              EventNameType_None,
+              NS_EVENT_NULL)
+NON_IDL_EVENT(gamepadconnected,
+              NS_GAMEPAD_CONNECTED,
+              EventNameType_None,
+              NS_EVENT_NULL)
+NON_IDL_EVENT(gamepaddisconnected,
+              NS_GAMEPAD_DISCONNECTED,
+              EventNameType_None,
+              NS_EVENT_NULL)
+#endif
 
 // Simple gesture events
 NON_IDL_EVENT(MozSwipeGesture,

@@ -20,6 +20,8 @@
 #include "xpcpublic.h"
 #include "nsXBLPrototypeBinding.h"
 
+using namespace mozilla;
+
 nsXBLProtoImplMethod::nsXBLProtoImplMethod(const PRUnichar* aName) :
   nsXBLProtoImplMember(aName), 
   mUncompiledMethod(BIT_UNCOMPILED)
@@ -102,6 +104,7 @@ nsXBLProtoImplMethod::InstallMember(JSContext* aCx,
 
   JSObject* globalObject = JS_GetGlobalForObject(aCx, aTargetClassObject);
   JSObject* scopeObject = xpc::GetXBLScope(aCx, globalObject);
+  NS_ENSURE_TRUE(scopeObject, NS_ERROR_OUT_OF_MEMORY);
 
   // now we want to reevaluate our property using aContext and the script object for this window...
   if (mJSMethodObject) {
@@ -192,7 +195,7 @@ nsXBLProtoImplMethod::CompileMember(nsIScriptContext* aContext, const nsCString&
   }
 
   JSObject* methodObject = nullptr;
-  JSContext* cx = aContext->GetNativeContext();
+  AutoPushJSContext cx(aContext->GetNativeContext());
   JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, aClassObject);
   JS::CompileOptions options(cx);
@@ -200,7 +203,7 @@ nsXBLProtoImplMethod::CompileMember(nsIScriptContext* aContext, const nsCString&
                          uncompiledMethod->mBodyText.GetLineNumber())
          .setVersion(JSVERSION_LATEST)
          .setUserBit(true); // Flag us as XBL
-  js::RootedObject rootedNull(cx, nullptr); // See bug 781070.
+  JS::RootedObject rootedNull(cx, nullptr); // See bug 781070.
   nsresult rv = nsJSUtils::CompileFunction(cx, rootedNull, options, cname,
                                            paramCount,
                                            const_cast<const char**>(args),
@@ -287,12 +290,12 @@ nsXBLProtoImplAnonymousMethod::Execute(nsIContent* aBoundElement)
 
   nsAutoMicroTask mt;
 
-  JSContext* cx = context->GetNativeContext();
+  AutoPushJSContext cx(context->GetNativeContext());
 
   JSObject* globalObject = global->GetGlobalJSObject();
 
   nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
-  jsval v;
+  JS::Value v;
   nsresult rv =
     nsContentUtils::WrapNative(cx, globalObject, aBoundElement, &v,
                                getter_AddRefs(wrapper));
@@ -308,6 +311,7 @@ nsXBLProtoImplAnonymousMethod::Execute(nsIContent* aBoundElement)
 
   JSObject* thisObject = JSVAL_TO_OBJECT(v);
   JSObject* scopeObject = xpc::GetXBLScope(cx, globalObject);
+  NS_ENSURE_TRUE(scopeObject, NS_ERROR_OUT_OF_MEMORY);
 
   JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, scopeObject);
@@ -329,7 +333,7 @@ nsXBLProtoImplAnonymousMethod::Execute(nsIContent* aBoundElement)
 
   JSBool ok = JS_TRUE;
   if (NS_SUCCEEDED(rv)) {
-    jsval retval;
+    JS::Value retval;
     ok = ::JS_CallFunctionValue(cx, thisObject, OBJECT_TO_JSVAL(method),
                                 0 /* argc */, nullptr /* argv */, &retval);
   }

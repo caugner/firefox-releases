@@ -25,6 +25,9 @@
 
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
+#ifdef MOZ_ANDROID_WALLPAPER
+    <uses-permission android:name="android.permission.SET_WALLPAPER"/>
+#endif
     <uses-permission android:name="@ANDROID_PACKAGE_NAME@.permissions.PASSWORD_PROVIDER"/>
     <uses-permission android:name="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"/>
     <uses-permission android:name="@ANDROID_PACKAGE_NAME@.permissions.FORMHISTORY_PROVIDER"/>
@@ -206,6 +209,14 @@
             </intent-filter>
         </activity>
         -->
+
+        <activity android:name="org.mozilla.gecko.VideoPlayer"
+                  android:configChanges="keyboard|keyboardHidden|mcc|mnc|orientation"
+                  android:theme="@android:style/Theme.NoTitleBar">
+            <intent-filter>
+                <action android:name="org.mozilla.gecko.PLAY_VIDEO" />
+            </intent-filter>
+        </activity>
 
         <activity android:name="org.mozilla.gecko.AwesomeBar"
                   android:theme="@style/Gecko.Light.AwesomeBar"

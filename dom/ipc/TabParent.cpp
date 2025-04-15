@@ -300,8 +300,10 @@ TabParent::RecvEvent(const RemoteDOMEvent& aEvent)
   nsCOMPtr<nsIDOMEvent> event = do_QueryInterface(aEvent.mEvent);
   NS_ENSURE_TRUE(event, true);
 
-  nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(mFrameElement);
+  nsCOMPtr<mozilla::dom::EventTarget> target = do_QueryInterface(mFrameElement);
   NS_ENSURE_TRUE(target, true);
+
+  event->SetOwner(target);
 
   bool dummy;
   target->DispatchEvent(event, &dummy);
@@ -644,6 +646,10 @@ TabParent::TryCapture(const nsGUIEvent& aEvent)
 {
   MOZ_ASSERT(sEventCapturer == this && mEventCaptureDepth > 0);
 
+  if (mIsDestroyed) {
+    return false;
+  }
+
   if (aEvent.eventStructType != NS_TOUCH_EVENT) {
     // Only capture of touch events is implemented, for now.
     return false;
@@ -664,19 +670,29 @@ TabParent::TryCapture(const nsGUIEvent& aEvent)
     return false;
   }
 
-  // Adjust the widget coordinates to be relative to our frame.
-  nsRefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
+  if (RenderFrameParent* rfp = GetRenderFrame()) {
+    // We need to process screen relative events co-ordinates for gestures to
+    // avoid phantom movement when the frame moves.
+    rfp->NotifyInputEvent(event);
 
-  if (!frameLoader) {
-    // No frame anymore?
-    sEventCapturer = nullptr;
-    return false;
+    // Adjust the widget coordinates to be relative to our frame.
+    nsRefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
+
+    if (!frameLoader) {
+      // No frame anymore?
+      sEventCapturer = nullptr;
+      return false;
+    }
+
+    // Remove the frame offset and compensate for zoom.
+    nsEventStateManager::MapEventCoordinatesForChildProcess(frameLoader,
+                                                            &event);
+    rfp->ApplyZoomCompensationToEvent(&event);
   }
 
-  nsEventStateManager::MapEventCoordinatesForChildProcess(frameLoader, &event);
-
-  SendRealTouchEvent(event);
-  return true;
+  return (event.message == NS_TOUCH_MOVE) ?
+    PBrowserParent::SendRealTouchMoveEvent(event) :
+    PBrowserParent::SendRealTouchEvent(event);
 }
 
 bool
@@ -731,7 +747,7 @@ TabParent::RecvNotifyIMEFocus(const bool& aFocus,
   mIMETabParent = aFocus ? this : nullptr;
   mIMESelectionAnchor = 0;
   mIMESelectionFocus = 0;
-  widget->OnIMEFocusChange(aFocus);
+  widget->NotifyIME(aFocus ? NOTIFY_IME_OF_FOCUS : NOTIFY_IME_OF_BLUR);
 
   if (aFocus) {
     *aPreference = widget->GetIMEUpdatePreference();
@@ -750,7 +766,7 @@ TabParent::RecvNotifyIMETextChange(const uint32_t& aStart,
   if (!widget)
     return true;
 
-  widget->OnIMETextChange(aStart, aEnd, aNewEnd);
+  widget->NotifyIMEOfTextChange(aStart, aEnd, aNewEnd);
   return true;
 }
 
@@ -766,7 +782,7 @@ TabParent::RecvNotifyIMESelection(const uint32_t& aSeqno,
   if (aSeqno == mIMESeqno) {
     mIMESelectionAnchor = aAnchor;
     mIMESelectionFocus = aFocus;
-    widget->OnIMESelectionChange();
+    widget->NotifyIME(NOTIFY_IME_OF_SELECTION_CHANGE);
   }
   return true;
 }
@@ -861,8 +877,9 @@ TabParent::SendCompositionEvent(nsCompositionEvent& event)
 }
 
 /**
- * During ResetInputState or CancelComposition, widget usually sends a
- * NS_TEXT_TEXT event to finalize or clear the composition, respectively
+ * During REQUEST_TO_COMMIT_COMPOSITION or REQUEST_TO_CANCEL_COMPOSITION,
+ * widget usually sends a NS_TEXT_TEXT event to finalize or clear the
+ * composition, respectively
  *
  * Because the event will not reach content in time, we intercept it
  * here and pass the text as the EndIMEComposition return value
@@ -942,11 +959,8 @@ TabParent::RecvEndIMEComposition(const bool& aCancel,
 
   mIMECompositionEnding = true;
 
-  if (aCancel) {
-    widget->CancelIMEComposition();
-  } else {
-    widget->ResetInputState();
-  }
+  widget->NotifyIME(aCancel ? REQUEST_TO_CANCEL_COMPOSITION :
+                              REQUEST_TO_COMMIT_COMPOSITION);
 
   mIMECompositionEnding = false;
   *aComposition = mIMECompositionText;
@@ -1261,7 +1275,7 @@ TabParent::AllocPRenderFrame(ScrollingBehavior* aScrolling,
 
   nsRefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
   if (!frameLoader) {
-    NS_ERROR("Can't allocate graphics resources, aborting subprocess");
+    NS_WARNING("Can't allocate graphics resources, aborting subprocess");
     return nullptr;
   }
 
@@ -1390,7 +1404,8 @@ TabParent::MaybeForwardEventToRenderFrame(const nsInputEvent& aEvent,
                                           nsInputEvent* aOutEvent)
 {
   if (RenderFrameParent* rfp = GetRenderFrame()) {
-    rfp->NotifyInputEvent(aEvent, aOutEvent);
+    rfp->NotifyInputEvent(aEvent);
+    rfp->ApplyZoomCompensationToEvent(aOutEvent);
   }
 }
 

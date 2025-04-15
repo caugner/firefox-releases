@@ -40,7 +40,7 @@
 #include "nsContentUtils.h"
 #include "mozilla/Preferences.h"
 #include "nsViewManager.h"
-#include "sampler.h"
+#include "GeckoProfiler.h"
 #include "nsNPAPIPluginInstance.h"
 
 using mozilla::TimeStamp;
@@ -251,6 +251,13 @@ protected:
     // time and the actual time.  We want to truncate the double down
     // to an int number of intervals.
     int numElapsedIntervals = static_cast<int>((aNowTime - mTargetTime) / mRateDuration);
+
+    if (numElapsedIntervals < 0) {
+      // It's possible that numElapsedIntervals is negative (e.g. timer compensation
+      // may result in (aNowTime - mTargetTime) < -1.0/mRateDuration, which will result in
+      // negative numElapsedIntervals), so make sure we don't target the same timestamp.
+      numElapsedIntervals = 0;
+    }
 
     // the last "tick" that may or may not have been actually sent was
     // at this time.  For example, if the rate is 15ms, the target
@@ -521,6 +528,8 @@ nsRefreshDriver::nsRefreshDriver(nsPresContext* aPresContext)
   mMostRecentRefreshEpochTime = JS_Now();
   mMostRecentRefresh = TimeStamp::Now();
 
+  mPaintFlashing = Preferences::GetBool("nglayout.debug.paint_flashing");
+
   mRequests.Init();
 }
 
@@ -555,10 +564,8 @@ nsRefreshDriver::AdvanceTimeAndRefresh(int64_t aMilliseconds)
   mMostRecentRefresh += TimeDuration::FromMilliseconds((double) aMilliseconds);
 
   nsCxPusher pusher;
-  if (pusher.PushNull()) {
-    DoTick();
-    pusher.Pop();
-  }
+  pusher.PushNull();
+  DoTick();
 }
 
 void
@@ -821,7 +828,7 @@ nsRefreshDriver::Tick(int64_t aNowEpoch, TimeStamp aNowTime)
     return;
   }
 
-  SAMPLE_LABEL("nsRefreshDriver", "Tick");
+  PROFILER_LABEL("nsRefreshDriver", "Tick");
 
   // We're either frozen or we were disconnected (likely in the middle
   // of a tick iteration).  Just do nothing here, since our

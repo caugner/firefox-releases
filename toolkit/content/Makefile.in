@@ -50,8 +50,6 @@ ifdef MOZ_TOOLKIT_SEARCH
 DEFINES += -DMOZ_TOOLKIT_SEARCH
 endif
 
-TEST_DIRS += tests
-
 EXTRA_JS_MODULES = \
   debug.js \
   DeferredTask.jsm \
@@ -63,10 +61,10 @@ EXTRA_JS_MODULES = \
   PopupNotifications.jsm \
   PropertyListUtils.jsm \
   Task.jsm \
+  PrivateBrowsingUtils.jsm \
   $(NULL)
 
 EXTRA_PP_JS_MODULES = \
-  PrivateBrowsingUtils.jsm \
   Services.jsm \
   WindowDraggingUtils.jsm \
   Troubleshoot.jsm \

@@ -82,9 +82,9 @@ public:
                               nsIAtom* aAttribute,
                               int32_t aModType) MOZ_OVERRIDE;
 
-  NS_IMETHOD  Init(nsIContent*      aContent,
-                   nsIFrame*        aParent,
-                   nsIFrame*        asPrevInFlow) MOZ_OVERRIDE;
+  virtual void Init(nsIContent*      aContent,
+                    nsIFrame*        aParent,
+                    nsIFrame*        asPrevInFlow) MOZ_OVERRIDE;
 
 
   NS_IMETHOD HandleEvent(nsPresContext* aPresContext, 
@@ -130,13 +130,11 @@ private:
 
   void PageUpDown(nscoord change);
   void SetCurrentThumbPosition(nsIContent* aScrollbar, nscoord aNewPos, bool aIsSmooth,
-                               bool aImmediateRedraw, bool aMaySnap);
-  void SetCurrentPosition(nsIContent* aScrollbar, int32_t aNewPos, bool aIsSmooth,
-                          bool aImmediateRedraw);
+                               bool aMaySnap);
+  void SetCurrentPosition(nsIContent* aScrollbar, int32_t aNewPos, bool aIsSmooth);
   void SetCurrentPositionInternal(nsIContent* aScrollbar, int32_t pos,
-                                  bool aIsSmooth, bool aImmediateRedraw);
-  nsresult CurrentPositionChanged(nsPresContext* aPresContext,
-                                  bool aImmediateRedraw);
+                                  bool aIsSmooth);
+  void CurrentPositionChanged();
 
   void DragThumb(bool aGrabMouseEvents);
   void AddListener();

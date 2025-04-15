@@ -165,9 +165,9 @@ const char* const kEventTypes[] = {
   "TreeInvalidated",
   // add ourself as a OpenStateChange listener (custom event fired in tree.xml)
   "OpenStateChange",
-  // add ourself as a CheckboxStateChange listener (custom event fired in nsHTMLInputElement.cpp)
+  // add ourself as a CheckboxStateChange listener (custom event fired in HTMLInputElement.cpp)
   "CheckboxStateChange",
-  // add ourself as a RadioStateChange Listener ( custom event fired in in nsHTMLInputElement.cpp  & radio.xml)
+  // add ourself as a RadioStateChange Listener ( custom event fired in in HTMLInputElement.cpp  & radio.xml)
   "RadioStateChange",
   "popupshown",
   "popuphiding",
@@ -197,10 +197,6 @@ RootAccessible::AddEventListeners()
     }
   }
 
-  if (!mCaretAccessible) {
-    mCaretAccessible = new nsCaretAccessible(this);
-  }
-
   return DocAccessible::AddEventListeners();
 }
 
@@ -220,23 +216,11 @@ RootAccessible::RemoveEventListeners()
   // Do this before removing clearing caret accessible, so that it can use
   // shutdown the caret accessible's selection listener
   DocAccessible::RemoveEventListeners();
-
-  if (mCaretAccessible) {
-    mCaretAccessible->Shutdown();
-    mCaretAccessible = nullptr;
-  }
-
   return NS_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // public
-
-nsCaretAccessible*
-RootAccessible::GetCaretAccessible()
-{
-  return mCaretAccessible;
-}
 
 void
 RootAccessible::DocumentActivated(DocAccessible* aDocument)

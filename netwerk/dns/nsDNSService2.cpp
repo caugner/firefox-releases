@@ -27,8 +27,10 @@
 #include "nsIOService.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsNetAddr.h"
+#include "nsProxyRelease.h"
 
 #include "mozilla/Attributes.h"
+#include "mozilla/VisualEventTracer.h"
 
 using namespace mozilla;
 using namespace mozilla::net;
@@ -36,7 +38,6 @@ using namespace mozilla::net;
 static const char kPrefDnsCacheEntries[]    = "network.dnsCacheEntries";
 static const char kPrefDnsCacheExpiration[] = "network.dnsCacheExpiration";
 static const char kPrefDnsCacheGrace[]      = "network.dnsCacheExpirationGracePeriod";
-static const char kPrefEnableIDN[]          = "network.enableIDN";
 static const char kPrefIPv4OnlyDomains[]    = "network.dns.ipv4OnlyDomains";
 static const char kPrefDisableIPv6[]        = "network.dns.disableIPv6";
 static const char kPrefDisablePrefetch[]    = "network.dns.disablePrefetch";
@@ -287,6 +288,8 @@ nsDNSAsyncRequest::OnLookupComplete(nsHostResolver *resolver,
             status = NS_ERROR_OUT_OF_MEMORY;
     }
 
+    MOZ_EVENT_TRACER_DONE(this, "net::dns::lookup");
+
     mListener->OnLookupComplete(this, rec, status);
     mListener = nullptr;
 
@@ -381,7 +384,6 @@ nsDNSService::Init()
     uint32_t maxCacheEntries  = 400;
     uint32_t maxCacheLifetime = 2; // minutes
     uint32_t lifetimeGracePeriod = 1;
-    bool     enableIDN        = true;
     bool     disableIPv6      = false;
     bool     disablePrefetch  = false;
     int      proxyType        = nsIProtocolProxyService::PROXYCONFIG_DIRECT;
@@ -401,7 +403,6 @@ nsDNSService::Init()
             lifetimeGracePeriod = val / 60; // convert from seconds to minutes
 
         // ASSUMPTION: pref branch does not modify out params on failure
-        prefs->GetBoolPref(kPrefEnableIDN, &enableIDN);
         prefs->GetBoolPref(kPrefDisableIPv6, &disableIPv6);
         prefs->GetCharPref(kPrefIPv4OnlyDomains, getter_Copies(ipv4OnlyDomains));
         prefs->GetCharPref(kPrefDnsLocalDomains, getter_Copies(localDomains));
@@ -421,7 +422,6 @@ nsDNSService::Init()
             prefs->AddObserver(kPrefDnsCacheEntries, this, false);
             prefs->AddObserver(kPrefDnsCacheExpiration, this, false);
             prefs->AddObserver(kPrefDnsCacheGrace, this, false);
-            prefs->AddObserver(kPrefEnableIDN, this, false);
             prefs->AddObserver(kPrefIPv4OnlyDomains, this, false);
             prefs->AddObserver(kPrefDnsLocalDomains, this, false);
             prefs->AddObserver(kPrefDisableIPv6, this, false);
@@ -433,18 +433,14 @@ nsDNSService::Init()
         }
     }
 
-    // we have to null out mIDN since we might be getting re-initialized
-    // as a result of a pref change.
-    nsCOMPtr<nsIIDNService> idn;
-    if (enableIDN)
-        idn = do_GetService(NS_IDNSERVICE_CONTRACTID);
-
     nsDNSPrefetch::Initialize(this);
 
     // Don't initialize the resolver if we're in offline mode.
     // Later on, the IO service will reinitialize us when going online.
     if (gIOService->IsOffline() && !gIOService->IsComingOnline())
         return NS_OK;
+
+    nsCOMPtr<nsIIDNService> idn = do_GetService(NS_IDNSERVICE_CONTRACTID);
 
     nsRefPtr<nsHostResolver> res;
     nsresult rv = nsHostResolver::Create(maxCacheEntries,
@@ -526,15 +522,13 @@ class DNSListenerProxy MOZ_FINAL : public nsIDNSListener
 {
 public:
   DNSListenerProxy(nsIDNSListener* aListener, nsIEventTarget* aTargetThread)
-    : mListener(aListener)
+    // Sometimes aListener is a main-thread only object like XPCWrappedJS, and
+    // sometimes it's a threadsafe object like nsSOCKSSocketInfo. Use a main-
+    // thread pointer holder, but disable strict enforcement of thread invariants.
+    // The AddRef implementation of XPCWrappedJS will assert if we go wrong here.
+    : mListener(new nsMainThreadPtrHolder<nsIDNSListener>(aListener, false))
     , mTargetThread(aTargetThread)
   { }
-
-  ~DNSListenerProxy()
-  {
-    nsCOMPtr<nsIThread> mainThread(do_GetMainThread());
-    NS_ProxyRelease(mainThread, mListener);
-  }
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIDNSLISTENER
@@ -542,7 +536,7 @@ public:
   class OnLookupCompleteRunnable : public nsRunnable
   {
   public:
-    OnLookupCompleteRunnable(nsIDNSListener* aListener,
+    OnLookupCompleteRunnable(nsMainThreadPtrHolder<nsIDNSListener>* aListener,
                              nsICancelable* aRequest,
                              nsIDNSRecord* aRecord,
                              nsresult aStatus)
@@ -552,23 +546,17 @@ public:
       , mStatus(aStatus)
     { }
 
-    ~OnLookupCompleteRunnable()
-    {
-      nsCOMPtr<nsIThread> mainThread(do_GetMainThread());
-      NS_ProxyRelease(mainThread, mListener);
-    }
-
     NS_DECL_NSIRUNNABLE
 
   private:
-    nsCOMPtr<nsIDNSListener> mListener;
+    nsMainThreadPtrHandle<nsIDNSListener> mListener;
     nsCOMPtr<nsICancelable> mRequest;
     nsCOMPtr<nsIDNSRecord> mRecord;
     nsresult mStatus;
   };
 
 private:
-  nsCOMPtr<nsIDNSListener> mListener;
+  nsMainThreadPtrHandle<nsIDNSListener> mListener;
   nsCOMPtr<nsIEventTarget> mTargetThread;
 };
 
@@ -645,6 +633,9 @@ nsDNSService::AsyncResolve(const nsACString  &hostname,
     if (!req)
         return NS_ERROR_OUT_OF_MEMORY;
     NS_ADDREF(*result = req);
+
+    MOZ_EVENT_TRACER_NAME_OBJECT(req, hostname.BeginReading());
+    MOZ_EVENT_TRACER_WAIT(req, "net::dns::lookup");
 
     // addref for resolver; will be released when OnLookupComplete is called.
     NS_ADDREF(req);

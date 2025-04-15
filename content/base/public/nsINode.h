@@ -282,9 +282,9 @@ public:
   // - HTMLFieldSetElement:   mElements, mDependentElements, mFirstLegend
   // - nsHTMLFormElement:     many!
   // - HTMLFrameSetElement:   mRowSpecs, mColSpecs
-  // - nsHTMLInputElement:    mInputData, mFiles, mFileList, mStaticDocfileList
+  // - HTMLInputElement:      mInputData, mFiles, mFileList, mStaticDocfileList
   // - nsHTMLMapElement:      mAreas
-  // - nsHTMLMediaElement:    many!
+  // - HTMLMediaElement:      many!
   // - nsHTMLOutputElement:   mDefaultValue, mTokenList
   // - nsHTMLRowElement:      mCells
   // - nsHTMLSelectElement:   mOptions, mRestoreState
@@ -360,10 +360,12 @@ public:
     /** data nodes (comments, PIs, text). Nodes of this type always
      returns a non-null value for nsIContent::GetText() */
     eDATA_NODE           = 1 << 8,
-    /** nsHTMLMediaElement */
+    /** HTMLMediaElement */
     eMEDIA               = 1 << 9,
     /** animation elements */
-    eANIMATION           = 1 << 10
+    eANIMATION           = 1 << 10,
+    /** filter elements that implement SVGFilterPrimitiveStandardAttributes */
+    eFILTER              = 1 << 11
   };
 
   /**
@@ -376,8 +378,7 @@ public:
    */
   virtual bool IsNodeOfType(uint32_t aFlags) const = 0;
 
-  virtual JSObject* WrapObject(JSContext *aCx, JSObject *aScope,
-                               bool *aTriedToWrap);
+  virtual JSObject* WrapObject(JSContext *aCx, JSObject *aScope) MOZ_OVERRIDE;
 
 protected:
   /**
@@ -385,11 +386,9 @@ protected:
    * does some additional checks and fix-up that's common to all nodes. WrapNode
    * should just call the DOM binding's Wrap function.
    */
-  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope,
-                             bool *aTriedToWrap)
+  virtual JSObject* WrapNode(JSContext *aCx, JSObject *aScope)
   {
     MOZ_ASSERT(!IsDOMBinding(), "Someone forgot to override WrapNode");
-    *aTriedToWrap = false;
     return nullptr;
   }
 
@@ -1135,6 +1134,12 @@ public:
     return NS_OK;
   }
 
+  /**
+   * Control if GetUserData and SetUserData methods will be exposed to
+   * unprivileged content.
+   */
+  static bool ShouldExposeUserData(JSContext* aCx, JSObject* /* unused */);
+
   void LookupPrefix(const nsAString& aNamespace, nsAString& aResult);
   bool IsDefaultNamespace(const nsAString& aNamespaceURI)
   {
@@ -1553,7 +1558,6 @@ public:
   nsINode* RemoveChild(nsINode& aChild, mozilla::ErrorResult& aError);
   already_AddRefed<nsINode> CloneNode(bool aDeep, mozilla::ErrorResult& aError);
   bool IsEqualNode(nsINode* aNode);
-  bool IsSupported(const nsAString& aFeature, const nsAString& aVersion);
   void GetNamespaceURI(nsAString& aNamespaceURI) const
   {
     mNodeInfo->GetNamespaceURI(aNamespaceURI);
@@ -1648,7 +1652,6 @@ protected:
   nsresult GetOwnerDocument(nsIDOMDocument** aOwnerDocument);
   nsresult CompareDocumentPosition(nsIDOMNode* aOther,
                                    uint16_t* aReturn);
-  nsresult GetAttributes(nsIDOMNamedNodeMap** aAttributes);
 
   nsresult ReplaceOrInsertBefore(bool aReplace, nsIDOMNode *aNewChild,
                                  nsIDOMNode *aRefChild, nsIDOMNode **aReturn);
@@ -1811,6 +1814,12 @@ extern const nsIID kThisPtrOffsetsSID;
   NS_OFFSET_AND_INTERFACE_TABLE_BEGIN_AMBIGUOUS(_class, nsINode)              \
     NS_INTERFACE_TABLE_ENTRY(_class, nsINode)                       
 
+#define NS_NODE_INTERFACE_TABLE1(_class, _i1)                                 \
+  NS_NODE_OFFSET_AND_INTERFACE_TABLE_BEGIN(_class)                            \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i1)                                     \
+  NS_OFFSET_AND_INTERFACE_TABLE_END                                           \
+  NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
+
 #define NS_NODE_INTERFACE_TABLE2(_class, _i1, _i2)                            \
   NS_NODE_OFFSET_AND_INTERFACE_TABLE_BEGIN(_class)                            \
     NS_INTERFACE_TABLE_ENTRY(_class, _i1)                                     \
@@ -1950,10 +1959,6 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsINode, NS_INODE_IID)
   { \
     return nsINode::GetNextSibling(aNextSibling); \
   } \
-  NS_IMETHOD GetAttributes(nsIDOMNamedNodeMap** aAttributes) __VA_ARGS__ \
-  { \
-    return nsINode::GetAttributes(aAttributes); \
-  } \
   NS_IMETHOD GetOwnerDocument(nsIDOMDocument** aOwnerDocument) __VA_ARGS__ \
   { \
     return nsINode::GetOwnerDocument(aOwnerDocument); \
@@ -1995,11 +2000,6 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsINode, NS_INODE_IID)
   NS_IMETHOD Normalize() __VA_ARGS__ \
   { \
     nsINode::Normalize(); \
-    return NS_OK; \
-  } \
-  NS_IMETHOD IsSupported(const nsAString& aFeature, const nsAString& aVersion, bool* aResult) __VA_ARGS__ \
-  { \
-    *aResult = nsINode::IsSupported(aFeature, aVersion); \
     return NS_OK; \
   } \
   NS_IMETHOD GetNamespaceURI(nsAString& aNamespaceURI) __VA_ARGS__ \

@@ -181,7 +181,7 @@ pref("dom.ipc.plugins.enabled", true);
 
 // product URLs
 // The breakpad report server to link to in about:crashes
-pref("breakpad.reportURL", "http://crash-stats.mozilla.com/report/index/");
+pref("breakpad.reportURL", "https://crash-stats.mozilla.com/report/index/");
 pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/b2g/%VERSION%/releasenotes/");
 pref("app.support.baseURL", "http://support.mozilla.com/b2g");
 pref("app.feedbackURL", "http://input.mozilla.com/feedback/");
@@ -255,6 +255,7 @@ pref("layers.async-pan-zoom.enabled", true);
 
 // Web Notifications
 pref("notification.feature.enabled", true);
+pref("dom.webnotifications.enabled", false);
 
 // IndexedDB
 pref("indexedDB.feature.enabled", true);
@@ -268,12 +269,6 @@ pref("media.cache_size", 4096);    // 4MB media cache
 // The default number of decoded video frames that are enqueued in
 // MediaDecoderReader's mVideoQueue.
 pref("media.video-queue.default-size", 3);
-
-//  0: don't show fullscreen keyboard
-//  1: always show fullscreen keyboard
-// -1: show fullscreen keyboard based on threshold pref
-pref("widget.ime.android.landscape_fullscreen", -1);
-pref("widget.ime.android.fullscreen_threshold", 250); // in hundreths of inches
 
 // optimize images' memory usage
 pref("image.mem.decodeondraw", true);
@@ -393,10 +388,25 @@ pref("dom.mozContacts.enabled", true);
 // WebAlarms
 pref("dom.mozAlarms.enabled", true);
 
+// SimplePush
+// serverURL to be assigned by services team
+pref("services.push.serverURL", "");
+pref("services.push.userAgentID", "");
+// exponential back-off start is 5 seconds like in HTTP/1.1
+pref("services.push.retryBaseInterval", 5000);
+// exponential back-off end is 20 minutes
+pref("services.push.maxRetryInterval", 1200000);
+// How long before a DOMRequest errors as timeout
+pref("services.push.requestTimeout", 10000);
+// enable udp wakeup support
+pref("services.push.udp.wakeupEnabled", true);
+// port on which UDP server socket is bound
+pref("services.push.udp.port", 2442);
+
 // NetworkStats
 #ifdef MOZ_B2G_RIL
 pref("dom.mozNetworkStats.enabled", true);
-pref("ril.lastKnownMcc", 724);
+pref("ril.lastKnownMcc", "724");
 #endif
 
 // WebSettings
@@ -527,11 +537,11 @@ pref("javascript.options.mem.log", false);
 // Increase mark slice time from 10ms to 30ms
 pref("javascript.options.mem.gc_incremental_slice_ms", 30);
 
-pref("javascript.options.mem.gc_high_frequency_heap_growth_max", 120);
-pref("javascript.options.mem.gc_high_frequency_heap_growth_min", 101);
+pref("javascript.options.mem.gc_high_frequency_heap_growth_max", 150);
+pref("javascript.options.mem.gc_high_frequency_heap_growth_min", 120);
 pref("javascript.options.mem.gc_high_frequency_high_limit_mb", 40);
 pref("javascript.options.mem.gc_high_frequency_low_limit_mb", 10);
-pref("javascript.options.mem.gc_low_frequency_heap_growth", 105);
+pref("javascript.options.mem.gc_low_frequency_heap_growth", 120);
 pref("javascript.options.mem.high_water_mark", 6);
 pref("javascript.options.mem.gc_allocation_threshold_mb", 3);
 
@@ -551,17 +561,17 @@ pref("dom.ipc.processPriorityManager.temporaryPriorityLockMS", 5000);
 // Kernel parameters for how processes are killed on low-memory.
 pref("gonk.systemMemoryPressureRecoveryPollMS", 5000);
 pref("hal.processPriorityManager.gonk.masterOomScoreAdjust", 0);
-pref("hal.processPriorityManager.gonk.masterKillUnderMB", 1);
+pref("hal.processPriorityManager.gonk.masterKillUnderMB", 4);
 pref("hal.processPriorityManager.gonk.foregroundHighOomScoreAdjust", 67);
-pref("hal.processPriorityManager.gonk.foregroundHighKillUnderMB", 3);
+pref("hal.processPriorityManager.gonk.foregroundHighKillUnderMB", 5);
 pref("hal.processPriorityManager.gonk.foregroundOomScoreAdjust", 134);
-pref("hal.processPriorityManager.gonk.foregroundKillUnderMB", 4);
+pref("hal.processPriorityManager.gonk.foregroundKillUnderMB", 6);
 pref("hal.processPriorityManager.gonk.backgroundPerceivableOomScoreAdjust", 200);
-pref("hal.processPriorityManager.gonk.backgroundPerceivableKillUnderMB", 5);
+pref("hal.processPriorityManager.gonk.backgroundPerceivableKillUnderMB", 7);
 pref("hal.processPriorityManager.gonk.backgroundHomescreenOomScoreAdjust", 267);
-pref("hal.processPriorityManager.gonk.backgroundHomescreenKillUnderMB", 5);
+pref("hal.processPriorityManager.gonk.backgroundHomescreenKillUnderMB", 8);
 pref("hal.processPriorityManager.gonk.backgroundOomScoreAdjust", 400);
-pref("hal.processPriorityManager.gonk.backgroundKillUnderMB", 8);
+pref("hal.processPriorityManager.gonk.backgroundKillUnderMB", 20);
 pref("hal.processPriorityManager.gonk.notifyLowMemUnderMB", 10);
 
 // Niceness values (i.e., CPU priorities) for B2G processes.
@@ -635,6 +645,8 @@ pref("memory.free_dirty_pages", true);
 pref("wap.UAProf.url", "");
 pref("wap.UAProf.tagname", "x-wap-profile");
 
+pref("layout.imagevisibility.enabled", false);
+
 // Enable native identity (persona/browserid)
 pref("dom.identity.enabled", true);
 
@@ -650,8 +662,9 @@ pref("webgl.can-lose-context-in-foreground", false);
 pref("memory_info_dumper.watch_fifo.enabled", true);
 pref("memory_info_dumper.watch_fifo.directory", "/data/local");
 
-// <input type='file'> implementation is not complete. We have to disable the
-// type to web content to help them do feature detection.
-pref("dom.disable_input_file", true);
-
 pref("general.useragent.enable_overrides", true);
+
+pref("b2g.version", @MOZ_B2G_VERSION@);
+
+// Disable console buffering to save memory.
+pref("consoleservice.buffered", false);

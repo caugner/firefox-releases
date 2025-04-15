@@ -5,11 +5,10 @@
 
 #include "mozilla/dom/HTMLFieldSetElement.h"
 #include "mozilla/dom/HTMLFieldSetElementBinding.h"
+#include "nsContentList.h"
 #include "nsEventDispatcher.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(FieldSet)
-DOMCI_NODE_DATA(HTMLFieldSetElement, mozilla::dom::HTMLFieldSetElement)
-
 
 namespace mozilla {
 namespace dom {
@@ -60,7 +59,7 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLFieldSetElement)
                                    nsIConstraintValidation)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLFieldSetElement,
                                                nsGenericHTMLFormElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLFieldSetElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLFieldSetElement)
 
@@ -246,10 +245,9 @@ HTMLFieldSetElement::NotifyElementsForFirstLegendChange(bool aNotify)
 }
 
 JSObject*
-HTMLFieldSetElement::WrapNode(JSContext* aCx, JSObject* aScope,
-                              bool* aTriedToWrap)
+HTMLFieldSetElement::WrapNode(JSContext* aCx, JSObject* aScope)
 {
-  return HTMLFieldSetElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return HTMLFieldSetElementBinding::Wrap(aCx, aScope, this);
 }
 
 } // namespace dom

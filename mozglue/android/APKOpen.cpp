@@ -104,10 +104,16 @@ JNI_Throw(JNIEnv* jenv, const char* classname, const char* msg)
 #undef JNI_STUBS
 
 static void * xul_handle = NULL;
+#ifndef MOZ_FOLD_LIBS
 static void * sqlite_handle = NULL;
-static void * nss_handle = NULL;
 static void * nspr_handle = NULL;
 static void * plc_handle = NULL;
+#else
+#define sqlite_handle nss_handle
+#define nspr_handle nss_handle
+#define plc_handle nss_handle
+#endif
+static void * nss_handle = NULL;
 
 template <typename T> inline void
 xul_dlsym(const char *symbolName, T *value)
@@ -212,17 +218,15 @@ loadGeckoLibs(const char *apkName)
   struct rusage usage1;
   getrusage(RUSAGE_THREAD, &usage1);
   
-  RefPtr<Zip> zip = new Zip(apkName);
+  RefPtr<Zip> zip = ZipCollection::GetZip(apkName);
 
 #ifdef MOZ_CRASHREPORTER
   file_ids = (char *)extractBuf("lib.id", zip);
 #endif
 
-  char *file = new char[strlen(apkName) + sizeof("!/libxpcom.so")];
-  sprintf(file, "%s!/libxpcom.so", apkName);
-  __wrap_dlopen(file, RTLD_GLOBAL | RTLD_LAZY);
-  // libxul.so is pulled from libxpcom.so, so we don't need to give the full path
-  xul_handle = __wrap_dlopen("libxul.so", RTLD_GLOBAL | RTLD_LAZY);
+  char *file = new char[strlen(apkName) + sizeof("!/libxul.so")];
+  sprintf(file, "%s!/libxul.so", apkName);
+  xul_handle = __wrap_dlopen(file, RTLD_GLOBAL | RTLD_LAZY);
   delete[] file;
 
 #ifdef MOZ_CRASHREPORTER
@@ -257,11 +261,21 @@ loadGeckoLibs(const char *apkName)
   return SUCCESS;
 }
 
-static int loadSQLiteLibs(const char *apkName)
+static mozglueresult loadNSSLibs(const char *apkName);
+
+static mozglueresult
+loadSQLiteLibs(const char *apkName)
 {
+  if (sqlite_handle)
+    return SUCCESS;
+
+#ifdef MOZ_FOLD_LIBS
+  if (loadNSSLibs(apkName) != SUCCESS)
+    return FAILURE;
+#else
   chdir(getenv("GRE_HOME"));
 
-  RefPtr<Zip> zip = new Zip(apkName);
+  RefPtr<Zip> zip = ZipCollection::GetZip(apkName);
   if (!lib_mapping) {
     lib_mapping = (struct mapping_info *)calloc(MAX_MAPPING_INFO, sizeof(*lib_mapping));
   }
@@ -284,6 +298,7 @@ static int loadSQLiteLibs(const char *apkName)
     __android_log_print(ANDROID_LOG_ERROR, "GeckoLibLoad", "Couldn't get a handle to libmozsqlite3!");
     return FAILURE;
   }
+#endif
 
   setup_sqlite_functions(sqlite_handle);
   return SUCCESS;
@@ -292,9 +307,12 @@ static int loadSQLiteLibs(const char *apkName)
 static mozglueresult
 loadNSSLibs(const char *apkName)
 {
+  if (nss_handle && nspr_handle && plc_handle)
+    return SUCCESS;
+
   chdir(getenv("GRE_HOME"));
 
-  RefPtr<Zip> zip = new Zip(apkName);
+  RefPtr<Zip> zip = ZipCollection::GetZip(apkName);
   if (!lib_mapping) {
     lib_mapping = (struct mapping_info *)calloc(MAX_MAPPING_INFO, sizeof(*lib_mapping));
   }
@@ -308,6 +326,7 @@ loadNSSLibs(const char *apkName)
   nss_handle = __wrap_dlopen(file, RTLD_GLOBAL | RTLD_LAZY);
   delete [] file;
 
+#ifndef MOZ_FOLD_LIBS
   file = new char[strlen(apkName) + sizeof("!/libnspr4.so")];
   sprintf(file, "%s!/libnspr4.so", apkName);
   nspr_handle = __wrap_dlopen(file, RTLD_GLOBAL | RTLD_LAZY);
@@ -317,6 +336,7 @@ loadNSSLibs(const char *apkName)
   sprintf(file, "%s!/libplc4.so", apkName);
   plc_handle = __wrap_dlopen(file, RTLD_GLOBAL | RTLD_LAZY);
   delete [] file;
+#endif
 
 #ifdef MOZ_CRASHREPORTER
   free(file_ids);
@@ -328,6 +348,7 @@ loadNSSLibs(const char *apkName)
     return FAILURE;
   }
 
+#ifndef MOZ_FOLD_LIBS
   if (!nspr_handle) {
     __android_log_print(ANDROID_LOG_ERROR, "GeckoLibLoad", "Couldn't get a handle to libnspr4!");
     return FAILURE;
@@ -337,6 +358,7 @@ loadNSSLibs(const char *apkName)
     __android_log_print(ANDROID_LOG_ERROR, "GeckoLibLoad", "Couldn't get a handle to libplc4!");
     return FAILURE;
   }
+#endif
 
   return setup_nss_functions(nss_handle, nspr_handle, plc_handle);
 }

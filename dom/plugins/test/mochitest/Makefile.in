@@ -66,6 +66,8 @@ MOCHITEST_FILES = \
   test_bug777098.html \
   test_bug751809.html \
   test_bug813906.html \
+  test_bug784131.html \
+  test_bug854082.html \
   test_bug863792.html \
   file_bug863792.html \
   test_enumerate.html \
@@ -156,6 +158,7 @@ MOCHITEST_FILES += \
   cocoa_window_focus.html \
   test_cocoa_focus.html \
   cocoa_focus.html \
+  test_queryContentsScaleFactor.html \
   $(NULL)
 endif
 

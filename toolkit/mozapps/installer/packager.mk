@@ -70,8 +70,6 @@ JSSHELL_BINS  = \
   $(DIST)/bin/$(DLL_PREFIX)mozglue$(DLL_SUFFIX) \
   $(NULL)
 ifndef MOZ_NATIVE_NSPR
-JSSHELL_BINS += $(DIST)/bin/$(DLL_PREFIX)nspr4$(DLL_SUFFIX)
-ifeq ($(OS_ARCH),WINNT)
 ifeq ($(_MSC_VER),1400)
 JSSHELL_BINS += $(DIST)/bin/Microsoft.VC80.CRT.manifest
 JSSHELL_BINS += $(DIST)/bin/msvcr80.dll
@@ -86,12 +84,15 @@ endif
 ifeq ($(_MSC_VER),1700)
 JSSHELL_BINS += $(DIST)/bin/msvcr110.dll
 endif
+ifdef MOZ_FOLD_LIBS
+JSSHELL_BINS += $(DIST)/bin/$(DLL_PREFIX)nss3$(DLL_SUFFIX)
 else
 JSSHELL_BINS += \
+  $(DIST)/bin/$(DLL_PREFIX)nspr4$(DLL_SUFFIX) \
   $(DIST)/bin/$(DLL_PREFIX)plds4$(DLL_SUFFIX) \
   $(DIST)/bin/$(DLL_PREFIX)plc4$(DLL_SUFFIX) \
   $(NULL)
-endif
+endif # MOZ_FOLD_LIBS
 endif # MOZ_NATIVE_NSPR
 MAKE_JSSHELL  = $(ZIP) -9j $(PKG_JSSHELL) $(JSSHELL_BINS)
 endif # LIBXUL_SDK
@@ -323,11 +324,7 @@ ABI_DIR = armeabi
 endif
 endif
 
-ifneq (,$(filter mobile/xul b2g,$(MOZ_BUILD_APP)))
-GECKO_APP_AP_PATH = $(call core_abspath,$(DEPTH)/embedding/android)
-else
 GECKO_APP_AP_PATH = $(call core_abspath,$(DEPTH)/mobile/android/base)
-endif
 
 ifdef ENABLE_TESTS
 INNER_ROBOCOP_PACKAGE=echo
@@ -347,9 +344,7 @@ INNER_ROBOCOP_PACKAGE=echo 'Testing is disabled - No Robocop for you'
 endif
 
 ifdef MOZ_OMX_PLUGIN
-OMX_PLUGIN_NAMES = libomxplugin.so libomxplugingb.so libomxplugingb235.so libomxpluginhc.so libomxpluginsony.so libomxpluginfroyo.so libomxpluginjb-htc.so
-else
-OMX_PLUGIN_NAMES =
+DIST_FILES += libomxplugin.so libomxplugingb.so libomxplugingb235.so libomxpluginhc.so libomxpluginsony.so libomxpluginfroyo.so libomxpluginjb-htc.so
 endif
 
 PKG_SUFFIX      = .apk
@@ -359,7 +354,7 @@ INNER_MAKE_PACKAGE	= \
   cp $(GECKO_APP_AP_PATH)/gecko.ap_ $(_ABS_DIST) && \
   ( cd $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH) && \
     mkdir -p lib/$(ABI_DIR) && \
-    mv libmozglue.so $(MOZ_CHILD_PROCESS_NAME) $(OMX_PLUGIN_NAMES) lib/$(ABI_DIR) && \
+    mv libmozglue.so $(MOZ_CHILD_PROCESS_NAME) lib/$(ABI_DIR) && \
     rm -f lib.id && \
     for SOMELIB in *.so ; \
     do \
@@ -382,13 +377,6 @@ INNER_UNMAKE_PACKAGE	= \
   pushd $(MOZ_PKG_DIR) && \
   $(UNZIP) $(UNPACKAGE) && \
   mv lib/$(ABI_DIR)/libmozglue.so . && \
-  mv lib/$(ABI_DIR)/libomxplugin.so . && \
-  mv lib/$(ABI_DIR)/libomxplugingb.so . && \
-  mv lib/$(ABI_DIR)/libomxplugingb235.so . && \
-  mv lib/$(ABI_DIR)/libomxpluginhc.so . && \
-  mv lib/$(ABI_DIR)/libomxpluginsony.so . && \
-  mv lib/$(ABI_DIR)/libomxpluginfroyo.so . && \
-  mv lib/$(ABI_DIR)/libomxpluginjb-htc.so . && \
   mv lib/$(ABI_DIR)/*plugin-container* $(MOZ_CHILD_PROCESS_NAME) && \
   rm -rf lib/$(ABI_DIR) && \
   popd
@@ -527,6 +515,10 @@ libs:: make-package
 endif
 
 DEFINES += -DDLL_PREFIX=$(DLL_PREFIX) -DDLL_SUFFIX=$(DLL_SUFFIX) -DBIN_SUFFIX=$(BIN_SUFFIX)
+
+ifdef MOZ_FOLD_LIBS
+DEFINES += -DMOZ_FOLD_LIBS=1
+endif
 
 GARBAGE		+= $(DIST)/$(PACKAGE) $(PACKAGE)
 

@@ -14,18 +14,19 @@
 #include "nsPresContext.h" // for nsCompatibility
 #include "nsString.h"
 #include "nsChangeHint.h"
-#include "nsIContent.h"
 #include "nsCSSPseudoElements.h"
 #include "nsRuleWalker.h"
 #include "nsNthIndexCache.h"
 #include "nsILoadContext.h"
+#include "mozilla/AutoRestore.h"
 #include "mozilla/BloomFilter.h"
 #include "mozilla/GuardObjects.h"
 
-class nsIStyleSheet;
-class nsIAtom;
-class nsICSSPseudoComparator;
 class nsAttrValue;
+class nsIAtom;
+class nsIContent;
+class nsICSSPseudoComparator;
+class nsIStyleSheet;
 struct TreeMatchContext;
 
 /**
@@ -241,6 +242,32 @@ struct NS_STACK_CLASS TreeMatchContext {
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
   };
 
+  /* Helper class for tracking whether we're skipping the ApplyStyleFixups
+   * code for flex items.
+   *
+   * The optional second parameter aSkipFlexItemStyleFixup allows this
+   * class to be instantiated but only conditionally activated (e.g.
+   * in cases where we may or may not want to be skipping flex-item
+   * style fixup for a particular chunk of code).
+   */
+  class NS_STACK_CLASS AutoFlexItemStyleFixupSkipper {
+  public:
+    AutoFlexItemStyleFixupSkipper(TreeMatchContext& aTreeMatchContext,
+                                  bool aSkipFlexItemStyleFixup = true
+                                  MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+      : mAutoRestorer(aTreeMatchContext.mSkippingFlexItemStyleFixup)
+    {
+      MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+      if (aSkipFlexItemStyleFixup) {
+        aTreeMatchContext.mSkippingFlexItemStyleFixup = true;
+      }
+    }
+
+  private:
+    mozilla::AutoRestore<bool> mAutoRestorer;
+    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
+  };
+
   // Is this matching operation for the creation of a style context?
   // (If it is, we need to set slow selector bits on nodes indicating
   // that certain restyling needs to happen.)
@@ -290,6 +317,11 @@ struct NS_STACK_CLASS TreeMatchContext {
   // Whether this document is using PB mode
   bool mUsingPrivateBrowsing;
 
+  // Whether we're currently skipping the flex item chunk of ApplyStyleFixups
+  // when resolving style (e.g. for children of elements that have a mandatory
+  // frame-type and can't be flex containers despite having "display:flex").
+  bool mSkippingFlexItemStyleFixup;
+
   // Whether this TreeMatchContext is being used with an nsCSSRuleProcessor
   // for an HTML5 scoped style sheet.
   bool mForScopedStyle;
@@ -320,6 +352,7 @@ struct NS_STACK_CLASS TreeMatchContext {
     , mIsHTMLDocument(aDocument->IsHTML())
     , mCompatMode(aDocument->GetCompatibilityMode())
     , mUsingPrivateBrowsing(false)
+    , mSkippingFlexItemStyleFixup(false)
     , mForScopedStyle(false)
     , mCurrentStyleScope(nullptr)
   {

@@ -21,43 +21,29 @@
 // THIS FILE IS GENERATED FROM SOURCE IN THE GCLI PROJECT
 // DO NOT EDIT IT DIRECTLY
 
-let [ define, require ] = (function() {
-  let tempScope = {};
-  Components.utils.import("resource://gre/modules/devtools/Require.jsm", tempScope);
-  return [ tempScope.define, tempScope.require ];
-})();
-registerCleanupFunction(function mockTearDown() {
-  define = undefined;
-  require = undefined;
-});
-
-let gcli = (function() {
-  let tempScope = {};
-  Components.utils.import("resource:///modules/devtools/gcli.jsm", tempScope);
-  return tempScope.gcli;
-})();
-registerCleanupFunction(function mockTearDown() {
-  gcli = undefined;
-});
+const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
+let { require: require, define: define } = Cu.import("resource://gre/modules/devtools/Require.jsm", {});
+Cu.import("resource:///modules/devtools/gcli.jsm", {});
 
 // <INJECTED SOURCE:END>
 
 var mockCommands = {};
 
+var util = require('util/util');
 var canon = require('gcli/canon');
-var util = require('gcli/util');
 
-var SelectionType = require('gcli/types/selection').SelectionType;
-var DeferredType = require('gcli/types/basic').DeferredType;
 var types = require('gcli/types');
+var SelectionType = require('gcli/types/selection').SelectionType;
+var DelegateType = require('gcli/types/basic').DelegateType;
+
 
 /**
  * Registration and de-registration.
  */
-mockCommands.setup = function() {
-  // setup/shutdown need to register/unregister types, however that means we
-  // need to re-initialize exports.option1 and exports.option2 with the
-  // actual types
+mockCommands.setup = function(opts) {
+  // setup/shutdown needs to register/unregister types, however that means we
+  // need to re-initialize mockCommands.option1 and mockCommands.option2 with
+  // the actual types
   mockCommands.option1.type = types.getType('string');
   mockCommands.option2.type = types.getType('number');
 
@@ -72,6 +58,7 @@ mockCommands.setup = function() {
   canon.addCommand(mockCommands.tsb);
   canon.addCommand(mockCommands.tss);
   canon.addCommand(mockCommands.tsu);
+  canon.addCommand(mockCommands.tsf);
   canon.addCommand(mockCommands.tsn);
   canon.addCommand(mockCommands.tsnDif);
   canon.addCommand(mockCommands.tsnExt);
@@ -90,7 +77,7 @@ mockCommands.setup = function() {
   canon.addCommand(mockCommands.tslong);
 };
 
-mockCommands.shutdown = function() {
+mockCommands.shutdown = function(opts) {
   canon.removeCommand(mockCommands.tsv);
   canon.removeCommand(mockCommands.tsr);
   canon.removeCommand(mockCommands.tso);
@@ -99,6 +86,7 @@ mockCommands.shutdown = function() {
   canon.removeCommand(mockCommands.tsb);
   canon.removeCommand(mockCommands.tss);
   canon.removeCommand(mockCommands.tsu);
+  canon.removeCommand(mockCommands.tsf);
   canon.removeCommand(mockCommands.tsn);
   canon.removeCommand(mockCommands.tsnDif);
   canon.removeCommand(mockCommands.tsnExt);
@@ -123,38 +111,34 @@ mockCommands.shutdown = function() {
 
 mockCommands.option1 = { type: types.getType('string') };
 mockCommands.option2 = { type: types.getType('number') };
-
-var lastOption = undefined;
+mockCommands.option3 = { type: types.getType({
+  name: 'selection',
+  lookup: [
+    { name: 'one', value: 1 },
+    { name: 'two', value: 2 },
+    { name: 'three', value: 3 }
+  ]
+})};
 
 mockCommands.optionType = new SelectionType({
   name: 'optionType',
   lookup: [
     { name: 'option1', value: mockCommands.option1 },
-    { name: 'option2', value: mockCommands.option2 }
-  ],
-  noMatch: function() {
-    lastOption = undefined;
-  },
-  stringify: function(option) {
-    lastOption = option;
-    return SelectionType.prototype.stringify.call(this, option);
-  },
-  parse: function(arg) {
-    var conversion = SelectionType.prototype.parse.call(this, arg);
-    lastOption = conversion.value;
-    return conversion;
-  }
+    { name: 'option2', value: mockCommands.option2 },
+    { name: 'option3', value: mockCommands.option3 }
+  ]
 });
 
-mockCommands.optionValue = new DeferredType({
+mockCommands.optionValue = new DelegateType({
   name: 'optionValue',
-  defer: function() {
-    if (lastOption && lastOption.type) {
-      return lastOption.type;
+  delegateType: function(context) {
+    if (context != null) {
+      var option = context.getArgsObject().optionType;
+      if (option != null) {
+        return option.type;
+      }
     }
-    else {
-      return types.getType('blank');
-    }
+    return types.getType('blank');
   }
 });
 
@@ -168,7 +152,10 @@ function createExec(name) {
       context: context
     };
     mockCommands.onCommandExec(data);
-    return data;
+    var argsOut = Object.keys(args).map(function(key) {
+      return key + '=' + args[key];
+    }).join(', ');
+    return 'Exec: ' + name + ' ' + argsOut;
   };
 }
 
@@ -231,6 +218,12 @@ mockCommands.tsu = {
   exec: createExec('tsu')
 };
 
+mockCommands.tsf = {
+  name: 'tsf',
+  params: [ { name: 'num', type: { name: 'number', allowFloat: true, max: 11.5, min: -6.5, step: 1.5 } } ],
+  exec: createExec('tsf')
+};
+
 mockCommands.tsn = {
   name: 'tsn'
 };
@@ -251,13 +244,13 @@ mockCommands.tsnExt = {
 mockCommands.tsnExte = {
   name: 'tsn exte',
   params: [ { name: 'text', type: 'string' } ],
-  exec: createExec('')
+  exec: createExec('tsnExte')
 };
 
 mockCommands.tsnExten = {
   name: 'tsn exten',
   params: [ { name: 'text', type: 'string' } ],
-  exec: createExec('tsnExte')
+  exec: createExec('tsnExten')
 };
 
 mockCommands.tsnExtend = {
@@ -267,15 +260,15 @@ mockCommands.tsnExtend = {
 };
 
 mockCommands.tsnDeep = {
-  name: 'tsn deep',
+  name: 'tsn deep'
 };
 
 mockCommands.tsnDeepDown = {
-  name: 'tsn deep down',
+  name: 'tsn deep down'
 };
 
 mockCommands.tsnDeepDownNested = {
-  name: 'tsn deep down nested',
+  name: 'tsn deep down nested'
 };
 
 mockCommands.tsnDeepDownNestedCmd = {
@@ -319,7 +312,7 @@ mockCommands.tselarr = {
   name: 'tselarr',
   params: [
     { name: 'num', type: { name: 'selection', data: [ '1', '2', '3' ] } },
-    { name: 'arr', type: { name: 'array', subtype: 'string' } },
+    { name: 'arr', type: { name: 'array', subtype: 'string' } }
   ],
   exec: createExec('tselarr')
 };
@@ -330,7 +323,7 @@ mockCommands.tsm = {
   params: [
     { name: 'abc', type: { name: 'selection', data: [ 'a', 'b', 'c' ] } },
     { name: 'txt', type: 'string' },
-    { name: 'num', type: { name: 'number', max: 42, min: 0 } },
+    { name: 'num', type: { name: 'number', max: 42, min: 0 } }
   ],
   exec: createExec('tsm')
 };
@@ -361,21 +354,18 @@ mockCommands.tsg = {
       ]
     },
     {
-      group: 'Second',
-      params: [
-        {
-          name: 'txt2',
-          type: 'string',
-          defaultValue: 'd',
-          description: 'txt2 param'
-        },
-        {
-          name: 'num',
-          type: { name: 'number', min: 40 },
-          defaultValue: 42,
-          description: 'num param'
-        }
-      ]
+      name: 'txt2',
+      type: 'string',
+      defaultValue: 'd',
+      description: 'txt2 param',
+      option: 'Second'
+    },
+    {
+      name: 'num',
+      type: { name: 'number', min: 40 },
+      defaultValue: 42,
+      description: 'num param',
+      option: 'Second'
     }
   ],
   exec: createExec('tsg')
@@ -450,7 +440,7 @@ mockCommands.tslong = {
             ]
           },
           description: 'sel Desc',
-          defaultValue: ' ',
+          defaultValue: ' '
         },
         {
           name: 'bool',

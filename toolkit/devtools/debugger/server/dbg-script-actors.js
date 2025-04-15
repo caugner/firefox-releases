@@ -29,29 +29,9 @@ function ThreadActor(aHooks, aGlobal)
   this._state = "detached";
   this._frameActors = [];
   this._environmentActors = [];
-  this._hooks = {};
   this._hooks = aHooks;
+  this._sources = {};
   this.global = aGlobal;
-
-  /**
-   * A script cache that maps script URLs to arrays of different Debugger.Script
-   * instances that have the same URL. For example, when an inline <script> tag
-   * in a web page contains a function declaration, the JS engine creates two
-   * Debugger.Script objects, one for the function and one for the script tag
-   * as a whole. The two objects will usually have different startLine and/or
-   * lineCount properties. For the edge case where two scripts are contained in
-   * the same line we need column support.
-   *
-   * The sparse array that is mapped to each URL serves as an additional mapping
-   * from startLine numbers to Debugger.Script objects, facilitating retrieval
-   * of the scripts that contain a particular line number. For example, if a
-   * cache holds two scripts with the URL http://foo.com/ starting at lines 4
-   * and 10, then the corresponding cache will be:
-   * this._scripts: {
-   *   'http://foo.com/': [,,,,[Debugger.Script],,,,,,[Debugger.Script]]
-   * }
-   */
-  this._scripts = {};
 
   // A cache of prototype chains for objects that have received a
   // prototypeAndProperties request. Due to the way the debugger frontend works,
@@ -99,7 +79,7 @@ ThreadActor.prototype = {
     }
     this.conn.removeActorPool(this._threadLifetimePool || undefined);
     this._threadLifetimePool = null;
-    this._scripts = {};
+    this._sources = {};
   },
 
   /**
@@ -489,7 +469,7 @@ ThreadActor.prototype = {
 
     let location = aRequest.location;
     let line = location.line;
-    if (!this._scripts[location.url] || line < 0) {
+    if (this.dbg.findScripts({ url: location.url }).length == 0 || line < 0) {
       return { error: "noScript" };
     }
 
@@ -519,165 +499,148 @@ ThreadActor.prototype = {
    *        The location of the breakpoint as specified in the protocol.
    */
   _setBreakpoint: function TA__setBreakpoint(aLocation) {
-    // Fetch the list of scripts in that url.
-    let scripts = this._scripts[aLocation.url];
-    // Fetch the outermost script in that list.
-    let script = null;
-    for (let i = 0; i <= aLocation.line; i++) {
-      // Stop when the first script that contains this location is found.
-      if (scripts[i]) {
-        // If that first script does not contain the line specified, it's no
-        // good. Note that |i === scripts[i].startLine| in this case, so the
-        // following check makes sure we are not considering a script that does
-        // not include |aLocation.line|.
-        if (i + scripts[i].lineCount < aLocation.line) {
-          continue;
+    let breakpoints = this._breakpointStore[aLocation.url];
+
+    // Get or create the breakpoint actor for the given location
+    let actor;
+    if (breakpoints[aLocation.line].actor) {
+      actor = breakpoints[aLocation.line].actor;
+    } else {
+      actor = breakpoints[aLocation.line].actor = new BreakpointActor(this, {
+        url: aLocation.url,
+        line: aLocation.line
+      });
+      this._hooks.addToParentPool(actor);
+    }
+
+    // Find all scripts matching the given location
+    let scripts = this.dbg.findScripts(aLocation);
+    if (scripts.length == 0) {
+      return {
+        error: "noScript",
+        actor: actor.actorID
+      };
+    }
+
+   /**
+     * For each script, if the given line has at least one entry point, set
+     * breakpoint on the bytecode offet for each of them.
+     */
+    let found = false;
+    for (let script of scripts) {
+      let offsets = script.getLineOffsets(aLocation.line);
+      if (offsets.length > 0) {
+        for (let offset of offsets) {
+          script.setBreakpoint(offset, actor);
         }
-        script = scripts[i];
-        break;
+        actor.addScript(script, this);
+        found = true;
       }
     }
-
-    let location = { url: aLocation.url, line: aLocation.line };
-    // Get the list of cached breakpoints in this URL.
-    let scriptBreakpoints = this._breakpointStore[location.url];
-    let bpActor;
-    if (scriptBreakpoints &&
-        scriptBreakpoints[location.line] &&
-        scriptBreakpoints[location.line].actor) {
-      bpActor = scriptBreakpoints[location.line].actor;
-    }
-    if (!bpActor) {
-      bpActor = new BreakpointActor(this, location);
-      this._hooks.addToParentPool(bpActor);
-      if (scriptBreakpoints[location.line]) {
-        scriptBreakpoints[location.line].actor = bpActor;
-      }
+    if (found) {
+      return {
+        actor: actor.actorID
+      };
     }
 
-    if (!script) {
-      return { error: "noScript", actor: bpActor.actorID };
-    }
+   /**
+     * If we get here, no breakpoint was set. This is because the given line
+     * has no entry points, for example because it is empty. As a fallback
+     * strategy, we try to set the breakpoint on the smallest line greater
+     * than or equal to the given line that as at least one entry point.
+     */
 
-    let inner, codeFound = false;
-    // We need to set the breakpoint in every script that has bytecode in the
-    // specified line.
-    for (let s of this._getContainers(script, aLocation.line)) {
-      // The first result of the iteration is the innermost script.
-      if (!inner) {
-        inner = s;
-      }
+    // Find all innermost scripts matching the given location
+    let scripts = this.dbg.findScripts({
+      url: aLocation.url,
+      line: aLocation.line,
+      innermost: true
+    });
 
-      let offsets = s.getLineOffsets(aLocation.line);
-      if (offsets.length) {
-        bpActor.addScript(s, this);
-        for (let i = 0; i < offsets.length; i++) {
-          s.setBreakpoint(offsets[i], bpActor);
-          codeFound = true;
-        }
-      }
-    }
-
+    /**
+     * For each innermost script, look for the smallest line greater than or
+     * equal to the given line that has one or more entry points. If found, set
+     * a breakpoint on the bytecode offset for each of its entry points.
+     */
     let actualLocation;
-    if (!codeFound) {
-      // No code at that line in any script, skipping forward in the innermost
-      // script.
-      let lines = inner.getAllOffsets();
-      let oldLine = aLocation.line;
-      for (let line = oldLine; line < lines.length; ++line) {
-        if (lines[line]) {
-          for (let i = 0; i < lines[line].length; i++) {
-            inner.setBreakpoint(lines[line][i], bpActor);
-            codeFound = true;
+    let found = false;
+    for (let script of scripts) {
+      let offsets = script.getAllOffsets();
+      for (let line = aLocation.line; line < offsets.length; ++line) {
+        if (offsets[line]) {
+          for (let offset of offsets[line]) {
+            script.setBreakpoint(offset, actor);
           }
-          bpActor.addScript(inner, this);
-          actualLocation = {
-            url: aLocation.url,
-            line: line,
-            column: aLocation.column
-          };
-          // If there wasn't already a breakpoint at that line, update the cache
-          // as well.
-          if (scriptBreakpoints[line] && scriptBreakpoints[line].actor) {
-            let existing = scriptBreakpoints[line].actor;
-            bpActor.onDelete();
-            delete scriptBreakpoints[oldLine];
-            return { actor: existing.actorID, actualLocation: actualLocation };
+          actor.addScript(script, this);
+          if (!actualLocation) {
+            actualLocation = {
+              url: aLocation.url,
+              line: line,
+              column: 0
+            };
           }
-          bpActor.location = actualLocation;
-          scriptBreakpoints[line] = scriptBreakpoints[oldLine];
-          scriptBreakpoints[line].line = line;
-          delete scriptBreakpoints[oldLine];
+          found = true;
           break;
         }
       }
     }
-
-    if (!codeFound) {
-      return  { error: "noCodeAtLineColumn", actor: bpActor.actorID };
-    }
-
-    return { actor: bpActor.actorID, actualLocation: actualLocation };
-  },
-
-  /**
-   * A recursive generator function for iterating over the scripts that contain
-   * the specified line, by looking through child scripts of the supplied
-   * script. As an example, an inline <script> tag has the top-level functions
-   * declared in it as its children.
-   *
-   * @param aScript Debugger.Script
-   *        The source script.
-   * @param aLine number
-   *        The line number.
-   */
-  _getContainers: function TA__getContainers(aScript, aLine) {
-    let children = aScript.getChildScripts();
-    if (children.length > 0) {
-      for (let i = 0; i < children.length; i++) {
-        let child = children[i];
-        // Iterate over the children that contain this location.
-        if (child.startLine <= aLine &&
-            child.startLine + child.lineCount > aLine) {
-          for (let j of this._getContainers(child, aLine)) {
-            yield j;
-          }
-        }
+    if (found) {
+      if (breakpoints[actualLocation.line] &&
+          breakpoints[actualLocation.line].actor) {
+        /**
+         * We already have a breakpoint actor for the actual location, so
+         * actor we created earlier is now redundant. Delete it, update the
+         * breakpoint store, and return the actor for the actual location.
+         */
+        actor.onDelete();
+        delete breakpoints[aLocation.line];
+        return {
+          actor: breakpoints[actualLocation.line].actor.actorID,
+          actualLocation: actualLocation
+        };
+      } else {
+        /**
+         * We don't have a breakpoint actor for the actual location yet.
+         * Instead or creating a new actor, reuse the actor we created earlier,
+         * and update the breakpoint store.
+         */
+        actor.location = actualLocation;
+        breakpoints[actualLocation.line] = breakpoints[aLocation.line];
+        delete breakpoints[aLocation.line];
+        // WARNING: This overwrites aLocation.line
+        breakpoints[actualLocation.line].line = actualLocation.line;
+        return {
+          actor: actor.actorID,
+          actualLocation: actualLocation
+        };
       }
     }
-    // Include this script in the iteration, too.
-    yield aScript;
+
+    /**
+     * If we get here, no line matching the given line was found, so just
+     * epically.
+     */
+    return {
+      error: "noCodeAtLineColumn",
+      actor: actor.actorID
+    };
   },
 
   /**
-   * Handle a protocol request to return the list of loaded scripts.
+   * Get the script and source lists from the debugger.
    */
-  onScripts: function TA_onScripts(aRequest) {
-    // Get the script list from the debugger.
+  _discoverScriptsAndSources: function TA__discoverScriptsAndSources() {
     for (let s of this.dbg.findScripts()) {
       this._addScript(s);
     }
-    // Build the cache.
-    let scripts = [];
-    for (let url in this._scripts) {
-      for (let i = 0; i < this._scripts[url].length; i++) {
-        if (!this._scripts[url][i]) {
-          continue;
-        }
+  },
 
-        let script = {
-          url: url,
-          startLine: i,
-          lineCount: this._scripts[url][i].lineCount,
-          source: this.sourceGrip(this._scripts[url][i], this)
-        };
-        scripts.push(script);
-      }
-    }
-
-    let packet = { from: this.actorID,
-                   scripts: scripts };
-    return packet;
+  onSources: function TA_onSources(aRequest) {
+    this._discoverScriptsAndSources();
+    let urls = Object.getOwnPropertyNames(this._sources);
+    return {
+      sources: [this._getSource(url).form() for (url of urls)]
+    };
   },
 
   /**
@@ -1099,10 +1062,10 @@ ThreadActor.prototype = {
       return this.threadLifetimePool.sourceActors[aScript.url].grip();
     }
 
-    let actor = new SourceActor(aScript, this);
+    let actor = new SourceActor(aScript.url, this);
     this.threadLifetimePool.addActor(actor);
     this.threadLifetimePool.sourceActors[aScript.url] = actor;
-    return actor.grip();
+    return actor.form();
   },
 
   // JS Debugger API hooks.
@@ -1167,36 +1130,27 @@ ThreadActor.prototype = {
    *        A Debugger.Object instance whose referent is the global object.
    */
   onNewScript: function TA_onNewScript(aScript, aGlobal) {
-    if (this._addScript(aScript)) {
-      // Notify the client.
-      this.conn.send({
-        from: this.actorID,
-        type: "newScript",
-        url: aScript.url,
-        startLine: aScript.startLine,
-        lineCount: aScript.lineCount,
-        source: this.sourceGrip(aScript, this)
-      });
-    }
+    this._addScript(aScript);
   },
 
   /**
-   * Check if the provided script is allowed to be stored in the cache.
+   * Check if scripts from the provided source URL are allowed to be stored in
+   * the cache.
    *
-   * @param aScript Debugger.Script
-   *        The source script that will be stored.
+   * @param aSourceUrl String
+   *        The url of the script's source that will be stored.
    * @returns true, if the script can be added, false otherwise.
    */
-  _allowScript: function TA__allowScript(aScript) {
+  _allowSource: function TA__allowScript(aSourceUrl) {
     // Ignore anything we don't have a URL for (eval scripts, for example).
-    if (!aScript.url)
+    if (!aSourceUrl)
       return false;
     // Ignore XBL bindings for content debugging.
-    if (aScript.url.indexOf("chrome://") == 0) {
+    if (aSourceUrl.indexOf("chrome://") == 0) {
       return false;
     }
     // Ignore about:* pages for content debugging.
-    if (aScript.url.indexOf("about:") == 0) {
+    if (aSourceUrl.indexOf("about:") == 0) {
       return false;
     }
     return true;
@@ -1210,15 +1164,13 @@ ThreadActor.prototype = {
    * @returns true, if the script was added, false otherwise.
    */
   _addScript: function TA__addScript(aScript) {
-    if (!this._allowScript(aScript)) {
+    if (!this._allowSource(aScript.url)) {
       return false;
     }
-    // Use a sparse array for storing the scripts for each URL in order to
-    // optimize retrieval.
-    if (!this._scripts[aScript.url]) {
-      this._scripts[aScript.url] = [];
-    }
-    this._scripts[aScript.url][aScript.startLine] = aScript;
+
+    // TODO bug 637572: we should be dealing with sources directly, not
+    // inferring them through scripts.
+    this._addSource(aScript.url);
 
     // Set any stored breakpoints.
     let existing = this._breakpointStore[aScript.url];
@@ -1280,7 +1232,49 @@ ThreadActor.prototype = {
       }
     }
     return retval;
-  }
+  },
+
+  /**
+   * Add a source to the current set of sources.
+   *
+   * Right now this takes an url, but in the future it should
+   * take a Debugger.Source.
+   *
+   * @param string the source URL.
+   * @returns a SourceActor representing the source.
+   */
+  _addSource: function TA__addSource(aURL) {
+    if (!this._allowSource(aURL)) {
+      return false;
+    }
+
+    if (aURL in this._sources) {
+      return true;
+    }
+
+    let actor = new SourceActor(aURL, this);
+    this.threadLifetimePool.addActor(actor);
+    this._sources[aURL] = actor;
+
+    this.conn.send({
+      from: this.actorID,
+      type: "newSource",
+      source: actor.form()
+    });
+
+    return true;
+  },
+
+  /**
+   * Get the source actor for the given URL.
+   */
+  _getSource: function TA__getSource(aUrl) {
+    let source = this._sources[aUrl];
+    if (!source) {
+      throw new Error("No source for '" + aUrl + "'");
+    }
+    return source;
+  },
 
 };
 
@@ -1293,7 +1287,7 @@ ThreadActor.prototype.requestTypes = {
   "interrupt": ThreadActor.prototype.onInterrupt,
   "releaseMany": ThreadActor.prototype.onReleaseMany,
   "setBreakpoint": ThreadActor.prototype.onSetBreakpoint,
-  "scripts": ThreadActor.prototype.onScripts,
+  "sources": ThreadActor.prototype.onSources,
   "threadGrips": ThreadActor.prototype.onThreadGrips
 };
 
@@ -1373,14 +1367,14 @@ PauseScopedActor.prototype = {
 /**
  * A SourceActor provides information about the source of a script.
  *
- * @param aScript Debugger.Script
- *        The script whose source we are representing.
+ * @param aUrl String
+ *        The url of the source we are representing.
  * @param aThreadActor ThreadActor
  *        The current thread actor.
  */
-function SourceActor(aScript, aThreadActor) {
+function SourceActor(aUrl, aThreadActor) {
   this._threadActor = aThreadActor;
-  this._script = aScript;
+  this._url = aUrl;
 }
 
 SourceActor.prototype = {
@@ -1389,8 +1383,12 @@ SourceActor.prototype = {
 
   get threadActor() { return this._threadActor; },
 
-  grip: function SA_grip() {
-    return this.actorID;
+  form: function SA_form() {
+    return {
+      actor: this.actorID,
+      url: this._url
+      // TODO bug 637572: introductionScript
+    };
   },
 
   disconnect: function LSA_disconnect() {
@@ -1418,7 +1416,7 @@ SourceActor.prototype = {
         return {
           "from": this.actorID,
           "error": "loadSourceError",
-          "message": "Could not load the source for " + this._script.url + "."
+          "message": "Could not load the source for " + this._url + "."
         };
       }.bind(this));
   },
@@ -1458,8 +1456,9 @@ SourceActor.prototype = {
    */
   _loadSource: function SA__loadSource() {
     let deferred = defer();
-    let url = this._script.url;
     let scheme;
+    let url = this._url.split(" -> ").pop();
+
     try {
       scheme = Services.io.extractScheme(url);
     } catch (e) {
@@ -2357,10 +2356,10 @@ update(ChromeDebuggerActor.prototype, {
   actorPrefix: "chromeDebugger",
 
   /**
-   * Override the eligibility check for scripts to make sure every script with a
-   * URL is stored when debugging chrome.
+   * Override the eligibility check for scripts and sources to make sure every
+   * script and source with a URL is stored when debugging chrome.
    */
-  _allowScript: function(aScript) !!aScript.url,
+  _allowSource: function(aSourceURL) !!aSourceURL,
 
    /**
    * An object that will be used by ThreadActors to tailor their behavior

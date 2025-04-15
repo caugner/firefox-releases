@@ -17,7 +17,6 @@
 #include "nsAttrValueInlines.h"
 #include "SVGAngle.h"
 #include "SVGAnimatedAngle.h"
-#include "mozilla/Attributes.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -373,7 +372,7 @@ nsSVGAngle::ToSMILAttr(nsSVGElement *aSVGElement)
 
 nsresult
 nsSVGAngle::SMILOrient::ValueFromString(const nsAString& aStr,
-                                        const nsISMILAnimationElement* /*aSrcElement*/,
+                                        const SVGAnimationElement* /*aSrcElement*/,
                                         nsSMILValue& aValue,
                                         bool& aPreventCachingOfSandwich) const
 {

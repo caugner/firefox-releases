@@ -47,6 +47,8 @@
 #include "nsIContentSecurityPolicy.h"
 #include "nsSandboxFlags.h"
 
+using mozilla::AutoPushJSContext;
+
 static NS_DEFINE_CID(kJSURICID, NS_JSURI_CID);
 
 class nsJSThunk : public nsIInputStream
@@ -166,22 +168,27 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
     rv = principal->GetCsp(getter_AddRefs(csp));
     NS_ENSURE_SUCCESS(rv, rv);
     if (csp) {
-		bool allowsInline;
-		rv = csp->GetAllowsInlineScript(&allowsInline);
-		NS_ENSURE_SUCCESS(rv, rv);
+        bool allowsInline = true;
+        bool reportViolations = false;
+        rv = csp->GetAllowsInlineScript(&reportViolations, &allowsInline);
+        NS_ENSURE_SUCCESS(rv, rv);
 
-      if (!allowsInline) {
-          // gather information to log with violation report
-          nsCOMPtr<nsIURI> uri;
-          principal->GetURI(getter_AddRefs(uri));
-          nsAutoCString asciiSpec;
-          uri->GetAsciiSpec(asciiSpec);
-		  csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_INLINE_SCRIPT,
-								   NS_ConvertUTF8toUTF16(asciiSpec),
-								   NS_ConvertUTF8toUTF16(mURL),
-                                   0);
+        if (reportViolations) {
+            // gather information to log with violation report
+            nsCOMPtr<nsIURI> uri;
+            principal->GetURI(getter_AddRefs(uri));
+            nsAutoCString asciiSpec;
+            uri->GetAsciiSpec(asciiSpec);
+            csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_INLINE_SCRIPT,
+                                     NS_ConvertUTF8toUTF16(asciiSpec),
+                                     NS_ConvertUTF8toUTF16(mURL),
+                                     0);
+        }
+
+        //return early if inline scripts are not allowed
+        if (!allowsInline) {
           return NS_ERROR_DOM_RETVAL_UNDEFINED;
-      }
+        }
     }
 
     // Get the global object we should be running on.
@@ -239,13 +246,7 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
     if (!useSandbox) {
         //-- Don't outside a sandbox unless the script principal subsumes the
         //   principal of the context.
-        nsCOMPtr<nsIPrincipal> objectPrincipal;
-        rv = securityManager->
-            GetObjectPrincipal(scriptContext->GetNativeContext(),
-                               globalJSObject,
-                               getter_AddRefs(objectPrincipal));
-        if (NS_FAILED(rv))
-            return rv;
+        nsIPrincipal* objectPrincipal = nsContentUtils::GetObjectPrincipal(globalJSObject);
 
         bool subsumes;
         rv = principal->Subsumes(objectPrincipal, &subsumes);
@@ -258,7 +259,7 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
     JS::Value v = JS::UndefinedValue();
     // Finally, we have everything needed to evaluate the expression.
 
-    JSContext *cx = scriptContext->GetNativeContext();
+    AutoPushJSContext cx(scriptContext->GetNativeContext());
     JSAutoRequest ar(cx);
     if (useSandbox) {
         // We were asked to use a sandbox, or the channel owner isn't allowed
@@ -295,8 +296,6 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
         NS_ENSURE_SUCCESS(rv, rv);
         sandboxObj = js::UnwrapObject(sandboxObj);
         JSAutoCompartment ac(cx, sandboxObj);
-        rv = xpc->HoldObject(cx, sandboxObj, getter_AddRefs(sandbox));
-        NS_ENSURE_SUCCESS(rv, rv);
 
         // Push our JSContext on the context stack so the JS_ValueToString call (and
         // JS_ReportPendingException, if relevant) will use the principal of cx.
@@ -310,8 +309,9 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
             return rv;
         }
 
-        rv = xpc->EvalInSandboxObject(NS_ConvertUTF8toUTF16(script), cx,
-                                      sandbox, true, &v);
+        rv = xpc->EvalInSandboxObject(NS_ConvertUTF8toUTF16(script),
+                                      /* filename = */ nullptr, cx,
+                                      sandboxObj, true, &v);
 
         // Propagate and report exceptions that happened in the
         // sandbox.

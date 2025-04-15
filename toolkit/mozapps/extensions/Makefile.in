@@ -25,14 +25,6 @@ else ifdef MOZ_DEBUG
 DEFINES += -DMOZ_EM_DEBUG=1
 endif
 
-MODULE = extensions
-
-XPIDLSRCS = \
-  amIInstallTrigger.idl \
-  amIWebInstallListener.idl \
-  amIWebInstaller.idl \
-  $(NULL)
-
 EXTRA_PP_COMPONENTS = \
   nsBlocklistService.js \
   extensions.manifest \
@@ -60,8 +52,6 @@ EXTRA_JS_MODULES = \
   PluginProvider.jsm \
   SpellCheckDictionaryBootstrap.js \
   $(NULL)
-
-TEST_DIRS += test
 
 EXTRA_DSO_LDOPTS = \
   $(MOZ_JS_LIBS) \

@@ -11,9 +11,6 @@ relativesrcdir   = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-DIRS = \
-  $(NULL)
-
 MOCHITEST_FILES = \
   test_network_basics.html \
   test_tcpsocket_default_permissions.html \
@@ -29,8 +26,6 @@ MOCHITEST_FILES = \
   test_networkstats_enabled_perm.html \
   $(NULL)
 endif
-
-MODULE = test_dom_socket
 
 XPCSHELL_TESTS = unit unit_ipc
 

@@ -5,6 +5,7 @@
 
 #include "nsNativeThemeCocoa.h"
 #include "nsObjCExceptions.h"
+#include "nsRangeFrame.h"
 #include "nsRenderingContext.h"
 #include "nsRect.h"
 #include "nsSize.h"
@@ -23,7 +24,6 @@
 #include "nsCocoaWindow.h"
 #include "nsNativeThemeColors.h"
 #include "nsIScrollableFrame.h"
-#include "nsIDOMHTMLProgressElement.h"
 #include "nsIDOMHTMLMeterElement.h"
 #include "mozilla/dom/Element.h"
 
@@ -170,8 +170,8 @@ extern "C" {
 
   int32_t stepsPerSecond = mIsIndeterminate ? 60 : 30;
   int32_t milliSecondsPerStep = 1000 / stepsPerSecond;
-  tdi.trackInfo.progress.phase = PR_IntervalToMilliseconds(PR_IntervalNow()) /
-                                 milliSecondsPerStep % 32;
+  tdi.trackInfo.progress.phase = uint8_t(PR_IntervalToMilliseconds(PR_IntervalNow()) /
+                                         milliSecondsPerStep);
 
   HIThemeDrawTrack(&tdi, NULL, cgContext, kHIThemeOrientationNormal);
 }
@@ -2062,7 +2062,8 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
 
     case NS_THEME_BUTTON:
       if (IsDefaultButton(aFrame)) {
-        if (!QueueAnimatedContentForRefresh(aFrame->GetContent(), 10)) {
+        if (!IsDisabled(aFrame, eventState) && FrameIsInActiveWindow(aFrame) &&
+            !QueueAnimatedContentForRefresh(aFrame->GetContent(), 10)) {
           NS_WARNING("Unable to animate button!");
         }
         DrawButton(cgContext, kThemePushButton, macRect, true,
@@ -2263,6 +2264,35 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
       // do nothing, drawn by scale
       break;
 
+    case NS_THEME_RANGE: {
+      nsRangeFrame *rangeFrame = do_QueryFrame(aFrame);
+      if (!rangeFrame) {
+        break;
+      }
+      int32_t value = rangeFrame->GetValue();
+      int32_t min = rangeFrame->GetMin();
+      int32_t max = rangeFrame->GetMax();
+      if (max < min) {
+        // The spec says that the only valid value is the minimum. For the
+        // purposes of drawing the range, we need to have a max that's greater
+        // than min though (it doesn't really matter what the value is, as long
+        // as the thumb is painted at the min.
+        max = min + 1;
+        value = min;
+      }
+      MOZ_ASSERT(MOZ_DOUBLE_IS_FINITE(value) &&
+                 MOZ_DOUBLE_IS_FINITE(min) &&
+                 MOZ_DOUBLE_IS_FINITE(max) &&
+                 value >= min && value <= max);
+      bool isVertical = !IsRangeHorizontal(aFrame);
+      bool reverseDir =
+        isVertical ||
+        rangeFrame->StyleVisibility()->mDirection == NS_STYLE_DIRECTION_RTL;
+      DrawScale(cgContext, macRect, eventState, isVertical, reverseDir,
+                value, min, max, aFrame);
+      break;
+    }
+
     case NS_THEME_SCROLLBAR_SMALL:
     case NS_THEME_SCROLLBAR: {
       DrawScrollbar(cgContext, macRect, aFrame);
@@ -2372,15 +2402,18 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
 nsIntMargin
 nsNativeThemeCocoa::RTLAwareMargin(const nsIntMargin& aMargin, nsIFrame* aFrame)
 {
-  if (IsFrameRTL(aFrame))
-    return nsIntMargin(aMargin.right, aMargin.top, aMargin.left, aMargin.bottom);
+  if (IsFrameRTL(aFrame)) {
+    // Return a copy of aMargin w/ right & left reversed:
+    return nsIntMargin(aMargin.top, aMargin.left,
+                       aMargin.bottom, aMargin.right);
+  }
 
   return aMargin;
 }
 
-static const nsIntMargin kAquaDropdownBorder(5, 1, 22, 2);
-static const nsIntMargin kAquaComboboxBorder(4, 3, 20, 3);
-static const nsIntMargin kAquaSearchfieldBorder(19, 3, 5, 2);
+static const nsIntMargin kAquaDropdownBorder(1, 22, 2, 5);
+static const nsIntMargin kAquaComboboxBorder(3, 20, 3, 4);
+static const nsIntMargin kAquaSearchfieldBorder(3, 5, 2, 19);
 
 NS_IMETHODIMP
 nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aContext, 
@@ -2398,14 +2431,14 @@ nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aContext,
       if (IsButtonTypeMenu(aFrame)) {
         *aResult = RTLAwareMargin(kAquaDropdownBorder, aFrame);
       } else {
-        aResult->SizeTo(7, 1, 7, 3);
+        aResult->SizeTo(1, 7, 3, 7);
       }
       break;
     }
 
     case NS_THEME_TOOLBAR_BUTTON:
     {
-      aResult->SizeTo(4, 1, 4, 1);
+      aResult->SizeTo(1, 4, 1, 4);
       break;
     }
 
@@ -2476,16 +2509,16 @@ nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aContext,
           int32_t endcapSize = isSmall ? 5 : 6;
 
           if (isHorizontal)
-            aResult->SizeTo(endcapSize, 0, 0, 0);
+            aResult->SizeTo(0, 0, 0, endcapSize);
           else
-            aResult->SizeTo(0, endcapSize, 0, 0);
+            aResult->SizeTo(endcapSize, 0, 0, 0);
         }
       }
       break;
     }
 
     case NS_THEME_STATUSBAR:
-      aResult->SizeTo(0, 1, 0, 0);
+      aResult->SizeTo(1, 0, 0, 0);
       break;
   }
 
@@ -2544,18 +2577,21 @@ nsNativeThemeCocoa::GetWidgetOverflow(nsDeviceContext* aContext, nsIFrame* aFram
     {
       // We assume that the above widgets can draw a focus ring that will be less than
       // or equal to 4 pixels thick.
-      nsIntMargin extraSize = nsIntMargin(MAX_FOCUS_RING_WIDTH, MAX_FOCUS_RING_WIDTH, MAX_FOCUS_RING_WIDTH, MAX_FOCUS_RING_WIDTH);
-      nsMargin m(NSIntPixelsToAppUnits(extraSize.left, p2a),
-                 NSIntPixelsToAppUnits(extraSize.top, p2a),
+      nsIntMargin extraSize = nsIntMargin(MAX_FOCUS_RING_WIDTH,
+                                          MAX_FOCUS_RING_WIDTH,
+                                          MAX_FOCUS_RING_WIDTH,
+                                          MAX_FOCUS_RING_WIDTH);
+      nsMargin m(NSIntPixelsToAppUnits(extraSize.top, p2a),
                  NSIntPixelsToAppUnits(extraSize.right, p2a),
-                 NSIntPixelsToAppUnits(extraSize.bottom, p2a));
+                 NSIntPixelsToAppUnits(extraSize.bottom, p2a),
+                 NSIntPixelsToAppUnits(extraSize.left, p2a));
       aOverflowRect->Inflate(m);
       return true;
     }
     case NS_THEME_PROGRESSBAR:
     {
       // Progress bars draw a 2 pixel white shadow under their progress indicators
-      nsMargin m(0, 0, 0, NSIntPixelsToAppUnits(2, p2a));
+      nsMargin m(0, 0, NSIntPixelsToAppUnits(2, p2a), 0);
       aOverflowRect->Inflate(m);
       return true;
     }
@@ -2654,6 +2690,35 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsRenderingContext* aContext,
     case NS_THEME_TAB:
     {
       aResult->SizeTo(0, tabHeights[miniControlSize]);
+      break;
+    }
+
+    case NS_THEME_RANGE:
+    {
+      // The Mac Appearance Manager API (the old API we're currently using)
+      // doesn't define constants to obtain a minimum size for sliders. We use
+      // the "thickness" of a slider that has default dimensions for both the
+      // minimum width and height to get something sane and so that paint
+      // invalidation works.
+      SInt32 size = 0;
+      if (IsRangeHorizontal(aFrame)) {
+        ::GetThemeMetric(kThemeMetricHSliderHeight, &size);
+      } else {
+        ::GetThemeMetric(kThemeMetricVSliderWidth, &size);
+      }
+      aResult->SizeTo(size, size);
+      *aIsOverridable = true;
+      break;
+    }
+
+    case NS_THEME_RANGE_THUMB:
+    {
+      SInt32 width = 0;
+      SInt32 height = 0;
+      ::GetThemeMetric(kThemeMetricSliderMinThumbWidth, &width);
+      ::GetThemeMetric(kThemeMetricSliderMinThumbHeight, &height);
+      aResult->SizeTo(width, height);
+      *aIsOverridable = false;
       break;
     }
 
@@ -2897,6 +2962,8 @@ nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFrame* a
     case NS_THEME_TREEVIEW_TREEITEM:
     case NS_THEME_TREEVIEW_LINE:
 
+    case NS_THEME_RANGE:
+
     case NS_THEME_SCALE_HORIZONTAL:
     case NS_THEME_SCALE_THUMB_HORIZONTAL:
     case NS_THEME_SCALE_VERTICAL:
@@ -2950,6 +3017,7 @@ nsNativeThemeCocoa::WidgetIsContainer(uint8_t aWidgetType)
    case NS_THEME_CHECKBOX:
    case NS_THEME_PROGRESSBAR:
    case NS_THEME_METERBAR:
+   case NS_THEME_RANGE:
     return false;
     break;
   }
@@ -2993,40 +3061,4 @@ nsNativeThemeCocoa::GetWidgetTransparency(nsIFrame* aFrame, uint8_t aWidgetType)
   default:
     return eUnknownTransparency;
   }
-}
-
-double
-nsNativeThemeCocoa::GetProgressValue(nsIFrame* aFrame)
-{
-  // When we are using the HTML progress element,
-  // we can get the value from the IDL property.
-  if (aFrame) {
-    nsCOMPtr<nsIDOMHTMLProgressElement> progress =
-      do_QueryInterface(aFrame->GetContent());
-    if (progress) {
-      double value;
-      progress->GetValue(&value);
-      return value;
-    }
-  }
-
-  return (double)CheckIntAttr(aFrame, nsGkAtoms::value, 0);
-}
-
-double
-nsNativeThemeCocoa::GetProgressMaxValue(nsIFrame* aFrame)
-{
-  // When we are using the HTML progress element,
-  // we can get the max from the IDL property.
-  if (aFrame) {
-    nsCOMPtr<nsIDOMHTMLProgressElement> progress =
-      do_QueryInterface(aFrame->GetContent());
-    if (progress) {
-      double max;
-      progress->GetMax(&max);
-      return max;
-    }
-  }
-
-  return (double)std::max(CheckIntAttr(aFrame, nsGkAtoms::max, 100), 1);
 }

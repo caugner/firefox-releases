@@ -40,7 +40,7 @@ function promiseSocialUrlNotRemembered(url) {
 
 let gURLsNotRemembered = [];
 
-function runSocialTestWithProvider(manifest, callback) {
+function runSocialTestWithProvider(manifest, callback, finishcallback) {
   let SocialService = Cu.import("resource://gre/modules/SocialService.jsm", {}).SocialService;
 
   let manifests = Array.isArray(manifest) ? manifest : [manifest];
@@ -67,7 +67,7 @@ function runSocialTestWithProvider(manifest, callback) {
   function finishIfDone(callFinish) {
     finishCount++;
     if (finishCount == manifests.length)
-      Task.spawn(finishCleanUp).then(finish);
+      Task.spawn(finishCleanUp).then(finishcallback || finish);
   }
   function removeAddedProviders(cleanup) {
     manifests.forEach(function (m) {
@@ -81,7 +81,7 @@ function runSocialTestWithProvider(manifest, callback) {
             SocialService.removeProvider(origin, cb);
           } catch (ex) {
             // Ignore "provider doesn't exist" errors.
-            if (ex.message == "SocialService.removeProvider: no provider with this origin exists!")
+            if (ex.message.indexOf("SocialService.removeProvider: no provider with origin") == 0)
               return;
             info("Failed to clean up provider " + origin + ": " + ex);
           }
@@ -89,6 +89,12 @@ function runSocialTestWithProvider(manifest, callback) {
       }
       removeProvider(m.origin, callback);
     });
+  }
+  function finishSocialTest(cleanup) {
+    // disable social before removing the providers to avoid providers
+    // being activated immediately before we get around to removing it.
+    Services.prefs.clearUserPref("social.enabled");
+    removeAddedProviders(cleanup);
   }
 
   let providersAdded = 0;
@@ -111,12 +117,6 @@ function runSocialTestWithProvider(manifest, callback) {
         // Set the UI's provider (which enables the feature)
         Social.provider = firstProvider;
 
-        function finishSocialTest(cleanup) {
-          // disable social before removing the providers to avoid providers
-          // being activated immediately before we get around to removing it.
-          Services.prefs.clearUserPref("social.enabled");
-          removeAddedProviders(cleanup);
-        }
         registerCleanupFunction(function () {
           finishSocialTest(true);
         });
@@ -169,10 +169,13 @@ function runSocialTests(tests, cbPreTest, cbPostTest, cbFinish) {
 // A fairly large hammer which checks all aspects of the SocialUI for
 // internal consistency.
 function checkSocialUI(win) {
-  let win = win || window;
+  win = win || window;
   let doc = win.document;
   let provider = Social.provider;
   let enabled = win.SocialUI.enabled;
+  let active = Social.providers.length > 0 && !win.SocialUI._chromeless &&
+               !PrivateBrowsingUtils.isWindowPrivate(win);
+
   function isbool(a, b, msg) {
     is(!!a, !!b, msg);
   }
@@ -181,19 +184,113 @@ function checkSocialUI(win) {
     isbool(win.SocialSidebar.opened, enabled, "social sidebar open?");
   isbool(win.SocialChatBar.isAvailable, enabled && Social.haveLoggedInUser(), "chatbar available?");
   isbool(!win.SocialChatBar.chatbar.hidden, enabled && Social.haveLoggedInUser(), "chatbar visible?");
-  isbool(!win.SocialShareButton.shareButton.hidden, enabled && provider.recommendInfo, "share button visible?");
-  isbool(!doc.getElementById("social-toolbar-item").hidden, enabled, "toolbar items visible?");
-  if (enabled)
-    is(win.SocialToolbar.button.style.listStyleImage, 'url("' + provider.iconURL + '")', "toolbar button has provider icon");
+
+  let canShare = enabled && provider.recommendInfo && Social.haveLoggedInUser() && win.SocialShareButton.canSharePage(win.gBrowser.currentURI)
+  isbool(!win.SocialShareButton.shareButton.hidden, canShare, "share button visible?");
+  isbool(!doc.getElementById("social-toolbar-item").hidden, active, "toolbar items visible?");
+  if (active)
+    is(win.SocialToolbar.button.style.listStyleImage, 'url("' + Social.defaultProvider.iconURL + '")', "toolbar button has provider icon");
+  // the menus should always have the provider name
+  if (provider) {
+    for (let id of ["menu_socialSidebar", "menu_socialAmbientMenu"])
+      is(document.getElementById(id).getAttribute("label"), Social.provider.name, "element has the provider name");
+  }
 
   // and for good measure, check all the social commands.
-  // Social:Remove - never disabled directly but parent nodes are
-  isbool(!doc.getElementById("Social:Toggle").hidden, enabled, "Social:Toggle visible?");
+  isbool(!doc.getElementById("Social:Toggle").hidden, active, "Social:Toggle visible?");
   isbool(!doc.getElementById("Social:ToggleNotifications").hidden, enabled, "Social:ToggleNotifications visible?");
   isbool(!doc.getElementById("Social:FocusChat").hidden, enabled && Social.haveLoggedInUser(), "Social:FocusChat visible?");
   isbool(doc.getElementById("Social:FocusChat").getAttribute("disabled"), enabled ? "false" : "true", "Social:FocusChat disabled?");
-  is(doc.getElementById("Social:SharePage").getAttribute("disabled"), enabled && provider.recommendInfo ? "false" : "true", "Social:SharePage visible?");
+  is(doc.getElementById("Social:SharePage").getAttribute("disabled"), canShare ? "false" : "true", "Social:SharePage visible?");
 
   // broadcasters.
-  isbool(!doc.getElementById("socialActiveBroadcaster").hidden, enabled, "socialActiveBroadcaster hidden?");
+  isbool(!doc.getElementById("socialActiveBroadcaster").hidden, active, "socialActiveBroadcaster hidden?");
+}
+
+// blocklist testing
+function updateBlocklist(aCallback) {
+  var blocklistNotifier = Cc["@mozilla.org/extensions/blocklist;1"]
+                          .getService(Ci.nsITimerCallback);
+  var observer = function() {
+    Services.obs.removeObserver(observer, "blocklist-updated");
+    if (aCallback)
+      executeSoon(aCallback);
+  };
+  Services.obs.addObserver(observer, "blocklist-updated", false);
+  blocklistNotifier.notify(null);
+}
+
+var _originalTestBlocklistURL = null;
+function setAndUpdateBlocklist(aURL, aCallback) {
+  if (!_originalTestBlocklistURL)
+    _originalTestBlocklistURL = Services.prefs.getCharPref("extensions.blocklist.url");
+  Services.prefs.setCharPref("extensions.blocklist.url", aURL);
+  updateBlocklist(aCallback);
+}
+
+function resetBlocklist() {
+  Services.prefs.setCharPref("extensions.blocklist.url", _originalTestBlocklistURL);
+}
+
+function setManifestPref(name, manifest) {
+  let string = Cc["@mozilla.org/supports-string;1"].
+               createInstance(Ci.nsISupportsString);
+  string.data = JSON.stringify(manifest);
+  Services.prefs.setComplexValue(name, Ci.nsISupportsString, string);
+}
+
+function getManifestPrefname(aManifest) {
+  // is same as the generated name in SocialServiceInternal.getManifestPrefname
+  let originUri = Services.io.newURI(aManifest.origin, null, null);
+  return "social.manifest." + originUri.hostPort.replace('.','-');
+}
+
+function setBuiltinManifestPref(name, manifest) {
+  // we set this as a default pref, it must not be a user pref
+  manifest.builtin = true;
+  let string = Cc["@mozilla.org/supports-string;1"].
+               createInstance(Ci.nsISupportsString);
+  string.data = JSON.stringify(manifest);
+  Services.prefs.getDefaultBranch(null).setComplexValue(name, Ci.nsISupportsString, string);
+  // verify this is set on the default branch
+  let stored = Services.prefs.getComplexValue(name, Ci.nsISupportsString).data;
+  is(stored, string.data, "manifest '"+name+"' stored in default prefs");
+  // don't dirty our manifest, we'll need it without this flag later
+  delete manifest.builtin;
+  // verify we DO NOT have a user-level pref
+  ok(!Services.prefs.prefHasUserValue(name), "manifest '"+name+"' is not in user-prefs");
+}
+
+function resetBuiltinManifestPref(name) {
+  Services.prefs.getDefaultBranch(null).deleteBranch(name);
+  is(Services.prefs.getDefaultBranch(null).getPrefType(name),
+     Services.prefs.PREF_INVALID, "default manifest removed");
+}
+
+function addWindowListener(aURL, aCallback) {
+  Services.wm.addListener({
+    onOpenWindow: function(aXULWindow) {
+      info("window opened, waiting for focus");
+      Services.wm.removeListener(this);
+
+      var domwindow = aXULWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                                .getInterface(Ci.nsIDOMWindow);
+      waitForFocus(function() {
+        is(domwindow.document.location.href, aURL, "window opened and focused");
+        executeSoon(function() {
+          aCallback(domwindow);
+        });
+      }, domwindow);
+    },
+    onCloseWindow: function(aXULWindow) { },
+    onWindowTitleChange: function(aXULWindow, aNewTitle) { }
+  });
+}
+
+function addTab(url, callback) {
+  let tab = gBrowser.selectedTab = gBrowser.addTab(url, {skipAnimation: true});
+  tab.linkedBrowser.addEventListener("load", function tabLoad(event) {
+    tab.linkedBrowser.removeEventListener("load", tabLoad, true);
+    executeSoon(function() {callback(tab)});
+  }, true);
 }

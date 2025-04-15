@@ -3,14 +3,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
-
 #include "mozilla/dom/SVGSwitchElement.h"
-#include "DOMSVGTests.h"
-#include "nsIFrame.h"
 #include "nsSVGUtils.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/SVGSwitchElementBinding.h"
+
+class nsIFrame;
 
 NS_IMPL_NS_NEW_NAMESPACED_SVG_ELEMENT(Switch)
 
@@ -18,9 +16,9 @@ namespace mozilla {
 namespace dom {
 
 JSObject*
-SVGSwitchElement::WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap)
+SVGSwitchElement::WrapNode(JSContext *aCx, JSObject *aScope)
 {
-  return SVGSwitchElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
+  return SVGSwitchElementBinding::Wrap(aCx, aScope, this);
 }
 
 //----------------------------------------------------------------------
@@ -49,7 +47,6 @@ NS_INTERFACE_MAP_END_INHERITING(SVGSwitchElementBase)
 SVGSwitchElement::SVGSwitchElement(already_AddRefed<nsINodeInfo> aNodeInfo)
   : SVGSwitchElementBase(aNodeInfo)
 {
-  SetIsDOMBinding();
 }
 
 void
@@ -146,10 +143,10 @@ SVGSwitchElement::FindActiveChild() const
       if (!child->IsElement()) {
         continue;
       }
-      nsCOMPtr<DOMSVGTests> tests(do_QueryInterface(child));
+      nsCOMPtr<SVGTests> tests(do_QueryInterface(child));
       if (tests) {
         if (tests->PassesConditionalProcessingTests(
-                            DOMSVGTests::kIgnoreSystemLanguage)) {
+                            SVGTests::kIgnoreSystemLanguage)) {
           int32_t languagePreferenceRank =
               tests->GetBestLanguagePreferenceRank(acceptLangs);
           switch (languagePreferenceRank) {
@@ -181,7 +178,7 @@ SVGSwitchElement::FindActiveChild() const
     if (!child->IsElement()) {
       continue;
     }
-    nsCOMPtr<DOMSVGTests> tests(do_QueryInterface(child));
+    nsCOMPtr<SVGTests> tests(do_QueryInterface(child));
     if (!tests || tests->PassesConditionalProcessingTests(&acceptLangs)) {
       return child;
     }

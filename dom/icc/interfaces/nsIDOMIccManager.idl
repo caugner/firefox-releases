@@ -6,8 +6,10 @@
 #include "SimToolKit.idl"
 
 interface nsIDOMEventListener;
+interface nsIDOMDOMRequest;
+interface nsIDOMContact;
 
-[scriptable, builtinclass, uuid(9d898c66-3485-4cd5-ab8d-92ef2988887b)]
+[scriptable, builtinclass, uuid(9af5378e-03ce-4c5f-8ec1-50ae774b5612)]
 interface nsIDOMMozIccManager : nsIDOMEventTarget
 {
   /**
@@ -272,4 +274,62 @@ interface nsIDOMMozIccManager : nsIDOMEventTarget
    * ICC.
    */
   [implicit_jscontext] attribute jsval onstksessionend;
+
+  /**
+   * Update ICC Phonebook contact.
+   *
+   * @param contactType
+   *        One of type as below,
+   *        - 'adn': Abbreviated Dialling Number
+   *        - 'fdn': Fixed Dialling Number
+   * @param contact
+   *        The contact will be updated in ICC
+   * @param [optional] pin2
+   *        PIN2 is only required for 'fdn'.
+   */
+  nsIDOMDOMRequest updateContact(in DOMString contactType,
+                                 in nsIDOMContact contact,
+                                 [optional] in DOMString pin2);
+
+  // UICC Secure Element Interfaces
+
+  /**
+   * A secure element is a smart card chip that can hold
+   * several different applications with the necessary security.
+   * The most known secure element is the Universal Integrated Circuit Card (UICC)
+   */
+
+  /**
+   * Send request to open a logical channel defined by its
+   * application identifier (AID)
+   *
+   * @param aid
+   *        The Application Identifier of the Applet to be selected on this channel
+   * return value : An instance of Channel (channelID) if available or null.
+   */
+  nsIDOMDOMRequest iccOpenChannel(in DOMString aid);
+
+  /**
+   * Interface, used to communicate with an applet through the
+   * Application Data Protocol Units (APDUs) and is
+   * used for all data that is exchanged between the UICC card and the terminal (ME).
+   *
+   * @param channel
+   *        The Application Identifier of the Applet to which APDU is directed
+   * @param apdu
+   *        Application Protocol Data Unit
+   * return value : Response APDU
+   */
+  nsIDOMDOMRequest iccExchangeAPDU(in long channel, in jsval apdu);
+
+  /**
+   * Send request to close the selected logical channel identified by its
+   * application identifier (AID)
+   *
+   * @param aid
+   *        The Application Identifier of the Applet , to be closed
+   */
+  nsIDOMDOMRequest iccCloseChannel(in long channel);
+
+  // End of UICC Secure Element Interfaces
 };

@@ -12,7 +12,6 @@
 #include "mozilla/Attributes.h"
 
 #include "mozilla/css/GroupRule.h"
-#include "mozilla/ErrorResult.h"
 #include "mozilla/Preferences.h"
 #include "nsIDOMCSSConditionRule.h"
 #include "nsIDOMCSSFontFaceRule.h"
@@ -23,7 +22,6 @@
 #include "nsIDOMMozCSSKeyframeRule.h"
 #include "nsIDOMMozCSSKeyframesRule.h"
 #include "nsIDOMCSSStyleDeclaration.h"
-#include "nsICSSRuleList.h"
 #include "nsAutoPtr.h"
 #include "nsCSSProperty.h"
 #include "nsCSSValue.h"
@@ -37,6 +35,9 @@
 class nsMediaList;
 
 namespace mozilla {
+
+class ErrorResult;
+
 namespace css {
 
 class MediaRule MOZ_FINAL : public GroupRule,
@@ -88,8 +89,8 @@ public:
   // @media rule methods
   nsresult SetMedia(nsMediaList* aMedia);
   
-  virtual NS_MUST_OVERRIDE size_t
-    SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const;
+  virtual size_t SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf)
+    const MOZ_MUST_OVERRIDE;
 
 protected:
   void AppendConditionText(nsAString& aOutput);
@@ -166,8 +167,8 @@ public:
 
   void SetURLs(URL *aURLs) { mURLs = aURLs; }
 
-  virtual NS_MUST_OVERRIDE size_t
-    SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const;
+  virtual size_t SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf)
+    const MOZ_MUST_OVERRIDE;
 
 protected:
   void AppendConditionText(nsAString& aOutput);
@@ -202,8 +203,7 @@ public:
   nsresult GetPropertyValue(nsCSSFontDesc aFontDescID,
                             nsAString & aResult) const;
 
-  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
-                               bool *triedToWrap);
+  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope) MOZ_OVERRIDE;
 
 protected:
   friend class nsCSSFontFaceRule;

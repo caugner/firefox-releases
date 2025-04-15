@@ -10,15 +10,17 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE           = sqlite3
 LIBRARY_NAME     = mozsqlite3
 SHORT_LIBNAME    = mozsqlt3
+ifdef MOZ_FOLD_LIBS
+FORCE_STATIC_LIB = 1
+else
 FORCE_SHARED_LIB = 1
+endif
 VISIBILITY_FLAGS =
 LIB_IS_C_ONLY    = 1
 
 ifeq ($(OS_ARCH),WINNT)
-ifndef GNU_CC
 DEFFILE = $(CURDIR)/sqlite-processed.def
 RCFILE  = sqlite.rc
 RESFILE = sqlite.res
@@ -39,7 +41,6 @@ $(DEFFILE): sqlite.def
 	  $(srcdir)/sqlite.def > $(DEFFILE)
 
 export:: sqlite-version.h
-endif
 endif
 
 ifeq (Darwin,$(OS_TARGET))

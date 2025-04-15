@@ -23,7 +23,6 @@ interface nsIDOMDocument;
 interface nsIDOMDocumentFragment;
 interface nsIDOMDocumentType;
 interface nsIDOMElement;
-interface nsIDOMNamedNodeMap;
 interface nsIDOMNode;
 interface nsIDOMNodeList;
 interface nsIDOMProcessingInstruction;
