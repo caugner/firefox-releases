@@ -5,6 +5,10 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 if CONFIG['MOZ_ENABLE_PROFILER_SPS']:
+    FAIL_ON_WARNINGS = not CONFIG['_MSC_VER']
+
+    LIBXUL_LIBRARY = True
+
     MODULE = 'profiler'
     LIBRARY_NAME = 'profiler'
     XPIDL_SOURCES += [
@@ -35,7 +39,6 @@ if CONFIG['MOZ_ENABLE_PROFILER_SPS']:
         'IOInterposer.cpp',
         'NSPRInterposer.cpp',
         'ProfilerIOInterposeObserver.cpp',
-        'SQLiteInterposer.cpp',
     ]
 
     if CONFIG['OS_TARGET'] in ('Android', 'Linux'):
@@ -43,10 +46,17 @@ if CONFIG['MOZ_ENABLE_PROFILER_SPS']:
             'shared-libraries-linux.cc',
             'platform-linux.cc',
         ]
+        if CONFIG['CPU_ARCH'] == 'arm':
+            CPP_SOURCES += [
+                'EHABIStackWalk.cpp',
+            ]
     elif CONFIG['OS_TARGET'] == 'Darwin':
         CPP_SOURCES += [
             'shared-libraries-macos.cc',
             'platform-macos.cc',
+        ]
+        CMMSRCS += [
+            'shim_mac_dump_syms.mm',
         ]
     elif CONFIG['OS_TARGET'] == 'WINNT':
         CPP_SOURCES += [
@@ -60,7 +70,6 @@ EXPORTS += [
 
 EXPORTS.mozilla += [
     'IOInterposer.h',
-    'SQLiteInterposer.h',
 ]
 
 XPCSHELL_TESTS_MANIFESTS += ['tests/xpcshell.ini']

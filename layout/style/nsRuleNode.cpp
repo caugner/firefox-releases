@@ -246,7 +246,7 @@ static nsSize CalcViewportUnitsScale(nsPresContext* aPresContext)
   nsIScrollableFrame* scrollFrame =
     aPresContext->PresShell()->GetRootScrollFrameAsScrollable();
   if (scrollFrame) {
-    nsPresContext::ScrollbarStyles styles(scrollFrame->GetScrollbarStyles());
+    ScrollbarStyles styles(scrollFrame->GetScrollbarStyles());
 
     if (styles.mHorizontal == NS_STYLE_OVERFLOW_SCROLL ||
         styles.mVertical == NS_STYLE_OVERFLOW_SCROLL) {
@@ -3750,7 +3750,7 @@ already_AddRefed<nsCSSShadowArray>
 nsRuleNode::GetShadowData(const nsCSSValueList* aList,
                           nsStyleContext* aContext,
                           bool aIsBoxShadow,
-                          bool& canStoreInRuleTree)
+                          bool& aCanStoreInRuleTree)
 {
   uint32_t arrayLength = ListLength(aList);
 
@@ -3773,13 +3773,13 @@ nsRuleNode::GetShadowData(const nsCSSValueList* aList,
     // OK to pass bad aParentCoord since we're not passing SETCOORD_INHERIT
     unitOK = SetCoord(arr->Item(0), tempCoord, nsStyleCoord(),
                       SETCOORD_LENGTH | SETCOORD_CALC_LENGTH_ONLY,
-                      aContext, mPresContext, canStoreInRuleTree);
+                      aContext, mPresContext, aCanStoreInRuleTree);
     NS_ASSERTION(unitOK, "unexpected unit");
     item->mXOffset = tempCoord.GetCoordValue();
 
     unitOK = SetCoord(arr->Item(1), tempCoord, nsStyleCoord(),
                       SETCOORD_LENGTH | SETCOORD_CALC_LENGTH_ONLY,
-                      aContext, mPresContext, canStoreInRuleTree);
+                      aContext, mPresContext, aCanStoreInRuleTree);
     NS_ASSERTION(unitOK, "unexpected unit");
     item->mYOffset = tempCoord.GetCoordValue();
 
@@ -3788,7 +3788,7 @@ nsRuleNode::GetShadowData(const nsCSSValueList* aList,
       unitOK = SetCoord(arr->Item(2), tempCoord, nsStyleCoord(),
                         SETCOORD_LENGTH | SETCOORD_CALC_LENGTH_ONLY |
                           SETCOORD_CALC_CLAMP_NONNEGATIVE,
-                        aContext, mPresContext, canStoreInRuleTree);
+                        aContext, mPresContext, aCanStoreInRuleTree);
       NS_ASSERTION(unitOK, "unexpected unit");
       item->mRadius = tempCoord.GetCoordValue();
     } else {
@@ -3799,7 +3799,7 @@ nsRuleNode::GetShadowData(const nsCSSValueList* aList,
     if (aIsBoxShadow && arr->Item(3).GetUnit() != eCSSUnit_Null) {
       unitOK = SetCoord(arr->Item(3), tempCoord, nsStyleCoord(),
                         SETCOORD_LENGTH | SETCOORD_CALC_LENGTH_ONLY,
-                        aContext, mPresContext, canStoreInRuleTree);
+                        aContext, mPresContext, aCanStoreInRuleTree);
       NS_ASSERTION(unitOK, "unexpected unit");
       item->mSpread = tempCoord.GetCoordValue();
     } else {
@@ -3810,7 +3810,7 @@ nsRuleNode::GetShadowData(const nsCSSValueList* aList,
       item->mHasColor = true;
       // 2nd argument can be bogus since inherit is not a valid color
       unitOK = SetColor(arr->Item(4), 0, mPresContext, aContext, item->mColor,
-                        canStoreInRuleTree);
+                        aCanStoreInRuleTree);
       NS_ASSERTION(unitOK, "unexpected unit");
     }
 
@@ -3987,6 +3987,19 @@ nsRuleNode::ComputeTextData(void* aStartStruct,
               NS_STYLE_TEXT_SIZE_ADJUST_NONE, // none value
               0, 0);
 
+  // text-orientation: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForTextOrientation(), text->mTextOrientation,
+              canStoreInRuleTree, SETDSC_ENUMERATED,
+              parentText->mTextOrientation,
+              NS_STYLE_TEXT_ORIENTATION_AUTO, 0, 0, 0, 0);
+
+  // text-combine-horizontal: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForTextCombineHorizontal(),
+              text->mTextCombineHorizontal,
+              canStoreInRuleTree, SETDSC_ENUMERATED,
+              parentText->mTextCombineHorizontal,
+              NS_STYLE_TEXT_COMBINE_HORIZ_NONE, 0, 0, 0, 0);
+
   COMPUTE_END_INHERITED(Text, text)
 }
 
@@ -4011,11 +4024,6 @@ nsRuleNode::ComputeTextResetData(void* aStartStruct,
                                        eStyleUnit_Enumerated);
     }
   }
-
-  // text-blink: enum, inherit, initial
-  SetDiscrete(*aRuleData->ValueForTextBlink(), text->mTextBlink,
-              canStoreInRuleTree, SETDSC_ENUMERATED, parentText->mTextBlink,
-              NS_STYLE_TEXT_BLINK_NONE, 0, 0, 0, 0);
 
   // text-decoration-line: enum (bit field), inherit, initial
   const nsCSSValue* decorationLineValue =
@@ -4880,6 +4888,13 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
   SetDiscrete(*aRuleData->ValueForDisplay(), display->mDisplay, canStoreInRuleTree,
               SETDSC_ENUMERATED, parentDisplay->mDisplay,
               NS_STYLE_DISPLAY_INLINE, 0, 0, 0, 0);
+
+  // display: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForMixBlendMode(), display->mMixBlendMode,
+              canStoreInRuleTree, SETDSC_ENUMERATED,
+              parentDisplay->mMixBlendMode, NS_STYLE_BLEND_NORMAL,
+              0, 0, 0, 0);
+
   // Backup original display value for calculation of a hypothetical
   // box (CSS2 10.6.4/10.6.5), in addition to getting our style data right later.
   // See nsHTMLReflowState::CalculateHypotheticalBox
@@ -5288,6 +5303,43 @@ nsRuleNode::ComputeVisibilityData(void* aStartStruct,
               canStoreInRuleTree, SETDSC_ENUMERATED,
               parentVisibility->mWritingMode,
               NS_STYLE_WRITING_MODE_HORIZONTAL_TB, 0, 0, 0, 0);
+
+  // image-orientation: enum, inherit, initial
+  const nsCSSValue* orientation = aRuleData->ValueForImageOrientation();
+  if (orientation->GetUnit() == eCSSUnit_Inherit) {
+    canStoreInRuleTree = false;
+    visibility->mImageOrientation = parentVisibility->mImageOrientation;
+  } else if (orientation->GetUnit() == eCSSUnit_Initial) {
+    visibility->mImageOrientation = nsStyleImageOrientation();
+  } else if (orientation->IsAngularUnit()) {
+    double angle = orientation->GetAngleValueInRadians();
+    visibility->mImageOrientation =
+      nsStyleImageOrientation::CreateAsAngleAndFlip(angle, false);
+  } else if (orientation->GetUnit() == eCSSUnit_Array) {
+    const nsCSSValue::Array* array = orientation->GetArrayValue();
+    MOZ_ASSERT(array->Item(0).IsAngularUnit(),
+               "First image-orientation value is not an angle");
+    MOZ_ASSERT(array->Item(1).GetUnit() == eCSSUnit_Enumerated &&
+               array->Item(1).GetIntValue() == NS_STYLE_IMAGE_ORIENTATION_FLIP,
+               "Second image-orientation value is not 'flip'");
+    double angle = array->Item(0).GetAngleValueInRadians();
+    visibility->mImageOrientation =
+      nsStyleImageOrientation::CreateAsAngleAndFlip(angle, true);
+    
+  } else if (orientation->GetUnit() == eCSSUnit_Enumerated) {
+    switch (orientation->GetIntValue()) {
+      case NS_STYLE_IMAGE_ORIENTATION_FLIP:
+        visibility->mImageOrientation = nsStyleImageOrientation::CreateAsFlip();
+        break;
+      case NS_STYLE_IMAGE_ORIENTATION_FROM_IMAGE:
+        visibility->mImageOrientation = nsStyleImageOrientation::CreateAsFromImage();
+        break;
+      default:
+        NS_NOTREACHED("Invalid image-orientation enumerated value");
+    }
+  } else {
+    MOZ_ASSERT(orientation->GetUnit() == eCSSUnit_Null, "Should be null unit");
+  }
 
   COMPUTE_END_INHERITED(Visibility, visibility)
 }
@@ -7368,11 +7420,11 @@ SetSVGPaint(const nsCSSValue& aValue, const nsStyleSVGPaint& parentPaint,
     } else if (pair.mXValue.GetUnit() == eCSSUnit_Enumerated) {
 
       switch (pair.mXValue.GetIntValue()) {
-      case NS_COLOR_OBJECTFILL:
-        aResult.SetType(eStyleSVGPaintType_ObjectFill);
+      case NS_COLOR_CONTEXT_FILL:
+        aResult.SetType(eStyleSVGPaintType_ContextFill);
         break;
-      case NS_COLOR_OBJECTSTROKE:
-        aResult.SetType(eStyleSVGPaintType_ObjectStroke);
+      case NS_COLOR_CONTEXT_STROKE:
+        aResult.SetType(eStyleSVGPaintType_ContextStroke);
         break;
       default:
         NS_NOTREACHED("unknown keyword as paint server value");
@@ -7404,11 +7456,11 @@ SetSVGOpacity(const nsCSSValue& aValue,
 {
   if (eCSSUnit_Enumerated == aValue.GetUnit()) {
     switch (aValue.GetIntValue()) {
-    case NS_STYLE_OBJECT_FILL_OPACITY:
-      aOpacityTypeField = eStyleSVGOpacitySource_ObjectFillOpacity;
+    case NS_STYLE_CONTEXT_FILL_OPACITY:
+      aOpacityTypeField = eStyleSVGOpacitySource_ContextFillOpacity;
       break;
-    case NS_STYLE_OBJECT_STROKE_OPACITY:
-      aOpacityTypeField = eStyleSVGOpacitySource_ObjectStrokeOpacity;
+    case NS_STYLE_CONTEXT_STROKE_OPACITY:
+      aOpacityTypeField = eStyleSVGOpacitySource_ContextStrokeOpacity;
       break;
     default:
       NS_NOTREACHED("SetSVGOpacity: Unknown keyword");
@@ -7428,10 +7480,10 @@ SetSVGOpacity(const nsCSSValue& aValue,
 
 template <typename FieldT, typename T>
 static bool
-SetTextObjectValue(const nsCSSValue& aValue, FieldT& aField, T aFallbackValue)
+SetTextContextValue(const nsCSSValue& aValue, FieldT& aField, T aFallbackValue)
 {
   if (aValue.GetUnit() != eCSSUnit_Enumerated ||
-      aValue.GetIntValue() != NS_STYLE_STROKE_PROP_OBJECTVALUE) {
+      aValue.GetIntValue() != NS_STYLE_STROKE_PROP_CONTEXT_VALUE) {
     return false;
   }
   aField = aFallbackValue;
@@ -7471,12 +7523,13 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
               parentSVG->mFill, mPresContext, aContext,
               svg->mFill, eStyleSVGPaintType_Color, canStoreInRuleTree);
 
-  // fill-opacity: factor, inherit, initial, objectFillOpacity, objectStrokeOpacity
-  nsStyleSVGOpacitySource objectFillOpacity = svg->mFillOpacitySource;
+  // fill-opacity: factor, inherit, initial,
+  // context-fill-opacity, context-stroke-opacity
+  nsStyleSVGOpacitySource contextFillOpacity = svg->mFillOpacitySource;
   SetSVGOpacity(*aRuleData->ValueForFillOpacity(),
-                svg->mFillOpacity, objectFillOpacity, canStoreInRuleTree,
+                svg->mFillOpacity, contextFillOpacity, canStoreInRuleTree,
                 parentSVG->mFillOpacity, parentSVG->mFillOpacitySource);
-  svg->mFillOpacitySource = objectFillOpacity;
+  svg->mFillOpacitySource = contextFillOpacity;
 
   // fill-rule: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForFillRule(),
@@ -7563,7 +7616,7 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
               parentSVG->mStroke, mPresContext, aContext,
               svg->mStroke, eStyleSVGPaintType_None, canStoreInRuleTree);
 
-  // stroke-dasharray: <dasharray>, none, inherit, -moz-objectValue
+  // stroke-dasharray: <dasharray>, none, inherit, context-value
   const nsCSSValue* strokeDasharrayValue = aRuleData->ValueForStrokeDasharray();
   switch (strokeDasharrayValue->GetUnit()) {
   case eCSSUnit_Null:
@@ -7590,7 +7643,7 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
 
   case eCSSUnit_Enumerated:
     NS_ABORT_IF_FALSE(strokeDasharrayValue->GetIntValue() ==
-                            NS_STYLE_STROKE_PROP_OBJECTVALUE,
+                            NS_STYLE_STROKE_PROP_CONTEXT_VALUE,
                       "Unknown keyword for stroke-dasharray");
     svg->mStrokeDasharrayFromObject = true;
     delete [] svg->mStrokeDasharray;
@@ -7645,9 +7698,9 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
     aRuleData->ValueForStrokeDashoffset();
   svg->mStrokeDashoffsetFromObject =
     strokeDashoffsetValue->GetUnit() == eCSSUnit_Enumerated &&
-    strokeDashoffsetValue->GetIntValue() == NS_STYLE_STROKE_PROP_OBJECTVALUE;
+    strokeDashoffsetValue->GetIntValue() == NS_STYLE_STROKE_PROP_CONTEXT_VALUE;
   if (svg->mStrokeDashoffsetFromObject) {
-    svg->mStrokeDashoffset.SetIntValue(0, eStyleUnit_Integer);
+    svg->mStrokeDashoffset.SetCoordValue(0);
   } else {
     SetCoord(*aRuleData->ValueForStrokeDashoffset(),
              svg->mStrokeDashoffset, parentSVG->mStrokeDashoffset,
@@ -7674,18 +7727,18 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
             parentSVG->mStrokeMiterlimit, 4.0f);
 
   // stroke-opacity:
-  nsStyleSVGOpacitySource objectStrokeOpacity = svg->mStrokeOpacitySource;
+  nsStyleSVGOpacitySource contextStrokeOpacity = svg->mStrokeOpacitySource;
   SetSVGOpacity(*aRuleData->ValueForStrokeOpacity(),
-                svg->mStrokeOpacity, objectStrokeOpacity, canStoreInRuleTree,
+                svg->mStrokeOpacity, contextStrokeOpacity, canStoreInRuleTree,
                 parentSVG->mStrokeOpacity, parentSVG->mStrokeOpacitySource);
-  svg->mStrokeOpacitySource = objectStrokeOpacity;
+  svg->mStrokeOpacitySource = contextStrokeOpacity;
 
   // stroke-width:
   const nsCSSValue* strokeWidthValue = aRuleData->ValueForStrokeWidth();
   switch (strokeWidthValue->GetUnit()) {
   case eCSSUnit_Enumerated:
     NS_ABORT_IF_FALSE(strokeWidthValue->GetIntValue() ==
-                        NS_STYLE_STROKE_PROP_OBJECTVALUE,
+                        NS_STYLE_STROKE_PROP_CONTEXT_VALUE,
                       "Unrecognized keyword for stroke-width");
     svg->mStrokeWidthFromObject = true;
     svg->mStrokeWidth.SetCoordValue(nsPresContext::CSSPixelsToAppUnits(1));
@@ -7719,45 +7772,16 @@ nsRuleNode::ComputeSVGData(void* aStartStruct,
   COMPUTE_END_INHERITED(SVG, svg)
 }
 
-static nsStyleFilter::Type
-StyleFilterTypeForFunctionName(nsCSSKeyword functionName)
-{
-  switch (functionName) {
-    case eCSSKeyword_blur:
-      return nsStyleFilter::Type::eBlur;
-    case eCSSKeyword_brightness:
-      return nsStyleFilter::Type::eBrightness;
-    case eCSSKeyword_contrast:
-      return nsStyleFilter::Type::eContrast;
-    case eCSSKeyword_grayscale:
-      return nsStyleFilter::Type::eGrayscale;
-    case eCSSKeyword_hue_rotate:
-      return nsStyleFilter::Type::eHueRotate;
-    case eCSSKeyword_invert:
-      return nsStyleFilter::Type::eInvert;
-    case eCSSKeyword_opacity:
-      return nsStyleFilter::Type::eOpacity;
-    case eCSSKeyword_saturate:
-      return nsStyleFilter::Type::eSaturate;
-    case eCSSKeyword_sepia:
-      return nsStyleFilter::Type::eSepia;
-    default:
-      NS_NOTREACHED("Unknown filter type.");
-      return nsStyleFilter::Type::eNull;
-  }
-}
-
-static void
-SetStyleFilterToCSSValue(nsStyleFilter* aStyleFilter,
-                         const nsCSSValue& aValue,
-                         nsStyleContext* aStyleContext,
-                         nsPresContext* aPresContext,
-                         bool& aCanStoreInRuleTree)
+void
+nsRuleNode::SetStyleFilterToCSSValue(nsStyleFilter* aStyleFilter,
+                                     const nsCSSValue& aValue,
+                                     nsStyleContext* aStyleContext,
+                                     nsPresContext* aPresContext,
+                                     bool& aCanStoreInRuleTree)
 {
   nsCSSUnit unit = aValue.GetUnit();
   if (unit == eCSSUnit_URL) {
-    aStyleFilter->mType = nsStyleFilter::Type::eURL;
-    aStyleFilter->mURL = aValue.GetURLValue();
+    aStyleFilter->SetURL(aValue.GetURLValue());
     return;
   }
 
@@ -7766,25 +7790,42 @@ SetStyleFilterToCSSValue(nsStyleFilter* aStyleFilter,
   nsCSSValue::Array* filterFunction = aValue.GetArrayValue();
   nsCSSKeyword functionName =
     (nsCSSKeyword)filterFunction->Item(0).GetIntValue();
-  aStyleFilter->mType = StyleFilterTypeForFunctionName(functionName);
+
+  int32_t type;
+  DebugOnly<bool> foundKeyword =
+    nsCSSProps::FindKeyword(functionName,
+                            nsCSSProps::kFilterFunctionKTable,
+                            type);
+  NS_ABORT_IF_FALSE(foundKeyword, "unknown filter type");
+  if (type == NS_STYLE_FILTER_DROP_SHADOW) {
+    nsRefPtr<nsCSSShadowArray> shadowArray = GetShadowData(
+      filterFunction->Item(1).GetListValue(),
+      aStyleContext,
+      false,
+      aCanStoreInRuleTree);
+    aStyleFilter->SetDropShadow(shadowArray);
+    return;
+  }
 
   int32_t mask = SETCOORD_PERCENT | SETCOORD_FACTOR;
-  if (aStyleFilter->mType == nsStyleFilter::Type::eBlur) {
+  if (type == NS_STYLE_FILTER_BLUR) {
     mask = SETCOORD_LENGTH | SETCOORD_STORE_CALC;
-  } else if (aStyleFilter->mType == nsStyleFilter::Type::eHueRotate) {
+  } else if (type == NS_STYLE_FILTER_HUE_ROTATE) {
     mask = SETCOORD_ANGLE;
   }
 
   NS_ABORT_IF_FALSE(filterFunction->Count() == 2,
-                    "all filter functions except drop-shadow should have "
+                    "all filter functions should have "
                     "exactly one argument");
 
   nsCSSValue& arg = filterFunction->Item(1);
-  DebugOnly<bool> success = SetCoord(arg, aStyleFilter->mFilterParameter,
-                                     nsStyleCoord(), mask,
-                                     aStyleContext, aPresContext,
-                                     aCanStoreInRuleTree);
-  NS_ABORT_IF_FALSE(success, "unexpected unit");
+  nsStyleCoord filterParameter;
+  DebugOnly<bool> didSetCoord = SetCoord(arg, filterParameter,
+                                         nsStyleCoord(), mask,
+                                         aStyleContext, aPresContext,
+                                         aCanStoreInRuleTree);
+  aStyleFilter->SetFilterParameter(filterParameter, type);
+  NS_ABORT_IF_FALSE(didSetCoord, "unexpected unit");
 }
 
 const void*
@@ -7882,7 +7923,7 @@ nsRuleNode::ComputeSVGResetData(void* aStartStruct,
         nsStyleFilter styleFilter;
         SetStyleFilterToCSSValue(&styleFilter, cur->mValue, aContext,
                                  mPresContext, canStoreInRuleTree);
-        NS_ABORT_IF_FALSE(styleFilter.mType != nsStyleFilter::Type::eNull,
+        NS_ABORT_IF_FALSE(styleFilter.GetType() != NS_STYLE_FILTER_NONE,
                           "filter should be set");
         svgReset->mFilters.AppendElement(styleFilter);
         cur = cur->mNext;

@@ -9,11 +9,9 @@
 #include "nsContentList.h"
 #include "nsContentUtils.h"
 #include "nsCSSRenderingBorders.h"
-#include "nsFontMetrics.h"
 #include "nsFormControlFrame.h"
 #include "nsIContent.h"
 #include "nsIDocument.h"
-#include "nsIDOMHTMLInputElement.h"
 #include "nsINameSpaceManager.h"
 #include "nsINodeInfo.h"
 #include "nsIPresShell.h"
@@ -23,9 +21,8 @@
 #include "nsNodeInfoManager.h"
 #include "nsRenderingContext.h"
 #include "mozilla/dom/Element.h"
-#include "prtypes.h"
-
-#include <algorithm>
+#include "nsStyleSet.h"
+#include "nsThemeConstants.h"
 
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"

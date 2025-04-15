@@ -7,18 +7,15 @@
 #ifndef nsPluginArray_h___
 #define nsPluginArray_h___
 
-#include "nsString.h"
-#include "nsCOMPtr.h"
 #include "nsTArray.h"
 #include "nsWeakReference.h"
 #include "nsIObserver.h"
 #include "nsWrapperCache.h"
 #include "nsPluginTags.h"
+#include "nsPIDOMWindow.h"
 
-class nsPIDOMWindow;
 class nsPluginElement;
 class nsMimeType;
-class nsPluginTag;
 
 class nsPluginArray MOZ_FINAL : public nsIObserver,
                                 public nsSupportsWeakReference,
@@ -32,7 +29,7 @@ public:
   // nsIObserver
   NS_DECL_NSIOBSERVER
 
-  nsPluginArray(nsWeakPtr aWindow);
+  nsPluginArray(nsPIDOMWindow* aWindow);
   virtual ~nsPluginArray();
 
   nsPIDOMWindow* GetParentObject() const;
@@ -62,7 +59,7 @@ private:
   bool AllowPlugins() const;
   void EnsurePlugins();
 
-  nsWeakPtr mWindow;
+  nsCOMPtr<nsPIDOMWindow> mWindow;
   nsTArray<nsRefPtr<nsPluginElement> > mPlugins;
 };
 
@@ -73,7 +70,7 @@ public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(nsPluginElement)
 
-  nsPluginElement(nsWeakPtr aWindow, nsPluginTag* aPluginTag);
+  nsPluginElement(nsPIDOMWindow* aWindow, nsPluginTag* aPluginTag);
 
   nsPIDOMWindow* GetParentObject() const;
   virtual JSObject* WrapObject(JSContext* aCx,
@@ -102,7 +99,7 @@ public:
 protected:
   void EnsureMimeTypes();
 
-  nsWeakPtr mWindow;
+  nsCOMPtr<nsPIDOMWindow> mWindow;
   nsRefPtr<nsPluginTag> mPluginTag;
   nsTArray<nsRefPtr<nsMimeType> > mMimeTypes;
 };

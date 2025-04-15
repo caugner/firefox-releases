@@ -4,11 +4,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsScriptSecurityManager.h"
+
 #include "mozilla/Util.h"
 
+#include "js/OldDebugAPI.h"
 #include "xpcprivate.h"
 #include "XPCWrapper.h"
-#include "nsScriptSecurityManager.h"
 #include "nsIServiceManager.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIScriptContext.h"
@@ -24,7 +26,6 @@
 #include "nsCRTGlue.h"
 #include "nsError.h"
 #include "nsDOMCID.h"
-#include "jsdbgapi.h"
 #include "nsIXPConnect.h"
 #include "nsIXPCSecurityManager.h"
 #include "nsTextFormatter.h"
@@ -75,6 +76,18 @@ nsIIOService    *nsScriptSecurityManager::sIOService = nullptr;
 nsIStringBundle *nsScriptSecurityManager::sStrBundle = nullptr;
 JSRuntime       *nsScriptSecurityManager::sRuntime   = 0;
 bool nsScriptSecurityManager::sStrictFileOriginPolicy = true;
+
+// Lazily initialized. Use the getter below.
+static jsid sEnabledID = JSID_VOID;
+static jsid
+EnabledID()
+{
+    if (sEnabledID != JSID_VOID)
+        return sEnabledID;
+    AutoSafeJSContext cx;
+    sEnabledID = INTERNED_STRING_TO_JSID(cx, JS_InternString(cx, "enabled"));
+    return sEnabledID;
+}
 
 bool
 nsScriptSecurityManager::SubjectIsPrivileged()
@@ -423,7 +436,7 @@ NS_IMPL_ISUPPORTS4(nsScriptSecurityManager,
 
 ///////////////// Security Checks /////////////////
 
-JSBool
+bool
 nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(JSContext *cx)
 {
     // Get the security manager
@@ -432,17 +445,17 @@ nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(JSContext *cx)
 
     NS_ASSERTION(ssm, "Failed to get security manager service");
     if (!ssm)
-        return JS_FALSE;
+        return false;
 
     nsresult rv;
     nsIPrincipal* subjectPrincipal = ssm->GetSubjectPrincipal(cx, &rv);
 
     NS_ASSERTION(NS_SUCCEEDED(rv), "CSP: Failed to get nsIPrincipal from js context");
     if (NS_FAILED(rv))
-        return JS_FALSE; // Not just absence of principal, but failure.
+        return false; // Not just absence of principal, but failure.
 
     if (!subjectPrincipal)
-        return JS_TRUE;
+        return true;
 
     nsCOMPtr<nsIContentSecurityPolicy> csp;
     rv = subjectPrincipal->GetCsp(getter_AddRefs(csp));
@@ -450,7 +463,7 @@ nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(JSContext *cx)
 
     // don't do anything unless there's a CSP
     if (!csp)
-        return JS_TRUE;
+        return true;
 
     bool evalOK = true;
     bool reportViolation = false;
@@ -459,7 +472,7 @@ nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(JSContext *cx)
     if (NS_FAILED(rv))
     {
         NS_WARNING("CSP: failed to get allowsEval");
-        return JS_TRUE; // fail open to not break sites.
+        return true; // fail open to not break sites.
     }
 
     if (reportViolation) {
@@ -483,7 +496,7 @@ nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(JSContext *cx)
 }
 
 
-JSBool
+bool
 nsScriptSecurityManager::CheckObjectAccess(JSContext *cx, JS::Handle<JSObject*> obj,
                                            JS::Handle<jsid> id, JSAccessMode mode,
                                            JS::MutableHandle<JS::Value> vp)
@@ -494,7 +507,7 @@ nsScriptSecurityManager::CheckObjectAccess(JSContext *cx, JS::Handle<JSObject*> 
 
     NS_WARN_IF_FALSE(ssm, "Failed to get security manager service");
     if (!ssm)
-        return JS_FALSE;
+        return false;
 
     // Get the object being accessed.  We protect these cases:
     // 1. The Function.prototype.caller property's value, which might lead
@@ -515,9 +528,9 @@ nsScriptSecurityManager::CheckObjectAccess(JSContext *cx, JS::Handle<JSObject*> 
                                  (int32_t)nsIXPCSecurityManager::ACCESS_GET_PROPERTY);
 
     if (NS_FAILED(rv))
-        return JS_FALSE; // Security check failed (XXX was an error reported?)
+        return false; // Security check failed (XXX was an error reported?)
 
-    return JS_TRUE;
+    return true;
 }
 
 NS_IMETHODIMP
@@ -1445,7 +1458,7 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
         ClassInfoData nameData(nullptr, loadURIPrefGroup);
 
         SecurityLevel secLevel;
-        rv = LookupPolicy(aPrincipal, nameData, sEnabledID,
+        rv = LookupPolicy(aPrincipal, nameData, EnabledID(),
                           nsIXPCSecurityManager::ACCESS_GET_PROPERTY,
                           nullptr, &secLevel);
         if (NS_SUCCEEDED(rv) && secLevel.level == SCRIPT_SECURITY_ALL_ACCESS)
@@ -1732,7 +1745,7 @@ nsScriptSecurityManager::CanExecuteScripts(JSContext* cx,
     ClassInfoData nameData(nullptr, jsPrefGroupName);
 
     SecurityLevel secLevel;
-    rv = LookupPolicy(aPrincipal, nameData, sEnabledID,
+    rv = LookupPolicy(aPrincipal, nameData, EnabledID(),
                       nsIXPCSecurityManager::ACCESS_GET_PROPERTY,
                       nullptr, &secLevel);
     if (NS_FAILED(rv) || secLevel.level == SCRIPT_SECURITY_NO_ACCESS)
@@ -1991,7 +2004,7 @@ nsScriptSecurityManager::old_doGetObjectPrincipal(JS::Handle<JSObject*> aObj,
         }
     }
 
-    js::Class *jsClass = js::GetObjectClass(obj);
+    const js::Class *jsClass = js::GetObjectClass(obj);
 
     do {
         // Note: jsClass is set before this loop, and also at the
@@ -2329,14 +2342,6 @@ nsScriptSecurityManager::nsScriptSecurityManager(void)
 
 nsresult nsScriptSecurityManager::Init()
 {
-    JSContext* cx = GetSafeJSContext();
-    if (!cx) return NS_ERROR_FAILURE;   // this can happen of xpt loading fails
-    
-    ::JS_BeginRequest(cx);
-    if (sEnabledID == JSID_VOID)
-        sEnabledID = INTERNED_STRING_TO_JSID(cx, ::JS_InternString(cx, "enabled"));
-    ::JS_EndRequest(cx);
-
     InitPrefs();
 
     nsresult rv = CallGetService(NS_IOSERVICE_CONTRACTID, &sIOService);
@@ -2376,8 +2381,6 @@ nsresult nsScriptSecurityManager::Init()
 }
 
 static StaticRefPtr<nsScriptSecurityManager> gScriptSecMan;
-
-jsid nsScriptSecurityManager::sEnabledID   = JSID_VOID;
 
 nsScriptSecurityManager::~nsScriptSecurityManager(void)
 {
@@ -2775,32 +2778,26 @@ nsScriptSecurityManager::InitPrefs()
 namespace mozilla {
 
 void
-GetExtendedOrigin(nsIURI* aURI, uint32_t aAppId, bool aInMozBrowser,
-                  nsACString& aExtendedOrigin)
+GetJarPrefix(uint32_t aAppId, bool aInMozBrowser, nsACString& aJarPrefix)
 {
-  MOZ_ASSERT(aURI);
   MOZ_ASSERT(aAppId != nsIScriptSecurityManager::UNKNOWN_APP_ID);
 
   if (aAppId == nsIScriptSecurityManager::UNKNOWN_APP_ID) {
     aAppId = nsIScriptSecurityManager::NO_APP_ID;
   }
 
-  nsAutoCString origin;
-  nsPrincipal::GetOriginForURI(aURI, getter_Copies(origin));
+  aJarPrefix.Truncate();
 
   // Fallback.
   if (aAppId == nsIScriptSecurityManager::NO_APP_ID && !aInMozBrowser) {
-    aExtendedOrigin.Assign(origin);
     return;
   }
 
-  // aExtendedOrigin = appId + "+" + { 't', 'f' } "+" + origin;
-  aExtendedOrigin.Truncate();
-  aExtendedOrigin.AppendInt(aAppId);
-  aExtendedOrigin.Append('+');
-  aExtendedOrigin.Append(aInMozBrowser ? 't' : 'f');
-  aExtendedOrigin.Append('+');
-  aExtendedOrigin.Append(origin);
+  // aJarPrefix = appId + "+" + { 't', 'f' } + "+";
+  aJarPrefix.AppendInt(aAppId);
+  aJarPrefix.Append('+');
+  aJarPrefix.Append(aInMozBrowser ? 't' : 'f');
+  aJarPrefix.Append('+');
 
   return;
 }
@@ -2808,13 +2805,12 @@ GetExtendedOrigin(nsIURI* aURI, uint32_t aAppId, bool aInMozBrowser,
 } // namespace mozilla
 
 NS_IMETHODIMP
-nsScriptSecurityManager::GetExtendedOrigin(nsIURI* aURI,
-                                           uint32_t aAppId,
-                                           bool aInMozBrowser,
-                                           nsACString& aExtendedOrigin)
+nsScriptSecurityManager::GetJarPrefix(uint32_t aAppId,
+                                      bool aInMozBrowser,
+                                      nsACString& aJarPrefix)
 {
   MOZ_ASSERT(aAppId != nsIScriptSecurityManager::UNKNOWN_APP_ID);
 
-  mozilla::GetExtendedOrigin(aURI, aAppId, aInMozBrowser, aExtendedOrigin);
+  mozilla::GetJarPrefix(aAppId, aInMozBrowser, aJarPrefix);
   return NS_OK;
 }

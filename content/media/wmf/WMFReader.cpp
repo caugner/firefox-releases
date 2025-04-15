@@ -10,14 +10,12 @@
 #include "WMFByteStream.h"
 #include "WMFSourceReaderCallback.h"
 #include "mozilla/dom/TimeRanges.h"
+#include "mozilla/dom/HTMLMediaElement.h"
 #include "mozilla/Preferences.h"
 #include "DXVA2Manager.h"
 #include "ImageContainer.h"
 #include "Layers.h"
 #include "mozilla/layers/LayersTypes.h"
-#include "WinUtils.h"
-
-using namespace mozilla::widget;
 
 #ifndef MOZ_SAMPLE_TYPE_FLOAT32
 #error We expect 32bit float audio samples on desktop for the Windows Media Foundation media backend.
@@ -104,10 +102,7 @@ WMFReader::OnDecodeThreadFinish()
 bool
 WMFReader::InitializeDXVA()
 {
-  if (!Preferences::GetBool("media.windows-media-foundation.use-dxva", false) ||
-      WinUtils::GetWindowsVersion() == WinUtils::VISTA_VERSION) {
-    // Don't use DXVA on Vista until bug 901944's fix has time to ride
-    // ride the release train.
+  if (!Preferences::GetBool("media.windows-media-foundation.use-dxva", false)) {
     return false;
   }
 
@@ -122,10 +117,8 @@ WMFReader::InitializeDXVA()
   HTMLMediaElement* element = owner->GetMediaElement();
   NS_ENSURE_TRUE(element, false);
 
-  nsIDocument* doc = element->GetOwnerDocument();
-  NS_ENSURE_TRUE(doc, false);
-
-  nsRefPtr<LayerManager> layerManager = nsContentUtils::LayerManagerForDocument(doc);
+  nsRefPtr<LayerManager> layerManager =
+    nsContentUtils::LayerManagerForDocument(element->OwnerDoc());
   NS_ENSURE_TRUE(layerManager, false);
 
   if (layerManager->GetBackendType() != LayersBackend::LAYERS_D3D9 &&
@@ -596,16 +589,23 @@ WMFReader::ReadMetadata(VideoInfo* aInfo,
       ULONG_PTR manager = ULONG_PTR(mDXVA2Manager->GetDXVADeviceManager());
       hr = videoDecoder->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER,
                                         manager);
+      if (hr == MF_E_TRANSFORM_TYPE_NOT_SET) {
+        // Ignore MF_E_TRANSFORM_TYPE_NOT_SET. Vista returns this here
+        // on some, perhaps all, video cards. This may be because activating
+        // DXVA changes the available output types. It seems to be safe to
+        // ignore this error.
+        hr = S_OK;
+      }
     }
     if (FAILED(hr)) {
-      LOG("Failed to set DXVA2 D3D Device manager on decoder");
+      LOG("Failed to set DXVA2 D3D Device manager on decoder hr=0x%x", hr);
       mUseHwAccel = false;
       // Re-run the configuration process, so that the output video format
       // is set correctly to reflect that hardware acceleration is disabled.
       // Without this, we'd be running with !mUseHwAccel and the output format
       // set to NV12, which is the format we expect when using hardware
       // acceleration. This would cause us to misinterpret the frame contents.
-      hr = ConfigureVideoDecoder();      
+      hr = ConfigureVideoDecoder();
     }
   }
   if (mInfo.mHasVideo) {
@@ -688,7 +688,6 @@ WMFReader::DecodeAudioData()
   if (FAILED(hr)) {
     LOG("WMFReader::DecodeAudioData() ReadSample failed with hr=0x%x", hr);
     // End the stream.
-    mAudioQueue.Finish();
     return false;
   }
 
@@ -703,7 +702,6 @@ WMFReader::DecodeAudioData()
     LOG("WMFReader::DecodeAudioData() ReadSample failed with hr=0x%x flags=0x%x",
         hr, flags);
     // End the stream.
-    mAudioQueue.Finish();
     return false;
   }
 
@@ -925,8 +923,6 @@ WMFReader::DecodeVideoFrame(bool &aKeyframeSkip,
                                  nullptr);
   if (FAILED(hr)) {
     LOG("WMFReader::DecodeVideoData() ReadSample failed with hr=0x%x", hr);
-    // End the stream.
-    mVideoQueue.Finish();
     return false;
   }
 
@@ -938,7 +934,6 @@ WMFReader::DecodeVideoFrame(bool &aKeyframeSkip,
   if (flags & MF_SOURCE_READERF_ERROR) {
     NS_WARNING("WMFReader: Catastrophic failure reading video sample");
     // Future ReadSample() calls will fail, so give up and report end of stream.
-    mVideoQueue.Finish();
     return false;
   }
 
@@ -950,8 +945,6 @@ WMFReader::DecodeVideoFrame(bool &aKeyframeSkip,
   if (!sample) {
     if ((flags & MF_SOURCE_READERF_ENDOFSTREAM)) {
       LOG("WMFReader; Null sample after video decode, at end of stream");
-      // End the stream.
-      mVideoQueue.Finish();
       return false;
     }
     LOG("WMFReader; Null sample after video decode. Maybe insufficient data...");
@@ -966,7 +959,6 @@ WMFReader::DecodeVideoFrame(bool &aKeyframeSkip,
     if (FAILED(hr) ||
         FAILED(ConfigureVideoFrameGeometry(mediaType))) {
       NS_WARNING("Failed to reconfigure video media type");
-      mVideoQueue.Finish();
       return false;
     }
   }
@@ -997,7 +989,6 @@ WMFReader::DecodeVideoFrame(bool &aKeyframeSkip,
 
   if ((flags & MF_SOURCE_READERF_ENDOFSTREAM)) {
     // End of stream.
-    mVideoQueue.Finish();
     LOG("End of video stream");
     return false;
   }

@@ -4,8 +4,19 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ColorLayerComposite.h"
-#include "mozilla/layers/Effects.h"
-#include "gfx2DGlue.h"
+#include "gfx2DGlue.h"                  // for ToMatrix4x4
+#include "gfxColor.h"                   // for gfxRGBA
+#include "mozilla/RefPtr.h"             // for RefPtr
+#include "mozilla/gfx/Matrix.h"         // for Matrix4x4
+#include "mozilla/gfx/Point.h"          // for Point
+#include "mozilla/gfx/Rect.h"           // for Rect
+#include "mozilla/gfx/Types.h"          // for Color
+#include "mozilla/layers/Compositor.h"  // for Compositor
+#include "mozilla/layers/CompositorTypes.h"  // for DIAGNOSTIC_COLOR
+#include "mozilla/layers/Effects.h"     // for Effect, EffectChain, etc
+#include "mozilla/mozalloc.h"           // for operator delete, etc
+#include "nsPoint.h"                    // for nsIntPoint
+#include "nsRect.h"                     // for nsIntRect
 
 namespace mozilla {
 namespace layers {
@@ -22,7 +33,8 @@ ColorLayerComposite::RenderLayer(const nsIntPoint& aOffset,
                                                            color.a));
   nsIntRect boundRect = GetBounds();
 
-  LayerManagerComposite::AddMaskEffect(GetMaskLayer(), effects);
+  LayerManagerComposite::AutoAddMaskEffect autoMaskEffect(GetMaskLayer(),
+                                                          effects);
 
   gfx::Rect rect(boundRect.x, boundRect.y,
                  boundRect.width, boundRect.height);
@@ -36,11 +48,9 @@ ColorLayerComposite::RenderLayer(const nsIntPoint& aOffset,
 
   mCompositor->DrawQuad(rect, clipRect, effects, opacity,
                         transform, gfx::Point(aOffset.x, aOffset.y));
-  mCompositor->DrawDiagnostics(gfx::Color(0.0, 1.0, 1.0, 1.0),
+  mCompositor->DrawDiagnostics(DIAGNOSTIC_COLOR,
                                rect, clipRect,
                                transform, gfx::Point(aOffset.x, aOffset.y));
-
-  LayerManagerComposite::RemoveMaskEffect(GetMaskLayer());
 }
 
 } /* layers */

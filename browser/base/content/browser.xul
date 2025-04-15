@@ -124,6 +124,9 @@
     <!-- for url bar autocomplete -->
     <panel type="autocomplete-richlistbox" id="PopupAutoCompleteRichResult" noautofocus="true" hidden="true"/>
 
+    <!-- for select dropdowns -->
+    <menupopup id="ContentSelectDropdown" rolluponmousewheel="true" hidden="true"/>
+
     <!-- for invalid form error message -->
     <panel id="invalid-form-popup" type="arrow" orient="vertical" noautofocus="true" hidden="true" level="parent">
       <description/>
@@ -504,8 +507,6 @@
             <image id="webapps-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="plugins-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="web-notifications-notification-icon" class="notification-anchor-icon" role="button"/>
-            <image id="alert-plugins-notification-icon" class="notification-anchor-icon" role="button"/>
-            <image id="blocked-plugins-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="plugin-install-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="mixed-content-blocked-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="webRTC-shareDevices-notification-icon" class="notification-anchor-icon" role="button"/>
@@ -740,11 +741,6 @@
                       oncommand="SocialUI.showLearnMore();"/>
           </menupopup>
         </toolbarbutton>
-        <toolbarbutton id="social-mark-button"
-                       class="toolbarbutton-1"
-                       hidden="true"
-                       disabled="true"
-                       command="Social:TogglePageMark"/>
       </toolbaritem>
 
       <hbox id="window-controls" hidden="true" pack="end">
@@ -1024,7 +1020,8 @@
                   flex="1" contenttooltip="aHTMLTooltip"
                   tabcontainer="tabbrowser-tabs"
                   contentcontextmenu="contentAreaContextMenu"
-                  autocompletepopup="PopupAutoComplete"/>
+                  autocompletepopup="PopupAutoComplete"
+                  selectpopup="ContentSelectDropdown"/>
       <chatbar id="pinnedchats" layer="true" mousethrough="always" hidden="true"/>
     </vbox>
     <splitter id="social-sidebar-splitter"

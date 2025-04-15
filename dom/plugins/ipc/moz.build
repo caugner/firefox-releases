@@ -39,6 +39,7 @@ EXPORTS.mozilla.plugins += [
     'PluginStreamChild.h',
     'PluginStreamParent.h',
     'PluginUtilsOSX.h',
+    'ScopedMethodFactory.h',
     'StreamNotifyChild.h',
     'StreamNotifyParent.h',
 ]
@@ -102,3 +103,10 @@ IPDL_SOURCES += [
     'PPluginSurface.ipdl',
     'PStreamNotify.ipdl',
 ]
+
+FAIL_ON_WARNINGS = True
+
+LIBXUL_LIBRARY = True
+
+LIBRARY_NAME = 'domplugins_s'
+

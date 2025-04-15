@@ -6,6 +6,15 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "LayersLogging.h"
+#include <stdint.h>                     // for uint8_t
+#include "gfx3DMatrix.h"                // for gfx3DMatrix
+#include "gfxColor.h"                   // for gfxRGBA
+#include "gfxMatrix.h"                  // for gfxMatrix
+#include "mozilla/gfx/Matrix.h"         // for Matrix4x4, Matrix
+#include "nsDebug.h"                    // for NS_ERROR
+#include "nsPoint.h"                    // for nsIntPoint
+#include "nsRect.h"                     // for nsIntRect
+#include "nsSize.h"                     // for nsIntSize
 
 using namespace mozilla::gfx;
 
@@ -184,6 +193,7 @@ AppendToString(nsACString& s, const Filter filter,
   s += pfx;
 
   switch (filter) {
+    case FILTER_GOOD: s += "FILTER_GOOD"; break;
     case FILTER_LINEAR: s += "FILTER_LINEAR"; break;
     case FILTER_POINT: s += "FILTER_POINT"; break;
   }
@@ -210,11 +220,11 @@ AppendToString(nsACString& s, TextureFlags flags,
   } \
 }
     bool previous = false;
-    AppendFlag(UseNearestFilter);
-    AppendFlag(NeedsYFlip);
+    AppendFlag(TEXTURE_USE_NEAREST_FILTER);
+    AppendFlag(TEXTURE_NEEDS_Y_FLIP);
     AppendFlag(TEXTURE_DISALLOW_BIGIMAGE);
-    AppendFlag(AllowRepeat);
-    AppendFlag(NewTile);
+    AppendFlag(TEXTURE_ALLOW_REPEAT);
+    AppendFlag(TEXTURE_NEW_TILE);
     AppendFlag(TEXTURE_DEALLOCATE_HOST);
 
 #undef AppendFlag

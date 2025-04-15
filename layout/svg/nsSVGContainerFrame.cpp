@@ -13,6 +13,7 @@
 #include "nsSVGUtils.h"
 #include "nsSVGAnimatedTransformList.h"
 #include "nsSVGTextFrame2.h"
+#include "RestyleManager.h"
 
 using namespace mozilla;
 
@@ -253,7 +254,8 @@ nsSVGDisplayContainerFrame::IsSVGTransformed(gfxMatrix *aOwnTransform,
 
 NS_IMETHODIMP
 nsSVGDisplayContainerFrame::PaintSVG(nsRenderingContext* aContext,
-                                     const nsIntRect *aDirtyRect)
+                                     const nsIntRect *aDirtyRect,
+                                     nsIFrame* aTransformRoot)
 {
   NS_ASSERTION(!NS_SVGDisplayListPaintingEnabled() ||
                (mState & NS_FRAME_IS_NONDISPLAY) ||
@@ -267,7 +269,7 @@ nsSVGDisplayContainerFrame::PaintSVG(nsRenderingContext* aContext,
 
   for (nsIFrame* kid = mFrames.FirstChild(); kid;
        kid = kid->GetNextSibling()) {
-    nsSVGUtils::PaintFrameWithEffects(aContext, aDirtyRect, kid);
+    nsSVGUtils::PaintFrameWithEffects(aContext, aDirtyRect, kid, aTransformRoot);
   }
 
   return NS_OK;
@@ -311,6 +313,8 @@ nsSVGDisplayContainerFrame::ReflowSVG()
   // recursing over our children to ensure that they know too. Otherwise, we
   // need to remove it _after_ recursing over our children so that they know
   // the initial reflow is currently underway.
+
+  bool isFirstReflow = (mState & NS_FRAME_FIRST_REFLOW);
 
   bool outerSVGHasHadFirstReflow =
     (GetParent()->GetStateBits() & NS_FRAME_FIRST_REFLOW) == 0;
@@ -362,7 +366,7 @@ nsSVGDisplayContainerFrame::ReflowSVG()
                     mRect.IsEqualEdges(nsRect()),
                     "Only inner-<svg>/<use> is expected to have mRect set");
 
-  if (mState & NS_FRAME_FIRST_REFLOW) {
+  if (isFirstReflow) {
     // Make sure we have our filter property (if any) before calling
     // FinishAndStoreOverflow (subsequent filter changes are handled off
     // nsChangeHint_UpdateEffects):

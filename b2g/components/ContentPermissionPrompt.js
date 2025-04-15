@@ -13,7 +13,11 @@ const Cr = Components.results;
 const Cu = Components.utils;
 const Cc = Components.classes;
 
-const PROMPT_FOR_UNKNOWN = ["geolocation", "desktop-notification"];
+const PROMPT_FOR_UNKNOWN    = ["geolocation", "desktop-notification",
+                               "audio-capture"];
+// Due to privary issue, permission requests like GetUserMedia should prompt
+// every time instead of providing session persistence.
+const PERMISSION_NO_SESSION = ["audio-capture"];
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
@@ -25,10 +29,17 @@ Cu.import("resource://gre/modules/PermissionsTable.jsm");
 var permissionManager = Cc["@mozilla.org/permissionmanager;1"].getService(Ci.nsIPermissionManager);
 var secMan = Cc["@mozilla.org/scriptsecuritymanager;1"].getService(Ci.nsIScriptSecurityManager);
 
+let permissionSpecificChecker = {};
+
 XPCOMUtils.defineLazyServiceGetter(this,
                                    "PermSettings",
                                    "@mozilla.org/permissionSettings;1",
                                    "nsIDOMPermissionSettings");
+
+XPCOMUtils.defineLazyServiceGetter(this,
+                                   "AudioManager",
+                                   "@mozilla.org/telephony/audiomanager;1",
+                                   "nsIAudioManager");
 
 function rememberPermission(aPermission, aPrincipal, aSession)
 {
@@ -43,7 +54,7 @@ function rememberPermission(aPermission, aPrincipal, aSession)
         permissionManager.addFromPrincipal(aPrincipal,
                                            aPerm,
                                            Ci.nsIPermissionManager.ALLOW_ACTION);
-      } else {
+      } else if (PERMISSION_NO_SESSION.indexOf(aPermission) < 0) {
         permissionManager.addFromPrincipal(aPrincipal,
                                            aPerm,
                                            Ci.nsIPermissionManager.ALLOW_ACTION,
@@ -111,6 +122,12 @@ ContentPermissionPrompt.prototype = {
     return true;
   },
 
+  handledByPermissionType: function handledByPermissionType(request) {
+    return permissionSpecificChecker.hasOwnProperty(request.type)
+             ? permissionSpecificChecker[request.type](request)
+             : false;
+  },
+
   _id: 0,
   prompt: function(request) {
     if (secMan.isSystemPrincipal(request.principal)) {
@@ -118,8 +135,10 @@ ContentPermissionPrompt.prototype = {
       return true;
     }
 
-    if (this.handledByApp(request))
-        return;
+    if (this.handledByApp(request) ||
+        this.handledByPermissionType(request)) {
+      return;
+    }
 
     // returns true if the request was handled
     if (this.handleExistingPermission(request))
@@ -188,7 +207,9 @@ ContentPermissionPrompt.prototype = {
     this.sendToBrowserWindow("permission-prompt", request, requestId, function(type, remember) {
       if (type == "permission-allow") {
         rememberPermission(request.type, principal, !remember);
-        callback();
+        if (callback) {
+          callback();
+        }
         request.allow();
         return;
       }
@@ -202,7 +223,9 @@ ContentPermissionPrompt.prototype = {
                                         Ci.nsIPermissionManager.EXPIRE_SESSION, 0);
       }
 
-      callback();
+      if (callback) {
+        callback();
+      }
       request.cancel();
     });
   },
@@ -245,19 +268,26 @@ ContentPermissionPrompt.prototype = {
       return;
     }
 
-    // When it's an app, get the manifest to add the l10n application name.
-    let app = DOMApplicationRegistry.getAppByLocalId(principal.appId);
-    DOMApplicationRegistry.getManifestFor(app.origin, function getManifest(aManifest) {
-      let helper = new ManifestHelper(aManifest, app.origin);
-      details.appName = helper.name;
-      browser.shell.sendChromeEvent(details);
-    });
+    details.manifestURL = DOMApplicationRegistry.getManifestURLByLocalId(principal.appId);
+    browser.shell.sendChromeEvent(details);
   },
 
   classID: Components.ID("{8c719f03-afe0-4aac-91ff-6c215895d467}"),
 
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIContentPermissionPrompt])
 };
+
+(function() {
+  // Do not allow GetUserMedia while in call.
+  permissionSpecificChecker["audio-capture"] = function(request) {
+    if (AudioManager.phoneState === Ci.nsIAudioManager.PHONE_STATE_IN_CALL) {
+      request.cancel();
+      return true;
+    } else {
+      return false;
+    }
+  };
+})();
 
 
 //module initialization

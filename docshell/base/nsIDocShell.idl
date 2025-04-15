@@ -9,9 +9,9 @@
 #include "nsIAtom.idl"
 
 %{ C++
+#include "js/TypeDecls.h"
 class nsPresContext;
 class nsIPresShell;
-struct JSContext;
 %}
 
 /**
@@ -42,7 +42,9 @@ interface nsIVariant;
 interface nsIPrivacyTransitionObserver;
 interface nsIReflowObserver;
 
-[scriptable, builtinclass, uuid(cdeb1ed0-7794-4e5f-964e-bb9d753d1686)]
+typedef unsigned long nsLoadFlags;
+
+[scriptable, builtinclass, uuid(A44B248D-A6E6-40F9-B2BB-55397B8DFD66)]
 interface nsIDocShell : nsIDocShellTreeItem
 {
   /**
@@ -156,7 +158,7 @@ interface nsIDocShell : nsIDocShellTreeItem
    * depending on the value of aReplace.
    */
   [implicit_jscontext]
-  void addState(in nsIVariant aData, in DOMString aTitle,
+  void addState(in jsval aData, in DOMString aTitle,
                 in DOMString aURL, in boolean aReplace);
 
   /**
@@ -259,6 +261,13 @@ interface nsIDocShell : nsIDocShellTreeItem
   attribute boolean allowWindowControl;
 
   /**
+   * True if the docshell allows its content to be handled by a content listener
+   * other than the docshell itself, including the external helper app service,
+   * and false otherwise.  Defaults to true.
+   */
+  [infallible] attribute boolean allowContentRetargeting;
+
+  /**
    * Get an enumerator over this docShell and its children.
    *
    * @param aItemType  - Only include docShells of this type, or if typeAll,
@@ -346,6 +355,16 @@ interface nsIDocShell : nsIDocShellTreeItem
   attribute unsigned long  loadType;
 
   /*
+   * Default load flags (as defined in nsIRequest) that will be set on all
+   * requests made by this docShell and propagated to all child docShells and
+   * to nsILoadGroup::defaultLoadFlags for the docShell's loadGroup.
+   * Default is no flags.  Once set, only future requests initiated by the
+   * docShell are affected, so in general, these flags should be set before
+   * the docShell loads any content.
+   */
+  attribute nsLoadFlags defaultLoadFlags;
+
+  /*
    * returns true if the docshell is being destroyed, false otherwise
    */
   boolean isBeingDestroyed();
@@ -403,6 +422,22 @@ interface nsIDocShell : nsIDocShellTreeItem
 
   /* attribute to access whether error pages are enabled */
   attribute boolean useErrorPages;
+
+  /**
+   * Display a load error in a frame while keeping that frame's currentURI
+   * pointing correctly to the page where the error ocurred, rather than to
+   * the error document page. You must provide either the aURI or aURL parameter.
+   *
+   * @param  aError         The error code to be displayed
+   * @param  aURI           nsIURI of the page where the error happened
+   * @param  aURL           wstring of the page where the error happened
+   * @param  aFailedChannel The channel related to this error
+   */
+  void displayLoadError(in nsresult aError,
+                        in nsIURI aURI,
+                        in wstring aURL,
+                        [optional] in nsIChannel aFailedChannel);
+
 
   /**
    * Keeps track of the previous SHTransaction index and the current
@@ -739,6 +774,13 @@ interface nsIDocShell : nsIDocShellTreeItem
   [infallible] readonly attribute unsigned long appId;
 
   /**
+   * Return the manifest URL of the app associated with this docshell.
+   *
+   * If there is no associated app in our hierarchy, we return empty string.
+   */
+  readonly attribute DOMString appManifestURL;
+
+  /**
    * Like nsIDocShellTreeItem::GetSameTypeParent, except this ignores <iframe
    * mozbrowser> and <iframe mozapp> boundaries.
    */
@@ -873,4 +915,12 @@ interface nsIDocShell : nsIDocShellTreeItem
    * Returns false for mLSHE, true for mOSHE
    */
   boolean getCurrentSHEntry(out nsISHEntry aEntry);
+
+  /**
+    * Cherry picked parts of nsIController.
+    * They are here, because we want to call these functions
+    * from JS.
+    */
+  boolean isCommandEnabled(in string command);
+  void doCommand(in string command);
 };

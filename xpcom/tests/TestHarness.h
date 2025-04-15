@@ -14,7 +14,7 @@
 
 #if defined(_MSC_VER) && defined(MOZ_STATIC_JS)
 /*
- * Including jsdbgapi.h may cause build break with --disable-shared-js
+ * Including js/OldDebugAPI.h may cause build break with --disable-shared-js
  * This is a workaround for bug 673616.
  */
 #define STATIC_JS_API
@@ -36,7 +36,6 @@
 #include "nsIProperties.h"
 #include "nsIObserverService.h"
 #include "nsXULAppAPI.h"
-#include "jsdbgapi.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>

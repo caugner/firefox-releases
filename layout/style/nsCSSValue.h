@@ -29,8 +29,6 @@ class nsIDocument;
 class nsIPrincipal;
 class nsPresContext;
 class nsIURI;
-template <class T>
-class nsPtrHashKey;
 
 // Deletes a linked list iteratively to avoid blowing up the stack (bug 456196).
 #define NS_CSS_DELETE_LIST_MEMBER(type_, ptr_, member_)                        \
@@ -514,8 +512,8 @@ public:
   // Checks if this is a function value with the specified function id.
   bool EqualsFunction(nsCSSKeyword aFunctionId) const;
 
-  // Returns an already addrefed buffer.  Can return null on allocation
-  // failure.
+  // Returns an already addrefed buffer.  Guaranteed to return non-null.
+  // (Will abort on allocation failure.)
   static already_AddRefed<nsStringBuffer>
     BufferFromString(const nsString& aValue);
 

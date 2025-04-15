@@ -8,20 +8,24 @@ package org.mozilla.gecko;
 import org.mozilla.gecko.animation.PropertyAnimator;
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.favicons.Favicons;
+import org.mozilla.gecko.favicons.OnFaviconLoadedListener;
+import org.mozilla.gecko.favicons.LoadFaviconTask;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.gfx.GeckoLayerClient;
 import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
-import org.mozilla.gecko.gfx.LayerView;
-import org.mozilla.gecko.gfx.PanZoomController;
+import org.mozilla.gecko.health.BrowserHealthRecorder;
 import org.mozilla.gecko.health.BrowserHealthReporter;
+import org.mozilla.gecko.home.BrowserSearch;
+import org.mozilla.gecko.home.HomePager;
+import org.mozilla.gecko.home.HomePager.OnUrlOpenListener;
 import org.mozilla.gecko.menu.GeckoMenu;
 import org.mozilla.gecko.util.Clipboard;
-import org.mozilla.gecko.util.FloatUtils;
 import org.mozilla.gecko.util.GamepadUtils;
 import org.mozilla.gecko.util.HardwareUtils;
+import org.mozilla.gecko.util.StringUtils;
 import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.util.UiAsyncTask;
-import org.mozilla.gecko.widget.AboutHome;
 import org.mozilla.gecko.widget.GeckoActionProvider;
 import org.mozilla.gecko.widget.ButtonToast;
 
@@ -38,7 +42,6 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.Cursor;
 import android.graphics.Bitmap;
-import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
@@ -49,6 +52,7 @@ import android.nfc.NfcAdapter;
 import android.nfc.NfcEvent;
 import android.os.Build;
 import android.os.Bundle;
+import android.support.v4.app.FragmentManager;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.InputDevice;
@@ -61,15 +65,14 @@ import android.view.MotionEvent;
 import android.view.SubMenu;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewStub;
 import android.view.animation.Interpolator;
-import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
 import android.widget.Toast;
 
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.InputStream;
-import java.net.URL;
+import java.net.URLEncoder;
 import java.util.EnumSet;
 import java.util.Vector;
 
@@ -78,8 +81,10 @@ abstract public class BrowserApp extends GeckoApp
                                             PropertyAnimator.PropertyAnimationListener,
                                             View.OnKeyListener,
                                             GeckoLayerClient.OnMetricsChangedListener,
-                                            AboutHome.UriLoadListener,
-                                            AboutHome.LoadCompleteListener {
+                                            BrowserSearch.OnSearchListener,
+                                            BrowserSearch.OnEditSuggestionListener,
+                                            HomePager.OnNewTabsListener,
+                                            OnUrlOpenListener {
     private static final String LOGTAG = "GeckoBrowserApp";
 
     private static final String PREF_CHROME_DYNAMICTOOLBAR = "browser.chrome.dynamictoolbar";
@@ -98,12 +103,14 @@ abstract public class BrowserApp extends GeckoApp
     private static final String STATE_ABOUT_HOME_TOP_PADDING = "abouthome_top_padding";
     private static final String STATE_DYNAMIC_TOOLBAR_ENABLED = "dynamic_toolbar";
 
-    public static BrowserToolbar mBrowserToolbar;
-    private AboutHome mAboutHome;
-    protected Telemetry.Timer mAboutHomeStartupTimer = null;
+    private static final String BROWSER_SEARCH_TAG = "browser_search";
+    private BrowserSearch mBrowserSearch;
+    private View mBrowserSearchContainer;
 
-    // Set the default session restore value
-    private int mSessionRestore = -1;
+    public static BrowserToolbar mBrowserToolbar;
+    private HomePager mHomePager;
+    private View mHomePagerContainer;
+    protected Telemetry.Timer mAboutHomeStartupTimer = null;
 
     private static final int GECKO_TOOLS_MENU = -1;
     private static final int ADDON_MENU_OFFSET = 1000;
@@ -154,15 +161,17 @@ abstract public class BrowserApp extends GeckoApp
 
     private Integer mPrefObserverId;
 
-    // Tag for the AboutHome fragment. The fragment is automatically attached
-    // after restoring from a saved state, so we use this tag to identify it.
-    private static final String ABOUTHOME_TAG = "abouthome";
-
     private SharedPreferencesHelper mSharedPreferencesHelper;
 
     private OrderedBroadcastHelper mOrderedBroadcastHelper;
 
     private BrowserHealthReporter mBrowserHealthReporter;
+
+    // The animator used to toggle HomePager visibility has a race where if the HomePager is shown
+    // (starting the animation), the HomePager is hidden, and the HomePager animation completes,
+    // both the web content and the HomePager will be hidden. This flag is used to prevent the
+    // race by determining if the web content should be hidden at the animation's end.
+    private boolean mHideWebContentOnAnimationEnd = false;
 
     private SiteIdentityPopup mSiteIdentityPopup;
 
@@ -183,16 +192,7 @@ abstract public class BrowserApp extends GeckoApp
                 // fall through
             case SELECTED:
                 if (Tabs.getInstance().isSelectedTab(tab)) {
-                    if (isAboutHome(tab)) {
-                        showAboutHome();
-
-                        if (isDynamicToolbarEnabled()) {
-                            // Show the toolbar.
-                            mLayerView.getLayerMarginsAnimator().showMargins(false);
-                        }
-                    } else {
-                        hideAboutHome();
-                    }
+                    updateHomePagerForTab(tab);
 
                     if (mSiteIdentityPopup != null)
                         mSiteIdentityPopup.dismiss();
@@ -245,12 +245,6 @@ abstract public class BrowserApp extends GeckoApp
     }
 
     @Override
-    void handleClearHistory() {
-        super.handleClearHistory();
-        updateAboutHomeTopSites();
-    }
-
-    @Override
     public boolean onKey(View v, int keyCode, KeyEvent event) {
         // Global onKey handler. This is called if the focused UI doesn't
         // handle the key event, and before Gecko swallows the events.
@@ -265,7 +259,7 @@ abstract public class BrowserApp extends GeckoApp
                 case KeyEvent.KEYCODE_BUTTON_Y:
                     // Toggle/focus the address bar on gamepad-y button.
                     if (mBrowserToolbar.isVisible()) {
-                        if (isDynamicToolbarEnabled() && !mAboutHome.getUserVisibleHint()) {
+                        if (isDynamicToolbarEnabled() && !isHomePagerVisible()) {
                             if (mLayerView != null) {
                                 mLayerView.getLayerMarginsAnimator().hideMargins(false);
                                 mLayerView.requestFocus();
@@ -332,7 +326,11 @@ abstract public class BrowserApp extends GeckoApp
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (onKey(null, keyCode, event)) {
+        if (!mBrowserToolbar.isEditing() && onKey(null, keyCode, event)) {
+            return true;
+        }
+
+        if (mBrowserToolbar.onKey(keyCode, event)) {
             return true;
         }
 
@@ -386,36 +384,14 @@ abstract public class BrowserApp extends GeckoApp
     }
 
     @Override
-    void onStatePurged() {
-        ThreadUtils.postToUiThread(new Runnable() {
-            @Override
-            public void run() {
-                if (mAboutHome != null)
-                    mAboutHome.setLastTabsVisibility(false);
-            }
-        });
-
-        super.onStatePurged();
-    }
-
-    @Override
-    protected int getSessionRestoreState(Bundle savedInstanceState) {
-        if (mSessionRestore > -1) {
-            return mSessionRestore;
-        }
-
-        return super.getSessionRestoreState(savedInstanceState);
-    }
-
-    @Override
     public void onCreate(Bundle savedInstanceState) {
         mAboutHomeStartupTimer = new Telemetry.Timer("FENNEC_STARTUP_TIME_ABOUTHOME");
 
         String args = getIntent().getStringExtra("args");
         if (args != null && args.contains(GUEST_BROWSING_ARG)) {
             mProfile = GeckoProfile.createGuestProfile(this);
-        } else if (GeckoProfile.maybeCleanupGuestProfile(this)) {
-            mSessionRestore = RESTORE_NORMAL;
+        } else {
+            GeckoProfile.maybeCleanupGuestProfile(this);
         }
 
         super.onCreate(savedInstanceState);
@@ -429,28 +405,66 @@ abstract public class BrowserApp extends GeckoApp
                 // If we get a gamepad panning MotionEvent while the focus is not on the layerview,
                 // put the focus on the layerview and carry on
                 if (mLayerView != null && !mLayerView.hasFocus() && GamepadUtils.isPanningControl(event)) {
-                    if (mAboutHome.getUserVisibleHint()) {
-                        mAboutHome.requestFocus();
-                    } else {
+                    if (mHomePager == null) {
+                        return false;
+                    }
+
+                    if (isHomePagerVisible()) {
                         mLayerView.requestFocus();
+                    } else {
+                        mHomePager.requestFocus();
                     }
                 }
                 return false;
             }
         });
 
-        // Find the Fragment if it was already added from a restored instance state.
-        mAboutHome = (AboutHome) getSupportFragmentManager().findFragmentByTag(ABOUTHOME_TAG);
+        mHomePagerContainer = findViewById(R.id.home_pager_container);
 
-        if (mAboutHome == null) {
-            // AboutHome will be dynamically attached and detached as
-            // about:home is shown. Adding/removing the fragment is not synchronous,
-            // so we can't use Fragment#isVisible() to determine whether the
-            // about:home is shown. Instead, we use Fragment#getUserVisibleHint()
-            // with the hint we set ourselves.
-            mAboutHome = AboutHome.newInstance();
-            mAboutHome.setUserVisibleHint(false);
+        mBrowserSearchContainer = findViewById(R.id.search_container);
+        mBrowserSearch = (BrowserSearch) getSupportFragmentManager().findFragmentByTag(BROWSER_SEARCH_TAG);
+        if (mBrowserSearch == null) {
+            mBrowserSearch = BrowserSearch.newInstance();
+            mBrowserSearch.setUserVisibleHint(false);
         }
+
+        mBrowserToolbar.setOnActivateListener(new BrowserToolbar.OnActivateListener() {
+            public void onActivate() {
+                enterEditingMode();
+            }
+        });
+
+        mBrowserToolbar.setOnCommitListener(new BrowserToolbar.OnCommitListener() {
+            public void onCommit() {
+                commitEditingMode();
+            }
+        });
+
+        mBrowserToolbar.setOnDismissListener(new BrowserToolbar.OnDismissListener() {
+            public void onDismiss() {
+                dismissEditingMode();
+            }
+        });
+
+        mBrowserToolbar.setOnFilterListener(new BrowserToolbar.OnFilterListener() {
+            public void onFilter(String searchText, AutocompleteHandler handler) {
+                filterEditingMode(searchText, handler);
+            }
+        });
+
+        mBrowserToolbar.setOnStartEditingListener(new BrowserToolbar.OnStartEditingListener() {
+            public void onStartEditing() {
+                // Temporarily disable doorhanger notifications.
+                mDoorHangerPopup.disable();
+            }
+        });
+
+        mBrowserToolbar.setOnStopEditingListener(new BrowserToolbar.OnStopEditingListener() {
+            public void onStopEditing() {
+                // Re-enable doorhanger notifications.
+                mDoorHangerPopup.enable();
+            }
+        });
 
         // Intercept key events for gamepad shortcuts
         mBrowserToolbar.setOnKeyListener(this);
@@ -470,8 +484,9 @@ abstract public class BrowserApp extends GeckoApp
         registerEventListener("Telemetry:Gather");
         registerEventListener("Settings:Show");
         registerEventListener("Updater:Launch");
+        registerEventListener("Reader:GoToReadingList");
 
-        Distribution.init(this, getPackageResourcePath());
+        Distribution.init(this);
         JavaAddonManager.getInstance().init(getApplicationContext());
         mSharedPreferencesHelper = new SharedPreferencesHelper(getApplicationContext());
         mOrderedBroadcastHelper = new OrderedBroadcastHelper(getApplicationContext());
@@ -495,7 +510,7 @@ abstract public class BrowserApp extends GeckoApp
 
         if (savedInstanceState != null) {
             mDynamicToolbarEnabled = savedInstanceState.getBoolean(STATE_DYNAMIC_TOOLBAR_ENABLED);
-            mAboutHome.setTopPadding(savedInstanceState.getInt(STATE_ABOUT_HOME_TOP_PADDING));
+            mHomePagerContainer.setPadding(0, savedInstanceState.getInt(STATE_ABOUT_HOME_TOP_PADDING), 0, 0);
         }
 
         // Listen to the dynamic toolbar pref
@@ -529,6 +544,25 @@ abstract public class BrowserApp extends GeckoApp
     }
 
     @Override
+    public void onBackPressed() {
+        if (getSupportFragmentManager().getBackStackEntryCount() > 0) {
+            super.onBackPressed();
+            return;
+        }
+
+        if (dismissEditingMode()) {
+            return;
+        }
+
+        if (mSiteIdentityPopup != null && mSiteIdentityPopup.isShowing()) {
+            mSiteIdentityPopup.dismiss();
+            return;
+        }
+
+        super.onBackPressed();
+    }
+
+    @Override
     public void onResume() {
         super.onResume();
         unregisterEventListener("Prompt:ShowTop");
@@ -540,8 +574,6 @@ abstract public class BrowserApp extends GeckoApp
         // Register for Prompt:ShowTop so we can foreground this activity even if it's hidden.
         registerEventListener("Prompt:ShowTop");
     }
-
-
 
     private void showBookmarkDialog() {
         final Tab tab = Tabs.getInstance().getSelectedTab();
@@ -585,14 +617,14 @@ abstract public class BrowserApp extends GeckoApp
                 mLayerView.getLayerClient().setOnMetricsChangedListener(this);
             }
             setToolbarMargin(0);
-            mAboutHome.setTopPadding(mBrowserToolbar.getHeight());
+            mHomePagerContainer.setPadding(0, mBrowserToolbar.getHeight(), 0, 0);
         } else {
             // Immediately show the toolbar when disabling the dynamic
             // toolbar.
             if (mLayerView != null) {
                 mLayerView.getLayerClient().setOnMetricsChangedListener(null);
             }
-            mAboutHome.setTopPadding(0);
+            mHomePagerContainer.setPadding(0, 0, 0, 0);
             if (mBrowserToolbar != null) {
                 mBrowserToolbar.scrollTo(0, 0);
             }
@@ -611,116 +643,86 @@ abstract public class BrowserApp extends GeckoApp
 
     @Override
     public boolean onSearchRequested() {
-        return showAwesomebar(AwesomeBar.Target.CURRENT_TAB);
+        enterEditingMode();
+        return true;
     }
 
     @Override
     public boolean onContextItemSelected(MenuItem item) {
-        switch(item.getItemId()) {
-            case R.id.pasteandgo: {
-                String text = Clipboard.getText();
-                if (!TextUtils.isEmpty(text)) {
-                    Tabs.getInstance().loadUrl(text);
-                }
-                return true;
+        final int itemId = item.getItemId();
+        if (itemId == R.id.pasteandgo) {
+            String text = Clipboard.getText();
+            if (!TextUtils.isEmpty(text)) {
+                Tabs.getInstance().loadUrl(text);
             }
-            case R.id.site_settings: {
-                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Permissions:Get", null));
-                return true;
-            }
-            case R.id.paste: {
-                String text = Clipboard.getText();
-                if (!TextUtils.isEmpty(text)) {
-                    showAwesomebar(AwesomeBar.Target.CURRENT_TAB, text);
-                }
-                return true;
-            }
-            case R.id.share: {
-                shareCurrentUrl();
-                return true;
-            }
-            case R.id.subscribe: {
-                Tab tab = Tabs.getInstance().getSelectedTab();
-                if (tab != null && tab.getFeedsEnabled()) {
-                    JSONObject args = new JSONObject();
-                    try {
-                        args.put("tabId", tab.getId());
-                    } catch (JSONException e) {
-                        Log.e(LOGTAG, "error building json arguments");
-                    }
-                    GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Feeds:Subscribe", args.toString()));
-                }
-                return true;
-            }
-            case R.id.copyurl: {
-                Tab tab = Tabs.getInstance().getSelectedTab();
-                if (tab != null) {
-                    String url = tab.getURL();
-                    if (url != null) {
-                        Clipboard.setText(url);
-                    }
-                }
-                return true;
-            }
-            case R.id.add_to_launcher: {
-                Tab tab = Tabs.getInstance().getSelectedTab();
-                if (tab != null) {
-                    final String url = tab.getURL();
-                    final String title = tab.getDisplayTitle();
-                    if (url == null || title == null) {
-                        return true;
-                    }
-
-                    Favicons favicons = Favicons.getInstance();
-                    favicons.loadFavicon(url, tab.getFaviconURL(), 0,
-                    new Favicons.OnFaviconLoadedListener() {
-                        @Override
-                        public void onFaviconLoaded(String url, Bitmap favicon) {
-                            GeckoAppShell.createShortcut(title, url, url, favicon == null ? null : favicon, "");
-                        }
-                    });
-                }
-                return true;
-            }
+            return true;
         }
-        return false;
-    }
 
-    public boolean showAwesomebar(AwesomeBar.Target aTarget) {
-        return showAwesomebar(aTarget, null);
-    }
+        if (itemId == R.id.site_settings) {
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Permissions:Get", null));
+            return true;
+        }
 
-    public boolean showAwesomebar(AwesomeBar.Target aTarget, String aUrl) {
-        Intent intent = new Intent(getBaseContext(), AwesomeBar.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
-        intent.putExtra(AwesomeBar.TARGET_KEY, aTarget.name());
-        intent.putExtra(AwesomeBar.GUEST_MODE_KEY, GeckoProfile.get(this).inGuestMode());
+        if (itemId == R.id.paste) {
+            String text = Clipboard.getText();
+            if (!TextUtils.isEmpty(text)) {
+                enterEditingMode(text);
+            }
+            return true;
+        }
 
-        // If we were passed in a URL, show it.
-        if (aUrl != null && !TextUtils.isEmpty(aUrl)) {
-            intent.putExtra(AwesomeBar.CURRENT_URL_KEY, aUrl);
-        } else if (aTarget == AwesomeBar.Target.CURRENT_TAB) {
-            // Otherwise, if we're editing the current tab, show its URL.
+        if (itemId == R.id.share) {
+            shareCurrentUrl();
+            return true;
+        }
+
+        if (itemId == R.id.subscribe) {
+            Tab tab = Tabs.getInstance().getSelectedTab();
+            if (tab != null && tab.getFeedsEnabled()) {
+                JSONObject args = new JSONObject();
+                try {
+                    args.put("tabId", tab.getId());
+                } catch (JSONException e) {
+                    Log.e(LOGTAG, "error building json arguments");
+                }
+                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Feeds:Subscribe", args.toString()));
+            }
+            return true;
+        }
+
+        if (itemId == R.id.copyurl) {
             Tab tab = Tabs.getInstance().getSelectedTab();
             if (tab != null) {
-                // Check to see if there's a user-entered search term, which we save
-                // whenever the user performs a search.
-                aUrl = tab.getUserSearch();
-                if (TextUtils.isEmpty(aUrl)) {
-                    aUrl = tab.getURL();
-                }
-                if (aUrl != null) {
-                    intent.putExtra(AwesomeBar.CURRENT_URL_KEY, aUrl);
+                String url = tab.getURL();
+                if (url != null) {
+                    Clipboard.setText(url);
                 }
             }
+            return true;
         }
 
-        int requestCode = GeckoAppShell.sActivityHelper.makeRequestCodeForAwesomebar();
-        startActivityForResult(intent, requestCode);
-        overridePendingTransition (R.anim.awesomebar_fade_in, R.anim.awesomebar_hold_still);
-        return true;
-    }
+        if (itemId == R.id.add_to_launcher) {
+            Tab tab = Tabs.getInstance().getSelectedTab();
+            if (tab != null) {
+                final String url = tab.getURL();
+                final String title = tab.getDisplayTitle();
+                if (url == null || title == null) {
+                    return true;
+                }
 
+                Favicons.loadFavicon(url, tab.getFaviconURL(), 0,
+                new OnFaviconLoadedListener() {
+                    @Override
+                    public void onFaviconLoaded(String url, Bitmap favicon) {
+                        GeckoAppShell.createShortcut(title, url, url, favicon == null ? null : favicon, "");
+                    }
+                });
+            }
+            return true;
+        }
+
+        return false;
+    }
 
     @Override
     public void setAccessibilityEnabled(boolean enabled) {
@@ -773,6 +775,7 @@ abstract public class BrowserApp extends GeckoApp
         unregisterEventListener("Telemetry:Gather");
         unregisterEventListener("Settings:Show");
         unregisterEventListener("Updater:Launch");
+        unregisterEventListener("Reader:GoToReadingList");
 
         if (AppConstants.MOZ_ANDROID_BEAM && Build.VERSION.SDK_INT >= 14) {
             NfcAdapter nfc = NfcAdapter.getDefaultAdapter(this);
@@ -826,7 +829,7 @@ abstract public class BrowserApp extends GeckoApp
     @Override
     protected void loadStartupTab(String url) {
         // We aren't showing about:home, so cancel the telemetry timer
-        if (url != null || mRestoreMode != RESTORE_NONE) {
+        if (url != null || mShouldRestore) {
             mAboutHomeStartupTimer.cancel();
         }
 
@@ -840,7 +843,7 @@ abstract public class BrowserApp extends GeckoApp
 
     @Override
     public void onMetricsChanged(ImmutableViewportMetrics aMetrics) {
-        if (mAboutHome.getUserVisibleHint() || mBrowserToolbar == null) {
+        if (isHomePagerVisible() || mBrowserToolbar == null) {
             return;
         }
 
@@ -866,6 +869,9 @@ abstract public class BrowserApp extends GeckoApp
         ThreadUtils.postToUiThread(new Runnable() {
             public void run() {
                 toolbarLayout.scrollTo(0, toolbarLayout.getHeight() - marginTop);
+                if (mDoorHangerPopup.isShowing()) {
+                    mDoorHangerPopup.updatePopup();
+                }
             }
         });
 
@@ -875,7 +881,7 @@ abstract public class BrowserApp extends GeckoApp
 
     @Override
     public void onPanZoomStopped() {
-        if (!isDynamicToolbarEnabled() || mAboutHome.getUserVisibleHint()) {
+        if (!isDynamicToolbarEnabled() || isHomePagerVisible()) {
             return;
         }
 
@@ -897,12 +903,19 @@ abstract public class BrowserApp extends GeckoApp
             height = mBrowserToolbar.getHeight();
         }
 
-        if (!isDynamicToolbarEnabled()) {
+        if (!isDynamicToolbarEnabled() || isHomePagerVisible()) {
             // Use aVisibleHeight here so that when the dynamic toolbar is
             // enabled, the padding will animate with the toolbar becoming
             // visible.
-            setToolbarMargin(height);
-            height = 0;
+            if (isDynamicToolbarEnabled()) {
+                // When the dynamic toolbar is enabled, set the padding on the
+                // about:home widget directly - this is to avoid resizing the
+                // LayerView, which can cause visible artifacts.
+                mHomePagerContainer.setPadding(0, height, 0, 0);
+            } else {
+                setToolbarMargin(height);
+                height = 0;
+            }
         } else {
             setToolbarMargin(0);
         }
@@ -952,39 +965,6 @@ abstract public class BrowserApp extends GeckoApp
         if (mSiteIdentityPopup != null) {
             mSiteIdentityPopup.dismiss();
         }
-    }
-
-    @Override
-    public void onBackPressed() {
-        if (mSiteIdentityPopup != null && mSiteIdentityPopup.isShowing()) {
-            mSiteIdentityPopup.dismiss();
-            return;
-        }
-
-        super.onBackPressed();
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        String url = null;
-
-        // Don't update the url in the toolbar if the activity was cancelled.
-        if (resultCode == Activity.RESULT_OK && data != null) {
-            // Don't update the url if the activity was launched to pick a site.
-            String targetKey = data.getStringExtra(AwesomeBar.TARGET_KEY);
-            if (!AwesomeBar.Target.PICK_SITE.toString().equals(targetKey)) {
-                // Update the toolbar with the url that was just entered.
-                url = data.getStringExtra(AwesomeBar.URL_KEY);
-            }
-        }
-
-        // We always need to call fromAwesomeBarSearch to perform the toolbar animation.
-        mBrowserToolbar.fromAwesomeBarSearch(url);
-
-        // Trigger any tab-related events after we start restoring
-        // the toolbar state above to make ensure animations happen
-        // on the correct order.
-        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override
@@ -1152,6 +1132,8 @@ abstract public class BrowserApp extends GeckoApp
                 startActivity(settingsIntent);
             } else if (event.equals("Updater:Launch")) {
                 handleUpdaterLaunch();
+            } else if (event.equals("Reader:GoToReadingList")) {
+                openReadingList();
             } else if (event.equals("Prompt:ShowTop")) {
                 // Bring this activity to front so the prompt is visible..
                 Intent bringToFrontIntent = new Intent();
@@ -1168,7 +1150,7 @@ abstract public class BrowserApp extends GeckoApp
 
     @Override
     public void addTab() {
-        showAwesomebar(AwesomeBar.Target.NEW_TAB);
+        Tabs.getInstance().loadUrl("about:home", Tabs.LOADURL_NEW_TAB);
     }
 
     @Override
@@ -1231,7 +1213,7 @@ abstract public class BrowserApp extends GeckoApp
         }
 
         mMainLayoutAnimator = new PropertyAnimator(animationLength, sTabsInterpolator);
-        mMainLayoutAnimator.setPropertyAnimationListener(this);
+        mMainLayoutAnimator.addPropertyAnimationListener(this);
 
         if (hasTabsSideBar()) {
             mMainLayoutAnimator.attach(mMainLayout,
@@ -1281,16 +1263,79 @@ abstract public class BrowserApp extends GeckoApp
         super.onSaveInstanceState(outState);
         mToast.onSaveInstanceState(outState);
         outState.putBoolean(STATE_DYNAMIC_TOOLBAR_ENABLED, mDynamicToolbarEnabled);
-        outState.putInt(STATE_ABOUT_HOME_TOP_PADDING, mAboutHome.getTopPadding());
+        outState.putInt(STATE_ABOUT_HOME_TOP_PADDING, mHomePagerContainer.getPaddingTop());
+    }
+
+    /**
+     * Attempts to switch to an open tab with the given URL.
+     *
+     * @return true if we successfully switched to a tab, false otherwise.
+     */
+    private boolean maybeSwitchToTab(String url, EnumSet<OnUrlOpenListener.Flags> flags) {
+        if (!flags.contains(OnUrlOpenListener.Flags.ALLOW_SWITCH_TO_TAB)) {
+            return false;
+        }
+
+        final Tabs tabs = Tabs.getInstance();
+        final int tabId = tabs.getTabIdForUrl(url);
+        if (tabId < 0) {
+            return false;
+        }
+
+        // If this tab is already selected, just hide the home pager.
+        if (tabs.isSelectedTab(tabs.getTab(tabId))) {
+            hideHomePager();
+        } else {
+            tabs.selectTab(tabId);
+        }
+
+        hideBrowserSearch();
+        mBrowserToolbar.cancelEdit();
+
+        return true;
+    }
+
+    private void openUrl(String url) {
+        openUrl(url, null, false);
+    }
+
+    private void openUrl(String url, boolean newTab) {
+        openUrl(url, null, newTab);
+    }
+
+    private void openUrl(String url, String searchEngine) {
+        openUrl(url, searchEngine, false);
+    }
+
+    private void openUrl(String url, String searchEngine, boolean newTab) {
+        mBrowserToolbar.setProgressVisibility(true);
+
+        int flags = Tabs.LOADURL_NONE;
+        if (newTab) {
+            flags |= Tabs.LOADURL_NEW_TAB;
+        }
+
+        Tabs.getInstance().loadUrl(url, searchEngine, -1, flags);
+
+        hideBrowserSearch();
+        mBrowserToolbar.cancelEdit();
+    }
+
+    private boolean isHomePagerVisible() {
+        return (mHomePager != null && mHomePager.isVisible());
+    }
+
+    private void openReadingList() {
+        Tabs.getInstance().loadUrl(ABOUT_HOME, Tabs.LOADURL_READING_LIST);
     }
 
     /* Favicon methods */
     private void loadFavicon(final Tab tab) {
         maybeCancelFaviconLoad(tab);
 
-        int flags = Favicons.FLAG_SCALE | (tab.isPrivate() ? 0 : Favicons.FLAG_PERSIST);
-        long id = Favicons.getInstance().loadFavicon(tab.getURL(), tab.getFaviconURL(), flags,
-                        new Favicons.OnFaviconLoadedListener() {
+        int flags = LoadFaviconTask.FLAG_SCALE | ( (tab.isPrivate() || tab.getErrorType() != Tab.ErrorType.NONE) ? 0 : LoadFaviconTask.FLAG_PERSIST);
+        int id = Favicons.loadFavicon(tab.getURL(), tab.getFaviconURL(), flags,
+                        new OnFaviconLoadedListener() {
 
             @Override
             public void onFaviconLoaded(String pageUrl, Bitmap favicon) {
@@ -1315,26 +1360,198 @@ abstract public class BrowserApp extends GeckoApp
     }
 
     private void maybeCancelFaviconLoad(Tab tab) {
-        long faviconLoadId = tab.getFaviconLoadId();
+        int faviconLoadId = tab.getFaviconLoadId();
 
         if (faviconLoadId == Favicons.NOT_LOADING)
             return;
 
         // Cancel pending favicon load task
-        Favicons.getInstance().cancelFaviconLoad(faviconLoadId);
+        Favicons.cancelFaviconLoad(faviconLoadId);
 
         // Reset favicon load state
         tab.setFaviconLoadId(Favicons.NOT_LOADING);
     }
 
+    /**
+     * Enters editing mode with the current tab's URL. There might be no
+     * tabs loaded by the time the user enters editing mode e.g. just after
+     * the app starts. In this case, we simply fallback to an empty URL.
+     */
+    private void enterEditingMode() {
+        String url = "";
 
-    /* About:home UI */
-    void updateAboutHomeTopSites() {
-        mAboutHome.update(EnumSet.of(AboutHome.UpdateFlags.TOP_SITES));
+        final Tab tab = Tabs.getInstance().getSelectedTab();
+        if (tab != null) {
+            final String userSearch = tab.getUserSearch();
+
+            // Check to see if there's a user-entered search term,
+            // which we save whenever the user performs a search.
+            url = (TextUtils.isEmpty(userSearch) ? tab.getURL() : userSearch);
+        }
+
+        enterEditingMode(url);
     }
 
-    private void showAboutHome() {
-        if (mAboutHome.getUserVisibleHint()) {
+    /**
+     * Enters editing mode with the specified URL. This method will
+     * always open the HISTORY page on about:home.
+     */
+    private void enterEditingMode(String url) {
+        if (url == null) {
+            throw new IllegalArgumentException("Cannot handle null URLs in enterEditingMode");
+        }
+
+        final PropertyAnimator animator = new PropertyAnimator(250);
+        animator.setUseHardwareLayer(false);
+
+        mBrowserToolbar.startEditing(url, animator);
+        showHomePagerWithAnimator(HomePager.Page.TOP_SITES, animator);
+
+        animator.start();
+    }
+
+    private void commitEditingMode() {
+        if (!mBrowserToolbar.isEditing()) {
+            return;
+        }
+
+        final String url = mBrowserToolbar.commitEdit();
+        animateHideHomePager();
+        hideBrowserSearch();
+
+        // HACK: We don't know the url that will be loaded when hideHomePager is initially called
+        // in BrowserToolbar's onStopEditing listener so on the awesomescreen, hideHomePager will
+        // use the url "about:home" and return without taking any action. hideBrowserSearch is
+        // then called, but since hideHomePager changes both HomePager and LayerView visibility
+        // and exited without taking an action, no Views are displayed and graphical corruption is
+        // visible instead.
+        //
+        // Here we call hideHomePager for the second time with the URL to be loaded so that
+        // hideHomePager is called with the correct state for the upcoming page load.
+        //
+        // Expected to be fixed by bug 915825.
+        hideHomePager(url);
+
+        // Don't do anything if the user entered an empty URL.
+        if (TextUtils.isEmpty(url)) {
+            return;
+        }
+
+        // If the URL doesn't look like a search query, just load it.
+        if (!StringUtils.isSearchQuery(url, true)) {
+            Tabs.getInstance().loadUrl(url, Tabs.LOADURL_USER_ENTERED);
+            return;
+        }
+
+        // Otherwise, check for a bookmark keyword.
+        ThreadUtils.postToBackgroundThread(new Runnable() {
+            @Override
+            public void run() {
+                final String keyword;
+                final String keywordSearch;
+
+                final int index = url.indexOf(" ");
+                if (index == -1) {
+                    keyword = url;
+                    keywordSearch = "";
+                } else {
+                    keyword = url.substring(0, index);
+                    keywordSearch = url.substring(index + 1);
+                }
+
+                final String keywordUrl = BrowserDB.getUrlForKeyword(getContentResolver(), keyword);
+
+                // If there isn't a bookmark keyword, just load the URL.
+                if (TextUtils.isEmpty(keywordUrl)) {
+                    Tabs.getInstance().loadUrl(url, Tabs.LOADURL_USER_ENTERED);
+                    return;
+                }
+
+                recordSearch(null, "barkeyword");
+
+                // Otherwise, construct a search query from the bookmark keyword.
+                final String searchUrl = keywordUrl.replace("%s", URLEncoder.encode(keywordSearch));
+                Tabs.getInstance().loadUrl(searchUrl, Tabs.LOADURL_USER_ENTERED);
+            }
+        });
+    }
+
+    /**
+     * Record in Health Report that a search has occurred.
+     *
+     * @param identifier
+     *        a search identifier, such as "partnername". Can be null.
+     * @param where
+     *        where the search was initialized; one of the values in
+     *        {@link BrowserHealthRecorder#SEARCH_LOCATIONS}.
+     */
+    private static void recordSearch(String identifier, String where) {
+        Log.i(LOGTAG, "Recording search: " + identifier + ", " + where);
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", BrowserHealthRecorder.EVENT_SEARCH);
+            message.put("location", where);
+            message.put("identifier", identifier);
+            GeckoAppShell.getEventDispatcher().dispatchEvent(message);
+        } catch (Exception e) {
+            Log.w(LOGTAG, "Error recording search.", e);
+        }
+    }
+
+    private boolean dismissEditingMode() {
+        if (!mBrowserToolbar.isEditing()) {
+            return false;
+        }
+
+        mBrowserToolbar.cancelEdit();
+
+        // Resetting the visibility of HomePager, which might have been hidden
+        // by the filterEditingMode().
+        mHomePager.setVisibility(View.VISIBLE);
+        animateHideHomePager();
+        hideBrowserSearch();
+
+        return true;
+    }
+
+    void filterEditingMode(String searchTerm, AutocompleteHandler handler) {
+        if (TextUtils.isEmpty(searchTerm)) {
+            mHomePager.setVisibility(View.VISIBLE);
+            hideBrowserSearch();
+        } else {
+            showBrowserSearch();
+            mHomePager.setVisibility(View.INVISIBLE);
+            mBrowserSearch.filter(searchTerm, handler);
+        }
+    }
+
+    /**
+     * Shows or hides the home pager for the given tab.
+     */
+    private void updateHomePagerForTab(Tab tab) {
+        // Don't change the visibility of the home pager if we're in editing mode.
+        if (mBrowserToolbar.isEditing()) {
+            return;
+        }
+
+        if (isAboutHome(tab)) {
+            showHomePager(tab.getAboutHomePage());
+
+            if (isDynamicToolbarEnabled()) {
+                // Show the toolbar.
+                mLayerView.getLayerMarginsAnimator().showMargins(false);
+            }
+        } else {
+            hideHomePager();
+        }
+    }
+
+    private void showHomePager(HomePager.Page page) {
+        showHomePagerWithAnimator(page, null);
+    }
+
+    private void showHomePagerWithAnimator(HomePager.Page page, PropertyAnimator animator) {
+        if (isHomePagerVisible()) {
             return;
         }
 
@@ -1347,35 +1564,118 @@ abstract public class BrowserApp extends GeckoApp
             mLayerView.getLayerMarginsAnimator().showMargins(true);
         }
 
-        // We use commitAllowingStateLoss() instead of commit() here to avoid an
-        // IllegalStateException. showAboutHome() and hideAboutHome() are
-        // executed inside of tab's onChange() callback. Since that callback can
-        // be triggered asynchronously from Gecko, it's possible that this
-        // method can be called while Fennec is in the background. If that
-        // happens, using commit() would throw an IllegalStateException since
-        // it can't be used between the Activity's onSaveInstanceState() and
-        // onResume().
-        getSupportFragmentManager().beginTransaction()
-                .add(R.id.gecko_layout, mAboutHome, ABOUTHOME_TAG).commitAllowingStateLoss();
-        mAboutHome.setUserVisibleHint(true);
+        if (mHomePager == null) {
+            final ViewStub homePagerStub = (ViewStub) findViewById(R.id.home_pager_stub);
+            mHomePager = (HomePager) homePagerStub.inflate();
+        }
 
-        mBrowserToolbar.setNextFocusDownId(R.id.abouthome_content);
+        mHomePager.show(getSupportFragmentManager(), page, animator);
+
+        // Hide the web content so it cannot be focused by screen readers.
+        hideWebContentOnPropertyAnimationEnd(animator);
     }
 
-    private void hideAboutHome() {
-        if (!mAboutHome.getUserVisibleHint()) {
+    private void hideWebContentOnPropertyAnimationEnd(final PropertyAnimator animator) {
+        if (animator == null) {
+            hideWebContent();
             return;
         }
 
-        getSupportFragmentManager().beginTransaction()
-                .remove(mAboutHome).commitAllowingStateLoss();
-        mAboutHome.setUserVisibleHint(false);
+        animator.addPropertyAnimationListener(new PropertyAnimator.PropertyAnimationListener() {
+            @Override
+            public void onPropertyAnimationStart() {
+                mHideWebContentOnAnimationEnd = true;
+            }
 
-        mBrowserToolbar.setShadowVisibility(true);
+            @Override
+            public void onPropertyAnimationEnd() {
+                if (mHideWebContentOnAnimationEnd) {
+                    hideWebContent();
+                }
+            }
+        });
+    }
+
+    private void hideWebContent() {
+        // The view is set to INVISIBLE, rather than GONE, to avoid
+        // the additional requestLayout() call.
+        mLayerView.setVisibility(View.INVISIBLE);
+    }
+
+    private void animateHideHomePager() {
+        final Tab selectedTab = Tabs.getInstance().getSelectedTab();
+        final String url = (selectedTab != null) ? selectedTab.getURL() : null;
+
+        hideHomePagerWithAnimation(true, url);
+    }
+
+    /**
+     * Hides the HomePager, using the url of the currently selected tab as the url to be
+     * loaded.
+     */
+    private void hideHomePager() {
+        final Tab selectedTab = Tabs.getInstance().getSelectedTab();
+        final String url = (selectedTab != null) ? selectedTab.getURL() : null;
+
+        hideHomePager(url);
+    }
+
+    private void hideHomePager(final String url) {
+        hideHomePagerWithAnimation(false, url);
+    }
+
+    private void hideHomePagerWithAnimation(boolean animate, final String url) {
+        if (!isHomePagerVisible() || TextUtils.equals(url, ABOUT_HOME)) {
+            return;
+        }
+
+        // Prevent race in hiding web content - see declaration for more info.
+        mHideWebContentOnAnimationEnd = false;
+
+        // Display the previously hidden web content (which prevented screen reader access).
+        mLayerView.setVisibility(View.VISIBLE);
+
+        // FIXME: do animation if animate is true
+        if (mHomePager != null) {
+            mHomePager.hide();
+        }
+
         mBrowserToolbar.setNextFocusDownId(R.id.layer_view);
 
         // Refresh toolbar height to possibly restore the toolbar padding
         refreshToolbarHeight();
+    }
+
+    private void showBrowserSearch() {
+        if (mBrowserSearch.getUserVisibleHint()) {
+            return;
+        }
+
+        mBrowserSearchContainer.setVisibility(View.VISIBLE);
+
+        final FragmentManager fm = getSupportFragmentManager();
+
+        // In certain situations, showBrowserSearch() can be called immediately after hideBrowserSearch()
+        // (see bug 925012). Because of an Android bug (http://code.google.com/p/android/issues/detail?id=61179),
+        // calling FragmentTransaction#add immediately after FragmentTransaction#remove won't add the fragment's
+        // view to the layout. Calling FragmentManager#executePendingTransactions before re-adding the fragment
+        // prevents this issue.
+        fm.executePendingTransactions();
+
+        fm.beginTransaction().add(R.id.search_container, mBrowserSearch, BROWSER_SEARCH_TAG).commitAllowingStateLoss();
+        mBrowserSearch.setUserVisibleHint(true);
+    }
+
+    private void hideBrowserSearch() {
+        if (!mBrowserSearch.getUserVisibleHint()) {
+            return;
+        }
+
+        mBrowserSearchContainer.setVisibility(View.INVISIBLE);
+
+        getSupportFragmentManager().beginTransaction()
+                .remove(mBrowserSearch).commitAllowingStateLoss();
+        mBrowserSearch.setUserVisibleHint(false);
     }
 
     private class HideTabsTouchListener implements TouchEventInterceptor {
@@ -1753,96 +2053,128 @@ abstract public class BrowserApp extends GeckoApp
     public boolean onOptionsItemSelected(MenuItem item) {
         Tab tab = null;
         Intent intent = null;
-        switch (item.getItemId()) {
-            case R.id.bookmark:
-                tab = Tabs.getInstance().getSelectedTab();
-                if (tab != null) {
-                    if (item.isChecked()) {
-                        tab.removeBookmark();
-                        Toast.makeText(this, R.string.bookmark_removed, Toast.LENGTH_SHORT).show();
-                        item.setIcon(R.drawable.ic_menu_bookmark_add);
-                    } else {
-                        tab.addBookmark();
-                        mToast.show(false,
-                            getResources().getString(R.string.bookmark_added),
-                            getResources().getString(R.string.bookmark_options),
-                            null,
-                            new ButtonToast.ToastListener() {
-                                @Override
-                                public void onButtonClicked() {
-                                    showBookmarkDialog();
-                                }
 
-                                @Override
-                                public void onToastHidden(ButtonToast.ReasonHidden reason) { }
-                            });
-                        item.setIcon(R.drawable.ic_menu_bookmark_remove);
-                    }
+        final int itemId = item.getItemId();
+
+        if (itemId == R.id.bookmark) {
+            tab = Tabs.getInstance().getSelectedTab();
+            if (tab != null) {
+                if (item.isChecked()) {
+                    tab.removeBookmark();
+                    Toast.makeText(this, R.string.bookmark_removed, Toast.LENGTH_SHORT).show();
+                    item.setIcon(R.drawable.ic_menu_bookmark_add);
+                } else {
+                    tab.addBookmark();
+                    mToast.show(false,
+                        getResources().getString(R.string.bookmark_added),
+                        getResources().getString(R.string.bookmark_options),
+                        null,
+                        new ButtonToast.ToastListener() {
+                            @Override
+                            public void onButtonClicked() {
+                                showBookmarkDialog();
+                            }
+
+                            @Override
+                            public void onToastHidden(ButtonToast.ReasonHidden reason) { }
+                        });
+                    item.setIcon(R.drawable.ic_menu_bookmark_remove);
                 }
-                return true;
-            case R.id.share:
-                shareCurrentUrl();
-                return true;
-            case R.id.reload:
-                tab = Tabs.getInstance().getSelectedTab();
-                if (tab != null)
-                    tab.doReload();
-                return true;
-            case R.id.forward:
-                tab = Tabs.getInstance().getSelectedTab();
-                if (tab != null)
-                    tab.doForward();
-                return true;
-            case R.id.save_as_pdf:
-                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("SaveAs:PDF", null));
-                return true;
-            case R.id.settings:
-                intent = new Intent(this, GeckoPreferences.class);
-                startActivity(intent);
-                return true;
-            case R.id.addons:
-                Tabs.getInstance().loadUrlInTab("about:addons");
-                return true;
-            case R.id.downloads:
-                Tabs.getInstance().loadUrlInTab("about:downloads");
-                return true;
-            case R.id.apps:
-                Tabs.getInstance().loadUrlInTab("about:apps");
-                return true;
-            case R.id.char_encoding:
-                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("CharEncoding:Get", null));
-                return true;
-            case R.id.find_in_page:
-                mFindInPageBar.show();
-                return true;
-            case R.id.desktop_mode:
-                Tab selectedTab = Tabs.getInstance().getSelectedTab();
-                if (selectedTab == null)
-                    return true;
-                JSONObject args = new JSONObject();
-                try {
-                    args.put("desktopMode", !item.isChecked());
-                    args.put("tabId", selectedTab.getId());
-                } catch (JSONException e) {
-                    Log.e(LOGTAG, "error building json arguments");
-                }
-                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("DesktopMode:Change", args.toString()));
-                return true;
-            case R.id.new_tab:
-                addTab();
-                return true;
-            case R.id.new_private_tab:
-                addPrivateTab();
-                return true;
-            case R.id.new_guest_session:
-                showGuestModeDialog(GuestModeDialog.ENTERING);
-                return true;
-            case R.id.exit_guest_session:
-                showGuestModeDialog(GuestModeDialog.LEAVING);
-                return true;
-            default:
-                return super.onOptionsItemSelected(item);
+            }
+            return true;
         }
+
+        if (itemId == R.id.share) {
+            shareCurrentUrl();
+            return true;
+        }
+
+        if (itemId == R.id.reload) {
+            tab = Tabs.getInstance().getSelectedTab();
+            if (tab != null)
+                tab.doReload();
+            return true;
+        }
+
+        if (itemId == R.id.forward) {
+            tab = Tabs.getInstance().getSelectedTab();
+            if (tab != null)
+                tab.doForward();
+            return true;
+        }
+
+        if (itemId == R.id.save_as_pdf) {
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("SaveAs:PDF", null));
+            return true;
+        }
+
+        if (itemId == R.id.settings) {
+            intent = new Intent(this, GeckoPreferences.class);
+            startActivity(intent);
+            return true;
+        }
+
+        if (itemId == R.id.addons) {
+            Tabs.getInstance().loadUrlInTab("about:addons");
+            return true;
+        }
+
+        if (itemId == R.id.downloads) {
+            Tabs.getInstance().loadUrlInTab("about:downloads");
+            return true;
+        }
+
+        if (itemId == R.id.apps) {
+            Tabs.getInstance().loadUrlInTab("about:apps");
+            return true;
+        }
+
+        if (itemId == R.id.char_encoding) {
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("CharEncoding:Get", null));
+            return true;
+        }
+
+        if (itemId == R.id.find_in_page) {
+            mFindInPageBar.show();
+            return true;
+        }
+
+        if (itemId == R.id.desktop_mode) {
+            Tab selectedTab = Tabs.getInstance().getSelectedTab();
+            if (selectedTab == null)
+                return true;
+            JSONObject args = new JSONObject();
+            try {
+                args.put("desktopMode", !item.isChecked());
+                args.put("tabId", selectedTab.getId());
+            } catch (JSONException e) {
+                Log.e(LOGTAG, "error building json arguments");
+            }
+            GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("DesktopMode:Change", args.toString()));
+            return true;
+        }
+
+        if (itemId == R.id.new_tab) {
+            addTab();
+            return true;
+        }
+
+        if (itemId == R.id.new_private_tab) {
+            addPrivateTab();
+            return true;
+        }
+
+        if (itemId == R.id.new_guest_session) {
+            showGuestModeDialog(GuestModeDialog.ENTERING);
+            return true;
+        }
+
+        if (itemId == R.id.exit_guest_session) {
+            showGuestModeDialog(GuestModeDialog.LEAVING);
+            return true;
+        }
+
+        return super.onOptionsItemSelected(item);
     }
 
     private void showGuestModeDialog(final GuestModeDialog type) {
@@ -1915,7 +2247,18 @@ abstract public class BrowserApp extends GeckoApp
             GeckoAppShell.sendEventToGecko(GeckoEvent.createURILoadEvent(uri));
         }
 
-        if (!Intent.ACTION_MAIN.equals(action) || !mInitialized) {
+        if (!mInitialized) {
+            return;
+        }
+
+        // Dismiss editing mode if the user is loading a URL from an external app.
+        if (Intent.ACTION_VIEW.equals(action)) {
+            dismissEditingMode();
+            return;
+        }
+
+        // Only solicit feedback when the app has been launched from the icon shortcut.
+        if (!Intent.ACTION_MAIN.equals(action)) {
             return;
         }
 
@@ -1990,15 +2333,37 @@ abstract public class BrowserApp extends GeckoApp
         }).execute();
     }
 
+    // HomePager.OnNewTabsListener
     @Override
-    public void onAboutHomeUriLoad(String url) {
-        mBrowserToolbar.setProgressVisibility(true);
-        Tabs.getInstance().loadUrl(url);
+    public void onNewTabs(String[] urls) {
+        final EnumSet<OnUrlOpenListener.Flags> flags = EnumSet.of(OnUrlOpenListener.Flags.ALLOW_SWITCH_TO_TAB);
+ 
+        for (String url : urls) {
+            if (!maybeSwitchToTab(url, flags)) {
+                openUrl(url, true);
+            }
+        }
     }
 
+    // HomePager.OnUrlOpenListener
     @Override
-    public void onAboutHomeLoadComplete() {
-        mAboutHomeStartupTimer.stop();
+    public void onUrlOpen(String url, EnumSet<OnUrlOpenListener.Flags> flags) {
+        if (!maybeSwitchToTab(url, flags)) {
+            openUrl(url);
+        }
+    }
+
+    // BrowserSearch.OnSearchListener
+    @Override
+    public void onSearch(String engineId, String text) {
+        recordSearch(engineId, "barsuggest");
+        openUrl(text, engineId);
+    }
+
+    // BrowserSearch.OnEditSuggestionListener
+    @Override
+    public void onEditSuggestion(String suggestion) {
+        mBrowserToolbar.onEditSuggestion(suggestion);
     }
 
     @Override

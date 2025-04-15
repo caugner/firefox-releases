@@ -5,21 +5,42 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/layers/AsyncCompositionManager.h"
-#include "base/basictypes.h"
-
+#include <stdint.h>                     // for uint32_t
+#include "AnimationCommon.h"            // for ComputedTimingFunction
+#include "CompositorParent.h"           // for CompositorParent, etc
+#include "FrameMetrics.h"               // for FrameMetrics
+#include "LayerManagerComposite.h"      // for LayerManagerComposite, etc
+#include "Layers.h"                     // for Layer, ContainerLayer, etc
+#include "gfxMatrix.h"                  // for gfxMatrix
+#include "gfxPoint.h"                   // for gfxPoint, gfxSize
+#include "gfxPoint3D.h"                 // for gfxPoint3D
+#include "mozilla/WidgetUtils.h"        // for ComputeTransformForRotation
+#include "mozilla/gfx/BaseRect.h"       // for BaseRect
+#include "mozilla/gfx/Point.h"          // for RoundedToInt, PointTyped
+#include "mozilla/gfx/Rect.h"           // for RoundedToInt, RectTyped
+#include "mozilla/gfx/ScaleFactor.h"    // for ScaleFactor
+#include "mozilla/layers/AsyncPanZoomController.h"
+#include "mozilla/layers/Compositor.h"  // for Compositor
+#include "nsAnimationManager.h"         // for ElementAnimations
+#include "nsCSSPropList.h"
+#include "nsCoord.h"                    // for NSAppUnitsToFloatPixels, etc
+#include "nsDebug.h"                    // for NS_ASSERTION, etc
+#include "nsDeviceContext.h"            // for nsDeviceContext
+#include "nsDisplayList.h"              // for nsDisplayTransform, etc
+#include "nsMathUtils.h"                // for NS_round
+#include "nsPoint.h"                    // for nsPoint
+#include "nsRect.h"                     // for nsIntRect
+#include "nsRegion.h"                   // for nsIntRegion
+#include "nsStyleAnimation.h"           // for nsStyleAnimation::Value, etc
+#include "nsTArray.h"                   // for nsTArray, nsTArray_Impl, etc
+#include "nsTArrayForwardDeclare.h"     // for InfallibleTArray
 #if defined(MOZ_WIDGET_ANDROID)
 # include <android/log.h>
 # include "AndroidBridge.h"
 #endif
+#include "GeckoProfiler.h"
 
-#include "CompositorParent.h"
-#include "LayerManagerComposite.h" 
-
-#include "nsStyleAnimation.h"
-#include "nsDisplayList.h"
-#include "AnimationCommon.h"
-#include "nsAnimationManager.h"
-#include "mozilla/layers/AsyncPanZoomController.h"
+struct nsCSSValueList;
 
 using namespace mozilla::dom;
 
@@ -193,14 +214,31 @@ GetLayerFixedMarginsOffset(Layer* aLayer,
   return translation;
 }
 
-void
-AsyncCompositionManager::AlignFixedLayersForAnchorPoint(Layer* aLayer,
-                                                        Layer* aTransformedSubtreeRoot,
-                                                        const gfx3DMatrix& aPreviousTransformForRoot,
-                                                        const LayerMargin& aFixedLayerMargins)
+static gfxFloat
+IntervalOverlap(gfxFloat aTranslation, gfxFloat aMin, gfxFloat aMax)
 {
-  if (aLayer != aTransformedSubtreeRoot && aLayer->GetIsFixedPosition() &&
-      !aLayer->GetParent()->GetIsFixedPosition()) {
+  // Determine the amount of overlap between the 1D vector |aTranslation|
+  // and the interval [aMin, aMax].
+  if (aTranslation > 0) {
+    return std::max(0.0, std::min(aMax, aTranslation) - std::max(aMin, 0.0));
+  } else {
+    return std::min(0.0, std::max(aMin, aTranslation) - std::min(aMax, 0.0));
+  }
+}
+
+void
+AsyncCompositionManager::AlignFixedAndStickyLayers(Layer* aLayer,
+                                                   Layer* aTransformedSubtreeRoot,
+                                                   const gfx3DMatrix& aPreviousTransformForRoot,
+                                                   const LayerMargin& aFixedLayerMargins)
+{
+  bool isRootFixed = aLayer->GetIsFixedPosition() &&
+    !aLayer->GetParent()->GetIsFixedPosition();
+  bool isStickyForSubtree = aLayer->GetIsStickyPosition() &&
+    aTransformedSubtreeRoot->AsContainerLayer() &&
+    aLayer->GetStickyScrollContainerId() ==
+      aTransformedSubtreeRoot->AsContainerLayer()->GetFrameMetrics().mScrollId;
+  if (aLayer != aTransformedSubtreeRoot && (isRootFixed || isStickyForSubtree)) {
     // Insert a translation so that the position of the anchor point is the same
     // before and after the change to the transform of aTransformedSubtreeRoot.
     // This currently only works for fixed layers with 2D transforms.
@@ -265,6 +303,21 @@ AsyncCompositionManager::AlignFixedLayersForAnchorPoint(Layer* aLayer,
         oldCumulativeTransform.Transform(locallyTransformedOffsetAnchor));
     gfxPoint translation = oldAnchorPositionInNewSpace - locallyTransformedAnchor;
 
+    if (aLayer->GetIsStickyPosition()) {
+      // For sticky positioned layers, the difference between the two rectangles
+      // defines a pair of translation intervals in each dimension through which
+      // the layer should not move relative to the scroll container. To
+      // accomplish this, we limit each dimension of the |translation| to that
+      // part of it which overlaps those intervals.
+      const LayerRect& stickyOuter = aLayer->GetStickyScrollRangeOuter();
+      const LayerRect& stickyInner = aLayer->GetStickyScrollRangeInner();
+
+      translation.y = IntervalOverlap(translation.y, stickyOuter.y, stickyOuter.YMost()) -
+                      IntervalOverlap(translation.y, stickyInner.y, stickyInner.YMost());
+      translation.x = IntervalOverlap(translation.x, stickyOuter.x, stickyOuter.XMost()) -
+                      IntervalOverlap(translation.x, stickyInner.x, stickyInner.XMost());
+    }
+
     // Finally, apply the 2D translation to the layer transform.
     TranslateShadowLayer2D(aLayer, translation);
 
@@ -275,8 +328,8 @@ AsyncCompositionManager::AlignFixedLayersForAnchorPoint(Layer* aLayer,
 
   for (Layer* child = aLayer->GetFirstChild();
        child; child = child->GetNextSibling()) {
-    AlignFixedLayersForAnchorPoint(child, aTransformedSubtreeRoot,
-                                   aPreviousTransformForRoot, aFixedLayerMargins);
+    AlignFixedAndStickyLayers(child, aTransformedSubtreeRoot,
+                              aPreviousTransformForRoot, aFixedLayerMargins);
   }
 }
 
@@ -476,11 +529,11 @@ AsyncCompositionManager::ApplyAsyncContentTransformToTree(TimeStamp aCurrentFram
     LayoutDeviceToLayerScale resolution(1.0 / rootTransform.GetXScale(),
                                         1.0 / rootTransform.GetYScale());
 #else
-    LayoutDeviceToLayerScale resolution = metrics.mResolution;
+    LayoutDeviceToLayerScale resolution = metrics.mCumulativeResolution;
 #endif
     oldTransform.Scale(resolution.scale, resolution.scale, 1);
 
-    AlignFixedLayersForAnchorPoint(aLayer, aLayer, oldTransform, fixedLayerMargins);
+    AlignFixedAndStickyLayers(aLayer, aLayer, oldTransform, fixedLayerMargins);
 
     appliedTransform = true;
   }
@@ -535,7 +588,7 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer, const LayoutDev
   // appears to be that metrics.mZoom is poorly initialized in some scenarios. In these scenarios,
   // however, we can assume there is no async zooming in progress and so the following statement
   // works fine.
-  CSSToScreenScale userZoom(metrics.mDevPixelsPerCSSPixel.scale * metrics.mResolution.scale);
+  CSSToScreenScale userZoom(metrics.mDevPixelsPerCSSPixel * metrics.mCumulativeResolution * LayerToScreenScale(1));
   ScreenPoint userScroll = metrics.mScrollOffset * userZoom;
   SyncViewportInfo(displayPort, geckoZoom, mLayersUpdated,
                    userScroll, userZoom, fixedLayerMargins,
@@ -559,7 +612,10 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer, const LayoutDev
   }
 
   LayerPoint translation = (userScroll / zoomAdjust) - geckoScroll;
-  treeTransform = gfx3DMatrix(ViewTransform(-translation, userZoom / metrics.mDevPixelsPerCSSPixel));
+  treeTransform = gfx3DMatrix(ViewTransform(-translation,
+                                            userZoom
+                                          / metrics.mDevPixelsPerCSSPixel
+                                          / metrics.GetParentResolution()));
 
   // The transform already takes the resolution scale into account.  Since we
   // will apply the resolution scale again when computing the effective
@@ -583,7 +639,7 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer, const LayoutDev
   // transform so that fixed position content moves and scales accordingly.
   // These calculations will effectively scale and offset fixed position layers
   // in screen space when the compensatory transform is performed in
-  // AlignFixedLayersForAnchorPoint.
+  // AlignFixedAndStickyLayers.
   ScreenRect contentScreenRect = mContentRect * userZoom;
   gfxPoint3D overscrollTranslation;
   if (userScroll.x < contentScreenRect.x) {
@@ -613,12 +669,13 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer, const LayoutDev
 
   // Make sure fixed position layers don't move away from their anchor points
   // when we're asynchronously panning or zooming
-  AlignFixedLayersForAnchorPoint(aLayer, aLayer, oldTransform, fixedLayerMargins);
+  AlignFixedAndStickyLayers(aLayer, aLayer, oldTransform, fixedLayerMargins);
 }
 
 bool
 AsyncCompositionManager::TransformShadowTree(TimeStamp aCurrentFrame)
 {
+  PROFILER_LABEL("AsyncCompositionManager", "TransformShadowTree");
   Layer* root = mLayerManager->GetRoot();
   if (!root) {
     return false;
@@ -658,7 +715,7 @@ AsyncCompositionManager::TransformShadowTree(TimeStamp aCurrentFrame)
                                             1.0 / rootTransform.GetYScale());
 #else
         LayoutDeviceToLayerScale resolution =
-            scrollableLayers[i]->AsContainerLayer()->GetFrameMetrics().mResolution;
+            scrollableLayers[i]->AsContainerLayer()->GetFrameMetrics().mCumulativeResolution;
 #endif
         TransformScrollableLayer(scrollableLayers[i], resolution);
       }

@@ -38,16 +38,17 @@ using mozilla::plugins::PluginInstanceParent;
 #include "mozilla/unused.h"
 
 #include "LayerManagerOGL.h"
-#include "BasicLayers.h"
 #ifdef MOZ_ENABLE_D3D9_LAYER
 #include "LayerManagerD3D9.h"
 #endif
 #ifdef MOZ_ENABLE_D3D10_LAYER
 #include "LayerManagerD3D10.h"
 #endif
+#include "mozilla/layers/CompositorParent.h"
 
 #include "nsUXThemeData.h"
 #include "nsUXThemeConstants.h"
+#include "mozilla/gfx/2D.h"
 
 extern "C" {
 #define PIXMAN_DONT_DEFINE_STDINT
@@ -212,6 +213,13 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
     return true;
   }
 
+  // Do an early async composite so that we at least have something on screen
+  // in the right place, even if the content is out of date.
+  if (GetLayerManager()->GetBackendType() == LAYERS_CLIENT &&
+      mCompositorParent) {
+    mCompositorParent->ScheduleRenderOnCompositorThread();
+  }
+
   nsIWidgetListener* listener = GetPaintListener();
   if (listener) {
     listener->WillPaintWindow(this);
@@ -357,7 +365,19 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
             return false;
           }
 
-          nsRefPtr<gfxContext> thebesContext = new gfxContext(targetSurface);
+          nsRefPtr<gfxContext> thebesContext;
+          if (gfxPlatform::GetPlatform()->SupportsAzureContentForType(mozilla::gfx::BACKEND_CAIRO)) {
+            RECT paintRect;
+            ::GetClientRect(mWnd, &paintRect);
+            RefPtr<mozilla::gfx::DrawTarget> dt =
+              gfxPlatform::GetPlatform()->CreateDrawTargetForSurface(targetSurface,
+                                                                     mozilla::gfx::IntSize(paintRect.right - paintRect.left,
+                                                                                           paintRect.bottom - paintRect.top));
+            thebesContext = new gfxContext(dt);
+          } else {
+            thebesContext = new gfxContext(targetSurface);
+          }
+
           if (IsRenderMode(gfxWindowsPlatform::RENDER_DIRECT2D)) {
             const nsIntRect* r;
             for (nsIntRegionRectIterator iter(region);

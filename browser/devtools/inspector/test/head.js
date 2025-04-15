@@ -13,7 +13,7 @@ SimpleTest.registerCleanupFunction(() => {
 
 
 let tempScope = {};
-Cu.import("resource:///modules/devtools/LayoutHelpers.jsm", tempScope);
+Cu.import("resource://gre/modules/devtools/LayoutHelpers.jsm", tempScope);
 let LayoutHelpers = tempScope.LayoutHelpers;
 
 let {devtools} = Cu.import("resource://gre/modules/devtools/Loader.jsm", tempScope);
@@ -77,7 +77,8 @@ function getHighlitNode()
   // Get midpoint of diagonal line.
   let midpoint = midPoint(a, b);
 
-  return LayoutHelpers.getElementFromPoint(h.win.document, midpoint.x,
+  let lh = new LayoutHelpers(window.content);
+  return lh.getElementFromPoint(h.win.document, midpoint.x,
     midpoint.y);
 }
 
@@ -168,3 +169,7 @@ function focusSearchBoxUsingShortcut(panelWin, callback) {
   EventUtils.synthesizeKey(name, modifiers);
 }
 
+SimpleTest.registerCleanupFunction(function () {
+  let target = TargetFactory.forTab(gBrowser.selectedTab);
+  gDevTools.closeToolbox(target);
+});

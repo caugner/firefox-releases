@@ -177,7 +177,7 @@ function runSocialTests(tests, cbPreTest, cbPostTest, cbFinish) {
         cbPostTest(runNextTest);
       }
       cbPreTest(function() {
-        is(providersAtStart, Social.providers.length, "pre-test: no new providers left enabled");
+        info("pre-test: starting with " + Social.providers.length + " providers");
         info("sub-test " + name + " starting");
         try {
           func.call(tests, cleanupAndRunNextTest);
@@ -194,12 +194,21 @@ function runSocialTests(tests, cbPreTest, cbPostTest, cbFinish) {
 // A fairly large hammer which checks all aspects of the SocialUI for
 // internal consistency.
 function checkSocialUI(win) {
+  let SocialService = Cu.import("resource://gre/modules/SocialService.jsm", {}).SocialService;
   win = win || window;
   let doc = win.document;
   let provider = Social.provider;
   let enabled = win.SocialUI.enabled;
   let active = Social.providers.length > 0 && !win.SocialUI._chromeless &&
                !PrivateBrowsingUtils.isWindowPrivate(win);
+
+  // if we have enabled providers, we should also have instances of those
+  // providers
+  if (SocialService.hasEnabledProviders) {
+    ok(Social.providers.length > 0, "providers are enabled");
+  } else {
+    is(Social.providers.length, 0, "providers are not enabled");
+  }
 
   // some local helpers to avoid log-spew for the many checks made here.
   let numGoodTests = 0, numTests = 0;
@@ -223,13 +232,9 @@ function checkSocialUI(win) {
   isbool(win.SocialSidebar.canShow, enabled, "social sidebar active?");
   if (enabled)
     isbool(win.SocialSidebar.opened, enabled, "social sidebar open?");
-  isbool(win.SocialChatBar.isAvailable, enabled && Social.haveLoggedInUser(), "chatbar available?");
-  isbool(!win.SocialChatBar.chatbar.hidden, enabled && Social.haveLoggedInUser(), "chatbar visible?");
+  isbool(win.SocialChatBar.isAvailable, enabled, "chatbar available?");
+  isbool(!win.SocialChatBar.chatbar.hidden, enabled, "chatbar visible?");
 
-  let markVisible = enabled && provider.pageMarkInfo;
-  let canMark = markVisible && win.SocialMark.canMarkPage(win.gBrowser.currentURI);
-  isbool(!win.SocialMark.button.hidden, markVisible, "SocialMark button visible?");
-  isbool(!win.SocialMark.button.disabled, canMark, "SocialMark button enabled?");
   isbool(!doc.getElementById("social-toolbar-item").hidden, active, "toolbar items visible?");
   if (active) {
     if (!enabled) {
@@ -242,14 +247,50 @@ function checkSocialUI(win) {
   if (provider) {
     for (let id of ["menu_socialSidebar", "menu_socialAmbientMenu"])
       _is(document.getElementById(id).getAttribute("label"), Social.provider.name, "element has the provider name");
+
+    let contextMenus = [
+      {
+        type: "link",
+        id: "context-marklinkMenu",
+        label: "social.marklinkMenu.label"
+      },
+      {
+        type: "page",
+        id: "context-markpageMenu",
+        label: "social.markpageMenu.label"
+      }
+    ];
+
+    for (let c of contextMenus) {
+      let leMenu = document.getElementById(c.id);
+      let parent, menus;
+      let markProviders = SocialMarks.getProviders();
+      if (markProviders.length > SocialMarks.MENU_LIMIT) {
+        // menus should be in a submenu, not in the top level of the context menu
+        parent = leMenu.firstChild;
+        menus = document.getElementsByClassName("context-mark" + c.type);
+        _is(menus.length, 0, "menu's are not in main context menu\n");
+        menus = parent.childNodes;
+        _is(menus.length, markProviders.length, c.id + " menu exists for each mark provider");
+      } else {
+        // menus should be in the top level of the context menu, not in a submenu
+        parent = leMenu.parentNode;
+        menus = document.getElementsByClassName("context-mark" + c.type);
+        _is(menus.length, markProviders.length, c.id + " menu exists for each mark provider");
+        menus = leMenu.firstChild.childNodes;
+        _is(menus.length, 0, "menu's are not in context submenu\n");
+      }
+      for (let m of menus)
+        _is(m.parentNode, parent, "menu has correct parent");
+    }
   }
 
   // and for good measure, check all the social commands.
   isbool(!doc.getElementById("Social:Toggle").hidden, active, "Social:Toggle visible?");
+  isbool(!doc.getElementById("Social:ToggleSidebar").hidden, enabled, "Social:ToggleSidebar visible?");
   isbool(!doc.getElementById("Social:ToggleNotifications").hidden, enabled, "Social:ToggleNotifications visible?");
-  isbool(!doc.getElementById("Social:FocusChat").hidden, enabled && Social.haveLoggedInUser(), "Social:FocusChat visible?");
+  isbool(!doc.getElementById("Social:FocusChat").hidden, enabled, "Social:FocusChat visible?");
   isbool(doc.getElementById("Social:FocusChat").getAttribute("disabled"), enabled ? "false" : "true", "Social:FocusChat disabled?");
-  _is(doc.getElementById("Social:TogglePageMark").getAttribute("disabled"), canMark ? "false" : "true", "Social:TogglePageMark enabled?");
 
   // broadcasters.
   isbool(!doc.getElementById("socialActiveBroadcaster").hidden, active, "socialActiveBroadcaster hidden?");
@@ -398,8 +439,8 @@ function get3ChatsForCollapsing(mode, cb) {
 
 function makeChat(mode, uniqueid, cb) {
   info("making a chat window '" + uniqueid +"'");
-  const chatUrl = "https://example.com/browser/browser/base/content/test/social/social_chat.html";
   let provider = Social.provider;
+  const chatUrl = provider.origin + "/browser/browser/base/content/test/social/social_chat.html";
   let isOpened = window.SocialChatBar.openChat(provider, chatUrl + "?id=" + uniqueid, function(chat) {
     info("chat window has opened");
     // we can't callback immediately or we might close the chat during

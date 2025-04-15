@@ -6,8 +6,6 @@
 
 #include "nsAboutRedirector.h"
 #include "nsNetUtil.h"
-#include "plstr.h"
-#include "nsIScriptSecurityManager.h"
 #include "nsAboutProtocolUtils.h"
 
 NS_IMPL_ISUPPORTS1(nsAboutRedirector, nsIAboutModule)
@@ -51,8 +49,7 @@ static RedirEntry kRedirMap[] = {
       nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
       nsIAboutModule::ALLOW_SCRIPT |
       nsIAboutModule::HIDE_FROM_ABOUTABOUT },
-    // aboutMemory.xhtml implements about:compartments
-    { "compartments", "chrome://global/content/aboutMemory.xhtml",
+    { "compartments", "chrome://global/content/aboutCompartments.xhtml",
       nsIAboutModule::ALLOW_SCRIPT },
     { "memory", "chrome://global/content/aboutMemory.xhtml",
       nsIAboutModule::ALLOW_SCRIPT },
@@ -65,6 +62,8 @@ static RedirEntry kRedirMap[] = {
       nsIAboutModule::ALLOW_SCRIPT },
     { "telemetry", "chrome://global/content/aboutTelemetry.xhtml",
       nsIAboutModule::ALLOW_SCRIPT },
+    { "networking", "chrome://global/content/aboutNetworking.xhtml",
+       nsIAboutModule::ALLOW_SCRIPT },
     // about:srcdoc is unresolvable by specification.  It is included here
     // because the security manager would disallow srcdoc iframes otherwise.
     { "srcdoc", "about:blank",

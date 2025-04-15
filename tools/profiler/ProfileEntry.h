@@ -8,7 +8,6 @@
 
 #include <ostream>
 #include "GeckoProfilerImpl.h"
-#include "JSAObjectBuilder.h"
 #include "platform.h"
 #include "mozilla/Mutex.h"
 
@@ -58,7 +57,7 @@ class ThreadProfile
 public:
   ThreadProfile(const char* aName, int aEntrySize, PseudoStack *aStack,
                 int aThreadId, PlatformData* aPlatformData,
-                bool aIsMainThread);
+                bool aIsMainThread, void *aStackTop);
   ~ThreadProfile();
   void addTag(ProfileEntry aTag);
   void flush();
@@ -68,16 +67,17 @@ public:
   friend std::ostream& operator<<(std::ostream& stream,
                                   const ThreadProfile& profile);
   void ToStreamAsJSON(std::ostream& stream);
-  JSCustomObject *ToJSObject(JSContext *aCx);
+  JSObject *ToJSObject(JSContext *aCx);
   PseudoStack* GetPseudoStack();
   mozilla::Mutex* GetMutex();
-  void BuildJSObject(JSAObjectBuilder& b, JSCustomObject* profile);
+  template <typename Builder> void BuildJSObject(Builder& b, typename Builder::ObjectHandle profile);
 
   bool IsMainThread() const { return mIsMainThread; }
   const char* Name() const { return mName; }
   int ThreadId() const { return mThreadId; }
 
   PlatformData* GetPlatformData() { return mPlatformData; }
+  void* GetStackTop() const { return mStackTop; }
 private:
   // Circular buffer 'Keep One Slot Open' implementation
   // for simplicity
@@ -92,6 +92,7 @@ private:
   int            mThreadId;
   bool           mIsMainThread;
   PlatformData*  mPlatformData;  // Platform specific data.
+  void* const    mStackTop;
 };
 
 std::ostream& operator<<(std::ostream& stream, const ThreadProfile& profile);

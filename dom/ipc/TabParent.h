@@ -9,7 +9,6 @@
 
 #include "base/basictypes.h"
 
-#include "jsapi.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/PBrowserParent.h"
 #include "mozilla/dom/PContentDialogParent.h"
@@ -23,10 +22,9 @@
 #include "nsITabParent.h"
 #include "nsWeakReference.h"
 #include "Units.h"
+#include "js/TypeDecls.h"
 
 struct gfxMatrix;
-struct JSContext;
-class JSObject;
 class mozIApplication;
 class nsFrameLoader;
 class nsIURI;
@@ -159,9 +157,13 @@ public:
     virtual bool RecvGetWidgetNativeData(WindowsHandle* aValue);
     virtual bool RecvZoomToRect(const CSSRect& aRect);
     virtual bool RecvUpdateZoomConstraints(const bool& aAllowZoom,
-                                           const float& aMinZoom,
-                                           const float& aMaxZoom);
+                                           const CSSToScreenScale& aMinZoom,
+                                           const CSSToScreenScale& aMaxZoom);
+    virtual bool RecvUpdateScrollOffset(const uint32_t& aPresShellId, const ViewID& aViewId, const CSSIntPoint& aScrollOffset);
     virtual bool RecvContentReceivedTouch(const bool& aPreventDefault);
+    virtual bool RecvRecordingDeviceEvents(const nsString& aRecordingStatus,
+                                           const bool& aIsAudio,
+                                           const bool& aIsVideo);
     virtual PContentDialogParent* AllocPContentDialogParent(const uint32_t& aType,
                                                             const nsCString& aName,
                                                             const nsCString& aFeatures,
@@ -187,6 +189,10 @@ public:
     void Activate();
     void Deactivate();
 
+    bool MapEventCoordinatesForChildProcess(nsEvent* aEvent);
+    void MapEventCoordinatesForChildProcess(const LayoutDeviceIntPoint& aOffset,
+                                                   nsEvent* aEvent);
+
     void SendMouseEvent(const nsAString& aType, float aX, float aY,
                         int32_t aButton, int32_t aClickCount,
                         int32_t aModifiers, bool aIgnoreRootScrollFrame);
@@ -194,7 +200,7 @@ public:
                       int32_t aCharCode, int32_t aModifiers,
                       bool aPreventDefault);
     bool SendRealMouseEvent(nsMouseEvent& event);
-    bool SendMouseWheelEvent(mozilla::widget::WheelEvent& event);
+    bool SendMouseWheelEvent(mozilla::WheelEvent& event);
     bool SendRealKeyEvent(nsKeyEvent& event);
     bool SendRealTouchEvent(nsTouchEvent& event);
 
@@ -215,7 +221,7 @@ public:
             const bool& stickDocument) MOZ_OVERRIDE;
     virtual bool DeallocPOfflineCacheUpdateParent(POfflineCacheUpdateParent* actor);
 
-    JSBool GetGlobalJSObject(JSContext* cx, JSObject** globalp);
+    bool GetGlobalJSObject(JSContext* cx, JSObject** globalp);
 
     NS_DECL_ISUPPORTS
     NS_DECL_NSIAUTHPROMPTPROVIDER
@@ -234,6 +240,12 @@ public:
 
     ContentParent* Manager() { return mManager; }
 
+    /**
+     * Let managees query if Destroy() is already called so they don't send out
+     * messages when the PBrowser actor is being destroyed.
+     */
+    bool IsDestroyed() const { return mIsDestroyed; }
+
 protected:
     bool ReceiveMessage(const nsString& aMessage,
                         bool aSync,
@@ -245,13 +257,16 @@ protected:
 
     virtual void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
 
-    virtual PIndexedDBParent* AllocPIndexedDBParent(const nsCString& aASCIIOrigin,
-                                                    bool* /* aAllowed */);
+    virtual PIndexedDBParent* AllocPIndexedDBParent(
+                                                  const nsCString& aGroup,
+                                                  const nsCString& aASCIIOrigin,
+                                                  bool* /* aAllowed */);
 
     virtual bool DeallocPIndexedDBParent(PIndexedDBParent* aActor);
 
     virtual bool
     RecvPIndexedDBConstructor(PIndexedDBParent* aActor,
+                              const nsCString& aGroup,
                               const nsCString& aASCIIOrigin,
                               bool* aAllowed);
 

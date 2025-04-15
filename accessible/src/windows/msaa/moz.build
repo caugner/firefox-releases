@@ -41,3 +41,21 @@ if CONFIG['MOZ_XUL']:
         'XULMenuAccessibleWrap.cpp',
         'XULTreeGridAccessibleWrap.cpp',
     ]
+
+LIBXUL_LIBRARY = True
+
+LOCAL_INCLUDES += [
+    '../../../../content/base/src',
+    '../../../../content/events/src',
+    '../../base',
+    '../../generic',
+    '../../html',
+    '../../xpcom',
+    '../../xul',
+    '../ia2',
+    '../sdn',
+    '../uia',
+]
+
+LIBRARY_NAME = 'accessibility_toolkit_msaa_s'
+

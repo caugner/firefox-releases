@@ -138,7 +138,7 @@ std::ostream& operator<<(std::ostream& stream, const ProfileEntry& entry)
 ThreadProfile::ThreadProfile(const char* aName, int aEntrySize,
                              PseudoStack *aStack, int aThreadId,
                              PlatformData* aPlatform,
-                             bool aIsMainThread)
+                             bool aIsMainThread, void *aStackTop)
   : mWritePos(0)
   , mLastFlushPos(0)
   , mReadPos(0)
@@ -149,6 +149,7 @@ ThreadProfile::ThreadProfile(const char* aName, int aEntrySize,
   , mThreadId(aThreadId)
   , mIsMainThread(aIsMainThread)
   , mPlatformData(aPlatform)
+  , mStackTop(aStackTop)
 {
   mEntries = new ProfileEntry[mEntrySize];
 }
@@ -298,16 +299,16 @@ void ThreadProfile::ToStreamAsJSON(std::ostream& stream)
   b.DeleteObject(profile);
 }
 
-JSCustomObject* ThreadProfile::ToJSObject(JSContext *aCx)
+JSObject* ThreadProfile::ToJSObject(JSContext *aCx)
 {
   JSObjectBuilder b(aCx);
-  JSCustomObject *profile = b.CreateObject();
+  JS::RootedObject profile(aCx, b.CreateObject());
   BuildJSObject(b, profile);
-
   return profile;
 }
 
-void ThreadProfile::BuildJSObject(JSAObjectBuilder& b, JSCustomObject* profile) {
+template <typename Builder>
+void ThreadProfile::BuildJSObject(Builder& b, typename Builder::ObjectHandle profile) {
 
   // Thread meta data
   if (XRE_GetProcessType() == GeckoProcessType_Plugin) {
@@ -319,12 +320,12 @@ void ThreadProfile::BuildJSObject(JSAObjectBuilder& b, JSCustomObject* profile) 
 
   b.DefineProperty(profile, "tid", mThreadId);
 
-  JSCustomArray *samples = b.CreateArray();
+  typename Builder::RootedArray samples(b.context(), b.CreateArray());
   b.DefineProperty(profile, "samples", samples);
 
-  JSCustomObject *sample = nullptr;
-  JSCustomArray *frames = nullptr;
-  JSCustomArray *marker = nullptr;
+  typename Builder::RootedObject sample(b.context());
+  typename Builder::RootedArray frames(b.context());
+  typename Builder::RootedArray marker(b.context());
 
   int readPos = mReadPos;
   while (readPos != mLastFlushPos) {
@@ -390,7 +391,7 @@ void ThreadProfile::BuildJSObject(JSAObjectBuilder& b, JSCustomObject* profile) 
       case 'l':
         {
           if (sample) {
-            JSCustomObject *frame = b.CreateObject();
+            typename Builder::RootedObject frame(b.context(), b.CreateObject());
             if (entry.mTagName == 'l') {
               // Bug 753041
               // We need a double cast here to tell GCC that we don't want to sign
@@ -415,6 +416,11 @@ void ThreadProfile::BuildJSObject(JSAObjectBuilder& b, JSCustomObject* profile) 
     readPos = (readPos + incBy) % mEntrySize;
   }
 }
+
+template void ThreadProfile::BuildJSObject<JSObjectBuilder>(JSObjectBuilder& b,
+                                                            JS::HandleObject profile);
+template void ThreadProfile::BuildJSObject<JSCustomObjectBuilder>(JSCustomObjectBuilder& b,
+                                                                  JSCustomObject *profile);
 
 PseudoStack* ThreadProfile::GetPseudoStack()
 {

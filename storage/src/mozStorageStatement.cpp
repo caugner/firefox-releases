@@ -24,6 +24,7 @@
 #include "mozStorageStatementRow.h"
 #include "mozStorageStatement.h"
 #include "GeckoProfiler.h"
+#include "nsDOMClassInfo.h"
 
 #include "prlog.h"
 
@@ -357,12 +358,73 @@ Statement::internalFinalize(bool aDestructing)
   if (!mDBStatement)
     return NS_OK;
 
+  int srv = SQLITE_OK;
+
+  if (!mDBConnection->isClosing(true)) {
+    //
+    // The connection is still open. While statement finalization and
+    // closing may, in some cases, take place in two distinct threads,
+    // we have a guarantee that the connection will remain open until
+    // this method terminates:
+    //
+    // a. The connection will be closed synchronously. In this case,
+    // there is no race condition, as everything takes place on the
+    // same thread.
+    //
+    // b. The connection is closed asynchronously and this code is
+    // executed on the opener thread. In this case, asyncClose() has
+    // not been called yet and will not be called before we return
+    // from this function.
+    //
+    // c. The connection is closed asynchronously and this code is
+    // executed on the async execution thread. In this case,
+    // AsyncCloseConnection::Run() has not been called yet and will
+    // not be called before we return from this function.
+    //
+    // In either case, the connection is still valid, hence closing
+    // here is safe.
+    //
 #ifdef PR_LOGGING
-  PR_LOG(gStorageLog, PR_LOG_NOTICE, ("Finalizing statement '%s'",
-                                      ::sqlite3_sql(mDBStatement)));
+    PR_LOG(gStorageLog, PR_LOG_NOTICE, ("Finalizing statement '%s' during garbage-collection",
+                                        ::sqlite3_sql(mDBStatement)));
+#endif
+    srv = ::sqlite3_finalize(mDBStatement);
+  }
+#ifdef DEBUG
+  else {
+    //
+    // The database connection is either closed or closing. The sqlite
+    // statement has either been finalized already by the connection
+    // or is about to be finalized by the connection.
+    //
+    // Finalizing it here would be useless and segfaultish.
+    //
+
+    char *msg = ::PR_smprintf("SQL statement (%x) should have been finalized"
+      " before garbage-collection. For more details on this statement, set"
+      " NSPR_LOG_MESSAGES=mozStorage:5 .",
+      mDBStatement);
+
+    //
+    // Note that we can't display the statement itself, as the data structure
+    // is not valid anymore. However, the address shown here should help
+    // developers correlate with the more complete debug message triggered
+    // by AsyncClose().
+    //
+
+#if 0
+    // Deactivate the warning until we have fixed the exising culprit
+    // (see bug 914070).
+    NS_WARNING(msg);
+#endif // 0
+
+    PR_LOG(gStorageLog, PR_LOG_WARNING, (msg));
+
+    ::PR_smprintf_free(msg);
+  }
+
 #endif
 
-  int srv = ::sqlite3_finalize(mDBStatement);
   mDBStatement = nullptr;
 
   if (mAsyncStatement) {

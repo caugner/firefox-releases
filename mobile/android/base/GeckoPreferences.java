@@ -79,6 +79,8 @@ public class GeckoPreferences
     private static String PREFS_DISPLAY_REFLOW_ON_ZOOM = "browser.zoom.reflowOnZoom";
     private static String PREFS_SYNC = NON_PREF_PREFIX + "sync";
 
+    public static String PREFS_RESTORE_SESSION = NON_PREF_PREFIX + "restoreSession3";
+
     // These values are chosen to be distinct from other Activity constants.
     private static int REQUEST_CODE_PREF_SCREEN = 5;
     private static int RESULT_CODE_EXIT_SETTINGS = 6;
@@ -315,9 +317,7 @@ public class GeckoPreferences
                     preferences.removePreference(pref);
                     i--;
                     continue;
-                } else if (PREFS_GEO_REPORTING.equals(key) &&
-                           ("release".equals(AppConstants.MOZ_UPDATE_CHANNEL) ||
-                            "beta".equals(AppConstants.MOZ_UPDATE_CHANNEL))) {
+                } else if (AppConstants.RELEASE_BUILD && PREFS_GEO_REPORTING.equals(key)) {
                     // We don't build wifi/cell tower collection in release builds, so hide the UI.
                     preferences.removePreference(pref);
                     i--;
@@ -334,6 +334,15 @@ public class GeckoPreferences
                             return true;
                         }
                     });
+                } else if (PREFS_RESTORE_SESSION.equals(key)) {
+                    // Set the summary string to the current entry. The summary
+                    // for other list prefs will be set in the PrefsHelper
+                    // callback, but since this pref doesn't live in Gecko, we
+                    // need to handle it separately.
+                    ListPreference listPref = (ListPreference) pref;
+                    CharSequence selectedEntry = listPref.getEntry();
+                    listPref.setSummary(selectedEntry);
+                    continue;
                 } else if (PREFS_SYNC.equals(key) && GeckoProfile.get(this).inGuestMode()) {
                     // Don't show sync prefs while in guest mode.
                     preferences.removePreference(pref);
@@ -673,9 +682,7 @@ public class GeckoPreferences
 
     // Initialize preferences by requesting the preference values from Gecko
     private int getGeckoPreferences(final PreferenceGroup screen, ArrayList<String> prefs) {
-        JSONArray jsonPrefs = new JSONArray(prefs);
-
-        return PrefsHelper.getPrefs(jsonPrefs, new PrefsHelper.PrefHandlerBase() {
+        return PrefsHelper.getPrefs(prefs, new PrefsHelper.PrefHandlerBase() {
             private Preference getField(String prefName) {
                 return screen.findPreference(prefName);
             }

@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef NS_HTML5_PARSER__
-#define NS_HTML5_PARSER__
+#ifndef NS_HTML5_PARSER
+#define NS_HTML5_PARSER
 
 #include "nsAutoPtr.h"
 #include "nsIParser.h"
@@ -257,8 +257,6 @@ class nsHtml5Parser : public nsIParser,
      * Parse until pending data is exhausted or a script blocks the parser
      */
     void ParseUntilBlocked();
-
-    bool IsSrcdocDocument();
 
   private:
 

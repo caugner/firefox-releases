@@ -2,8 +2,10 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// gSyncUI handles updating the tools menu
+// gSyncUI handles updating the tools menu and displaying notifications.
 let gSyncUI = {
+  DEFAULT_EOL_URL: "https://www.mozilla.org/firefox/?utm_source=synceol",
+
   _obs: ["weave:service:sync:start",
          "weave:service:sync:delayed",
          "weave:service:quota:remaining",
@@ -21,7 +23,9 @@ let gSyncUI = {
 
   _unloaded: false,
 
-  init: function SUI_init() {
+  init: function () {
+    Cu.import("resource://services-common/stringbundle.js");
+
     // Proceed to set up the UI if Sync has already started up.
     // Otherwise we'll do it when Sync is firing up.
     let xps = Components.classes["@mozilla.org/weave/service;1"]
@@ -209,24 +213,29 @@ let gSyncUI = {
     Weave.Notifications.replaceTitle(notification);
   },
 
+  _getAppName: function () {
+    try {
+      let syncStrings = new StringBundle("chrome://browser/locale/sync.properties");
+      return syncStrings.getFormattedString("sync.defaultAccountApplication", [brandName]);
+    } catch (ex) {}
+    let brand = new StringBundle("chrome://branding/locale/brand.properties");
+    return brand.get("brandShortName");
+  },
+
   onEOLNotice: function (data) {
     let code = data.code;
     let kind = (code == "hard-eol") ? "error" : "warning";
-    let url = data.url || "https://www.mozilla.org/firefox/?utm_source=synceol";
+    let url = data.url || gSyncUI.DEFAULT_EOL_URL;
 
-    let title = this._stringBundle.GetStringFromName("error.sync.needUpdate.label");
-    let description = this._stringBundle.GetStringFromName("error.sync.needUpdate.description");
-  
-    // Hack for uplift.
-    let browserStrings = Cc["@mozilla.org/intl/stringbundle;1"].
-                           getService(Ci.nsIStringBundleService).
-                           createBundle("chrome://browser/locale/browser.properties");
-    let learnMore = browserStrings.GetStringFromName("syncPromoNotification.learnMoreLinkText");
+    let title = this._stringBundle.GetStringFromName(kind + ".sync.eol.label");
+    let description = this._stringBundle.formatStringFromName(kind + ".sync.eol.description",
+                                                              [this._getAppName()],
+                                                              1);
 
     let buttons = [];
     buttons.push(new Weave.NotificationButton(
-      learnMore,
-      null,          // No accesskey.
+      this._stringBundle.GetStringFromName("sync.eol.learnMore.label"),
+      this._stringBundle.GetStringFromName("sync.eol.learnMore.accesskey"),
       function() {
         window.openUILinkIn(url, "tab");
         return true;

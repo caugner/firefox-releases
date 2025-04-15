@@ -5,6 +5,7 @@
 
 #include "AndroidJavaWrappers.h"
 #include "AndroidBridge.h"
+#include "AndroidBridgeUtilities.h"
 #include "nsIAndroidBridge.h"
 #include "nsIDOMKeyEvent.h"
 #include "nsIWidget.h"
@@ -60,6 +61,7 @@ jfieldID AndroidGeckoEvent::jScreenOrientationField = 0;
 jfieldID AndroidGeckoEvent::jByteBufferField = 0;
 jfieldID AndroidGeckoEvent::jWidthField = 0;
 jfieldID AndroidGeckoEvent::jHeightField = 0;
+jfieldID AndroidGeckoEvent::jPrefNamesField = 0;
 
 jclass AndroidGeckoEvent::jDomKeyLocationClass = 0;
 jfieldID AndroidGeckoEvent::jDomKeyLocationValueField = 0;
@@ -132,69 +134,6 @@ jfieldID AndroidProgressiveUpdateData::jHeightField = 0;
 jfieldID AndroidProgressiveUpdateData::jScaleField = 0;
 jfieldID AndroidProgressiveUpdateData::jShouldAbortField = 0;
 
-static jclass GetClassGlobalRef(JNIEnv* env, const char* className)
-{
-    jobject classLocalRef = env->FindClass(className);
-    if (!classLocalRef) {
-        ALOG(">>> FATAL JNI ERROR! FindClass(className=\"%s\") failed. Did "
-             "ProGuard optimize away a non-public class?", className);
-        env->ExceptionDescribe();
-        MOZ_CRASH();
-    }
-
-    jobject classGlobalRef = env->NewGlobalRef(classLocalRef);
-    if (!classGlobalRef) {
-        env->ExceptionDescribe();
-        MOZ_CRASH();
-    }
-
-    // Local ref no longer necessary because we have a global ref.
-    env->DeleteLocalRef(classLocalRef);
-    classLocalRef = NULL;
-
-    return static_cast<jclass>(classGlobalRef);
-}
-
-static jfieldID GetFieldID(JNIEnv* env, jclass jClass,
-                           const char* fieldName, const char* fieldType)
-{
-    jfieldID fieldID = env->GetFieldID(jClass, fieldName, fieldType);
-    if (!fieldID) {
-        ALOG(">>> FATAL JNI ERROR! GetFieldID(fieldName=\"%s\", "
-             "fieldType=\"%s\") failed. Did ProGuard optimize away a non-"
-             "public field?", fieldName, fieldType);
-        env->ExceptionDescribe();
-        MOZ_CRASH();
-    }
-    return fieldID;
-}
-
-static jmethodID GetMethodID(JNIEnv* env, jclass jClass,
-                             const char* methodName, const char* methodType)
-{
-    jmethodID methodID = env->GetMethodID(jClass, methodName, methodType);
-    if (!methodID) {
-        ALOG(">>> FATAL JNI ERROR! GetMethodID(methodName=\"%s\", "
-             "methodType=\"%s\") failed. Did ProGuard optimize away a non-"
-             "public method?", methodName, methodType);
-        env->ExceptionDescribe();
-        MOZ_CRASH();
-    }
-    return methodID;
-}
-
-#define initInit() jclass jClass
-
-// note that this also sets jClass
-#define getClassGlobalRef(cname) \
-    (jClass = GetClassGlobalRef(jEnv, cname))
-
-#define getField(fname, ftype) \
-    GetFieldID(jEnv, jClass, fname, ftype)
-
-#define getMethod(fname, ftype) \
-    GetMethodID(jEnv, jClass, fname, ftype)
-
 RefCountedJavaObject::~RefCountedJavaObject() {
     if (mObject)
         GetJNIForThread()->DeleteGlobalRef(mObject);
@@ -266,6 +205,7 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jByteBufferField = getField("mBuffer", "Ljava/nio/ByteBuffer;");
     jWidthField = getField("mWidth", "I");
     jHeightField = getField("mHeight", "I");
+    jPrefNamesField = getField("mPrefNames", "[Ljava/lang/String;");
 
     // Init GeckoEvent.DomKeyLocation enum
     jDomKeyLocationClass = getClassGlobalRef("org/mozilla/gecko/GeckoEvent$DomKeyLocation");
@@ -357,6 +297,8 @@ AndroidGeckoLayerClient::InitGeckoLayerClientClass(JNIEnv *jEnv)
 
     jGeckoLayerClientClass = getClassGlobalRef("org/mozilla/gecko/gfx/GeckoLayerClient");
 
+    jProgressiveUpdateCallbackMethod = getMethod("progressiveUpdateCallback",
+                                                 "(ZFFFFFZ)Lorg/mozilla/gecko/gfx/ProgressiveUpdateData;");
     jSetFirstPaintViewport = getMethod("setFirstPaintViewport", "(FFFFFFF)V");
     jSetPageRect = getMethod("setPageRect", "(FFFF)V");
     jSyncViewportInfoMethod = getMethod("syncViewportInfo",
@@ -370,14 +312,12 @@ AndroidGeckoLayerClient::InitGeckoLayerClientClass(JNIEnv *jEnv)
     jContentDocumentChanged = getMethod("contentDocumentChanged", "()V");
     jIsContentDocumentDisplayed = getMethod("isContentDocumentDisplayed", "()Z");
 
-    jViewportClass = GetClassGlobalRef(jEnv, "org/mozilla/gecko/gfx/ImmutableViewportMetrics");
-    jViewportCtor = GetMethodID(jEnv, jViewportClass, "<init>", "(FFFFFFFFFFFFF)V");
+    jViewportClass = getClassGlobalRef("org/mozilla/gecko/gfx/ImmutableViewportMetrics");
+    jViewportCtor = getMethod("<init>", "(FFFFFFFFFFFFF)V");
 
-    jDisplayportClass = GetClassGlobalRef(jEnv, "org/mozilla/gecko/gfx/DisplayPortMetrics");
-    jDisplayportPosition = GetFieldID(jEnv, jDisplayportClass, "mPosition", "Landroid/graphics/RectF;");
-    jDisplayportResolution = GetFieldID(jEnv, jDisplayportClass, "resolution", "F");
-    jProgressiveUpdateCallbackMethod = getMethod("progressiveUpdateCallback",
-                                                 "(ZFFFFFZ)Lorg/mozilla/gecko/gfx/ProgressiveUpdateData;");
+    jDisplayportClass = getClassGlobalRef("org/mozilla/gecko/gfx/DisplayPortMetrics");
+    jDisplayportPosition = getField("mPosition", "Landroid/graphics/RectF;");
+    jDisplayportResolution = getField("resolution", "F");
 }
 
 void
@@ -476,6 +416,21 @@ AndroidGeckoEvent::ReadFloatArray(nsTArray<float> &aVals,
 }
 
 void
+AndroidGeckoEvent::ReadStringArray(nsTArray<nsString> &array,
+                                   JNIEnv *jenv,
+                                   jfieldID field)
+{
+    jarray jArray = (jarray)jenv->GetObjectField(wrapped_obj, field);
+    jsize length = jenv->GetArrayLength(jArray);
+    jobjectArray jStringArray = (jobjectArray)jArray;
+    nsString *strings = array.AppendElements(length);
+    for (jsize i = 0; i < length; ++i) {
+        jstring javastring = (jstring) jenv->GetObjectArrayElement(jStringArray, i);
+        ReadStringFromJString(strings[i], jenv, javastring);
+    }
+}
+
+void
 AndroidGeckoEvent::ReadRectField(JNIEnv *jenv)
 {
     AndroidRect r(jenv, jenv->GetObjectField(wrappedObject(), jRectField));
@@ -490,45 +445,38 @@ AndroidGeckoEvent::ReadRectField(JNIEnv *jenv)
 }
 
 void
-AndroidGeckoEvent::ReadCharactersField(JNIEnv *jenv)
+AndroidGeckoEvent::ReadStringFromJString(nsString &aString, JNIEnv *jenv,
+                                         jstring s)
 {
-    jstring s = (jstring) jenv->GetObjectField(wrapped_obj, jCharactersField);
     if (!s) {
-        mCharacters.SetIsVoid(true);
+        aString.SetIsVoid(true);
         return;
     }
 
     int len = jenv->GetStringLength(s);
-    mCharacters.SetLength(len);
-    jenv->GetStringRegion(s, 0, len, mCharacters.BeginWriting());
+    aString.SetLength(len);
+    jenv->GetStringRegion(s, 0, len, aString.BeginWriting());
+}
+
+void
+AndroidGeckoEvent::ReadCharactersField(JNIEnv *jenv)
+{
+    jstring s = (jstring) jenv->GetObjectField(wrapped_obj, jCharactersField);
+    ReadStringFromJString(mCharacters, jenv, s);
 }
 
 void
 AndroidGeckoEvent::ReadCharactersExtraField(JNIEnv *jenv)
 {
     jstring s = (jstring) jenv->GetObjectField(wrapped_obj, jCharactersExtraField);
-    if (!s) {
-        mCharactersExtra.SetIsVoid(true);
-        return;
-    }
-
-    int len = jenv->GetStringLength(s);
-    mCharactersExtra.SetLength(len);
-    jenv->GetStringRegion(s, 0, len, mCharactersExtra.BeginWriting());
+    ReadStringFromJString(mCharactersExtra, jenv, s);
 }
 
 void
 AndroidGeckoEvent::ReadDataField(JNIEnv *jenv)
 {
     jstring s = (jstring) jenv->GetObjectField(wrapped_obj, jDataField);
-    if (!s) {
-        mData.SetIsVoid(true);
-        return;
-    }
-
-    int len = jenv->GetStringLength(s);
-    mData.SetLength(len);
-    jenv->GetStringRegion(s, 0, len, mData.BeginWriting());
+    ReadStringFromJString(mData, jenv, s);
 }
 
 void
@@ -708,6 +656,24 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
 
         case NETWORK_LINK_CHANGE: {
             ReadCharactersField(jenv);
+            break;
+        }
+
+        case TELEMETRY_HISTOGRAM_ADD: {
+            ReadCharactersField(jenv);
+            mCount = jenv->GetIntField(jobj, jCountField);
+            break;
+        }
+
+        case PREFERENCES_OBSERVE:
+        case PREFERENCES_GET: {
+            ReadStringArray(mPrefNames, jenv, jPrefNamesField);
+            mCount = jenv->GetIntField(jobj, jCountField);
+            break;
+        }
+
+        case PREFERENCES_REMOVE_OBSERVERS: {
+            mCount = jenv->GetIntField(jobj, jCountField);
             break;
         }
 

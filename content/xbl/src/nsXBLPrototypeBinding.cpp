@@ -35,7 +35,6 @@
 #include "nsTextFragment.h"
 #include "nsTextNode.h"
 
-#include "nsIScriptContext.h"
 #include "nsIScriptError.h"
 
 #include "nsIStyleRuleProcessor.h"
@@ -105,7 +104,6 @@ nsXBLPrototypeBinding::nsXBLPrototypeBinding()
   mBaseNameSpaceID(kNameSpaceID_None)
 {
   MOZ_COUNT_CTOR(nsXBLPrototypeBinding);
-  mInterfaceTable.Init();
 }
 
 nsresult
@@ -200,13 +198,6 @@ nsXBLPrototypeBinding::SetBasePrototype(nsXBLPrototypeBinding* aBinding)
   }
 
   mBaseBinding = aBinding;
-}
-
-already_AddRefed<nsIContent>
-nsXBLPrototypeBinding::GetBindingElement()
-{
-  nsCOMPtr<nsIContent> result = mBinding;
-  return result.forget();
 }
 
 void
@@ -946,12 +937,10 @@ nsXBLPrototypeBinding::Read(nsIObjectInputStream* aStream,
     mInterfaceTable.Put(iid, mBinding);
   }
 
-  nsCOMPtr<nsIScriptGlobalObjectOwner> globalOwner(do_QueryObject(aDocInfo));
-  nsIScriptGlobalObject* globalObject = globalOwner->GetScriptGlobalObject();
-  NS_ENSURE_TRUE(globalObject, NS_ERROR_UNEXPECTED);
-
-  nsIScriptContext *context = globalObject->GetContext();
-  NS_ENSURE_TRUE(context, NS_ERROR_FAILURE);
+  AutoSafeJSContext cx;
+  JS::Rooted<JSObject*> compilationGlobal(cx, aDocInfo->GetCompilationGlobal());
+  NS_ENSURE_TRUE(compilationGlobal, NS_ERROR_UNEXPECTED);
+  JSAutoCompartment ac(cx, compilationGlobal);
 
   bool isFirstBinding = aFlags & XBLBinding_Serialize_IsFirstBinding;
   rv = Init(id, aDocInfo, nullptr, isFirstBinding);
@@ -976,7 +965,7 @@ nsXBLPrototypeBinding::Read(nsIObjectInputStream* aStream,
     // retrieve the mapped bindings from within here. However, if an error
     // occurs, the mapping should be removed again so that we don't keep an
     // invalid binding around.
-    rv = mImplementation->Read(context, aStream, this, globalObject);
+    rv = mImplementation->Read(aStream, this);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -995,7 +984,7 @@ nsXBLPrototypeBinding::Read(nsIObjectInputStream* aStream,
                  "invalid handler type");
 
     nsXBLPrototypeHandler* handler = new nsXBLPrototypeHandler(this);
-    rv = handler->Read(context, aStream);
+    rv = handler->Read(aStream);
     if (NS_FAILED(rv)) {
       delete handler;
       return rv;
@@ -1010,8 +999,38 @@ nsXBLPrototypeBinding::Read(nsIObjectInputStream* aStream,
     previousHandler = handler;
   } while (1);
 
+  if (mBinding) {
+    while (true) {
+      XBLBindingSerializeDetails type;
+      rv = aStream->Read8(&type);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      if (type != XBLBinding_Serialize_Attribute) {
+        break;
+      }
+
+      int32_t attrNamespace;
+      rv = ReadNamespace(aStream, attrNamespace);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      nsAutoString attrPrefix, attrName, attrValue;
+      rv = aStream->ReadString(attrName);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      rv = aStream->ReadString(attrValue);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      rv = aStream->ReadString(attrPrefix);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      nsCOMPtr<nsIAtom> atomPrefix = do_GetAtom(attrPrefix);
+      nsCOMPtr<nsIAtom> atomName = do_GetAtom(attrName);
+      mBinding->SetAttr(attrNamespace, atomName, atomPrefix, attrValue, false);
+    }
+  }
+
   // Finally, read in the resources.
-  do {
+  while (true) {
     XBLBindingSerializeDetails type;
     rv = aStream->Read8(&type);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -1028,7 +1047,7 @@ nsXBLPrototypeBinding::Read(nsIObjectInputStream* aStream,
 
     AddResource(type == XBLBinding_Serialize_Stylesheet ? nsGkAtoms::stylesheet :
                                                           nsGkAtoms::image, src);
-  } while (1);
+  }
 
   if (isFirstBinding) {
     aDocInfo->SetFirstPrototypeBinding(this);
@@ -1054,12 +1073,10 @@ nsXBLPrototypeBinding::Write(nsIObjectOutputStream* aStream)
   // mKeyHandlersRegistered and mKeyHandlers are not serialized as they are
   // computed on demand.
 
-  nsCOMPtr<nsIScriptGlobalObjectOwner> globalOwner(do_QueryObject(mXBLDocInfoWeak));
-  nsIScriptGlobalObject* globalObject = globalOwner->GetScriptGlobalObject();
-  NS_ENSURE_TRUE(globalObject, NS_ERROR_UNEXPECTED);
-
-  nsIScriptContext *context = globalObject->GetContext();
-  NS_ENSURE_TRUE(context, NS_ERROR_FAILURE);
+  AutoSafeJSContext cx;
+  JS::Rooted<JSObject*> compilationGlobal(cx, mXBLDocInfoWeak->GetCompilationGlobal());
+  NS_ENSURE_TRUE(compilationGlobal, NS_ERROR_UNEXPECTED);
+  JSAutoCompartment ac(cx, compilationGlobal);
 
   uint8_t flags = mInheritStyle ? XBLBinding_Serialize_InheritStyle : 0;
 
@@ -1118,7 +1135,7 @@ nsXBLPrototypeBinding::Write(nsIObjectOutputStream* aStream)
 
   // Write out the implementation details.
   if (mImplementation) {
-    rv = mImplementation->Write(context, aStream, this);
+    rv = mImplementation->Write(aStream, this);
     NS_ENSURE_SUCCESS(rv, rv);
   }
   else {
@@ -1131,10 +1148,42 @@ nsXBLPrototypeBinding::Write(nsIObjectOutputStream* aStream)
   // Write out the handlers.
   nsXBLPrototypeHandler* handler = mPrototypeHandler;
   while (handler) {
-    rv = handler->Write(context, aStream);
+    rv = handler->Write(aStream);
     NS_ENSURE_SUCCESS(rv, rv);
 
     handler = handler->GetNextHandler();
+  }
+
+  aStream->Write8(XBLBinding_Serialize_NoMoreItems);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (mBinding) {
+    uint32_t attributes = mBinding->GetAttrCount();
+    nsAutoString attrValue;
+    for (uint32_t i = 0; i < attributes; ++i) {
+      const nsAttrName* attr = mBinding->GetAttrNameAt(i);
+      nsDependentAtomString attrName = attr->LocalName();
+      mBinding->GetAttr(attr->NamespaceID(), attr->LocalName(), attrValue);
+      rv = aStream->Write8(XBLBinding_Serialize_Attribute);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      rv = WriteNamespace(aStream, attr->NamespaceID());
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      rv = aStream->WriteWStringZ(attrName.get());
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      rv = aStream->WriteWStringZ(attrValue.get());
+      NS_ENSURE_SUCCESS(rv, rv);
+      nsIAtom* prefix = attr->GetPrefix();
+      nsAutoString prefixString;
+      if (prefix) {
+        prefix->ToString(prefixString);
+      }
+
+      rv = aStream->WriteWStringZ(prefixString.get());
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
   }
 
   aStream->Write8(XBLBinding_Serialize_NoMoreItems);
@@ -1626,7 +1675,7 @@ nsXBLPrototypeBinding::ResolveBaseBinding()
       if (!CheckTagNameWhiteList(nameSpaceID, tagName)) {
         const PRUnichar* params[] = { display.get() };
         nsContentUtils::ReportToConsole(nsIScriptError::errorFlag,
-                                        "XBL", nullptr,
+                                        NS_LITERAL_CSTRING("XBL"), nullptr,
                                         nsContentUtils::eXBL_PROPERTIES,
                                        "InvalidExtendsBinding",
                                         params, ArrayLength(params),

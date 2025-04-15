@@ -54,7 +54,6 @@ EXPORTS += [
     'nsStyleStruct.h',
     'nsStyleStructFwd.h',
     'nsStyleStructInlines.h',
-    'nsStyleStructList.h',
     'nsStyleTransformMatrix.h',
     'nsStyleUtil.h',
 ]
@@ -122,4 +121,12 @@ CPP_SOURCES += [
     'nsStyleUtil.cpp',
     'nsTransitionManager.cpp',
 ]
+
+FAIL_ON_WARNINGS = True
+
+LIBXUL_LIBRARY = True
+
+MSVC_ENABLE_PGO = True
+
+LIBRARY_NAME = 'gkstyle_s'
 

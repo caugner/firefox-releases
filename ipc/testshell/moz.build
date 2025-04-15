@@ -26,3 +26,10 @@ IPDL_SOURCES = [
     'PTestShell.ipdl',
     'PTestShellCommand.ipdl',
 ]
+
+FAIL_ON_WARNINGS = True
+
+LIBXUL_LIBRARY = True
+
+LIBRARY_NAME = 'ipcshell_s'
+

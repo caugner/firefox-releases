@@ -8,6 +8,7 @@
 #include "WebGLTexture.h"
 #include "WebGLRenderbuffer.h"
 #include "WebGLFramebuffer.h"
+#include "GLContext.h"
 
 #include <algorithm>
 
@@ -55,7 +56,7 @@ bool WebGLExtensionDrawBuffers::IsSupported(const WebGLContext* context)
 {
     gl::GLContext * gl = context->GL();
 
-    if (!gl->IsExtensionSupported(GLContext::XXX_draw_buffers)) {
+    if (!gl->IsSupported(GLFeature::draw_buffers)) {
         return false;
     }
 

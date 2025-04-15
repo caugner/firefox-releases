@@ -6,25 +6,44 @@
 #ifndef GFX_LAYERS_H
 #define GFX_LAYERS_H
 
-#include "mozilla/DebugOnly.h"
-
+#include <stdint.h>                     // for uint32_t, uint64_t, uint8_t
+#include <stdio.h>                      // for FILE
+#include <sys/types.h>                  // for int32_t, int64_t
+#include "FrameMetrics.h"               // for FrameMetrics
+#include "Units.h"                      // for LayerMargin, LayerPoint
+#include "gfx3DMatrix.h"                // for gfx3DMatrix
+#include "gfxASurface.h"                // for gfxASurface, etc
+#include "gfxColor.h"                   // for gfxRGBA
+#include "gfxMatrix.h"                  // for gfxMatrix
+#include "gfxPattern.h"                 // for gfxPattern, etc
+#include "gfxPoint.h"                   // for gfxPoint, gfxIntSize
+#include "gfxRect.h"                    // for gfxRect
+#include "mozilla/Assertions.h"         // for MOZ_ASSERT_HELPER2, etc
+#include "mozilla/DebugOnly.h"          // for DebugOnly
+#include "mozilla/RefPtr.h"             // for TemporaryRef
+#include "mozilla/TimeStamp.h"          // for TimeStamp, TimeDuration
+#include "mozilla/gfx/BaseMargin.h"     // for BaseMargin
+#include "mozilla/gfx/BasePoint.h"      // for BasePoint
+#include "mozilla/gfx/Point.h"          // for IntSize
+#include "mozilla/gfx/Types.h"          // for SurfaceFormat
+#include "mozilla/gfx/UserData.h"       // for UserData, etc
 #include "mozilla/layers/LayersTypes.h"
-#include "gfxTypes.h"
-#include "gfxASurface.h"
-#include "nsRegion.h"
-#include "nsPoint.h"
-#include "nsRect.h"
-#include "nsISupportsImpl.h"
-#include "nsAutoPtr.h"
-#include "gfx3DMatrix.h"
-#include "gfxColor.h"
-#include "gfxPattern.h"
-#include "nsTArray.h"
-#include "nsThreadUtils.h"
-#include "nsStyleAnimation.h"
-#include "FrameMetrics.h"
-#include "mozilla/gfx/2D.h"
-#include "mozilla/TimeStamp.h"
+#include "mozilla/mozalloc.h"           // for operator delete, etc
+#include "nsAutoPtr.h"                  // for nsAutoPtr, nsRefPtr, etc
+#include "nsCOMPtr.h"                   // for already_AddRefed
+#include "nsCSSProperty.h"              // for nsCSSProperty
+#include "nsDebug.h"                    // for NS_ASSERTION
+#include "nsISupportsImpl.h"            // for Layer::Release, etc
+#include "nsRect.h"                     // for nsIntRect
+#include "nsRegion.h"                   // for nsIntRegion
+#include "nsSize.h"                     // for nsIntSize
+#include "nsString.h"                   // for nsCString
+#include "nsStyleAnimation.h"           // for nsStyleAnimation::Value, etc
+#include "nsTArray.h"                   // for nsTArray
+#include "nsTArrayForwardDeclare.h"     // for InfallibleTArray
+#include "nscore.h"                     // for nsACString, nsAString
+#include "prlog.h"                      // for PRLogModuleInfo
+
 
 class gfxContext;
 class nsPaintEvent;
@@ -38,6 +57,10 @@ class WebGLContext;
 
 namespace gl {
 class GLContext;
+}
+
+namespace gfx {
+class DrawTarget;
 }
 
 namespace css {
@@ -67,7 +90,6 @@ class LayerManagerComposite;
 class SpecificLayerAttributes;
 class SurfaceDescriptor;
 class Compositor;
-class LayerComposite;
 struct TextureFactoryIdentifier;
 struct EffectMask;
 
@@ -242,6 +264,7 @@ public:
   typedef void (* DrawThebesLayerCallback)(ThebesLayer* aLayer,
                                            gfxContext* aContext,
                                            const nsIntRegion& aRegionToDraw,
+                                           DrawRegionClip aClip,
                                            const nsIntRegion& aRegionToInvalidate,
                                            void* aCallbackData);
 
@@ -385,8 +408,8 @@ public:
     CreateOptimalMaskSurface(const gfxIntSize &aSize);
 
   /**
-   * Creates a DrawTarget which is optimized for inter-operating with this
-   * layermanager.
+   * Creates a DrawTarget for use with canvas which is optimized for
+   * inter-operating with this layermanager.
    */
   virtual TemporaryRef<mozilla::gfx::DrawTarget>
     CreateDrawTarget(const mozilla::gfx::IntSize &aSize,
@@ -591,7 +614,6 @@ private:
   TimeStamp mTabSwitchStart;
 };
 
-class ThebesLayer;
 typedef InfallibleTArray<Animation> AnimationArray;
 
 struct AnimData {
@@ -888,6 +910,32 @@ public:
     }
   }
 
+  /**
+   * CONSTRUCTION PHASE ONLY
+   * If a layer is "sticky position", |aScrollId| holds the scroll identifier
+   * of the scrollable content that contains it. The difference between the two
+   * rectangles |aOuter| and |aInner| is treated as two intervals in each
+   * dimension, with the current scroll position at the origin. For each
+   * dimension, while that component of the scroll position lies within either
+   * interval, the layer should not move relative to its scrolling container.
+   */
+  void SetStickyPositionData(FrameMetrics::ViewID aScrollId, LayerRect aOuter,
+                             LayerRect aInner)
+  {
+    if (!mStickyPositionData ||
+        !mStickyPositionData->mOuter.IsEqualEdges(aOuter) ||
+        !mStickyPositionData->mInner.IsEqualEdges(aInner)) {
+      MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) StickyPositionData", this));
+      if (!mStickyPositionData) {
+        mStickyPositionData = new StickyPositionData;
+      }
+      mStickyPositionData->mScrollId = aScrollId;
+      mStickyPositionData->mOuter = aOuter;
+      mStickyPositionData->mInner = aInner;
+      Mutated();
+    }
+  }
+
   // These getters can be used anytime.
   float GetOpacity() { return mOpacity; }
   const nsIntRect* GetClipRect() { return mUseClipRect ? &mClipRect : nullptr; }
@@ -905,8 +953,12 @@ public:
   float GetPostXScale() const { return mPostXScale; }
   float GetPostYScale() const { return mPostYScale; }
   bool GetIsFixedPosition() { return mIsFixedPosition; }
+  bool GetIsStickyPosition() { return mStickyPositionData; }
   LayerPoint GetFixedPositionAnchor() { return mAnchor; }
   const LayerMargin& GetFixedPositionMargins() { return mMargins; }
+  FrameMetrics::ViewID GetStickyScrollContainerId() { return mStickyPositionData->mScrollId; }
+  const LayerRect& GetStickyScrollRangeOuter() { return mStickyPositionData->mOuter; }
+  const LayerRect& GetStickyScrollRangeInner() { return mStickyPositionData->mInner; }
   Layer* GetMaskLayer() const { return mMaskLayer; }
 
   // Note that all lengths in animation data are either in CSS pixels or app
@@ -1262,6 +1314,12 @@ protected:
   bool mIsFixedPosition;
   LayerPoint mAnchor;
   LayerMargin mMargins;
+  struct StickyPositionData {
+    FrameMetrics::ViewID mScrollId;
+    LayerRect mOuter;
+    LayerRect mInner;
+  };
+  nsAutoPtr<StickyPositionData> mStickyPositionData;
   DebugOnly<uint32_t> mDebugColorIndex;
   // If this layer is used for OMTA, then this counter is used to ensure we
   // stay in sync with the animation manager
@@ -1389,13 +1447,13 @@ public:
    * If aAfter is non-null, it must be a child of this container and
    * we insert after that layer. If it's null we insert at the start.
    */
-  virtual void InsertAfter(Layer* aChild, Layer* aAfter) = 0;
+  virtual void InsertAfter(Layer* aChild, Layer* aAfter);
   /**
    * CONSTRUCTION PHASE ONLY
    * Remove aChild from the child list of this container. aChild must
    * be a child of this container.
    */
-  virtual void RemoveChild(Layer* aChild) = 0;
+  virtual void RemoveChild(Layer* aChild);
   /**
    * CONSTRUCTION PHASE ONLY
    * Reposition aChild from the child list of this container. aChild must
@@ -1403,7 +1461,7 @@ public:
    * If aAfter is non-null, it must be a child of this container and we
    * reposition after that layer. If it's null, we reposition at the start.
    */
-  virtual void RepositionChild(Layer* aChild, Layer* aAfter) = 0;
+  virtual void RepositionChild(Layer* aChild, Layer* aAfter);
 
   /**
    * CONSTRUCTION PHASE ONLY
@@ -1507,6 +1565,8 @@ public:
 
 protected:
   friend class ReadbackProcessor;
+
+  static bool HasOpaqueAncestorLayer(Layer* aLayer);
 
   void DidInsertChild(Layer* aLayer);
   void DidRemoveChild(Layer* aLayer);

@@ -487,6 +487,8 @@ public:
   RemoteContentController(RenderFrameParent* aRenderFrame)
     : mUILoop(MessageLoop::current())
     , mRenderFrame(aRenderFrame)
+    , mHaveZoomConstraints(false)
+    , mAllowZoom(true)
   { }
 
   virtual void RequestContentRepaint(const FrameMetrics& aFrameMetrics) MOZ_OVERRIDE
@@ -576,6 +578,28 @@ public:
     MessageLoop::current()->PostDelayedTask(FROM_HERE, aTask, aDelayMs);
   }
 
+  void SaveZoomConstraints(bool aAllowZoom,
+                           const CSSToScreenScale& aMinZoom,
+                           const CSSToScreenScale& aMaxZoom)
+  {
+    mHaveZoomConstraints = true;
+    mAllowZoom = aAllowZoom;
+    mMinZoom = aMinZoom;
+    mMaxZoom = aMaxZoom;
+  }
+
+  virtual bool GetZoomConstraints(bool* aOutAllowZoom,
+                                  CSSToScreenScale* aOutMinZoom,
+                                  CSSToScreenScale* aOutMaxZoom)
+  {
+    if (mHaveZoomConstraints) {
+      *aOutAllowZoom = mAllowZoom;
+      *aOutMinZoom = mMinZoom;
+      *aOutMaxZoom = mMaxZoom;
+    }
+    return mHaveZoomConstraints;
+  }
+
 private:
   void DoRequestContentRepaint(const FrameMetrics& aFrameMetrics)
   {
@@ -587,6 +611,11 @@ private:
 
   MessageLoop* mUILoop;
   RenderFrameParent* mRenderFrame;
+
+  bool mHaveZoomConstraints;
+  bool mAllowZoom;
+  CSSToScreenScale mMinZoom;
+  CSSToScreenScale mMaxZoom;
 };
 
 RenderFrameParent::RenderFrameParent(nsFrameLoader* aFrameLoader,
@@ -624,6 +653,8 @@ RenderFrameParent::RenderFrameParent(nsFrameLoader* aFrameLoader,
       CompositorParent::SetControllerForLayerTree(mLayersId, mContentController);
     }
   }
+  // Set a default RenderFrameParent
+  mFrameLoader->SetCurrentRemoteFrame(this);
 }
 
 APZCTreeManager*
@@ -862,6 +893,13 @@ RenderFrameParent::RecvDetectScrollableSubframe()
   return true;
 }
 
+bool
+RenderFrameParent::RecvUpdateHitRegion(const nsRegion& aRegion)
+{
+  mTouchRegion = aRegion;
+  return true;
+}
+
 PLayerTransactionParent*
 RenderFrameParent::AllocPLayerTransactionParent()
 {
@@ -999,12 +1037,32 @@ RenderFrameParent::ContentReceivedTouch(bool aPreventDefault)
 }
 
 void
-RenderFrameParent::UpdateZoomConstraints(bool aAllowZoom, float aMinZoom, float aMaxZoom)
+RenderFrameParent::UpdateZoomConstraints(bool aAllowZoom,
+                                         const CSSToScreenScale& aMinZoom,
+                                         const CSSToScreenScale& aMaxZoom)
 {
+  if (mContentController) {
+    mContentController->SaveZoomConstraints(aAllowZoom, aMinZoom, aMaxZoom);
+  }
   if (GetApzcTreeManager()) {
     GetApzcTreeManager()->UpdateZoomConstraints(ScrollableLayerGuid(mLayersId),
                                                 aAllowZoom, aMinZoom, aMaxZoom);
   }
+}
+
+void
+RenderFrameParent::UpdateScrollOffset(uint32_t aPresShellId, ViewID aViewId, const CSSIntPoint& aScrollOffset)
+{
+  if (GetApzcTreeManager()) {
+    GetApzcTreeManager()->UpdateScrollOffset(ScrollableLayerGuid(mLayersId, aPresShellId, aViewId),
+                                             aScrollOffset);
+  }
+}
+
+bool
+RenderFrameParent::HitTest(const nsRect& aRect)
+{
+  return mTouchRegion.Contains(aRect);
 }
 
 }  // namespace layout
@@ -1022,6 +1080,14 @@ nsDisplayRemote::BuildLayer(nsDisplayListBuilder* aBuilder,
   return layer.forget();
 }
 
+void
+nsDisplayRemote::HitTest(nsDisplayListBuilder* aBuilder, const nsRect& aRect,
+                         HitTestState* aState, nsTArray<nsIFrame*> *aOutFrames)
+{
+  if (mRemoteFrame->HitTest(aRect)) {
+    aOutFrames->AppendElement(mFrame);
+  }
+}
 
 void
 nsDisplayRemoteShadow::HitTest(nsDisplayListBuilder* aBuilder, const nsRect& aRect,

@@ -14,8 +14,14 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource:///modules/SignInToWebsite.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "AboutHome",
+                                  "resource:///modules/AboutHome.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
                                   "resource://gre/modules/AddonManager.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "ContentClick",
+                                  "resource:///modules/ContentClick.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
                                   "resource://gre/modules/NetUtil.jsm");
@@ -64,6 +70,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "PlacesBackups",
 
 XPCOMUtils.defineLazyModuleGetter(this, "OS",
                                   "resource://gre/modules/osfile.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "SessionStore",
+                                  "resource:///modules/sessionstore/SessionStore.jsm");
 
 const PREF_PLUGINS_NOTIFYUSER = "plugins.update.notifyUser";
 const PREF_PLUGINS_UPDATEURL  = "plugins.update.url";
@@ -170,7 +179,7 @@ BrowserGlue.prototype = {
         this._finalUIStartup();
         break;
       case "browser-delayed-startup-finished":
-        this._onFirstWindowLoaded();
+        this._onFirstWindowLoaded(subject);
         Services.obs.removeObserver(this, "browser-delayed-startup-finished");
         break;
       case "sessionstore-windows-restored":
@@ -459,6 +468,11 @@ BrowserGlue.prototype = {
     SignInToWebsiteUX.init();
     PdfJs.init();
     webrtcUI.init();
+    AboutHome.init();
+    SessionStore.init();
+
+    if (Services.prefs.getBoolPref("browser.tabs.remote"))
+      ContentClick.init();
 
     Services.obs.notifyObservers(null, "browser-ui-startup-complete", "");
   },
@@ -500,7 +514,9 @@ BrowserGlue.prototype = {
       samples = Services.prefs.getIntPref("browser.slowStartup.samples");
     } catch (e) { }
 
-    averageTime = (averageTime * samples + currentTime) / ++samples;
+    let totalTime = (averageTime * samples) + currentTime;
+    samples++;
+    averageTime = totalTime / samples;
 
     if (samples >= Services.prefs.getIntPref("browser.slowStartup.maxSamples")) {
       if (averageTime > Services.prefs.getIntPref("browser.slowStartup.timeThreshold"))
@@ -582,7 +598,7 @@ BrowserGlue.prototype = {
   },
 
   // the first browser window has finished initializing
-  _onFirstWindowLoaded: function BG__onFirstWindowLoaded() {
+  _onFirstWindowLoaded: function BG__onFirstWindowLoaded(aWindow) {
 #ifdef XP_WIN
     // For windows seven, initialize the jump list module.
     const WINTASKBAR_CONTRACTID = "@mozilla.org/windows-taskbar;1";
@@ -753,6 +769,7 @@ BrowserGlue.prototype = {
     var browserEnum = Services.wm.getEnumerator("navigator:browser");
     let allWindowsPrivate = true;
     while (browserEnum.hasMoreElements()) {
+      // XXXbz should we skip closed windows here?
       windowcount++;
 
       var browser = browserEnum.getNext();
@@ -1187,7 +1204,7 @@ BrowserGlue.prototype = {
       // potential hangs (bug 518683).  The asynchronous shutdown operations
       // will then be handled by a shutdown service (bug 435058).
       waitingForHTMLExportToComplete = false;
-      BookmarkHTMLUtils.exportToFile(FileUtils.getFile("BMarks", [])).then(
+      BookmarkHTMLUtils.exportToFile(Services.dirsvc.get("BMarks", Ci.nsIFile)).then(
         function onSuccess() {
           waitingForHTMLExportToComplete = true;
         },
@@ -1411,9 +1428,6 @@ BrowserGlue.prototype = {
         }
         this._setPersist(toolbarResource, currentsetResource, currentset);
       }
-
-      Services.prefs.clearUserPref("browser.download.useToolkitUI");
-      Services.prefs.clearUserPref("browser.library.useNewDownloadsView");
     }
 
 #ifdef XP_WIN
@@ -1717,16 +1731,17 @@ ContentPermissionPrompt.prototype = {
 
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIContentPermissionPrompt]),
 
-  _getChromeWindow: function CPP_getChromeWindow(aWindow) {
-    var chromeWin = aWindow
-      .QueryInterface(Ci.nsIInterfaceRequestor)
-      .getInterface(Ci.nsIWebNavigation)
-      .QueryInterface(Ci.nsIDocShellTreeItem)
-      .rootTreeItem
-      .QueryInterface(Ci.nsIInterfaceRequestor)
-      .getInterface(Ci.nsIDOMWindow)
-      .QueryInterface(Ci.nsIDOMChromeWindow);
-    return chromeWin;
+  _getBrowserForRequest: function (aRequest) {
+    // "element" is only defined in e10s mode.
+    let browser = aRequest.element;
+    if (!browser) {
+      // Find the requesting browser.
+      browser = aRequest.window.QueryInterface(Ci.nsIInterfaceRequestor)
+                                  .getInterface(Ci.nsIWebNavigation)
+                                  .QueryInterface(Ci.nsIDocShell)
+                                  .chromeEventHandler;
+    }
+    return browser;
   },
 
   /**
@@ -1751,16 +1766,8 @@ ContentPermissionPrompt.prototype = {
 
     var browserBundle = Services.strings.createBundle("chrome://browser/locale/browser.properties");
 
-    var requestingWindow = aRequest.window.top;
-    var chromeWin = this._getChromeWindow(requestingWindow).wrappedJSObject;
-    var browser = chromeWin.gBrowser.getBrowserForDocument(requestingWindow.document);
-    if (!browser) {
-      // find the requesting browser or iframe
-      browser = requestingWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                                  .getInterface(Ci.nsIWebNavigation)
-                                  .QueryInterface(Ci.nsIDocShell)
-                                  .chromeEventHandler;
-    }
+    var browser = this._getBrowserForRequest(aRequest);
+    var chromeWin = browser.ownerDocument.defaultView;
     var requestPrincipal = aRequest.principal;
 
     // Transform the prompt actions into PopupNotification actions.
@@ -1876,8 +1883,7 @@ ContentPermissionPrompt.prototype = {
       });
     }
 
-    var requestingWindow = aRequest.window.top;
-    var chromeWin = this._getChromeWindow(requestingWindow).wrappedJSObject;
+    var chromeWin = this._getBrowserForRequest(aRequest).ownerDocument.defaultView;
     var link = chromeWin.document.getElementById("geolocation-learnmore-link");
     link.value = browserBundle.GetStringFromName("geolocation.learnMore");
     link.href = Services.urlFormatter.formatURLPref("browser.geolocation.warning.infoURL");

@@ -15,6 +15,7 @@
 #include "nsIDocument.h"
 #include "nsIPresShell.h"
 #include "nsPresContext.h"
+#include "nsIURI.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Anchor)
 
@@ -40,19 +41,8 @@ HTMLAnchorElement::~HTMLAnchorElement()
 {
 }
 
-NS_IMPL_ADDREF_INHERITED(HTMLAnchorElement, Element)
-NS_IMPL_RELEASE_INHERITED(HTMLAnchorElement, Element)
-
-// QueryInterface implementation for HTMLAnchorElement
-NS_INTERFACE_TABLE_HEAD(HTMLAnchorElement)
-  NS_HTML_CONTENT_INTERFACES(nsGenericHTMLElement)
-  NS_INTERFACE_TABLE_INHERITED3(HTMLAnchorElement,
-                                nsIDOMHTMLAnchorElement,
-                                nsILink,
-                                Link)
-  NS_INTERFACE_TABLE_TO_MAP_SEGUE
-NS_ELEMENT_INTERFACE_MAP_END
-
+NS_IMPL_ISUPPORTS_INHERITED2(HTMLAnchorElement, nsGenericHTMLElement,
+                             nsIDOMHTMLAnchorElement, Link)
 
 NS_IMPL_ELEMENT_CLONE(HTMLAnchorElement)
 

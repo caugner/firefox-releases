@@ -13,6 +13,7 @@
 #include "nsMappedAttributes.h"
 #include "nsSize.h"
 #include "nsIDocument.h"
+#include "nsIDOMMutationEvent.h"
 #include "nsIScriptContext.h"
 #include "nsIURL.h"
 #include "nsIIOService.h"
@@ -66,14 +67,12 @@ NS_IMPL_RELEASE_INHERITED(HTMLImageElement, Element)
 
 // QueryInterface implementation for HTMLImageElement
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLImageElement)
-  NS_HTML_CONTENT_INTERFACES(nsGenericHTMLElement)
   NS_INTERFACE_TABLE_INHERITED4(HTMLImageElement,
                                 nsIDOMHTMLImageElement,
                                 nsIImageLoadingContent,
                                 imgIOnloadBlocker,
                                 imgINotificationObserver)
-  NS_INTERFACE_TABLE_TO_MAP_SEGUE
-NS_ELEMENT_INTERFACE_MAP_END
+NS_INTERFACE_TABLE_TAIL_INHERITING(nsGenericHTMLElement)
 
 
 NS_IMPL_ELEMENT_CLONE(HTMLImageElement)
@@ -253,6 +252,11 @@ HTMLImageElement::GetAttributeChangeHint(const nsIAtom* aAttribute,
   if (aAttribute == nsGkAtoms::usemap ||
       aAttribute == nsGkAtoms::ismap) {
     NS_UpdateHint(retval, NS_STYLE_HINT_FRAMECHANGE);
+  } else if (aAttribute == nsGkAtoms::alt) {
+    if (aModType == nsIDOMMutationEvent::ADDITION ||
+        aModType == nsIDOMMutationEvent::REMOVAL) {
+      NS_UpdateHint(retval, NS_STYLE_HINT_FRAMECHANGE);
+    }
   }
   return retval;
 }
@@ -525,9 +529,10 @@ HTMLImageElement::IntrinsicState() const
 already_AddRefed<HTMLImageElement>
 HTMLImageElement::Image(const GlobalObject& aGlobal,
                         const Optional<uint32_t>& aWidth,
-                        const Optional<uint32_t>& aHeight, ErrorResult& aError)
+                        const Optional<uint32_t>& aHeight,
+                        ErrorResult& aError)
 {
-  nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(aGlobal.GetAsSupports());
   nsIDocument* doc;
   if (!win || !(doc = win->GetExtantDoc())) {
     aError.Throw(NS_ERROR_FAILURE);

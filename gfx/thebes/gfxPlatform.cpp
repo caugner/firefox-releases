@@ -42,6 +42,7 @@
 #include "nsUnicodeProperties.h"
 #include "harfbuzz/hb.h"
 #include "gfxGraphiteShaper.h"
+#include "gfxGradientCache.h"
 
 #include "nsUnicodeRange.h"
 #include "nsServiceManagerUtils.h"
@@ -104,7 +105,6 @@ static int gCMSIntent = -2;
 static void ShutdownCMS();
 static void MigratePrefs();
 
-static bool sDrawLayerBorders = false;
 static bool sDrawFrameCounter = false;
 
 #include "mozilla/gfx/2D.h"
@@ -150,6 +150,9 @@ SRGBOverrideObserver::Observe(nsISupports *aSubject,
 #define GFX_PREF_FALLBACK_USE_CMAPS  "gfx.font_rendering.fallback.always_use_cmaps"
 
 #define GFX_PREF_OPENTYPE_SVG "gfx.font_rendering.opentype_svg.enabled"
+
+#define GFX_PREF_WORD_CACHE_CHARLIMIT "gfx.font_rendering.wordcache.charlimit"
+#define GFX_PREF_WORD_CACHE_MAXENTRIES "gfx.font_rendering.wordcache.maxentries"
 
 #define GFX_PREF_GRAPHITE_SHAPING "gfx.font_rendering.graphite.enabled"
 
@@ -248,12 +251,18 @@ static const char *gPrefLangNames[] = {
 };
 
 gfxPlatform::gfxPlatform()
-  : mAzureCanvasBackendCollector(this, &gfxPlatform::GetAzureBackendInfo)
+  : mAzureCanvasBackendCollector(MOZ_THIS_IN_INITIALIZER_LIST(),
+                                 &gfxPlatform::GetAzureBackendInfo)
+  , mDrawLayerBorders(false)
+  , mDrawTileBorders(false)
+  , mDrawBigImageBorders(false)
 {
     mUseHarfBuzzScripts = UNINITIALIZED_VALUE;
     mAllowDownloadableFonts = UNINITIALIZED_VALUE;
     mFallbackUsesCmaps = UNINITIALIZED_VALUE;
 
+    mWordCacheCharLimit = UNINITIALIZED_VALUE;
+    mWordCacheMaxEntries = UNINITIALIZED_VALUE;
     mGraphiteShapingEnabled = UNINITIALIZED_VALUE;
     mOpenTypeSVGEnabled = UNINITIALIZED_VALUE;
     mBidiNumeralOption = UNINITIALIZED_VALUE;
@@ -264,6 +273,16 @@ gfxPlatform::gfxPlatform()
 
     mLayersUseDeprecated =
         Preferences::GetBool("layers.use-deprecated-textures", true);
+
+    Preferences::AddBoolVarCache(&mDrawLayerBorders,
+                                 "layers.draw-borders",
+                                 false);
+    Preferences::AddBoolVarCache(&mDrawTileBorders,
+                                 "layers.draw-tile-borders",
+                                 false);
+    Preferences::AddBoolVarCache(&mDrawBigImageBorders,
+                                 "layers.draw-bigimage-borders",
+                                 false);
 
     uint32_t canvasMask = (1 << BACKEND_CAIRO) | (1 << BACKEND_SKIA);
     uint32_t contentMask = 0;
@@ -349,17 +368,18 @@ gfxPlatform::Init()
     mozilla::gl::GLContext::StaticInit();
 #endif
 
-    bool useOffMainThreadCompositing = GetPrefLayersOffMainThreadCompositionEnabled() ||
-        Preferences::GetBool("browser.tabs.remote", false);
-    useOffMainThreadCompositing &= GetPlatform()->SupportsOffMainThreadCompositing();
+    bool useOffMainThreadCompositing = OffMainThreadCompositionRequired() ||
+                                       GetPrefLayersOffMainThreadCompositionEnabled();
 
-    if (useOffMainThreadCompositing && (XRE_GetProcessType() ==
-                                        GeckoProcessType_Default)) {
+    if (!OffMainThreadCompositionRequired()) {
+      useOffMainThreadCompositing &= GetPlatform()->SupportsOffMainThreadCompositing();
+    }
+
+    if (useOffMainThreadCompositing && (XRE_GetProcessType() == GeckoProcessType_Default)) {
         CompositorParent::StartUp();
-        if (Preferences::GetBool("layers.async-video.enabled",false)) {
+        if (Preferences::GetBool("layers.async-video.enabled", false)) {
             ImageBridgeChild::StartUp();
         }
-
     }
 
     nsresult rv;
@@ -417,10 +437,6 @@ gfxPlatform::Init()
 
     gPlatform->mOrientationSyncMillis = Preferences::GetUint("layers.orientation.sync.timeout", (uint32_t)0);
 
-    mozilla::Preferences::AddBoolVarCache(&sDrawLayerBorders,
-                                          "layers.draw-borders",
-                                          false);
-
     mozilla::Preferences::AddBoolVarCache(&sDrawFrameCounter,
                                           "layers.frame-counter",
                                           false);
@@ -435,6 +451,7 @@ gfxPlatform::Shutdown()
     // started up. That's OK, they can handle it.
     gfxFontCache::Shutdown();
     gfxFontGroup::Shutdown();
+    gfxGradientCache::Shutdown();
     gfxGraphiteShaper::Shutdown();
 #if defined(XP_MACOSX) || defined(XP_WIN) // temporary, until this is implemented on others
     gfxPlatformFontList::Shutdown();
@@ -630,6 +647,10 @@ gfxPlatform::ClearSourceSurfaceForSurface(gfxASurface *aSurface)
 RefPtr<SourceSurface>
 gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurface)
 {
+  if (!aSurface->CairoSurface() || aSurface->CairoStatus()) {
+    return nullptr;
+  }
+
   void *userData = aSurface->GetData(&kSourceSurface);
 
   if (userData) {
@@ -726,10 +747,6 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
       // alive. This is true if gfxASurface actually -is- an ImageSurface or
       // if it is a gfxWindowsSurface which supports GetAsImageSurface.
       if (imgSurface != aSurface && !isWin32ImageSurf) {
-        // This shouldn't happen for now, it can be easily supported by making
-        // a copy. For now let's just abort.
-        NS_RUNTIMEABORT("Attempt to create unsupported SourceSurface from"
-            "non-image surface.");
         return nullptr;
       }
 
@@ -794,7 +811,7 @@ gfxPlatform::SupportsAzureContentForDrawTarget(DrawTarget* aTarget)
     return false;
   }
 
-  return (1 << aTarget->GetType()) & mContentBackendBitmask;
+  return SupportsAzureContentForType(aTarget->GetType());
 }
 
 bool
@@ -866,7 +883,7 @@ gfxPlatform::CreateDrawTargetForBackend(BackendType aBackend, const IntSize& aSi
 }
 
 RefPtr<DrawTarget>
-gfxPlatform::CreateOffscreenDrawTarget(const IntSize& aSize, SurfaceFormat aFormat)
+gfxPlatform::CreateOffscreenCanvasDrawTarget(const IntSize& aSize, SurfaceFormat aFormat)
 {
   NS_ASSERTION(mPreferredCanvasBackend, "No backend.");
   RefPtr<DrawTarget> target = CreateDrawTargetForBackend(mPreferredCanvasBackend, aSize, aFormat);
@@ -878,6 +895,12 @@ gfxPlatform::CreateOffscreenDrawTarget(const IntSize& aSize, SurfaceFormat aForm
   return CreateDrawTargetForBackend(mFallbackCanvasBackend, aSize, aFormat);
 }
 
+RefPtr<DrawTarget>
+gfxPlatform::CreateOffscreenContentDrawTarget(const IntSize& aSize, SurfaceFormat aFormat)
+{
+  NS_ASSERTION(mContentBackend, "No backend.");
+  return CreateDrawTargetForBackend(mContentBackend, aSize, aFormat);
+}
 
 RefPtr<DrawTarget>
 gfxPlatform::CreateDrawTargetForData(unsigned char* aData, const IntSize& aSize, int32_t aStride, SurfaceFormat aFormat)
@@ -945,6 +968,34 @@ gfxPlatform::OpenTypeSVGEnabled()
     }
 
     return mOpenTypeSVGEnabled > 0;
+}
+
+uint32_t
+gfxPlatform::WordCacheCharLimit()
+{
+    if (mWordCacheCharLimit == UNINITIALIZED_VALUE) {
+        mWordCacheCharLimit =
+            Preferences::GetInt(GFX_PREF_WORD_CACHE_CHARLIMIT, 32);
+        if (mWordCacheCharLimit < 0) {
+            mWordCacheCharLimit = 32;
+        }
+    }
+
+    return uint32_t(mWordCacheCharLimit);
+}
+
+uint32_t
+gfxPlatform::WordCacheMaxEntries()
+{
+    if (mWordCacheMaxEntries == UNINITIALIZED_VALUE) {
+        mWordCacheMaxEntries =
+            Preferences::GetInt(GFX_PREF_WORD_CACHE_MAXENTRIES, 10000);
+        if (mWordCacheMaxEntries < 0) {
+            mWordCacheMaxEntries = 10000;
+        }
+    }
+
+    return uint32_t(mWordCacheMaxEntries);
 }
 
 bool
@@ -1181,10 +1232,20 @@ gfxPlatform::IsLangCJK(eFontPrefLang aLang)
     }
 }
 
-bool
-gfxPlatform::DrawLayerBorders()
+mozilla::layers::DiagnosticTypes
+gfxPlatform::GetLayerDiagnosticTypes()
 {
-    return sDrawLayerBorders;
+  mozilla::layers::DiagnosticTypes type = DIAGNOSTIC_NONE;
+  if (mDrawLayerBorders) {
+    type |= mozilla::layers::DIAGNOSTIC_LAYER_BORDERS;
+  }
+  if (mDrawTileBorders) {
+    type |= mozilla::layers::DIAGNOSTIC_TILE_BORDERS;
+  }
+  if (mDrawBigImageBorders) {
+    type |= mozilla::layers::DIAGNOSTIC_BIGIMAGE_BORDERS;
+  }
+  return type;
 }
 
 bool
@@ -1338,8 +1399,9 @@ gfxPlatform::InitBackendPrefs(uint32_t aCanvasBitmask, uint32_t aContentBitmask)
       mPreferredCanvasBackend = BACKEND_CAIRO;
     }
     mFallbackCanvasBackend = GetCanvasBackendPref(aCanvasBitmask & ~(1 << mPreferredCanvasBackend));
-    mContentBackend = GetContentBackendPref(aContentBitmask);
+
     mContentBackendBitmask = aContentBitmask;
+    mContentBackend = GetContentBackendPref(mContentBackendBitmask);
 }
 
 /* static */ BackendType
@@ -1349,16 +1411,17 @@ gfxPlatform::GetCanvasBackendPref(uint32_t aBackendBitmask)
 }
 
 /* static */ BackendType
-gfxPlatform::GetContentBackendPref(uint32_t aBackendBitmask)
+gfxPlatform::GetContentBackendPref(uint32_t &aBackendBitmask)
 {
     return GetBackendPref("gfx.content.azure.enabled", "gfx.content.azure.backends", aBackendBitmask);
 }
 
 /* static */ BackendType
-gfxPlatform::GetBackendPref(const char* aEnabledPrefName, const char* aBackendPrefName, uint32_t aBackendBitmask)
+gfxPlatform::GetBackendPref(const char* aEnabledPrefName, const char* aBackendPrefName, uint32_t &aBackendBitmask)
 {
     if (aEnabledPrefName &&
         !Preferences::GetBool(aEnabledPrefName, false)) {
+        aBackendBitmask = 0;
         return BACKEND_NONE;
     }
 
@@ -1368,13 +1431,20 @@ gfxPlatform::GetBackendPref(const char* aEnabledPrefName, const char* aBackendPr
         ParseString(prefString, ',', backendList);
     }
 
+    uint32_t allowedBackends = 0;
+    BackendType result = BACKEND_NONE;
     for (uint32_t i = 0; i < backendList.Length(); ++i) {
-        BackendType result = BackendTypeForName(backendList[i]);
-        if ((1 << result) & aBackendBitmask) {
-            return result;
+        BackendType type = BackendTypeForName(backendList[i]);
+        if ((1 << type) & aBackendBitmask) {
+            allowedBackends |= (1 << type);
+            if (result == BACKEND_NONE) {
+                result = type;
+            }
         }
     }
-    return BACKEND_NONE;
+
+    aBackendBitmask = allowedBackends;
+    return result;
 }
 
 bool
@@ -1727,6 +1797,16 @@ gfxPlatform::GetBidiNumeralOption()
     return mBidiNumeralOption;
 }
 
+static void
+FlushFontAndWordCaches()
+{
+    gfxFontCache *fontCache = gfxFontCache::GetCache();
+    if (fontCache) {
+        fontCache->AgeAllGenerations();
+        fontCache->FlushShapedWordCaches();
+    }
+}
+
 void
 gfxPlatform::FontsPrefsChanged(const char *aPref)
 {
@@ -1735,20 +1815,18 @@ gfxPlatform::FontsPrefsChanged(const char *aPref)
         mAllowDownloadableFonts = UNINITIALIZED_VALUE;
     } else if (!strcmp(GFX_PREF_FALLBACK_USE_CMAPS, aPref)) {
         mFallbackUsesCmaps = UNINITIALIZED_VALUE;
+    } else if (!strcmp(GFX_PREF_WORD_CACHE_CHARLIMIT, aPref)) {
+        mWordCacheCharLimit = UNINITIALIZED_VALUE;
+        FlushFontAndWordCaches();
+    } else if (!strcmp(GFX_PREF_WORD_CACHE_MAXENTRIES, aPref)) {
+        mWordCacheMaxEntries = UNINITIALIZED_VALUE;
+        FlushFontAndWordCaches();
     } else if (!strcmp(GFX_PREF_GRAPHITE_SHAPING, aPref)) {
         mGraphiteShapingEnabled = UNINITIALIZED_VALUE;
-        gfxFontCache *fontCache = gfxFontCache::GetCache();
-        if (fontCache) {
-            fontCache->AgeAllGenerations();
-            fontCache->FlushShapedWordCaches();
-        }
+        FlushFontAndWordCaches();
     } else if (!strcmp(GFX_PREF_HARFBUZZ_SCRIPTS, aPref)) {
         mUseHarfBuzzScripts = UNINITIALIZED_VALUE;
-        gfxFontCache *fontCache = gfxFontCache::GetCache();
-        if (fontCache) {
-            fontCache->AgeAllGenerations();
-            fontCache->FlushShapedWordCaches();
-        }
+        FlushFontAndWordCaches();
     } else if (!strcmp(BIDI_NUMERAL_PREF, aPref)) {
         mBidiNumeralOption = UNINITIALIZED_VALUE;
     } else if (!strcmp(GFX_PREF_OPENTYPE_SVG, aPref)) {
@@ -1866,6 +1944,8 @@ static bool sPrefLayersPreferD3D9 = false;
 static bool sLayersSupportsD3D9 = true;
 static int  sPrefLayoutFrameRate = -1;
 static bool sBufferRotationEnabled = false;
+static bool sComponentAlphaEnabled = true;
+static bool sPrefBrowserTabsRemote = false;
 
 static bool sLayersAccelerationPrefsInitialized = false;
 
@@ -1883,6 +1963,8 @@ InitLayersAccelerationPrefs()
     sPrefLayersPreferD3D9 = Preferences::GetBool("layers.prefer-d3d9", false);
     sPrefLayoutFrameRate = Preferences::GetInt("layout.frame_rate", -1);
     sBufferRotationEnabled = Preferences::GetBool("layers.bufferrotation.enabled", true);
+    sComponentAlphaEnabled = Preferences::GetBool("layers.componentalpha.enabled", true);
+    sPrefBrowserTabsRemote = Preferences::GetBool("browser.tabs.remote", false);
 
     nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
     if (gfxInfo) {
@@ -1919,6 +2001,12 @@ gfxPlatform::GetPrefLayersAccelerationForceEnabled()
 {
   InitLayersAccelerationPrefs();
   return sPrefLayersAccelerationForceEnabled;
+}
+
+bool gfxPlatform::OffMainThreadCompositionRequired()
+{
+  InitLayersAccelerationPrefs();
+  return sPrefBrowserTabsRemote;
 }
 
 bool
@@ -1973,4 +2061,15 @@ gfxPlatform::DisableBufferRotation()
   MutexAutoLock autoLock(*gGfxPlatformPrefsLock);
 
   sBufferRotationEnabled = false;
+}
+
+bool
+gfxPlatform::ComponentAlphaEnabled()
+{
+#ifdef MOZ_GFX_OPTIMIZE_MOBILE
+  return false;
+#endif
+
+  InitLayersAccelerationPrefs();
+  return sComponentAlphaEnabled;
 }

@@ -25,7 +25,6 @@
 #include "nsNetUtil.h"
 #include "nsIPermissionManager.h"
 #include "nsIDOMGeoPositionCallback.h"
-#include "nsIMemoryReporter.h"
 #include "nsCOMArray.h"
 #include "nsDataHashtable.h"
 #include "nsHashKeys.h"
@@ -36,6 +35,7 @@
 class mozIApplication;
 class nsConsoleService;
 class nsIDOMBlob;
+class nsIMemoryReporter;
 
 namespace mozilla {
 
@@ -55,6 +55,7 @@ class PCompositorParent;
 
 namespace dom {
 
+class Element;
 class TabParent;
 class PStorageParent;
 class ClonedMessageData;
@@ -142,8 +143,9 @@ public:
     bool IsAlive();
     bool IsForApp();
 
-    void SetChildMemoryReporters(const InfallibleTArray<MemoryReport>& report);
-    void ClearChildMemoryReporters();
+    void SetChildMemoryReports(const InfallibleTArray<MemoryReport>&
+                               childReports);
+    void UnregisterChildMemoryReporter();
 
     GeckoChildProcessHost* Process() {
         return mSubprocess;
@@ -165,6 +167,8 @@ public:
     void KillHard();
 
     uint64_t ChildID() { return mChildID; }
+    const nsString& AppManifestURL() const { return mAppManifestURL; }
+
     bool IsPreallocated();
 
     /**
@@ -178,6 +182,8 @@ public:
 protected:
     void OnChannelConnected(int32_t pid) MOZ_OVERRIDE;
     virtual void ActorDestroy(ActorDestroyReason why);
+
+    bool ShouldContinueFromReplyTimeout() MOZ_OVERRIDE;
 
 private:
     static nsDataHashtable<nsStringHashKey, ContentParent*> *sAppContentParents;
@@ -312,11 +318,15 @@ private:
             const nsCString& aContentDisposition,
             const bool& aForceSave,
             const int64_t& aContentLength,
-            const OptionalURIParams& aReferrer);
+            const OptionalURIParams& aReferrer,
+            PBrowserParent* aBrowser);
     virtual bool DeallocPExternalHelperAppParent(PExternalHelperAppParent* aService);
 
     virtual PSmsParent* AllocPSmsParent();
     virtual bool DeallocPSmsParent(PSmsParent*);
+
+    virtual PTelephonyParent* AllocPTelephonyParent();
+    virtual bool DeallocPTelephonyParent(PTelephonyParent*);
 
     virtual PStorageParent* AllocPStorageParent();
     virtual bool DeallocPStorageParent(PStorageParent* aActor);
@@ -324,6 +334,9 @@ private:
     virtual PBluetoothParent* AllocPBluetoothParent();
     virtual bool DeallocPBluetoothParent(PBluetoothParent* aActor);
     virtual bool RecvPBluetoothConstructor(PBluetoothParent* aActor);
+
+    virtual PFMRadioParent* AllocPFMRadioParent();
+    virtual bool DeallocPFMRadioParent(PFMRadioParent* aActor);
 
     virtual PSpeechSynthesisParent* AllocPSpeechSynthesisParent();
     virtual bool DeallocPSpeechSynthesisParent(PSpeechSynthesisParent* aActor);
@@ -371,10 +384,6 @@ private:
 
     virtual bool RecvCloseAlert(const nsString& aName);
 
-    virtual bool RecvTestPermissionFromPrincipal(const IPC::Principal& aPrincipal,
-                                                 const nsCString& aType,
-                                                 uint32_t* permission);
-
     virtual bool RecvLoadURIExternal(const URIParams& uri);
 
     virtual bool RecvSyncMessage(const nsString& aMsg,
@@ -408,26 +417,32 @@ private:
 
     virtual bool RecvFirstIdle();
 
-    virtual bool RecvAudioChannelGetMuted(const AudioChannelType& aType,
+    virtual bool RecvAudioChannelGetState(const AudioChannelType& aType,
                                           const bool& aElementHidden,
                                           const bool& aElementWasHidden,
-                                          bool* aValue);
+                                          AudioChannelState* aValue);
 
-    virtual bool RecvAudioChannelRegisterType(const AudioChannelType& aType);
+    virtual bool RecvAudioChannelRegisterType(const AudioChannelType& aType,
+                                              const bool& aWithVideo);
     virtual bool RecvAudioChannelUnregisterType(const AudioChannelType& aType,
-                                                const bool& aElementHidden);
+                                                const bool& aElementHidden,
+                                                const bool& aWithVideo);
 
     virtual bool RecvAudioChannelChangedNotification();
 
-    virtual bool RecvBroadcastVolume(const nsString& aVolumeName);
+    virtual bool RecvAudioChannelChangeDefVolChannel(
+      const AudioChannelType& aType, const bool& aHidden);
 
-    virtual bool RecvRecordingDeviceEvents(const nsString& aRecordingStatus);
+    virtual bool RecvBroadcastVolume(const nsString& aVolumeName);
 
     virtual bool RecvSystemMessageHandled() MOZ_OVERRIDE;
 
     virtual bool RecvCreateFakeVolume(const nsString& fsName, const nsString& mountPoint) MOZ_OVERRIDE;
 
     virtual bool RecvSetFakeVolumeState(const nsString& fsName, const int32_t& fsState) MOZ_OVERRIDE;
+
+    virtual bool RecvKeywordToURI(const nsCString& aKeyword, OptionalInputStreamParams* aPostData,
+                                  OptionalURIParams* aURI);
 
     virtual void ProcessingError(Result what) MOZ_OVERRIDE;
 
@@ -441,11 +456,13 @@ private:
     uint64_t mChildID;
     int32_t mGeolocationWatchID;
 
-    // This is a cache of all of the memory reporters
-    // registered in the child process.  To update this, one
-    // can broadcast the topic "child-memory-reporter-request" using
-    // the nsIObserverService.
-    nsCOMArray<nsIMemoryReporter> mMemoryReporters;
+    // This is a reporter holding the reports from the child's last
+    // "child-memory-reporter-update" notification.  To update this, one can
+    // broadcast the topic "child-memory-reporter-request" using the
+    // nsIObserverService.
+    //
+    // Note that this assumes there is at most one child process at a time!
+    nsCOMPtr<nsIMemoryReporter> mChildReporter;
 
     nsString mAppManifestURL;
 
@@ -472,12 +489,15 @@ private:
     // false, but some previously scheduled IPC traffic may still pass
     // through.
     bool mIsAlive;
-    // True after the OS-level shutdown sequence has been initiated.
-    // After going true, any use of this at all, including lingering
-    // IPC traffic passing through, will cause assertions to fail.
-    bool mIsDestroyed;
+
     bool mSendPermissionUpdates;
     bool mIsForBrowser;
+
+    // These variables track whether we've called Close(), CloseWithError()
+    // and KillHard() on our channel.
+    bool mCalledClose;
+    bool mCalledCloseWithError;
+    bool mCalledKillHard;
 
     friend class CrashReporterParent;
 

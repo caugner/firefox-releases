@@ -2,31 +2,42 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-DEPTH = @DEPTH@
-topsrcdir = @top_srcdir@
-srcdir = @srcdir@
-VPATH = @srcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
-EXTRA_DEPS += $(srcdir)/../objs.mk
 
 ifeq (WINNT,$(OS_TARGET))
 VISIBILITY_FLAGS =
 endif
 
-LIBXUL_LIBRARY=1
+DEFINES += -DHAVE_STRDUP -DNR_SOCKET_IS_VOID_PTR
 
-ifndef _MSC_VER
-FAIL_ON_WARNINGS = 1
-endif # !_MSC_VER
+ifneq (,$(filter Darwin DragonFly FreeBSD NetBSD OpenBSD,$(OS_TARGET)))
+ifeq ($(OS_TARGET), Darwin)
+DEFINES += -DDARWIN
+else
+DEFINES += -DBSD
+endif
+endif
 
-include $(srcdir)/../objs.mk
+ifeq ($(OS_TARGET), Linux)
+DEFINES += -DLINUX -DUSE_INTERFACE_PRIORITIZER
+endif
 
+ifeq ($(OS_TARGET), Android)
+DEFINES += -DLINUX -DANDROID
+endif
 
-# Make a copy into the local directory for dual compilation
-export:: $(MTRANSPORT_CPPSRCS)
-	$(INSTALL) $^ .
+ifeq ($(OS_TARGET), WINNT)
+DEFINES += -DWIN
+endif
+
+DEFINES += \
+   -DR_DEFINED_INT2=int16_t -DR_DEFINED_UINT2=uint16_t \
+   -DR_DEFINED_INT4=int32_t -DR_DEFINED_UINT4=uint32_t \
+   -DR_DEFINED_INT8=int64_t -DR_DEFINED_UINT8=uint64_t \
+   $(NULL)
+
+ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
+DEFINES += -DUSE_INTERFACE_PRIORITIZER
+endif
 
 # for stun.h
 ifeq (WINNT,$(OS_TARGET))
@@ -37,5 +48,3 @@ DEFINES += \
 else ifeq (Linux,$(OS_TARGET))
 DEFINES += -DLINUX
 endif
-
-include $(topsrcdir)/config/rules.mk

@@ -3,14 +3,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH		= @DEPTH@
-topsrcdir	= @top_srcdir@
-srcdir		= @srcdir@
-VPATH		= @srcdir@
-relativesrcdir  = @relativesrcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
 # Note: browserElementTestHelpers.js looks at the test's filename to determine
 # whether the test should be OOP.  "_oop_" signals OOP, "_inproc_" signals in
 # process.  Default is OOP.
@@ -167,7 +159,14 @@ MOCHITEST_FILES = \
 		test_browserElement_inproc_DocumentFirstPaint.html \
 		browserElement_VisibilityChange.js \
 		test_browserElement_inproc_VisibilityChange.html \
+		browserElement_BrowserWindowResize.js \
+		test_browserElement_inproc_BrowserWindowResize.html \
 		$(NULL)
+
+# Disabled until we fix bug 906096.
+#		browserElement_SetInputMethodActive.js \
+#		test_browserElement_inproc_SetInputMethodActive.html \
+#		file_inputmethod.html \
 
 # Disabled due to https://bugzilla.mozilla.org/show_bug.cgi?id=774100
 #		test_browserElement_inproc_Reload.html \
@@ -242,8 +241,10 @@ MOCHITEST_FILES += \
 		test_browserElement_oop_PurgeHistory.html \
 		test_browserElement_oop_DocumentFirstPaint.html \
 		test_browserElement_oop_VisibilityChange.html \
+		test_browserElement_oop_BrowserWindowResize.html \
 	$(NULL)
 
-endif #}
+# Disabled until we fix bug 906096.
+#		test_browserElement_oop_SetInputMethodActive.html \
 
-include $(topsrcdir)/config/rules.mk
+endif #}

@@ -6,14 +6,11 @@
 /* rendering object for CSS display:inline objects */
 
 #include "nsInlineFrame.h"
-#include "nsCOMPtr.h"
 #include "nsLineLayout.h"
 #include "nsBlockFrame.h"
 #include "nsPlaceholderFrame.h"
 #include "nsGkAtoms.h"
-#include "nsHTMLParts.h"
 #include "nsStyleContext.h"
-#include "nsIPresShell.h"
 #include "nsPresContext.h"
 #include "nsRenderingContext.h"
 #include "nsCSSAnonBoxes.h"
@@ -919,8 +916,6 @@ nsInlineFrame::AccessibleType()
     return a11y::eHTMLButtonType;
   if (tagAtom == nsGkAtoms::img)  // Create accessible for broken <img>
     return a11y::eHyperTextType;
-  if (tagAtom == nsGkAtoms::label)  // Creat accessible for <label>
-    return a11y::eHTMLLabelType;
 
   return a11y::eNoType;
 }

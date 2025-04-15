@@ -19,7 +19,6 @@
 #include "nsCSSRuleProcessor.h"
 #include "nsRuleProcessorData.h"
 #include <algorithm>
-#include "nsCRT.h"
 #include "nsIAtom.h"
 #include "pldhash.h"
 #include "nsICSSPseudoComparator.h"
@@ -28,9 +27,7 @@
 #include "mozilla/css/GroupRule.h"
 #include "nsIDocument.h"
 #include "nsPresContext.h"
-#include "nsEventStateManager.h"
 #include "nsGkAtoms.h"
-#include "nsString.h"
 #include "nsUnicharUtils.h"
 #include "nsError.h"
 #include "nsRuleWalker.h"
@@ -44,17 +41,11 @@
 #include "nsAttrValue.h"
 #include "nsAttrValueInlines.h"
 #include "nsAttrName.h"
-#include "nsServiceManagerUtils.h"
 #include "nsTArray.h"
 #include "nsContentUtils.h"
 #include "nsIMediaList.h"
 #include "nsCSSRules.h"
-#include "nsIPrincipal.h"
 #include "nsStyleSet.h"
-#include "prlog.h"
-#include "nsIObserverService.h"
-#include "nsNetCID.h"
-#include "mozilla/Services.h"
 #include "mozilla/dom/Element.h"
 #include "nsNthIndexCache.h"
 #include "mozilla/Preferences.h"
@@ -921,6 +912,7 @@ struct RuleCascadeData {
     : mRuleHash(aQuirksMode),
       mStateSelectors(),
       mSelectorDocumentStates(0),
+      mKeyframesRuleTable(16),
       mCacheKey(aMedium),
       mNext(nullptr),
       mQuirksMode(aQuirksMode)
@@ -944,7 +936,6 @@ struct RuleCascadeData {
     PL_DHashTableInit(&mXULTreeRules, &RuleHash_TagTable_Ops, nullptr,
                       sizeof(RuleHashTagTableEntry), 16);
 #endif
-    mKeyframesRuleTable.Init(16); // FIXME: make infallible!
   }
 
   ~RuleCascadeData()
@@ -1187,11 +1178,6 @@ InitSystemMetrics()
     sSystemMetrics->AppendElement(nsGkAtoms::touch_enabled);
   }
  
-  rv = LookAndFeel::GetInt(LookAndFeel::eIntID_MaemoClassic, &metricResult);
-  if (NS_SUCCEEDED(rv) && metricResult) {
-    sSystemMetrics->AppendElement(nsGkAtoms::maemo_classic);
-  }
-
   rv = LookAndFeel::GetInt(LookAndFeel::eIntID_SwipeAnimationEnabled,
                            &metricResult);
   if (NS_SUCCEEDED(rv) && metricResult) {

@@ -2,15 +2,12 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+// IWYU pragma: private, include "nsDOMClassInfoID.h"
 
 DOMCI_CLASS(Window)
 DOMCI_CLASS(Location)
-DOMCI_CLASS(History)
 DOMCI_CLASS(DOMPrototype)
 DOMCI_CLASS(DOMConstructor)
-
-// Core classes
-DOMCI_CLASS(DOMException)
 
 DOMCI_CLASS(DeviceAcceleration)
 DOMCI_CLASS(DeviceRotationRate)
@@ -68,9 +65,6 @@ DOMCI_CLASS(CSSSupportsRule)
 DOMCI_CLASS(SVGLength)
 DOMCI_CLASS(SVGNumber)
 
-// Canvas
-DOMCI_CLASS(MozCanvasPrintState)
-
 // WindowUtils
 DOMCI_CLASS(WindowUtils)
 
@@ -91,7 +85,6 @@ DOMCI_CLASS(File)
 // DOM modal content window class, almost identical to Window
 DOMCI_CLASS(ModalContentWindow)
 
-DOMCI_CLASS(MozPowerManager)
 DOMCI_CLASS(MozWakeLock)
 
 DOMCI_CLASS(MozMobileMessageManager)
@@ -104,7 +97,6 @@ DOMCI_CLASS(MozMobileMessageThread)
 DOMCI_CLASS(MozConnection)
 #ifdef MOZ_B2G_RIL
 DOMCI_CLASS(MozMobileConnection)
-DOMCI_CLASS(MozCellBroadcast)
 #endif
 
 // @font-face in CSS
@@ -128,36 +120,24 @@ DOMCI_CLASS(CSSPageRule)
 DOMCI_CLASS(MediaQueryList)
 
 #ifdef MOZ_B2G_RIL
-DOMCI_CLASS(Telephony)
-DOMCI_CLASS(TelephonyCall)
-DOMCI_CLASS(MozVoicemail)
 DOMCI_CLASS(MozIccManager)
 #endif
 
-#ifdef MOZ_B2G_FM
-DOMCI_CLASS(FMRadio)
-#endif
-
 #ifdef MOZ_B2G_BT
-DOMCI_CLASS(BluetoothManager)
-DOMCI_CLASS(BluetoothAdapter)
 DOMCI_CLASS(BluetoothDevice)
 #endif
 
-DOMCI_CLASS(CameraControl)
 DOMCI_CLASS(CameraCapabilities)
-
-DOMCI_CLASS(OpenWindowEventDetail)
-DOMCI_CLASS(AsyncScrollEventDetail)
 
 DOMCI_CLASS(LockedFile)
 
 DOMCI_CLASS(CSSFontFeatureValuesRule)
 
 DOMCI_CLASS(UserDataHandler)
-DOMCI_CLASS(GeoPositionError)
 DOMCI_CLASS(LoadStatus)
 DOMCI_CLASS(XPathNamespace)
+DOMCI_CLASS(XULControlElement)
+DOMCI_CLASS(XULLabeledControlElement)
 DOMCI_CLASS(XULButtonElement)
 DOMCI_CLASS(XULCheckboxElement)
 DOMCI_CLASS(XULPopupElement)

@@ -53,13 +53,6 @@ class Configuration:
                 entry.append({})
             self.descriptors.extend([Descriptor(self, iface, x) for x in entry])
 
-        # Mark the descriptors for which the nativeType corresponds to exactly
-        # one interface.
-        for descriptor in self.descriptors:
-            descriptor.unsharedImplementation = all(
-                d.nativeType != descriptor.nativeType or d == descriptor
-                for d in self.descriptors)
-
         # Keep the descriptor list sorted for determinism.
         self.descriptors.sort(lambda x,y: cmp(x.name, y.name))
 
@@ -99,8 +92,6 @@ class Configuration:
                     item.setUserData("mainThread", True)
                 if item in worker:
                     item.setUserData("workers", True)
-        flagWorkerOrMainThread(self.dictionaries, mainDictionaries,
-                               workerDictionaries);
         flagWorkerOrMainThread(self.callbacks, mainCallbacks, workerCallbacks)
 
     def getInterface(self, ifname):
@@ -218,10 +209,7 @@ class Descriptor(DescriptorProvider):
             else:
                 nativeTypeDefault = "nsIDOM" + ifaceName
         elif self.interface.isCallback():
-            if self.workers:
-                nativeTypeDefault = "JSObject"
-            else:
-                nativeTypeDefault = "mozilla::dom::" + ifaceName
+            nativeTypeDefault = "mozilla::dom::" + ifaceName
         else:
             if self.workers:
                 nativeTypeDefault = "mozilla::dom::workers::" + ifaceName
@@ -233,7 +221,7 @@ class Descriptor(DescriptorProvider):
 
         # Do something sane for JSObject
         if self.nativeType == "JSObject":
-            headerDefault = "jsapi.h"
+            headerDefault = "js/TypeDecls.h"
         elif self.interface.isCallback() or self.interface.isJSImplemented():
             # A copy of CGHeaders.getDeclarationFilename; we can't
             # import it here, sadly.

@@ -720,14 +720,18 @@ static void* gBreakpadReservedVM;
  * Reserve some VM space. In the event that we crash because VM space is
  * being leaked without leaking memory, freeing this space before taking
  * the minidump will allow us to collect a minidump.
+ *
+ * This size is bigger than xul.dll plus some extra for MinidumpWriteDump
+ * allocations.
  */
-static const SIZE_T kReserveSize = 0xc00000; // 12 MB
+static const SIZE_T kReserveSize = 0x2400000; // 36 MB
 
 static void
 ReserveBreakpadVM()
 {
   if (!gBreakpadReservedVM) {
-    gBreakpadReservedVM = VirtualAlloc(NULL, kReserveSize, MEM_RESERVE, 0);
+    gBreakpadReservedVM = VirtualAlloc(NULL, kReserveSize, MEM_RESERVE,
+                                       PAGE_NOACCESS);
   }
 }
 
@@ -735,7 +739,7 @@ static void
 FreeBreakpadVM()
 {
   if (gBreakpadReservedVM) {
-    VirtualFree(gBreakpadReservedVM, kReserveSize, MEM_RELEASE);
+    VirtualFree(gBreakpadReservedVM, 0, MEM_RELEASE);
   }
 }
 
@@ -802,9 +806,19 @@ nsresult SetExceptionHandler(nsIFile* aXREDirectory,
   if (gExceptionHandler)
     return NS_ERROR_ALREADY_INITIALIZED;
 
+#if defined(DEBUG)
+  // In debug builds, disable the crash reporter by default, and allow to
+  // enable it with the MOZ_CRASHREPORTER environment variable.
+  const char *envvar = PR_GetEnv("MOZ_CRASHREPORTER");
+  if ((!envvar || !*envvar) && !force)
+    return NS_OK;
+#else
+  // In non-debug builds, enable the crash reporter by default, and allow
+  // to disable it with the MOZ_CRASHREPORTER_DISABLE environment variable.
   const char *envvar = PR_GetEnv("MOZ_CRASHREPORTER_DISABLE");
   if (envvar && *envvar && !force)
     return NS_OK;
+#endif
 
 #if defined(MOZ_WIDGET_GONK)
   doReport = false;
@@ -834,8 +848,6 @@ nsresult SetExceptionHandler(nsIFile* aXREDirectory,
   crashReporterAPIData_Hash =
     new nsDataHashtable<nsCStringHashKey,nsCString>();
   NS_ENSURE_TRUE(crashReporterAPIData_Hash, NS_ERROR_OUT_OF_MEMORY);
-
-  crashReporterAPIData_Hash->Init();
 
   notesField = new nsCString();
   NS_ENSURE_TRUE(notesField, NS_ERROR_OUT_OF_MEMORY);
@@ -2290,7 +2302,6 @@ OOPInit()
     NS_RUNTIMEABORT("can't start crash reporter server()");
 
   pidToMinidump = new ChildMinidumpMap();
-  pidToMinidump->Init();
 
   dumpMapLock = new Mutex("CrashReporter::dumpMapLock");
 

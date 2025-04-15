@@ -248,7 +248,7 @@ DocAccessibleWrap::Shutdown()
   if (nsWinUtils::IsWindowEmulationStarted()) {
     // Destroy window created for root document.
     if (mDocFlags & eTabDocument) {
-      nsWinUtils::sHWNDCache.Remove(mHWND);
+      nsWinUtils::sHWNDCache->Remove(mHWND);
       ::DestroyWindow(static_cast<HWND>(mHWND));
     }
 
@@ -279,7 +279,7 @@ DocAccessibleWrap::DoInitialUpdate()
     // Create window for tab document.
     if (mDocFlags & eTabDocument) {
       mozilla::dom::TabChild* tabChild =
-        mozilla::dom::GetTabChildFrom(mDocumentNode->GetShell());
+        mozilla::dom::TabChild::GetFrom(mDocumentNode->GetShell());
 
       a11y::RootAccessible* rootDocument = RootAccessible();
 
@@ -308,7 +308,7 @@ DocAccessibleWrap::DoInitialUpdate()
       mHWND = nsWinUtils::CreateNativeWindow(kClassNameTabContent, parentWnd,
                                              x, y, width, height, isActive);
 
-      nsWinUtils::sHWNDCache.Put(mHWND, this);
+      nsWinUtils::sHWNDCache->Put(mHWND, this);
 
     } else {
       DocAccessible* parentDocument = ParentDocument();

@@ -18,6 +18,7 @@
 #include "AudioChannelCommon.h"
 #include <algorithm>
 #include "mozilla/Preferences.h"
+#include "nsComponentManagerUtils.h"
 
 static bool
 IsAudioAPIEnabled()
@@ -30,16 +31,9 @@ NS_IMPL_NS_NEW_HTML_ELEMENT(Audio)
 namespace mozilla {
 namespace dom {
 
-NS_IMPL_ADDREF_INHERITED(HTMLAudioElement, HTMLMediaElement)
-NS_IMPL_RELEASE_INHERITED(HTMLAudioElement, HTMLMediaElement)
-
-NS_INTERFACE_TABLE_HEAD(HTMLAudioElement)
-  NS_HTML_CONTENT_INTERFACES(HTMLMediaElement)
-  NS_INTERFACE_TABLE_INHERITED4(HTMLAudioElement, nsIDOMHTMLMediaElement,
-                                nsIDOMHTMLAudioElement, nsITimerCallback,
-                                nsIAudioChannelAgentCallback)
-  NS_INTERFACE_TABLE_TO_MAP_SEGUE
-NS_ELEMENT_INTERFACE_MAP_END
+NS_IMPL_ISUPPORTS_INHERITED4(HTMLAudioElement, HTMLMediaElement,
+                             nsIDOMHTMLMediaElement, nsIDOMHTMLAudioElement,
+                             nsITimerCallback, nsIAudioChannelAgentCallback)
 
 NS_IMPL_ELEMENT_CLONE(HTMLAudioElement)
 
@@ -60,7 +54,7 @@ HTMLAudioElement::Audio(const GlobalObject& aGlobal,
                         const Optional<nsAString>& aSrc,
                         ErrorResult& aRv)
 {
-  nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(aGlobal.GetAsSupports());
   nsIDocument* doc;
   if (!win || !(doc = win->GetExtantDoc())) {
     aRv.Throw(NS_ERROR_FAILURE);
@@ -238,7 +232,7 @@ HTMLAudioElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
 
 /* void canPlayChanged (in boolean canPlay); */
 NS_IMETHODIMP
-HTMLAudioElement::CanPlayChanged(bool canPlay)
+HTMLAudioElement::CanPlayChanged(int32_t canPlay)
 {
   NS_ENSURE_TRUE(nsContentUtils::IsCallerChrome(), NS_ERROR_NOT_AVAILABLE);
   // Only Audio_Data API will initialize the mAudioStream, so we call the parent
@@ -247,7 +241,7 @@ HTMLAudioElement::CanPlayChanged(bool canPlay)
     return HTMLMediaElement::CanPlayChanged(canPlay);
   }
 #ifdef MOZ_B2G
-  if (canPlay) {
+  if (canPlay != AUDIO_CHANNEL_STATE_MUTED) {
     SetMutedInternal(mMuted & ~MUTED_BY_AUDIO_CHANNEL);
   } else {
     SetMutedInternal(mMuted | MUTED_BY_AUDIO_CHANNEL);
@@ -292,7 +286,7 @@ HTMLAudioElement::UpdateAudioChannelPlayingState()
     }
 
     if (mPlayingThroughTheAudioChannel) {
-      bool canPlay;
+      int32_t canPlay;
       mAudioChannelAgent->StartPlaying(&canPlay);
       CanPlayChanged(canPlay);
     } else {

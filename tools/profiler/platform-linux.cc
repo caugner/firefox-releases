@@ -30,6 +30,7 @@
 # vim: sw=2
 */
 #include <stdio.h>
+#include <math.h>
 
 #include <pthread.h>
 #include <semaphore.h>
@@ -38,8 +39,11 @@
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/prctl.h> // set name
 #include <stdlib.h>
 #include <sched.h>
+#include <iostream>
+#include <fstream>
 #ifdef ANDROID
 #include <android/log.h>
 #else
@@ -68,6 +72,11 @@
 #include "nsThreadUtils.h"
 #include "TableTicker.h"
 #include "UnwinderThread2.h"
+#if defined(__ARM_EABI__) && defined(MOZ_WIDGET_GONK)
+ // Should also work on other Android and ARM Linux, but not tested there yet.
+#define USE_EHABI_STACKWALK
+#include "EHABIStackWalk.h"
+#endif
 
 #include <string.h>
 #include <stdio.h>
@@ -157,8 +166,10 @@ static void ProfilerSaveSignalHandler(int signal, siginfo_t* info, void* context
 #define V8_HOST_ARCH_X64 1
 #endif
 static void ProfilerSignalHandler(int signal, siginfo_t* info, void* context) {
-  if (!Sampler::GetActiveSampler())
+  if (!Sampler::GetActiveSampler()) {
+    sem_post(&sSignalHandlingDone);
     return;
+  }
 
   TickSample sample_obj;
   TickSample* sample = &sample_obj;
@@ -233,6 +244,8 @@ Sampler::FreePlatformData(PlatformData* aData)
 }
 
 static void* SignalSender(void* arg) {
+  // Taken from platform_thread_posix.cc
+  prctl(PR_SET_NAME, "SamplerThread", 0, 0, 0);
 # if defined(ANDROID)
   // pthread_atfork isn't available on Android.
   void* initialize_atfork = NULL;
@@ -281,15 +294,16 @@ static void* SignalSender(void* arg) {
     // Convert ms to us and subtract 100 us to compensate delays
     // occuring during signal delivery.
     // TODO measure and confirm this.
-    const useconds_t interval =
-      SamplerRegistry::sampler->interval() * 1000 - 100;
-    //int result = usleep(interval);
-    usleep(interval);
+    int interval = floor(SamplerRegistry::sampler->interval() * 1000 + 0.5) - 100;
+    if (interval <= 0) {
+      interval = 1;
+    }
+    OS::SleepMicro(interval);
   }
   return initialize_atfork; // which is guaranteed to be NULL
 }
 
-Sampler::Sampler(int interval, bool profiling, int entrySize)
+Sampler::Sampler(double interval, bool profiling, int entrySize)
     : interval_(interval),
       profiling_(profiling),
       paused_(false),
@@ -305,6 +319,9 @@ Sampler::~Sampler() {
 void Sampler::Start() {
   LOG("Sampler started");
 
+#ifdef USE_EHABI_STACKWALK
+  mozilla::EHABIStackWalkInit();
+#endif
   SamplerRegistry::AddActiveSampler(this);
 
   // Initialize signal handler communication
@@ -378,8 +395,19 @@ bool Sampler::RegisterCurrentThread(const char* aName,
 
   mozilla::MutexAutoLock lock(*Sampler::sRegisteredThreadsMutex);
 
-  ThreadInfo* info = new ThreadInfo(aName, gettid(),
-    aIsMainThread, aPseudoStack);
+  int id = gettid();
+  for (uint32_t i = 0; i < sRegisteredThreads->size(); i++) {
+    ThreadInfo* info = sRegisteredThreads->at(i);
+    if (info->ThreadId() == id) {
+      // Thread already registered. This means the first unregister will be
+      // too early.
+      ASSERT(false);
+      return false;
+    }
+  }
+
+  ThreadInfo* info = new ThreadInfo(aName, id,
+    aIsMainThread, aPseudoStack, stackTop);
 
   if (sActiveSampler) {
     sActiveSampler->RegisterThread(info);
@@ -414,12 +442,41 @@ void Sampler::UnregisterCurrentThread()
 
 #ifdef ANDROID
 static struct sigaction old_sigstart_signal_handler;
-const int SIGSTART = SIGUSR1;
+const int SIGSTART = SIGUSR2;
 
 static void StartSignalHandler(int signal, siginfo_t* info, void* context) {
-  profiler_start(PROFILE_DEFAULT_ENTRY, PROFILE_DEFAULT_INTERVAL,
-                 PROFILE_DEFAULT_FEATURES, PROFILE_DEFAULT_FEATURE_COUNT,
-                 NULL, 0);
+
+  // XXX: Everything we do here is NOT async signal safe. We risk nasty things
+  // like deadlocks but we typically only do this once so it tends to be ok.
+  // See bug 909403
+  const char* threadName = NULL;
+  uint32_t threadCount = 0;
+  char thread[256];
+
+  // TODO support selecting features from profiler.options
+  const char* features[3] = {NULL, NULL, NULL};
+  uint32_t featureCount = 0;
+  features[0] = "leaf";
+  featureCount++;
+  features[1] = "js";
+  featureCount++;
+  const char* threadFeature = "threads";
+
+  std::ifstream infile;
+  infile.open("/data/local/tmp/profiler.options");
+  if (infile.is_open()) {
+    infile.getline(thread, 256);
+    threadName = thread;
+    threadCount = 1;
+    features[featureCount] = threadFeature;
+    featureCount++;
+    printf_stderr("Profiling only %s\n", threadName);
+  }
+  infile.close();
+
+  profiler_start(PROFILE_DEFAULT_ENTRY, 1,
+                 features, featureCount,
+                 &threadName, threadCount);
 }
 
 void OS::RegisterStartHandler()
@@ -434,4 +491,9 @@ void OS::RegisterStartHandler()
   }
 }
 #endif
+
+void OS::SleepMicro(int microseconds)
+{
+  usleep(microseconds);
+}
 

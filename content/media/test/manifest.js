@@ -42,6 +42,7 @@ var gPlayedTests = [
   { name:"seek.webm", type:"video/webm", duration:3.966 },
   { name:"gizmo.mp4", type:"video/mp4", duration:5.56 },
   { name:"owl.mp3", type:"audio/mpeg", duration:3.29 },
+  { name:"vbr.mp3", type:"audio/mpeg", duration:10.0 }
 ];
 
 // Used by test_mozLoadFrom.  Need one test file per decoder backend, plus
@@ -154,10 +155,10 @@ var gPlayTests = [
 
   // Test playback of a WebM file with non-zero start time.
   { name:"split.webm", type:"video/webm", duration:1.967 },
-  
+
   // Test playback of a raw file
   { name:"seek.yuv", type:"video/x-raw-yuv", duration:1.833 },
-  
+
   // A really short, low sample rate, single channel file. This tests whether
   // we can handle playing files when only push very little audio data to the
   // hardware.
@@ -181,6 +182,12 @@ var gPlayTests = [
   { name:"small-shot.m4a", type:"audio/mp4", duration:0.29 },
   { name:"small-shot.mp3", type:"audio/mpeg", duration:0.27 },
   { name:"owl.mp3", type:"audio/mpeg", duration:3.29 },
+  // owl.mp3 as above, but with something funny going on in the ID3v2 tag
+  // that causes DirectShow to fail.
+  { name:"owl-funny-id3.mp3", type:"audio/mpeg", duration:3.29 },
+  // owl.mp3 as above, but with something even funnier going on in the ID3v2 tag
+  // that causes DirectShow to fail.
+  { name:"owl-funnier-id3.mp3", type:"audio/mpeg", duration:3.29 },
 
   // Invalid file
   { name:"bogus.duh", type:"bogus/duh", duration:Number.NaN }
@@ -563,7 +570,7 @@ const DEBUG_TEST_LOOP_FOREVER = false;
 //   1. Create a new MediaTestManager object.
 //   2. Create a test startTest function. This takes a test object and a token,
 //      and performs anything necessary to start the test. The test object is an
-//      element in one of the g*Tests above. Your startTest function must call 
+//      element in one of the g*Tests above. Your startTest function must call
 //      MediaTestManager.start(token) if it starts a test. The test object is
 //      guaranteed to be playable by our supported decoders; you don't need to
 //      check canPlayType.
@@ -574,12 +581,12 @@ function MediaTestManager() {
 
   // Sets up a MediaTestManager to runs through the 'tests' array, which needs
   // to be one of, or have the same fields as, the g*Test arrays of tests. Uses
-  // the user supplied 'startTest' function to initialize the test. This 
+  // the user supplied 'startTest' function to initialize the test. This
   // function must accept two arguments, the test entry from the 'tests' array,
   // and a token. Call MediaTestManager.started(token) if you start the test,
   // and MediaTestManager.finished(token) when the test finishes. You don't have
   // to start every test, but if you call started() you *must* call finish()
-  // else you'll timeout. 
+  // else you'll timeout.
   this.runTests = function(tests, startTest) {
     this.startTime = new Date();
     SimpleTest.info("Started " + this.startTime + " (" + this.startTime.getTime()/1000 + "s)");
@@ -593,7 +600,7 @@ function MediaTestManager() {
     SimpleTest.waitForExplicitFinish();
     this.nextTest();
   }
-  
+
   // Registers that the test corresponding to 'token' has been started.
   // Don't call more than once per token.
   this.started = function(token) {
@@ -601,7 +608,7 @@ function MediaTestManager() {
     this.numTestsRunning++;
     is(this.numTestsRunning, this.tokens.length, "[started " + token + "] Length of array should match number of running tests");
   }
-  
+
   // Registers that the test corresponding to 'token' has finished. Call when
   // you've finished your test. If all tests are complete this will finish the
   // run, otherwise it may start up the next run. It's ok to call multiple times
@@ -626,7 +633,7 @@ function MediaTestManager() {
     // with live threads waiting for the GC are killed promptly, to free up the
     // thread stacks' address space.
     SpecialPowers.forceGC();
-    
+
     while (this.testNum < this.tests.length && this.tokens.length < PARALLEL_TESTS) {
       var test = this.tests[this.testNum];
       var token = (test.name ? (test.name + "-"): "") + this.testNum;
@@ -635,11 +642,11 @@ function MediaTestManager() {
       if (DEBUG_TEST_LOOP_FOREVER && this.testNum == this.tests.length) {
         this.testNum = 0;
       }
-      
+
       // Ensure we can play the resource type.
       if (test.type && !document.createElement('video').canPlayType(test.type))
         continue;
-      
+
       // Do the init. This should start the test.
       this.startTest(test, token);
     }
@@ -688,9 +695,11 @@ function mediaTestCleanup() {
   var branch = prefService.getBranch("media.");
   var oldDefault = 2;
   var oldAuto = 3;
+  var oldAppleMedia = undefined;
   var oldGStreamer = undefined;
   var oldOpus = undefined;
 
+  try { oldAppleMedia = SpecialPowers.getBoolPref("media.apple.mp3.enabled"); } catch(ex) { }
   try { oldGStreamer = SpecialPowers.getBoolPref("media.gstreamer.enabled"); } catch(ex) { }
   try { oldDefault   = SpecialPowers.getIntPref("media.preload.default"); } catch(ex) { }
   try { oldAuto      = SpecialPowers.getIntPref("media.preload.auto"); } catch(ex) { }
@@ -703,10 +712,14 @@ function mediaTestCleanup() {
     SpecialPowers.setBoolPref("media.opus.enabled", true);
   if (oldGStreamer !== undefined)
     SpecialPowers.setBoolPref("media.gstreamer.enabled", true);
+  if (oldAppleMedia !== undefined)
+    SpecialPowers.setBoolPref("media.apple.mp3.enabled", true);
 
   window.addEventListener("unload", function() {
     if (oldGStreamer !== undefined)
       SpecialPowers.setBoolPref("media.gstreamer.enabled", oldGStreamer);
+    if (oldAppleMedia !== undefined)
+      SpecialPowers.setBoolPref("media.apple.mp3.enabled", oldAppleMedia);
     SpecialPowers.setIntPref("media.preload.default", oldDefault);
     SpecialPowers.setIntPref("media.preload.auto", oldAuto);
     if (oldOpus !== undefined)

@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -29,6 +30,7 @@
 #include "nsCOMArray.h"
 #include "nsXPCOMCID.h"
 #include "nsAutoPtr.h"
+#include "nsPrintfCString.h"
 
 #include "nsQuickSort.h"
 #include "pldhash.h"
@@ -43,6 +45,8 @@
 #include "nsTArray.h"
 #include "nsRefPtrHashtable.h"
 #include "nsIMemoryReporter.h"
+
+class PrefCallback;
 
 namespace mozilla {
 
@@ -160,8 +164,6 @@ static nsTArray<nsAutoPtr<CacheData> >* gCacheData = nullptr;
 static nsRefPtrHashtable<ValueObserverHashKey,
                          ValueObserver>* gObserverTable = nullptr;
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(PreferencesMallocSizeOf)
-
 static size_t
 SizeOfObserverEntryExcludingThis(ValueObserverHashKey* aKey,
                                  const nsRefPtr<ValueObserver>& aData,
@@ -174,52 +176,176 @@ SizeOfObserverEntryExcludingThis(ValueObserverHashKey* aKey,
   return n;
 }
 
-// static
-int64_t
-Preferences::GetPreferencesMemoryUsed()
+// Although this is a member of Preferences, it measures sPreferences and
+// several other global structures.
+/* static */ int64_t
+Preferences::SizeOfIncludingThisAndOtherStuff(mozilla::MallocSizeOf aMallocSizeOf)
 {
   NS_ENSURE_TRUE(InitStaticMembers(), 0);
 
-  size_t n = 0;
-  n += PreferencesMallocSizeOf(sPreferences);
+  size_t n = aMallocSizeOf(sPreferences);
   if (gHashTable.ops) {
     // pref keys are allocated in a private arena, which we count elsewhere.
     // pref stringvals are allocated out of the same private arena.
-    n += PL_DHashTableSizeOfExcludingThis(&gHashTable, nullptr,
-                                          PreferencesMallocSizeOf);
+    n += PL_DHashTableSizeOfExcludingThis(&gHashTable, nullptr, aMallocSizeOf);
   }
   if (gCacheData) {
-    n += gCacheData->SizeOfIncludingThis(PreferencesMallocSizeOf);
+    n += gCacheData->SizeOfIncludingThis(aMallocSizeOf);
     for (uint32_t i = 0, count = gCacheData->Length(); i < count; ++i) {
-      n += PreferencesMallocSizeOf((*gCacheData)[i]);
+      n += aMallocSizeOf((*gCacheData)[i]);
     }
   }
   if (gObserverTable) {
-    n += PreferencesMallocSizeOf(gObserverTable);
+    n += aMallocSizeOf(gObserverTable);
     n += gObserverTable->SizeOfExcludingThis(SizeOfObserverEntryExcludingThis,
-                                             PreferencesMallocSizeOf);
+                                             aMallocSizeOf);
   }
   // We don't measure sRootBranch and sDefaultRootBranch here because
   // DMD indicates they are not significant.
-  n += pref_SizeOfPrivateData(PreferencesMallocSizeOf);
+  n += pref_SizeOfPrivateData(aMallocSizeOf);
   return n;
 }
 
-NS_MEMORY_REPORTER_IMPLEMENT(Preferences,
-  "explicit/preferences",
-  KIND_HEAP,
-  UNITS_BYTES,
-  Preferences::GetPreferencesMemoryUsed,
-  "Memory used by the preferences system.")
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(PreferencesMallocSizeOf)
+
+class PreferencesReporter MOZ_FINAL : public nsIMemoryReporter
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIMEMORYREPORTER
+protected:
+  static const uint32_t kSuspectReferentCount = 1000;
+  static PLDHashOperator CountReferents(PrefCallback* aKey,
+                                        nsAutoPtr<PrefCallback>& aCallback,
+                                        void* aClosure);
+};
+
+NS_IMPL_ISUPPORTS1(PreferencesReporter, nsIMemoryReporter)
+
+NS_IMETHODIMP
+PreferencesReporter::GetName(nsACString& aName)
+{
+  aName.AssignLiteral("preference-service");
+  return NS_OK;
+}
+
+struct PreferencesReferentCount {
+  PreferencesReferentCount() : numStrong(0), numWeakAlive(0), numWeakDead(0) {}
+  size_t numStrong;
+  size_t numWeakAlive;
+  size_t numWeakDead;
+  nsTArray<nsCString> suspectPreferences;
+  // Count of the number of referents for each preference.
+  nsDataHashtable<nsCStringHashKey, uint32_t> prefCounter;
+};
+
+PLDHashOperator
+PreferencesReporter::CountReferents(PrefCallback* aKey,
+                                    nsAutoPtr<PrefCallback>& aCallback,
+                                    void* aClosure)
+{
+  PreferencesReferentCount* referentCount =
+    static_cast<PreferencesReferentCount*>(aClosure);
+
+  nsPrefBranch* prefBranch = aCallback->GetPrefBranch();
+  const char* pref = prefBranch->getPrefName(aCallback->GetDomain().get());
+
+  if (aCallback->IsWeak()) {
+    nsCOMPtr<nsIObserver> callbackRef = do_QueryReferent(aCallback->mWeakRef);
+    if (callbackRef) {
+      referentCount->numWeakAlive++;
+    } else {
+      referentCount->numWeakDead++;
+    }
+  } else {
+    referentCount->numStrong++;
+  }
+
+  nsDependentCString prefString(pref);
+  uint32_t oldCount = 0;
+  referentCount->prefCounter.Get(prefString, &oldCount);
+  uint32_t currentCount = oldCount + 1;
+  referentCount->prefCounter.Put(prefString, currentCount);
+
+  // Keep track of preferences that have a suspiciously large
+  // number of referents (symptom of leak).
+  if (currentCount == kSuspectReferentCount) {
+    referentCount->suspectPreferences.AppendElement(prefString);
+  }
+
+  return PL_DHASH_NEXT;
+}
+
+NS_IMETHODIMP
+PreferencesReporter::CollectReports(nsIMemoryReporterCallback* aCb,
+                                    nsISupports* aClosure)
+{
+#define REPORT(_path, _kind, _units, _amount, _desc)                          \
+    do {                                                                      \
+      nsresult rv;                                                            \
+      rv = aCb->Callback(EmptyCString(), _path, _kind,                        \
+                         _units, _amount, NS_LITERAL_CSTRING(_desc),          \
+                         aClosure);                                           \
+      NS_ENSURE_SUCCESS(rv, rv);                                              \
+    } while (0)
+
+  REPORT(NS_LITERAL_CSTRING("explicit/preferences"),
+         nsIMemoryReporter::KIND_HEAP, nsIMemoryReporter::UNITS_BYTES,
+         Preferences::SizeOfIncludingThisAndOtherStuff(PreferencesMallocSizeOf),
+         "Memory used by the preferences system.");
+
+  nsPrefBranch* rootBranch =
+    static_cast<nsPrefBranch*>(Preferences::GetRootBranch());
+  if (!rootBranch) {
+    return NS_OK;
+  }
+
+  PreferencesReferentCount referentCount;
+  rootBranch->mObservers.Enumerate(&CountReferents, &referentCount);
+
+  for (uint32_t i = 0; i < referentCount.suspectPreferences.Length(); i++) {
+    nsCString& suspect = referentCount.suspectPreferences[i];
+    uint32_t totalReferentCount = 0;
+    referentCount.prefCounter.Get(suspect, &totalReferentCount);
+
+    nsPrintfCString suspectPath("preference-service-suspect/"
+                                "referent(pref=%s)", suspect.get());
+
+    REPORT(suspectPath,
+           nsIMemoryReporter::KIND_OTHER, nsIMemoryReporter::UNITS_COUNT,
+           totalReferentCount,
+           "A preference with a suspiciously large number "
+           "referents (symptom of a leak).");
+  }
+
+  REPORT(NS_LITERAL_CSTRING("preference-service/referent/strong"),
+         nsIMemoryReporter::KIND_OTHER, nsIMemoryReporter::UNITS_COUNT,
+         referentCount.numStrong,
+         "The number of strong referents held by the preference service.");
+
+  REPORT(NS_LITERAL_CSTRING("preference-service/referent/weak/alive"),
+         nsIMemoryReporter::KIND_OTHER, nsIMemoryReporter::UNITS_COUNT,
+         referentCount.numWeakAlive,
+         "The number of weak referents held by the preference service "
+         "that are still alive.");
+
+  REPORT(NS_LITERAL_CSTRING("preference-service/referent/weak/dead"),
+         nsIMemoryReporter::KIND_OTHER, nsIMemoryReporter::UNITS_COUNT,
+         referentCount.numWeakDead,
+         "The number of weak referents held by the preference service "
+         "that are dead.");
+
+#undef REPORT
+
+  return NS_OK;
+}
 
 namespace {
 class AddPreferencesMemoryReporterRunnable : public nsRunnable
 {
   NS_IMETHOD Run()
   {
-    nsCOMPtr<nsIMemoryReporter> reporter =
-      new NS_MEMORY_REPORTER_NAME(Preferences);
-    return NS_RegisterMemoryReporter(reporter);
+    return NS_RegisterMemoryReporter(new PreferencesReporter());
   }
 };
 } // anonymous namespace
@@ -252,7 +378,6 @@ Preferences::GetInstanceForService()
   gCacheData = new nsTArray<nsAutoPtr<CacheData> >();
 
   gObserverTable = new nsRefPtrHashtable<ValueObserverHashKey, ValueObserver>();
-  gObserverTable->Init();
 
   // Preferences::GetInstanceForService() can be called from GetService(), and
   // NS_RegisterMemoryReporter calls GetService(nsIMemoryReporter).  To avoid a

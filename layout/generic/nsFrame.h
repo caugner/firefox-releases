@@ -11,15 +11,12 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/Likely.h"
 #include "nsBox.h"
-#include "nsRect.h"
-#include "nsString.h"
 #include "prlog.h"
 
 #include "nsIPresShell.h"
-#include "nsFrameSelection.h"
 #include "nsHTMLReflowState.h"
-#include "nsHTMLReflowMetrics.h"
 #include "nsHTMLParts.h"
+#include "nsISelectionDisplay.h"
 
 /**
  * nsFrame logging constants. We redefine the nspr
@@ -100,6 +97,7 @@
 
 struct nsBoxLayoutMetrics;
 class nsDisplayBackgroundImage;
+struct nsRect;
 
 /**
  * Implementation of a simple frame that's not splittable and has no

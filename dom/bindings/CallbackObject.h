@@ -20,18 +20,16 @@
 #include "nsISupports.h"
 #include "nsISupportsImpl.h"
 #include "nsCycleCollectionParticipant.h"
-#include "jsapi.h"
 #include "jswrapper.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/ErrorResult.h"
+#include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/Util.h"
 #include "nsContentUtils.h"
 #include "nsCxPusher.h"
 #include "nsWrapperCache.h"
 #include "nsJSEnvironment.h"
 #include "xpcpublic.h"
-#include "nsLayoutStatics.h"
-#include "js/RootingAPI.h"
 
 namespace mozilla {
 namespace dom {
@@ -60,7 +58,7 @@ public:
 
   JS::Handle<JSObject*> Callback() const
   {
-    xpc_UnmarkGrayObject(mCallback);
+    JS::ExposeObjectToActiveJS(mCallback);
     return CallbackPreserveColor();
   }
 
@@ -103,18 +101,18 @@ private:
     // Set mCallback before we hold, on the off chance that a GC could somehow
     // happen in there... (which would be pretty odd, granted).
     mCallback = aCallback;
-    // Make sure we'll be able to drop as needed
-    nsLayoutStatics::AddRef();
-    NS_HOLD_JS_OBJECTS(this, CallbackObject);
+    mozilla::HoldJSObjects(this);
   }
+
+  CallbackObject(const CallbackObject&) MOZ_DELETE;
+  CallbackObject& operator =(const CallbackObject&) MOZ_DELETE;
 
 protected:
   void DropCallback()
   {
     if (mCallback) {
       mCallback = nullptr;
-      NS_DROP_JS_OBJECTS(this, CallbackObject);
-      nsLayoutStatics::Release();
+      mozilla::DropJSObjects(this);
     }
   }
 
@@ -149,17 +147,12 @@ protected:
 
     // Members which can go away whenever
     JSContext* mCx;
-    nsCOMPtr<nsIScriptContext> mCtx;
 
     // Caller's compartment. This will only have a sensible value if
     // mExceptionHandling == eRethrowContentExceptions.
     JSCompartment* mCompartment;
 
     // And now members whose construction/destruction order we need to control.
-
-    // Put our nsAutoMicrotask first, so it gets destroyed after everything else
-    // is gone
-    nsAutoMicroTask mMt;
 
     nsCxPusher mCxPusher;
 
@@ -178,6 +171,7 @@ protected:
     ErrorResult& mErrorResult;
     const ExceptionHandling mExceptionHandling;
     uint32_t mSavedJSContextOptions;
+    const bool mIsMainThread;
   };
 };
 

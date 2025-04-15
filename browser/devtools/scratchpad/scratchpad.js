@@ -19,18 +19,21 @@ let require = Components.utils.import("resource://gre/modules/devtools/Loader.js
 let { Cc, Ci, Cu } = require("chrome");
 let promise = require("sdk/core/promise");
 let Telemetry = require("devtools/shared/telemetry");
+let DevtoolsHelpers = require("devtools/shared/helpers");
 let TargetFactory = require("devtools/framework/target").TargetFactory;
+const escodegen = require("escodegen/escodegen");
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource:///modules/source-editor.jsm");
-Cu.import("resource:///modules/devtools/LayoutHelpers.jsm");
 Cu.import("resource:///modules/devtools/scratchpad-manager.jsm");
 Cu.import("resource://gre/modules/jsdebugger.jsm");
 Cu.import("resource:///modules/devtools/gDevTools.jsm");
 Cu.import("resource://gre/modules/osfile.jsm");
 Cu.import("resource:///modules/devtools/ViewHelpers.jsm");
+Cu.import("resource://gre/modules/reflect.jsm");
+Cu.import("resource://gre/modules/devtools/DevToolsUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "VariablesView",
   "resource:///modules/devtools/VariablesView.jsm");
@@ -38,7 +41,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "VariablesView",
 XPCOMUtils.defineLazyModuleGetter(this, "VariablesViewController",
   "resource:///modules/devtools/VariablesViewController.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "GripClient",
+XPCOMUtils.defineLazyModuleGetter(this, "ObjectClient",
   "resource://gre/modules/devtools/dbg-client.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "WebConsoleUtils",
@@ -135,7 +138,10 @@ var Scratchpad = {
    * Retrieve the xul:notificationbox DOM element. It notifies the user when
    * the current code execution context is SCRATCHPAD_CONTEXT_BROWSER.
    */
-  get notificationBox() document.getElementById("scratchpad-notificationbox"),
+  get notificationBox()
+  {
+    return document.getElementById("scratchpad-notificationbox");
+  },
 
   /**
    * Get the selected text from the editor.
@@ -143,7 +149,10 @@ var Scratchpad = {
    * @return string
    *         The selected text.
    */
-  get selectedText() this.editor.getSelectedText(),
+  get selectedText()
+  {
+    return this.editor.getSelectedText();
+  },
 
   /**
    * Get the editor content, in the given range. If no range is given you get
@@ -252,7 +261,10 @@ var Scratchpad = {
   /**
    * Get the most recent chrome window of type navigator:browser.
    */
-  get browserWindow() Services.wm.getMostRecentWindow("navigator:browser"),
+  get browserWindow()
+  {
+    return Services.wm.getMostRecentWindow("navigator:browser");
+  },
 
   /**
    * Get the gBrowser object of the most recent browser window.
@@ -490,8 +502,8 @@ var Scratchpad = {
         this._writePrimitiveAsComment(aResult).then(resolve, reject);
       }
       else {
-        let gripClient = new GripClient(this.debuggerClient, aResult);
-        gripClient.getDisplayString(aResponse => {
+        let objectClient = new ObjectClient(this.debuggerClient, aResult);
+        objectClient.getDisplayString(aResponse => {
           if (aResponse.error) {
             reportError("display", aResponse);
             reject(aResponse);
@@ -510,6 +522,27 @@ var Scratchpad = {
     }, reject);
 
     return deferred.promise;
+  },
+
+  /**
+   * Pretty print the source text inside the scratchpad.
+   */
+  prettyPrint: function SP_prettyPrint() {
+    const uglyText = this.getText();
+    const tabsize = Services.prefs.getIntPref("devtools.editor.tabsize");
+    try {
+      const ast = Reflect.parse(uglyText);
+      const prettyText = escodegen.generate(ast, {
+        format: {
+          indent: {
+            style: " ".repeat(tabsize)
+          }
+        }
+      });
+      this.setText(prettyText);
+    } catch (e) {
+      this.writeAsErrorComment(DevToolsUtils.safeErrorString(e));
+    }
   },
 
   /**
@@ -584,7 +617,7 @@ var Scratchpad = {
     }
     else {
       let reject = aReason => deferred.reject(aReason);
-      let gripClient = new GripClient(this.debuggerClient, aError);
+      let objectClient = new ObjectClient(this.debuggerClient, aError);
 
       // Because properties on Error objects are lazily added, this roundabout
       // way of getting all the properties is required, rather than simply
@@ -593,7 +626,7 @@ var Scratchpad = {
       let promises = names.map(aName => {
         let deferred = promise.defer();
 
-        gripClient.getProperty(aName, aResponse => {
+        objectClient.getProperty(aName, aResponse => {
           if (aResponse.error) {
             deferred.reject(aResponse);
           }
@@ -612,7 +645,7 @@ var Scratchpad = {
         // We also need to use getPrototypeAndProperties to retrieve any
         // safeGetterValues in case this is a DOM error.
         let deferred = promise.defer();
-        gripClient.getPrototypeAndProperties(aResponse => {
+        objectClient.getPrototypeAndProperties(aResponse => {
           if (aResponse.error) {
             deferred.reject(aResponse);
           }
@@ -666,7 +699,7 @@ var Scratchpad = {
           deferred.resolve(error.message + stack);
         }
         else {
-          gripClient.getDisplayString(aResult => {
+          objectClient.getDisplayString(aResult => {
             if (aResult.error) {
               deferred.reject(aResult);
             }
@@ -1258,9 +1291,9 @@ var Scratchpad = {
 
     let initialText = this.strings.formatStringFromName(
       "scratchpadIntro1",
-      [LayoutHelpers.prettyKey(document.getElementById("sp-key-run")),
-       LayoutHelpers.prettyKey(document.getElementById("sp-key-inspect")),
-       LayoutHelpers.prettyKey(document.getElementById("sp-key-display"))],
+      [DevtoolsHelpers.prettyKey(document.getElementById("sp-key-run")),
+       DevtoolsHelpers.prettyKey(document.getElementById("sp-key-inspect")),
+       DevtoolsHelpers.prettyKey(document.getElementById("sp-key-display"))],
       3);
 
     let args = window.arguments;
@@ -1392,13 +1425,17 @@ var Scratchpad = {
     this.editor.removeEventListener(SourceEditor.EVENTS.DIRTY_CHANGED,
                                     this._onDirtyChanged);
     PreferenceObserver.uninit();
+    CloseObserver.uninit();
 
     this.editor.destroy();
     this.editor = null;
+
     if (this._sidebar) {
       this._sidebar.destroy();
       this._sidebar = null;
     }
+
+    scratchpadTargets = null;
     this.webConsoleClient = null;
     this.debuggerClient = null;
     this.initialized = false;
@@ -1767,8 +1804,8 @@ ScratchpadSidebar.prototype = {
         });
 
         VariablesViewController.attach(this.variablesView, {
-          getGripClient: aGrip => {
-            return new GripClient(this._scratchpad.debuggerClient, aGrip);
+          getObjectClient: aGrip => {
+            return new ObjectClient(this._scratchpad.debuggerClient, aGrip);
           },
           getLongStringClient: aActor => {
             return this._scratchpad.webConsoleClient.longString(aActor);

@@ -1,8 +1,7 @@
-/* vim:set ts=2 sw=2 sts=2 expandtab */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
- */
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 ;(function(id, factory) { // Module boilerplate :(
   if (typeof(define) === 'function') { // RequireJS
     define(factory);
@@ -48,6 +47,20 @@ const define = Object.defineProperties;
 const prototypeOf = Object.getPrototypeOf;
 const create = Object.create;
 const keys = Object.keys;
+
+
+const COMPONENT_ERROR = '`Components` is not available in this context.\n' +
+  'Functionality provided by Components may be available in an SDK\n' +
+  'module: https://jetpack.mozillalabs.com/sdk/latest/docs/ \n\n' +
+  'However, if you still need to import Components, you may use the\n' +
+  '`chrome` module\'s properties for shortcuts to Component properties:\n\n' +
+  'Shortcuts: \n' +
+  '    Cc = Components' + '.classes \n' +
+  '    Ci = Components' + '.interfaces \n' +
+  '    Cu = Components' + '.utils \n' +
+  '    CC = Components' + '.Constructor \n' +
+  'Example: \n' +
+  '    let { Cc, Ci } = require(\'chrome\');\n';
 
 // Workaround for bug 674195. Freezing objects from other compartments fail,
 // so we use `Object.freeze` from the same component instead.
@@ -217,19 +230,26 @@ const load = iced(function load(loader, module) {
   let { sandboxes, globals } = loader;
   let require = Require(loader, module);
 
+  // We expose set of properties defined by `CommonJS` specification via
+  // prototype of the sandbox. Also globals are deeper in the prototype
+  // chain so that each module has access to them as well.
+  let descriptors = descriptor({
+    require: require,
+    module: module,
+    exports: module.exports,
+    get Components() {
+      // Expose `Components` property to throw error on usage with
+      // additional information
+      throw new ReferenceError(COMPONENT_ERROR);
+    }
+  });
+
   let sandbox = sandboxes[module.uri] = Sandbox({
     name: module.uri,
     // Get an existing module sandbox, if any, so we can reuse its compartment
     // when creating the new one to reduce memory consumption.
     sandbox: sandboxes[keys(sandboxes).shift()],
-    // We expose set of properties defined by `CommonJS` specification via
-    // prototype of the sandbox. Also globals are deeper in the prototype
-    // chain so that each module has access to them as well.
-    prototype: create(globals, descriptor({
-      require: require,
-      module: module,
-      exports: module.exports
-    })),
+    prototype: create(globals, descriptors),
     wantXrays: false
   });
 
@@ -240,6 +260,7 @@ const load = iced(function load(loader, module) {
     let stack = error.stack || Error().stack;
     let frames = parseStack(stack).filter(isntLoaderFrame);
     let toString = String(error);
+    let file = sourceURI(fileName);
 
     // Note that `String(error)` where error is from subscript loader does
     // not puts `:` after `"Error"` unlike regular errors thrown by JS code.
@@ -251,6 +272,13 @@ const load = iced(function load(loader, module) {
       lineNumber = caller.lineNumber;
       message = "Module `" + module.id + "` is not found at " + module.uri;
       toString = message;
+    }
+    // Workaround for a Bug 910653. Errors thrown by subscript loader
+    // do not include `stack` field and above created error won't have
+    // fileName or lineNumber of the module being loaded, so we ensure
+    // it does.
+    else if (frames[frames.length - 1].fileName !== file) {
+      frames.push({ fileName: file, lineNumber: lineNumber, name: "" });
     }
 
     let prototype = typeof(error) === "object" ? error.constructor.prototype :

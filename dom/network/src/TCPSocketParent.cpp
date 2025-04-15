@@ -7,10 +7,11 @@
 #include "jsfriendapi.h"
 #include "nsJSUtils.h"
 #include "nsIDOMTCPSocket.h"
-#include "nsContentUtils.h"
 #include "nsCxPusher.h"
 #include "mozilla/unused.h"
 #include "mozilla/AppProcessChecker.h"
+#include "mozilla/net/NeckoCommon.h"
+#include "mozilla/net/PNeckoParent.h"
 
 namespace IPC {
 
@@ -80,11 +81,12 @@ NS_IMETHODIMP_(nsrefcnt) TCPSocketParent::Release(void)
 
 bool
 TCPSocketParent::RecvOpen(const nsString& aHost, const uint16_t& aPort, const bool& aUseSSL,
-                          const nsString& aBinaryType, PBrowserParent* aBrowser)
+                          const nsString& aBinaryType)
 {
   // We don't have browser actors in xpcshell, and hence can't run automated
   // tests without this loophole.
-  if (aBrowser && !AssertAppProcessPermission(aBrowser, "tcp-socket")) {
+  if (net::UsingNeckoIPCSecurity() &&
+      !AssertAppProcessPermission(Manager()->Manager(), "tcp-socket")) {
     FireInteralError(this, __LINE__);
     return true;
   }
@@ -114,6 +116,15 @@ TCPSocketParent::InitJS(const JS::Value& aIntermediary, JSContext* aCx)
 }
 
 bool
+TCPSocketParent::RecvStartTLS()
+{
+  NS_ENSURE_TRUE(mSocket, true);
+  nsresult rv = mSocket->UpgradeToSecure();
+  NS_ENSURE_SUCCESS(rv, true);
+  return true;
+}
+
+bool
 TCPSocketParent::RecvSuspend()
 {
   NS_ENSURE_TRUE(mSocket, true);
@@ -140,6 +151,7 @@ TCPSocketParent::RecvData(const SendableData& aData)
   switch (aData.type()) {
     case SendableData::TArrayOfuint8_t: {
       AutoSafeJSContext cx;
+      JSAutoRequest ar(cx);
       JS::Rooted<JS::Value> val(cx);
       JS::Rooted<JSObject*> obj(cx, mIntermediaryObj);
       IPC::DeserializeArrayBuffer(obj, aData.get_ArrayOfuint8_t(), &val);

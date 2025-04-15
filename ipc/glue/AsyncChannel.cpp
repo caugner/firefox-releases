@@ -90,7 +90,7 @@ AsyncChannel::Link::~Link()
 
 AsyncChannel::ProcessLink::ProcessLink(AsyncChannel *aChan)
     : Link(aChan)
-    , mExistingListener(NULL)
+    , mExistingListener(nullptr)
 {
 }
 
@@ -158,8 +158,9 @@ AsyncChannel::ProcessLink::Open(mozilla::ipc::Transport* aTransport,
                 NewRunnableMethod(this, &ProcessLink::OnTakeConnectedChannel));
         }
 
-        // FIXME/cjones: handle errors
-        while (!mChan->Connected()) {
+        // Should not wait here if something goes wrong with the channel.
+        while (!mChan->Connected() &&
+               mChan->mChannelState != AsyncChannel::ChannelError) {
             mChan->mMonitor->Wait();
         }
     }
@@ -289,8 +290,8 @@ AsyncChannel::AsyncChannel(AsyncListener* aListener)
     mChannelState(ChannelClosed),
     mWorkerLoop(),
     mChild(false),
-    mChannelErrorTask(NULL),
-    mLink(NULL),
+    mChannelErrorTask(nullptr),
+    mLink(nullptr),
     mWorkerLoopID(-1)
 {
     MOZ_COUNT_CTOR(AsyncChannel);
@@ -525,7 +526,7 @@ AsyncChannel::OnNotifyMaybeChannelError()
     AssertWorkerThread();
     mMonitor->AssertNotCurrentThreadOwns();
 
-    mChannelErrorTask = NULL;
+    mChannelErrorTask = nullptr;
 
     // OnChannelError holds mMonitor when it posts this task and this
     // task cannot be allowed to run until OnChannelError has
@@ -604,7 +605,7 @@ AsyncChannel::Clear()
 
     if (mChannelErrorTask) {
         mChannelErrorTask->Cancel();
-        mChannelErrorTask = NULL;
+        mChannelErrorTask = nullptr;
     }
 }
 
@@ -856,8 +857,10 @@ AsyncChannel::OnChannelErrorFromLink()
     AssertLinkThread();
     mMonitor->AssertCurrentThreadOwns();
 
-    if (ChannelClosing != mChannelState)
+    if (ChannelClosing != mChannelState) {
         mChannelState = ChannelError;
+        mMonitor->Notify();
+    }
 
     PostErrorNotifyTask();
 }
@@ -913,9 +916,6 @@ AsyncChannel::ProcessGoodbyeMessage()
     // TODO sort out Close() on this side racing with Close() on the
     // other side
     mChannelState = ChannelClosing;
-
-    printf("NOTE: %s process received `Goodbye', closing down\n",
-           mChild ? "child" : "parent");
 }
 
 

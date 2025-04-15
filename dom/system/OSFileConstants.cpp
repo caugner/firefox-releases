@@ -44,6 +44,7 @@
 
 #include "OSFileConstants.h"
 #include "nsIOSFileConstantsService.h"
+#include "nsZipArchive.h"
 
 #if defined(__DragonFly__) || defined(__FreeBSD__) \
   || defined(__NetBSD__) || defined(__OpenBSD__)
@@ -242,7 +243,7 @@ void CleanupOSFileConstants()
 /**
  * End marker for ConstantSpec
  */
-#define PROP_END { NULL, JSVAL_VOID }
+#define PROP_END { NULL, JS::UndefinedValue() }
 
 
 // Define missing constants for Android
@@ -269,7 +270,7 @@ void CleanupOSFileConstants()
  * keep properties organized by alphabetical order
  * and #ifdef-away properties that are not portable.
  */
-static dom::ConstantSpec gLibcProperties[] =
+static const dom::ConstantSpec gLibcProperties[] =
 {
   // Arguments for open
   INT_CONSTANT(O_APPEND),
@@ -522,7 +523,7 @@ static dom::ConstantSpec gLibcProperties[] =
  * keep properties organized by alphabetical order
  * and #ifdef-away properties that are not portable.
  */
-static dom::ConstantSpec gWinProperties[] =
+static const dom::ConstantSpec gWinProperties[] =
 {
   // FormatMessage flags
   INT_CONSTANT(FORMAT_MESSAGE_FROM_SYSTEM),

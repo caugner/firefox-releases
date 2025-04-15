@@ -29,6 +29,7 @@
 #include "nsCharSeparatedTokenizer.h"
 #include "nsNetAddr.h"
 #include "nsProxyRelease.h"
+#include "nsIObserverService.h"
 
 #include "mozilla/Attributes.h"
 #include "mozilla/VisualEventTracer.h"
@@ -417,8 +418,6 @@ nsDNSService::Init()
     if (mFirstTime) {
         mFirstTime = false;
 
-        mLocalDomains.Init();
-
         // register as prefs observer
         if (prefs) {
             prefs->AddObserver(kPrefDnsCacheEntries, this, false);
@@ -432,6 +431,13 @@ nsDNSService::Init()
             // Monitor these to see if there is a change in proxy configuration
             // If a manual proxy is in use, disable prefetch implicitly
             prefs->AddObserver("network.proxy.type", this, false);
+        }
+
+        nsresult rv;
+        nsCOMPtr<nsIObserverService> observerService =
+            do_GetService("@mozilla.org/observer-service;1", &rv);
+        if (NS_SUCCEEDED(rv)) {
+            observerService->AddObserver(this, "last-pb-context-exited", false);
         }
     }
 
@@ -782,7 +788,8 @@ NS_IMETHODIMP
 nsDNSService::Observe(nsISupports *subject, const char *topic, const PRUnichar *data)
 {
     // we are only getting called if a preference has changed. 
-    NS_ASSERTION(strcmp(topic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID) == 0,
+    NS_ASSERTION(strcmp(topic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID) == 0 ||
+        strcmp(topic, "last-pb-context-exited") == 0,
         "unexpected observe call");
 
     //

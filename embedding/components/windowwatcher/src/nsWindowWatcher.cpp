@@ -753,52 +753,6 @@ nsWindowWatcher::OpenWindowInternal(nsIDOMWindow *aParent,
     }
   }
 
-  // Inherit the right character set into the new window to use as a fallback
-  // in the event the document being loaded does not specify a charset.  When
-  // aCalledFromJS is true, we want to use the character set of the document in
-  // the caller; otherwise we want to use the character set of aParent's
-  // docshell. Failing to set this charset is not fatal, so we want to continue
-  // in the face of errors.
-  nsCOMPtr<nsIContentViewer> newCV;
-  newDocShell->GetContentViewer(getter_AddRefs(newCV));
-  nsCOMPtr<nsIMarkupDocumentViewer> newMuCV = do_QueryInterface(newCV);
-  if (newMuCV) {
-    nsCOMPtr<nsIDocShellTreeItem> parentItem;
-    GetWindowTreeItem(aParent, getter_AddRefs(parentItem));
-
-    if (aCalledFromJS) {
-      nsCOMPtr<nsIDocShellTreeItem> callerItem = GetCallerTreeItem(parentItem);
-      nsCOMPtr<nsPIDOMWindow> callerWin = do_GetInterface(callerItem);
-      if (callerWin) {
-        nsCOMPtr<nsIDocument> doc = callerWin->GetExtantDoc();
-        if (doc) {
-          newMuCV->SetDefaultCharacterSet(doc->GetDocumentCharacterSet());
-        }
-      }
-    }
-    else {
-      nsCOMPtr<nsIDocShell> parentDocshell = do_QueryInterface(parentItem);
-      // parentDocshell may be null if the parent got closed in the meantime
-      if (parentDocshell) {
-        nsCOMPtr<nsIContentViewer> parentCV;
-        parentDocshell->GetContentViewer(getter_AddRefs(parentCV));
-        nsCOMPtr<nsIMarkupDocumentViewer> parentMuCV =
-          do_QueryInterface(parentCV);
-        if (parentMuCV) {
-          nsAutoCString charset;
-          nsresult res = parentMuCV->GetDefaultCharacterSet(charset);
-          if (NS_SUCCEEDED(res)) {
-            newMuCV->SetDefaultCharacterSet(charset);
-          }
-          res = parentMuCV->GetPrevDocCharacterSet(charset);
-          if (NS_SUCCEEDED(res)) {
-            newMuCV->SetPrevDocCharacterSet(charset);
-          }
-        }
-      }
-    }
-  }
-
   // Now we have to set the right opener principal on the new window.  Note
   // that we have to do this _before_ starting any URI loads, thanks to the
   // sync nature of javascript: loads.  Since this is the only place where we
@@ -966,17 +920,10 @@ nsWindowWatcher::OpenWindowInternal(nsIDOMWindow *aParent,
     // we need that to show a modal window.
     NS_ENSURE_TRUE(newChrome, NS_ERROR_NOT_AVAILABLE);
 
-    nsCOMPtr<nsPIDOMWindow> modalContentWindow;
-
     // Dispatch dialog events etc, but we only want to do that if
     // we're opening a modal content window (the helper classes are
     // no-ops if given no window), for chrome dialogs we don't want to
     // do any of that (it's done elsewhere for us).
-
-    if (windowIsModalContentDialog) {
-      modalContentWindow = do_QueryInterface(*_retval);
-    }
-
     nsAutoWindowStateHelper windowStateHelper(aParent);
 
     if (!windowStateHelper.DefaultEnabled()) {
@@ -1000,7 +947,7 @@ nsWindowWatcher::OpenWindowInternal(nsIDOMWindow *aParent,
       // Reset popup state while opening a modal dialog, and firing
       // events about the dialog, to prevent the current state from
       // being active the whole time a modal dialog is open.
-      nsAutoPopupStatePusher popupStatePusher(modalContentWindow, openAbused);
+      nsAutoPopupStatePusher popupStatePusher(openAbused);
   
       newChrome->ShowAsModal();
     }

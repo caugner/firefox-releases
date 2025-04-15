@@ -144,6 +144,9 @@ class OS {
   // Sleep for a number of milliseconds.
   static void Sleep(const int milliseconds);
 
+  // Sleep for a number of microseconds.
+  static void SleepMicro(const int microseconds);
+
   // Factory method for creating platform dependent Mutex.
   // Please use delete to reclaim the storage for the returned Mutex.
   static Mutex* CreateMutex();
@@ -238,6 +241,8 @@ extern UnwMode sUnwindMode;       /* what mode? */
 extern int     sUnwindInterval;   /* in milliseconds */
 extern int     sUnwindStackScan;  /* max # of dubious frames allowed */
 
+extern int     sProfileEntries;   /* how many entries do we store? */
+
 
 // ----------------------------------------------------------------------------
 // Sampler
@@ -284,10 +289,10 @@ class TableTicker;
 class Sampler {
  public:
   // Initialize sampler.
-  explicit Sampler(int interval, bool profiling, int entrySize);
+  explicit Sampler(double interval, bool profiling, int entrySize);
   virtual ~Sampler();
 
-  int interval() const { return interval_; }
+  double interval() const { return interval_; }
 
   // This method is called for each sampling period with the current
   // program counter.
@@ -355,7 +360,7 @@ class Sampler {
  private:
   void SetActive(bool value) { NoBarrier_Store(&active_, value); }
 
-  const int interval_;
+  const double interval_;
   const bool profiling_;
   Atomic32 paused_;
   Atomic32 active_;
@@ -373,13 +378,14 @@ class Sampler {
 
 class ThreadInfo {
  public:
-  ThreadInfo(const char* aName, int aThreadId, bool aIsMainThread, PseudoStack* aPseudoStack)
+  ThreadInfo(const char* aName, int aThreadId, bool aIsMainThread, PseudoStack* aPseudoStack, void* aStackTop)
     : mName(strdup(aName))
     , mThreadId(aThreadId)
     , mIsMainThread(aIsMainThread)
     , mPseudoStack(aPseudoStack)
     , mPlatformData(Sampler::AllocPlatformData(aThreadId))
-    , mProfile(NULL) {}
+    , mProfile(NULL)
+    , mStackTop(aStackTop) {}
 
   virtual ~ThreadInfo();
 
@@ -393,6 +399,7 @@ class ThreadInfo {
   ThreadProfile* Profile() const { return mProfile; }
 
   PlatformData* GetPlatformData() const { return mPlatformData; }
+  void* StackTop() const { return mStackTop; }
  private:
   char* mName;
   int mThreadId;
@@ -400,6 +407,7 @@ class ThreadInfo {
   PseudoStack* mPseudoStack;
   PlatformData* mPlatformData;
   ThreadProfile* mProfile;
+  void* const mStackTop;
 };
 
 #endif /* ndef TOOLS_PLATFORM_H_ */

@@ -8,10 +8,15 @@
 #include "mozilla/widget/AudioSession.h"
 #include "MetroUtils.h"
 #include "MetroApp.h"
+#include "FrameworkView.h"
 #include "nsIObserverService.h"
 #include "nsServiceManagerUtils.h"
+#include "mozilla/AutoRestore.h"
 #include "WinUtils.h"
+#include "nsIAppStartup.h"
+#include "nsToolkitCompsCID.h"
 
+using namespace mozilla;
 using namespace mozilla::widget;
 using namespace mozilla::widget::winrt;
 using namespace Microsoft::WRL;
@@ -19,15 +24,26 @@ using namespace Microsoft::WRL::Wrappers;
 using namespace ABI::Windows::UI::Core;
 using namespace ABI::Windows::Foundation;
 
+// ProcessNextNativeEvent message wait timeout, see bug 907410.
+#define MSG_WAIT_TIMEOUT 250
+
 namespace mozilla {
 namespace widget {
 namespace winrt {
 extern ComPtr<MetroApp> sMetroApp;
+extern ComPtr<FrameworkView> sFrameworkView;
 } } }
 
-const PRUnichar* kMetroAppShellEventId = L"nsAppShell:EventID";
-static UINT sShellEventMsgID;
+namespace mozilla {
+namespace widget {
+// pulled from win32 app shell
+extern UINT sAppShellGeckoMsgId;
+} }
+
 static ComPtr<ICoreWindowStatic> sCoreStatic;
+static bool sIsDispatching = false;
+static bool sWillEmptyThreadQueue = false;
+static bool sEmptyingThreadQueue = false;
 
 MetroAppShell::~MetroAppShell()
 {
@@ -43,7 +59,6 @@ MetroAppShell::Init()
 
   WNDCLASSW wc;
   HINSTANCE module = GetModuleHandle(NULL);
-  sShellEventMsgID = RegisterWindowMessageW(kMetroAppShellEventId);
 
   const PRUnichar *const kWindowClass = L"nsAppShell:EventWindowClass";
   if (!GetClassInfoW(module, kWindowClass, &wc)) {
@@ -77,6 +92,82 @@ MetroAppShell::Init()
   return nsBaseAppShell::Init();
 }
 
+HRESULT SHCreateShellItemArrayFromShellItemDynamic(IShellItem *psi, REFIID riid, void **ppv)
+{
+  HMODULE shell32DLL = LoadLibraryW(L"shell32.dll");
+  if (!shell32DLL) {
+    return E_FAIL;
+  }
+
+  typedef BOOL (WINAPI* SHFn)(IShellItem *psi, REFIID riid, void **ppv);
+
+  HRESULT hr = E_FAIL;
+  SHFn SHCreateShellItemArrayFromShellItemDynamicPtr =
+    (SHFn)GetProcAddress(shell32DLL, "SHCreateShellItemArrayFromShellItem");
+  FreeLibrary(shell32DLL);
+  if (SHCreateShellItemArrayFromShellItemDynamicPtr) {
+    hr = SHCreateShellItemArrayFromShellItemDynamicPtr(psi, riid, ppv);
+  }
+
+  FreeLibrary(shell32DLL);
+  return hr;
+}
+
+BOOL
+WinLaunchDeferredMetroFirefox()
+{
+  // Create an instance of the Firefox Metro DEH which is used to launch the browser
+  const CLSID CLSID_FirefoxMetroDEH = {0x5100FEC1,0x212B, 0x4BF5 ,{0x9B,0xF8, 0x3E,0x65, 0x0F,0xD7,0x94,0xA3}};
+
+  nsRefPtr<IExecuteCommand> executeCommand;
+  HRESULT hr = CoCreateInstance(CLSID_FirefoxMetroDEH,
+                                NULL,
+                                CLSCTX_LOCAL_SERVER,
+                                IID_IExecuteCommand,
+                                getter_AddRefs(executeCommand));
+  if (FAILED(hr))
+    return FALSE;
+
+  // Get the currently running exe path
+  WCHAR exePath[MAX_PATH + 1] = { L'\0' };
+  if (!::GetModuleFileNameW(0, exePath, MAX_PATH))
+    return FALSE;
+
+  // Convert the path to a long path since GetModuleFileNameW returns the path
+  // that was used to launch Firefox which is not necessarily a long path.
+  if (!::GetLongPathNameW(exePath, exePath, MAX_PATH))
+    return FALSE;
+
+  // Create an IShellItem for the current browser path
+  nsRefPtr<IShellItem> shellItem;
+  hr = WinUtils::SHCreateItemFromParsingName(exePath, NULL, IID_IShellItem, getter_AddRefs(shellItem));
+  if (FAILED(hr))
+    return FALSE;
+
+  // Convert to an IShellItemArray which is used for the path to launch
+  nsRefPtr<IShellItemArray> shellItemArray;
+  hr = SHCreateShellItemArrayFromShellItemDynamic(shellItem, IID_IShellItemArray, getter_AddRefs(shellItemArray));
+  if (FAILED(hr))
+    return FALSE;
+
+  // Set the path to launch and parameters needed
+  nsRefPtr<IObjectWithSelection> selection;
+  hr = executeCommand->QueryInterface(IID_IObjectWithSelection, getter_AddRefs(selection));
+  if (FAILED(hr))
+    return FALSE;
+  hr = selection->SetSelection(shellItemArray);
+  if (FAILED(hr))
+    return FALSE;
+
+  hr = executeCommand->SetParameters(L"--metro-restart");
+  if (FAILED(hr))
+    return FALSE;
+
+  // Run the default browser through the DEH
+  hr = executeCommand->Execute();
+  return SUCCEEDED(hr);
+}
+
 // Called by appstartup->run in xre, which is initiated by a call to
 // XRE_metroStartup in MetroApp. This call is on the metro main thread.
 NS_IMETHODIMP
@@ -97,12 +188,69 @@ MetroAppShell::Run(void)
       // Just exit
       rv = NS_ERROR_NOT_IMPLEMENTED;
     break;
-    case GeckoProcessType_Default:
-      // Nothing to do, just return.
+    case GeckoProcessType_Default: {
+      mozilla::widget::StartAudioSession();
+      sFrameworkView->ActivateView();
+      rv = nsBaseAppShell::Run();
+      mozilla::widget::StopAudioSession();
+
+      nsCOMPtr<nsIAppStartup> appStartup (do_GetService(NS_APPSTARTUP_CONTRACTID));
+      bool restarting;
+      if (appStartup && NS_SUCCEEDED(appStartup->GetRestarting(&restarting)) && restarting) {
+        if (!WinLaunchDeferredMetroFirefox()) {
+          NS_WARNING("Couldn't deferred launch Metro Firefox.");
+        }
+      }
+
+      // This calls XRE_metroShutdown() in xre. This will also destroy
+      // MessagePump.
+      sMetroApp->ShutdownXPCOM();
+
+      // This will free the real main thread in CoreApplication::Run()
+      // once winrt cleans up this thread.
+      sMetroApp->CoreExit();
+    }
     break;
   }
 
   return rv;
+}
+
+// Called in certain cases where we have async input events in the thread
+// queue and need to make sure they get dispatched before the stack unwinds.
+void // static
+MetroAppShell::MarkEventQueueForPurge()
+{
+  LogFunction();
+  sWillEmptyThreadQueue = true;
+
+  // If we're dispatching native events, wait until the dispatcher is
+  // off the stack.
+  if (sIsDispatching) {
+    return;
+  }
+
+  // Safe to process pending events now
+  DispatchAllGeckoEvents();
+}
+
+// static
+void
+MetroAppShell::DispatchAllGeckoEvents()
+{
+  if (!sWillEmptyThreadQueue) {
+    return;
+  }
+
+  LogFunction();
+  NS_ASSERTION(NS_IsMainThread(), "DispatchAllXPCOMEvents should be called on the main thread");
+
+  sWillEmptyThreadQueue = false;
+
+  AutoRestore<bool> dispatching(sEmptyingThreadQueue);
+  sEmptyingThreadQueue = true;
+  nsIThread *thread = NS_GetCurrentThread();
+  NS_ProcessPendingEvents(thread, 0);
 }
 
 static void
@@ -125,50 +273,48 @@ ProcessNativeEvents(CoreProcessEventsOption eventOption)
 }
 
 // static
-void
+bool
 MetroAppShell::ProcessOneNativeEventIfPresent()
 {
-  ProcessNativeEvents(CoreProcessEventsOption::CoreProcessEventsOption_ProcessOneIfPresent);
-}
+  if (sIsDispatching) {
+    // Calling into ProcessNativeEvents is harmless, but won't actually process any
+    // native events. So we log here so we can spot this and get a handle on the
+    // corner cases where this can happen.
+    Log("WARNING: Reentrant call into process events detected, returning early.");
+    return false;
+  }
 
-// static
-void
-MetroAppShell::ProcessAllNativeEventsPresent()
-{
-  ProcessNativeEvents(CoreProcessEventsOption::CoreProcessEventsOption_ProcessAllIfPresent);
+  {
+    AutoRestore<bool> dispatching(sIsDispatching);
+    sIsDispatching = true;
+    ProcessNativeEvents(CoreProcessEventsOption::CoreProcessEventsOption_ProcessOneIfPresent);
+  }
+
+  DispatchAllGeckoEvents();
+
+  return !!HIWORD(::GetQueueStatus(MOZ_QS_ALLEVENT));
 }
 
 bool
 MetroAppShell::ProcessNextNativeEvent(bool mayWait)
 {
-  MSG msg;
+  // NS_ProcessPendingEvents will process thread events *and* call
+  // nsBaseAppShell::OnProcessNextEvent to process native events. However
+  // we do not want native events getting dispatched while we are in
+  // DispatchAllGeckoEvents.
+  if (sEmptyingThreadQueue) {
+    return false;
+  }
 
+  if (ProcessOneNativeEventIfPresent()) {
+    return true;
+  }
   if (mayWait) {
-    if (!WinUtils::PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) {
-      WinUtils::WaitForMessage();
-    }
-    ProcessOneNativeEventIfPresent();
-    return true;
+    DWORD result = ::MsgWaitForMultipleObjectsEx(0, NULL, MSG_WAIT_TIMEOUT, MOZ_QS_ALLEVENT,
+                                                 MWMO_INPUTAVAILABLE|MWMO_ALERTABLE);
+    NS_WARN_IF_FALSE(result != WAIT_FAILED, "Wait failed");
   }
-
-  if (WinUtils::PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) {
-    ProcessOneNativeEventIfPresent();
-    return true;
-  }
-
-  return false;
-}
-
-// Results from a call to appstartup->quit, which fires a final nsAppExitEvent
-// event which calls us here. This is on the metro main thread. We want to
-// call xpcom shutdown here, but we need to wait until the runnable that fires
-// this is off the stack. See NativeEventCallback below.
-NS_IMETHODIMP
-MetroAppShell::Exit(void)
-{
-  LogFunction();
-  mExiting = true;
-  return NS_OK;
+  return ProcessOneNativeEventIfPresent();
 }
 
 void
@@ -176,29 +322,13 @@ MetroAppShell::NativeCallback()
 {
   NS_ASSERTION(NS_IsMainThread(), "Native callbacks must be on the metro main thread");
   NativeEventCallback();
-
-  // Handle shutdown after Exit() is called and unwinds.
-  if (mExiting) {
-    // shutdown fires events, don't recurse
-    static bool sShutdown = false;
-    if (sShutdown)
-      return;
-    sShutdown = true;
-    if (sMetroApp) {
-      // This calls XRE_metroShutdown() in xre
-      sMetroApp->ShutdownXPCOM();
-      // This will free the real main thread in CoreApplication::Run()
-      // once winrt cleans up this thread.
-      sMetroApp->CoreExit();
-    }
-  }
 }
 
 // static
 LRESULT CALLBACK
 MetroAppShell::EventWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-  if (uMsg == sShellEventMsgID) {
+  if (uMsg == sAppShellGeckoMsgId) {
     MetroAppShell *as = reinterpret_cast<MetroAppShell *>(lParam);
     as->NativeCallback();
     NS_RELEASE(as);
@@ -211,7 +341,7 @@ void
 MetroAppShell::ScheduleNativeEventCallback()
 {
   NS_ADDREF_THIS();
-  PostMessage(mEventWnd, sShellEventMsgID, 0, reinterpret_cast<LPARAM>(this));
+  PostMessage(mEventWnd, sAppShellGeckoMsgId, 0, reinterpret_cast<LPARAM>(this));
 }
 
 void

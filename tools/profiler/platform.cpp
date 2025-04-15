@@ -8,10 +8,12 @@
 #include <errno.h>
 
 #include "IOInterposer.h"
+#include "NSPRInterposer.h"
 #include "ProfilerIOInterposeObserver.h"
 #include "platform.h"
 #include "PlatformMacros.h"
 #include "prenv.h"
+#include "mozilla/StaticPtr.h"
 #include "mozilla/ThreadLocal.h"
 #include "PseudoStack.h"
 #include "TableTicker.h"
@@ -58,7 +60,8 @@ mozilla::Mutex* Sampler::sRegisteredThreadsMutex = nullptr;
 
 TableTicker* Sampler::sActiveSampler;
 
-static mozilla::ProfilerIOInterposeObserver* sInterposeObserver = nullptr;
+static mozilla::StaticAutoPtr<mozilla::ProfilerIOInterposeObserver>
+                                                            sInterposeObserver;
 
 void Sampler::Startup() {
   sRegisteredThreads = new std::vector<ThreadInfo*>();
@@ -171,13 +174,16 @@ void read_profiler_env_vars()
 
   MOZ_ASSERT(sUnwindMode     == UnwINVALID);
   MOZ_ASSERT(sUnwindInterval == 0);
+  MOZ_ASSERT(sProfileEntries == 0);
 
   /* Set defaults */
   sUnwindMode     = nativeAvail ? UnwCOMBINED : UnwPSEUDO;
   sUnwindInterval = 0;  /* We'll have to look elsewhere */
+  sProfileEntries = 0;
 
   const char* strM = PR_GetEnv("MOZ_PROFILER_MODE");
   const char* strI = PR_GetEnv("MOZ_PROFILER_INTERVAL");
+  const char* strE = PR_GetEnv("MOZ_PROFILER_ENTRIES");
   const char* strF = PR_GetEnv("MOZ_PROFILER_STACK_SCAN");
 
   if (strM) {
@@ -195,6 +201,15 @@ void read_profiler_env_vars()
     long int n = strtol(strI, (char**)NULL, 10);
     if (errno == 0 && n >= 1 && n <= 1000) {
       sUnwindInterval = n;
+    }
+    else goto usage;
+  }
+
+  if (strE) {
+    errno = 0;
+    long int n = strtol(strE, (char**)NULL, 10);
+    if (errno == 0 && n > 0) {
+      sProfileEntries = n;
     }
     else goto usage;
   }
@@ -223,6 +238,9 @@ void read_profiler_env_vars()
   LOG( "SPS:   MOZ_PROFILER_INTERVAL=<number>   (milliseconds, 1 to 1000)");
   LOG( "SPS:   If unset, platform default is used.");
   LOG( "SPS: ");
+  LOG( "SPS:   MOZ_PROFILER_ENTRIES=<number>    (count, minimum of 1)");
+  LOG( "SPS:   If unset, platform default is used.");
+  LOG( "SPS: ");
   LOG( "SPS:   MOZ_PROFILER_VERBOSE");
   LOG( "SPS:   If set to any value, increases verbosity (recommended).");
   LOG( "SPS: ");
@@ -238,6 +256,7 @@ void read_profiler_env_vars()
   /* Re-set defaults */
   sUnwindMode       = nativeAvail ? UnwCOMBINED : UnwPSEUDO;
   sUnwindInterval   = 0;  /* We'll have to look elsewhere */
+  sProfileEntries   = 0;
   sUnwindStackScan  = 0;
 
  out:
@@ -245,6 +264,8 @@ void read_profiler_env_vars()
   LOGF("SPS: Unwind mode       = %s", name_UnwMode(sUnwindMode));
   LOGF("SPS: Sampling interval = %d ms (zero means \"platform default\")",
        (int)sUnwindInterval);
+  LOGF("SPS: Entry store size  = %d (zero means \"platform default\")",
+       (int)sProfileEntries);
   LOGF("SPS: UnwindStackScan   = %d (max dubious frames per unwind).",
        (int)sUnwindStackScan);
   LOG( "SPS: Use env var MOZ_PROFILER_MODE=help for further information.");
@@ -285,8 +306,10 @@ void mozilla_sampler_init(void* stackTop)
   // Allow the profiler to be started using signals
   OS::RegisterStartHandler();
 
-  // Initialize (but don't enable) I/O interposing
-  sInterposeObserver = new mozilla::ProfilerIOInterposeObserver();
+  // Initialize I/O interposing
+  mozilla::IOInterposer::Init();
+  // Initialize NSPR I/O Interposing
+  mozilla::InitNSPRIOInterposing();
 
   // We can't open pref so we use an environment variable
   // to know if we should trigger the profiler on startup
@@ -298,7 +321,7 @@ void mozilla_sampler_init(void* stackTop)
 
   const char* features[] = {"js"
                          , "leaf"
-#if defined(XP_WIN) || defined(XP_MACOSX)
+#if defined(XP_WIN) || defined(XP_MACOSX) || (defined(SPS_ARCH_arm) && defined(linux))
                          , "stackwalk"
 #endif
 #if defined(SPS_OS_android) && !defined(MOZ_WIDGET_GONK)
@@ -335,9 +358,15 @@ void mozilla_sampler_shutdown()
 
   profiler_stop();
 
-  delete sInterposeObserver;
+  // Unregister IO interpose observer
+  mozilla::IOInterposer::Unregister(mozilla::IOInterposeObserver::OpAll,
+                                    sInterposeObserver);
+  // mozilla_sampler_shutdown is only called at shutdown, and late-write checks
+  // might need the IO interposer, so we don't clear it. Don't worry it's
+  // designed not to report leaks.
+  // mozilla::IOInterposer::Clear();
+  mozilla::ClearNSPRIOInterposing();
   sInterposeObserver = nullptr;
-  mozilla::IOInterposer::ClearInstance();
 
   Sampler::Shutdown();
 
@@ -418,7 +447,7 @@ const char** mozilla_sampler_get_features()
 }
 
 // Values are only honored on the first start
-void mozilla_sampler_start(int aProfileEntries, int aInterval,
+void mozilla_sampler_start(int aProfileEntries, double aInterval,
                            const char** aFeatures, uint32_t aFeatureCount,
                            const char** aThreadNameFilters, uint32_t aFilterCount)
 
@@ -430,6 +459,10 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
      in preference to anything else. */
   if (sUnwindInterval > 0)
     aInterval = sUnwindInterval;
+
+  /* If the entry count was set using env vars, use that, too: */
+  if (sProfileEntries > 0)
+    aProfileEntries = sProfileEntries;
 
   // Reset the current state if the profiler is running
   profiler_stop();
@@ -477,7 +510,12 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
 #endif
 
   if (t->AddMainThreadIO()) {
-    mozilla::IOInterposer::GetInstance()->Enable(true);
+    if (!sInterposeObserver) {
+      // Lazily create IO interposer observer
+      sInterposeObserver = new mozilla::ProfilerIOInterposeObserver();
+    }
+    mozilla::IOInterposer::Register(mozilla::IOInterposeObserver::OpAll,
+                                    sInterposeObserver);
   }
 
   sIsProfiling = true;
@@ -522,7 +560,8 @@ void mozilla_sampler_stop()
     uwt__deinit();
   }
 
-  mozilla::IOInterposer::GetInstance()->Enable(false);
+  mozilla::IOInterposer::Unregister(mozilla::IOInterposeObserver::OpAll,
+                                    sInterposeObserver);
 
   sIsProfiling = false;
 
@@ -587,29 +626,31 @@ void mozilla_sampler_unlock()
 
 bool mozilla_sampler_register_thread(const char* aName, void* stackTop)
 {
-#ifndef MOZ_WIDGET_GONK
+#if defined(MOZ_WIDGET_GONK) && !defined(MOZ_PROFILING)
+  // The only way to profile secondary threads on b2g
+  // is to build with profiling OR have the profiler
+  // running on startup.
+  if (!profiler_is_active()) {
+    return false;
+  }
+#endif
+
   PseudoStack* stack = new PseudoStack();
   tlsPseudoStack.set(stack);
 
   return Sampler::RegisterCurrentThread(aName, stack, false, stackTop);
-#else
-  return false;
-#endif
 }
 
 void mozilla_sampler_unregister_thread()
 {
-#ifndef MOZ_WIDGET_GONK
   Sampler::UnregisterCurrentThread();
 
   PseudoStack *stack = tlsPseudoStack.get();
   if (!stack) {
-    ASSERT(false);
     return;
   }
   delete stack;
   tlsPseudoStack.set(nullptr);
-#endif
 }
 
 double mozilla_sampler_time()

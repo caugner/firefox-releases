@@ -909,7 +909,33 @@ EngineURL.prototype = {
     this.mozparams[aObj.name] = aObj;
   },
 
+  reevalMozParams: function(engine) {
+    for (let param of this.params) {
+      let mozparam = this.mozparams[param.name];
+      if (mozparam && mozparam.positionDependent) {
+        // the condition is a string in the form of "topN", extract N as int
+        let positionStr = mozparam.condition.slice("top".length);
+        let position = parseInt(positionStr, 10);
+        let engines;
+        try {
+          // This will throw if we're not initialized yet (which shouldn't happen), just 
+          // ignore and move on with the false Value (checking isInitialized also throws)
+          // XXX
+          engines = Services.search.getVisibleEngines({});
+        } catch (ex) {
+          LOG("reevalMozParams called before search service initialization!?");
+          break;
+        }
+        let index = engines.map((e) => e.wrappedJSObject).indexOf(engine.wrappedJSObject);
+        let isTopN = index > -1 && (index + 1) <= position;
+        param.value = isTopN ? mozparam.trueValue : mozparam.falseValue;
+      }
+    }
+  },
+
   getSubmission: function SRCH_EURL_getSubmission(aSearchTerms, aEngine, aPurpose) {
+    this.reevalMozParams(aEngine);
+
     var url = ParamSubstitution(this.template, aSearchTerms, aEngine);
     // Default to an empty string if the purpose is not provided so that default purpose params
     // (purpose="") work consistently rather than having to define "null" and "" purposes.
@@ -931,7 +957,6 @@ EngineURL.prototype = {
     }
 
     var postData = null;
-    let postDataString = null;
     if (this.method == "GET") {
       // GET method requests have no post data, and append the encoded
       // query string to the url...
@@ -939,8 +964,8 @@ EngineURL.prototype = {
         url += "?";
       url += dataString;
     } else if (this.method == "POST") {
-      // For POST requests, specify the data as a MIME stream as well as a string.
-      postDataString = dataString;
+      // POST method requests must wrap the encoded text in a MIME
+      // stream and supply that as POSTDATA.
       var stringStream = Cc["@mozilla.org/io/string-input-stream;1"].
                          createInstance(Ci.nsIStringInputStream);
       stringStream.data = dataString;
@@ -952,7 +977,7 @@ EngineURL.prototype = {
       postData.setData(stringStream);
     }
 
-    return new Submission(makeURI(url), postData, postDataString);
+    return new Submission(makeURI(url), postData);
   },
 
   _hasRelation: function SRC_EURL__hasRelation(aRel)
@@ -1648,7 +1673,8 @@ Engine.prototype = {
                  // We only support MozParams for default search engines
                  this._isDefault) {
         var value;
-        switch (param.getAttribute("condition")) {
+        let condition = param.getAttribute("condition");
+        switch (condition) {
           case "purpose":
             url.addParam(param.getAttribute("name"),
                          param.getAttribute("value"),
@@ -1678,6 +1704,17 @@ Engine.prototype = {
                                 "condition": "pref"});
             } catch (e) { }
             break;
+          default:
+            if (condition && condition.startsWith("top")) {
+              url.addParam(param.getAttribute("name"), param.getAttribute("falseValue"));
+              let mozparam = {"name": param.getAttribute("name"),
+                              "falseValue": param.getAttribute("falseValue"),
+                              "trueValue": param.getAttribute("trueValue"),
+                              "condition": condition,
+                              "positionDependent": true};
+              url._addMozParam(mozparam);
+            }
+          break;
         }
       }
     }
@@ -2544,7 +2581,7 @@ Engine.prototype = {
 
     if (!aData) {
       // Return a dummy submission object with our searchForm attribute
-      return new Submission(makeURI(this.searchForm));
+      return new Submission(makeURI(this.searchForm), null);
     }
 
     LOG("getSubmission: In data: \"" + aData + "\"; Purpose: \"" + aPurpose + "\"");
@@ -2581,10 +2618,9 @@ Engine.prototype = {
 };
 
 // nsISearchSubmission
-function Submission(aURI, aPostData = null, aPostDataString = null) {
+function Submission(aURI, aPostData = null) {
   this._uri = aURI;
   this._postData = aPostData;
-  this._postDataString = aPostDataString;
 }
 Submission.prototype = {
   get uri() {
@@ -2592,9 +2628,6 @@ Submission.prototype = {
   },
   get postData() {
     return this._postData;
-  },
-  get postDataString() {
-    return this._postDataString;
   },
   QueryInterface: function SRCH_SUBM_QI(aIID) {
     if (aIID.equals(Ci.nsISearchSubmission) ||

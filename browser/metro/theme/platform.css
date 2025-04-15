@@ -447,8 +447,27 @@ notification {
   min-height: 64px;
 }
 
+notificationbox[count="0"] .notification-layer,
+notificationbox[count="1"] .notification-layer,
+notificationbox[count="2"] .notification-layer[anonid="layer2"] {
+  visibility: collapse;
+}
+
+notificationbox[count="2"] .notification-layer[anonid="layer1"],
+notificationbox[count="3"] .notification-layer[anonid="layer1"],
+notificationbox[count="3"] .notification-layer[anonid="layer2"] {
+  visibility: visible;
+}
+
+.notification-layer {
+  border: @metro_border_thin@ solid @field_disabled_foreground_color@;
+  border-bottom: none;
+  height:5px
+}
+
 .notification-inner {
   border-style: none;
+  border: @metro_border_thin@ solid @field_disabled_foreground_color@;
 }
 
 .notification-button {
@@ -498,107 +517,75 @@ notification {
   -moz-box-flex: 9999;
 }
 
-/* Dialogs ----------------------------------------------------------------- */
-
-.modal-block,
-.perm-modal-block {
-  background-color: rgba(0,0,0,.6);
-  -moz-box-align: center;
-  -moz-box-pack: center;
-  -moz-box-orient: horizontal;
+/* ensure the notification children pick up snapped-view box property overrides */
+.notification-button.box-inherit {
+  -moz-margin-start: inherit;
+  -moz-margin-end: inherit;
+  width: inherit;
+  display: inherit;
+  overflow: inherit;
 }
 
-.dialog-dark,
-.panel-arrowcontent {
-  background: url("chrome://browser/skin/images/popup-bg-hdpi.png") left bottom repeat-x;
-  background-color: white;
-  border-radius: @border_radius_normal@;
-  box-shadow: black 0 @border_radius_tiny@ @border_radius_tiny@,
-              black 0 -@border_radius_tiny@ @border_radius_tiny@;
-  padding: @padding_normal@ 0; /* core spacing on top/bottom */
+@media (max-width: 330px) {
+  /* notifications need layout tweaks in narrow viewport
+   */
+  .notification-button {
+      display: block;
+      width: calc(100% - 40px);
+      overflow: visible;
+      -moz-margin-start: 40px;
+      -moz-margin-end: 0;
+  }
+
+  .notification-inner {
+    display: block;
+    padding: @metro_spacing_xnormal@;
+  }
+  .notification-inner > [anonid="details"] {
+    display: inline-block;
+    width: calc(100% - 48px);
+  }
+
+  .notification-inner > .messageCloseButton {
+    display: inline-block;
+    vertical-align: top;
+    -moz-margin-start: 8px;
+    -moz-margin-end: 0;
+  }
+  .notification-inner > [anonid="details"] > .messageImage {
+    display: inline;
+    vertical-align: top;
+    -moz-margin-start: 0;
+    -moz-margin-end: 8px;
+  }
+  .notification-inner > [anonid="details"] > .messageText {
+    display: inline-block;
+    width: calc(100% - 40px);
+    overflow: visible;
+  }
+
 }
 
-dialog {
-  -moz-box-orient: horizontal;
-  -moz-box-align: center;
-  -moz-box-pack: center;
+/* Prompts ----------------------------------------------------------------- */
+
+.mainContainer {
+/* TODO: These values should probably come from somewhere. Maybe the same as the width of our overlay buttons? */
+  padding-left: 60px;
+  padding-right: 60px;
 }
 
-dialog > .prompt-inner {
-  width: 600px;
-}
-
-.prompt-header > .prompt-message {
-  white-space: pre-wrap;
-}
-
-.prompt-header > .button-checkbox {
-  margin-left: @margin_large@;
-}
-
-.prompt-title {
-  padding-top: @metro_spacing_normal@;
-  text-align: start;
+.info\.title {
   font-size: @metro_font_large@;
 }
 
-/* Authentication dialogs do not have a title */
-.prompt-title:empty {
-  display: none;
-}
-
-.prompt-message {
-  padding-top: @metro_spacing_normal@;
-  text-align: start;
+.info\.body {
   font-size: @metro_font_normal@;
 }
 
-.prompt-buttons {
-  -moz-box-pack: end;
-  text-align: end;
-  padding: @metro_spacing_normal@ 0;
-}
-
-.prompt-edit {
-  margin: @margin_xnormal@;
-  font-size: @font_normal@;
-  text-align: start;
-}
-
-/* additional styles for crash prompt dialog */
-
-/* specific height and wider for the long privacy statement */
-.prompt-inner-statement {
-  margin-top: @metro_spacing_xnormal@;
-  margin-bottom: @metro_spacing_xnormal@;
-  height: 450px;
-  width: 800px;
-}
-
-.crash-message {
-  text-align: justify;
-  margin-top: 5px;
-  margin-bottom: @metro_spacing_small@;
-  font-size: @metro_font_normal@;
-}
-
-.crash-link {
-  margin-top: @metro_spacing_small@;
-}
-
-/* temp - bug 887176 */
-.crash-privacy-back-button {
-  width: 26px;
-  margin-top: 22px; /* align with title text */
-  -moz-margin-end: 15px;
-  background-image: url(chrome://browser/skin/images/appbar-stop.png);
-  background-origin: border-box;
-  background-position: right 0 top 0;
-  background-repeat: no-repeat;
-}
-
-.crash-privacy-statement-scroller {
-  overflow: auto;
+.buttonContainer {
+  background-color: transparent;
+  padding: 0;
+  border: none;
 }
 
 /* Arrowbox ---------------------------------------------------------------- */
@@ -645,29 +632,42 @@ arrowbox {
 
 .meta {
   background-color: @panel_light_color@;
-  background-image: url("chrome://browser/skin/images/firefox-watermark.png");
-  background-repeat: no-repeat;
-  background-position: center center;
-  padding: @metro_spacing_normal@ @metro_spacing_xxnormal@;
-  overflow: auto;
-  max-width: 100%;
-  width: 100%;
+}
+
+/* needs to observe the viewstate */
+.meta-section-container {
+  padding: 45px 75px 0;
+  -moz-box-orient: horizontal;
+}
+
+.meta-section-container[viewstate="snapped"],
+.meta-section-container[viewstate="portrait"] {
+  -moz-box-orient: vertical;
+  -moz-box-flex: 1;
+}
+
+.meta-section-container[viewstate="snapped"] {
+  padding: 0;
 }
 
 .meta-section {
   margin: 0 @metro_spacing_large@;
 }
 
+.meta-section-container[viewstate="snapped"] > .meta-section {
+  margin: 0 @metro_spacing_xnormal@;
+}
+
 .meta-section-title {
+  margin: @metro_spacing_normal@ @tile_side_margin@;
   font-size: @metro_font_large@;
   font-weight: 100;
-  display: none;
   cursor: default;
 }
 
-#start-container[viewstate="snapped"] .meta-section-title.narrow-title,
-#start-container:not([viewstate="snapped"]) .meta-section-title.wide-title {
-  display: block;
+.meta-section-title.wide-title {
+  font-size: @metro_font_xlarge@;
+  margin-bottom: calc(40px - @tile_side_margin@);
 }
 
 .meta-section:not([expanded]) > .meta-section-title.narrow-title:-moz-locale-dir(ltr):after {
@@ -676,6 +676,17 @@ arrowbox {
 
 .meta-section:not([expanded]) > .meta-section-title.narrow-title:-moz-locale-dir(rtl):before {
   content: "<";
+}
+
+.meta-section-container:not([viewstate="snapped"]) .meta-section-title.narrow-title,
+.meta-section-container[viewstate="snapped"] .meta-section-title.wide-title {
+  display: none;
+}
+
+.meta-section-container[viewstate="snapped"] .meta-section-title,
+.meta-section-container[viewstate="snapped"] richgrid {
+  margin-top: @metro_spacing_xnormal@;
+  padding: 0;
 }
 
 /* App bars ----------------------------------------------------------------- */
@@ -827,4 +838,16 @@ appbar toolbar[labelled] toolbarbutton > .toolbarbutton-text {
 
 .appbar-secondary {
   list-style-image: url(chrome://browser/skin/images/appbar-icons.png);
+}
+
+/* Flyout panels (sidebars) ------------------------------------------------- */
+
+.flyout-narrow {
+  width: 346px;
+}
+
+/* Some elements don't resize to fit their container properly for some reason.
+ * Setting max-width on the element or a child fixes it. */
+.flyout-narrow .flyoutpanel-hack {
+  max-width: calc(346px - 2 * 40px);
 }

@@ -16,13 +16,12 @@
 #include "nsJSUtils.h"
 #include "nsStringGlue.h"
 
-#include "Exceptions.h"
+#include "mozilla/dom/Exceptions.h"
 #include "WorkerInlines.h"
 #include "WorkerPrivate.h"
 
 USING_WORKERS_NAMESPACE
-
-using mozilla::dom::workers::exceptions::ThrowDOMExceptionForNSResult;
+using mozilla::dom::Throw;
 
 namespace {
 
@@ -32,7 +31,7 @@ class Blob
   Blob();
   ~Blob();
 
-  static JSClass sClass;
+  static const JSClass sClass;
   static const JSPropertySpec sProperties[];
   static const JSFunctionSpec sFunctions[];
 
@@ -81,14 +80,13 @@ private:
     return GetPrivate(aObj);
   }
 
-  static JSBool
+  static bool
   Construct(JSContext* aCx, unsigned aArgc, jsval* aVp)
   {
     nsRefPtr<nsDOMMultipartFile> file = new nsDOMMultipartFile();
     nsresult rv = file->InitBlob(aCx, aArgc, JS_ARGV(aCx, aVp), Unwrap);
     if (NS_FAILED(rv)) {
-      ThrowDOMExceptionForNSResult(aCx, rv);
-      return false;
+      return Throw(aCx, rv);
     }
 
     JSObject* obj = file::CreateBlob(aCx, file);
@@ -110,7 +108,7 @@ private:
   }
 
   static bool
-  IsBlob(const JS::Value& v)
+  IsBlob(JS::Handle<JS::Value> v)
   {
     return v.isObject() && GetPrivate(&v.toObject()) != nullptr;
   }
@@ -124,15 +122,14 @@ private:
 
     uint64_t size;
     if (NS_FAILED(blob->GetSize(&size))) {
-      ThrowDOMExceptionForNSResult(aCx, NS_ERROR_DOM_FILE_NOT_READABLE_ERR);
-      return false;
+      return Throw(aCx, NS_ERROR_DOM_FILE_NOT_READABLE_ERR);
     }
 
     aArgs.rval().setNumber(double(size));
     return true;
   }
 
-  static JSBool
+  static bool
   GetSize(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
   {
     JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
@@ -144,14 +141,11 @@ private:
   {
     JS::Rooted<JSObject*> obj(aCx, &aArgs.thisv().toObject());
     nsIDOMBlob* blob = GetInstancePrivate(aCx, obj, "type");
-    if (!blob) {
-      return false;
-    }
+    MOZ_ASSERT(blob);
 
     nsString type;
     if (NS_FAILED(blob->GetType(type))) {
-      ThrowDOMExceptionForNSResult(aCx, NS_ERROR_DOM_FILE_NOT_READABLE_ERR);
-      return false;
+      return Throw(aCx, NS_ERROR_DOM_FILE_NOT_READABLE_ERR);
     }
 
     JSString* jsType = JS_NewUCStringCopyN(aCx, type.get(), type.Length());
@@ -163,14 +157,14 @@ private:
     return true;
   }
 
-  static JSBool
+  static bool
   GetType(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
   {
     JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
     return JS::CallNonGenericMethod<IsBlob, GetTypeImpl>(aCx, args);
   }
 
-  static JSBool
+  static bool
   Slice(JSContext* aCx, unsigned aArgc, jsval* aVp)
   {
     JS::Rooted<JSObject*> obj(aCx, JS_THIS_OBJECT(aCx, aVp));
@@ -201,8 +195,7 @@ private:
                               static_cast<uint64_t>(end),
                               contentType, optionalArgc,
                               getter_AddRefs(rtnBlob)))) {
-      ThrowDOMExceptionForNSResult(aCx, NS_ERROR_DOM_FILE_NOT_READABLE_ERR);
-      return false;
+      return Throw(aCx, NS_ERROR_DOM_FILE_NOT_READABLE_ERR);
     }
 
     JSObject* rtnObj = file::CreateBlob(aCx, rtnBlob);
@@ -215,7 +208,7 @@ private:
   }
 };
 
-JSClass Blob::sClass = {
+const JSClass Blob::sClass = {
   "Blob",
   JSCLASS_HAS_PRIVATE,
   JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
@@ -239,7 +232,7 @@ class File : public Blob
   File();
   ~File();
 
-  static JSClass sClass;
+  static const JSClass sClass;
   static const JSPropertySpec sProperties[];
 
 public:
@@ -267,7 +260,7 @@ public:
   GetPrivate(JSObject* aObj)
   {
     if (aObj) {
-      JSClass* classPtr = JS_GetClass(aObj);
+      const JSClass* classPtr = JS_GetClass(aObj);
       if (classPtr == &sClass) {
         nsISupports* priv = static_cast<nsISupports*>(JS_GetPrivate(aObj));
         nsCOMPtr<nsIDOMFile> file = do_QueryInterface(priv);
@@ -278,7 +271,7 @@ public:
     return NULL;
   }
 
-  static JSClass*
+  static const JSClass*
   Class()
   {
     return &sClass;
@@ -299,7 +292,7 @@ private:
     return NULL;
   }
 
-  static JSBool
+  static bool
   Construct(JSContext* aCx, unsigned aArgc, jsval* aVp)
   {
     JS_ReportErrorNumber(aCx, js_GetErrorMessage, NULL, JSMSG_WRONG_CONSTRUCTOR,
@@ -317,7 +310,7 @@ private:
   }
 
   static bool
-  IsFile(const JS::Value& v)
+  IsFile(JS::Handle<JS::Value> v)
   {
     return v.isObject() && GetPrivate(&v.toObject()) != nullptr;
   }
@@ -333,8 +326,7 @@ private:
 
     if (GetWorkerPrivateFromContext(aCx)->UsesSystemPrincipal() &&
         NS_FAILED(file->GetMozFullPathInternal(fullPath))) {
-      ThrowDOMExceptionForNSResult(aCx, NS_ERROR_DOM_FILE_NOT_READABLE_ERR);
-      return false;
+      return Throw(aCx, NS_ERROR_DOM_FILE_NOT_READABLE_ERR);
     }
 
     JSString* jsFullPath = JS_NewUCStringCopyN(aCx, fullPath.get(),
@@ -347,7 +339,7 @@ private:
     return true;
   }
 
-  static JSBool
+  static bool
   GetMozFullPath(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
   {
     JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
@@ -375,11 +367,39 @@ private:
     return true;
   }
 
-  static JSBool
+  static bool
   GetName(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
   {
     JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
     return JS::CallNonGenericMethod<IsFile, GetNameImpl>(aCx, args);
+  }
+
+  static bool
+  GetPathImpl(JSContext* aCx, JS::CallArgs aArgs)
+  {
+    JS::Rooted<JSObject*> obj(aCx, &aArgs.thisv().toObject());
+    nsIDOMFile* file = GetInstancePrivate(aCx, obj, "path");
+    MOZ_ASSERT(file);
+
+    nsString path;
+    if (NS_FAILED(file->GetPath(path))) {
+      path.Truncate();
+    }
+
+    JSString* jsPath = JS_NewUCStringCopyN(aCx, path.get(), path.Length());
+    if (!jsPath) {
+      return false;
+    }
+
+    aArgs.rval().setString(jsPath);
+    return true;
+  }
+
+  static bool
+  GetPath(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
+  {
+    JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
+    return JS::CallNonGenericMethod<IsFile, GetPathImpl>(aCx, args);
   }
 
   static bool
@@ -398,7 +418,7 @@ private:
     return true;
   }
 
-  static JSBool
+  static bool
   GetLastModifiedDate(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
   {
     JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
@@ -406,7 +426,7 @@ private:
   }
 };
 
-JSClass File::sClass = {
+const JSClass File::sClass = {
   "File",
   JSCLASS_HAS_PRIVATE,
   JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
@@ -415,6 +435,7 @@ JSClass File::sClass = {
 
 const JSPropertySpec File::sProperties[] = {
   JS_PSGS("name", GetName, GetterOnlyJSNative, JSPROP_ENUMERATE),
+  JS_PSGS("path", GetPath, GetterOnlyJSNative, JSPROP_ENUMERATE),
   JS_PSGS("lastModifiedDate", GetLastModifiedDate, GetterOnlyJSNative,
           JSPROP_ENUMERATE),
   JS_PSGS("mozFullPath", GetMozFullPath, GetterOnlyJSNative, JSPROP_ENUMERATE),
@@ -425,7 +446,7 @@ nsIDOMBlob*
 Blob::GetPrivate(JSObject* aObj)
 {
   if (aObj) {
-    JSClass* classPtr = JS_GetClass(aObj);
+    const JSClass* classPtr = JS_GetClass(aObj);
     if (classPtr == &sClass || classPtr == File::Class()) {
       nsISupports* priv = static_cast<nsISupports*>(JS_GetPrivate(aObj));
       nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(priv);

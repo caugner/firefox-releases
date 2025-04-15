@@ -64,8 +64,20 @@ XPCOMUtils.defineLazyModuleGetter(this, "OS",
                                   "resource://gre/modules/osfile.jsm")
 XPCOMUtils.defineLazyModuleGetter(this, "Promise",
                                   "resource://gre/modules/commonjs/sdk/core/promise.js");
+XPCOMUtils.defineLazyModuleGetter(this, "Services",
+                                  "resource://gre/modules/Services.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Task",
                                   "resource://gre/modules/Task.jsm");
+
+XPCOMUtils.defineLazyServiceGetter(this, "gDownloadHistory",
+           "@mozilla.org/browser/download-history;1",
+           Ci.nsIDownloadHistory);
+XPCOMUtils.defineLazyServiceGetter(this, "gExternalAppLauncher",
+           "@mozilla.org/uriloader/external-helper-app-service;1",
+           Ci.nsPIExternalAppLauncher);
+XPCOMUtils.defineLazyServiceGetter(this, "gExternalHelperAppService",
+           "@mozilla.org/uriloader/external-helper-app-service;1",
+           Ci.nsIExternalHelperAppService);
 
 const BackgroundFileSaverStreamListener = Components.Constructor(
       "@mozilla.org/network/background-file-saver;1?mode=streamlistener",
@@ -79,6 +91,43 @@ function isString(aValue) {
   return (typeof aValue == "string") ||
          (typeof aValue == "object" && "charAt" in aValue);
 }
+
+/**
+ * Serialize the unknown properties of aObject into aSerializable.
+ */
+function serializeUnknownProperties(aObject, aSerializable)
+{
+  if (aObject._unknownProperties) {
+    for (let property in aObject._unknownProperties) {
+      aSerializable[property] = aObject._unknownProperties[property];
+    }
+  }
+}
+
+/**
+ * Check for any unknown properties in aSerializable and preserve those in the
+ * _unknownProperties field of aObject. aFilterFn is called for each property
+ * name of aObject and should return true only for unknown properties.
+ */
+function deserializeUnknownProperties(aObject, aSerializable, aFilterFn)
+{
+  for (let property in aSerializable) {
+    if (aFilterFn(property)) {
+      if (!aObject._unknownProperties) {
+        aObject._unknownProperties = { };
+      }
+
+      aObject._unknownProperties[property] = aSerializable[property];
+    }
+  }
+}
+
+/**
+ * This determines the minimum time interval between updates to the number of
+ * bytes transferred, and is a limiting factor to the sequence of readings used
+ * in calculating the speed of the download.
+ */
+const kProgressUpdateIntervalMs = 400;
 
 ////////////////////////////////////////////////////////////////////////////////
 //// Download
@@ -184,12 +233,19 @@ Download.prototype = {
   currentBytes: 0,
 
   /**
+   * Fractional number representing the speed of the download, in bytes per
+   * second.  This value is zero when the download is stopped, and may be
+   * updated regardless of the value of hasProgress.
+   */
+  speed: 0,
+
+  /**
    * Indicates whether, at this time, there is any partially downloaded data
    * that can be used when restarting a failed or canceled download.
    *
    * This property is relevant while the download is in progress, and also if it
    * failed or has been canceled.  If the download has been completed
-   * successfully, this property is not relevant anymore.
+   * successfully, this property is always false.
    *
    * Whether partial data can actually be retained depends on the saver and the
    * download source, and may not be known before the download is started.
@@ -302,6 +358,9 @@ Download.prototype = {
     let currentAttempt = deferAttempt.promise;
     this._currentAttempt = currentAttempt;
 
+    // Restart the progress and speed calculations from scratch.
+    this._lastProgressTimeMs = 0;
+
     // This function propagates progress from the DownloadSaver object, unless
     // it comes in late from a download attempt that was replaced by a new one.
     function DS_setProgressBytes(aCurrentBytes, aTotalBytes, aHasPartialData)
@@ -365,6 +424,7 @@ Download.prototype = {
         // Update the status properties for a successful download.
         this.progress = 100;
         this.succeeded = true;
+        this.hasPartialData = false;
       } catch (ex) {
         // Fail with a generic status code on cancellation, so that the caller
         // is forced to actually check the status properties to see if the
@@ -387,12 +447,26 @@ Download.prototype = {
         if (this._currentAttempt == currentAttempt || !this._currentAttempt) {
           this._currentAttempt = null;
           this.stopped = true;
+          this.speed = 0;
           this._notifyChange();
           if (this.succeeded) {
+            yield DownloadIntegration.downloadDone(this);
+
             this._deferSucceeded.resolve();
 
             if (this.launchWhenSucceeded) {
               this.launch().then(null, Cu.reportError);
+
+              // Always schedule files to be deleted at the end of the private browsing
+              // mode, regardless of the value of the pref.
+              if (this.source.isPrivate) {
+                gExternalAppLauncher.deleteTemporaryPrivateFileWhenPossible(
+                                     new FileUtils.File(this.target.path));
+              } else if (Services.prefs.getBoolPref(
+                          "browser.helperApps.deleteTempFileOnExit")) {
+                gExternalAppLauncher.deleteTemporaryFileOnExit(
+                                     new FileUtils.File(this.target.path));
+              }
             }
           }
         }
@@ -605,6 +679,47 @@ Download.prototype = {
   },
 
   /**
+   * Updates the state of a finished, failed, or canceled download based on the
+   * current state in the file system.  If the download is in progress or it has
+   * been finalized, this method has no effect, and it returns a resolved
+   * promise.
+   *
+   * This allows the properties of the download to be updated in case the user
+   * moved or deleted the target file or its associated ".part" file.
+   *
+   * @return {Promise}
+   * @resolves When the operation has completed.
+   * @rejects Never.
+   */
+  refresh: function ()
+  {
+    return Task.spawn(function () {
+      if (!this.stopped || this._finalized) {
+        return;
+      }
+
+      // Update the current progress from disk if we retained partial data.
+      if (this.hasPartialData && this.target.partFilePath) {
+        let stat = yield OS.File.stat(this.target.partFilePath);
+
+        // Ignore the result if the state has changed meanwhile.
+        if (!this.stopped || this._finalized) {
+          return;
+        }
+
+        // Update the bytes transferred and the related progress properties.
+        this.currentBytes = stat.size;
+        if (this.totalBytes > 0) {
+          this.hasProgress = true;
+          this.progress = Math.floor(this.currentBytes /
+                                         this.totalBytes * 100);
+        }
+        this._notifyChange();
+      }
+    }.bind(this)).then(null, Cu.reportError);
+  },
+
+  /**
    * True if the "finalize" method has been called.  This prevents the download
    * from starting again after having been stopped.
    */
@@ -647,7 +762,18 @@ Download.prototype = {
   },
 
   /**
+   * Indicates the time of the last progress notification, expressed as the
+   * number of milliseconds since January 1, 1970, 00:00:00 UTC.  This is zero
+   * until some bytes have actually been transferred.
+   */
+  _lastProgressTimeMs: 0,
+
+  /**
    * Updates progress notifications based on the number of bytes transferred.
+   *
+   * The number of bytes transferred is not updated unless enough time passed
+   * since this function was last called.  This limits the computation load, in
+   * particular when the listeners update the user interface in response.
    *
    * @param aCurrentBytes
    *        Number of bytes transferred until now.
@@ -658,16 +784,57 @@ Download.prototype = {
    *        restarting the download if it fails or is canceled.
    */
   _setBytes: function D_setBytes(aCurrentBytes, aTotalBytes, aHasPartialData) {
-    this.currentBytes = aCurrentBytes;
+    let changeMade = (this.hasPartialData != aHasPartialData);
     this.hasPartialData = aHasPartialData;
-    if (aTotalBytes != -1) {
+
+    // Unless aTotalBytes is -1, we can report partial download progress.  In
+    // this case, notify when the related properties changed since last time.
+    if (aTotalBytes != -1 && (!this.hasProgress ||
+                              this.totalBytes != aTotalBytes)) {
       this.hasProgress = true;
       this.totalBytes = aTotalBytes;
-      if (aTotalBytes > 0) {
-        this.progress = Math.floor(aCurrentBytes / aTotalBytes * 100);
+      changeMade = true;
+    }
+
+    // Updating the progress and computing the speed require that enough time
+    // passed since the last update, or that we haven't started throttling yet.
+    let currentTimeMs = Date.now();
+    let intervalMs = currentTimeMs - this._lastProgressTimeMs;
+    if (intervalMs >= kProgressUpdateIntervalMs) {
+      // Don't compute the speed unless we started throttling notifications.
+      if (this._lastProgressTimeMs != 0) {
+        // Calculate the speed in bytes per second.
+        let rawSpeed = (aCurrentBytes - this.currentBytes) / intervalMs * 1000;
+        if (this.speed == 0) {
+          // When the previous speed is exactly zero instead of a fractional
+          // number, this can be considered the first element of the series.
+          this.speed = rawSpeed;
+        } else {
+          // Apply exponential smoothing, with a smoothing factor of 0.1.
+          this.speed = rawSpeed * 0.1 + this.speed * 0.9;
+        }
+      }
+
+      // Start throttling notifications only when we have actually received some
+      // bytes for the first time.  The timing of the first part of the download
+      // is not reliable, due to possible latency in the initial notifications.
+      // This also allows automated tests to receive and verify the number of
+      // bytes initially transferred.
+      if (aCurrentBytes > 0) {
+        this._lastProgressTimeMs = currentTimeMs;
+
+        // Update the progress now that we don't need its previous value.
+        this.currentBytes = aCurrentBytes;
+        if (this.totalBytes > 0) {
+          this.progress = Math.floor(this.currentBytes / this.totalBytes * 100);
+        }
+        changeMade = true;
       }
     }
-    this._notifyChange();
+
+    if (changeMade) {
+      this._notifyChange();
+    }
   },
 
   /**
@@ -691,21 +858,60 @@ Download.prototype = {
       serializable.saver = saver;
     }
 
-    if (this.launcherPath) {
-      serializable.launcherPath = this.launcherPath;
+    if (this.error && ("message" in this.error)) {
+      serializable.error = { message: this.error.message };
     }
 
-    if (this.launchWhenSucceeded) {
-      serializable.launchWhenSucceeded = true;
+    if (this.startTime) {
+      serializable.startTime = this.startTime.toJSON();
     }
 
-    if (this.contentType) {
-      serializable.contentType = this.contentType;
+    // These are serialized unless they are false, null, or empty strings.
+    for (let property of kSerializableDownloadProperties) {
+      if (property != "error" && property != "startTime" && this[property]) {
+        serializable[property] = this[property];
+      }
     }
+
+    serializeUnknownProperties(this, serializable);
 
     return serializable;
   },
+
+  /**
+   * Returns a value that changes only when one of the properties of a Download
+   * object that should be saved into a file also change.  This excludes
+   * properties whose value doesn't usually change during the download lifetime.
+   *
+   * This function is used to determine whether the download should be
+   * serialized after a property change notification has been received.
+   *
+   * @return String representing the relevant download state.
+   */
+  getSerializationHash: function ()
+  {
+    // The "succeeded", "canceled", "error", and startTime properties are not
+    // taken into account because they all change before the "stopped" property
+    // changes, and are not altered in other cases.
+    return this.stopped + "," + this.totalBytes + "," + this.hasPartialData +
+           "," + this.contentType;
+  },
 };
+
+/**
+ * Defines which properties of the Download object are serializable.
+ */
+const kSerializableDownloadProperties = [
+  "succeeded",
+  "canceled",
+  "error",
+  "totalBytes",
+  "hasPartialData",
+  "tryToKeepPartialData",
+  "launcherPath",
+  "launchWhenSucceeded",
+  "contentType",
+];
 
 /**
  * Creates a new Download object from a serializable representation.  This
@@ -746,17 +952,25 @@ Download.fromSerializable = function (aSerializable) {
   }
   download.saver.download = download;
 
-  if ("launchWhenSucceeded" in aSerializable) {
-    download.launchWhenSucceeded = !!aSerializable.launchWhenSucceeded;
+  if ("startTime" in aSerializable) {
+    let time = aSerializable.startTime.getTime
+             ? aSerializable.startTime.getTime()
+             : aSerializable.startTime;
+    download.startTime = new Date(time);
   }
 
-  if ("contentType" in aSerializable) {
-    download.contentType = aSerializable.contentType;
+  for (let property of kSerializableDownloadProperties) {
+    if (property in aSerializable) {
+      download[property] = aSerializable[property];
+    }
   }
 
-  if ("launcherPath" in aSerializable) {
-    download.launcherPath = aSerializable.launcherPath;
-  }
+  deserializeUnknownProperties(download, aSerializable, property =>
+    kSerializableDownloadProperties.indexOf(property) == -1 &&
+    property != "startTime" &&
+    property != "source" &&
+    property != "target" &&
+    property != "saver");
 
   return download;
 };
@@ -796,7 +1010,7 @@ DownloadSource.prototype = {
   toSerializable: function ()
   {
     // Simplify the representation if we don't have other details.
-    if (!this.isPrivate && !this.referrer) {
+    if (!this.isPrivate && !this.referrer && !this._unknownProperties) {
       return this.url;
     }
 
@@ -807,6 +1021,8 @@ DownloadSource.prototype = {
     if (this.referrer) {
       serializable.referrer = this.referrer;
     }
+
+    serializeUnknownProperties(this, serializable);
     return serializable;
   },
 };
@@ -845,7 +1061,11 @@ DownloadSource.fromSerializable = function (aSerializable) {
     if ("referrer" in aSerializable) {
       source.referrer = aSerializable.referrer;
     }
+
+    deserializeUnknownProperties(source, aSerializable, property =>
+      property != "url" && property != "isPrivate" && property != "referrer");
   }
+
   return source;
 };
 
@@ -879,12 +1099,14 @@ DownloadTarget.prototype = {
   toSerializable: function ()
   {
     // Simplify the representation if we don't have other details.
-    if (!this.partFilePath) {
+    if (!this.partFilePath && !this._unknownProperties) {
       return this.path;
     }
 
-    return { path: this.path,
-             partFilePath: this.partFilePath };
+    let serializable = { path: this.path,
+                         partFilePath: this.partFilePath };
+    serializeUnknownProperties(this, serializable);
+    return serializable;
   },
 };
 
@@ -897,6 +1119,7 @@ DownloadTarget.prototype = {
  *        object with the following properties:
  *        {
  *          path: String containing the path of the target file.
+ *          partFilePath: optional string containing the part file path.
  *        }
  *
  * @return The newly created DownloadTarget object.
@@ -916,6 +1139,9 @@ DownloadTarget.fromSerializable = function (aSerializable) {
     if ("partFilePath" in aSerializable) {
       target.partFilePath = aSerializable.partFilePath;
     }
+
+    deserializeUnknownProperties(target, aSerializable, property =>
+      property != "path" && property != "partFilePath");
   }
   return target;
 };
@@ -949,7 +1175,7 @@ function DownloadError(aResult, aMessage, aInferCause)
   if (aMessage) {
     this.message = aMessage;
   } else {
-    let exception = new Components.Exception(this.result);
+    let exception = new Components.Exception("", this.result);
     this.message = exception.toString();
   }
   if (aInferCause) {
@@ -1060,6 +1286,30 @@ DownloadSaver.prototype = {
   },
 
   /**
+   * This can be called by the saver implementation when the download is already
+   * started, to add it to the browsing history.  This method has no effect if
+   * the download is private.
+   */
+  addToHistory: function ()
+  {
+    if (this.download.source.isPrivate) {
+      return;
+    }
+
+    let sourceUri = NetUtil.newURI(this.download.source.url);
+    let referrer = this.download.source.referrer;
+    let referrerUri = referrer ? NetUtil.newURI(referrer) : null;
+    let targetUri = NetUtil.newURI(new FileUtils.File(
+                                       this.download.target.path));
+
+    // The start time is always available when we reach this point.
+    let startPRTime = this.download.startTime.getTime() * 1000;
+
+    gDownloadHistory.addDownload(sourceUri, referrerUri, startPRTime,
+                                 targetUri);
+  },
+
+  /**
    * Returns a static representation of the current object state.
    *
    * @return A JavaScript object that can be serialized to JSON.
@@ -1121,6 +1371,18 @@ DownloadCopySaver.prototype = {
   _canceled: false,
 
   /**
+   * True if the associated download has already been added to browsing history.
+   */
+  alreadyAddedToHistory: false,
+
+  /**
+   * String corresponding to the entityID property of the nsIResumableChannel
+   * used to execute the download, or null if the channel was not resumable or
+   * the saver was instructed not to keep partially downloaded data.
+   */
+  entityID: null,
+
+  /**
    * Implements "DownloadSaver.execute".
    */
   execute: function DCS_execute(aSetProgressBytesFn, aSetPropertiesFn)
@@ -1135,6 +1397,16 @@ DownloadCopySaver.prototype = {
     let keepPartialData = download.tryToKeepPartialData;
 
     return Task.spawn(function task_DCS_execute() {
+      // Add the download to history the first time it is started in this
+      // session.  If the download is restarted in a different session, a new
+      // history visit will be added.  We do this just to avoid the complexity
+      // of serializing this state between sessions, since adding a new visit
+      // does not have any noticeable side effect.
+      if (!this.alreadyAddedToHistory) {
+        this.addToHistory();
+        this.alreadyAddedToHistory = true;
+      }
+
       // To reduce the chance that other downloads reuse the same final target
       // file name, we should create a placeholder as soon as possible, before
       // starting the network request.  The placeholder is also required in case
@@ -1243,6 +1515,24 @@ DownloadCopySaver.prototype = {
                 aSetProgressBytesFn(0, channel.contentLength);
               }
 
+              // If the URL we are downloading from includes a file extension
+              // that matches the "Content-Encoding" header, for example ".gz"
+              // with a "gzip" encoding, we should save the file in its encoded
+              // form.  In all other cases, we decode the body while saving.
+              if (channel instanceof Ci.nsIEncodedChannel &&
+                  channel.contentEncodings) {
+                let uri = channel.URI;
+                if (uri instanceof Ci.nsIURL && uri.fileExtension) {
+                  // Only the first, outermost encoding is considered.
+                  let encoding = channel.contentEncodings.getNext();
+                  if (encoding) {
+                    channel.applyConversion =
+                      gExternalHelperAppService.applyDecodingForExtension(
+                                                uri.fileExtension, encoding);
+                  }
+                }
+              }
+
               if (keepPartialData) {
                 // If the source is not resumable, don't keep partial data even
                 // if we were asked to try and do it.
@@ -1321,7 +1611,16 @@ DownloadCopySaver.prototype = {
         // background file saver may have already removed the file.
         try {
           yield OS.File.remove(targetPath);
-        } catch (e2 if e2 instanceof OS.File.Error && e2.becauseNoSuchFile) { }
+        } catch (e2) {
+          // If we failed during the operation, we report the error but use the
+          // original one as the failure reason of the download.  Note that on
+          // Windows we may get an access denied error instead of a no such file
+          // error if the file existed before, and was recently deleted.
+          if (!(e2 instanceof OS.File.Error &&
+                (e2.becauseNoSuchFile || e2.becauseAccessDenied))) {
+            Cu.reportError(e2);
+          }
+        }
         throw ex;
       }
     }.bind(this));
@@ -1358,8 +1657,15 @@ DownloadCopySaver.prototype = {
    */
   toSerializable: function ()
   {
-    // Simplify the representation since we don't have other details for now.
-    return "copy";
+    // Simplify the representation if we don't have other details.
+    if (!this.entityID && !this._unknownProperties) {
+      return "copy";
+    }
+
+    let serializable = { type: "copy",
+                         entityID: this.entityID };
+    serializeUnknownProperties(this, serializable);
+    return serializable;
   },
 };
 
@@ -1373,8 +1679,15 @@ DownloadCopySaver.prototype = {
  * @return The newly created DownloadCopySaver object.
  */
 DownloadCopySaver.fromSerializable = function (aSerializable) {
-  // We don't have other state details for now.
-  return new DownloadCopySaver();
+  let saver = new DownloadCopySaver();
+  if ("entityID" in aSerializable) {
+    saver.entityID = aSerializable.entityID;
+  }
+
+  deserializeUnknownProperties(saver, aSerializable, property =>
+    property != "entityID" && property != "type");
+
+  return saver;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1454,8 +1767,14 @@ DownloadLegacySaver.prototype = {
    *
    * @param aRequest
    *        nsIRequest associated to the status update.
+   * @param aAlreadyAddedToHistory
+   *        Indicates that the nsIExternalHelperAppService component already
+   *        added the download to the browsing history, unless it was started
+   *        from a private browsing window.  When this parameter is false, the
+   *        download is added to the browsing history here.  Private downloads
+   *        are never added to history even if this parameter is false.
    */
-  onTransferStarted: function (aRequest)
+  onTransferStarted: function (aRequest, aAlreadyAddedToHistory)
   {
     // Store the entity ID to use for resuming if required.
     if (this.download.tryToKeepPartialData &&
@@ -1465,6 +1784,15 @@ DownloadLegacySaver.prototype = {
         this.entityID = aRequest.entityID;
       } catch (ex if ex instanceof Components.Exception &&
                      ex.result == Cr.NS_ERROR_NOT_RESUMABLE) { }
+    }
+
+    // For legacy downloads, we must update the referrer at this time.
+    if (aRequest instanceof Ci.nsIHttpChannel && aRequest.referrer) {
+      this.download.source.referrer = aRequest.referrer.spec;
+    }
+
+    if (!aAlreadyAddedToHistory) {
+      this.addToHistory();
     }
   },
 
@@ -1505,6 +1833,13 @@ DownloadLegacySaver.prototype = {
   copySaver: null,
 
   /**
+   * String corresponding to the entityID property of the nsIResumableChannel
+   * used to execute the download, or null if the channel was not resumable or
+   * the saver was instructed not to keep partially downloaded data.
+   */
+  entityID: null,
+
+  /**
    * Implements "DownloadSaver.execute".
    */
   execute: function DLS_execute(aSetProgressBytesFn)
@@ -1516,6 +1851,7 @@ DownloadLegacySaver.prototype = {
         this.copySaver = new DownloadCopySaver();
         this.copySaver.download = this.download;
         this.copySaver.entityID = this.entityID;
+        this.copySaver.alreadyAddedToHistory = true;
       }
       return this.copySaver.execute.apply(this.copySaver, arguments);
     }
@@ -1555,6 +1891,23 @@ DownloadLegacySaver.prototype = {
             yield file.close();
           } catch (ex if ex instanceof OS.File.Error && ex.becauseExists) { }
         }
+      } catch (ex) {
+        // Ensure we always remove the final target file on failure,
+        // independently of which code path failed.  In some cases, the
+        // component executing the download may have already removed the file.
+        try {
+          yield OS.File.remove(this.download.target.path);
+        } catch (e2) {
+          // If we failed during the operation, we report the error but use the
+          // original one as the failure reason of the download.  Note that on
+          // Windows we may get an access denied error instead of a no such file
+          // error if the file existed before, and was recently deleted.
+          if (!(e2 instanceof OS.File.Error &&
+                (e2.becauseNoSuchFile || e2.becauseAccessDenied))) {
+            Cu.reportError(e2);
+          }
+        }
+        throw ex;
       } finally {
         // We don't need the reference to the request anymore.
         this.request = null;
@@ -1574,14 +1927,8 @@ DownloadLegacySaver.prototype = {
       return this.copySaver.cancel.apply(this.copySaver, arguments);
     }
 
-    // Synchronously cancel the operation as soon as the object is connected.
+    // Cancel the operation as soon as the object is connected.
     this.deferCanceled.resolve();
-
-    // We don't necessarily receive status notifications after we call "cancel",
-    // but cancellation through nsICancelable should be synchronous, thus force
-    // the rejection of the execution promise immediately.
-    this.deferExecuted.reject(new DownloadError(Cr.NS_ERROR_FAILURE,
-                                                "Download canceled."));
   },
 
   /**
@@ -1604,7 +1951,7 @@ DownloadLegacySaver.prototype = {
     // thus it cannot be rebuilt during deserialization.  To support resuming
     // across different browser sessions, this object is transformed into a
     // DownloadCopySaver for the purpose of serialization.
-    return "copy";
+    return DownloadCopySaver.prototype.toSerializable.call(this);
   },
 };
 

@@ -31,6 +31,11 @@
 
 using namespace mozilla;
 
+enum nsMixedContentBlockerMessageType {
+  eBlocked = 0x00,
+  eUserOverride = 0x01
+};
+
 // Is mixed script blocking (fonts, plugin content, scripts, stylesheets,
 // iframes, websockets, XHR) enabled?
 bool nsMixedContentBlocker::sBlockMixedScript = false;
@@ -147,22 +152,42 @@ nsMixedContentBlocker::~nsMixedContentBlocker()
 
 NS_IMPL_ISUPPORTS1(nsMixedContentBlocker, nsIContentPolicy)
 
-void
-LogBlockingMixedContent(MixedContentTypes classification,
-                        nsIURI* aContentLocation,
-                        nsIDocument* aRootDoc)
+static void
+LogMixedContentMessage(MixedContentTypes aClassification,
+                       nsIURI* aContentLocation,
+                       nsIDocument* aRootDoc,
+                       nsMixedContentBlockerMessageType aMessageType)
 {
+  nsAutoCString messageCategory;
+  uint32_t severityFlag;
+  nsAutoCString messageLookupKey;
+
+  if (aMessageType == eBlocked) {
+    severityFlag = nsIScriptError::errorFlag;
+    messageCategory.AssignLiteral("Mixed Content Blocker");
+    if (aClassification == eMixedDisplay) {
+      messageLookupKey.AssignLiteral("BlockMixedDisplayContent");
+    } else {
+      messageLookupKey.AssignLiteral("BlockMixedActiveContent");
+    }
+  } else {
+    severityFlag = nsIScriptError::warningFlag;
+    messageCategory.AssignLiteral("Mixed Content Message");
+    if (aClassification == eMixedDisplay) {
+      messageLookupKey.AssignLiteral("LoadingMixedDisplayContent");
+    } else {
+      messageLookupKey.AssignLiteral("LoadingMixedActiveContent");
+    }
+  }
+
   nsAutoCString locationSpec;
   aContentLocation->GetSpec(locationSpec);
   NS_ConvertUTF8toUTF16 locationSpecUTF16(locationSpec);
 
   const PRUnichar* strings[] = { locationSpecUTF16.get() };
-  nsContentUtils::ReportToConsole(nsIScriptError::errorFlag,
-                                  "Mixed Content Blocker",
-                                  aRootDoc,
+  nsContentUtils::ReportToConsole(severityFlag, messageCategory, aRootDoc,
                                   nsContentUtils::eSECURITY_PROPERTIES,
-                                  classification == eMixedDisplay ? "BlockMixedDisplayContent" : "BlockMixedActiveContent",
-                                  strings, ArrayLength(strings));
+                                  messageLookupKey.get(), strings, ArrayLength(strings));
 }
 
 NS_IMETHODIMP
@@ -317,54 +342,85 @@ nsMixedContentBlocker::ShouldLoad(uint32_t aContentType,
      return NS_OK;
   }
 
-  // We need aRequestingLocation to pull out the scheme. If it isn't passed
-  // in, get it from the aRequestingPricipal
-  if (!aRequestingLocation) {
-    if (!aRequestPrincipal) {
-      // If we don't have aRequestPrincipal, try getting it from the
-      // DOM node using aRequestingContext
-      nsCOMPtr<nsINode> node = do_QueryInterface(aRequestingContext);
-      if (node) {
-        aRequestPrincipal = node->NodePrincipal();
-      } else {
-        // Try using the window's script object principal if it's not a node.
-        nsCOMPtr<nsIScriptObjectPrincipal> scriptObjPrin = do_QueryInterface(aRequestingContext);
-        if (scriptObjPrin) {
-          aRequestPrincipal = scriptObjPrin->GetPrincipal();
-        }
-      }
-    }
-    if (aRequestPrincipal) {
-      nsCOMPtr<nsIURI> principalUri;
-      nsresult rvalue = aRequestPrincipal->GetURI(getter_AddRefs(principalUri));
-      if (NS_SUCCEEDED(rvalue)) {
-        aRequestingLocation = principalUri;
-      }
-    }
+  // Since there are cases where aRequestingLocation and aRequestPrincipal are
+  // definitely not the owning document, we try to ignore them by extracting the
+  // requestingLocation in the following order:
+  // 1) from the aRequestingContext, either extracting
+  //    a) the node's principal, or the
+  //    b) script object's principal.
+  // 2) if aRequestingContext yields a principal but no location, we check
+  //    if its the system principal. If it is, allow the load.
+  // 3) Special case handling for:
+  //    a) speculative loads, where shouldLoad is called twice (bug 839235)
+  //       and the first speculative load does not include a context.
+  //       In this case we use aRequestingLocation to set requestingLocation.
+  //    b) TYPE_CSP_REPORT which does not provide a context. In this case we
+  //       use aRequestingLocation to set requestingLocation.
+  //    c) content scripts from addon code that do not provide aRequestingContext
+  //       or aRequestingLocation, but do provide aRequestPrincipal.
+  //       If aRequestPrincipal is an expanded principal, we allow the load.
+  // 4) If we still end up not having a requestingLocation, we reject the load.
 
-    if (!aRequestingLocation) {
-      // If content scripts from an addon are causing this load, they have an
-      // ExpandedPrincipal instead of a Principal. This is pseudo-privileged code, so allow
-      // the load. Or if this is system principal, allow the load.
-      nsCOMPtr<nsIExpandedPrincipal> expanded = do_QueryInterface(aRequestPrincipal);
-      if (expanded || (aRequestPrincipal && nsContentUtils::IsSystemPrincipal(aRequestPrincipal))) {
-        *aDecision = ACCEPT;
-        return NS_OK;
-      } else {
-        // We still don't have a requesting location and there is no Expanded Principal.
-        // We can't tell if this is a mixed content load.  Deny to be safe.
-        *aDecision = REJECT_REQUEST;
-        return NS_OK;
-      }
+  nsCOMPtr<nsIPrincipal> principal;
+  // 1a) Try to get the principal if aRequestingContext is a node.
+  nsCOMPtr<nsINode> node = do_QueryInterface(aRequestingContext);
+  if (node) {
+    principal = node->NodePrincipal();
+  }
+
+  // 1b) Try using the window's script object principal if it's not a node.
+  if (!principal) {
+    nsCOMPtr<nsIScriptObjectPrincipal> scriptObjPrin = do_QueryInterface(aRequestingContext);
+    if (scriptObjPrin) {
+      principal = scriptObjPrin->GetPrincipal();
     }
+  }
+
+  nsCOMPtr<nsIURI> requestingLocation;
+  if (principal) {
+    principal->GetURI(getter_AddRefs(requestingLocation));
+  }
+
+  // 2) if aRequestingContext yields a principal but no location, we check if its a system principal.
+  if (principal && !requestingLocation) {
+    if (nsContentUtils::IsSystemPrincipal(principal)) {
+      *aDecision = ACCEPT;
+      return NS_OK;
+    }
+  }
+
+  // 3a,b) Special case handling for speculative loads and TYPE_CSP_REPORT. In
+  // such cases, aRequestingContext doesn't exist, so we use aRequestingLocation.
+  // Unfortunately we can not distinguish between speculative and normal loads here,
+  // otherwise we could special case this assignment.
+  if (!requestingLocation) {
+    requestingLocation = aRequestingLocation;
+  }
+
+  // 3c) Special case handling for content scripts from addons code, which only
+  // provide a aRequestPrincipal; aRequestingContext and aRequestingLocation are
+  // both null; if the aRequestPrincipal is an expandedPrincipal, we allow the load.
+  if (!principal && !requestingLocation && aRequestPrincipal) {
+    nsCOMPtr<nsIExpandedPrincipal> expanded = do_QueryInterface(aRequestPrincipal);
+    if (expanded) {
+      *aDecision = ACCEPT;
+      return NS_OK;
+    }
+  }
+
+  // 4) Giving up. We still don't have a requesting location, therefore we can't tell
+  //    if this is a mixed content load. Deny to be safe.
+  if (!requestingLocation) {
+    *aDecision = REJECT_REQUEST;
+    return NS_OK;
   }
 
   // Check the parent scheme. If it is not an HTTPS page then mixed content
   // restrictions do not apply.
   bool parentIsHttps;
-  nsresult rv = aRequestingLocation->SchemeIs("https", &parentIsHttps);
+  nsresult rv = requestingLocation->SchemeIs("https", &parentIsHttps);
   if (NS_FAILED(rv)) {
-    NS_ERROR("aRequestingLocation->SchemeIs failed");
+    NS_ERROR("requestingLocation->SchemeIs failed");
     *aDecision = REJECT_REQUEST;
     return NS_OK;
   }
@@ -453,15 +509,18 @@ nsMixedContentBlocker::ShouldLoad(uint32_t aContentType,
   // If the content is display content, and the pref says display content should be blocked, block it.
   if (sBlockMixedDisplay && classification == eMixedDisplay) {
     if (allowMixedContent) {
+      LogMixedContentMessage(classification, aContentLocation, rootDoc, eUserOverride);
       *aDecision = nsIContentPolicy::ACCEPT;
       rootDoc->SetHasMixedActiveContentLoaded(true);
       if (!rootDoc->GetHasMixedDisplayContentLoaded() && NS_SUCCEEDED(stateRV)) {
+        rootDoc->SetHasMixedDisplayContentLoaded(true);
         eventSink->OnSecurityChange(aRequestingContext, (State | nsIWebProgressListener::STATE_LOADED_MIXED_DISPLAY_CONTENT));
       }
     } else {
       *aDecision = nsIContentPolicy::REJECT_REQUEST;
-      LogBlockingMixedContent(classification, aContentLocation, rootDoc);
+      LogMixedContentMessage(classification, aContentLocation, rootDoc, eBlocked);
       if (!rootDoc->GetHasMixedDisplayContentBlocked() && NS_SUCCEEDED(stateRV)) {
+        rootDoc->SetHasMixedDisplayContentBlocked(true);
         eventSink->OnSecurityChange(aRequestingContext, (State | nsIWebProgressListener::STATE_BLOCKED_MIXED_DISPLAY_CONTENT));
       }
     }
@@ -471,6 +530,7 @@ nsMixedContentBlocker::ShouldLoad(uint32_t aContentType,
     // If the content is active content, and the pref says active content should be blocked, block it
     // unless the user has choosen to override the pref
     if (allowMixedContent) {
+       LogMixedContentMessage(classification, aContentLocation, rootDoc, eUserOverride);
        *aDecision = nsIContentPolicy::ACCEPT;
        // See if the pref will change here. If it will, only then do we need to call OnSecurityChange() to update the UI.
        if (rootDoc->GetHasMixedActiveContentLoaded()) {
@@ -501,7 +561,7 @@ nsMixedContentBlocker::ShouldLoad(uint32_t aContentType,
     } else {
        //User has not overriden the pref by Disabling protection. Reject the request and update the security state.
        *aDecision = nsIContentPolicy::REJECT_REQUEST;
-       LogBlockingMixedContent(classification, aContentLocation, rootDoc);
+       LogMixedContentMessage(classification, aContentLocation, rootDoc, eBlocked);
        // See if the pref will change here. If it will, only then do we need to call OnSecurityChange() to update the UI.
        if (rootDoc->GetHasMixedActiveContentBlocked()) {
          return NS_OK;
@@ -518,6 +578,9 @@ nsMixedContentBlocker::ShouldLoad(uint32_t aContentType,
 
   } else {
     // The content is not blocked by the mixed content prefs.
+
+    // Log a message that we are loading mixed content.
+    LogMixedContentMessage(classification, aContentLocation, rootDoc, eUserOverride);
 
     // Fire the event from a script runner as it is unsafe to run script
     // from within ShouldLoad

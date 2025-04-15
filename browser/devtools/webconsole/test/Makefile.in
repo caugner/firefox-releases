@@ -2,14 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH			= @DEPTH@
-topsrcdir	= @top_srcdir@
-srcdir		= @srcdir@
-VPATH			= @srcdir@
-relativesrcdir  = @relativesrcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
 MOCHITEST_BROWSER_FILES = \
 	browser_webconsole_notifications.js \
 	browser_webconsole_message_node_id.js \
@@ -28,18 +20,14 @@ MOCHITEST_BROWSER_FILES = \
 	browser_webconsole_execution_scope.js \
 	browser_webconsole_for_of.js \
 	browser_webconsole_history.js \
-	browser_webconsole_js_input_and_output_styling.js \
 	browser_webconsole_js_input_expansion.js \
 	browser_webconsole_live_filtering_of_message_types.js \
 	browser_webconsole_live_filtering_on_search_strings.js \
 	browser_warn_user_about_replaced_api.js \
-	browser_webconsole_copying_multiple_messages_inserts_newlines_in_between.js \
 	browser_webconsole_bug_586388_select_all.js  \
 	browser_webconsole_bug_588967_input_expansion.js \
-	browser_webconsole_log_node_classes.js \
 	browser_webconsole_network_panel.js \
 	browser_webconsole_jsterm.js \
-	browser_webconsole_null_and_undefined_output.js \
 	browser_webconsole_output_order.js \
 	browser_webconsole_property_provider.js \
 	browser_webconsole_bug_587617_output_copy.js \
@@ -81,7 +69,6 @@ MOCHITEST_BROWSER_FILES = \
 	browser_webconsole_bug_632817.js \
 	browser_webconsole_bug_611795.js \
 	browser_webconsole_bug_618311_close_panels.js \
-	browser_webconsole_bug_626484_output_copy_order.js \
 	browser_webconsole_bug_632347_iterators_generators.js \
 	browser_webconsole_bug_642108_pruneTest.js \
 	browser_webconsole_bug_585956_console_trace.js \
@@ -145,6 +132,11 @@ MOCHITEST_BROWSER_FILES = \
 	browser_webconsole_bug_686937_autocomplete_JSTerm_helpers.js \
 	browser_webconsole_cached_autocomplete.js \
 	browser_console_navigation_marker.js \
+	browser_webconsole_bug_762593_insecure_passwords_web_console_warning.js \
+	browser_webconsole_bug_762593_insecure_passwords_about_blank_web_console_warning.js \
+	browser_webconsole_allow_mixedcontent_securityerrors.js \
+	browser_webconsole_block_mixedcontent_securityerrors.js \
+	browser_webconsole_output_copy_newlines.js \
 	head.js \
 	$(NULL)
 
@@ -244,10 +236,13 @@ MOCHITEST_BROWSER_FILES += \
 	test-bug-837351-security-errors.html \
 	test-bug-869003-top-window.html \
 	test-bug-869003-iframe.html \
+	test-iframe-762593-insecure-form-action.html \
+	test-iframe-762593-insecure-frame.html \
+	test-bug-762593-insecure-passwords-web-console-warning.html \
+	test-bug-762593-insecure-passwords-about-blank-web-console-warning.html \
 	test-consoleiframes.html \
 	test-iframe1.html \
 	test-iframe2.html \
 	test-iframe3.html \
+	test-mixedcontent-securityerrors.html \
 	$(NULL)
-
-include $(topsrcdir)/config/rules.mk

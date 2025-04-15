@@ -9,7 +9,6 @@
 #include "mozilla/dom/ArchiveRequestBinding.h"
 #include "nsContentUtils.h"
 #include "nsCxPusher.h"
-#include "nsLayoutStatics.h"
 #include "nsEventDispatcher.h"
 
 USING_FILE_NAMESPACE
@@ -55,7 +54,6 @@ ArchiveRequest::ArchiveRequest(nsIDOMWindow* aWindow,
   MOZ_ASSERT(aReader);
 
   MOZ_COUNT_CTOR(ArchiveRequest);
-  nsLayoutStatics::AddRef();
 
   /* An event to make this request asynchronous: */
   nsRefPtr<ArchiveRequestEvent> event = new ArchiveRequestEvent(this);
@@ -65,7 +63,6 @@ ArchiveRequest::ArchiveRequest(nsIDOMWindow* aWindow,
 ArchiveRequest::~ArchiveRequest()
 {
   MOZ_COUNT_DTOR(ArchiveRequest);
-  nsLayoutStatics::Release();
 }
 
 nsresult
@@ -138,7 +135,7 @@ ArchiveRequest::ReaderReady(nsTArray<nsCOMPtr<nsIDOMFile> >& aFileList,
   AutoPushJSContext cx(sc->GetNativeContext());
   NS_ASSERTION(cx, "Failed to get a context!");
 
-  JS::Rooted<JSObject*> global(cx, sc->GetNativeGlobal());
+  JS::Rooted<JSObject*> global(cx, sc->GetWindowProxy());
   NS_ASSERTION(global, "Failed to get global object!");
 
   JSAutoCompartment ac(cx, global);
@@ -196,7 +193,7 @@ ArchiveRequest::GetFilenamesResult(JSContext* aCx,
 
     JS::Rooted<JS::Value> item(aCx, STRING_TO_JSVAL(str));
 
-    if (NS_FAILED(rv) || !JS_SetElement(aCx, array, i, item.address())) {
+    if (NS_FAILED(rv) || !JS_SetElement(aCx, array, i, &item)) {
       return NS_ERROR_FAILURE;
     }
   }
@@ -249,7 +246,7 @@ ArchiveRequest::GetFilesResult(JSContext* aCx,
     nsresult rv = nsContentUtils::WrapNative(aCx, global, file,
                                              &NS_GET_IID(nsIDOMFile),
                                              value.address());
-    if (NS_FAILED(rv) || !JS_SetElement(aCx, array, i, value.address())) {
+    if (NS_FAILED(rv) || !JS_SetElement(aCx, array, i, &value)) {
       return NS_ERROR_FAILURE;
     }
   }

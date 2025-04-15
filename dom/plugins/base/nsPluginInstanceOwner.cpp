@@ -57,6 +57,8 @@ using mozilla::DefaultXDisplay;
 #include "nsIScrollableFrame.h"
 #include "nsIDocShell.h"
 #include "ImageContainer.h"
+#include "nsIDOMHTMLCollection.h"
+#include "GLContext.h"
 
 #include "nsContentCID.h"
 #include "nsWidgetsCID.h"
@@ -169,7 +171,7 @@ nsPluginInstanceOwner::GetImageContainer()
 
   SharedTextureImage::Data data;
   data.mHandle = mInstance->CreateSharedHandle();
-  data.mShareType = mozilla::gl::GLContext::SameProcess;
+  data.mShareType = mozilla::gl::SameProcess;
   data.mInverted = mInstance->Inverted();
 
   LayoutDeviceRect r = GetPluginRect();
@@ -941,10 +943,9 @@ NS_IMETHODIMP nsPluginInstanceOwner::GetDocumentEncoding(const char* *result)
   } else {
     if (!gCharsetMap) {
       const int NUM_CHARSETS = sizeof(charsets) / sizeof(moz2javaCharset);
-      gCharsetMap = new nsDataHashtable<nsDepCharHashKey, const char*>();
+      gCharsetMap = new nsDataHashtable<nsDepCharHashKey, const char*>(NUM_CHARSETS);
       if (!gCharsetMap)
         return NS_ERROR_OUT_OF_MEMORY;
-      gCharsetMap->Init(NUM_CHARSETS);
       for (uint16_t i = 0; i < NUM_CHARSETS; i++) {
         gCharsetMap->Put(charsets[i].mozName, charsets[i].javaName);
       }
@@ -1100,10 +1101,10 @@ nsresult nsPluginInstanceOwner::EnsureCachedAttrParamArrays()
           }
           if (domapplet || domobject) {
             if (domapplet) {
-              parent = domapplet;
+              parent = do_QueryInterface(domapplet);
             }
             else {
-              parent = domobject;
+              parent = do_QueryInterface(domobject);
             }
             nsCOMPtr<nsIDOMNode> mydomNode = do_QueryInterface(mydomElement);
             if (parent == mydomNode) {
@@ -1680,10 +1681,10 @@ already_AddRefed<ImageContainer> nsPluginInstanceOwner::GetImageContainerForVide
 
   SharedTextureImage::Data data;
 
-  data.mShareType = gl::GLContext::SameProcess;
+  data.mShareType = gl::SameProcess;
   data.mHandle = mInstance->GLContext()->CreateSharedHandle(data.mShareType,
                                                             aVideoInfo->mSurfaceTexture,
-                                                            gl::GLContext::SurfaceTexture);
+                                                            gl::SurfaceTexture);
 
   // The logic below for Honeycomb is just a guess, but seems to work. We don't have a separate
   // inverted flag for video.
@@ -1796,24 +1797,6 @@ nsresult nsPluginInstanceOwner::DispatchFocusToPlugin(nsIDOMEvent* aFocusEvent)
   
   return NS_OK;
 }    
-
-#if defined(MOZ_WIDGET_QT) && (MOZ_PLATFORM_MAEMO == 6)
-nsresult nsPluginInstanceOwner::Text(nsIDOMEvent* aTextEvent)
-{
-  if (mInstance) {
-    nsEvent *event = aTextEvent->GetInternalNSEvent();
-    if (event && event->eventStructType == NS_TEXT_EVENT) {
-      nsEventStatus rv = ProcessEvent(*static_cast<nsGUIEvent*>(event));
-      if (nsEventStatus_eConsumeNoDefault == rv) {
-        aTextEvent->PreventDefault();
-        aTextEvent->StopPropagation();
-      }
-    }
-  }
-
-  return NS_OK;
-}
-#endif
 
 nsresult nsPluginInstanceOwner::ProcessKeyPress(nsIDOMEvent* aKeyEvent)
 {
@@ -1952,11 +1935,6 @@ nsPluginInstanceOwner::HandleEvent(nsIDOMEvent* aEvent)
   if (eventType.EqualsLiteral("keypress")) {
     return ProcessKeyPress(aEvent);
   }
-#if defined(MOZ_WIDGET_QT) && (MOZ_PLATFORM_MAEMO == 6)
-  if (eventType.EqualsLiteral("text")) {
-    return Text(aEvent);
-  }
-#endif
 
   nsCOMPtr<nsIDOMDragEvent> dragEvent(do_QueryInterface(aEvent));
   if (dragEvent && mInstance) {
@@ -2395,29 +2373,10 @@ nsEventStatus nsPluginInstanceOwner::ProcessEvent(const nsGUIEvent& anEvent)
           // DOMKeyCodeToGdkKeyCode(keyEvent.keyCode) and
           // gdk_keymap_get_entries_for_keyval will be useful, but the
           // mappings will not be unique.
-#if defined(MOZ_WIDGET_QT) && (MOZ_PLATFORM_MAEMO == 6)
-          bool handled;
-          if (NS_SUCCEEDED(mInstance->HandleGUIEvent(anEvent, &handled)) &&
-              handled) {
-            rv = nsEventStatus_eConsumeNoDefault;
-          }
-#else
           NS_WARNING("Synthesized key event not sent to plugin");
-#endif
         }
       break;
 
-#if defined(MOZ_WIDGET_QT) && (MOZ_PLATFORM_MAEMO == 6)
-   case NS_TEXT_EVENT:
-        {
-          bool handled;
-          if (NS_SUCCEEDED(mInstance->HandleGUIEvent(anEvent, &handled)) &&
-              handled) {
-            rv = nsEventStatus_eConsumeNoDefault;
-          }
-        }
-      break;
-#endif
     default: 
       switch (anEvent.message)
         {
@@ -2581,9 +2540,6 @@ nsPluginInstanceOwner::Destroy()
   mContent->RemoveEventListener(NS_LITERAL_STRING("dragstart"), this, true);
   mContent->RemoveEventListener(NS_LITERAL_STRING("draggesture"), this, true);
   mContent->RemoveEventListener(NS_LITERAL_STRING("dragend"), this, true);
-#if defined(MOZ_WIDGET_QT) && (MOZ_PLATFORM_MAEMO == 6)
-  mContent->RemoveEventListener(NS_LITERAL_STRING("text"), this, true);
-#endif
 
 #if MOZ_WIDGET_ANDROID
   RemovePluginView();
@@ -3010,9 +2966,6 @@ nsresult nsPluginInstanceOwner::Init(nsIContent* aContent)
   mContent->AddEventListener(NS_LITERAL_STRING("dragstart"), this, true);
   mContent->AddEventListener(NS_LITERAL_STRING("draggesture"), this, true);
   mContent->AddEventListener(NS_LITERAL_STRING("dragend"), this, true);
-#if defined(MOZ_WIDGET_QT) && (MOZ_PLATFORM_MAEMO == 6)
-  mContent->AddEventListener(NS_LITERAL_STRING("text"), this, true);
-#endif
 
   return NS_OK; 
 }

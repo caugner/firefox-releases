@@ -11,7 +11,9 @@
 #include "nsStyleConsts.h"
 #include "nsPresContext.h"
 #include "nsCSSValue.h"
+#ifdef XP_WIN
 #include "mozilla/LookAndFeel.h"
+#endif
 #include "nsCSSRuleProcessor.h"
 
 using namespace mozilla;
@@ -590,13 +592,6 @@ nsMediaFeatures::features[] = {
         nsMediaFeature::eMinMaxNotAllowed,
         nsMediaFeature::eBoolInteger,
         { &nsGkAtoms::touch_enabled },
-        GetSystemMetric
-    },
-    {
-        &nsGkAtoms::_moz_maemo_classic,
-        nsMediaFeature::eMinMaxNotAllowed,
-        nsMediaFeature::eBoolInteger,
-        { &nsGkAtoms::maemo_classic },
         GetSystemMetric
     },
     {

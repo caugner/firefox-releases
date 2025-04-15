@@ -6,6 +6,7 @@
 #if !defined(nsMediaFragmentURIParser_h__)
 #define nsMediaFragmentURIParser_h__
 
+#include "mozilla/Maybe.h"
 #include "nsIURI.h"
 #include "nsString.h"
 #include "nsRect.h"

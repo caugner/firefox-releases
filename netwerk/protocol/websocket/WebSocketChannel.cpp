@@ -35,12 +35,12 @@
 #include "nsAlgorithm.h"
 #include "nsProxyRelease.h"
 #include "nsNetUtil.h"
+#include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
-#include "TimeStamp.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/TimeStamp.h"
 
 #include "plbase64.h"
-#include "pratom.h"
 #include "prmem.h"
 #include "prnetdb.h"
 #include "prbit.h"
@@ -424,12 +424,12 @@ public:
 
   void IncrementSessionCount()
   {
-    PR_ATOMIC_INCREMENT(&mSessionCount);
+    mSessionCount++;
   }
 
   void DecrementSessionCount()
   {
-    PR_ATOMIC_DECREMENT(&mSessionCount);
+    mSessionCount--;
   }
 
   int32_t SessionCount()
@@ -468,7 +468,7 @@ private:
 
   // SessionCount might be decremented from the main or the socket
   // thread, so manage it with atomic counters
-  int32_t               mSessionCount;
+  Atomic<int32_t>               mSessionCount;
 
   // Queue for websockets that have not completed connecting yet.
   // The first nsOpenConn with a given address will be either be
@@ -952,6 +952,7 @@ WebSocketChannel::WebSocketChannel() :
   mCompressor(nullptr),
   mDynamicOutputSize(0),
   mDynamicOutput(nullptr),
+  mPrivateBrowsing(false),
   mConnectionLogService(nullptr)
 {
   NS_ABORT_IF_FALSE(NS_IsMainThread(), "not main thread");
@@ -1328,7 +1329,7 @@ WebSocketChannel::ProcessInput(uint8_t *buffer, uint32_t count)
 
         NS_DispatchToMainThread(new CallOnMessageAvailable(this, utf8Data, -1));
         nsresult rv;
-        if (mConnectionLogService) {
+        if (mConnectionLogService && !mPrivateBrowsing) {
           nsAutoCString host;
           rv = mURI->GetHostPort(host);
           if (NS_SUCCEEDED(rv)) {
@@ -1419,7 +1420,7 @@ WebSocketChannel::ProcessInput(uint8_t *buffer, uint32_t count)
                                                            payloadLength));
         // To add the header to 'Networking Dashboard' log
         nsresult rv;
-        if (mConnectionLogService) {
+        if (mConnectionLogService && !mPrivateBrowsing) {
           nsAutoCString host;
           rv = mURI->GetHostPort(host);
           if (NS_SUCCEEDED(rv)) {
@@ -1844,7 +1845,7 @@ WebSocketChannel::CleanupConnection()
   }
 
   nsresult rv;
-  if (mConnectionLogService) {
+  if (mConnectionLogService && !mPrivateBrowsing) {
     nsAutoCString host;
     rv = mURI->GetHostPort(host);
     if (NS_SUCCEEDED(rv))
@@ -2678,7 +2679,9 @@ WebSocketChannel::AsyncOpen(nsIURI *aURI,
   if (NS_FAILED(rv))
     return rv;
 
-  if (mConnectionLogService) {
+  mPrivateBrowsing = NS_UsePrivateBrowsing(localChannel);
+
+  if (mConnectionLogService && !mPrivateBrowsing) {
     nsAutoCString host;
     rv = mURI->GetHostPort(host);
     if (NS_SUCCEEDED(rv)) {
@@ -2783,7 +2786,7 @@ WebSocketChannel::SendMsgCommon(const nsACString *aMsg, bool aIsBinary,
   }
 
   nsresult rv;
-  if (mConnectionLogService) {
+  if (mConnectionLogService && !mPrivateBrowsing) {
     nsAutoCString host;
     rv = mURI->GetHostPort(host);
     if (NS_SUCCEEDED(rv)) {

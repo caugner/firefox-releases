@@ -2,14 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH		= @DEPTH@
-topsrcdir	= @top_srcdir@
-srcdir		= @srcdir@
-VPATH		= @srcdir@
-relativesrcdir  = @relativesrcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
 MOCHITEST_BROWSER_FILES := \
 	browser_thumbnails_capture.js \
 	browser_thumbnails_expiration.js \
@@ -19,6 +11,7 @@ MOCHITEST_BROWSER_FILES := \
 	browser_thumbnails_storage_migrate3.js \
 	browser_thumbnails_bug726727.js \
 	browser_thumbnails_bug727765.js \
+	browser_thumbnails_bug818225.js \
 	head.js \
 	background_red.html \
 	background_red_scroll.html \
@@ -33,6 +26,11 @@ MOCHITEST_BROWSER_FILES += \
 	thumbnails_background.sjs \
 	thumbnails_update.sjs \
 	$(NULL)
-endif
 
-include $(topsrcdir)/config/rules.mk
+ifdef MOZ_CRASHREPORTER
+MOCHITEST_BROWSER_FILES += \
+	browser_thumbnails_background_crash.js \
+	thumbnails_crash_content_helper.js \
+	$(NULL)
+endif
+endif

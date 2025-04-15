@@ -125,14 +125,11 @@ DebuggerTransport.prototype = {
 
   onStopRequest:
   makeInfallible(function DT_onStopRequest(aRequest, aContext, aStatus) {
-    let self = this;
-    Services.tm.currentThread.dispatch(makeInfallible(function() {
-      self.close();
-      if (self.hooks) {
-        self.hooks.onClosed(aStatus);
-        self.hooks = null;
-      }
-    }, "DebuggerTransport instance's this.close"), 0);
+    this.close();
+    if (this.hooks) {
+      this.hooks.onClosed(aStatus);
+      this.hooks = null;
+    }
   }, "DebuggerTransport.prototype.onStopRequest"),
 
   onDataAvailable:
@@ -154,10 +151,22 @@ DebuggerTransport.prototype = {
     // Well this is ugly.
     let sep = this._incoming.indexOf(':');
     if (sep < 0) {
+      // Incoming packet length is too big anyway - drop the connection.
+      if (this._incoming.length > 20) {
+        this.close();
+      }
+
       return false;
     }
 
-    let count = parseInt(this._incoming.substring(0, sep));
+    let count = this._incoming.substring(0, sep);
+    // Check for a positive number with no garbage afterwards.
+    if (!/^[0-9]+$/.exec(count)) {
+      this.close();
+      return false;
+    }
+
+    count = +count;
     if (this._incoming.length - (sep + 1) < count) {
       // Don't have a complete request yet.
       return false;
@@ -183,7 +192,11 @@ DebuggerTransport.prototype = {
     dumpn("Got: " + packet);
     let self = this;
     Services.tm.currentThread.dispatch(makeInfallible(function() {
-      self.hooks.onPacket(parsed);
+      // Ensure the hooks are still around by the time this runs (they will go
+      // away when the transport is closed).
+      if (self.hooks) {
+        self.hooks.onPacket(parsed);
+      }
     }, "DebuggerTransport instance's this.hooks.onPacket"), 0);
 
     return true;

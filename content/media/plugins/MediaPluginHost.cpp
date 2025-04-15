@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "mozilla/Preferences.h"
-#include "mozilla/TimeStamp.h"
 #include "mozilla/dom/TimeRanges.h"
 #include "MediaResource.h"
 #include "mozilla/dom/HTMLMediaElement.h"
@@ -15,9 +14,15 @@
 #include "nsIGfxInfo.h"
 #include "gfxCrashReporterUtils.h"
 #include "prmem.h"
+#include "prlink.h"
 #include "MediaResourceServer.h"
+#include "nsServiceManagerUtils.h"
 
 #include "MPAPI.h"
+
+#if defined(ANDROID) && !defined(MOZ_WIDGET_GONK)
+#include "nsIPropertyBag2.h"
+#endif
 
 #if defined(ANDROID) || defined(MOZ_WIDGET_GONK)
 #include "android/log.h"
@@ -108,9 +113,6 @@ static bool IsOmxSupported()
 // nullptr is returned if Omx decoding is not supported on the device,
 static const char* GetOmxLibraryName()
 {
-  if (!IsOmxSupported())
-    return nullptr;
-
 #if defined(ANDROID) && !defined(MOZ_WIDGET_GONK)
   nsCOMPtr<nsIPropertyBag2> infoService = do_GetService("@mozilla.org/system-info;1");
   NS_ASSERTION(infoService, "Could not find a system info service");
@@ -139,19 +141,18 @@ static const char* GetOmxLibraryName()
     ALOG("Android Manufacturer is: %s", NS_LossyConvertUTF16toASCII(manufacturer).get());
   }
 
-  if (version >= 16 && manufacturer.Find("HTC") == 0) {
-    return "libomxpluginjb-htc.so";
+  nsAutoString hardware;
+  rv = infoService->GetPropertyAsAString(NS_LITERAL_STRING("hardware"), hardware);
+  if (NS_SUCCEEDED(rv)) {
+    ALOG("Android Hardware is: %s", NS_LossyConvertUTF16toASCII(hardware).get());
   }
-  else if (version == 15 &&
-      (device.Find("LT28", false) == 0 ||
-       device.Find("LT26", false) == 0 ||
-       device.Find("LT22", false) == 0 ||
-       device.Find("IS12", false) == 0 ||
-       device.Find("MT27", false) == 0)) {
-    // Sony Ericsson devices running ICS
-    return "libomxpluginsony.so";
-  }
-  else if (version == 13 || version == 12 || version == 11) {
+#endif
+
+  if (!IsOmxSupported())
+    return nullptr;
+
+#if defined(ANDROID) && !defined(MOZ_WIDGET_GONK)
+  if (version == 13 || version == 12 || version == 11) {
     return "libomxpluginhc.so";
   }
   else if (version == 10 && release_version >= NS_LITERAL_STRING("2.3.6")) {

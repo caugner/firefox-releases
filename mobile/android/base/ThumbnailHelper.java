@@ -9,6 +9,7 @@ import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.gfx.IntSize;
 import org.mozilla.gecko.mozglue.DirectBufferAllocator;
+import org.mozilla.gecko.mozglue.GeneratableAndroidBridgeTarget;
 
 import android.graphics.Bitmap;
 import android.util.Log;
@@ -29,7 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class ThumbnailHelper {
     private static final String LOGTAG = "GeckoThumbnailHelper";
 
-    public static final float THUMBNAIL_ASPECT_RATIO = 0.714f;  // this is a 5:7 ratio (as per UX decision)
+    public static final float THUMBNAIL_ASPECT_RATIO = 0.571f;  // this is a 4:7 ratio (as per UX decision)
 
     // static singleton stuff
 
@@ -143,6 +144,7 @@ public final class ThumbnailHelper {
     }
 
     /* This method is invoked by JNI once the thumbnail data is ready. */
+    @GeneratableAndroidBridgeTarget(stubName = "SendThumbnail")
     public static void notifyThumbnail(ByteBuffer data, int tabId, boolean success) {
         Tab tab = Tabs.getInstance().getTab(tabId);
         ThumbnailHelper helper = ThumbnailHelper.getInstance();

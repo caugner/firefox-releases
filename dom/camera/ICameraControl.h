@@ -5,7 +5,6 @@
 #ifndef DOM_CAMERA_ICAMERACONTROL_H
 #define DOM_CAMERA_ICAMERACONTROL_H
 
-#include "jsapi.h"
 #include "nsIFile.h"
 #include "nsIDOMCameraManager.h"
 #include "DictionaryHelpers.h"
@@ -44,6 +43,8 @@ public:
   virtual nsresult Get(nsICameraClosedCallback** aOnClosed) = 0;
   virtual nsresult Set(nsICameraRecorderStateChange* aOnRecorderStateChange) = 0;
   virtual nsresult Get(nsICameraRecorderStateChange** aOnRecorderStateChange) = 0;
+  virtual nsresult Set(nsICameraPreviewStateChange* aOnPreviewStateChange) = 0;
+  virtual nsresult Get(nsICameraPreviewStateChange** aOnPreviewStateChange) = 0;
   virtual nsresult SetFocusAreas(JSContext* aCx, const JS::Value& aValue) = 0;
   virtual nsresult SetMeteringAreas(JSContext* aCx, const JS::Value& aValue) = 0;
   virtual nsresult GetVideoSizes(nsTArray<idl::CameraSize>& aVideoSizes) = 0;

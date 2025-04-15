@@ -2,14 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH		= @DEPTH@
-topsrcdir	= @top_srcdir@
-srcdir		= @srcdir@
-VPATH		= @srcdir@
-relativesrcdir	= @relativesrcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
 MOCHITEST_FILES	= \
 		test_allowCurrent.html \
 		test_allowWatch.html \
@@ -19,6 +11,7 @@ MOCHITEST_FILES	= \
 		test_clearWatch.html \
 		test_clearWatch_invalid.html \
 		test_geolocation_is_undefined_when_pref_is_off.html \
+		test_handlerSpinsEventLoop.html \
 		test_manyCurrentConcurrent.html \
 		test_manyCurrentSerial.html \
 		test_manyWatchConcurrent.html \
@@ -36,5 +29,3 @@ MOCHITEST_FILES	= \
 		network_geolocation.sjs \
 		windowTest.html \
 		$(NULL)
-
-include $(topsrcdir)/config/rules.mk

@@ -10,6 +10,7 @@
 
 #include "mozilla/dom/SVGSVGElement.h"
 #include "mozilla/dom/SVGTests.h"
+#include "nsContentUtils.h"
 #include "nsICSSDeclaration.h"
 #include "nsIDocument.h"
 #include "nsIDOMMutationEvent.h"
@@ -666,7 +667,7 @@ nsSVGElement::UnsetAttrInternal(int32_t aNamespaceID, nsIAtom* aName,
       nsEventListenerManager* manager = GetListenerManager(false);
       if (manager) {
         nsIAtom* eventName = GetEventNameForAttr(aName);
-        manager->RemoveEventHandler(eventName);
+        manager->RemoveEventHandler(eventName, EmptyString());
       }
       return;
     }
@@ -1108,23 +1109,14 @@ NS_IMETHODIMP nsSVGElement::SetId(const nsAString & aId)
 NS_IMETHODIMP
 nsSVGElement::GetOwnerSVGElement(nsIDOMSVGElement * *aOwnerSVGElement)
 {
-  ErrorResult rv;
-  NS_IF_ADDREF(*aOwnerSVGElement = GetOwnerSVGElement(rv));
-  return rv.ErrorCode();
+  NS_IF_ADDREF(*aOwnerSVGElement = GetOwnerSVGElement());
+  return NS_OK;
 }
 
 SVGSVGElement*
-nsSVGElement::GetOwnerSVGElement(ErrorResult& rv)
+nsSVGElement::GetOwnerSVGElement()
 {
-  SVGSVGElement* ownerSVGElement = GetCtx();
-
-  // If we didn't find anything and we're not the outermost SVG element,
-  // we've got an invalid structure
-  if (!ownerSVGElement && Tag() != nsGkAtoms::svg) {
-    rv.Throw(NS_ERROR_FAILURE);
-  }
-
-  return ownerSVGElement;
+  return GetCtx(); // this may return nullptr
 }
 
 /* readonly attribute nsIDOMSVGElement viewportElement; */
@@ -1311,15 +1303,20 @@ ParseMappedAttrAnimValueCallback(void*    aObject,
                                  void*    aPropertyValue,
                                  void*    aData)
 {
-  NS_ABORT_IF_FALSE(aPropertyName != SMIL_MAPPED_ATTR_STYLERULE_ATOM,
-                    "animated content style rule should have been removed "
-                    "from properties table already (we're rebuilding it now)");
+  MOZ_ASSERT(aPropertyName != SMIL_MAPPED_ATTR_STYLERULE_ATOM,
+             "animated content style rule should have been removed "
+             "from properties table already (we're rebuilding it now)");
 
-  MappedAttrParser* mappedAttrParser =
-    static_cast<MappedAttrParser*>(aData);
+  MappedAttrParser* mappedAttrParser = static_cast<MappedAttrParser*>(aData);
+  MOZ_ASSERT(mappedAttrParser, "parser should be non-null");
 
-  nsStringBuffer* valueBuf = static_cast<nsStringBuffer*>(aPropertyValue);
-  mappedAttrParser->ParseMappedAttrValue(aPropertyName, nsCheapString(valueBuf));
+  nsStringBuffer* animValBuf = static_cast<nsStringBuffer*>(aPropertyValue);
+  MOZ_ASSERT(animValBuf, "animated value should be non-null");
+
+  nsString animValStr;
+  nsContentUtils::PopulateStringFromStringBuffer(animValBuf, animValStr);
+
+  mappedAttrParser->ParseMappedAttrValue(aPropertyName, animValStr);
 }
 
 // Callback for freeing animated content style rule, in property table.

@@ -4,11 +4,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/layers/CompositableClient.h"
-#include "mozilla/layers/TextureClient.h"
-#include "mozilla/layers/TextureClientOGL.h"
-#include "mozilla/layers/LayerTransactionChild.h"
+#include <stdint.h>                     // for uint64_t, uint32_t
+#include "gfxPlatform.h"                // for gfxPlatform
 #include "mozilla/layers/CompositableForwarder.h"
-#include "gfxPlatform.h"
+#include "mozilla/layers/TextureClient.h"  // for DeprecatedTextureClient, etc
+#include "mozilla/layers/TextureClientOGL.h"
+#include "mozilla/mozalloc.h"           // for operator delete, etc
 #ifdef XP_WIN
 #include "mozilla/layers/TextureD3D9.h"
 #include "mozilla/layers/TextureD3D11.h"
@@ -31,7 +32,24 @@ CompositableClient::~CompositableClient()
 {
   MOZ_COUNT_DTOR(CompositableClient);
   Destroy();
-  MOZ_ASSERT(mTexturesToRemove.size() == 0, "would leak textures pending fore deletion");
+
+  FlushTexturesToRemoveCallbacks();
+
+  MOZ_ASSERT(mTexturesToRemove.Length() == 0, "would leak textures pending for deletion");
+}
+
+void
+CompositableClient::FlushTexturesToRemoveCallbacks()
+{
+  std::map<uint64_t,TextureClientData*>::iterator it
+    = mTexturesToRemoveCallbacks.begin();
+  std::map<uint64_t,TextureClientData*>::iterator stop
+    = mTexturesToRemoveCallbacks.end();
+  for (; it != stop; ++it) {
+    it->second->DeallocateSharedData(GetForwarder());
+    delete it->second;
+  }
+  mTexturesToRemoveCallbacks.clear();
 }
 
 LayersBackend
@@ -137,7 +155,8 @@ CompositableClient::CreateDeprecatedTextureClient(DeprecatedTextureClientType aD
     break;
   case TEXTURE_FALLBACK:
 #ifdef XP_WIN
-    if (parentBackend == LAYERS_D3D9) {
+    if (parentBackend == LAYERS_D3D11 ||
+        parentBackend == LAYERS_D3D9) {
       result = new DeprecatedTextureClientShmem(GetForwarder(), GetTextureInfo());
     }
 #endif
@@ -164,6 +183,16 @@ TemporaryRef<BufferTextureClient>
 CompositableClient::CreateBufferTextureClient(gfx::SurfaceFormat aFormat,
                                               uint32_t aTextureFlags)
 {
+// XXX - Once bug 908196 is fixed, we can use gralloc textures here which will
+// improve performances of videos using SharedPlanarYCbCrImage on b2g.
+//#ifdef MOZ_WIDGET_GONK
+//  {
+//    RefPtr<BufferTextureClient> result = new GrallocTextureClientOGL(this,
+//                                                                     aFormat,
+//                                                                     aTextureFlags);
+//    return result.forget();
+//  }
+//#endif
   if (gfxPlatform::GetPlatform()->PreferMemoryOverShmem()) {
     RefPtr<BufferTextureClient> result = new MemoryTextureClient(this, aFormat, aTextureFlags);
     return result.forget();
@@ -194,17 +223,38 @@ void
 CompositableClient::RemoveTextureClient(TextureClient* aClient)
 {
   MOZ_ASSERT(aClient);
-  mTexturesToRemove.push_back(aClient->GetID());
-  aClient->SetID(0);
+  mTexturesToRemove.AppendElement(TextureIDAndFlags(aClient->GetID(),
+                                                    aClient->GetFlags()));
+  if (!(aClient->GetFlags() & TEXTURE_DEALLOCATE_HOST)) {
+    TextureClientData* data = aClient->DropTextureData();
+    if (data) {
+      mTexturesToRemoveCallbacks[aClient->GetID()] = data;
+    }
+  }
+  aClient->ClearID();
+  aClient->MarkInvalid();
+}
+
+void
+CompositableClient::OnReplyTextureRemoved(uint64_t aTextureID)
+{
+  std::map<uint64_t,TextureClientData*>::iterator it
+    = mTexturesToRemoveCallbacks.find(aTextureID);
+  if (it != mTexturesToRemoveCallbacks.end()) {
+    it->second->DeallocateSharedData(GetForwarder());
+    delete it->second;
+    mTexturesToRemoveCallbacks.erase(it);
+  }
 }
 
 void
 CompositableClient::OnTransaction()
 {
-  for (unsigned i = 0; i < mTexturesToRemove.size(); ++i) {
-    mForwarder->RemoveTexture(this, mTexturesToRemove[i]);
+  for (unsigned i = 0; i < mTexturesToRemove.Length(); ++i) {
+    const TextureIDAndFlags& texture = mTexturesToRemove[i];
+    mForwarder->RemoveTexture(this, texture.mID, texture.mFlags);
   }
-  mTexturesToRemove.clear();
+  mTexturesToRemove.Clear();
 }
 
 } // namespace layers

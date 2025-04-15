@@ -8,8 +8,8 @@
 #define mozilla_CycleCollectedJSRuntime_h__
 
 #include "mozilla/MemoryReporting.h"
-#include "jsprvtd.h"
 #include "jsapi.h"
+#include "js/Class.h"
 
 #include "nsCycleCollector.h"
 #include "nsCycleCollectionParticipant.h"
@@ -19,6 +19,7 @@
 
 class nsCycleCollectionNoteRootCallback;
 class nsScriptObjectTracer;
+class nsIException;
 
 namespace mozilla {
 
@@ -83,15 +84,8 @@ class CycleCollectedJSRuntime
   friend class IncrementalFinalizeRunnable;
 protected:
   CycleCollectedJSRuntime(uint32_t aMaxbytes,
-                          JSUseHelperThreads aUseHelperThreads,
-                          bool aExpectUnrootedGlobals);
+                          JSUseHelperThreads aUseHelperThreads);
   virtual ~CycleCollectedJSRuntime();
-
-  JSRuntime* Runtime() const
-  {
-    MOZ_ASSERT(mJSRuntime);
-    return mJSRuntime;
-  }
 
   size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
   void UnmarkSkippableJSHolders();
@@ -112,7 +106,7 @@ private:
                   nsCycleCollectionTraversalCallback& aCb) const;
 
   virtual bool
-  DescribeCustomObjects(JSObject* aObject, js::Class* aClasp,
+  DescribeCustomObjects(JSObject* aObject, const js::Class* aClasp,
                         char (&aName)[72]) const
   {
     return false; // We did nothing.
@@ -123,11 +117,11 @@ private:
                         nsCycleCollectionTraversalCallback& aCb) const;
 
   void
-  NoteGCThingXPCOMChildren(js::Class* aClasp, JSObject* aObj,
+  NoteGCThingXPCOMChildren(const js::Class* aClasp, JSObject* aObj,
                            nsCycleCollectionTraversalCallback& aCb) const;
 
   virtual bool
-  NoteCustomGCThingXPCOMChildren(js::Class* aClasp, JSObject* aObj,
+  NoteCustomGCThingXPCOMChildren(const js::Class* aClasp, JSObject* aObj,
                                  nsCycleCollectionTraversalCallback& aCb) const
   {
     return false; // We did nothing.
@@ -149,18 +143,13 @@ private:
   static void
   TraverseObjectShim(void* aData, void* aThing);
 
-  void MaybeTraverseGlobals(nsCycleCollectionNoteRootCallback& aCb) const;
-
   void TraverseNativeRoots(nsCycleCollectionNoteRootCallback& aCb);
-
-  void MaybeTraceGlobals(JSTracer* aTracer) const;
-
 
   static void TraceBlackJS(JSTracer* aTracer, void* aData);
   static void TraceGrayJS(JSTracer* aTracer, void* aData);
   static void GCCallback(JSRuntime* aRuntime, JSGCStatus aStatus, void* aData);
-  static JSBool ContextCallback(JSContext* aCx, unsigned aOperation,
-                                void* aData);
+  static bool ContextCallback(JSContext* aCx, unsigned aOperation,
+                              void* aData);
 
   virtual void TraceNativeBlackRoots(JSTracer* aTracer) { };
   void TraceNativeGrayRoots(JSTracer* aTracer);
@@ -173,27 +162,22 @@ private:
   void FinalizeDeferredThings(DeferredFinalizeType aType);
 
   void OnGC(JSGCStatus aStatus);
-  bool OnContext(JSContext* aCx, unsigned aOperation);
 
 public:
   void AddJSHolder(void* aHolder, nsScriptObjectTracer* aTracer);
   void RemoveJSHolder(void* aHolder);
 #ifdef DEBUG
-  bool TestJSHolder(void* aHolder);
+  bool IsJSHolder(void* aHolder);
   void SetObjectToUnlink(void* aObject) { mObjectToUnlink = aObject; }
   void AssertNoObjectsToTrace(void* aPossibleJSHolder);
 #endif
 
-  // This returns the singleton nsCycleCollectionParticipant for JSContexts.
-  static nsCycleCollectionParticipant* JSContextParticipant();
+  already_AddRefed<nsIException> GetPendingException() const;
+  void SetPendingException(nsIException* aException);
 
   nsCycleCollectionParticipant* GCThingParticipant();
   nsCycleCollectionParticipant* ZoneParticipant();
 
-  bool NotifyLeaveMainThread() const;
-  void NotifyEnterCycleCollectionThread() const;
-  void NotifyLeaveCycleCollectionThread() const;
-  void NotifyEnterMainThread() const;
   nsresult BeginCycleCollection(nsCycleCollectionNoteRootCallback &aCb);
   bool UsefulToMergeZones() const;
   void FixWeakMappingGrayBits() const;
@@ -212,6 +196,16 @@ public:
   
   virtual void DispatchDeferredDeletion(bool aContinuation) = 0;
 
+  JSRuntime* Runtime() const
+  {
+    MOZ_ASSERT(mJSRuntime);
+    return mJSRuntime;
+  }
+
+  // Get the current thread's CycleCollectedJSRuntime.  Returns null if there
+  // isn't one.
+  static CycleCollectedJSRuntime* Get();
+
 private:
   JSGCThingParticipant mGCThingCycleCollectorGlobal;
 
@@ -228,7 +222,7 @@ private:
 
   nsRefPtr<IncrementalFinalizeRunnable> mFinalizeRunnable;
 
-  bool mExpectUnrootedGlobals;
+  nsCOMPtr<nsIException> mPendingException;
 
 #ifdef DEBUG
   void* mObjectToUnlink;

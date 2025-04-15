@@ -94,15 +94,10 @@ MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSourc
   // get the JVM
   JavaVM *jvm = mozilla::AndroidBridge::Bridge()->GetVM();
 
-  JNIEnv *env;
-  jint res = jvm->AttachCurrentThread(&env, NULL);
-
   if (webrtc::VideoEngine::SetAndroidObjects(jvm, (void*)context) != 0) {
     LOG(("VieCapture:SetAndroidObjects Failed"));
     return;
   }
-
-  env->DeleteGlobalRef(context);
 #endif
 
   if (!mVideoEngine) {
@@ -121,7 +116,7 @@ MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSourc
       file = "WebRTC.log";
     }
 
-    LOG(("Logging webrtc to %s level %d", __FUNCTION__, file, logs->level));
+    LOG(("%s Logging webrtc to %s level %d", __FUNCTION__, file, logs->level));
 
     mVideoEngine->SetTraceFilter(logs->level);
     mVideoEngine->SetTraceFile(file);

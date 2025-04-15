@@ -246,8 +246,10 @@ class RadialGradientPattern : public Pattern
 {
 public:
   /*
-   * aBegin Start of the linear gradient
-   * aEnd End of the linear gradient
+   * aCenter1 Center of the inner (focal) circle.
+   * aCenter2 Center of the outer circle.
+   * aRadius1 Radius of the inner (focal) circle.
+   * aRadius2 Radius of the outer circle.
    * aStops GradientStops object for this gradient, this should match the
    *        backend type of the draw target this pattern will be used with.
    * aMatrix A matrix that transforms the pattern into user space
@@ -570,6 +572,15 @@ public:
    */
   virtual TemporaryRef<SourceSurface> Snapshot() = 0;
   virtual IntSize GetSize() = 0;
+
+  /**
+   * If possible returns the bits to this DrawTarget for direct manipulation. While
+   * the bits is locked any modifications to this DrawTarget is forbidden.
+   * Release takes the original data pointer for safety.
+   */
+  virtual bool LockBits(uint8_t** aData, IntSize* aSize,
+                        int32_t* aStride, SurfaceFormat* aFormat) { return false; }
+  virtual void ReleaseBits(uint8_t* aData) {}
 
   /* Ensure that the DrawTarget backend has flushed all drawing operations to
    * this draw target. This must be called before using the backing surface of

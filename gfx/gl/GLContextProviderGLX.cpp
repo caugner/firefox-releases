@@ -50,9 +50,9 @@ typedef GLXLibrary::LibraryType LibType;
 static LibType gCurrLib = GLXLibrary::OPENGL_LIB;
 
 LibType
-GLXLibrary::SelectLibrary(const GLContext::ContextFlags& aFlags)
+GLXLibrary::SelectLibrary(const ContextFlags& aFlags)
 {
-  return (aFlags & GLContext::ContextFlagsMesaLLVMPipe)
+  return (aFlags & ContextFlagsMesaLLVMPipe)
           ? GLXLibrary::MESA_LLVMPIPE_LIB
           : GLXLibrary::OPENGL_LIB;
 }
@@ -263,6 +263,7 @@ GLXLibrary::EnsureInitialized(LibType libType)
     }
 
     mIsATI = serverVendor && DoesStringMatch(serverVendor, "ATI");
+    mIsNVIDIA = serverVendor && DoesStringMatch(serverVendor, "NVIDIA Corporation");
     mClientIsMesa = clientVendor && DoesStringMatch(clientVendor, "Mesa");
 
     mInitialized = true;
@@ -367,7 +368,10 @@ GLXLibrary::CreatePixmap(gfxASurface* aSurface)
         // again).
         //
         // This checks that the depth matches in one of the two ways.
-        if (depth != format->depth && depth != format->depth - alphaSize) {
+        // NVIDIA now forces format->depth == depth so only the first way
+        // is checked for NVIDIA
+        if (depth != format->depth &&
+            (mIsNVIDIA || depth != format->depth - alphaSize) ) {
             continue;
         }
 
@@ -933,7 +937,7 @@ TRY_AGAIN_NO_SHARING:
 
     bool TextureImageSupportsGetBackingSurface()
     {
-        return mGLX->UseTextureFromPixmap();
+        return false;
     }
 
     virtual already_AddRefed<TextureImage>
@@ -1156,7 +1160,7 @@ GLContextGLX::CreateTextureImage(const nsIntSize& aSize,
 }
 
 static GLContextGLX *
-GetGlobalContextGLX(const GLContext::ContextFlags aFlags = GLContext::ContextFlagsNone)
+GetGlobalContextGLX(const ContextFlags aFlags = ContextFlagsNone)
 {
     return static_cast<GLContextGLX*>(GLContextProviderGLX::GetGlobalContext(aFlags));
 }
@@ -1380,9 +1384,9 @@ DONE_CREATING_PIXMAP:
     if (!error && // earlier recorded error
         !serverError)
     {
-        GLContext::ContextFlags flag = libToUse == GLXLibrary::MESA_LLVMPIPE_LIB
-                                         ? GLContext::ContextFlagsMesaLLVMPipe
-                                         : GLContext::ContextFlagsNone;
+        ContextFlags flag = libToUse == GLXLibrary::MESA_LLVMPIPE_LIB
+                                         ? ContextFlagsMesaLLVMPipe
+                                         : ContextFlagsNone;
         // We might have an alpha channel, but it doesn't matter.
         SurfaceCaps dummyCaps = SurfaceCaps::Any();
         GLContextGLX* shareContext = GetGlobalContextGLX(flag);
@@ -1423,15 +1427,15 @@ GLContextProviderGLX::CreateOffscreen(const gfxIntSize& size,
 }
 
 SharedTextureHandle
-GLContextProviderGLX::CreateSharedHandle(GLContext::SharedTextureShareType shareType,
+GLContextProviderGLX::CreateSharedHandle(SharedTextureShareType shareType,
                                          void* buffer,
-                                         GLContext::SharedTextureBufferType bufferType)
+                                         SharedTextureBufferType bufferType)
 {
   return 0;
 }
 
 already_AddRefed<gfxASurface>
-GLContextProviderGLX::GetSharedHandleAsSurface(GLContext::SharedTextureShareType shareType,
+GLContextProviderGLX::GetSharedHandleAsSurface(SharedTextureShareType shareType,
                                                SharedTextureHandle sharedHandle)
 {
   return nullptr;

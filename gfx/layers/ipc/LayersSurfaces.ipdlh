@@ -6,6 +6,7 @@ include protocol PGrallocBuffer;
 
 include "gfxipc/ShadowLayerUtils.h";
 include "mozilla/gfx/Types.h";
+include "nsRegion.h";
 
 using gfx3DMatrix;
 using gfxIntSize;
@@ -23,7 +24,7 @@ using mozilla::layers::SurfaceDescriptorX11;
 using mozilla::null_t;
 using mozilla::WindowsHandle;
 using mozilla::gl::SharedTextureHandle;
-using mozilla::gl::GLContext::SharedTextureShareType;
+using mozilla::gl::SharedTextureShareType;
 using mozilla::gfx::SurfaceStreamHandle;
 using mozilla::gfx::SurfaceFormat;
 using mozilla::gfx::IntSize;
@@ -51,6 +52,42 @@ struct SharedTextureDescriptor {
   SharedTextureHandle handle;
   nsIntSize size;
   bool inverted;
+};
+
+struct BasicShmTileDescriptor {
+  Shmem reusableSurface;
+};
+
+struct BasicTileDescriptor {
+  uintptr_t reusableSurface;
+};
+
+struct PlaceholderTileDescriptor {
+};
+
+union TileDescriptor {
+  BasicTileDescriptor;
+  BasicShmTileDescriptor;
+  PlaceholderTileDescriptor;
+};
+
+struct SurfaceDescriptorTiles {
+  nsIntRegion validRegion;
+  nsIntRegion paintedRegion;
+  TileDescriptor[] tiles;
+  int         retainedWidth;
+  int         retainedHeight;
+  float       resolution;
+};
+
+struct NewSurfaceDescriptorGralloc {
+  PGrallocBuffer buffer;
+  /**
+   * android::GraphicBuffer has a size information. But there are cases
+   * that GraphicBuffer's size and actual video's size are different.
+   * Extra size member is necessary. See Bug 850566.
+   */
+  IntSize size;
 };
 
 // XXX - soon to be removed
@@ -134,6 +171,7 @@ union SurfaceDescriptor {
   SurfaceDescriptorX11;
   SharedTextureDescriptor;
   SurfaceStreamDescriptor;
+  NewSurfaceDescriptorGralloc;
   YCbCrImage;                 // XXX - deprecated
   SurfaceDescriptorGralloc;   // XXX - deprecated
   Shmem;                      // XXX - deprecated

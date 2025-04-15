@@ -572,52 +572,61 @@ XPCOMUtils.defineLazyGetter(this, "gCanApplyUpdates", function aus_gCanApplyUpda
     }
   }
 
-  try {
-    var updateTestFile = getUpdateFile([FILE_PERMS_TEST]);
-    LOG("gCanApplyUpdates - testing write access " + updateTestFile.path);
-    testWriteAccess(updateTestFile, false);
+  let useService = false;
+  if (shouldUseService() && isServiceInstalled()) {
+    // No need to perform directory write checks, the maintenance service will
+    // be able to write to all directories.
+    LOG("gCanApplyUpdates - bypass the write checks because we'll use the service");
+    useService = true;
+  }
+
+  if (!useService) {
+    try {
+      var updateTestFile = getUpdateFile([FILE_PERMS_TEST]);
+      LOG("gCanApplyUpdates - testing write access " + updateTestFile.path);
+      testWriteAccess(updateTestFile, false);
 #ifdef XP_WIN
-    var sysInfo = Cc["@mozilla.org/system-info;1"].
-                  getService(Ci.nsIPropertyBag2);
+      var sysInfo = Cc["@mozilla.org/system-info;1"].
+                    getService(Ci.nsIPropertyBag2);
 
-    // Example windowsVersion:  Windows XP == 5.1
-    var windowsVersion = sysInfo.getProperty("version");
-    LOG("gCanApplyUpdates - windowsVersion = " + windowsVersion);
-
-  /**
-#    For Vista, updates can be performed to a location requiring admin
-#    privileges by requesting elevation via the UAC prompt when launching
-#    updater.exe if the appDir is under the Program Files directory
-#    (e.g. C:\Program Files\) and UAC is turned on and  we can elevate
-#    (e.g. user has a split token).
-#
-#    Note: this does note attempt to handle the case where UAC is turned on
-#    and the installation directory is in a restricted location that
-#    requires admin privileges to update other than Program Files.
-   */
-    var userCanElevate = false;
-
-    if (parseFloat(windowsVersion) >= 6) {
-      try {
-        var fileLocator = Cc["@mozilla.org/file/directory_service;1"].
-                          getService(Ci.nsIProperties);
-        // KEY_UPDROOT will fail and throw an exception if
-        // appDir is not under the Program Files, so we rely on that
-        var dir = fileLocator.get(KEY_UPDROOT, Ci.nsIFile);
-        // appDir is under Program Files, so check if the user can elevate
-        userCanElevate = Services.appinfo.QueryInterface(Ci.nsIWinAppHelper).
-                         userCanElevate;
-        LOG("gCanApplyUpdates - on Vista, userCanElevate: " + userCanElevate);
-      }
-      catch (ex) {
-        // When the installation directory is not under Program Files,
-        // fall through to checking if write access to the
-        // installation directory is available.
-        LOG("gCanApplyUpdates - on Vista, appDir is not under Program Files");
-      }
-    }
+      // Example windowsVersion:  Windows XP == 5.1
+      var windowsVersion = sysInfo.getProperty("version");
+      LOG("gCanApplyUpdates - windowsVersion = " + windowsVersion);
 
     /**
+  #    For Vista, updates can be performed to a location requiring admin
+  #    privileges by requesting elevation via the UAC prompt when launching
+  #    updater.exe if the appDir is under the Program Files directory
+  #    (e.g. C:\Program Files\) and UAC is turned on and  we can elevate
+  #    (e.g. user has a split token).
+  #
+  #    Note: this does note attempt to handle the case where UAC is turned on
+  #    and the installation directory is in a restricted location that
+  #    requires admin privileges to update other than Program Files.
+     */
+      var userCanElevate = false;
+
+      if (parseFloat(windowsVersion) >= 6) {
+        try {
+          var fileLocator = Cc["@mozilla.org/file/directory_service;1"].
+                            getService(Ci.nsIProperties);
+          // KEY_UPDROOT will fail and throw an exception if
+          // appDir is not under the Program Files, so we rely on that
+          var dir = fileLocator.get(KEY_UPDROOT, Ci.nsIFile);
+          // appDir is under Program Files, so check if the user can elevate
+          userCanElevate = Services.appinfo.QueryInterface(Ci.nsIWinAppHelper).
+                           userCanElevate;
+          LOG("gCanApplyUpdates - on Vista, userCanElevate: " + userCanElevate);
+        }
+        catch (ex) {
+          // When the installation directory is not under Program Files,
+          // fall through to checking if write access to the
+          // installation directory is available.
+          LOG("gCanApplyUpdates - on Vista, appDir is not under Program Files");
+        }
+      }
+
+      /**
 #      On Windows, we no longer store the update under the app dir.
 #
 #      If we are on Windows (including Vista, if we can't elevate) we need to
@@ -636,25 +645,26 @@ XPCOMUtils.defineLazyGetter(this, "gCanApplyUpdates", function aus_gCanApplyUpda
 #         (e.g. the user does not have a split token)
 #      4) UAC is turned on and the user is already elevated, so they can't be
 #         elevated again
-     */
-    if (!userCanElevate) {
-      // if we're unable to create the test file this will throw an exception.
-      var appDirTestFile = getAppBaseDir();
-      appDirTestFile.append(FILE_PERMS_TEST);
-      LOG("gCanApplyUpdates - testing write access " + appDirTestFile.path);
-      if (appDirTestFile.exists())
-        appDirTestFile.remove(false)
-      appDirTestFile.create(Ci.nsILocalFile.NORMAL_FILE_TYPE, FileUtils.PERMS_FILE);
-      appDirTestFile.remove(false);
-    }
+       */
+      if (!userCanElevate) {
+        // if we're unable to create the test file this will throw an exception.
+        var appDirTestFile = getAppBaseDir();
+        appDirTestFile.append(FILE_PERMS_TEST);
+        LOG("gCanApplyUpdates - testing write access " + appDirTestFile.path);
+        if (appDirTestFile.exists())
+          appDirTestFile.remove(false)
+        appDirTestFile.create(Ci.nsILocalFile.NORMAL_FILE_TYPE, FileUtils.PERMS_FILE);
+        appDirTestFile.remove(false);
+      }
 #endif //XP_WIN
-  }
-  catch (e) {
-     LOG("gCanApplyUpdates - unable to apply updates. Exception: " + e);
-    // No write privileges to install directory
-    submitHasPermissionsTelemetryPing(false);
-    return false;
-  }
+    }
+    catch (e) {
+       LOG("gCanApplyUpdates - unable to apply updates. Exception: " + e);
+      // No write privileges to install directory
+      submitHasPermissionsTelemetryPing(false);
+      return false;
+    }
+  } // if (!useService)
 
   if (!hasUpdateMutex()) {
     LOG("gCanApplyUpdates - unable to apply updates because another instance" +
@@ -737,24 +747,10 @@ function getCanStageUpdates() {
   return canStageUpdatesSession;
 }
 
-XPCOMUtils.defineLazyGetter(this, "gIsMetro", function aus_gIsMetro() {
-#ifdef XP_WIN
-#ifdef MOZ_METRO
-  try {
-    let metroUtils = Cc["@mozilla.org/windows-metroutils;1"].
-                    createInstance(Ci.nsIWinMetroUtils);
-    return metroUtils && metroUtils.immersive;
-  } catch (e) {}
-#endif
-#endif
-
-  return false;
-});
-
 XPCOMUtils.defineLazyGetter(this, "gMetroUpdatesEnabled", function aus_gMetroUpdatesEnabled() {
 #ifdef XP_WIN
 #ifdef MOZ_METRO
-  if (gIsMetro) {
+  if (Services.metro && Services.metro.immersive) {
     let metroUpdate = getPref("getBoolPref", PREF_APP_UPDATE_METRO_ENABLED, true);
     if (!metroUpdate) {
       LOG("gMetroUpdatesEnabled - unable to automatically check for metro " +
@@ -1111,6 +1107,33 @@ function shouldUseService() {
 #ifdef MOZ_MAINTENANCE_SERVICE
   return getPref("getBoolPref",
                  PREF_APP_UPDATE_SERVICE_ENABLED, false);
+#else
+  return false;
+#endif
+}
+
+/**
+ * Determines if the service is is installed and enabled or not.
+ *
+ * @return  true if the service should be used for updates,
+ *          is installed and enabled.
+ */
+function isServiceInstalled() {
+#ifdef XP_WIN
+  let installed = 0;
+  try {
+    let wrk = Cc["@mozilla.org/windows-registry-key;1"].
+              createInstance(Ci.nsIWindowsRegKey);
+    wrk.open(wrk.ROOT_KEY_LOCAL_MACHINE,
+             "SOFTWARE\\Mozilla\\MaintenanceService",
+             wrk.ACCESS_READ | wrk.WOW64_64);
+    installed = wrk.readIntValue("Installed");
+    wrk.close();
+  } catch(e) {
+  }
+  installed = installed == 1;  // convert to bool
+  LOG("isServiceInstalled = " + installed);
+  return installed;
 #else
   return false;
 #endif
@@ -2051,7 +2074,17 @@ UpdateService.prototype = {
    * notify the user of install success.
    */
   _postUpdateProcessing: function AUS__postUpdateProcessing() {
-    if (!this.canCheckForUpdates) {
+    // canCheckForUpdates will return false when metro-only updates are disabled
+    // from within metro.  In that case we still want _postUpdateProcessing to
+    // run.  gMetroUpdatesEnabled returns true on non Windows 8 platforms.
+    // We want _postUpdateProcessing to run so that it will update the history
+    // XML. Without updating the history XML, the about flyout will continue to
+    // have the "Restart to Apply Update" button (history xml indicates update
+    // is applied).
+    // TODO: I think this whole if-block should be removed since updates can
+    // always be applied via the about dialog, we should be running post update
+    // in those cases.
+    if (!this.canCheckForUpdates && gMetroUpdatesEnabled) {
       LOG("UpdateService:_postUpdateProcessing - unable to check for " +
           "updates... returning early");
       return;
@@ -2243,7 +2276,7 @@ UpdateService.prototype = {
    * service was at some point installed, but is now uninstalled.
    */
   _sendServiceInstalledTelemetryPing: function AUS__svcInstallTelemetryPing() {
-    let installed = 0;
+    let installed = isServiceInstalled(); // Is the service installed?
     let attempted = 0;
     try {
       let wrk = Cc["@mozilla.org/windows-registry-key;1"].
@@ -2251,14 +2284,14 @@ UpdateService.prototype = {
       wrk.open(wrk.ROOT_KEY_LOCAL_MACHINE,
                "SOFTWARE\\Mozilla\\MaintenanceService",
                wrk.ACCESS_READ | wrk.WOW64_64);
+      // Was the service at some point installed, but is now uninstalled?
       attempted = wrk.readIntValue("Attempted");
-      installed = wrk.readIntValue("Installed");
       wrk.close();
     } catch(e) {
     }
     try {
       let h = Services.telemetry.getHistogramById("UPDATER_SERVICE_INSTALLED");
-      h.add(installed);
+      h.add(Number(installed));
     } catch(e) {
       // Don't allow any exception to be propagated.
       Cu.reportError(e);
@@ -2506,6 +2539,24 @@ UpdateService.prototype = {
    *          The timer that fired
    */
   notify: function AUS_notify(timer) {
+    // The telemetry below is specific to background notification.
+    this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_ENABLED,
+                                    "UPDATER_UPDATES_ENABLED");
+    this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_METRO_ENABLED,
+                                    "UPDATER_UPDATES_METRO_ENABLED");
+    this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_AUTO,
+                                    "UPDATER_UPDATES_AUTOMATIC");
+    this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_STAGING_ENABLED,
+                                    "UPDATER_STAGE_ENABLED");
+
+#ifdef XP_WIN
+    this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_SERVICE_ENABLED,
+                                    "UPDATER_SERVICE_ENABLED");
+    this._sendIntPrefTelemetryPing(PREF_APP_UPDATE_SERVICE_ERRORS,
+                                   "UPDATER_SERVICE_ERRORS");
+    this._sendServiceInstalledTelemetryPing();
+#endif
+
     this._checkForBackgroundUpdates(true);
   },
 
@@ -2524,24 +2575,10 @@ UpdateService.prototype = {
    */
   _checkForBackgroundUpdates: function AUS__checkForBackgroundUpdates(isNotify) {
     this._isNotify = isNotify;
-    // This ensures that telemetry is gathered even if update is disabled.
+    // From this point on, the telemetry reported differentiates between a call
+    // to notify and a call to checkForBackgroundUpdates so they are reported
+    // separately.
     this._sendLastNotifyIntervalPing();
-    this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_ENABLED,
-                                    "UPDATER_UPDATES_ENABLED");
-    this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_METRO_ENABLED,
-                                    "UPDATER_UPDATES_METRO_ENABLED");
-    this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_AUTO,
-                                    "UPDATER_UPDATES_AUTOMATIC");
-    this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_STAGING_ENABLED,
-                                    "UPDATER_STAGE_ENABLED");
-
-#ifdef XP_WIN
-    this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_SERVICE_ENABLED,
-                                    "UPDATER_SERVICE_ENABLED");
-    this._sendIntPrefTelemetryPing(PREF_APP_UPDATE_SERVICE_ERRORS,
-                                   "UPDATER_SERVICE_ERRORS");
-    this._sendServiceInstalledTelemetryPing();
-#endif
 
     // If a download is in progress or the patch has been staged do nothing.
     if (this.isDownloading) {
@@ -2764,7 +2801,7 @@ UpdateService.prototype = {
       LOG("UpdateService:_selectAndInstallUpdate - prompting because the " +
           "update snippet specified showPrompt");
       this._showPrompt(update);
-      if (!gIsMetro) {
+      if (!Services.metro || !Services.metro.immersive) {
         this._backgroundUpdateCheckCodePing(PING_BGUC_SHOWPROMPT_SNIPPET);
         return;
       }
@@ -2774,7 +2811,7 @@ UpdateService.prototype = {
       LOG("UpdateService:_selectAndInstallUpdate - prompting because silent " +
           "install is disabled");
       this._showPrompt(update);
-      if (!gIsMetro) {
+      if (!Services.metro || !Services.metro.immersive) {
         this._backgroundUpdateCheckCodePing(PING_BGUC_SHOWPROMPT_PREF);
         return;
       }
@@ -4270,7 +4307,7 @@ Downloader.prototype = {
         "max fail: " + maxFail + ", " + "retryTimeout: " + retryTimeout);
     if (Components.isSuccessCode(status)) {
       if (this._verifyDownload()) {
-        state = shouldUseService() ? STATE_PENDING_SVC : STATE_PENDING
+        state = shouldUseService() ? STATE_PENDING_SVC : STATE_PENDING;
         if (this.background) {
           shouldShowPrompt = !getCanStageUpdates();
         }

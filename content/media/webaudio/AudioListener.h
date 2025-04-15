@@ -16,14 +16,11 @@
 #include "AudioContext.h"
 #include "PannerNode.h"
 #include "WebAudioUtils.h"
-
-struct JSContext;
+#include "js/TypeDecls.h"
 
 namespace mozilla {
 
 namespace dom {
-
-class AudioContext;
 
 class AudioListener MOZ_FINAL : public nsWrapperCache,
                                 public EnableWebAudioCheck

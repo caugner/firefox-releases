@@ -12,6 +12,8 @@ const { open, focus, close } = require('sdk/window/helpers');
 const { StringBundle } = require('sdk/deprecated/app-strings');
 const tabs = require('sdk/tabs');
 const { browserWindows } = require('sdk/windows');
+const { set: setPref } = require("sdk/preferences/service");
+const DEPRECATE_PREF = "devtools.errorconsole.deprecation_warnings";
 
 const base64png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQImWNgYGBgAA";
 
@@ -903,39 +905,8 @@ exports.testOnLoadEventWithImage = function(assert, done) {
   });
 };
 
-exports.testOnPageShowEvent = function (assert, done) {
-  let firstUrl = 'data:text/html;charset=utf-8,First';
-  let secondUrl = 'data:text/html;charset=utf-8,Second';
-
-  openBrowserWindow(function(window, browser) {
-    let counter = 0;
-    tabs.on('pageshow', function onPageShow(tab, persisted) {
-      counter++;
-      if (counter === 1) {
-        assert.ok(!persisted, 'page should not be cached on initial load');
-        tab.url = secondUrl;
-      }
-      else if (counter === 2) {
-        assert.ok(!persisted, 'second test page should not be cached either');
-        tab.attach({
-          contentScript: 'setTimeout(function () { window.history.back(); }, 0)'
-        });
-      }
-      else {
-        assert.ok(persisted, 'when we get back to the fist page, it has to' +
-                               'come from cache');
-        tabs.removeListener('pageshow', onPageShow);
-        close(window).then(done);
-      }
-    });
-
-    tabs.open({
-      url: firstUrl
-    });
-  });
-};
-
 exports.testFaviconGetterDeprecation = function (assert, done) {
+  setPref(DEPRECATE_PREF, true);
   const { LoaderWithHookedConsole } = require("sdk/test/loader");
   let { loader, messages } = LoaderWithHookedConsole(module);
   let tabs = loader.require('sdk/tabs');

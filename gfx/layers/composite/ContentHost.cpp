@@ -4,12 +4,26 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/layers/ContentHost.h"
-#include "mozilla/layers/Effects.h"
-#include "nsPrintfCString.h"
-#include "gfx2DGlue.h"
+#include "LayersLogging.h"              // for AppendToString
+#include "gfx2DGlue.h"                  // for ContentForFormat
+#include "gfxPoint.h"                   // for gfxIntSize
+#include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
+#include "mozilla/gfx/BaseRect.h"       // for BaseRect
+#include "mozilla/layers/Compositor.h"  // for Compositor
+#include "mozilla/layers/Effects.h"     // for TexturedEffect, Effect, etc
+#include "mozilla/layers/LayersMessages.h"  // for ThebesBufferData
+#include "nsAString.h"
+#include "nsPrintfCString.h"            // for nsPrintfCString
+#include "nsString.h"                   // for nsAutoCString
+
+class gfxImageSurface;
 
 namespace mozilla {
+namespace gfx {
+class Matrix4x4;
+}
 using namespace gfx;
+
 namespace layers {
 
 ContentHostBase::ContentHostBase(const TextureInfo& aTextureInfo)
@@ -175,13 +189,10 @@ ContentHostBase::Composite(EffectChain& aEffectChain,
                                           Float(tileRegionRect.width) / texRect.width,
                                           Float(tileRegionRect.height) / texRect.height);
             GetCompositor()->DrawQuad(rect, aClipRect, aEffectChain, aOpacity, aTransform, aOffset);
-            if (iterOnWhite) {
-                GetCompositor()->DrawDiagnostics(gfx::Color(0.0,0.0,1.0,1.0),
-                                                 rect, aClipRect, aTransform, aOffset);
-	    } else {
-                GetCompositor()->DrawDiagnostics(gfx::Color(0.0,1.0,0.0,1.0),
-                                                 rect, aClipRect, aTransform, aOffset);
-	    }
+            DiagnosticTypes diagnostics = DIAGNOSTIC_CONTENT;
+            diagnostics |= usingTiles ? DIAGNOSTIC_BIGIMAGE : 0;
+            diagnostics |= iterOnWhite ? DIAGNOSTIC_COMPONENT_ALPHA : 0;
+            GetCompositor()->DrawDiagnostics(diagnostics, rect, aClipRect, aTransform, aOffset);
         }
       }
     }
@@ -210,6 +221,8 @@ ContentHostBase::SetCompositor(Compositor* aCompositor)
     mDeprecatedTextureHostOnWhite->SetCompositor(aCompositor);
   }
 }
+
+#ifdef MOZ_DUMP_PAINTING
 
 void
 ContentHostBase::Dump(FILE* aFile,
@@ -240,6 +253,8 @@ ContentHostBase::Dump(FILE* aFile,
 
 }
 
+#endif
+
 ContentHostSingleBuffered::~ContentHostSingleBuffered()
 {
   DestroyTextures();
@@ -259,7 +274,8 @@ ContentHostSingleBuffered::EnsureDeprecatedTextureHost(TextureIdentifier aTextur
 
   *newHost = DeprecatedTextureHost::CreateDeprecatedTextureHost(aSurface.type(),
                                             aTextureInfo.mDeprecatedTextureHostFlags,
-                                            aTextureInfo.mTextureFlags);
+                                            aTextureInfo.mTextureFlags,
+                                            this);
 
   (*newHost)->SetBuffer(new SurfaceDescriptor(aSurface), aAllocator);
   Compositor* compositor = GetCompositor();
@@ -350,7 +366,8 @@ ContentHostDoubleBuffered::EnsureDeprecatedTextureHost(TextureIdentifier aTextur
 {
   RefPtr<DeprecatedTextureHost> newHost = DeprecatedTextureHost::CreateDeprecatedTextureHost(aSurface.type(),
                                                                aTextureInfo.mDeprecatedTextureHostFlags,
-                                                               aTextureInfo.mTextureFlags);
+                                                               aTextureInfo.mTextureFlags,
+                                                               this);
 
   newHost->SetBuffer(new SurfaceDescriptor(aSurface), aAllocator);
 
@@ -507,17 +524,19 @@ ContentHostIncremental::TextureCreationRequest::Execute(ContentHostIncremental* 
   RefPtr<DeprecatedTextureHost> newHost =
     DeprecatedTextureHost::CreateDeprecatedTextureHost(SurfaceDescriptor::TShmem,
                                    mTextureInfo.mDeprecatedTextureHostFlags,
-                                   mTextureInfo.mTextureFlags);
+                                   mTextureInfo.mTextureFlags,
+                                   nullptr);
   Compositor* compositor = aHost->GetCompositor();
   if (compositor) {
     newHost->SetCompositor(compositor);
   }
   RefPtr<DeprecatedTextureHost> newHostOnWhite;
-  if (mTextureInfo.mTextureFlags & ComponentAlpha) {
+  if (mTextureInfo.mTextureFlags & TEXTURE_COMPONENT_ALPHA) {
     newHostOnWhite =
       DeprecatedTextureHost::CreateDeprecatedTextureHost(SurfaceDescriptor::TShmem,
                                      mTextureInfo.mDeprecatedTextureHostFlags,
-                                     mTextureInfo.mTextureFlags);
+                                     mTextureInfo.mTextureFlags,
+                                     nullptr);
     Compositor* compositor = aHost->GetCompositor();
     if (compositor) {
       newHostOnWhite->SetCompositor(compositor);
@@ -728,6 +747,7 @@ ContentHostDoubleBuffered::PrintInfo(nsACString& aTo, const char* aPrefix)
 }
 #endif
 
+#ifdef MOZ_DUMP_PAINTING
 void
 ContentHostDoubleBuffered::Dump(FILE* aFile,
                                 const char* aPrefix,
@@ -757,6 +777,7 @@ ContentHostDoubleBuffered::Dump(FILE* aFile,
   }
 
 }
+#endif
 
 LayerRenderState
 ContentHostBase::GetRenderState()

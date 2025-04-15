@@ -12,25 +12,21 @@
 #include "nsContainerFrame.h"
 #include "nsIAnonymousContentCreator.h"
 #include "nsBoxFrame.h"
-#include "nsDisplayList.h"
 #include "nsIScrollableFrame.h"
-#include "nsIScrollPositionListener.h"
 #include "nsIStatefulFrame.h"
 #include "nsThreadUtils.h"
 #include "nsIReflowCallback.h"
 #include "nsBoxLayoutState.h"
 #include "nsQueryFrame.h"
-#include "nsCOMArray.h"
-#include "nsSVGIntegrationUtils.h"
 #include "nsExpirationTracker.h"
 
 class nsPresContext;
 class nsIPresShell;
 class nsIContent;
 class nsIAtom;
-class nsIDocument;
 class nsIScrollFrameInternal;
 class nsPresState;
+class nsIScrollPositionListener;
 struct ScrollReflowState;
 
 namespace mozilla {
@@ -55,8 +51,7 @@ public:
   nsGfxScrollFrameInner(nsContainerFrame* aOuter, bool aIsRoot);
   ~nsGfxScrollFrameInner();
 
-  typedef nsIScrollableFrame::ScrollbarStyles ScrollbarStyles;
-  ScrollbarStyles GetScrollbarStylesFromFrame() const;
+  mozilla::ScrollbarStyles GetScrollbarStylesFromFrame() const;
 
   // If a child frame was added or removed on the scrollframe,
   // reload our child frame list.
@@ -281,6 +276,10 @@ public:
 
   bool UpdateOverflow();
 
+  void UpdateSticky();
+
+  bool IsRectNearlyVisible(const nsRect& aRect) const;
+
   // adjust the scrollbar rectangle aRect to account for any visible resizer.
   // aHasResizer specifies if there is a content resizer, however this method
   // will also check if a widget resizer is present as well.
@@ -402,6 +401,17 @@ protected:
                           nsIScrollableFrame::ScrollMode aMode,
                           nsIAtom *aOrigin, // nullptr indicates "other" origin
                           const nsRect* aRange);
+
+  nsRect ExpandRect(const nsRect& aRect) const;
+  static void EnsureImageVisPrefsCached();
+  static bool sImageVisPrefsCached;
+  // The number of scrollports wide/high to expand when looking for images.
+  static uint32_t sHorzExpandScrollPort;
+  static uint32_t sVertExpandScrollPort;
+  // The fraction of the scrollport we allow to scroll by before we schedule
+  // an update of image visibility.
+  static int32_t sHorzScrollFraction;
+  static int32_t sVertScrollFraction;
 };
 
 /**
@@ -514,7 +524,7 @@ public:
   virtual nsIFrame* GetScrolledFrame() const MOZ_OVERRIDE {
     return mInner.GetScrolledFrame();
   }
-  virtual nsGfxScrollFrameInner::ScrollbarStyles GetScrollbarStyles() const {
+  virtual mozilla::ScrollbarStyles GetScrollbarStyles() const {
     return mInner.GetScrollbarStylesFromFrame();
   }
   virtual uint32_t GetScrollbarVisibility() const MOZ_OVERRIDE {
@@ -622,6 +632,9 @@ public:
   }
   virtual void ClearDidHistoryRestore() MOZ_OVERRIDE {
     mInner.mDidHistoryRestore = false;
+  }
+  virtual bool IsRectNearlyVisible(const nsRect& aRect) MOZ_OVERRIDE {
+    return mInner.IsRectNearlyVisible(aRect);
   }
 
   // nsIStatefulFrame
@@ -801,7 +814,7 @@ public:
   virtual nsIFrame* GetScrolledFrame() const MOZ_OVERRIDE {
     return mInner.GetScrolledFrame();
   }
-  virtual nsGfxScrollFrameInner::ScrollbarStyles GetScrollbarStyles() const {
+  virtual mozilla::ScrollbarStyles GetScrollbarStyles() const {
     return mInner.GetScrollbarStylesFromFrame();
   }
   virtual uint32_t GetScrollbarVisibility() const MOZ_OVERRIDE {
@@ -906,6 +919,9 @@ public:
   }
   virtual void ClearDidHistoryRestore() MOZ_OVERRIDE {
     mInner.mDidHistoryRestore = false;
+  }
+  virtual bool IsRectNearlyVisible(const nsRect& aRect) MOZ_OVERRIDE {
+    return mInner.IsRectNearlyVisible(aRect);
   }
 
   // nsIStatefulFrame

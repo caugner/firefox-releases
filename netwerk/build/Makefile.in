@@ -3,21 +3,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH     = @DEPTH@
-topsrcdir = @top_srcdir@
-srcdir    = @srcdir@
-VPATH     = @srcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
-LIBRARY_NAME   = necko
-MSVC_ENABLE_PGO := 1
 EXPORT_LIBRARY = 1
-IS_COMPONENT   = 1
-MODULE_NAME    = necko
-LIBXUL_LIBRARY = 1
-FAIL_ON_WARNINGS := 1
-
 SHARED_LIBRARY_LIBS = \
   ../base/src/$(LIB_PREFIX)neckobase_s.$(LIB_SUFFIX) \
   ../dns/$(LIB_PREFIX)neckodns_s.$(LIB_SUFFIX) \
@@ -53,11 +39,6 @@ endif
 ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
     SHARED_LIBRARY_LIBS += \
         ../system/mac/$(LIB_PREFIX)neckosystem_s.$(LIB_SUFFIX)
-endif
-
-ifdef MOZ_ENABLE_LIBCONIC
-    SHARED_LIBRARY_LIBS += \
-        ../system/maemo/$(LIB_PREFIX)neckosystem_s.$(LIB_SUFFIX)
 endif
 
 ifdef MOZ_ENABLE_QTNETWORK
@@ -97,10 +78,6 @@ ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
     LOCAL_INCLUDES += -I$(srcdir)/../system/mac
 endif
 
-ifdef MOZ_ENABLE_LIBCONIC
-    LOCAL_INCLUDES += -I$(srcdir)/../system/maemo
-endif
-
 ifdef MOZ_ENABLE_QTNETWORK
     LOCAL_INCLUDES += -I$(srcdir)/../system/qt
 endif
@@ -124,7 +101,5 @@ LOCAL_INCLUDES += -I$(srcdir)/../wifi
 
 endif
 
-include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/config/rules.mk
 include $(topsrcdir)/ipc/chromium/chromium-config.mk
-

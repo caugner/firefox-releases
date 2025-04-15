@@ -7,25 +7,22 @@
 #include "MediaRecorder.h"
 #include "GeneratedEvents.h"
 #include "MediaEncoder.h"
-#include "mozilla/Util.h"
 #include "nsDOMEventTargetHelper.h"
-#include "nsDOMFile.h"
 #include "nsError.h"
 #include "nsIDocument.h"
-#include "nsIDOMBlobEvent.h"
 #include "nsIDOMRecordErrorEvent.h"
-#include "nsIScriptObjectPrincipal.h"
-#include "nsIScriptSecurityManager.h"
-#include "nsAString.h"
 #include "nsTArray.h"
+#include "DOMMediaStream.h"
+#include "EncodedBufferCache.h"
+#include "nsIDOMFile.h"
+#include "mozilla/dom/BlobEvent.h"
 
 namespace mozilla {
 
 namespace dom {
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_2(MediaRecorder, nsDOMEventTargetHelper,
-                                     mStream,
-                                     mReadThread)
+NS_IMPL_CYCLE_COLLECTION_INHERITED_1(MediaRecorder, nsDOMEventTargetHelper,
+                                     mStream)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(MediaRecorder)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)
@@ -90,9 +87,14 @@ public:
     NS_IMETHODIMP Run()
     {
       MOZ_ASSERT(NS_IsMainThread());
-      mRecorder->DispatchSimpleEvent(NS_LITERAL_STRING("stop"));
       mRecorder->mReadThread->Shutdown();
       mRecorder->mReadThread = nullptr;
+
+      // Setting mState to Inactive here is for the case where SourceStream
+      // ends itself, thus the recorder should stop itself too.
+      mRecorder->mState = RecordingState::Inactive;
+      mRecorder->DispatchSimpleEvent(NS_LITERAL_STRING("stop"));
+
       return NS_OK;
     }
 
@@ -113,19 +115,78 @@ private:
   nsRefPtr<MediaEncoder>  mEncoder;
 };
 
+// ShutdownObserver receive shutdow notification from the main thread.
+// Stop recording thread if MediaRecorder is in recording state.
+class MediaRecorder::ShutdownObserver : public nsIObserver
+{
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIOBSERVER
+
+public:
+  ShutdownObserver(MediaRecorder *recorder)
+    : mRecorder(recorder)
+  {
+  }
+
+  virtual ~ShutdownObserver()
+  {
+     Unregister();
+  }
+
+  // Register shutdown notification
+  void Registrer() { nsContentUtils::RegisterShutdownObserver(this); }
+
+  // Ungegister shutdown notification
+  void Unregister() { nsContentUtils::UnregisterShutdownObserver(this); }
+
+private:
+  MediaRecorder *mRecorder;
+};
+
+NS_IMPL_ISUPPORTS1(MediaRecorder::ShutdownObserver, nsIObserver)
+
+NS_IMETHODIMP
+MediaRecorder::ShutdownObserver::Observe(nsISupports *aSubject,
+                                         const char *aTopic,
+                                         const PRUnichar *aData)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  if (strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0) {
+    if (mRecorder->mState != RecordingState::Inactive) {
+      ErrorResult result;
+      mRecorder->Stop(result);
+    }
+  }
+
+   return NS_OK;
+}
+
+
 MediaRecorder::~MediaRecorder()
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  if (mStreamPort) {
+    mStreamPort->Destroy();
+  }
   if (mTrackUnionStream) {
     mTrackUnionStream->Destroy();
   }
+
+  if (mObserver.get())
+     mObserver->Unregister();
 }
 
 void
-MediaRecorder::Init(JSContext* aCx, nsPIDOMWindow* aOwnerWindow)
+MediaRecorder::Init(nsPIDOMWindow* aOwnerWindow)
 {
   MOZ_ASSERT(aOwnerWindow);
   MOZ_ASSERT(aOwnerWindow->IsInnerWindow());
   BindToOwner(aOwnerWindow);
+
+  if (mObserver.get() == nullptr)
+    mObserver = new ShutdownObserver(this);
 }
 
 MediaRecorder::MediaRecorder(DOMMediaStream& aStream)
@@ -143,7 +204,7 @@ MediaRecorder::ExtractEncodedData()
   do {
     nsTArray<nsTArray<uint8_t> > outputBufs;
     mEncoder->GetEncodedData(&outputBufs, mMimeType);
-    for (uint i = 0; i < outputBufs.Length(); i++) {
+    for (uint32_t i = 0; i < outputBufs.Length(); i++) {
       mEncodedBufferCache->AppendBuffer(outputBufs[i]);
     }
 
@@ -151,7 +212,7 @@ MediaRecorder::ExtractEncodedData()
       NS_DispatchToMainThread(new PushBlobTask(this));
       lastBlobTimeStamp = TimeStamp::Now();
     }
-  } while (mState == RecordingState::Recording && !mEncoder->IsShutdown());
+  } while (!mEncoder->IsShutdown());
 
   NS_DispatchToMainThread(new PushBlobTask(this));
 }
@@ -160,6 +221,11 @@ void
 MediaRecorder::Start(const Optional<int32_t>& aTimeSlice, ErrorResult& aResult)
 {
   if (mState != RecordingState::Inactive) {
+    aResult.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+    return;
+  }
+
+  if (mStream->GetStream()->IsFinished() || mStream->GetStream()->IsDestroyed()) {
     aResult.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
@@ -192,8 +258,7 @@ MediaRecorder::Start(const Optional<int32_t>& aTimeSlice, ErrorResult& aResult)
   MOZ_ASSERT(mEncoder, "CreateEncoder failed");
 
   mTrackUnionStream->SetAutofinish(true);
-  nsRefPtr<MediaInputPort> port =
-    mTrackUnionStream->AllocateInputPort(mStream->GetStream(), MediaInputPort::FLAG_BLOCK_OUTPUT);
+  mStreamPort = mTrackUnionStream->AllocateInputPort(mStream->GetStream(), MediaInputPort::FLAG_BLOCK_OUTPUT);
 
   if (mEncoder) {
     mTrackUnionStream->AddListener(mEncoder);
@@ -212,6 +277,9 @@ MediaRecorder::Start(const Optional<int32_t>& aTimeSlice, ErrorResult& aResult)
     mReadThread->Dispatch(event, NS_DISPATCH_NORMAL);
     mState = RecordingState::Recording;
   }
+
+  if (mObserver.get())
+    mObserver->Registrer();
 }
 
 void
@@ -221,8 +289,16 @@ MediaRecorder::Stop(ErrorResult& aResult)
     aResult.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
-  mTrackUnionStream->RemoveListener(mEncoder);
   mState = RecordingState::Inactive;
+
+  mStreamPort->Destroy();
+  mStreamPort = nullptr;
+
+  mTrackUnionStream->Destroy();
+  mTrackUnionStream = nullptr;
+
+  if (mObserver.get())
+    mObserver->Unregister();
 }
 
 void
@@ -255,12 +331,8 @@ MediaRecorder::RequestData(ErrorResult& aResult)
     aResult.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
-
-  nsresult rv = CreateAndDispatchBlobEvent();
-  if (NS_FAILED(rv)) {
-    aResult.Throw(rv);
-    return;
-  }
+  NS_DispatchToMainThread(NS_NewRunnableMethod(this, &MediaRecorder::CreateAndDispatchBlobEvent),
+                                               NS_DISPATCH_NORMAL);
 }
 
 JSObject*
@@ -270,23 +342,23 @@ MediaRecorder::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 }
 
 /* static */ already_AddRefed<MediaRecorder>
-MediaRecorder::Constructor(const GlobalObject& aGlobal, JSContext* aCx,
+MediaRecorder::Constructor(const GlobalObject& aGlobal,
                            DOMMediaStream& aStream, ErrorResult& aRv)
 {
-  nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(aGlobal.GetAsSupports());
   if (!sgo) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }
 
-  nsCOMPtr<nsPIDOMWindow> ownerWindow = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<nsPIDOMWindow> ownerWindow = do_QueryInterface(aGlobal.GetAsSupports());
   if (!ownerWindow) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }
 
   nsRefPtr<MediaRecorder> object = new MediaRecorder(aStream);
-  object->Init(aCx, ownerWindow);
+  object->Init(ownerWindow);
   return object.forget();
 }
 
@@ -300,20 +372,14 @@ MediaRecorder::CreateAndDispatchBlobEvent()
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
-  nsCOMPtr<nsIDOMBlob> blob;
-  blob = mEncodedBufferCache->ExtractBlob(mMimeType);
-
-  // create an event that uses the MessageEvent interface,
-  // which does not bubble, is not cancelable, and has no default action
-  nsCOMPtr<nsIDOMEvent> event;
-  nsresult rv = NS_NewDOMBlobEvent(getter_AddRefs(event), this, nullptr, nullptr);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIDOMBlobEvent> blobEvent = do_QueryInterface(event);
-  rv = blobEvent->InitBlobEvent(NS_LITERAL_STRING("dataavailable"),
-    false, false, blob);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  BlobEventInitInitializer init;
+  init.mBubbles = false;
+  init.mCancelable = false;
+  init.mData = mEncodedBufferCache->ExtractBlob(mMimeType);
+  nsRefPtr<BlobEvent> event =
+    BlobEvent::Constructor(this,
+                           NS_LITERAL_STRING("dataavailable"),
+                           init);
   event->SetTrusted(true);
   return DispatchDOMEvent(nullptr, event, nullptr, nullptr);
 }

@@ -115,7 +115,8 @@ function runNextTest()
                                    httpserver.identity.primaryPort +
                                    set.serverURL);
   let uriloader = Cc["@mozilla.org/uriloader;1"].getService(Ci.nsIURILoader);
-  uriloader.openURI(channel, true, new WindowContext());
+  uriloader.openURI(channel, Ci.nsIURILoader.IS_CONTENT_PREFERRED,
+                    new WindowContext());
 }
 
 // sends the responses for the files. sends the same content twice if we resume
@@ -145,6 +146,10 @@ let tests = [
 ];
 
 function run_test() {
+  if (oldDownloadManagerDisabled()) {
+    return;
+  }
+
   // setup a download listener to run tests after each download finished
   DownloadListener.init();
   Services.prefs.setBoolPref("browser.download.manager.showWhenStarting", false);

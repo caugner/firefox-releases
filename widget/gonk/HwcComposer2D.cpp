@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012, 2013 The Linux Foundation. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,45 +19,39 @@
 
 #include "libdisplay/GonkDisplay.h"
 #include "Framebuffer.h"
+#include "HwcUtils.h"
 #include "HwcComposer2D.h"
 #include "mozilla/layers/LayerManagerComposite.h"
 #include "mozilla/layers/PLayerTransaction.h"
 #include "mozilla/layers/ShadowLayerUtilsGralloc.h"
 #include "mozilla/StaticPtr.h"
 #include "cutils/properties.h"
-#include "gfxUtils.h"
+
+#if ANDROID_VERSION >= 18
+#include "libdisplay/FramebufferSurface.h"
+#endif
 
 #define LOG_TAG "HWComposer"
 
-#if (LOG_NDEBUG == 0)
+/*
+ * By default the debug message of hwcomposer (LOG_DEBUG level) are undefined,
+ * but can be enabled by uncommenting HWC_DEBUG below.
+ */
+//#define HWC_DEBUG
+
+#ifdef HWC_DEBUG
 #define LOGD(args...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, ## args)
 #else
 #define LOGD(args...) ((void)0)
 #endif
 
+#define LOGI(args...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, ## args)
 #define LOGE(args...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, ## args)
 
 #define LAYER_COUNT_INCREMENTS 5
 
 using namespace android;
 using namespace mozilla::layers;
-
-enum {
-    HWC_USE_GPU = HWC_FRAMEBUFFER,
-    HWC_USE_OVERLAY = HWC_OVERLAY,
-    HWC_USE_COPYBIT
-};
-
-// HWC layer flags
-enum {
-    // Draw a solid color rectangle
-    // The color should be set on the transform member of the hwc_layer_t struct
-    // The expected format is a 32 bit ABGR with 8 bits per component
-    HWC_COLOR_FILL = 0x8,
-    // Swap the RB pixels of gralloc buffer, like RGBA<->BGRA or RGBX<->BGRX
-    // The flag will be set inside LayerRenderState
-    HWC_FORMAT_RB_SWAP = 0x40
-};
 
 namespace mozilla {
 
@@ -79,7 +73,7 @@ HwcComposer2D::Init(hwc_display_t dpy, hwc_surface_t sur)
 {
     MOZ_ASSERT(!Initialized());
 
-    mHwc = (hwc_composer_device_t*)GetGonkDisplay()->GetHWCDevice();
+    mHwc = (HwcDevice*)GetGonkDisplay()->GetHWCDevice();
     if (!mHwc) {
         LOGE("Failed to initialize hwc");
         return -1;
@@ -104,7 +98,7 @@ HwcComposer2D*
 HwcComposer2D::GetInstance()
 {
     if (!sInstance) {
-        LOGD("Creating new instance");
+        LOGI("Creating new instance");
         sInstance = new HwcComposer2D();
     }
     return sInstance;
@@ -113,10 +107,10 @@ HwcComposer2D::GetInstance()
 bool
 HwcComposer2D::ReallocLayerList()
 {
-    int size = sizeof(hwc_layer_list_t) +
-        ((mMaxLayerCount + LAYER_COUNT_INCREMENTS) * sizeof(hwc_layer_t));
+    int size = sizeof(HwcList) +
+        ((mMaxLayerCount + LAYER_COUNT_INCREMENTS) * sizeof(HwcLayer));
 
-    hwc_layer_list_t* listrealloc = (hwc_layer_list_t*)realloc(mList, size);
+    HwcList* listrealloc = (HwcList*)realloc(mList, size);
 
     if (!listrealloc) {
         return false;
@@ -130,159 +124,6 @@ HwcComposer2D::ReallocLayerList()
 
     mList = listrealloc;
     mMaxLayerCount += LAYER_COUNT_INCREMENTS;
-    return true;
-}
-
-/**
- * Sets hwc layer rectangles required for hwc composition
- *
- * @param aVisible Input. Layer's unclipped visible rectangle
- *        The origin is the top-left corner of the layer
- * @param aTransform Input. Layer's transformation matrix
- *        It transforms from layer space to screen space
- * @param aClip Input. A clipping rectangle.
- *        The origin is the top-left corner of the screen
- * @param aBufferRect Input. The layer's buffer bounds
- *        The origin is the top-left corner of the layer
- * @param aSurceCrop Output. Area of the source to consider,
- *        the origin is the top-left corner of the buffer
- * @param aVisibleRegionScreen Output. Visible region in screen space.
- *        The origin is the top-left corner of the screen
- * @return true if the layer should be rendered.
- *         false if the layer can be skipped
- */
-static bool
-PrepareLayerRects(nsIntRect aVisible, const gfxMatrix& aTransform,
-                  nsIntRect aClip, nsIntRect aBufferRect,
-                  hwc_rect_t* aSourceCrop, hwc_rect_t* aVisibleRegionScreen) {
-
-    gfxRect visibleRect(aVisible);
-    gfxRect clip(aClip);
-    gfxRect visibleRectScreen = aTransform.TransformBounds(visibleRect);
-    // |clip| is guaranteed to be integer
-    visibleRectScreen.IntersectRect(visibleRectScreen, clip);
-
-    if (visibleRectScreen.IsEmpty()) {
-        LOGD("Skip layer");
-        return false;
-    }
-
-    gfxMatrix inverse(aTransform);
-    inverse.Invert();
-    gfxRect crop = inverse.TransformBounds(visibleRectScreen);
-
-    //clip to buffer size
-    crop.IntersectRect(crop, aBufferRect);
-    crop.Round();
-
-    if (crop.IsEmpty()) {
-        LOGD("Skip layer");
-        return false;
-    }
-
-    //propagate buffer clipping back to visible rect
-    visibleRectScreen = aTransform.TransformBounds(crop);
-    visibleRectScreen.Round();
-
-    // Map from layer space to buffer space
-    crop -= aBufferRect.TopLeft();
-
-    aSourceCrop->left = crop.x;
-    aSourceCrop->top  = crop.y;
-    aSourceCrop->right  = crop.x + crop.width;
-    aSourceCrop->bottom = crop.y + crop.height;
-
-    aVisibleRegionScreen->left = visibleRectScreen.x;
-    aVisibleRegionScreen->top  = visibleRectScreen.y;
-    aVisibleRegionScreen->right  = visibleRectScreen.x + visibleRectScreen.width;
-    aVisibleRegionScreen->bottom = visibleRectScreen.y + visibleRectScreen.height;
-
-    return true;
-}
-
-/**
- * Prepares hwc layer visible region required for hwc composition
- *
- * @param aVisible Input. Layer's unclipped visible region
- *        The origin is the top-left corner of the layer
- * @param aTransform Input. Layer's transformation matrix
- *        It transforms from layer space to screen space
- * @param aClip Input. A clipping rectangle.
- *        The origin is the top-left corner of the screen
- * @param aBufferRect Input. The layer's buffer bounds
- *        The origin is the top-left corner of the layer
- * @param aVisibleRegionScreen Output. Visible region in screen space.
- *        The origin is the top-left corner of the screen
- * @return true if the layer should be rendered.
- *         false if the layer can be skipped
- */
-static bool
-PrepareVisibleRegion(const nsIntRegion& aVisible,
-                     const gfxMatrix& aTransform,
-                     nsIntRect aClip, nsIntRect aBufferRect,
-                     RectVector* aVisibleRegionScreen) {
-
-    nsIntRegionRectIterator rect(aVisible);
-    bool isVisible = false;
-    while (const nsIntRect* visibleRect = rect.Next()) {
-        hwc_rect_t visibleRectScreen;
-        gfxRect screenRect;
-
-        screenRect.IntersectRect(gfxRect(*visibleRect), aBufferRect);
-        screenRect = aTransform.TransformBounds(screenRect);
-        screenRect.IntersectRect(screenRect, aClip);
-        screenRect.Round();
-        if (screenRect.IsEmpty()) {
-            continue;
-        }
-        visibleRectScreen.left = screenRect.x;
-        visibleRectScreen.top  = screenRect.y;
-        visibleRectScreen.right  = screenRect.XMost();
-        visibleRectScreen.bottom = screenRect.YMost();
-        aVisibleRegionScreen->push_back(visibleRectScreen);
-        isVisible = true;
-    }
-
-    return isVisible;
-}
-
-/**
- * Calculates the layer's clipping rectangle
- *
- * @param aTransform Input. A transformation matrix
- *        It transforms the clip rect to screen space
- * @param aLayerClip Input. The layer's internal clipping rectangle.
- *        This may be NULL which means the layer has no internal clipping
- *        The origin is the top-left corner of the layer
- * @param aParentClip Input. The parent layer's rendering clipping rectangle
- *        The origin is the top-left corner of the screen
- * @param aRenderClip Output. The layer's rendering clipping rectangle
- *        The origin is the top-left corner of the screen
- * @return true if the layer should be rendered.
- *         false if the layer can be skipped
- */
-static bool
-CalculateClipRect(const gfxMatrix& aTransform, const nsIntRect* aLayerClip,
-                  nsIntRect aParentClip, nsIntRect* aRenderClip) {
-
-    *aRenderClip = aParentClip;
-
-    if (!aLayerClip) {
-        return true;
-    }
-
-    if (aLayerClip->IsEmpty()) {
-        return false;
-    }
-
-    nsIntRect clip = *aLayerClip;
-
-    gfxRect r(clip);
-    gfxRect trClip = aTransform.TransformBounds(r);
-    trClip.Round();
-    gfxUtils::GfxRectToIntRect(trClip, &clip);
-
-    aRenderClip->IntersectRect(*aRenderClip, clip);
     return true;
 }
 
@@ -310,15 +151,24 @@ HwcComposer2D::PrepareLayerList(Layer* aLayer,
     }
 
     nsIntRect clip;
-    if (!CalculateClipRect(aParentTransform * aGLWorldTransform,
-                           aLayer->GetEffectiveClipRect(),
-                           aClip,
-                           &clip))
+    if (!HwcUtils::CalculateClipRect(aParentTransform * aGLWorldTransform,
+                                     aLayer->GetEffectiveClipRect(),
+                                     aClip,
+                                     &clip))
     {
         LOGD("%s Clip rect is empty. Skip layer", aLayer->Name());
         return true;
     }
 
+    // HWC supports only the following 2D transformations:
+    //
+    // Scaling via the sourceCrop and displayFrame in HwcLayer
+    // Translation via the sourceCrop and displayFrame in HwcLayer
+    // Rotation (in square angles only) via the HWC_TRANSFORM_ROT_* flags
+    // Reflection (horizontal and vertical) via the HWC_TRANSFORM_FLIP_* flags
+    //
+    // A 2D transform with PreservesAxisAlignedRectangles() has all the attributes
+    // above
     gfxMatrix transform;
     const gfx3DMatrix& transform3D = aLayer->GetEffectiveTransform();
     if (!transform3D.Is2D(&transform) || !transform.PreservesAxisAlignedRectangles()) {
@@ -356,6 +206,8 @@ HwcComposer2D::PrepareLayerList(Layer* aLayer,
             return false;
         }
     }
+    // Buffer rotation is not to be confused with the angled rotation done by a transform matrix
+    // It's a fancy ThebesLayer feature used for scrolling
     if (state.BufferRotated()) {
         LOGD("%s Layer has a rotated buffer", aLayer->Name());
         return false;
@@ -388,9 +240,9 @@ HwcComposer2D::PrepareLayerList(Layer* aLayer,
         }
     }
 
-    hwc_layer_t& hwcLayer = mList->hwLayers[current];
+    HwcLayer& hwcLayer = mList->hwLayers[current];
 
-    if(!PrepareLayerRects(visibleRect,
+    if(!HwcUtils::PrepareLayerRects(visibleRect,
                           transform * aGLWorldTransform,
                           clip,
                           bufferRect,
@@ -406,36 +258,142 @@ HwcComposer2D::PrepareLayerList(Layer* aLayer,
     hwcLayer.flags = 0;
     hwcLayer.hints = 0;
     hwcLayer.blending = HWC_BLENDING_PREMULT;
-    hwcLayer.compositionType = HWC_USE_COPYBIT;
+#if ANDROID_VERSION >= 18
+    hwcLayer.compositionType = HWC_FRAMEBUFFER;
+
+    hwcLayer.acquireFenceFd = -1;
+    hwcLayer.releaseFenceFd = -1;
+    hwcLayer.planeAlpha = 0xFF; // Until plane alpha is enabled
+#else
+    hwcLayer.compositionType = HwcUtils::HWC_USE_COPYBIT;
+#endif
 
     if (!fillColor) {
         if (state.FormatRBSwapped()) {
-            hwcLayer.flags |= HWC_FORMAT_RB_SWAP;
+            hwcLayer.flags |= HwcUtils::HWC_FORMAT_RB_SWAP;
         }
 
+        // Translation and scaling have been addressed in PrepareLayerRects().
+        // Given the above and that we checked for PreservesAxisAlignedRectangles()
+        // the only possible transformations left to address are
+        // square angle rotation and horizontal/vertical reflection.
+        //
+        // The rotation and reflection permutations total 16 but can be
+        // reduced to 8 transformations after eliminating redundancies.
+        //
+        // All matrices represented here are in the form
+        //
+        // | xx  xy |
+        // | yx  yy |
+        //
+        // And ignore scaling.
+        //
+        // Reflection is applied before rotation
         gfxMatrix rotation = transform * aGLWorldTransform;
-        // Compute fuzzy equal like PreservesAxisAlignedRectangles()
+        // Compute fuzzy zero like PreservesAxisAlignedRectangles()
         if (fabs(rotation.xx) < 1e-6) {
             if (rotation.xy < 0) {
-                hwcLayer.transform = HWC_TRANSFORM_ROT_90;
-                LOGD("Layer buffer rotated 90 degrees");
+                if (rotation.yx > 0) {
+                    // 90 degree rotation
+                    //
+                    // |  0  -1  |
+                    // |  1   0  |
+                    //
+                    hwcLayer.transform = HWC_TRANSFORM_ROT_90;
+                    LOGD("Layer rotated 90 degrees");
+                }
+                else {
+                    // Horizontal reflection then 90 degree rotation
+                    //
+                    // |  0  -1  | | -1   0  | = |  0  -1  |
+                    // |  1   0  | |  0   1  |   | -1   0  |
+                    //
+                    // same as vertical reflection then 270 degree rotation
+                    //
+                    // |  0   1  | |  1   0  | = |  0  -1  |
+                    // | -1   0  | |  0  -1  |   | -1   0  |
+                    //
+                    hwcLayer.transform = HWC_TRANSFORM_ROT_90 | HWC_TRANSFORM_FLIP_H;
+                    LOGD("Layer vertically reflected then rotated 270 degrees");
+                }
             } else {
-                hwcLayer.transform = HWC_TRANSFORM_ROT_270;
-                LOGD("Layer buffer rotated 270 degrees");
+                if (rotation.yx < 0) {
+                    // 270 degree rotation
+                    //
+                    // |  0   1  |
+                    // | -1   0  |
+                    //
+                    hwcLayer.transform = HWC_TRANSFORM_ROT_270;
+                    LOGD("Layer rotated 270 degrees");
+                }
+                else {
+                    // Vertical reflection then 90 degree rotation
+                    //
+                    // |  0   1  | | -1   0  | = |  0   1  |
+                    // | -1   0  | |  0   1  |   |  1   0  |
+                    //
+                    // Same as horizontal reflection then 270 degree rotation
+                    //
+                    // |  0  -1  | |  1   0  | = |  0   1  |
+                    // |  1   0  | |  0  -1  |   |  1   0  |
+                    //
+                    hwcLayer.transform = HWC_TRANSFORM_ROT_90 | HWC_TRANSFORM_FLIP_V;
+                    LOGD("Layer horizontally reflected then rotated 270 degrees");
+                }
             }
         } else if (rotation.xx < 0) {
-            hwcLayer.transform = HWC_TRANSFORM_ROT_180;
-            LOGD("Layer buffer rotated 180 degrees");
+            if (rotation.yy > 0) {
+                // Horizontal reflection
+                //
+                // | -1   0  |
+                // |  0   1  |
+                //
+                hwcLayer.transform = HWC_TRANSFORM_FLIP_H;
+                LOGD("Layer rotated 180 degrees");
+            }
+            else {
+                // 180 degree rotation
+                //
+                // | -1   0  |
+                // |  0  -1  |
+                //
+                // Same as horizontal and vertical reflection
+                //
+                // | -1   0  | |  1   0  | = | -1   0  |
+                // |  0   1  | |  0  -1  |   |  0  -1  |
+                //
+                hwcLayer.transform = HWC_TRANSFORM_ROT_180;
+                LOGD("Layer rotated 180 degrees");
+            }
         } else {
-            hwcLayer.transform = 0;
+            if (rotation.yy < 0) {
+                // Vertical reflection
+                //
+                // |  1   0  |
+                // |  0  -1  |
+                //
+                hwcLayer.transform = HWC_TRANSFORM_FLIP_V;
+                LOGD("Layer rotated 180 degrees");
+            }
+            else {
+                // No rotation or reflection
+                //
+                // |  1   0  |
+                // |  0   1  |
+                //
+                hwcLayer.transform = 0;
+            }
         }
 
-        hwcLayer.transform |= state.YFlipped() ? HWC_TRANSFORM_FLIP_V : 0;
+        if (state.YFlipped()) {
+           // Invert vertical reflection flag if it was already set
+           hwcLayer.transform ^= HWC_TRANSFORM_FLIP_V;
+        }
         hwc_region_t region;
         if (visibleRegion.GetNumRects() > 1) {
-            mVisibleRegions.push_back(RectVector());
-            RectVector* visibleRects = &(mVisibleRegions.back());
-            if(!PrepareVisibleRegion(visibleRegion,
+            mVisibleRegions.push_back(HwcUtils::RectVector());
+            HwcUtils::RectVector* visibleRects = &(mVisibleRegions.back());
+            if(!HwcUtils::PrepareVisibleRegion(visibleRegion,
                                      transform * aGLWorldTransform,
                                      clip,
                                      bufferRect,
@@ -450,7 +408,7 @@ HwcComposer2D::PrepareLayerList(Layer* aLayer,
         }
         hwcLayer.visibleRegionScreen = region;
     } else {
-        hwcLayer.flags |= HWC_COLOR_FILL;
+        hwcLayer.flags |= HwcUtils::HWC_COLOR_FILL;
         ColorLayer* colorLayer = aLayer->AsColorLayer();
         if (colorLayer->GetColor().a < 1.0) {
             LOGD("Color layer has semitransparency which is unsupported");
@@ -462,6 +420,93 @@ HwcComposer2D::PrepareLayerList(Layer* aLayer,
     mList->numHwLayers++;
     return true;
 }
+
+
+#if ANDROID_VERSION >= 18
+bool
+HwcComposer2D::TryHwComposition()
+{
+    FramebufferSurface* fbsurface = (FramebufferSurface*)(GetGonkDisplay()->GetFBSurface());
+
+    if (!fbsurface) {
+        LOGE("H/W Composition failed. FBSurface not initialized.");
+        return false;
+    }
+
+    hwc_display_contents_1_t *displays[HWC_NUM_DISPLAY_TYPES] = {NULL};
+    const hwc_rect_t r = {0, 0, mScreenRect.width, mScreenRect.height};
+    int idx = mList->numHwLayers;
+
+    displays[HWC_DISPLAY_PRIMARY] = mList;
+    mList->flags = HWC_GEOMETRY_CHANGED;
+    mList->retireFenceFd = -1;
+
+    mList->hwLayers[idx].hints = 0;
+    mList->hwLayers[idx].flags = 0;
+    mList->hwLayers[idx].transform = 0;
+    mList->hwLayers[idx].handle = fbsurface->lastHandle;
+    mList->hwLayers[idx].blending = HWC_BLENDING_PREMULT;
+    mList->hwLayers[idx].compositionType = HWC_FRAMEBUFFER_TARGET;
+    mList->hwLayers[idx].sourceCrop = r;
+    mList->hwLayers[idx].displayFrame = r;
+    mList->hwLayers[idx].visibleRegionScreen.numRects = 1;
+    mList->hwLayers[idx].visibleRegionScreen.rects = &mList->hwLayers[idx].sourceCrop;
+    mList->hwLayers[idx].acquireFenceFd = -1;
+    mList->hwLayers[idx].releaseFenceFd = -1;
+    mList->hwLayers[idx].planeAlpha = 0xFF;
+    mList->numHwLayers++;
+
+    mHwc->prepare(mHwc, HWC_NUM_DISPLAY_TYPES, displays);
+
+    for (int j = 0; j < idx; j++) {
+        if (mList->hwLayers[j].compositionType == HWC_FRAMEBUFFER) {
+            LOGD("GPU or Partial MDP Composition");
+            return false;
+        }
+    }
+
+    // Full MDP Composition
+    mHwc->set(mHwc, HWC_NUM_DISPLAY_TYPES, displays);
+
+    for (int i = 0; i <= MAX_HWC_LAYERS; i++) {
+        if (mPrevRelFd[i] <= 0) {
+            break;
+        }
+        if (!i) {
+            // Wait for previous retire Fence to signal.
+            // Denotes contents on display have been replaced.
+            // For buffer-sync, framework should not over-write
+            // prev buffers until we close prev releaseFenceFds
+            sp<Fence> fence = new Fence(mPrevRelFd[i]);
+            if (fence->wait(1000) == -ETIME) {
+                LOGE("Wait timed-out for retireFenceFd %d", mPrevRelFd[i]);
+            }
+        }
+        close(mPrevRelFd[i]);
+        mPrevRelFd[i] = -1;
+    }
+
+    mPrevRelFd[0] = mList->retireFenceFd;
+    for (uint32_t j = 0; j < idx; j++) {
+        if (mList->hwLayers[j].compositionType == HWC_OVERLAY) {
+            mPrevRelFd[j + 1] = mList->hwLayers[j].releaseFenceFd;
+            mList->hwLayers[j].releaseFenceFd = -1;
+        }
+    }
+
+    close(mList->hwLayers[idx].releaseFenceFd);
+    mList->hwLayers[idx].releaseFenceFd = -1;
+    mList->retireFenceFd = -1;
+    mList->numHwLayers = 0;
+    return true;
+}
+#else
+bool
+HwcComposer2D::TryHwComposition()
+{
+    return !mHwc->set(mHwc, mDpy, mSur, mList);
+}
+#endif
 
 bool
 HwcComposer2D::TryRender(Layer* aRoot,
@@ -490,9 +535,10 @@ HwcComposer2D::TryRender(Layer* aRoot,
         return false;
     }
 
-    if (mHwc->set(mHwc, mDpy, mSur, mList)) {
-        LOGE("Hardware device failed to render");
-        return false;
+    if (!TryHwComposition()) {
+      // Full MDP Composition
+      LOGE("H/W Composition failed");
+      return false;
     }
 
     LOGD("Frame rendered");

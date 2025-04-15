@@ -10,10 +10,9 @@
  * utility methods for subclasses, and so forth.
  */
 
-#include "mozilla/DebugOnly.h"
-
 #include "mozilla/dom/Element.h"
 
+#include "mozilla/DebugOnly.h"
 #include "mozilla/dom/Attr.h"
 #include "nsDOMAttributeMap.h"
 #include "nsIAtom.h"
@@ -118,7 +117,6 @@
 #include "nsWrapperCacheInlines.h"
 #include "xpcpublic.h"
 #include "nsIScriptError.h"
-#include "nsLayoutStatics.h"
 #include "mozilla/Telemetry.h"
 
 #include "mozilla/CORSMode.h"
@@ -127,10 +125,26 @@
 #include "nsXBLService.h"
 #include "nsContentCID.h"
 #include "nsITextControlElement.h"
+#include "nsISupportsImpl.h"
 #include "mozilla/dom/DocumentFragment.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
+
+NS_IMETHODIMP
+Element::QueryInterface(REFNSIID aIID, void** aInstancePtr)
+{
+  NS_ASSERTION(aInstancePtr,
+               "QueryInterface requires a non-NULL destination!");
+  nsresult rv = FragmentOrElement::QueryInterface(aIID, aInstancePtr);
+  if (NS_SUCCEEDED(rv)) {
+    return NS_OK;
+  }
+
+  // Give the binding manager a chance to get an interface for this element.
+  return OwnerDoc()->BindingManager()->GetBindingImplementation(this, aIID,
+                                                                aInstancePtr);
+}
 
 nsEventStates
 Element::IntrinsicState() const
@@ -341,7 +355,7 @@ Element::GetBindingURL(nsIDocument *aDocument, css::URLValue **aResult)
 JSObject*
 Element::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aScope)
 {
-  JSObject* obj = nsINode::WrapObject(aCx, aScope);
+  JS::Rooted<JSObject*> obj(aCx, nsINode::WrapObject(aCx, aScope));
   if (!obj) {
     return nullptr;
   }
@@ -379,7 +393,7 @@ Element::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aScope)
   mozilla::css::URLValue *bindingURL;
   bool ok = GetBindingURL(doc, &bindingURL);
   if (!ok) {
-    dom::Throw<true>(aCx, NS_ERROR_FAILURE);
+    dom::Throw(aCx, NS_ERROR_FAILURE);
     return nullptr;
   }
 
@@ -396,7 +410,7 @@ Element::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aScope)
 
   nsXBLService* xblService = nsXBLService::GetInstance();
   if (!xblService) {
-    dom::Throw<true>(aCx, NS_ERROR_NOT_AVAILABLE);
+    dom::Throw(aCx, NS_ERROR_NOT_AVAILABLE);
     return nullptr;
   }
 
@@ -458,7 +472,7 @@ Element::GetStyledFrame()
 }
 
 nsIScrollableFrame*
-Element::GetScrollFrame(nsIFrame **aStyledFrame)
+Element::GetScrollFrame(nsIFrame **aStyledFrame, bool aFlushLayout)
 {
   // it isn't clear what to return for SVG nodes, so just return nothing
   if (IsSVG()) {
@@ -468,7 +482,11 @@ Element::GetScrollFrame(nsIFrame **aStyledFrame)
     return nullptr;
   }
 
-  nsIFrame* frame = GetStyledFrame();
+  // Inline version of GetStyledFrame to use Flush_None if needed.
+  nsIFrame* frame = GetPrimaryFrame(aFlushLayout ? Flush_Layout : Flush_None);
+  if (frame) {
+    frame = nsLayoutUtils::GetStyleFrame(frame);
+  }
 
   if (aStyledFrame) {
     *aStyledFrame = frame;
@@ -524,6 +542,28 @@ Element::ScrollIntoView(bool aTop)
                                      nsIPresShell::SCROLL_ALWAYS),
                                    nsIPresShell::ScrollAxis(),
                                    nsIPresShell::SCROLL_OVERFLOW_HIDDEN);
+}
+
+bool
+Element::ScrollByNoFlush(int32_t aDx, int32_t aDy)
+{
+  nsIScrollableFrame* sf = GetScrollFrame(nullptr, false);
+  if (!sf) {
+    return false;
+  }
+
+  nsWeakFrame weakRef(sf->GetScrolledFrame());
+
+  CSSIntPoint before = sf->GetScrollPositionCSSPixels();
+  sf->ScrollToCSSPixelsApproximate(CSSIntPoint(before.x + aDx, before.y + aDy));
+
+  // The frame was destroyed, can't keep on scrolling.
+  if (!weakRef.IsAlive()) {
+    return false;
+  }
+
+  CSSIntPoint after = sf->GetScrollPositionCSSPixels();
+  return (before != after);
 }
 
 static nsSize GetScrollRectSizeForOverflowVisibleFrame(nsIFrame* aFrame)
@@ -1118,7 +1158,7 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
       // The element being removed is an ancestor of the full-screen element,
       // exit full-screen state.
       nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
-                                      "DOM", OwnerDoc(),
+                                      NS_LITERAL_CSTRING("DOM"), OwnerDoc(),
                                       nsContentUtils::eDOM_PROPERTIES,
                                       "RemovedFullScreenElement");
       // Fully exit full-screen.
@@ -1128,7 +1168,9 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
       nsIDocument::UnlockPointer();
     }
     if (GetParent()) {
-      NS_RELEASE(mParent);
+      nsINode* p = mParent;
+      mParent = nullptr;
+      NS_RELEASE(p);
     } else {
       mParent = nullptr;
     }
@@ -1391,7 +1433,7 @@ Element::DispatchClickEvent(nsPresContext* aPresContext,
                             nsInputEvent* aSourceEvent,
                             nsIContent* aTarget,
                             bool aFullDispatch,
-                            const widget::EventFlags* aExtraEventFlags,
+                            const EventFlags* aExtraEventFlags,
                             nsEventStatus* aStatus)
 {
   NS_PRECONDITION(aTarget, "Must have target");
@@ -1433,7 +1475,9 @@ Element::GetPrimaryFrame(mozFlushType aType)
 
   // Cause a flush, so we get up-to-date frame
   // information
-  doc->FlushPendingNotifications(aType);
+  if (aType != Flush_None) {
+    doc->FlushPendingNotifications(aType);
+  }
 
   return GetPrimaryFrame();
 }
@@ -1698,10 +1742,6 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
 
   UpdateState(aNotify);
 
-  if (aNotify) {
-    nsNodeUtils::AttributeChanged(this, aNamespaceID, aName, aModType);
-  }
-
   if (aCallAfterSetAttr) {
     rv = AfterSetAttr(aNamespaceID, aName, &aValueForAfterSetAttr, aNotify);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -1710,6 +1750,10 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
       OnSetDirAttr(this, &aValueForAfterSetAttr,
                    hadValidDir, hadDirAuto, aNotify);
     }
+  }
+
+  if (aNotify) {
+    nsNodeUtils::AttributeChanged(this, aNamespaceID, aName, aModType);
   }
 
   if (aFireMutation) {
@@ -2417,7 +2461,7 @@ Element::MozRequestFullScreen()
   const char* error = GetFullScreenError(OwnerDoc());
   if (error) {
     nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
-                                    "DOM", OwnerDoc(),
+                                    NS_LITERAL_CSTRING("DOM"), OwnerDoc(),
                                     nsContentUtils::eDOM_PROPERTIES,
                                     error);
     nsRefPtr<nsAsyncDOMEvent> e =
@@ -2436,6 +2480,11 @@ Element::MozRequestFullScreen()
 
 // Try to keep the size of StringBuilder close to a jemalloc bucket size.
 #define STRING_BUFFER_UNITS 1020
+
+namespace {
+
+// We put StringBuilder in the anonymous namespace to prevent anything outside
+// this file from accidentally being linked against it.
 
 class StringBuilder
 {
@@ -2699,6 +2748,8 @@ private:
   // mLength is used only in the first StringBuilder object in the linked list.
   uint32_t                                mLength;
 };
+
+} // anonymous namespace
 
 static void
 AppendEncodedCharacters(const nsTextFragment* aText, StringBuilder& aBuilder)
@@ -3401,6 +3452,18 @@ Element::SetBoolAttr(nsIAtom* aAttr, bool aValue)
   }
 
   return UnsetAttr(kNameSpaceID_None, aAttr, true);
+}
+
+Directionality
+Element::GetComputedDirectionality() const
+{
+  nsIFrame* frame = GetPrimaryFrame();
+  if (frame) {
+    return frame->StyleVisibility()->mDirection == NS_STYLE_DIRECTION_LTR
+             ? eDir_LTR : eDir_RTL;
+  }
+
+  return GetDirectionality();
 }
 
 float

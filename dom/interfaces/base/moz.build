@@ -7,6 +7,7 @@
 XPIDL_SOURCES += [
     'domstubs.idl',
     'nsIBrowserDOMWindow.idl',
+    'nsICompositionStringSynthesizer.idl',
     'nsIContentPermissionPrompt.idl',
     'nsIContentPrefService.idl',
     'nsIContentPrefService2.idl',
@@ -58,10 +59,6 @@ if CONFIG['MOZ_WEBSPEECH']:
     ]
 
 XPIDL_MODULE = 'dom_base'
-
-XPIDL_FLAGS += [
-    '-I$(topsrcdir)/dom/interfaces/events',
-]
 
 MODULE = 'dom'
 

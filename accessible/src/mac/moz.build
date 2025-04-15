@@ -29,3 +29,17 @@ CMMSRCS += [
     'mozHTMLAccessible.mm',
     'mozTextAccessible.mm',
 ]
+
+LIBXUL_LIBRARY = True
+
+LOCAL_INCLUDES += [
+    '../base',
+    '../generic',
+    '../html',
+    '../xul',
+    '/layout/generic',
+    '/layout/xul/base/src',
+    '/widget/cocoa',
+    '/widget/xpwidgets',
+]
+

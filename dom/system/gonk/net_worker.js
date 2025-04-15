@@ -55,6 +55,8 @@ const INTERFACE_DELIMIT = "\0";
 
 importScripts("systemlibs.js");
 
+const SDK_VERSION = libcutils.property_get("ro.build.version.sdk", "0");
+
 function netdResponseType(code) {
   return Math.floor(code/100)*100;
 }
@@ -212,8 +214,8 @@ self.onmessage = function onmessage(event) {
 };
 
 /**
-* Set DNS servers for given network interface.
-*/
+ * Set DNS servers for given network interface.
+ */
 function setDNS(options) {
   let ifprops = getIFProperties(options.ifname);
   let dns1_str = options.dns1_str || ifprops.dns1_str;
@@ -249,21 +251,6 @@ function setDefaultRouteAndDNS(options) {
 }
 
 /**
- * Run DHCP and set default route and DNS servers for a given
- * network interface.
- */
-function runDHCPAndSetDefaultRouteAndDNS(options) {
-  let dhcp = libnetutils.dhcp_do_request(options.ifname);
-  dhcp.ifname = options.ifname;
-  dhcp.oldIfname = options.oldIfname;
-
-  //TODO this could be race-y... by the time we've finished the DHCP request
-  // and are now fudging with the routes, another network interface may have
-  // come online that's preferred...
-  setDefaultRouteAndDNS(dhcp);
-}
-
-/**
  * Remove default route for given network interface.
  */
 function removeDefaultRoute(options) {
@@ -288,6 +275,13 @@ function removeHostRoute(options) {
   }
 }
 
+/**
+ * Remove the routes associated with the named interface.
+ */
+function removeHostRoutes(options) {
+  libnetutils.ifc_remove_host_routes(options.ifname);
+}
+
 function removeNetworkRoute(options) {
   let ipvalue = netHelpers.stringToIP(options.ip);
   let netmaskvalue = netHelpers.stringToIP(options.netmask);
@@ -307,25 +301,51 @@ let gPending = false;
 let gReason = [];
 
 /**
- * Handle received data from netd.
+ * This helper function acts like String.split() fucntion.
+ * The function finds the first token in the javascript
+ * uint8 type array object, where tokens are delimited by
+ * the delimiter. The first token and the index pointer to
+ * the next token are returned in this function.
  */
-function onNetdMessage(data) {
-  let result = "";
-  let reason = "";
+function split(start, data, delimiter) {
+  // Sanity check.
+  if (start < 0 || data.length <= 0) {
+    return null;
+  }
 
-  // The return result is separated from the reason by a space character.
-  let i = 0;
+  let result = "";
+  let i = start;
   while (i < data.length) {
     let octet = data[i];
     i += 1;
-    if (octet == 32) {
-      break;
+    if (octet === delimiter) {
+      return {token: result, index: i};
     }
     result += String.fromCharCode(octet);
   }
+  return null;
+}
 
-  let code = parseInt(result);
+/**
+ * Handle received data from netd.
+ */
+function onNetdMessage(data) {
+  let result = split(0, data, 32);
+  if (!result) {
+    nextNetdCommand();
+    return;
+  }
+  let code = parseInt(result.token);
 
+  // Netd response contains the command sequence number
+  // in non-broadcast message for Android jb version.
+  // The format is ["code" "optional sequence number" "reason"]
+  if (!isBroadcastMessage(code) && SDK_VERSION >= 16) {
+    result = split(result.index, data, 32);
+  }
+
+  let i = result.index;
+  let reason = "";
   for (; i < data.length; i++) {
     let octet = data[i];
     reason += String.fromCharCode(octet);
@@ -383,18 +403,31 @@ function nextNetdCommand() {
   [gCurrentCommand, gCurrentCallback] = gCommandQueue.shift();
   debug("Sending '" + gCurrentCommand + "' command to netd.");
   gPending = true;
-  return postNetdCommand(gCurrentCommand);
+
+  // Android JB version adds sequence number to netd command.
+  let command = (SDK_VERSION >= 16) ? "0 " + gCurrentCommand : gCurrentCommand;
+  return postNetdCommand(command);
 }
 
 function setInterfaceUp(params, callback) {
   let command = "interface setcfg " + params.ifname + " " + params.ip + " " +
-                params.prefix + " " + "[" + params.link + "]";
+                params.prefix + " ";
+  if (SDK_VERSION >= 16) {
+    command += params.link;
+  } else {
+    command += "[" + params.link + "]";
+  }
   return doCommand(command, callback);
 }
 
 function setInterfaceDown(params, callback) {
   let command = "interface setcfg " + params.ifname + " " + params.ip + " " +
-                params.prefix + " " + "[" + params.link + "]";
+                params.prefix + " ";
+  if (SDK_VERSION >= 16) {
+    command += params.link;
+  } else {
+    command += "[" + params.link + "]";
+  }
   return doCommand(command, callback);
 }
 
@@ -452,7 +485,8 @@ function tetherInterface(params, callback) {
 }
 
 function preTetherInterfaceList(params, callback) {
-  let command = "tether interface list 0";
+  let command = (SDK_VERSION >= 16) ? "tether interface list"
+                                    : "tether interface list 0";
   return doCommand(command, callback);
 }
 
@@ -500,11 +534,21 @@ function wifiFirmwareReload(params, callback) {
 }
 
 function startAccessPointDriver(params, callback) {
+  // Skip the command for sdk version >= 16.
+  if (SDK_VERSION >= 16) {
+    callback(false, {code: "", reason: ""});
+    return true;
+  }
   let command = "softap start " + params.ifname;
   return doCommand(command, callback);
 }
 
 function stopAccessPointDriver(params, callback) {
+  // Skip the command for sdk version >= 16.
+  if (SDK_VERSION >= 16) {
+    callback(false, {code: "", reason: ""});
+    return true;
+  }
   let command = "softap stop " + params.ifname;
   return doCommand(command, callback);
 }
@@ -536,14 +580,39 @@ function escapeQuote(str) {
   return str.replace(/"/g, "\\\"");
 }
 
-// The command format is "softap set wlan0 wl0.1 hotspot456 open null 6 0 8".
+/**
+ * Command format for sdk version < 16
+ *   Arguments:
+ *     argv[2] - wlan interface
+ *     argv[3] - SSID
+ *     argv[4] - Security
+ *     argv[5] - Key
+ *     argv[6] - Channel
+ *     argv[7] - Preamble
+ *     argv[8] - Max SCB
+ *
+ * Command format for sdk version >= 16
+ *   Arguments:
+ *     argv[2] - wlan interface
+ *     argv[3] - SSID
+ *     argv[4] - Security
+ *     argv[5] - Key
+ */
 function setAccessPoint(params, callback) {
-  let command = "softap set " + params.ifname +
-                " " + params.wifictrlinterfacename +
-                " \"" + escapeQuote(params.ssid) + "\"" +
-                " " + params.security +
-                " \"" + escapeQuote(params.key) + "\"" +
-                " " + "6 0 8";
+  let command;
+  if (SDK_VERSION >= 16) {
+    command = "softap set " + params.ifname +
+              " \"" + escapeQuote(params.ssid) + "\"" +
+              " " + params.security +
+              " \"" + escapeQuote(params.key) + "\"";
+  } else {
+    command = "softap set " + params.ifname +
+              " " + params.wifictrlinterfacename +
+              " \"" + escapeQuote(params.ssid) + "\"" +
+              " " + params.security +
+              " \"" + escapeQuote(params.key) + "\"" +
+              " " + "6 0 8";
+  }
   return doCommand(command, callback);
 }
 

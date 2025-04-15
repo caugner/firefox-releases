@@ -4,50 +4,56 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/layers/TextureClientOGL.h"
-#include "mozilla/layers/CompositableClient.h"
-#include "mozilla/layers/CompositableForwarder.h"
-#include "GLContext.h"
-#include "gfxipc/ShadowLayerUtils.h"
+#include "GLContext.h"                  // for GLContext, etc
+#include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
+#include "mozilla/layers/ISurfaceAllocator.h"
+#include "nsSize.h"                     // for nsIntSize
 
 using namespace mozilla::gl;
 
 namespace mozilla {
 namespace layers {
 
-SharedTextureClientOGL::SharedTextureClientOGL()
-: mHandle(0), mIsCrossProcess(false), mInverted(false)
+class CompositableForwarder;
+
+SharedTextureClientOGL::SharedTextureClientOGL(TextureFlags aFlags)
+  : TextureClient(aFlags)
+  , mHandle(0)
+  , mInverted(false)
 {
+  MOZ_ASSERT(!(aFlags & (TEXTURE_DEALLOCATE_CLIENT|TEXTURE_DEALLOCATE_HOST)),
+             "SharedTextureClientOGL doesn't know how to release textures!");
 }
 
 SharedTextureClientOGL::~SharedTextureClientOGL()
 {
-  // the data is released by the host
+  // the data is owned externally.
 }
 
 
 bool
 SharedTextureClientOGL::ToSurfaceDescriptor(SurfaceDescriptor& aOutDescriptor)
 {
+  MOZ_ASSERT(IsValid());
   if (!IsAllocated()) {
     return false;
   }
   nsIntSize nsSize(mSize.width, mSize.height);
-  aOutDescriptor = SharedTextureDescriptor(mIsCrossProcess ? gl::GLContext::CrossProcess
-                                                           : gl::GLContext::SameProcess,
-                                           mHandle, nsSize, mInverted);
+  aOutDescriptor = SharedTextureDescriptor(mShareType, mHandle, nsSize, mInverted);
   return true;
 }
 
 void
 SharedTextureClientOGL::InitWith(gl::SharedTextureHandle aHandle,
                                  gfx::IntSize aSize,
-                                 bool aIsCrossProcess,
+                                 gl::SharedTextureShareType aShareType,
                                  bool aInverted)
 {
+  MOZ_ASSERT(IsValid());
   MOZ_ASSERT(!IsAllocated());
   mHandle = aHandle;
   mSize = aSize;
-  mIsCrossProcess = aIsCrossProcess;
+  mShareType = aShareType;
   mInverted = aInverted;
 }
 

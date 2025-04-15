@@ -13,7 +13,7 @@
 #include "nsIPrefBranch.h"
 #include "nsThreadUtils.h"
 
-#include "voice_engine/include/voe_errors.h"
+#include "webrtc/voice_engine/include/voe_errors.h"
 
 #ifdef MOZ_WIDGET_ANDROID
 #include "AndroidJNIWrapper.h"
@@ -145,19 +145,10 @@ MediaConduitErrorCode WebrtcAudioConduit::Init(WebrtcAudioConduit *other)
       // get the JVM
       JavaVM *jvm = jsjni_GetVM();
 
-      JNIEnv* env;
-      if (jvm->GetEnv((void**)&env, JNI_VERSION_1_4) != JNI_OK) {
-        CSFLogError(logTag,  "%s: could not get Java environment", __FUNCTION__);
-        return kMediaConduitSessionNotInited;
-      }
-      jvm->AttachCurrentThread(&env, NULL);
-
       if (webrtc::VoiceEngine::SetAndroidObjects(jvm, (void*)context) != 0) {
         CSFLogError(logTag, "%s Unable to set Android objects", __FUNCTION__);
         return kMediaConduitSessionNotInited;
       }
-
-      env->DeleteGlobalRef(context);
 #endif
 
     //Per WebRTC APIs below function calls return NULL on failure

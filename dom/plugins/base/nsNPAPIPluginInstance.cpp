@@ -23,6 +23,7 @@
 #include "nsContentUtils.h"
 #include "nsPluginInstanceOwner.h"
 
+#include "nsIDOMElement.h"
 #include "nsIDocument.h"
 #include "nsIDocShell.h"
 #include "nsIScriptGlobalObject.h"
@@ -49,6 +50,7 @@ using namespace mozilla;
 #include "mozilla/dom/ScreenOrientation.h"
 #include "mozilla/Hal.h"
 #include "GLContextProvider.h"
+#include "GLContext.h"
 #include "TexturePoolOGL.h"
 
 using namespace mozilla::gl;
@@ -134,9 +136,9 @@ public:
       return 0;
 
     SharedTextureHandle handle =
-      sPluginContext->CreateSharedHandle(GLContext::SameProcess,
+      sPluginContext->CreateSharedHandle(gl::SameProcess,
                                          (void*)mTextureInfo.mTexture,
-                                         GLContext::TextureID);
+                                         gl::TextureID);
 
     // We want forget about this now, so delete the texture. Assigning it to zero
     // ensures that we create a new one in Lock()
@@ -1012,9 +1014,9 @@ SharedTextureHandle nsNPAPIPluginInstance::CreateSharedHandle()
     return mContentTexture->CreateSharedHandle();
   } else if (mContentSurface) {
     EnsureGLContext();
-    return sPluginContext->CreateSharedHandle(GLContext::SameProcess,
+    return sPluginContext->CreateSharedHandle(gl::SameProcess,
                                               mContentSurface,
-                                              GLContext::SurfaceTexture);
+                                              gl::SurfaceTexture);
   } else return 0;
 }
 
@@ -1201,23 +1203,6 @@ nsNPAPIPluginInstance::AsyncSetWindow(NPWindow* window)
 
   return library->AsyncSetWindow(&mNPP, window);
 }
-
-#if defined(MOZ_WIDGET_QT) && (MOZ_PLATFORM_MAEMO == 6)
-nsresult
-nsNPAPIPluginInstance::HandleGUIEvent(const nsGUIEvent& anEvent, bool* handled)
-{
-  if (RUNNING != mRunning) {
-    *handled = false;
-    return NS_OK;
-  }
-
-  AutoPluginLibraryCall library(this);
-  if (!library)
-    return NS_ERROR_FAILURE;
-
-  return library->HandleGUIEvent(&mNPP, anEvent, handled);
-}
-#endif
 
 nsresult
 nsNPAPIPluginInstance::GetImageContainer(ImageContainer**aContainer)

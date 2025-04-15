@@ -13,36 +13,27 @@
 #include "nsString.h"
 #include "nsIURI.h"
 #include "nsIHttpChannel.h"
-#include "nsIJARChannel.h"
 #include "nsIDocument.h"
+#include "nsIContent.h"
 #include "nsIStreamListener.h"
 #include "nsWeakReference.h"
-#include "jsapi.h"
-#include "nsIScriptContext.h"
 #include "nsIChannelEventSink.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIHttpHeaderVisitor.h"
 #include "nsIProgressEventSink.h"
-#include "nsCOMArray.h"
 #include "nsJSUtils.h"
 #include "nsTArray.h"
 #include "nsITimer.h"
-#include "nsIDOMProgressEvent.h"
 #include "nsDOMEventTargetHelper.h"
-#include "nsDOMFile.h"
-#include "nsDOMBlobBuilder.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsISizeOfEventTarget.h"
 
 #include "mozilla/Assertions.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/TypedArray.h"
 #include "mozilla/dom/XMLHttpRequestBinding.h"
-#include "mozilla/dom/XMLHttpRequestUploadBinding.h"
-#include "mozilla/dom/EventHandlerBinding.h"
 
 #ifdef Status
 /* Xlib headers insist on this for some reason... Nuke it because
@@ -50,10 +41,61 @@
 #undef Status
 #endif
 
-class nsILoadGroup;
 class AsyncVerifyRedirectCallbackForwarder;
-class nsIUnicodeDecoder;
+class BlobSet;
+class nsDOMFile;
 class nsFormData;
+class nsIJARChannel;
+class nsILoadGroup;
+class nsIUnicodeDecoder;
+class nsIJSID;
+
+namespace mozilla {
+
+// A helper for building up an ArrayBuffer object's data
+// before creating the ArrayBuffer itself.  Will do doubling
+// based reallocation, up to an optional maximum growth given.
+//
+// When all the data has been appended, call getArrayBuffer,
+// passing in the JSContext* for which the ArrayBuffer object
+// is to be created.  This also implicitly resets the builder,
+// or it can be reset explicitly at any point by calling reset().
+class ArrayBufferBuilder
+{
+  void* mRawContents;
+  uint8_t* mDataPtr;
+  uint32_t mCapacity;
+  uint32_t mLength;
+public:
+  ArrayBufferBuilder();
+  ~ArrayBufferBuilder();
+
+  void reset();
+
+  // Will truncate if aNewCap is < length().
+  bool setCapacity(uint32_t aNewCap);
+
+  // Append aDataLen bytes from data to the current buffer.  If we
+  // need to grow the buffer, grow by doubling the size up to a
+  // maximum of aMaxGrowth (if given).  If aDataLen is greater than
+  // what the new capacity would end up as, then grow by aDataLen.
+  //
+  // The data parameter must not overlap with anything beyond the
+  // builder's current valid contents [0..length)
+  bool append(const uint8_t* aNewData, uint32_t aDataLen,
+              uint32_t aMaxGrowth = 0);
+
+  uint32_t length()   { return mLength; }
+  uint32_t capacity() { return mCapacity; }
+
+  JSObject* getArrayBuffer(JSContext* aCx);
+
+protected:
+  static bool areOverlappingRegions(const uint8_t* aStart1, uint32_t aLength1,
+                                    const uint8_t* aStart2, uint32_t aLength2);
+};
+
+} // namespace mozilla
 
 class nsXHREventTarget : public nsDOMEventTargetHelper,
                          public nsIXMLHttpRequestEventTarget
@@ -82,25 +124,22 @@ public:
   virtual void DisconnectFromOwner();
 };
 
-class nsXMLHttpRequestUpload : public nsXHREventTarget,
-                               public nsIXMLHttpRequestUpload
+class nsXMLHttpRequestUpload MOZ_FINAL : public nsXHREventTarget,
+                                         public nsIXMLHttpRequestUpload
 {
 public:
   nsXMLHttpRequestUpload(nsDOMEventTargetHelper* aOwner)
   {
     BindToOwner(aOwner);
     SetIsDOMBinding();
-  }                                         
+  }
   NS_DECL_ISUPPORTS_INHERITED
   NS_FORWARD_NSIXMLHTTPREQUESTEVENTTARGET(nsXHREventTarget::)
   NS_REALLY_FORWARD_NSIDOMEVENTTARGET(nsXHREventTarget)
   NS_DECL_NSIXMLHTTPREQUESTUPLOAD
 
   virtual JSObject* WrapObject(JSContext *cx,
-                               JS::Handle<JSObject*> scope) MOZ_OVERRIDE
-  {
-    return mozilla::dom::XMLHttpRequestUploadBinding::Wrap(cx, scope, this);
-  }
+                               JS::Handle<JSObject*> scope) MOZ_OVERRIDE;
   nsISupports* GetParentObject()
   {
     return GetOwner();
@@ -151,9 +190,9 @@ public:
               const mozilla::dom::MozXMLHttpRequestParameters& aParams,
               ErrorResult& aRv)
   {
-    nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.Get());
+    nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
     nsCOMPtr<nsIScriptObjectPrincipal> principal =
-      do_QueryInterface(aGlobal.Get());
+      do_QueryInterface(aGlobal.GetAsSupports());
     if (!global || ! principal) {
       aRv.Throw(NS_ERROR_FAILURE);
       return nullptr;
@@ -272,11 +311,11 @@ private:
     RequestBody() : mType(Uninitialized)
     {
     }
-    RequestBody(mozilla::dom::ArrayBuffer* aArrayBuffer) : mType(ArrayBuffer)
+    RequestBody(const mozilla::dom::ArrayBuffer* aArrayBuffer) : mType(ArrayBuffer)
     {
       mValue.mArrayBuffer = aArrayBuffer;
     }
-    RequestBody(mozilla::dom::ArrayBufferView* aArrayBufferView) : mType(ArrayBufferView)
+    RequestBody(const mozilla::dom::ArrayBufferView* aArrayBufferView) : mType(ArrayBufferView)
     {
       mValue.mArrayBufferView = aArrayBufferView;
     }
@@ -312,8 +351,8 @@ private:
       InputStream
     };
     union Value {
-      mozilla::dom::ArrayBuffer* mArrayBuffer;
-      mozilla::dom::ArrayBufferView* mArrayBufferView;
+      const mozilla::dom::ArrayBuffer* mArrayBuffer;
+      const mozilla::dom::ArrayBufferView* mArrayBufferView;
       nsIDOMBlob* mBlob;
       nsIDocument* mDocument;
       const nsAString* mString;
@@ -359,11 +398,12 @@ public:
   {
     aRv = Send(Nullable<RequestBody>());
   }
-  void Send(mozilla::dom::ArrayBuffer& aArrayBuffer, ErrorResult& aRv)
+  void Send(const mozilla::dom::ArrayBuffer& aArrayBuffer, ErrorResult& aRv)
   {
     aRv = Send(RequestBody(&aArrayBuffer));
   }
-  void Send(mozilla::dom::ArrayBufferView& aArrayBufferView, ErrorResult& aRv)
+  void Send(const mozilla::dom::ArrayBufferView& aArrayBufferView,
+            ErrorResult& aRv)
   {
     aRv = Send(RequestBody(&aArrayBufferView));
   }
@@ -633,7 +673,6 @@ protected:
   bool mErrorLoad;
   bool mWaitingForOnStopRequest;
   bool mProgressTimerIsActive;
-  bool mProgressEventWasDelayed;
   bool mIsHtml;
   bool mWarnAboutMultipartHtml;
   bool mWarnAboutSyncHtml;
@@ -664,7 +703,7 @@ protected:
 
   JS::Heap<JS::Value> mResultJSON;
 
-  js::ArrayBufferBuilder mArrayBufferBuilder;
+  mozilla::ArrayBufferBuilder mArrayBufferBuilder;
   JS::Heap<JSObject*> mResultArrayBuffer;
 
   void ResetResponse();

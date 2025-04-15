@@ -106,7 +106,6 @@
 #include "nsIXULDocument.h"
 #endif /* MOZ_XUL */
 
-#include "nsCycleCollectionParticipant.h"
 #include "nsCCUncollectableMarker.h"
 
 #include "mozAutoDocUpdate.h"
@@ -117,7 +116,6 @@
 #include "nsCycleCollector.h"
 #include "xpcpublic.h"
 #include "nsIScriptError.h"
-#include "nsLayoutStatics.h"
 #include "mozilla/Telemetry.h"
 
 #include "mozilla/CORSMode.h"
@@ -1042,21 +1040,19 @@ class ContentUnbinder : public nsRunnable
 public:
   ContentUnbinder()
   {
-    nsLayoutStatics::AddRef();
     mLast = this;
   }
 
   ~ContentUnbinder()
   {
     Run();
-    nsLayoutStatics::Release();
   }
 
   void UnbindSubtree(nsIContent* aNode)
   {
     if (aNode->NodeType() != nsIDOMNode::ELEMENT_NODE &&
         aNode->NodeType() != nsIDOMNode::DOCUMENT_FRAGMENT_NODE) {
-      return;  
+      return;
     }
     FragmentOrElement* container = static_cast<FragmentOrElement*>(aNode);
     uint32_t childCount = container->mAttrsAndChildren.ChildCount();
@@ -1225,7 +1221,9 @@ void
 FragmentOrElement::MarkNodeChildren(nsINode* aNode)
 {
   JSObject* o = GetJSObjectChild(aNode);
-  xpc_UnmarkGrayObject(o);
+  if (o) {
+    JS::ExposeObjectToActiveJS(o);
+  }
 
   nsEventListenerManager* elm = aNode->GetListenerManager(false);
   if (elm) {
@@ -1749,13 +1747,6 @@ NS_INTERFACE_MAP_END
 NS_IMPL_CYCLE_COLLECTING_ADDREF(FragmentOrElement)
 NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_LAST_RELEASE(FragmentOrElement,
                                                    nsNodeUtils::LastRelease(this))
-
-nsresult
-FragmentOrElement::PostQueryInterface(REFNSIID aIID, void** aInstancePtr)
-{
-  return OwnerDoc()->BindingManager()->GetBindingImplementation(this, aIID,
-                                                                aInstancePtr);
-}
 
 //----------------------------------------------------------------------
 

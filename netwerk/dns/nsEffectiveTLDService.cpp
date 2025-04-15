@@ -1,4 +1,5 @@
-//* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -60,32 +61,35 @@ nsDomainEntry::FuncForStaticAsserts(void)
 
 static nsEffectiveTLDService *gService = nullptr;
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(EffectiveTLDServiceMallocSizeOf)
-
-static int64_t
-GetEffectiveTLDSize()
+class EffectiveTLDServiceReporter MOZ_FINAL : public MemoryUniReporter
 {
-  return gService->SizeOfIncludingThis(EffectiveTLDServiceMallocSizeOf);
-}
+public:
+  EffectiveTLDServiceReporter()
+    : MemoryUniReporter("explicit/xpcom/effective-TLD-service",
+                         KIND_HEAP, UNITS_BYTES,
+                         "Memory used by the effective TLD service.")
+  {}
 
-NS_MEMORY_REPORTER_IMPLEMENT(
-  EffectiveTLDService,
-  "explicit/xpcom/effective-TLD-service",
-  KIND_HEAP,
-  nsIMemoryReporter::UNITS_BYTES,
-  GetEffectiveTLDSize,
-  "Memory used by the effective TLD service.")
+private:
+  int64_t Amount() MOZ_OVERRIDE
+  {
+    return gService ? gService->SizeOfIncludingThis(MallocSizeOf) : 0;
+  }
+};
+
+nsEffectiveTLDService::nsEffectiveTLDService()
+  // We'll probably have to rehash at least once, since nsTHashtable doesn't
+  // use a perfect hash, but at least we'll save a few rehashes along the way.
+  // Next optimization here is to precompute the hash using something like
+  // gperf, but one step at a time.  :-)
+  : mHash(ArrayLength(nsDomainEntry::entries))
+{
+}
 
 nsresult
 nsEffectiveTLDService::Init()
 {
   const ETLDEntry *entries = nsDomainEntry::entries;
-
-  // We'll probably have to rehash at least once, since nsTHashtable doesn't
-  // use a perfect hash, but at least we'll save a few rehashes along the way.
-  // Next optimization here is to precompute the hash using something like
-  // gperf, but one step at a time.  :-)
-  mHash.Init(ArrayLength(nsDomainEntry::entries));
 
   nsresult rv;
   mIDNService = do_GetService(NS_IDNSERVICE_CONTRACTID, &rv);
@@ -108,16 +112,15 @@ nsEffectiveTLDService::Init()
 
   MOZ_ASSERT(!gService);
   gService = this;
-  mReporter = new NS_MEMORY_REPORTER_NAME(EffectiveTLDService);
-  (void)::NS_RegisterMemoryReporter(mReporter);
+  mReporter = new EffectiveTLDServiceReporter();
+  NS_RegisterMemoryReporter(mReporter);
 
   return NS_OK;
 }
 
 nsEffectiveTLDService::~nsEffectiveTLDService()
 {
-  (void)::NS_UnregisterMemoryReporter(mReporter);
-  mReporter = nullptr;
+  NS_UnregisterMemoryReporter(mReporter);
   gService = nullptr;
 }
 

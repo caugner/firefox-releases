@@ -5,13 +5,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "AudioContext.h"
-#include "nsContentUtils.h"
+
 #include "nsPIDOMWindow.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/AnalyserNode.h"
 #include "mozilla/dom/AudioContextBinding.h"
 #include "mozilla/dom/HTMLMediaElement.h"
 #include "mozilla/dom/OfflineAudioContextBinding.h"
+#include "mozilla/dom/OwningNonNull.h"
 #include "MediaStreamGraph.h"
 #include "AudioDestinationNode.h"
 #include "AudioBufferSourceNode.h"
@@ -53,23 +54,19 @@ AudioContext::AudioContext(nsPIDOMWindow* aWindow,
                            uint32_t aLength,
                            float aSampleRate)
   : mSampleRate(aIsOffline ? aSampleRate : IdealAudioRate())
-  , mDestination(new AudioDestinationNode(MOZ_THIS_IN_INITIALIZER_LIST(),
-                                          aIsOffline, aNumberOfChannels,
-                                          aLength, aSampleRate))
   , mNumberOfChannels(aNumberOfChannels)
   , mIsOffline(aIsOffline)
 {
-  // Actually play audio
-  mDestination->Stream()->AddAudioOutput(&gWebAudioOutputKey);
   nsDOMEventTargetHelper::BindToOwner(aWindow);
   aWindow->AddAudioContext(this);
   SetIsDOMBinding();
 
-  mActiveNodes.Init();
-  mPannerNodes.Init();
-  mAudioBufferSourceNodes.Init();
-  mOscillatorNodes.Init();
-  mScriptProcessorNodes.Init();
+  // Note: AudioDestinationNode needs an AudioContext that must already be
+  // bound to the window.
+  mDestination = new AudioDestinationNode(this, aIsOffline,
+                                          aNumberOfChannels,
+                                          aLength, aSampleRate);
+  mDestination->Stream()->AddAudioOutput(&gWebAudioOutputKey);
 }
 
 AudioContext::~AudioContext()
@@ -91,9 +88,10 @@ AudioContext::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 }
 
 /* static */ already_AddRefed<AudioContext>
-AudioContext::Constructor(const GlobalObject& aGlobal, ErrorResult& aRv)
+AudioContext::Constructor(const GlobalObject& aGlobal,
+                          ErrorResult& aRv)
 {
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
   if (!window) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
@@ -110,7 +108,7 @@ AudioContext::Constructor(const GlobalObject& aGlobal,
                           float aSampleRate,
                           ErrorResult& aRv)
 {
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
   if (!window) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
@@ -169,7 +167,7 @@ AudioContext::CreateBuffer(JSContext* aJSContext, uint32_t aNumberOfChannels,
 }
 
 already_AddRefed<AudioBuffer>
-AudioContext::CreateBuffer(JSContext* aJSContext, ArrayBuffer& aBuffer,
+AudioContext::CreateBuffer(JSContext* aJSContext, const ArrayBuffer& aBuffer,
                           bool aMixToMono, ErrorResult& aRv)
 {
   // Do not accept this method unless the legacy pref has been set.

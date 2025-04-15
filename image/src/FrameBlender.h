@@ -8,12 +8,11 @@
 #define mozilla_imagelib_FrameBlender_h_
 
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/TimeStamp.h"
 #include "gfxASurface.h"
-#include "imgFrame.h"
 #include "FrameSequence.h"
 #include "nsCOMPtr.h"
-#include "nsISupportsImpl.h"
+
+class imgFrame;
 
 namespace mozilla {
 namespace image {

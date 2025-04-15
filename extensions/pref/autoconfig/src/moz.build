@@ -13,3 +13,7 @@ CPP_SOURCES += [
     'nsReadConfig.cpp',
 ]
 
+LIBXUL_LIBRARY = True
+
+LIBRARY_NAME = 'autoconfig'
+

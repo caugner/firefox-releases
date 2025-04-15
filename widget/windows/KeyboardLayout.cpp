@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/DebugOnly.h"
 #include "mozilla/Util.h"
 
 #include "KeyboardLayout.h"
@@ -39,6 +40,11 @@
 
 namespace mozilla {
 namespace widget {
+
+// Unique id counter associated with a keydown / keypress events. Used in
+// identifing keypress events for removal from async event dispatch queue
+// in metrofx after preventDefault is called on keydown events.
+static uint32_t sUniqueKeyEventId = 0;
 
 struct DeadKeyEntry
 {
@@ -755,6 +761,9 @@ NativeKey::InitKeyEvent(nsKeyEvent& aKeyEvent,
   switch (aKeyEvent.message) {
     case NS_KEY_DOWN:
       aKeyEvent.keyCode = mDOMKeyCode;
+      // Unique id for this keydown event and its associated keypress.
+      sUniqueKeyEventId++;
+      aKeyEvent.mUniqueId = sUniqueKeyEventId;
       break;
     case NS_KEY_UP:
       aKeyEvent.keyCode = mDOMKeyCode;
@@ -767,6 +776,7 @@ NativeKey::InitKeyEvent(nsKeyEvent& aKeyEvent,
         (mOriginalVirtualKeyCode == VK_MENU && mMsg.message != WM_SYSKEYUP);
       break;
     case NS_KEY_PRESS:
+      aKeyEvent.mUniqueId = sUniqueKeyEventId;
       break;
     default:
       MOZ_CRASH("Invalid event message");
@@ -796,7 +806,7 @@ NativeKey::DispatchKeyEvent(nsKeyEvent& aKeyEvent,
     aKeyEvent.pluginEvent = static_cast<void*>(&pluginEvent);
   }
 
-  return (mWidget->DispatchWindowEvent(&aKeyEvent) || mWidget->Destroyed());
+  return (mWidget->DispatchKeyboardEvent(&aKeyEvent) || mWidget->Destroyed());
 }
 
 bool

@@ -29,7 +29,6 @@
 #include "nsDOMClassInfoID.h" // DOMCI_DATA
 #include "mozilla/CORSMode.h"
 #include "mozilla/Attributes.h"
-#include "nsContentUtils.h"
 #include "nsIScrollableFrame.h"
 #include "mozilla/dom/Attr.h"
 #include "nsISMILAttr.h"
@@ -132,6 +131,8 @@ public:
 #endif // MOZILLA_INTERNAL_API
 
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_ELEMENT_IID)
+
+  NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr);
 
   /**
    * Method to get the full state of this element.  See nsEventStates.h for
@@ -335,6 +336,8 @@ public:
     return (!HasFixedDir() &&
             (HasValidDir() || IsHTML(nsGkAtoms::bdi)));
   }
+
+  Directionality GetComputedDirectionality() const;
 
 protected:
   /**
@@ -673,6 +676,11 @@ public:
                                         sf->GetScrollPositionCSSPixels().y));
     }
   }
+  /* Scrolls without flushing the layout.
+   * aDx is the x offset, aDy the y offset in CSS pixels.
+   * Returns true if we actually scrolled.
+   */
+  bool ScrollByNoFlush(int32_t aDx, int32_t aDy);
   int32_t ScrollWidth();
   int32_t ScrollHeight();
   int32_t ClientTop()
@@ -761,7 +769,7 @@ public:
                                      nsInputEvent* aSourceEvent,
                                      nsIContent* aTarget,
                                      bool aFullDispatch,
-                                     const widget::EventFlags* aFlags,
+                                     const EventFlags* aFlags,
                                      nsEventStatus* aStatus);
 
   /**
@@ -1139,7 +1147,8 @@ private:
    */
   nsRect GetClientAreaRect();
 
-  nsIScrollableFrame* GetScrollFrame(nsIFrame **aStyledFrame = nullptr);
+  nsIScrollableFrame* GetScrollFrame(nsIFrame **aStyledFrame = nullptr,
+                                     bool aFlushLayout = true);
 
   nsresult GetMarkup(bool aIncludeSelf, nsAString& aMarkup);
 

@@ -2,12 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "Crypto.h"
-#include "DOMError.h"
-#include "nsString.h"
 #include "jsfriendapi.h"
-#include "nsIServiceManager.h"
 #include "nsCOMPtr.h"
 #include "nsIRandomGenerator.h"
+#include "nsPIDOMWindow.h"
 
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/CryptoBinding.h"
@@ -55,7 +53,8 @@ Crypto::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 }
 
 JSObject *
-Crypto::GetRandomValues(JSContext* aCx, ArrayBufferView& aArray, ErrorResult& aRv)
+Crypto::GetRandomValues(JSContext* aCx, const ArrayBufferView& aArray,
+			ErrorResult& aRv)
 {
   NS_ABORT_IF_FALSE(NS_IsMainThread(), "Called on the wrong thread");
 

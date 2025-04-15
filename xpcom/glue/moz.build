@@ -27,7 +27,6 @@ EXPORTS += [
     'nsCycleCollectionNoteRootCallback.h',
     'nsCycleCollectionParticipant.h',
     'nsCycleCollectionTraversalCallback.h',
-    'nsCycleCollectorUtils.h',
     'nsDataHashtable.h',
     'nsDebug.h',
     'nsDeque.h',
@@ -74,6 +73,7 @@ EXPORTS.mozilla += [
     'DeadlockDetector.h',
     'FileUtils.h',
     'GenericFactory.h',
+    'HoldDropJSObjects.h',
     'IntentionalCrash.h',
     'Monitor.h',
     'Mutex.h',
@@ -86,9 +86,12 @@ EXPORTS.mozilla.threads += [
     'nsThreadIDs.h',
 ]
 
+include('objs.mozbuild')
+
+CPP_SOURCES += xpcom_gluens_src_cppsrcs
+CPP_SOURCES += xpcom_glue_src_cppsrcs
+
 CPP_SOURCES += [
-    '$(XPCOM_GLUENS_SRC_LCPPSRCS)',
-    '$(XPCOM_GLUE_SRC_LCPPSRCS)',
     'GenericModule.cpp',
     'nsStringAPI.cpp',
 ]

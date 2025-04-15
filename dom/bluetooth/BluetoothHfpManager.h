@@ -9,8 +9,8 @@
 
 #include "BluetoothCommon.h"
 #include "BluetoothProfileManagerBase.h"
+#include "BluetoothRilListener.h"
 #include "BluetoothSocketObserver.h"
-#include "BluetoothTelephonyListener.h"
 #include "mozilla/ipc/UnixSocket.h"
 #include "mozilla/Hal.h"
 
@@ -61,22 +61,31 @@ public:
   static BluetoothHfpManager* Get();
   ~BluetoothHfpManager();
 
+  // The following functions are inherited from BluetoothSocketObserver
   virtual void ReceiveSocketData(
     BluetoothSocket* aSocket,
     nsAutoPtr<mozilla::ipc::UnixSocketRawData>& aMessage) MOZ_OVERRIDE;
-  virtual void OnConnectSuccess(BluetoothSocket* aSocket) MOZ_OVERRIDE;
-  virtual void OnConnectError(BluetoothSocket* aSocket) MOZ_OVERRIDE;
-  virtual void OnDisconnect(BluetoothSocket* aSocket) MOZ_OVERRIDE;
+  virtual void OnSocketConnectSuccess(BluetoothSocket* aSocket) MOZ_OVERRIDE;
+  virtual void OnSocketConnectError(BluetoothSocket* aSocket) MOZ_OVERRIDE;
+  virtual void OnSocketDisconnect(BluetoothSocket* aSocket) MOZ_OVERRIDE;
+
+  // The following functions are inherited from BluetoothProfileManagerBase
   virtual void OnGetServiceChannel(const nsAString& aDeviceAddress,
                                    const nsAString& aServiceUuid,
                                    int aChannel) MOZ_OVERRIDE;
   virtual void OnUpdateSdpRecords(const nsAString& aDeviceAddress) MOZ_OVERRIDE;
   virtual void GetAddress(nsAString& aDeviceAddress) MOZ_OVERRIDE;
+  virtual void Connect(const nsAString& aDeviceAddress,
+                       BluetoothProfileController* aController) MOZ_OVERRIDE;
+  virtual void Disconnect(BluetoothProfileController* aController) MOZ_OVERRIDE;
+  virtual void OnConnect(const nsAString& aErrorStr) MOZ_OVERRIDE;
+  virtual void OnDisconnect(const nsAString& AErrorStr) MOZ_OVERRIDE;
 
-  void Connect(const nsAString& aDeviceAddress,
-               const bool aIsHandsfree,
-               BluetoothReplyRunnable* aRunnable);
-  void Disconnect();
+  virtual void GetName(nsACString& aName)
+  {
+    aName.AssignLiteral("HFP/HSP");
+  }
+
   bool Listen();
   bool ConnectSco(BluetoothReplyRunnable* aRunnable = nullptr);
   bool DisconnectSco();
@@ -88,6 +97,8 @@ public:
   void HandleCallStateChanged(uint32_t aCallIndex, uint16_t aCallState,
                               const nsAString& aError, const nsAString& aNumber,
                               const bool aIsOutgoing, bool aSend);
+  void HandleIccInfoChanged();
+  void HandleVoiceConnectionChanged();
 
   bool IsConnected();
   bool IsScoConnected();
@@ -105,10 +116,8 @@ private:
   friend class BluetoothHfpManagerObserver;
 
   BluetoothHfpManager();
-  void HandleIccInfoChanged();
   void HandleShutdown();
   void HandleVolumeChanged(const nsAString& aData);
-  void HandleVoiceConnectionChanged();
 
   bool Init();
   void Notify(const hal::BatteryInformation& aBatteryInfo);
@@ -117,9 +126,8 @@ private:
   uint32_t FindFirstCall(uint16_t aState);
   uint32_t GetNumberOfCalls(uint16_t aState);
 
-  void DispatchConnectionStatusChanged(const nsAString& aType);
-  void NotifyDialer(const nsAString& aCommand);
   void NotifyConnectionStatusChanged(const nsAString& aType);
+  void NotifyDialer(const nsAString& aCommand);
 
   bool SendCommand(const char* aCommand, uint32_t aValue = 0);
   bool SendLine(const char* aMessage);
@@ -139,15 +147,13 @@ private:
   int mNetworkSelectionMode;
   bool mReceiveVgsFlag;
   bool mDialingRequestProcessed;
-  bool mIsHandsfree;
-  bool mNeedsUpdatingSdpRecords;
   nsString mDeviceAddress;
   nsString mMsisdn;
   nsString mOperatorName;
 
   nsTArray<Call> mCurrentCallArray;
-  nsAutoPtr<BluetoothTelephonyListener> mListener;
-  nsRefPtr<BluetoothReplyRunnable> mRunnable;
+  nsAutoPtr<BluetoothRilListener> mListener;
+  nsRefPtr<BluetoothProfileController> mController;
   nsRefPtr<BluetoothReplyRunnable> mScoRunnable;
 
   // If a connection has been established, mSocket will be the socket

@@ -11,11 +11,8 @@
 #include "imgDecoderObserver.h"
 #include "Image.h"
 #include "ImageLogging.h"
-#include "RasterImage.h"
 #include "nsIObserverService.h"
-#include "RasterImage.h"
 
-#include "mozilla/Util.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Services.h"
 
@@ -603,8 +600,10 @@ imgStatusTracker::SyncNotifyDifference(const ImageStatusDiff& diff)
   LOG_SCOPE(GetImgLog(), "imgStatusTracker::SyncNotifyDifference");
 
   nsIntRect invalidRect = mInvalidRect.Union(diff.invalidRect);
-  mInvalidRect.SetEmpty();
+
   SyncNotifyState(mConsumers, !!mImage, diff.diffState, invalidRect, mHadLastPart);
+
+  mInvalidRect.SetEmpty();
 
   if (diff.unblockedOnload) {
     nsTObserverArray<imgRequestProxy*>::ForwardIterator iter(mConsumers);

@@ -8,6 +8,7 @@
 #include "nsServiceManagerUtils.h"
 #include "nsIXPConnect.h"
 #include "mozilla/Services.h"
+#include "jsapi.h"
 
 namespace mozilla {
 namespace places {
@@ -118,7 +119,7 @@ PlaceInfo::GetVisits(JSContext* aContext,
     NS_ENSURE_STATE(jsobj);
     JS::Rooted<JS::Value> wrappedVisit(aContext, OBJECT_TO_JSVAL(jsobj));
 
-    JSBool rc = JS_SetElement(aContext, visits, idx, wrappedVisit.address());
+    bool rc = JS_SetElement(aContext, visits, idx, &wrappedVisit);
     NS_ENSURE_TRUE(rc, NS_ERROR_UNEXPECTED);
   }
 

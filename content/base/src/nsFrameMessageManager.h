@@ -21,7 +21,9 @@
 #include "mozilla/Services.h"
 #include "nsIObserverService.h"
 #include "nsThreadUtils.h"
+#include "nsWeakPtr.h"
 #include "mozilla/Attributes.h"
+#include "js/RootingAPI.h"
 
 namespace mozilla {
 namespace dom {
@@ -30,6 +32,7 @@ class ContentParent;
 class ContentChild;
 struct StructuredCloneData;
 class ClonedMessageData;
+class MessageManagerReporter;
 
 namespace ipc {
 
@@ -106,12 +109,12 @@ StructuredCloneData UnpackClonedMessageDataForChild(const ClonedMessageData& aDa
 } // namespace mozilla
 
 class nsAXPCNativeCallContext;
-struct JSContext;
-class JSObject;
 
 struct nsMessageListenerInfo
 {
-  nsCOMPtr<nsIMessageListener> mListener;
+  // Exactly one of mStrongListener and mWeakListener must be non-null.
+  nsCOMPtr<nsIMessageListener> mStrongListener;
+  nsWeakPtr mWeakListener;
   nsCOMPtr<nsIAtom> mMessage;
 };
 
@@ -132,7 +135,7 @@ class MOZ_STACK_CLASS SameProcessCpowHolder : public CpowHolder
     bool ToObject(JSContext* aCx, JSObject** aObjp);
 
   private:
-    JS::RootedObject mObj;
+    JS::Rooted<JSObject*> mObj;
 };
 
 class nsFrameMessageManager MOZ_FINAL : public nsIContentFrameMessageManager,
@@ -140,6 +143,7 @@ class nsFrameMessageManager MOZ_FINAL : public nsIContentFrameMessageManager,
                                         public nsIFrameScriptLoader,
                                         public nsIProcessChecker
 {
+  friend class mozilla::dom::MessageManagerReporter;
   typedef mozilla::dom::StructuredCloneData StructuredCloneData;
 public:
   nsFrameMessageManager(mozilla::dom::ipc::MessageManagerCallback* aCallback,

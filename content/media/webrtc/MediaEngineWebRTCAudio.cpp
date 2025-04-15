@@ -103,15 +103,20 @@ MediaEngineWebRTCAudioSource::Config(bool aEchoOn, uint32_t aEcho,
 nsresult
 MediaEngineWebRTCAudioSource::Allocate(const MediaEnginePrefs &aPrefs)
 {
-  if (mState == kReleased && mInitDone) {
-    webrtc::VoEHardware* ptrVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
-    int res = ptrVoEHw->SetRecordingDevice(mCapIndex);
-    ptrVoEHw->Release();
-    if (res) {
+  if (mState == kReleased) {
+    if (mInitDone) {
+      webrtc::VoEHardware* ptrVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
+      int res = ptrVoEHw->SetRecordingDevice(mCapIndex);
+      ptrVoEHw->Release();
+      if (res) {
+        return NS_ERROR_FAILURE;
+      }
+      mState = kAllocated;
+      LOG(("Audio device %d allocated", mCapIndex));
+    } else {
+      LOG(("Audio device is not initalized"));
       return NS_ERROR_FAILURE;
     }
-    mState = kAllocated;
-    LOG(("Audio device %d allocated", mCapIndex));
   } else if (mSources.IsEmpty()) {
     LOG(("Audio device %d reallocated", mCapIndex));
   } else {
@@ -343,12 +348,12 @@ MediaEngineWebRTCAudioSource::Shutdown()
   mInitDone = false;
 }
 
-typedef WebRtc_Word16 sample;
+typedef int16_t sample;
 
 void
-MediaEngineWebRTCAudioSource::Process(const int channel,
-  const webrtc::ProcessingTypes type, sample* audio10ms,
-  const int length, const int samplingFreq, const bool isStereo)
+MediaEngineWebRTCAudioSource::Process(int channel,
+  webrtc::ProcessingTypes type, sample* audio10ms,
+  int length, int samplingFreq, bool isStereo)
 {
   MonitorAutoLock lock(mMonitor);
   if (mState != kStarted)

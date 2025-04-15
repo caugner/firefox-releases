@@ -1935,6 +1935,17 @@ CSS_PROP_POSITION(
     nullptr,
     offsetof(nsStylePosition, mHeight),
     eStyleAnimType_Coord)
+CSS_PROP_VISIBILITY(
+    image-orientation,
+    image_orientation,
+    ImageOrientation,
+    CSS_PROPERTY_PARSE_VALUE |
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION,
+    "layout.css.image-orientation.enabled",
+    0,
+    kImageOrientationKTable,
+    offsetof(nsStyleVisibility, mImageOrientation),
+    eStyleAnimType_None)
 CSS_PROP_LIST(
     -moz-image-region,
     image_region,
@@ -2277,6 +2288,16 @@ CSS_PROP_POSITION(
     kWidthKTable,
     offsetof(nsStylePosition, mMinWidth),
     eStyleAnimType_Coord)
+CSS_PROP_DISPLAY(
+    mix-blend-mode,
+    mix_blend_mode,
+    MixBlendMode,
+    CSS_PROPERTY_PARSE_VALUE,
+    "layout.css.mix-blend-mode.enabled",
+    VARIANT_HK,
+    kBlendModeKTable,
+    CSS_PROP_NO_OFFSET,
+    eStyleAnimType_None)
 CSS_PROP_DISPLAY(
     opacity,
     opacity,
@@ -2633,16 +2654,6 @@ CSS_PROP_VISIBILITY(
     kPointerEventsKTable,
     offsetof(nsStyleVisibility, mPointerEvents),
     eStyleAnimType_EnumU8)
-CSS_PROP_VISIBILITY(
-    writing-mode,
-    writing_mode,
-    WritingMode,
-    CSS_PROPERTY_PARSE_VALUE,
-    "layout.css.vertical-text.enabled",
-    VARIANT_HK,
-    kWritingModeKTable,
-    offsetof(nsStyleVisibility, mWritingMode),
-    eStyleAnimType_EnumU8)
 CSS_PROP_DISPLAY(
     position,
     position,
@@ -2711,7 +2722,7 @@ CSS_PROP_TEXT(
     text-align,
     text_align,
     TextAlign,
-    CSS_PROPERTY_PARSE_VALUE,
+    CSS_PROPERTY_PARSE_VALUE | CSS_PROPERTY_APPLIES_TO_PLACEHOLDER,
     "",
     // When we support aligning on a string, we can parse text-align
     // as a string....
@@ -2735,17 +2746,16 @@ CSS_PROP_SHORTHAND(
     TextDecoration,
     CSS_PROPERTY_PARSE_FUNCTION,
     "")
-CSS_PROP_TEXTRESET(
-    -moz-text-blink,
-    text_blink,
-    CSS_PROP_DOMPROP_PREFIXED(TextBlink),
+CSS_PROP_TEXT(
+    text-combine-horizontal,
+    text_combine_horizontal,
+    TextCombineHorizontal,
     CSS_PROPERTY_PARSE_VALUE |
-        CSS_PROPERTY_APPLIES_TO_FIRST_LETTER_AND_FIRST_LINE |
-        CSS_PROPERTY_APPLIES_TO_PLACEHOLDER,
-    "",
-    VARIANT_HK,
-    kTextBlinkKTable,
-    offsetof(nsStyleTextReset, mTextBlink),
+        CSS_PROPERTY_VALUE_PARSER_FUNCTION,
+    "layout.css.vertical-text.enabled",
+    0,
+    kTextCombineHorizontalKTable,
+    offsetof(nsStyleText, mTextCombineHorizontal),
     eStyleAnimType_EnumU8)
 CSS_PROP_TEXTRESET(
     -moz-text-decoration-color,
@@ -2796,6 +2806,16 @@ CSS_PROP_TEXT(
     nullptr,
     offsetof(nsStyleText, mTextIndent),
     eStyleAnimType_Coord)
+CSS_PROP_TEXT(
+    text-orientation,
+    text_orientation,
+    TextOrientation,
+    CSS_PROPERTY_PARSE_VALUE,
+    "layout.css.vertical-text.enabled",
+    VARIANT_HK,
+    kTextOrientationKTable,
+    offsetof(nsStyleText, mTextOrientation),
+    eStyleAnimType_EnumU8)
 CSS_PROP_TEXTRESET(
     text-overflow,
     text_overflow,
@@ -2852,7 +2872,7 @@ CSS_PROP_DISPLAY(
     CSS_PROPERTY_PARSE_FUNCTION,
     "",
     0,
-    kDisplayKTable,
+    nullptr,
     offsetof(nsStyleDisplay, mSpecifiedTransform),
     eStyleAnimType_Custom)
 CSS_PROP_DISPLAY(
@@ -3132,6 +3152,16 @@ CSS_PROP_TEXT(
     kHyphensKTable,
     CSS_PROP_NO_OFFSET,
     eStyleAnimType_None)
+CSS_PROP_VISIBILITY(
+    writing-mode,
+    writing_mode,
+    WritingMode,
+    CSS_PROPERTY_PARSE_VALUE,
+    "layout.css.vertical-text.enabled",
+    VARIANT_HK,
+    kWritingModeKTable,
+    offsetof(nsStyleVisibility, mWritingMode),
+    eStyleAnimType_EnumU8)
 CSS_PROP_POSITION(
     z-index,
     z_index,
@@ -3312,7 +3342,7 @@ CSS_PROP_SVG(
     CSS_PROPERTY_PARSE_FUNCTION,
     "",
     0,
-    kObjectPatternKTable,
+    kContextPatternKTable,
     offsetof(nsStyleSVG, mFill),
     eStyleAnimType_PaintServer)
 CSS_PROP_SVG(
@@ -3321,8 +3351,8 @@ CSS_PROP_SVG(
     FillOpacity,
     CSS_PROPERTY_PARSE_VALUE,
     "",
-    VARIANT_HN | VARIANT_KEYWORD,
-    kObjectOpacityKTable,
+    VARIANT_HN | VARIANT_OPENTYPE_SVG_KEYWORD,
+    kContextOpacityKTable,
     offsetof(nsStyleSVG, mFillOpacity),
     eStyleAnimType_float)
 CSS_PROP_SVG(
@@ -3344,7 +3374,7 @@ CSS_PROP_SVGRESET(
     0,
     nullptr,
     CSS_PROP_NO_OFFSET,
-    eStyleAnimType_None)
+    eStyleAnimType_Custom)
 CSS_PROP_SVGRESET(
     flood-color,
     flood_color,
@@ -3478,7 +3508,7 @@ CSS_PROP_SVG(
     CSS_PROPERTY_PARSE_FUNCTION,
     "",
     0,
-    kObjectPatternKTable,
+    kContextPatternKTable,
     offsetof(nsStyleSVG, mStroke),
     eStyleAnimType_PaintServer)
 CSS_PROP_SVG(
@@ -3490,7 +3520,7 @@ CSS_PROP_SVG(
         // NOTE: Internal values have range restrictions.
     "",
     0,
-    kStrokeObjectValueKTable,
+    kStrokeContextValueKTable,
     CSS_PROP_NO_OFFSET, /* property stored in 2 separate members */
     eStyleAnimType_Custom)
 CSS_PROP_SVG(
@@ -3499,8 +3529,8 @@ CSS_PROP_SVG(
     StrokeDashoffset,
     CSS_PROPERTY_PARSE_VALUE,
     "",
-    VARIANT_HLPN | VARIANT_KEYWORD,
-    kStrokeObjectValueKTable,
+    VARIANT_HLPN | VARIANT_OPENTYPE_SVG_KEYWORD,
+    kStrokeContextValueKTable,
     offsetof(nsStyleSVG, mStrokeDashoffset),
     eStyleAnimType_Coord)
 CSS_PROP_SVG(
@@ -3540,8 +3570,8 @@ CSS_PROP_SVG(
     StrokeOpacity,
     CSS_PROPERTY_PARSE_VALUE,
     "",
-    VARIANT_HN | VARIANT_KEYWORD,
-    kObjectOpacityKTable,
+    VARIANT_HN | VARIANT_OPENTYPE_SVG_KEYWORD,
+    kContextOpacityKTable,
     offsetof(nsStyleSVG, mStrokeOpacity),
     eStyleAnimType_float)
 CSS_PROP_SVG(
@@ -3551,8 +3581,8 @@ CSS_PROP_SVG(
     CSS_PROPERTY_PARSE_VALUE |
         CSS_PROPERTY_VALUE_NONNEGATIVE,
     "",
-    VARIANT_HLPN | VARIANT_KEYWORD,
-    kStrokeObjectValueKTable,
+    VARIANT_HLPN | VARIANT_OPENTYPE_SVG_KEYWORD,
+    kStrokeContextValueKTable,
     offsetof(nsStyleSVG, mStrokeWidth),
     eStyleAnimType_Coord)
 CSS_PROP_SVG(

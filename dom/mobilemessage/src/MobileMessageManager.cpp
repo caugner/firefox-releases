@@ -11,7 +11,7 @@
 #include "nsIObserverService.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
-#include "Constants.h"
+#include "mozilla/dom/mobilemessage/Constants.h" // For MessageType
 #include "nsIDOMMozSmsEvent.h"
 #include "nsIDOMMozMmsEvent.h"
 #include "nsIDOMMozSmsMessage.h"
@@ -101,12 +101,19 @@ MobileMessageManager::Shutdown()
 
 NS_IMETHODIMP
 MobileMessageManager::GetSegmentInfoForText(const nsAString& aText,
-                                            nsIDOMMozSmsSegmentInfo** aResult)
+                                            nsIDOMDOMRequest** aRequest)
 {
   nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
   NS_ENSURE_TRUE(smsService, NS_ERROR_FAILURE);
 
-  return smsService->GetSegmentInfoForText(aText, aResult);
+  nsRefPtr<DOMRequest> request = new DOMRequest(GetOwner());
+  nsCOMPtr<nsIMobileMessageCallback> msgCallback =
+    new MobileMessageCallback(request);
+  nsresult rv = smsService->GetSegmentInfoForText(aText, msgCallback);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  request.forget(aRequest);
+  return NS_OK;
 }
 
 nsresult
@@ -155,7 +162,7 @@ MobileMessageManager::Send(const JS::Value& aNumber_, const nsAString& aMessage,
     return NS_ERROR_INVALID_ARG;
   }
 
-  JS::Rooted<JSObject*> global(cx, sc->GetNativeGlobal());
+  JS::Rooted<JSObject*> global(cx, sc->GetWindowProxy());
   NS_ASSERTION(global, "Failed to get global object!");
 
   JSAutoCompartment ac(cx, global);
@@ -175,7 +182,7 @@ MobileMessageManager::Send(const JS::Value& aNumber_, const nsAString& aMessage,
 
   JS::Rooted<JS::Value> number(cx);
   for (uint32_t i=0; i<size; ++i) {
-    if (!JS_GetElement(cx, numbers, i, number.address())) {
+    if (!JS_GetElement(cx, numbers, i, &number)) {
       return NS_ERROR_INVALID_ARG;
     }
 
@@ -278,7 +285,7 @@ MobileMessageManager::Delete(const JS::Value& aParam, nsIDOMDOMRequest** aReques
 
     JS::Rooted<JS::Value> idJsValue(cx);
     for (uint32_t i = 0; i < size; i++) {
-      if (!JS_GetElement(cx, ids, i, idJsValue.address())) {
+      if (!JS_GetElement(cx, ids, i, &idJsValue)) {
         return NS_ERROR_INVALID_ARG;
       }
 

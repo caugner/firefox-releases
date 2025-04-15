@@ -6,6 +6,11 @@
 
 MODULE = 'widget'
 
+if CONFIG['MOZ_ENABLE_GTK2']:
+    LIBRARY_NAME = 'widget_gtk2'
+else:
+    LIBRARY_NAME = 'widget_gtk3'
+
 EXPORTS += [
     'mozcontainer.h',
     'nsGTKToolkit.h',
@@ -53,3 +58,12 @@ if CONFIG['MOZ_X11']:
         'nsClipboard.cpp',
         'nsDragService.cpp',
     ]
+
+FAIL_ON_WARNINGS = True
+
+CSRCS += [
+    'mozcontainer.c',
+]
+
+LIBXUL_LIBRARY = True
+

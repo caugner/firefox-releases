@@ -380,11 +380,10 @@ function gatherTextUnder ( root )
       // Add this text to our collection.
       text += " " + node.data;
     } else if ( node instanceof HTMLImageElement) {
-      // If it has an alt= attribute, use that.
+      // If it has an "alt" attribute, add that.
       var altText = node.getAttribute( "alt" );
       if ( altText && altText != "" ) {
-        text = altText;
-        break;
+        text += " " + altText;
       }
     }
     // Find next node to test.
@@ -404,10 +403,8 @@ function gatherTextUnder ( root )
       }
     }
   }
-  // Strip leading whitespace.
-  text = text.replace( /^\s+/, "" );
-  // Strip trailing whitespace.
-  text = text.replace( /\s+$/, "" );
+  // Strip leading and tailing whitespace.
+  text = text.trim();
   // Compress remaining whitespace.
   text = text.replace( /\s+/g, " " );
   return text;
@@ -457,6 +454,9 @@ function openAboutDialog() {
   while (enumerator.hasMoreElements()) {
     // Only open one about window (Bug 599573)
     let win = enumerator.getNext();
+    if (win.closed) {
+      continue;
+    }
     win.focus();
     return;
   }

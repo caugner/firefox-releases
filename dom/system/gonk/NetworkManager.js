@@ -233,6 +233,7 @@ NetworkManager.prototype = {
             if (network.type == Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE ||
                 network.type == Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_MMS ||
                 network.type == Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_SUPL) {
+              this.removeHostRoutes(network.name);
               this.addHostRoute(network);
             }
             // Add extra host route. For example, mms proxy or mmsc.
@@ -321,7 +322,6 @@ NetworkManager.prototype = {
             state: i.state,
             type: i.type,
             name: i.name,
-            dhcp: i.dhcp,
             ip: i.ip,
             netmask: i.netmask,
             broadcast: i.broadcast,
@@ -457,9 +457,10 @@ NetworkManager.prototype = {
 
   // Helpers
 
+  idgen: 0,
   controlMessage: function controlMessage(params, callback) {
     if (callback) {
-      let id = callback.name;
+      let id = this.idgen++;
       params.id = id;
       this.controlCallbacks[id] = callback;
     }
@@ -477,6 +478,7 @@ NetworkManager.prototype = {
     let callback = this.controlCallbacks[id];
     if (callback) {
       callback.call(this, response);
+      delete this.controlCallbacks[id];
     }
   },
 
@@ -597,7 +599,7 @@ NetworkManager.prototype = {
   setDefaultRouteAndDNS: function setDefaultRouteAndDNS(oldInterface) {
     debug("Going to change route and DNS to " + this.active.name);
     let options = {
-      cmd: this.active.dhcp ? "runDHCPAndSetDefaultRouteAndDNS" : "setDefaultRouteAndDNS",
+      cmd: "setDefaultRouteAndDNS",
       ifname: this.active.name,
       oldIfname: (oldInterface && oldInterface != this.active) ? oldInterface.name : null,
       gateway_str: this.active.gateway,
@@ -605,7 +607,7 @@ NetworkManager.prototype = {
       dns2_str: this.active.dns2
     };
     this.worker.postMessage(options);
-    this.setNetworkProxy();
+    this.setNetworkProxy(this.active);
   },
 
   removeDefaultRoute: function removeDefaultRoute(ifname) {
@@ -635,6 +637,15 @@ NetworkManager.prototype = {
       ifname: network.name,
       gateway: network.gateway,
       hostnames: [network.dns1, network.dns2, network.httpProxyHost]
+    };
+    this.worker.postMessage(options);
+  },
+
+  removeHostRoutes: function removeHostRoutes(ifname) {
+    debug("Going to remove all host routes on " + ifname);
+    let options = {
+      cmd: "removeHostRoutes",
+      ifname: ifname,
     };
     this.worker.postMessage(options);
   },
@@ -688,9 +699,9 @@ NetworkManager.prototype = {
     this.worker.postMessage(options);
   },
 
-  setNetworkProxy: function setNetworkProxy() {
+  setNetworkProxy: function setNetworkProxy(network) {
     try {
-      if (!this.active.httpProxyHost || this.active.httpProxyHost == "") {
+      if (!network.httpProxyHost || network.httpProxyHost == "") {
         // Sets direct connection to internet.
         Services.prefs.clearUserPref("network.proxy.type");
         Services.prefs.clearUserPref("network.proxy.share_proxy_settings");
@@ -698,23 +709,23 @@ NetworkManager.prototype = {
         Services.prefs.clearUserPref("network.proxy.http_port");
         Services.prefs.clearUserPref("network.proxy.ssl");
         Services.prefs.clearUserPref("network.proxy.ssl_port");
-        debug("No proxy support for " + this.active.name + " network interface.");
+        debug("No proxy support for " + network.name + " network interface.");
         return;
       }
 
-      debug("Going to set proxy settings for " + this.active.name + " network interface.");
+      debug("Going to set proxy settings for " + network.name + " network interface.");
       // Sets manual proxy configuration.
       Services.prefs.setIntPref("network.proxy.type", MANUAL_PROXY_CONFIGURATION);
       // Do not use this proxy server for all protocols.
       Services.prefs.setBoolPref("network.proxy.share_proxy_settings", false);
-      Services.prefs.setCharPref("network.proxy.http", this.active.httpProxyHost);
-      Services.prefs.setCharPref("network.proxy.ssl", this.active.httpProxyHost);
-      let port = this.active.httpProxyPort == "" ? 8080 : this.active.httpProxyPort;
+      Services.prefs.setCharPref("network.proxy.http", network.httpProxyHost);
+      Services.prefs.setCharPref("network.proxy.ssl", network.httpProxyHost);
+      let port = network.httpProxyPort == 0 ? 8080 : network.httpProxyPort;
       Services.prefs.setIntPref("network.proxy.http_port", port);
       Services.prefs.setIntPref("network.proxy.ssl_port", port);
     } catch (ex) {
        debug("Exception " + ex + ". Unable to set proxy setting for "
-             + this.active.name + " network interface.");
+             + network.name + " network interface.");
        return;
     }
   },

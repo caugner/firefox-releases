@@ -35,7 +35,7 @@ interface Element : Node {
   [Constant]
   readonly attribute DOMTokenList? classList;
 
-  [Constant]
+  [SameObject]
   readonly attribute MozNamedAttrMap attributes;
   DOMString? getAttribute(DOMString name);
   DOMString? getAttributeNS(DOMString? namespace, DOMString localName);
@@ -131,6 +131,13 @@ interface Element : Node {
   Attr? getAttributeNodeNS(DOMString? namespaceURI, DOMString localName);
   [Throws]
   Attr? setAttributeNodeNS(Attr newAttr);
+
+  [ChromeOnly]
+  /**
+   * Scrolls the element by (dx, dy) CSS pixels without doing any
+   * layout flushing.
+   */
+  boolean scrollByNoFlush(long dx, long dy);
 };
 
 // http://dev.w3.org/csswg/cssom-view/#extensions-to-the-element-interface
@@ -186,4 +193,5 @@ partial interface Element {
 };
 
 Element implements ChildNode;
+Element implements NonDocumentTypeChildNode;
 Element implements ParentNode;

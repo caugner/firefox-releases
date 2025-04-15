@@ -7,16 +7,20 @@
 #include "SpeechRecognition.h"
 
 #include "nsCOMPtr.h"
-#include "nsContentUtils.h"
 #include "nsCycleCollectionParticipant.h"
 
 #include "mozilla/dom/SpeechRecognitionBinding.h"
+#include "mozilla/dom/MediaStreamTrackBinding.h"
+#include "mozilla/MediaManager.h"
+#include "mozilla/Services.h"
 
 #include "AudioSegment.h"
 #include "endpointer.h"
 
 #include "GeneratedEvents.h"
 #include "nsIDOMSpeechRecognitionEvent.h"
+#include "nsIObserverService.h"
+#include "nsServiceManagerUtils.h"
 
 #include <algorithm>
 
@@ -108,9 +112,10 @@ SpeechRecognition::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 }
 
 already_AddRefed<SpeechRecognition>
-SpeechRecognition::Constructor(const GlobalObject& aGlobal, ErrorResult& aRv)
+SpeechRecognition::Constructor(const GlobalObject& aGlobal,
+                               ErrorResult& aRv)
 {
-  nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(aGlobal.GetAsSupports());
   if (!win) {
     aRv.Throw(NS_ERROR_FAILURE);
   }
@@ -134,17 +139,11 @@ SpeechRecognition::ProcessEvent(SpeechEvent* aEvent)
          GetName(aEvent),
          GetName(mCurrentState));
 
-  // Run priority events first
-  for (uint32_t i = 0; i < mPriorityEvents.Length(); ++i) {
-    nsRefPtr<SpeechEvent> event = mPriorityEvents[i];
-
-    SR_LOG("Processing priority %s", GetName(event));
-    Transition(event);
+  if (mAborted && aEvent->mType != EVENT_ABORT) {
+    // ignore all events while aborting
+    return;
   }
 
-  mPriorityEvents.Clear();
-
-  SR_LOG("Processing %s received as argument", GetName(aEvent));
   Transition(aEvent);
 }
 
@@ -304,9 +303,6 @@ SpeechRecognition::Transition(SpeechEvent* aEvent)
           MOZ_CRASH("Invalid event EVENT_COUNT");
       }
       break;
-    case STATE_ABORTING:
-      DoNothing(aEvent);
-      break;
     case STATE_COUNT:
       MOZ_CRASH("Invalid state STATE_COUNT");
   }
@@ -384,6 +380,7 @@ SpeechRecognition::Reset()
   mEstimationSamples = 0;
   mBufferedSamples = 0;
   mSpeechDetectionTimer->Cancel();
+  mAborted = false;
 }
 
 void
@@ -496,9 +493,6 @@ void
 SpeechRecognition::AbortSilently(SpeechEvent* aEvent)
 {
   bool stopRecording = StateBetween(STATE_ESTIMATING, STATE_RECOGNIZING);
-
-  // prevent reentrancy from DOM events
-  SetState(STATE_ABORTING);
 
   if (mRecognitionService) {
     mRecognitionService->Abort();
@@ -624,8 +618,7 @@ SpeechRecognition::GetGrammars(ErrorResult& aRv) const
 }
 
 void
-SpeechRecognition::SetGrammars(mozilla::dom::SpeechGrammarList& aArg,
-                               ErrorResult& aRv)
+SpeechRecognition::SetGrammars(SpeechGrammarList& aArg, ErrorResult& aRv)
 {
   aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
   return;
@@ -719,11 +712,16 @@ SpeechRecognition::Start(ErrorResult& aRv)
   rv = mRecognitionService->Initialize(this->asWeakPtr());
   NS_ENSURE_SUCCESS_VOID(rv);
 
+  AutoSafeJSContext cx;
+  MediaStreamConstraintsInitializer constraints;
+  constraints.mAudio.SetAsBoolean() = true;
+
   if (!mTestConfig.mFakeFSMEvents) {
     MediaManager* manager = MediaManager::Get();
-    manager->GetUserMedia(false,
+    manager->GetUserMedia(cx,
+                          false,
                           GetOwner(),
-                          new GetUserMediaStreamOptions(),
+                          constraints,
                           new GetUserMediaSuccessCallback(this),
                           new GetUserMediaErrorCallback(this));
   }
@@ -742,6 +740,11 @@ SpeechRecognition::Stop()
 void
 SpeechRecognition::Abort()
 {
+  if (mAborted) {
+    return;
+  }
+
+  mAborted = true;
   nsRefPtr<SpeechEvent> event = new SpeechEvent(this, EVENT_ABORT);
   NS_DispatchToMainThread(event);
 }
@@ -899,7 +902,6 @@ SpeechRecognition::GetName(FSMState aId)
     "STATE_WAITING_FOR_SPEECH",
     "STATE_RECOGNIZING",
     "STATE_WAITING_FOR_RESULT",
-    "STATE_ABORTING"
   };
 
   MOZ_ASSERT(aId < STATE_COUNT);
@@ -924,56 +926,6 @@ SpeechRecognition::GetName(SpeechEvent* aEvent)
   MOZ_ASSERT(aEvent->mType < EVENT_COUNT);
   MOZ_ASSERT(ArrayLength(names) == EVENT_COUNT);
   return names[aEvent->mType];
-}
-
-NS_IMPL_ISUPPORTS1(SpeechRecognition::GetUserMediaStreamOptions, nsIMediaStreamOptions)
-
-NS_IMETHODIMP
-SpeechRecognition::GetUserMediaStreamOptions::GetFake(bool* aFake)
-{
-  *aFake = false;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-SpeechRecognition::GetUserMediaStreamOptions::GetAudio(bool* aAudio)
-{
-  *aAudio = true;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-SpeechRecognition::GetUserMediaStreamOptions::GetVideo(bool* aVideo)
-{
-  *aVideo = false;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-SpeechRecognition::GetUserMediaStreamOptions::GetPicture(bool* aPicture)
-{
-  *aPicture = false;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-SpeechRecognition::GetUserMediaStreamOptions::GetCamera(nsAString& aCamera)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-SpeechRecognition::GetUserMediaStreamOptions::GetAudioDevice(nsIMediaDevice** aAudioDevice)
-{
-  *aAudioDevice = nullptr;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-SpeechRecognition::GetUserMediaStreamOptions::GetVideoDevice(nsIMediaDevice** aVideoDevice)
-{
-  *aVideoDevice = nullptr;
-  return NS_OK;
 }
 
 SpeechEvent::~SpeechEvent()

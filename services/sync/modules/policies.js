@@ -866,7 +866,7 @@ ErrorHandler.prototype = {
 
         this.handleServerAlert(xwa);
         break;
-        
+
       case 400:
         if (resp == RESPONSE_OVER_QUOTA) {
           Status.sync = OVER_QUOTA;

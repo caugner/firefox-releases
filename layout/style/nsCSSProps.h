@@ -12,9 +12,8 @@
 #define nsCSSProps_h___
 
 #include "nsString.h"
-#include "nsChangeHint.h"
 #include "nsCSSProperty.h"
-#include "nsStyleStruct.h"
+#include "nsStyleStructFwd.h"
 #include "nsCSSKeywords.h"
 
 // Flags for ParseVariant method
@@ -49,6 +48,8 @@
 #define VARIANT_ELEMENT       0x08000000  // eCSSUnit_Element
 #define VARIANT_POSITIVE_DIMENSION 0x10000000 // Only lengths greater than 0.0
 #define VARIANT_NONNEGATIVE_DIMENSION 0x20000000 // Only lengths greater than or equal to 0.0
+// Keyword used iff gfx.font_rendering.opentype_svg.enabled is true:
+#define VARIANT_OPENTYPE_SVG_KEYWORD 0x40000000
 
 // Common combinations of variants
 #define VARIANT_AL   (VARIANT_AUTO | VARIANT_LENGTH)
@@ -438,6 +439,7 @@ public:
   static const int32_t kBackgroundRepeatKTable[];
   static const int32_t kBackgroundRepeatPartKTable[];
   static const int32_t kBackgroundSizeKTable[];
+  static const int32_t kBlendModeKTable[];
   static const int32_t kBorderCollapseKTable[];
   static const int32_t kBorderColorKTable[];
   static const int32_t kBorderImageRepeatKTable[];
@@ -450,11 +452,12 @@ public:
   static const int32_t kBoxPackKTable[];
   static const int32_t kDominantBaselineKTable[];
   static const int32_t kFillRuleKTable[];
+  static const int32_t kFilterFunctionKTable[];
   static const int32_t kImageRenderingKTable[];
   static const int32_t kShapeRenderingKTable[];
   static const int32_t kStrokeLinecapKTable[];
   static const int32_t kStrokeLinejoinKTable[];
-  static const int32_t kStrokeObjectValueKTable[];
+  static const int32_t kStrokeContextValueKTable[];
   static const int32_t kVectorEffectKTable[];
   static const int32_t kTextAnchorKTable[];
   static const int32_t kTextRenderingKTable[];
@@ -469,7 +472,8 @@ public:
   static const int32_t kContentKTable[];
   static const int32_t kCursorKTable[];
   static const int32_t kDirectionKTable[];
-  // Not const because we modify its entries when CSS prefs change.
+  // Not const because we modify its entries when the pref
+  // "layout.css.flexbox.enabled" changes:
   static int32_t kDisplayKTable[];
   static const int32_t kElevationKTable[];
   static const int32_t kEmptyCellsKTable[];
@@ -495,13 +499,15 @@ public:
   static const int32_t kFontVariantNumericKTable[];
   static const int32_t kFontVariantPositionKTable[];
   static const int32_t kFontWeightKTable[];
+  static const int32_t kImageOrientationKTable[];
+  static const int32_t kImageOrientationFlipKTable[];
   static const int32_t kIMEModeKTable[];
   static const int32_t kLineHeightKTable[];
   static const int32_t kListStylePositionKTable[];
   static const int32_t kListStyleKTable[];
   static const int32_t kMaskTypeKTable[];
-  static const int32_t kObjectOpacityKTable[];
-  static const int32_t kObjectPatternKTable[];
+  static const int32_t kContextOpacityKTable[];
+  static const int32_t kContextPatternKTable[];
   static const int32_t kOrientKTable[];
   static const int32_t kOutlineStyleKTable[];
   static const int32_t kOutlineColorKTable[];
@@ -513,7 +519,9 @@ public:
   static const int32_t kPageSizeKTable[];
   static const int32_t kPitchKTable[];
   static const int32_t kPointerEventsKTable[];
-  static const int32_t kPositionKTable[];
+  // Not const because we modify its entries when the pref
+  // "layout.css.sticky.enabled" changes:
+  static int32_t kPositionKTable[];
   static const int32_t kRadialGradientShapeKTable[];
   static const int32_t kRadialGradientSizeKTable[];
   static const int32_t kRadialGradientLegacySizeKTable[];
@@ -527,9 +535,10 @@ public:
   static const int32_t kTableLayoutKTable[];
   static const int32_t kTextAlignKTable[];
   static const int32_t kTextAlignLastKTable[];
-  static const int32_t kTextBlinkKTable[];
+  static const int32_t kTextCombineHorizontalKTable[];
   static const int32_t kTextDecorationLineKTable[];
   static const int32_t kTextDecorationStyleKTable[];
+  static const int32_t kTextOrientationKTable[];
   static const int32_t kTextOverflowKTable[];
   static const int32_t kTextTransformKTable[];
   static const int32_t kTransitionTimingFunctionKTable[];

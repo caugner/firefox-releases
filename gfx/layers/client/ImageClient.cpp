@@ -3,16 +3,36 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/layers/TextureClient.h"
-#include "mozilla/layers/ImageClient.h"
-#include "BasicLayers.h"
-#include "mozilla/layers/ShadowLayers.h"
-#include "SharedTextureImage.h"
-#include "ImageContainer.h" // For PlanarYCbCrImage
-#include "mozilla/layers/SharedRGBImage.h"
+#include "ImageClient.h"
+#include <stdint.h>                     // for uint32_t
+#include "ImageContainer.h"             // for Image, PlanarYCbCrImage, etc
+#include "ImageTypes.h"                 // for ImageFormat::PLANAR_YCBCR, etc
+#include "SharedTextureImage.h"         // for SharedTextureImage::Data, etc
+#include "gfx2DGlue.h"                  // for ImageFormatToSurfaceFormat
+#include "gfxASurface.h"                // for gfxASurface, etc
+#include "gfxPlatform.h"                // for gfxPlatform
+#include "gfxPoint.h"                   // for gfxIntSize
+#include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
+#include "mozilla/RefPtr.h"             // for RefPtr, TemporaryRef
+#include "mozilla/gfx/BaseSize.h"       // for BaseSize
+#include "mozilla/gfx/Point.h"          // for IntSize
+#include "mozilla/gfx/Types.h"          // for SurfaceFormat, etc
+#include "mozilla/layers/CompositableClient.h"  // for CompositableClient
+#include "mozilla/layers/CompositableForwarder.h"
+#include "mozilla/layers/CompositorTypes.h"  // for CompositableType, etc
+#include "mozilla/layers/ISurfaceAllocator.h"
+#include "mozilla/layers/LayersSurfaces.h"  // for SurfaceDescriptor, etc
+#include "mozilla/layers/ShadowLayers.h"  // for ShadowLayerForwarder
 #include "mozilla/layers/SharedPlanarYCbCrImage.h"
-#include "gfxPlatform.h"
-
+#include "mozilla/layers/SharedRGBImage.h"
+#include "mozilla/layers/TextureClient.h"  // for TextureClient, etc
+#include "mozilla/layers/TextureClientOGL.h"  // for SharedTextureClientOGL
+#include "mozilla/mozalloc.h"           // for operator delete, etc
+#include "nsAutoPtr.h"                  // for nsRefPtr
+#include "nsCOMPtr.h"                   // for already_AddRefed
+#include "nsDebug.h"                    // for NS_WARNING, NS_ASSERTION
+#include "nsISupportsImpl.h"            // for Image::Release, etc
+#include "nsRect.h"                     // for nsIntRect
 #ifdef MOZ_WIDGET_GONK
 #include "GrallocImages.h"
 #endif
@@ -39,9 +59,7 @@ ImageClient::CreateImageClient(CompositableType aCompositableHostType,
     if (gfxPlatform::GetPlatform()->UseDeprecatedTextures()) {
       result = new DeprecatedImageClientSingle(aForwarder, aFlags, BUFFER_IMAGE_BUFFERED);
     } else {
-      // ImageClientBuffered was a hack for async-video only, and the new textures
-      // make it so that we don't need to do this hack anymore.
-      result = new ImageClientSingle(aForwarder, aFlags, COMPOSITABLE_IMAGE);
+      result = new ImageClientBuffered(aForwarder, aFlags, COMPOSITABLE_IMAGE);
     }
     break;
   case BUFFER_BRIDGE:
@@ -79,6 +97,28 @@ TextureInfo ImageClientSingle::GetTextureInfo() const
   return TextureInfo(COMPOSITABLE_IMAGE);
 }
 
+void
+ImageClientSingle::FlushAllImages(bool aExceptFront)
+{
+  if (!aExceptFront && mFrontBuffer) {
+    RemoveTextureClient(mFrontBuffer);
+    mFrontBuffer = nullptr;
+  }
+}
+
+void
+ImageClientBuffered::FlushAllImages(bool aExceptFront)
+{
+  if (!aExceptFront && mFrontBuffer) {
+    RemoveTextureClient(mFrontBuffer);
+    mFrontBuffer = nullptr;
+  }
+  if (mBackBuffer) {
+    RemoveTextureClient(mBackBuffer);
+    mBackBuffer = nullptr;
+  }
+}
+
 bool
 ImageClientSingle::UpdateImage(ImageContainer* aContainer,
                                uint32_t aContentFlags)
@@ -96,15 +136,21 @@ ImageClientSingle::UpdateImage(ImageContainer* aContainer,
 
   if (image->AsSharedImage() && image->AsSharedImage()->GetTextureClient()) {
     // fast path: no need to allocate and/or copy image data
-    RefPtr<TextureClient> tex = image->AsSharedImage()->GetTextureClient();
+    RefPtr<TextureClient> texture = image->AsSharedImage()->GetTextureClient();
+
+    if (texture->IsSharedWithCompositor()) {
+      // XXX - temporary fix for bug 911941
+      // This will be changed with bug 912907
+      return false;
+    }
 
     if (mFrontBuffer) {
       RemoveTextureClient(mFrontBuffer);
     }
-    mFrontBuffer = tex;
-    AddTextureClient(tex);
-    GetForwarder()->UpdatedTexture(this, tex, nullptr);
-    GetForwarder()->UseTexture(this, tex);
+    mFrontBuffer = texture;
+    AddTextureClient(texture);
+    GetForwarder()->UpdatedTexture(this, texture, nullptr);
+    GetForwarder()->UseTexture(this, texture);
   } else if (image->GetFormat() == PLANAR_YCBCR) {
     PlanarYCbCrImage* ycbcr = static_cast<PlanarYCbCrImage*>(image);
     const PlanarYCbCrImage::Data* data = ycbcr->GetData();
@@ -117,15 +163,16 @@ ImageClientSingle::UpdateImage(ImageContainer* aContainer,
       mFrontBuffer = nullptr;
     }
 
+    bool bufferCreated = false;
     if (!mFrontBuffer) {
-      mFrontBuffer = CreateBufferTextureClient(gfx::FORMAT_YUV);
+      mFrontBuffer = CreateBufferTextureClient(gfx::FORMAT_YUV, TEXTURE_DEALLOCATE_HOST);
       gfx::IntSize ySize(data->mYSize.width, data->mYSize.height);
       gfx::IntSize cbCrSize(data->mCbCrSize.width, data->mCbCrSize.height);
       if (!mFrontBuffer->AsTextureClientYCbCr()->AllocateForYCbCr(ySize, cbCrSize, data->mStereoMode)) {
         mFrontBuffer = nullptr;
         return false;
       }
-      AddTextureClient(mFrontBuffer);
+      bufferCreated = true;
     }
 
     if (!mFrontBuffer->Lock(OPEN_READ_WRITE)) {
@@ -133,6 +180,10 @@ ImageClientSingle::UpdateImage(ImageContainer* aContainer,
     }
     bool status = mFrontBuffer->AsTextureClientYCbCr()->UpdateYCbCr(*data);
     mFrontBuffer->Unlock();
+
+    if (bufferCreated) {
+      AddTextureClient(mFrontBuffer);
+    }
 
     if (status) {
       GetForwarder()->UpdatedTexture(this, mFrontBuffer, nullptr);
@@ -142,6 +193,22 @@ ImageClientSingle::UpdateImage(ImageContainer* aContainer,
       return false;
     }
 
+  } else if (image->GetFormat() == SHARED_TEXTURE) {
+    SharedTextureImage* sharedImage = static_cast<SharedTextureImage*>(image);
+    const SharedTextureImage::Data *data = sharedImage->GetData();
+    gfx::IntSize size = gfx::IntSize(image->GetSize().width, image->GetSize().height);
+
+    if (mFrontBuffer) {
+      RemoveTextureClient(mFrontBuffer);
+      mFrontBuffer = nullptr;
+    }
+
+    RefPtr<SharedTextureClientOGL> buffer = new SharedTextureClientOGL(mTextureFlags);
+    buffer->InitWith(data->mHandle, size, data->mShareType, data->mInverted);
+    mFrontBuffer = buffer;
+
+    AddTextureClient(mFrontBuffer);
+    GetForwarder()->UseTexture(this, mFrontBuffer);
   } else {
     nsRefPtr<gfxASurface> surface = image->GetAsSurface();
     MOZ_ASSERT(surface);
@@ -154,14 +221,16 @@ ImageClientSingle::UpdateImage(ImageContainer* aContainer,
       mFrontBuffer = nullptr;
     }
 
+    bool bufferCreated = false;
     if (!mFrontBuffer) {
       gfxASurface::gfxImageFormat format
         = gfxPlatform::GetPlatform()->OptimalFormatForContent(surface->GetContentType());
-      mFrontBuffer = CreateBufferTextureClient(gfx::ImageFormatToSurfaceFormat(format));
+      mFrontBuffer = CreateBufferTextureClient(gfx::ImageFormatToSurfaceFormat(format),
+                                               TEXTURE_DEALLOCATE_HOST);
       MOZ_ASSERT(mFrontBuffer->AsTextureClientSurface());
       mFrontBuffer->AsTextureClientSurface()->AllocateForSurface(size);
 
-      AddTextureClient(mFrontBuffer);
+      bufferCreated = true;
     }
 
     if (!mFrontBuffer->Lock(OPEN_READ_WRITE)) {
@@ -169,6 +238,11 @@ ImageClientSingle::UpdateImage(ImageContainer* aContainer,
     }
     bool status = mFrontBuffer->AsTextureClientSurface()->UpdateSurface(surface);
     mFrontBuffer->Unlock();
+
+    if (bufferCreated) {
+      AddTextureClient(mFrontBuffer);
+    }
+
     if (status) {
       GetForwarder()->UpdatedTexture(this, mFrontBuffer, nullptr);
       GetForwarder()->UseTexture(this, mFrontBuffer);
@@ -202,19 +276,26 @@ ImageClientSingle::AddTextureClient(TextureClient* aTexture)
 }
 
 TemporaryRef<BufferTextureClient>
+ImageClientSingle::CreateBufferTextureClient(gfx::SurfaceFormat aFormat, TextureFlags aFlags)
+{
+  return CompositableClient::CreateBufferTextureClient(aFormat, mTextureFlags | aFlags);
+}
+
+TemporaryRef<BufferTextureClient>
 ImageClientSingle::CreateBufferTextureClient(gfx::SurfaceFormat aFormat)
 {
-  return CompositableClient::CreateBufferTextureClient(aFormat, mTextureFlags);
+  return CompositableClient::CreateBufferTextureClient(aFormat,
+    mTextureFlags | TEXTURE_FLAGS_DEFAULT);
 }
 
 void
-ImageClientSingle::Detach()
+ImageClientSingle::OnDetach()
 {
   mFrontBuffer = nullptr;
 }
 
 void
-ImageClientBuffered::Detach()
+ImageClientBuffered::OnDetach()
 {
   mFrontBuffer = nullptr;
   mBackBuffer = nullptr;
@@ -397,25 +478,17 @@ ImageClientBridge::UpdateImage(ImageContainer* aContainer, uint32_t aContentFlag
 }
 
 already_AddRefed<Image>
-ImageClient::CreateImage(const uint32_t *aFormats,
-                         uint32_t aNumFormats)
+ImageClientSingle::CreateImage(const uint32_t *aFormats,
+                               uint32_t aNumFormats)
 {
   nsRefPtr<Image> img;
   for (uint32_t i = 0; i < aNumFormats; i++) {
     switch (aFormats[i]) {
       case PLANAR_YCBCR:
-        if (gfxPlatform::GetPlatform()->UseDeprecatedTextures()) {
-            img = new DeprecatedSharedPlanarYCbCrImage(GetForwarder());
-        } else {
-            img = new SharedPlanarYCbCrImage(this);
-        }
+        img = new SharedPlanarYCbCrImage(this);
         return img.forget();
       case SHARED_RGB:
-        if (gfxPlatform::GetPlatform()->UseDeprecatedTextures()) {
-            img = new DeprecatedSharedRGBImage(GetForwarder());
-        } else {
-            img = new SharedRGBImage(this);
-        }
+        img = new SharedRGBImage(this);
         return img.forget();
 #ifdef MOZ_WIDGET_GONK
       case GRALLOC_PLANAR_YCBCR:
@@ -426,6 +499,30 @@ ImageClient::CreateImage(const uint32_t *aFormats,
   }
   return nullptr;
 }
+
+already_AddRefed<Image>
+DeprecatedImageClientSingle::CreateImage(const uint32_t *aFormats,
+                                         uint32_t aNumFormats)
+{
+  nsRefPtr<Image> img;
+  for (uint32_t i = 0; i < aNumFormats; i++) {
+    switch (aFormats[i]) {
+      case PLANAR_YCBCR:
+        img = new DeprecatedSharedPlanarYCbCrImage(GetForwarder());
+        return img.forget();
+      case SHARED_RGB:
+        img = new DeprecatedSharedRGBImage(GetForwarder());
+        return img.forget();
+#ifdef MOZ_WIDGET_GONK
+      case GRALLOC_PLANAR_YCBCR:
+        img = new GrallocImage();
+        return img.forget();
+#endif
+    }
+  }
+  return nullptr;
+}
+
 
 }
 }

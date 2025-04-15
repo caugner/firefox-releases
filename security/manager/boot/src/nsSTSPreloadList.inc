@@ -4,11 +4,11 @@
 
 /*****************************************************************************/
 /* This is an automatically generated file. If you're not                    */
-/* nsStrictTransportSecurityService.cpp, you shouldn't be #including it.     */
+/* nsSiteSecurityService.cpp, you shouldn't be #including it.     */
 /*****************************************************************************/
 
 #include <stdint.h>
-const PRTime gPreloadListExpirationTime = INT64_C(1389435858253000);
+const PRTime gPreloadListExpirationTime = INT64_C(1393668321023000);
 
 class nsSTSPreload
 {
@@ -22,6 +22,7 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "alpha.irccloud.com", false },
   { "api.intercom.io", false },
   { "app.recurly.com", false },
+  { "appseccalifornia.org", true },
   { "arivo.com.br", true },
   { "bank.simple.com", false },
   { "bassh.net", true },
@@ -29,6 +30,7 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "blog.cyveillance.com", true },
   { "blog.linode.com", false },
   { "blog.torproject.org", false },
+  { "blueseed.co", false },
   { "bugzilla.mozilla.org", true },
   { "business.medbank.com.mt", true },
   { "carezone.com", false },
@@ -42,13 +44,17 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "crate.io", true },
   { "crm.onlime.ch", false },
   { "crypto.cat", false },
+  { "cupcake.io", true },
+  { "cupcake.is", true },
   { "cyphertite.com", true },
+  { "davidlyness.com", true },
   { "developer.mydigipass.com", false },
   { "dist.torproject.org", false },
   { "dm.lookout.com", false },
   { "dm.mylookout.com", false },
   { "download.jitsi.org", false },
   { "ebanking.indovinabank.com.vn", false },
+  { "ecosystem.atlassian.net", true },
   { "entropia.de", false },
   { "espra.com", true },
   { "factor.cc", false },
@@ -73,8 +79,9 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "logotype.se", true },
   { "lolicore.ch", true },
   { "lookout.com", false },
+  { "lumi.do", false },
   { "luneta.nearbuysystems.com", false },
-  { "makeyourlaws.org", true },
+  { "makeyourlaws.org", false },
   { "manager.linode.com", false },
   { "mattmccutchen.net", true },
   { "mediacru.sh", true },
@@ -95,19 +102,19 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "paymill.de", true },
   { "piratenlogin.de", true },
   { "pixi.me", true },
-  { "rapidresearch.me", true },
   { "riseup.net", true },
   { "roundcube.mayfirst.org", false },
   { "sandbox.mydigipass.com", false },
   { "securityheaders.com", true },
   { "shodan.io", true },
-  { "silentcircle.com", true },
-  { "simple.com", false },
+  { "silentcircle.com", false },
   { "squareup.com", false },
   { "stocktrade.de", false },
   { "stripe.com", true },
+  { "strongest-privacy.com", true },
   { "support.mayfirst.org", false },
   { "surkatty.org", true },
+  { "tent.io", true },
   { "therapynotes.com", false },
   { "twitter.com", false },
   { "ubertt.org", true },
@@ -119,15 +126,15 @@ static const nsSTSPreload kSTSPreloadList[] = {
   { "writeapp.me", false },
   { "www.apollo-auto.com", true },
   { "www.braintreepayments.com", false },
-  { "www.cueup.com", false },
   { "www.cyveillance.com", true },
   { "www.entropia.de", false },
+  { "www.gov.uk", false },
   { "www.grc.com", false },
   { "www.intercom.io", false },
   { "www.irccloud.com", false },
   { "www.linode.com", false },
   { "www.lookout.com", false },
-  { "www.makeyourlaws.org", true },
+  { "www.makeyourlaws.org", false },
   { "www.mydigipass.com", false },
   { "www.mylookout.com", false },
   { "www.noisebridge.net", false },

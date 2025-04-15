@@ -19,6 +19,8 @@ const ACCESSFU_DISABLE = 0;
 const ACCESSFU_ENABLE = 1;
 const ACCESSFU_AUTO = 2;
 
+const SCREENREADER_SETTING = 'accessibility.screenreader';
+
 this.AccessFu = {
   /**
    * Initialize chrome-layer accessibility functionality.
@@ -29,14 +31,21 @@ this.AccessFu = {
     Utils.init(aWindow);
 
     try {
-      Cc['@mozilla.org/android/bridge;1'].
-        getService(Ci.nsIAndroidBridge).handleGeckoMessage(
+      let bridgeCc = Cc['@mozilla.org/android/bridge;1'];
+      bridgeCc.getService(Ci.nsIAndroidBridge).handleGeckoMessage(
           JSON.stringify({ type: 'Accessibility:Ready' }));
       Services.obs.addObserver(this, 'Accessibility:Settings', false);
     } catch (x) {
       // Not on Android
-      if (Utils.MozBuildApp === 'b2g') {
-        aWindow.addEventListener('ContentStart', this, false);
+      if (aWindow.navigator.mozSettings) {
+        let lock = aWindow.navigator.mozSettings.createLock();
+        let req = lock.get(SCREENREADER_SETTING);
+        req.addEventListener('success', () => {
+          this._systemPref = req.result[SCREENREADER_SETTING];
+          this._enableOrDisable();
+        });
+        aWindow.navigator.mozSettings.addObserver(
+          SCREENREADER_SETTING, this.handleEvent.bind(this));
       }
     }
 
@@ -56,10 +65,9 @@ this.AccessFu = {
     }
     if (Utils.MozBuildApp === 'mobile/android') {
       Services.obs.removeObserver(this, 'Accessibility:Settings');
-    } else if (Utils.MozBuildApp === 'b2g') {
-      Utils.win.shell.contentBrowser.contentWindow.removeEventListener(
-        'mozContentEvent', this);
-      Utils.win.removeEventListener('ContentStart', this);
+    } else if (Utils.win.navigator.mozSettings) {
+      Utils.win.navigator.mozSettings.removeObserver(
+        SCREENREADER_SETTING, this.handleEvent.bind(this));
     }
     delete this._activatePref;
     Utils.uninit();
@@ -116,6 +124,7 @@ this.AccessFu = {
     Services.obs.addObserver(this, 'Accessibility:PreviousObject', false);
     Services.obs.addObserver(this, 'Accessibility:Focus', false);
     Services.obs.addObserver(this, 'Accessibility:ActivateObject', false);
+    Services.obs.addObserver(this, 'Accessibility:LongPress', false);
     Services.obs.addObserver(this, 'Accessibility:MoveByGranularity', false);
     Utils.win.addEventListener('TabOpen', this);
     Utils.win.addEventListener('TabClose', this);
@@ -159,7 +168,11 @@ this.AccessFu = {
     Services.obs.removeObserver(this, 'Accessibility:PreviousObject');
     Services.obs.removeObserver(this, 'Accessibility:Focus');
     Services.obs.removeObserver(this, 'Accessibility:ActivateObject');
+    Services.obs.removeObserver(this, 'Accessibility:LongPress');
     Services.obs.removeObserver(this, 'Accessibility:MoveByGranularity');
+
+    delete this._quicknavModesPref;
+    delete this._notifyOutputPref;
 
     if (this.doneCallback) {
       this.doneCallback();
@@ -169,6 +182,9 @@ this.AccessFu = {
 
   _enableOrDisable: function _enableOrDisable() {
     try {
+      if (!this._activatePref) {
+        return;
+      }
       let activatePref = this._activatePref.value;
       if (activatePref == ACCESSFU_ENABLE ||
           this._systemPref && activatePref == ACCESSFU_AUTO)
@@ -276,6 +292,9 @@ this.AccessFu = {
       case 'Accessibility:ActivateObject':
         this.Input.activateCurrent(JSON.parse(aData));
         break;
+      case 'Accessibility:LongPress':
+        this.Input.sendContextMenuMessage();
+        break;
       case 'Accessibility:Focus':
         this._focused = JSON.parse(aData);
         if (this._focused) {
@@ -297,20 +316,6 @@ this.AccessFu = {
 
   handleEvent: function handleEvent(aEvent) {
     switch (aEvent.type) {
-      case 'ContentStart':
-      {
-        Utils.win.shell.contentBrowser.contentWindow.addEventListener(
-          'mozContentEvent', this, false, true);
-        break;
-      }
-      case 'mozContentEvent':
-      {
-        if (aEvent.detail.type == 'accessibility-screenreader') {
-          this._systemPref = aEvent.detail.enabled;
-          this._enableOrDisable();
-        }
-        break;
-      }
       case 'TabOpen':
       {
         let mm = Utils.getMessageManager(aEvent.target);
@@ -337,6 +342,15 @@ this.AccessFu = {
             function () {
               this.showCurrent(false);
             }.bind(this), 500);
+        }
+        break;
+      }
+      default:
+      {
+        // A settings change, it does not have an event type
+        if (aEvent.settingName == SCREENREADER_SETTING) {
+          this._systemPref = aEvent.settingValue;
+          this._enableOrDisable();
         }
         break;
       }
@@ -481,6 +495,119 @@ var Output = {
     }
   },
 
+  speechHelper: {
+    EARCONS: ['chrome://global/content/accessibility/tick.wav'],
+
+    delayedActions: [],
+
+    earconsToLoad: -1, // -1: not inited, 1 or more: initing, 0: inited
+
+    earconBuffers: {},
+
+    webaudioEnabled: false,
+
+    webspeechEnabled: false,
+
+    doDelayedActionsIfLoaded: function doDelayedActionsIfLoaded(aToLoadCount) {
+      if (aToLoadCount === 0) {
+        this.outputActions(this.delayedActions);
+        this.delayedActions = [];
+        return true;
+      }
+
+      return false;
+    },
+
+    init: function init() {
+      if (this.earconsToLoad === 0) {
+        // Already inited.
+        return;
+      }
+
+      let window = Utils.win;
+      this.webaudioEnabled = !!window.AudioContext;
+      this.webspeechEnabled = !!window.speechSynthesis;
+
+      this.earconsToLoad = this.webaudioEnabled ? this.EARCONS.length : 0;
+
+      if (this.doDelayedActionsIfLoaded(this.earconsToLoad)) {
+        // Nothing to load
+        return;
+      }
+
+      this.audioContext = new window.AudioContext();
+
+      for (let earcon of this.EARCONS) {
+        let xhr = new window.XMLHttpRequest();
+        xhr.open('GET', earcon);
+        xhr.responseType = 'arraybuffer';
+        xhr.onerror = () => {
+          Logger.error('Error getting earcon:', xhr.statusText);
+          this.doDelayedActionsIfLoaded(--this.earconsToLoad);
+        };
+        xhr.onload = () => {
+          this.audioContext.decodeAudioData(
+            xhr.response,
+            (audioBuffer) => {
+              try {
+                let earconName = /.*\/(.*)\..*$/.exec(earcon)[1];
+                this.earconBuffers[earconName] = new WeakMap();
+                this.earconBuffers[earconName].set(window, audioBuffer);
+                this.doDelayedActionsIfLoaded(--this.earconsToLoad);
+              } catch (x) {
+                Logger.logException(x);
+              }
+            },
+            () => {
+              this.doDelayedActionsIfLoaded(--this.earconsToLoad);
+              Logger.error('Error decoding earcon');
+            });
+        };
+        xhr.send();
+      }
+    },
+
+    output: function output(aActions) {
+      if (this.earconsToLoad !== 0) {
+        // We did not load the earcons yet.
+        this.delayedActions.push.apply(this.delayedActions, aActions);
+        if (this.earconsToLoad < 0) {
+          // Loading did not start yet, start it.
+          this.init();
+        }
+        return;
+      }
+
+      this.outputActions(aActions);
+    },
+
+    outputActions: function outputActions(aActions) {
+      for (let action of aActions) {
+        let window = Utils.win;
+        Logger.info('tts.' + action.method,
+                    '"' + action.data + '"',
+                    JSON.stringify(action.options));
+
+        if (!action.options.enqueue && this.webspeechEnabled) {
+          window.speechSynthesis.cancel();
+        }
+
+        if (action.method === 'speak' && this.webspeechEnabled) {
+          window.speechSynthesis.speak(
+            new window.SpeechSynthesisUtterance(action.data));
+        } else if (action.method === 'playEarcon' && this.webaudioEnabled) {
+          let audioBufferWeakMap = this.earconBuffers[action.data];
+          if (audioBufferWeakMap) {
+            let node = this.audioContext.createBufferSource();
+            node.connect(this.audioContext.destination);
+            node.buffer = audioBufferWeakMap.get(window);
+            node.start(0);
+          }
+        }
+      }
+    }
+  },
+
   start: function start() {
     Cu.import('resource://gre/modules/Geometry.jsm');
   },
@@ -498,8 +625,7 @@ var Output = {
   },
 
   Speech: function Speech(aDetails, aBrowser) {
-    for each (let action in aDetails.actions)
-      Logger.info('tts.' + action.method, '"' + action.data + '"', JSON.stringify(action.options));
+    this.speechHelper.output(aDetails.actions);
   },
 
   Visual: function Visual(aDetails, aBrowser) {

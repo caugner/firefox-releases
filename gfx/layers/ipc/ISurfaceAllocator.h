@@ -6,10 +6,12 @@
 #ifndef GFX_LAYERS_ISURFACEDEALLOCATOR
 #define GFX_LAYERS_ISURFACEDEALLOCATOR
 
-#include "mozilla/ipc/SharedMemory.h"
-#include "mozilla/RefPtr.h"
-#include "gfxPoint.h"
-#include "gfxASurface.h"
+#include <stddef.h>                     // for size_t
+#include <stdint.h>                     // for uint32_t
+#include "gfxASurface.h"                // for gfxASurface, etc
+#include "gfxPoint.h"                   // for gfxIntSize
+#include "mozilla/ipc/SharedMemory.h"   // for SharedMemory, etc
+#include "mozilla/WeakPtr.h"
 
 /*
  * FIXME [bjacob] *** PURE CRAZYNESS WARNING ***
@@ -22,17 +24,18 @@
 #define MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
 #endif
 
-class gfxSharedImageSurface;
 class gfxASurface;
+class gfxSharedImageSurface;
 
 namespace base {
 class Thread;
-} // namespace
+}
 
 namespace mozilla {
 namespace ipc {
 class Shmem;
-} // namespace
+}
+
 namespace layers {
 
 class PGrallocBufferChild;
@@ -67,7 +70,7 @@ bool ReleaseOwnedSurfaceDescriptor(const SurfaceDescriptor& aDescriptor);
  * These methods should be only called in the ipdl implementor's thread, unless
  * specified otherwise in the implementing class.
  */
-class ISurfaceAllocator
+class ISurfaceAllocator : public SupportsWeakPtr<ISurfaceAllocator>
 {
 public:
 ISurfaceAllocator() {}
@@ -109,6 +112,14 @@ ISurfaceAllocator() {}
 
   virtual void DestroySharedSurface(SurfaceDescriptor* aSurface);
 
+  // method that does the actual allocation work
+  virtual PGrallocBufferChild* AllocGrallocBuffer(const gfxIntSize& aSize,
+                                                  uint32_t aFormat,
+                                                  uint32_t aUsage,
+                                                  MaybeMagicGrallocBufferHandle* aHandle)
+  {
+    return nullptr;
+  }
 protected:
   // this method is needed for a temporary fix, will be removed after
   // DeprecatedTextureClient/Host rework.
@@ -119,14 +130,6 @@ protected:
                                               uint32_t aCaps,
                                               SurfaceDescriptor* aBuffer);
 
-  // method that does the actual allocation work
-  virtual PGrallocBufferChild* AllocGrallocBuffer(const gfxIntSize& aSize,
-                                                  uint32_t aFormat,
-                                                  uint32_t aUsage,
-                                                  MaybeMagicGrallocBufferHandle* aHandle)
-  {
-    return nullptr;
-  }
 
   ~ISurfaceAllocator() {}
 };

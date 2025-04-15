@@ -18,6 +18,8 @@
 
 #include "mozilla/Preferences.h"
 #include "mozilla/Types.h"
+#include "mozilla/Monitor.h"
+#include "nsMimeTypes.h"
 #include "MPAPI.h"
 #include "prlog.h"
 
@@ -25,6 +27,7 @@
 #include "GonkNativeWindowClient.h"
 #include "OMXCodecProxy.h"
 #include "OmxDecoder.h"
+#include "nsISeekableStream.h"
 
 #ifdef PR_LOGGING
 PRLogModuleInfo *gOmxDecoderLog;
@@ -37,6 +40,127 @@ using namespace MPAPI;
 using namespace mozilla;
 
 namespace mozilla {
+
+class OmxDecoderProcessCachedDataTask : public Task
+{
+public:
+  OmxDecoderProcessCachedDataTask(android::OmxDecoder* aOmxDecoder, int64_t aOffset)
+  : mOmxDecoder(aOmxDecoder),
+    mOffset(aOffset)
+  { }
+
+  void Run()
+  {
+    MOZ_ASSERT(!NS_IsMainThread());
+    MOZ_ASSERT(mOmxDecoder.get());
+    mOmxDecoder->ProcessCachedData(mOffset, false);
+  }
+
+private:
+  android::sp<android::OmxDecoder> mOmxDecoder;
+  int64_t                          mOffset;
+};
+
+// When loading an MP3 stream from a file, we need to parse the file's
+// content to find its duration. Reading files of 100 MiB or more can
+// delay the player app noticably, so the file is read and decoded in
+// smaller chunks.
+//
+// We first read on the decode thread, but parsing must be done on the
+// main thread. After we read the file's initial MiBs in the decode
+// thread, an instance of this class is scheduled to the main thread for
+// parsing the MP3 stream. The decode thread waits until it has finished.
+//
+// If there is more data available from the file, the runnable dispatches
+// a task to the IO thread for retrieving the next chunk of data, and
+// the IO task dispatches a runnable to the main thread for parsing the
+// data. This goes on until all of the MP3 file has been parsed.
+
+class OmxDecoderNotifyDataArrivedRunnable : public nsRunnable
+{
+public:
+  OmxDecoderNotifyDataArrivedRunnable(android::OmxDecoder* aOmxDecoder,
+                                      const char* aBuffer, uint64_t aLength,
+                                      int64_t aOffset, uint64_t aFullLength)
+  : mOmxDecoder(aOmxDecoder),
+    mBuffer(aBuffer),
+    mLength(aLength),
+    mOffset(aOffset),
+    mFullLength(aFullLength),
+    mCompletedMonitor("OmxDecoderNotifyDataArrived.mCompleted"),
+    mCompleted(false)
+  {
+    MOZ_ASSERT(mOmxDecoder.get());
+    MOZ_ASSERT(mBuffer.get() || !mLength);
+  }
+
+  NS_IMETHOD Run()
+  {
+    NS_ASSERTION(NS_IsMainThread(), "Should be on main thread.");
+
+    NotifyDataArrived();
+    Completed();
+
+    return NS_OK;
+  }
+
+  void WaitForCompletion()
+  {
+    MOZ_ASSERT(!NS_IsMainThread());
+
+    MonitorAutoLock mon(mCompletedMonitor);
+    if (!mCompleted) {
+      mCompletedMonitor.Wait();
+    }
+  }
+
+private:
+  void NotifyDataArrived()
+  {
+    const char* buffer = mBuffer.get();
+
+    while (mLength) {
+      uint32_t length = std::min<uint64_t>(mLength, UINT32_MAX);
+      bool success = mOmxDecoder->NotifyDataArrived(buffer, mLength,
+                                                    mOffset);
+      if (!success) {
+        return;
+      }
+
+      buffer  += length;
+      mLength -= length;
+      mOffset += length;
+    }
+
+    if (mOffset < mFullLength) {
+      // We cannot read data in the main thread because it
+      // might block for too long. Instead we post an IO task
+      // to the IO thread if there is more data available.
+      XRE_GetIOMessageLoop()->PostTask(FROM_HERE,
+          new OmxDecoderProcessCachedDataTask(mOmxDecoder.get(), mOffset));
+    }
+  }
+
+  // Call this function at the end of Run() to notify waiting
+  // threads.
+  void Completed()
+  {
+    MonitorAutoLock mon(mCompletedMonitor);
+    MOZ_ASSERT(!mCompleted);
+    mCompleted = true;
+    mCompletedMonitor.Notify();
+  }
+
+  android::sp<android::OmxDecoder> mOmxDecoder;
+  nsAutoArrayPtr<const char>       mBuffer;
+  uint64_t                         mLength;
+  int64_t                          mOffset;
+  uint64_t                         mFullLength;
+
+  Monitor mCompletedMonitor;
+  bool    mCompleted;
+};
+
 namespace layers {
 
 VideoGraphicBuffer::VideoGraphicBuffer(const android::wp<android::OmxDecoder> aOmxDecoder,
@@ -147,6 +271,8 @@ OmxDecoder::OmxDecoder(MediaResource *aResource,
   mAudioChannels(-1),
   mAudioSampleRate(-1),
   mDurationUs(-1),
+  mMP3FrameParser(aResource->GetLength()),
+  mIsMp3(false),
   mVideoBuffer(nullptr),
   mAudioBuffer(nullptr),
   mIsVideoSeeking(false),
@@ -215,6 +341,12 @@ bool OmxDecoder::Init() {
     return false;
   }
 
+  const char* extractorMime;
+  sp<MetaData> meta = extractor->getMetaData();
+  if (meta->findCString(kKeyMIMEType, &extractorMime) && !strcasecmp(extractorMime, AUDIO_MP3)) {
+    mIsMp3 = true;
+  }
+
   ssize_t audioTrackIndex = -1;
   ssize_t videoTrackIndex = -1;
 
@@ -274,9 +406,27 @@ bool OmxDecoder::TryLoad() {
     if (durationUs > totalDurationUs)
       totalDurationUs = durationUs;
   }
-  if (mAudioTrack.get() && mAudioTrack->getFormat()->findInt64(kKeyDuration, &durationUs)) {
-    if (durationUs > totalDurationUs)
-      totalDurationUs = durationUs;
+  if (mAudioTrack.get()) {
+    durationUs = -1;
+    const char* audioMime;
+    sp<MetaData> meta = mAudioTrack->getFormat();
+
+    if (meta->findCString(kKeyMIMEType, &audioMime) && !strcasecmp(audioMime, AUDIO_MP3)) {
+      // Feed MP3 parser with cached data. Local files will be fully
+      // cached already, network streams will update with sucessive
+      // calls to NotifyDataArrived.
+      if (ProcessCachedData(0, true)) {
+        durationUs = mMP3FrameParser.GetDuration();
+        if (durationUs > totalDurationUs) {
+          totalDurationUs = durationUs;
+        }
+      }
+    }
+    if ((durationUs == -1) && meta->findInt64(kKeyDuration, &durationUs)) {
+      if (durationUs > totalDurationUs) {
+        totalDurationUs = durationUs;
+      }
+    }
   }
   mDurationUs = totalDurationUs;
 
@@ -340,7 +490,11 @@ bool OmxDecoder::AllocateMediaResources()
 
   if ((mVideoTrack != nullptr) && (mVideoSource == nullptr)) {
     mNativeWindow = new GonkNativeWindow();
+#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 17
+    mNativeWindowClient = new GonkNativeWindowClient(mNativeWindow->getBufferQueue());
+#else
     mNativeWindowClient = new GonkNativeWindowClient(mNativeWindow);
+#endif
 
     // Experience with OMX codecs is that only the HW decoders are
     // worth bothering with, at least on the platforms where this code
@@ -481,6 +635,32 @@ bool OmxDecoder::SetAudioFormat() {
 
   LOG(PR_LOG_DEBUG, "channelCount: %d sampleRate: %d",
       mAudioChannels, mAudioSampleRate);
+
+  return true;
+}
+
+void OmxDecoder::ReleaseDecoder()
+{
+  mDecoder = nullptr;
+}
+
+bool OmxDecoder::NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_t aOffset)
+{
+  if (!mAudioTrack.get() || !mIsMp3 || !mMP3FrameParser.IsMP3() || !mDecoder) {
+    return false;
+  }
+
+  mMP3FrameParser.Parse(aBuffer, aLength, aOffset);
+
+  int64_t durationUs = mMP3FrameParser.GetDuration();
+
+  if (durationUs != mDurationUs) {
+    mDurationUs = durationUs;
+
+    MOZ_ASSERT(mDecoder);
+    ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
+    mDecoder->UpdateEstimatedMediaDuration(mDurationUs);
+  }
 
   return true;
 }
@@ -842,3 +1022,45 @@ void OmxDecoder::ReleaseAllPendingVideoBuffersLocked()
   releasingVideoBuffers.clear();
 }
 
+bool OmxDecoder::ProcessCachedData(int64_t aOffset, bool aWaitForCompletion)
+{
+  // We read data in chunks of 32 KiB. We can reduce this
+  // value if media, such as sdcards, is too slow.
+  // Because of SD card's slowness, need to keep sReadSize to small size.
+  // See Bug 914870.
+  static const int64_t sReadSize = 32 * 1024;
+
+  NS_ASSERTION(!NS_IsMainThread(), "Should not be on main thread.");
+
+  MOZ_ASSERT(mResource);
+
+  int64_t resourceLength = mResource->GetCachedDataEnd(0);
+  NS_ENSURE_TRUE(resourceLength >= 0, false);
+
+  if (aOffset >= resourceLength) {
+    return true; // Cache is empty, nothing to do
+  }
+
+  int64_t bufferLength = std::min<int64_t>(resourceLength-aOffset, sReadSize);
+
+  nsAutoArrayPtr<char> buffer(new char[bufferLength]);
+
+  nsresult rv = mResource->ReadFromCache(buffer.get(), aOffset, bufferLength);
+  NS_ENSURE_SUCCESS(rv, false);
+
+  nsRefPtr<OmxDecoderNotifyDataArrivedRunnable> runnable(
+    new OmxDecoderNotifyDataArrivedRunnable(this,
+                                            buffer.forget(),
+                                            bufferLength,
+                                            aOffset,
+                                            resourceLength));
+
+  rv = NS_DispatchToMainThread(runnable.get());
+  NS_ENSURE_SUCCESS(rv, false);
+
+  if (aWaitForCompletion) {
+    runnable->WaitForCompletion();
+  }
+
+  return true;
+}

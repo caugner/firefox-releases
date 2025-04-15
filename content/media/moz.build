@@ -28,11 +28,17 @@ if CONFIG['MOZ_GSTREAMER']:
 if CONFIG['MOZ_DASH']:
     PARALLEL_DIRS += ['dash']
 
+if CONFIG['MOZ_DIRECTSHOW']:
+    PARALLEL_DIRS += ['directshow']
+
 if CONFIG['MOZ_MEDIA_PLUGINS']:
     PARALLEL_DIRS += ['plugins']
 
 if CONFIG['MOZ_WMF']:
     PARALLEL_DIRS += ['wmf']
+
+if CONFIG['MOZ_APPLEMEDIA']:
+    PARALLEL_DIRS += ['apple']
 
 PARALLEL_DIRS += ['webrtc']
 
@@ -40,8 +46,7 @@ if CONFIG['MOZ_OMX_DECODER']:
     PARALLEL_DIRS += ['omx']
     PARALLEL_DIRS += ['omx/mediaresourcemanager']
 
-if CONFIG['MOZ_WEBSPEECH']:
-    PARALLEL_DIRS += ['webspeech']
+PARALLEL_DIRS += ['webspeech']
 
 TEST_DIRS += ['test']
 
@@ -64,6 +69,7 @@ EXPORTS += [
     'DecoderTraits.h',
     'EncodedBufferCache.h',
     'FileBlockCache.h',
+    'MP3FrameParser.h',
     'MediaCache.h',
     'MediaDecoder.h',
     'MediaDecoderOwner.h',
@@ -91,6 +97,8 @@ EXPORTS.mozilla.dom += [
     'TextTrackCue.h',
     'TextTrackCueList.h',
     'TextTrackList.h',
+    'TextTrackRegion.h',
+    'TextTrackRegionList.h',
     'VideoPlaybackQuality.h',
     'VideoStreamTrack.h',
 ]
@@ -109,6 +117,7 @@ CPP_SOURCES += [
     'DecoderTraits.cpp',
     'EncodedBufferCache.cpp',
     'FileBlockCache.cpp',
+    'MP3FrameParser.cpp',
     'MediaCache.cpp',
     'MediaDecoder.cpp',
     'MediaDecoderReader.cpp',
@@ -122,6 +131,8 @@ CPP_SOURCES += [
     'TextTrackCue.cpp',
     'TextTrackCueList.cpp',
     'TextTrackList.cpp',
+    'TextTrackRegion.cpp',
+    'TextTrackRegionList.cpp',
     'VideoFrameContainer.cpp',
     'VideoPlaybackQuality.cpp',
     'VideoSegment.cpp',
@@ -130,7 +141,16 @@ CPP_SOURCES += [
     'WebVTTLoadListener.cpp',
 ]
 
+FAIL_ON_WARNINGS = True
+
 if CONFIG['CPU_ARCH'] == 'arm' and CONFIG['BUILD_ARM_NEON']:
     CPP_SOURCES += [
         'AudioNodeEngineNEON.cpp',
     ]
+
+LIBXUL_LIBRARY = True
+
+MSVC_ENABLE_PGO = True
+
+LIBRARY_NAME = 'gkconmedia_s'
+

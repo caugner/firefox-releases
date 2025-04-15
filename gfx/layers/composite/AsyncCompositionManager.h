@@ -6,16 +6,18 @@
 #ifndef GFX_ASYNCCOMPOSITIONMANAGER_H
 #define GFX_ASYNCCOMPOSITIONMANAGER_H
 
-#include "gfxPoint.h"
-#include "gfx3DMatrix.h"
-#include "nsAutoPtr.h"
-#include "nsRect.h"
-#include "mozilla/dom/ScreenOrientation.h"
-#include "mozilla/gfx/Rect.h"
-#include "mozilla/Attributes.h"
-#include "mozilla/RefPtr.h"
-#include "mozilla/TimeStamp.h"
-#include "mozilla/layers/LayerTransaction.h" // for TargetConfig
+#include "Units.h"                      // for LayerPoint, etc
+#include "mozilla/layers/LayerManagerComposite.h"  // for LayerManagerComposite
+#include "gfx3DMatrix.h"                // for gfx3DMatrix
+#include "mozilla/Attributes.h"         // for MOZ_DELETE, MOZ_FINAL, etc
+#include "mozilla/RefPtr.h"             // for RefCounted
+#include "mozilla/TimeStamp.h"          // for TimeStamp
+#include "mozilla/dom/ScreenOrientation.h"  // for ScreenOrientation
+#include "mozilla/gfx/BasePoint.h"      // for BasePoint
+#include "mozilla/layers/LayersMessages.h"  // for TargetConfig
+#include "nsAutoPtr.h"                  // for nsRefPtr
+#include "nsISupportsImpl.h"            // for LayerManager::AddRef, etc
+#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
 
 namespace mozilla {
 namespace layers {
@@ -28,7 +30,7 @@ class AutoResolveRefLayers;
 // Represents (affine) transforms that are calculated from a content view.
 struct ViewTransform {
   ViewTransform(LayerPoint aTranslation = LayerPoint(),
-                LayoutDeviceToScreenScale aScale = LayoutDeviceToScreenScale())
+                ParentLayerToScreenScale aScale = ParentLayerToScreenScale())
     : mTranslation(aTranslation)
     , mScale(aScale)
   {}
@@ -49,7 +51,7 @@ struct ViewTransform {
   }
 
   LayerPoint mTranslation;
-  LayoutDeviceToScreenScale mScale;
+  ParentLayerToScreenScale mScale;
 };
 
 /**
@@ -144,19 +146,20 @@ private:
                         ScreenPoint& aOffset);
 
   /**
-   * Adds a translation to the transform of any fixed-pos layer descendant of
-   * aTransformedSubtreeRoot whose parent layer is not fixed. The translation is
-   * chosen so that the layer's anchor point relative to aTransformedSubtreeRoot's
-   * parent layer is the same as it was when aTransformedSubtreeRoot's
-   * GetLocalTransform() was aPreviousTransformForRoot.
+   * Adds a translation to the transform of any fixed position (whose parent
+   * layer is not fixed) or sticky position layer descendant of
+   * aTransformedSubtreeRoot. The translation is chosen so that the layer's
+   * anchor point relative to aTransformedSubtreeRoot's parent layer is the same
+   * as it was when aTransformedSubtreeRoot's GetLocalTransform() was
+   * aPreviousTransformForRoot. For sticky position layers, the translation is
+   * further intersected with the layer's sticky scroll ranges.
    * This function will also adjust layers so that the given content document
    * fixed position margins will be respected during asynchronous panning and
    * zooming.
    */
-  void AlignFixedLayersForAnchorPoint(Layer* aLayer,
-                                      Layer* aTransformedSubtreeRoot,
-                                      const gfx3DMatrix& aPreviousTransformForRoot,
-                                      const LayerMargin& aFixedLayerMargins);
+  void AlignFixedAndStickyLayers(Layer* aLayer, Layer* aTransformedSubtreeRoot,
+                                 const gfx3DMatrix& aPreviousTransformForRoot,
+                                 const LayerMargin& aFixedLayerMargins);
 
   /**
    * DRAWING PHASE ONLY

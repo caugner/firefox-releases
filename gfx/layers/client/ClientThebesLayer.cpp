@@ -4,7 +4,24 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ClientThebesLayer.h"
-#include "ClientTiledThebesLayer.h"
+#include "ClientTiledThebesLayer.h"     // for ClientTiledThebesLayer
+#include <stdint.h>                     // for uint32_t
+#include "GeckoProfiler.h"              // for PROFILER_LABEL
+#include "client/ClientLayerManager.h"  // for ClientLayerManager, etc
+#include "gfxASurface.h"                // for gfxASurface, etc
+#include "gfxContext.h"                 // for gfxContext
+#include "gfxRect.h"                    // for gfxRect
+#include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
+#include "mozilla/gfx/2D.h"             // for DrawTarget
+#include "mozilla/gfx/Matrix.h"         // for Matrix
+#include "mozilla/gfx/Rect.h"           // for Rect, IntRect
+#include "mozilla/gfx/Types.h"          // for Float, etc
+#include "mozilla/layers/LayersTypes.h"
+#include "mozilla/Preferences.h"
+#include "nsAutoPtr.h"                  // for nsRefPtr
+#include "nsCOMPtr.h"                   // for already_AddRefed
+#include "nsISupportsImpl.h"            // for Layer::AddRef, etc
+#include "nsRect.h"                     // for nsIntRect
 
 using namespace mozilla::gfx;
 
@@ -89,7 +106,7 @@ ClientThebesLayer::PaintThebes()
 
       PaintBuffer(state.mContext,
                   state.mRegionToDraw, extendedDrawRegion, state.mRegionToInvalidate,
-                  state.mDidSelfCopy);
+                  state.mDidSelfCopy, state.mClip);
       MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) PaintThebes", this));
       Mutated();
     } else {
@@ -129,7 +146,7 @@ ClientThebesLayer::PaintBuffer(gfxContext* aContext,
                                const nsIntRegion& aRegionToDraw,
                                const nsIntRegion& aExtendedRegionToDraw,
                                const nsIntRegion& aRegionToInvalidate,
-                               bool aDidSelfCopy)
+                               bool aDidSelfCopy, DrawRegionClip aClip)
 {
   ContentClientRemote* contentClientRemote = static_cast<ContentClientRemote*>(mContentClient.get());
   MOZ_ASSERT(contentClientRemote->GetIPDLActor());
@@ -144,7 +161,8 @@ ClientThebesLayer::PaintBuffer(gfxContext* aContext,
   }
   ClientManager()->GetThebesLayerCallback()(this, 
                                             aContext, 
-                                            aExtendedRegionToDraw, 
+                                            aExtendedRegionToDraw,
+                                            aClip,
                                             aRegionToInvalidate,
                                             ClientManager()->GetThebesLayerCallbackData());
 
@@ -169,14 +187,12 @@ already_AddRefed<ThebesLayer>
 ClientLayerManager::CreateThebesLayer()
 {
   NS_ASSERTION(InConstruction(), "Only allowed in construction phase");
-#ifdef FORCE_BASICTILEDTHEBESLAYER
-  if (GetCompositorBackendType() == LAYERS_OPENGL) {
+  if (Preferences::GetBool("layers.force-tiles") && GetCompositorBackendType() == LAYERS_OPENGL) {
     nsRefPtr<ClientTiledThebesLayer> layer =
       new ClientTiledThebesLayer(this);
     CREATE_SHADOW(Thebes);
     return layer.forget();
   } else
-#endif
   {
     nsRefPtr<ClientThebesLayer> layer =
       new ClientThebesLayer(this);

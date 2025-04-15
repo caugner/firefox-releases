@@ -8,19 +8,23 @@ const {Cc, Cu, Ci} = require("chrome");
 
 // Page size for pageup/pagedown
 const PAGE_SIZE = 10;
-
 const PREVIEW_AREA = 700;
 const DEFAULT_MAX_CHILDREN = 100;
+const COLLAPSE_ATTRIBUTE_LENGTH = 120;
+const COLLAPSE_DATA_URL_REGEX = /^data.+base64/;
+const COLLAPSE_DATA_URL_LENGTH = 60;
 
-let {UndoStack} = require("devtools/shared/undo");
-let EventEmitter = require("devtools/shared/event-emitter");
-let {editableField, InplaceEditor} = require("devtools/shared/inplace-editor");
-let promise = require("sdk/core/promise");
+const {UndoStack} = require("devtools/shared/undo");
+const {editableField, InplaceEditor} = require("devtools/shared/inplace-editor");
+const promise = require("sdk/core/promise");
 
-Cu.import("resource:///modules/devtools/LayoutHelpers.jsm");
+Cu.import("resource://gre/modules/devtools/LayoutHelpers.jsm");
 Cu.import("resource://gre/modules/devtools/Templater.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+
+loader.lazyGetter(this, "DOMParser", function() {
+ return Cc["@mozilla.org/xmlextras/domparser;1"].createInstance(Ci.nsIDOMParser);
+});
 loader.lazyGetter(this, "AutocompletePopup", () => require("devtools/shared/autocomplete-popup").AutocompletePopup);
 
 /**
@@ -49,6 +53,8 @@ function MarkupView(aInspector, aFrame, aControllerWindow)
   this.doc = this._frame.contentDocument;
   this._elt = this.doc.querySelector("#root");
 
+  this.layoutHelpers = new LayoutHelpers(this.doc.defaultView);
+
   try {
     this.maxChildren = Services.prefs.getIntPref("devtools.markup.pagesize");
   } catch(ex) {
@@ -66,7 +72,7 @@ function MarkupView(aInspector, aFrame, aControllerWindow)
   this.undo = new UndoStack();
   this.undo.installController(aControllerWindow);
 
-  this._containers = new WeakMap();
+  this._containers = new Map();
 
   this._boundMutationObserver = this._mutationObserver.bind(this);
   this.walker.on("mutations", this._boundMutationObserver)
@@ -186,7 +192,8 @@ MarkupView.prototype = {
         }
         break;
       case Ci.nsIDOMKeyEvent.DOM_VK_RIGHT:
-        if (!this._selectedContainer.expanded) {
+        if (!this._selectedContainer.expanded &&
+            this._selectedContainer.hasChildren) {
           this._expandContainer(this._selectedContainer);
         } else {
           let next = this._selectionWalker().nextNode();
@@ -346,7 +353,6 @@ MarkupView.prototype = {
     return container;
   },
 
-
   /**
    * Mutation observer used for included nodes.
    */
@@ -359,7 +365,7 @@ MarkupView.prototype = {
       if (mutation.type === "documentUnload") {
         // Treat this as a childList change of the child (maybe the protocol
         // should do this).
-        type = "childList"
+        type = "childList";
         target = mutation.targetParent;
         if (!target) {
           continue;
@@ -384,7 +390,6 @@ MarkupView.prototype = {
     });
   },
 
-
   /**
    * Make sure the given node's parents are expanded and the
    * node is scrolled on to screen.
@@ -402,7 +407,7 @@ MarkupView.prototype = {
       return this._ensureVisible(aNode);
     }).then(() => {
       // Why is this not working?
-      LayoutHelpers.scrollIntoViewIfNeeded(this._containers.get(aNode).editor.elt, centered);
+      this.layoutHelpers.scrollIntoViewIfNeeded(this._containers.get(aNode).editor.elt, centered);
     });
   },
 
@@ -413,7 +418,7 @@ MarkupView.prototype = {
   {
     return this._updateChildren(aContainer, true).then(() => {
       aContainer.expanded = true;
-    })
+    });
   },
 
   /**
@@ -723,6 +728,9 @@ MarkupView.prototype = {
 
     delete this._elt;
 
+    for (let [key, container] of this._containers) {
+      container.destroy();
+    }
     delete this._containers;
   },
 
@@ -801,8 +809,7 @@ MarkupView.prototype = {
       this._updatePreview();
       this._previewBar.classList.remove("hide");
     }.bind(this), 1000);
-  },
-
+  }
 };
 
 
@@ -811,14 +818,13 @@ MarkupView.prototype = {
  * tree.  Manages creation of the editor for the node and
  * a <ul> for placing child elements, and expansion/collapsing
  * of the element.
- *
+ * 
  * @param MarkupView aMarkupView
  *        The markup view that owns this container.
  * @param DOMNode aNode
  *        The node to display.
  */
-function MarkupContainer(aMarkupView, aNode)
-{
+function MarkupContainer(aMarkupView, aNode) {
   this.markup = aMarkupView;
   this.doc = this.markup.doc;
   this.undo = this.markup.undo;
@@ -833,48 +839,44 @@ function MarkupContainer(aMarkupView, aNode)
   } else if (aNode.nodeType == Ci.nsIDOMNode.DOCUMENT_TYPE_NODE) {
     this.editor = new DoctypeEditor(this, aNode);
   } else {
-    this.editor = new GenericEditor(this.markup, aNode);
+    this.editor = new GenericEditor(this, aNode);
   }
 
   // The template will fill the following properties
   this.elt = null;
   this.expander = null;
-  this.codeBox = null;
+  this.highlighter = null;
+  this.tagLine = null;
   this.children = null;
   this.markup.template("container", this);
   this.elt.container = this;
   this.children.container = this;
 
-  this.expander.addEventListener("click", function() {
-    this.markup.navigate(this);
+  // Expanding/collapsing the node on dblclick of the whole tag-line element
+  this._onToggle = this._onToggle.bind(this);
+  this.elt.addEventListener("dblclick", this._onToggle, false);
+  this.expander.addEventListener("click", this._onToggle, false);
 
-    this.markup.setNodeExpanded(this.node, !this.expanded);
-  }.bind(this));
+  // Dealing with the highlighting of the row via javascript rather than :hover
+  // This is to allow highlighting the closing tag-line as well as reusing the
+  // theme css classes (which wouldn't have been possible with a :hover pseudo)
+  this._onMouseOver = this._onMouseOver.bind(this);
+  this.elt.addEventListener("mouseover", this._onMouseOver, false);
 
-  this.codeBox.insertBefore(this.editor.elt, this.children);
+  this._onMouseOut = this._onMouseOut.bind(this);
+  this.elt.addEventListener("mouseout", this._onMouseOut, false);
 
-  this.editor.elt.addEventListener("mousedown", function(evt) {
-    this.markup.navigate(this);
-  }.bind(this), false);
+  // Appending the editor element and attaching event listeners
+  this.tagLine.appendChild(this.editor.elt);
 
-  if (this.editor.summaryElt) {
-    this.editor.summaryElt.addEventListener("click", function(evt) {
-      this.markup.navigate(this);
-      this.markup.expandNode(this.node);
-    }.bind(this), false);
-    this.codeBox.appendChild(this.editor.summaryElt);
-  }
-
-  if (this.editor.closeElt) {
-    this.editor.closeElt.addEventListener("mousedown", function(evt) {
-      this.markup.navigate(this);
-    }.bind(this), false);
-    this.codeBox.appendChild(this.editor.closeElt);
-  }
+  this._onMouseDown = this._onMouseDown.bind(this);
+  this.elt.addEventListener("mousedown", this._onMouseDown, false);
 }
 
 MarkupContainer.prototype = {
-  toString: function() { return "[MarkupContainer for " + this.node + "]" },
+  toString: function() {
+    return "[MarkupContainer for " + this.node + "]";
+  },
 
   /**
    * True if the current node has children.  The MarkupView
@@ -903,21 +905,88 @@ MarkupContainer.prototype = {
    * True if the node has been visually expanded in the tree.
    */
   get expanded() {
-    return this.children.hasAttribute("expanded");
+    return !this.elt.classList.contains("collapsed");
   },
 
   set expanded(aValue) {
-    if (aValue) {
+    if (aValue && this.elt.classList.contains("collapsed")) {
+      // Expanding a node means cloning its "inline" closing tag into a new
+      // tag-line that the user can interact with and showing the children.
+      if (this.editor instanceof ElementEditor) {
+        let closingTag = this.elt.querySelector(".close");
+        if (closingTag) {
+          if (!this.closeTagLine) {
+            let line = this.markup.doc.createElement("div");
+            line.classList.add("tag-line");
+
+            let highlighter = this.markup.doc.createElement("div");
+            highlighter.classList.add("highlighter");
+            line.appendChild(highlighter);
+
+            line.appendChild(closingTag.cloneNode(true));
+            line.addEventListener("mouseover", this._onMouseOver, false);
+            line.addEventListener("mouseout", this._onMouseOut, false);
+
+            this.closeTagLine = line;
+          }
+          this.elt.appendChild(this.closeTagLine);
+        }
+      }
+      this.elt.classList.remove("collapsed");
       this.expander.setAttribute("open", "");
-      this.children.setAttribute("expanded", "");
-      if (this.editor.summaryElt) {
-        this.editor.summaryElt.setAttribute("expanded", "");
+      this.highlighted = false;
+    } else if (!aValue) {
+      if (this.editor instanceof ElementEditor && this.closeTagLine) {
+        this.elt.removeChild(this.closeTagLine);
+      }
+      this.elt.classList.add("collapsed");
+      this.expander.removeAttribute("open");
+    }
+  },
+
+  _onToggle: function(event) {
+    this.markup.navigate(this);
+    if(this.hasChildren) {
+      this.markup.setNodeExpanded(this.node, !this.expanded);
+    }
+    event.stopPropagation();
+  },
+
+  _onMouseOver: function(event) {
+    this.highlighted = true;
+    event.stopPropagation();
+  },
+
+  _onMouseOut: function(event) {
+    this.highlighted = false;
+    event.stopPropagation();
+  },
+
+  _onMouseDown: function(event) {
+    this.highlighted = false;
+    this.markup.navigate(this);
+    event.stopPropagation();
+  },
+
+  _highlighted: false,
+
+  /**
+   * Highlight the currently hovered tag + its closing tag if necessary
+   * (that is if the tag is expanded)
+   */
+  set highlighted(aValue) {
+    this._highlighted = aValue;
+    if (aValue) {
+      if (!this.selected) {
+        this.highlighter.classList.add("theme-bg-darker");
+      }
+      if (this.closeTagLine) {
+        this.closeTagLine.querySelector(".highlighter").classList.add("theme-bg-darker");
       }
     } else {
-      this.expander.removeAttribute("open");
-      this.children.removeAttribute("expanded");
-      if (this.editor.summaryElt) {
-        this.editor.summaryElt.removeAttribute("expanded");
+      this.highlighter.classList.remove("theme-bg-darker");
+      if (this.closeTagLine) {
+        this.closeTagLine.querySelector(".highlighter").classList.remove("theme-bg-darker");
       }
     }
   },
@@ -925,8 +994,7 @@ MarkupContainer.prototype = {
   /**
    * True if the container is visible in the markup tree.
    */
-  get visible()
-  {
+  get visible() {
     return this.elt.getBoundingClientRect().height > 0;
   },
 
@@ -943,15 +1011,11 @@ MarkupContainer.prototype = {
     this._selected = aValue;
     this.editor.selected = aValue;
     if (this._selected) {
-      this.editor.elt.classList.add("theme-selected");
-      if (this.editor.closeElt) {
-        this.editor.closeElt.classList.add("theme-selected");
-      }
+      this.tagLine.setAttribute("selected", "");
+      this.highlighter.classList.add("theme-selected");
     } else {
-      this.editor.elt.classList.remove("theme-selected");
-      if (this.editor.closeElt) {
-        this.editor.closeElt.classList.remove("theme-selected");
-      }
+      this.tagLine.removeAttribute("selected");
+      this.highlighter.classList.remove("theme-selected");
     }
   },
 
@@ -959,8 +1023,7 @@ MarkupContainer.prototype = {
    * Update the container's editor to the current state of the
    * viewed node.
    */
-  update: function MC_update()
-  {
+  update: function() {
     if (this.editor.update) {
       this.editor.update();
     }
@@ -969,20 +1032,42 @@ MarkupContainer.prototype = {
   /**
    * Try to put keyboard focus on the current editor.
    */
-  focus: function MC_focus()
-  {
+  focus: function() {
     let focusable = this.editor.elt.querySelector("[tabindex]");
     if (focusable) {
       focusable.focus();
     }
   },
-}
+
+  /**
+   * Get rid of event listeners and references, when the container is no longer
+   * needed
+   */
+  destroy: function() {
+    // Recursively destroy children containers
+    let firstChild;
+    while (firstChild = this.children.firstChild) {
+      firstChild.container.destroy();
+      this.children.removeChild(firstChild);
+    }
+
+    // Remove event listeners
+    this.elt.removeEventListener("dblclick", this._onToggle, false);
+    this.elt.removeEventListener("mouseover", this._onMouseOver, false);
+    this.elt.removeEventListener("mouseout", this._onMouseOut, false);
+    this.elt.removeEventListener("mousedown", this._onMouseDown, false);
+    this.expander.removeEventListener("click", this._onToggle, false);
+
+    // Destroy my editor
+    this.editor.destroy();
+  }
+};
+
 
 /**
  * Dummy container node used for the root document element.
  */
-function RootContainer(aMarkupView, aNode)
-{
+function RootContainer(aMarkupView, aNode) {
   this.doc = aMarkupView.doc;
   this.elt = this.doc.createElement("ul");
   this.elt.container = this;
@@ -990,6 +1075,13 @@ function RootContainer(aMarkupView, aNode)
   this.node = aNode;
   this.toString = function() { return "[root container]"}
 }
+
+RootContainer.prototype = {
+  hasChildren: true,
+  expanded: true,
+  update: function() {},
+  destroy: function() {}
+};
 
 /**
  * Creates an editor for simple nodes.
@@ -1000,6 +1092,10 @@ function GenericEditor(aContainer, aNode)
   this.elt.className = "editor";
   this.elt.textContent = aNode.nodeName;
 }
+
+GenericEditor.prototype = {
+  destroy: function() {}
+};
 
 /**
  * Creates an editor for a DOCTYPE node.
@@ -1016,6 +1112,10 @@ function DoctypeEditor(aContainer, aNode)
      (aNode.systemId ? ' "' + aNode.systemId + '"' : '') +
      '>';
 }
+
+DoctypeEditor.prototype = {
+  destroy: function() {}
+};
 
 /**
  * Creates a simple text editor node, used for TEXT and COMMENT
@@ -1093,7 +1193,9 @@ TextEditor.prototype = {
         }
       }).then(null, console.error);
     }
-  }
+  },
+
+  destroy: function() {}
 };
 
 /**
@@ -1111,26 +1213,18 @@ function ElementEditor(aContainer, aNode)
   this.markup = this.container.markup;
   this.node = aNode;
 
-  this.attrs = [];
+  this.attrs = {};
 
   // The templates will fill the following properties
   this.elt = null;
   this.tag = null;
+  this.closeTag = null;
   this.attrList = null;
   this.newAttr = null;
-  this.summaryElt = null;
   this.closeElt = null;
 
   // Create the main editor
   this.template("element", this);
-
-  if (this.node.hasChildren) {
-    // Create the summary placeholder
-    this.template("elementContentSummary", this);
-  }
-
-  // Create the closing tag
-  this.template("elementClose", this);
 
   this.rawNode = aNode.rawNode();
 
@@ -1168,7 +1262,7 @@ function ElementEditor(aContainer, aNode)
           undoMods.apply();
         });
       } catch(x) {
-        console.log(x);
+        console.error(x);
       }
     }
   });
@@ -1215,83 +1309,112 @@ ElementEditor.prototype = {
     return this.node.startModifyingAttributes();
   },
 
-  _createAttribute: function EE_createAttribute(aAttr, aBefore)
+  _createAttribute: function EE_createAttribute(aAttr, aBefore = null)
   {
-    if (this.attrs.indexOf(aAttr.name) !== -1) {
-      var attr = this.attrs[aAttr.name];
-      var name = attr.querySelector(".attrname");
-      var val = attr.querySelector(".attrvalue");
-    } else {
-      // Create the template editor, which will save some variables here.
-      let data = {
-        attrName: aAttr.name,
-      };
-      this.template("attribute", data);
-      var {attr, inner, name, val} = data;
+    // Create the template editor, which will save some variables here.
+    let data = {
+      attrName: aAttr.name,
+    };
+    this.template("attribute", data);
+    var {attr, inner, name, val} = data;
 
-      // Figure out where we should place the attribute.
-      let before = aBefore || null;
-      if (aAttr.name == "id") {
-        before = this.attrList.firstChild;
-      } else if (aAttr.name == "class") {
-        let idNode = this.attrs["id"];
-        before = idNode ? idNode.nextSibling : this.attrList.firstChild;
-      }
-      this.attrList.insertBefore(attr, before);
+    // Double quotes need to be handled specially to prevent DOMParser failing.
+    // name="v"a"l"u"e" when editing -> name='v"a"l"u"e"'
+    // name="v'a"l'u"e" when editing -> name="v'a&quot;l'u&quot;e"
+    let editValueDisplayed = aAttr.value || "";
+    let hasDoubleQuote = editValueDisplayed.contains('"');
+    let hasSingleQuote = editValueDisplayed.contains("'");
+    let initial = aAttr.name + '="' + editValueDisplayed + '"';
 
-      // Make the attribute editable.
-      editableField({
-        element: inner,
-        trigger: "dblclick",
-        stopOnReturn: true,
-        selectAll: false,
-        contentType: InplaceEditor.CONTENT_TYPES.CSS_MIXED,
-        popup: this.markup.popup,
-        start: (aEditor, aEvent) => {
-          // If the editing was started inside the name or value areas,
-          // select accordingly.
-          if (aEvent && aEvent.target === name) {
-            aEditor.input.setSelectionRange(0, name.textContent.length);
-          } else if (aEvent && aEvent.target === val) {
-            let length = val.textContent.length;
-            let editorLength = aEditor.input.value.length;
-            let start = editorLength - (length + 1);
-            aEditor.input.setSelectionRange(start, start + length);
-          } else {
-            aEditor.input.select();
-          }
-        },
-        done: (aVal, aCommit) => {
-          if (!aCommit) {
-            return;
-          }
+    // Can't just wrap value with ' since the value contains both " and '.
+    if (hasDoubleQuote && hasSingleQuote) {
+        editValueDisplayed = editValueDisplayed.replace(/\"/g, "&quot;");
+        initial = aAttr.name + '="' + editValueDisplayed + '"';
+    }
 
-          let doMods = this._startModifyingAttributes();
-          let undoMods = this._startModifyingAttributes();
+    // Wrap with ' since there are no single quotes in the attribute value.
+    if (hasDoubleQuote && !hasSingleQuote) {
+        initial = aAttr.name + "='" + editValueDisplayed + "'";
+    }
 
-          // Remove the attribute stored in this editor and re-add any attributes
-          // parsed out of the input element. Restore original attribute if
-          // parsing fails.
-          try {
-            this._saveAttribute(aAttr.name, undoMods);
-            doMods.removeAttribute(aAttr.name);
-            this._applyAttributes(aVal, attr, doMods, undoMods);
-            this.undo.do(() => {
-              doMods.apply();
-            }, () => {
-              undoMods.apply();
-            })
-          } catch(ex) {
-            console.error(ex);
-          }
+    // Make the attribute editable.
+    editableField({
+      element: inner,
+      trigger: "dblclick",
+      stopOnReturn: true,
+      selectAll: false,
+      initial: initial,
+      contentType: InplaceEditor.CONTENT_TYPES.CSS_MIXED,
+      popup: this.markup.popup,
+      start: (aEditor, aEvent) => {
+        // If the editing was started inside the name or value areas,
+        // select accordingly.
+        if (aEvent && aEvent.target === name) {
+          aEditor.input.setSelectionRange(0, name.textContent.length);
+        } else if (aEvent && aEvent.target === val) {
+          let length = editValueDisplayed.length;
+          let editorLength = aEditor.input.value.length;
+          let start = editorLength - (length + 1);
+          aEditor.input.setSelectionRange(start, start + length);
+        } else {
+          aEditor.input.select();
         }
-      });
+      },
+      done: (aVal, aCommit) => {
+        if (!aCommit) {
+          return;
+        }
 
-      this.attrs[aAttr.name] = attr;
+        let doMods = this._startModifyingAttributes();
+        let undoMods = this._startModifyingAttributes();
+
+        // Remove the attribute stored in this editor and re-add any attributes
+        // parsed out of the input element. Restore original attribute if
+        // parsing fails.
+        try {
+          this._saveAttribute(aAttr.name, undoMods);
+          doMods.removeAttribute(aAttr.name);
+          this._applyAttributes(aVal, attr, doMods, undoMods);
+          this.undo.do(() => {
+            doMods.apply();
+          }, () => {
+            undoMods.apply();
+          })
+        } catch(ex) {
+          console.error(ex);
+        }
+      }
+    });
+
+
+    // Figure out where we should place the attribute.
+    let before = aBefore;
+    if (aAttr.name == "id") {
+      before = this.attrList.firstChild;
+    } else if (aAttr.name == "class") {
+      let idNode = this.attrs["id"];
+      before = idNode ? idNode.nextSibling : this.attrList.firstChild;
+    }
+    this.attrList.insertBefore(attr, before);
+
+    // Remove the old version of this attribute from the DOM.
+    let oldAttr = this.attrs[aAttr.name];
+    if (oldAttr && oldAttr.parentNode) {
+      oldAttr.parentNode.removeChild(oldAttr);
+    }
+
+    this.attrs[aAttr.name] = attr;
+
+    let collapsedValue;
+    if (aAttr.value.match(COLLAPSE_DATA_URL_REGEX)) {
+      collapsedValue = truncateString(aAttr.value, COLLAPSE_DATA_URL_LENGTH);
+    }
+    else {
+      collapsedValue = truncateString(aAttr.value, COLLAPSE_ATTRIBUTE_LENGTH);
     }
 
     name.textContent = aAttr.name;
-    val.textContent = aAttr.value;
+    val.textContent = collapsedValue;
 
     return attr;
   },
@@ -1307,12 +1430,10 @@ ElementEditor.prototype = {
    */
   _applyAttributes: function EE__applyAttributes(aValue, aAttrNode, aDoMods, aUndoMods)
   {
-    let attrs = escapeAttributeValues(aValue);
-
+    let attrs = parseAttributeValues(aValue, this.doc);
     for (let attr of attrs) {
       // Create an attribute editor next to the current attribute if needed.
       this._createAttribute(attr, aAttrNode ? aAttrNode.nextSibling : null);
-
       this._saveAttribute(attr.name, aUndoMods);
       aDoMods.setAttribute(attr.name, attr.value);
     }
@@ -1387,126 +1508,59 @@ ElementEditor.prototype = {
         }
       });
     }).then(null, console.error);
-  }
-}
+  },
 
-
-
-RootContainer.prototype = {
-  hasChildren: true,
-  expanded: true,
-  update: function RC_update() {}
+  destroy: function() {}
 };
 
 function nodeDocument(node) {
   return node.ownerDocument || (node.nodeType == Ci.nsIDOMNode.DOCUMENT_NODE ? node : null);
 }
 
+function truncateString(str, maxLength) {
+  if (str.length <= maxLength) {
+    return str;
+  }
+
+  return str.substring(0, Math.ceil(maxLength / 2)) +
+         "…" +
+         str.substring(str.length - Math.floor(maxLength / 2));
+}
 /**
- * Properly escape attribute values.
+ * Parse attribute names and values from a string.
  *
  * @param  {String} attr
- *         The attributes for which the values are to be escaped.
+ *         The input string for which names/values are to be parsed.
+ * @param  {HTMLDocument} doc
+ *         A document that can be used to test valid attributes.
  * @return {Array}
- *         An array of attribute names and their escaped values.
+ *         An array of attribute names and their values.
  */
-function escapeAttributeValues(attr) {
-  let name = null;
-  let value = null;
-  let result = "";
+function parseAttributeValues(attr, doc) {
+  attr = attr.trim();
+
+  // Handle bad user inputs by appending a " or ' if it fails to parse without them.
+  let el = DOMParser.parseFromString("<div " + attr + "></div>", "text/html").body.childNodes[0] ||
+           DOMParser.parseFromString("<div " + attr + "\"></div>", "text/html").body.childNodes[0] ||
+           DOMParser.parseFromString("<div " + attr + "'></div>", "text/html").body.childNodes[0];
+  let div = doc.createElement("div");
+
   let attributes = [];
-
-  while(attr.length > 0) {
-    let match;
-    let dirty = false;
-
-    // Trim quotes and spaces from attr start
-    match = attr.match(/^["\s]+/);
-    if (match && match.length == 1) {
-      attr = attr.substr(match[0].length);
+  for (let attribute of el.attributes) {
+    // Try to set on an element in the document, throws exception on bad input.
+    // Prevents InvalidCharacterError - "String contains an invalid character".
+    try {
+      div.setAttribute(attribute.name, attribute.value);
+      attributes.push({
+        name: attribute.name,
+        value: attribute.value
+      });
     }
-
-    // Name
-    if (!dirty) {
-      match = attr.match(/^([\w-]+)="/);
-      if (match && match.length == 2) {
-        if (name) {
-          // We had a name without a value e.g. disabled. Let's set the value to "";
-          value = "";
-        } else {
-          name = match[1];
-          attr = attr.substr(match[0].length);
-        }
-        dirty = true;
-      }
-    }
-
-    // Value (in the case of multiple attributes)
-    if (!dirty) {
-      match = attr.match(/^(.+?)"\s+[\w-]+="/);
-      if (match && match.length > 1) {
-        value = typeof match[1] == "undefined" ? match[2] : match[1];
-        attr = attr.substr(value.length);
-        value = simpleEscape(value);
-        dirty = true;
-      }
-    }
-
-    // Final value
-    if (!dirty && attr.indexOf("=\"") == -1) {
-      // No more attributes, get the remaining value minus it's ending quote.
-      if (attr.charAt(attr.length - 1) == '"') {
-        attr = attr.substr(0, attr.length - 1);
-      }
-
-      if (!name) {
-        name = attr;
-        value = "";
-      } else {
-        value = simpleEscape(attr);
-      }
-      attr = "";
-      dirty = true;
-    }
-
-    if (name !== null && value !== null) {
-      attributes.push({name: name, value: value});
-      name = value = null;
-    }
-
-    if (!dirty) {
-      // This should never happen but we exit here if it does.
-      return attributes;
-    }
+    catch(e) { }
   }
-  return attributes;
-}
 
-/**
- * Escape basic html entities <, >, " and '.
- * @param  {String} value
- *         Value to escape.
- * @return {String}
- *         Escaped value.
- */
-function simpleEscape(value) {
-  return value.replace(/</g, "&lt;")
-              .replace(/>/g, "&gt;")
-              .replace(/"/g, "&quot;")
-              .replace(/'/g, "&apos;");
-}
-
-/**
- * A tree walker filter for avoiding empty whitespace text nodes.
- */
-function whitespaceTextFilter(aNode)
-{
-    if (aNode.nodeType == Ci.nsIDOMNode.TEXT_NODE &&
-        !/[^\s]/.exec(aNode.nodeValue)) {
-      return Ci.nsIDOMNodeFilter.FILTER_SKIP;
-    } else {
-      return Ci.nsIDOMNodeFilter.FILTER_ACCEPT;
-    }
+  // Attributes return from DOMParser in reverse order from how they are entered.
+  return attributes.reverse();
 }
 
 loader.lazyGetter(MarkupView.prototype, "strings", () => Services.strings.createBundle(

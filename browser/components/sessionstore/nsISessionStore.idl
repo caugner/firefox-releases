@@ -25,7 +25,7 @@ interface nsIDOMNode;
  * |gBrowser.tabContainer| such as e.g. |gBrowser.selectedTab|.
  */
 
-[scriptable, uuid(700756cc-f5c7-11e2-b842-59d9dc830245)]
+[scriptable, uuid(9a5a77f2-80bf-40c5-b341-485a736abb4c)]
 interface nsISessionStore : nsISupports
 {
   /**
@@ -198,9 +198,4 @@ interface nsISessionStore : nsISupports
    * @param aName is the name of the attribute to save/restore for all tabbrowser tabs.
    */
   void persistTabAttribute(in AString aName);
-
-  /**
-   * Initialize the service
-   */
-  jsval init(in nsIDOMWindow aWindow);
 };

@@ -40,23 +40,21 @@
 #endif
 
 // JS
-#include "jsdbgapi.h"
-
-// we eventually want to make this runtime switchable
-#if defined(MOZ_PROFILING) && (defined(XP_UNIX) && !defined(XP_MACOSX))
- #ifndef ANDROID
-  #define USE_BACKTRACE
- #endif
-#endif
-#ifdef USE_BACKTRACE
- #include <execinfo.h>
-#endif
+#include "js/OldDebugAPI.h"
 
 #if defined(MOZ_PROFILING) && (defined(XP_MACOSX) || defined(XP_WIN))
  #define USE_NS_STACKWALK
 #endif
 #ifdef USE_NS_STACKWALK
  #include "nsStackWalk.h"
+#endif
+
+#if defined(SPS_ARCH_arm) && defined(MOZ_WIDGET_GONK)
+ // Should also work on other Android and ARM Linux, but not tested there yet.
+ #define USE_EHABI_STACKWALK
+#endif
+#ifdef USE_EHABI_STACKWALK
+ #include "EHABIStackWalk.h"
 #endif
 
 using std::string;
@@ -93,15 +91,19 @@ void TableTicker::HandleSaveRequest()
   NS_DispatchToMainThread(runnable);
 }
 
-JSCustomObject* TableTicker::GetMetaJSCustomObject(JSAObjectBuilder& b)
+template <typename Builder>
+typename Builder::Object TableTicker::GetMetaJSCustomObject(Builder& b)
 {
-  JSCustomObject *meta = b.CreateObject();
+  typename Builder::RootedObject meta(b.context(), b.CreateObject());
 
   b.DefineProperty(meta, "version", 2);
   b.DefineProperty(meta, "interval", interval());
   b.DefineProperty(meta, "stackwalk", mUseStackWalk);
   b.DefineProperty(meta, "jank", mJankOnly);
   b.DefineProperty(meta, "processType", XRE_GetProcessType());
+
+  TimeDuration delta = TimeStamp::Now() - sStartTime;
+  b.DefineProperty(meta, "startTime", PR_Now()/1000.0f - delta.ToMilliseconds());
 
   nsresult res;
   nsCOMPtr<nsIHttpProtocolHandler> http = do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &res);
@@ -158,42 +160,47 @@ void TableTicker::ToStreamAsJSON(std::ostream& stream)
 JSObject* TableTicker::ToJSObject(JSContext *aCx)
 {
   JSObjectBuilder b(aCx);
-  JSCustomObject* profile = b.CreateObject();
+  JS::RootedObject profile(aCx, b.CreateObject());
   BuildJSObject(b, profile);
-  JSObject* jsProfile = b.GetJSObject(profile);
-
-  return jsProfile;
+  return profile;
 }
 
+template <typename Builder>
 struct SubprocessClosure {
-  JSAObjectBuilder* mBuilder;
-  JSCustomArray* mThreads;
+  SubprocessClosure(Builder *aBuilder, typename Builder::ArrayHandle aThreads)
+    : mBuilder(aBuilder), mThreads(aThreads)
+  {}
+
+  Builder* mBuilder;
+  typename Builder::ArrayHandle mThreads;
 };
 
+template <typename Builder>
 void SubProcessCallback(const char* aProfile, void* aClosure)
 {
   // Called by the observer to get their profile data included
   // as a sub profile
-  SubprocessClosure* closure = (SubprocessClosure*)aClosure;
+  SubprocessClosure<Builder>* closure = (SubprocessClosure<Builder>*)aClosure;
 
   closure->mBuilder->ArrayPush(closure->mThreads, aProfile);
 }
 
 #if defined(SPS_OS_android) && !defined(MOZ_WIDGET_GONK)
+template <typename Builder>
 static
-JSCustomObject* BuildJavaThreadJSObject(JSAObjectBuilder& b)
+typename Builder::Object BuildJavaThreadJSObject(Builder& b)
 {
-  JSCustomObject* javaThread = b.CreateObject();
+  typename Builder::RootedObject javaThread(b.context(), b.CreateObject());
   b.DefineProperty(javaThread, "name", "Java Main Thread");
 
-  JSCustomArray *samples = b.CreateArray();
+  typename Builder::RootedArray samples(b.context(), b.CreateArray());
   b.DefineProperty(javaThread, "samples", samples);
 
   int sampleId = 0;
   while (true) {
     int frameId = 0;
-    JSCustomObject *sample = nullptr;
-    JSCustomArray *frames = nullptr;
+    typename Builder::RootedObject sample(b.context());
+    typename Builder::RootedArray frames(b.context());
     while (true) {
       nsCString result;
       bool hasFrame = AndroidBridge::Bridge()->GetFrameNameJavaProfiling(0, sampleId, frameId, result);
@@ -212,7 +219,7 @@ JSCustomObject* BuildJavaThreadJSObject(JSAObjectBuilder& b)
         double sampleTime = AndroidBridge::Bridge()->GetSampleTimeJavaProfiling(0, sampleId);
         b.DefineProperty(sample, "time", sampleTime);
       }
-      JSCustomObject *frame = b.CreateObject();
+      typename Builder::RootedObject frame(b.context(), b.CreateObject());
       b.DefineProperty(frame, "location", result.BeginReading());
       b.ArrayPush(frames, frame);
       frameId++;
@@ -227,17 +234,18 @@ JSCustomObject* BuildJavaThreadJSObject(JSAObjectBuilder& b)
 }
 #endif
 
-void TableTicker::BuildJSObject(JSAObjectBuilder& b, JSCustomObject* profile)
+template <typename Builder>
+void TableTicker::BuildJSObject(Builder& b, typename Builder::ObjectHandle profile)
 {
   // Put shared library info
   b.DefineProperty(profile, "libs", GetSharedLibraryInfoString().c_str());
 
   // Put meta data
-  JSCustomObject *meta = GetMetaJSCustomObject(b);
+  typename Builder::RootedObject meta(b.context(), GetMetaJSCustomObject(b));
   b.DefineProperty(profile, "meta", meta);
 
   // Lists the samples for each ThreadProfile
-  JSCustomArray *threads = b.CreateArray();
+  typename Builder::RootedArray threads(b.context(), b.CreateArray());
   b.DefineProperty(profile, "threads", threads);
 
   SetPaused(true);
@@ -252,7 +260,7 @@ void TableTicker::BuildJSObject(JSAObjectBuilder& b, JSCustomObject* profile)
 
       MutexAutoLock lock(*sRegisteredThreads->at(i)->Profile()->GetMutex());
 
-      JSCustomObject* threadSamples = b.CreateObject();
+      typename Builder::RootedObject threadSamples(b.context(), b.CreateObject());
       sRegisteredThreads->at(i)->Profile()->BuildJSObject(b, threadSamples);
       b.ArrayPush(threads, threadSamples);
     }
@@ -262,7 +270,7 @@ void TableTicker::BuildJSObject(JSAObjectBuilder& b, JSCustomObject* profile)
   if (ProfileJava()) {
     AndroidBridge::Bridge()->PauseJavaProfiling();
 
-    JSCustomObject* javaThread = BuildJavaThreadJSObject(b);
+    typename Builder::RootedObject javaThread(b.context(), BuildJavaThreadJSObject(b));
     b.ArrayPush(threads, javaThread);
 
     AndroidBridge::Bridge()->UnpauseJavaProfiling();
@@ -273,12 +281,10 @@ void TableTicker::BuildJSObject(JSAObjectBuilder& b, JSCustomObject* profile)
 
   // Send a event asking any subprocesses (plugins) to
   // give us their information
-  SubprocessClosure closure;
-  closure.mBuilder = &b;
-  closure.mThreads = threads;
+  SubprocessClosure<Builder> closure(&b, threads);
   nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
   if (os) {
-    nsRefPtr<ProfileSaveEvent> pse = new ProfileSaveEvent(SubProcessCallback, &closure);
+    nsRefPtr<ProfileSaveEvent> pse = new ProfileSaveEvent(SubProcessCallback<Builder>, &closure);
     os->NotifyObservers(pse, "profiler-subprocess", nullptr);
   }
 }
@@ -347,23 +353,7 @@ void addProfileEntry(volatile StackEntry &entry, ThreadProfile &aProfile,
   }
 }
 
-#ifdef USE_BACKTRACE
-void TableTicker::doNativeBacktrace(ThreadProfile &aProfile, TickSample* aSample)
-{
-  void *array[100];
-  int count = backtrace (array, 100);
-
-  aProfile.addTag(ProfileEntry('s', "(root)"));
-
-  for (int i = 0; i < count; i++) {
-    if( (intptr_t)array[i] == -1 ) break;
-    aProfile.addTag(ProfileEntry('l', (void*)array[i]));
-  }
-}
-#endif
-
-
-#ifdef USE_NS_STACKWALK
+#if defined(USE_NS_STACKWALK) || defined(USE_EHABI_STACKWALK)
 typedef struct {
   void** array;
   void** sp_array;
@@ -371,6 +361,48 @@ typedef struct {
   size_t count;
 } PCArray;
 
+static void mergeNativeBacktrace(ThreadProfile &aProfile, const PCArray &array) {
+  aProfile.addTag(ProfileEntry('s', "(root)"));
+
+  PseudoStack* stack = aProfile.GetPseudoStack();
+  uint32_t pseudoStackPos = 0;
+
+  /* We have two stacks, the native C stack we extracted from unwinding,
+   * and the pseudostack we managed during execution. We want to consolidate
+   * the two in order. We do so by merging using the approximate stack address
+   * when each entry was push. When pushing JS entry we may not now the stack
+   * address in which case we have a NULL stack address in which case we assume
+   * that it follows immediatly the previous element.
+   *
+   *  C Stack | Address    --  Pseudo Stack | Address
+   *  main()  | 0x100          run_js()     | 0x40
+   *  start() | 0x80           jsCanvas()   | NULL
+   *  timer() | 0x50           drawLine()   | NULL
+   *  azure() | 0x10
+   *
+   * Merged: main(), start(), timer(), run_js(), jsCanvas(), drawLine(), azure()
+   */
+  // i is the index in C stack starting at main and decreasing
+  // pseudoStackPos is the position in the Pseudo stack starting
+  // at the first frame (run_js in the example) and increasing.
+  for (size_t i = array.count; i > 0; --i) {
+    while (pseudoStackPos < stack->stackSize()) {
+      volatile StackEntry& entry = stack->mStack[pseudoStackPos];
+
+      if (entry.stackAddress() < array.sp_array[i-1] && entry.stackAddress())
+        break;
+
+      addProfileEntry(entry, aProfile, stack, array.array[0]);
+      pseudoStackPos++;
+    }
+
+    aProfile.addTag(ProfileEntry('l', (void*)array.array[i-1]));
+  }
+}
+
+#endif
+
+#ifdef USE_NS_STACKWALK
 static
 void StackWalkCallback(void* aPC, void* aSP, void* aClosure)
 {
@@ -419,45 +451,29 @@ void TableTicker::doNativeBacktrace(ThreadProfile &aProfile, TickSample* aSample
   nsresult rv = NS_StackWalk(StackWalkCallback, /* skipFrames */ 0, maxFrames,
                              &array, thread, platformData);
 #endif
-  if (NS_SUCCEEDED(rv)) {
-    aProfile.addTag(ProfileEntry('s', "(root)"));
-
-    PseudoStack* stack = aProfile.GetPseudoStack();
-    uint32_t pseudoStackPos = 0;
-
-    /* We have two stacks, the native C stack we extracted from unwinding,
-     * and the pseudostack we managed during execution. We want to consolidate
-     * the two in order. We do so by merging using the approximate stack address
-     * when each entry was push. When pushing JS entry we may not now the stack
-     * address in which case we have a NULL stack address in which case we assume
-     * that it follows immediatly the previous element.
-     *
-     *  C Stack | Address    --  Pseudo Stack | Address
-     *  main()  | 0x100          run_js()     | 0x40
-     *  start() | 0x80           jsCanvas()   | NULL
-     *  timer() | 0x50           drawLine()   | NULL
-     *  azure() | 0x10
-     *
-     * Merged: main(), start(), timer(), run_js(), jsCanvas(), drawLine(), azure()
-     */
-    // i is the index in C stack starting at main and decreasing
-    // pseudoStackPos is the position in the Pseudo stack starting
-    // at the first frame (run_js in the example) and increasing.
-    for (size_t i = array.count; i > 0; --i) {
-      while (pseudoStackPos < stack->stackSize()) {
-        volatile StackEntry& entry = stack->mStack[pseudoStackPos];
-
-        if (entry.stackAddress() < array.sp_array[i-1] && entry.stackAddress())
-          break;
-
-        addProfileEntry(entry, aProfile, stack, array.array[0]);
-        pseudoStackPos++;
-      }
-
-      aProfile.addTag(ProfileEntry('l', (void*)array.array[i-1]));
-    }
-  }
+  if (NS_SUCCEEDED(rv))
+    mergeNativeBacktrace(aProfile, array);
 }
+#endif
+
+#ifdef USE_EHABI_STACKWALK
+void TableTicker::doNativeBacktrace(ThreadProfile &aProfile, TickSample* aSample)
+{
+  void *pc_array[1000];
+  void *sp_array[1000];
+  PCArray array = {
+    pc_array,
+    sp_array,
+    mozilla::ArrayLength(pc_array),
+    0
+  };
+
+  ucontext_t *ucontext = reinterpret_cast<ucontext_t *>(aSample->context);
+  array.count = EHABIStackWalk(ucontext->uc_mcontext, aProfile.GetStackTop(),
+                               sp_array, pc_array, array.size);
+  mergeNativeBacktrace(aProfile, array);
+}
+
 #endif
 
 static
@@ -522,7 +538,7 @@ void TableTicker::InplaceTick(TickSample* sample)
     }
   }
 
-#if defined(USE_BACKTRACE) || defined(USE_NS_STACKWALK)
+#if defined(USE_NS_STACKWALK) || defined(USE_EHABI_STACKWALK)
   if (mUseStackWalk) {
     doNativeBacktrace(currThreadProfile, sample);
   } else {
@@ -570,8 +586,13 @@ void mozilla_sampler_print_location1()
     return;
   }
 
+  // This won't allow unwinding past this function, but it will be safe.
+  void *stackTop = &stack;
+
   ThreadProfile threadProfile("Temp", PROFILE_DEFAULT_ENTRY, stack,
-                              0, Sampler::AllocPlatformData(0), false);
+                              0, Sampler::AllocPlatformData(0), false,
+                              stackTop);
+
   doSampleStackTrace(stack, threadProfile, NULL);
 
   threadProfile.flush();

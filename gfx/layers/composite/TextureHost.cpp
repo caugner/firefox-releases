@@ -4,16 +4,22 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/layers/TextureHost.h"
-#include "mozilla/layers/LayersSurfaces.h"
-#include "LayersLogging.h"
-#include "nsPrintfCString.h"
-#include "mozilla/ipc/Shmem.h"
-#include "ipc/AutoOpenSurface.h"
+#include "CompositableHost.h"           // for CompositableHost
+#include "LayersLogging.h"              // for AppendToString
+#include "gfx2DGlue.h"                  // for ToIntSize
+#include "gfxImageSurface.h"            // for gfxImageSurface
+#include "mozilla/gfx/2D.h"             // for DataSourceSurface, Factory
+#include "mozilla/ipc/Shmem.h"          // for Shmem
+#include "mozilla/layers/Compositor.h"  // for Compositor
+#include "mozilla/layers/ISurfaceAllocator.h"  // for ISurfaceAllocator
 #include "mozilla/layers/ImageDataSerializer.h"
+#include "mozilla/layers/LayersSurfaces.h"  // for SurfaceDescriptor, etc
 #include "mozilla/layers/YCbCrImageDataSerializer.h"
-#include "gfx2DGlue.h"
-#include "mozilla/gfx/2D.h"
+#include "nsAString.h"
+#include "nsAutoPtr.h"                  // for nsRefPtr
+#include "nsPrintfCString.h"            // for nsPrintfCString
 
+struct nsIntPoint;
 
 namespace mozilla {
 namespace layers {
@@ -40,13 +46,21 @@ TemporaryRef<DeprecatedTextureHost> CreateDeprecatedTextureHostD3D11(SurfaceDesc
 /* static */ TemporaryRef<DeprecatedTextureHost>
 DeprecatedTextureHost::CreateDeprecatedTextureHost(SurfaceDescriptorType aDescriptorType,
                                            uint32_t aDeprecatedTextureHostFlags,
-                                           uint32_t aTextureFlags)
+                                           uint32_t aTextureFlags,
+                                           CompositableHost* aCompositableHost)
 {
   switch (Compositor::GetBackend()) {
     case LAYERS_OPENGL:
-      return CreateDeprecatedTextureHostOGL(aDescriptorType,
+      {
+      RefPtr<DeprecatedTextureHost> result;
+      result = CreateDeprecatedTextureHostOGL(aDescriptorType,
                                         aDeprecatedTextureHostFlags,
                                         aTextureFlags);
+      if (aCompositableHost) {
+        result->SetCompositableBackendSpecificData(aCompositableHost->GetCompositableBackendSpecificData());
+      }
+      return result;
+      }
 #ifdef XP_WIN
     case LAYERS_D3D9:
       return CreateDeprecatedTextureHostD3D9(aDescriptorType,
@@ -130,6 +144,39 @@ CreateBackendIndependentTextureHost(uint64_t aID,
   return result;
 }
 
+void
+TextureHost::SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData)
+{
+    mCompositableBackendData = aBackendData;
+}
+
+
+TextureHost::TextureHost(uint64_t aID,
+                         TextureFlags aFlags)
+    : mID(aID)
+    , mNextTexture(nullptr)
+    , mFlags(aFlags)
+{}
+
+TextureHost::~TextureHost()
+{
+}
+
+void
+TextureSource::SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData)
+{
+    mCompositableBackendData = aBackendData;
+}
+
+TextureSource::TextureSource()
+{
+    MOZ_COUNT_CTOR(TextureSource);
+}
+TextureSource::~TextureSource()
+{
+    MOZ_COUNT_DTOR(TextureSource);
+}
+
 DeprecatedTextureHost::DeprecatedTextureHost()
   : mFlags(0)
   , mBuffer(nullptr)
@@ -174,6 +221,15 @@ DeprecatedTextureHost::SwapTextures(const SurfaceDescriptor& aImage,
     *aResult = *mBuffer;
   }
   *mBuffer = aImage;
+  // The following SetBuffer call was added in bug 912725 as a fix for the
+  // hacky fix introduced in gecko 23 for bug 862324.
+  // Note that it is a no-op in the generic case, but not for
+  // GrallocDeprecatedTextureHostOGL which overrides SetBuffer to make it
+  // register the TextureHost with the GrallocBufferActor.
+  // The reason why this SetBuffer calls is needed here is that just above we
+  // overwrote *mBuffer in place, so we need to tell the new mBuffer about this
+  // TextureHost.
+  SetBuffer(mBuffer, mDeAllocator);
 }
 
 #ifdef MOZ_LAYERS_HAVE_LOG
@@ -226,7 +282,8 @@ BufferTextureHost::Updated(const nsIntRegion* aRegion)
     mPartialUpdate = false;
   }
   if (GetFlags() & TEXTURE_IMMEDIATE_UPLOAD) {
-    MaybeUpload(mPartialUpdate ? &mMaybeUpdatedRegion : nullptr);
+    DebugOnly<bool> result = MaybeUpload(mPartialUpdate ? &mMaybeUpdatedRegion : nullptr);
+    MOZ_ASSERT(result);
   }
 }
 
@@ -380,6 +437,9 @@ BufferTextureHost::Upload(nsIntRegion *aRegion)
     }
 
     RefPtr<gfx::DataSourceSurface> surf = deserializer.GetAsSurface();
+    if (!surf) {
+      return false;
+    }
 
     if (!mFirstSource->Update(surf.get(), mFlags, aRegion)) {
       NS_WARNING("failed to update the DataTextureSource");
@@ -392,7 +452,7 @@ BufferTextureHost::Upload(nsIntRegion *aRegion)
 already_AddRefed<gfxImageSurface>
 BufferTextureHost::GetAsSurface()
 {
-  nsRefPtr<gfxImageSurface> result; 
+  nsRefPtr<gfxImageSurface> result;
   if (mFormat == gfx::FORMAT_UNKNOWN) {
     NS_WARNING("BufferTextureHost: unsupported format!");
     return nullptr;

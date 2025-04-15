@@ -289,8 +289,33 @@ add_task(function test_asyncClose_succeeds_with_finalized_async_statement()
   stmt.executeAsync();
   stmt.finalize();
 
-  let deferred = Promise.defer();
   yield asyncClose(getOpenedDatabase());
+  // Reset gDBConn so that later tests will get a new connection object.
+  gDBConn = null;
+});
+
+add_task(function test_close_then_release_statement() {
+  // Testing the behavior in presence of a bad client that finalizes
+  // statements after the database has been closed (typically by
+  // letting the gc finalize the statement).
+  let db = getOpenedDatabase();
+  let stmt = createStatement("SELECT * FROM test -- test_close_then_release_statement");
+  db.close();
+  stmt.finalize(); // Finalize too late - this should not crash
+
+  // Reset gDBConn so that later tests will get a new connection object.
+  gDBConn = null;
+});
+
+add_task(function test_asyncClose_then_release_statement() {
+  // Testing the behavior in presence of a bad client that finalizes
+  // statements after the database has been async closed (typically by
+  // letting the gc finalize the statement).
+  let db = getOpenedDatabase();
+  let stmt = createStatement("SELECT * FROM test -- test_asyncClose_then_release_statement");
+  yield asyncClose(db);
+  stmt.finalize(); // Finalize too late - this should not crash
+
   // Reset gDBConn so that later tests will get a new connection object.
   gDBConn = null;
 });
@@ -359,7 +384,7 @@ function standardAsyncTest(promisedDB, name, shouldInit = false) {
   }
 
   // Generate a name to insert and fetch back
-  let name = "worker bee " + Math.random() + " (" + name + ")";
+  name = "worker bee " + Math.random() + " (" + name + ")";
 
   let stmt = adb.createAsyncStatement("INSERT INTO test (name) VALUES (:name)");
   stmt.params.name = name;

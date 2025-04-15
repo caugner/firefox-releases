@@ -17,20 +17,18 @@
 #include "nsDisplayList.h"
 #include "imgIContainer.h"
 #include "mozilla/Attributes.h"
+#include "nsIReflowCallback.h"
 
-class nsIFrame;
 class nsImageMap;
 class nsIURI;
 class nsILoadGroup;
 struct nsHTMLReflowState;
 struct nsHTMLReflowMetrics;
-struct nsSize;
 class nsDisplayImage;
 class nsPresContext;
 class nsImageFrame;
 class nsTransform2D;
 class nsImageLoadingContent;
-class imgRequestProxy;
 
 namespace mozilla {
 namespace layers {
@@ -60,7 +58,8 @@ private:
 
 #define ImageFrameSuper nsSplittableFrame
 
-class nsImageFrame : public ImageFrameSuper {
+class nsImageFrame : public ImageFrameSuper,
+                     public nsIReflowCallback {
 public:
   typedef mozilla::layers::ImageContainer ImageContainer;
   typedef mozilla::layers::ImageLayer ImageLayer;
@@ -169,6 +168,11 @@ public:
                                  InlineMinWidthData *aData);
 
   void DisconnectMap();
+
+  // nsIReflowCallback
+  virtual bool ReflowFinished() MOZ_OVERRIDE;
+  virtual void ReflowCallbackCanceled() MOZ_OVERRIDE;
+
 protected:
   virtual ~nsImageFrame();
 
@@ -280,12 +284,14 @@ private:
 
   nsCOMPtr<imgINotificationObserver> mListener;
 
+  nsCOMPtr<imgIContainer> mImage;
   nsSize mComputedSize;
   nsIFrame::IntrinsicSize mIntrinsicSize;
   nsSize mIntrinsicRatio;
 
   bool mDisplayingIcon;
   bool mFirstFrameComplete;
+  bool mReflowCallbackPosted;
 
   static nsIIOService* sIOService;
   

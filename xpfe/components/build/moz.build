@@ -10,3 +10,7 @@ CPP_SOURCES += [
     'nsModule.cpp',
 ]
 
+LIBXUL_LIBRARY = True
+
+LIBRARY_NAME = 'appcomps'
+

@@ -33,6 +33,7 @@
 #include "GeckoProfiler.h"
 #include "nsHTMLCSSStyleSheet.h"
 #include "nsHTMLStyleSheet.h"
+#include "nsCSSRules.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -303,7 +304,6 @@ SortStyleSheetsByScope(nsTArray<nsCSSStyleSheet*>& aSheets)
   }
 
   ScopeDepthCache cache;
-  cache.Init();
 
   nsTArray<ScopedSheetOrder> sheets;
   sheets.SetLength(n);

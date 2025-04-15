@@ -24,17 +24,16 @@ struct WebGLMappedIdentifier {
 };
 
 class WebGLShader MOZ_FINAL
-    : public nsISupports
+    : public nsWrapperCache
     , public WebGLRefCountedObject<WebGLShader>
     , public LinkedListElement<WebGLShader>
     , public WebGLContextBoundObject
-    , public nsWrapperCache
 {
     friend class WebGLContext;
     friend class WebGLProgram;
 
 public:
-    WebGLShader(WebGLContext *context, WebGLenum stype);
+    WebGLShader(WebGLContext *context, GLenum stype);
 
     ~WebGLShader() {
         DeleteOnce();
@@ -42,8 +41,8 @@ public:
 
     size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
-    WebGLuint GLName() { return mGLName; }
-    WebGLenum ShaderType() { return mType; }
+    GLuint GLName() { return mGLName; }
+    GLenum ShaderType() { return mType; }
 
     void SetSource(const nsAString& src) {
         // XXX do some quick gzip here maybe -- getting this will be very rare
@@ -80,13 +79,13 @@ public:
     virtual JSObject* WrapObject(JSContext *cx,
                                  JS::Handle<JSObject*> scope) MOZ_OVERRIDE;
 
-    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-    NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(WebGLShader)
+    NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(WebGLShader)
+    NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(WebGLShader)
 
 protected:
 
-    WebGLuint mGLName;
-    WebGLenum mType;
+    GLuint mGLName;
+    GLenum mType;
     nsString mSource;
     nsCString mTranslationLog; // The translation log should contain only ASCII characters
     bool mNeedsTranslation;

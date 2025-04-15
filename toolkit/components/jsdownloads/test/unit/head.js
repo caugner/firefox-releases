@@ -170,6 +170,101 @@ function promiseTimeout(aTime)
 }
 
 /**
+ * Allows waiting for an observer notification once.
+ *
+ * @param aTopic
+ *        Notification topic to observe.
+ *
+ * @return {Promise}
+ * @resolves The array [aSubject, aData] from the observed notification.
+ * @rejects Never.
+ */
+function promiseTopicObserved(aTopic)
+{
+  let deferred = Promise.defer();
+
+  Services.obs.addObserver(
+    function PTO_observe(aSubject, aTopic, aData) {
+      Services.obs.removeObserver(PTO_observe, aTopic);
+      deferred.resolve([aSubject, aData]);
+    }, aTopic, false);
+
+  return deferred.promise;
+}
+
+/**
+ * Clears history asynchronously.
+ *
+ * @return {Promise}
+ * @resolves When history has been cleared.
+ * @rejects Never.
+ */
+function promiseClearHistory()
+{
+  let promise = promiseTopicObserved(PlacesUtils.TOPIC_EXPIRATION_FINISHED);
+  do_execute_soon(function() PlacesUtils.bhistory.removeAllPages());
+  return promise;
+}
+
+/**
+ * Waits for a new history visit to be notified for the specified URI.
+ *
+ * @param aUrl
+ *        String containing the URI that will be visited.
+ *
+ * @return {Promise}
+ * @resolves Array [aTime, aTransitionType] from nsINavHistoryObserver.onVisit.
+ * @rejects Never.
+ */
+function promiseWaitForVisit(aUrl)
+{
+  let deferred = Promise.defer();
+
+  let uri = NetUtil.newURI(aUrl);
+
+  PlacesUtils.history.addObserver({
+    QueryInterface: XPCOMUtils.generateQI([Ci.nsINavHistoryObserver]),
+    onBeginUpdateBatch: function () {},
+    onEndUpdateBatch: function () {},
+    onVisit: function (aURI, aVisitID, aTime, aSessionID, aReferringID,
+                       aTransitionType, aGUID, aHidden) {
+      if (aURI.equals(uri)) {
+        PlacesUtils.history.removeObserver(this);
+        deferred.resolve([aTime, aTransitionType]);
+      }
+    },
+    onTitleChanged: function () {},
+    onDeleteURI: function () {},
+    onClearHistory: function () {},
+    onPageChanged: function () {},
+    onDeleteVisits: function () {},
+  }, false);
+
+  return deferred.promise;
+}
+
+/**
+ * Check browsing history to see whether the given URI has been visited.
+ *
+ * @param aUrl
+ *        String containing the URI that will be visited.
+ *
+ * @return {Promise}
+ * @resolves Boolean indicating whether the URI has been visited.
+ * @rejects JavaScript exception.
+ */
+function promiseIsURIVisited(aUrl) {
+  let deferred = Promise.defer();
+
+  PlacesUtils.asyncHistory.isURIVisited(NetUtil.newURI(aUrl),
+    function (aURI, aIsVisited) {
+      deferred.resolve(aIsVisited);
+    });
+
+  return deferred.promise;
+}
+
+/**
  * Creates a new Download object, setting a temporary file as the target.
  *
  * @param aSourceUrl
@@ -246,6 +341,7 @@ function promiseStartLegacyDownload(aSourceUrl, aOptions) {
     localHandlerApp.executable = new FileUtils.File(aOptions.launcherPath);
 
     mimeInfo.preferredApplicationHandler = localHandlerApp;
+    mimeInfo.preferredAction = Ci.nsIMIMEInfo.useHelperApp;
   }
 
   if (aOptions && aOptions.launchWhenSucceeded) {
@@ -256,6 +352,8 @@ function promiseStartLegacyDownload(aSourceUrl, aOptions) {
 
   // Apply decoding if required by the "Content-Encoding" header.
   persist.persistFlags &= ~Ci.nsIWebBrowserPersist.PERSIST_FLAGS_NO_CONVERSION;
+  persist.persistFlags |=
+    Ci.nsIWebBrowserPersist.PERSIST_FLAGS_AUTODETECT_APPLY_CONVERSION;
 
   // We must create the nsITransfer implementation using its class ID because
   // the "@mozilla.org/transfer;1" contract is currently implemented in
@@ -267,24 +365,24 @@ function promiseStartLegacyDownload(aSourceUrl, aOptions) {
 
   let deferred = Promise.defer();
 
-  let isPrivate = aOptions && aOptions.isPrivate;
-  let promise = isPrivate ? Downloads.getPrivateDownloadList()
-                          : Downloads.getPublicDownloadList();
-  promise.then(function (aList) {
+  Downloads.getList(Downloads.ALL).then(function (aList) {
     // Temporarily register a view that will get notified when the download we
     // are controlling becomes visible in the list of downloads.
     aList.addView({
       onDownloadAdded: function (aDownload) {
-        aList.removeView(this);
+        aList.removeView(this).then(null, do_report_unexpected_exception);
 
         // Remove the download to keep the list empty for the next test.  This
         // also allows the caller to register the "onchange" event directly.
-        aList.remove(aDownload);
+        let promise = aList.remove(aDownload);
 
         // When the download object is ready, make it available to the caller.
-        deferred.resolve(aDownload);
+        promise.then(() => deferred.resolve(aDownload),
+                     do_report_unexpected_exception);
       },
-    });
+    }).then(null, do_report_unexpected_exception);
+
+    let isPrivate = aOptions && aOptions.isPrivate;
 
     // Initialize the components so they reference each other.  This will cause
     // the Download object to be created and added to the public downloads.
@@ -320,21 +418,22 @@ function promiseStartExternalHelperAppServiceDownload(aSourceUrl) {
 
   let deferred = Promise.defer();
 
-  Downloads.getPublicDownloadList().then(function (aList) {
+  Downloads.getList(Downloads.PUBLIC).then(function (aList) {
     // Temporarily register a view that will get notified when the download we
     // are controlling becomes visible in the list of downloads.
     aList.addView({
       onDownloadAdded: function (aDownload) {
-        aList.removeView(this);
+        aList.removeView(this).then(null, do_report_unexpected_exception);
 
         // Remove the download to keep the list empty for the next test.  This
         // also allows the caller to register the "onchange" event directly.
-        aList.remove(aDownload);
+        let promise = aList.remove(aDownload);
 
         // When the download object is ready, make it available to the caller.
-        deferred.resolve(aDownload);
+        promise.then(() => deferred.resolve(aDownload),
+                     do_report_unexpected_exception);
       },
-    });
+    }).then(null, do_report_unexpected_exception);
 
     let channel = NetUtil.newChannel(sourceURI);
 
@@ -368,29 +467,104 @@ function promiseStartExternalHelperAppServiceDownload(aSourceUrl) {
 }
 
 /**
- * Returns a new public DownloadList object.
+ * Waits for a download to finish, in case it has not finished already.
+ *
+ * @param aDownload
+ *        The Download object to wait upon.
  *
  * @return {Promise}
- * @resolves The newly created DownloadList object.
- * @rejects JavaScript exception.
+ * @resolves When the download has finished successfully.
+ * @rejects JavaScript exception if the download failed.
  */
-function promiseNewDownloadList() {
-  // Force the creation of a new public download list.
-  Downloads._promisePublicDownloadList = null;
-  return Downloads.getPublicDownloadList();
+function promiseDownloadStopped(aDownload) {
+  if (!aDownload.stopped) {
+    // The download is in progress, wait for the current attempt to finish and
+    // report any errors that may occur.
+    return aDownload.start();
+  }
+
+  if (aDownload.succeeded) {
+    return Promise.resolve();
+  }
+
+  // The download failed or was canceled.
+  return Promise.reject(aDownload.error || new Error("Download canceled."));
 }
 
 /**
- * Returns a new private DownloadList object.
+ * Waits for a download to reach half of its progress, in case it has not
+ * reached the expected progress already.
+ *
+ * @param aDownload
+ *        The Download object to wait upon.
+ *
+ * @return {Promise}
+ * @resolves When the download has reached half of its progress.
+ * @rejects Never.
+ */
+function promiseDownloadMidway(aDownload) {
+  let deferred = Promise.defer();
+
+  // Wait for the download to reach half of its progress.
+  let onchange = function () {
+    if (!aDownload.stopped && !aDownload.canceled && aDownload.progress == 50) {
+      aDownload.onchange = null;
+      deferred.resolve();
+    }
+  };
+
+  // Register for the notification, but also call the function directly in
+  // case the download already reached the expected progress.
+  aDownload.onchange = onchange;
+  onchange();
+
+  return deferred.promise;
+}
+
+/**
+ * Waits for a download to finish, in case it has not finished already.
+ *
+ * @param aDownload
+ *        The Download object to wait upon.
+ *
+ * @return {Promise}
+ * @resolves When the download has finished successfully.
+ * @rejects JavaScript exception if the download failed.
+ */
+function promiseDownloadStopped(aDownload) {
+  if (!aDownload.stopped) {
+    // The download is in progress, wait for the current attempt to finish and
+    // report any errors that may occur.
+    return aDownload.start();
+  }
+
+  if (aDownload.succeeded) {
+    return Promise.resolve();
+  }
+
+  // The download failed or was canceled.
+  return Promise.reject(aDownload.error || new Error("Download canceled."));
+}
+
+/**
+ * Returns a new public or private DownloadList object.
+ *
+ * @param aIsPrivate
+ *        True for the private list, false or undefined for the public list.
  *
  * @return {Promise}
  * @resolves The newly created DownloadList object.
  * @rejects JavaScript exception.
  */
-function promiseNewPrivateDownloadList() {
-  // Force the creation of a new public download list.
-  Downloads._privateDownloadList = null;
-  return Downloads.getPrivateDownloadList();
+function promiseNewList(aIsPrivate)
+{
+  // We need to clear all the internal state for the list and summary objects,
+  // since all the objects are interdependent internally.
+  Downloads._promiseListsInitialized = null;
+  Downloads._lists = {};
+  Downloads._summaries = {};
+
+  return Downloads.getList(aIsPrivate ? Downloads.PRIVATE : Downloads.PUBLIC);
 }
 
 /**
@@ -424,51 +598,19 @@ function promiseVerifyContents(aPath, aExpectedContents)
       do_check_true(Components.isSuccessCode(aStatus));
       let contents = NetUtil.readInputStreamToString(aInputStream,
                                                      aInputStream.available());
-      if (contents.length <= TEST_DATA_SHORT.length * 2) {
-        do_check_eq(contents, aExpectedContents);
-      } else {
+      if (contents.length > TEST_DATA_SHORT.length * 2 ||
+          /[^\x20-\x7E]/.test(contents)) {
         // Do not print the entire content string to the test log.
         do_check_eq(contents.length, aExpectedContents.length);
         do_check_true(contents == aExpectedContents);
+      } else {
+        // Print the string if it is short and made of printable characters.
+        do_check_eq(contents, aExpectedContents);
       }
       deferred.resolve();
     });
     yield deferred.promise;
   });
-}
-
-/**
- * Adds entry for download.
- *
- * @param aSourceUrl
- *        String containing the URI for the download source, or null to use
- *        httpUrl("source.txt").
- *
- * @return {Promise}
- * @rejects JavaScript exception.
- */
-function promiseAddDownloadToHistory(aSourceUrl) {
-  let deferred = Promise.defer();
-  PlacesUtils.asyncHistory.updatePlaces(
-    {
-      uri: NetUtil.newURI(aSourceUrl || httpUrl("source.txt")),
-      visits: [{
-        transitionType: Ci.nsINavHistoryService.TRANSITION_DOWNLOAD,
-        visitDate:  Date.now()
-      }]
-    },
-    {
-      handleError: function handleError(aResultCode, aPlaceInfo) {
-        let ex = new Components.Exception("Unexpected error in adding visits.",
-                                          aResultCode);
-        deferred.reject(ex);
-      },
-      handleResult: function () {},
-      handleCompletion: function handleCompletion() {
-        deferred.resolve();
-      }
-    });
-  return deferred.promise;
 }
 
 /**
@@ -658,7 +800,8 @@ add_task(function test_common_initialize()
     });
 
   // Disable integration with the host application requiring profile access.
-  DownloadIntegration.dontLoad = true;
+  DownloadIntegration.dontLoadList = true;
+  DownloadIntegration.dontLoadObservers = true;
   // Disable the parental controls checking.
   DownloadIntegration.dontCheckParentalControls = true;
   // Disable the calls to the OS to launch files and open containing folders
@@ -691,7 +834,9 @@ add_task(function test_common_initialize()
                                             aSuggestedFileExtension,
                                             aForcePrompt)
         {
+          // The dialog should create the empty placeholder file.
           let file = getTempFile(TEST_TARGET_FILE_NAME);
+          file.create(Ci.nsIFile.NORMAL_FILE_TYPE, FileUtils.PERMS_FILE);
           aLauncher.saveDestinationAvailable(file);
         },
       }.QueryInterface(aIid);

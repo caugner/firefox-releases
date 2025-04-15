@@ -3,27 +3,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH		= @DEPTH@
-topsrcdir	= @top_srcdir@
-srcdir		= @srcdir@
-VPATH		= @srcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
 # Solaris sh blows
 ifeq ($(OS_ARCH),SunOS)
 SHELL := ksh
 endif
 
-LIBRARY_NAME	= gklayout
-MSVC_ENABLE_PGO := 1
 EXPORT_LIBRARY = 1
-IS_COMPONENT	= 1
-MODULE_NAME	= nsLayoutModule
-LIBXUL_LIBRARY	= 1
-FAIL_ON_WARNINGS = 1
-
-
 SHARED_LIBRARY_LIBS = \
 	../base/$(LIB_PREFIX)gkbase_s.$(LIB_SUFFIX) \
 	../forms/$(LIB_PREFIX)gkforms_s.$(LIB_SUFFIX) \
@@ -53,6 +38,7 @@ SHARED_LIBRARY_LIBS = \
 	$(DEPTH)/content/xul/document/src/$(LIB_PREFIX)gkconxuldoc_s.$(LIB_SUFFIX) \
 	$(DEPTH)/view/src/$(LIB_PREFIX)gkview_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/activities/src/$(LIB_PREFIX)dom_activities_s.$(LIB_SUFFIX) \
+	$(DEPTH)/dom/apps/src/$(LIB_PREFIX)dom_apps_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/base/$(LIB_PREFIX)jsdombase_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/battery/$(LIB_PREFIX)dom_battery_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/alarm/$(LIB_PREFIX)domalarm_s.$(LIB_SUFFIX) \
@@ -74,6 +60,7 @@ SHARED_LIBRARY_LIBS = \
 	$(DEPTH)/dom/promise/$(LIB_PREFIX)dompromise_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/src/notification/$(LIB_PREFIX)jsdomnotification_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/system/$(LIB_PREFIX)domsystem_s.$(LIB_SUFFIX) \
+	$(DEPTH)/dom/telephony/$(LIB_PREFIX)domtelephony_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/workers/$(LIB_PREFIX)domworkers_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/indexedDB/$(LIB_PREFIX)dom_indexeddb_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/indexedDB/ipc/$(LIB_PREFIX)dom_indexeddb_ipc_s.$(LIB_SUFFIX) \
@@ -130,7 +117,8 @@ endif #}
 
 ifdef MOZ_B2G_FM #{
 SHARED_LIBRARY_LIBS	+= \
-  $(DEPTH)/dom/fm/$(LIB_PREFIX)domfm_s.$(LIB_SUFFIX) \
+  $(DEPTH)/dom/fmradio/$(LIB_PREFIX)domfmradio_s.$(LIB_SUFFIX) \
+  $(DEPTH)/dom/fmradio/ipc/$(LIB_PREFIX)domfmradio_s.$(LIB_SUFFIX) \
   $(NULL)
 endif #}
 
@@ -143,7 +131,6 @@ SHARED_LIBRARY_LIBS	+= $(DEPTH)/dom/camera/$(LIB_PREFIX)domcamera_s.$(LIB_SUFFIX
 ifdef MOZ_B2G_RIL #{
 SHARED_LIBRARY_LIBS	+= \
   $(DEPTH)/dom/system/gonk/$(LIB_PREFIX)domsystemgonk_s.$(LIB_SUFFIX) \
-  $(DEPTH)/dom/telephony/$(LIB_PREFIX)domtelephony_s.$(LIB_SUFFIX) \
   $(DEPTH)/dom/icc/src/$(LIB_PREFIX)dom_icc_s.$(LIB_SUFFIX) \
   $(DEPTH)/dom/cellbroadcast/src/$(LIB_PREFIX)dom_cellbroadcast_s.$(LIB_SUFFIX) \
   $(DEPTH)/dom/voicemail/$(LIB_PREFIX)domvoicemail_s.$(LIB_SUFFIX) \
@@ -171,6 +158,18 @@ endif
 ifdef MOZ_WMF
 SHARED_LIBRARY_LIBS 	+= \
 	$(DEPTH)/content/media/wmf/$(LIB_PREFIX)gkconwmf_s.$(LIB_SUFFIX) \
+	$(NULL)
+endif
+
+ifdef MOZ_DIRECTSHOW
+SHARED_LIBRARY_LIBS 	+= \
+	$(DEPTH)/content/media/directshow/$(LIB_PREFIX)gkcondirectshow_s.$(LIB_SUFFIX) \
+	$(NULL)
+endif
+
+ifdef MOZ_APPLEMEDIA
+SHARED_LIBRARY_LIBS 	+= \
+	$(DEPTH)/content/media/apple/$(LIB_PREFIX)gkconapplemedia_s.$(LIB_SUFFIX) \
 	$(NULL)
 endif
 
@@ -206,6 +205,12 @@ ifdef MOZ_WEBSPEECH
 SHARED_LIBRARY_LIBS += \
   $(DEPTH)/content/media/webspeech/recognition/$(LIB_PREFIX)gkconwebspeechrecognition_s.$(LIB_SUFFIX) \
   $(DEPTH)/content/media/webspeech/synth/$(LIB_PREFIX)gkconwebspeechsynth_s.$(LIB_SUFFIX) \
+  $(NULL)
+endif
+
+ifdef MOZ_SYNTH_PICO
+SHARED_LIBRARY_LIBS += \
+  $(DEPTH)/content/media/webspeech/synth/pico/$(LIB_PREFIX)synthpico.$(LIB_SUFFIX) \
   $(NULL)
 endif
 
@@ -255,10 +260,6 @@ SHARED_LIBRARY_LIBS += \
 		$(DEPTH)/content/smil/$(LIB_PREFIX)gkconsmil_s.$(LIB_SUFFIX) \
 		$(NULL)
 
-ifdef ENABLE_EDITOR_API_LOG
-DEFINES += -DENABLE_EDITOR_API_LOG
-endif
-
 SHARED_LIBRARY_LIBS += \
 	$(DEPTH)/js/xpconnect/src/$(LIB_PREFIX)xpconnect_s.$(LIB_SUFFIX)
 
@@ -273,7 +274,6 @@ SHARED_LIBRARY_LIBS += \
   $(DEPTH)/dom/gamepad/$(LIB_PREFIX)domgamepad_s.$(LIB_SUFFIX)
 endif
 
-include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/config/rules.mk
 include $(topsrcdir)/ipc/chromium/chromium-config.mk
 
@@ -333,7 +333,7 @@ LOCAL_INCLUDES	+= -I$(topsrcdir)/dom/system/gonk
 endif #}
 
 ifdef MOZ_B2G_FM #{
-LOCAL_INCLUDES	+= -I$(topsrcdir)/dom/fm
+LOCAL_INCLUDES	+= -I$(topsrcdir)/dom/fmradio
 endif #}
 
 ifdef MOZ_B2G_BT #{
@@ -345,5 +345,3 @@ LOCAL_INCLUDES	+= -I$(topsrcdir)/content/media/webspeech/synth
 endif #}
 
 LOCAL_INCLUDES	+= -I$(topsrcdir)/dom/camera
-
-DEFINES += -D_IMPL_NS_LAYOUT

@@ -27,8 +27,8 @@ namespace {
 
 class Worker
 {
-  static DOMJSClass sClass;
-  static DOMIfaceAndProtoJSClass sProtoClass;
+  static const DOMJSClass sClass;
+  static const DOMIfaceAndProtoJSClass sProtoClass;
   static const JSPropertySpec sProperties[];
   static const JSFunctionSpec sFunctions[];
 
@@ -40,19 +40,19 @@ protected:
   };
 
 public:
-  static JSClass*
+  static const JSClass*
   Class()
   {
     return sClass.ToJSClass();
   }
 
-  static JSClass*
+  static const JSClass*
   ProtoClass()
   {
     return sProtoClass.ToJSClass();
   }
 
-  static DOMClass*
+  static const DOMClass*
   DOMClassStruct()
   {
     return &sClass.mClass;
@@ -71,7 +71,7 @@ public:
     }
 
     js::SetReservedSlot(proto, DOM_PROTO_INSTANCE_CLASS_SLOT,
-                        JS::PrivateValue(DOMClassStruct()));
+                        JS::PrivateValue(const_cast<DOMClass *>(DOMClassStruct())));
 
     if (!aMainRuntime) {
       WorkerPrivate* parent = GetWorkerPrivateFromContext(aCx);
@@ -91,9 +91,9 @@ public:
   GetInstancePrivate(JSContext* aCx, JSObject* aObj, const char* aFunctionName);
 
 protected:
-  static JSBool
+  static bool
   ConstructInternal(JSContext* aCx, unsigned aArgc, jsval* aVp,
-                    bool aIsChromeWorker, JSClass* aClass)
+                    bool aIsChromeWorker, const JSClass* aClass)
   {
     if (!aArgc) {
       JS_ReportError(aCx, "Constructor requires at least one argument!");
@@ -164,7 +164,7 @@ private:
   ~Worker();
 
   static bool
-  IsWorker(const JS::Value& v)
+  IsWorker(JS::Handle<JS::Value> v)
   {
     return v.isObject() && ClassIsWorker(JS_GetClass(&v.toObject()));
   }
@@ -196,7 +196,7 @@ private:
     return GetEventListener(aCx, aArgs, NS_LITERAL_STRING("onerror"));
   }
 
-  static JSBool
+  static bool
   GetOnerror(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
   {
     JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
@@ -209,7 +209,7 @@ private:
     return GetEventListener(aCx, aArgs, NS_LITERAL_STRING("onmessage"));
   }
 
-  static JSBool
+  static bool
   GetOnmessage(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
   {
     JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
@@ -248,7 +248,7 @@ private:
     return SetEventListener(aCx, aArgs, NS_LITERAL_STRING("onerror"));
   }
 
-  static JSBool
+  static bool
   SetOnerror(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
   {
     JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
@@ -261,14 +261,14 @@ private:
     return SetEventListener(aCx, aArgs, NS_LITERAL_STRING("onmessage"));
   }
 
-  static JSBool
+  static bool
   SetOnmessage(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
   {
     JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
     return JS::CallNonGenericMethod<IsWorker, SetOnmessageImpl>(aCx, args);
   }
 
-  static JSBool
+  static bool
   Construct(JSContext* aCx, unsigned aArgc, jsval* aVp)
   {
     return ConstructInternal(aCx, aArgc, aVp, false, Class());
@@ -294,7 +294,7 @@ private:
     }
   }
 
-  static JSBool
+  static bool
   Terminate(JSContext* aCx, unsigned aArgc, jsval* aVp)
   {
     JSObject* obj = JS_THIS_OBJECT(aCx, aVp);
@@ -308,10 +308,15 @@ private:
       return !JS_IsExceptionPending(aCx);
     }
 
-    return worker->Terminate(aCx);
+    if (!worker->Terminate(aCx)) {
+      return false;
+    }
+
+    JS_RVAL(aCx, aVp).setUndefined();
+    return true;
   }
 
-  static JSBool
+  static bool
   PostMessage(JSContext* aCx, unsigned aArgc, jsval* aVp)
   {
     JSObject* obj = JS_THIS_OBJECT(aCx, aVp);
@@ -332,11 +337,16 @@ private:
       return false;
     }
 
-    return worker->PostMessage(aCx, message, transferable);
+    if (!worker->PostMessage(aCx, message, transferable)) {
+      return false;
+    }
+
+    JS_RVAL(aCx, aVp).setUndefined();
+    return true;
   }
 };
 
-DOMJSClass Worker::sClass = {
+const DOMJSClass Worker::sClass = {
   {
     "Worker",
     JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(3) |
@@ -352,7 +362,7 @@ DOMJSClass Worker::sClass = {
   }
 };
 
-DOMIfaceAndProtoJSClass Worker::sProtoClass = {
+const DOMIfaceAndProtoJSClass Worker::sProtoClass = {
   {
     // XXXbz we use "Worker" here to match sClass so that we can
     // js::InitClassWithReserved this JSClass and then call
@@ -396,23 +406,23 @@ const JSFunctionSpec Worker::sFunctions[] = {
 
 class ChromeWorker : public Worker
 {
-  static DOMJSClass sClass;
-  static DOMIfaceAndProtoJSClass sProtoClass;
+  static const DOMJSClass sClass;
+  static const DOMIfaceAndProtoJSClass sProtoClass;
 
 public:
-  static JSClass*
+  static const JSClass*
   Class()
   {
     return sClass.ToJSClass();
   }
 
-  static JSClass*
+  static const JSClass*
   ProtoClass()
   {
     return sProtoClass.ToJSClass();
   }
 
-  static DOMClass*
+  static const DOMClass*
   DOMClassStruct()
   {
     return &sClass.mClass;
@@ -430,7 +440,7 @@ public:
     }
 
     js::SetReservedSlot(proto, DOM_PROTO_INSTANCE_CLASS_SLOT,
-                        JS::PrivateValue(DOMClassStruct()));
+                        JS::PrivateValue(const_cast<DOMClass *>(DOMClassStruct())));
 
     if (!aMainRuntime) {
       WorkerPrivate* parent = GetWorkerPrivateFromContext(aCx);
@@ -457,7 +467,7 @@ private:
   GetInstancePrivate(JSContext* aCx, JSObject* aObj, const char* aFunctionName)
   {
     if (aObj) {
-      JSClass* classPtr = JS_GetClass(aObj);
+      const JSClass* classPtr = JS_GetClass(aObj);
       if (classPtr == Class()) {
         return UnwrapDOMObject<WorkerPrivate>(aObj);
       }
@@ -466,7 +476,7 @@ private:
     return Worker::GetInstancePrivate(aCx, aObj, aFunctionName);
   }
 
-  static JSBool
+  static bool
   Construct(JSContext* aCx, unsigned aArgc, jsval* aVp)
   {
     return ConstructInternal(aCx, aArgc, aVp, true, Class());
@@ -493,7 +503,7 @@ private:
   }
 };
 
-DOMJSClass ChromeWorker::sClass = {
+const DOMJSClass ChromeWorker::sClass = {
   { "ChromeWorker",
     JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(3) |
     JSCLASS_IMPLEMENTS_BARRIERS,
@@ -508,7 +518,7 @@ DOMJSClass ChromeWorker::sClass = {
   }
 };
 
-DOMIfaceAndProtoJSClass ChromeWorker::sProtoClass = {
+const DOMIfaceAndProtoJSClass ChromeWorker::sProtoClass = {
   {
     // XXXbz we use "ChromeWorker" here to match sClass so that we can
     // js::InitClassWithReserved this JSClass and then call
@@ -542,7 +552,7 @@ WorkerPrivate*
 Worker::GetInstancePrivate(JSContext* aCx, JSObject* aObj,
                            const char* aFunctionName)
 {
-  JSClass* classPtr = JS_GetClass(aObj);
+  const JSClass* classPtr = JS_GetClass(aObj);
   if (ClassIsWorker(classPtr)) {
     return UnwrapDOMObject<WorkerPrivate>(aObj);
   }
@@ -596,12 +606,12 @@ InitClass(JSContext* aCx, JSObject* aGlobal, JSObject* aProto,
 } // namespace chromeworker
 
 bool
-ClassIsWorker(JSClass* aClass)
+ClassIsWorker(const JSClass* aClass)
 {
   return Worker::Class() == aClass || ChromeWorker::Class() == aClass;
 }
 
-JSBool
+bool
 GetterOnlyJSNative(JSContext* aCx, unsigned aArgc, JS::Value* aVp)
 {
     JS_ReportErrorNumber(aCx, js_GetErrorMessage, nullptr, JSMSG_GETTER_ONLY);

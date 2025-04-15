@@ -2,15 +2,6 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-DEPTH = @DEPTH@
-topsrcdir = @top_srcdir@
-srcdir = @srcdir@
-VPATH = @srcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
-FAIL_ON_WARNINGS = 1
-
 DEFINES += \
   -DHAVE_STRDUP -DNR_SOCKET_IS_VOID_PTR -DSCTP_DEBUG -DINET
 
@@ -77,11 +68,16 @@ endif
 endif
 endif
 
-ifeq ($(OS_TARGET), Darwin)
+ifneq (,$(filter Darwin DragonFly FreeBSD NetBSD OpenBSD,$(OS_TARGET)))
 LOCAL_INCLUDES +=  -I$(topsrcdir)/media/mtransport/third_party/nrappkit/src/port/darwin/include
+ifneq (,$(filter DragonFly FreeBSD NetBSD OpenBSD,$(OS_TARGET)))
+LOCAL_INCLUDES +=  -I$(topsrcdir)/media/mtransport/third_party/nrappkit/src/port/generic/include
+endif
+ifeq ($(OS_TARGET), Darwin)
 DEFINES += \
   -DGTEST_USE_OWN_TR1_TUPLE=1 \
   $(NULL)
+endif
 endif
 
 ifeq ($(OS_TARGET), Linux)
@@ -102,5 +98,3 @@ DEFINES += \
   -DGTEST_USE_OWN_TR1_TUPLE=1 \
   $(NULL)
 endif
-
-include $(topsrcdir)/config/rules.mk

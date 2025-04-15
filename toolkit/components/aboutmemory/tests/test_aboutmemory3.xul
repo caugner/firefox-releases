@@ -22,8 +22,7 @@
   let mgr = Cc["@mozilla.org/memory-reporter-manager;1"].
             getService(Ci.nsIMemoryReporterManager);
 
-  // Remove all the real reporters and multi-reporters;  save them to
-  // restore at the end.
+  // Remove all the real reporters;  save them to restore at the end.
   mgr.blockRegistration();
   let e = mgr.enumerateReporters();
   let realReporters = [];
@@ -31,13 +30,6 @@
     let r = e.getNext().QueryInterface(Ci.nsIMemoryReporter);
     mgr.unregisterReporter(r);
     realReporters.push(r);
-  }
-  e = mgr.enumerateMultiReporters();
-  let realMultiReporters = [];
-  while (e.hasMoreElements()) {
-    let r = e.getNext().QueryInterface(Ci.nsIMemoryMultiReporter);
-    mgr.unregisterMultiReporter(r);
-    realMultiReporters.push(r);
   }
 
   // Setup a minimal number of fake reporters.
@@ -47,22 +39,18 @@
   const OTHER = Ci.nsIMemoryReporter.KIND_OTHER;
   const BYTES = Ci.nsIMemoryReporter.UNITS_BYTES;
 
-  function f(aPath, aKind, aAmount, aDesc) {
-    return {
-      process:     "",
-      path:        aPath,
-      kind:        aKind,
-      units:       BYTES,
-      amount:      aAmount,
-      description: aDesc
-    };
-  }
-
   let fakeReporters = [
-    f("heap-allocated",     OTHER,   250 * MB, "Heap allocated."),
-    f("explicit/a/b",       HEAP,     50 * MB, "A b."),
-    f("other/a",            OTHER,   0.2 * MB, "Other a."),
-    f("other/b",            OTHER,   0.1 * MB, "Other b."),
+    { name: "fake1",
+      collectReports: function(aCbObj, aClosure) {
+        function f(aP, aK, aA, aD) {
+          aCbObj.callback("", aP, aK, BYTES, aA, aD, aClosure);
+        }
+        f("heap-allocated",     OTHER,   250 * MB, "Heap allocated.");
+        f("explicit/a/b",       HEAP,     50 * MB, "A b.");
+        f("other/a",            OTHER,   0.2 * MB, "Other a.");
+        f("other/b",            OTHER,   0.1 * MB, "Other b.");
+      }
+    }
   ];
 
   for (let i = 0; i < fakeReporters.length; i++) {
@@ -78,17 +66,13 @@
   <![CDATA[
   function finish()
   {
-    // Unregister fake reporters and multi-reporters, re-register the real
-    // reporters and multi-reporters, just in case subsequent tests rely on
-    // them.
+    // Unregister fake reporters and re-register the real reporters, just in
+    // case subsequent tests rely on them.
     for (let i = 0; i < fakeReporters.length; i++) {
       mgr.unregisterReporter(fakeReporters[i]);
     }
     for (let i = 0; i < realReporters.length; i++) {
       mgr.registerReporterEvenIfBlocked(realReporters[i]);
-    }
-    for (let i = 0; i < realMultiReporters.length; i++) {
-      mgr.registerMultiReporterEvenIfBlocked(realMultiReporters[i]);
     }
     mgr.unblockRegistration();
 
@@ -229,9 +213,27 @@ Explicit Allocations\n\
 \n\
 Other Measurements\n\
 \n\
+1,024 B (100.0%) -- compartments\n\
+└──1,024 B (100.0%) ── system/a\n\
+\n\
+1,024 B (100.0%) -- ghost-windows\n\
+└──1,024 B (100.0%) ── a\n\
+\n\
 314,572 B (100.0%) -- other\n\
 ├──209,715 B (66.67%) ── a\n\
 └──104,857 B (33.33%) ── b\n\
+\n\
+1,024 B (100.0%) -- pss\n\
+└──1,024 B (100.0%) ── a\n\
+\n\
+1,024 B (100.0%) -- rss\n\
+└──1,024 B (100.0%) ── a\n\
+\n\
+1,024 B (100.0%) -- size\n\
+└──1,024 B (100.0%) ── a\n\
+\n\
+1,024 B (100.0%) -- swap\n\
+└──1,024 B (100.0%) ── a\n\
 \n\
 262,144,000 B ── heap-allocated\n\
 \n\
@@ -325,12 +327,13 @@ Other Measurements\n\
     // This loads a pre-existing file that is valid.
     { filename: "memory-reports-good.json", expected: expectedGood, dumpFirst: false },
 
-    // This dumps to a file and then reads it back in.  The output is the same as the first test.
+    // This dumps to a file and then reads it back in.
     { filename: "memory-reports-dumped.json.gz", expected: expectedGood2, dumpFirst: true },
 
     // This loads a pre-existing file that is invalid.
     { filename: "memory-reports-bad.json",  expected: expectedBad, dumpFirst: false },
 
+    // This loads a pre-existing diff file.
     { filename: "memory-reports-diff1.json", filename2: "memory-reports-diff2.json",  expected: expectedDiff, dumpFirst: false }
   ];
 

@@ -13,8 +13,12 @@ fuzzy-if(Android,4,34) == image-opacity-02.svg image-opacity-02-ref.svg # Bug 77
 == image-svg-inline-01.html                   ../pass.svg
 == image-svg-inline-zoom-in-01a.html          ../pass.svg
 == image-svg-inline-zoom-in-01b.html          ../pass.svg
+== image-svg-inline-zoom-in-01c.html          ../pass.svg
+== image-svg-inline-zoom-in-01d.html          ../pass.svg
 == image-svg-inline-zoom-out-01a.html         ../pass.svg
 == image-svg-inline-zoom-out-01b.html         ../pass.svg
+== image-svg-inline-zoom-out-01c.html         ../pass.svg
+== image-svg-inline-zoom-out-01d.html         ../pass.svg
 == image-svg-inline-sprite-zoom-in-01a.html   image-svg-inline-sprite-zoom-in-01-ref.html
 == image-svg-inline-sprite-zoom-in-01b.html   image-svg-inline-sprite-zoom-in-01-ref.html
 == image-svg-inline-sprite-zoom-out-01a.html  image-svg-inline-sprite-zoom-out-01-ref.html
@@ -34,3 +38,4 @@ skip-if(B2G) == image-preserveAspectRatio-02-raster.svg image-preserveAspectRati
 skip-if(B2G) == image-preserveAspectRatio-02-svg.svg    image-preserveAspectRatio-02-ref.svg # bug 773482
 skip-if(B2G) == image-preserveAspectRatio-03.svg        image-preserveAspectRatio-03-ref.svg # bug 773482
 skip-if(B2G) == image-preserveAspectRatio-04.svg        image-preserveAspectRatio-04-ref.svg # bug 773482
+== image-preserveAspectRatio-05.svg ../pass.svg

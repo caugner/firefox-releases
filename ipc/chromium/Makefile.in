@@ -2,17 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH     = @DEPTH@
-topsrcdir = @top_srcdir@
-srcdir    = @srcdir@
-VPATH     = @srcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
 OS_CXXFLAGS := $(filter-out -fshort-wchar,$(OS_CXXFLAGS))
 
-LIBRARY_NAME = chromium_s
-LIBXUL_LIBRARY = 1
 EXPORT_LIBRARY = 1
 
 ACDEFINES =
@@ -36,8 +27,6 @@ vpath %.mm \
   $(srcdir)/src/base \
   $(srcdir)/src/chrome/common \
   $(NULL)
-
-include $(topsrcdir)/config/config.mk
 
 ifneq ($(OS_ARCH),WINNT) # (if OS_POSIX) {
 ifeq ($(OS_TARGET),Android)
@@ -89,10 +78,12 @@ ifeq ($(OS_TARGET),Android) # {
 LOCAL_INCLUDES += -I$(srcdir)/src/third_party/libevent/android
 else # } else {
 LOCAL_INCLUDES += -I$(srcdir)/src/third_party/libevent/linux
+CSRCS += \
+  epoll_sub.c \
+  $(NULL)
 endif # }
 CSRCS += \
   epoll.c \
-  epoll_sub.c \
   $(NULL)
 
 else # } else (OS_BSD)  {

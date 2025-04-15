@@ -26,7 +26,6 @@
 #define HRTFPanner_h
 
 #include "FFTConvolver.h"
-#include "HRTFDatabaseLoader.h"
 #include "DelayProcessor.h"
 
 namespace mozilla {
@@ -34,6 +33,8 @@ struct AudioChunk;
 }
 
 namespace WebCore {
+
+class HRTFDatabaseLoader;
 
 using mozilla::AudioChunk;
 
@@ -50,8 +51,7 @@ public:
 
     float sampleRate() const { return m_sampleRate; }
 
-    double tailTime() const;
-    double latencyTime() const;
+    int maxTailFrames() const;
 
 private:
     // Given an azimuth angle in the range -180 -> +180, returns the corresponding azimuth index for the database,

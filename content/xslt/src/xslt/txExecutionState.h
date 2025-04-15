@@ -56,10 +56,11 @@ public:
 class txLoadedDocumentsHash : public nsTHashtable<txLoadedDocumentEntry>
 {
 public:
-     txLoadedDocumentsHash()
-        : mSourceDocument(nullptr)
-     {
-     }
+    txLoadedDocumentsHash()
+        : nsTHashtable<txLoadedDocumentEntry>(8),
+          mSourceDocument(nullptr)
+    {
+    }
     ~txLoadedDocumentsHash();
     void init(txXPathNode* aSourceDocument);
 

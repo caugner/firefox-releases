@@ -19,9 +19,7 @@
 
 #include "nsPresArena.h"
 
-#include "mozilla/MemoryReporting.h"
 #include "mozilla/Poison.h"
-#include "nsCRT.h"
 #include "nsDebug.h"
 #include "nsArenaMemoryStats.h"
 #include "nsPrintfCString.h"
@@ -31,7 +29,6 @@ static const size_t ARENA_PAGE_SIZE = 8192;
 
 nsPresArena::nsPresArena()
 {
-  mFreeLists.Init();
   PL_INIT_ARENA_POOL(&mPool, "PresArena", ARENA_PAGE_SIZE);
 }
 

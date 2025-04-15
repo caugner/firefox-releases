@@ -141,11 +141,6 @@ public:
     eColorID__moz_mac_menutextselect,
     // text color of disabled text on toolbars
     eColorID__moz_mac_disabledtoolbartext,
-
-    //new in 10.2
-
-    //active list highlight
-    eColorID__moz_mac_alternateprimaryhighlight,
     //inactive light hightlight
     eColorID__moz_mac_secondaryhighlight,
 
@@ -290,15 +285,6 @@ public:
      * metric.
      */
     eIntID_MacLionTheme,
-
-    /*
-     * A Boolean value to determine whether Mameo is using the new Fremantle
-     * theme.
-     *
-     * The value of this metric is not used on other platforms. These platforms
-     * should return NS_ERROR_NOT_IMPLEMENTED when queried for this metric.
-     */
-    eIntID_MaemoClassic,
 
     /*
      * eIntID_AlertNotificationOrigin indicates from which corner of the

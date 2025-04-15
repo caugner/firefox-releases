@@ -74,7 +74,7 @@ StaticAutoPtr<DeviceStorageUsedSpaceCache>
 
 DeviceStorageUsedSpaceCache::DeviceStorageUsedSpaceCache()
 {
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  MOZ_ASSERT(NS_IsMainThread());
 
   mIOThread = new LazyIdleThread(
     DEFAULT_THREAD_TIMEOUT_MS,
@@ -93,7 +93,7 @@ DeviceStorageUsedSpaceCache::CreateOrGet()
     return sDeviceStorageUsedSpaceCache;
   }
 
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  MOZ_ASSERT(NS_IsMainThread());
 
   sDeviceStorageUsedSpaceCache = new DeviceStorageUsedSpaceCache();
   ClearOnShutdown(&sDeviceStorageUsedSpaceCache);
@@ -181,9 +181,10 @@ public:
   nsCOMPtr<nsIFile> pictures;
   nsCOMPtr<nsIFile> videos;
   nsCOMPtr<nsIFile> music;
-  nsCOMPtr<nsIFile> apps;
   nsCOMPtr<nsIFile> sdcard;
 #endif
+  nsCOMPtr<nsIFile> apps;
+  nsCOMPtr<nsIFile> crashes;
   nsCOMPtr<nsIFile> temp;
 };
 
@@ -207,8 +208,7 @@ DeviceStorageTypeChecker::CreateOrGet()
     return sDeviceStorageTypeChecker;
   }
 
-  NS_ASSERTION(NS_IsMainThread(),
-               "This can only be created on the main thread!");
+  MOZ_ASSERT(NS_IsMainThread());
 
   nsCOMPtr<nsIStringBundleService> stringService
     = mozilla::services::GetStringBundleService();
@@ -268,8 +268,9 @@ DeviceStorageTypeChecker::Check(const nsAString& aType, nsIDOMBlob* aBlob)
   }
 
   if (aType.EqualsLiteral(DEVICESTORAGE_APPS) ||
-      aType.EqualsLiteral(DEVICESTORAGE_SDCARD)) {
-    // Apps and sdcard have no restriction on mime types
+      aType.EqualsLiteral(DEVICESTORAGE_SDCARD) ||
+      aType.EqualsLiteral(DEVICESTORAGE_CRASHES)) {
+    // Apps, crashes and sdcard have no restriction on mime types
     return true;
   }
 
@@ -282,8 +283,9 @@ DeviceStorageTypeChecker::Check(const nsAString& aType, nsIFile* aFile)
   NS_ASSERTION(aFile, "Calling Check without a file");
 
   if (aType.EqualsLiteral(DEVICESTORAGE_APPS) ||
-      aType.EqualsLiteral(DEVICESTORAGE_SDCARD)) {
-    // apps have no restrictions on what file extensions used.
+      aType.EqualsLiteral(DEVICESTORAGE_SDCARD) ||
+      aType.EqualsLiteral(DEVICESTORAGE_CRASHES)) {
+    // Apps, crashes and sdcard have no restrictions on what file extensions used.
     return true;
   }
 
@@ -362,7 +364,8 @@ DeviceStorageTypeChecker::GetPermissionForType(const nsAString& aType,
       !aType.EqualsLiteral(DEVICESTORAGE_VIDEOS) &&
       !aType.EqualsLiteral(DEVICESTORAGE_MUSIC) &&
       !aType.EqualsLiteral(DEVICESTORAGE_APPS) &&
-      !aType.EqualsLiteral(DEVICESTORAGE_SDCARD)) {
+      !aType.EqualsLiteral(DEVICESTORAGE_SDCARD) &&
+      !aType.EqualsLiteral(DEVICESTORAGE_CRASHES)) {
     // unknown type
     return NS_ERROR_FAILURE;
   }
@@ -402,11 +405,12 @@ bool
 DeviceStorageTypeChecker::IsVolumeBased(const nsAString& aType)
 {
 #ifdef MOZ_WIDGET_GONK
-  // The apps aren't stored in the same place as the media, so
+  // The apps and crashes aren't stored in the same place as the media, so
   // we only ever return a single apps object, and not an array
   // with one per volume (as is the case for the remaining
   // storage types).
-  return !aType.EqualsLiteral(DEVICESTORAGE_APPS);
+  return !aType.EqualsLiteral(DEVICESTORAGE_APPS) &&
+         !aType.EqualsLiteral(DEVICESTORAGE_CRASHES);
 #else
   return false;
 #endif
@@ -468,7 +472,7 @@ public:
 
   NS_IMETHOD Run()
   {
-    NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(NS_IsMainThread());
     nsString data;
     CopyASCIItoUTF16(mType, data);
     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
@@ -571,13 +575,16 @@ DeviceStorageFile::Init()
   NS_ASSERTION(typeChecker, "DeviceStorageTypeChecker is null");
 }
 
+// Directories which don't depend on a volume should be calculated once
+// here. Directories which depend on the root directory of a volume
+// should be calculated in DeviceStorageFile::GetRootDirectoryForType.
 static void
 InitDirs()
 {
   if (sDirs) {
     return;
   }
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  MOZ_ASSERT(NS_IsMainThread());
   sDirs = new GlobalDirs;
   ClearOnShutdown(&sDirs);
 
@@ -619,12 +626,6 @@ InitDirs()
                   getter_AddRefs(sDirs->music));
 #endif
 
-  dirService->Get(NS_APP_USER_PROFILE_50_DIR, NS_GET_IID(nsIFile),
-                  getter_AddRefs(sDirs->apps));
-  if (sDirs->apps) {
-    sDirs->apps->AppendRelativeNativePath(NS_LITERAL_CSTRING("webapps"));
-  }
-
   // Eventually, on desktop, we want to do something smarter -- for example,
   // detect when an sdcard is inserted, and use that instead of this.
   dirService->Get(NS_APP_USER_PROFILE_50_DIR, NS_GET_IID(nsIFile),
@@ -633,6 +634,33 @@ InitDirs()
     sDirs->sdcard->AppendRelativeNativePath(NS_LITERAL_CSTRING("fake-sdcard"));
   }
 #endif // !MOZ_WIDGET_GONK
+
+#ifdef MOZ_WIDGET_GONK
+  NS_NewLocalFile(NS_LITERAL_STRING("/data"),
+                  false,
+                  getter_AddRefs(sDirs->apps));
+#else
+  dirService->Get(NS_APP_USER_PROFILE_50_DIR, NS_GET_IID(nsIFile),
+                  getter_AddRefs(sDirs->apps));
+  if (sDirs->apps) {
+    sDirs->apps->AppendRelativeNativePath(NS_LITERAL_CSTRING("webapps"));
+  }
+#endif
+
+  if (XRE_GetProcessType() == GeckoProcessType_Default) {
+    NS_GetSpecialDirectory("UAppData", getter_AddRefs(sDirs->crashes));
+    if (sDirs->crashes) {
+      sDirs->crashes->Append(NS_LITERAL_STRING("Crash Reports"));
+    }
+  } else {
+    // NS_GetSpecialDirectory("UAppData") fails in content processes because
+    // gAppData from toolkit/xre/nsAppRunner.cpp is not initialized.
+#ifdef MOZ_WIDGET_GONK
+    NS_NewLocalFile(NS_LITERAL_STRING("/data/b2g/mozilla/Crash Reports"),
+                                      false,
+                                      getter_AddRefs(sDirs->crashes));
+#endif
+  }
 
   if (mozilla::Preferences::GetBool("device.storage.testing", false)) {
     dirService->Get(NS_OS_TEMP_DIR, NS_GET_IID(nsIFile),
@@ -663,6 +691,9 @@ DeviceStorageFile::GetFullPath(nsAString &aFullPath)
 }
 
 
+// Directories which don't depend on a volume should be calculated once
+// in InitDirs. Directories which depend on the root directory of a volume
+// should be calculated in this method.
 void
 DeviceStorageFile::GetRootDirectoryForType(const nsAString& aStorageType,
                                            const nsAString& aStorageName,
@@ -715,11 +746,7 @@ DeviceStorageFile::GetRootDirectoryForType(const nsAString& aStorageType,
 
   // Apps directory
   else if (aStorageType.EqualsLiteral(DEVICESTORAGE_APPS)) {
-#ifdef MOZ_WIDGET_GONK
-    NS_NewLocalFile(NS_LITERAL_STRING("/data"), false, getter_AddRefs(f));
-#else
     f = sDirs->apps;
-#endif
   }
 
    // default SDCard
@@ -731,8 +758,13 @@ DeviceStorageFile::GetRootDirectoryForType(const nsAString& aStorageType,
 #endif
   }
 
+  // crash reports directory.
+  else if (aStorageType.EqualsLiteral(DEVICESTORAGE_CRASHES)) {
+    f = sDirs->crashes;
+  }
+
   // in testing, we default all device storage types to a temp directory
-  if (f && mozilla::Preferences::GetBool("device.storage.testing", false)) {
+  if (f && sDirs->temp) {
     f = sDirs->temp;
   }
 
@@ -965,7 +997,7 @@ DeviceStorageFile::Write(InfallibleTArray<uint8_t>& aBits)
 nsresult
 DeviceStorageFile::Remove()
 {
-  NS_ASSERTION(!NS_IsMainThread(), "Wrong thread!");
+  MOZ_ASSERT(!NS_IsMainThread());
 
   if (!mFile) {
     return NS_ERROR_FAILURE;
@@ -994,7 +1026,7 @@ DeviceStorageFile::Remove()
 nsresult
 DeviceStorageFile::CalculateMimeType()
 {
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  MOZ_ASSERT(NS_IsMainThread());
 
   nsAutoCString mimeType;
   nsCOMPtr<nsIMIMEService> mimeService =
@@ -1014,7 +1046,7 @@ DeviceStorageFile::CalculateMimeType()
 nsresult
 DeviceStorageFile::CalculateSizeAndModifiedDate()
 {
-  NS_ASSERTION(!NS_IsMainThread(), "Wrong thread!");
+  MOZ_ASSERT(!NS_IsMainThread());
 
   int64_t fileSize;
   nsresult rv = mFile->GetFileSize(&fileSize);
@@ -1261,14 +1293,27 @@ DeviceStorageFile::GetStatus(nsAString& aStatus)
   nsCOMPtr<nsIVolume> vol;
   nsresult rv = vs->GetVolumeByName(mStorageName, getter_AddRefs(vol));
   NS_ENSURE_SUCCESS_VOID(rv);
+  if (!vol) {
+    return;
+  }
+  bool isMediaPresent;
+  rv = vol->GetIsMediaPresent(&isMediaPresent);
+  NS_ENSURE_SUCCESS_VOID(rv);
+  if (!isMediaPresent) {
+    return;
+  }
+  bool isSharing;
+  rv = vol->GetIsSharing(&isSharing);
+  NS_ENSURE_SUCCESS_VOID(rv);
+  if (isSharing) {
+    aStatus.AssignLiteral("shared");
+    return;
+  }
   int32_t volState;
   rv = vol->GetState(&volState);
   NS_ENSURE_SUCCESS_VOID(rv);
   if (volState == nsIVolume::STATE_MOUNTED) {
     aStatus.AssignLiteral("available");
-  } else if (volState == nsIVolume::STATE_SHARED ||
-             volState == nsIVolume::STATE_SHAREDMNT) {
-    aStatus.AssignLiteral("shared");
   }
 #endif
 }
@@ -1297,6 +1342,8 @@ void
 nsDOMDeviceStorage::SetRootDirectoryForType(const nsAString& aStorageType,
                                             const nsAString& aStorageName)
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   nsCOMPtr<nsIFile> f;
   DeviceStorageFile::GetRootDirectoryForType(aStorageType,
                                              aStorageName,
@@ -1341,7 +1388,7 @@ InterfaceToJsval(nsPIDOMWindow* aWindow,
 JS::Value
 nsIFileToJsval(nsPIDOMWindow* aWindow, DeviceStorageFile* aFile)
 {
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  MOZ_ASSERT(NS_IsMainThread());
   NS_ASSERTION(aWindow, "Null Window");
 
   if (!aFile) {
@@ -1371,7 +1418,7 @@ nsIFileToJsval(nsPIDOMWindow* aWindow, DeviceStorageFile* aFile)
 
 JS::Value StringToJsval(nsPIDOMWindow* aWindow, nsAString& aString)
 {
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  MOZ_ASSERT(NS_IsMainThread());
   NS_ASSERTION(aWindow, "Null Window");
 
   nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(aWindow);
@@ -1464,7 +1511,7 @@ public:
 
   NS_IMETHOD Run()
   {
-    NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(NS_IsMainThread());
     mRequest->FireError(mError);
     mRequest = nullptr;
     return NS_OK;
@@ -1488,7 +1535,7 @@ ContinueCursorEvent::ContinueCursorEvent(DOMRequest* aRequest)
 already_AddRefed<DeviceStorageFile>
 ContinueCursorEvent::GetNextFile()
 {
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  MOZ_ASSERT(NS_IsMainThread());
 
   nsDOMDeviceStorageCursor* cursor
     = static_cast<nsDOMDeviceStorageCursor*>(mRequest.get());
@@ -1583,7 +1630,7 @@ public:
   ~InitCursorEvent() {}
 
   NS_IMETHOD Run() {
-    NS_ASSERTION(!NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(!NS_IsMainThread());
 
     if (mFile->mFile) {
       bool check;
@@ -1777,7 +1824,7 @@ public:
 
   NS_IMETHOD Run()
   {
-    NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(NS_IsMainThread());
 
     nsString state = NS_LITERAL_STRING("unavailable");
     if (mFile) {
@@ -1822,7 +1869,7 @@ public:
 
   NS_IMETHOD Run()
   {
-    NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(NS_IsMainThread());
 
     AutoJSContext cx;
     JS::Rooted<JS::Value> result(cx, JSVAL_NULL);
@@ -1864,7 +1911,7 @@ public:
 
   NS_IMETHOD Run()
   {
-    NS_ASSERTION(!NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(!NS_IsMainThread());
 
     nsCOMPtr<nsIInputStream> stream;
     mBlob->GetInternalStream(getter_AddRefs(stream));
@@ -1918,7 +1965,7 @@ public:
 
   NS_IMETHOD Run()
   {
-    NS_ASSERTION(!NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(!NS_IsMainThread());
 
     nsRefPtr<nsRunnable> r;
     if (!mFile->mEditable) {
@@ -1962,7 +2009,7 @@ public:
 
   NS_IMETHOD Run()
   {
-    NS_ASSERTION(!NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(!NS_IsMainThread());
     mFile->Remove();
 
     nsRefPtr<nsRunnable> r;
@@ -1999,7 +2046,7 @@ public:
 
   NS_IMETHOD Run()
   {
-    NS_ASSERTION(!NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(!NS_IsMainThread());
 
     uint64_t picturesUsage = 0, videosUsage = 0, musicUsage = 0, totalUsage = 0;
     mFile->AccumDiskUsage(&picturesUsage, &videosUsage,
@@ -2038,7 +2085,7 @@ public:
 
   NS_IMETHOD Run()
   {
-    NS_ASSERTION(!NS_IsMainThread(), "Wrong thread!");
+    MOZ_ASSERT(!NS_IsMainThread());
 
     int64_t freeSpace = 0;
     if (mFile) {
@@ -2096,6 +2143,7 @@ public:
                                            nsIContentPermissionRequest)
 
   NS_IMETHOD Run() {
+    MOZ_ASSERT(NS_IsMainThread());
 
     if (mozilla::Preferences::GetBool("device.storage.prompt.testing", false)) {
       Allow();
@@ -2106,7 +2154,7 @@ public:
 
       // because owner implements nsITabChild, we can assume that it is
       // the one and only TabChild.
-      TabChild* child = GetTabChildFrom(mWindow->GetDocShell());
+      TabChild* child = TabChild::GetFrom(mWindow->GetDocShell());
       if (!child) {
         return NS_OK;
       }
@@ -2476,7 +2524,7 @@ nsDOMDeviceStorage::Init(nsPIDOMWindow* aWindow, const nsAString &aType,
 
   // the 'apps' type is special.  We only want this exposed
   // if the caller has the "webapps-manage" permission.
-  if (aType.EqualsLiteral("apps")) {
+  if (aType.EqualsLiteral(DEVICESTORAGE_APPS)) {
     nsCOMPtr<nsIPermissionManager> permissionManager
       = do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
     NS_ENSURE_TRUE(permissionManager, NS_ERROR_FAILURE);
@@ -2502,7 +2550,7 @@ nsDOMDeviceStorage::~nsDOMDeviceStorage()
 void
 nsDOMDeviceStorage::Shutdown()
 {
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  MOZ_ASSERT(NS_IsMainThread());
 
   if (!mStorageName.IsEmpty()) {
     UnregisterForSDCardChanges(this);
@@ -3093,6 +3141,8 @@ nsDOMDeviceStorage::EnumerateInternal(const nsAString& aPath,
                                       const EnumerationParameters& aOptions,
                                       bool aEditable, ErrorResult& aRv)
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   nsCOMPtr<nsPIDOMWindow> win = GetOwner();
   if (!win) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
@@ -3123,7 +3173,7 @@ nsDOMDeviceStorage::EnumerateInternal(const nsAString& aPath,
   if (XRE_GetProcessType() == GeckoProcessType_Content) {
     // because owner implements nsITabChild, we can assume that it is
     // the one and only TabChild.
-    TabChild* child = GetTabChildFrom(win->GetDocShell());
+    TabChild* child = TabChild::GetFrom(win->GetDocShell());
     if (!child) {
       return cursor.forget();
     }
@@ -3159,6 +3209,12 @@ nsDOMDeviceStorage::EnumerateInternal(const nsAString& aPath,
 void
 nsDOMDeviceStorage::DispatchMountChangeEvent(nsAString& aVolumeStatus)
 {
+  if (aVolumeStatus == mLastStatus) {
+    // We've already sent this status, don't bother sending it again.
+    return;
+  }
+  mLastStatus = aVolumeStatus;
+
   nsCOMPtr<nsIDOMEvent> event;
   NS_NewDOMDeviceStorageChangeEvent(getter_AddRefs(event), this,
                                     nullptr, nullptr);
@@ -3182,7 +3238,7 @@ nsDOMDeviceStorage::Observe(nsISupports *aSubject,
                             const char *aTopic,
                             const PRUnichar *aData)
 {
-  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+  MOZ_ASSERT(NS_IsMainThread());
 
   if (!strcmp(aTopic, "file-watcher-update")) {
 

@@ -20,7 +20,6 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.text.TextUtils;
@@ -145,7 +144,7 @@ public class ButtonToast {
         int duration = immediate ? 0 : mView.getResources().getInteger(android.R.integer.config_longAnimTime);
 
         mView.clearAnimation();
-        if (immediate || Build.VERSION.SDK_INT < 11) {
+        if (immediate) {
             mView.setVisibility(View.GONE);
             showNextInQueue();
         } else {
@@ -153,7 +152,9 @@ public class ButtonToast {
             // See bug 885717.
             PropertyAnimator animator = new PropertyAnimator(duration);
             animator.attach(mView, PropertyAnimator.Property.ALPHA, 0.0f);
-            animator.setPropertyAnimationListener(new PropertyAnimator.PropertyAnimationListener () {
+            animator.addPropertyAnimationListener(new PropertyAnimator.PropertyAnimationListener () {
+                // If we are showing a toast and go in the background
+                // onAnimationEnd will be called when the app is restored
                 public void onPropertyAnimationEnd() {
                     mView.setVisibility(View.GONE);
                     showNextInQueue();

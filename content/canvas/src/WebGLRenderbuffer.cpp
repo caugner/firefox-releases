@@ -7,7 +7,7 @@
 #include "WebGLRenderbuffer.h"
 #include "WebGLTexture.h"
 #include "mozilla/dom/WebGLRenderingContextBinding.h"
-#include "nsContentUtils.h"
+#include "GLContext.h"
 
 using namespace mozilla;
 
@@ -68,10 +68,5 @@ WebGLRenderbuffer::MemoryUsage() const {
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_0(WebGLRenderbuffer)
 
-NS_IMPL_CYCLE_COLLECTING_ADDREF(WebGLRenderbuffer)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(WebGLRenderbuffer)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WebGLRenderbuffer)
-  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
+NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(WebGLRenderbuffer, AddRef)
+NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(WebGLRenderbuffer, Release)

@@ -5,10 +5,24 @@
 // This verifies that plugins exist and can be enabled and disabled.
 var gID = null;
 
+function setTestPluginState(state) {
+  let tags = AM_Cc["@mozilla.org/plugin/host;1"].getService(AM_Ci.nsIPluginHost)
+    .getPluginTags();
+  for (let tag of tags) {
+    if (tag.name == "Test Plug-in") {
+      tag.enabledState = state;
+      return;
+    }
+  }
+  throw Error("No plugin tag found for the test plugin");
+}
+
 function run_test() {
   do_test_pending();
   createAppInfo("xpcshell@tests.mozilla.org", "XPCShell", "1", "1.9.2");
   Services.prefs.setBoolPref("plugins.click_to_play", true);
+
+  setTestPluginState(AM_Ci.nsIPluginTag.STATE_CLICKTOPLAY);
 
   startupManager();
   AddonManager.addAddonListener(AddonListener);
@@ -86,13 +100,13 @@ function run_test_1() {
       do_check_eq(p.creator, null);
       do_check_eq(p.version, "1.0.0.0");
       do_check_eq(p.type, "plugin");
-      do_check_false(p.userDisabled);
+      do_check_eq(p.userDisabled, "askToActivate");
       do_check_false(p.appDisabled);
       do_check_true(p.isActive);
       do_check_true(p.isCompatible);
       do_check_true(p.providesUpdatesSecurely);
       do_check_eq(p.blocklistState, 0);
-      do_check_eq(p.permissions, AddonManager.PERM_CAN_DISABLE | AddonManager.PERM_CAN_ASK_TO_ACTIVATE);
+      do_check_eq(p.permissions, AddonManager.PERM_CAN_DISABLE | AddonManager.PERM_CAN_ENABLE);
       do_check_eq(p.pendingOperations, 0);
       do_check_true(p.size > 0);
       do_check_eq(p.size, getFileSize(testPlugin));
@@ -112,7 +126,8 @@ function run_test_2(p) {
   let test = {};
   test[gID] = [
     ["onDisabling", false],
-    "onDisabled"
+    "onDisabled",
+    ["onPropertyChanged", ["userDisabled"]]
   ];
   prepare_test(test);
 
@@ -173,6 +188,6 @@ function run_test_4() {
 
     Services.prefs.clearUserPref("plugins.click_to_play");
 
-    do_test_finished();
+    do_execute_soon(do_test_finished);
   });
 }

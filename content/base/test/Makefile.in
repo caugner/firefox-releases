@@ -3,14 +3,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH		= @DEPTH@
-topsrcdir	= @top_srcdir@
-srcdir		= @srcdir@
-VPATH		= @srcdir@
-relativesrcdir  = @relativesrcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
 MOCHITEST_FILES_A = \
 		responseIdentical.sjs \
 		test_bug5141.html \
@@ -242,6 +234,7 @@ MOCHITEST_FILES_A = \
 		test_bug704063.html \
 		test_bug894874.html \
 		test_bug895974.html \
+		test_bug895239.html \
 		$(NULL)
 
 MOCHITEST_FILES_B = \
@@ -333,49 +326,6 @@ MOCHITEST_FILES_B = \
 		test_bug503481b.html \
 		file_bug503481b_inner.html \
 		test_viewport_scroll.html \
-		test_CSP.html \
-		file_CSP.sjs \
-		file_CSP.css \
-		file_CSP_main.html \
-		file_CSP_main.html^headers^ \
-		file_CSP_main_spec_compliant.html \
-		file_CSP_main_spec_compliant.html^headers^ \
-		file_CSP_main.js \
-		file_CSP_main_spec_compliant.js \
-		test_CSP_frameancestors.html \
-		file_CSP_frameancestors.sjs \
-		file_CSP_frameancestors_main.html \
-		file_CSP_frameancestors_main.js \
-		file_CSP_frameancestors_spec_compliant.sjs \
-		file_CSP_frameancestors_main_spec_compliant.html \
-		file_CSP_frameancestors_main_spec_compliant.js \
-		test_CSP_inlinescript.html \
-		file_CSP_inlinescript_main.html \
-		file_CSP_inlinescript_main.html^headers^ \
-		file_CSP_inlinescript_main_spec_compliant.html \
-		file_CSP_inlinescript_main_spec_compliant.html^headers^ \
-		file_CSP_inlinescript_main_spec_compliant_allowed.html \
-		file_CSP_inlinescript_main_spec_compliant_allowed.html^headers^ \
-		test_CSP_evalscript.html \
-		file_CSP_evalscript_main.html \
-		file_CSP_evalscript_main.html^headers^ \
-		file_CSP_evalscript_main.js \
-		file_CSP_evalscript_main_allowed.js \
-		file_CSP_evalscript_main_spec_compliant.html \
-	 	file_CSP_evalscript_main_spec_compliant.html^headers^ \
-		file_CSP_evalscript_main_spec_compliant_allowed.html \
-		file_CSP_evalscript_main_spec_compliant_allowed.html^headers^ \
-		test_CSP_inlinestyle.html \
-		file_CSP_inlinestyle_main.html \
-		file_CSP_inlinestyle_main.html^headers^ \
-		file_CSP_inlinestyle_main_spec_compliant.html \
-		file_CSP_inlinestyle_main_spec_compliant.html^headers^ \
-		file_CSP_inlinestyle_main_spec_compliant_allowed.html \
-		file_CSP_inlinestyle_main_spec_compliant_allowed.html^headers^ \
-		file_csp_bug768029.html \
-		file_csp_bug768029.sjs \
-		file_csp_bug773891.html \
-		file_csp_bug773891.sjs \
 		test_bug540854.html \
 		bug540854.sjs \
 		test_bug548463.html \
@@ -390,10 +340,6 @@ MOCHITEST_FILES_B = \
 		test_bug557892.html \
 		file_bug557892.html \
 		test_bug559526.html \
-		test_csp_redirects.html \
-		file_csp_redirects_page.sjs \
-		file_csp_redirects_main.html \
-		file_csp_redirects_resource.sjs \
 		test_bug346485.html \
 		test_bug560780.html \
 		test_bug562652.html \
@@ -539,6 +485,9 @@ MOCHITEST_FILES_C= \
 		test_bug708620.html \
 		file_bug708620.html \
 		file_bug708620-2.html \
+		test_XHR_timeout.html \
+		test_XHR_timeout.js \
+		file_XHR_timeout.sjs \
 		test_bug717511.html \
 		file_bug717511.html \
 		file_bug717511.html^headers^ \
@@ -617,9 +566,6 @@ MOCHITEST_FILES_C= \
 		test_bug813919.html \
 		test_bug814576.html \
 		test_xhr_withCredentials.html \
-		test_bothCSPheaders.html \
-		file_bothCSPheaders.html \
-		file_bothCSPheaders.html^headers^ \
 		badMessageEvent2.eventsource \
 		badMessageEvent2.eventsource^headers^ \
 		test_object.html \
@@ -628,29 +574,23 @@ MOCHITEST_FILES_C= \
 		test_bug869000.html \
 		test_bug869002.html \
 		test_bug876282.html \
-		test_CSP_bug885433.html \
-		file_CSP_bug885433_allows.html \
-		file_CSP_bug885433_allows.html^headers^ \
-		file_CSP_bug885433_blocks.html \
-		file_CSP_bug885433_blocks.html^headers^ \
 		test_bug890580.html \
 		test_declare_stylesheet_obsolete.html \
 		variable_style_sheet.sjs \
 		test_processing_instruction_update_stylesheet.xhtml \
-		test_CSP_bug888172.html \
-		file_CSP_bug888172.html \
-		file_CSP_bug888172.sjs \
+		test_bug907892.html \
+		file_bug907892.html \
+		test_bug902847.html \
 		$(NULL)
 
 # OOP tests don't work on Windows (bug 763081) or native-fennec
-# (see Bug 774939)
-ifneq ($(OS_ARCH),WINNT)
-ifndef MOZ_ANDROID_OMTC
+# (see Bug 774939). App permission checks are also disabled on
+# anything but B2G (Bug 900707).
+ifdef MOZ_CHILD_PERMISSIONS
 MOCHITEST_FILES_B += \
 		test_messagemanager_assertpermission.html \
 		test_child_process_shutdown_message.html \
 		$(NULL)
-endif
 endif
 
 MOCHITEST_CHROME_FILES =	\
@@ -676,15 +616,7 @@ MOCHITEST_FILES_PARTS = $(foreach s,A B C,MOCHITEST_FILES_$(s))
 #		test_bug503473.html \
 #		file_bug503473-frame.sjs \
 
-# Disabled for frequent failures (bug 841505, bug 842344, etc)
-#		test_XHR_timeout.html \
-#		test_XHR_timeout.js \
-#		file_XHR_timeout.sjs \
-
 MOCHITEST_BROWSER_FILES = \
 		browser_bug593387.js \
 		browser_bug902350.js \
 		$(NULL)
-
-include $(topsrcdir)/config/rules.mk
-

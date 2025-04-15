@@ -127,6 +127,7 @@ documenttab[closing] > .documenttab-container {
   margin: @metro_spacing_normal@ @metro_spacing_snormal@;
   background: white none center top no-repeat;
   background-size: cover;
+  min-width: @thumbnail_width@;
   width: @thumbnail_width@;
   height: @thumbnail_height@;
 }
@@ -186,80 +187,57 @@ documenttab[selected] .documenttab-selection {
 
 /* Start UI ----------------------------------------------------------------- */
 
-#start-container {
-  display: none;
+#content-viewport[startpage] browser {
+  padding-bottom: @toolbar_height@;
 }
 
-#start-container[startpage],
-#start-container[filtering] {
-  display: -moz-box;
-}
-
-#start-scrollbox[input="precise"] {
+#startui-page {
   overflow-x: scroll;
+  overflow-y: hidden;
+  height: 100%;
 }
 
-/* if autocomplete is set, hide both start pages,
- *  else hide the autocomplete screen */
-#start-container[filtering] > .start-page,
-#start-container:not([filtering]) > #start-autocomplete {
-  visibility: collapse;
-}
-/* startUI sections, grids */
-#start-scrollbox > .meta-section {
-  /* allot space for at least a single column */
-  min-width: @grid_double_column_width@;
-  /* leave margin for horizontal scollbar */
-  margin-bottom: 30px;
-}
-#start-scrollbox[input="precise"] > .meta-section {
-  margin-bottom: 5px;
-}
-#start-topsites {
-  /* allot space for 3 tile columns for the topsites grid */
-  min-width: calc(3 * @grid_double_column_width@);
-}
-#start-scrollbox {
-  -moz-box-orient: horizontal;
-  /* Move scrollbar above toolbar,
-   *  discount padding added by .meta in #start-container */
-  margin-bottom: calc(@toolbar_height@ - @metro_spacing_normal@);
+#startui-body {
+  height: 100%;
+  margin: 0;
 }
 
-#start-container[viewstate="snapped"] #start-scrollbox {
+#start-container {
+  height: 100%;
+}
+
+#urlbar-autocomplete[viewstate="snapped"],
+#urlbar-autocomplete[viewstate="portrait"]{
   -moz-box-orient: vertical;
 }
 
-/*Formatting for the limited horizontal space of snapped*/
-#start-autocomplete[viewstate="snapped"] .richgrid-item-content {
-  -moz-box-orient: horizontal;
+#start-container[viewstate="snapped"],
+#start-container[viewstate="portrait"] {
+  width: 100%;
+  max-width: 100%; /* ensure page doesn't expand, messing up @media rules */
+  height: auto;
 }
-#start-container,
-#start-autocomplete {
-  padding-left: 0;
-  padding-right: 0;
-}
-#start-container[viewstate="snapped"] #start-scrollbox > .meta-section {
-  margin: 0;
-  min-width: @grid_double_column_width@;
-  -moz-box-flex: 1;
-  -moz-box-align: center;
-}
-#start-container[viewstate="snapped"] richgrid {
+
+#start-container[viewstate="snapped"] .meta-section:not([expanded]) > richgrid {
   visibility: collapse;
 }
 
-#start-container[viewstate="snapped"] .meta-section[expanded] > richgrid {
-  visibility: visible;
+#autocomplete-overlay {
+  display: none;
+  background-color: black;
+  opacity: .3;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+#stack[autocomplete] > #page > #content-viewport > #autocomplete-overlay {
+  display: -moz-box;
 }
 
 /* Browser Content Areas ==================================================== */
-
-/* Hide the browser while the start UI is visible */
-#content-viewport[startpage],
-#content-viewport[filtering] {
-  visibility: collapse;
-}
 
 /* a 'margin-top' is applied dynamically in ContentAreaObserver */
 #browsers {
@@ -298,12 +276,27 @@ documenttab[selected] .documenttab-selection {
 }
 
 .selectionhandle {
-  list-style-image: url("chrome://browser/skin/images/selection-monocle.png");
-  border: 0px solid gray;
+  background-image: url("chrome://browser/skin/images/selection-monocle.png");
+  background-repeat: no-repeat;
+  background-size: 18px 18px;
   padding: 0px;
-  margin-top: -30px;
-  margin-left: -18px;
+  margin-top: -19px;
+  margin-left: -9px;
   pointer-events: auto;
+}
+
+@media (min-resolution: @min_res_140pc@) {
+  /* Load 140% image when scaled by 140% */
+  .selectionhandle {
+    background-image: url("chrome://browser/skin/images/selection-monocle@1.4x.png");
+  }
+}
+
+@media (min-resolution: @min_res_180pc@) {
+  /* Load 180% image when scaled by 180% */
+  .selectionhandle {
+    background-image: url("chrome://browser/skin/images/selection-monocle@1.8x.png");
+  }
 }
 
 /* content scrollbars */
@@ -382,6 +375,7 @@ documenttab[selected] .documenttab-selection {
   background-position: left 6px center;
 }
 
+#stack[viewstate="snapped"] > .overlay-button,
 #stack[keyboardVisible] > .overlay-button,
 #stack[autocomplete] > .overlay-button,
 #stack[fullscreen] > .overlay-button,
@@ -444,10 +438,36 @@ documenttab[selected] .documenttab-selection {
 
 /* Navigation bar ========================================================== */
 
+/* Most appbars are hidden by default, but we want to keep #navbar visible so
+ * we can show the progress bar at all times.  Instead, we hide only the
+ * toolbar portion of the navbar. */
+#navbar {
+  visibility: visible;
+}
+#navbar:not([hiding]):not([visible]) > #toolbar-overlay {
+  visibility: hidden;
+}
+
 .circularprogressindicator-progressRing {
+  visibility: visible;
   margin: 0 @toolbar_horizontal_spacing@;
   pointer-events:none;
   position: absolute;
+}
+.circularprogressindicator-progressTrack {
+  visibility: visible;
+  margin: 0 @toolbar_horizontal_spacing@;
+  pointer-events: none;
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  background-repeat: no-repeat;
+  background-size: 40px 40px;
+  background-image: url(chrome://browser/skin/images/progresscircle-bg.png);
+}
+.circularprogressindicator-progressRing:not([progress]),
+.circularprogressindicator-progressTrack:not([progress]) {
+  visibility: hidden;
 }
 
 /* Progress meter ---------------------------------------------------------- */
@@ -489,6 +509,22 @@ documenttab[selected] .documenttab-selection {
   background-color: @panel_light_color@;
 }
 
+#urlbar-autocomplete {
+  padding-top: 0;
+}
+
+#toolbar {
+  padding: 0 @toolbar_horizontal_padding@;
+}
+
+#toolbar[viewstate="snapped"] {
+  padding: 0 @toolbar_snapped_horizontal_padding@;
+}
+
+#toolbar[viewstate="snapped"] > toolbarbutton {
+  margin: 0 @toolbar_snapped_horizontal_spacing@;
+}
+
 /* Combined back/forward buttons */
 
 #back-button {
@@ -511,7 +547,7 @@ documenttab[selected] .documenttab-selection {
 }
 
 #forward-button[disabled] {
-  -moz-margin-start: -@forward_spacing@;
+  -moz-margin-start: -@forward_spacing@ !important;
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
@@ -546,7 +582,7 @@ documenttab[selected] .documenttab-selection {
   overflow: hidden;
 }
 
-#urlbar[mode="edit"] {
+#urlbar[editing] {
   border-color: @metro_orange@;
 }
 
@@ -671,11 +707,17 @@ documenttab[selected] .documenttab-selection {
   }
 }
 
-#urlbar:-moz-any([mode="loading"], [mode="view"]) > #go-button,
-#urlbar:-moz-any([mode="edit"], [mode="loading"]) > #reload-button,
-#urlbar:-moz-any([mode="edit"], [mode="view"]) > #stop-button,
-#toolbar[viewstate="snapped"] > #urlbar ~ toolbarbutton {
+/* navbar edit button: one button out of three - when editing: go, when !editing,
+   loading: stop, when !editing, !loading: reload */
+
+#go-button, #reload-button, #stop-button  {
   visibility: collapse;
+}
+
+#urlbar[editing] > #go-button,
+#urlbar:not([editing])[loading] > #stop-button,
+#urlbar:not([editing]):not([loading]) > #reload-button {
+  visibility: visible;
 }
 
 /* Contextual toolbar controls */
@@ -693,6 +735,10 @@ documenttab[selected] .documenttab-selection {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
+}
+
+#toolbar[viewstate="snapped"] #toolbar-contextual {
+  visibility: collapse;
 }
 
 .circularprogressindicator-progressButton {
@@ -784,20 +830,6 @@ documenttab[selected] .documenttab-selection {
   #panel-close-button {
     list-style-image: url(chrome://browser/skin/images/navbar-back@1.8x.png);
   }
-}
-
-#panel-view-switcher {
-  border: 0 none !important;
-  color: #000 !important;
-  background: transparent;
-  padding: 0;
-  font-size: @metro_font_xlarge@;
-  font-weight: 100;
-  margin: 0;
-}
-
-#panel-container[viewstate="snapped"] #panel-view-switcher {
-  font-size: @metro_font_large@;
 }
 
 #panel-items {
@@ -966,6 +998,15 @@ documenttab[selected] .documenttab-selection {
 }
 #restore-selected-button:active {
   -moz-image-region: rect(80px, 560px, 120px, 520px) !important;
+}
+
+/* Download notifications ======================================================= */
+
+.download-filename-text {
+  font-weight: bold;
+}
+.download-host-text {
+  font-weight: bold;
 }
 
 /* Autoscroll popup ======================================================== */
@@ -1236,36 +1277,3 @@ setting[type="radio"] > vbox {
 #clear-notification-done {
   font-weight: bold;
 }
-
-/* Alert Popup ============================================================= */
-
-#alerts-container {
-  color: white;
-  background-color: #5e6166;
-  border: @border_width_small@ solid #767973;
-  border-radius: @border_radius_normal@;
-  box-shadow: black 0 @border_radius_tiny@ @border_radius_tiny@;
-  padding: @padding_normal@; /* core spacing on top/bottom */
-  margin-bottom: @margin_large@;
-  transition-property: opacity;
-  transition-duration: 0.5s;
-  opacity: 0;
-}
-
-#alerts-container.showing {
-  opacity: 1;
-}
-
-#alerts-title {
-  font-size: @font_small@ !important;
-}
-
-#alerts-text {
-  font-size: @font_xsmall@ !important;
-  white-space: pre;
-}
-
-#alerts-container {
-  -moz-margin-end: @margin_large@;
-}
-

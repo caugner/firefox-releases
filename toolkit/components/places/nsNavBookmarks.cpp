@@ -50,10 +50,10 @@
 using namespace mozilla;
 
 // These columns sit to the right of the kGetInfoIndex_* columns.
-const int32_t nsNavBookmarks::kGetChildrenIndex_Position = 14;
-const int32_t nsNavBookmarks::kGetChildrenIndex_Type = 15;
-const int32_t nsNavBookmarks::kGetChildrenIndex_PlaceID = 16;
-const int32_t nsNavBookmarks::kGetChildrenIndex_Guid = 17;
+const int32_t nsNavBookmarks::kGetChildrenIndex_Guid = 15;
+const int32_t nsNavBookmarks::kGetChildrenIndex_Position = 16;
+const int32_t nsNavBookmarks::kGetChildrenIndex_Type = 17;
+const int32_t nsNavBookmarks::kGetChildrenIndex_PlaceID = 18;
 
 using namespace mozilla::places;
 
@@ -199,15 +199,19 @@ ExpireRecentBookmarksByParent(nsTHashtable<BookmarkKeyClass>* hashTable,
 } // Anonymous namespace.
 
 
-nsNavBookmarks::nsNavBookmarks() : mItemCount(0)
-                                 , mRoot(0)
-                                 , mMenuRoot(0)
-                                 , mTagsRoot(0)
-                                 , mUnfiledRoot(0)
-                                 , mToolbarRoot(0)
-                                 , mCanNotify(false)
-                                 , mCacheObservers("bookmark-observers")
-                                 , mBatching(false)
+nsNavBookmarks::nsNavBookmarks()
+  : mItemCount(0)
+  , mRoot(0)
+  , mMenuRoot(0)
+  , mTagsRoot(0)
+  , mUnfiledRoot(0)
+  , mToolbarRoot(0)
+  , mCanNotify(false)
+  , mCacheObservers("bookmark-observers")
+  , mBatching(false)
+  , mBookmarkToKeywordHash(BOOKMARKS_TO_KEYWORDS_INITIAL_CACHE_SIZE)
+  , mRecentBookmarksCache(RECENT_BOOKMARKS_INITIAL_CACHE_SIZE)
+  , mUncachableBookmarks(RECENT_BOOKMARKS_INITIAL_CACHE_SIZE)
 {
   NS_ASSERTION(!gBookmarksService,
                "Attempting to create two instances of the service!");
@@ -238,9 +242,6 @@ nsNavBookmarks::Init()
 {
   mDB = Database::GetDatabase();
   NS_ENSURE_STATE(mDB);
-
-  mRecentBookmarksCache.Init(RECENT_BOOKMARKS_INITIAL_CACHE_SIZE);
-  mUncachableBookmarks.Init(RECENT_BOOKMARKS_INITIAL_CACHE_SIZE);
 
   nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
   if (os) {
@@ -1062,8 +1063,8 @@ nsNavBookmarks::GetDescendantChildren(int64_t aFolderId,
     nsCOMPtr<mozIStorageStatement> stmt = mDB->GetStatement(
       "SELECT h.id, h.url, IFNULL(b.title, h.title), h.rev_host, h.visit_count, "
              "h.last_visit_date, f.url, b.id, b.dateAdded, b.lastModified, "
-             "b.parent, null, h.frecency, h.hidden, b.position, b.type, b.fk, "
-             "b.guid "
+             "b.parent, null, h.frecency, h.hidden, h.guid, b.guid, "
+             "b.position, b.type, b.fk "
       "FROM moz_bookmarks b "
       "LEFT JOIN moz_places h ON b.fk = h.id "
       "LEFT JOIN moz_favicons f ON h.favicon_id = f.id "
@@ -1743,6 +1744,7 @@ nsNavBookmarks::ResultNodeForContainer(int64_t aItemId,
 
   (*aNode)->mDateAdded = bookmark.dateAdded;
   (*aNode)->mLastModified = bookmark.lastModified;
+  (*aNode)->mBookmarkGuid = bookmark.guid;
 
   NS_ADDREF(*aNode);
   return NS_OK;
@@ -1766,8 +1768,8 @@ nsNavBookmarks::QueryFolderChildren(
   nsCOMPtr<mozIStorageStatement> stmt = mDB->GetStatement(
     "SELECT h.id, h.url, IFNULL(b.title, h.title), h.rev_host, h.visit_count, "
            "h.last_visit_date, f.url, b.id, b.dateAdded, b.lastModified, "
-           "b.parent, null, h.frecency, h.hidden, b.position, b.type, b.fk, "
-           "b.guid "
+           "b.parent, null, h.frecency, h.hidden, h.guid, b.guid, "
+           "b.position, b.type, b.fk "
     "FROM moz_bookmarks b "
     "LEFT JOIN moz_places h ON b.fk = h.id "
     "LEFT JOIN moz_favicons f ON h.favicon_id = f.id "
@@ -1877,6 +1879,9 @@ nsNavBookmarks::ProcessFolderNodeRow(
   // moz_bookmarks.position.
   node->mBookmarkIndex = aCurrentIndex;
 
+  rv = aRow->GetUTF8String(kGetChildrenIndex_Guid, node->mBookmarkGuid);
+  NS_ENSURE_SUCCESS(rv, rv);
+
   NS_ENSURE_TRUE(aChildren->AppendObject(node), NS_ERROR_OUT_OF_MEMORY);
 
   return NS_OK;
@@ -1900,8 +1905,8 @@ nsNavBookmarks::QueryFolderChildrenAsync(
   nsCOMPtr<mozIStorageAsyncStatement> stmt = mDB->GetAsyncStatement(
     "SELECT h.id, h.url, IFNULL(b.title, h.title), h.rev_host, h.visit_count, "
            "h.last_visit_date, f.url, b.id, b.dateAdded, b.lastModified, "
-           "b.parent, null, h.frecency, h.hidden, b.position, b.type, b.fk, "
-           "b.guid "
+           "b.parent, null, h.frecency, h.hidden, h.guid, b.guid, "
+           "b.position, b.type, b.fk "
     "FROM moz_bookmarks b "
     "LEFT JOIN moz_places h ON b.fk = h.id "
     "LEFT JOIN moz_favicons f ON h.favicon_id = f.id "
@@ -2320,7 +2325,6 @@ nsNavBookmarks::GetItemIndex(int64_t aItemId, int32_t* _index)
   return NS_OK;
 }
 
-
 NS_IMETHODIMP
 nsNavBookmarks::SetItemIndex(int64_t aItemId, int32_t aNewIndex)
 {
@@ -2601,11 +2605,6 @@ nsNavBookmarks::GetURIForKeyword(const nsAString& aUserCasedKeyword,
 
 nsresult
 nsNavBookmarks::EnsureKeywordsHash() {
-  if (mBookmarkToKeywordHash.IsInitialized())
-    return NS_OK;
-
-  mBookmarkToKeywordHash.Init(BOOKMARKS_TO_KEYWORDS_INITIAL_CACHE_SIZE);
-
   nsCOMPtr<mozIStorageStatement> stmt;
   nsresult rv = mDB->MainConn()->CreateStatement(NS_LITERAL_CSTRING(
     "SELECT b.id, k.keyword "

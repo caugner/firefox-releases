@@ -4,9 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsDOMClipboardEvent.h"
-#include "nsContentUtils.h"
-#include "nsClientRect.h"
 #include "nsDOMDataTransfer.h"
+#include "nsIClipboard.h"
 
 nsDOMClipboardEvent::nsDOMClipboardEvent(mozilla::dom::EventTarget* aOwner,
                                          nsPresContext* aPresContext,
@@ -56,7 +55,7 @@ nsDOMClipboardEvent::Constructor(const mozilla::dom::GlobalObject& aGlobal,
                                  const mozilla::dom::ClipboardEventInit& aParam,
                                  mozilla::ErrorResult& aRv)
 {
-  nsCOMPtr<mozilla::dom::EventTarget> t = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<mozilla::dom::EventTarget> t = do_QueryInterface(aGlobal.GetAsSupports());
   nsRefPtr<nsDOMClipboardEvent> e =
     new nsDOMClipboardEvent(t, nullptr, nullptr);
   bool trusted = e->Init(t);
@@ -68,7 +67,7 @@ nsDOMClipboardEvent::Constructor(const mozilla::dom::GlobalObject& aGlobal,
       // Always create a clipboardData for the copy event. If this is changed to
       // support other types of events, make sure that read/write privileges are
       // checked properly within nsDOMDataTransfer.
-      clipboardData = new nsDOMDataTransfer(NS_COPY, false);
+      clipboardData = new nsDOMDataTransfer(NS_COPY, false, -1);
       clipboardData->SetData(aParam.mDataType, aParam.mData);
     }
   }
@@ -93,10 +92,10 @@ nsDOMClipboardEvent::GetClipboardData()
 
   if (!event->clipboardData) {
     if (mEventIsInternal) {
-      event->clipboardData = new nsDOMDataTransfer(NS_COPY, false);
+      event->clipboardData = new nsDOMDataTransfer(NS_COPY, false, -1);
     } else {
       event->clipboardData =
-        new nsDOMDataTransfer(event->message, event->message == NS_PASTE);
+        new nsDOMDataTransfer(event->message, event->message == NS_PASTE, nsIClipboard::kGlobalClipboard);
     }
   }
 

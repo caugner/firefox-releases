@@ -30,7 +30,6 @@
 #include "nsAutoPtr.h"
 #include "nsIWidget.h"
 #include "nsStyleSet.h"
-#include "nsPresArena.h"
 #include "nsFrameSelection.h"
 #include "nsGUIEvent.h"
 #include "nsContentUtils.h" // For AddScriptBlocker().
@@ -324,7 +323,6 @@ public:
 
   virtual void AddInvalidateHiddenPresShellObserver(nsRefreshDriver *aDriver) MOZ_OVERRIDE;
 
-
   // This data is stored as a content property (nsGkAtoms::scrolling) on
   // mContentToScrollTo when we have a pending ScrollIntoView.
   struct ScrollIntoViewData {
@@ -338,6 +336,10 @@ public:
   virtual void RebuildImageVisibility(const nsDisplayList& aList) MOZ_OVERRIDE;
 
   virtual void EnsureImageInVisibleList(nsIImageLoadingContent* aImage) MOZ_OVERRIDE;
+
+  virtual void RemoveImageFromVisibleList(nsIImageLoadingContent* aImage) MOZ_OVERRIDE;
+
+  virtual bool AssumeAllImagesVisible() MOZ_OVERRIDE;
 
 protected:
   virtual ~PresShell();
@@ -557,13 +559,6 @@ protected:
     }
 
   protected:
-    void Init(nsInputEvent* aEvent)
-    {
-      mEvent->time = aEvent->time;
-      mEvent->refPoint = aEvent->refPoint;
-      mEvent->modifiers = aEvent->modifiers;
-    }
-
     nsDelayedInputEvent()
     : nsDelayedEvent(), mEvent(nullptr) {}
 
@@ -580,8 +575,7 @@ protected:
                                 aEvent->widget,
                                 aEvent->reason,
                                 aEvent->context);
-      Init(aEvent);
-      static_cast<nsMouseEvent*>(mEvent)->clickCount = aEvent->clickCount;
+      static_cast<nsMouseEvent*>(mEvent)->AssignMouseEventData(*aEvent, false);
     }
 
     virtual ~nsDelayedMouseEvent()
@@ -598,12 +592,7 @@ protected:
       mEvent = new nsKeyEvent(aEvent->mFlags.mIsTrusted,
                               aEvent->message,
                               aEvent->widget);
-      Init(aEvent);
-      static_cast<nsKeyEvent*>(mEvent)->keyCode = aEvent->keyCode;
-      static_cast<nsKeyEvent*>(mEvent)->charCode = aEvent->charCode;
-      static_cast<nsKeyEvent*>(mEvent)->alternativeCharCodes =
-        aEvent->alternativeCharCodes;
-      static_cast<nsKeyEvent*>(mEvent)->isChar = aEvent->isChar;
+      static_cast<nsKeyEvent*>(mEvent)->AssignKeyEventData(*aEvent, false);
     }
 
     virtual ~nsDelayedKeyEvent()
@@ -635,8 +624,10 @@ protected:
       }
     }
     virtual void WillRefresh(mozilla::TimeStamp aTime) MOZ_OVERRIDE {
-      if (mPresShell)
-        mPresShell->ProcessSynthMouseMoveEvent(mFromScroll);
+      if (mPresShell) {
+        nsRefPtr<PresShell> shell = mPresShell;
+        shell->ProcessSynthMouseMoveEvent(mFromScroll);
+      }
     }
   private:
     PresShell* mPresShell;
@@ -727,7 +718,7 @@ protected:
   static void MarkImagesInListVisible(const nsDisplayList& aList);
 
   // A list of images that are visible or almost visible.
-  nsTArray< nsCOMPtr<nsIImageLoadingContent > > mVisibleImages;
+  nsTHashtable< nsRefPtrHashKey<nsIImageLoadingContent> > mVisibleImages;
 
 #ifdef DEBUG
   // The reflow root under which we're currently reflowing.  Null when

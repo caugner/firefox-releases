@@ -13,7 +13,7 @@
 
 #include "mozilla/css/Declaration.h"
 #include "nsPrintfCString.h"
-#include "mozilla/Preferences.h"
+#include "gfxFontConstants.h"
 
 namespace mozilla {
 namespace css {
@@ -568,8 +568,9 @@ Declaration::GetValue(nsCSSProperty aProperty, nsAString& aValue) const
 
       // if font features are not enabled, pointers for fontVariant
       // values above may be null since the shorthand check ignores them
+      // font-variant-alternates enabled ==> layout.css.font-features.enabled is true
       bool fontFeaturesEnabled =
-        mozilla::Preferences::GetBool("layout.css.font-features.enabled");
+        nsCSSProps::IsEnabled(eCSSProperty_font_variant_alternates);
 
       if (systemFont &&
           systemFont->GetUnit() != eCSSUnit_None &&
@@ -679,35 +680,7 @@ Declaration::GetValue(nsCSSProperty aProperty, nsAString& aValue) const
         return;
       }
 
-      const nsCSSValue *textBlink =
-        data->ValueFor(eCSSProperty_text_blink);
-      const nsCSSValue *decorationLine =
-        data->ValueFor(eCSSProperty_text_decoration_line);
-
-      NS_ABORT_IF_FALSE(textBlink->GetUnit() == eCSSUnit_Enumerated,
-                        nsPrintfCString("bad text-blink unit %d",
-                                        textBlink->GetUnit()).get());
-      NS_ABORT_IF_FALSE(decorationLine->GetUnit() == eCSSUnit_Enumerated,
-                        nsPrintfCString("bad text-decoration-line unit %d",
-                                        decorationLine->GetUnit()).get());
-
-      bool blinkNone = (textBlink->GetIntValue() == NS_STYLE_TEXT_BLINK_NONE);
-      bool lineNone =
-        (decorationLine->GetIntValue() == NS_STYLE_TEXT_DECORATION_LINE_NONE);
-
-      if (blinkNone && lineNone) {
-        AppendValueToString(eCSSProperty_text_decoration_line, aValue);
-      } else {
-        if (!blinkNone) {
-          AppendValueToString(eCSSProperty_text_blink, aValue);
-        }
-        if (!lineNone) {
-          if (!aValue.IsEmpty()) {
-            aValue.Append(PRUnichar(' '));
-          }
-          AppendValueToString(eCSSProperty_text_decoration_line, aValue);
-        }
-      }
+      AppendValueToString(eCSSProperty_text_decoration_line, aValue);
       break;
     }
     case eCSSProperty_transition: {

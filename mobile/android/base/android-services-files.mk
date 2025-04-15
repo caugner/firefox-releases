@@ -25,6 +25,7 @@ SYNC_JAVA_FILES := \
   background/bagheera/BagheeraRequestDelegate.java \
   background/bagheera/BoundedByteArrayEntity.java \
   background/bagheera/DeflateHelper.java \
+  background/common/DateUtils.java \
   background/common/log/Logger.java \
   background/common/log/writers/AndroidLevelCachingLogWriter.java \
   background/common/log/writers/AndroidLogWriter.java \
@@ -40,6 +41,7 @@ SYNC_JAVA_FILES := \
   background/db/Tab.java \
   background/healthreport/Environment.java \
   background/healthreport/EnvironmentBuilder.java \
+  background/healthreport/EnvironmentV1.java \
   background/healthreport/HealthReportDatabases.java \
   background/healthreport/HealthReportDatabaseStorage.java \
   background/healthreport/HealthReportGenerator.java \
@@ -128,6 +130,7 @@ SYNC_JAVA_FILES := \
   sync/net/BrowserIDAuthHeaderProvider.java \
   sync/net/ConnectionMonitorThread.java \
   sync/net/HandleProgressException.java \
+  sync/net/HawkAuthHeaderProvider.java \
   sync/net/HMACAuthHeaderProvider.java \
   sync/net/HttpResponseObserver.java \
   sync/net/Resource.java \

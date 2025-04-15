@@ -23,7 +23,9 @@
 #include "nsWindowDbg.h"
 #include "cairo.h"
 #include "nsITimer.h"
+#include "nsRegion.h"
 #include "mozilla/TimeStamp.h"
+#include "nsMargin.h"
 
 #ifdef CAIRO_HAS_D2D_SURFACE
 #include "gfxD2DSurface.h"
@@ -52,6 +54,7 @@
 class nsNativeDragTarget;
 class nsIRollupListener;
 class nsIFile;
+class nsIntRegion;
 class imgIContainer;
 
 namespace mozilla {
@@ -85,6 +88,9 @@ public:
   // nsWindowBase
   virtual void InitEvent(nsGUIEvent& aEvent, nsIntPoint* aPoint = nullptr) MOZ_OVERRIDE;
   virtual bool DispatchWindowEvent(nsGUIEvent* aEvent) MOZ_OVERRIDE;
+  virtual bool DispatchKeyboardEvent(nsGUIEvent* aEvent) MOZ_OVERRIDE;
+  virtual nsWindowBase* GetParentWindowBase(bool aIncludeOwner) MOZ_OVERRIDE;
+  virtual bool IsTopLevelWidget() MOZ_OVERRIDE { return mIsTopWidgetWindow; }
 
   // nsIWidget interface
   NS_IMETHOD              Create(nsIWidget *aParent,
@@ -187,6 +193,8 @@ public:
   NS_IMETHOD              GetNonClientMargins(nsIntMargin &margins);
   NS_IMETHOD              SetNonClientMargins(nsIntMargin &margins);
   void                    SetDrawsInTitlebar(bool aState);
+  mozilla::TemporaryRef<mozilla::gfx::DrawTarget> StartRemoteDrawing() MOZ_OVERRIDE;
+  virtual void            EndRemoteDrawing() MOZ_OVERRIDE;
 
   /**
    * Event helpers
@@ -227,7 +235,7 @@ public:
    * Misc.
    */
   virtual bool            AutoErase(HDC dc);
-  bool                    IsTopLevelWidget() { return mIsTopWidgetWindow; }
+
   /**
    * Start allowing Direct3D9 to be used by widgets when GetLayerManager is
    * called.
@@ -273,9 +281,11 @@ public:
 
   bool                    const DestroyCalled() { return mDestroyCalled; }
 
-  virtual mozilla::layers::LayersBackend GetPreferredCompositorBackend();
+  virtual void GetPreferredCompositorBackends(nsTArray<mozilla::layers::LayersBackend>& aHints);
 
 protected:
+
+  virtual void WindowUsesOMTC() MOZ_OVERRIDE;
 
   // A magic number to identify the FAKETRACKPOINTSCROLLABLE window created
   // when the trackpoint hack is enabled.
@@ -510,6 +520,7 @@ protected:
 
   // Graphics
   HDC                   mPaintDC; // only set during painting
+  HDC                   mCompositeDC; // only set during StartRemoteDrawing
 
 #ifdef CAIRO_HAS_D2D_SURFACE
   nsRefPtr<gfxD2DSurface>    mD2DWindowSurface; // Surface for this window.

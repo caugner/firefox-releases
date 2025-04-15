@@ -11,9 +11,8 @@ namespace mozilla {
 class WebGLContext;
 
 class WebGLExtensionBase
-    : public nsISupports
+    : public nsWrapperCache
     , public WebGLContextBoundObject
-    , public nsWrapperCache
 {
 public:
     WebGLExtensionBase(WebGLContext*);
@@ -23,8 +22,8 @@ public:
         return Context();
     }
 
-    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-    NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(WebGLExtensionBase)
+    NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(WebGLExtensionBase)
+    NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(WebGLExtensionBase)
 };
 
 #define DECL_WEBGL_EXTENSION_GOOP                                           \
@@ -183,6 +182,25 @@ public:
     void DeleteVertexArrayOES(WebGLVertexArray* array);
     bool IsVertexArrayOES(WebGLVertexArray* array);
     void BindVertexArrayOES(WebGLVertexArray* array);
+
+    static bool IsSupported(const WebGLContext* context);
+
+    DECL_WEBGL_EXTENSION_GOOP
+};
+
+class WebGLExtensionInstancedArrays
+    : public WebGLExtensionBase
+{
+public:
+    WebGLExtensionInstancedArrays(WebGLContext* context);
+    virtual ~WebGLExtensionInstancedArrays();
+
+    void DrawArraysInstancedANGLE(GLenum mode, GLint first,
+                                  GLsizei count, GLsizei primcount);
+    void DrawElementsInstancedANGLE(GLenum mode, GLsizei count,
+                                    GLenum type, WebGLintptr offset,
+                                    GLsizei primcount);
+    void VertexAttribDivisorANGLE(GLuint index, GLuint divisor);
 
     static bool IsSupported(const WebGLContext* context);
 

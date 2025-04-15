@@ -58,9 +58,6 @@ mozPersonalDictionary::~mozPersonalDictionary()
 
 nsresult mozPersonalDictionary::Init()
 {
-  mDictionaryTable.Init();
-  mIgnoreTable.Init();
-
   nsCOMPtr<nsIObserverService> svc =
     do_GetService("@mozilla.org/observer-service;1");
 

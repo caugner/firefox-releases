@@ -8,17 +8,18 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "video_engine/vie_receiver.h"
+#include "webrtc/video_engine/vie_receiver.h"
 
 #include <vector>
 
-#include "modules/remote_bitrate_estimator/include/remote_bitrate_estimator.h"
-#include "modules/rtp_rtcp/interface/rtp_rtcp.h"
-#include "modules/utility/interface/rtp_dump.h"
-#include "modules/video_coding/main/interface/video_coding.h"
-#include "system_wrappers/interface/critical_section_wrapper.h"
-#include "system_wrappers/interface/tick_util.h"
-#include "system_wrappers/interface/trace.h"
+#include "webrtc/modules/remote_bitrate_estimator/include/remote_bitrate_estimator.h"
+#include "webrtc/modules/rtp_rtcp/interface/rtp_header_parser.h"
+#include "webrtc/modules/rtp_rtcp/interface/rtp_rtcp.h"
+#include "webrtc/modules/utility/interface/rtp_dump.h"
+#include "webrtc/modules/video_coding/main/interface/video_coding.h"
+#include "webrtc/system_wrappers/interface/critical_section_wrapper.h"
+#include "webrtc/system_wrappers/interface/tick_util.h"
+#include "webrtc/system_wrappers/interface/trace.h"
 
 namespace webrtc {
 
@@ -27,6 +28,7 @@ ViEReceiver::ViEReceiver(const int32_t channel_id,
                          RemoteBitrateEstimator* remote_bitrate_estimator)
     : receive_cs_(CriticalSectionWrapper::CreateCriticalSection()),
       channel_id_(channel_id),
+      rtp_header_parser_(RtpHeaderParser::Create()),
       rtp_rtcp_(NULL),
       vcm_(module_vcm),
       remote_bitrate_estimator_(remote_bitrate_estimator),
@@ -88,20 +90,34 @@ void ViEReceiver::RegisterSimulcastRtpRtcpModules(
   }
 }
 
+bool ViEReceiver::SetReceiveTimestampOffsetStatus(bool enable, int id) {
+  if (enable) {
+    return rtp_header_parser_->RegisterRtpHeaderExtension(
+        kRtpExtensionTransmissionTimeOffset, id);
+  } else {
+    return rtp_header_parser_->DeregisterRtpHeaderExtension(
+        kRtpExtensionTransmissionTimeOffset);
+  }
+}
+
+bool ViEReceiver::SetReceiveAbsoluteSendTimeStatus(bool enable, int id) {
+  if (enable) {
+    return rtp_header_parser_->RegisterRtpHeaderExtension(
+        kRtpExtensionAbsoluteSendTime, id);
+  } else {
+    return rtp_header_parser_->DeregisterRtpHeaderExtension(
+        kRtpExtensionAbsoluteSendTime);
+  }
+}
+
 int ViEReceiver::ReceivedRTPPacket(const void* rtp_packet,
                                    int rtp_packet_length) {
-  if (!receiving_) {
-    return -1;
-  }
   return InsertRTPPacket(static_cast<const int8_t*>(rtp_packet),
                          rtp_packet_length);
 }
 
 int ViEReceiver::ReceivedRTCPPacket(const void* rtcp_packet,
                                     int rtcp_packet_length) {
-  if (!receiving_rtcp_) {
-    return -1;
-  }
   return InsertRTCPPacket(static_cast<const int8_t*>(rtcp_packet),
                           rtcp_packet_length);
 }
@@ -112,15 +128,6 @@ int32_t ViEReceiver::OnReceivedPayloadData(
   if (rtp_header == NULL) {
     return 0;
   }
-
-  // TODO(holmer): Make sure packets reconstructed using FEC are not passed to
-  // the bandwidth estimator.
-  const int packet_size = payload_size + rtp_header->header.paddingLength;
-  uint32_t compensated_timestamp = rtp_header->header.timestamp +
-      rtp_header->extension.transmissionTimeOffset;
-  remote_bitrate_estimator_->IncomingPacket(
-      rtp_header->header.ssrc, packet_size,
-      TickTime::MillisecondTimestamp(), compensated_timestamp);
   if (vcm_->IncomingPacket(payload_data, payload_size, *rtp_header) != 0) {
     // Check this...
     return -1;
@@ -146,6 +153,9 @@ int ViEReceiver::InsertRTPPacket(const int8_t* rtp_packet,
 
   {
     CriticalSectionScoped cs(receive_cs_.get());
+    if (!receiving_) {
+      return -1;
+    }
 
     if (external_decryption_) {
       int decrypted_length = kViEMaxMtu;
@@ -172,8 +182,19 @@ int ViEReceiver::InsertRTPPacket(const int8_t* rtp_packet,
                            static_cast<uint16_t>(received_packet_length));
     }
   }
+  RTPHeader header;
+  if (!rtp_header_parser_->Parse(received_packet, received_packet_length,
+                                 &header)) {
+    WEBRTC_TRACE(webrtc::kTraceDebug, webrtc::kTraceVideo, channel_id_,
+                 "IncomingPacket invalid RTP header");
+    return -1;
+  }
+  const int payload_size = received_packet_length - header.headerLength;
+  remote_bitrate_estimator_->IncomingPacket(TickTime::MillisecondTimestamp(),
+                                            payload_size, header);
   assert(rtp_rtcp_);  // Should be set by owner at construction time.
-  return rtp_rtcp_->IncomingPacket(received_packet, received_packet_length);
+  return rtp_rtcp_->IncomingRtpPacket(received_packet, received_packet_length,
+                                      header);
 }
 
 int ViEReceiver::InsertRTCPPacket(const int8_t* rtcp_packet,
@@ -184,6 +205,9 @@ int ViEReceiver::InsertRTCPPacket(const int8_t* rtcp_packet,
   int received_packet_length = rtcp_packet_length;
   {
     CriticalSectionScoped cs(receive_cs_.get());
+    if (!receiving_rtcp_) {
+      return -1;
+    }
 
     if (external_decryption_) {
       int decrypted_length = kViEMaxMtu;
@@ -217,26 +241,30 @@ int ViEReceiver::InsertRTCPPacket(const int8_t* rtcp_packet,
     std::list<RtpRtcp*>::iterator it = rtp_rtcp_simulcast_.begin();
     while (it != rtp_rtcp_simulcast_.end()) {
       RtpRtcp* rtp_rtcp = *it++;
-      rtp_rtcp->IncomingPacket(received_packet, received_packet_length);
+      rtp_rtcp->IncomingRtcpPacket(received_packet, received_packet_length);
     }
   }
   assert(rtp_rtcp_);  // Should be set by owner at construction time.
-  return rtp_rtcp_->IncomingPacket(received_packet, received_packet_length);
+  return rtp_rtcp_->IncomingRtcpPacket(received_packet, received_packet_length);
 }
 
 void ViEReceiver::StartReceive() {
+  CriticalSectionScoped cs(receive_cs_.get());
   receiving_ = true;
 }
 
 void ViEReceiver::StopReceive() {
+  CriticalSectionScoped cs(receive_cs_.get());
   receiving_ = false;
 }
 
 void ViEReceiver::StartRTCPReceive() {
+  CriticalSectionScoped cs(receive_cs_.get());
   receiving_rtcp_ = true;
 }
 
 void ViEReceiver::StopRTCPReceive() {
+  CriticalSectionScoped cs(receive_cs_.get());
   receiving_rtcp_ = false;
 }
 
@@ -290,7 +318,8 @@ void ViEReceiver::EstimatedReceiveBandwidth(
   // LatestEstimate returns an error if there is no valid bitrate estimate, but
   // ViEReceiver instead returns a zero estimate.
   remote_bitrate_estimator_->LatestEstimate(&ssrcs, available_bandwidth);
-  if (!ssrcs.empty()) {
+  if (std::find(ssrcs.begin(), ssrcs.end(), rtp_rtcp_->RemoteSSRC()) !=
+      ssrcs.end()) {
     *available_bandwidth /= ssrcs.size();
   } else {
     *available_bandwidth = 0;

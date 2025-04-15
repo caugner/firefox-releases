@@ -29,7 +29,7 @@ GLScreenBuffer::Create(GLContext* gl,
                      const SurfaceCaps& caps)
 {
     if (caps.antialias &&
-        !gl->IsExtensionSupported(GLContext::XXX_framebuffer_multisample))
+        !gl->IsSupported(GLFeature::framebuffer_multisample))
     {
         return nullptr;
     }
@@ -66,10 +66,17 @@ GLScreenBuffer::Create(GLContext* gl,
 
 GLScreenBuffer::~GLScreenBuffer()
 {
-    delete mFactory;
     delete mStream;
     delete mDraw;
     delete mRead;
+
+    // bug 914823: it is crucial to destroy the Factory _after_ we destroy
+    // the SharedSurfaces around here! Reason: the shared surfaces will want
+    // to ask the Allocator (e.g. the ClientLayerManager) to destroy their
+    // buffers, but that Allocator may be kept alive by the Factory,
+    // as it currently the case in SurfaceFactory_Gralloc holding a nsRefPtr
+    // to the Allocator!
+    delete mFactory;
 }
 
 
@@ -79,7 +86,7 @@ GLScreenBuffer::BindAsFramebuffer(GLContext* const gl, GLenum target) const
     GLuint drawFB = DrawFB();
     GLuint readFB = ReadFB();
 
-    if (!gl->IsExtensionSupported(GLContext::XXX_framebuffer_blit)) {
+    if (!gl->IsSupported(GLFeature::framebuffer_blit)) {
         MOZ_ASSERT(drawFB == readFB);
         gl->raw_fBindFramebuffer(target, readFB);
         return;
@@ -92,14 +99,14 @@ GLScreenBuffer::BindAsFramebuffer(GLContext* const gl, GLenum target) const
         break;
 
     case LOCAL_GL_DRAW_FRAMEBUFFER_EXT:
-        if (!gl->IsExtensionSupported(GLContext::XXX_framebuffer_blit))
+        if (!gl->IsSupported(GLFeature::framebuffer_blit))
             NS_WARNING("DRAW_FRAMEBUFFER requested but unavailable.");
 
         gl->raw_fBindFramebuffer(LOCAL_GL_DRAW_FRAMEBUFFER_EXT, drawFB);
         break;
 
     case LOCAL_GL_READ_FRAMEBUFFER_EXT:
-        if (!gl->IsExtensionSupported(GLContext::XXX_framebuffer_blit))
+        if (!gl->IsSupported(GLFeature::framebuffer_blit))
             NS_WARNING("READ_FRAMEBUFFER requested but unavailable.");
 
         gl->raw_fBindFramebuffer(LOCAL_GL_READ_FRAMEBUFFER_EXT, readFB);
@@ -124,7 +131,7 @@ GLScreenBuffer::BindFB(GLuint fb)
     if (mInternalDrawFB == mInternalReadFB) {
         mGL->raw_fBindFramebuffer(LOCAL_GL_FRAMEBUFFER, mInternalDrawFB);
     } else {
-        MOZ_ASSERT(mGL->IsExtensionSupported(GLContext::XXX_framebuffer_blit));
+        MOZ_ASSERT(mGL->IsSupported(GLFeature::framebuffer_blit));
         mGL->raw_fBindFramebuffer(LOCAL_GL_DRAW_FRAMEBUFFER_EXT, mInternalDrawFB);
         mGL->raw_fBindFramebuffer(LOCAL_GL_READ_FRAMEBUFFER_EXT, mInternalReadFB);
     }
@@ -138,7 +145,7 @@ GLScreenBuffer::BindFB(GLuint fb)
 void
 GLScreenBuffer::BindDrawFB(GLuint fb)
 {
-    if (!mGL->IsExtensionSupported(GLContext::XXX_framebuffer_blit)) {
+    if (!mGL->IsSupported(GLFeature::framebuffer_blit)) {
         NS_WARNING("DRAW_FRAMEBUFFER requested, but unsupported.");
 
         mGL->raw_fBindFramebuffer(LOCAL_GL_DRAW_FRAMEBUFFER_EXT, fb);
@@ -158,7 +165,7 @@ GLScreenBuffer::BindDrawFB(GLuint fb)
 void
 GLScreenBuffer::BindReadFB(GLuint fb)
 {
-    if (!mGL->IsExtensionSupported(GLContext::XXX_framebuffer_blit)) {
+    if (!mGL->IsSupported(GLFeature::framebuffer_blit)) {
         NS_WARNING("READ_FRAMEBUFFER requested, but unsupported.");
 
         mGL->raw_fBindFramebuffer(LOCAL_GL_READ_FRAMEBUFFER_EXT, fb);
@@ -233,7 +240,7 @@ GLScreenBuffer::GetReadFB() const
     // We use raw_ here because this is debug code and we need to see what
     // the driver thinks.
     GLuint actual = 0;
-    if (mGL->IsExtensionSupported(GLContext::XXX_framebuffer_blit))
+    if (mGL->IsSupported(GLFeature::framebuffer_blit))
         mGL->raw_fGetIntegerv(LOCAL_GL_READ_FRAMEBUFFER_BINDING_EXT, (GLint*)&actual);
     else
         mGL->raw_fGetIntegerv(LOCAL_GL_FRAMEBUFFER_BINDING, (GLint*)&actual);

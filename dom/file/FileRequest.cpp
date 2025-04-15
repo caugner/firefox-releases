@@ -7,7 +7,6 @@
 #include "FileRequest.h"
 
 #include "DOMFileRequest.h"
-#include "nsContentUtils.h"
 #include "nsCxPusher.h"
 #include "nsEventDispatcher.h"
 #include "nsError.h"
@@ -80,7 +79,7 @@ FileRequest::NotifyHelperCompleted(FileHelper* aFileHelper)
 
   JS::Rooted<JS::Value> result(cx);
 
-  JS::Rooted<JSObject*> global(cx, sc->GetNativeGlobal());
+  JS::Rooted<JSObject*> global(cx, sc->GetWindowProxy());
   NS_ASSERTION(global, "Failed to get global object!");
 
   JSAutoCompartment ac(cx, global);

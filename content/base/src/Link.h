@@ -20,9 +20,9 @@ namespace dom {
 
 class Element;
 
-#define MOZILLA_DOM_LINK_IMPLEMENTATION_IID \
-  { 0x7EA57721, 0xE373, 0x458E, \
-    {0x8F, 0x44, 0xF8, 0x96, 0x56, 0xB4, 0x14, 0xF5 } }
+#define MOZILLA_DOM_LINK_IMPLEMENTATION_IID               \
+{ 0xb25edee6, 0xdd35, 0x4f8b,                             \
+  { 0xab, 0x90, 0x66, 0xd0, 0xbd, 0x3c, 0x22, 0xd5 } }
 
 class Link : public nsISupports
 {
@@ -45,8 +45,8 @@ public:
   /**
    * @return the URI this link is for, if available.
    */
-  already_AddRefed<nsIURI> GetURI() const;
-  virtual already_AddRefed<nsIURI> GetURIExternal() const {
+  nsIURI* GetURI() const;
+  virtual nsIURI* GetURIExternal() const {
     return GetURI();
   }
 
@@ -54,13 +54,18 @@ public:
    * Helper methods for modifying and obtaining parts of the URI of the Link.
    */
   void SetProtocol(const nsAString &aProtocol);
+  void SetUsername(const nsAString &aUsername);
+  void SetPassword(const nsAString &aPassword);
   void SetHost(const nsAString &aHost);
   void SetHostname(const nsAString &aHostname);
   void SetPathname(const nsAString &aPathname);
   void SetSearch(const nsAString &aSearch);
   void SetPort(const nsAString &aPort);
   void SetHash(const nsAString &aHash);
+  void GetOrigin(nsAString &aOrigin);
   void GetProtocol(nsAString &_protocol);
+  void GetUsername(nsAString &aUsername);
+  void GetPassword(nsAString &aPassword);
   void GetHost(nsAString &_host);
   void GetHostname(nsAString &_hostname);
   void GetPathname(nsAString &_pathname);
@@ -111,11 +116,11 @@ protected:
    */
   bool HasURI() const
   {
-    if (mCachedURI)
+    if (HasCachedURI()) {
       return true;
+    }
 
-    nsCOMPtr<nsIURI> uri(GetURI());
-    return !!uri;
+    return !!GetURI();
   }
 
   nsIURI* GetCachedURI() const { return mCachedURI; }

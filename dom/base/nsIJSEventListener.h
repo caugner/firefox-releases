@@ -7,7 +7,6 @@
 #define nsIJSEventListener_h__
 
 #include "nsIScriptContext.h"
-#include "jsapi.h"
 #include "xpcpublic.h"
 #include "nsIDOMEventListener.h"
 #include "nsIAtom.h"
@@ -202,7 +201,12 @@ public:
   // Can return null if we already have a handler.
   JSObject* GetEventScope() const
   {
-    return xpc_UnmarkGrayObject(mScopeObject);
+    if (!mScopeObject) {
+      return nullptr;
+    }
+
+    JS::ExposeObjectToActiveJS(mScopeObject);
+    return mScopeObject;
   }
 
   const nsEventHandler& GetHandler() const

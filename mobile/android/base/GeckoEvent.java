@@ -66,7 +66,11 @@ public class GeckoEvent {
         CALL_OBSERVER(33),
         REMOVE_OBSERVER(34),
         LOW_MEMORY(35),
-        NETWORK_LINK_CHANGE(36);
+        NETWORK_LINK_CHANGE(36),
+        TELEMETRY_HISTOGRAM_ADD(37),
+        PREFERENCES_OBSERVE(39),
+        PREFERENCES_GET(40),
+        PREFERENCES_REMOVE_OBSERVERS(41);
 
         public final int value;
 
@@ -184,6 +188,8 @@ public class GeckoEvent {
 
     private int mWidth;
     private int mHeight;
+
+    private String[] mPrefNames;
 
     private GeckoEvent(NativeGeckoEvent event) {
         mType = event.value;
@@ -688,6 +694,26 @@ public class GeckoEvent {
         return event;
     }
 
+    public static GeckoEvent createPreferencesObserveEvent(int requestId, String[] prefNames) {
+        GeckoEvent event = new GeckoEvent(NativeGeckoEvent.PREFERENCES_OBSERVE);
+        event.mCount = requestId;
+        event.mPrefNames = prefNames;
+        return event;
+    }
+
+    public static GeckoEvent createPreferencesGetEvent(int requestId, String[] prefNames) {
+        GeckoEvent event = new GeckoEvent(NativeGeckoEvent.PREFERENCES_GET);
+        event.mCount = requestId;
+        event.mPrefNames = prefNames;
+        return event;
+    }
+
+    public static GeckoEvent createPreferencesRemoveObserversEvent(int requestId) {
+        GeckoEvent event = new GeckoEvent(NativeGeckoEvent.PREFERENCES_REMOVE_OBSERVERS);
+        event.mCount = requestId;
+        return event;
+    }
+
     public static GeckoEvent createLowMemoryEvent(int level) {
         GeckoEvent event = new GeckoEvent(NativeGeckoEvent.LOW_MEMORY);
         event.mMetaState = level;
@@ -697,6 +723,14 @@ public class GeckoEvent {
     public static GeckoEvent createNetworkLinkChangeEvent(String status) {
         GeckoEvent event = new GeckoEvent(NativeGeckoEvent.NETWORK_LINK_CHANGE);
         event.mCharacters = status;
+        return event;
+    }
+
+    public static GeckoEvent createTelemetryHistogramAddEvent(String histogram,
+                                                              int value) {
+        GeckoEvent event = new GeckoEvent(NativeGeckoEvent.TELEMETRY_HISTOGRAM_ADD);
+        event.mCharacters = histogram;
+        event.mCount = value;
         return event;
     }
 

@@ -7,11 +7,10 @@
 #ifndef mozilla_layers_Axis_h
 #define mozilla_layers_Axis_h
 
-#include "nsGUIEvent.h"
-#include "mozilla/TimeStamp.h"
-#include "mozilla/gfx/2D.h"
-#include "nsTArray.h"
-#include "Units.h"
+#include <sys/types.h>                  // for int32_t
+#include "Units.h"                      // for CSSRect, CSSPoint
+#include "mozilla/TimeStamp.h"          // for TimeDuration
+#include "nsTArray.h"                   // for nsTArray
 
 namespace mozilla {
 namespace layers {
@@ -69,16 +68,14 @@ public:
   void CancelTouch();
 
   /**
-   * Gets displacement that should have happened since the previous touch.
-   * Note: Does not reset the displacement. It gets recalculated on the next
-   * UpdateWithTouchAtDevicePoint(), however it is not safe to assume this will
-   * be the same on every call. This also checks for page boundaries and will
-   * return an adjusted displacement to prevent the viewport from overscrolling
-   * the page rect. An example of where this might matter is when you call it,
-   * apply a displacement that takes you to the boundary of the page, then call
-   * it again. The result will be different in this case.
+   * Takes a requested displacement to the position of this axis, and adjusts
+   * it to account for acceleration  (which might increase the displacement)
+   * and overscroll (which might decrease the displacement; this is to prevent
+   * the viewport from overscrolling the page rect). If overscroll ocurred,
+   * its amount is written to |aOverscrollAmountOut|.
+   * The adjusted displacement is returned.
    */
-  float GetDisplacementForDuration(float aScale, const TimeDuration& aDelta);
+  float AdjustDisplacement(float aDisplacement, float& aOverscrollAmountOut);
 
   /**
    * Gets the distance between the starting position of the touch supplied in
@@ -143,7 +140,7 @@ public:
    * scroll offset in such a way that it remains in the same place on the page
    * relative.
    */
-  Overscroll ScaleWillOverscroll(float aScale, float aFocus);
+  Overscroll ScaleWillOverscroll(ScreenToScreenScale aScale, float aFocus);
 
   /**
    * If a scale will overscroll the axis, this returns the amount and in what
@@ -153,7 +150,7 @@ public:
    * scroll offset in such a way that it remains in the same place on the page
    * relative.
    */
-  float ScaleWillOverscrollAmount(float aScale, float aFocus);
+  float ScaleWillOverscrollAmount(ScreenToScreenScale aScale, float aFocus);
 
   /**
    * Checks if an axis will overscroll in both directions by computing the
@@ -162,7 +159,7 @@ public:
    *
    * This gets called by ScaleWillOverscroll().
    */
-  bool ScaleWillOverscrollBothSides(float aScale);
+  bool ScaleWillOverscrollBothSides(ScreenToScreenScale aScale);
 
   float GetOrigin();
   float GetCompositionLength();
@@ -170,6 +167,8 @@ public:
   float GetPageLength();
   float GetCompositionEnd();
   float GetPageEnd();
+
+  int32_t GetPos() const { return mPos; }
 
   virtual float GetPointOffset(const CSSPoint& aPoint) = 0;
   virtual float GetRectLength(const CSSRect& aRect) = 0;

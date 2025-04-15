@@ -4,12 +4,29 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "BasicThebesLayer.h"
-#include "gfxUtils.h"
-#include "nsIWidget.h"
-#include "RenderTrace.h"
-#include "GeckoProfiler.h"
-
-#include "prprf.h"
+#include <stdint.h>                     // for uint32_t
+#include "GeckoProfiler.h"              // for PROFILER_LABEL
+#include "ReadbackLayer.h"              // for ReadbackLayer, ReadbackSink
+#include "ReadbackProcessor.h"          // for ReadbackProcessor::Update, etc
+#include "RenderTrace.h"                // for RenderTraceInvalidateEnd, etc
+#include "BasicLayersImpl.h"            // for AutoMaskData, etc
+#include "gfxASurface.h"                // for gfxASurface, etc
+#include "gfxContext.h"                 // for gfxContext, etc
+#include "gfxRect.h"                    // for gfxRect
+#include "gfxUtils.h"                   // for gfxUtils
+#include "mozilla/gfx/2D.h"             // for DrawTarget
+#include "mozilla/gfx/BaseRect.h"       // for BaseRect
+#include "mozilla/gfx/Matrix.h"         // for Matrix
+#include "mozilla/gfx/Rect.h"           // for Rect, IntRect
+#include "mozilla/gfx/Types.h"          // for Float, etc
+#include "mozilla/layers/LayersTypes.h"
+#include "nsAutoPtr.h"                  // for nsRefPtr
+#include "nsCOMPtr.h"                   // for already_AddRefed
+#include "nsISupportsImpl.h"            // for gfxContext::Release, etc
+#include "nsPoint.h"                    // for nsIntPoint
+#include "nsRect.h"                     // for nsIntRect
+#include "nsTArray.h"                   // for nsTArray, nsTArray_Impl
+struct gfxMatrix;
 
 using namespace mozilla::gfx;
 
@@ -126,7 +143,7 @@ BasicThebesLayer::PaintThebes(gfxContext* aContext,
         groupContext = aContext;
       }
       SetAntialiasingFlags(this, groupContext);
-      aCallback(this, groupContext, toDraw, nsIntRegion(), aCallbackData);
+      aCallback(this, groupContext, toDraw, CLIP_NONE, nsIntRegion(), aCallbackData);
       if (needsGroup) {
         BasicManager()->PopGroupToSourceWithCachedSurface(aContext, groupContext);
         if (needsClipToVisibleRegion) {
@@ -177,6 +194,7 @@ BasicThebesLayer::PaintThebes(gfxContext* aContext,
       PaintBuffer(state.mContext,
                   state.mRegionToDraw, extendedDrawRegion, state.mRegionToInvalidate,
                   state.mDidSelfCopy,
+                  state.mClip,
                   aCallback, aCallbackData);
       MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) PaintThebes", this));
       Mutated();

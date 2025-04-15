@@ -15,6 +15,7 @@
 #include "nsJSEnvironment.h"
 #include "nsThreadUtils.h"
 #include "StructuredCloneTags.h"
+#include "jsapi.h"
 
 using namespace mozilla::dom;
 
@@ -98,7 +99,7 @@ Read(JSContext* aCx, JSStructuredCloneReader* aReader, uint32_t aTag,
   return NS_DOMReadStructuredClone(aCx, aReader, aTag, aData, nullptr);
 }
 
-JSBool
+bool
 Write(JSContext* aCx, JSStructuredCloneWriter* aWriter,
       JS::Handle<JSObject*> aObj, void* aClosure)
 {

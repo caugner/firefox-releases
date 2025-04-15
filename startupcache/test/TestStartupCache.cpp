@@ -24,6 +24,7 @@
 #include "nsIXPConnect.h"
 #include "jsapi.h"
 #include "prio.h"
+#include "mozilla/Maybe.h"
 
 using namespace JS;
 
@@ -440,12 +441,12 @@ CompareCountArrays(JSContext *cx, JSObject *aBefore, JSObject *aAfter)
 
   JS::RootedValue before_num(cx), after_num(cx);
   for (uint32_t i = 0; i < before_size; ++i) {
-    if (!(JS_GetElement(cx, before, i, before_num.address())
-          && JS_GetElement(cx, after, i, after_num.address()))) {
+    if (!(JS_GetElement(cx, before, i, &before_num)
+          && JS_GetElement(cx, after, i, &after_num))) {
       return NS_ERROR_UNEXPECTED;
     }
 
-    JSBool same = JS_TRUE;
+    bool same = true;
     if (!JS_LooselyEqual(cx, before_num, after_num, &same)) {
       return NS_ERROR_UNEXPECTED;
     } else {
@@ -513,7 +514,7 @@ int main(int argc, char** argv)
 
   bool use_js = !!cx;
   JSAutoRequest req(cx);
-  static JSClass global_class = {
+  static const JSClass global_class = {
     "global", JSCLASS_NEW_RESOLVE | JSCLASS_GLOBAL_FLAGS | JSCLASS_HAS_PRIVATE,
     JS_PropertyStub,  JS_DeletePropertyStub,
     JS_PropertyStub,  JS_StrictPropertyStub,

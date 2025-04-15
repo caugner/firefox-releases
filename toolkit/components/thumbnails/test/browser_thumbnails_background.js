@@ -23,7 +23,10 @@ function spawnNextTest() {
     finish();
     return;
   }
-  imports.Task.spawn(tests.shift()).then(spawnNextTest, function onError(err) {
+
+  let nextTest = tests.shift();
+  info("starting sub-test " + nextTest.name);
+  imports.Task.spawn(nextTest).then(spawnNextTest, function onError(err) {
     ok(false, err);
     spawnNextTest();
   });
@@ -55,7 +58,7 @@ let tests = [
     let files = urls.map(fileForURL);
     files.forEach(f => ok(!f.exists(), "Thumbnail should not be cached yet."));
     urls.forEach(function (url) {
-      let isTimeoutTest = url.indexOf("?wait") >= 0;
+      let isTimeoutTest = url.indexOf("wait") >= 0;
       imports.BackgroundPageThumbs.capture(url, {
         timeout: isTimeoutTest ? 100 : 30000,
         onDone: function onDone(capturedURL) {
@@ -159,8 +162,9 @@ let tests = [
     let win = yield openPrivateWindow();
     let capturedURL = yield capture(url);
     is(capturedURL, url, "Captured URL should be URL passed to capture.");
-    ok(!file.exists(),
-       "Thumbnail file should not exist because a private window is open.");
+    ok(file.exists(),
+       "Thumbnail file should be created even when a private window is open.");
+    file.remove(false);
 
     win.close();
   },
@@ -181,9 +185,10 @@ let tests = [
     imports.BackgroundPageThumbs.capture(url, {
       onDone: function (capturedURL) {
         is(capturedURL, url, "Captured URL should be URL passed to capture.");
-        ok(!file.exists(),
-           "Thumbnail file should not exist because a private window " +
+        ok(file.exists(),
+           "Thumbnail file should be created even though a private window " +
            "was opened during the capture.");
+        file.remove(false);
         maybeFinish();
       },
     });
@@ -201,7 +206,7 @@ let tests = [
     yield deferred.promise;
   },
 
-  function noCookies() {
+  function noCookiesSent() {
     // Visit the test page in the browser and tell it to set a cookie.
     let url = testPageURL({ setGreenCookie: true });
     let tab = gBrowser.loadOneTab(url, { inBackground: false });
@@ -237,6 +242,29 @@ let tests = [
       deferred.resolve();
     });
     yield deferred.promise;
+  },
+
+  // check that if a page captured in the background attempts to set a cookie,
+  // that cookie is not saved for subsequent requests.
+  function noCookiesStored() {
+    let url = testPageURL({ setRedCookie: true });
+    let file = fileForURL(url);
+    ok(!file.exists(), "Thumbnail file should not exist before capture.");
+    yield capture(url);
+    ok(file.exists(), "Thumbnail file should exist after capture.");
+    file.remove(false);
+    // now load it up in a browser - it should *not* be red, otherwise the
+    // cookie above was saved.
+    let tab = gBrowser.loadOneTab(url, { inBackground: false });
+    let browser = tab.linkedBrowser;
+    yield onPageLoad(browser);
+
+    // The root element of the page shouldn't be red.
+    let redStr = "rgb(255, 0, 0)";
+    isnot(browser.contentDocument.documentElement.style.backgroundColor,
+          redStr,
+          "The page shouldn't be red.");
+    gBrowser.removeTab(tab);
   },
 
   // the following tests attempt to display modal dialogs.  The test just
@@ -301,15 +329,45 @@ let tests = [
     imports.BackgroundPageThumbs.capture(url, {onDone: doneCallback});
     yield deferred.promise;
   },
+
+  function capIfMissing() {
+    let url = "http://example.com/";
+    let file = fileForURL(url);
+    ok(!file.exists(), "Thumbnail file should not already exist.");
+
+    let capturedURL = yield captureIfMissing(url);
+    is(capturedURL, url, "Captured URL should be URL passed to capture");
+    ok(file.exists(), "Thumbnail should be cached after capture: " + file.path);
+
+    let past = Date.now() - 1000000000;
+    let pastFudge = past + 30000;
+    file.lastModifiedTime = past;
+    ok(file.lastModifiedTime < pastFudge, "Last modified time should stick!");
+    capturedURL = yield captureIfMissing(url);
+    is(capturedURL, url, "Captured URL should be URL passed to second capture");
+    ok(file.exists(), "Thumbnail should remain cached after second capture: " +
+                      file.path);
+    ok(file.lastModifiedTime < pastFudge,
+       "File should not have been overwritten");
+
+    file.remove(false);
+  },
 ];
 
 function capture(url, options) {
+  return captureWithMethod("capture", url, options);
+}
+
+function captureIfMissing(url, options) {
+  return captureWithMethod("captureIfMissing", url, options);
+}
+
+function captureWithMethod(methodName, url, options={}) {
   let deferred = imports.Promise.defer();
-  options = options || {};
   options.onDone = function onDone(capturedURL) {
     deferred.resolve(capturedURL);
   };
-  imports.BackgroundPageThumbs.capture(url, options);
+  imports.BackgroundPageThumbs[methodName](url, options);
   return deferred.promise;
 }
 

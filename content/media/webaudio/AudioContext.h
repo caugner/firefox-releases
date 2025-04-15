@@ -9,10 +9,7 @@
 
 #include "EnableWebAudioCheck.h"
 #include "MediaBufferDecoder.h"
-#include "MediaStreamGraph.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/dom/AudioContextBinding.h"
-#include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/TypedArray.h"
 #include "nsAutoPtr.h"
 #include "nsCOMPtr.h"
@@ -20,7 +17,7 @@
 #include "nsDOMEventTargetHelper.h"
 #include "nsHashKeys.h"
 #include "nsTHashtable.h"
-#include "StreamBuffer.h"
+#include "js/TypeDecls.h"
 
 // X11 has a #define for CurrentTime. Unbelievable :-(.
 // See content/media/DOMMediaStream.h for more fun!
@@ -28,14 +25,14 @@
 #undef CurrentTime
 #endif
 
-struct JSContext;
-class JSObject;
 class nsPIDOMWindow;
 
 namespace mozilla {
 
+class DOMMediaStream;
 class ErrorResult;
-struct WebAudioDecodeJob;
+class MediaStream;
+class MediaStreamGraph;
 
 namespace dom {
 
@@ -52,11 +49,10 @@ class ConvolverNode;
 class DelayNode;
 class DynamicsCompressorNode;
 class GainNode;
-class GlobalObject;
 class HTMLMediaElement;
 class MediaElementAudioSourceNode;
+class GlobalObject;
 class MediaStreamAudioDestinationNode;
-class OfflineRenderSuccessCallback;
 class MediaStreamAudioSourceNode;
 class OscillatorNode;
 class PannerNode;
@@ -129,7 +125,7 @@ public:
                ErrorResult& aRv);
 
   already_AddRefed<AudioBuffer>
-  CreateBuffer(JSContext* aJSContext, ArrayBuffer& aBuffer,
+  CreateBuffer(JSContext* aJSContext, const ArrayBuffer& aBuffer,
                bool aMixToMono, ErrorResult& aRv);
 
   already_AddRefed<MediaStreamAudioDestinationNode>

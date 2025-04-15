@@ -5,9 +5,11 @@
 #include "inFlasher.h"
 #include "inLayoutUtils.h"
 
+#include "nsIDOMElement.h"
 #include "nsIServiceManager.h"
 #include "nsIPresShell.h"
 #include "nsIFrame.h"
+#include "nsIWidget.h"
 #include "nsReadableUtils.h"
 #include "nsRenderingContext.h"
 

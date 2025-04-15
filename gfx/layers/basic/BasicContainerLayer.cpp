@@ -3,23 +3,70 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "BasicLayersImpl.h"
 #include "BasicContainerLayer.h"
+#include <sys/types.h>                  // for int32_t
+#include "BasicLayersImpl.h"            // for ToData
+#include "basic/BasicImplData.h"        // for BasicImplData
+#include "basic/BasicLayers.h"          // for BasicLayerManager
+#include "mozilla/gfx/BaseRect.h"       // for BaseRect
+#include "mozilla/mozalloc.h"           // for operator new
+#include "nsAutoPtr.h"                  // for nsRefPtr
+#include "nsCOMPtr.h"                   // for already_AddRefed
+#include "nsISupportsImpl.h"            // for Layer::AddRef, etc
+#include "nsPoint.h"                    // for nsIntPoint
+#include "nsRect.h"                     // for nsIntRect
+#include "gfx3DMatrix.h"                // for gfx3DMatrix
+#include "gfxMatrix.h"                  // for gfxMatrix
+#include "nsRegion.h"                   // for nsIntRegion
 
 using namespace mozilla::gfx;
 
 namespace mozilla {
 namespace layers {
 
-
-
 BasicContainerLayer::~BasicContainerLayer()
 {
   while (mFirstChild) {
-    ContainerRemoveChild(mFirstChild, this);
+    ContainerLayer::RemoveChild(mFirstChild);
   }
 
   MOZ_COUNT_DTOR(BasicContainerLayer);
+}
+
+void
+BasicContainerLayer::ComputeEffectiveTransforms(const gfx3DMatrix& aTransformToSurface)
+{
+  // We push groups for container layers if we need to, which always
+  // are aligned in device space, so it doesn't really matter how we snap
+  // containers.
+  gfxMatrix residual;
+  gfx3DMatrix idealTransform = GetLocalTransform()*aTransformToSurface;
+  idealTransform.ProjectTo2D();
+
+  if (!idealTransform.CanDraw2D()) {
+    mEffectiveTransform = idealTransform;
+    ComputeEffectiveTransformsForChildren(gfx3DMatrix());
+    ComputeEffectiveTransformForMaskLayer(gfx3DMatrix());
+    mUseIntermediateSurface = true;
+    return;
+  }
+
+  mEffectiveTransform = SnapTransformTranslation(idealTransform, &residual);
+  // We always pass the ideal matrix down to our children, so there is no
+  // need to apply any compensation using the residual from SnapTransformTranslation.
+  ComputeEffectiveTransformsForChildren(idealTransform);
+
+  ComputeEffectiveTransformForMaskLayer(aTransformToSurface);
+
+  /* If we have a single child, it can just inherit our opacity,
+   * otherwise we need a PushGroup and we need to mark ourselves as using
+   * an intermediate surface so our children don't inherit our opacity
+   * via GetEffectiveOpacity.
+   * Having a mask layer always forces our own push group
+   */
+  mUseIntermediateSurface =
+    GetMaskLayer() || (GetEffectiveOpacity() != 1.0 &&
+                       HasMultipleChildren());
 }
 
 bool

@@ -6,8 +6,7 @@
 "use strict";
 
 function clearFormHistory() {
-  var formHistory = Cc["@mozilla.org/satchel/form-history;1"].getService(Ci.nsIFormHistory2);
-  formHistory.removeAllEntries();
+  FormHistory.update({ op : "remove" });
 }
 
 function test() {
@@ -29,8 +28,8 @@ function checkAutofillMenuItemContents(aItemList)
 {
   let errors = 0;
   let found = 0;
-  for (let idx = 0; idx < AutofillMenuUI._commands.childNodes.length; idx++) {
-    let item = AutofillMenuUI._commands.childNodes[idx];
+  for (let idx = 0; idx < AutofillMenuUI.commands.childNodes.length; idx++) {
+    let item = AutofillMenuUI.commands.childNodes[idx];
     let label = item.firstChild.getAttribute("value");
     let value = item.getAttribute("data");
     if (aItemList.indexOf(value) == -1) {

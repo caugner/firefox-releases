@@ -6,14 +6,34 @@
 #ifndef MOZILLA_GFX_BUFFERHOST_H
 #define MOZILLA_GFX_BUFFERHOST_H
 
-#include "mozilla/layers/Compositor.h"
+#include <stdint.h>                     // for uint64_t
+#include <stdio.h>                      // for FILE
+#include "gfxPoint.h"                   // for gfxSize
+#include "gfxRect.h"                    // for gfxRect
+#include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
+#include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
+#include "mozilla/RefPtr.h"             // for RefPtr, RefCounted, etc
+#include "mozilla/gfx/Point.h"          // for Point
+#include "mozilla/gfx/Rect.h"           // for Rect
+#include "mozilla/gfx/Types.h"          // for Filter
+#include "mozilla/ipc/ProtocolUtils.h"
+#include "mozilla/layers/CompositorTypes.h"  // for TextureInfo, etc
+#include "mozilla/layers/LayersTypes.h"  // for LayerRenderState, etc
 #include "mozilla/layers/PCompositableParent.h"
-#include "mozilla/layers/ISurfaceAllocator.h"
-#include "ThebesLayerBuffer.h"
-#include "ClientTiledThebesLayer.h" // for BasicTiledLayerBuffer
-#include "mozilla/RefPtr.h"
+#include "mozilla/mozalloc.h"           // for operator delete
+#include "nsCOMPtr.h"                   // for already_AddRefed
+#include "nsRegion.h"                   // for nsIntRegion
+#include "nscore.h"                     // for nsACString
+
+class gfxImageSurface;
+struct nsIntPoint;
+struct nsIntRect;
 
 namespace mozilla {
+namespace gfx {
+class Matrix4x4;
+}
+
 namespace layers {
 
 // Some properties of a Layer required for tiling
@@ -31,6 +51,29 @@ class Layer;
 class DeprecatedTextureHost;
 class TextureHost;
 class SurfaceDescriptor;
+class Compositor;
+class ISurfaceAllocator;
+class ThebesBufferData;
+class TiledLayerComposer;
+struct EffectChain;
+
+/**
+ * A base class for doing CompositableHost and platform dependent task on TextureHost.
+ */
+class CompositableBackendSpecificData : public RefCounted<CompositableBackendSpecificData>
+{
+public:
+  CompositableBackendSpecificData()
+  {
+    MOZ_COUNT_CTOR(CompositableBackendSpecificData);
+  }
+  virtual ~CompositableBackendSpecificData()
+  {
+    MOZ_COUNT_DTOR(CompositableBackendSpecificData);
+  }
+  virtual void SetCompositor(Compositor* aCompositor) {}
+  virtual void ClearData() {}
+};
 
 /**
  * The compositor-side counterpart to CompositableClient. Responsible for
@@ -56,6 +99,16 @@ public:
   static TemporaryRef<CompositableHost> Create(const TextureInfo& aTextureInfo);
 
   virtual CompositableType GetType() = 0;
+
+  virtual CompositableBackendSpecificData* GetCompositableBackendSpecificData()
+  {
+    return mBackendData;
+  }
+
+  virtual void SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData)
+  {
+    mBackendData = aBackendData;
+  }
 
   // If base class overrides, it should still call the parent implementation
   virtual void SetCompositor(Compositor* aCompositor);
@@ -220,13 +273,13 @@ public:
   }
   bool IsAttached() { return mAttached; }
 
+#ifdef MOZ_DUMP_PAINTING
   virtual void Dump(FILE* aFile=nullptr,
                     const char* aPrefix="",
                     bool aDumpHtml=false) { }
   static void DumpDeprecatedTextureHost(FILE* aFile, DeprecatedTextureHost* aTexture);
   static void DumpTextureHost(FILE* aFile, TextureHost* aTexture);
 
-#ifdef MOZ_DUMP_PAINTING
   virtual already_AddRefed<gfxImageSurface> GetAsSurface() { return nullptr; }
 #endif
 
@@ -236,13 +289,14 @@ public:
 
   void AddTextureHost(TextureHost* aTexture);
   virtual void UseTextureHost(TextureHost* aTexture) {}
-  void RemoveTextureHost(uint64_t aTextureID);
+  virtual void RemoveTextureHost(uint64_t aTextureID);
   TextureHost* GetTextureHost(uint64_t aTextureID);
 
 protected:
   TextureInfo mTextureInfo;
   Compositor* mCompositor;
   Layer* mLayer;
+  RefPtr<CompositableBackendSpecificData> mBackendData;
   RefPtr<TextureHost> mFirstTexture;
   bool mAttached;
   bool mKeepAttached;

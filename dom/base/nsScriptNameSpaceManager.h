@@ -29,6 +29,7 @@
 #include "nsDOMClassInfo.h"
 #include "nsIObserver.h"
 #include "nsWeakReference.h"
+#include "xpcpublic.h"
 
 
 struct nsGlobalNameStruct
@@ -59,8 +60,9 @@ struct nsGlobalNameStruct
   // mChromeOnly is only used for structs that define non-WebIDL things
   // (possibly in addition to WebIDL ones).  In particular, it's not even
   // initialized for eTypeNewDOMBinding structs.
-  bool mChromeOnly;
-  bool mDisabled;
+  bool mChromeOnly : 1;
+  bool mAllowXBL : 1;
+  bool mDisabled : 1;
 
   union {
     int32_t mDOMClassInfoID; // eTypeClassConstructor
@@ -119,6 +121,7 @@ public:
   nsresult RegisterClassName(const char *aClassName,
                              int32_t aDOMClassInfoID,
                              bool aPrivileged,
+                             bool aXBLAllowed,
                              bool aDisabled,
                              const PRUnichar **aResult);
 
@@ -174,6 +177,8 @@ private:
     NS_ConvertASCIItoUTF16 key(aKey);
     return AddToHash(aTable, &key, aClassName);
   }
+  // Removes an existing entry from the hash.
+  void RemoveFromHash(PLDHashTable *aTable, const nsAString *aKey);
 
   nsresult FillHash(nsICategoryManager *aCategoryManager,
                     const char *aCategory);
@@ -193,6 +198,24 @@ private:
   nsresult AddCategoryEntryToHash(nsICategoryManager* aCategoryManager,
                                   const char* aCategory,
                                   nsISupports* aEntry);
+
+  /**
+   * Remove an existing category entry from the hash table.
+   * Only some categories can be removed (see the beginning of the definition).
+   * The other ones will be ignored.
+   *
+   * @aCategory        Category where the entry will be removed from.
+   * @aEntry           The entry that should be removed.
+   */
+  nsresult RemoveCategoryEntryFromHash(nsICategoryManager* aCategoryManager,
+                                       const char* aCategory,
+                                       nsISupports* aEntry);
+
+  // common helper for AddCategoryEntryToHash and RemoveCategoryEntryFromHash
+  nsresult OperateCategoryEntryHash(nsICategoryManager* aCategoryManager,
+                                    const char* aCategory,
+                                    nsISupports* aEntry,
+                                    bool aRemove);
 
   nsGlobalNameStruct* LookupNameInternal(const nsAString& aName,
                                          const PRUnichar **aClassName = nullptr);

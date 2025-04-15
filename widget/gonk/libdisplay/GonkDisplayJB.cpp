@@ -14,7 +14,11 @@
  */
 
 #include "GonkDisplayJB.h"
+#if ANDROID_VERSION == 17
+#include <gui/SurfaceTextureClient.h>
+#else
 #include <gui/Surface.h>
+#endif
 
 #include <hardware/hardware.h>
 #include <hardware/hwcomposer.h>
@@ -46,10 +50,10 @@ GonkDisplayJB::GonkDisplayJB()
         ALOGW_IF(err, "could not open framebuffer");
     }
 
-    if (!err) {
+    if (!err && mFBDevice) {
         mWidth = mFBDevice->width;
-        mHeight = mFBDevice->height;
-        xdpi = mFBDevice->xdpi;
+	 mHeight = mFBDevice->height;
+	 xdpi = mFBDevice->xdpi;
         /* The emulator actually reports RGBA_8888, but EGL doesn't return
          * any matching configuration. We force RGBX here to fix it. */
         surfaceformat = HAL_PIXEL_FORMAT_RGBX_8888;
@@ -97,18 +101,34 @@ GonkDisplayJB::GonkDisplayJB()
     ALOGW_IF(err, "Couldn't load %s module (%s)", POWER_HARDWARE_MODULE_ID, strerror(-err));
 
     mAlloc = new GraphicBufferAlloc();
+
+    status_t error;
+    uint32_t usage = GRALLOC_USAGE_HW_FB | GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_COMPOSER;
+    mBootAnimBuffer = mAlloc->createGraphicBuffer(mWidth, mHeight, surfaceformat, usage, &error);
+    if (error != NO_ERROR || !mBootAnimBuffer.get()) {
+        ALOGI("Trying to create BRGA format framebuffer");
+        surfaceformat = HAL_PIXEL_FORMAT_BGRA_8888;
+        mBootAnimBuffer = mAlloc->createGraphicBuffer(mWidth, mHeight, surfaceformat, usage, &error);
+    }
+
     mFBSurface = new FramebufferSurface(0, mWidth, mHeight, surfaceformat, mAlloc);
 
+#if ANDROID_VERSION == 17
+    sp<SurfaceTextureClient> stc = new SurfaceTextureClient(static_cast<sp<ISurfaceTexture> >(mFBSurface->getBufferQueue()));
+#else
     sp<Surface> stc = new Surface(static_cast<sp<IGraphicBufferProducer> >(mFBSurface->getBufferQueue()));
+#endif
     mSTClient = stc;
 
     mList = (hwc_display_contents_1_t *)malloc(sizeof(*mList) + (sizeof(hwc_layer_1_t)*2));
     if (mHwc)
         mHwc->blank(mHwc, HWC_DISPLAY_PRIMARY, 0);
 
-    status_t error;
-    mBootAnimBuffer = mAlloc->createGraphicBuffer(mWidth, mHeight, surfaceformat, GRALLOC_USAGE_HW_FB | GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_COMPOSER, &error);
-    StartBootAnimation();
+    if (error == NO_ERROR && mBootAnimBuffer.get()) {
+        ALOGI("Starting bootanimation with (%d) format framebuffer", surfaceformat);
+        StartBootAnimation();
+    } else
+        ALOGW("Couldn't show bootanimation (%s)", strerror(-error));
 }
 
 GonkDisplayJB::~GonkDisplayJB()
@@ -160,14 +180,33 @@ GonkDisplayJB::GetHWCDevice()
     return mHwc;
 }
 
+void*
+GonkDisplayJB::GetFBSurface()
+{
+    return mFBSurface.get();
+}
+
 bool
 GonkDisplayJB::SwapBuffers(EGLDisplay dpy, EGLSurface sur)
 {
     StopBootAnimation();
     mBootAnimBuffer = nullptr;
 
+    // Should be called when composition rendering is complete for a frame.
+    // Only HWC v1.0 needs this call.
+    // HWC > v1.0 case, do not call compositionComplete().
+    // mFBDevice is present only when HWC is v1.0.
+    if (mFBDevice && mFBDevice->compositionComplete) {
+        mFBDevice->compositionComplete(mFBDevice);
+    }
+
+#if ANDROID_VERSION == 17
+    mList->dpy = dpy;
+    mList->sur = sur;
+#else
     mList->outbuf = nullptr;
     mList->outbufAcquireFenceFd = -1;
+#endif
     eglSwapBuffers(dpy, sur);
     return Post(mFBSurface->lastHandle, mFBSurface->lastFenceFD);
 }
@@ -206,7 +245,9 @@ GonkDisplayJB::Post(buffer_handle_t buf, int fence)
     mList->hwLayers[1].visibleRegionScreen.rects = &mList->hwLayers[1].sourceCrop;
     mList->hwLayers[1].acquireFenceFd = fence;
     mList->hwLayers[1].releaseFenceFd = -1;
+#if ANDROID_VERSION == 18
     mList->hwLayers[1].planeAlpha = 0xFF;
+#endif
     mHwc->prepare(mHwc, HWC_NUM_DISPLAY_TYPES, displays);
     int err = mHwc->set(mHwc, HWC_NUM_DISPLAY_TYPES, displays);
     mFBSurface->setReleaseFenceFd(mList->hwLayers[1].releaseFenceFd);

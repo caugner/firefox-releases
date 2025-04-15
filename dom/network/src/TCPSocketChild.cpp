@@ -91,8 +91,7 @@ TCPSocketChild::Open(nsITCPSocketInternal* aSocket, const nsAString& aHost,
   }
   AddIPDLReference();
   gNeckoChild->SendPTCPSocketConstructor(this);
-  SendOpen(nsString(aHost), aPort, aUseSSL, nsString(aBinaryType),
-           GetTabChildFrom(aWindow));
+  SendOpen(nsString(aHost), aPort, aUseSSL, nsString(aBinaryType));
   return NS_OK;
 }
 
@@ -138,6 +137,7 @@ TCPSocketChild::RecvCallback(const nsString& aType,
 
     if (data.type() == SendableData::TArrayOfuint8_t) {
       JSContext* cx = nsContentUtils::GetSafeJSContext();
+      JSAutoRequest ar(cx);
       JS::Rooted<JS::Value> val(cx);
       JS::Rooted<JSObject*> window(cx, mWindowObj);
       bool ok = IPC::DeserializeArrayBuffer(window, data.get_ArrayOfuint8_t(), &val);
@@ -156,6 +156,13 @@ TCPSocketChild::RecvCallback(const nsString& aType,
   }
   NS_ENSURE_SUCCESS(rv, true);
   return true;
+}
+
+NS_IMETHODIMP
+TCPSocketChild::StartTLS()
+{
+  SendStartTLS();
+  return NS_OK;
 }
 
 NS_IMETHODIMP

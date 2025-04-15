@@ -18,6 +18,8 @@
 #include "nsWrapperCache.h"
 #include "nscore.h"
 
+class nsIInputStream;
+
 namespace mozilla {
 namespace dom {
 
@@ -35,7 +37,9 @@ class MediaSource MOZ_FINAL : public nsDOMEventTargetHelper
 {
 public:
   /** WebIDL Methods. */
-  static already_AddRefed<MediaSource> Constructor(const GlobalObject& aGlobal, ErrorResult& aRv);
+  static already_AddRefed<MediaSource>
+  Constructor(const GlobalObject& aGlobal,
+              ErrorResult& aRv);
 
   SourceBufferList* SourceBuffers();
   SourceBufferList* ActiveSourceBuffers();
@@ -48,7 +52,8 @@ public:
   void RemoveSourceBuffer(SourceBuffer& aSourceBuffer, ErrorResult& aRv);
 
   void EndOfStream(const Optional<MediaSourceEndOfStreamError>& aError, ErrorResult& aRv);
-  static bool IsTypeSupported(const GlobalObject& aGlobal, const nsAString& aType);
+  static bool IsTypeSupported(const GlobalObject& aGlobal,
+                              const nsAString& aType);
   /** End WebIDL Methods. */
 
   NS_DECL_ISUPPORTS_INHERITED
@@ -82,7 +87,7 @@ public:
 
   bool AppendDone() const
   {
-    return mReadyState == MediaSourceReadyState::Closed;
+    return mReadyState == MediaSourceReadyState::Closed || mReadyState == MediaSourceReadyState::Ended;
   }
 
   // Attach this MediaSource to MediaElement aElement.  Returns false if already attached.

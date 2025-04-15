@@ -4,11 +4,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 include LayersSurfaces;
-include LayerTransaction;
+include LayersMessages;
 include protocol PGrallocBuffer;
 include protocol PCompositable;
 
 include "mozilla/layers/CompositorTypes.h";
+include "mozilla/GfxMessageUtils.h";
 
 using ImageHandle;
 using mozilla::layers::TextureInfo;

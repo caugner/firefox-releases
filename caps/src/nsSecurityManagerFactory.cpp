@@ -26,7 +26,6 @@
 #include "nsIDocument.h"
 #include "jsfriendapi.h"
 #include "xpcprivate.h"
-#include "nsContentUtils.h"
 #include "nsCxPusher.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
@@ -47,7 +46,7 @@ nsSecurityNameSet::~nsSecurityNameSet()
 
 NS_IMPL_ISUPPORTS1(nsSecurityNameSet, nsIScriptExternalNameSet)
 
-static JSBool
+static bool
 netscape_security_enablePrivilege(JSContext *cx, unsigned argc, JS::Value *vp)
 {
     Telemetry::Accumulate(Telemetry::ENABLE_PRIVILEGE_EVER_CALLED, true);
@@ -67,7 +66,7 @@ NS_IMETHODIMP
 nsSecurityNameSet::InitializeNameSet(nsIScriptContext* aScriptContext)
 {
     AutoJSContext cx;
-    JS::Rooted<JSObject*> global(cx, aScriptContext->GetNativeGlobal());
+    JS::Rooted<JSObject*> global(cx, aScriptContext->GetWindowProxy());
     JSAutoCompartment ac(cx, global);
 
     /*
@@ -82,7 +81,7 @@ nsSecurityNameSet::InitializeNameSet(nsIScriptContext* aScriptContext)
             break;
         obj = proto;
     }
-    JSClass *objectClass = JS_GetClass(obj);
+    const JSClass *objectClass = JS_GetClass(obj);
 
     JS::Rooted<JS::Value> v(cx);
     if (!JS_GetProperty(cx, global, "netscape", &v))

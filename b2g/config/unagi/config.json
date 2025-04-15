@@ -11,6 +11,7 @@
         "{workdir}/sources.xml"
     ],
     "b2g_manifest": "unagi.xml",
+    "b2g_manifest_branch": "v1.2",
     "additional_source_tarballs": ["backup-unagi.tar.bz2"],
     "zip_files": [
         ["{workdir}/out/target/product/unagi/*.img", "out/target/product/unagi/"],
@@ -25,11 +26,11 @@
         "MOZILLA_OFFICIAL": "1",
         "B2GUPDATER": "1"
     },
-    "gecko_l10n_root": "http://hg.mozilla.org/l10n-central",
+    "gecko_l10n_root": "https://hg.mozilla.org/releases/l10n/mozilla-aurora",
     "gaia": {
         "l10n": {
             "vcs": "hgtool",
-            "root": "http://hg.mozilla.org/gaia-l10n"
+            "root": "https://hg.mozilla.org/releases/gaia-l10n/v1_2"
         }
     }
 }

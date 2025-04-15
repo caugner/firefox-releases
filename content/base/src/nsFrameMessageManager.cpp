@@ -33,6 +33,8 @@
 #include "mozilla/dom/StructuredCloneUtils.h"
 #include "JavaScriptChild.h"
 #include "JavaScriptParent.h"
+#include "nsDOMLists.h"
+#include "nsPrintfCString.h"
 #include <algorithm>
 
 #ifdef ANDROID
@@ -51,8 +53,8 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(nsFrameMessageManager)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsFrameMessageManager)
   uint32_t count = tmp->mListeners.Length();
   for (uint32_t i = 0; i < count; i++) {
-    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mListeners[i] mListener");
-    cb.NoteXPCOMChild(tmp->mListeners[i].mListener.get());
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mListeners[i] mStrongListener");
+    cb.NoteXPCOMChild(tmp->mListeners[i].mStrongListener.get());
   }
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChildManagers)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
@@ -246,14 +248,14 @@ nsFrameMessageManager::AddMessageListener(const nsAString& aMessage,
   uint32_t len = mListeners.Length();
   for (uint32_t i = 0; i < len; ++i) {
     if (mListeners[i].mMessage == message &&
-      mListeners[i].mListener == aListener) {
+      mListeners[i].mStrongListener == aListener) {
       return NS_OK;
     }
   }
   nsMessageListenerInfo* entry = mListeners.AppendElement();
   NS_ENSURE_TRUE(entry, NS_ERROR_OUT_OF_MEMORY);
   entry->mMessage = message;
-  entry->mListener = aListener;
+  entry->mStrongListener = aListener;
   return NS_OK;
 }
 
@@ -265,11 +267,71 @@ nsFrameMessageManager::RemoveMessageListener(const nsAString& aMessage,
   uint32_t len = mListeners.Length();
   for (uint32_t i = 0; i < len; ++i) {
     if (mListeners[i].mMessage == message &&
-      mListeners[i].mListener == aListener) {
+      mListeners[i].mStrongListener == aListener) {
       mListeners.RemoveElementAt(i);
       return NS_OK;
     }
   }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsFrameMessageManager::AddWeakMessageListener(const nsAString& aMessage,
+                                              nsIMessageListener* aListener)
+{
+  nsWeakPtr weak = do_GetWeakReference(aListener);
+  NS_ENSURE_TRUE(weak, NS_ERROR_NO_INTERFACE);
+
+#ifdef DEBUG
+  // It's technically possible that one object X could give two different
+  // nsIWeakReference*'s when you do_GetWeakReference(X).  We really don't want
+  // this to happen; it will break e.g. RemoveWeakMessageListener.  So let's
+  // check that we're not getting ourselves into that situation.
+  nsCOMPtr<nsISupports> canonical = do_QueryInterface(aListener);
+  for (uint32_t i = 0; i < mListeners.Length(); ++i) {
+    if (!mListeners[i].mWeakListener) {
+      continue;
+    }
+
+    nsCOMPtr<nsISupports> otherCanonical =
+      do_QueryReferent(mListeners[i].mWeakListener);
+    MOZ_ASSERT((canonical == otherCanonical) ==
+               (weak == mListeners[i].mWeakListener));
+  }
+#endif
+
+  nsCOMPtr<nsIAtom> message = do_GetAtom(aMessage);
+  uint32_t len = mListeners.Length();
+  for (uint32_t i = 0; i < len; ++i) {
+    if (mListeners[i].mMessage == message &&
+        mListeners[i].mWeakListener == weak) {
+      return NS_OK;
+    }
+  }
+
+  nsMessageListenerInfo* entry = mListeners.AppendElement();
+  entry->mMessage = message;
+  entry->mWeakListener = weak;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsFrameMessageManager::RemoveWeakMessageListener(const nsAString& aMessage,
+                                                 nsIMessageListener* aListener)
+{
+  nsWeakPtr weak = do_GetWeakReference(aListener);
+  NS_ENSURE_TRUE(weak, NS_OK);
+
+  nsCOMPtr<nsIAtom> message = do_GetAtom(aMessage);
+  uint32_t len = mListeners.Length();
+  for (uint32_t i = 0; i < len; ++i) {
+    if (mListeners[i].mMessage == message &&
+        mListeners[i].mWeakListener == weak) {
+      mListeners.RemoveElementAt(i);
+      return NS_OK;
+    }
+  }
+
   return NS_OK;
 }
 
@@ -316,7 +378,29 @@ nsFrameMessageManager::RemoveDelayedFrameScript(const nsAString& aURL)
   return NS_OK;
 }
 
-static JSBool
+NS_IMETHODIMP
+nsFrameMessageManager::GetDelayedFrameScripts(nsIDOMDOMStringList** aList)
+{
+  // Frame message managers may return an incomplete list because scripts
+  // that were loaded after it was connected are not added to the list.
+  if (!IsGlobal() && !IsWindowLevel()) {
+    NS_WARNING("Cannot retrieve list of pending frame scripts for frame"
+               "message managers as it may be incomplete");
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  nsRefPtr<nsDOMStringList> scripts = new nsDOMStringList();
+
+  for (uint32_t i = 0; i < mPendingScripts.Length(); ++i) {
+    scripts->Add(mPendingScripts[i]);
+  }
+
+  scripts.forget(aList);
+
+  return NS_OK;
+}
+
+static bool
 JSONCreator(const jschar* aBuf, uint32_t aLen, void* aData)
 {
   nsAString* result = static_cast<nsAString*>(aData);
@@ -401,7 +485,7 @@ nsFrameMessageManager::SendSyncMessage(const nsAString& aMessageName,
                         retval[i].Length(), &ret)) {
         return NS_ERROR_UNEXPECTED;
       }
-      NS_ENSURE_TRUE(JS_SetElement(aCx, dataArray, i, ret.address()),
+      NS_ENSURE_TRUE(JS_SetElement(aCx, dataArray, i, &ret),
                      NS_ERROR_OUT_OF_MEMORY);
     }
 
@@ -667,14 +751,30 @@ nsFrameMessageManager::ReceiveMessage(nsISupports* aTarget,
                                       InfallibleTArray<nsString>* aJSONRetVal)
 {
   AutoSafeJSContext ctx;
+
   if (mListeners.Length()) {
     nsCOMPtr<nsIAtom> name = do_GetAtom(aMessage);
     MMListenerRemover lr(this);
 
     for (uint32_t i = 0; i < mListeners.Length(); ++i) {
+      // Remove mListeners[i] if it's an expired weak listener.
+      nsCOMPtr<nsISupports> weakListener;
+      if (mListeners[i].mWeakListener) {
+        weakListener = do_QueryReferent(mListeners[i].mWeakListener);
+        if (!weakListener) {
+          mListeners.RemoveElementAt(i--);
+          continue;
+        }
+      }
+
       if (mListeners[i].mMessage == name) {
-        nsCOMPtr<nsIXPConnectWrappedJS> wrappedJS =
-          do_QueryInterface(mListeners[i].mListener);
+        nsCOMPtr<nsIXPConnectWrappedJS> wrappedJS;
+        if (weakListener) {
+          wrappedJS = do_QueryInterface(weakListener);
+        } else {
+          wrappedJS = do_QueryInterface(mListeners[i].mStrongListener);
+        }
+
         if (!wrappedJS) {
           continue;
         }
@@ -867,6 +967,169 @@ nsFrameMessageManager::Disconnect(bool aRemoveFromParent)
   }
 }
 
+namespace {
+
+struct MessageManagerReferentCount {
+  MessageManagerReferentCount() : strong(0), weakAlive(0), weakDead(0) {}
+  size_t strong;
+  size_t weakAlive;
+  size_t weakDead;
+  nsCOMArray<nsIAtom> suspectMessages;
+  nsDataHashtable<nsPtrHashKey<nsIAtom>, uint32_t> messageCounter;
+};
+
+} // anonymous namespace
+
+namespace mozilla {
+namespace dom {
+
+class MessageManagerReporter MOZ_FINAL : public nsIMemoryReporter
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIMEMORYREPORTER
+protected:
+  static const size_t kSuspectReferentCount = 300;
+  void CountReferents(nsFrameMessageManager* aMessageManager,
+                      MessageManagerReferentCount* aReferentCount);
+};
+
+NS_IMPL_ISUPPORTS1(MessageManagerReporter, nsIMemoryReporter)
+
+void
+MessageManagerReporter::CountReferents(nsFrameMessageManager* aMessageManager,
+                                       MessageManagerReferentCount* aReferentCount)
+{
+  for (uint32_t i = 0; i < aMessageManager->mListeners.Length(); i++) {
+    const nsMessageListenerInfo& listenerInfo = aMessageManager->mListeners[i];
+
+    if (listenerInfo.mWeakListener) {
+      nsCOMPtr<nsISupports> referent =
+        do_QueryReferent(listenerInfo.mWeakListener);
+      if (referent) {
+        aReferentCount->weakAlive++;
+      } else {
+        aReferentCount->weakDead++;
+      }
+    } else {
+      aReferentCount->strong++;
+    }
+
+    uint32_t oldCount = 0;
+    aReferentCount->messageCounter.Get(listenerInfo.mMessage, &oldCount);
+    uint32_t currentCount = oldCount + 1;
+    aReferentCount->messageCounter.Put(listenerInfo.mMessage, currentCount);
+
+    // Keep track of messages that have a suspiciously large
+    // number of referents (symptom of leak).
+    if (currentCount == kSuspectReferentCount) {
+      aReferentCount->suspectMessages.AppendElement(listenerInfo.mMessage);
+    }
+  }
+
+  // Add referent count in child managers because the listeners
+  // participate in messages dispatched from parent message manager.
+  for (uint32_t i = 0; i < aMessageManager->mChildManagers.Length(); i++) {
+    nsRefPtr<nsFrameMessageManager> mm =
+      static_cast<nsFrameMessageManager*>(aMessageManager->mChildManagers[i]);
+    CountReferents(mm, aReferentCount);
+  }
+}
+
+NS_IMETHODIMP
+MessageManagerReporter::GetName(nsACString& aName)
+{
+  aName.AssignLiteral("message-manager");
+  return NS_OK;
+}
+
+static nsresult
+ReportReferentCount(const char* aManagerType,
+                    const MessageManagerReferentCount& aReferentCount,
+                    nsIMemoryReporterCallback* aCb,
+                    nsISupports* aClosure)
+{
+#define REPORT(_path, _amount, _desc)                                         \
+    do {                                                                      \
+      nsresult rv;                                                            \
+      rv = aCb->Callback(EmptyCString(), _path,                               \
+                         nsIMemoryReporter::KIND_OTHER,                       \
+                         nsIMemoryReporter::UNITS_COUNT, _amount,             \
+                         _desc, aClosure);                                    \
+      NS_ENSURE_SUCCESS(rv, rv);                                              \
+    } while (0)
+
+  REPORT(nsPrintfCString("message-manager/referent/%s/strong", aManagerType),
+         aReferentCount.strong,
+         nsPrintfCString("The number of strong referents held by the message "
+                         "manager in the %s manager.", aManagerType));
+  REPORT(nsPrintfCString("message-manager/referent/%s/weak/alive", aManagerType),
+         aReferentCount.weakAlive,
+         nsPrintfCString("The number of weak referents that are still alive "
+                         "held by the message manager in the %s manager.",
+                         aManagerType));
+  REPORT(nsPrintfCString("message-manager/referent/%s/weak/dead", aManagerType),
+         aReferentCount.weakDead,
+         nsPrintfCString("The number of weak referents that are dead "
+                         "held by the message manager in the %s manager.",
+                         aManagerType));
+
+  for (uint32_t i = 0; i < aReferentCount.suspectMessages.Length(); i++) {
+    uint32_t totalReferentCount = 0;
+    aReferentCount.messageCounter.Get(aReferentCount.suspectMessages[i],
+                                      &totalReferentCount);
+    nsAtomCString suspect(aReferentCount.suspectMessages[i]);
+    REPORT(nsPrintfCString("message-manager-suspect/%s/referent(message=%s)",
+                           aManagerType, suspect.get()), totalReferentCount,
+           nsPrintfCString("A message in the %s message manager with a "
+                           "suspiciously large number of referents (symptom "
+                           "of a leak).", aManagerType));
+  }
+
+#undef REPORT
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+MessageManagerReporter::CollectReports(nsIMemoryReporterCallback* aCb,
+                                       nsISupports* aClosure)
+{
+  nsresult rv;
+
+  if (XRE_GetProcessType() == GeckoProcessType_Default) {
+    nsCOMPtr<nsIMessageBroadcaster> globalmm =
+      do_GetService("@mozilla.org/globalmessagemanager;1");
+    if (globalmm) {
+      nsRefPtr<nsFrameMessageManager> mm =
+        static_cast<nsFrameMessageManager*>(globalmm.get());
+      MessageManagerReferentCount count;
+      CountReferents(mm, &count);
+      rv = ReportReferentCount("global-manager", count, aCb, aClosure);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+  }
+
+  if (nsFrameMessageManager::sParentProcessManager) {
+    MessageManagerReferentCount count;
+    CountReferents(nsFrameMessageManager::sParentProcessManager, &count);
+    rv = ReportReferentCount("parent-process-manager", count, aCb, aClosure);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  if (nsFrameMessageManager::sChildProcessManager) {
+    MessageManagerReferentCount count;
+    CountReferents(nsFrameMessageManager::sChildProcessManager, &count);
+    rv = ReportReferentCount("child-process-manager", count, aCb, aClosure);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return NS_OK;
+}
+
+} // namespace dom
+} // namespace mozilla
+
 nsresult
 NS_NewGlobalMessageManager(nsIMessageBroadcaster** aResult)
 {
@@ -875,6 +1138,7 @@ NS_NewGlobalMessageManager(nsIMessageBroadcaster** aResult)
   nsFrameMessageManager* mm = new nsFrameMessageManager(nullptr,
                                                         nullptr,
                                                         MM_CHROME | MM_GLOBAL | MM_BROADCASTER);
+  NS_RegisterMemoryReporter(new MessageManagerReporter());
   return CallQueryInterface(mm, aResult);
 }
 
@@ -889,7 +1153,6 @@ nsFrameScriptExecutor::DidCreateGlobal()
   if (!sCachedScripts) {
     sCachedScripts =
       new nsDataHashtable<nsStringHashKey, nsFrameJSScriptExecutorHolder*>;
-    sCachedScripts->Init();
 
     nsRefPtr<nsScriptCacheCleaner> scriptCacheCleaner =
       new nsScriptCacheCleaner();
@@ -1392,6 +1655,7 @@ NS_NewChildProcessMessageManager(nsISyncMessageSender** aResult)
     cb = new SameChildProcessMessageManagerCallback();
   } else {
     cb = new ChildProcessMessageManagerCallback();
+    NS_RegisterMemoryReporter(new MessageManagerReporter());
   }
   nsFrameMessageManager* mm = new nsFrameMessageManager(cb,
                                                         nullptr,
@@ -1405,7 +1669,9 @@ nsFrameMessageManager::MarkForCC()
 {
   uint32_t len = mListeners.Length();
   for (uint32_t i = 0; i < len; ++i) {
-    xpc_TryUnmarkWrappedGrayObject(mListeners[i].mListener);
+    if (mListeners[i].mStrongListener) {
+      xpc_TryUnmarkWrappedGrayObject(mListeners[i].mStrongListener);
+    }
   }
   if (mRefCnt.IsPurple()) {
     mRefCnt.RemovePurple();

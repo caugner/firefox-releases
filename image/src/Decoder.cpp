@@ -5,10 +5,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "Decoder.h"
-#include "nsIServiceManager.h"
 #include "nsIConsoleService.h"
 #include "nsIScriptError.h"
 #include "GeckoProfiler.h"
+#include "nsServiceManagerUtils.h"
+#include "nsComponentManagerUtils.h"
 
 namespace mozilla {
 namespace image {
@@ -266,7 +267,12 @@ Decoder::FlushInvalidations()
 void
 Decoder::SetSizeOnImage()
 {
-  mImage.SetSize(mImageMetadata.GetWidth(), mImageMetadata.GetHeight());
+  MOZ_ASSERT(mImageMetadata.HasSize(), "Should have size");
+  MOZ_ASSERT(mImageMetadata.HasOrientation(), "Should have orientation");
+
+  mImage.SetSize(mImageMetadata.GetWidth(),
+                 mImageMetadata.GetHeight(),
+                 mImageMetadata.GetOrientation());
 }
 
 /*
@@ -282,14 +288,16 @@ void Decoder::FinishInternal() { }
  */
 
 void
-Decoder::PostSize(int32_t aWidth, int32_t aHeight)
+Decoder::PostSize(int32_t aWidth,
+                  int32_t aHeight,
+                  Orientation aOrientation /* = Orientation()*/)
 {
   // Validate
   NS_ABORT_IF_FALSE(aWidth >= 0, "Width can't be negative!");
   NS_ABORT_IF_FALSE(aHeight >= 0, "Height can't be negative!");
 
   // Tell the image
-  mImageMetadata.SetSize(aWidth, aHeight);
+  mImageMetadata.SetSize(aWidth, aHeight, aOrientation);
 
   // Notify the observer
   if (mObserver)
@@ -343,6 +351,7 @@ Decoder::PostFrameStop(FrameBlender::FrameAlpha aFrameAlpha /* = FrameBlender::k
   mCurrentFrame->SetFrameDisposalMethod(aDisposalMethod);
   mCurrentFrame->SetTimeout(aTimeout);
   mCurrentFrame->SetBlendMethod(aBlendMethod);
+  mCurrentFrame->ImageUpdated(mCurrentFrame->GetRect());
 
   // Flush any invalidations before we finish the frame
   FlushInvalidations();

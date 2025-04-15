@@ -12,6 +12,7 @@ EXPORTS += [
     'ScrollbarActivity.h',
     'Selection.h',
     'nsCanvasFrame.h',
+    'nsDirection.h',
     'nsFrameIdList.h',
     'nsFrameList.h',
     'nsFrameSelection.h',
@@ -44,6 +45,7 @@ EXPORTS.mozilla.layout += [
 CPP_SOURCES += [
     'FrameChildList.cpp',
     'ScrollbarActivity.cpp',
+    'StickyScrollContainer.cpp',
     'TextOverflow.cpp',
     'nsAbsoluteContainingBlock.cpp',
     'nsBRFrame.cpp',
@@ -92,3 +94,12 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
     CMMSRCS += [
         'nsPluginUtilsOSX.mm',
     ]
+
+FAIL_ON_WARNINGS = not CONFIG['_MSC_VER']
+
+LIBXUL_LIBRARY = True
+
+MSVC_ENABLE_PGO = True
+
+LIBRARY_NAME = 'gkgeneric_s'
+

@@ -4,19 +4,33 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/layers/CanvasClient.h"
-#include "mozilla/layers/TextureClient.h"
-#include "ClientCanvasLayer.h"
-#include "mozilla/layers/ShadowLayers.h"
-#include "SharedTextureImage.h"
-#include "nsXULAppAPI.h"
-#include "GLContext.h"
-#include "SurfaceStream.h"
-#include "SharedSurface.h"
+#include "ClientCanvasLayer.h"          // for ClientCanvasLayer
+#include "GLContext.h"                  // for GLContext
+#include "GLScreenBuffer.h"             // for GLScreenBuffer
+#include "Layers.h"                     // for Layer, etc
+#include "SurfaceStream.h"              // for SurfaceStream
+#include "SurfaceTypes.h"               // for SurfaceStreamHandle
+#include "gfx2DGlue.h"                  // for ImageFormatToSurfaceFormat
+#include "gfxASurface.h"                // for gfxASurface, etc
+#include "gfxPlatform.h"                // for gfxPlatform
+#include "mozilla/gfx/BaseSize.h"       // for BaseSize
+#include "mozilla/layers/CompositableForwarder.h"
+#include "mozilla/layers/LayersTypes.h"
+#include "mozilla/layers/TextureClient.h"  // for TextureClient, etc
+#include "nsAutoPtr.h"                  // for nsRefPtr
+#include "nsDebug.h"                    // for printf_stderr, NS_ASSERTION
+#include "nsXULAppAPI.h"                // for XRE_GetProcessType, etc
 #ifdef MOZ_WIDGET_GONK
 #include "SharedSurfaceGralloc.h"
 #endif
 
 using namespace mozilla::gl;
+
+namespace mozilla {
+namespace gfx {
+class SharedSurface;
+}
+}
 
 namespace mozilla {
 namespace layers {
@@ -47,6 +61,7 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
     mBuffer = nullptr;
   }
 
+  bool bufferCreated = false;
   if (!mBuffer) {
     bool isOpaque = (aLayer->GetContentFlags() & Layer::CONTENT_OPAQUE);
     gfxASurface::gfxContentType contentType = isOpaque
@@ -58,7 +73,7 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
     MOZ_ASSERT(mBuffer->AsTextureClientSurface());
     mBuffer->AsTextureClientSurface()->AllocateForSurface(aSize);
 
-    AddTextureClient(mBuffer);
+    bufferCreated = true;
   }
 
   if (!mBuffer->Lock(OPEN_READ_WRITE)) {
@@ -71,6 +86,10 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
   }
 
   mBuffer->Unlock();
+
+  if (bufferCreated) {
+    AddTextureClient(mBuffer);
+  }
 
   if (surface) {
     GetForwarder()->UpdatedTexture(this, mBuffer, nullptr);
@@ -104,14 +123,32 @@ DeprecatedCanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 {
   if (!mDeprecatedTextureClient) {
     mDeprecatedTextureClient = CreateDeprecatedTextureClient(TEXTURE_CONTENT);
-    MOZ_ASSERT(mDeprecatedTextureClient, "Failed to create texture client");
+    if (!mDeprecatedTextureClient) {
+      mDeprecatedTextureClient = CreateDeprecatedTextureClient(TEXTURE_FALLBACK);
+      if (!mDeprecatedTextureClient) {
+        NS_WARNING("Could not create texture client");
+        return;
+      }
+    }
   }
 
   bool isOpaque = (aLayer->GetContentFlags() & Layer::CONTENT_OPAQUE);
   gfxASurface::gfxContentType contentType = isOpaque
                                               ? gfxASurface::CONTENT_COLOR
                                               : gfxASurface::CONTENT_COLOR_ALPHA;
-  mDeprecatedTextureClient->EnsureAllocated(aSize, contentType);
+
+  if (!mDeprecatedTextureClient->EnsureAllocated(aSize, contentType)) {
+    // We might already be on the fallback texture client if we couldn't create a
+    // better one above. In which case this call to create is wasted. But I don't
+    // think this will happen often enough to be worth complicating the code with
+    // further checks.
+    mDeprecatedTextureClient = CreateDeprecatedTextureClient(TEXTURE_FALLBACK);
+    MOZ_ASSERT(mDeprecatedTextureClient, "Failed to create texture client");
+    if (!mDeprecatedTextureClient->EnsureAllocated(aSize, contentType)) {
+      NS_WARNING("Could not allocate texture client");
+      return;
+    }
+  }
 
   gfxASurface* surface = mDeprecatedTextureClient->LockSurface();
   aLayer->UpdateSurface(surface);

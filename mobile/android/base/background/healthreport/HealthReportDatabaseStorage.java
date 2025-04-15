@@ -12,6 +12,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
 import org.json.JSONObject;
+import org.mozilla.gecko.background.common.DateUtils;
 import org.mozilla.gecko.background.common.log.Logger;
 import org.mozilla.gecko.background.healthreport.HealthReportStorage.MeasurementFields.FieldSpec;
 
@@ -20,6 +21,7 @@ import android.content.Context;
 import android.content.ContextWrapper;
 import android.database.Cursor;
 import android.database.SQLException;
+import android.database.sqlite.SQLiteConstraintException;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.os.Build;
@@ -126,7 +128,7 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
   };
 
   private static final String[] COLUMNS_ENVIRONMENT_DETAILS = new String[] {
-      "id", "hash",
+      "id", "version", "hash",
       "profileCreation", "cpuCount", "memoryMB",
 
       "isBlocklistEnabled", "isTelemetryEnabled", "extensionCount",
@@ -135,6 +137,8 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
       "architecture", "sysName", "sysVersion", "vendor", "appName", "appID",
       "appVersion", "appBuildID", "platformVersion", "platformBuildID", "os",
       "xpcomabi", "updateChannel",
+
+      "distribution", "osLocale", "appLocale", "acceptLangSet",
 
       // Joined to the add-ons table.
       "addonsBody"
@@ -186,7 +190,7 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
   protected final HealthReportSQLiteOpenHelper helper;
 
   public static class HealthReportSQLiteOpenHelper extends SQLiteOpenHelper {
-    public static final int CURRENT_VERSION = 4;
+    public static final int CURRENT_VERSION = 6;
     public static final String LOG_TAG = "HealthReportSQL";
 
     /**
@@ -227,11 +231,16 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
 
     public static boolean CAN_USE_ABSOLUTE_DB_PATH = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.FROYO);
     public HealthReportSQLiteOpenHelper(Context context, File profileDirectory, String name) {
+      this(context, profileDirectory, name, CURRENT_VERSION);
+    }
+
+    // For testing DBs of different versions.
+    public HealthReportSQLiteOpenHelper(Context context, File profileDirectory, String name, int version) {
       super(
           (CAN_USE_ABSOLUTE_DB_PATH ? context : new AbsolutePathContext(context, profileDirectory)),
           (CAN_USE_ABSOLUTE_DB_PATH ? getAbsolutePath(profileDirectory, name) : name),
           null,
-          CURRENT_VERSION);
+          version);
 
       if (CAN_USE_ABSOLUTE_DB_PATH) {
         Logger.pii(LOG_TAG, "Opening: " + getAbsolutePath(profileDirectory, name));
@@ -247,7 +256,10 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
                    "                     UNIQUE (body) " +
                    ")");
 
+        // N.B., hash collisions can occur across versions. In that case, the system
+        // is likely to persist the original environment version.
         db.execSQL("CREATE TABLE environments (id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                   "                           version INTEGER, " +
                    "                           hash TEXT, " +
                    "                           profileCreation INTEGER, " +
                    "                           cpuCount        INTEGER, " +
@@ -270,6 +282,12 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
                    "                           os              TEXT, " +
                    "                           xpcomabi        TEXT, " +
                    "                           updateChannel   TEXT, " +
+  
+                   "                           distribution    TEXT, " +
+                   "                           osLocale        TEXT, " +
+                   "                           appLocale       TEXT, " +
+                   "                           acceptLangSet   INTEGER, " +
+  
                    "                           addonsID        INTEGER, " +
                    "                           FOREIGN KEY (addonsID) REFERENCES addons(id) ON DELETE RESTRICT, " +
                    "                           UNIQUE (hash) " +
@@ -347,9 +365,17 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
       }
     }
 
+    @Override
+    public void onOpen(SQLiteDatabase db) {
+      if (!db.isReadOnly()) {
+        db.execSQL("PRAGMA foreign_keys=ON;");
+      }
+    }
+
     private void createAddonsEnvironmentsView(SQLiteDatabase db) {
       db.execSQL("CREATE VIEW environments_with_addons AS " +
           "SELECT e.id AS id, " +
+          "       e.version AS version, " +
           "       e.hash AS hash, " +
           "       e.profileCreation AS profileCreation, " +
           "       e.cpuCount AS cpuCount, " +
@@ -372,6 +398,10 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
           "       e.os AS os, " +
           "       e.xpcomabi AS xpcomabi, " +
           "       e.updateChannel AS updateChannel, " +
+          "       e.distribution AS distribution, " +
+          "       e.osLocale AS osLocale, " +
+          "       e.appLocale AS appLocale, " +
+          "       e.acceptLangSet AS acceptLangSet, " +
           "       addons.body AS addonsBody " +
           "FROM environments AS e, addons " +
           "WHERE e.addonsID = addons.id");
@@ -394,6 +424,38 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
                  " WHERE measurement IN (SELECT id FROM measurements WHERE name = 'org.mozilla.searches.counts')");
     }
 
+    private void upgradeDatabaseFrom4to5(SQLiteDatabase db) {
+      // Delete NULL in addons.body, which appeared as a result of Bug 886156. Note that the
+      // foreign key constraint, "ON DELETE RESTRICT", may be violated, but since onOpen() is
+      // called after this method, foreign keys are not yet enabled and constraints can be broken.
+      db.delete("addons", "body IS NULL", null);
+
+      // Purge any data inconsistent with foreign key references (which may have appeared before
+      // foreign keys were enabled in Bug 900289).
+      db.delete("fields", "measurement NOT IN (SELECT id FROM measurements)", null);
+      db.delete("environments", "addonsID NOT IN (SELECT id from addons)", null);
+      db.delete(EVENTS_INTEGER, "env NOT IN (SELECT id FROM environments)", null);
+      db.delete(EVENTS_TEXTUAL, "env NOT IN (SELECT id FROM environments)", null);
+      db.delete(EVENTS_INTEGER, "field NOT IN (SELECT id FROM fields)", null);
+      db.delete(EVENTS_TEXTUAL, "field NOT IN (SELECT id FROM fields)", null);
+    }
+
+    private void upgradeDatabaseFrom5to6(SQLiteDatabase db) {
+      db.execSQL("DROP VIEW environments_with_addons");
+
+      // Add version to environment (default to 1).
+      db.execSQL("ALTER TABLE environments ADD COLUMN version INTEGER DEFAULT 1");
+
+      // Add fields to environment (default to empty string).
+      db.execSQL("ALTER TABLE environments ADD COLUMN distribution TEXT DEFAULT ''");
+      db.execSQL("ALTER TABLE environments ADD COLUMN osLocale TEXT DEFAULT ''");
+      db.execSQL("ALTER TABLE environments ADD COLUMN appLocale TEXT DEFAULT ''");
+      db.execSQL("ALTER TABLE environments ADD COLUMN acceptLangSet INTEGER DEFAULT 0");
+
+      // Recreate view.
+      createAddonsEnvironmentsView(db);
+    }
+
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
       if (oldVersion >= newVersion) {
@@ -408,6 +470,10 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
           upgradeDatabaseFrom2To3(db);
         case 3:
           upgradeDatabaseFrom3To4(db);
+        case 4:
+          upgradeDatabaseFrom4to5(db);
+        case 5:
+          upgradeDatabaseFrom5to6(db);
         }
         db.setTransactionSuccessful();
       } catch (Exception e) {
@@ -515,6 +581,7 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
 
       // Otherwise, add data and hash to the DB.
       ContentValues v = new ContentValues();
+      v.put("version", version);
       v.put("hash", h);
       v.put("profileCreation", profileCreation);
       v.put("cpuCount", cpuCount);
@@ -537,6 +604,10 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
       v.put("os", os);
       v.put("xpcomabi", xpcomabi);
       v.put("updateChannel", updateChannel);
+      v.put("distribution", distribution);
+      v.put("osLocale", osLocale);
+      v.put("appLocale", appLocale);
+      v.put("acceptLangSet", acceptLangSet);
 
       final SQLiteDatabase db = storage.helper.getWritableDatabase();
 
@@ -622,6 +693,7 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
     }
 
     public void init(ContentValues v) {
+      version         = v.containsKey("version") ? v.getAsInteger("version") : Environment.CURRENT_VERSION;
       profileCreation = v.getAsInteger("profileCreation");
       cpuCount        = v.getAsInteger("cpuCount");
       memoryMB        = v.getAsInteger("memoryMB");
@@ -646,6 +718,11 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
       xpcomabi        = v.getAsString("xpcomabi");
       updateChannel   = v.getAsString("updateChannel");
 
+      distribution    = v.getAsString("distribution");
+      osLocale        = v.getAsString("osLocale");
+      appLocale       = v.getAsString("appLocale");
+      acceptLangSet   = v.getAsInteger("acceptLangSet");
+
       try {
         setJSONForAddons(v.getAsString("addonsBody"));
       } catch (Exception e) {
@@ -665,6 +742,7 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
     public boolean init(Cursor cursor) {
       int i = 0;
       this.id         = cursor.getInt(i++);
+      this.version    = cursor.getInt(i++);
       this.hash       = cursor.getString(i++);
 
       profileCreation = cursor.getInt(i++);
@@ -690,6 +768,11 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
       os              = cursor.getString(i++);
       xpcomabi        = cursor.getString(i++);
       updateChannel   = cursor.getString(i++);
+
+      distribution    = cursor.getString(i++);
+      osLocale        = cursor.getString(i++);
+      appLocale       = cursor.getString(i++);
+      acceptLangSet   = cursor.getInt(i++);
 
       try {
         setJSONForAddons(cursor.getBlob(i++));
@@ -998,7 +1081,7 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
 
   @Override
   public int getDay(long time) {
-    return HealthReportUtils.getDay(time);
+    return DateUtils.getDay(time);
   }
 
   @Override
@@ -1031,7 +1114,11 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
       v.put("env", env);
       v.put("field", field);
       v.put("date", day);
-      db.insert(table, null, v);
+      try {
+        db.insertOrThrow(table, null, v);
+      } catch (SQLiteConstraintException e) {
+        throw new IllegalStateException("Event did not reference existing an environment or field.", e);
+      }
     }
   }
 
@@ -1063,7 +1150,11 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
 
     final SQLiteDatabase db = this.helper.getWritableDatabase();
     putValue(v, value);
-    db.insert(table, null, v);
+    try {
+      db.insertOrThrow(table, null, v);
+    } catch (SQLiteConstraintException e) {
+      throw new IllegalStateException("Event did not reference existing an environment or field.", e);
+    }
   }
 
   @Override
@@ -1133,7 +1224,11 @@ public class HealthReportDatabaseStorage implements HealthReportStorage {
       v.put("value", by);
       v.put("field", field);
       v.put("date", day);
-      db.insert(EVENTS_INTEGER, null, v);
+      try {
+        db.insertOrThrow(EVENTS_INTEGER, null, v);
+      } catch (SQLiteConstraintException e) {
+        throw new IllegalStateException("Event did not reference existing an environment or field.", e);
+      }
     }
   }
 

@@ -126,10 +126,10 @@ nsDOMMouseEvent::InitMouseEvent(const nsAString& aType,
 
   nsresult rv = InitMouseEvent(aType, aCanBubble, aCancelable, aView,
                                aDetail, aScreenX, aScreenY, aClientX, aClientY,
-                               (modifiers & widget::MODIFIER_CONTROL) != 0,
-                               (modifiers & widget::MODIFIER_ALT) != 0,
-                               (modifiers & widget::MODIFIER_SHIFT) != 0,
-                               (modifiers & widget::MODIFIER_META) != 0,
+                               (modifiers & MODIFIER_CONTROL) != 0,
+                               (modifiers & MODIFIER_ALT) != 0,
+                               (modifiers & MODIFIER_SHIFT) != 0,
+                               (modifiers & MODIFIER_META) != 0,
                                aButton, aRelatedTarget);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -152,7 +152,7 @@ nsDOMMouseEvent::Constructor(const mozilla::dom::GlobalObject& aGlobal,
                              const mozilla::dom::MouseEventInit& aParam,
                              mozilla::ErrorResult& aRv)
 {
-  nsCOMPtr<mozilla::dom::EventTarget> t = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<mozilla::dom::EventTarget> t = do_QueryInterface(aGlobal.GetAsSupports());
   nsRefPtr<nsDOMMouseEvent> e = new nsDOMMouseEvent(t, nullptr, nullptr);
   bool trusted = e->Init(t);
   e->InitMouseEvent(aType, aParam.mBubbles, aParam.mCancelable,

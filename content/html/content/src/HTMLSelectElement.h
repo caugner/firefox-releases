@@ -18,7 +18,9 @@
 #include "nsError.h"
 #include "mozilla/dom/HTMLFormElement.h"
 
+class nsContentList;
 class nsIDOMHTMLOptionElement;
+class nsIHTMLCollection;
 class nsISelectControlFrame;
 class nsPresState;
 
@@ -119,15 +121,6 @@ public:
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
 
-  // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-
-  // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-
-  // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
-
   virtual int32_t TabIndexDefault() MOZ_OVERRIDE;
 
   // nsIDOMHTMLSelectElement
@@ -216,6 +209,11 @@ public:
   {
     mOptions->IndexedSetter(aIndex, aOption, aRv);
   }
+
+  static bool MatchSelectedOptions(nsIContent* aContent, int32_t, nsIAtom*,
+                                   void*);
+
+  nsIHTMLCollection* SelectedOptions();
 
   int32_t SelectedIndex() const
   {
@@ -375,8 +373,6 @@ public:
   {
     return mOptions;
   }
-
-  virtual nsIDOMNode* AsDOMNode() MOZ_OVERRIDE { return this; }
 
   // nsIConstraintValidation
   nsresult GetValidationMessage(nsAString& aValidationMessage,
@@ -565,6 +561,12 @@ protected:
   void SetSelectionChanged(bool aValue, bool aNotify);
 
   /**
+   * Marks the selectedOptions list as dirty, so that it'll populate itself
+   * again.
+   */
+  void UpdateSelectedOptions();
+
+  /**
    * Return whether an element should have a validity UI.
    * (with :-moz-ui-invalid and :-moz-ui-valid pseudo-classes).
    *
@@ -629,6 +631,11 @@ protected:
    * done adding options
    */
   nsCOMPtr<SelectState> mRestoreState;
+
+  /**
+   * The live list of selected options.
+  */
+  nsRefPtr<nsContentList> mSelectedOptions;
 };
 
 } // namespace dom

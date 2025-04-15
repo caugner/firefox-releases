@@ -68,12 +68,20 @@ using namespace mozilla::ipc::windows;
  * these in-calls are blocked.
  */
 
-// pulled from widget's nsAppShell
-extern const PRUnichar* kAppShellEventId;
 #if defined(ACCESSIBILITY)
 // pulled from accessibility's win utils
 extern const PRUnichar* kPropNameTabContent;
 #endif
+
+// widget related message id constants we need to defer
+namespace mozilla {
+namespace widget {
+extern UINT sAppShellGeckoMsgId;
+#ifdef MOZ_METRO
+extern UINT sDefaultBrowserMsgId;
+#endif
+}
+}
 
 namespace {
 
@@ -90,11 +98,10 @@ nsTArray<HWND>* gNeuteredWindows = nullptr;
 typedef nsTArray<nsAutoPtr<DeferredMessage> > DeferredMessageArray;
 DeferredMessageArray* gDeferredMessages = nullptr;
 
-HHOOK gDeferredGetMsgHook = NULL;
-HHOOK gDeferredCallWndProcHook = NULL;
+HHOOK gDeferredGetMsgHook = nullptr;
+HHOOK gDeferredCallWndProcHook = nullptr;
 
 DWORD gUIThreadId = 0;
-static UINT sAppShellGeckoMsgId;
 
 LRESULT CALLBACK
 DeferredMessageHook(int nCode,
@@ -134,7 +141,7 @@ DeferredMessageHook(int nCode,
   }
 
   // Always call the next hook.
-  return CallNextHookEx(NULL, nCode, wParam, lParam);
+  return CallNextHookEx(nullptr, nCode, wParam, lParam);
 }
 
 void
@@ -145,9 +152,9 @@ ScheduleDeferredMessageRun()
     NS_ASSERTION(gDeferredMessages->Length(), "No deferred messages?!");
 
     gDeferredGetMsgHook = ::SetWindowsHookEx(WH_GETMESSAGE, DeferredMessageHook,
-                                             NULL, gUIThreadId);
+                                             nullptr, gUIThreadId);
     gDeferredCallWndProcHook = ::SetWindowsHookEx(WH_CALLWNDPROC,
-                                                  DeferredMessageHook, NULL,
+                                                  DeferredMessageHook, nullptr,
                                                   gUIThreadId);
     NS_ASSERTION(gDeferredGetMsgHook && gDeferredCallWndProcHook,
                  "Failed to set hooks!");
@@ -274,9 +281,14 @@ ProcessOrDeferMessage(HWND hwnd,
       return 0;
 
     default: {
-      if (uMsg && uMsg == sAppShellGeckoMsgId) {
+      if (uMsg && uMsg == mozilla::widget::sAppShellGeckoMsgId) {
         // Widget's registered native event callback
         deferred = new DeferredSendMessage(hwnd, uMsg, wParam, lParam);
+#ifdef MOZ_METRO
+      } else if (uMsg && uMsg == mozilla::widget::sDefaultBrowserMsgId) {
+        // Metro widget's system shutdown message
+        deferred = new DeferredSendMessage(hwnd, uMsg, wParam, lParam);
+#endif
       } else {
         // Unknown messages only
 #ifdef DEBUG
@@ -369,6 +381,13 @@ WindowIsDeferredWindow(HWND hWnd)
     return true;
   }
 
+#ifdef MOZ_METRO
+  // immersive UI ICoreWindow
+  if (className.EqualsLiteral("Windows.UI.Core.CoreWindow")) {
+    return true;
+  }
+#endif
+
   // Plugin windows that can trigger ipc calls in child:
   // 'ShockwaveFlashFullScreen' - flash fullscreen window
   // 'AGFullScreenWinClass' - silverlight fullscreen window
@@ -425,9 +444,9 @@ NeuterWindowProcedure(HWND hWnd)
 
   NS_ASSERTION(!GetProp(hWnd, kOldWndProcProp), "This should always be null!");
 
-  // It's possible to get NULL out of SetWindowLongPtr, and the only way to know
-  // if that's a valid old value is to use GetLastError. Clear the error here so
-  // we can tell.
+  // It's possible to get nullptr out of SetWindowLongPtr, and the only way to
+  // know if that's a valid old value is to use GetLastError. Clear the error
+  // here so we can tell.
   SetLastError(ERROR_SUCCESS);
 
   LONG_PTR currentWndProc =
@@ -489,7 +508,7 @@ CallWindowProcedureHook(int nCode,
       }
     }
   }
-  return CallNextHookEx(NULL, nCode, wParam, lParam);
+  return CallNextHookEx(nullptr, nCode, wParam, lParam);
 }
 
 inline void
@@ -525,7 +544,6 @@ Init()
   NS_ASSERTION(gUIThreadId, "ThreadId should not be 0!");
   NS_ASSERTION(gUIThreadId == GetCurrentThreadId(),
                "Running on different threads!");
-  sAppShellGeckoMsgId = RegisterWindowMessageW(kAppShellEventId);
 }
 
 // This timeout stuff assumes a sane value of mTimeoutMs (less than the overflow
@@ -600,7 +618,7 @@ RPCChannel::SyncStackFrame::~SyncStackFrame()
   if (!mStaticPrev) {
     NS_ASSERTION(gNeuteredWindows, "Bad pointer!");
     delete gNeuteredWindows;
-    gNeuteredWindows = NULL;
+    gNeuteredWindows = nullptr;
   }
 }
 
@@ -669,7 +687,7 @@ RPCChannel::SpinInternalEventLoop()
     }
 
     // Retrieve window or thread messages
-    if (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+    if (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
       // The child UI should have been destroyed before the app is closed, in
       // which case, we should never get this here.
       if (msg.message == WM_QUIT) {
@@ -719,7 +737,7 @@ SyncChannel::WaitForNotify()
 
     // We only do this to ensure that we won't get stuck in
     // MsgWaitForMultipleObjects below.
-    timerId = SetTimer(NULL, 0, mTimeoutMs, NULL);
+    timerId = SetTimer(nullptr, 0, mTimeoutMs, nullptr);
     NS_ASSERTION(timerId, "SetTimer failed!");
   }
 
@@ -729,7 +747,7 @@ SyncChannel::WaitForNotify()
 
   SyncChannel::SetIsPumpingMessages(true);
   HHOOK windowHook = SetWindowsHookEx(WH_CALLWNDPROC, CallWindowProcedureHook,
-                                      NULL, gUIThreadId);
+                                      nullptr, gUIThreadId);
   NS_ASSERTION(windowHook, "Failed to set hook!");
 
   {
@@ -788,7 +806,7 @@ SyncChannel::WaitForNotify()
       // have woken up for a message designated for a window in another thread.
       // If we loop immediately then we could enter a tight loop, so we'll give
       // up our time slice here to let the child process its message.
-      if (!PeekMessageW(&msg, NULL, 0, 0, PM_NOREMOVE) &&
+      if (!PeekMessageW(&msg, nullptr, 0, 0, PM_NOREMOVE) &&
           !haveSentMessagesPending) {
         // Message was for child, we should wait a bit.
         SwitchToThread();
@@ -810,7 +828,7 @@ SyncChannel::WaitForNotify()
   ScheduleDeferredMessageRun();
 
   if (timerId) {
-    KillTimer(NULL, timerId);
+    KillTimer(nullptr, timerId);
   }
 
   SyncChannel::SetIsPumpingMessages(false);
@@ -844,8 +862,8 @@ RPCChannel::WaitForNotify()
   // windowHook is used as a flag variable for the loop below: if it is set
   // and we start to spin a nested event loop, we need to clear the hook and
   // process deferred/pending messages.
-  // If windowHook is NULL, SyncChannel::IsPumpingMessages should be false.
-  HHOOK windowHook = NULL;
+  // If windowHook is nullptr, SyncChannel::IsPumpingMessages should be false.
+  HHOOK windowHook = nullptr;
 
   while (1) {
     NS_ASSERTION((!!windowHook) == SyncChannel::IsPumpingMessages(),
@@ -854,10 +872,10 @@ RPCChannel::WaitForNotify()
     if (mTopFrame->mSpinNestedEvents) {
       if (windowHook) {
         UnhookWindowsHookEx(windowHook);
-        windowHook = NULL;
+        windowHook = nullptr;
 
         if (timerId) {
-          KillTimer(NULL, timerId);
+          KillTimer(nullptr, timerId);
           timerId = 0;
         }
 
@@ -881,14 +899,14 @@ RPCChannel::WaitForNotify()
     if (!windowHook) {
       SyncChannel::SetIsPumpingMessages(true);
       windowHook = SetWindowsHookEx(WH_CALLWNDPROC, CallWindowProcedureHook,
-                                    NULL, gUIThreadId);
+                                    nullptr, gUIThreadId);
       NS_ASSERTION(windowHook, "Failed to set hook!");
 
       NS_ASSERTION(!timerId, "Timer already initialized?");
 
       if (mTimeoutMs != kNoTimeout) {
         InitTimeoutData(&timeoutData, mTimeoutMs);
-        timerId = SetTimer(NULL, 0, mTimeoutMs, NULL);
+        timerId = SetTimer(nullptr, 0, mTimeoutMs, nullptr);
         NS_ASSERTION(timerId, "SetTimer failed!");
       }
     }
@@ -927,7 +945,7 @@ RPCChannel::WaitForNotify()
 
     // PeekMessage markes the messages as "old" so that they don't wake up
     // MsgWaitForMultipleObjects every time.
-    if (!PeekMessageW(&msg, NULL, 0, 0, PM_NOREMOVE) &&
+    if (!PeekMessageW(&msg, nullptr, 0, 0, PM_NOREMOVE) &&
         !haveSentMessagesPending) {
       // Message was for child, we should wait a bit.
       SwitchToThread();
@@ -949,7 +967,7 @@ RPCChannel::WaitForNotify()
     ScheduleDeferredMessageRun();
 
     if (timerId) {
-      KillTimer(NULL, timerId);
+      KillTimer(nullptr, timerId);
     }
   }
 
@@ -999,7 +1017,7 @@ DeferredRedrawMessage::Run()
 #ifdef DEBUG
   BOOL ret =
 #endif
-  RedrawWindow(hWnd, NULL, NULL, flags);
+  RedrawWindow(hWnd, nullptr, nullptr, flags);
   NS_ASSERTION(ret, "RedrawWindow failed!");
 }
 
@@ -1042,7 +1060,7 @@ DeferredSettingChangeMessage::DeferredSettingChangeMessage(HWND aHWnd,
     lParam = reinterpret_cast<LPARAM>(lParamString);
   }
   else {
-    lParamString = NULL;
+    lParamString = nullptr;
     lParam = 0;
   }
 }
@@ -1067,7 +1085,7 @@ DeferredWindowPosMessage::DeferredWindowPosMessage(HWND aHWnd,
     else {
       RECT* arg = reinterpret_cast<RECT*>(aLParam);
       windowPos.hwnd = aHWnd;
-      windowPos.hwndInsertAfter = NULL;
+      windowPos.hwndInsertAfter = nullptr;
       windowPos.x = arg->left;
       windowPos.y = arg->top;
       windowPos.cx = arg->right - arg->left;
@@ -1145,7 +1163,7 @@ DeferredCopyDataMessage::DeferredCopyDataMessage(HWND aHWnd,
     }
   }
   else {
-    copyData.lpData = NULL;
+    copyData.lpData = nullptr;
   }
 
   lParam = reinterpret_cast<LPARAM>(&copyData);

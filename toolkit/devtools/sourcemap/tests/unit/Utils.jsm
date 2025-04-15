@@ -127,6 +127,14 @@ define('test/source-map/util', ['require', 'exports', 'module' ,  'lib/source-ma
     sourceRoot: '/the/root',
     mappings: 'CAAC,IAAI,IAAM,SAAUA,GAClB,OAAOC,IAAID;CCDb,IAAI,IAAM,SAAUE,GAClB,OAAOA'
   };
+  exports.emptyMap = {
+    version: 3,
+    file: 'min.js',
+    names: [],
+    sources: [],
+    mappings: ''
+  };
+
 
   function assertMapping(generatedLine, generatedColumn, originalSource,
                          originalLine, originalColumn, name, map, assert,
@@ -251,6 +259,7 @@ define('lib/source-map/util', ['require', 'exports', 'module' , ], function(requ
   exports.getArg = getArg;
 
   var urlRegexp = /([\w+\-.]+):\/\/((\w+:\w+)@)?([\w.]+)?(:(\d+))?(\S+)?/;
+  var dataUrlRegexp = /^data:.+\,.+/;
 
   function urlParse(aUrl) {
     var match = aUrl.match(urlRegexp);
@@ -288,7 +297,7 @@ define('lib/source-map/util', ['require', 'exports', 'module' , ], function(requ
   function join(aRoot, aPath) {
     var url;
 
-    if (aPath.match(urlRegexp)) {
+    if (aPath.match(urlRegexp) || aPath.match(dataUrlRegexp)) {
       return aPath;
     }
 

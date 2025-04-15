@@ -7,6 +7,7 @@
 #define nsGUIEventIPC_h__
 
 #include "ipc/IPCMessageUtils.h"
+#include "mozilla/GfxMessageUtils.h"
 #include "mozilla/dom/Touch.h"
 #include "nsGUIEvent.h"
 
@@ -14,9 +15,9 @@ namespace IPC
 {
 
 template<>
-struct ParamTraits<mozilla::widget::BaseEventFlags>
+struct ParamTraits<mozilla::BaseEventFlags>
 {
-  typedef mozilla::widget::BaseEventFlags paramType;
+  typedef mozilla::BaseEventFlags paramType;
 
   static void Write(Message* aMsg, const paramType& aParam)
   {
@@ -120,9 +121,9 @@ struct ParamTraits<nsMouseEvent_base>
 };
 
 template<>
-struct ParamTraits<mozilla::widget::WheelEvent>
+struct ParamTraits<mozilla::WheelEvent>
 {
-  typedef mozilla::widget::WheelEvent paramType;
+  typedef mozilla::WheelEvent paramType;
 
   static void Write(Message* aMsg, const paramType& aParam)
   {
@@ -159,7 +160,7 @@ struct ParamTraits<mozilla::widget::WheelEvent>
       ReadParam(aMsg, aIter, &aResult->overflowDeltaX) &&
       ReadParam(aMsg, aIter, &aResult->overflowDeltaY);
     aResult->scrollType =
-      static_cast<mozilla::widget::WheelEvent::ScrollType>(scrollType);
+      static_cast<mozilla::WheelEvent::ScrollType>(scrollType);
     return rv;
   }
 };
@@ -260,6 +261,7 @@ struct ParamTraits<nsKeyEvent>
     WriteParam(aMsg, aParam.charCode);
     WriteParam(aMsg, aParam.isChar);
     WriteParam(aMsg, aParam.location);
+    WriteParam(aMsg, aParam.mUniqueId);
     // An OS-specific native event might be attached in |mNativeKeyEvent|,  but
     // that cannot be copied across process boundaries.
   }
@@ -272,9 +274,11 @@ struct ParamTraits<nsKeyEvent>
         ReadParam(aMsg, aIter, &aResult->keyCode) &&
         ReadParam(aMsg, aIter, &aResult->charCode) &&
         ReadParam(aMsg, aIter, &aResult->isChar) &&
-        ReadParam(aMsg, aIter, &aResult->location)) {
-      aResult->mKeyNameIndex =
-        static_cast<mozilla::widget::KeyNameIndex>(keyNameIndex);
+        ReadParam(aMsg, aIter, &aResult->location) &&
+        ReadParam(aMsg, aIter, &aResult->mUniqueId))
+    {
+      aResult->mKeyNameIndex = static_cast<mozilla::KeyNameIndex>(keyNameIndex);
+      aResult->mNativeKeyEvent = NULL;
       return true;
     }
     return false;
@@ -336,7 +340,7 @@ struct ParamTraits<nsTextEvent>
 
   static void Write(Message* aMsg, const paramType& aParam)
   {
-    WriteParam(aMsg, static_cast<nsInputEvent>(aParam));
+    WriteParam(aMsg, static_cast<nsGUIEvent>(aParam));
     WriteParam(aMsg, aParam.seqno);
     WriteParam(aMsg, aParam.theText);
     WriteParam(aMsg, aParam.isChar);
@@ -347,7 +351,7 @@ struct ParamTraits<nsTextEvent>
 
   static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
   {
-    if (!ReadParam(aMsg, aIter, static_cast<nsInputEvent*>(aResult)) ||
+    if (!ReadParam(aMsg, aIter, static_cast<nsGUIEvent*>(aResult)) ||
         !ReadParam(aMsg, aIter, &aResult->seqno) ||
         !ReadParam(aMsg, aIter, &aResult->theText) ||
         !ReadParam(aMsg, aIter, &aResult->isChar) ||

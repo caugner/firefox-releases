@@ -20,11 +20,11 @@ EXTRA_COMPONENTS += [
     'ContentPermissionPrompt.js',
     'FilePicker.js',
     'MailtoProtocolHandler.js',
-    'MozKeyboard.js',
     'PaymentGlue.js',
     'ProcessGlobal.js',
     'SmsProtocolHandler.js',
     'TelProtocolHandler.js',
+    'WebappsUpdateTimer.js',
     'YoutubeProtocolHandler.js',
 ]
 
@@ -41,7 +41,7 @@ if CONFIG['MOZ_UPDATER']:
 
 EXTRA_JS_MODULES += [
     'ErrorPage.jsm',
-    'Keyboard.jsm',
     'SignInToWebsite.jsm',
     'TelURIParser.jsm',
+    'WebappsUpdater.jsm',
 ]

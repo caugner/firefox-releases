@@ -3,6 +3,13 @@
 #include "IPDLUnitTests.h"      // fail etc.
 #include <unistd.h>
 
+template<>
+struct RunnableMethodTraits<mozilla::_ipdltest::TestUrgencyParent>
+{
+    static void RetainCallee(mozilla::_ipdltest::TestUrgencyParent* obj) { }
+    static void ReleaseCallee(mozilla::_ipdltest::TestUrgencyParent* obj) { }
+};
+
 namespace mozilla {
 namespace _ipdltest {
 
@@ -59,6 +66,36 @@ TestUrgencyParent::RecvTest3(uint32_t *value)
   return true;
 }
 
+bool
+TestUrgencyParent::RecvTest4_Begin()
+{
+  if (!CallTest4_Reenter())
+    fail("call Test4_Reenter");
+  return true;
+}
+
+bool
+TestUrgencyParent::RecvTest4_NestedSync()
+{
+  fail("nested sync not supported");
+  return false;
+}
+
+bool
+TestUrgencyParent::RecvFinalTest_Begin()
+{
+  SetReplyTimeoutMs(2000);
+  if (CallFinalTest_Hang())
+    fail("should have failed due to timeout");
+  if (!GetIPCChannel()->Unsound_IsClosed())
+    fail("channel should have closed");
+
+  MessageLoop::current()->PostTask(
+      FROM_HERE,
+      NewRunnableMethod(this, &TestUrgencyParent::Close));
+  return false;
+}
+
 //-----------------------------------------------------------------------------
 // child
 
@@ -97,6 +134,13 @@ TestUrgencyChild::RecvStart()
   if (result != 1000)
     fail("wrong value from test3");
 
+  if (!SendTest4_Begin())
+    fail("calling SendTest4_Begin");
+
+  // This must be the last test, since the child process may die.
+  if (SendFinalTest_Begin())
+    fail("Final test should not have succeeded");
+
   Close();
 
   return true;
@@ -124,6 +168,21 @@ TestUrgencyChild::AnswerReply2(uint32_t *reply)
 
   *reply = 500;
   test_ = kSecondTestGotReply;
+  return true;
+}
+
+bool
+TestUrgencyChild::AnswerTest4_Reenter()
+{
+  if (SendTest4_NestedSync())
+    fail("sending nested sync messages not supported");
+  return true;
+}
+
+bool
+TestUrgencyChild::AnswerFinalTest_Hang()
+{
+  sleep(10);
   return true;
 }
 

@@ -15,6 +15,7 @@
 #include "prenv.h"
 
 #include "IPCMessageStart.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/ipc/FileDescriptor.h"
 #include "mozilla/ipc/Shmem.h"
 #include "mozilla/ipc/Transport.h"
@@ -112,8 +113,12 @@ LoggingEnabled()
 #endif
 }
 
-void
+MOZ_NEVER_INLINE void
 ProtocolErrorBreakpoint(const char* aMsg);
+
+MOZ_NEVER_INLINE void
+FatalError(const char* aProtocolName, const char* aMsg,
+           base::ProcessHandle aHandle, bool aIsParent);
 
 typedef IPCMessageStart ProtocolId;
 
@@ -122,12 +127,12 @@ struct PrivateIPDLInterface {};
 bool
 Bridge(const PrivateIPDLInterface&,
        AsyncChannel*, base::ProcessHandle, AsyncChannel*, base::ProcessHandle,
-       ProtocolId);
+       ProtocolId, ProtocolId);
 
 bool
 Open(const PrivateIPDLInterface&,
      AsyncChannel*, base::ProcessHandle, Transport::Mode,
-     ProtocolId);
+     ProtocolId, ProtocolId);
 
 bool
 UnpackChannelOpened(const PrivateIPDLInterface&,

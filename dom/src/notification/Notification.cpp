@@ -3,9 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "PCOMContentPermissionRequestChild.h"
-#include "mozilla/dom/PBrowserChild.h"
 #include "mozilla/dom/Notification.h"
-#include "mozilla/dom/ContentChild.h"
+#include "mozilla/dom/AppNotificationServiceOptionsBinding.h"
+#include "mozilla/dom/OwningNonNull.h"
 #include "mozilla/Preferences.h"
 #include "TabChild.h"
 #include "nsContentUtils.h"
@@ -18,6 +18,10 @@
 #include "nsToolkitCompsCID.h"
 #include "nsGlobalWindow.h"
 #include "nsDOMJSUtils.h"
+#ifdef MOZ_B2G
+#include "nsIDOMDesktopNotification.h"
+#include "nsIAppsService.h"
+#endif
 
 namespace mozilla {
 namespace dom {
@@ -137,7 +141,7 @@ NotificationPermissionRequest::Run()
   if (XRE_GetProcessType() == GeckoProcessType_Content) {
     // because owner implements nsITabChild, we can assume that it is
     // the one and only TabChild.
-    TabChild* child = GetTabChildFrom(mWindow->GetDocShell());
+    TabChild* child = TabChild::GetFrom(mWindow->GetDocShell());
     if (!child) {
       return NS_ERROR_NOT_AVAILABLE;
     }
@@ -181,7 +185,9 @@ NotificationPermissionRequest::GetWindow(nsIDOMWindow** aRequestingWindow)
 NS_IMETHODIMP
 NotificationPermissionRequest::GetElement(nsIDOMElement** aElement)
 {
-  return NS_ERROR_FAILURE;
+  NS_ENSURE_ARG_POINTER(aElement);
+  *aElement = nullptr;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -307,7 +313,7 @@ Notification::Constructor(const GlobalObject& aGlobal,
                                                          tag,
                                                          aOptions.mIcon);
 
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
   MOZ_ASSERT(window, "Window should not be null.");
   notification->BindToOwner(window);
 
@@ -352,15 +358,47 @@ Notification::ShowInternal()
     }
   }
 
+  nsCOMPtr<nsIObserver> observer = new NotificationObserver(this);
+
   nsString alertName;
   rv = GetAlertName(alertName);
   NS_ENSURE_SUCCESS(rv, rv);
+
+#ifdef MOZ_B2G
+  nsCOMPtr<nsIAppNotificationService> appNotifier =
+    do_GetService("@mozilla.org/system-alerts-service;1");
+  if (appNotifier) {
+    nsCOMPtr<nsPIDOMWindow> window = GetOwner();
+    uint32_t appId = (window.get())->GetDoc()->NodePrincipal()->GetAppId();
+
+    if (appId != nsIScriptSecurityManager::UNKNOWN_APP_ID) {
+      nsCOMPtr<nsIAppsService> appsService = do_GetService("@mozilla.org/AppsService;1");
+      nsString manifestUrl = EmptyString();
+      appsService->GetManifestURLByLocalId(appId, manifestUrl);
+      mozilla::AutoSafeJSContext cx;
+      JS::RootedValue val(cx);
+      AppNotificationServiceOptionsInitializer ops;
+      ops.mTextClickable = true;
+      ops.mManifestURL = manifestUrl;
+      ops.mId = alertName;
+      ops.mDir = DirectionToString(mDir);
+      ops.mLang = mLang;
+
+      if (!ops.ToObject(cx, JS::NullPtr(), &val)) {
+        NS_WARNING("Converting dict to object failed!");
+        return NS_ERROR_FAILURE;
+      }
+
+      return appNotifier->ShowAppNotification(mIconUrl, mTitle, mBody,
+                                              observer, val);
+    }
+  }
+#endif
 
   // In the case of IPC, the parent process uses the cookie to map to
   // nsIObserver. Thus the cookie must be unique to differentiate observers.
   nsString uniqueCookie = NS_LITERAL_STRING("notification:");
   uniqueCookie.AppendInt(sCount++);
-  nsCOMPtr<nsIObserver> observer = new NotificationObserver(this);
   return alertService->ShowAlertNotification(absoluteUrl, mTitle, mBody, true,
                                              uniqueCookie, observer, alertName,
                                              DirectionToString(mDir), mLang);
@@ -372,8 +410,8 @@ Notification::RequestPermission(const GlobalObject& aGlobal,
                                 ErrorResult& aRv)
 {
   // Get principal from global to make permission request for notifications.
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.Get());
-  nsCOMPtr<nsIScriptObjectPrincipal> sop = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
+  nsCOMPtr<nsIScriptObjectPrincipal> sop = do_QueryInterface(aGlobal.GetAsSupports());
   if (!sop) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
     return;
@@ -393,7 +431,7 @@ Notification::RequestPermission(const GlobalObject& aGlobal,
 NotificationPermission
 Notification::GetPermission(const GlobalObject& aGlobal, ErrorResult& aRv)
 {
-  return GetPermissionInternal(aGlobal.Get(), aRv);
+  return GetPermissionInternal(aGlobal.GetAsSupports(), aRv);
 }
 
 NotificationPermission
@@ -433,20 +471,12 @@ Notification::GetPermissionInternal(nsISupports* aGlobal, ErrorResult& aRv)
 
   uint32_t permission = nsIPermissionManager::UNKNOWN_ACTION;
 
-  if (XRE_GetProcessType() == GeckoProcessType_Content) {
-    ContentChild* cpc = ContentChild::GetSingleton();
+  nsCOMPtr<nsIPermissionManager> permissionManager =
+    do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
 
-    cpc->SendTestPermissionFromPrincipal(IPC::Principal(principal),
-                                         NS_LITERAL_CSTRING("desktop-notification"),
-                                         &permission);
-  } else {
-    nsCOMPtr<nsIPermissionManager> permissionManager =
-      do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
-
-    permissionManager->TestPermissionFromPrincipal(principal,
-                                                   "desktop-notification",
-                                                   &permission);
-  }
+  permissionManager->TestPermissionFromPrincipal(principal,
+                                                 "desktop-notification",
+                                                 &permission);
 
   // Convert the result to one of the enum types.
   switch (permission) {

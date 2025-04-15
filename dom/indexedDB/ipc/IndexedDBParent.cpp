@@ -18,7 +18,6 @@
 #include "mozilla/dom/TabParent.h"
 #include "mozilla/unused.h"
 #include "mozilla/Util.h"
-#include "nsContentUtils.h"
 #include "nsCxPusher.h"
 
 #include "AsyncConnectionHelper.h"
@@ -83,7 +82,9 @@ IndexedDBParent::~IndexedDBParent()
 void
 IndexedDBParent::Disconnect()
 {
-  MOZ_ASSERT(!mDisconnected);
+  if (mDisconnected) {
+    return;
+  }
 
   mDisconnected = true;
 
@@ -143,9 +144,10 @@ IndexedDBParent::ActorDestroy(ActorDestroyReason aWhy)
 
 bool
 IndexedDBParent::RecvPIndexedDBDatabaseConstructor(
-                                               PIndexedDBDatabaseParent* aActor,
-                                               const nsString& aName,
-                                               const uint64_t& aVersion)
+                                        PIndexedDBDatabaseParent* aActor,
+                                        const nsString& aName,
+                                        const uint64_t& aVersion,
+                                        const PersistenceType& aPersistenceType)
 {
   if (!CheckReadPermission(aName)) {
     return false;
@@ -161,8 +163,8 @@ IndexedDBParent::RecvPIndexedDBDatabaseConstructor(
   }
 
   nsRefPtr<IDBOpenDBRequest> request;
-  nsresult rv =
-    mFactory->OpenInternal(aName, aVersion, false, getter_AddRefs(request));
+  nsresult rv = mFactory->OpenInternal(aName, aVersion, aPersistenceType, false,
+                                       getter_AddRefs(request));
   NS_ENSURE_SUCCESS(rv, false);
 
   IndexedDBDatabaseParent* actor =
@@ -177,7 +179,8 @@ IndexedDBParent::RecvPIndexedDBDatabaseConstructor(
 bool
 IndexedDBParent::RecvPIndexedDBDeleteDatabaseRequestConstructor(
                                   PIndexedDBDeleteDatabaseRequestParent* aActor,
-                                  const nsString& aName)
+                                  const nsString& aName,
+                                  const PersistenceType& aPersistenceType)
 {
   if (!CheckWritePermission(aName)) {
     return false;
@@ -197,8 +200,8 @@ IndexedDBParent::RecvPIndexedDBDeleteDatabaseRequestConstructor(
 
   nsRefPtr<IDBOpenDBRequest> request;
 
-  nsresult rv =
-    mFactory->OpenInternal(aName, 0, true, getter_AddRefs(request));
+  nsresult rv = mFactory->OpenInternal(aName, 0, aPersistenceType, true,
+                                       getter_AddRefs(request));
   NS_ENSURE_SUCCESS(rv, false);
 
   rv = actor->SetOpenRequest(request);
@@ -208,8 +211,10 @@ IndexedDBParent::RecvPIndexedDBDeleteDatabaseRequestConstructor(
 }
 
 PIndexedDBDatabaseParent*
-IndexedDBParent::AllocPIndexedDBDatabaseParent(const nsString& aName,
-                                               const uint64_t& aVersion)
+IndexedDBParent::AllocPIndexedDBDatabaseParent(
+                                        const nsString& aName,
+                                        const uint64_t& aVersion,
+                                        const PersistenceType& aPersistenceType)
 {
   return new IndexedDBDatabaseParent();
 }
@@ -222,7 +227,9 @@ IndexedDBParent::DeallocPIndexedDBDatabaseParent(PIndexedDBDatabaseParent* aActo
 }
 
 PIndexedDBDeleteDatabaseRequestParent*
-IndexedDBParent::AllocPIndexedDBDeleteDatabaseRequestParent(const nsString& aName)
+IndexedDBParent::AllocPIndexedDBDeleteDatabaseRequestParent(
+                                        const nsString& aName,
+                                        const PersistenceType& aPersistenceType)
 {
   return new IndexedDBDeleteDatabaseRequestParent(mFactory);
 }
@@ -390,7 +397,7 @@ IndexedDBDatabaseParent::HandleRequestEvent(nsIDOMEvent* aEvent,
   MOZ_ASSERT(!JSVAL_IS_PRIMITIVE(result));
 
   IDBDatabase *database;
-  rv = UnwrapObject<IDBDatabase>(cx, &result.toObject(), database);
+  rv = UNWRAP_OBJECT(IDBDatabase, cx, &result.toObject(), database);
   if (NS_FAILED(rv)) {
     NS_WARNING("Didn't get the object we expected!");
     return rv;
@@ -1517,18 +1524,17 @@ IndexedDBObjectStoreRequestParent::GetAll(const GetAllParams& aParams)
 
   nsRefPtr<IDBRequest> request;
 
-  const ipc::FIXME_Bug_521898_objectstore::OptionalKeyRange keyRangeUnion =
-    aParams.optionalKeyRange();
+  const ipc::OptionalKeyRange keyRangeUnion = aParams.optionalKeyRange();
 
   nsRefPtr<IDBKeyRange> keyRange;
 
   switch (keyRangeUnion.type()) {
-    case ipc::FIXME_Bug_521898_objectstore::OptionalKeyRange::TKeyRange:
+    case ipc::OptionalKeyRange::TKeyRange:
       keyRange =
         IDBKeyRange::FromSerializedKeyRange(keyRangeUnion.get_KeyRange());
       break;
 
-    case ipc::FIXME_Bug_521898_objectstore::OptionalKeyRange::Tvoid_t:
+    case ipc::OptionalKeyRange::Tvoid_t:
       break;
 
     default:
@@ -1656,18 +1662,17 @@ IndexedDBObjectStoreRequestParent::Count(const CountParams& aParams)
   MOZ_ASSERT(mRequestType == ParamsUnionType::TCountParams);
   MOZ_ASSERT(mObjectStore);
 
-  const ipc::FIXME_Bug_521898_objectstore::OptionalKeyRange keyRangeUnion =
-    aParams.optionalKeyRange();
+  const ipc::OptionalKeyRange keyRangeUnion = aParams.optionalKeyRange();
 
   nsRefPtr<IDBKeyRange> keyRange;
 
   switch (keyRangeUnion.type()) {
-    case ipc::FIXME_Bug_521898_objectstore::OptionalKeyRange::TKeyRange:
+    case ipc::OptionalKeyRange::TKeyRange:
       keyRange =
         IDBKeyRange::FromSerializedKeyRange(keyRangeUnion.get_KeyRange());
       break;
 
-    case ipc::FIXME_Bug_521898_objectstore::OptionalKeyRange::Tvoid_t:
+    case ipc::OptionalKeyRange::Tvoid_t:
       break;
 
     default:
@@ -1695,18 +1700,17 @@ IndexedDBObjectStoreRequestParent::OpenCursor(const OpenCursorParams& aParams)
   MOZ_ASSERT(mRequestType == ParamsUnionType::TOpenCursorParams);
   MOZ_ASSERT(mObjectStore);
 
-  const ipc::FIXME_Bug_521898_objectstore::OptionalKeyRange keyRangeUnion =
-    aParams.optionalKeyRange();
+  const ipc::OptionalKeyRange keyRangeUnion = aParams.optionalKeyRange();
 
   nsRefPtr<IDBKeyRange> keyRange;
 
   switch (keyRangeUnion.type()) {
-    case ipc::FIXME_Bug_521898_objectstore::OptionalKeyRange::TKeyRange:
+    case ipc::OptionalKeyRange::TKeyRange:
       keyRange =
         IDBKeyRange::FromSerializedKeyRange(keyRangeUnion.get_KeyRange());
       break;
 
-    case ipc::FIXME_Bug_521898_objectstore::OptionalKeyRange::Tvoid_t:
+    case ipc::OptionalKeyRange::Tvoid_t:
       break;
 
     default:
@@ -1816,18 +1820,17 @@ IndexedDBIndexRequestParent::GetAll(const GetAllParams& aParams)
 
   nsRefPtr<IDBRequest> request;
 
-  const ipc::FIXME_Bug_521898_index::OptionalKeyRange keyRangeUnion =
-    aParams.optionalKeyRange();
+  const ipc::OptionalKeyRange keyRangeUnion = aParams.optionalKeyRange();
 
   nsRefPtr<IDBKeyRange> keyRange;
 
   switch (keyRangeUnion.type()) {
-    case ipc::FIXME_Bug_521898_index::OptionalKeyRange::TKeyRange:
+    case ipc::OptionalKeyRange::TKeyRange:
       keyRange =
         IDBKeyRange::FromSerializedKeyRange(keyRangeUnion.get_KeyRange());
       break;
 
-    case ipc::FIXME_Bug_521898_index::OptionalKeyRange::Tvoid_t:
+    case ipc::OptionalKeyRange::Tvoid_t:
       break;
 
     default:
@@ -1855,18 +1858,17 @@ IndexedDBIndexRequestParent::GetAllKeys(const GetAllKeysParams& aParams)
 
   nsRefPtr<IDBRequest> request;
 
-  const ipc::FIXME_Bug_521898_index::OptionalKeyRange keyRangeUnion =
-    aParams.optionalKeyRange();
+  const ipc::OptionalKeyRange keyRangeUnion = aParams.optionalKeyRange();
 
   nsRefPtr<IDBKeyRange> keyRange;
 
   switch (keyRangeUnion.type()) {
-    case ipc::FIXME_Bug_521898_index::OptionalKeyRange::TKeyRange:
+    case ipc::OptionalKeyRange::TKeyRange:
       keyRange =
         IDBKeyRange::FromSerializedKeyRange(keyRangeUnion.get_KeyRange());
       break;
 
-    case ipc::FIXME_Bug_521898_index::OptionalKeyRange::Tvoid_t:
+    case ipc::OptionalKeyRange::Tvoid_t:
       break;
 
     default:
@@ -1892,18 +1894,17 @@ IndexedDBIndexRequestParent::Count(const CountParams& aParams)
   MOZ_ASSERT(mRequestType == ParamsUnionType::TCountParams);
   MOZ_ASSERT(mIndex);
 
-  const ipc::FIXME_Bug_521898_index::OptionalKeyRange keyRangeUnion =
-    aParams.optionalKeyRange();
+  const ipc::OptionalKeyRange keyRangeUnion = aParams.optionalKeyRange();
 
   nsRefPtr<IDBKeyRange> keyRange;
 
   switch (keyRangeUnion.type()) {
-    case ipc::FIXME_Bug_521898_index::OptionalKeyRange::TKeyRange:
+    case ipc::OptionalKeyRange::TKeyRange:
       keyRange =
         IDBKeyRange::FromSerializedKeyRange(keyRangeUnion.get_KeyRange());
       break;
 
-    case ipc::FIXME_Bug_521898_index::OptionalKeyRange::Tvoid_t:
+    case ipc::OptionalKeyRange::Tvoid_t:
       break;
 
     default:
@@ -1931,18 +1932,17 @@ IndexedDBIndexRequestParent::OpenCursor(const OpenCursorParams& aParams)
   MOZ_ASSERT(mRequestType == ParamsUnionType::TOpenCursorParams);
   MOZ_ASSERT(mIndex);
 
-  const ipc::FIXME_Bug_521898_index::OptionalKeyRange keyRangeUnion =
-    aParams.optionalKeyRange();
+  const ipc::OptionalKeyRange keyRangeUnion = aParams.optionalKeyRange();
 
   nsRefPtr<IDBKeyRange> keyRange;
 
   switch (keyRangeUnion.type()) {
-    case ipc::FIXME_Bug_521898_index::OptionalKeyRange::TKeyRange:
+    case ipc::OptionalKeyRange::TKeyRange:
       keyRange =
         IDBKeyRange::FromSerializedKeyRange(keyRangeUnion.get_KeyRange());
       break;
 
-    case ipc::FIXME_Bug_521898_objectstore::OptionalKeyRange::Tvoid_t:
+    case ipc::OptionalKeyRange::Tvoid_t:
       break;
 
     default:
@@ -1972,18 +1972,17 @@ IndexedDBIndexRequestParent::OpenKeyCursor(const OpenKeyCursorParams& aParams)
   MOZ_ASSERT(mRequestType == ParamsUnionType::TOpenKeyCursorParams);
   MOZ_ASSERT(mIndex);
 
-  const ipc::FIXME_Bug_521898_index::OptionalKeyRange keyRangeUnion =
-    aParams.optionalKeyRange();
+  const ipc::OptionalKeyRange keyRangeUnion = aParams.optionalKeyRange();
 
   nsRefPtr<IDBKeyRange> keyRange;
 
   switch (keyRangeUnion.type()) {
-    case ipc::FIXME_Bug_521898_index::OptionalKeyRange::TKeyRange:
+    case ipc::OptionalKeyRange::TKeyRange:
       keyRange =
         IDBKeyRange::FromSerializedKeyRange(keyRangeUnion.get_KeyRange());
       break;
 
-    case ipc::FIXME_Bug_521898_objectstore::OptionalKeyRange::Tvoid_t:
+    case ipc::OptionalKeyRange::Tvoid_t:
       break;
 
     default:

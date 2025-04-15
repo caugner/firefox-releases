@@ -29,7 +29,7 @@ let testData = [
   ["VK_BACK_SPACE", {}, "", -1, 0],
   ["c", {}, "caption-side", 0, 10],
   ["o", {}, "color", 0, 6],
-  ["VK_TAB", {}, "n", -1, 0],
+  ["VK_TAB", {}, "none", -1, 0],
   ["r", {}, "red", 0, 5],
   ["VK_DOWN", {}, "rgb", 1, 5],
   ["VK_DOWN", {}, "rgba", 2, 5],
@@ -48,7 +48,7 @@ function openRuleView() {
     let node = content.document.getElementsByTagName("h1")[0];
     inspector.selection.setNode(node);
 
-    inspector.sidebar.once("ruleview-ready", testCompletion);
+    inspector.once("inspector-updated", testCompletion);
   });
 }
 

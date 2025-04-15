@@ -22,6 +22,11 @@
 
 #ifdef ANDROID
 #include <stdio.h>
+
+// Minimum memory threshold for a device to be considered
+// a low memory platform. This value has be in sync with
+// Java's equivalent threshold, defined in
+// mobile/android/base/util/HardwareUtils.java
 #define LOW_MEMORY_THRESHOLD_KB (384 * 1024)
 #endif
 
@@ -114,7 +119,7 @@ nsMemoryImpl::FlushMemory(const PRUnichar* aReason, bool aImmediate)
         }
     }
 
-    int32_t lastVal = PR_ATOMIC_SET(&sIsFlushing, 1);
+    int32_t lastVal = sIsFlushing.exchange(1);
     if (lastVal)
         return NS_OK;
 
@@ -183,8 +188,8 @@ nsMemoryImpl::FlushEvent::Run()
     return NS_OK;
 }
 
-int32_t
-nsMemoryImpl::sIsFlushing = 0;
+mozilla::Atomic<int32_t>
+nsMemoryImpl::sIsFlushing;
 
 PRIntervalTime
 nsMemoryImpl::sLastFlushTime = 0;

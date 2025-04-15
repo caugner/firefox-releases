@@ -6,20 +6,55 @@
 #ifndef MOZILLA_GFX_COMPOSITOROGL_H
 #define MOZILLA_GFX_COMPOSITOROGL_H
 
-#include "mozilla/layers/Compositor.h"
-#include "GLContext.h"
-#include "LayerManagerOGLProgram.h"
-#include "mozilla/layers/Effects.h"
-#include "nsTArray.h"
+#include "GLContextTypes.h"             // for GLContext, etc
+#include "GLDefs.h"                     // for GLuint, LOCAL_GL_TEXTURE_2D, etc
+#include "LayerManagerOGLProgram.h"     // for ShaderProgramOGL, etc
+#include "Units.h"                      // for ScreenPoint
+#include "gfxContext.h"                 // for gfxContext
+#include "gfxPoint.h"                   // for gfxIntSize
+#include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
+#include "mozilla/Attributes.h"         // for MOZ_OVERRIDE, MOZ_FINAL
+#include "mozilla/RefPtr.h"             // for TemporaryRef, RefPtr
+#include "mozilla/gfx/BaseSize.h"       // for BaseSize
+#include "mozilla/gfx/Point.h"          // for IntSize, Point
+#include "mozilla/gfx/Rect.h"           // for Rect, IntRect
+#include "mozilla/gfx/Types.h"          // for Float, SurfaceFormat, etc
+#include "mozilla/layers/Compositor.h"  // for SurfaceInitMode, Compositor, etc
+#include "mozilla/layers/CompositorTypes.h"  // for MaskType::NumMaskTypes, etc
+#include "mozilla/layers/LayersTypes.h"
+#include "nsAutoPtr.h"                  // for nsRefPtr, nsAutoPtr
+#include "nsCOMPtr.h"                   // for already_AddRefed
+#include "nsDebug.h"                    // for NS_ASSERTION, NS_WARNING
+#include "nsISupportsImpl.h"            // for gfxContext::AddRef, etc
+#include "nsSize.h"                     // for nsIntSize
+#include "nsTArray.h"                   // for nsAutoTArray, nsTArray, etc
+#include "nsThreadUtils.h"              // for nsRunnable
+#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
+#include "nsXULAppAPI.h"                // for XRE_GetProcessType
+#include "nscore.h"                     // for NS_IMETHOD
+#include "VBOArena.h"                   // for gl::VBOArena
 
-#include "mozilla/TimeStamp.h"
+class gfx3DMatrix;
+class nsIWidget;
+struct gfxMatrix;
 
 namespace mozilla {
+class TimeStamp;
+
+namespace gfx {
+class Matrix4x4;
+}
+
 namespace layers {
 
-struct FPSState;
+class CompositingRenderTarget;
 class CompositingRenderTargetOGL;
+class DataTextureSource;
 class GLManagerCompositor;
+class TextureSource;
+struct Effect;
+struct EffectChain;
+struct FPSState;
 
 class CompositorOGL : public Compositor
 {
@@ -69,10 +104,7 @@ public:
   virtual void EndFrameForExternalComposition(const gfxMatrix& aTransform) MOZ_OVERRIDE;
   virtual void AbortFrame() MOZ_OVERRIDE;
 
-  virtual bool SupportsPartialTextureUpdate() MOZ_OVERRIDE
-  {
-    return mGLContext->CanUploadSubTextures();
-  }
+  virtual bool SupportsPartialTextureUpdate() MOZ_OVERRIDE;
 
   virtual bool CanUseCanvasLayerForSize(const gfxIntSize &aSize) MOZ_OVERRIDE
   {
@@ -82,15 +114,7 @@ public:
     return aSize <= gfxIntSize(maxSize, maxSize);
   }
 
-  virtual int32_t GetMaxTextureSize() const MOZ_OVERRIDE
-  {
-    MOZ_ASSERT(mGLContext);
-    GLint texSize = 0;
-    mGLContext->fGetIntegerv(LOCAL_GL_MAX_TEXTURE_SIZE,
-                             &texSize);
-    MOZ_ASSERT(texSize != 0);
-    return texSize;
-  }
+  virtual int32_t GetMaxTextureSize() const MOZ_OVERRIDE;
 
   /**
    * Set the size of the EGL surface we're rendering to, if we're rendering to
@@ -102,13 +126,7 @@ public:
     mRenderOffset = aOffset;
   }
 
-  virtual void MakeCurrent(MakeCurrentFlags aFlags = 0) MOZ_OVERRIDE {
-    if (mDestroyed) {
-      NS_WARNING("Call on destroyed layer manager");
-      return;
-    }
-    mGLContext->MakeCurrent(aFlags & ForceMakeCurrent);
-  }
+  virtual void MakeCurrent(MakeCurrentFlags aFlags = 0) MOZ_OVERRIDE;
 
   virtual void SetTargetContext(gfxContext* aTarget) MOZ_OVERRIDE
   {
@@ -141,6 +159,9 @@ public:
   gfx::SurfaceFormat GetFBOFormat() const {
     return gfx::FORMAT_R8G8B8A8;
   }
+
+  virtual void SaveState() MOZ_OVERRIDE;
+  virtual void RestoreState() MOZ_OVERRIDE;
 
   /**
    * The compositor provides with temporary textures for use with direct
@@ -200,6 +221,11 @@ private:
    *  flipped and unflipped textures */
   GLuint mQuadVBO;
 
+  /**
+   * When we can't use mQuadVBO, we allocate VBOs from this arena instead.
+   */
+  gl::VBOArena mVBOs;
+
   bool mHasBGRA;
 
   /**
@@ -258,62 +284,15 @@ private:
   GLintptr QuadVBOTexCoordOffset() { return sizeof(float)*4*2; }
   GLintptr QuadVBOFlippedTexCoordOffset() { return sizeof(float)*8*2; }
 
-  void BindQuadVBO() {
-    mGLContext->fBindBuffer(LOCAL_GL_ARRAY_BUFFER, mQuadVBO);
-  }
-
-  void QuadVBOVerticesAttrib(GLuint aAttribIndex) {
-    mGLContext->fVertexAttribPointer(aAttribIndex, 2,
-                                     LOCAL_GL_FLOAT, LOCAL_GL_FALSE, 0,
-                                     (GLvoid*) QuadVBOVertexOffset());
-  }
-
-  void QuadVBOTexCoordsAttrib(GLuint aAttribIndex) {
-    mGLContext->fVertexAttribPointer(aAttribIndex, 2,
-                                     LOCAL_GL_FLOAT, LOCAL_GL_FALSE, 0,
-                                     (GLvoid*) QuadVBOTexCoordOffset());
-  }
-
-  void QuadVBOFlippedTexCoordsAttrib(GLuint aAttribIndex) {
-    mGLContext->fVertexAttribPointer(aAttribIndex, 2,
-                                     LOCAL_GL_FLOAT, LOCAL_GL_FALSE, 0,
-                                     (GLvoid*) QuadVBOFlippedTexCoordOffset());
-  }
-
+  void BindQuadVBO();
+  void QuadVBOVerticesAttrib(GLuint aAttribIndex);
+  void QuadVBOTexCoordsAttrib(GLuint aAttribIndex);
+  void QuadVBOFlippedTexCoordsAttrib(GLuint aAttribIndex);
   void BindAndDrawQuad(GLuint aVertAttribIndex,
                        GLuint aTexCoordAttribIndex,
-                       bool aFlipped = false)
-  {
-    BindQuadVBO();
-    QuadVBOVerticesAttrib(aVertAttribIndex);
-
-    if (aTexCoordAttribIndex != GLuint(-1)) {
-      if (aFlipped)
-        QuadVBOFlippedTexCoordsAttrib(aTexCoordAttribIndex);
-      else
-        QuadVBOTexCoordsAttrib(aTexCoordAttribIndex);
-
-      mGLContext->fEnableVertexAttribArray(aTexCoordAttribIndex);
-    }
-
-    mGLContext->fEnableVertexAttribArray(aVertAttribIndex);
-    mGLContext->fDrawArrays(LOCAL_GL_TRIANGLE_STRIP, 0, 4);
-    mGLContext->fDisableVertexAttribArray(aVertAttribIndex);
-
-    if (aTexCoordAttribIndex != GLuint(-1)) {
-      mGLContext->fDisableVertexAttribArray(aTexCoordAttribIndex);
-    }
-  }
-
+                       bool aFlipped = false);
   void BindAndDrawQuad(ShaderProgramOGL *aProg,
-                       bool aFlipped = false)
-  {
-    NS_ASSERTION(aProg->HasInitialized(), "Shader program not correctly initialized");
-    BindAndDrawQuad(aProg->AttribLocation(ShaderProgramOGL::VertexCoordAttrib),
-                    aProg->AttribLocation(ShaderProgramOGL::TexCoordAttrib),
-                    aFlipped);
-  }
-
+                       bool aFlipped = false);
   void BindAndDrawQuadWithTextureRect(ShaderProgramOGL *aProg,
                                       const gfx::Rect& aTexCoordRect,
                                       TextureSource *aTexture);

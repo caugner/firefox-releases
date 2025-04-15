@@ -20,8 +20,7 @@
 #include "nsIDOMCameraManager.h"
 #include "nsCycleCollectionParticipant.h"
 #include "mozilla/Attributes.h"
-
-class nsPIDOMWindow;
+#include "nsPIDOMWindow.h"
 
 namespace mozilla {
   class ErrorResult;
@@ -86,8 +85,7 @@ protected:
    * 'mActiveWindows' is only ever accessed while in the main thread,
    * so it is not otherwise protected.
    */
-  static WindowTable sActiveWindows;
-  static bool sActiveWindowsInitialized;
+  static WindowTable* sActiveWindows;
 };
 
 class GetCameraTask : public nsRunnable

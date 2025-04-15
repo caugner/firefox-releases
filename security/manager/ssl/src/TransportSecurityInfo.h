@@ -49,9 +49,9 @@ public:
   nsresult SetSecurityState(uint32_t aState);
   nsresult SetShortSecurityDescription(const PRUnichar *aText);
 
-  const char * GetHostName() const {
-    return mHostName.get();
-  }
+  const nsACString & GetHostName() const { return mHostName; }
+  const char * GetHostNameRaw() const { return mHostName.get(); }
+
   nsresult GetHostName(char **aHostName);
   nsresult SetHostName(const char *aHostName);
 
@@ -134,9 +134,6 @@ public:
   static nsresult Init()
   {
     sInstance = new RememberCertErrorsTable();
-    if (!sInstance->mErrorHosts.IsInitialized())
-      return NS_ERROR_OUT_OF_MEMORY;
-
     return NS_OK;
   }
 

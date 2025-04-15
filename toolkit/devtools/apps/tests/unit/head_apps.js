@@ -54,19 +54,13 @@ function installTestApp(zipName, appId, onDone) {
   let request = {type: "install", appId: appId};
   webappActorRequest(request, function (aResponse) {
     do_check_eq(aResponse.appId, appId);
-  });
-
-  // The install request is asynchronous and send back an event to tell
-  // if the installation succeed or failed
-  gClient.addListener("webappsEvent", function (aState, aType, aPacket) {
-    do_check_eq(aType.appId, appId);
-    if ("error" in aType) {
-      do_throw("Error: " + aType.error);
+    if ("error" in aResponse) {
+      do_throw("Error: " + aResponse.error);
     }
-    if ("message" in aType) {
-      do_throw("Error message: " + aType.message);
+    if ("message" in aResponse) {
+      do_throw("Error message: " + aResponse.message);
     }
-    do_check_false("error" in aType);
+    do_check_false("error" in aResponse);
 
     onDone();
   });
@@ -98,12 +92,12 @@ function do_get_webappsdir() {
   var webappsDir = Services.dirsvc.get("ProfD", Ci.nsILocalFile);
   webappsDir.append("test_webapps");
   if (!webappsDir.exists())
-    webappsDir.create(Ci.nsIFile.DIRECTORY_TYPE, 0755);
+    webappsDir.create(Ci.nsIFile.DIRECTORY_TYPE, parseInt("755", 8));
 
   var coreAppsDir = Services.dirsvc.get("ProfD", Ci.nsILocalFile);
   coreAppsDir.append("test_coreapps");
   if (!coreAppsDir.exists())
-    coreAppsDir.create(Ci.nsIFile.DIRECTORY_TYPE, 0755);
+    coreAppsDir.create(Ci.nsIFile.DIRECTORY_TYPE, parseInt("755", 8));
 
   // Register our own provider for the profile directory.
   // It will return our special docshell profile directory.

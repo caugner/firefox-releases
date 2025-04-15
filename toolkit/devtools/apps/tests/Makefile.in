@@ -10,6 +10,14 @@ relativesrcdir = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-XPCSHELL_TESTS = unit
+# The mochitest doesn't work on fennec yet
+ifneq (android,$(MOZ_WIDGET_TOOLKIT))
+MOCHITEST_FILES = \
+    test_webapps_actor.html \
+    debugger-protocol-helper.js \
+    data/ \
+    redirect.sjs \
+    $(NULL)
+endif
 
 include $(topsrcdir)/config/rules.mk

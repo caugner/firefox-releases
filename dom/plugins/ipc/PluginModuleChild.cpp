@@ -150,10 +150,6 @@ PluginModuleChild::Init(const std::string& aPluginFilename,
 
     NS_ASSERTION(aChannel, "need a channel");
 
-    mObjectMap.Init();
-    mStringIdentifiers.Init();
-    mIntIdentifiers.Init();
-
     if (!InitGraphics())
         return false;
 
@@ -169,14 +165,12 @@ PluginModuleChild::Init(const std::string& aPluginFilename,
 
     nsPluginFile pluginFile(localFile);
 
-    // Maemo flash can render with any provided rectangle and so does not
-    // require this quirk.
-#if (defined(MOZ_X11) && !defined(MOZ_PLATFORM_MAEMO)) || defined(OS_MACOSX)
+#if defined(MOZ_X11) || defined(OS_MACOSX)
     nsPluginInfo info = nsPluginInfo();
     if (NS_FAILED(pluginFile.GetPluginInfo(info, &mLibrary)))
         return false;
 
-#if defined(MOZ_X11) && !defined(MOZ_PLATFORM_MAEMO)
+#if defined(MOZ_X11)
     NS_NAMED_LITERAL_CSTRING(flash10Head, "Shockwave Flash 10.");
     if (StringBeginsWith(nsDependentCString(info.fDescription), flash10Head)) {
         AddQuirk(QUIRK_FLASH_EXPOSE_COORD_TRANSLATION);
@@ -728,7 +722,6 @@ PluginModuleChild::RegisterActorForNPObject(NPObject* aObject,
                                             PluginScriptableObjectChild* aActor)
 {
     AssertPluginThread();
-    NS_ASSERTION(mObjectMap.IsInitialized(), "Not initialized!");
     NS_ASSERTION(aObject && aActor, "Null pointer!");
 
     NPObjectData* d = mObjectMap.GetEntry(aObject);
@@ -745,7 +738,6 @@ void
 PluginModuleChild::UnregisterActorForNPObject(NPObject* aObject)
 {
     AssertPluginThread();
-    NS_ASSERTION(mObjectMap.IsInitialized(), "Not initialized!");
     NS_ASSERTION(aObject, "Null pointer!");
 
     NPObjectData* d = mObjectMap.GetEntry(aObject);
@@ -759,7 +751,6 @@ PluginScriptableObjectChild*
 PluginModuleChild::GetActorForNPObject(NPObject* aObject)
 {
     AssertPluginThread();
-    NS_ASSERTION(mObjectMap.IsInitialized(), "Not initialized!");
     NS_ASSERTION(aObject, "Null pointer!");
 
     NPObjectData* d = mObjectMap.GetEntry(aObject);

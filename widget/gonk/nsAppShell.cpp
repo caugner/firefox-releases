@@ -44,6 +44,7 @@
 #include "nsIObserverService.h"
 #include "nsIScreen.h"
 #include "nsScreenManagerGonk.h"
+#include "nsThreadUtils.h"
 #include "nsWindow.h"
 #include "OrientationObserver.h"
 #include "GonkMemoryPressureMonitoring.h"
@@ -320,16 +321,18 @@ GeckoPointerController::getBounds(float* outMinX,
 {
     int32_t width, height, orientation;
 
-    mConfig->getDisplayInfo(0, false, &width, &height, &orientation);
+    DisplayViewport viewport;
+
+    mConfig->getDisplayInfo(false, &viewport);
 
     *outMinX = *outMinY = 0;
     if (orientation == DISPLAY_ORIENTATION_90 ||
         orientation == DISPLAY_ORIENTATION_270) {
-        *outMaxX = height;
-        *outMaxY = width;
+        *outMaxX = viewport.deviceHeight;
+        *outMaxY = viewport.deviceWidth;
     } else {
-        *outMaxX = width;
-        *outMaxY = height;
+        *outMaxX = viewport.deviceWidth;
+        *outMaxY = viewport.deviceHeight;
     }
     return true;
 }
@@ -381,6 +384,16 @@ deviceId)
     {
         return new GeckoPointerController(&mConfig);
     };
+    virtual void notifyInputDevicesChanged(const android::Vector<InputDeviceInfo>& inputDevices) {};
+    virtual sp<KeyCharacterMap> getKeyboardLayoutOverlay(const String8& inputDeviceDescriptor)
+    {
+        return NULL;
+    };
+    virtual String8 getDeviceAlias(const InputDeviceIdentifier& identifier)
+    {
+        return String8::empty();
+    };
+
     void setDisplayInfo();
 
 protected:
@@ -453,7 +466,20 @@ GeckoInputReaderPolicy::setDisplayInfo()
                   DISPLAY_ORIENTATION_270,
                   "Orientation enums not matched!");
 
-    mConfig.setDisplayInfo(0, false, gScreenBounds.width, gScreenBounds.height, nsScreenGonk::GetRotation());
+    DisplayViewport viewport;
+    viewport.displayId = 0;
+    viewport.orientation = nsScreenGonk::GetRotation();
+    viewport.physicalRight = viewport.deviceWidth = gScreenBounds.width;
+    viewport.physicalBottom = viewport.deviceHeight = gScreenBounds.height;
+    if (viewport.orientation == DISPLAY_ORIENTATION_90 ||
+        viewport.orientation == DISPLAY_ORIENTATION_270) {
+        viewport.logicalRight = gScreenBounds.height;
+        viewport.logicalBottom = gScreenBounds.width;
+    } else {
+        viewport.logicalRight = gScreenBounds.width;
+        viewport.logicalBottom = gScreenBounds.height;
+    }
+    mConfig.setDisplayInfo(false, viewport);
 }
 
 void GeckoInputReaderPolicy::getReaderConfiguration(InputReaderConfiguration* outConfig)
@@ -595,16 +621,22 @@ void GeckoInputDispatcher::notifySwitch(const NotifySwitchArgs* args)
     if (!sDevInputAudioJack)
         return;
 
-    switch (args->switchCode) {
-    case SW_HEADPHONE_INSERT:
-        sHeadphoneState = args->switchValue;
-        updateHeadphoneSwitch();
-        break;
-    case SW_MICROPHONE_INSERT:
-        sMicrophoneState = args->switchValue;
-        updateHeadphoneSwitch();
-        break;
+    bool needSwitchUpdate = false;
+
+    if (args->switchMask & (1 << SW_HEADPHONE_INSERT)) {
+        sHeadphoneState = (args->switchValues & (1 << SW_HEADPHONE_INSERT)) ?
+                          AKEY_STATE_DOWN : AKEY_STATE_UP;
+        needSwitchUpdate = true;
     }
+
+    if (args->switchMask & (1 << SW_MICROPHONE_INSERT)) {
+        sMicrophoneState = (args->switchValues & (1 << SW_MICROPHONE_INSERT)) ?
+                           AKEY_STATE_DOWN : AKEY_STATE_UP;
+        needSwitchUpdate = true;
+    }
+
+    if (needSwitchUpdate)
+        updateHeadphoneSwitch();
 }
 
 void GeckoInputDispatcher::notifyDeviceReset(const NotifyDeviceResetArgs* args)

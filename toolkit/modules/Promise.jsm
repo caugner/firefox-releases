@@ -114,6 +114,10 @@ const N_STATUS = Name("status");
 const N_VALUE = Name("value");
 const N_HANDLERS = Name("handlers");
 
+// The following error types are considered programmer errors, which should be
+// reported (possibly redundantly) so as to let programmers fix their code.
+const ERRORS_TO_REPORT = ["EvalError", "RangeError", "ReferenceError", "TypeError"];
+
 ////////////////////////////////////////////////////////////////////////////////
 //// Promise
 
@@ -283,6 +287,16 @@ this.PromiseWalker = {
   },
 
   /**
+   * Sets up the PromiseWalker loop to start on the next tick of the event loop
+   */
+  scheduleWalkerLoop: function()
+  {
+    this.walkerLoopScheduled = true;
+    Services.tm.currentThread.dispatch(this.walkerLoop,
+                                       Ci.nsIThread.DISPATCH_NORMAL);
+  },
+
+  /**
    * Schedules the resolution or rejection handlers registered on the provided
    * promise for processing.
    *
@@ -300,9 +314,7 @@ this.PromiseWalker = {
 
     // Schedule the walker loop on the next tick of the event loop.
     if (!this.walkerLoopScheduled) {
-      this.walkerLoopScheduled = true;
-      Services.tm.currentThread.dispatch(this.walkerLoop,
-                                         Ci.nsIThread.DISPATCH_NORMAL);
+      this.scheduleWalkerLoop();
     }
   },
 
@@ -321,15 +333,21 @@ this.PromiseWalker = {
    */
   walkerLoop: function ()
   {
-    // Allow rescheduling the walker loop immediately.  This makes this walker
-    // resilient to the case where one handler does not return, but starts a
-    // nested event loop.  In that case, the newly scheduled walker will take
-    // over.  In the common case, the newly scheduled walker will be invoked
+    // If there is more than one handler waiting, reschedule the walker loop
+    // immediately.  Otherwise, use walkerLoopScheduled to tell schedulePromise()
+    // to reschedule the loop if it adds more handlers to the queue.  This makes
+    // this walker resilient to the case where one handler does not return, but
+    // starts a nested event loop.  In that case, the newly scheduled walker will
+    // take over.  In the common case, the newly scheduled walker will be invoked
     // after this one has returned, with no actual handler to process.  This
     // small overhead is required to make nested event loops work correctly, but
     // occurs at most once per resolution chain, thus having only a minor
     // impact on overall performance.
-    this.walkerLoopScheduled = false;
+    if (this.handlers.length > 1) {
+      this.scheduleWalkerLoop();
+    } else {
+      this.walkerLoopScheduled = false;
+    }
 
     // Process all the known handlers eagerly.
     while (this.handlers.length > 0) {
@@ -558,7 +576,27 @@ Handler.prototype = {
         nextStatus = STATUS_RESOLVED;
       }
     } catch (ex) {
-      // If an exception occurred in the handler, reject the next promise.
+
+      // An exception has occurred in the handler.
+
+      if (ex && typeof ex == "object" && "name" in ex &&
+          ERRORS_TO_REPORT.indexOf(ex.name) != -1) {
+
+        // We suspect that the exception is a programmer error, so we now
+        // display it using dump().  Note that we do not use Cu.reportError as
+        // we assume that this is a programming error, so we do not want end
+        // users to see it. Also, if the programmer handles errors correctly,
+        // they will either treat the error or log them somewhere.
+
+        dump("A coding exception was thrown in a Promise " +
+             ((nextStatus == STATUS_RESOLVED) ? "resolution":"rejection") +
+             " callback.\n");
+        dump("Full message: " + ex + "\n");
+        dump("See https://developer.mozilla.org/Mozilla/JavaScript_code_modules/Promise.jsm/Promise\n");
+        dump("Full stack: " + (("stack" in ex)?ex.stack:"not available") + "\n");
+      }
+
+      // Additionally, reject the next promise.
       nextStatus = STATUS_REJECTED;
       nextValue = ex;
     }

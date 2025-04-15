@@ -17,28 +17,47 @@
 namespace mozilla {
 
 class WebGLVertexArray MOZ_FINAL
-    : public nsISupports
+    : public nsWrapperCache
     , public WebGLRefCountedObject<WebGLVertexArray>
     , public LinkedListElement<WebGLVertexArray>
     , public WebGLContextBoundObject
-    , public nsWrapperCache
 {
+// -----------------------------------------------------------------------------
+// PUBLIC
 public:
+
+    // -------------------------------------------------------------------------
+    // CONSTRUCTOR & DESTRUCTOR
+
     WebGLVertexArray(WebGLContext *context);
 
     ~WebGLVertexArray() {
         DeleteOnce();
     };
 
-    void Delete();
 
-    bool HasEverBeenBound() { return mHasEverBeenBound; }
-    void SetHasEverBeenBound(bool x) { mHasEverBeenBound = x; }
-    WebGLuint GLName() const { return mGLName; }
+    // -------------------------------------------------------------------------
+    // IMPLMENET PARENT CLASSES
+
+    void Delete();
 
     WebGLContext* GetParentObject() const {
         return Context();
     }
+
+    virtual JSObject* WrapObject(JSContext *cx,
+                                 JS::Handle<JSObject*> scope) MOZ_OVERRIDE;
+
+    NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(WebGLVertexArray)
+    NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(WebGLVertexArray)
+
+
+    // -------------------------------------------------------------------------
+    // MEMBER FUNCTIONS
+
+    bool HasEverBeenBound() { return mHasEverBeenBound; }
+    void SetHasEverBeenBound(bool x) { mHasEverBeenBound = x; }
+    GLuint GLName() const { return mGLName; }
 
     bool EnsureAttrib(GLuint index, const char *info);
     bool HasAttrib(GLuint index) {
@@ -48,20 +67,24 @@ public:
         return HasAttrib(index) && mAttribs[index].enabled;
     }
 
-    virtual JSObject* WrapObject(JSContext *cx,
-                                 JS::Handle<JSObject*> scope) MOZ_OVERRIDE;
 
-    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-    NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(WebGLVertexArray)
+// -----------------------------------------------------------------------------
+// PRIVATE
+private:
 
-    WebGLuint mGLName;
+    // -------------------------------------------------------------------------
+    // MEMBERS
+
+    GLuint mGLName;
     bool mHasEverBeenBound;
-
     nsTArray<WebGLVertexAttribData> mAttribs;
     WebGLRefPtr<WebGLBuffer> mBoundElementArrayBuffer;
 
+
+    // -------------------------------------------------------------------------
+    // FRIENDSHIPS
+
     friend class WebGLContext;
-    friend class WebGLExtensionVertexArray;
 };
 
 } // namespace mozilla

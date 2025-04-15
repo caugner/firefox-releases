@@ -13,10 +13,18 @@
 #include "nsICharsetDetectionObserver.h"
 #include "nsStringGlue.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/dom/BindingUtils.h"
 
 class nsIInputStream;
 class nsIDOMBlob;
+
+namespace mozilla {
+class ErrorResult;
+
+namespace dom {
+class GlobalObject;
+template<typename> class Optional;
+}
+}
 
 BEGIN_WORKERS_NAMESPACE
 
@@ -36,7 +44,7 @@ public:
   _finalize(JSFreeOp* aFop) MOZ_OVERRIDE;
 
   static FileReaderSync*
-  Constructor(const WorkerGlobalObject& aGlobal, ErrorResult& aRv);
+  Constructor(const GlobalObject& aGlobal, ErrorResult& aRv);
 
   NS_DECL_ISUPPORTS_INHERITED
 

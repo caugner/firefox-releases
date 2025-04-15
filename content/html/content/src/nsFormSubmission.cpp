@@ -51,7 +51,7 @@ SendJSWarning(nsIDocument* aDocument,
               const PRUnichar** aWarningArgs, uint32_t aWarningArgsLen)
 {
   nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
-                                  "HTML", aDocument,
+                                  NS_LITERAL_CSTRING("HTML"), aDocument,
                                   nsContentUtils::eFORMS_PROPERTIES,
                                   aWarningName,
                                   aWarningArgs, aWarningArgsLen);
@@ -470,6 +470,14 @@ nsFSMultipartFormData::AddNameFilePair(const nsAString& aName,
 
       if (filename16.IsEmpty()) {
         filename16.AssignLiteral("blob");
+      } else {
+        nsAutoString filepath16;
+        rv = file->GetPath(filepath16);
+        NS_ENSURE_SUCCESS(rv, rv);
+        if (!filepath16.IsEmpty()) {
+          // File.path includes trailing "/"
+          filename16 = filepath16 + filename16;
+        }
       }
 
       rv = EncodeVal(filename16, filename, true);

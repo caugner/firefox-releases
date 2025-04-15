@@ -2,14 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH		= @DEPTH@
-topsrcdir	= @top_srcdir@
-srcdir		= @srcdir@
-VPATH		= @srcdir@
-relativesrcdir  = @relativesrcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
 MOCHITEST_FILES = \
         head_plain.js \
         bug364677-data.xml \
@@ -36,15 +28,18 @@ MOCHITEST_FILES = \
         test_offline_gzip.html \
         test_offlineNotification.html \
         video.ogg \
+        offlineByDefault.js \
         $(NULL)
 
-# test_contextmenu.html is disabled on Linux due to bug 513558
+# test_contextmenu.html and test_contextmenu_input are disabled on Linux due to bug 513558
 ifndef MOZ_WIDGET_GTK
 MOCHITEST_FILES += \
         audio.ogg \
         privateBrowsingMode.js \
         subtst_contextmenu.html \
+        contextmenu_common.js \
         test_contextmenu.html \
+        test_contextmenu_input.html \
         $(NULL)
 endif
 
@@ -188,6 +183,8 @@ MOCHITEST_BROWSER_FILES = \
                  browser_bug880101.js \
                  browser_bug882977.js \
                  browser_canonizeURL.js \
+                 browser_mixedcontent_securityflags.js \
+                 browser_no_mcb_on_http_site.js \
                  browser_clearplugindata_noage.html \
                  browser_clearplugindata.html \
                  browser_clearplugindata.js \
@@ -195,6 +192,8 @@ MOCHITEST_BROWSER_FILES = \
                  browser_contextSearchTabPosition.js \
                  browser_CTP_drag_drop.js \
                  browser_CTP_data_urls.js \
+                 browser_CTP_nonplugins.js \
+                 browser_CTP_resize.js \
                  browser_ctrlTab.js \
                  browser_customize_popupNotification.js \
                  browser_customize.js \
@@ -230,6 +229,8 @@ MOCHITEST_BROWSER_FILES = \
                  browser_popupUI.js \
                  browser_private_browsing_window.js \
                  browser_private_no_prompt.js \
+                 browser_registerProtocolHandler_notification.html \
+                 browser_registerProtocolHandler_notification.js \
                  browser_relatedTabs.js \
                  browser_removeTabsToTheEnd.js \
                  browser_sanitize-passwordDisabledHosts.js \
@@ -308,6 +309,7 @@ MOCHITEST_BROWSER_FILES = \
                  page_style_sample.html \
                  plugin_add_dynamically.html \
                  plugin_alternate_content.html \
+                 plugin_big.html \
                  plugin_both.html \
                  plugin_both2.html \
                  plugin_bug744745.html \
@@ -319,6 +321,8 @@ MOCHITEST_BROWSER_FILES = \
                  plugin_clickToPlayAllow.html \
                  plugin_clickToPlayDeny.html \
                  plugin_hidden_to_visible.html \
+                 plugin_small.html \
+                 plugin_syncRemoved.html \
                  plugin_test.html \
                  plugin_test2.html \
                  plugin_test3.html \
@@ -333,6 +337,13 @@ MOCHITEST_BROWSER_FILES = \
                  test_bug628179.html \
                  test_bug839103.html \
                  test_wyciwyg_copying.html \
+                 test-mixedcontent-securityerrors.html \
+                 test_no_mcb_on_http_site_img.html \
+                 test_no_mcb_on_http_site_img.css \
+                 test_no_mcb_on_http_site_font.html \
+                 test_no_mcb_on_http_site_font.css \
+                 test_no_mcb_on_http_site_font2.html \
+                 test_no_mcb_on_http_site_font2.css \
                  title_test.svg \
                  video.ogg \
                  zoom_test.html \
@@ -366,6 +377,7 @@ ifdef MOZ_CRASHREPORTER
 MOCHITEST_BROWSER_FILES += \
   browser_pluginCrashCommentAndURL.js \
   pluginCrashCommentAndURL.html \
+  browser_CTP_crashreporting.js \
   $(NULL)
 endif
 
@@ -375,5 +387,3 @@ MOCHITEST_BROWSER_FILES += \
   browser_CTP_context_menu.js \
   $(NULL)
 endif
-
-include $(topsrcdir)/config/rules.mk

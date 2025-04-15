@@ -9,9 +9,9 @@
 #include "WebGLRenderbuffer.h"
 #include "WebGLTexture.h"
 #include "mozilla/dom/WebGLRenderingContextBinding.h"
-#include "nsContentUtils.h"
 #include "WebGLTexture.h"
 #include "WebGLRenderbuffer.h"
+#include "GLContext.h"
 
 using namespace mozilla;
 
@@ -45,7 +45,7 @@ WebGLFramebuffer::Attachment::IsDeleteRequested() const {
 
 bool
 WebGLFramebuffer::Attachment::HasAlpha() const {
-    WebGLenum format = 0;
+    GLenum format = 0;
     if (Texture() && Texture()->HasImageInfoAt(mTextureLevel, mTextureCubeMapFace))
         format = Texture()->ImageInfoAt(mTextureLevel, mTextureCubeMapFace).Format();
     else if (Renderbuffer())
@@ -58,7 +58,7 @@ WebGLFramebuffer::Attachment::HasAlpha() const {
 }
 
 void
-WebGLFramebuffer::Attachment::SetTexture(WebGLTexture *tex, WebGLint level, WebGLenum face) {
+WebGLFramebuffer::Attachment::SetTexture(WebGLTexture *tex, GLint level, GLenum face) {
     mTexturePtr = tex;
     mRenderbufferPtr = nullptr;
     mTextureLevel = level;
@@ -102,7 +102,7 @@ WebGLFramebuffer::Attachment::IsComplete() const {
         if (!mTexturePtr->HasImageInfoAt(0, 0))
             return false;
 
-        WebGLenum format = mTexturePtr->ImageInfoAt(0).Format();
+        GLenum format = mTexturePtr->ImageInfoAt(0).Format();
 
         if (mAttachmentPoint == LOCAL_GL_DEPTH_ATTACHMENT) {
             return format == LOCAL_GL_DEPTH_COMPONENT;
@@ -111,7 +111,7 @@ WebGLFramebuffer::Attachment::IsComplete() const {
             return format == LOCAL_GL_DEPTH_STENCIL;
         }
         else if (mAttachmentPoint >= LOCAL_GL_COLOR_ATTACHMENT0 &&
-                 mAttachmentPoint < WebGLenum(LOCAL_GL_COLOR_ATTACHMENT0 + WebGLContext::sMaxColorAttachments)) {
+                 mAttachmentPoint < GLenum(LOCAL_GL_COLOR_ATTACHMENT0 + WebGLContext::sMaxColorAttachments)) {
             return (format == LOCAL_GL_ALPHA ||
                     format == LOCAL_GL_LUMINANCE ||
                     format == LOCAL_GL_LUMINANCE_ALPHA ||
@@ -122,7 +122,7 @@ WebGLFramebuffer::Attachment::IsComplete() const {
     }
 
     if (mRenderbufferPtr) {
-        WebGLenum format = mRenderbufferPtr->InternalFormat();
+        GLenum format = mRenderbufferPtr->InternalFormat();
 
         if (mAttachmentPoint == LOCAL_GL_DEPTH_ATTACHMENT) {
             return format == LOCAL_GL_DEPTH_COMPONENT16;
@@ -134,7 +134,7 @@ WebGLFramebuffer::Attachment::IsComplete() const {
             return format == LOCAL_GL_DEPTH_STENCIL;
         }
         else if (mAttachmentPoint >= LOCAL_GL_COLOR_ATTACHMENT0 &&
-                 mAttachmentPoint < WebGLenum(LOCAL_GL_COLOR_ATTACHMENT0 + WebGLContext::sMaxColorAttachments)) {
+                 mAttachmentPoint < GLenum(LOCAL_GL_COLOR_ATTACHMENT0 + WebGLContext::sMaxColorAttachments)) {
             return (format == LOCAL_GL_RGB565 ||
                     format == LOCAL_GL_RGB5_A1 ||
                     format == LOCAL_GL_RGBA4);
@@ -158,9 +158,9 @@ WebGLFramebuffer::Delete() {
 }
 
 void
-WebGLFramebuffer::FramebufferRenderbuffer(WebGLenum target,
-                             WebGLenum attachment,
-                             WebGLenum rbtarget,
+WebGLFramebuffer::FramebufferRenderbuffer(GLenum target,
+                             GLenum attachment,
+                             GLenum rbtarget,
                              WebGLRenderbuffer *wrb)
 {
     MOZ_ASSERT(mContext->mBoundFramebuffer == this);
@@ -198,10 +198,10 @@ WebGLFramebuffer::FramebufferRenderbuffer(WebGLenum target,
     }
 
     mContext->MakeContextCurrent();
-    WebGLuint parambuffername = wrb ? wrb->GLName() : 0;
+    GLuint parambuffername = wrb ? wrb->GLName() : 0;
     if (attachment == LOCAL_GL_DEPTH_STENCIL_ATTACHMENT) {
-        WebGLuint depthbuffername = parambuffername;
-        WebGLuint stencilbuffername = parambuffername;
+        GLuint depthbuffername = parambuffername;
+        GLuint stencilbuffername = parambuffername;
         if (!parambuffername){
             depthbuffername   = mDepthAttachment.Renderbuffer()   ? mDepthAttachment.Renderbuffer()->GLName()   : 0;
             stencilbuffername = mStencilAttachment.Renderbuffer() ? mStencilAttachment.Renderbuffer()->GLName() : 0;
@@ -209,7 +209,7 @@ WebGLFramebuffer::FramebufferRenderbuffer(WebGLenum target,
         mContext->gl->fFramebufferRenderbuffer(target, LOCAL_GL_DEPTH_ATTACHMENT, rbtarget, depthbuffername);
         mContext->gl->fFramebufferRenderbuffer(target, LOCAL_GL_STENCIL_ATTACHMENT, rbtarget, stencilbuffername);
     } else {
-        WebGLuint renderbuffername = parambuffername;
+        GLuint renderbuffername = parambuffername;
         if(!parambuffername && (attachment == LOCAL_GL_DEPTH_ATTACHMENT || attachment == LOCAL_GL_STENCIL_ATTACHMENT)){
             renderbuffername = mDepthStencilAttachment.Renderbuffer() ? mDepthStencilAttachment.Renderbuffer()->GLName() : 0;
         }
@@ -218,11 +218,11 @@ WebGLFramebuffer::FramebufferRenderbuffer(WebGLenum target,
 }
 
 void
-WebGLFramebuffer::FramebufferTexture2D(WebGLenum target,
-                          WebGLenum attachment,
-                          WebGLenum textarget,
+WebGLFramebuffer::FramebufferTexture2D(GLenum target,
+                          GLenum attachment,
+                          GLenum textarget,
                           WebGLTexture *wtex,
-                          WebGLint level)
+                          GLint level)
 {
     MOZ_ASSERT(mContext->mBoundFramebuffer == this);
     if (!mContext->ValidateObjectAllowNull("framebufferTexture2D: texture",
@@ -265,10 +265,10 @@ WebGLFramebuffer::FramebufferTexture2D(WebGLenum target,
     }
 
     mContext->MakeContextCurrent();
-    WebGLuint paramtexturename = wtex ? wtex->GLName() : 0;
+    GLuint paramtexturename = wtex ? wtex->GLName() : 0;
     if (attachment == LOCAL_GL_DEPTH_STENCIL_ATTACHMENT) {
-        WebGLuint depthtexturename = paramtexturename;
-        WebGLuint stenciltexturename = paramtexturename;
+        GLuint depthtexturename = paramtexturename;
+        GLuint stenciltexturename = paramtexturename;
         if(!paramtexturename){
             depthtexturename   = mDepthAttachment.Texture()   ? mDepthAttachment.Texture()->GLName()   : 0;
             stenciltexturename = mStencilAttachment.Texture() ? mStencilAttachment.Texture()->GLName() : 0;
@@ -276,7 +276,7 @@ WebGLFramebuffer::FramebufferTexture2D(WebGLenum target,
         mContext->gl->fFramebufferTexture2D(target, LOCAL_GL_DEPTH_ATTACHMENT, textarget, depthtexturename, level);
         mContext->gl->fFramebufferTexture2D(target, LOCAL_GL_STENCIL_ATTACHMENT, textarget, stenciltexturename, level);
     } else {
-        WebGLuint texturename = paramtexturename;
+        GLuint texturename = paramtexturename;
         if(!paramtexturename && (attachment == LOCAL_GL_DEPTH_ATTACHMENT || attachment == LOCAL_GL_STENCIL_ATTACHMENT)){
             texturename = mDepthStencilAttachment.Texture() ? mDepthStencilAttachment.Texture()->GLName() : 0;
         }
@@ -321,7 +321,7 @@ WebGLFramebuffer::HasAttachmentsOfMismatchedDimensions() const {
 }
 
 const WebGLFramebuffer::Attachment&
-WebGLFramebuffer::GetAttachment(WebGLenum attachment) const {
+WebGLFramebuffer::GetAttachment(GLenum attachment) const {
     if (attachment == LOCAL_GL_DEPTH_STENCIL_ATTACHMENT)
         return mDepthStencilAttachment;
     if (attachment == LOCAL_GL_DEPTH_ATTACHMENT)
@@ -421,7 +421,7 @@ WebGLFramebuffer::CheckAndInitializeRenderbuffers()
 
     mContext->MakeContextCurrent();
 
-    WebGLenum status = mContext->CheckFramebufferStatus(LOCAL_GL_FRAMEBUFFER);
+    GLenum status = mContext->CheckFramebufferStatus(LOCAL_GL_FRAMEBUFFER);
     if (status != LOCAL_GL_FRAMEBUFFER_COMPLETE)
         return false;
 
@@ -472,14 +472,14 @@ WebGLFramebuffer::CheckAndInitializeRenderbuffers()
     return true;
 }
 
-bool WebGLFramebuffer::CheckColorAttachementNumber(WebGLenum attachment, const char * functionName) const
+bool WebGLFramebuffer::CheckColorAttachementNumber(GLenum attachment, const char * functionName) const
 {
     const char* const errorFormating = "%s: attachment: invalid enum value 0x%x";
 
     if (mContext->IsExtensionEnabled(WebGLContext::WEBGL_draw_buffers))
     {
         if (attachment < LOCAL_GL_COLOR_ATTACHMENT0 ||
-            attachment > WebGLenum(LOCAL_GL_COLOR_ATTACHMENT0 + mContext->mGLMaxColorAttachments))
+            attachment > GLenum(LOCAL_GL_COLOR_ATTACHMENT0 + mContext->mGLMaxColorAttachments))
         {
             mContext->ErrorInvalidEnum(errorFormating, functionName, attachment);
             return false;
@@ -533,9 +533,11 @@ ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
                             const char* aName,
                             uint32_t aFlags = 0)
 {
-    CycleCollectionNoteEdgeName(aCallback, aName, aFlags);
-    aCallback.NoteXPCOMChild(aField.mTexturePtr);
-    aCallback.NoteXPCOMChild(aField.mRenderbufferPtr);
+    CycleCollectionNoteChild(aCallback, aField.mTexturePtr.get(),
+                             aName, aFlags);
+
+    CycleCollectionNoteChild(aCallback, aField.mRenderbufferPtr.get(),
+                             aName, aFlags);
 }
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_7(WebGLFramebuffer,
@@ -547,10 +549,5 @@ NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_7(WebGLFramebuffer,
   mDepthStencilAttachment.mTexturePtr,
   mDepthStencilAttachment.mRenderbufferPtr)
 
-NS_IMPL_CYCLE_COLLECTING_ADDREF(WebGLFramebuffer)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(WebGLFramebuffer)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WebGLFramebuffer)
-  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
+NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(WebGLFramebuffer, AddRef)
+NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(WebGLFramebuffer, Release)

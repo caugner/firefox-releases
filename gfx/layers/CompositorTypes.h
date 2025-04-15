@@ -6,9 +6,10 @@
 #ifndef MOZILLA_LAYERS_COMPOSITORTYPES_H
 #define MOZILLA_LAYERS_COMPOSITORTYPES_H
 
-#include "LayersTypes.h"
-#include "nsXULAppAPI.h"
-
+#include <stdint.h>                     // for uint32_t
+#include <sys/types.h>                  // for int32_t
+#include "LayersTypes.h"                // for LayersBackend, etc
+#include "nsXULAppAPI.h"                // for GeckoProcessType, etc
 
 namespace mozilla {
 namespace layers {
@@ -26,18 +27,18 @@ const SurfaceDescriptorType SURFACEDESCRIPTOR_UNKNOWN = 0;
  */
 typedef uint32_t TextureFlags;
 // Use nearest-neighbour texture filtering (as opposed to linear filtering).
-const TextureFlags UseNearestFilter           = 1 << 0;
+const TextureFlags TEXTURE_USE_NEAREST_FILTER = 1 << 0;
 // The texture should be flipped around the y-axis when composited.
-const TextureFlags NeedsYFlip                 = 1 << 1;
+const TextureFlags TEXTURE_NEEDS_Y_FLIP       = 1 << 1;
 // Force the texture to be represented using a single tile (note that this means
 // tiled textures, not tiled layers).
 const TextureFlags TEXTURE_DISALLOW_BIGIMAGE  = 1 << 2;
 // Allow using 'repeat' mode for wrapping.
-const TextureFlags AllowRepeat                = 1 << 3;
+const TextureFlags TEXTURE_ALLOW_REPEAT       = 1 << 3;
 // The texture represents a tile which is newly created.
-const TextureFlags NewTile                    = 1 << 4;
+const TextureFlags TEXTURE_NEW_TILE           = 1 << 4;
 // The texture is part of a component-alpha pair
-const TextureFlags ComponentAlpha             = 1 << 5;
+const TextureFlags TEXTURE_COMPONENT_ALPHA    = 1 << 5;
 // The buffer will be treated as if the RB bytes are swapped.
 // This is useful for rendering using Cairo/Thebes, because there is no
 // BGRX Android pixel format, and so we have to do byte swapping.
@@ -92,6 +93,28 @@ TextureRequiresLocking(TextureFlags aFlags)
                      TEXTURE_DOUBLE_BUFFERED |
                      TEXTURE_IMMUTABLE));
 }
+
+/**
+ * The type of debug diagnostic to enable.
+ */
+typedef uint32_t DiagnosticTypes;
+const DiagnosticTypes DIAGNOSTIC_NONE             = 0;
+const DiagnosticTypes DIAGNOSTIC_TILE_BORDERS     = 1 << 0;
+const DiagnosticTypes DIAGNOSTIC_LAYER_BORDERS    = 1 << 1;
+const DiagnosticTypes DIAGNOSTIC_BIGIMAGE_BORDERS = 1 << 2;
+
+/**
+ * Information about the object that is being diagnosed.
+ */
+typedef uint32_t DiagnosticFlags;
+const DiagnosticFlags DIAGNOSTIC_IMAGE      = 1 << 0;
+const DiagnosticFlags DIAGNOSTIC_CONTENT    = 1 << 1;
+const DiagnosticFlags DIAGNOSTIC_CANVAS     = 1 << 2;
+const DiagnosticFlags DIAGNOSTIC_COLOR      = 1 << 3;
+const DiagnosticFlags DIAGNOSTIC_CONTAINER  = 1 << 4;
+const DiagnosticFlags DIAGNOSTIC_TILE       = 1 << 5;
+const DiagnosticFlags DIAGNOSTIC_BIGIMAGE   = 1 << 6;
+const DiagnosticFlags DIAGNOSTIC_COMPONENT_ALPHA = 1 << 7;
 
 /**
  * See gfx/layers/Effects.h

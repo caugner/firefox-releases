@@ -3,12 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "base/basictypes.h"
 #include "CanvasRenderingContext2D.h"
 
 #include "nsXULElement.h"
-
-#include "prenv.h"
 
 #include "nsIServiceManager.h"
 #include "nsMathUtils.h"
@@ -20,12 +17,10 @@
 #include "nsSVGEffects.h"
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
-#include "nsIVariant.h"
 
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIFrame.h"
 #include "nsError.h"
-#include "nsIScriptError.h"
 
 #include "nsCSSParser.h"
 #include "mozilla/css/StyleRule.h"
@@ -39,11 +34,9 @@
 
 #include "nsColor.h"
 #include "nsGfxCIID.h"
-#include "nsIScriptSecurityManager.h"
 #include "nsIDocShell.h"
 #include "nsIDOMWindow.h"
 #include "nsPIDOMWindow.h"
-#include "nsIXPConnect.h"
 #include "nsDisplayList.h"
 
 #include "nsTArray.h"
@@ -73,6 +66,7 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 
+#include "mozilla/Alignment.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/dom/ContentParent.h"
@@ -89,9 +83,6 @@
 #include "mozilla/unused.h"
 #include "nsCCUncollectableMarker.h"
 #include "nsWrapperCacheInlines.h"
-#include "nsJSUtils.h"
-#include "XPCQuickStubs.h"
-#include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/CanvasRenderingContext2DBinding.h"
 #include "mozilla/dom/HTMLImageElement.h"
 #include "mozilla/dom/HTMLVideoElement.h"
@@ -139,20 +130,19 @@ const Float SIGMA_MAX = 100;
 /* Memory reporter stuff */
 static int64_t gCanvasAzureMemoryUsed = 0;
 
-static int64_t GetCanvasAzureMemoryUsed() {
-  return gCanvasAzureMemoryUsed;
-}
-
 // This is KIND_OTHER because it's not always clear where in memory the pixels
 // of a canvas are stored.  Furthermore, this memory will be tracked by the
 // underlying surface implementations.  See bug 655638 for details.
-NS_MEMORY_REPORTER_IMPLEMENT(CanvasAzureMemory,
-  "canvas-2d-pixel-bytes",
-  KIND_OTHER,
-  UNITS_BYTES,
-  GetCanvasAzureMemoryUsed,
-  "Memory used by 2D canvases. Each canvas requires (width * height * 4) "
-  "bytes.")
+class Canvas2dPixelsReporter MOZ_FINAL : public MemoryUniReporter
+{
+  public:
+    Canvas2dPixelsReporter()
+      : MemoryUniReporter("canvas-2d-pixels", KIND_OTHER, UNITS_BYTES,
+"Memory used by 2D canvases. Each canvas requires (width * height * 4) bytes.")
+    {}
+private:
+    int64_t Amount() MOZ_OVERRIDE { return gCanvasAzureMemoryUsed; }
+};
 
 class CanvasRadialGradient : public CanvasGradient
 {
@@ -546,7 +536,7 @@ CanvasRenderingContext2D::CanvasRenderingContext2D()
   sNumLivingContexts++;
   SetIsDOMBinding();
 
-#if USE_SKIA_GPU
+#ifdef USE_SKIA_GPU
   mForceSoftware = false;
 #endif
 }
@@ -563,10 +553,8 @@ CanvasRenderingContext2D::~CanvasRenderingContext2D()
     NS_IF_RELEASE(sErrorTarget);
   }
 
-#if USE_SKIA_GPU
-  std::vector<CanvasRenderingContext2D*>::iterator iter = std::find(DemotableContexts().begin(), DemotableContexts().end(), this);
-  if (iter != DemotableContexts().end())
-    DemotableContexts().erase(iter);
+#ifdef USE_SKIA_GPU
+  RemoveDemotableContext(this);
 #endif
 }
 
@@ -745,16 +733,18 @@ CanvasRenderingContext2D::RedrawUser(const gfxRect& r)
   Redraw(newr);
 }
 
-#if USE_SKIA_GPU
-
 void CanvasRenderingContext2D::Demote()
 {
-  if (!IsTargetValid() || mForceSoftware)
+#ifdef  USE_SKIA_GPU
+  if (!IsTargetValid() || mForceSoftware || !mTarget->GetGLContext())
     return;
+
+  RemoveDemotableContext(this);
 
   RefPtr<SourceSurface> snapshot = mTarget->Snapshot();
   RefPtr<DrawTarget> oldTarget = mTarget;
   mTarget = nullptr;
+  mResetLayer = true;
   mForceSoftware = true;
 
   // Recreate target, now demoted to software only
@@ -762,10 +752,20 @@ void CanvasRenderingContext2D::Demote()
   if (!IsTargetValid())
     return;
 
-  // Put back the content from the old DrawTarget
+  // Restore the content from the old DrawTarget
   mgfx::Rect r(0, 0, mWidth, mHeight);
   mTarget->DrawSurface(snapshot, r, r);
+
+  // Restore the clips and transform
+  for (uint32_t i = 0; i < CurrentState().clipsPushed.size(); i++) {
+    mTarget->PushClip(CurrentState().clipsPushed[i]);
+  }
+
+  mTarget->SetTransform(oldTarget->GetTransform());
+#endif
 }
+
+#ifdef USE_SKIA_GPU
 
 std::vector<CanvasRenderingContext2D*>&
 CanvasRenderingContext2D::DemotableContexts()
@@ -788,8 +788,6 @@ CanvasRenderingContext2D::DemoteOldestContextIfNecessary()
     return;
 
   CanvasRenderingContext2D* oldest = contexts.front();
-  contexts.erase(contexts.begin());
-
   oldest->Demote();
 }
 
@@ -801,6 +799,20 @@ CanvasRenderingContext2D::AddDemotableContext(CanvasRenderingContext2D* context)
     return;
 
   DemotableContexts().push_back(context);
+}
+
+void
+CanvasRenderingContext2D::RemoveDemotableContext(CanvasRenderingContext2D* context)
+{
+  std::vector<CanvasRenderingContext2D*>::iterator iter = std::find(DemotableContexts().begin(), DemotableContexts().end(), context);
+  if (iter != DemotableContexts().end())
+    DemotableContexts().erase(iter);
+}
+
+bool
+CheckSizeForSkiaGL(IntSize size) {
+  int minsize = Preferences::GetInt("gfx.canvas.min-size-for-skia-gl", 128);
+  return size.width >= minsize && size.height >= minsize;
 }
 
 #endif
@@ -848,13 +860,10 @@ CanvasRenderingContext2D::EnsureTarget()
         nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
         nsString vendor;
 
-        if (!mForceSoftware &&
-            gfxInfo &&
-            NS_SUCCEEDED(gfxInfo->GetAdapterVendorID(vendor)) &&
-            StringBeginsWith(vendor, NS_LITERAL_STRING("NVIDIA")))
+        if (!mForceSoftware && CheckSizeForSkiaGL(size))
         {
           glContext = GLContextProvider::CreateOffscreen(gfxIntSize(size.width, size.height),
-                                                         caps, GLContext::ContextFlagsNone);
+                                                         caps, gl::ContextFlagsNone);
         }
 
         if (glContext) {
@@ -868,7 +877,7 @@ CanvasRenderingContext2D::EnsureTarget()
 #endif
        mTarget = layerManager->CreateDrawTarget(size, format);
      } else {
-       mTarget = gfxPlatform::GetPlatform()->CreateOffscreenDrawTarget(size, format);
+       mTarget = gfxPlatform::GetPlatform()->CreateOffscreenCanvasDrawTarget(size, format);
      }
   }
 
@@ -876,7 +885,7 @@ CanvasRenderingContext2D::EnsureTarget()
     static bool registered = false;
     if (!registered) {
       registered = true;
-      NS_RegisterMemoryReporter(new NS_MEMORY_REPORTER_NAME(CanvasAzureMemory));
+      NS_RegisterMemoryReporter(new Canvas2dPixelsReporter());
     }
 
     gCanvasAzureMemoryUsed += mWidth * mHeight * 4;
@@ -1045,7 +1054,8 @@ CanvasRenderingContext2D::GetInputStream(const char *aMimeType,
 
   nsresult rv;
   const char encoderPrefix[] = "@mozilla.org/image/encoder;2?type=";
-  nsAutoArrayPtr<char> conid(new (std::nothrow) char[strlen(encoderPrefix) + strlen(aMimeType) + 1]);
+  static const fallible_t fallible = fallible_t();
+  nsAutoArrayPtr<char> conid(new (fallible) char[strlen(encoderPrefix) + strlen(aMimeType) + 1]);
 
   if (!conid) {
     return NS_ERROR_OUT_OF_MEMORY;
@@ -1059,7 +1069,7 @@ CanvasRenderingContext2D::GetInputStream(const char *aMimeType,
     return NS_ERROR_FAILURE;
   }
 
-  nsAutoArrayPtr<uint8_t> imageBuffer(new (std::nothrow) uint8_t[mWidth * mHeight * 4]);
+  nsAutoArrayPtr<uint8_t> imageBuffer(new (fallible) uint8_t[mWidth * mHeight * 4]);
   if (!imageBuffer) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -1236,7 +1246,7 @@ ObjectToMatrix(JSContext* cx, JS::Handle<JSObject*> obj, Matrix& matrix,
   for (uint32_t i = 0; i < 6; ++i) {
     JS::Rooted<JS::Value> elt(cx);
     double d;
-    if (!JS_GetElement(cx, obj, i, elt.address())) {
+    if (!JS_GetElement(cx, obj, i, &elt)) {
       error.Throw(NS_ERROR_FAILURE);
       return false;
     }
@@ -3046,6 +3056,24 @@ CanvasRenderingContext2D::DrawImage(const HTMLImageOrCanvasOrVideoElement& image
   RedrawUser(gfxRect(dx, dy, dw, dh));
 }
 
+#ifdef USE_SKIA_GPU
+static bool
+IsStandardCompositeOp(CompositionOp op)
+{
+    return (op == OP_SOURCE ||
+            op == OP_ATOP ||
+            op == OP_IN ||
+            op == OP_OUT ||
+            op == OP_OVER ||
+            op == OP_DEST_IN ||
+            op == OP_DEST_OUT ||
+            op == OP_DEST_OVER ||
+            op == OP_DEST_ATOP ||
+            op == OP_ADD ||
+            op == OP_XOR);
+}
+#endif
+
 void
 CanvasRenderingContext2D::SetGlobalCompositeOperation(const nsAString& op,
                                                       ErrorResult& error)
@@ -3084,6 +3112,12 @@ CanvasRenderingContext2D::SetGlobalCompositeOperation(const nsAString& op,
   else CANVAS_OP_TO_GFX_OP("luminosity", LUMINOSITY)
   // XXX ERRMSG we need to report an error to developers here! (bug 329026)
   else return;
+
+#ifdef USE_SKIA_GPU
+  if (!IsStandardCompositeOp(comp_op)) {
+    Demote();
+  }
+#endif
 
 #undef CANVAS_OP_TO_GFX_OP
   CurrentState().op = comp_op;
@@ -3128,6 +3162,12 @@ CanvasRenderingContext2D::GetGlobalCompositeOperation(nsAString& op,
   else {
     error.Throw(NS_ERROR_FAILURE);
   }
+
+#ifdef USE_SKIA_GPU
+  if (!IsStandardCompositeOp(comp_op)) {
+    Demote();
+  }
+#endif
 
 #undef CANVAS_OP_TO_GFX_OP
 }
@@ -3532,7 +3572,7 @@ CanvasRenderingContext2D::EnsureErrorTarget()
     return;
   }
 
-  RefPtr<DrawTarget> errorTarget = gfxPlatform::GetPlatform()->CreateOffscreenDrawTarget(IntSize(1, 1), FORMAT_B8G8R8A8);
+  RefPtr<DrawTarget> errorTarget = gfxPlatform::GetPlatform()->CreateOffscreenCanvasDrawTarget(IntSize(1, 1), FORMAT_B8G8R8A8);
   NS_ABORT_IF_FALSE(errorTarget, "Failed to allocate the error target!");
 
   sErrorTarget = errorTarget;

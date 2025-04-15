@@ -15,15 +15,6 @@ component {88b3eb21-d072-4e3b-886d-f89d8c49fe59} UpdatePrompt.js
 contract @mozilla.org/updates/update-prompt;1 {88b3eb21-d072-4e3b-886d-f89d8c49fe59}
 #endif
 
-# MozKeyboard.js
-component {397a7fdf-2254-47be-b74e-76625a1a66d5} MozKeyboard.js
-contract @mozilla.org/b2g-keyboard;1 {397a7fdf-2254-47be-b74e-76625a1a66d5}
-category JavaScript-navigator-property mozKeyboard @mozilla.org/b2g-keyboard;1
-
-component {5c7f4ce1-a946-4adc-89e6-c908226341a0} MozKeyboard.js
-contract @mozilla.org/b2g-inputmethod;1 {5c7f4ce1-a946-4adc-89e6-c908226341a0}
-category JavaScript-navigator-property mozInputMethod @mozilla.org/b2g-inputmethod;1
-
 # DirectoryProvider.js
 component {9181eb7c-6f87-11e1-90b1-4f59d80dd2e5} DirectoryProvider.js
 contract @mozilla.org/browser/directory-provider;1 {9181eb7c-6f87-11e1-90b1-4f59d80dd2e5}
@@ -40,7 +31,8 @@ category app-startup ProcessGlobal service,@mozilla.org/b2g-process-global;1
 
 # ContentHandler.js
 component {d18d0216-d50c-11e1-ba54-efb18d0ef0ac} ContentHandler.js
-contract @mozilla.org/uriloader/content-handler;1?type=application/pdf {d18d0216-d50c-11e1-ba54-efb18d0ef0ac}
+contract @mozilla.org/b2g/activities-content-handler;1 {d18d0216-d50c-11e1-ba54-efb18d0ef0ac}
+category app-startup ContentHandler service,@mozilla.org/b2g/activities-content-handler;1
 
 # PaymentGlue.js
 component {8b83eabc-7929-47f4-8b48-4dea8d887e4b} PaymentGlue.js
@@ -73,3 +65,8 @@ contract @mozilla.org/network/protocol/about;1?what=certerror {920400b1-cf8f-476
 # FilePicker.js
 component {436ff8f9-0acc-4b11-8ec7-e293efba3141} FilePicker.js
 contract @mozilla.org/filepicker;1 {436ff8f9-0acc-4b11-8ec7-e293efba3141}
+
+# WebappsUpdateTimer.js
+component {637b0f77-2429-49a0-915f-abf5d0db8b9a} WebappsUpdateTimer.js
+contract @mozilla.org/b2g/webapps-update-timer;1 {637b0f77-2429-49a0-915f-abf5d0db8b9a}
+category update-timer WebappsUpdateTimer @mozilla.org/b2g/webapps-update-timer;1,getService,background-update-timer,webapps.update.interval,86400

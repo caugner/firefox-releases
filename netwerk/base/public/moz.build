@@ -85,6 +85,7 @@ XPIDL_SOURCES += [
     'nsISerializationHelper.idl',
     'nsIServerSocket.idl',
     'nsISimpleStreamListener.idl',
+    'nsISiteSecurityService.idl',
     'nsISocketTransport.idl',
     'nsISocketTransportService.idl',
     'nsISpeculativeConnect.idl',
@@ -93,7 +94,6 @@ XPIDL_SOURCES += [
     'nsIStreamListenerTee.idl',
     'nsIStreamLoader.idl',
     'nsIStreamTransportService.idl',
-    'nsIStrictTransportSecurityService.idl',
     'nsISyncStreamListener.idl',
     'nsISystemProxySettings.idl',
     'nsIThreadRetargetableRequest.idl',
@@ -133,4 +133,6 @@ EXPORTS += [
     'nsStreamListenerWrapper.h',
     'nsURIHashKey.h',
 ]
+
+FAIL_ON_WARNINGS = True
 

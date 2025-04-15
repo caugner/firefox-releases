@@ -8,15 +8,17 @@
 #ifndef nsXBLService_h_
 #define nsXBLService_h_
 
+#include "mozilla/LinkedList.h"
 #include "nsString.h"
 #include "nsIObserver.h"
 #include "nsWeakReference.h"
-#include "jsapi.h"              // nsXBLJSClass derives from JSClass
-#include "jsclist.h"            // nsXBLJSClass derives from JSCList
+#include "js/Class.h"           // nsXBLJSClass derives from JSClass
 #include "nsTArray.h"
 
+class nsCStringKey;
 class nsXBLBinding;
 class nsXBLDocumentInfo;
+class nsXBLJSClass;
 class nsIContent;
 class nsIDocument;
 class nsString;
@@ -124,15 +126,21 @@ public:
 
   static nsHashtable* gClassTable;           // A table of nsXBLJSClass objects.
 
-  static JSCList  gClassLRUList;             // LRU list of cached classes.
+  static mozilla::LinkedList<nsXBLJSClass>* gClassLRUList;
+                                             // LRU list of cached classes.
   static uint32_t gClassLRUListLength;       // Number of classes on LRU list.
   static uint32_t gClassLRUListQuota;        // Quota on class LRU list.
   static bool     gAllowDataURIs;            // Whether we should allow data
                                              // urls in -moz-binding. Needed for
                                              // testing.
+
+  // Look up the class by key in gClassTable.
+  static nsXBLJSClass *getClass(const nsCString &key);
+  static nsXBLJSClass *getClass(nsCStringKey *key);
 };
 
-class nsXBLJSClass : public JSCList, public JSClass
+class nsXBLJSClass : public mozilla::LinkedListElement<nsXBLJSClass>
+                   , public JSClass
 {
 private:
   nsrefcnt mRefCnt;
@@ -153,6 +161,23 @@ public:
   nsrefcnt Drop() { return --mRefCnt ? mRefCnt : Destroy(); }
   nsrefcnt AddRef() { return Hold(); }
   nsrefcnt Release() { return Drop(); }
+
+  // Downcast from a pointer to const JSClass to a pointer to non-const
+  // nsXBLJSClass.
+  //
+  // The const_cast is safe because nsXBLJSClass instances are never actually
+  // const. It's necessary because we pass pointers to nsXBLJSClass to code
+  // which uses pointers to const JSClass, and returns them back to us that
+  // way, and we need to convert them back to pointers to non-const
+  // nsXBLJSClass so that we can modify the reference count and add them to
+  // the gClassLRUList list.
+  static nsXBLJSClass*
+  fromJSClass(const JSClass* c)
+  {
+    nsXBLJSClass* x = const_cast<nsXBLJSClass*>(static_cast<const nsXBLJSClass*>(c));
+    MOZ_ASSERT(nsXBLService::getClass(x->mKey) == x);
+    return x;
+  }
 };
 
 #endif

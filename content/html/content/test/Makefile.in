@@ -3,14 +3,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH          = @DEPTH@
-topsrcdir      = @top_srcdir@
-srcdir         = @srcdir@
-VPATH          = @srcdir@
-relativesrcdir = @relativesrcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
 MOCHITEST_FILES = \
 		test_hidden.html \
 		test_bug589.html \
@@ -148,7 +140,6 @@ MOCHITEST_FILES = \
 		test_bug569955.html \
 		test_bug573969.html \
 		test_bug561640.html \
-		test_bug566064.html \
 		test_bug582412-1.html \
 		test_bug582412-2.html \
 		test_bug558788-1.html \
@@ -288,6 +279,13 @@ MOCHITEST_FILES = \
 		file_iframe_sandbox_a_if10.html \
 		file_iframe_sandbox_a_if11.html \
 		file_iframe_sandbox_a_if12.html \
+		file_iframe_sandbox_a_if13.html \
+		file_iframe_sandbox_a_if14.html \
+		file_iframe_sandbox_a_if15.html \
+		file_iframe_sandbox_a_if16.html \
+		file_iframe_sandbox_a_if17.html \
+		file_iframe_sandbox_a_if18.html \
+		file_iframe_sandbox_a_if19.html \
 		test_iframe_sandbox_same_origin.html \
 		file_iframe_sandbox_b_if1.html \
 		file_iframe_sandbox_b_if2.html \
@@ -368,7 +366,6 @@ MOCHITEST_FILES = \
 		test_meta_attributes_reflection.html \
 		test_mod_attributes_reflection.html \
 		test_mozaudiochannel.html \
-		test_mozLoadFrom.html \
 		test_style_attributes_reflection.html \
 		test_bug629801.html \
 		test_bug839371.html \
@@ -392,6 +389,8 @@ MOCHITEST_FILES = \
 		file_srcdoc-2.html \
 		test_bug893537.html \
 		file_bug893537.html \
+		test_input_files_not_nsIFile.html \
+		test_nested_invalid_fieldsets.html \
 		$(NULL)
 
 MOCHITEST_CHROME_FILES = \
@@ -403,5 +402,3 @@ MOCHITEST_BROWSER_FILES = \
 		file_bug649778.html \
 		file_bug649778.html^headers^ \
 		$(NULL)
-
-include $(topsrcdir)/config/rules.mk

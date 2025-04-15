@@ -26,6 +26,7 @@
 #include "nricemediastream.h"
 #include "nriceresolverfake.h"
 #include "nriceresolver.h"
+#include "nrinterfaceprioritizer.h"
 #include "mtransport_test_utils.h"
 #include "runnable_utils.h"
 
@@ -167,9 +168,15 @@ class IceTestPeer : public sigslot::has_slots<> {
     return ice_ctx_->GetGlobalAttributes();
   }
 
-  std::vector<std::string> GetCandidates(const std::string &name) {
-    std::vector<std::string> candidates_in = candidates_[name];
+  std::vector<std::string> GetCandidates(size_t stream) {
     std::vector<std::string> candidates;
+
+    if (stream >= streams_.size())
+      return candidates;
+
+    std::vector<std::string> candidates_in =
+      streams_[stream]->GetCandidates();
+
 
     for (size_t i=0; i < candidates_in.size(); i++) {
       if ((!candidate_filter_) || candidate_filter_(candidates_in[i])) {
@@ -212,7 +219,7 @@ class IceTestPeer : public sigslot::has_slots<> {
       for (size_t i=0; i<streams_.size(); ++i) {
         test_utils->sts_target()->Dispatch(
             WrapRunnableRet(streams_[i], &NrIceMediaStream::ParseAttributes,
-                            remote->GetCandidates(remote->streams_[i]->name()),
+                            remote->GetCandidates(i),
                             &res), NS_DISPATCH_SYNC);
 
         ASSERT_TRUE(NS_SUCCEEDED(res));
@@ -248,7 +255,7 @@ class IceTestPeer : public sigslot::has_slots<> {
     ASSERT_GT(remote_->streams_.size(), stream);
 
     std::vector<std::string> candidates =
-      remote_->GetCandidates(remote_->streams_[stream]->name());
+      remote_->GetCandidates(stream);
 
     for (size_t j=0; j<candidates.size(); j++) {
       test_utils->sts_target()->Dispatch(
@@ -301,13 +308,17 @@ class IceTestPeer : public sigslot::has_slots<> {
         NrIceCandidate *remote;
 
         nsresult res = streams_[i]->GetActivePair(j+1, &local, &remote);
-        ASSERT_TRUE(NS_SUCCEEDED(res));
-        DumpCandidate("Local  ", *local);
-        ASSERT_EQ(expected_local_type_, local->type);
-        DumpCandidate("Remote ", *remote);
-        ASSERT_EQ(expected_remote_type_, remote->type);
-        delete local;
-        delete remote;
+        if (res == NS_ERROR_NOT_AVAILABLE) {
+          std::cerr << "Component unpaired or disabled." << std::endl;
+        } else {
+          ASSERT_TRUE(NS_SUCCEEDED(res));
+          DumpCandidate("Local  ", *local);
+          ASSERT_EQ(expected_local_type_, local->type);
+          DumpCandidate("Remote ", *remote);
+          ASSERT_EQ(expected_remote_type_, remote->type);
+          delete local;
+          delete remote;
+        }
       }
     }
   }
@@ -376,6 +387,12 @@ class IceTestPeer : public sigslot::has_slots<> {
 
     attributes.push_back(candidate);
     streams_[i]->ParseAttributes(attributes);
+  }
+
+  void DisableComponent(size_t stream, int component_id) {
+    ASSERT_LT(stream, streams_.size());
+    nsresult res = streams_[stream]->DisableComponent(component_id);
+    ASSERT_TRUE(NS_SUCCEEDED(res));
   }
 
  private:
@@ -560,6 +577,54 @@ class IceConnectTest : public ::testing::Test {
   mozilla::ScopedDeletePtr<IceTestPeer> p2_;
 };
 
+class PrioritizerTest : public ::testing::Test {
+ public:
+  PrioritizerTest():
+    prioritizer_(nullptr) {}
+
+  ~PrioritizerTest() {
+    if (prioritizer_) {
+      nr_interface_prioritizer_destroy(&prioritizer_);
+    }
+  }
+
+  void SetPriorizer(nr_interface_prioritizer *prioritizer) {
+    prioritizer_ = prioritizer;
+  }
+
+  void AddInterface(const std::string& num, int type, int estimated_speed) {
+    std::string str_addr = "10.0.0." + num;
+    std::string ifname = "eth" + num;
+    nr_local_addr local_addr;
+    local_addr.interface.type = type;
+    local_addr.interface.estimated_speed = estimated_speed;
+
+    int r = nr_ip4_str_port_to_transport_addr(str_addr.c_str(), 0,
+                                              IPPROTO_UDP, &(local_addr.addr));
+    ASSERT_EQ(0, r);
+    strncpy(local_addr.addr.ifname, ifname.c_str(), MAXIFNAME);
+
+    r = nr_interface_prioritizer_add_interface(prioritizer_, &local_addr);
+    ASSERT_EQ(0, r);
+    r = nr_interface_prioritizer_sort_preference(prioritizer_);
+    ASSERT_EQ(0, r);
+  }
+
+  void HasLowerPreference(const std::string& num1, const std::string& num2) {
+    std::string key1 = "eth" + num1 + ":10.0.0." + num1;
+    std::string key2 = "eth" + num2 + ":10.0.0." + num2;
+    UCHAR pref1, pref2;
+    int r = nr_interface_prioritizer_get_priority(prioritizer_, key1.c_str(), &pref1);
+    ASSERT_EQ(0, r);
+    r = nr_interface_prioritizer_get_priority(prioritizer_, key2.c_str(), &pref2);
+    ASSERT_EQ(0, r);
+    ASSERT_LE(pref1, pref2);
+  }
+
+ private:
+  nr_interface_prioritizer *prioritizer_;
+};
+
 }  // end namespace
 
 TEST_F(IceGatherTest, TestGatherFakeStunServerHostnameNoResolver) {
@@ -612,6 +677,21 @@ TEST_F(IceGatherTest, TestGatherTurn) {
   Gather();
 }
 
+TEST_F(IceGatherTest, TestGatherDisableComponent) {
+  peer_->SetStunServer(kDefaultStunServerHostname, kDefaultStunServerPort);
+  peer_->AddStream(2);
+  peer_->DisableComponent(1, 2);
+  Gather();
+  std::vector<std::string> candidates =
+    peer_->GetCandidates(1);
+
+  for (size_t i=0; i<candidates.size(); ++i) {
+    size_t sp1 = candidates[i].find(' ');
+    ASSERT_EQ(0, candidates[i].compare(sp1+1, 1, "1", 1));
+  }
+}
+
+
 // Verify that a bogus candidate doesn't cause crashes on the
 // main thread. See bug 856433.
 TEST_F(IceGatherTest, TestBogusCandidate) {
@@ -636,6 +716,21 @@ TEST_F(IceConnectTest, TestConnect) {
   ASSERT_TRUE(Gather(true));
   Connect();
 }
+
+TEST_F(IceConnectTest, TestConnectTwoComponents) {
+  AddStream("first", 2);
+  ASSERT_TRUE(Gather(true));
+  Connect();
+}
+
+TEST_F(IceConnectTest, TestConnectTwoComponentsDisableSecond) {
+  AddStream("first", 2);
+  ASSERT_TRUE(Gather(true));
+  p1_->DisableComponent(0, 2);
+  p2_->DisableComponent(0, 2);
+  Connect();
+}
+
 
 TEST_F(IceConnectTest, TestConnectP2ThenP1) {
   AddStream("first", 1);
@@ -750,6 +845,37 @@ TEST_F(IceConnectTest, TestConnectShutdownOneSide) {
   AddStream("first", 1);
   ASSERT_TRUE(Gather(true));
   ConnectThenDelete();
+}
+
+TEST_F(PrioritizerTest, TestPrioritizer) {
+  SetPriorizer(::mozilla::CreateInterfacePrioritizer());
+
+  AddInterface("0", NR_INTERFACE_TYPE_VPN, 100); // unknown vpn
+  AddInterface("1", NR_INTERFACE_TYPE_VPN | NR_INTERFACE_TYPE_WIRED, 100); // wired vpn
+  AddInterface("2", NR_INTERFACE_TYPE_VPN | NR_INTERFACE_TYPE_WIFI, 100); // wifi vpn
+  AddInterface("3", NR_INTERFACE_TYPE_VPN | NR_INTERFACE_TYPE_MOBILE, 100); // wifi vpn
+  AddInterface("4", NR_INTERFACE_TYPE_WIRED, 1000); // wired, high speed
+  AddInterface("5", NR_INTERFACE_TYPE_WIRED, 10); // wired, low speed
+  AddInterface("6", NR_INTERFACE_TYPE_WIFI, 10); // wifi, low speed
+  AddInterface("7", NR_INTERFACE_TYPE_WIFI, 1000); // wifi, high speed
+  AddInterface("8", NR_INTERFACE_TYPE_MOBILE, 10); // mobile, low speed
+  AddInterface("9", NR_INTERFACE_TYPE_MOBILE, 1000); // mobile, high speed
+  AddInterface("10", NR_INTERFACE_TYPE_UNKNOWN, 10); // unknown, low speed
+  AddInterface("11", NR_INTERFACE_TYPE_UNKNOWN, 1000); // unknown, high speed
+
+  // expected preference "4" > "5" > "1" > "7" > "6" > "2" > "9" > "8" > "3" > "11" > "10" > "0"
+
+  HasLowerPreference("0", "10");
+  HasLowerPreference("10", "11");
+  HasLowerPreference("11", "3");
+  HasLowerPreference("3", "8");
+  HasLowerPreference("8", "9");
+  HasLowerPreference("9", "2");
+  HasLowerPreference("2", "6");
+  HasLowerPreference("6", "7");
+  HasLowerPreference("7", "1");
+  HasLowerPreference("1", "5");
+  HasLowerPreference("5", "4");
 }
 
 static std::string get_environment(const char *name) {

@@ -6,7 +6,6 @@
 
 interface nsIDOMMozIccInfo;
 interface nsIDOMMozMobileConnectionInfo;
-interface nsIDOMMozSmsSegmentInfo;
 interface nsIMobileMessageCallback;
 
 [scriptable, uuid(1e602d20-d066-4399-8997-daf36b3158ef)]
@@ -79,17 +78,16 @@ interface nsIRilContext : nsISupports
   readonly attribute nsIDOMMozMobileConnectionInfo data;
 };
 
-[scriptable, uuid(715c972b-97c5-48fd-a8b1-d50e6852153a)]
+[scriptable, function, uuid(3bc96351-53b0-47a1-a888-c74c64b60f25)]
+interface nsIRilSendWorkerMessageCallback : nsISupports
+{
+  boolean handleResponse(in jsval response);
+};
+
+[scriptable, uuid(61a8ca67-6113-4cd0-b443-e045f09863ed)]
 interface nsIRadioInterface : nsISupports
 {
-  /**
-   * Activates or deactivates radio power.
-   */
-  void setRadioEnabled(in bool value);
-
   readonly attribute nsIRilContext rilContext;
-
-  readonly attribute nsIVoicemailInfo voicemailInfo;
 
   /**
    * PDP APIs
@@ -97,15 +95,6 @@ interface nsIRadioInterface : nsISupports
   void setupDataCallByType(in DOMString apntype);
   void deactivateDataCallByType(in DOMString apntype);
   long getDataCallStateByType(in DOMString apntype);
-  void setupDataCall(in long radioTech,
-                     in DOMString apn,
-                     in DOMString user,
-                     in DOMString passwd,
-                     in long chappap,
-                     in DOMString pdptype);
-  void deactivateDataCall(in DOMString cid,
-                          in DOMString reason);
-  void getDataCallList();
 
   void registerDataCallCallback(in nsIRILDataCallback callback);
   void unregisterDataCallCallback(in nsIRILDataCallback callback);
@@ -115,12 +104,17 @@ interface nsIRadioInterface : nsISupports
   /**
    * SMS-related functionality.
    */
-  nsIDOMMozSmsSegmentInfo getSegmentInfoForText(in DOMString text);
+  void getSegmentInfoForText(in DOMString text,
+                             in nsIMobileMessageCallback request);
 
   void sendSMS(in DOMString number,
                in DOMString message,
                in boolean silent,
                in nsIMobileMessageCallback request);
+
+  void sendWorkerMessage(in DOMString type,
+              [optional] in jsval message,
+              [optional] in nsIRilSendWorkerMessageCallback callback);
 };
 
 [scriptable, uuid(44b03951-1444-4c03-bd37-0bcb3a01b56f)]

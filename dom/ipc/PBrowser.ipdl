@@ -31,6 +31,7 @@ using gfxMatrix;
 using gfxSize;
 using CSSRect;
 using mozilla::layers::FrameMetrics;
+using FrameMetrics::ViewID;
 using mozilla::layout::ScrollingBehavior;
 using mozilla::void_t;
 using mozilla::WindowsHandle;
@@ -43,7 +44,7 @@ using nsIntSize;
 using nsKeyEvent;
 using nsMouseEvent;
 using nsMouseScrollEvent;
-using mozilla::widget::WheelEvent;
+using mozilla::WheelEvent;
 using nsQueryContentEvent;
 using nsRect;
 using nsSelectionEvent;
@@ -53,6 +54,7 @@ using RemoteDOMEvent;
 using mozilla::dom::ScreenOrientation;
 using mozilla::layers::TextureFactoryIdentifier;
 using mozilla::CSSIntPoint;
+using mozilla::CSSToScreenScale;
 namespace mozilla {
 namespace dom {
 
@@ -249,7 +251,7 @@ parent:
     POfflineCacheUpdate(URIParams manifestURI, URIParams documentURI,
                         bool stickDocument);
 
-    sync PIndexedDB(nsCString asciiOrigin)
+    sync PIndexedDB(nsCString group, nsCString asciiOrigin)
         returns (bool allowed);
 
     /**
@@ -286,7 +288,22 @@ parent:
      * Updates any zoom constraints on the parent and anything tied to it. This
      * is useful for control logic that resides outside of the remote browser.
      */
-    UpdateZoomConstraints(bool aAllowZoom, float aMinZoom, float aMaxZoom);
+    UpdateZoomConstraints(bool aAllowZoom, CSSToScreenScale aMinZoom, CSSToScreenScale aMaxZoom);
+
+    /**
+     * Notifies the parent about a scroll event. The pres shell ID and
+     * view ID identify which scrollable (sub-)frame was scrolled, and
+     * the new scroll offset for that frame is sent.
+     */
+    UpdateScrollOffset(uint32_t aPresShellId, ViewID aViewId, CSSIntPoint aScrollOffset);
+
+    /**
+     * Notifies the parent about a recording device is starting or shutdown.
+     * @param recordingStatus starting or shutdown
+     * @param isAudio recording start with microphone
+     * @param isVideo recording start with camera
+     */
+    async RecordingDeviceEvents(nsString recordingStatus, bool isAudio, bool isVideo);
 
     __delete__();
 
@@ -404,6 +421,13 @@ child:
      * parent.
      */
     Destroy();
+
+
+    /**
+     * Tell the child side if it has to update it's touchable region
+     * to the parent.
+     */
+    SetUpdateHitRegion(bool aEnabled);
 
 /*
  * FIXME: write protocol!

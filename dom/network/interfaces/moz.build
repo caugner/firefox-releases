@@ -21,15 +21,12 @@ if CONFIG['MOZ_B2G_RIL']:
     XPIDL_SOURCES += [
         'nsIDOMCFStateChangeEvent.idl',
         'nsIDOMMobileConnection.idl',
+        'nsIDOMMozEmergencyCbModeEvent.idl',
+        'nsIDOMMozOtaStatusEvent.idl',
         'nsIDOMNetworkStats.idl',
         'nsIDOMNetworkStatsManager.idl',
         'nsIMobileConnectionProvider.idl',
+        'nsINetworkStatsServiceProxy.idl',
     ]
 
 XPIDL_MODULE = 'dom_network'
-
-XPIDL_FLAGS += [
-    '-I$(topsrcdir)/dom/interfaces/base',
-    '-I$(topsrcdir)/dom/interfaces/events',
-]
-

@@ -115,9 +115,20 @@ bool NetAddrToString(const NetAddr *addr, char *buf, uint32_t bufSize)
 #if defined(XP_UNIX) || defined(XP_OS2)
   else if (addr->raw.family == AF_LOCAL) {
     if (bufSize < sizeof(addr->local.path)) {
+      // Many callers don't bother checking our return value, so
+      // null-terminate just in case.
+      if (bufSize > 0) {
+          buf[0] = '\0';
+      }
       return false;
     }
-    memcpy(buf, addr->local.path, bufSize);
+
+    // Usually, the size passed to memcpy should be the size of the
+    // destination. Here, we know that the source is no larger than the
+    // destination, so using the source's size is always safe, whereas
+    // using the destination's size may cause us to read off the end of the
+    // source.
+    memcpy(buf, addr->local.path, sizeof(addr->local.path));
     return true;
   }
 #endif
@@ -171,6 +182,11 @@ NetAddrElement::NetAddrElement(const PRNetAddr *prNetAddr)
   PRNetAddrToNetAddr(prNetAddr, &mAddress);
 }
 
+NetAddrElement::NetAddrElement(const NetAddrElement& netAddr)
+{
+  mAddress = netAddr.mAddress;
+}
+
 NetAddrElement::~NetAddrElement()
 {
 }
@@ -178,18 +194,9 @@ NetAddrElement::~NetAddrElement()
 AddrInfo::AddrInfo(const char *host, const PRAddrInfo *prAddrInfo,
                    bool disableIPv4, const char *cname)
 {
-  size_t hostlen = strlen(host);
-  mHostName = static_cast<char*>(moz_xmalloc(hostlen + 1));
-  memcpy(mHostName, host, hostlen + 1);
-  if (cname) {
-      size_t cnameLen = strlen(cname);
-      mCanonicalName = static_cast<char*>(moz_xmalloc(cnameLen + 1));
-      memcpy(mCanonicalName, cname, cnameLen + 1);
-  }
-  else {
-      mCanonicalName = nullptr;
-  }
+  MOZ_ASSERT(prAddrInfo, "Cannot construct AddrInfo with a null prAddrInfo pointer!");
 
+  Init(host, cname);
   PRNetAddr tmpAddr;
   void *iter = nullptr;
   do {
@@ -201,6 +208,11 @@ AddrInfo::AddrInfo(const char *host, const PRAddrInfo *prAddrInfo,
   } while (iter);
 }
 
+AddrInfo::AddrInfo(const char *host, const char *cname)
+{
+  Init(host, cname);
+}
+
 AddrInfo::~AddrInfo()
 {
   NetAddrElement *addrElement;
@@ -209,6 +221,32 @@ AddrInfo::~AddrInfo()
   }
   moz_free(mHostName);
   moz_free(mCanonicalName);
+}
+
+void
+AddrInfo::Init(const char *host, const char *cname)
+{
+  MOZ_ASSERT(host, "Cannot initialize AddrInfo with a null host pointer!");
+
+  size_t hostlen = strlen(host);
+  mHostName = static_cast<char*>(moz_xmalloc(hostlen + 1));
+  memcpy(mHostName, host, hostlen + 1);
+  if (cname) {
+    size_t cnameLen = strlen(cname);
+    mCanonicalName = static_cast<char*>(moz_xmalloc(cnameLen + 1));
+    memcpy(mCanonicalName, cname, cnameLen + 1);
+  }
+  else {
+    mCanonicalName = nullptr;
+  }
+}
+
+void
+AddrInfo::AddAddress(NetAddrElement *address)
+{
+  MOZ_ASSERT(address, "Cannot add the address to an uninitialized list");
+
+  mAddresses.insertBack(address);
 }
 
 } // namespace dns

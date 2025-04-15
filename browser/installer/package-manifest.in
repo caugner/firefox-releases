@@ -175,14 +175,6 @@
 @BINPATH@/components/dom_apps.xpt
 @BINPATH@/components/dom_base.xpt
 @BINPATH@/components/dom_system.xpt
-#ifdef MOZ_B2G_RIL
-@BINPATH@/components/dom_telephony.xpt
-@BINPATH@/components/dom_voicemail.xpt
-@BINPATH@/components/dom_wifi.xpt
-@BINPATH@/components/dom_system_gonk.xpt
-@BINPATH@/components/dom_icc.xpt
-@BINPATH@/components/dom_wappush.xpt
-#endif
 #ifdef MOZ_B2G_BT
 @BINPATH@/components/dom_bluetooth.xpt
 #endif
@@ -201,9 +193,9 @@
 @BINPATH@/components/dom_notification.xpt
 @BINPATH@/components/dom_html.xpt
 @BINPATH@/components/dom_indexeddb.xpt
+@BINPATH@/components/dom_inputmethod.xpt
 @BINPATH@/components/dom_offline.xpt
 @BINPATH@/components/dom_json.xpt
-@BINPATH@/components/dom_browserelement.xpt
 @BINPATH@/components/dom_power.xpt
 @BINPATH@/components/dom_quota.xpt
 @BINPATH@/components/dom_range.xpt
@@ -213,6 +205,7 @@
 @BINPATH@/components/dom_mobilemessage.xpt
 @BINPATH@/components/dom_storage.xpt
 @BINPATH@/components/dom_stylesheets.xpt
+@BINPATH@/components/dom_telephony.xpt
 @BINPATH@/components/dom_traversal.xpt
 #ifdef MOZ_WEBSPEECH
 @BINPATH@/components/dom_webspeechrecognition.xpt
@@ -249,6 +242,7 @@
 @BINPATH@/components/jsdservice.xpt
 #endif
 @BINPATH@/components/jsdebugger.xpt
+@BINPATH@/components/jsdownloads.xpt
 @BINPATH@/components/jsinspector.xpt
 @BINPATH@/components/layout_base.xpt
 #ifdef NS_PRINTING
@@ -441,19 +435,6 @@
 @BINPATH@/components/contentSecurityPolicy.js
 @BINPATH@/components/contentAreaDropListener.manifest
 @BINPATH@/components/contentAreaDropListener.js
-#ifdef MOZ_B2G_RIL
-@BINPATH@/components/RadioInterfaceLayer.manifest
-@BINPATH@/components/RadioInterfaceLayer.js
-@BINPATH@/components/MmsService.manifest
-@BINPATH@/components/MmsService.js
-@BINPATH@/components/RILContentHelper.js
-@BINPATH@/components/MobileMessageDatabaseService.manifest
-@BINPATH@/components/MobileMessageDatabaseService.js
-@BINPATH@/components/WifiWorker.js
-@BINPATH@/components/WifiWorker.manifest
-@BINPATH@/components/DOMWifiManager.js
-@BINPATH@/components/DOMWifiManager.manifest
-#endif
 @BINPATH@/browser/components/BrowserProfileMigrators.manifest
 @BINPATH@/browser/components/ProfileMigrator.js
 @BINPATH@/browser/components/ChromeProfileMigrator.js
@@ -520,6 +501,8 @@
 @BINPATH@/components/PermissionSettings.manifest
 @BINPATH@/components/ContactManager.js
 @BINPATH@/components/ContactManager.manifest
+@BINPATH@/components/PhoneNumberService.js
+@BINPATH@/components/PhoneNumberService.manifest
 @BINPATH@/components/AlarmsManager.js
 @BINPATH@/components/AlarmsManager.manifest
 @BINPATH@/components/Push.js
@@ -546,6 +529,10 @@
 #ifdef MOZ_WEBSPEECH
 @BINPATH@/components/dom_webspeechsynth.xpt
 #endif
+
+; InputMethod API
+@BINPATH@/components/MozKeyboard.js
+@BINPATH@/components/InputMethod.manifest
 
 ; Modules
 @BINPATH@/browser/modules/*
@@ -757,13 +744,13 @@ bin/libfreebl_32int64_3.so
 @BINPATH@/webapprt/chrome/@AB_CD@.manifest
 @BINPATH@/webapprt/components/CommandLineHandler.js
 @BINPATH@/webapprt/components/ContentPermission.js
-@BINPATH@/webapprt/components/ContentPolicy.js
 @BINPATH@/webapprt/components/DirectoryProvider.js
 @BINPATH@/webapprt/components/components.manifest
 @BINPATH@/webapprt/defaults/preferences/prefs.js
 @BINPATH@/webapprt/modules/Startup.jsm
 @BINPATH@/webapprt/modules/WebappRT.jsm
 @BINPATH@/webapprt/modules/WebappsHandler.jsm
+@BINPATH@/webapprt/modules/RemoteDebugger.jsm
 #endif
 
 #ifdef MOZ_METRO
@@ -791,4 +778,8 @@ bin/libfreebl_32int64_3.so
 @BINPATH@/metro/components
 @BINPATH@/metro/defaults
 @BINPATH@/metro/modules
+#endif
+
+#ifdef MOZ_ASAN
+@BINPATH@/llvm-symbolizer
 #endif

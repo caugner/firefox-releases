@@ -24,16 +24,15 @@
 #include "nsQueryFrame.h"
 #include "nsStyleContext.h"
 #include "nsStyleStruct.h"
-#include "nsStyleStructFwd.h"
 #include "nsHTMLReflowMetrics.h"
 #include "nsFrameList.h"
-#include "nsIContent.h"
-#include "nsAlgorithm.h"
 #include "mozilla/layout/FrameChildList.h"
-#include "mozilla/css/ImageLoader.h"
 #include "FramePropertyTable.h"
 #include "mozilla/TypedEnum.h"
+#include "nsDirection.h"
 #include <algorithm>
+#include "nsITheme.h"
+#include "gfx3DMatrix.h"
 
 #ifdef ACCESSIBILITY
 #include "mozilla/a11y/AccTypes.h"
@@ -79,6 +78,7 @@ class gfxSkipCharsIterator;
 class gfxContext;
 class nsLineList_iterator;
 class nsAbsoluteContainingBlock;
+class nsIContent;
 
 struct nsPeekOffsetStruct;
 struct nsPoint;
@@ -335,6 +335,21 @@ typedef uint64_t nsFrameState;
   (((_frame)->GetStateBits() &      \
     (NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN)) != 0)
 
+/**
+ * Constant used to indicate an unconstrained size.
+ *
+ * @see #Reflow()
+ */
+#define NS_UNCONSTRAINEDSIZE NS_MAXSIZE
+
+#define NS_INTRINSICSIZE    NS_UNCONSTRAINEDSIZE
+#define NS_AUTOHEIGHT       NS_UNCONSTRAINEDSIZE
+#define NS_AUTOMARGIN       NS_UNCONSTRAINEDSIZE
+#define NS_AUTOOFFSET       NS_UNCONSTRAINEDSIZE
+// NOTE: there are assumptions all over that these have the same value, namely NS_UNCONSTRAINEDSIZE
+//       if any are changed to be a value other than NS_UNCONSTRAINEDSIZE
+//       at least update AdjustComputedHeight/Width and test ad nauseum
+
 //----------------------------------------------------------------------
 
 enum nsSelectionAmount {
@@ -353,11 +368,6 @@ enum nsSelectionAmount {
   eSelectWordNoSpace = 8 // select a "word" without selecting the following
                          // space, no matter what the default platform
                          // behavior is
-};
-
-enum nsDirection {
-  eDirNext    = 0,
-  eDirPrevious= 1
 };
 
 enum nsSpread {
@@ -425,7 +435,7 @@ typedef uint32_t nsReflowStatus;
 #define NS_FRAME_IS_FULLY_COMPLETE(status) \
   (NS_FRAME_IS_COMPLETE(status) && !NS_FRAME_OVERFLOW_IS_INCOMPLETE(status))
 
-// These macros set or switch incompete statuses without touching th
+// These macros set or switch incomplete statuses without touching the
 // NS_FRAME_REFLOW_NEXTINFLOW bit.
 #define NS_FRAME_SET_INCOMPLETE(status) \
   status = (status & ~NS_FRAME_OVERFLOW_INCOMPLETE) | NS_FRAME_NOT_COMPLETE
@@ -475,7 +485,7 @@ typedef uint32_t nsReflowStatus;
 
 // Construct a line-break-before status. Note that there is no
 // completion status for a line-break before because we *know* that
-// the frame will be reflowed later and hence it's current completion
+// the frame will be reflowed later and hence its current completion
 // status doesn't matter.
 #define NS_INLINE_LINE_BREAK_BEFORE()                                   \
   (NS_INLINE_BREAK | NS_INLINE_BREAK_BEFORE |                           \
@@ -796,7 +806,7 @@ public:
   #include "nsStyleStructList.h"
   #undef STYLE_STRUCT
 
-#ifdef _IMPL_NS_LAYOUT
+#ifdef MOZILLA_INTERNAL_API
   /** Also forward GetVisitedDependentColor to the style context */
   nscolor GetVisitedDependentColor(nsCSSProperty aProperty)
     { return mStyleContext->GetVisitedDependentColor(aProperty); }
@@ -832,8 +842,8 @@ public:
    * position.
    */
   nsRect GetRect() const { return mRect; }
-  nsPoint GetPosition() const { return nsPoint(mRect.x, mRect.y); }
-  nsSize GetSize() const { return nsSize(mRect.width, mRect.height); }
+  nsPoint GetPosition() const { return mRect.TopLeft(); }
+  nsSize GetSize() const { return mRect.Size(); }
 
   /**
    * When we change the size of the frame's border-box rect, we may need to
@@ -857,9 +867,22 @@ public:
   void SetPosition(const nsPoint& aPt) { mRect.MoveTo(aPt); }
 
   /**
-   * Return frame's computed offset due to relative positioning
+   * Move the frame, accounting for relative positioning. Use this when
+   * adjusting the frame's position by a known amount, to properly update its
+   * saved normal position (see GetNormalPosition below).
+   *
+   * This must be used only when moving a frame *after*
+   * nsHTMLReflowState::ApplyRelativePositioning is called.  When moving
+   * a frame during the reflow process prior to calling
+   * nsHTMLReflowState::ApplyRelativePositioning, the position should
+   * simply be adjusted directly (e.g., using SetPosition()).
    */
-  nsPoint GetRelativeOffset(const nsStyleDisplay* aDisplay = nullptr) const;
+  void MovePositionBy(const nsPoint& aTranslation);
+
+  /**
+   * Return frame's position without relative positioning
+   */
+  nsPoint GetNormalPosition() const;
 
   virtual nsPoint GetPositionOfChildIgnoringScrolling(nsIFrame* aChild)
   { return aChild->GetPosition(); }
@@ -869,10 +892,7 @@ public:
       : GetPosition();
   }
 
-  static void DestroyRegion(void* aPropertyValue)
-  {
-    delete static_cast<nsRegion*>(aPropertyValue);
-  }
+  static void DestroyRegion(void* aPropertyValue);
 
   static void DestroyMargin(void* aPropertyValue)
   {
@@ -894,10 +914,7 @@ public:
     delete static_cast<nsOverflowAreas*>(aPropertyValue);
   }
 
-  static void DestroySurface(void* aPropertyValue)
-  {
-    static_cast<gfxASurface*>(aPropertyValue)->Release();
-  }
+  static void DestroySurface(void* aPropertyValue);
 
 #ifdef _MSC_VER
 // XXX Workaround MSVC issue by making the static FramePropertyDescriptor
@@ -922,7 +939,8 @@ public:
   NS_DECLARE_FRAME_PROPERTY(IBSplitSpecialSibling, nullptr)
   NS_DECLARE_FRAME_PROPERTY(IBSplitSpecialPrevSibling, nullptr)
 
-  NS_DECLARE_FRAME_PROPERTY(ComputedOffsetProperty, DestroyPoint)
+  NS_DECLARE_FRAME_PROPERTY(NormalPositionProperty, DestroyPoint)
+  NS_DECLARE_FRAME_PROPERTY(ComputedOffsetProperty, DestroyMargin)
 
   NS_DECLARE_FRAME_PROPERTY(OutlineInnerRectProperty, DestroyRect)
   NS_DECLARE_FRAME_PROPERTY(PreEffectsBBoxProperty, DestroyRect)
@@ -945,6 +963,8 @@ public:
   NS_DECLARE_FRAME_PROPERTY(CachedBackgroundImage, DestroySurface)
 
   NS_DECLARE_FRAME_PROPERTY(InvalidationRect, DestroyRect)
+
+  NS_DECLARE_FRAME_PROPERTY(RefusedAsyncAnimation, nullptr)
 
   /**
    * Return the distance between the border edge of the frame and the
@@ -990,7 +1010,7 @@ public:
    * @param aReflowState An optional reflow state parameter, which is used if
    *        ApplySkipSides() is being called in the middle of reflow.
    *
-   * @note (See also bug 743402, comment 11) GetSkipSides() and it's sister
+   * @note (See also bug 743402, comment 11) GetSkipSides() and its sister
    *       method, ApplySkipSides() checks to see if this frame has a previous
    *       or next continuation to determine if a side should be skipped.
    *       Unfortunately, this only works after reflow has been completed. In
@@ -1369,19 +1389,7 @@ public:
    * Ensure that aImage gets notifed when the underlying image request loads
    * or animates.
    */
-  void AssociateImage(const nsStyleImage& aImage, nsPresContext* aPresContext)
-  {
-    if (aImage.GetType() != eStyleImageType_Image) {
-      return;
-    }
-
-    imgIRequest *req = aImage.GetImageData();
-    mozilla::css::ImageLoader* loader =
-      aPresContext->Document()->StyleImageLoader();
-
-    // If this fails there's not much we can do ...
-    loader->AssociateRequestToFrame(req, this);
-  }
+  void AssociateImage(const nsStyleImage& aImage, nsPresContext* aPresContext);
 
   /**
    * This structure holds information about a cursor. mContainer represents a
@@ -2420,7 +2428,7 @@ public:
    * Determine whether borders should not be painted on certain sides of the
    * frame.
    *
-   * @note (See also bug 743402, comment 11) GetSkipSides() and it's sister
+   * @note (See also bug 743402, comment 11) GetSkipSides() and its sister
    *       method, ApplySkipSides() checks to see if this frame has a previous
    *       or next continuation to determine if a side should be skipped.
    *       Unfortunately, this only works after reflow has been completed. In
@@ -2433,10 +2441,7 @@ public:
   /**
    * @returns true if this frame is selected.
    */
-  bool IsSelected() const {
-    return (GetContent() && GetContent()->IsSelectionDescendant()) ?
-      IsFrameSelected() : false;
-  }
+  bool IsSelected() const;
 
   /**
    *  called to discover where this frame, or a parent frame has user-select style
@@ -3263,7 +3268,7 @@ private:
   }
 
   void Init(nsIFrame* aFrame) {
-#ifdef _IMPL_NS_LAYOUT
+#ifdef MOZILLA_INTERNAL_API
     InitInternal(aFrame);
 #else
     InitExternal(aFrame);

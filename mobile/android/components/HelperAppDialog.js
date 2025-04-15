@@ -37,6 +37,7 @@ HelperAppLauncherDialog.prototype = {
     try {
       file = this.validateLeafName(defaultFolder, aDefaultFile, aSuggestedFileExt);
     } catch (e) { }
+
     return file;
   },
 

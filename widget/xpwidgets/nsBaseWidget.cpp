@@ -822,7 +822,7 @@ nsBaseWidget::AutoUseBasicLayerManager::~AutoUseBasicLayerManager()
 bool
 nsBaseWidget::ComputeShouldAccelerate(bool aDefault)
 {
-#if defined(XP_WIN) || defined(ANDROID) || (MOZ_PLATFORM_MAEMO > 5) || \
+#if defined(XP_WIN) || defined(ANDROID) || \
     defined(MOZ_GL_PROVIDER) || defined(XP_MACOSX)
   bool accelerateByDefault = true;
 #else
@@ -914,14 +914,27 @@ void nsBaseWidget::CreateCompositor()
   CreateCompositor(rect.width, rect.height);
 }
 
-mozilla::layers::LayersBackend
-nsBaseWidget::GetPreferredCompositorBackend()
+void
+nsBaseWidget::GetPreferredCompositorBackends(nsTArray<LayersBackend>& aHints)
 {
   if (mUseLayersAcceleration) {
-    return mozilla::layers::LAYERS_OPENGL;
+    aHints.AppendElement(LAYERS_OPENGL);
   }
 
-  return mozilla::layers::LAYERS_BASIC;
+  aHints.AppendElement(LAYERS_BASIC);
+}
+
+static void
+CheckForBasicBackends(nsTArray<LayersBackend>& aHints)
+{
+  for (size_t i = 0; i < aHints.Length(); ++i) {
+    if (aHints[i] == LAYERS_BASIC &&
+        !Preferences::GetBool("layers.offmainthreadcomposition.force-basic", false) &&
+        !Preferences::GetBool("browser.tabs.remote", false)) {
+      // basic compositor is not stable enough for regular use
+      aHints[i] = LAYERS_NONE;
+    }
+  }
 }
 
 void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
@@ -945,11 +958,16 @@ void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
 
   TextureFactoryIdentifier textureFactoryIdentifier;
   PLayerTransactionChild* shadowManager;
-  mozilla::layers::LayersBackend backendHint = GetPreferredCompositorBackend();
+  nsTArray<LayersBackend> backendHints;
+  GetPreferredCompositorBackends(backendHints);
 
-  bool success;
-  shadowManager = mCompositorChild->SendPLayerTransactionConstructor(
-    backendHint, 0, &textureFactoryIdentifier, &success);
+  CheckForBasicBackends(backendHints);
+
+  bool success = false;
+  if (!backendHints.IsEmpty()) {
+    shadowManager = mCompositorChild->SendPLayerTransactionConstructor(
+      backendHints, 0, &textureFactoryIdentifier, &success);
+  }
 
   if (success) {
     ShadowLayerForwarder* lf = lm->AsShadowForwarder();
@@ -961,6 +979,7 @@ void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
     lf->SetShadowManager(shadowManager);
     lf->IdentifyTextureHost(textureFactoryIdentifier);
     ImageBridgeChild::IdentifyCompositorTextureHost(textureFactoryIdentifier);
+    WindowUsesOMTC();
 
     mLayerManager = lm;
     return;
@@ -1031,7 +1050,7 @@ LayerManager* nsBaseWidget::GetLayerManager(PLayerTransactionChild* aShadowManag
   return usedLayerManager;
 }
 
-BasicLayerManager* nsBaseWidget::CreateBasicLayerManager()
+LayerManager* nsBaseWidget::CreateBasicLayerManager()
 {
   return new BasicLayerManager(this);
 }

@@ -11,14 +11,12 @@
 #include "nsImageLoadingContent.h"
 #include "nsIDOMHTMLInputElement.h"
 #include "nsITextControlElement.h"
+#include "nsITimer.h"
 #include "nsIPhonetic.h"
 #include "nsIDOMNSEditableElement.h"
-#include "nsTextEditorState.h"
 #include "nsCOMPtr.h"
 #include "nsIConstraintValidation.h"
-#include "nsDOMFile.h"
-#include "mozilla/dom/HTMLFormElement.h" // for ShouldShowInvalidUI()
-#include "nsIFile.h"
+#include "mozilla/dom/HTMLFormElement.h" // for HasEverTriedInvalidSubmit()
 #include "nsIFilePicker.h"
 #include "nsIContentPrefService2.h"
 #include "mozilla/Decimal.h"
@@ -27,9 +25,12 @@ class nsDOMFileList;
 class nsIRadioGroupContainer;
 class nsIRadioGroupVisitor;
 class nsIRadioVisitor;
+class nsTextEditorState;
 
 namespace mozilla {
 namespace dom {
+
+class Date;
 
 class UploadLastDir MOZ_FINAL : public nsIObserver, public nsSupportsWeakReference {
 public:
@@ -52,10 +53,9 @@ public:
    * Store the last used directory for this location using the
    * content pref service, if it is available
    * @param aURI URI of the current page
-   * @param aDomFile file chosen by the user - the path to the parent of this
-   *        file will be stored
+   * @param aDir Parent directory of the file(s)/directory chosen by the user
    */
-  nsresult StoreLastUsedDirectory(nsIDocument* aDoc, nsIDOMFile* aDomFile);
+  nsresult StoreLastUsedDirectory(nsIDocument* aDoc, nsIFile* aDir);
 
   class ContentPrefCallback MOZ_FINAL : public nsIContentPrefCallback2
   {
@@ -83,6 +83,7 @@ class HTMLInputElement MOZ_FINAL : public nsGenericHTMLFormElementWithState,
                                    public nsITextControlElement,
                                    public nsIPhonetic,
                                    public nsIDOMNSEditableElement,
+                                   public nsITimerCallback,
                                    public nsIConstraintValidation
 {
 public:
@@ -101,15 +102,8 @@ public:
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
 
-  // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-
-  // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-
-  // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
   virtual int32_t TabIndexDefault() MOZ_OVERRIDE;
+  using nsGenericHTMLElement::Focus;
   virtual void Focus(ErrorResult& aError) MOZ_OVERRIDE;
 
   // nsIDOMHTMLInputElement
@@ -196,12 +190,12 @@ public:
 
   void GetDisplayFileName(nsAString& aFileName) const;
 
-  const nsCOMArray<nsIDOMFile>& GetFilesInternal() const
+  const nsTArray<nsCOMPtr<nsIDOMFile> >& GetFilesInternal() const
   {
     return mFiles;
   }
 
-  void SetFiles(const nsCOMArray<nsIDOMFile>& aFiles, bool aSetValueChanged);
+  void SetFiles(const nsTArray<nsCOMPtr<nsIDOMFile> >& aFiles, bool aSetValueChanged);
   void SetFiles(nsIDOMFileList* aFiles, bool aSetValueChanged);
 
   void SetCheckedChangedInternal(bool aCheckedChanged);
@@ -233,7 +227,13 @@ public:
 
   void MaybeLoadImage();
 
-  virtual nsIDOMNode* AsDOMNode() MOZ_OVERRIDE { return this; }
+  // nsITimerCallback
+  NS_DECL_NSITIMERCALLBACK
+
+  // Avoid warning about the implementation of nsITimerCallback::Notify hiding
+  // our nsImageLoadingContent base class' implementation of
+  // imgINotificationObserver::Notify:
+  using nsImageLoadingContent::Notify;
 
   // nsIConstraintValidation
   bool     IsTooLong();
@@ -399,6 +399,19 @@ public:
   // XPCOM GetForm() is OK
 
   nsDOMFileList* GetFiles();
+
+  void OpenDirectoryPicker(ErrorResult& aRv);
+
+  void ResetProgressCounters()
+  {
+    mFileListProgress = 0;
+    mLastFileListProgress = 0;
+  }
+  void StartProgressEventTimer();
+  void MaybeDispatchProgressEvent(bool aFinalProgress);
+  void DispatchProgressEvent(const nsAString& aType,
+                             bool aLengthComputable,
+                             uint64_t aLoaded, uint64_t aTotal);
 
   // XPCOM GetFormAction() is OK
   void SetFormAction(const nsAString& aValue, ErrorResult& aRv)
@@ -656,6 +669,13 @@ public:
 
   // XPCOM GetPhonetic() is OK
 
+  void SetFileListProgress(uint32_t mFileCount)
+  {
+    MOZ_ASSERT(!NS_IsMainThread(),
+               "Why are we calling this on the main thread?");
+    mFileListProgress = mFileCount;
+  }
+
 protected:
   virtual JSObject* WrapNode(JSContext* aCx,
                              JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
@@ -740,10 +760,7 @@ protected:
    */
   bool IsValueEmpty() const;
 
-  void ClearFiles(bool aSetValueChanged) {
-    nsCOMArray<nsIDOMFile> files;
-    SetFiles(files, aSetValueChanged);
-  }
+  void ClearFiles(bool aSetValueChanged);
 
   void SetIndeterminateInternal(bool aValue,
                                 bool aShouldInvalidate);
@@ -1087,7 +1104,11 @@ protected:
    */
   nsresult MaybeInitPickers(nsEventChainPostVisitor& aVisitor);
 
-  nsresult InitFilePicker();
+  enum FilePickerType {
+    FILE_PICKER_FILE,
+    FILE_PICKER_DIRECTORY
+  };
+  nsresult InitFilePicker(FilePickerType aType);
   nsresult InitColorPicker();
 
   /**
@@ -1129,7 +1150,7 @@ protected:
    * the frame. Whenever the frame wants to change the filename it has to call
    * SetFileNames to update this member.
    */
-  nsCOMArray<nsIDOMFile>   mFiles;
+  nsTArray<nsCOMPtr<nsIDOMFile> >   mFiles;
 
   nsRefPtr<nsDOMFileList>  mFileList;
 
@@ -1151,6 +1172,13 @@ protected:
    */
   Decimal mRangeThumbDragStartValue;
 
+  /**
+   * Timer that is used when mType == NS_FORM_INPUT_FILE and the user selects a
+   * directory. It is used to fire progress events while the list of files
+   * under that directory tree is built.
+   */
+  nsCOMPtr<nsITimer> mProgressTimer;
+
   // Step scale factor values, for input types that have one.
   static const Decimal kStepScaleFactorDate;
   static const Decimal kStepScaleFactorNumberRange;
@@ -1165,6 +1193,19 @@ protected:
 
   // Float value returned by GetStep() when the step attribute is set to 'any'.
   static const Decimal kStepAny;
+
+  /**
+   * The number of files added to the FileList being built off-main-thread when
+   * mType == NS_FORM_INPUT_FILE and the user selects a directory. This is set
+   * off the main thread, read on main thread.
+   */
+  mozilla::Atomic<uint32_t> mFileListProgress;
+
+  /**
+   * The number of files added to the FileList at the time the last progress
+   * event was fired.
+   */
+  uint32_t mLastFileListProgress;
 
   /**
    * The type of this input (<input type=...>) as an integer.
@@ -1186,6 +1227,7 @@ protected:
   bool                     mCanShowInvalidUI    : 1;
   bool                     mHasRange            : 1;
   bool                     mIsDraggingRange     : 1;
+  bool                     mProgressTimerIsActive : 1;
 
 private:
 
@@ -1251,8 +1293,7 @@ private:
   {
   public:
     nsFilePickerShownCallback(HTMLInputElement* aInput,
-                              nsIFilePicker* aFilePicker,
-                              bool aMulti);
+                              nsIFilePicker* aFilePicker);
     virtual ~nsFilePickerShownCallback()
     { }
 
@@ -1263,7 +1304,6 @@ private:
   private:
     nsCOMPtr<nsIFilePicker> mFilePicker;
     nsRefPtr<HTMLInputElement> mInput;
-    bool mMulti;
   };
 };
 

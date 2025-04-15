@@ -19,7 +19,6 @@
 #include "nsRect.h"
 #include "nsRenderingContext.h"
 #include "nsTextFrame.h"
-#include "nsStyleStructInlines.h"
 #include "mozilla/Util.h"
 #include "mozilla/Likely.h"
 
@@ -573,8 +572,7 @@ TextOverflow::ProcessLine(const nsDisplayListSet& aLists,
   mRight.Reset();
   mRight.mActive = mRight.mStyle->mType != NS_STYLE_TEXT_OVERFLOW_CLIP;
   
-  FrameHashtable framesToHide;
-  framesToHide.Init(100);
+  FrameHashtable framesToHide(100);
   AlignmentEdges alignmentEdges;
   ExamineLineFrames(aLine, &framesToHide, &alignmentEdges);
   bool needLeft = mLeft.IsNeeded();

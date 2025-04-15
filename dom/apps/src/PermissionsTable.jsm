@@ -69,6 +69,12 @@ this.PermissionsTable =  { geolocation: {
                              certified: ALLOW_ACTION,
                              access: ["read"]
                            },
+                           "device-storage:crashes": {
+                             app: DENY_ACTION,
+                             privileged: DENY_ACTION,
+                             certified: ALLOW_ACTION,
+                             access: ["read"]
+                           },
                            "device-storage:pictures": {
                              app: DENY_ACTION,
                              privileged: PROMPT_ACTION,
@@ -145,6 +151,11 @@ this.PermissionsTable =  { geolocation: {
                              privileged: DENY_ACTION,
                              certified: ALLOW_ACTION
                            },
+                           phonenumberservice: {
+                             app: DENY_ACTION,
+                             privileged: DENY_ACTION,
+                             certified: ALLOW_ACTION
+                           },
                            fmradio: {
                              app: DENY_ACTION,
                              privileged: ALLOW_ACTION,
@@ -217,7 +228,8 @@ this.PermissionsTable =  { geolocation: {
                              substitute: [
                                "indexedDB-unlimited",
                                "offline-app",
-                               "pin-app"
+                               "pin-app",
+                               "default-persistent-storage"
                              ]
                            },
                            "background-sensors": {
@@ -272,8 +284,23 @@ this.PermissionsTable =  { geolocation: {
                            },
                            "keyboard": {
                              app: DENY_ACTION,
+                             privileged: ALLOW_ACTION,
+                             certified: ALLOW_ACTION
+                           },
+                           "inputmethod-manage": {
+                             app: DENY_ACTION,
                              privileged: DENY_ACTION,
                              certified: ALLOW_ACTION
+                           },
+                           "wappush": {
+                             app: DENY_ACTION,
+                             privileged: DENY_ACTION,
+                             certified: ALLOW_ACTION
+                           },
+                           "audio-capture": {
+                             app: PROMPT_ACTION,
+                             privileged: PROMPT_ACTION,
+                             certified: PROMPT_ACTION
                            },
                          };
 

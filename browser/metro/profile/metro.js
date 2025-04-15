@@ -12,7 +12,12 @@ pref("devtools.errorconsole.enabled", true);
 #endif
 
 // Automatically submit crash reports
+#ifdef RELEASE_BUILD
 pref("app.crashreporter.autosubmit", false);
+#else
+// For Nightly and Aurora we turn this on by default
+pref("app.crashreporter.autosubmit", true);
+#endif
 // Has the user been prompted about crash reporting?
 pref("app.crashreporter.prompted", false);
 
@@ -23,9 +28,18 @@ pref("metro.debug.selection.displayRanges", false);
 pref("metro.debug.selection.dumpRanges", false);
 pref("metro.debug.selection.dumpEvents", false);
 
+// Enable tab-modal prompts
+pref("prompts.tab_modal.enabled", true);
+
+
 // Enable off main thread compositing
 pref("layers.offmainthreadcomposition.enabled", true);
-pref("layers.async-pan-zoom.enabled", false);
+pref("layers.async-pan-zoom.enabled", true);
+pref("layers.componentalpha.enabled", false);
+// Disabled on aurora and up for now
+pref("apzc.asynczoom.disabled", true);
+pref("gfx.azpc.touch_start_tolerance", "0.1"); // dpi * tolerance = pixel threshold
+pref("gfx.axis.fling_friction", "0.002");
 
 // Enable Microsoft TSF support by default for imes.
 pref("intl.enable_tsf_support", true);
@@ -220,7 +234,7 @@ pref("accessibility.browsewithcaret", false);
 pref("app.update.showInstalledUI", false);
 
 // pointer to the default engine name
-pref("browser.search.defaultenginename", "chrome://browser/locale/browser.properties");
+pref("browser.search.defaultenginename", "chrome://browser/locale/region.properties");
 
 // SSL error page behaviour
 pref("browser.ssl_override_behavior", 2);
@@ -230,9 +244,9 @@ pref("browser.xul.error_pages.expert_bad_cert", false);
 pref("browser.search.log", false);
 
 // ordering of search engines in the engine list.
-pref("browser.search.order.1", "chrome://browser/locale/browser.properties");
-pref("browser.search.order.2", "chrome://browser/locale/browser.properties");
-pref("browser.search.order.3", "chrome://browser/locale/browser.properties");
+pref("browser.search.order.1", "chrome://browser/locale/region.properties");
+pref("browser.search.order.2", "chrome://browser/locale/region.properties");
+pref("browser.search.order.3", "chrome://browser/locale/region.properties");
 
 // send ping to the server to update
 pref("browser.search.update", true);
@@ -362,6 +376,9 @@ pref("geo.wifi.uri", "https://www.googleapis.com/geolocation/v1/geolocate?key=%G
 
 // JS error console
 pref("devtools.errorconsole.enabled", false);
+
+// snapped view
+pref("browser.ui.snapped.maxWidth", 600);
 
 // kinetic tweakables
 pref("browser.ui.kinetic.updateInterval", 16);
@@ -498,9 +515,9 @@ pref("app.update.cert.maxErrors", 5);
 // when the |app.update.cert.checkAttributes| preference is set to false. Also,
 // the |app.update.url.override| preference should ONLY be used for testing.
 // IMPORTANT! firefox.js should also be updated for updates to certs.X.issuerName
-pref("app.update.certs.1.issuerName", "OU=Equifax Secure Certificate Authority,O=Equifax,C=US");
+pref("app.update.certs.1.issuerName", "CN=Thawte SSL CA,O=\"Thawte, Inc.\",C=US");
 pref("app.update.certs.1.commonName", "aus3.mozilla.org");
-pref("app.update.certs.2.issuerName", "CN=Thawte SSL CA,O=\"Thawte, Inc.\",C=US");
+pref("app.update.certs.2.issuerName", "CN=DigiCert Secure Server CA,O=DigiCert Inc,C=US");
 pref("app.update.certs.2.commonName", "aus3.mozilla.org");
 
 // User-settable override to app.update.url for testing purposes.

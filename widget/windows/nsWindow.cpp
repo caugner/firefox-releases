@@ -73,6 +73,7 @@
 #include "prtime.h"
 #include "prprf.h"
 #include "prmem.h"
+#include "prenv.h"
 
 #include "mozilla/WidgetTraceEvent.h"
 #include "nsIAppShell.h"
@@ -121,6 +122,7 @@
 #include "WidgetUtils.h"
 #include "nsIWidgetListener.h"
 #include "mozilla/dom/Touch.h"
+#include "mozilla/gfx/2D.h"
 
 #ifdef MOZ_ENABLE_D3D9_LAYER
 #include "LayerManagerD3D9.h"
@@ -132,7 +134,6 @@
 
 #include "LayerManagerOGL.h"
 #include "nsIGfxInfo.h"
-#include "BasicLayers.h"
 #include "nsUXThemeConstants.h"
 #include "KeyboardLayout.h"
 #include "nsNativeDragTarget.h"
@@ -316,6 +317,7 @@ nsWindow::nsWindow() : nsWindowBase()
   mIconBig              = nullptr;
   mWnd                  = nullptr;
   mPaintDC              = nullptr;
+  mCompositeDC          = nullptr;
   mPrevWndProc          = nullptr;
   mNativeDragTarget     = nullptr;
   mInDtor               = false;
@@ -536,9 +538,9 @@ nsWindow::Create(nsIWidget *aParent,
     return NS_ERROR_FAILURE;
   }
 
-  if (mIsRTL && nsUXThemeData::dwmSetWindowAttributePtr) {
+  if (mIsRTL && WinUtils::dwmSetWindowAttributePtr) {
     DWORD dwAttribute = TRUE;    
-    nsUXThemeData::dwmSetWindowAttributePtr(mWnd, DWMWA_NONCLIENT_RTL_LAYOUT, &dwAttribute, sizeof dwAttribute);
+    WinUtils::dwmSetWindowAttributePtr(mWnd, DWMWA_NONCLIENT_RTL_LAYOUT, &dwAttribute, sizeof dwAttribute);
   }
 
   if (mWindowType != eWindowType_plugin &&
@@ -886,7 +888,7 @@ void nsWindow::SubclassWindow(BOOL bState)
     }
     NS_ASSERTION(mPrevWndProc, "Null standard window procedure");
     // connect the this pointer to the nsWindow handle
-    WinUtils::SetNSWindowPtr(mWnd, this);
+    WinUtils::SetNSWindowBasePtr(mWnd, this);
   } else {
     if (IsWindow(mWnd)) {
       if (mUnicodeWidget) {
@@ -899,7 +901,7 @@ void nsWindow::SubclassWindow(BOOL bState)
                           reinterpret_cast<LONG_PTR>(mPrevWndProc));
       }
     }
-    WinUtils::SetNSWindowPtr(mWnd, NULL);
+    WinUtils::SetNSWindowBasePtr(mWnd, NULL);
     mPrevWndProc = NULL;
   }
 }
@@ -978,7 +980,14 @@ double nsWindow::GetDefaultScaleInternal()
   return gfxWindowsPlatform::GetPlatform()->GetDPIScale();
 }
 
-nsWindow* nsWindow::GetParentWindow(bool aIncludeOwner)
+nsWindow*
+nsWindow::GetParentWindow(bool aIncludeOwner)
+{
+  return static_cast<nsWindow*>(GetParentWindowBase(aIncludeOwner));
+}
+
+nsWindowBase*
+nsWindow::GetParentWindowBase(bool aIncludeOwner)
 {
   if (mIsTopWidgetWindow) {
     // Must use a flag instead of mWindowType to tell if the window is the
@@ -1017,7 +1026,7 @@ nsWindow* nsWindow::GetParentWindow(bool aIncludeOwner)
     }
   }
 
-  return widget;
+  return static_cast<nsWindowBase*>(widget);
 }
  
 BOOL CALLBACK
@@ -2638,9 +2647,9 @@ void nsWindow::UpdateGlass()
           margins.cxRightWidth, margins.cyBottomHeight));
 
   // Extends the window frame behind the client area
-  if(nsUXThemeData::CheckForCompositor()) {
-    nsUXThemeData::dwmExtendFrameIntoClientAreaPtr(mWnd, &margins);
-    nsUXThemeData::dwmSetWindowAttributePtr(mWnd, DWMWA_NCRENDERING_POLICY, &policy, sizeof policy);
+  if (nsUXThemeData::CheckForCompositor()) {
+    WinUtils::dwmExtendFrameIntoClientAreaPtr(mWnd, &margins);
+    WinUtils::dwmSetWindowAttributePtr(mWnd, DWMWA_NCRENDERING_POLICY, &policy, sizeof policy);
   }
 }
 #endif
@@ -3522,6 +3531,39 @@ nsWindow::OverrideSystemMouseScrollSpeed(double aOriginalDeltaX,
   return NS_OK;
 }
 
+mozilla::TemporaryRef<mozilla::gfx::DrawTarget>
+nsWindow::StartRemoteDrawing()
+{
+  MOZ_ASSERT(!mCompositeDC);
+
+  HDC dc = GetDC(mWnd);
+  if (!dc) {
+    return nullptr;
+  }
+
+  uint32_t flags = (mTransparencyMode == eTransparencyOpaque) ? 0 :
+      gfxWindowsSurface::FLAG_IS_TRANSPARENT;
+  nsRefPtr<gfxASurface> surf = new gfxWindowsSurface(dc, flags);
+
+  mozilla::gfx::IntSize size(surf->GetSize().width, surf->GetSize().height);
+  if (size.width <= 0 || size.height <= 0) {
+    ReleaseDC(mWnd, dc);
+    return nullptr;
+  }
+
+  MOZ_ASSERT(!mCompositeDC);
+  mCompositeDC = dc;
+
+  return mozilla::gfx::Factory::CreateDrawTargetForCairoSurface(surf->CairoSurface(), size);
+}
+
+void
+nsWindow::EndRemoteDrawing()
+{
+  ReleaseDC(mWnd, mCompositeDC);
+  mCompositeDC = nullptr;
+}
+
 /**************************************************************
  **************************************************************
  **
@@ -3618,6 +3660,13 @@ bool nsWindow::DispatchStandardEvent(uint32_t aMsg)
 
   bool result = DispatchWindowEvent(&event);
   return result;
+}
+
+bool nsWindow::DispatchKeyboardEvent(nsGUIEvent* event)
+{
+  nsEventStatus status;
+  DispatchEvent(event, status);
+  return ConvertStatus(status);
 }
 
 bool nsWindow::DispatchWindowEvent(nsGUIEvent* event)
@@ -4480,7 +4529,7 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
   LRESULT dwmHitResult;
   if (mCustomNonClient &&
       nsUXThemeData::CheckForCompositor() &&
-      nsUXThemeData::dwmDwmDefWindowProcPtr(mWnd, msg, wParam, lParam, &dwmHitResult)) {
+      WinUtils::dwmDwmDefWindowProcPtr(mWnd, msg, wParam, lParam, &dwmHitResult)) {
     *aRetValue = dwmHitResult;
     return true;
   }
@@ -4886,7 +4935,7 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       if (lParam != -1 && !result && mCustomNonClient) {
         nsMouseEvent event(true, NS_MOUSE_MOZHITTEST, this, nsMouseEvent::eReal,
                            nsMouseEvent::eNormal);
-        event.refPoint = LayoutDeviceIntPoint(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        event.refPoint = LayoutDeviceIntPoint(GET_X_LPARAM(pos), GET_Y_LPARAM(pos));
         event.inputSource = MOUSE_INPUT_SOURCE();
         event.mFlags.mOnlyChromeDispatch = true;
         if (DispatchWindowEvent(&event)) {
@@ -6551,18 +6600,32 @@ nsWindow::StartAllowingD3D9(bool aReinitialize)
   }
 }
 
-mozilla::layers::LayersBackend
-nsWindow::GetPreferredCompositorBackend()
+void
+nsWindow::GetPreferredCompositorBackends(nsTArray<LayersBackend>& aHints)
 {
   LayerManagerPrefs prefs;
   GetLayerManagerPrefs(&prefs);
-  if (prefs.mDisableAcceleration) {
-    return mozilla::layers::LAYERS_BASIC;
+
+  if (!prefs.mDisableAcceleration) {
+    if (!prefs.mPreferD3D9) {
+      aHints.AppendElement(LAYERS_D3D11);
+    }
+    aHints.AppendElement(LAYERS_D3D9);
   }
-  if (prefs.mPreferD3D9) {
-    return mozilla::layers::LAYERS_D3D9;
+  aHints.AppendElement(LAYERS_BASIC);
+}
+
+void
+nsWindow::WindowUsesOMTC()
+{
+  ULONG_PTR style = ::GetClassLongPtr(mWnd, GCL_STYLE);
+  if (!style) {
+    NS_WARNING("Could not get window class style");
+    return;
   }
-  return mozilla::layers::LAYERS_D3D11;
+  style |= CS_HREDRAW | CS_VREDRAW;
+  DebugOnly<ULONG_PTR> result = ::SetClassLongPtr(mWnd, GCL_STYLE, style);
+  NS_WARN_IF_FALSE(result, "Could not reset window class style");
 }
 
 bool
@@ -7119,8 +7182,7 @@ nsWindow::ClearCachedResources()
 #endif
     if (mLayerManager &&
         mLayerManager->GetBackendType() == LAYERS_BASIC) {
-      static_cast<BasicLayerManager*>(mLayerManager.get())->
-        ClearCachedResources();
+      mLayerManager->ClearCachedResources();
     }
     ::EnumChildWindows(mWnd, nsWindow::ClearResourcesCallback, 0);
 }

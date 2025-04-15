@@ -26,7 +26,6 @@
 #include "nsCSSPseudoElements.h"
 #include "gfxFontFeatures.h"
 
-class nsIURI;
 class nsCSSFontFaceRule;
 class nsCSSKeyframesRule;
 class nsCSSFontFeatureValuesRule;
@@ -459,7 +458,7 @@ class nsStyleSet
   nsRefPtr<gfxFontFeatureValueSet> mFontFeatureValuesLookup;
 };
 
-#ifdef _IMPL_NS_LAYOUT
+#ifdef MOZILLA_INTERNAL_API
 inline
 void nsRuleNode::AddRef()
 {

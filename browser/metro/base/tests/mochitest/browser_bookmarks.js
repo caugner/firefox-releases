@@ -5,7 +5,7 @@
 
 "use strict";
 
-let gStartView = BookmarksStartView._view;
+let gStartView = null;
 
 function test() {
   runTests();
@@ -13,115 +13,23 @@ function test() {
 
 function setup() {
   PanelUI.hide();
+
+  if (!BrowserUI.isStartTabVisible) {
+    let tab = yield addTab("about:start");
+    gStartView = tab.browser.contentWindow.BookmarksStartView._view;
+
+    yield waitForCondition(() => BrowserUI.isStartTabVisible);
+
+    yield hideContextUI();
+  }
+
   BookmarksTestHelper.setup();
-
-  yield hideContextUI();
-
-  if (StartUI.isStartPageVisible)
-    return;
-
-  yield addTab("about:start");
-
-  yield waitForCondition(() => StartUI.isStartPageVisible);
 }
 
 function tearDown() {
   PanelUI.hide();
   BookmarksTestHelper.restore();
 }
-
-var BookmarksTestHelper = {
-  _originalNavHistoryService: null,
-  MockNavHistoryService: {
-    getNewQueryOptions: function () {
-      return {};
-    },
-    getNewQuery: function () {
-      return {
-        setFolders: function(){}
-      };
-    },
-    executeQuery: function () {
-      return {
-        root: {
-          get childCount() {
-            return Object.keys(BookmarksTestHelper._nodes).length;
-          },
-
-          getChild: function (aIndex) BookmarksTestHelper._nodes[Object.keys(BookmarksTestHelper._nodes)[aIndex]]
-        }
-      }
-    }
-  },
-
-  _originalBookmarkService: null,
-  MockBookmarkService: {
-    getItemIndex: function (aIndex) aIndex,
-    getBookmarkURI: function (aId) BookmarksTestHelper._nodes[aId].uri,
-    getItemTitle: function (aId) BookmarksTestHelper._nodes[aId].title,
-    removeItem: function (aId) {
-      delete BookmarksTestHelper._nodes[aId];
-
-      // Simulate observer notification
-      gStartView._changes.onItemRemoved(aId, gStartView._root);
-    },
-  },
-
-  Node: function (aTitle, aId) {
-    this.type = this.RESULT_TYPE_URI = 0;
-    this.title = aTitle;
-    this.itemId = aId;
-    this.uri = "http://" + aTitle + ".com.br";
-    this.pinned = true
-  },
-
-  _nodes: null,
-  createNodes: function (aMany) {
-    this._nodes = {};
-    for (let i=0; i<aMany; i++) {
-      this._nodes[i] = new this.Node("Mock-Bookmark" + i, i);
-    }
-  },
-
-  _originalPinHelper: null,
-  MockPinHelper: {
-    isPinned: function (aItem) BookmarksTestHelper._nodes[aItem].pinned,
-    setUnpinned: function (aItem) BookmarksTestHelper._nodes[aItem].pinned = false,
-    setPinned: function (aItem) BookmarksTestHelper._nodes[aItem].pinned = true,
-  },
-
-  _originalUpdateFavicon: null,
-  setup: function setup() {
-    // Just enough items so that there will be one less then the limit
-    // after removing 4 items.
-    this.createNodes(gStartView._limit + 3);
-
-    this._originalNavHistoryService = gStartView._navHistoryService;
-    gStartView._navHistoryService = this.MockNavHistoryService;
-
-    this._originalBookmarkService = gStartView._bookmarkService;
-    gStartView._bookmarkService= this.MockBookmarkService;
-
-    this._originalPinHelper = gStartView._pinHelper;
-    gStartView._pinHelper = this.MockPinHelper;
-
-    this._originalUpdateFavicon = gStartView._updateFavicon;
-    gStartView._updateFavicon = function () {};
-
-    gStartView.clearBookmarks();
-    gStartView.getBookmarks();
-  },
-
-  restore: function () {
-    gStartView._navHistoryService = this._originalNavHistoryService;
-    gStartView._bookmarkService= this._originalBookmarkService;
-    gStartView._pinHelper = this._originalPinHelper;
-    gStartView._updateFavicon = this._originalUpdateFavicon;
-
-    gStartView.clearBookmarks();
-    gStartView.getBookmarks();
-  }
-};
 
 gTests.push({
   desc: "Test bookmarks StartUI unpin",

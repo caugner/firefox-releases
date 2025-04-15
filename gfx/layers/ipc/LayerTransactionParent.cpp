@@ -5,28 +5,40 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include <vector>
-
-#include "AutoOpenSurface.h"
-#include "CompositorParent.h"
-#include "gfxSharedImageSurface.h"
-#include "ImageLayers.h"
-#include "mozilla/layout/RenderFrameParent.h"
-#include "mozilla/unused.h"
-#include "RenderTrace.h"
-#include "ShadowLayerParent.h"
 #include "LayerTransactionParent.h"
-#include "ShadowLayers.h"
-#include "ShadowLayerUtils.h"
-#include "TiledLayerBuffer.h"
-#include "gfxPlatform.h"
-#include "CompositableHost.h"
-#include "mozilla/layers/ThebesLayerComposite.h"
-#include "mozilla/layers/ImageLayerComposite.h"
-#include "mozilla/layers/ColorLayerComposite.h"
-#include "mozilla/layers/ContainerLayerComposite.h"
+#include <vector>                       // for vector
+#include "CompositableHost.h"           // for CompositableParent, Get, etc
+#include "ImageLayers.h"                // for ImageLayer
+#include "Layers.h"                     // for Layer, ContainerLayer, etc
+#include "ShadowLayerParent.h"          // for ShadowLayerParent
+#include "gfx3DMatrix.h"                // for gfx3DMatrix
+#include "gfxPoint3D.h"                 // for gfxPoint3D
+#include "CompositableTransactionParent.h"  // for EditReplyVector
+#include "ShadowLayersManager.h"        // for ShadowLayersManager
+#include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
+#include "mozilla/gfx/BasePoint3D.h"    // for BasePoint3D
 #include "mozilla/layers/CanvasLayerComposite.h"
-#include "mozilla/layers/PLayerTransaction.h"
+#include "mozilla/layers/ColorLayerComposite.h"
+#include "mozilla/layers/Compositor.h"  // for Compositor
+#include "mozilla/layers/ContainerLayerComposite.h"
+#include "mozilla/layers/ImageLayerComposite.h"
+#include "mozilla/layers/LayerManagerComposite.h"
+#include "mozilla/layers/LayersMessages.h"  // for EditReply, etc
+#include "mozilla/layers/LayersSurfaces.h"  // for PGrallocBufferParent
+#include "mozilla/layers/LayersTypes.h"  // for MOZ_LAYERS_LOG
+#include "mozilla/layers/PCompositableParent.h"
+#include "mozilla/layers/PLayerParent.h"  // for PLayerParent
+#include "mozilla/layers/ThebesLayerComposite.h"
+#include "mozilla/mozalloc.h"           // for operator delete, etc
+#include "nsCoord.h"                    // for NSAppUnitsToFloatPixels
+#include "nsDebug.h"                    // for NS_RUNTIMEABORT
+#include "nsISupportsImpl.h"            // for Layer::Release, etc
+#include "nsLayoutUtils.h"              // for nsLayoutUtils
+#include "nsMathUtils.h"                // for NS_round
+#include "nsPoint.h"                    // for nsPoint
+#include "nsTArray.h"                   // for nsTArray, nsTArray_Impl, etc
+#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
+#include "GeckoProfiler.h"
 
 typedef std::vector<mozilla::layers::EditReply> EditReplyVector;
 
@@ -34,6 +46,8 @@ using mozilla::layout::RenderFrameParent;
 
 namespace mozilla {
 namespace layers {
+
+class PGrallocBufferParent;
 
 //--------------------------------------------------
 // Convenience accessors
@@ -173,6 +187,7 @@ LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
                                    const bool& isFirstPaint,
                                    InfallibleTArray<EditReply>* reply)
 {
+  PROFILER_LABEL("LayerTransactionParent", "RecvUpdate");
 #ifdef COMPOSITOR_PERFORMANCE_WARNING
   TimeStamp updateStart = TimeStamp::Now();
 #endif
@@ -257,6 +272,11 @@ LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
       layer->SetIsFixedPosition(common.isFixedPosition());
       layer->SetFixedPositionAnchor(common.fixedPositionAnchor());
       layer->SetFixedPositionMargins(common.fixedPositionMargin());
+      if (common.isStickyPosition()) {
+        layer->SetStickyPositionData(common.stickyScrollContainerId(),
+                                     common.stickyScrollRangeOuter(),
+                                     common.stickyScrollRangeInner());
+      }
       if (PLayerParent* maskLayer = common.maskLayerParent()) {
         layer->SetMaskLayer(cast(maskLayer)->AsLayer());
       } else {
@@ -333,12 +353,9 @@ LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
       }
       break;
     }
-    case Edit::TOpSetColoredBorders: {
-      if (edit.get_OpSetColoredBorders().enabled()) {
-        mLayerManager->GetCompositor()->EnableColoredBorders();
-      } else {
-        mLayerManager->GetCompositor()->DisableColoredBorders();
-      }
+    case Edit::TOpSetDiagnosticTypes: {
+      mLayerManager->GetCompositor()->SetDiagnosticTypes(
+        edit.get_OpSetDiagnosticTypes().diagnostics());
       break;
     }
     // Tree ops

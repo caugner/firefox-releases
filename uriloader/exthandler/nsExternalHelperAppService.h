@@ -143,13 +143,6 @@ protected:
   NS_HIDDEN_(bool) GetTypeFromExtras(const nsACString& aExtension,
                                        nsACString& aMIMEType);
 
-  /**
-   * Fixes the file permissions to be correct. Base class has a no-op
-   * implementation, subclasses can use this to correctly inherit ACLs from the
-   * parent directory, to make the permissions obey the umask, etc.
-   */
-  virtual void FixFilePermissions(nsIFile* aFile);
-
 #ifdef PR_LOGGING
   /**
    * NSPR Logging Module. Usage: set NSPR_LOG_MODULES=HelperAppService:level,
@@ -159,9 +152,8 @@ protected:
   static PRLogModuleInfo* mLog;
 
 #endif
-  // friend, so that it can access the nspr log module and FixFilePermissions
+  // friend, so that it can access the nspr log module.
   friend class nsExternalAppHandler;
-  friend class nsExternalLoadRequest;
 
   /**
    * Helper function for ExpungeTemporaryFiles and ExpungeTemporaryPrivateFiles
@@ -282,12 +274,9 @@ protected:
   bool mShouldCloseWindow;
 
   /**
-   * have we received information from the user about how they want to
-   * dispose of this content
+   * True if a stop request has been issued.
    */
-  bool mReceivedDispositionInfo;
   bool mStopRequestIssued; 
-  bool mProgressListenerInitialized;
 
   bool mIsFileChannel;
 
@@ -324,6 +313,11 @@ protected:
   nsCOMPtr<nsIBackgroundFileSaver> mSaver;
 
   /**
+   * Stores the SHA-256 hash associated with the file that we downloaded.
+   */
+  nsAutoCString mHash;
+
+  /**
    * Creates the temporary file for the download and an output stream for it.
    * Upon successful return, both mTempFile and mSaver will be valid.
    */
@@ -334,17 +328,15 @@ protected:
    * using the window which initiated the load....RetargetLoadNotifications
    * contains that information...
    */
-  void RetargetLoadNotifications(nsIRequest *request); 
+  void RetargetLoadNotifications(nsIRequest *request);
   /**
-   * If the user tells us how they want to dispose of the content and
-   * we still haven't finished downloading while they were deciding,
-   * then create a progress listener of some kind so they know
-   * what's going on...
+   * Once the user tells us how they want to dispose of the content
+   * create an nsITransfer so they know what's going on. If this fails, the
+   * caller MUST call Cancel.
    */
-  nsresult CreateProgressListener();
+  nsresult CreateTransfer();
 
-
-  /* 
+  /*
    * The following two functions are part of the split of SaveToDisk
    * to make it async, and works as following:
    *
@@ -380,33 +372,21 @@ protected:
    */
   void ProcessAnyRefreshTags();
 
-  /** 
-   * An internal method used to actually move the temp file to the final
-   * destination once we done receiving data AND have showed the progress dialog
-   */
-  nsresult MoveFile(nsIFile * aNewFileLocation);
   /**
-   * An internal method used to actually launch a helper app given the temp file
-   * once we are done receiving data AND have showed the progress dialog.
-   * Uses the application specified in the mime info.
+   * Notify our nsITransfer object that we are done with the download.  This is
+   * always called after the target file has been closed.
+   *
+   * @param aStatus
+   *        NS_OK for success, or a failure code if the download failed.
+   *        A partially downloaded file may still be available in this case.
    */
-  nsresult OpenWithApplication();
-  
-  /**
-   * Helper routine which peaks at the mime action specified by mMimeInfo
-   * and calls either MoveFile or OpenWithApplication
-   */
-  nsresult ExecuteDesiredAction();
+  void NotifyTransfer(nsresult aStatus);
+
   /**
    * Helper routine that searches a pref string for a given mime type
    */
   bool GetNeverAskFlagFromPref(const char * prefName, const char * aContentType);
 
-  /**
-   * Initialize an nsITransfer object for use as a progress object
-   */
-  nsresult InitializeDownload(nsITransfer*);
-  
   /**
    * Helper routine to ensure mSuggestedFileName is "correct";
    * this ensures that mTempFileExtension only contains an extension when it
@@ -427,7 +407,17 @@ protected:
    */
   nsresult MaybeCloseWindow();
 
-  nsCOMPtr<nsIWebProgressListener2> mWebProgressListener;
+  /**
+   * Set in nsHelperDlgApp.js. This is always null after the user has chosen an
+   * action.
+   */
+  nsCOMPtr<nsIWebProgressListener2> mDialogProgressListener;
+  /**
+   * Set once the user has chosen an action. This is null after the download
+   * has been canceled or completes.
+   */
+  nsCOMPtr<nsITransfer> mTransfer;
+
   nsCOMPtr<nsIChannel> mOriginalChannel; /**< in the case of a redirect, this will be the pre-redirect channel. */
   nsCOMPtr<nsIHelperAppLauncherDialog> mDialog;
 

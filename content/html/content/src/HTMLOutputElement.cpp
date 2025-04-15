@@ -5,12 +5,13 @@
 
 #include "mozilla/dom/HTMLOutputElement.h"
 
-#include "mozilla/dom/HTMLOutputElementBinding.h"
-#include "nsFormSubmission.h"
-#include "nsDOMSettableTokenList.h"
-#include "nsEventStates.h"
 #include "mozAutoDocUpdate.h"
 #include "mozilla/dom/HTMLFormElement.h"
+#include "mozilla/dom/HTMLOutputElementBinding.h"
+#include "nsContentUtils.h"
+#include "nsDOMSettableTokenList.h"
+#include "nsEventStates.h"
+#include "nsFormSubmission.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Output)
 
@@ -54,12 +55,10 @@ NS_IMPL_ADDREF_INHERITED(HTMLOutputElement, Element)
 NS_IMPL_RELEASE_INHERITED(HTMLOutputElement, Element)
 
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLOutputElement)
-  NS_HTML_CONTENT_INTERFACES(nsGenericHTMLFormElement)
   NS_INTERFACE_TABLE_INHERITED2(HTMLOutputElement,
                                 nsIMutationObserver,
                                 nsIConstraintValidation)
-  NS_INTERFACE_TABLE_TO_MAP_SEGUE
-NS_ELEMENT_INTERFACE_MAP_END
+NS_INTERFACE_TABLE_TAIL_INHERITING(nsGenericHTMLFormElement)
 
 NS_IMPL_ELEMENT_CLONE(HTMLOutputElement)
 
@@ -140,6 +139,12 @@ HTMLOutputElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
   UpdateState(false);
 
   return rv;
+}
+
+void
+HTMLOutputElement::GetValue(nsAString& aValue)
+{
+  nsContentUtils::GetNodeTextContent(this, true, aValue);
 }
 
 void

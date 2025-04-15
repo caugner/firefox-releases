@@ -148,6 +148,12 @@ function testGen() {
 
   // Test the console.log() output.
 
+  let outputItem;
+  function onExecute(msg) {
+    outputItem = msg;
+    subtestNext();
+  }
+
   HUD.jsterm.execute("console.log(" + consoleTest + ")");
 
   waitForMessages({
@@ -167,42 +173,29 @@ function testGen() {
   // Test jsterm print() output.
 
   HUD.jsterm.setInputValue("print(" + inputValue + ")");
-  HUD.jsterm.execute();
-
-  waitForMessages({
-    webconsole: HUD,
-    messages: [{
-      name: "jsterm print() output is correct for inputValues[" + cpos + "]",
-      text: printOutput,
-      category: CATEGORY_OUTPUT,
-    }],
-  }).then(subtestNext);
+  HUD.jsterm.execute(null, onExecute);
 
   yield undefined;
+
+  ok(outputItem,
+    "found the jsterm print() output line for inputValues[" + cpos + "]");
+  ok(outputItem.textContent.indexOf(printOutput) > -1,
+    "jsterm print() output is correct for inputValues[" + cpos + "]");
 
   // Test jsterm execution output.
 
   HUD.jsterm.clearOutput();
   HUD.jsterm.setInputValue(inputValue);
-  HUD.jsterm.execute();
-
-  let outputItem;
-  waitForMessages({
-    webconsole: HUD,
-    messages: [{
-      name: "jsterm output is correct for inputValues[" + cpos + "]",
-      text: expectedOutput,
-      category: CATEGORY_OUTPUT,
-    }],
-  }).then(([result]) => {
-    outputItem = [...result.matched][0];
-    ok(outputItem, "found message element");
-    subtestNext();
-  });
+  HUD.jsterm.execute(null, onExecute);
 
   yield undefined;
 
-  let messageBody = outputItem.querySelector(".webconsole-msg-body");
+  ok(outputItem, "found the jsterm output line for inputValues[" + cpos + "]");
+  ok(outputItem.textContent.indexOf(expectedOutput) > -1,
+    "jsterm output is correct for inputValues[" + cpos + "]");
+
+  let messageBody = outputItem.querySelector(".body a") ||
+                    outputItem.querySelector(".body");
   ok(messageBody, "we have the message body for inputValues[" + cpos + "]");
 
   // Test click on output.
@@ -273,3 +266,4 @@ function test() {
   addTab(TEST_URI);
   browser.addEventListener("load", tabLoad, true);
 }
+

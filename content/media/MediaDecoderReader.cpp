@@ -4,10 +4,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "GrallocImages.h"
 #include "MediaDecoderReader.h"
+#ifdef MOZ_OMX_DECODER
+#include "GrallocImages.h"
+#endif
 #include "AbstractMediaDecoder.h"
-#include "MediaDecoderStateMachine.h"
 #include "VideoUtils.h"
 #include "ImageContainer.h"
 
@@ -471,6 +472,8 @@ VideoData* MediaDecoderReader::FindStartTime(int64_t& aOutStartTime)
 
 nsresult MediaDecoderReader::DecodeToTarget(int64_t aTarget)
 {
+  LOG(PR_LOG_DEBUG, ("MediaDecoderReader::DecodeToTarget(%lld) Begin", aTarget));
+
   // Decode forward to the target frame. Start with video, if we have it.
   if (HasVideo()) {
     bool eof = false;
@@ -592,6 +595,9 @@ nsresult MediaDecoderReader::DecodeToTarget(int64_t aTarget)
       break;
     }
   }
+
+  LOG(PR_LOG_DEBUG, ("MediaDecoderReader::DecodeToTarget(%lld) End", aTarget));
+
   return NS_OK;
 }
 

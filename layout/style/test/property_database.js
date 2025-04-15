@@ -2788,6 +2788,7 @@ var gCSSProperties = {
 		],
 		invalid_values: [ "auto", "none", "5" ]
 	},
+
 	"opacity": {
 		domProp: "opacity",
 		inherited: false,
@@ -3088,19 +3089,11 @@ var gCSSProperties = {
 		other_values: [ "center", "justify", "start", "end", "left", "right" ],
 		invalid_values: []
 	},
-	"-moz-text-blink": {
-		domProp: "MozTextBlink",
-		inherited: false,
-		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "none" ],
-		other_values: [ "blink" ],
-		invalid_values: [ "underline", "overline", "line-through", "none underline", "underline blink", "blink underline" ]
-	},
 	"text-decoration": {
 		domProp: "textDecoration",
 		inherited: false,
 		type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
-		subproperties: [ "-moz-text-blink", "-moz-text-decoration-color", "-moz-text-decoration-line", "-moz-text-decoration-style" ],
+		subproperties: [ "-moz-text-decoration-color", "-moz-text-decoration-line", "-moz-text-decoration-style" ],
 		initial_values: [ "none" ],
 		other_values: [ "underline", "overline", "line-through", "blink", "blink line-through underline", "underline overline line-through blink", "-moz-anchor-decoration", "blink -moz-anchor-decoration" ],
 		invalid_values: [ "none none", "underline none", "none underline", "blink none", "none blink", "line-through blink line-through", "underline overline line-through blink none", "underline overline line-throuh blink blink",
@@ -3120,7 +3113,7 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "none" ],
-		other_values: [ "underline", "overline", "line-through", "line-through underline", "underline overline line-through", "-moz-anchor-decoration", "-moz-anchor-decoration" ],
+		other_values: [ "underline", "overline", "line-through", "blink", "blink line-through underline", "underline overline line-through blink", "-moz-anchor-decoration", "blink -moz-anchor-decoration" ],
 		invalid_values: [ "none none", "underline none", "none underline", "line-through blink line-through", "underline overline line-through blink none", "underline overline line-throuh blink blink" ]
 	},
 	"-moz-text-decoration-style": {
@@ -3486,14 +3479,14 @@ var gCSSProperties = {
 		type: CSS_TYPE_LONGHAND,
 		prerequisites: { "color": "blue" },
 		initial_values: [ "black", "#000", "#000000", "rgb(0,0,0)", "rgba(0,0,0,1)" ],
-		other_values: [ "green", "#fc3", "url('#myserver')", "url(foo.svg#myserver)", 'url("#myserver") green', "none", "currentColor", "-moz-objectFill", "-moz-objectStroke" ],
+		other_values: [ "green", "#fc3", "url('#myserver')", "url(foo.svg#myserver)", 'url("#myserver") green', "none", "currentColor", "context-fill", "context-stroke" ],
 		invalid_values: [ "000000", "ff00ff" ]
 	},
 	"fill-opacity": {
 		domProp: "fillOpacity",
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "1", "2.8", "1.000", "-moz-objectFillOpacity", "-moz-objectStrokeOpacity" ],
+		initial_values: [ "1", "2.8", "1.000", "context-fill-opacity", "context-stroke-opacity" ],
 		other_values: [ "0", "0.3", "-7.3" ],
 		invalid_values: []
 	},
@@ -3618,14 +3611,14 @@ var gCSSProperties = {
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "none" ],
-		other_values: [ "black", "#000", "#000000", "rgb(0,0,0)", "rgba(0,0,0,1)", "green", "#fc3", "url('#myserver')", "url(foo.svg#myserver)", 'url("#myserver") green', "currentColor", "-moz-objectFill", "-moz-objectStroke" ],
+		other_values: [ "black", "#000", "#000000", "rgb(0,0,0)", "rgba(0,0,0,1)", "green", "#fc3", "url('#myserver')", "url(foo.svg#myserver)", 'url("#myserver") green', "currentColor", "context-fill", "context-stroke" ],
 		invalid_values: [ "000000", "ff00ff" ]
 	},
 	"stroke-dasharray": {
 		domProp: "strokeDasharray",
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "none", "-moz-objectValue" ],
+		initial_values: [ "none", "context-value" ],
 		other_values: [ "5px,3px,2px", "5px 3px 2px", "  5px ,3px	, 2px ", "1px", "5%", "3em" ],
 		invalid_values: [ "-5px,3px,2px", "5px,3px,-2px" ]
 	},
@@ -3633,7 +3626,7 @@ var gCSSProperties = {
 		domProp: "strokeDashoffset",
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "0", "-0px", "0em", "-moz-objectValue" ],
+		initial_values: [ "0", "-0px", "0em", "context-value" ],
 		other_values: [ "3px", "3%", "1em" ],
 		invalid_values: []
 	},
@@ -3665,7 +3658,7 @@ var gCSSProperties = {
 		domProp: "strokeOpacity",
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "1", "2.8", "1.000", "-moz-objectFillOpacity", "-moz-objectStrokeOpacity" ],
+		initial_values: [ "1", "2.8", "1.000", "context-fill-opacity", "context-stroke-opacity" ],
 		other_values: [ "0", "0.3", "-7.3" ],
 		invalid_values: []
 	},
@@ -3673,7 +3666,7 @@ var gCSSProperties = {
 		domProp: "strokeWidth",
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "1px", "-moz-objectValue" ],
+		initial_values: [ "1px", "context-value" ],
 		other_values: [ "0", "0px", "-0em", "17px", "0.2em" ],
 		invalid_values: [ "-0.1px", "-3px" ]
 	},
@@ -4260,6 +4253,24 @@ if (SpecialPowers.getBoolPref("layout.css.vertical-text.enabled")) {
 			initial_values: [ "horizontal-tb" ],
 			other_values: [ "vertical-lr", "vertical-rl" ],
 			invalid_values: [ "10px", "30%", "justify", "auto", "1em" ]
+		},
+		"text-orientation": {
+			domProp: "textOrientation",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "auto" ],
+			other_values: [ "upright", "sideways" ],
+			invalid_values: [ "none", "3em" ]
+		},
+		"text-combine-horizontal": {
+			domProp: "textCombineHorizontal",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "none" ],
+			other_values: [ "all", "digits", "digits 2", "digits 3", "digits 4", "digits     3" ],
+			invalid_values: [ "auto", "all 2", "none all", "digits -3", "digits 0",
+			                  "digits 12", "none 3", "digits 3.1415", "digits3", "digits 1",
+			                  "digits 3 all", "digits foo", "digits all", "digits 3.0" ]
 		}
 	};
 	for (var prop in verticalTextProperties) {
@@ -4413,7 +4424,7 @@ if (SpecialPowers.getBoolPref("svg.paint-order.enabled")) {
 }
 
 if (SpecialPowers.getBoolPref("layout.css.filters.enabled")) {
-  	gCSSProperties["filter"] = {
+	gCSSProperties["filter"] = {
 		domProp: "filter",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
@@ -4457,6 +4468,24 @@ if (SpecialPowers.getBoolPref("layout.css.filters.enabled")) {
 			"contrast(2)",
 			"contrast(350%)",
 			"contrast(4.567)",
+
+			"drop-shadow(2px 2px)",
+			"drop-shadow(2px 2px 1px)",
+			"drop-shadow(2px 2px green)",
+			"drop-shadow(2px 2px 1px green)",
+			"drop-shadow(green 2px 2px)",
+			"drop-shadow(green 2px 2px 1px)",
+			"drop-shadow(currentColor 3px 3px)",
+			"drop-shadow(2px 2px calc(-5px))", /* clamped */
+			"drop-shadow(calc(3em - 2px) 2px green)",
+			"drop-shadow(green calc(3em - 2px) 2px)",
+			"drop-shadow(2px calc(2px + 0.2em))",
+			"drop-shadow(blue 2px calc(2px + 0.2em))",
+			"drop-shadow(2px calc(2px + 0.2em) blue)",
+			"drop-shadow(calc(-2px) calc(-2px))",
+			"drop-shadow(-2px -2px)",
+			"drop-shadow(calc(2px) calc(2px))",
+			"drop-shadow(calc(2px) calc(2px) calc(2px))",
 
 			"grayscale(0)",
 			"grayscale(50%)",
@@ -4556,6 +4585,22 @@ if (SpecialPowers.getBoolPref("layout.css.filters.enabled")) {
 			"contrast(10px)",
 			"contrast(-1)",
 
+			"drop-shadow()",
+			"drop-shadow(3% 3%)",
+			"drop-shadow(2px 2px -5px)",
+			"drop-shadow(2px 2px 2px 2px)",
+			"drop-shadow(2px 2px, none)",
+			"drop-shadow(none, 2px 2px)",
+			"drop-shadow(inherit, 2px 2px)",
+			"drop-shadow(2px 2px, inherit)",
+			"drop-shadow(2 2px)",
+			"drop-shadow(2px 2)",
+			"drop-shadow(2px 2px 2)",
+			"drop-shadow(2px 2px 2px 2)",
+			"drop-shadow(calc(2px) calc(2px) calc(2px) calc(2px))",
+			"drop-shadow(green 2px 2px, blue 1px 3px 4px)",
+			"drop-shadow(blue 2px 2px, currentColor 1px 2px)",
+
 			"grayscale()",
 			"grayscale(0.5 0.5)",
 			"grayscale(0.5,)",
@@ -4609,6 +4654,81 @@ if (SpecialPowers.getBoolPref("layout.css.filters.enabled")) {
 	};
 }
 
+if (SpecialPowers.getBoolPref("layout.css.image-orientation.enabled")) {
+	gCSSProperties["image-orientation"] = {
+		domProp: "imageOrientation",
+		inherited: true,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [
+			"0deg",
+			"0grad",
+			"0rad",
+			"0turn",
+
+			// Rounded initial values.
+			"-90deg",
+			"15deg",
+			"360deg",
+		],
+		other_values: [
+			"0deg flip",
+			"90deg",
+			"90deg flip",
+			"180deg",
+			"180deg flip",
+			"270deg",
+			"270deg flip",
+			"flip",
+			"from-image",
+
+			// Grad units.
+			"0grad flip",
+			"100grad",
+			"100grad flip",
+			"200grad",
+			"200grad flip",
+			"300grad",
+			"300grad flip",
+
+			// Radian units.
+			"0rad flip",
+			"1.57079633rad",
+			"1.57079633rad flip",
+			"3.14159265rad",
+			"3.14159265rad flip",
+			"4.71238898rad",
+			"4.71238898rad flip",
+
+			// Turn units.
+			"0turn flip",
+			"0.25turn",
+			"0.25turn flip",
+			"0.5turn",
+			"0.5turn flip",
+			"0.75turn",
+			"0.75turn flip",
+
+			// Rounded values.
+			"-45deg flip",
+			"65deg flip",
+			"400deg flip",
+		],
+		invalid_values: [
+			"none",
+			"0deg none",
+			"flip 0deg",
+			"flip 0deg",
+			"0",
+			"0 flip",
+			"flip 0",
+			"0deg from-image",
+			"from-image 0deg",
+			"flip from-image",
+			"from-image flip",
+		]
+	};
+}
+
 if (SpecialPowers.getBoolPref("layout.css.osx-font-smoothing.enabled")) {
 	gCSSProperties["-moz-osx-font-smoothing"] = {
 		domProp: "MozOSXFontSmoothing",
@@ -4619,3 +4739,20 @@ if (SpecialPowers.getBoolPref("layout.css.osx-font-smoothing.enabled")) {
 		invalid_values: [ "none", "subpixel-antialiased", "antialiased" ]
 	};
 }
+
+if (SpecialPowers.getBoolPref("layout.css.sticky.enabled")) {
+	gCSSProperties["position"].other_values.push("sticky");
+}
+
+if (SpecialPowers.getBoolPref("layout.css.mix-blend-mode.enabled")) {
+        gCSSProperties["mix-blend-mode"] = {
+        domProp: "mixBlendMode",
+        inherited: false,
+        type: CSS_TYPE_LONGHAND,
+        initial_values: [ "normal" ],
+        other_values: ["multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn",
+            "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"],
+        invalid_values: []
+    };
+}
+

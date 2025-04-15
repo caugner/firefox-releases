@@ -290,22 +290,13 @@ let HiddenBrowsers = {
 
 function HiddenBrowser(width, height) {
   this.resize(width, height);
-
-  HostFrame.get().then(aFrame => {
-    let doc = aFrame.document;
-    this._browser = doc.createElementNS(XUL_NS, "browser");
-    this._browser.setAttribute("type", "content");
-    this._browser.setAttribute("src", NEWTAB_URL);
-    this._applySize();
-    doc.getElementById("win").appendChild(this._browser);
-  });
+  this._createBrowser();
 }
 
 HiddenBrowser.prototype = {
   _width: null,
   _height: null,
   _timer: null,
-  _needsFrameScripts: true,
 
   get isPreloaded() {
     return this._browser &&
@@ -329,18 +320,13 @@ HiddenBrowser.prototype = {
     // Swap docShells.
     tabbrowser.swapNewTabWithBrowser(aTab, this._browser);
 
-    // Load all default frame scripts.
-    if (this._needsFrameScripts) {
-      this._needsFrameScripts = false;
+    // Load all default frame scripts attached to the target window.
+    let mm = aTab.linkedBrowser.messageManager;
+    let scripts = win.messageManager.getDelayedFrameScripts();
+    Array.forEach(scripts, script => mm.loadFrameScript(script, true));
 
-      let mm = aTab.linkedBrowser.messageManager;
-      mm.loadFrameScript("chrome://browser/content/content.js", true);
-      mm.loadFrameScript("chrome://browser/content/content-sessionStore.js", true);
-
-      if ("TabView" in win) {
-        mm.loadFrameScript("chrome://browser/content/tabview-content.js", true);
-      }
-    }
+    // Remove the browser, it will be recreated by a timer.
+    this._removeBrowser();
 
     // Start a timer that will kick off preloading the next newtab page.
     this._timer = createTimer(this, PRELOADER_INTERVAL_MS);
@@ -353,13 +339,18 @@ HiddenBrowser.prototype = {
     this._timer = null;
 
     // Start pre-loading the new tab page.
-    this._browser.loadURI(NEWTAB_URL);
+    this._createBrowser();
   },
 
   resize: function (width, height) {
     this._width = width;
     this._height = height;
     this._applySize();
+  },
+
+  destroy: function () {
+    this._removeBrowser();
+    this._timer = clearTimer(this._timer);
   },
 
   _applySize: function () {
@@ -369,13 +360,22 @@ HiddenBrowser.prototype = {
     }
   },
 
-  destroy: function () {
+  _createBrowser: function () {
+    HostFrame.get().then(aFrame => {
+      let doc = aFrame.document;
+      this._browser = doc.createElementNS(XUL_NS, "browser");
+      this._browser.setAttribute("type", "content");
+      this._browser.setAttribute("src", NEWTAB_URL);
+      this._applySize();
+      doc.getElementById("win").appendChild(this._browser);
+    });
+  },
+
+  _removeBrowser: function () {
     if (this._browser) {
       this._browser.remove();
       this._browser = null;
     }
-
-    this._timer = clearTimer(this._timer);
   }
 };
 

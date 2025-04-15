@@ -10,8 +10,8 @@
 #include "nsCOMPtr.h"
 #include "nsContentUtils.h"
 #include "nsGkAtoms.h"
-#include "nsILink.h"
 #include "nsSVGString.h"
+#include "nsIURI.h"
 
 NS_IMPL_NS_NEW_NAMESPACED_SVG_ELEMENT(A)
 
@@ -34,11 +34,10 @@ nsSVGElement::StringInfo SVGAElement::sStringInfo[2] =
 //----------------------------------------------------------------------
 // nsISupports methods
 
-NS_IMPL_ISUPPORTS_INHERITED5(SVGAElement, SVGAElementBase,
+NS_IMPL_ISUPPORTS_INHERITED4(SVGAElement, SVGAElementBase,
                              nsIDOMNode,
                              nsIDOMElement,
                              nsIDOMSVGElement,
-                             nsILink,
                              Link)
 
 

@@ -14,11 +14,6 @@ XPIDL_SOURCES += [
     'nsISiteSpecificUserAgent.idl',
 ]
 
-XPIDL_FLAGS += [
-    '-I$(topsrcdir)/dom/interfaces/base',
-    '-I$(topsrcdir)/dom/interfaces/events',
-]
-
 MODULE = 'dom'
 
 EXPORTS += [
@@ -42,7 +37,6 @@ EXPORTS += [
     'nsIScriptGlobalObjectOwner.h',
     'nsIScriptNameSpaceManager.h',
     'nsIScriptObjectPrincipal.h',
-    'nsIScriptRuntime.h',
     'nsIScriptTimeoutHandler.h',
     'nsJSEnvironment.h',
     'nsJSUtils.h',
@@ -59,7 +53,11 @@ EXPORTS.mozilla.dom += [
     'BarProps.h',
     'DOMCursor.h',
     'DOMError.h',
+    'DOMException.h',
     'DOMRequest.h',
+    'MessageChannel.h',
+    'MessagePort.h',
+    'MessagePortList.h',
     'ScreenOrientation.h',
     'StructuredCloneTags.h',
     'URL.h',
@@ -67,15 +65,18 @@ EXPORTS.mozilla.dom += [
 
 CPP_SOURCES += [
     'BarProps.cpp',
+    'CompositionStringSynthesizer.cpp',
     'Crypto.cpp',
     'DOMCursor.cpp',
     'DOMError.cpp',
+    'DOMException.cpp',
     'DOMRequest.cpp',
     'Navigator.cpp',
-    'URL.cpp',
+    'MessageChannel.cpp',
+    'MessagePort.cpp',
+    'MessagePortList.cpp',
     'nsContentPermissionHelper.cpp',
     'nsDOMClassInfo.cpp',
-    'nsDOMException.cpp',
     'nsDOMNavigationTiming.cpp',
     'nsDOMScriptObjectFactory.cpp',
     'nsDOMWindowList.cpp',
@@ -98,6 +99,8 @@ CPP_SOURCES += [
     'nsWindowMemoryReporter.cpp',
     'nsWindowRoot.cpp',
     'nsWrapperCache.cpp',
+    'URL.cpp',
+    'WindowNamedPropertiesHandler.cpp',
 ]
 
 EXTRA_COMPONENTS += [
@@ -113,3 +116,12 @@ EXTRA_JS_MODULES += [
     'IndexedDBHelper.jsm',
     'ObjectWrapper.jsm',
 ]
+
+FAIL_ON_WARNINGS = True
+
+LIBXUL_LIBRARY = True
+
+MSVC_ENABLE_PGO = True
+
+LIBRARY_NAME = 'jsdombase_s'
+

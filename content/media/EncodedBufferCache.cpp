@@ -6,14 +6,15 @@
 
 #include "EncodedBufferCache.h"
 #include "nsAnonymousTemporaryFile.h"
-#include "nsLocalFile.h"
+#include "nsDOMFile.h"
+#include "prio.h"
 
 namespace mozilla {
 
 void
 EncodedBufferCache::AppendBuffer(nsTArray<uint8_t> & aBuf)
 {
-  ReentrantMonitorAutoEnter mon(mReentrantMonitor);
+  MutexAutoLock lock(mMutex);
   mDataSize += aBuf.Length();
 
   mEncodedBuffers.AppendElement()->SwapElements(aBuf);
@@ -41,7 +42,7 @@ EncodedBufferCache::AppendBuffer(nsTArray<uint8_t> & aBuf)
 already_AddRefed<nsIDOMBlob>
 EncodedBufferCache::ExtractBlob(const nsAString &aContentType)
 {
-  ReentrantMonitorAutoEnter mon(mReentrantMonitor);
+  MutexAutoLock lock(mMutex);
   nsCOMPtr<nsIDOMBlob> blob;
   if (mTempFileEnabled) {
     // generate new temporary file to write

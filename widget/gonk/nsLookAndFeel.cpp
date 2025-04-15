@@ -353,7 +353,6 @@ nsLookAndFeel::GetIntImpl(IntID aID, int32_t &aResult)
             break;
 
         case eIntID_WindowsDefaultTheme:
-        case eIntID_MaemoClassic:
         case eIntID_WindowsThemeIdentifier:
         case eIntID_OperatingSystemVersionIdentifier:
             aResult = 0;
@@ -389,7 +388,7 @@ nsLookAndFeel::GetFontImpl(FontID aID, nsString& aFontName,
                            gfxFontStyle& aFontStyle,
                            float aDevPixPerCSSPixel)
 {
-    aFontName.AssignLiteral("\"Droid Sans\"");
+    aFontName.AssignLiteral("\"Fira Sans OT\"");
     aFontStyle.style = NS_FONT_STYLE_NORMAL;
     aFontStyle.weight = NS_FONT_WEIGHT_NORMAL;
     aFontStyle.stretch = NS_FONT_STRETCH_NORMAL;

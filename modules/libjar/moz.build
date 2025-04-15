@@ -17,6 +17,7 @@ XPIDL_SOURCES += [
 ]
 
 MODULE = 'jar'
+LIBRARY_NAME	= 'jar'
 
 EXPORTS += [
     'nsJARURI.h',
@@ -33,4 +34,10 @@ CPP_SOURCES += [
     'nsJARURI.cpp',
     'nsZipArchive.cpp',
 ]
+
+FAIL_ON_WARNINGS = True
+
+LIBXUL_LIBRARY = True
+
+MSVC_ENABLE_PGO = True
 

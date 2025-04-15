@@ -56,6 +56,7 @@
 #include "mozilla/layers/LayerManagerComposite.h"
 #include "GLTextureImage.h"
 #include "GLContextProvider.h"
+#include "GLContext.h"
 #include "mozilla/layers/GLManager.h"
 #include "mozilla/layers/CompositorCocoaWidgetHelper.h"
 #include "mozilla/layers/CompositorOGL.h"
@@ -1534,15 +1535,7 @@ nsChildView::ComputeShouldAccelerate(bool aDefault)
 bool
 nsChildView::ShouldUseOffMainThreadCompositing()
 {
-  // When acceleration is off, default to false, but allow force-enabling
-  // using the layers.offmainthreadcomposition.prefer-basic pref.
-  if (!ComputeShouldAccelerate(mUseLayersAcceleration) &&
-      !Preferences::GetBool("layers.offmainthreadcomposition.prefer-basic", false)) {
-    return false;
-  }
-
-  // Don't use OMTC (which requires OpenGL) for transparent windows or for
-  // popup windows.
+  // Don't use OMTC for transparent windows or for popup windows.
   if (!mView || ![[mView window] isOpaque] ||
       [[mView window] isKindOfClass:[PopupWindow class]])
     return false;
@@ -1841,16 +1834,16 @@ NS_IMETHODIMP_(void)
 nsChildView::SetInputContext(const InputContext& aContext,
                              const InputContextAction& aAction)
 {
-  // XXX Ideally, we should check if this instance has focus or not.
-  //     However, this is called only when this widget has focus, so,
-  //     it's not problem at least for now.
-  if (aContext.IsPasswordEditor()) {
-    TextInputHandler::EnableSecureEventInput();
-  } else {
-    TextInputHandler::EnsureSecureEventInputDisabled();
+  NS_ENSURE_TRUE_VOID(mTextInputHandler);
+
+  if (mTextInputHandler->IsFocused()) {
+    if (aContext.IsPasswordEditor()) {
+      TextInputHandler::EnableSecureEventInput();
+    } else {
+      TextInputHandler::EnsureSecureEventInputDisabled();
+    }
   }
 
-  NS_ENSURE_TRUE_VOID(mTextInputHandler);
   mInputContext = aContext;
   switch (aContext.mIMEState.mEnabled) {
     case IMEState::ENABLED:
@@ -3367,7 +3360,16 @@ NSEvent* gLastDragMouseDownEvent = nil;
     new gfxQuartzSurface(aContext, backingSize);
   targetSurface->SetAllowUseAsSource(false);
 
-  nsRefPtr<gfxContext> targetContext = new gfxContext(targetSurface);
+  nsRefPtr<gfxContext> targetContext;
+  if (gfxPlatform::GetPlatform()->SupportsAzureContentForType(mozilla::gfx::BACKEND_CAIRO)) {
+    RefPtr<mozilla::gfx::DrawTarget> dt =
+      gfxPlatform::GetPlatform()->CreateDrawTargetForSurface(targetSurface,
+                                                             mozilla::gfx::IntSize(backingSize.width,
+                                                                                   backingSize.height));
+    targetContext = new gfxContext(dt);
+  } else {
+    targetContext = new gfxContext(targetSurface);
+  }
 
   // Set up the clip region.
   nsIntRegionRectIterator iter(region);

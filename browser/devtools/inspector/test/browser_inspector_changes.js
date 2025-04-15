@@ -40,7 +40,7 @@ function test() {
       testDiv.style.fontSize = "10px";
 
       // Start up the style inspector panel...
-      Services.obs.addObserver(stylePanelTests, "StyleInspector-populated", false);
+      inspector.once("computed-view-refreshed", stylePanelTests);
 
       inspector.selection.setNode(testDiv);
     });
@@ -48,24 +48,24 @@ function test() {
 
   function stylePanelTests()
   {
-    Services.obs.removeObserver(stylePanelTests, "StyleInspector-populated");
-
     let computedview = inspector.sidebar.getWindowForTab("computedview").computedview;
     ok(computedview, "Style Panel has a cssHtmlTree");
 
     let propView = getInspectorProp("font-size");
     is(propView.value, "10px", "Style inspector should be showing the correct font size.");
 
-    Services.obs.addObserver(stylePanelAfterChange, "StyleInspector-populated", false);
+    inspector.once("computed-view-refreshed", stylePanelAfterChange);
 
     testDiv.style.fontSize = "15px";
+
+    // FIXME: This shouldn't be needed but as long as we don't fix the bug
+    // where the rule/computed views are not updated when the selected node's
+    // styles change, it has to stay here
     inspector.emit("layout-change");
   }
 
   function stylePanelAfterChange()
   {
-    Services.obs.removeObserver(stylePanelAfterChange, "StyleInspector-populated");
-
     let propView = getInspectorProp("font-size");
     is(propView.value, "15px", "Style inspector should be showing the new font size.");
 
@@ -78,16 +78,19 @@ function test() {
     inspector.sidebar.select("ruleview");
 
     executeSoon(function() {
-      Services.obs.addObserver(stylePanelAfterSwitch, "StyleInspector-populated", false);
+      inspector.once("computed-view-refreshed", stylePanelAfterSwitch);
       testDiv.style.fontSize = "20px";
       inspector.sidebar.select("computedview");
+
+      // FIXME: This shouldn't be needed but as long as we don't fix the bug
+      // where the rule/computed views are not updated when the selected node's
+      // styles change, it has to stay here
+      inspector.emit("layout-change");
     });
   }
 
   function stylePanelAfterSwitch()
   {
-    Services.obs.removeObserver(stylePanelAfterSwitch, "StyleInspector-populated");
-
     let propView = getInspectorProp("font-size");
     is(propView.value, "20px", "Style inspector should be showing the newest font size.");
 

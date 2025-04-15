@@ -17,6 +17,8 @@
 namespace mozilla {
 namespace layers {
 
+class GrallocTextureClientOGL;
+
 /**
  * The gralloc buffer maintained by android GraphicBuffer can be
  * shared between the compositor thread and the producer thread. The
@@ -68,14 +70,15 @@ protected:
  * mPicX, mPicY and mPicSize. The size of the rendered image is
  * mPicSize, not mYSize or mCbCrSize.
  */
-class GrallocImage : public PlanarYCbCrImage {
+class GrallocImage : public PlanarYCbCrImage
+                   , public ISharedImage
+{
   typedef PlanarYCbCrImage::Data Data;
   static uint32_t sColorIdMap[];
-
 public:
   struct GrallocData {
-      nsRefPtr<GraphicBufferLocked> mGraphicBuffer;
-      gfxIntSize mPicSize;
+    nsRefPtr<GraphicBufferLocked> mGraphicBuffer;
+    gfxIntSize mPicSize;
   };
 
   GrallocImage();
@@ -101,6 +104,8 @@ public:
     HAL_PIXEL_FORMAT_YCbCr_420_P            = 0x103,
     HAL_PIXEL_FORMAT_YCbCr_420_SP           = 0x109,
     HAL_PIXEL_FORMAT_YCrCb_420_SP_ADRENO    = 0x10A,
+    HAL_PIXEL_FORMAT_YCbCr_420_SP_TILED     = 0x7FA30C03,
+    HAL_PIXEL_FORMAT_YCbCr_420_SP_VENUS     = 0x7FA30C04,
   };
 
   virtual already_AddRefed<gfxASurface> GetAsSurface();
@@ -123,9 +128,19 @@ public:
     return SurfaceDescriptor();
   }
 
+  virtual ISharedImage* AsSharedImage() MOZ_OVERRIDE { return this; }
+
+  virtual TextureClient* GetTextureClient() MOZ_OVERRIDE;
+
+  virtual uint8_t* GetBuffer()
+  {
+    return static_cast<uint8_t*>(GetNativeBuffer());
+  }
+
 private:
   bool mBufferAllocated;
   nsRefPtr<GraphicBufferLocked> mGraphicBuffer;
+  RefPtr<GrallocTextureClientOGL> mTextureClient;
 };
 
 } // namespace layers

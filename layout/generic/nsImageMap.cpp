@@ -12,18 +12,11 @@
 #include "nsReadableUtils.h"
 #include "nsRenderingContext.h"
 #include "nsPresContext.h"
-#include "nsIURL.h"
-#include "nsIServiceManager.h"
-#include "nsNetUtil.h"
-#include "nsTextFragment.h"
 #include "mozilla/dom/Element.h"
-#include "nsIDocument.h"
 #include "nsINameSpaceManager.h"
 #include "nsGkAtoms.h"
-#include "nsIPresShell.h"
 #include "nsImageFrame.h"
 #include "nsCoord.h"
-#include "nsIConsoleService.h"
 #include "nsIScriptError.h"
 #include "nsIStringBundle.h"
 #include "nsContentUtils.h"
@@ -91,7 +84,7 @@ static void logMessage(nsIContent*      aContent,
   nsIDocument* doc = aContent->OwnerDoc();
 
   nsContentUtils::ReportToConsole(
-     aFlags, "ImageMap", doc,
+     aFlags, NS_LITERAL_CSTRING("ImageMap"), doc,
      nsContentUtils::eLAYOUT_PROPERTIES,
      aMessageName,
      nullptr,  /* params */

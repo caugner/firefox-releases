@@ -70,6 +70,8 @@
              oncommand="DebuggerView.WatchExpressions._onCmdRemoveAllExpressions()"/>
     <command id="togglePauseOnExceptions"
              oncommand="DebuggerView.Options._togglePauseOnExceptions()"/>
+    <command id="toggleIgnoreCaughtExceptions"
+             oncommand="DebuggerView.Options._toggleIgnoreCaughtExceptions()"/>
     <command id="toggleShowPanesOnStartup"
              oncommand="DebuggerView.Options._toggleShowPanesOnStartup()"/>
     <command id="toggleShowOnlyEnum"
@@ -160,6 +162,11 @@
                 label="&debuggerUI.pauseExceptions;"
                 accesskey="&debuggerUI.pauseExceptions.key;"
                 command="togglePauseOnExceptions"/>
+      <menuitem id="ignore-caught-exceptions"
+                type="checkbox"
+                label="&debuggerUI.ignoreCaughtExceptions;"
+                accesskey="&debuggerUI.ignoreCaughtExceptions.key;"
+                command="toggleIgnoreCaughtExceptions"/>
       <menuitem id="show-panes-on-startup"
                 type="checkbox"
                 label="&debuggerUI.showPanesOnInit;"
@@ -347,35 +354,35 @@
              value="&debuggerUI.searchPanelOperators;"/>
       <hbox align="center">
         <button id="global-operator-button"
-                class="searchbox-panel-operator-button"
+                class="searchbox-panel-operator-button devtools-monospace"
                 command="globalSearchCommand"/>
         <label id="global-operator-label"
                class="plain searchbox-panel-operator-label"/>
       </hbox>
       <hbox align="center">
         <button id="function-operator-button"
-                class="searchbox-panel-operator-button"
+                class="searchbox-panel-operator-button devtools-monospace"
                 command="functionSearchCommand"/>
         <label id="function-operator-label"
                class="plain searchbox-panel-operator-label"/>
       </hbox>
       <hbox align="center">
         <button id="token-operator-button"
-                class="searchbox-panel-operator-button"
+                class="searchbox-panel-operator-button devtools-monospace"
                 command="tokenSearchCommand"/>
         <label id="token-operator-label"
                class="plain searchbox-panel-operator-label"/>
       </hbox>
       <hbox align="center">
         <button id="line-operator-button"
-                class="searchbox-panel-operator-button"
+                class="searchbox-panel-operator-button devtools-monospace"
                 command="lineSearchCommand"/>
         <label id="line-operator-label"
                class="plain searchbox-panel-operator-label"/>
       </hbox>
       <hbox align="center">
         <button id="variable-operator-button"
-                class="searchbox-panel-operator-button"
+                class="searchbox-panel-operator-button devtools-monospace"
                 command="variableSearchCommand"/>
         <label id="variable-operator-label"
                class="plain searchbox-panel-operator-label"/>

@@ -18,3 +18,8 @@ MODULE = 'toolkitcomps'
 CPP_SOURCES = [
     'DiskSpaceWatcher.cpp',
 ]
+
+LIBXUL_LIBRARY = True
+
+LIBRARY_NAME = 'diskspacewatcher'
+

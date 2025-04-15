@@ -7,18 +7,19 @@
 #ifndef MediaRecorder_h
 #define MediaRecorder_h
 
-#include "DOMMediaStream.h"
-#include "MediaEncoder.h"
 #include "mozilla/dom/MediaRecorderBinding.h"
 #include "nsDOMEventTargetHelper.h"
-#include "EncodedBufferCache.h"
-#include "TrackUnionStream.h"
 
 // Max size for allowing queue encoded data in memory
 #define MAX_ALLOW_MEMORY_BUFFER 1024000
 namespace mozilla {
 
 class ErrorResult;
+class DOMMediaStream;
+class EncodedBufferCache;
+class MediaEncoder;
+class ProcessedMediaStream;
+class MediaInputPort;
 
 namespace dom {
 
@@ -35,6 +36,7 @@ namespace dom {
 
 class MediaRecorder : public nsDOMEventTargetHelper
 {
+  class ShutdownObserver;
   class ExtractEncodedDataTask;
   class PushBlobTask;
   class PushErrorMessageTask;
@@ -73,8 +75,8 @@ public:
   void GetMimeType(nsString &aMimeType) { aMimeType = mMimeType; }
 
   static already_AddRefed<MediaRecorder>
-  Constructor(const GlobalObject& aGlobal, JSContext* aCx, DOMMediaStream& aStream,
-              ErrorResult& aRv);
+  Constructor(const GlobalObject& aGlobal,
+              DOMMediaStream& aStream, ErrorResult& aRv);
 
   // EventHandler
   IMPL_EVENT_HANDLER(dataavailable)
@@ -85,7 +87,7 @@ public:
   friend class ExtractEncodedData;
 
 protected:
-  void Init(JSContext* aCx, nsPIDOMWindow* aOwnerWindow);
+  void Init(nsPIDOMWindow* aOwnerWindow);
   // Copy encoded data from encoder to EncodedBufferCache. This function runs in the Media Encoder Thread.
   void ExtractEncodedData();
 
@@ -110,6 +112,8 @@ protected:
   nsRefPtr<DOMMediaStream> mStream;
   // This media stream is used for notifying raw data to encoder and can be blocked.
   nsRefPtr<ProcessedMediaStream> mTrackUnionStream;
+  // This is used for destroing the inputport when destroy the mediaRecorder
+  nsRefPtr<MediaInputPort> mStreamPort;
   // This object creates on start() and destroys in ~MediaRecorder.
   nsAutoPtr<EncodedBufferCache> mEncodedBufferCache;
   // It specifies the container format as well as the audio and video capture formats.
@@ -119,6 +123,9 @@ protected:
   int32_t mTimeSlice;
   // The current state of the MediaRecorder object.
   RecordingState mState;
+
+  // Receive shutdown notofication to terminate read thread.
+  nsRefPtr<ShutdownObserver> mObserver;
 };
 
 }

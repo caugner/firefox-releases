@@ -10,16 +10,12 @@
 #include "AudioParamTimeline.h"
 #include "nsWrapperCache.h"
 #include "nsCycleCollectionParticipant.h"
-#include "nsCOMPtr.h"
 #include "EnableWebAudioCheck.h"
 #include "nsAutoPtr.h"
 #include "AudioNode.h"
 #include "mozilla/dom/TypedArray.h"
-#include "mozilla/Util.h"
 #include "WebAudioUtils.h"
-
-struct JSContext;
-class nsIDOMWindow;
+#include "js/TypeDecls.h"
 
 namespace mozilla {
 

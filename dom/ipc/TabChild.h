@@ -7,15 +7,14 @@
 #ifndef mozilla_dom_TabChild_h
 #define mozilla_dom_TabChild_h
 
-#ifndef _IMPL_NS_LAYOUT
 #include "mozilla/dom/PBrowserChild.h"
-#endif
 #ifdef DEBUG
 #include "PCOMContentPermissionRequestChild.h"
 #endif /* DEBUG */
 #include "nsIWebNavigation.h"
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
+#include "nsEventDispatcher.h"
 #include "nsIWebBrowserChrome2.h"
 #include "nsIEmbeddingSiteWindow.h"
 #include "nsIWebBrowserChromeFocus.h"
@@ -23,7 +22,6 @@
 #include "nsIDOMEventListener.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIWindowProvider.h"
-#include "jsapi.h"
 #include "nsIDOMWindow.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
@@ -117,6 +115,13 @@ public:
                                                     aUseCapture,
                                                     aWantsUntrusted,
                                                     optional_argc);
+  }
+
+  nsresult
+  PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+  {
+    aVisitor.mForceContentDispatch = true;
+    return NS_OK;
   }
 
   virtual JSContext* GetJSContextForEventHandlers() MOZ_OVERRIDE;
@@ -219,7 +224,7 @@ public:
                                 const bool&     aIgnoreRootScrollFrame);
     virtual bool RecvRealMouseEvent(const nsMouseEvent& event);
     virtual bool RecvRealKeyEvent(const nsKeyEvent& event);
-    virtual bool RecvMouseWheelEvent(const mozilla::widget::WheelEvent& event);
+    virtual bool RecvMouseWheelEvent(const mozilla::WheelEvent& event);
     virtual bool RecvRealTouchEvent(const nsTouchEvent& event);
     virtual bool RecvRealTouchMoveEvent(const nsTouchEvent& event);
     virtual bool RecvKeyEvent(const nsString& aType,
@@ -295,8 +300,6 @@ public:
     void GetDPI(float* aDPI);
     void GetDefaultScale(double *aScale);
 
-    ScreenToScreenScale GetZoom() { return mLastMetrics.mZoom; }
-
     ScreenOrientation GetOrientation() { return mOrientation; }
 
     void SetBackgroundColor(const nscolor& aColor);
@@ -308,12 +311,13 @@ public:
     /** Return a boolean indicating if the page has called preventDefault on
      *  the event.
      */
-    bool DispatchMouseEvent(const nsString& aType,
-                            const CSSPoint& aPoint,
-                            const int32_t&  aButton,
-                            const int32_t&  aClickCount,
-                            const int32_t&  aModifiers,
-                            const bool&     aIgnoreRootScrollFrame);
+    bool DispatchMouseEvent(const nsString&       aType,
+                            const CSSPoint&       aPoint,
+                            const int32_t&        aButton,
+                            const int32_t&        aClickCount,
+                            const int32_t&        aModifiers,
+                            const bool&           aIgnoreRootScrollFrame,
+                            const unsigned short& aInputSourceArg);
 
     /**
      * Signal to this TabChild that it should be made visible:
@@ -334,16 +338,49 @@ public:
 
     ContentChild* Manager() { return mManager; }
 
+    bool GetUpdateHitRegion() { return mUpdateHitRegion; }
+
+    void UpdateHitRegion(const nsRegion& aRegion);
+
+    static inline TabChild*
+    GetFrom(nsIDocShell* aDocShell)
+    {
+      nsCOMPtr<nsITabChild> tc = do_GetInterface(aDocShell);
+      return static_cast<TabChild*>(tc.get());
+    }
+
+    static inline TabChild*
+    GetFrom(nsIPresShell* aPresShell)
+    {
+      nsIDocument* doc = aPresShell->GetDocument();
+      if (!doc) {
+          return nullptr;
+      }
+      nsCOMPtr<nsISupports> container = doc->GetContainer();
+      nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
+      return GetFrom(docShell);
+    }
+
+    static inline TabChild*
+    GetFrom(nsIDOMWindow* aWindow)
+    {
+      nsCOMPtr<nsIWebNavigation> webNav = do_GetInterface(aWindow);
+      nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(webNav);
+      return GetFrom(docShell);
+    }
+
 protected:
     virtual PRenderFrameChild* AllocPRenderFrameChild(ScrollingBehavior* aScrolling,
                                                       TextureFactoryIdentifier* aTextureFactoryIdentifier,
                                                       uint64_t* aLayersId) MOZ_OVERRIDE;
     virtual bool DeallocPRenderFrameChild(PRenderFrameChild* aFrame) MOZ_OVERRIDE;
     virtual bool RecvDestroy() MOZ_OVERRIDE;
+    virtual bool RecvSetUpdateHitRegion(const bool& aEnabled) MOZ_OVERRIDE;
 
     nsEventStatus DispatchWidgetEvent(nsGUIEvent& event);
 
-    virtual PIndexedDBChild* AllocPIndexedDBChild(const nsCString& aASCIIOrigin,
+    virtual PIndexedDBChild* AllocPIndexedDBChild(const nsCString& aGroup,
+                                                  const nsCString& aASCIIOrigin,
                                                   bool* /* aAllowed */);
 
     virtual bool DeallocPIndexedDBChild(PIndexedDBChild* aActor);
@@ -425,9 +462,6 @@ private:
 
     // Get the DOMWindowUtils for the top-level window in this tab.
     already_AddRefed<nsIDOMWindowUtils> GetDOMWindowUtils();
-    // Get the DOMWindowUtils for the window corresponding to the givent content
-    // element. This might be an iframe inside the tab, for instance.
-    already_AddRefed<nsIDOMWindowUtils> GetDOMWindowUtils(nsIContent* aContent);
 
     class CachedFileDescriptorInfo;
     class CachedFileDescriptorCallbackRunnable;
@@ -465,36 +499,10 @@ private:
     bool mContentDocumentIsDisplayed;
     bool mTriedBrowserInit;
     ScreenOrientation mOrientation;
+    bool mUpdateHitRegion;
 
     DISALLOW_EVIL_CONSTRUCTORS(TabChild);
 };
-
-inline TabChild*
-GetTabChildFrom(nsIDocShell* aDocShell)
-{
-    nsCOMPtr<nsITabChild> tc = do_GetInterface(aDocShell);
-    return static_cast<TabChild*>(tc.get());
-}
-
-inline TabChild*
-GetTabChildFrom(nsIPresShell* aPresShell)
-{
-    nsIDocument* doc = aPresShell->GetDocument();
-    if (!doc) {
-        return nullptr;
-    }
-    nsCOMPtr<nsISupports> container = doc->GetContainer();
-    nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
-    return GetTabChildFrom(docShell);
-}
-
-inline TabChild*
-GetTabChildFrom(nsIDOMWindow* aWindow)
-{
-    nsCOMPtr<nsIWebNavigation> webNav = do_GetInterface(aWindow);
-    nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(webNav);
-    return GetTabChildFrom(docShell);
-}
 
 }
 }

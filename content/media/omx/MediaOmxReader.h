@@ -8,6 +8,7 @@
 
 #include "MediaResource.h"
 #include "MediaDecoderReader.h"
+#include "nsRect.h"
 #include <ui/GraphicBuffer.h>
 
 namespace android {
@@ -40,6 +41,8 @@ public:
   virtual nsresult Init(MediaDecoderReader* aCloneDonor);
   virtual nsresult ResetDecode();
 
+  virtual void NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_t aOffset);
+
   virtual bool DecodeAudioData();
   virtual bool DecodeVideoFrame(bool &aKeyframeSkip,
                                 int64_t aTimeThreshold);
@@ -58,6 +61,8 @@ public:
 
   virtual bool IsDormantNeeded();
   virtual void ReleaseMediaResources();
+
+  virtual void ReleaseDecoder() MOZ_OVERRIDE;
 
   virtual nsresult ReadMetadata(VideoInfo* aInfo,
                                 MetadataTags** aTags);

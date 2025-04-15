@@ -10,9 +10,10 @@
 #include "WebGLContextUtils.h"
 #include "WebGLBuffer.h"
 #include "WebGLVertexAttribData.h"
-#include "WebGLMemoryMultiReporterWrapper.h"
+#include "WebGLMemoryReporterWrapper.h"
 #include "WebGLFramebuffer.h"
 #include "WebGLVertexArray.h"
+#include "WebGLQuery.h"
 
 #include "AccessCheck.h"
 #include "nsIConsoleService.h"
@@ -36,6 +37,7 @@
 #include "nsDisplayList.h"
 
 #include "GLContextProvider.h"
+#include "GLContext.h"
 
 #include "gfxCrashReporterUtils.h"
 
@@ -51,6 +53,7 @@
 #include "mozilla/Services.h"
 #include "mozilla/dom/WebGLRenderingContextBinding.h"
 #include "mozilla/dom/BindingUtils.h"
+#include "mozilla/dom/ImageData.h"
 #include "mozilla/ProcessPriorityManager.h"
 
 #include "Layers.h"
@@ -154,6 +157,7 @@ WebGLContext::WebGLContext()
 
     mScissorTestEnabled = 0;
     mDitherEnabled = 1;
+    mRasterizerDiscardEnabled = 0; // OpenGL ES 3.0 spec p244
 
     // initialize some GL values: we're going to get them from the GL and use them as the sizes of arrays,
     // so in case glGetIntegerv leaves them uninitialized because of a GL bug, we would have very weird crashes.
@@ -169,18 +173,19 @@ WebGLContext::WebGLContext()
     mGLMaxVertexUniformVectors = 0;
     mGLMaxColorAttachments = 1;
     mGLMaxDrawBuffers = 1;
+    mGLMaxTransformFeedbackSeparateAttribs = 0;
 
     // See OpenGL ES 2.0.25 spec, 6.2 State Tables, table 6.13
     mPixelStorePackAlignment = 4;
     mPixelStoreUnpackAlignment = 4;
 
-    WebGLMemoryMultiReporterWrapper::AddWebGLContext(this);
+    WebGLMemoryReporterWrapper::AddWebGLContext(this);
 
     mAllowRestore = true;
     mContextLossTimerRunning = false;
     mDrawSinceContextLossTimerSet = false;
     mContextRestorer = do_CreateInstance("@mozilla.org/timer;1");
-    mContextStatus = ContextStable;
+    mContextStatus = ContextNotLost;
     mContextLostErrorSet = false;
     mLoseContextOnHeapMinimize = false;
     mCanLoseContextInForeground = true;
@@ -196,8 +201,7 @@ WebGLContext::WebGLContext()
 
     mLastUseIndex = 0;
 
-    mMinInUseAttribArrayLengthCached = false;
-    mMinInUseAttribArrayLength = 0;
+    InvalidateBufferFetching();
 
     mIsScreenCleared = false;
 
@@ -209,7 +213,7 @@ WebGLContext::WebGLContext()
 WebGLContext::~WebGLContext()
 {
     DestroyResourcesAndContext();
-    WebGLMemoryMultiReporterWrapper::RemoveWebGLContext(this);
+    WebGLMemoryReporterWrapper::RemoveWebGLContext(this);
     TerminateContextLossTimer();
     mContextRestorer = nullptr;
 }
@@ -235,8 +239,10 @@ WebGLContext::DestroyResourcesAndContext()
     mBound2DTextures.Clear();
     mBoundCubeMapTextures.Clear();
     mBoundArrayBuffer = nullptr;
+    mBoundTransformFeedbackBuffer = nullptr;
     mCurrentProgram = nullptr;
     mBoundFramebuffer = nullptr;
+    mActiveOcclusionQuery = nullptr;
     mBoundRenderbuffer = nullptr;
     mBoundVertexArray = nullptr;
     mDefaultVertexArray = nullptr;
@@ -255,6 +261,8 @@ WebGLContext::DestroyResourcesAndContext()
         mShaders.getLast()->DeleteOnce();
     while (!mPrograms.isEmpty())
         mPrograms.getLast()->DeleteOnce();
+    while (!mQueries.isEmpty())
+        mQueries.getLast()->DeleteOnce();
 
     if (mBlackTexturesAreInitialized) {
         gl->fDeleteTextures(1, &mBlackTexture2D);
@@ -523,9 +531,9 @@ WebGLContext::SetDimensions(int32_t width, int32_t height)
 
     // try the default provider, whatever that is
     if (!gl && useOpenGL) {
-        GLContext::ContextFlags flag = useMesaLlvmPipe
-                                       ? GLContext::ContextFlagsMesaLLVMPipe
-                                       : GLContext::ContextFlagsNone;
+        gl::ContextFlags flag = useMesaLlvmPipe
+                                ? gl::ContextFlagsMesaLLVMPipe
+                                : gl::ContextFlagsNone;
         gl = gl::GLContextProvider::CreateOffscreen(size, caps, flag);
         if (gl && !InitAndValidateGL()) {
             GenerateWarning("Error during %s initialization",
@@ -608,6 +616,7 @@ WebGLContext::Render(gfxContext *ctx, gfxPattern::GraphicsFilter f, uint32_t aFl
     } else if (srcPremultAlpha && !dstPremultAlpha) {
         gfxUtils::UnpremultiplyImageSurface(surf);
     }
+    surf->MarkDirty();
 
     nsRefPtr<gfxPattern> pat = new gfxPattern(surf);
     pat->SetFilter(f);
@@ -644,8 +653,8 @@ void WebGLContext::LoseOldestWebGLContextIfLimitExceeded()
     // when choosing which one to lose first.
     UpdateLastUseIndex();
 
-    WebGLMemoryMultiReporterWrapper::ContextsArrayType &contexts
-      = WebGLMemoryMultiReporterWrapper::Contexts();
+    WebGLMemoryReporterWrapper::ContextsArrayType &contexts
+      = WebGLMemoryReporterWrapper::Contexts();
 
     // quick exit path, should cover a majority of cases
     if (contexts.Length() <= kMaxWebGLContextsPerPrincipal) {
@@ -735,9 +744,6 @@ WebGLContext::GetInputStream(const char* aMimeType,
 
     const char encoderPrefix[] = "@mozilla.org/image/encoder;2?type=";
     nsAutoArrayPtr<char> conid(new char[strlen(encoderPrefix) + strlen(aMimeType) + 1]);
-
-    if (!conid)
-        return NS_ERROR_OUT_OF_MEMORY;
 
     strcpy(conid, encoderPrefix);
     strcat(conid, aMimeType);
@@ -839,7 +845,7 @@ WebGLContext::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
                              CanvasLayer *aOldLayer,
                              LayerManager *aManager)
 {
-    if (!IsContextStable())
+    if (IsContextLost())
         return nullptr;
 
     if (!mResetLayer && aOldLayer &&
@@ -894,7 +900,7 @@ void
 WebGLContext::GetContextAttributes(Nullable<dom::WebGLContextAttributesInitializer> &retval)
 {
     retval.SetNull();
-    if (!IsContextStable())
+    if (IsContextLost())
         return;
 
     dom::WebGLContextAttributes& result = retval.SetValue();
@@ -909,16 +915,11 @@ WebGLContext::GetContextAttributes(Nullable<dom::WebGLContextAttributesInitializ
     result.mPreserveDrawingBuffer = mOptions.preserveDrawingBuffer;
 }
 
-bool
-WebGLContext::IsExtensionEnabled(WebGLExtensionID ext) const {
-    return mExtensions.SafeElementAt(ext);
-}
-
-/* [noscript] DOMString mozGetUnderlyingParamString(in WebGLenum pname); */
+/* [noscript] DOMString mozGetUnderlyingParamString(in GLenum pname); */
 NS_IMETHODIMP
 WebGLContext::MozGetUnderlyingParamString(uint32_t pname, nsAString& retval)
 {
-    if (!IsContextStable())
+    if (IsContextLost())
         return NS_OK;
 
     retval.SetIsVoid(true);
@@ -941,252 +942,6 @@ WebGLContext::MozGetUnderlyingParamString(uint32_t pname, nsAString& retval)
     }
 
     return NS_OK;
-}
-
-bool WebGLContext::IsExtensionSupported(JSContext *cx, WebGLExtensionID ext) const
-{
-    // Chrome contexts need access to debug information even when
-    // webgl.disable-extensions is set. This is used in the graphics
-    // section of about:support.
-    if (xpc::AccessCheck::isChrome(js::GetContextCompartment(cx))) {
-        switch (ext) {
-            case WEBGL_debug_renderer_info:
-                return true;
-            default:
-                // For warnings-as-errors.
-                break;
-        }
-    }
-
-    return IsExtensionSupported(ext);
-}
-
-bool WebGLContext::IsExtensionSupported(WebGLExtensionID ext) const
-{
-    if (mDisableExtensions) {
-        return false;
-    }
-
-    switch (ext) {
-        case OES_element_index_uint:
-            if (!gl->IsGLES2())
-                return true;
-            return gl->IsExtensionSupported(GLContext::OES_element_index_uint);
-        case OES_standard_derivatives:
-            if (!gl->IsGLES2())
-                return true;
-            return gl->IsExtensionSupported(GLContext::OES_standard_derivatives);
-        case WEBGL_lose_context:
-            // We always support this extension.
-            return true;
-        case OES_texture_float:
-            return gl->IsExtensionSupported(gl->IsGLES2() ? GLContext::OES_texture_float
-                                                          : GLContext::ARB_texture_float);
-        case OES_texture_float_linear:
-            return gl->IsExtensionSupported(gl->IsGLES2() ? GLContext::OES_texture_float_linear
-                                                          : GLContext::ARB_texture_float);
-        case OES_vertex_array_object:
-            return WebGLExtensionVertexArray::IsSupported(this);
-        case EXT_texture_filter_anisotropic:
-            return gl->IsExtensionSupported(GLContext::EXT_texture_filter_anisotropic);
-        case WEBGL_compressed_texture_s3tc:
-            if (gl->IsExtensionSupported(GLContext::EXT_texture_compression_s3tc)) {
-                return true;
-            }
-            else if (gl->IsExtensionSupported(GLContext::EXT_texture_compression_dxt1) &&
-                     gl->IsExtensionSupported(GLContext::ANGLE_texture_compression_dxt3) &&
-                     gl->IsExtensionSupported(GLContext::ANGLE_texture_compression_dxt5))
-            {
-                return true;
-            }
-            return false;
-        case WEBGL_compressed_texture_atc:
-            return gl->IsExtensionSupported(GLContext::AMD_compressed_ATC_texture);
-        case WEBGL_compressed_texture_pvrtc:
-            return gl->IsExtensionSupported(GLContext::IMG_texture_compression_pvrtc);
-        case WEBGL_depth_texture:
-            if (gl->IsGLES2() &&
-                gl->IsExtensionSupported(GLContext::OES_packed_depth_stencil) &&
-                gl->IsExtensionSupported(GLContext::OES_depth_texture))
-            {
-                return true;
-            }
-            else if (!gl->IsGLES2() &&
-                     gl->IsExtensionSupported(GLContext::EXT_packed_depth_stencil))
-            {
-                return true;
-            }
-            return false;
-        default:
-            // For warnings-as-errors.
-            break;
-    }
-
-    if (Preferences::GetBool("webgl.enable-draft-extensions", false) || IsWebGL2()) {
-        switch (ext) {
-            case WEBGL_draw_buffers:
-                return WebGLExtensionDrawBuffers::IsSupported(this);
-            default:
-                // For warnings-as-errors.
-                break;
-        }
-    }
-
-    return false;
-}
-
-static bool
-CompareWebGLExtensionName(const nsACString& name, const char *other)
-{
-    return name.Equals(other, nsCaseInsensitiveCStringComparator());
-}
-
-JSObject*
-WebGLContext::GetExtension(JSContext *cx, const nsAString& aName, ErrorResult& rv)
-{
-    if (!IsContextStable())
-        return nullptr;
-
-    NS_LossyConvertUTF16toASCII name(aName);
-
-    WebGLExtensionID ext = WebGLExtensionID_unknown_extension;
-
-    // step 1: figure what extension is wanted
-    if (CompareWebGLExtensionName(name, "OES_element_index_uint"))
-    {
-        ext = OES_element_index_uint;
-    }
-    else if (CompareWebGLExtensionName(name, "OES_texture_float"))
-    {
-        ext = OES_texture_float;
-    }
-    else if (CompareWebGLExtensionName(name, "OES_texture_float_linear"))
-    {
-        ext = OES_texture_float_linear;
-    }
-    else if (CompareWebGLExtensionName(name, "OES_vertex_array_object"))
-    {
-        ext = OES_vertex_array_object;
-    }
-    else if (CompareWebGLExtensionName(name, "OES_standard_derivatives"))
-    {
-        ext = OES_standard_derivatives;
-    }
-    else if (CompareWebGLExtensionName(name, "EXT_texture_filter_anisotropic"))
-    {
-        ext = EXT_texture_filter_anisotropic;
-    }
-    else if (CompareWebGLExtensionName(name, "MOZ_WEBGL_lose_context"))
-    {
-        ext = WEBGL_lose_context;
-    }
-    else if (CompareWebGLExtensionName(name, "WEBGL_lose_context"))
-    {
-        ext = WEBGL_lose_context;
-    }
-    else if (CompareWebGLExtensionName(name, "MOZ_WEBGL_compressed_texture_s3tc"))
-    {
-        ext = WEBGL_compressed_texture_s3tc;
-    }
-    else if (CompareWebGLExtensionName(name, "WEBGL_compressed_texture_s3tc"))
-    {
-        ext = WEBGL_compressed_texture_s3tc;
-    }
-    else if (CompareWebGLExtensionName(name, "MOZ_WEBGL_compressed_texture_atc"))
-    {
-        ext = WEBGL_compressed_texture_atc;
-    }
-    else if (CompareWebGLExtensionName(name, "MOZ_WEBGL_compressed_texture_pvrtc"))
-    {
-        ext = WEBGL_compressed_texture_pvrtc;
-    }
-    else if (CompareWebGLExtensionName(name, "WEBGL_debug_renderer_info"))
-    {
-        ext = WEBGL_debug_renderer_info;
-    }
-    else if (CompareWebGLExtensionName(name, "MOZ_WEBGL_depth_texture"))
-    {
-        ext = WEBGL_depth_texture;
-    }
-    else if (CompareWebGLExtensionName(name, "WEBGL_depth_texture"))
-    {
-        ext = WEBGL_depth_texture;
-    }
-    else if (CompareWebGLExtensionName(name, "WEBGL_draw_buffers"))
-    {
-        ext = WEBGL_draw_buffers;
-    }
-
-    if (ext == WebGLExtensionID_unknown_extension) {
-      return nullptr;
-    }
-
-    // step 2: check if the extension is supported
-    if (!IsExtensionSupported(cx, ext)) {
-        return nullptr;
-    }
-
-    // step 3: if the extension hadn't been previously been created, create it now, thus enabling it
-    if (!IsExtensionEnabled(ext)) {
-        EnableExtension(ext);
-    }
-
-    return WebGLObjectAsJSObject(cx, mExtensions[ext].get(), rv);
-}
-
-void
-WebGLContext::EnableExtension(WebGLExtensionID ext)
-{
-    mExtensions.EnsureLengthAtLeast(ext + 1);
-
-    MOZ_ASSERT(IsExtensionEnabled(ext) == false);
-
-    WebGLExtensionBase* obj = nullptr;
-    switch (ext) {
-        case OES_element_index_uint:
-            obj = new WebGLExtensionElementIndexUint(this);
-            break;
-        case OES_standard_derivatives:
-            obj = new WebGLExtensionStandardDerivatives(this);
-            break;
-        case EXT_texture_filter_anisotropic:
-            obj = new WebGLExtensionTextureFilterAnisotropic(this);
-            break;
-        case WEBGL_lose_context:
-            obj = new WebGLExtensionLoseContext(this);
-            break;
-        case WEBGL_compressed_texture_s3tc:
-            obj = new WebGLExtensionCompressedTextureS3TC(this);
-            break;
-        case WEBGL_compressed_texture_atc:
-            obj = new WebGLExtensionCompressedTextureATC(this);
-            break;
-        case WEBGL_compressed_texture_pvrtc:
-            obj = new WebGLExtensionCompressedTexturePVRTC(this);
-            break;
-        case WEBGL_debug_renderer_info:
-            obj = new WebGLExtensionDebugRendererInfo(this);
-            break;
-        case WEBGL_depth_texture:
-            obj = new WebGLExtensionDepthTexture(this);
-            break;
-        case OES_texture_float:
-            obj = new WebGLExtensionTextureFloat(this);
-            break;
-        case OES_texture_float_linear:
-            obj = new WebGLExtensionTextureFloatLinear(this);
-            break;
-        case WEBGL_draw_buffers:
-            obj = new WebGLExtensionDrawBuffers(this);
-            break;
-        case OES_vertex_array_object:
-            obj = new WebGLExtensionVertexArray(this);
-            break;
-        default:
-            MOZ_ASSERT(false, "should not get there.");
-    }
-
-    mExtensions[ext] = obj;
 }
 
 void
@@ -1332,12 +1087,20 @@ WebGLContext::ForceClearFramebufferWithDefaultValues(GLbitfield mask, const bool
         gl->fClearStencil(0);
     }
 
+    if (mRasterizerDiscardEnabled) {
+        gl->fDisable(LOCAL_GL_RASTERIZER_DISCARD);
+    }
+
     // Do the clear!
     gl->fClear(mask);
 
     // And reset!
     if (mScissorTestEnabled)
         gl->fEnable(LOCAL_GL_SCISSOR_TEST);
+
+    if (mRasterizerDiscardEnabled) {
+        gl->fEnable(LOCAL_GL_RASTERIZER_DISCARD);
+    }
 
     // Restore GL state after clearing.
     if (initializeColorBuffer) {
@@ -1372,6 +1135,10 @@ WebGLContext::ForceClearFramebufferWithDefaultValues(GLbitfield mask, const bool
 bool
 WebGLContext::PresentScreenBuffer()
 {
+    if (IsContextLost()) {
+        return false;
+    }
+
     if (!mShouldPresent) {
         return false;
     }
@@ -1394,7 +1161,7 @@ WebGLContext::PresentScreenBuffer()
 void
 WebGLContext::DummyFramebufferOperation(const char *info)
 {
-    WebGLenum status = CheckFramebufferStatus(LOCAL_GL_FRAMEBUFFER);
+    GLenum status = CheckFramebufferStatus(LOCAL_GL_FRAMEBUFFER);
     if (status == LOCAL_GL_FRAMEBUFFER_COMPLETE)
         return;
     else
@@ -1458,7 +1225,7 @@ WebGLContext::RobustnessTimerCallback(nsITimer* timer)
             SetupContextLossTimer();
             return;
         }
-        mContextStatus = ContextStable;
+        mContextStatus = ContextNotLost;
         nsContentUtils::DispatchTrustedEvent(mCanvasElement->OwnerDoc(),
                                              static_cast<nsIDOMHTMLCanvasElement*>(mCanvasElement),
                                              NS_LITERAL_STRING("webglcontextrestored"),
@@ -1478,10 +1245,10 @@ void
 WebGLContext::MaybeRestoreContext()
 {
     // Don't try to handle it if we already know it's busted.
-    if (mContextStatus != ContextStable || gl == nullptr)
+    if (mContextStatus != ContextNotLost || gl == nullptr)
         return;
 
-    bool isEGL = gl->GetContextType() == GLContext::ContextTypeEGL,
+    bool isEGL = gl->GetContextType() == gl::ContextTypeEGL,
          isANGLE = gl->IsANGLE();
 
     GLContext::ContextResetARB resetStatus = GLContext::CONTEXT_NO_ERROR;
@@ -1550,47 +1317,7 @@ WebGLContext::ForceRestoreContext()
 }
 
 void
-WebGLContext::GetSupportedExtensions(JSContext *cx, Nullable< nsTArray<nsString> > &retval)
-{
-    retval.SetNull();
-    if (!IsContextStable())
-        return;
-
-    nsTArray<nsString>& arr = retval.SetValue();
-
-    if (IsExtensionSupported(cx, OES_element_index_uint))
-        arr.AppendElement(NS_LITERAL_STRING("OES_element_index_uint"));
-    if (IsExtensionSupported(cx, OES_texture_float))
-        arr.AppendElement(NS_LITERAL_STRING("OES_texture_float"));
-    if (IsExtensionSupported(cx, OES_texture_float_linear))
-        arr.AppendElement(NS_LITERAL_STRING("OES_texture_float_linear"));
-    if (IsExtensionSupported(cx, OES_standard_derivatives))
-        arr.AppendElement(NS_LITERAL_STRING("OES_standard_derivatives"));
-    if (IsExtensionSupported(cx, EXT_texture_filter_anisotropic))
-        arr.AppendElement(NS_LITERAL_STRING("EXT_texture_filter_anisotropic"));
-    if (IsExtensionSupported(cx, WEBGL_lose_context))
-        arr.AppendElement(NS_LITERAL_STRING("MOZ_WEBGL_lose_context"));
-    if (IsExtensionSupported(cx, WEBGL_lose_context))
-        arr.AppendElement(NS_LITERAL_STRING("WEBGL_lose_context"));
-    if (IsExtensionSupported(cx, WEBGL_compressed_texture_s3tc))
-        arr.AppendElement(NS_LITERAL_STRING("MOZ_WEBGL_compressed_texture_s3tc"));
-    if (IsExtensionSupported(cx, WEBGL_compressed_texture_s3tc))
-        arr.AppendElement(NS_LITERAL_STRING("WEBGL_compressed_texture_s3tc"));
-    if (IsExtensionSupported(cx, WEBGL_compressed_texture_atc))
-        arr.AppendElement(NS_LITERAL_STRING("MOZ_WEBGL_compressed_texture_atc"));
-    if (IsExtensionSupported(cx, WEBGL_compressed_texture_pvrtc))
-        arr.AppendElement(NS_LITERAL_STRING("MOZ_WEBGL_compressed_texture_pvrtc"));
-    if (IsExtensionSupported(cx, WEBGL_debug_renderer_info))
-        arr.AppendElement(NS_LITERAL_STRING("WEBGL_debug_renderer_info"));
-    if (IsExtensionSupported(cx, WEBGL_depth_texture))
-        arr.AppendElement(NS_LITERAL_STRING("MOZ_WEBGL_depth_texture"));
-    if (IsExtensionSupported(cx, WEBGL_depth_texture))
-        arr.AppendElement(NS_LITERAL_STRING("WEBGL_depth_texture"));
-    if (IsExtensionSupported(cx, WEBGL_draw_buffers))
-        arr.AppendElement(NS_LITERAL_STRING("WEBGL_draw_buffers"));
-    if (IsExtensionSupported(cx, OES_vertex_array_object))
-        arr.AppendElement(NS_LITERAL_STRING("OES_vertex_array_object"));
-}
+WebGLContext::MakeContextCurrent() const { gl->MakeCurrent(); }
 
 //
 // XPCOM goop
@@ -1599,17 +1326,20 @@ WebGLContext::GetSupportedExtensions(JSContext *cx, Nullable< nsTArray<nsString>
 NS_IMPL_CYCLE_COLLECTING_ADDREF(WebGLContext)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(WebGLContext)
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_10(WebGLContext,
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_13(WebGLContext,
   mCanvasElement,
   mExtensions,
   mBound2DTextures,
   mBoundCubeMapTextures,
   mBoundArrayBuffer,
+  mBoundTransformFeedbackBuffer,
   mCurrentProgram,
   mBoundFramebuffer,
   mBoundRenderbuffer,
   mBoundVertexArray,
-  mDefaultVertexArray)
+  mDefaultVertexArray,
+  mActiveOcclusionQuery,
+  mActiveTransformFeedbackQuery)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WebGLContext)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY

@@ -107,7 +107,7 @@ var FindHelperUI = {
   },
 
   show: function findHelperShow() {
-    if (StartUI.isVisible || this._open)
+    if (BrowserUI.isStartTabVisible || this._open)
       return;
 
     // Hide any menus
@@ -140,23 +140,25 @@ var FindHelperUI = {
       this._container.removeEventListener("transitionend", onTransitionEnd, true);
       this._textbox.value = "";
       this.status = null;
-      this._textbox.blur();
       this._open = false;
 
       // Restore the scroll synchronisation
       Browser.selectedBrowser.scrollSync = true;
     };
 
+    this._textbox.blur();
     this._container.addEventListener("transitionend", onTransitionEnd, true);
     this._container.dismiss();
     Elements.browsers.removeAttribute("findbar");
   },
 
   goToPrevious: function findHelperGoToPrevious() {
+    this._textbox.blur();
     Browser.selectedBrowser.messageManager.sendAsyncMessage("FindAssist:Previous", { });
   },
 
   goToNext: function findHelperGoToNext() {
+    this._textbox.blur();
     Browser.selectedBrowser.messageManager.sendAsyncMessage("FindAssist:Next", { });
   },
 

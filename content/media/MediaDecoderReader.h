@@ -9,16 +9,23 @@
 #include <nsDeque.h>
 #include "nsSize.h"
 #include "mozilla/ReentrantMonitor.h"
-#include "MediaStreamGraph.h"
 #include "SharedBuffer.h"
-#include "ImageLayers.h"
 #include "AudioSampleFormat.h"
-#include "MediaResource.h"
-#include "mozilla/dom/HTMLMediaElement.h"
+#include "AbstractMediaDecoder.h"
+#include "ImageTypes.h"
+
+struct nsIntRect;
 
 namespace mozilla {
 
-class AbstractMediaDecoder;
+namespace layers {
+class Image;
+class ImageContainer;
+}
+
+namespace dom {
+class TimeRanges;
+}
 
 // Stores info relevant to presenting media frames.
 class VideoInfo {
@@ -413,6 +420,8 @@ public:
   virtual bool IsDormantNeeded() { return false; }
   // Release media resources they should be released in dormant state
   virtual void ReleaseMediaResources() {};
+  // Release the decoder during shutdown
+  virtual void ReleaseDecoder() {};
 
   // Resets all state related to decoding, emptying all buffers etc.
   virtual nsresult ResetDecode();
@@ -456,12 +465,12 @@ public:
                         int64_t aStartTime,
                         int64_t aEndTime,
                         int64_t aCurrentTime) = 0;
-  
+
   // Called when the decode thread is started, before calling any other
   // decode, read metadata, or seek functions. Do any thread local setup
   // in this function.
   virtual void OnDecodeThreadStart() {}
-  
+
   // Called when the decode thread is about to finish, after all calls to
   // any other decode, read metadata, or seek functions. Any backend specific
   // thread local tear down must be done in this function. Note that another
@@ -527,8 +536,8 @@ public:
     return functor.mResult;
   }
 
-  // Only used by WebMReader for now, so stub here rather than in every
-  // reader than inherits from MediaDecoderReader.
+  // Only used by WebMReader and MediaOmxReader for now, so stub here rather
+  // than in every reader than inherits from MediaDecoderReader.
   virtual void NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_t aOffset) {}
 
   virtual MediaQueue<AudioData>& AudioQueue() { return mAudioQueue; }

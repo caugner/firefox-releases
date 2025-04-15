@@ -10,7 +10,6 @@
 #include "nsIClassInfoImpl.h"
 #include "nsTArray.h"
 #include "nsAutoPtr.h"
-#include "nsCycleCollectorUtils.h"
 
 using namespace mozilla;
 
@@ -53,8 +52,6 @@ NS_IMPL_CI_INTERFACE_GETTER1(nsThreadManager, nsIThreadManager)
 nsresult
 nsThreadManager::Init()
 {
-  mThreadsByPRThread.Init();
-
   if (PR_NewThreadPrivateIndex(&mCurThreadIndex, ReleaseObject) == PR_FAILURE)
     return NS_ERROR_FAILURE;
 
@@ -272,13 +269,6 @@ nsThreadManager::GetIsMainThread(bool *result)
   // This method may be called post-Shutdown
 
   *result = (PR_GetCurrentThread() == mMainPRThread);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsThreadManager::GetIsCycleCollectorThread(bool *result)
-{
-  *result = bool(NS_IsCycleCollectorThread());
   return NS_OK;
 }
 

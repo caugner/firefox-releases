@@ -5,10 +5,7 @@
 
 #include "mozilla/dom/HTMLTrackElement.h"
 #include "mozilla/dom/TextTrackCue.h"
-#include "mozilla/dom/TextTrackCueBinding.h"
-#include "mozilla/dom/ProcessingInstruction.h"
 #include "nsIFrame.h"
-#include "nsTextNode.h"
 #include "nsVideoFrame.h"
 
 // Alternate value for the 'auto' keyword.
@@ -17,11 +14,12 @@
 namespace mozilla {
 namespace dom {
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_4(TextTrackCue,
-                                        mDocument,
-                                        mTrack,
-                                        mTrackElement,
-                                        mDisplayState)
+NS_IMPL_CYCLE_COLLECTION_INHERITED_4(TextTrackCue,
+                                     nsDOMEventTargetHelper,
+                                     mDocument,
+                                     mTrack,
+                                     mTrackElement,
+                                     mDisplayState)
 
 NS_IMPL_ADDREF_INHERITED(TextTrackCue, nsDOMEventTargetHelper)
 NS_IMPL_RELEASE_INHERITED(TextTrackCue, nsDOMEventTargetHelper)
@@ -212,7 +210,7 @@ TextTrackCue::ConvertLeafNodeToContent(const webvtt_node* aWebVTTNode)
 JSObject*
 TextTrackCue::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
-  return TextTrackCueBinding::Wrap(aCx, aScope, this);
+  return VTTCueBinding::Wrap(aCx, aScope, this);
 }
 
 void

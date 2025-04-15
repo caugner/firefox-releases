@@ -364,11 +364,6 @@
         <getter><![CDATA[
             // return the rect that represents our bounding box
             let containerNode = this.hasAttribute("flex") ? this : this.parentNode;
-            // Autocomplete is a binding within a binding, so we have to step
-            // up an additional parentNode.
-            if (containerNode.id == "results-vbox" ||
-                containerNode.id == "searches-vbox")
-                containerNode = containerNode.parentNode;
             let rect = containerNode.getBoundingClientRect();
             // return falsy if the container has no height
             return rect.height ? {
@@ -463,21 +458,26 @@
 
             // clear explicit width and columns before calculating from avail. height again
             let gridStyle = this._grid.style;
-            gridStyle.removeProperty('min-width');
-            gridStyle.removeProperty('-moz-column-count');
+            gridStyle.removeProperty("min-width");
+            gridStyle.removeProperty("-moz-column-count");
 
-            // We favor overflowing horizontally, not vertically (rows then colums)
-            // rows attribute = max rows
-            let maxRowCount = Math.min(this.getAttribute("rows") || Infinity, Math.floor(containerDims.height / itemDims.height));
-            this._rowCount = Math.min(this.itemCount, maxRowCount);
+            if (this.hasAttribute("vertical")) {
+              this._columnCount = Math.floor(containerDims.width / itemDims.width) || 1;
+              this._rowCount = Math.floor(this.itemCount / this._columnCount);
+            } else {
+              // We favor overflowing horizontally, not vertically (rows then colums)
+              // rows attribute = max rows
+              let maxRowCount = Math.min(this.getAttribute("rows") || Infinity, Math.floor(containerDims.height / itemDims.height));
+              this._rowCount = Math.min(this.itemCount, maxRowCount);
 
-            // columns attribute = min cols
-            this._columnCount = this.itemCount ?
-                  Math.max(
-                      // at least 1 column when there are items
-                      this.getAttribute("columns") || 1,
-                      Math.ceil(this.itemCount / this._rowCount)
-                  ) : this.getAttribute("columns") || 0;
+              // columns attribute = min cols
+              this._columnCount = this.itemCount ?
+                    Math.max(
+                        // at least 1 column when there are items
+                        this.getAttribute("columns") || 1,
+                        Math.ceil(this.itemCount / this._rowCount)
+                    ) : this.getAttribute("columns") || 0;
+            }
 
             // width is typically auto, cap max columns by truncating items collection
             // or, setting max-width style property with overflow hidden
@@ -800,7 +800,7 @@
     <content>
       <html:div anonid="anon-tile" class="tile-content" xbl:inherits="customImage">
         <html:div class="tile-start-container" xbl:inherits="customImage">
-          <html:div class="tile-icon-box"><xul:image anonid="anon-tile-icon" xbl:inherits="src=iconURI"/></html:div>
+          <html:div class="tile-icon-box" anonid="anon-tile-icon-box"><xul:image anonid="anon-tile-icon" xbl:inherits="src=iconURI"/></html:div>
         </html:div>
         <html:div anonid="anon-tile-label" class="tile-desc" xbl:inherits="xbl:text=label"/>
       </html:div>
@@ -817,6 +817,7 @@
       <property name="_textbox" onget="return document.getAnonymousElementByAttribute(this, 'class', 'tile-desc');"/>
       <property name="_top" onget="return document.getAnonymousElementByAttribute(this, 'class', 'tile-start-container');"/>
       <property name="_icon" onget="return document.getAnonymousElementByAttribute(this, 'anonid', 'anon-tile-icon');"/>
+      <property name="_iconBox" onget="return document.getAnonymousElementByAttribute(this, 'anonid', 'anon-tile-icon-box');"/>
       <property name="_label" onget="return document.getAnonymousElementByAttribute(this, 'anonid', 'anon-tile-label');"/>
       <property name="iconSrc"
                 onset="this._icon.src = val; this.setAttribute('iconURI', val);"
@@ -876,9 +877,21 @@
           if (val) {
             this.setAttribute("customColor", val);
             this._contentBox.style.backgroundColor = val;
+
+            // overridden in tiles.css for non-thumbnail types
+            this._label.style.backgroundColor = val.replace(/rgb\(([^\)]+)\)/, 'rgba($1, 0.8)');
+
+            // Small icons get a border+background-color treatment.
+            // See tiles.css for large icon overrides
+            this._iconBox.style.borderColor = val.replace(/rgb\(([^\)]+)\)/, 'rgba($1, 0.6)');
+            this._iconBox.style.backgroundColor = this.hasAttribute("tintColor") ?
+                                                    this.getAttribute("tintColor") : "#fff";
           } else {
             this.removeAttribute("customColor");
             this._contentBox.style.removeProperty("background-color");
+            this._label.style.removeProperty("background-color");
+            this._iconBox.style.removeProperty("border-color");
+            this._iconBox.style.removeProperty("background-color");
           }
         ]]></setter>
       </property>

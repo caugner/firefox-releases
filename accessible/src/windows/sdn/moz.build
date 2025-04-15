@@ -11,3 +11,16 @@ CPP_SOURCES += [
     'sdnTextAccessible.cpp',
 ]
 
+LIBXUL_LIBRARY = True
+
+LOCAL_INCLUDES += [
+    '../../base',
+    '../../generic',
+    '../../html',
+    '../../xpcom',
+    '../../xul',
+    '../msaa',
+]
+
+LIBRARY_NAME = 'accessibility_toolkit_sdn_s'
+

@@ -36,61 +36,6 @@ function promiseStartDownload(aSourceUrl) {
 }
 
 /**
- * Waits for a download to reach half of its progress, in case it has not
- * reached the expected progress already.
- *
- * @param aDownload
- *        The Download object to wait upon.
- *
- * @return {Promise}
- * @resolves When the download has reached half of its progress.
- * @rejects Never.
- */
-function promiseDownloadMidway(aDownload) {
-  let deferred = Promise.defer();
-
-  // Wait for the download to reach half of its progress.
-  let onchange = function () {
-    if (!aDownload.stopped && !aDownload.canceled && aDownload.progress == 50) {
-      aDownload.onchange = null;
-      deferred.resolve();
-    }
-  };
-
-  // Register for the notification, but also call the function directly in
-  // case the download already reached the expected progress.
-  aDownload.onchange = onchange;
-  onchange();
-
-  return deferred.promise;
-}
-
-/**
- * Waits for a download to finish, in case it has not finished already.
- *
- * @param aDownload
- *        The Download object to wait upon.
- *
- * @return {Promise}
- * @resolves When the download has finished successfully.
- * @rejects JavaScript exception if the download failed.
- */
-function promiseDownloadStopped(aDownload) {
-  if (!aDownload.stopped) {
-    // The download is in progress, wait for the current attempt to finish and
-    // report any errors that may occur.
-    return aDownload.start();
-  }
-
-  if (aDownload.succeeded) {
-    return Promise.resolve();
-  }
-
-  // The download failed or was canceled.
-  return Promise.reject(aDownload.error || new Error("Download canceled."));
-}
-
-/**
  * Creates and starts a new download, configured to keep partial data, and
  * returns only when the first part of "interruptible_resumable.txt" has been
  * saved to disk.  You must call "continueResponses" to allow the interruptible
@@ -209,7 +154,6 @@ add_task(function test_basic()
  * that the file is saved correctly.  When testing DownloadLegacySaver, the
  * download is executed using the nsIExternalHelperAppService component.
  */
-/*
 add_task(function test_basic_tryToKeepPartialData()
 {
   let download = yield promiseStartDownload_tryToKeepPartialData();
@@ -221,7 +165,6 @@ add_task(function test_basic_tryToKeepPartialData()
                               TEST_DATA_SHORT + TEST_DATA_SHORT);
   do_check_false(yield OS.File.exists(download.target.partFilePath));
 });
-*/
 
 /**
  * Checks the referrer for downloads.
@@ -383,7 +326,6 @@ add_task(function test_empty_progress()
  * Downloads a file with a "Content-Length" of 0 with the tryToKeepPartialData
  * property set, and ensures that the file is saved correctly.
  */
-/*
 add_task(function test_empty_progress_tryToKeepPartialData()
 {
   // Start a new download and configure it to keep partially downloaded data.
@@ -409,7 +351,6 @@ add_task(function test_empty_progress_tryToKeepPartialData()
   do_check_eq((yield OS.File.stat(download.target.path)).size, 0);
   do_check_false(yield OS.File.exists(download.target.partFilePath));
 });
-*/
 
 /**
  * Downloads an empty file with no "Content-Length" and checks the progress.
@@ -599,6 +540,28 @@ add_task(function test_cancel_midway()
 });
 
 /**
+ * Cancels a download while keeping partially downloaded data, and verifies that
+ * both the target file and the ".part" file are deleted.
+ */
+add_task(function test_cancel_midway_tryToKeepPartialData()
+{
+  let download = yield promiseStartDownload_tryToKeepPartialData();
+
+  do_check_true(yield OS.File.exists(download.target.path));
+  do_check_true(yield OS.File.exists(download.target.partFilePath));
+
+  yield download.cancel();
+  yield download.removePartialData();
+
+  do_check_true(download.stopped);
+  do_check_true(download.canceled);
+  do_check_true(download.error === null);
+
+  do_check_false(yield OS.File.exists(download.target.path));
+  do_check_false(yield OS.File.exists(download.target.partFilePath));
+});
+
+/**
  * Cancels a download right after starting it.
  */
 add_task(function test_cancel_immediately()
@@ -685,12 +648,6 @@ add_task(function test_cancel_midway_restart_tryToKeepPartialData()
   let download = yield promiseStartDownload_tryToKeepPartialData();
   yield download.cancel();
 
-  // This time-based solution is a workaround to avoid intermittent failures,
-  // and will be removed when bug 899102 is resolved.
-  if (gUseLegacySaver) {
-    yield promiseTimeout(250);
-  }
-
   do_check_true(download.stopped);
   do_check_true(download.hasPartialData);
 
@@ -744,12 +701,6 @@ add_task(function test_cancel_midway_restart_removePartialData()
   let download = yield promiseStartDownload_tryToKeepPartialData();
   yield download.cancel();
 
-  // This time-based solution is a workaround to avoid intermittent failures,
-  // and will be removed when bug 899102 is resolved.
-  if (gUseLegacySaver) {
-    yield promiseTimeout(250);
-  }
-
   do_check_true(download.hasPartialData);
   yield promiseVerifyContents(download.target.partFilePath, TEST_DATA_SHORT);
 
@@ -781,12 +732,6 @@ add_task(function test_cancel_midway_restart_tryToKeepPartialData_false()
   let download = yield promiseStartDownload_tryToKeepPartialData();
   yield download.cancel();
 
-  // This time-based solution is a workaround to avoid intermittent failures,
-  // and will be removed when bug 899102 is resolved.
-  if (gUseLegacySaver) {
-    yield promiseTimeout(250);
-  }
-
   download.tryToKeepPartialData = false;
 
   // The above property change does not affect existing partial data.
@@ -808,12 +753,6 @@ add_task(function test_cancel_midway_restart_tryToKeepPartialData_false()
   do_check_true(yield OS.File.exists(download.target.partFilePath));
 
   yield download.cancel();
-
-  // This time-based solution is a workaround to avoid intermittent failures,
-  // and will be removed when bug 899102 is resolved.
-  if (gUseLegacySaver) {
-    yield promiseTimeout(250);
-  }
 
   // The ".part" file should be deleted now that the download is canceled.
   do_check_false(download.hasPartialData);
@@ -1021,12 +960,6 @@ add_task(function test_finalize_tryToKeepPartialData()
   let download = yield promiseStartDownload_tryToKeepPartialData();
   yield download.finalize();
 
-  // This time-based solution is a workaround to avoid intermittent failures,
-  // and will be removed when bug 899102 is resolved.
-  if (gUseLegacySaver) {
-    yield promiseTimeout(250);
-  }
-
   do_check_true(download.hasPartialData);
   do_check_true(yield OS.File.exists(download.target.partFilePath));
 
@@ -1036,12 +969,6 @@ add_task(function test_finalize_tryToKeepPartialData()
   // Check finalization while removing partial data.
   download = yield promiseStartDownload_tryToKeepPartialData();
   yield download.finalize(true);
-
-  // This time-based solution is a workaround to avoid intermittent failures,
-  // and will be removed when bug 899102 is resolved.
-  if (gUseLegacySaver) {
-    yield promiseTimeout(250);
-  }
 
   do_check_false(download.hasPartialData);
   do_check_false(yield OS.File.exists(download.target.partFilePath));
@@ -1127,6 +1054,8 @@ add_task(function test_error_source()
     do_check_true(download.error !== null);
     do_check_true(download.error.becauseSourceFailed);
     do_check_false(download.error.becauseTargetFailed);
+
+    do_check_false(yield OS.File.exists(download.target.path));
   } finally {
     serverSocket.close();
   }
@@ -1271,8 +1200,8 @@ add_task(function test_public_and_private()
   });
 
   let targetFile = getTempFile(TEST_TARGET_FILE_NAME);
-  yield Downloads.simpleDownload(sourceUrl, targetFile);
-  yield Downloads.simpleDownload(sourceUrl, targetFile);
+  yield Downloads.fetch(sourceUrl, targetFile);
+  yield Downloads.fetch(sourceUrl, targetFile);
 
   if (!gUseLegacySaver) {
     let download = yield Downloads.createDownload({
@@ -1328,7 +1257,7 @@ add_task(function test_with_content_encoding()
     aResponse.setHeader("Content-Length",
                         "" + TEST_DATA_SHORT_GZIP_ENCODED.length, false);
 
-    let bos =  new BinaryOutputStream(aResponse.bodyOutputStream);
+    let bos = new BinaryOutputStream(aResponse.bodyOutputStream);
     bos.writeByteArray(TEST_DATA_SHORT_GZIP_ENCODED,
                        TEST_DATA_SHORT_GZIP_ENCODED.length);
   });
@@ -1341,6 +1270,46 @@ add_task(function test_with_content_encoding()
 
   // Ensure the content matches the decoded test data.
   yield promiseVerifyContents(download.target.path, TEST_DATA_SHORT);
+
+  cleanup();
+});
+
+/**
+ * Checks that the file is not decoded if the extension matches the encoding.
+ */
+add_task(function test_with_content_encoding_ignore_extension()
+{
+  let sourcePath = "/test_with_content_encoding_ignore_extension.gz";
+  let sourceUrl = httpUrl("test_with_content_encoding_ignore_extension.gz");
+
+  function cleanup() {
+    gHttpServer.registerPathHandler(sourcePath, null);
+  }
+  do_register_cleanup(cleanup);
+
+  gHttpServer.registerPathHandler(sourcePath, function (aRequest, aResponse) {
+    aResponse.setHeader("Content-Type", "text/plain", false);
+    aResponse.setHeader("Content-Encoding", "gzip", false);
+    aResponse.setHeader("Content-Length",
+                        "" + TEST_DATA_SHORT_GZIP_ENCODED.length, false);
+
+    let bos = new BinaryOutputStream(aResponse.bodyOutputStream);
+    bos.writeByteArray(TEST_DATA_SHORT_GZIP_ENCODED,
+                       TEST_DATA_SHORT_GZIP_ENCODED.length);
+  });
+
+  let download = yield promiseStartDownload(sourceUrl);
+  yield promiseDownloadStopped(download);
+
+  do_check_eq(download.progress, 100);
+  do_check_eq(download.totalBytes, TEST_DATA_SHORT_GZIP_ENCODED.length);
+
+  // Ensure the content matches the encoded test data.  We convert the data to a
+  // string before executing the content check.
+  yield promiseVerifyContents(download.target.path,
+        String.fromCharCode.apply(String, TEST_DATA_SHORT_GZIP_ENCODED));
+
+  cleanup();
 });
 
 /**
@@ -1470,6 +1439,7 @@ add_task(function test_launch() {
         source: httpUrl("source.txt"),
         target: getTempFile(TEST_TARGET_FILE_NAME).path,
         launcherPath: launcherPath,
+        launchWhenSucceeded: true
       });
 
       try {
@@ -1486,11 +1456,12 @@ add_task(function test_launch() {
       // it is created, thus we don't test calling "launch" before starting.
       download = yield promiseStartLegacyDownload(
                                          httpUrl("source.txt"),
-                                         { launcherPath: launcherPath });
+                                         { launcherPath: launcherPath,
+                                           launchWhenSucceeded: true });
       yield promiseDownloadStopped(download);
     }
 
-    do_check_false(download.launchWhenSucceeded);
+    do_check_true(download.launchWhenSucceeded);
 
     DownloadIntegration._deferTestOpenFile = Promise.defer();
     download.launch();
@@ -1587,3 +1558,191 @@ add_task(function test_contentType() {
 
   do_check_eq("text/plain", download.contentType);
 });
+
+/**
+ * Tests that the serialization/deserialization of the startTime Date
+ * object works correctly.
+ */
+add_task(function test_toSerializable_startTime()
+{
+  let download1 = yield promiseStartDownload(httpUrl("source.txt"));
+  yield promiseDownloadStopped(download1);
+
+  let serializable = download1.toSerializable();
+  let reserialized = JSON.parse(JSON.stringify(serializable));
+
+  let download2 = yield Downloads.createDownload(reserialized);
+
+  do_check_eq(download1.startTime.constructor.name, "Date");
+  do_check_eq(download2.startTime.constructor.name, "Date");
+  do_check_eq(download1.startTime.toJSON(), download2.startTime.toJSON());
+});
+
+/**
+ * This test will call the platform specific operations within
+ * DownloadPlatform::DownloadDone. While there is no test to verify the
+ * specific behaviours, this at least ensures that there is no error or crash.
+ */
+add_task(function test_platform_integration()
+{
+  let downloadFiles = [];
+  function cleanup() {
+    for (let file of downloadFiles) {
+      file.remove(true);
+    }
+  }
+  do_register_cleanup(cleanup);
+
+  for (let isPrivate of [false, true]) {
+    DownloadIntegration.downloadDoneCalled = false;
+
+    // Some platform specific operations only operate on files outside the
+    // temporary directory or in the Downloads directory (such as setting
+    // the Windows searchable attribute, and the Mac Downloads icon bouncing),
+    // so use the system Downloads directory for the target file.
+    let targetFilePath = yield DownloadIntegration.getSystemDownloadsDirectory();
+    targetFilePath = OS.Path.join(targetFilePath,
+                                  "test" + (Math.floor(Math.random() * 1000000)));
+    let targetFile = new FileUtils.File(targetFilePath);
+    downloadFiles.push(targetFile);
+
+    let download;
+    if (gUseLegacySaver) {
+      download = yield promiseStartLegacyDownload(httpUrl("source.txt"),
+                                                  { targetFile: targetFile });
+    }
+    else {
+      download = yield Downloads.createDownload({
+        source: httpUrl("source.txt"),
+        target: targetFile,
+      });
+      download.start();
+    }
+
+    // Wait for the whenSucceeded promise to be resolved first.
+    // downloadDone should be called before the whenSucceeded promise is resolved.
+    yield download.whenSucceeded().then(function () {
+      do_check_true(DownloadIntegration.downloadDoneCalled);
+    });
+
+    // Then, wait for the promise returned by "start" to be resolved.
+    yield promiseDownloadStopped(download);
+
+    yield promiseVerifyContents(download.target.path, TEST_DATA_SHORT);
+  }
+});
+
+/**
+ * Checks that downloads are added to browsing history when they start.
+ */
+add_task(function test_history()
+{
+  mustInterruptResponses();
+
+  // We will wait for the visit to be notified during the download.
+  yield promiseClearHistory();
+  let promiseVisit = promiseWaitForVisit(httpUrl("interruptible.txt"));
+
+  // Start a download that is not allowed to finish yet.
+  let download = yield promiseStartDownload(httpUrl("interruptible.txt"));
+
+  // The history notifications should be received before the download completes.
+  let [time, transitionType] = yield promiseVisit;
+  do_check_eq(time, download.startTime.getTime() * 1000);
+  do_check_eq(transitionType, Ci.nsINavHistoryService.TRANSITION_DOWNLOAD);
+
+  // Restart and complete the download after clearing history.
+  yield promiseClearHistory();
+  download.cancel();
+  continueResponses();
+  yield download.start();
+
+  // The restart should not have added a new history visit.
+  do_check_false(yield promiseIsURIVisited(httpUrl("interruptible.txt")));
+});
+
+/**
+ * Checks that downloads started by nsIHelperAppService are added to the
+ * browsing history when they start.
+ */
+add_task(function test_history_tryToKeepPartialData()
+{
+  // We will wait for the visit to be notified during the download.
+  yield promiseClearHistory();
+  let promiseVisit =
+      promiseWaitForVisit(httpUrl("interruptible_resumable.txt"));
+
+  // Start a download that is not allowed to finish yet.
+  let beforeStartTimeMs = Date.now();
+  let download = yield promiseStartDownload_tryToKeepPartialData();
+
+  // The history notifications should be received before the download completes.
+  let [time, transitionType] = yield promiseVisit;
+  do_check_eq(transitionType, Ci.nsINavHistoryService.TRANSITION_DOWNLOAD);
+
+  // The time set by nsIHelperAppService may be different than the start time in
+  // the download object, thus we only check that it is a meaningful time.  Note
+  // that we subtract one second from the earliest time to account for rounding.
+  do_check_true(time >= beforeStartTimeMs * 1000 - 1000000);
+
+  // Complete the download before finishing the test.
+  continueResponses();
+  yield promiseDownloadStopped(download);
+});
+
+/**
+ * Tests that the temp download files are removed on exit and exiting private
+ * mode after they have been launched.
+ */
+add_task(function test_launchWhenSucceeded_deleteTempFileOnExit() {
+  const kDeleteTempFileOnExit = "browser.helperApps.deleteTempFileOnExit";
+
+  let customLauncherPath = getTempFile("app-launcher").path;
+  let autoDeleteTargetPathOne = getTempFile(TEST_TARGET_FILE_NAME).path;
+  let autoDeleteTargetPathTwo = getTempFile(TEST_TARGET_FILE_NAME).path;
+  let noAutoDeleteTargetPath = getTempFile(TEST_TARGET_FILE_NAME).path;
+
+  let autoDeleteDownloadOne = yield Downloads.createDownload({
+    source: { url: httpUrl("source.txt"), isPrivate: true },
+    target: autoDeleteTargetPathOne,
+    launchWhenSucceeded: true,
+    launcherPath: customLauncherPath,
+  });
+  yield autoDeleteDownloadOne.start();
+
+  Services.prefs.setBoolPref(kDeleteTempFileOnExit, true);
+  let autoDeleteDownloadTwo = yield Downloads.createDownload({
+    source: httpUrl("source.txt"),
+    target: autoDeleteTargetPathTwo,
+    launchWhenSucceeded: true,
+    launcherPath: customLauncherPath,
+  });
+  yield autoDeleteDownloadTwo.start();
+
+  Services.prefs.setBoolPref(kDeleteTempFileOnExit, false);
+  let noAutoDeleteDownload = yield Downloads.createDownload({
+    source: httpUrl("source.txt"),
+    target: noAutoDeleteTargetPath,
+    launchWhenSucceeded: true,
+    launcherPath: customLauncherPath,
+  });
+  yield noAutoDeleteDownload.start();
+
+  Services.prefs.clearUserPref(kDeleteTempFileOnExit);
+
+  do_check_true(yield OS.File.exists(autoDeleteTargetPathOne));
+  do_check_true(yield OS.File.exists(autoDeleteTargetPathTwo));
+  do_check_true(yield OS.File.exists(noAutoDeleteTargetPath));
+
+  // Simulate leaving private browsing mode
+  Services.obs.notifyObservers(null, "last-pb-context-exited", null);
+  do_check_false(yield OS.File.exists(autoDeleteTargetPathOne));
+
+  // Simulate browser shutdown
+  let expire = Cc["@mozilla.org/uriloader/external-helper-app-service;1"]
+                 .getService(Ci.nsIObserver);
+  expire.observe(null, "profile-before-change", null);
+  do_check_false(yield OS.File.exists(autoDeleteTargetPathTwo));
+  do_check_true(yield OS.File.exists(noAutoDeleteTargetPath));
+});
+

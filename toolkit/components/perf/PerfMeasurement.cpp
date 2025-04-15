@@ -9,6 +9,7 @@
 #include "nsMemory.h"
 #include "mozilla/Preferences.h"
 #include "mozJSComponentLoader.h"
+#include "nsZipArchive.h"
 
 #define JSPERF_CONTRACTID \
   "@mozilla.org/jsperf;1"
@@ -38,7 +39,7 @@ Module::~Module()
 #define XPC_MAP_FLAGS nsIXPCScriptable::WANT_CALL
 #include "xpc_map_end.h"
 
-static JSBool
+static bool
 SealObjectAndPrototype(JSContext* cx, JSObject* parent, const char* name)
 {
   JS::Rooted<JS::Value> prop(cx);
@@ -58,7 +59,7 @@ SealObjectAndPrototype(JSContext* cx, JSObject* parent, const char* name)
   return JS_FreezeObject(cx, obj) && JS_FreezeObject(cx, prototype);
 }
 
-static JSBool
+static bool
 InitAndSealPerfMeasurementClass(JSContext* cx, JS::Handle<JSObject*> global)
 {
   // Init the PerfMeasurement class

@@ -13,7 +13,6 @@ XPIDL_SOURCES += [
     'nsIDebug2.idl',
     'nsIErrorService.idl',
     'nsIException.idl',
-    'nsIExceptionService.idl',
     'nsIGZFileWriter.idl',
     'nsIInterfaceRequestor.idl',
     'nsIMemory.idl',
@@ -43,8 +42,6 @@ MODULE = 'xpcom'
 
 EXPORTS += [
     'ErrorList.h',
-    'ErrorListCDefines.h',
-    'ErrorListCxxDefines.h',
     'nsAgg.h',
     'nsAutoPtr.h',
     'nsAutoRef.h',
@@ -78,7 +75,6 @@ EXPORTS.mozilla += [
     'AvailableMemoryTracker.h',
     'ClearOnShutdown.h',
     'CycleCollectedJSRuntime.h',
-    'MapsMemoryReporter.h',
     'StackWalk.h',
     'StaticMutex.h',
     'StaticPtr.h',
@@ -97,7 +93,6 @@ CPP_SOURCES += [
     'nsDebugImpl.cpp',
     'nsErrorAsserts.cpp',
     'nsErrorService.cpp',
-    'nsExceptionService.cpp',
     'nsGZFileWriter.cpp',
     'nsInterfaceRequestorAgg.cpp',
     'nsMemoryImpl.cpp',
@@ -112,11 +107,6 @@ CPP_SOURCES += [
     'nsVersionComparatorImpl.cpp',
 ]
 
-if CONFIG['OS_ARCH'] == 'Linux':
-    CPP_SOURCES += [
-        'MapsMemoryReporter.cpp',
-    ]
-
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
     CPP_SOURCES += [
         'nsMacUtilsImpl.cpp',
@@ -125,3 +115,15 @@ elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
     CPP_SOURCES += [
         'nsCrashOnException.cpp',
     ]
+
+CSRCS += [
+    'nsErrorAssertsC.c',
+]
+
+
+LIBXUL_LIBRARY = True
+
+MSVC_ENABLE_PGO = True
+
+LIBRARY_NAME = 'xpcombase_s'
+

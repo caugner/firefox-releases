@@ -10,7 +10,6 @@
 #include "nsIDOMDOMRequest.h"
 #include "nsDOMEventTargetHelper.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/dom/DOMError.h"
 #include "mozilla/dom/DOMRequestBinding.h"
 
 #include "nsCOMPtr.h"
@@ -79,7 +78,7 @@ public:
   virtual ~DOMRequest()
   {
     mResult = JSVAL_VOID;
-    NS_DROP_JS_OBJECTS(this, DOMRequest);
+    mozilla::DropJSObjects(this);
   }
 
 protected:

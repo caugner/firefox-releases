@@ -344,8 +344,16 @@ else
 INNER_ROBOCOP_PACKAGE=echo 'Testing is disabled - No Robocop for you'
 endif
 
+# Create geckoview_library/geckoview_{assets,library}.zip for third-party GeckoView consumers.
+ifndef MOZ_DISABLE_GECKOVIEW
+INNER_MAKE_GECKOVIEW_LIBRARY= \
+  $(MAKE) -C ../mobile/android/geckoview_library package ABI_DIR=$(ABI_DIR)
+else
+INNER_MAKE_GECKOVIEW_LIBRARY=echo 'GeckoView library packaging is disabled'
+endif
+
 ifdef MOZ_OMX_PLUGIN
-DIST_FILES += libomxplugin.so libomxplugingb.so libomxplugingb235.so libomxpluginhc.so libomxpluginsony.so libomxpluginfroyo.so libomxpluginjb-htc.so
+DIST_FILES += libomxplugin.so libomxplugingb.so libomxplugingb235.so libomxpluginhc.so libomxpluginfroyo.so
 endif
 
 SO_LIBRARIES := $(filter %.so,$(DIST_FILES))
@@ -394,7 +402,8 @@ INNER_MAKE_PACKAGE	= \
   cp $(_ABS_DIST)/gecko.apk $(_ABS_DIST)/gecko-unsigned-unaligned.apk && \
   $(RELEASE_JARSIGNER) $(_ABS_DIST)/gecko.apk && \
   $(ZIPALIGN) -f -v 4 $(_ABS_DIST)/gecko.apk $(PACKAGE) && \
-  $(INNER_ROBOCOP_PACKAGE)
+  $(INNER_ROBOCOP_PACKAGE) && \
+  $(INNER_MAKE_GECKOVIEW_LIBRARY)
 
 # Language repacks root the resources contained in assets/omni.ja
 # under assets/, but the repacks expect them to be rooted at /.
@@ -513,7 +522,6 @@ NO_PKG_FILES += \
 	nsinstall \
 	viewer \
 	TestGtkEmbed \
-	codesighs* \
 	elf-dynstr-gc \
 	mangle* \
 	maptsv* \
@@ -556,9 +564,7 @@ GARBAGE		+= $(DIST)/$(PACKAGE) $(PACKAGE)
 
 # The following target stages files into two directories: one directory for
 # core files, and one for optional extensions based on the information in
-# the MOZ_PKG_MANIFEST file and the following vars:
-# MOZ_NONLOCALIZED_PKG_LIST
-# MOZ_LOCALIZED_PKG_LIST
+# the MOZ_PKG_MANIFEST file.
 
 PKG_ARG = , "$(pkg)"
 
@@ -817,16 +823,6 @@ upload: checksum
 	$(PYTHON) $(MOZILLA_DIR)/build/upload.py --base-path $(DIST) \
 		$(UPLOAD_FILES) \
 		$(CHECKSUM_FILES)
-
-ifeq (WINNT,$(OS_TARGET))
-CODESIGHS_PACKAGE = $(INSTALLER_PACKAGE)
-else
-CODESIGHS_PACKAGE = $(DIST)/$(PACKAGE)
-endif
-
-codesighs:
-	$(PYTHON) $(topsrcdir)/tools/codesighs/codesighs.py \
-	  "$(DIST)/$(MOZ_PKG_DIR)" "$(CODESIGHS_PACKAGE)"
 
 ifndef MOZ_PKG_SRCDIR
 MOZ_PKG_SRCDIR = $(topsrcdir)

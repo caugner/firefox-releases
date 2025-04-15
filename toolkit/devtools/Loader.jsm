@@ -18,10 +18,13 @@ XPCOMUtils.defineLazyModuleGetter(this, "FileUtils", "resource://gre/modules/Fil
 XPCOMUtils.defineLazyModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "console", "resource://gre/modules/devtools/Console.jsm");
 
+let SourceMap = {};
+Cu.import("resource://gre/modules/devtools/SourceMap.jsm", SourceMap);
+
 let loader = Cu.import("resource://gre/modules/commonjs/toolkit/loader.js", {}).Loader;
 let promise = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js", {}).Promise;
 
-this.EXPORTED_SYMBOLS = ["devtools"];
+this.EXPORTED_SYMBOLS = ["DevToolsLoader", "devtools"];
 
 /**
  * Providers are different strategies for loading the devtools.
@@ -36,14 +39,15 @@ let loaderGlobals = {
     lazyImporter: XPCOMUtils.defineLazyModuleGetter.bind(XPCOMUtils),
     lazyServiceGetter: XPCOMUtils.defineLazyServiceGetter.bind(XPCOMUtils)
   }
-}
+};
 
 // Used when the tools should be loaded from the Firefox package itself (the default)
 var BuiltinProvider = {
-  load: function(done) {
+  load: function() {
     this.loader = new loader.Loader({
       modules: {
-        "toolkit/loader": loader
+        "toolkit/loader": loader,
+        "source-map": SourceMap,
       },
       paths: {
         "": "resource://gre/modules/commonjs/",
@@ -51,6 +55,14 @@ var BuiltinProvider = {
         "devtools": "resource:///modules/devtools",
         "devtools/server": "resource://gre/modules/devtools/server",
         "devtools/toolkit/webconsole": "resource://gre/modules/devtools/toolkit/webconsole",
+        "devtools/app-actor-front": "resource://gre/modules/devtools/app-actor-front.js",
+        "devtools/styleinspector/css-logic": "resource://gre/modules/devtools/styleinspector/css-logic",
+        "devtools/touch-events": "resource://gre/modules/devtools/touch-events",
+        "devtools/client": "resource://gre/modules/devtools/client",
+
+        "escodegen/escodegen": "resource://gre/modules/devtools/escodegen/escodegen",
+        "escodegen/package.json": "resource://gre/modules/devtools/escodegen/package.json",
+        "estraverse": "resource://gre/modules/devtools/escodegen/estraverse",
 
         // Allow access to xpcshell test items from the loader.
         "xpcshell-test": "resource://test"
@@ -76,7 +88,7 @@ var SrcdirProvider = {
     return Services.io.newFileURI(file).spec;
   },
 
-  load: function(done) {
+  load: function() {
     let srcdir = Services.prefs.getComplexValue("devtools.loader.srcdir",
                                                 Ci.nsISupportsString);
     srcdir = OS.Path.normalize(srcdir.data.trim());
@@ -85,16 +97,25 @@ var SrcdirProvider = {
     let toolkitURI = this.fileURI(OS.Path.join(srcdir, "toolkit", "devtools"));
     let serverURI = this.fileURI(OS.Path.join(srcdir, "toolkit", "devtools", "server"));
     let webconsoleURI = this.fileURI(OS.Path.join(srcdir, "toolkit", "devtools", "webconsole"));
+    let appActorURI = this.fileURI(OS.Path.join(srcdir, "toolkit", "devtools", "apps", "app-actor-front.js"));
+    let cssLogicURI = this.fileURI(OS.Path.join(toolkitURI, "styleinspector", "css-logic"));
+    let touchEventsURI = this.fileURI(OS.Path.join(toolkitDir, "touch-events"));
+    let clientURI = this.fileURI(OS.Path.join(srcdir, "toolkit", "devtools", "client"));
     let mainURI = this.fileURI(OS.Path.join(srcdir, "browser", "devtools", "main.js"));
     this.loader = new loader.Loader({
       modules: {
-        "toolkit/loader": loader
+        "toolkit/loader": loader,
+        "source-map": SourceMap,
       },
       paths: {
         "": "resource://gre/modules/commonjs/",
         "devtools/server": serverURI,
         "devtools/toolkit/webconsole": webconsoleURI,
+        "devtools/app-actor-front": appActorURI,
+        "devtools/client": clientURI,
         "devtools": devtoolsURI,
+        "devtools/styleinspector/css-logic": cssLogicURI,
+        "devtools/touch-events": touchEventsURI,
         "main": mainURI
       },
       globals: loaderGlobals
@@ -176,9 +197,15 @@ var SrcdirProvider = {
 /**
  * The main devtools API.
  * In addition to a few loader-related details, this object will also include all
- * exports from the main module.
+ * exports from the main module.  The standard instance of this loader is
+ * exported as |devtools| below, but if a fresh copy of the loader is needed,
+ * then a new one can also be created.
  */
-this.devtools = {
+this.DevToolsLoader = function DevToolsLoader() {
+  this._chooseProvider();
+};
+
+DevToolsLoader.prototype = {
   _provider: null,
 
   /**
@@ -261,5 +288,5 @@ this.devtools = {
   },
 };
 
-// Now load the tools.
-devtools._chooseProvider();
+// Export the standard instance of DevToolsLoader used by the tools.
+this.devtools = new DevToolsLoader();

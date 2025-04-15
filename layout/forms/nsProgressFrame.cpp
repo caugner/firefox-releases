@@ -16,11 +16,12 @@
 #include "nsContentCreatorFunctions.h"
 #include "nsContentUtils.h"
 #include "nsFormControlFrame.h"
-#include "nsContentList.h"
 #include "nsFontMetrics.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLProgressElement.h"
 #include "nsContentList.h"
+#include "nsStyleSet.h"
+#include "nsThemeConstants.h"
 #include <algorithm>
 
 using namespace mozilla::dom;

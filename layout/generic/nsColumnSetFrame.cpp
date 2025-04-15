@@ -6,6 +6,8 @@
 /* rendering object for css3 multi-column layout */
 
 #include "nsColumnSetFrame.h"
+#include "nsCSSRendering.h"
+#include "nsDisplayList.h"
 
 using namespace mozilla;
 using namespace mozilla::layout;
@@ -1038,8 +1040,8 @@ nsColumnSetFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   DisplayBorderBackgroundOutline(aBuilder, aLists);
 
   aLists.BorderBackground()->AppendNewToTop(new (aBuilder)
-      nsDisplayGeneric(aBuilder, this, ::PaintColumnRule, "ColumnRule",
-                       nsDisplayItem::TYPE_COLUMN_RULE));
+      nsDisplayGenericOverflow(aBuilder, this, ::PaintColumnRule, "ColumnRule",
+                               nsDisplayItem::TYPE_COLUMN_RULE));
   
   // Our children won't have backgrounds so it doesn't matter where we put them.
   for (nsFrameList::Enumerator e(mFrames); !e.AtEnd(); e.Next()) {

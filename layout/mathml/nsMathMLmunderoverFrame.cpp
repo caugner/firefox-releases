@@ -3,19 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-
-#include "nsCOMPtr.h"
-#include "nsFrame.h"
-#include "nsPresContext.h"
-#include "nsStyleContext.h"
-#include "nsStyleConsts.h"
-#include "nsINameSpaceManager.h"
-#include "nsRenderingContext.h"
-
 #include "nsMathMLmunderoverFrame.h"
-#include "nsMathMLmsubsupFrame.h"
-#include "nsMathMLmsupFrame.h"
-#include "nsMathMLmsubFrame.h"
+#include "nsPresContext.h"
+#include "nsRenderingContext.h"
+#include "nsMathMLmmultiscriptsFrame.h"
 #include <algorithm>
 
 //
@@ -310,27 +301,27 @@ nsMathMLmunderoverFrame::Place(nsRenderingContext& aRenderingContext,
     //place like sub sup or subsup
     nscoord scriptSpace = nsPresContext::CSSPointsToAppUnits(0.5f);
     if (tag == nsGkAtoms::munderover_) {
-      return nsMathMLmsubsupFrame::PlaceSubSupScript(PresContext(),
-                                                     aRenderingContext,
-                                                     aPlaceOrigin,
-                                                     aDesiredSize,
-                                                     this, 0, 0,
-                                                     scriptSpace);
+      return nsMathMLmmultiscriptsFrame::PlaceMultiScript(PresContext(),
+                                                          aRenderingContext,
+                                                          aPlaceOrigin,
+                                                          aDesiredSize,
+                                                          this, 0, 0,
+                                                          scriptSpace);
     } else if (tag == nsGkAtoms::munder_) {
-      return nsMathMLmsubFrame::PlaceSubScript(PresContext(),
-                                               aRenderingContext,
-                                               aPlaceOrigin,
-                                               aDesiredSize,
-                                               this, 0,
-                                               scriptSpace);
+      return nsMathMLmmultiscriptsFrame::PlaceMultiScript(PresContext(),
+                                                          aRenderingContext,
+                                                          aPlaceOrigin,
+                                                          aDesiredSize,
+                                                          this, 0, 0,
+                                                          scriptSpace);
     } else {
       NS_ASSERTION(tag == nsGkAtoms::mover_, "mContent->Tag() not recognized");
-      return nsMathMLmsupFrame::PlaceSuperScript(PresContext(),
-                                                 aRenderingContext,
-                                                 aPlaceOrigin,
-                                                 aDesiredSize,
-                                                 this, 0,
-                                                 scriptSpace);
+      return nsMathMLmmultiscriptsFrame::PlaceMultiScript(PresContext(),
+                                                          aRenderingContext,
+                                                          aPlaceOrigin,
+                                                          aDesiredSize,
+                                                          this, 0, 0,
+                                                          scriptSpace);
     }
     
   }

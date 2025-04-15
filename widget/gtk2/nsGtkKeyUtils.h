@@ -41,13 +41,6 @@ public:
     KeyNameIndex ComputeDOMKeyNameIndex(const GdkEventKey* aGdkKeyEvent);
 
     /**
-     * Returns a GDK keyval which is related to the aDOMKeyCode.  However,
-     * it may not be same as original value since there are some lost
-     * information.
-     */
-    static guint GuessGDKKeyval(uint32_t aDOMKeyCode);
-
-    /**
      * Modifier is list of modifiers which we support in widget level.
      */
     enum Modifier {
@@ -146,6 +139,7 @@ protected:
      * Initializing methods.
      */
     void Init();
+    void InitXKBExtension();
     void InitBySystemSettings();
 
     /**
@@ -204,6 +198,11 @@ protected:
      * mGdkKeymap is a wrapped instance by this class.
      */
     GdkKeymap* mGdkKeymap;
+
+    /**
+     * The base event code of XKB extension.
+     */
+    int mXKBBaseEventCode;
 
     /**
      * Pointer of the singleton instance.

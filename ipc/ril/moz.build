@@ -14,3 +14,7 @@ CPP_SOURCES += [
     'Ril.cpp',
 ]
 
+LIBXUL_LIBRARY = True
+
+LIBRARY_NAME = 'mozril_s'
+

@@ -20,14 +20,14 @@ EXPORTS += [
     'OrientationObserver.h',
 ]
 
-DIRS += ['libdisplay']
+DIRS += ['libdisplay', 'nativewindow']
 
+# libui files
 CPP_SOURCES += [
     'EventHub.cpp',
-    'Framebuffer.cpp',
-    'GonkMemoryPressureMonitoring.cpp',
     'Input.cpp',
     'InputApplication.cpp',
+    'InputDevice.cpp',
     'InputDispatcher.cpp',
     'InputListener.cpp',
     'InputReader.cpp',
@@ -36,26 +36,30 @@ CPP_SOURCES += [
     'KeyCharacterMap.cpp',
     'KeyLayoutMap.cpp',
     'Keyboard.cpp',
-    'OrientationObserver.cpp',
-    'PixelFormat.cpp',
     'PointerController.cpp',
-    'PropertyMap.cpp',
     'SpriteController.cpp',
-    'Static.cpp',
-    'String16.cpp',
-    'String8.cpp',
-    'Timers.cpp',
     'Tokenizer.cpp',
-    'Unicode.cpp',
+    'VelocityControl.cpp',
+    'VelocityTracker.cpp',
     'VirtualKeyMap.cpp',
+]
+
+CPP_SOURCES += [
+    'Framebuffer.cpp',
+    'GfxInfo.cpp',
+    'HwcUtils.cpp',
+    'GonkMemoryPressureMonitoring.cpp',
+    'OrientationObserver.cpp',
+    'ProcessOrientation.cpp',
     'nsAppShell.cpp',
     'nsIdleServiceGonk.cpp',
     'nsLookAndFeel.cpp',
     'nsWidgetFactory.cpp',
     'nsWindow.cpp',
+    'HwcComposer2D.cpp'
 ]
 
-if CONFIG['ANDROID_VERSION'] == '15':
-    CPP_SOURCES += [
-        'HwcComposer2D.cpp'
-    ]
+LIBXUL_LIBRARY = True
+
+LIBRARY_NAME = 'widget_gonk'
+

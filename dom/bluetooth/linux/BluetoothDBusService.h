@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef mozilla_dom_bluetooth_bluetoothdbuseventservice_h__
-#define mozilla_dom_bluetooth_bluetoothdbuseventservice_h__
+#ifndef mozilla_dom_bluetooth_bluetoothdbusservice_h__
+#define mozilla_dom_bluetooth_bluetoothdbusservice_h__
 
 #include "mozilla/Attributes.h"
 #include "BluetoothCommon.h"
@@ -36,7 +36,7 @@ public:
   virtual nsresult GetDefaultAdapterPathInternal(
                                              BluetoothReplyRunnable* aRunnable) MOZ_OVERRIDE;
 
-  virtual nsresult GetConnectedDevicePropertiesInternal(uint16_t aProfileId,
+  virtual nsresult GetConnectedDevicePropertiesInternal(uint16_t aServiceUuid,
                                              BluetoothReplyRunnable* aRunnable) MOZ_OVERRIDE;
 
   virtual nsresult GetPairedDevicePropertiesInternal(
@@ -100,20 +100,18 @@ public:
   SetPairingConfirmationInternal(const nsAString& aDeviceAddress, bool aConfirm,
                                  BluetoothReplyRunnable* aRunnable) MOZ_OVERRIDE;
 
-  virtual bool
-  SetAuthorizationInternal(const nsAString& aDeviceAddress, bool aAllow,
-                           BluetoothReplyRunnable* aRunnable) MOZ_OVERRIDE;
-
   virtual void
   Connect(const nsAString& aDeviceAddress,
-          const uint16_t aProfileId,
-          BluetoothReplyRunnable* aRunnable);
+          uint32_t aCod,
+          uint16_t aServiceUuid,
+          BluetoothReplyRunnable* aRunnable) MOZ_OVERRIDE;
 
   virtual bool
-  IsConnected(uint16_t aProfileId) MOZ_OVERRIDE;
+  IsConnected(uint16_t aServiceUuid) MOZ_OVERRIDE;
 
   virtual void
-  Disconnect(const uint16_t aProfileId, BluetoothReplyRunnable* aRunnable);
+  Disconnect(const nsAString& aDeviceAddress, uint16_t aServiceUuid,
+             BluetoothReplyRunnable* aRunnable) MOZ_OVERRIDE;
 
   virtual void
   SendFile(const nsAString& aDeviceAddress,
@@ -162,6 +160,14 @@ public:
   SendSinkMessage(const nsAString& aDeviceAddresses,
                   const nsAString& aMessage) MOZ_OVERRIDE;
 
+  virtual nsresult
+  SendInputMessage(const nsAString& aDeviceAddresses,
+                   const nsAString& aMessage) MOZ_OVERRIDE;
+
+protected:
+  BluetoothDBusService();
+  ~BluetoothDBusService();
+
 private:
   /**
    * For DBus Control method of "UpdateNotification", event id should be
@@ -194,8 +200,10 @@ private:
 
   void UpdateNotification(ControlEventId aEventId, uint64_t aData);
 
-  void DisconnectAllAcls(const nsAString& aAdapterPath);
-
+  nsresult SendAsyncDBusMessage(const nsAString& aObjectPath,
+                                const char* aInterface,
+                                const nsAString& aMessage,
+                                void (*aCallback)(DBusMessage*, void*));
 };
 
 END_BLUETOOTH_NAMESPACE

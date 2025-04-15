@@ -11,8 +11,6 @@
 #include "nsTArray.h"
 #include "nsRegion.h"
 #include "nsIFrame.h"
-#include "nsDisplayListInvalidation.h"
-#include "LayerTreeInvalidation.h"
 #include "ImageLayers.h"
 #include "DisplayItemClip.h"
 
@@ -20,12 +18,13 @@ class nsDisplayListBuilder;
 class nsDisplayList;
 class nsDisplayItem;
 class gfxContext;
-class nsRootPresContext;
+class nsDisplayItemGeometry;
 
 namespace mozilla {
 namespace layers {
 class ContainerLayer;
 class LayerManager;
+class BasicLayerManager;
 class ThebesLayer;
 }
 
@@ -97,6 +96,7 @@ public:
   typedef layers::ThebesLayer ThebesLayer;
   typedef layers::ImageLayer ImageLayer;
   typedef layers::LayerManager LayerManager;
+  typedef layers::BasicLayerManager BasicLayerManager;
 
   FrameLayerBuilder() :
     mRetainingManager(nullptr),
@@ -106,7 +106,6 @@ public:
     mMaxContainerLayerGeneration(0)
   {
     MOZ_COUNT_CTOR(FrameLayerBuilder);
-    mThebesLayerItems.Init();
   }
   ~FrameLayerBuilder()
   {
@@ -245,6 +244,7 @@ public:
   static void DrawThebesLayer(ThebesLayer* aLayer,
                               gfxContext* aContext,
                               const nsIntRegion& aRegionToDraw,
+                              mozilla::layers::DrawRegionClip aClip,
                               const nsIntRegion& aRegionToInvalidate,
                               void* aCallbackData);
 
@@ -276,7 +276,7 @@ public:
                            const DisplayItemClip& aClip,
                            LayerState aLayerState,
                            const nsPoint& aTopLeft,
-                           LayerManager* aManager,
+                           BasicLayerManager* aManager,
                            nsAutoPtr<nsDisplayItemGeometry> aGeometry);
 
   /**
@@ -423,7 +423,7 @@ public:
     LayerManagerData* mParent;
     nsRefPtr<Layer> mLayer;
     nsRefPtr<Layer> mOptLayer;
-    nsRefPtr<LayerManager> mInactiveManager;
+    nsRefPtr<BasicLayerManager> mInactiveManager;
     nsAutoTArray<nsIFrame*, 1> mFrameList;
     nsAutoPtr<nsDisplayItemGeometry> mGeometry;
     DisplayItemClip mClip;
@@ -520,6 +520,24 @@ protected:
 
     uint32_t mContainerLayerGeneration;
   };
+
+  static void RecomputeVisibilityForItems(nsTArray<ClippedDisplayItem>& aItems,
+                                          nsDisplayListBuilder* aBuilder,
+                                          const nsIntRegion& aRegionToDraw,
+                                          const nsIntPoint& aOffset,
+                                          int32_t aAppUnitsPerDevPixel,
+                                          float aXScale,
+                                          float aYScale);
+
+  void PaintItems(nsTArray<ClippedDisplayItem>& aItems,
+                  const nsIntRect& aRect,
+                  gfxContext* aContext,
+                  nsRenderingContext* aRC,
+                  nsDisplayListBuilder* aBuilder,
+                  nsPresContext* aPresContext,
+                  const nsIntPoint& aOffset,
+                  float aXScale, float aYScale,
+                  int32_t aCommonClipCount);
 
   /**
    * We accumulate ClippedDisplayItem elements in a hashtable during

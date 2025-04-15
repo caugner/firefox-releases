@@ -208,8 +208,8 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_COLOR_MOZ_VISITEDHYPERLINKTEXT       -5
 #define NS_COLOR_MOZ_ACTIVEHYPERLINKTEXT        -6
 // Only valid as paints in SVG glyphs
-#define NS_COLOR_OBJECTFILL                     -7
-#define NS_COLOR_OBJECTSTROKE                   -8
+#define NS_COLOR_CONTEXT_FILL                   -7
+#define NS_COLOR_CONTEXT_STROKE                 -8
 
 // See nsStyleDisplay
 #define NS_STYLE_ANIMATION_DIRECTION_NORMAL       0
@@ -441,6 +441,20 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_FLOAT_LEFT                     1
 #define NS_STYLE_FLOAT_RIGHT                    2
 
+// See nsStyleFilter
+#define NS_STYLE_FILTER_NONE                    0
+#define NS_STYLE_FILTER_URL                     1
+#define NS_STYLE_FILTER_BLUR                    2
+#define NS_STYLE_FILTER_BRIGHTNESS              3
+#define NS_STYLE_FILTER_CONTRAST                4
+#define NS_STYLE_FILTER_GRAYSCALE               5
+#define NS_STYLE_FILTER_INVERT                  6
+#define NS_STYLE_FILTER_OPACITY                 7
+#define NS_STYLE_FILTER_SATURATE                8
+#define NS_STYLE_FILTER_SEPIA                   9
+#define NS_STYLE_FILTER_HUE_ROTATE              10
+#define NS_STYLE_FILTER_DROP_SHADOW             11
+
 // See nsStyleFont
 // We should eventually stop using the NS_STYLE_* variants here.
 #define NS_STYLE_FONT_STYLE_NORMAL              NS_FONT_STYLE_NORMAL
@@ -517,6 +531,7 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_POSITION_RELATIVE              1
 #define NS_STYLE_POSITION_ABSOLUTE              2
 #define NS_STYLE_POSITION_FIXED                 3
+#define NS_STYLE_POSITION_STICKY                4
 
 // See nsStylePosition.mClip
 #define NS_STYLE_CLIP_AUTO                      0x00
@@ -621,6 +636,10 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_POINTER_EVENTS_ALL             8
 #define NS_STYLE_POINTER_EVENTS_AUTO            9
 
+// See nsStyleVisibility.mImageOrientationType
+#define NS_STYLE_IMAGE_ORIENTATION_FLIP         0
+#define NS_STYLE_IMAGE_ORIENTATION_FROM_IMAGE   1
+
 // See nsStyleDisplay
 #define NS_STYLE_RESIZE_NONE                    0
 #define NS_STYLE_RESIZE_BOTH                    1
@@ -644,10 +663,6 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_TEXT_ALIGN_MOZ_CENTER_OR_INHERIT 11
 // Note: make sure that the largest NS_STYLE_TEXT_ALIGN_* value is smaller than
 // the smallest NS_STYLE_VERTICAL_ALIGN_* value below!
-
-// See nsStyleText
-#define NS_STYLE_TEXT_BLINK_NONE                0
-#define NS_STYLE_TEXT_BLINK_BLINK               1
 
 // See nsStyleText, nsStyleFont
 #define NS_STYLE_TEXT_DECORATION_LINE_NONE         0
@@ -738,6 +753,18 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 // See nsStyleText
 #define NS_STYLE_TEXT_SIZE_ADJUST_NONE          0
 #define NS_STYLE_TEXT_SIZE_ADJUST_AUTO          1
+
+// See nsStyleText
+#define NS_STYLE_TEXT_ORIENTATION_AUTO          0
+#define NS_STYLE_TEXT_ORIENTATION_UPRIGHT       1
+#define NS_STYLE_TEXT_ORIENTATION_SIDEWAYS      2
+
+// See nsStyleText
+#define NS_STYLE_TEXT_COMBINE_HORIZ_NONE        0
+#define NS_STYLE_TEXT_COMBINE_HORIZ_ALL         1
+#define NS_STYLE_TEXT_COMBINE_HORIZ_DIGITS_2    2
+#define NS_STYLE_TEXT_COMBINE_HORIZ_DIGITS_3    3
+#define NS_STYLE_TEXT_COMBINE_HORIZ_DIGITS_4    4
 
 // See nsStyleText
 #define NS_STYLE_LINE_HEIGHT_BLOCK_HEIGHT       0
@@ -887,7 +914,7 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_STROKE_LINEJOIN_BEVEL          2
 
 // stroke-dasharray, stroke-dashoffset, stroke-width
-#define NS_STYLE_STROKE_PROP_OBJECTVALUE        0
+#define NS_STYLE_STROKE_PROP_CONTEXT_VALUE      0
 
 // text-anchor
 #define NS_STYLE_TEXT_ANCHOR_START              0
@@ -916,9 +943,27 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_TRANSFORM_STYLE_FLAT               0
 #define NS_STYLE_TRANSFORM_STYLE_PRESERVE_3D        1
 
-// object {fill,stroke}-opacity for SVG glyphs
-#define NS_STYLE_OBJECT_FILL_OPACITY                0
-#define NS_STYLE_OBJECT_STROKE_OPACITY              1
+// object {fill,stroke}-opacity inherited from context for SVG glyphs
+#define NS_STYLE_CONTEXT_FILL_OPACITY               0
+#define NS_STYLE_CONTEXT_STROKE_OPACITY             1
+
+// blending
+#define NS_STYLE_BLEND_NORMAL                       0
+#define NS_STYLE_BLEND_MULTIPLY                     1
+#define NS_STYLE_BLEND_SCREEN                       2
+#define NS_STYLE_BLEND_OVERLAY                      3
+#define NS_STYLE_BLEND_DARKEN                       4
+#define NS_STYLE_BLEND_LIGHTEN                      5
+#define NS_STYLE_BLEND_COLOR_DODGE                  6
+#define NS_STYLE_BLEND_COLOR_BURN                   7
+#define NS_STYLE_BLEND_HARD_LIGHT                   8
+#define NS_STYLE_BLEND_SOFT_LIGHT                   9
+#define NS_STYLE_BLEND_DIFFERENCE                   10
+#define NS_STYLE_BLEND_EXCLUSION                    11
+#define NS_STYLE_BLEND_HUE                          12
+#define NS_STYLE_BLEND_SATURATION                   13
+#define NS_STYLE_BLEND_COLOR                        14
+#define NS_STYLE_BLEND_LUMINOSITY                   15
 
 /*****************************************************************************
  * Constants for media features.                                             *

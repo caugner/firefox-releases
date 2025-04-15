@@ -19,6 +19,7 @@ CPP_SOURCES += [
 ]
 
 IPDL_SOURCES += [
+    'IndexedDBParams.ipdlh',
     'PIndexedDB.ipdl',
     'PIndexedDBCursor.ipdl',
     'PIndexedDBDatabase.ipdl',
@@ -28,3 +29,10 @@ IPDL_SOURCES += [
     'PIndexedDBRequest.ipdl',
     'PIndexedDBTransaction.ipdl',
 ]
+
+FAIL_ON_WARNINGS = True
+
+LIBXUL_LIBRARY = True
+
+LIBRARY_NAME = 'dom_indexeddb_ipc_s'
+

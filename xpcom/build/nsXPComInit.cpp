@@ -31,14 +31,12 @@
 #include "nsDebugImpl.h"
 #include "nsTraceRefcntImpl.h"
 #include "nsErrorService.h"
-#include "nsByteBuffer.h"
 
 #include "nsSupportsArray.h"
 #include "nsArray.h"
 #include "nsINIParserImpl.h"
 #include "nsSupportsPrimitives.h"
 #include "nsConsoleService.h"
-#include "nsExceptionService.h"
 
 #include "nsComponentManager.h"
 #include "nsCategoryManagerUtils.h"
@@ -120,7 +118,6 @@ extern nsresult nsStringInputStreamConstructor(nsISupports *, REFNSIID, void **)
 #include "base/message_loop.h"
 
 #include "mozilla/ipc/BrowserProcessSubThread.h"
-#include "mozilla/MapsMemoryReporter.h"
 #include "mozilla/AvailableMemoryTracker.h"
 #include "mozilla/ClearOnShutdown.h"
 
@@ -182,7 +179,6 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsSupportsInterfacePointerImpl)
 
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsConsoleService, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsAtomService)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsExceptionService)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsTimerImpl)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsBinaryOutputStream)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsBinaryInputStream)
@@ -195,9 +191,9 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(VisualEventTracer)
 
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsVariant)
 
-NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsHashPropertyBag, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsHashPropertyBag)
 
-NS_GENERIC_AGGREGATED_CONSTRUCTOR_INIT(nsProperties, Init)
+NS_GENERIC_AGGREGATED_CONSTRUCTOR(nsProperties)
 
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsUUIDGenerator, Init)
 
@@ -335,51 +331,58 @@ NS_InitXPCOM(nsIServiceManager* *result,
     return NS_InitXPCOM2(result, binDirectory, nullptr);
 }
 
-// |sSizeOfICU| can be accessed by multiple JSRuntimes, so it must be
-// thread-safe.
-static Atomic<size_t> sSizeOfICU;
-
-static int64_t
-GetICUSize()
+class ICUReporter MOZ_FINAL : public MemoryUniReporter
 {
-    return sSizeOfICU;
-}
+public:
+    ICUReporter()
+      : MemoryUniReporter("explicit/icu", KIND_HEAP, UNITS_BYTES,
+"Memory used by ICU, a Unicode and globalization support library.")
+    {
+#ifdef DEBUG
+        // There must be only one instance of this class, due to |sAmount|
+        // being static.
+        static bool hasRun = false;
+        MOZ_ASSERT(!hasRun);
+        hasRun = true;
+#endif
+        sAmount = 0;
+    }
 
-NS_MEMORY_REPORTER_IMPLEMENT(ICU,
-    "explicit/icu",
-    KIND_HEAP,
-    UNITS_BYTES,
-    GetICUSize,
-    "Memory used by ICU, a Unicode and globalization support library."
-)
+    static void* Alloc(const void*, size_t size)
+    {
+        void* p = malloc(size);
+        sAmount += MallocSizeOfOnAlloc(p);
+        return p;
+    }
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_ON_ALLOC_FUN(ICUMallocSizeOfOnAlloc)
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_ON_FREE_FUN(ICUMallocSizeOfOnFree)
+    static void* Realloc(const void*, void* p, size_t size)
+    {
+        sAmount -= MallocSizeOfOnFree(p);
+        void *pnew = realloc(p, size);
+        if (pnew) {
+            sAmount += MallocSizeOfOnAlloc(pnew);
+        } else {
+            // realloc failed;  undo the decrement from above
+            sAmount += MallocSizeOfOnAlloc(p);
+        }
+        return pnew;
+    }
 
-static void*
-ICUAlloc(const void*, size_t size)
-{
-    void* p = malloc(size);
-    sSizeOfICU += ICUMallocSizeOfOnAlloc(p);
-    return p;
-}
+    static void Free(const void*, void* p)
+    {
+        sAmount -= MallocSizeOfOnFree(p);
+        free(p);
+    }
 
-static void*
-ICURealloc(const void*, void* p, size_t size)
-{
-    size_t delta = 0 - ICUMallocSizeOfOnFree(p);
-    void* pnew = realloc(p, size);
-    delta += pnew ? ICUMallocSizeOfOnAlloc(pnew) : ICUMallocSizeOfOnAlloc(p);
-    sSizeOfICU += delta;
-    return pnew;
-}
+private:
+    // |sAmount| can be (implicitly) accessed by multiple JSRuntimes, so it
+    // must be thread-safe.
+    static Atomic<size_t> sAmount;
 
-static void
-ICUFree(const void*, void* p)
-{
-    sSizeOfICU -= ICUMallocSizeOfOnFree(p);
-    free(p);
-}
+    int64_t Amount() MOZ_OVERRIDE { return sAmount; }
+};
+
+/* static */ Atomic<size_t> ICUReporter::sAmount;
 
 EXPORT_XPCOM_API(nsresult)
 NS_InitXPCOM2(nsIServiceManager* *result,
@@ -517,8 +520,7 @@ NS_InitXPCOM2(nsIServiceManager* *result,
     }
 
     // And start it up for this thread too.
-    rv = nsCycleCollector_startup(CCSingleThread);
-    if (NS_FAILED(rv)) return rv;
+    nsCycleCollector_startup();
 
     // Register ICU memory functions.  This really shouldn't be necessary: the
     // JS engine should do this on its own inside JS_Init, and memory-reporting
@@ -526,7 +528,8 @@ NS_InitXPCOM2(nsIServiceManager* *result,
     // can't define the alloc/free functions in the JS engine, because it can't
     // depend on the XPCOM-based memory reporting goop.  So for now, we have
     // this oddness.
-    if (!JS_SetICUMemoryFunctions(ICUAlloc, ICURealloc, ICUFree)) {
+    if (!JS_SetICUMemoryFunctions(ICUReporter::Alloc, ICUReporter::Realloc,
+                                  ICUReporter::Free)) {
         NS_RUNTIMEABORT("JS_SetICUMemoryFunctions failed.");
     }
 
@@ -570,11 +573,9 @@ NS_InitXPCOM2(nsIServiceManager* *result,
     CreateAnonTempFileRemover();
 #endif
 
-    mozilla::MapsMemoryReporter::Init();
-
     // The memory reporter manager is up and running -- register a reporter for
     // ICU's memory usage.
-    NS_RegisterMemoryReporter(new NS_MEMORY_REPORTER_NAME(ICU));
+    NS_RegisterMemoryReporter(new ICUReporter());
 
     mozilla::Telemetry::Init();
 
@@ -664,8 +665,6 @@ ShutdownXPCOM(nsIServiceManager* servMgr)
                                 nullptr);
 
         gXPCOMThreadsShutDown = true;
-        nsCycleCollector_shutdownThreads();
-
         NS_ProcessPendingEvents(thread);
 
         // Shutdown the timer thread and all timers that might still be alive before

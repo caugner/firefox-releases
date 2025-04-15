@@ -205,22 +205,30 @@ protected:
   virtual bool
   RecvPIndexedDBDatabaseConstructor(PIndexedDBDatabaseParent* aActor,
                                     const nsString& aName,
-                                    const uint64_t& aVersion) MOZ_OVERRIDE;
+                                    const uint64_t& aVersion,
+                                    const PersistenceType& aPersistenceType)
+                                    MOZ_OVERRIDE;
 
   virtual bool
   RecvPIndexedDBDeleteDatabaseRequestConstructor(
                                   PIndexedDBDeleteDatabaseRequestParent* aActor,
-                                  const nsString& aName) MOZ_OVERRIDE;
+                                  const nsString& aName,
+                                  const PersistenceType& aPersistenceType)
+                                  MOZ_OVERRIDE;
 
   virtual PIndexedDBDatabaseParent*
-  AllocPIndexedDBDatabaseParent(const nsString& aName, const uint64_t& aVersion)
+  AllocPIndexedDBDatabaseParent(const nsString& aName, const uint64_t& aVersion,
+                                const PersistenceType& aPersistenceType)
                                 MOZ_OVERRIDE;
 
   virtual bool
   DeallocPIndexedDBDatabaseParent(PIndexedDBDatabaseParent* aActor) MOZ_OVERRIDE;
 
   virtual PIndexedDBDeleteDatabaseRequestParent*
-  AllocPIndexedDBDeleteDatabaseRequestParent(const nsString& aName) MOZ_OVERRIDE;
+  AllocPIndexedDBDeleteDatabaseRequestParent(
+                                        const nsString& aName,
+                                        const PersistenceType& aPersistenceType)
+                                        MOZ_OVERRIDE;
 
   virtual bool
   DeallocPIndexedDBDeleteDatabaseRequestParent(
@@ -697,10 +705,10 @@ class IndexedDBObjectStoreRequestParent : public IndexedDBRequestParentBase
   typedef ipc::PutParams PutParams;
   typedef ipc::ClearParams ClearParams;
   typedef ipc::DeleteParams DeleteParams;
-  typedef ipc::FIXME_Bug_521898_objectstore::GetParams GetParams;
-  typedef ipc::FIXME_Bug_521898_objectstore::GetAllParams GetAllParams;
-  typedef ipc::FIXME_Bug_521898_objectstore::CountParams CountParams;
-  typedef ipc::FIXME_Bug_521898_objectstore::OpenCursorParams OpenCursorParams;
+  typedef ipc::GetParams GetParams;
+  typedef ipc::GetAllParams GetAllParams;
+  typedef ipc::CountParams CountParams;
+  typedef ipc::OpenCursorParams OpenCursorParams;
 
 public:
   IndexedDBObjectStoreRequestParent(IDBObjectStore* aObjectStore,
@@ -758,10 +766,10 @@ class IndexedDBIndexRequestParent : public IndexedDBRequestParentBase
   typedef ipc::GetKeyParams GetKeyParams;
   typedef ipc::GetAllKeysParams GetAllKeysParams;
   typedef ipc::OpenKeyCursorParams OpenKeyCursorParams;
-  typedef ipc::FIXME_Bug_521898_index::GetParams GetParams;
-  typedef ipc::FIXME_Bug_521898_index::GetAllParams GetAllParams;
-  typedef ipc::FIXME_Bug_521898_index::CountParams CountParams;
-  typedef ipc::FIXME_Bug_521898_index::OpenCursorParams OpenCursorParams;
+  typedef ipc::GetParams GetParams;
+  typedef ipc::GetAllParams GetAllParams;
+  typedef ipc::CountParams CountParams;
+  typedef ipc::OpenCursorParams OpenCursorParams;
 
 public:
   IndexedDBIndexRequestParent(IDBIndex* aIndex, RequestType aRequestType);

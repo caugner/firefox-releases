@@ -28,10 +28,10 @@
 #include "mozilla/ipc/Netd.h"
 #include "AutoMounter.h"
 #include "TimeZoneSettingObserver.h"
+#include "AudioManager.h"
 #endif
 #include "mozilla/ipc/Ril.h"
 #include "nsIObserverService.h"
-#include "nsContentUtils.h"
 #include "nsCxPusher.h"
 #include "nsServiceManagerUtils.h"
 #include "nsThreadUtils.h"
@@ -88,7 +88,7 @@ private:
   unsigned long mClientId;
 };
 
-JSBool
+bool
 PostToRIL(JSContext *cx, unsigned argc, JS::Value *vp)
 {
   NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
@@ -137,8 +137,7 @@ PostToRIL(JSContext *cx, unsigned argc, JS::Value *vp)
     return false;
   }
 
-  UnixSocketRawData* raw = new UnixSocketRawData(size);
-  memcpy(raw->mData, data, raw->mSize);
+  UnixSocketRawData* raw = new UnixSocketRawData(data, size);
 
   nsRefPtr<SendRilSocketDataTask> task = new SendRilSocketDataTask(clientId, raw);
   NS_DispatchToMainThread(task);
@@ -160,7 +159,7 @@ ConnectWorkerToRIL::RunTask(JSContext *aCx)
 
 #ifdef MOZ_WIDGET_GONK
 
-JSBool
+bool
 DoNetdCommand(JSContext *cx, unsigned argc, JS::Value *vp)
 {
   NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
@@ -347,6 +346,8 @@ SystemWorkerManager::Init()
   InitializeTimeZoneSettingObserver();
   rv = InitNetd(cx);
   NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIAudioManager> audioManager =
+    do_GetService(NS_AUDIOMANAGER_CONTRACTID);
 #endif
 
   nsCOMPtr<nsIObserverService> obs =

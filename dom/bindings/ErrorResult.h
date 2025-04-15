@@ -30,6 +30,9 @@ enum ErrNum {
   Err_Limit
 };
 
+bool
+ThrowErrorMessage(JSContext* aCx, const ErrNum aErrorNumber, ...);
+
 } // namespace dom
 
 class ErrorResult {

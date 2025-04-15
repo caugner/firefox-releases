@@ -61,6 +61,8 @@ pref("browser.cache.disk_cache_ssl",        true);
 pref("browser.cache.check_doc_frequency",   3);
 
 pref("browser.cache.offline.enable",           true);
+// enable offline apps by default, disable prompt
+pref("offline-apps.allow_by_default",          true);
 
 // offline cache capacity in kilobytes
 pref("browser.cache.offline.capacity",         512000);
@@ -76,10 +78,15 @@ pref("offline-apps.quota.warn",        51200);
 // cache compression turned off for now - see bug #715198
 pref("browser.cache.compression_level", 0);
 
+// Whether or not testing features are enabled.
+pref("dom.quotaManager.testing", false);
+
 // Whether or not indexedDB is enabled.
 pref("dom.indexedDB.enabled", true);
 // Space to allow indexedDB databases before prompting (in MB).
 pref("dom.indexedDB.warningQuota", 50);
+// Whether or not indexedDB experimental features are enabled.
+pref("dom.indexedDB.experimental", false);
 
 // Whether or not Web Workers are enabled.
 pref("dom.workers.enabled", true);
@@ -144,6 +151,14 @@ pref("browser.display.focus_ring_style", 1);
 pref("browser.helperApps.alwaysAsk.force",  false);
 pref("browser.helperApps.neverAsk.saveToDisk", "");
 pref("browser.helperApps.neverAsk.openFile", "");
+pref("browser.helperApps.deleteTempFileOnExit", false);
+
+#ifdef XP_WIN
+// By default, security zone information is stored in the Alternate Data Stream
+// of downloaded executable files on Windows.  This preference allows disabling
+// this feature, and thus the associated system-level execution prompts.
+pref("browser.download.saveZoneInformation", true);
+#endif
 
 // xxxbsmedberg: where should prefs for the toolkit go?
 pref("browser.chrome.toolbar_tips",         true);
@@ -169,6 +184,9 @@ pref("media.windows-media-foundation.enabled", true);
 pref("media.windows-media-foundation.use-dxva", true);
 pref("media.windows-media-foundation.play-stand-alone", true);
 #endif
+#ifdef MOZ_DIRECTSHOW
+pref("media.directshow.enabled", true);
+#endif
 #ifdef MOZ_RAW
 pref("media.raw.enabled", true);
 #endif
@@ -188,7 +206,10 @@ pref("media.webm.enabled", true);
 pref("media.dash.enabled", false);
 #endif
 #ifdef MOZ_GSTREAMER
-pref("media.gstreamer.enabled", false);
+pref("media.gstreamer.enabled", true);
+#endif
+#ifdef MOZ_APPLEMEDIA
+pref("media.apple.mp3.enabled", true);
 #endif
 #ifdef MOZ_WEBRTC
 pref("media.navigator.enabled", true);
@@ -280,6 +301,12 @@ pref("gfx.font_loader.interval", 50);          // run every 50 ms
 // whether to always search all font cmaps during system font fallback
 pref("gfx.font_rendering.fallback.always_use_cmaps", false);
 
+// cache shaped word results
+pref("gfx.font_rendering.wordcache.charlimit", 32);
+
+// cache shaped word results
+pref("gfx.font_rendering.wordcache.maxentries", 10000);
+
 pref("gfx.font_rendering.graphite.enabled", true);
 
 // Check intl/unicharutil/util/nsUnicodeProperties.h for definitions of script bits
@@ -308,13 +335,13 @@ pref("gfx.font_rendering.directwrite.enabled", false);
 pref("gfx.font_rendering.directwrite.use_gdi_table_loading", true);
 #endif
 
-pref("gfx.font_rendering.opentype_svg.enabled", false);
+pref("gfx.font_rendering.opentype_svg.enabled", true);
 
 #ifdef XP_WIN
 // comma separated list of backends to use in order of preference
 // e.g., pref("gfx.canvas.azure.backends", "direct2d,skia,cairo");
 pref("gfx.canvas.azure.backends", "direct2d,skia,cairo");
-pref("gfx.content.azure.backends", "direct2d");
+pref("gfx.content.azure.backends", "direct2d,cairo");
 pref("gfx.content.azure.enabled", true);
 #else
 pref("gfx.content.azure.enabled", false);
@@ -453,9 +480,12 @@ pref("devtools.debugger.remote-enabled", false);
 pref("devtools.debugger.remote-port", 6000);
 // Force debugger server binding on the loopback interface
 pref("devtools.debugger.force-local", true);
-
+// Display a prompt when a new connection starts to accept/reject it
+pref("devtools.debugger.prompt-connection", true);
 // Temporary setting to enable webapps actors
-pref("devtools.debugger.enable-content-actors", false);
+pref("devtools.debugger.enable-content-actors", true);
+// Block tools from seeing / interacting with certified apps
+pref("devtools.debugger.forbid-certified-apps", true);
 
 // view source
 pref("view_source.syntax_highlight", true);
@@ -469,9 +499,6 @@ pref("view_source.editor.args", "");
 // When true this will word-wrap plain text documents.
 pref("plain_text.wrap_long_lines", false);
 
-// dispatch left clicks only to content in browser (still allows clicks to chrome/xul)
-pref("nglayout.events.dispatchLeftClickOnly", true);
-
 // whether or not to draw images while dragging
 pref("nglayout.enable_drag_images", true);
 
@@ -483,6 +510,10 @@ pref("nglayout.debug.paint_flashing_chrome", false);
 // enable/disable widget update area flashing --- only supported with 
 // BasicLayers (other layer managers always update the entire widget area)
 pref("nglayout.debug.widget_update_flashing", false);
+
+pref("layout.imagevisibility.enabled", true);
+pref("layout.imagevisibility.numscrollportwidths", 0);
+pref("layout.imagevisibility.numscrollportheights", 1);
 
 // scrollbar snapping region
 // 0 - off
@@ -773,14 +804,9 @@ pref("dom.min_timeout_value", 4);
 // And for background windows
 pref("dom.min_background_timeout_value", 1000);
 
-// Stop defining the Components object in content.
-pref("dom.omit_components_in_content", true);
-
 // Don't use new input types
 pref("dom.experimental_forms", false);
-
-// Don't enable <input type=range> yet:
-pref("dom.experimental_forms_range", true);
+pref("dom.forms.number", false);
 
 // Don't enable <input type=color> yet:
 pref("dom.forms.color", false);
@@ -819,10 +845,13 @@ pref("javascript.options.strict.debug",     true);
 pref("javascript.options.baselinejit.content", true);
 pref("javascript.options.baselinejit.chrome",  true);
 pref("javascript.options.ion.content",      true);
+pref("javascript.options.ion.chrome",       false);
 pref("javascript.options.asmjs",            true);
+pref("javascript.options.parallel_parsing", true);
 pref("javascript.options.ion.parallel_compilation", true);
 pref("javascript.options.jit_hardening", true);
-pref("javascript.options.typeinference", true);
+pref("javascript.options.typeinference.content", true);
+pref("javascript.options.typeinference.chrome", false);
 // This preference limits the memory usage of javascript.
 // If you want to change these values for your device,
 // please find Bug 417052 comment 17 and Bug 456721
@@ -830,7 +859,6 @@ pref("javascript.options.typeinference", true);
 pref("javascript.options.mem.high_water_mark", 128);
 pref("javascript.options.mem.max", -1);
 pref("javascript.options.mem.gc_per_compartment", true);
-pref("javascript.options.mem.disable_explicit_compartment_gc", true);
 pref("javascript.options.mem.gc_incremental", true);
 pref("javascript.options.mem.gc_incremental_slice_ms", 10);
 pref("javascript.options.mem.log", false);
@@ -847,8 +875,6 @@ pref("javascript.options.mem.gc_dynamic_heap_growth", true);
 pref("javascript.options.mem.gc_dynamic_mark_slice", true);
 pref("javascript.options.mem.gc_allocation_threshold_mb", 30);
 pref("javascript.options.mem.gc_decommit_threshold_mb", 32);
-
-pref("javascript.options.mem.analysis_purge_mb", 100);
 
 pref("javascript.options.showInConsole", false);
 
@@ -911,6 +937,9 @@ pref("network.protocol-handler.external.moz-icon", false);
 // This pref controls the default settings.  Per protocol settings can be used
 // to override this value.
 pref("network.protocol-handler.expose-all", true);
+
+// Warning for about:networking page
+pref("network.warnOnAboutNetworking", true);
 
 // Example: make IMAP an exposed protocol
 // pref("network.protocol-handler.expose.imap", true);
@@ -1780,6 +1809,9 @@ pref("layout.css.masking.enabled", false);
 pref("layout.css.masking.enabled", true);
 #endif
 
+// Is support for mix-blend-mode enabled? 
+pref("layout.css.mix-blend-mode.enabled", false);
+
 // Is support for the the @supports rule enabled?
 pref("layout.css.supports-rule.enabled", true);
 
@@ -1788,6 +1820,12 @@ pref("layout.css.filters.enabled", false);
 
 // Is support for CSS Flexbox enabled?
 pref("layout.css.flexbox.enabled", true);
+
+// Is support for CSS sticky positioning enabled?
+pref("layout.css.sticky.enabled", false);
+
+// Is support for the CSS4 image-orientation property enabled?
+pref("layout.css.image-orientation.enabled", true);
 
 // Is support for CSS3 Fonts features enabled?
 // (includes font-variant-*, font-kerning, font-synthesis
@@ -3282,74 +3320,68 @@ pref("font.alias-list", "sans,sans-serif,serif,monospace");
 // ar
 
 pref("font.name.serif.el", "Droid Serif");
-pref("font.name.sans-serif.el", "Roboto");
-pref("font.name.monospace.el", "Source Code Pro");
+pref("font.name.sans-serif.el", "Fira Sans OT");
+pref("font.name.monospace.el", "Fira Mono OT");
 
 pref("font.name.serif.he", "Charis SIL Compact");
-pref("font.name.sans-serif.he", "Feura Sans");
-pref("font.name.monospace.he", "Source Code Pro");
-pref("font.name-list.sans-serif.he", "Droid Sans Hebrew, Feura Sans");
+pref("font.name.sans-serif.he", "Fira Sans OT");
+pref("font.name.monospace.he", "Fira Mono OT");
+pref("font.name-list.sans-serif.he", "Droid Sans Hebrew, Fira Sans OT");
 
 pref("font.name.serif.ja", "Charis SIL Compact");
-pref("font.name.sans-serif.ja", "Feura Sans");
+pref("font.name.sans-serif.ja", "Fira Sans OT");
 pref("font.name.monospace.ja", "MotoyaLMaru");
-pref("font.name-list.sans-serif.ja", "Feura Sans, Roboto, MotoyaLMaru, MotoyaLCedar, Droid Sans Japanese");
-pref("font.name-list.monospace.ja", "MotoyaLMaru, MotoyaLCedar, Source Code Pro");
+pref("font.name-list.sans-serif.ja", "Fira Sans OT, MotoyaLMaru, MotoyaLCedar, Droid Sans Japanese");
+pref("font.name-list.monospace.ja", "MotoyaLMaru, MotoyaLCedar, Fira Mono OT");
 
 pref("font.name.serif.ko", "Charis SIL Compact");
-pref("font.name.sans-serif.ko", "Feura Sans");
-pref("font.name.monospace.ko", "Source Code Pro");
+pref("font.name.sans-serif.ko", "Fira Sans OT");
+pref("font.name.monospace.ko", "Fira Mono OT");
 
 pref("font.name.serif.th", "Charis SIL Compact");
-pref("font.name.sans-serif.th", "Feura Sans");
-pref("font.name.monospace.th", "Source Code Pro");
-pref("font.name-list.sans-serif.th", "Feura Sans, Droid Sans Thai");
+pref("font.name.sans-serif.th", "Fira Sans OT");
+pref("font.name.monospace.th", "Fira Mono OT");
+pref("font.name-list.sans-serif.th", "Fira Sans OT, Droid Sans Thai");
 
 pref("font.name.serif.tr", "Charis SIL Compact");
-pref("font.name.sans-serif.tr", "Feura Sans");
-pref("font.name.monospace.tr", "Source Code Pro");
-pref("font.name-list.sans-serif.tr", "Feura Sans, Roboto");
+pref("font.name.sans-serif.tr", "Fira Sans OT");
+pref("font.name.monospace.tr", "Fira Mono OT");
 
 pref("font.name.serif.x-baltic", "Charis SIL Compact");
-pref("font.name.sans-serif.x-baltic", "Feura Sans");
-pref("font.name.monospace.x-baltic", "Source Code Pro");
-pref("font.name-list.sans-serif.x-baltic", "Feura Sans, Roboto");
+pref("font.name.sans-serif.x-baltic", "Fira Sans OT");
+pref("font.name.monospace.x-baltic", "Fira Mono OT");
 
 pref("font.name.serif.x-central-euro", "Charis SIL Compact");
-pref("font.name.sans-serif.x-central-euro", "Feura Sans");
-pref("font.name.monospace.x-central-euro", "Source Code Pro");
-pref("font.name-list.sans-serif.x-central-euro", "Feura Sans, Roboto");
+pref("font.name.sans-serif.x-central-euro", "Fira Sans OT");
+pref("font.name.monospace.x-central-euro", "Fira Mono OT");
 
 pref("font.name.serif.x-cyrillic", "Charis SIL Compact");
-pref("font.name.sans-serif.x-cyrillic", "Roboto");
-pref("font.name.monospace.x-cyrillic", "Source Code Pro");
+pref("font.name.sans-serif.x-cyrillic", "Fira Sans OT");
+pref("font.name.monospace.x-cyrillic", "Fira Mono OT");
 
 pref("font.name.serif.x-unicode", "Charis SIL Compact");
-pref("font.name.sans-serif.x-unicode", "Feura Sans");
-pref("font.name.monospace.x-unicode", "Source Code Pro");
-pref("font.name-list.sans-serif.x-unicode", "Feura Sans, Roboto");
+pref("font.name.sans-serif.x-unicode", "Fira Sans OT");
+pref("font.name.monospace.x-unicode", "Fira Mono OT");
 
 pref("font.name.serif.x-user-def", "Charis SIL Compact");
-pref("font.name.sans-serif.x-user-def", "Feura Sans");
-pref("font.name.monospace.x-user-def", "Source Code Pro");
-pref("font.name-list.sans-serif.x-user-def", "Feura Sans, Roboto");
+pref("font.name.sans-serif.x-user-def", "Fira Sans OT");
+pref("font.name.monospace.x-user-def", "Fira Mono OT");
 
 pref("font.name.serif.x-western", "Charis SIL Compact");
-pref("font.name.sans-serif.x-western", "Feura Sans");
-pref("font.name.monospace.x-western", "Source Code Pro");
-pref("font.name-list.sans-serif.x-western", "Feura Sans, Roboto");
+pref("font.name.sans-serif.x-western", "Fira Sans OT");
+pref("font.name.monospace.x-western", "Fira Mono OT");
 
 pref("font.name.serif.zh-CN", "Charis SIL Compact");
-pref("font.name.sans-serif.zh-CN", "Feura Sans");
-pref("font.name.monospace.zh-CN", "Source Code Pro");
+pref("font.name.sans-serif.zh-CN", "Fira Sans OT");
+pref("font.name.monospace.zh-CN", "Fira Mono OT");
 
 pref("font.name.serif.zh-HK", "Charis SIL Compact");
-pref("font.name.sans-serif.zh-HK", "Feura Sans");
-pref("font.name.monospace.zh-HK", "Source Code Pro");
+pref("font.name.sans-serif.zh-HK", "Fira Sans OT");
+pref("font.name.monospace.zh-HK", "Fira Mono OT");
 
 pref("font.name.serif.zh-TW", "Charis SIL Compact");
-pref("font.name.sans-serif.zh-TW", "Feura Sans");
-pref("font.name.monospace.zh-TW", "Source Code Pro");
+pref("font.name.sans-serif.zh-TW", "Fira Sans OT");
+pref("font.name.monospace.zh-TW", "Fira Mono OT");
 
 #else
 
@@ -3903,6 +3935,7 @@ pref("signon.SignonFileName3",              "signons3.txt"); // obsolete
 pref("signon.autofillForms",                true);
 pref("signon.autologin.proxy",              false);
 pref("signon.debug",                        false);
+pref("signon.useDOMFormHasPassword",        true);
 
 // Satchel (Form Manager) prefs
 pref("browser.formfill.debug",            false);
@@ -4062,9 +4095,6 @@ pref("layers.async-video.enabled",false);
 // Whether to disable acceleration for all widgets.
 pref("layers.acceleration.disabled", false);
 
-// Whether to use the deprecated texture architecture rather than the new one.
-pref("layers.use-deprecated-textures", true);
-
 // Whether to force acceleration on, ignoring blacklists.
 #ifdef ANDROID
 // bug 838603 -- on Android, accidentally blacklisting OpenGL layers
@@ -4077,22 +4107,40 @@ pref("layers.acceleration.force-enabled", false);
 pref("layers.acceleration.draw-fps", false);
 
 pref("layers.draw-borders", false);
+pref("layers.draw-tile-borders", false);
+pref("layers.draw-bigimage-borders", false);
 pref("layers.frame-counter", false);
+// Max number of layers per container. See Overwrite in mobile prefs.
+pref("layers.max-active", -1);
 
+// Whether to use the deprecated texture architecture rather than the new one.
 #ifdef XP_MACOSX
 pref("layers.offmainthreadcomposition.enabled", true);
+pref("layers.use-deprecated-textures", false);
+#else
+#ifdef MOZ_WIDGET_GONK
+pref("layers.use-deprecated-textures", false);
 #else
 pref("layers.offmainthreadcomposition.enabled", false);
+pref("layers.use-deprecated-textures", true);
 #endif
+#endif
+
 // same effect as layers.offmainthreadcomposition.enabled, but specifically for
 // use with tests.
 pref("layers.offmainthreadcomposition.testing.enabled", false);
+
+// whether to allow use of the basic compositor
+pref("layers.offmainthreadcomposition.force-basic", false);
+
 // Whether to animate simple opacity and transforms on the compositor
 pref("layers.offmainthreadcomposition.async-animations", false);
 // Whether to prefer normal memory over shared memory. Ignored with cross-process compositing
 pref("layers.prefer-memory-over-shmem", true);
 
 pref("layers.bufferrotation.enabled", true);
+
+pref("layers.componentalpha.enabled", true);
 
 #ifdef ANDROID
 pref("gfx.apitrace.enabled",false);
@@ -4190,6 +4238,7 @@ pref("dom.sms.enabled", false);
 // 7-bit default alphabet.
 pref("dom.sms.strict7BitEncoding", false);
 pref("dom.sms.requestStatusReport", true);
+pref("dom.mms.requestStatusReport", true);
 
 // WebContacts
 pref("dom.mozContacts.enabled", false);
@@ -4306,9 +4355,14 @@ pref("dom.browserElement.maxScreenshotDelayMS", 2000);
 // Whether we should show the placeholder when the element is focused but empty.
 pref("dom.placeholder.show_on_focus", true);
 
-// UAProfile settings
+// MMS UA Profile settings
 pref("wap.UAProf.url", "");
 pref("wap.UAProf.tagname", "x-wap-profile");
+
+// MMS version 1.1 = 0x11 (or decimal 17)
+// MMS version 1.3 = 0x13 (or decimal 19)
+// @see OMA-TS-MMS_ENC-V1_3-20110913-A clause 7.3.34
+pref("dom.mms.version", 19);
 
 // Retrieval mode for MMS
 // manual: Manual retrieval mode.
@@ -4350,3 +4404,24 @@ pref("dom.forms.inputmode", false);
 #else
 pref("dom.forms.inputmode", true);
 #endif
+
+// InputMethods for soft keyboards in B2G
+pref("dom.mozInputMethod.enabled", false);
+
+// Telephony API
+pref("dom.telephony.enabled", false);
+
+// Cell Broadcast API
+pref("dom.cellbroadcast.enabled", false);
+
+// ICC API
+pref("dom.icc.enabled", false);
+
+// Mobile Connection API
+pref("dom.mobileconnection.enabled", false);
+
+// Voice Mail API
+pref("dom.voicemail.enabled", false);
+
+// DOM Inter-App Communication API.
+pref("dom.inter-app-communication-api.enabled", false);

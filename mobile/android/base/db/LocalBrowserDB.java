@@ -22,6 +22,7 @@ import android.content.ContentValues;
 import android.database.ContentObserver;
 import android.database.Cursor;
 import android.database.CursorWrapper;
+import android.database.DatabaseUtils;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.net.Uri;
@@ -52,7 +53,6 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
 
     // Use wrapped Boolean so that we can have a null state
     private Boolean mDesktopBookmarksExist;
-    private Boolean mReadingListItemsExist;
 
     private final Uri mBookmarksUriWithProfile;
     private final Uri mParentsUriWithProfile;
@@ -70,15 +70,12 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
                            Bookmarks.URL,
                            Bookmarks.TITLE,
                            Bookmarks.TYPE,
-                           Bookmarks.PARENT,
-                           Bookmarks.KEYWORD,
-                           Bookmarks.FAVICON }; 
+                           Bookmarks.PARENT };
 
     public LocalBrowserDB(String profile) {
         mProfile = profile;
         mFolderIdMap = new HashMap<String, Long>();
         mDesktopBookmarksExist = null;
-        mReadingListItemsExist = null;
 
         mBookmarksUriWithProfile = appendProfile(Bookmarks.CONTENT_URI);
         mParentsUriWithProfile = appendProfile(Bookmarks.PARENTS_CONTENT_URI);
@@ -100,7 +97,6 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
     @Override
     public void invalidateCachedState() {
         mDesktopBookmarksExist = null;
-        mReadingListItemsExist = null;
     }
 
     private Uri historyUriWithLimit(int limit) {
@@ -236,16 +232,20 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
 
     @Override
     public Cursor getTopSites(ContentResolver cr, int limit) {
-        // Filter out sites that are pinned
+        // Filter out bookmarks that don't have real parents (e.g. pinned sites or reading list items)
         String selection = DBUtils.concatenateWhere("", Combined.URL + " NOT IN (SELECT " +
                                              Bookmarks.URL + " FROM bookmarks WHERE " +
-                                             DBUtils.qualifyColumn("bookmarks", Bookmarks.PARENT) + " == ? AND " +
+                                             DBUtils.qualifyColumn("bookmarks", Bookmarks.PARENT) + " < ? AND " +
                                              DBUtils.qualifyColumn("bookmarks", Bookmarks.IS_DELETED) + " == 0)");
-        String[] selectionArgs = DBUtils.appendSelectionArgs(new String[0], new String[] { String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID) });
+        String[] selectionArgs = new String[] { String.valueOf(Bookmarks.FIXED_ROOT_ID) };
+
         return filterAllSites(cr,
                               new String[] { Combined._ID,
                                              Combined.URL,
-                                             Combined.TITLE },
+                                             Combined.TITLE,
+                                             Combined.DISPLAY,
+                                             Combined.BOOKMARK_ID,
+                                             Combined.HISTORY_ID },
                               "",
                               limit,
                               BrowserDB.ABOUT_PAGES_URL_FILTER,
@@ -332,7 +332,6 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
                                            Combined.HISTORY_ID,
                                            Combined.URL,
                                            Combined.TITLE,
-                                           Combined.FAVICON,
                                            Combined.DISPLAY,
                                            Combined.DATE_LAST_VISITED,
                                            Combined.VISITS },
@@ -373,7 +372,6 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
     public Cursor getBookmarksInFolder(ContentResolver cr, long folderId) {
         Cursor c = null;
         boolean addDesktopFolder = false;
-        boolean addReadingListFolder = false;
 
         // We always want to show mobile bookmarks in the root view.
         if (folderId == Bookmarks.FIXED_ROOT_ID) {
@@ -382,10 +380,6 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
             // We'll add a fake "Desktop Bookmarks" folder to the root view if desktop 
             // bookmarks exist, so that the user can still access non-mobile bookmarks.
             addDesktopFolder = desktopBookmarksExist(cr);
-
-            // We'll add the Reading List folder to the root view if any reading
-            // list items exist.
-            addReadingListFolder = readingListItemsExist(cr);
         }
 
         if (folderId == Bookmarks.FAKE_DESKTOP_FOLDER_ID) {
@@ -406,16 +400,17 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
             c = cr.query(mBookmarksUriWithProfile,
                          DEFAULT_BOOKMARK_COLUMNS,
                          Bookmarks.PARENT + " = ? AND " +
-                         "(" + Bookmarks.TYPE + " = ? OR " + Bookmarks.TYPE + " = ?)",
+                         "(" + Bookmarks.TYPE + " = ? OR " +
+                            "(" + Bookmarks.TYPE + " = ? AND " + Bookmarks.URL + " IS NOT NULL))",
                          new String[] { String.valueOf(folderId),
-                                        String.valueOf(Bookmarks.TYPE_BOOKMARK),
-                                        String.valueOf(Bookmarks.TYPE_FOLDER) },
+                                        String.valueOf(Bookmarks.TYPE_FOLDER),
+                                        String.valueOf(Bookmarks.TYPE_BOOKMARK) },
                          null);
         }
 
-        if (addDesktopFolder || addReadingListFolder) {
+        if (addDesktopFolder) {
             // Wrap cursor to add fake desktop bookmarks and reading list folders
-            c = new SpecialFoldersCursorWrapper(c, addDesktopFolder, addReadingListFolder);
+            c = new SpecialFoldersCursorWrapper(c, addDesktopFolder);
         }
 
         return new LocalDBCursor(c);
@@ -450,29 +445,6 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         // Cache result for future queries
         mDesktopBookmarksExist = (count > 0);
         return mDesktopBookmarksExist;
-    }
-
-    private boolean readingListItemsExist(ContentResolver cr) {
-        if (mReadingListItemsExist != null)
-            return mReadingListItemsExist;
-
-        Cursor c = null;
-        int count = 0;
-        try {
-            c = cr.query(bookmarksUriWithLimit(1),
-                         new String[] { Bookmarks._ID },
-                         Bookmarks.PARENT + " = ?",
-                         new String[] { String.valueOf(Bookmarks.FIXED_READING_LIST_ID) },
-                         null);
-            count = c.getCount();
-        } finally {
-            if (c != null)
-                c.close();
-        }
-
-        // Cache result for future queries
-        mReadingListItemsExist = (count > 0);
-        return mReadingListItemsExist;
     }
 
     @Override
@@ -727,6 +699,16 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
 
     @Override
     public Bitmap getFaviconForUrl(ContentResolver cr, String uri) {
+        final byte[] b = getFaviconBytesForUrl(cr, uri);
+        if (b == null) {
+            return null;
+        }
+
+        return BitmapUtils.decodeByteArray(b);
+    }
+
+    @Override
+    public byte[] getFaviconBytesForUrl(ContentResolver cr, String uri) {
         Cursor c = null;
         byte[] b = null;
 
@@ -737,20 +719,19 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
                          new String[] { uri },
                          null);
 
-            if (c.moveToFirst()) {
-                int faviconIndex = c.getColumnIndexOrThrow(Combined.FAVICON);
-                b = c.getBlob(faviconIndex);
+            if (!c.moveToFirst()) {
+                return null;
             }
+
+            final int faviconIndex = c.getColumnIndexOrThrow(Combined.FAVICON);
+            b = c.getBlob(faviconIndex);
         } finally {
-            if (c != null)
+            if (c != null) {
                 c.close();
+            }
         }
 
-        if (b == null) {
-            return null;
-        }
-
-        return BitmapUtils.decodeByteArray(b);
+        return b;
     }
 
     @Override
@@ -777,23 +758,23 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
     @Override
     public Cursor getFaviconsForUrls(ContentResolver cr, List<String> urls) {
         StringBuilder selection = new StringBuilder();
-        String[] selectionArgs = new String[urls.size()];
+        selection.append(Favicons.URL + " IN (");
 
         for (int i = 0; i < urls.size(); i++) {
-          final String url = urls.get(i);
+            final String url = urls.get(i);
 
-          if (i > 0)
-            selection.append(" OR ");
+            if (i > 0)
+                selection.append(", ");
 
-          selection.append(Favicons.URL + " = ?");
-          selectionArgs[i] = url;
+            DatabaseUtils.appendEscapedSQLString(selection, url);
         }
+
+        selection.append(")");
 
         return cr.query(mCombinedUriWithProfile,
                         new String[] { Combined.URL, Combined.FAVICON },
                         selection.toString(),
-                        selectionArgs,
-                        null);
+                        null, null);
     }
 
     @Override
@@ -874,20 +855,38 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         return b;
     }
 
+    /**
+     * Query for non-null thumbnails matching the provided <code>urls</code>.
+     * The returned cursor will have no more than, but possibly fewer than,
+     * the requested number of thumbnails.
+     *
+     * Returns null if the provided list of URLs is empty or null.
+     */
     @Override
     public Cursor getThumbnailsForUrls(ContentResolver cr, List<String> urls) {
-        StringBuilder selection = new StringBuilder();
-        String[] selectionArgs = new String[urls.size()];
-
-        for (int i = 0; i < urls.size(); i++) {
-          final String url = urls.get(i);
-
-          if (i > 0)
-            selection.append(" OR ");
-
-          selection.append(Thumbnails.URL + " = ?");
-          selectionArgs[i] = url;
+        if (urls == null) {
+            return null;
         }
+
+        int urlCount = urls.size();
+        if (urlCount == 0) {
+            return null;
+        }
+
+        // Don't match against null thumbnails.
+        StringBuilder selection = new StringBuilder(
+                Thumbnails.DATA + " IS NOT NULL AND " +
+                Thumbnails.URL + " IN ("
+        );
+
+        // Compute a (?, ?, ?) sequence to match the provided URLs.
+        int i = 1;
+        while (i++ < urlCount) {
+            selection.append("?, ");
+        }
+        selection.append("?)");
+
+        String[] selectionArgs = urls.toArray(new String[urlCount]);
 
         return cr.query(mThumbnailsUriWithProfile,
                         new String[] { Thumbnails.URL, Thumbnails.DATA },
@@ -1073,23 +1072,16 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         private int mIndexOffset;
 
         private int mDesktopBookmarksIndex = -1;
-        private int mReadingListIndex = -1;
 
         private boolean mAtDesktopBookmarksPosition = false;
-        private boolean mAtReadingListPosition = false;
 
-        public SpecialFoldersCursorWrapper(Cursor c, boolean showDesktopBookmarks, boolean showReadingList) {
+        public SpecialFoldersCursorWrapper(Cursor c, boolean showDesktopBookmarks) {
             super(c);
 
             mIndexOffset = 0;
 
             if (showDesktopBookmarks) {
                 mDesktopBookmarksIndex = mIndexOffset;
-                mIndexOffset++;
-            }
-
-            if (showReadingList) {
-                mReadingListIndex = mIndexOffset;
                 mIndexOffset++;
             }
         }
@@ -1102,9 +1094,8 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         @Override
         public boolean moveToPosition(int position) {
             mAtDesktopBookmarksPosition = (mDesktopBookmarksIndex == position);
-            mAtReadingListPosition = (mReadingListIndex == position);
 
-            if (mAtDesktopBookmarksPosition || mAtReadingListPosition)
+            if (mAtDesktopBookmarksPosition)
                 return true;
 
             return super.moveToPosition(position - mIndexOffset);
@@ -1112,7 +1103,7 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
 
         @Override
         public long getLong(int columnIndex) {
-            if (!mAtDesktopBookmarksPosition && !mAtReadingListPosition)
+            if (!mAtDesktopBookmarksPosition)
                 return super.getLong(columnIndex);
 
             if (columnIndex == getColumnIndex(Bookmarks.PARENT)) {
@@ -1124,16 +1115,11 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
 
         @Override
         public int getInt(int columnIndex) {
-            if (!mAtDesktopBookmarksPosition && !mAtReadingListPosition)
+            if (!mAtDesktopBookmarksPosition)
                 return super.getInt(columnIndex);
 
-            if (columnIndex == getColumnIndex(Bookmarks._ID)) {
-                if (mAtDesktopBookmarksPosition) {
+            if (columnIndex == getColumnIndex(Bookmarks._ID) && mAtDesktopBookmarksPosition)
                     return Bookmarks.FAKE_DESKTOP_FOLDER_ID;
-                } else if (mAtReadingListPosition) {
-                    return Bookmarks.FIXED_READING_LIST_ID;
-                }
-            }
 
             if (columnIndex == getColumnIndex(Bookmarks.TYPE))
                 return Bookmarks.TYPE_FOLDER;
@@ -1143,16 +1129,11 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
 
         @Override
         public String getString(int columnIndex) {
-            if (!mAtDesktopBookmarksPosition && !mAtReadingListPosition)
+            if (!mAtDesktopBookmarksPosition)
                 return super.getString(columnIndex);
 
-            if (columnIndex == getColumnIndex(Bookmarks.GUID)) {
-                if (mAtDesktopBookmarksPosition) {
+            if (columnIndex == getColumnIndex(Bookmarks.GUID) && mAtDesktopBookmarksPosition)
                     return Bookmarks.FAKE_DESKTOP_FOLDER_GUID;
-                } else if (mAtReadingListPosition) {
-                    return Bookmarks.READING_LIST_FOLDER_GUID;
-                }
-            }
 
             return "";
         }
@@ -1202,26 +1183,18 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         values.put(Bookmarks.POSITION, position);
         values.put(Bookmarks.IS_DELETED, 0);
 
-        // If this site is already pinned, unpin it
-        cr.delete(mBookmarksUriWithProfile,
-                  Bookmarks.PARENT + " == ? AND " + Bookmarks.URL + " == ?",
-                  new String[] {
-                      String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID),
-                      url
-                  });
-
-        // If something is already pinned in this spot update it
-        int updated = cr.update(mBookmarksUriWithProfile,
-                                values,
-                                Bookmarks.POSITION + " = ? AND " +
-                                Bookmarks.PARENT + " = ?",
-                                new String[] { Integer.toString(position),
-                                               String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID) });
-
-        // Otherwise just insert a new item
-        if (updated == 0) {
-            cr.insert(mBookmarksUriWithProfile, values);
-        }
+        // We do an update-and-replace here without deleting any existing pins for the given URL.
+        // That means if the user pins a URL, then edits another thumbnail to use the same URL,
+        // we'll end up with two pins for that site. This is the intended behavior, which
+        // incidentally saves us a delete query.
+        Uri uri = mBookmarksUriWithProfile.buildUpon()
+                .appendQueryParameter(BrowserContract.PARAM_INSERT_IF_NEEDED, "true").build();
+        cr.update(uri,
+                  values,
+                  Bookmarks.POSITION + " = ? AND " +
+                  Bookmarks.PARENT + " = ?",
+                  new String[] { Integer.toString(position),
+                                 String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID) });
     }
 
     @Override

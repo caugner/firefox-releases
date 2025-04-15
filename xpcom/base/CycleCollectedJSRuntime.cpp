@@ -59,12 +59,13 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/DOMJSClass.h"
-#include "jsfriendapi.h"
 #include "jsprf.h"
 #include "nsCycleCollectionNoteRootCallback.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsCycleCollector.h"
 #include "nsDOMJSUtils.h"
+#include "nsIException.h"
+#include "nsThreadUtils.h"
 #include "xpcpublic.h"
 
 using namespace mozilla;
@@ -259,8 +260,9 @@ private:
     if (delegateMightNeedMarking && kkind == JSTRACE_OBJECT) {
       JSObject* kdelegate = js::GetWeakmapKeyDelegate((JSObject*)k);
       if (kdelegate && !xpc_IsGrayGCThing(kdelegate)) {
-        JS::UnmarkGrayGCThingRecursively(k, JSTRACE_OBJECT);
-        tracer->mAnyMarked = true;
+        if (JS::UnmarkGrayGCThingRecursively(k, JSTRACE_OBJECT)) {
+          tracer->mAnyMarked = true;
+        }
       }
     }
 
@@ -268,54 +270,14 @@ private:
         (!k || !xpc_IsGrayGCThing(k)) &&
         (!m || !xpc_IsGrayGCThing(m)) &&
         vkind != JSTRACE_SHAPE) {
-      JS::UnmarkGrayGCThingRecursively(v, vkind);
-      tracer->mAnyMarked = true;
+      if (JS::UnmarkGrayGCThingRecursively(v, vkind)) {
+        tracer->mAnyMarked = true;
+      }
     }
   }
 
   bool mAnyMarked;
 };
-
-class JSContextParticipant : public nsCycleCollectionParticipant
-{
-public:
-  NS_IMETHOD Root(void *n)
-  {
-    return NS_OK;
-  }
-  NS_IMETHOD Unlink(void *n)
-  {
-    return NS_OK;
-  }
-  NS_IMETHOD Unroot(void *n)
-  {
-    return NS_OK;
-  }
-  NS_IMETHOD_(void) DeleteCycleCollectable(void *n)
-  {
-  }
-  NS_IMETHOD Traverse(void *n, nsCycleCollectionTraversalCallback &cb)
-  {
-    JSContext *cx = static_cast<JSContext*>(n);
-
-    // JSContexts do not have an internal refcount and always have a single
-    // owner (e.g., nsJSContext). Thus, the default refcount is 1. However,
-    // in the (abnormal) case of synchronous cycle-collection, the context
-    // may be actively executing code in which case we want to treat it as
-    // rooted by adding an extra refcount.
-    unsigned refCount = js::ContextHasOutstandingRequests(cx) ? 2 : 1;
-
-    cb.DescribeRefCountedNode(refCount, "JSContext");
-    if (JSObject *global = js::DefaultObjectForContextOrNull(cx)) {
-      NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "[global object]");
-      cb.NoteJSChild(global);
-    }
-
-    return NS_OK;
-  }
-};
-
-static JSContextParticipant JSContext_cycleCollectorGlobal;
 
 struct Closure
 {
@@ -473,12 +435,11 @@ NoteJSChildGrayWrapperShim(void* aData, void* aThing)
 static const JSZoneParticipant sJSZoneCycleCollectorGlobal;
 
 CycleCollectedJSRuntime::CycleCollectedJSRuntime(uint32_t aMaxbytes,
-                                                 JSUseHelperThreads aUseHelperThreads,
-                                                 bool aExpectUnrootedGlobals)
+                                                 JSUseHelperThreads aUseHelperThreads)
   : mGCThingCycleCollectorGlobal(sGCThingCycleCollectorGlobal),
     mJSZoneCycleCollectorGlobal(sJSZoneCycleCollectorGlobal),
     mJSRuntime(nullptr),
-    mExpectUnrootedGlobals(aExpectUnrootedGlobals)
+    mJSHolders(512)
 #ifdef DEBUG
   , mObjectToUnlink(nullptr)
 #endif
@@ -494,18 +455,19 @@ CycleCollectedJSRuntime::CycleCollectedJSRuntime(uint32_t aMaxbytes,
   JS_SetGrayGCRootsTracer(mJSRuntime, TraceGrayJS, this);
   JS_SetGCCallback(mJSRuntime, GCCallback, this);
   JS_SetContextCallback(mJSRuntime, ContextCallback, this);
-
-  mJSHolders.Init(512);
+  JS_SetDestroyZoneCallback(mJSRuntime, XPCStringConvert::FreeZoneCache);
+  JS_SetSweepZoneCallback(mJSRuntime, XPCStringConvert::ClearZoneCache);
 
   nsCycleCollector_registerJSRuntime(this);
-
-  mDeferredFinalizerTable.Init();
 }
 
 CycleCollectedJSRuntime::~CycleCollectedJSRuntime()
 {
   MOZ_ASSERT(!mDeferredFinalizerTable.Count());
   MOZ_ASSERT(!mDeferredSupports.Length());
+
+  // Clear mPendingException first, since it might be cycle collected.
+  mPendingException = nullptr;
 
   nsCycleCollector_forgetJSRuntime();
 
@@ -539,23 +501,6 @@ CycleCollectedJSRuntime::UnmarkSkippableJSHolders()
 }
 
 void
-CycleCollectedJSRuntime::MaybeTraceGlobals(JSTracer* aTracer) const
-{
-  JSContext* iter = nullptr;
-  while (JSContext* acx = JS_ContextIterator(Runtime(), &iter)) {
-    MOZ_ASSERT(js::HasUnrootedGlobal(acx) == mExpectUnrootedGlobals);
-    if (!js::HasUnrootedGlobal(acx)) {
-      continue;
-    }
-
-    if (JSObject* global = js::DefaultObjectForContextOrNull(acx)) {
-      JS::AssertGCThingMustBeTenured(global);
-      JS_CallObjectTracer(aTracer, &global, "Global Object");
-    }
-  }
-}
-
-void
 CycleCollectedJSRuntime::DescribeGCThing(bool aIsMarked, void* aThing,
                                          JSGCTraceKind aTraceKind,
                                          nsCycleCollectionTraversalCallback& aCb) const
@@ -568,7 +513,7 @@ CycleCollectedJSRuntime::DescribeGCThing(bool aIsMarked, void* aThing,
   char name[72];
   if (aTraceKind == JSTRACE_OBJECT) {
     JSObject* obj = static_cast<JSObject*>(aThing);
-    js::Class* clasp = js::GetObjectClass(obj);
+    const js::Class* clasp = js::GetObjectClass(obj);
 
     // Give the subclass a chance to do something
     if (DescribeCustomObjects(obj, clasp, name)) {
@@ -619,7 +564,7 @@ CycleCollectedJSRuntime::NoteGCThingJSChildren(void* aThing,
 }
 
 void
-CycleCollectedJSRuntime::NoteGCThingXPCOMChildren(js::Class* aClasp, JSObject* aObj,
+CycleCollectedJSRuntime::NoteGCThingXPCOMChildren(const js::Class* aClasp, JSObject* aObj,
                                                   nsCycleCollectionTraversalCallback& aCb) const
 {
   MOZ_ASSERT(aClasp);
@@ -732,32 +677,9 @@ CycleCollectedJSRuntime::TraverseObjectShim(void* aData, void* aThing)
                                  JSTRACE_OBJECT, closure->cb);
 }
 
-// For all JS objects that are held by native objects but aren't held
-// through rooting or locking, we need to add all the native objects that
-// hold them so that the JS objects are colored correctly in the cycle
-// collector. This includes JSContexts that don't have outstanding requests,
-// because their global object wasn't marked by the JS GC. All other JS
-// roots were marked by the JS GC and will be colored correctly in the cycle
-// collector.
-void
-CycleCollectedJSRuntime::MaybeTraverseGlobals(nsCycleCollectionNoteRootCallback& aCb) const
-{
-  JSContext *iter = nullptr, *acx;
-  while ((acx = JS_ContextIterator(Runtime(), &iter))) {
-    // Add the context to the CC graph only if traversing it would
-    // end up doing something.
-    JSObject* global = js::DefaultObjectForContextOrNull(acx);
-    if (global && xpc_IsGrayGCThing(global)) {
-      aCb.NoteNativeRoot(acx, JSContextParticipant());
-    }
-  }
-}
-
 void
 CycleCollectedJSRuntime::TraverseNativeRoots(nsCycleCollectionNoteRootCallback& aCb)
 {
-  MaybeTraverseGlobals(aCb);
-
   // NB: This is here just to preserve the existing XPConnect order. I doubt it
   // would hurt to do this after the JS holders.
   TraverseAdditionalNativeRoots(aCb);
@@ -795,7 +717,7 @@ CycleCollectedJSRuntime::GCCallback(JSRuntime* aRuntime,
   self->OnGC(aStatus);
 }
 
-/* static */ JSBool
+/* static */ bool
 CycleCollectedJSRuntime::ContextCallback(JSContext* aContext,
                                          unsigned aOperation,
                                          void* aData)
@@ -804,7 +726,7 @@ CycleCollectedJSRuntime::ContextCallback(JSContext* aContext,
 
   MOZ_ASSERT(JS_GetRuntime(aContext) == self->Runtime());
 
-  return self->OnContext(aContext, aOperation);
+  return self->CustomContextCallback(aContext, aOperation);
 }
 
 struct JsGcTracer : public TraceCallbacks
@@ -837,8 +759,6 @@ TraceJSHolder(void* aHolder, nsScriptObjectTracer*& aTracer, void* aArg)
 void
 CycleCollectedJSRuntime::TraceNativeGrayRoots(JSTracer* aTracer)
 {
-  MaybeTraceGlobals(aTracer);
-
   // NB: This is here just to preserve the existing XPConnect order. I doubt it
   // would hurt to do this after the JS holders.
   TraceAdditionalNativeGrayRoots(aTracer);
@@ -852,24 +772,48 @@ CycleCollectedJSRuntime::AddJSHolder(void* aHolder, nsScriptObjectTracer* aTrace
   mJSHolders.Put(aHolder, aTracer);
 }
 
+struct ClearJSHolder : TraceCallbacks
+{
+  virtual void Trace(JS::Heap<JS::Value>* aPtr, const char*, void*) const MOZ_OVERRIDE
+  {
+    *aPtr = JSVAL_VOID;
+  }
+
+  virtual void Trace(JS::Heap<jsid>* aPtr, const char*, void*) const MOZ_OVERRIDE
+  {
+    *aPtr = JSID_VOID;
+  }
+
+  virtual void Trace(JS::Heap<JSObject*>* aPtr, const char*, void*) const MOZ_OVERRIDE
+  {
+    *aPtr = nullptr;
+  }
+
+  virtual void Trace(JS::Heap<JSString*>* aPtr, const char*, void*) const MOZ_OVERRIDE
+  {
+    *aPtr = nullptr;
+  }
+
+  virtual void Trace(JS::Heap<JSScript*>* aPtr, const char*, void*) const MOZ_OVERRIDE
+  {
+    *aPtr = nullptr;
+  }
+};
+
 void
 CycleCollectedJSRuntime::RemoveJSHolder(void* aHolder)
 {
-#ifdef DEBUG
-  // Assert that the holder doesn't try to keep any GC things alive.
-  // In case of unlinking cycle collector calls AssertNoObjectsToTrace
-  // manually because we don't want to check the holder before we are
-  // finished unlinking it
-  if (aHolder != mObjectToUnlink) {
-    AssertNoObjectsToTrace(aHolder);
+  nsScriptObjectTracer* tracer = mJSHolders.Get(aHolder);
+  if (!tracer) {
+    return;
   }
-#endif
+  tracer->Trace(aHolder, ClearJSHolder(), nullptr);
   mJSHolders.Remove(aHolder);
 }
 
 #ifdef DEBUG
 bool
-CycleCollectedJSRuntime::TestJSHolder(void* aHolder)
+CycleCollectedJSRuntime::IsJSHolder(void* aHolder)
 {
   return mJSHolders.Get(aHolder, nullptr);
 }
@@ -890,11 +834,17 @@ CycleCollectedJSRuntime::AssertNoObjectsToTrace(void* aPossibleJSHolder)
 }
 #endif
 
-// static
-nsCycleCollectionParticipant*
-CycleCollectedJSRuntime::JSContextParticipant()
+already_AddRefed<nsIException>
+CycleCollectedJSRuntime::GetPendingException() const
 {
-  return &JSContext_cycleCollectorGlobal;
+  nsCOMPtr<nsIException> out = mPendingException;
+  return out.forget();
+}
+
+void
+CycleCollectedJSRuntime::SetPendingException(nsIException* aException)
+{
+  mPendingException = aException;
 }
 
 nsCycleCollectionParticipant*
@@ -907,38 +857,6 @@ nsCycleCollectionParticipant*
 CycleCollectedJSRuntime::ZoneParticipant()
 {
     return &mJSZoneCycleCollectorGlobal;
-}
-
-bool
-CycleCollectedJSRuntime::NotifyLeaveMainThread() const
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  if (JS_IsInRequest(mJSRuntime)) {
-    return false;
-  }
-  JS_ClearRuntimeThread(mJSRuntime);
-  return true;
-}
-
-void
-CycleCollectedJSRuntime::NotifyEnterCycleCollectionThread() const
-{
-  MOZ_ASSERT(!NS_IsMainThread());
-  JS_SetRuntimeThread(mJSRuntime);
-}
-
-void
-CycleCollectedJSRuntime::NotifyLeaveCycleCollectionThread() const
-{
-  MOZ_ASSERT(!NS_IsMainThread());
-  JS_ClearRuntimeThread(mJSRuntime);
-}
-
-void
-CycleCollectedJSRuntime::NotifyEnterMainThread() const
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  JS_SetRuntimeThread(mJSRuntime);
 }
 
 nsresult
@@ -978,19 +896,18 @@ CycleCollectedJSRuntime::UsefulToMergeZones() const
   JSContext* cx;
   JSAutoRequest ar(nsContentUtils::GetSafeJSContext());
   while ((cx = JS_ContextIterator(mJSRuntime, &iter))) {
-    // Skip anything without an nsIScriptContext, as well as any scx whose
-    // NativeGlobal() is not an outer window (this happens with XUL Prototype
-    // compilation scopes, for example, which we're not interested in).
+    // Skip anything without an nsIScriptContext.
     nsIScriptContext* scx = GetScriptContextFromJSContext(cx);
-    JS::RootedObject global(cx, scx ? scx->GetNativeGlobal() : nullptr);
-    if (!global || !js::GetObjectParent(global)) {
+    JS::RootedObject obj(cx, scx ? scx->GetWindowProxyPreserveColor() : nullptr);
+    if (!obj) {
       continue;
     }
+    MOZ_ASSERT(js::IsOuterObject(obj));
     // Grab the inner from the outer.
-    global = JS_ObjectToInnerObject(cx, global);
-    MOZ_ASSERT(!js::GetObjectParent(global));
-    if (JS::GCThingIsMarkedGray(global) &&
-        !js::IsSystemCompartment(js::GetObjectCompartment(global))) {
+    obj = JS_ObjectToInnerObject(cx, obj);
+    MOZ_ASSERT(!js::GetObjectParent(obj));
+    if (JS::GCThingIsMarkedGray(obj) &&
+        !js::IsSystemCompartment(js::GetObjectCompartment(obj))) {
       return true;
     }
   }
@@ -1193,21 +1110,7 @@ CycleCollectedJSRuntime::OnGC(JSGCStatus aStatus)
 {
   switch (aStatus) {
     case JSGC_BEGIN:
-    {
-      // XXXkhuey do we still need this?
-      // We seem to sometime lose the unrooted global flag. Restore it
-      // here. FIXME: bug 584495.
-      if (mExpectUnrootedGlobals){
-        JSContext* iter = nullptr;
-        while (JSContext* acx = JS_ContextIterator(Runtime(), &iter)) {
-          if (!js::HasUnrootedGlobal(acx)) {
-            JS_ToggleOptions(acx, JSOPTION_UNROOTED_GLOBAL);
-          }
-        }
-      }
-
       break;
-    }
     case JSGC_END:
     {
       /*
@@ -1231,16 +1134,4 @@ CycleCollectedJSRuntime::OnGC(JSGCStatus aStatus)
   }
 
   CustomGCCallback(aStatus);
-}
-
-bool
-CycleCollectedJSRuntime::OnContext(JSContext* aCx, unsigned aOperation)
-{
-  if (mExpectUnrootedGlobals && aOperation == JSCONTEXT_NEW) {
-    // XXXkhuey bholley is going to make this go away, but for now XPConnect
-    // needs it.
-    JS_ToggleOptions(aCx, JSOPTION_UNROOTED_GLOBAL);
-  }
-
-  return CustomContextCallback(aCx, aOperation);
 }

@@ -44,13 +44,16 @@
 #include "nsIPrompt.h"
 #include "nsIFilePicker.h"
 #include "nsJSPrincipals.h"
+#include "nsJSUtils.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIGenKeypairInfoDlg.h"
 #include "nsIDOMCryptoDialogs.h"
 #include "nsIFormSigningDialog.h"
+#include "nsIContentSecurityPolicy.h"
+#include "nsIURI.h"
 #include "jsapi.h"
-#include "jsdbgapi.h"
+#include "js/OldDebugAPI.h"
 #include <ctype.h>
 #include "pk11func.h"
 #include "keyhi.h"
@@ -841,7 +844,9 @@ cryptojs_generateOneKeyPair(JSContext *cx, nsKeyPairInfo *keyPairInfo,
             mustMoveKey = true;
           }
         
-          PK11_FreeSlot(used_slot);
+          if (used_slot) {
+            PK11_FreeSlot(used_slot);
+          }
         }
       }
     }
@@ -1894,6 +1899,39 @@ nsCrypto::GenerateCRMFRequest(JSContext* aContext,
     return nullptr;
   }
 
+  nsCOMPtr<nsIContentSecurityPolicy> csp;
+  if (!nsContentUtils::GetContentSecurityPolicy(aContext, getter_AddRefs(csp))) {
+    NS_ERROR("Error: failed to get CSP");
+    aRv.Throw(NS_ERROR_FAILURE);
+    return nullptr;
+  }
+
+  bool evalAllowed = true;
+  bool reportEvalViolations = false;
+  if (csp && NS_FAILED(csp->GetAllowsEval(&reportEvalViolations, &evalAllowed))) {
+    NS_WARNING("CSP: failed to get allowsEval");
+    aRv.Throw(NS_ERROR_FAILURE);
+    return nullptr;
+  }
+
+  if (reportEvalViolations) {
+    NS_NAMED_LITERAL_STRING(scriptSample, "window.crypto.generateCRMFRequest: call to eval() or related function blocked by CSP");
+
+    const char *fileName;
+    uint32_t lineNum;
+    nsJSUtils::GetCallingLocation(aContext, &fileName, &lineNum);
+    csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_EVAL,
+                             NS_ConvertASCIItoUTF16(fileName),
+                             scriptSample,
+                             lineNum);
+  }
+
+  if (!evalAllowed) {
+    NS_WARNING("eval() not allowed by Content Security Policy");
+    aRv.Throw(NS_ERROR_FAILURE);
+    return nullptr;
+  }
+
   //Put up some UI warning that someone is trying to
   //escrow the private key.
   //Don't addref this copy.  That way ths reference goes away
@@ -2042,7 +2080,6 @@ nsCrypto::GenerateCRMFRequest(JSContext* aContext,
   return crmf.forget();
 }
 
-
 // Reminder that we inherit the memory passed into us here.
 // An implementation to let us back up certs as an event.
 nsP12Runnable::nsP12Runnable(nsIX509Cert **certArr, int32_t numCerts,
@@ -2172,7 +2209,7 @@ nsCryptoRunnable::Run()
   JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, m_args->m_scope);
 
-  JSBool ok =
+  bool ok =
     JS_EvaluateScriptForPrincipals(cx, m_args->m_scope,
                                    nsJSPrincipals::get(m_args->m_principals),
                                    m_args->m_jsCallback, 

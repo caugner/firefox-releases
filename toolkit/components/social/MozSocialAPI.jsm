@@ -10,7 +10,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "SocialService", "resource://gre/modules/SocialService.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils", "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
-this.EXPORTED_SYMBOLS = ["MozSocialAPI", "openChatWindow", "findChromeWindowForChats"];
+this.EXPORTED_SYMBOLS = ["MozSocialAPI", "openChatWindow", "findChromeWindowForChats", "closeAllChatWindows"];
 
 this.MozSocialAPI = {
   _enabled: false,
@@ -49,7 +49,7 @@ function injectController(doc, topic, data) {
       return;
     }
 
-    var containingBrowser = window.QueryInterface(Ci.nsIInterfaceRequestor)
+    let containingBrowser = window.QueryInterface(Ci.nsIInterfaceRequestor)
                                   .getInterface(Ci.nsIWebNavigation)
                                   .QueryInterface(Ci.nsIDocShell)
                                   .chromeEventHandler;
@@ -72,7 +72,7 @@ function injectController(doc, topic, data) {
     handleWindowClose(window);
 
     SocialService.getProvider(doc.nodePrincipal.origin, function(provider) {
-      if (provider && provider.workerURL && provider.enabled) {
+      if (provider && provider.enabled) {
         attachToWindow(provider, window);
       }
     });
@@ -93,7 +93,7 @@ function attachToWindow(provider, targetWindow) {
     return;
   }
 
-  var port = provider.getWorkerPort(targetWindow);
+  let port = provider.workerURL ? provider.getWorkerPort(targetWindow) : null;
 
   let mozSocialObj = {
     // Use a method for backwards compat with existing providers, but we
@@ -211,12 +211,14 @@ function attachToWindow(provider, targetWindow) {
     return targetWindow.navigator.wrappedJSObject.mozSocial = contentObj;
   });
 
-  targetWindow.addEventListener("unload", function () {
-    // We want to close the port, but also want the target window to be
-    // able to use the port during an unload event they setup - so we
-    // set a timer which will fire after the unload events have all fired.
-    schedule(function () { port.close(); });
-  });
+  if (port) {
+    targetWindow.addEventListener("unload", function () {
+      // We want to close the port, but also want the target window to be
+      // able to use the port during an unload event they setup - so we
+      // set a timer which will fire after the unload events have all fired.
+      schedule(function () { port.close(); });
+    });
+  }
 }
 
 function handleWindowClose(targetWindow) {
@@ -235,10 +237,10 @@ function handleWindowClose(targetWindow) {
                 .QueryInterface(Ci.nsIDocShell)
                 .chromeEventHandler;
     while (elt) {
-      if (elt.nodeName == "panel") {
+      if (elt.localName == "panel") {
         elt.hidePopup();
         break;
-      } else if (elt.nodeName == "chatbox") {
+      } else if (elt.localName == "chatbox") {
         elt.close();
         break;
       }
@@ -307,7 +309,7 @@ function findChromeWindowForChats(preferredWindow) {
   }
   while (enumerator.hasMoreElements()) {
     let win = enumerator.getNext();
-    if (win && isWindowGoodForChats(win))
+    if (!win.closed && isWindowGoodForChats(win))
       topMost = win;
   }
   return topMost;
@@ -332,4 +334,28 @@ this.openChatWindow =
   // getAttention is ignored if the target window is already foreground, so
   // we can call it unconditionally.
   chromeWindow.getAttention();
+}
+
+this.closeAllChatWindows =
+ function closeAllChatWindows(provider) {
+  // close all attached chat windows
+  let winEnum = Services.wm.getEnumerator("navigator:browser");
+  while (winEnum.hasMoreElements()) {
+    let win = winEnum.getNext();
+    if (!win.SocialChatBar)
+      continue;
+    let chats = [c for (c of win.SocialChatBar.chatbar.children) if (c.content.getAttribute("origin") == provider.origin)];
+    [c.close() for (c of chats)];
+  }
+
+  // close all standalone chat windows
+  winEnum = Services.wm.getEnumerator("Social:Chat");
+  while (winEnum.hasMoreElements()) {
+    let win = winEnum.getNext();
+    if (win.closed)
+      continue;
+    let origin = win.document.getElementById("chatter").content.getAttribute("origin");
+    if (provider.origin == origin)
+      win.close();
+  }
 }

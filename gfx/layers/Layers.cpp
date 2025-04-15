@@ -5,25 +5,32 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/DebugOnly.h"
-
-#include "mozilla/layers/AsyncPanZoomController.h"
-#include "mozilla/layers/PLayerTransaction.h"
-#include "mozilla/layers/LayerManagerComposite.h"
-#include "mozilla/Telemetry.h"
-#include "CompositableHost.h"
-
-#include "ImageLayers.h"
-#include "ImageContainer.h"
 #include "Layers.h"
-#include "gfxPlatform.h"
-#include "ReadbackLayer.h"
-#include "gfxUtils.h"
-#include "nsPrintfCString.h"
-#include "LayerSorter.h"
-#include "AnimationCommon.h"
-#include "mozilla/layers/Compositor.h"
-#include "LayersLogging.h"
+#include <algorithm>                    // for max, min
+#include "AnimationCommon.h"            // for ComputedTimingFunction
+#include "CompositableHost.h"           // for CompositableHost
+#include "ImageContainer.h"             // for ImageContainer, etc
+#include "ImageLayers.h"                // for ImageLayer
+#include "LayerSorter.h"                // for SortLayersBy3DZOrder
+#include "LayersLogging.h"              // for AppendToString
+#include "ReadbackLayer.h"              // for ReadbackLayer
+#include "gfxPlatform.h"                // for gfxPlatform
+#include "gfxUtils.h"                   // for gfxUtils, etc
+#include "mozilla/DebugOnly.h"          // for DebugOnly
+#include "mozilla/Preferences.h"        // for Preferences
+#include "mozilla/Telemetry.h"          // for Accumulate
+#include "mozilla/TelemetryHistogramEnums.h"
+#include "mozilla/gfx/2D.h"             // for DrawTarget
+#include "mozilla/gfx/BaseSize.h"       // for BaseSize
+#include "mozilla/layers/AsyncPanZoomController.h"
+#include "mozilla/layers/Compositor.h"  // for Compositor
+#include "mozilla/layers/CompositorTypes.h"
+#include "mozilla/layers/LayerManagerComposite.h"  // for LayerComposite
+#include "mozilla/layers/LayersMessages.h"  // for TransformFunction, etc
+#include "nsAString.h"
+#include "nsCSSValue.h"                 // for nsCSSValue::Array, etc
+#include "nsPrintfCString.h"            // for nsPrintfCString
+#include "nsStyleStruct.h"              // for nsTimingFunction, etc
 
 using namespace mozilla::layers;
 using namespace mozilla::gfx;
@@ -128,7 +135,7 @@ LayerManager::CreateDrawTarget(const IntSize &aSize,
                                SurfaceFormat aFormat)
 {
   return gfxPlatform::GetPlatform()->
-    CreateOffscreenDrawTarget(aSize, aFormat);
+    CreateOffscreenCanvasDrawTarget(aSize, aFormat);
 }
 
 TextureFactoryIdentifier
@@ -179,6 +186,7 @@ Layer::Layer(LayerManager* aManager, void* aImplData) :
   mUseTileSourceRect(false),
   mIsFixedPosition(false),
   mMargins(0, 0, 0, 0),
+  mStickyPositionData(nullptr),
   mDebugColorIndex(0),
   mAnimationGeneration(0)
 {}
@@ -706,6 +714,121 @@ ContainerLayer::ContainerLayer(LayerManager* aManager, void* aImplData)
 ContainerLayer::~ContainerLayer() {}
 
 void
+ContainerLayer::InsertAfter(Layer* aChild, Layer* aAfter)
+{
+  NS_ASSERTION(aChild->Manager() == Manager(),
+               "Child has wrong manager");
+  NS_ASSERTION(!aChild->GetParent(),
+               "aChild already in the tree");
+  NS_ASSERTION(!aChild->GetNextSibling() && !aChild->GetPrevSibling(),
+               "aChild already has siblings?");
+  NS_ASSERTION(!aAfter ||
+               (aAfter->Manager() == Manager() &&
+                aAfter->GetParent() == this),
+               "aAfter is not our child");
+
+  aChild->SetParent(this);
+  if (aAfter == mLastChild) {
+    mLastChild = aChild;
+  }
+  if (!aAfter) {
+    aChild->SetNextSibling(mFirstChild);
+    if (mFirstChild) {
+      mFirstChild->SetPrevSibling(aChild);
+    }
+    mFirstChild = aChild;
+    NS_ADDREF(aChild);
+    DidInsertChild(aChild);
+    return;
+  }
+
+  Layer* next = aAfter->GetNextSibling();
+  aChild->SetNextSibling(next);
+  aChild->SetPrevSibling(aAfter);
+  if (next) {
+    next->SetPrevSibling(aChild);
+  }
+  aAfter->SetNextSibling(aChild);
+  NS_ADDREF(aChild);
+  DidInsertChild(aChild);
+}
+
+void
+ContainerLayer::RemoveChild(Layer *aChild)
+{
+  NS_ASSERTION(aChild->Manager() == Manager(),
+               "Child has wrong manager");
+  NS_ASSERTION(aChild->GetParent() == this,
+               "aChild not our child");
+
+  Layer* prev = aChild->GetPrevSibling();
+  Layer* next = aChild->GetNextSibling();
+  if (prev) {
+    prev->SetNextSibling(next);
+  } else {
+    this->mFirstChild = next;
+  }
+  if (next) {
+    next->SetPrevSibling(prev);
+  } else {
+    this->mLastChild = prev;
+  }
+
+  aChild->SetNextSibling(nullptr);
+  aChild->SetPrevSibling(nullptr);
+  aChild->SetParent(nullptr);
+
+  this->DidRemoveChild(aChild);
+  NS_RELEASE(aChild);
+}
+
+
+void
+ContainerLayer::RepositionChild(Layer* aChild, Layer* aAfter)
+{
+  NS_ASSERTION(aChild->Manager() == Manager(),
+               "Child has wrong manager");
+  NS_ASSERTION(aChild->GetParent() == this,
+               "aChild not our child");
+  NS_ASSERTION(!aAfter ||
+               (aAfter->Manager() == Manager() &&
+                aAfter->GetParent() == this),
+               "aAfter is not our child");
+
+  Layer* prev = aChild->GetPrevSibling();
+  Layer* next = aChild->GetNextSibling();
+  if (prev == aAfter) {
+    // aChild is already in the correct position, nothing to do.
+    return;
+  }
+  if (prev) {
+    prev->SetNextSibling(next);
+  }
+  if (next) {
+    next->SetPrevSibling(prev);
+  }
+  if (!aAfter) {
+    aChild->SetPrevSibling(nullptr);
+    aChild->SetNextSibling(mFirstChild);
+    if (mFirstChild) {
+      mFirstChild->SetPrevSibling(aChild);
+    }
+    mFirstChild = aChild;
+    return;
+  }
+
+  Layer* afterNext = aAfter->GetNextSibling();
+  if (afterNext) {
+    afterNext->SetPrevSibling(aChild);
+  } else {
+    mLastChild = aChild;
+  }
+  aAfter->SetNextSibling(aChild);
+  aChild->SetPrevSibling(aAfter);
+  aChild->SetNextSibling(afterNext);
+}
+
+void
 ContainerLayer::FillSpecificAttributes(SpecificLayerAttributes& aAttrs)
 {
   aAttrs = ContainerLayerAttributes(GetFrameMetrics(), mPreXScale, mPreYScale,
@@ -818,6 +941,16 @@ ContainerLayer::ComputeEffectiveTransformsForChildren(const gfx3DMatrix& aTransf
   for (Layer* l = mFirstChild; l; l = l->GetNextSibling()) {
     l->ComputeEffectiveTransforms(aTransformToSurface);
   }
+}
+
+/* static */ bool
+ContainerLayer::HasOpaqueAncestorLayer(Layer* aLayer)
+{
+  for (Layer* l = aLayer->GetParent(); l; l = l->GetParent()) {
+    if (l->GetContentFlags() & Layer::CONTENT_OPAQUE)
+      return true;
+  }
+  return false;
 }
 
 void
@@ -1041,9 +1174,13 @@ Layer::Dump(FILE* aFile, const char* aPrefix, bool aDumpHtml)
     fprintf(aFile, ">");
   }
   DumpSelf(aFile, aPrefix);
+
+#ifdef MOZ_DUMP_PAINTING
   if (AsLayerComposite() && AsLayerComposite()->GetCompositableHost()) {
     AsLayerComposite()->GetCompositableHost()->Dump(aFile, aPrefix, aDumpHtml);
   }
+#endif
+
   if (aDumpHtml) {
     fprintf(aFile, "</a>");
   }
@@ -1143,6 +1280,14 @@ Layer::PrintInfo(nsACString& aTo, const char* aPrefix)
   }
   if (GetIsFixedPosition()) {
     aTo.AppendPrintf(" [isFixedPosition anchor=%f,%f]", mAnchor.x, mAnchor.y);
+  }
+  if (GetIsStickyPosition()) {
+    aTo.AppendPrintf(" [isStickyPosition scrollId=%d outer=%f,%f %fx%f "
+                     "inner=%f,%f %fx%f]", mStickyPositionData->mScrollId,
+                     mStickyPositionData->mOuter.x, mStickyPositionData->mOuter.y,
+                     mStickyPositionData->mOuter.width, mStickyPositionData->mOuter.height,
+                     mStickyPositionData->mInner.x, mStickyPositionData->mInner.y,
+                     mStickyPositionData->mInner.width, mStickyPositionData->mInner.height);
   }
 
   return aTo;

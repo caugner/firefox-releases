@@ -61,7 +61,6 @@
 #include "nsIDOMUserDataHandler.h"
 #include "nsIEditor.h"
 #include "nsIEditorIMESupport.h"
-#include "nsIFrame.h"
 #include "nsILinkHandler.h"
 #include "nsINameSpaceManager.h"
 #include "nsINodeInfo.h"
@@ -76,7 +75,6 @@
 #include "nsViewManager.h"
 #include "nsIWebNavigation.h"
 #include "nsIWidget.h"
-#include "nsLayoutStatics.h"
 #include "nsLayoutUtils.h"
 #include "nsMutationEvent.h"
 #include "nsNetUtil.h"
@@ -105,6 +103,7 @@
 #include <algorithm>
 #include "nsDOMEvent.h"
 #include "nsGlobalWindow.h"
+#include "nsDOMMutationObserver.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -1975,7 +1974,7 @@ nsINode::ReplaceOrInsertBefore(bool aReplace, nsINode* aNewChild,
   // DocumentType nodes are the only nodes that can have a null
   // ownerDocument according to the DOM spec, and we need to allow
   // inserting them w/o calling AdoptNode().
-  if (OwnerDoc() != newContent->OwnerDoc()) {
+  if (doc != newContent->OwnerDoc()) {
     aError = AdoptNodeIntoOwnerDoc(this, aNewChild);
     if (aError.Failed()) {
       return nullptr;
@@ -2146,6 +2145,22 @@ nsINode::UnbindObject(nsISupports* aObject)
   }
 }
 
+void
+nsINode::GetBoundMutationObservers(nsTArray<nsRefPtr<nsDOMMutationObserver> >& aResult)
+{
+  nsCOMArray<nsISupports>* objects =
+    static_cast<nsCOMArray<nsISupports>*>(GetProperty(nsGkAtoms::keepobjectsalive));
+  if (objects) {
+    for (int32_t i = 0; i < objects->Count(); ++i) {
+      nsCOMPtr<nsDOMMutationObserver> mo = do_QueryInterface(objects->ObjectAt(i));
+      if (mo) {
+        MOZ_ASSERT(!aResult.Contains(mo));
+        aResult.AppendElement(mo.forget());
+      }
+    }
+  }
+}
+
 size_t
 nsINode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 {
@@ -2170,13 +2185,15 @@ nsINode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 #define EVENT(name_, id_, type_, struct_)                                    \
   EventHandlerNonNull* nsINode::GetOn##name_() {                             \
     nsEventListenerManager *elm = GetListenerManager(false);                 \
-    return elm ? elm->GetEventHandler(nsGkAtoms::on##name_) : nullptr;       \
+    return elm ? elm->GetEventHandler(nsGkAtoms::on##name_, EmptyString())   \
+               : nullptr;                                                    \
   }                                                                          \
   void nsINode::SetOn##name_(EventHandlerNonNull* handler,                   \
                              ErrorResult& error) {                           \
     nsEventListenerManager *elm = GetListenerManager(true);                  \
     if (elm) {                                                               \
-      error = elm->SetEventHandler(nsGkAtoms::on##name_, handler);           \
+      error = elm->SetEventHandler(nsGkAtoms::on##name_,                     \
+                                   EmptyString(), handler);                  \
     } else {                                                                 \
       error.Throw(NS_ERROR_OUT_OF_MEMORY);                                   \
     }                                                                        \
@@ -2473,7 +2490,7 @@ nsINode::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aScope)
   if (!OwnerDoc()->GetScriptHandlingObject(hasHadScriptHandlingObject) &&
       !hasHadScriptHandlingObject &&
       !nsContentUtils::IsCallerChrome()) {
-    Throw<true>(aCx, NS_ERROR_UNEXPECTED);
+    Throw(aCx, NS_ERROR_UNEXPECTED);
     return nullptr;
   }
 

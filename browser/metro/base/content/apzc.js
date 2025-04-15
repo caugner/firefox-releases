@@ -15,6 +15,13 @@ let Cr = Components.results;
  */
 
 var APZCObserver = {
+  _debugEvents: false,
+  _enabled: false,
+
+  get enabled() {
+    return this._enabled;
+  },
+
   init: function() {
     this._enabled = Services.prefs.getBoolPref(kAsyncPanZoomEnabled);
     if (!this._enabled) {
@@ -39,18 +46,28 @@ var APZCObserver = {
         let windowUtils = Browser.selectedBrowser.contentWindow.
                           QueryInterface(Ci.nsIInterfaceRequestor).
                           getInterface(Ci.nsIDOMWindowUtils);
+        // findElementWithViewId will throw if it can't find it
+        let element;
+        try {
+          element = windowUtils.findElementWithViewId(ROOT_ID);
+        } catch (e) {
+          // Not present; nothing to do here
+          break;
+        }
         windowUtils.setDisplayPortForElement(0, 0, ContentAreaObserver.width,
                                              ContentAreaObserver.height,
-                                             windowUtils.findElementWithViewId(ROOT_ID));
+                                             element);
         break;
       case 'TabOpen': {
         let browser = aEvent.originalTarget.linkedBrowser;
         browser.addEventListener("pageshow", this, true);
+        browser.messageManager.addMessageListener("scroll", this);
         break;
       }
       case 'TabClose': {
         let browser = aEvent.originalTarget.linkedBrowser;
-        browser.removeEventListener("pageshow", this);
+        browser.removeEventListener("pageshow", this, true);
+        browser.messageManager.removeMessageListener("scroll", this);
         break;
       }
     }
@@ -77,52 +94,50 @@ var APZCObserver = {
       let resolution = frameMetrics.resolution;
       let compositedRect = frameMetrics.compositedRect;
 
-      if (StartUI.isStartPageVisible) {
-        let windowUtils = Browser.windowUtils;
-        Browser.selectedBrowser.contentWindow.scrollTo(scrollTo.x, scrollTo.y);
-        windowUtils.setResolution(resolution, resolution);
-        windowUtils.setDisplayPortForElement(displayPort.x * resolution,
-                                             displayPort.y * resolution,
-                                             displayPort.width * resolution,
-                                             displayPort.height * resolution,
-                                             Elements.startUI);
-      } else {
-        let windowUtils = Browser.selectedBrowser.contentWindow.
-                                  QueryInterface(Ci.nsIInterfaceRequestor).
-                                  getInterface(Ci.nsIDOMWindowUtils);
-        windowUtils.setScrollPositionClampingScrollPortSize(compositedRect.width,
-                                                            compositedRect.height);
-        Browser.selectedBrowser.messageManager.sendAsyncMessage("Content:SetCacheViewport", {
-          scrollX: scrollTo.x,
-          scrollY: scrollTo.y,
-          x: displayPort.x + scrollTo.x,
-          y: displayPort.y + scrollTo.y,
-          w: displayPort.width,
-          h: displayPort.height,
-          scale: resolution,
-          id: scrollId
-        });
-      }
+      let windowUtils = Browser.selectedBrowser.contentWindow.
+                                QueryInterface(Ci.nsIInterfaceRequestor).
+                                getInterface(Ci.nsIDOMWindowUtils);
+      windowUtils.setScrollPositionClampingScrollPortSize(compositedRect.width,
+                                                          compositedRect.height);
+      Browser.selectedBrowser.messageManager.sendAsyncMessage("Content:SetCacheViewport", {
+        scrollX: scrollTo.x,
+        scrollY: scrollTo.y,
+        x: displayPort.x + scrollTo.x,
+        y: displayPort.y + scrollTo.y,
+        w: displayPort.width,
+        h: displayPort.height,
+        scale: resolution,
+        id: scrollId
+      });
 
-      Util.dumpLn("APZC scrollId: " + scrollId);
-      Util.dumpLn("APZC scrollTo.x: " + scrollTo.x + ", scrollTo.y: " + scrollTo.y);
-      Util.dumpLn("APZC setResolution: " + resolution);
-      Util.dumpLn("APZC setDisplayPortForElement: displayPort.x: " +
-                  displayPort.x + ", displayPort.y: " + displayPort.y +
-                  ", displayPort.width: " + displayPort.width +
-                  ", displayort.height: " + displayPort.height);
+      if (this._debugEvents) {
+        Util.dumpLn("APZC scrollId: " + scrollId);
+        Util.dumpLn("APZC scrollTo.x: " + scrollTo.x + ", scrollTo.y: " + scrollTo.y);
+        Util.dumpLn("APZC setResolution: " + resolution);
+        Util.dumpLn("APZC setDisplayPortForElement: displayPort.x: " +
+                    displayPort.x + ", displayPort.y: " + displayPort.y +
+                    ", displayPort.width: " + displayPort.width +
+                    ", displayort.height: " + displayPort.height);
+      }
     } else if (aTopic == "apzc-handle-pan-begin") {
       // When we're panning, hide the main scrollbars by setting imprecise
       // input (which sets a property on the browser which hides the scrollbar
       // via CSS).  This reduces jittering from left to right. We may be able
       // to get rid of this once we implement axis locking in /gfx APZC.
-      Util.dumpLn("APZC pan-begin");
       if (InputSourceHelper.isPrecise) {
         InputSourceHelper._imprecise();
       }
+    }
+  },
 
-    } else if (aTopic == "apzc-handle-pan-end") {
-      Util.dumpLn("APZC pan-end");
+  receiveMessage: function(aMessage) {
+    let json = aMessage.json;
+    switch (aMessage.name) {
+      case "scroll": {
+        let data = json.viewId + " " + json.presShellId + " (" + json.scrollOffset.x + ", " + json.scrollOffset.y + ")";
+        Services.obs.notifyObservers(null, "scroll-offset-changed", data);
+        break;
+      }
     }
   }
 };

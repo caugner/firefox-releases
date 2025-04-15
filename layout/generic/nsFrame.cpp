@@ -13,7 +13,6 @@
 #include "nsFrame.h"
 #include "nsFrameList.h"
 #include "nsPlaceholderFrame.h"
-#include "nsLineLayout.h"
 #include "nsIContent.h"
 #include "nsContentUtils.h"
 #include "nsIAtom.h"
@@ -25,9 +24,7 @@
 #include "nsViewManager.h"
 #include "nsIScrollableFrame.h"
 #include "nsPresContext.h"
-#include "nsCRT.h"
 #include "nsGUIEvent.h"
-#include "nsIDOMEvent.h"
 #include "nsAsyncDOMEvent.h"
 #include "nsStyleConsts.h"
 #include "nsIPresShell.h"
@@ -35,7 +32,6 @@
 #include "prprf.h"
 #include <stdarg.h>
 #include "nsFrameManager.h"
-#include "nsCSSRendering.h"
 #include "nsLayoutUtils.h"
 
 #include "nsIDOMNode.h"
@@ -43,17 +39,11 @@
 #include "nsISelection.h"
 #include "nsISelectionPrivate.h"
 #include "nsFrameSelection.h"
-#include "nsHTMLParts.h"
 #include "nsGkAtoms.h"
 #include "nsCSSAnonBoxes.h"
-#include "nsCSSPseudoElements.h"
-#include "nsCSSFrameConstructor.h"
 
 #include "nsFrameTraversal.h"
-#include "nsStyleChangeList.h"
-#include "nsIDOMRange.h"
 #include "nsRange.h"
-#include "nsITableCellLayout.h"//  "
 #include "nsITextControlFrame.h"
 #include "nsINameSpaceManager.h"
 #include "nsIPercentHeightObserver.h"
@@ -65,33 +55,28 @@
 #endif
 
 // For triple-click pref
-#include "nsIServiceManager.h"
 #include "imgIContainer.h"
 #include "imgIRequest.h"
-#include "nsLayoutCID.h"
-#include "nsUnicharUtils.h"
 #include "nsError.h"
 #include "nsContainerFrame.h"
 #include "nsBoxLayoutState.h"
 #include "nsBlockFrame.h"
 #include "nsDisplayList.h"
-#include "nsIObjectLoadingContent.h"
 #include "nsExpirationTracker.h"
 #include "nsSVGIntegrationUtils.h"
 #include "nsSVGEffects.h"
 #include "nsChangeHint.h"
 #include "nsDeckFrame.h"
-#include "nsTableFrame.h"
 #include "nsSubDocumentFrame.h"
 #include "nsSVGTextFrame2.h"
 
 #include "gfxContext.h"
 #include "nsRenderingContext.h"
-#include "CSSCalc.h"
 #include "nsAbsoluteContainingBlock.h"
+#include "StickyScrollContainer.h"
 #include "nsFontInflationData.h"
-#include "nsAnimationManager.h"
-#include "nsTransitionManager.h"
+#include "gfxASurface.h"
+#include "nsRegion.h"
 
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
@@ -526,6 +511,13 @@ nsFrame::Init(nsIContent*      aContent,
     // property, so we can set this bit here and then ignore it.
     mState |= NS_FRAME_MAY_BE_TRANSFORMED;
   }
+  if (disp->mPosition == NS_STYLE_POSITION_STICKY) {
+    StickyScrollContainer* ssc =
+      StickyScrollContainer::GetStickyScrollContainerForFrame(this);
+    if (ssc) {
+      ssc->AddFrame(this);
+    }
+  }
 
   if (nsLayoutUtils::FontSizeInflationEnabled(PresContext()) || !GetParent()
 #ifdef DEBUG
@@ -603,6 +595,14 @@ nsFrame::DestroyFrom(nsIFrame* aDestructRoot)
   MOZ_ASSERT(!HasAbsolutelyPositionedChildren());
 
   nsSVGEffects::InvalidateDirectRenderingObservers(this);
+
+  if (StyleDisplay()->mPosition == NS_STYLE_POSITION_STICKY) {
+    StickyScrollContainer* ssc =
+      StickyScrollContainer::GetStickyScrollContainerForFrame(this);
+    if (ssc) {
+      ssc->RemoveFrame(this);
+    }
+  }
 
   // Get the view pointer now before the frame properties disappear
   // when we call NotifyDestroyingFrame()
@@ -1736,6 +1736,12 @@ WrapPreserve3DListInternal(nsIFrame* aFrame, nsDisplayListBuilder *aBuilder, nsD
   return NS_OK;
 }
 
+static bool
+IsScrollFrameActive(nsIScrollableFrame* aScrollableFrame)
+{
+  return aScrollableFrame && aScrollableFrame->IsScrollingActive();
+}
+
 static nsresult
 WrapPreserve3DList(nsIFrame* aFrame, nsDisplayListBuilder* aBuilder, nsDisplayList *aList)
 {
@@ -1813,10 +1819,14 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
 
   bool useOpacity = HasOpacity() && !nsSVGUtils::CanOptimizeOpacity(this);
   bool usingSVGEffects = nsSVGIntegrationUtils::UsingEffectsForFrame(this);
+  bool useStickyPosition = disp->mPosition == NS_STYLE_POSITION_STICKY &&
+    IsScrollFrameActive(nsLayoutUtils::GetNearestScrollableFrame(GetParent(),
+                        nsLayoutUtils::SCROLLABLE_SAME_DOC |
+                        nsLayoutUtils::SCROLLABLE_INCLUDE_HIDDEN));
 
   DisplayListClipState::AutoSaveRestore clipState(aBuilder);
 
-  if (isTransformed || useOpacity || usingSVGEffects) {
+  if (isTransformed || useOpacity || usingSVGEffects || useStickyPosition) {
     // We don't need to pass ancestor clipping down to our children;
     // everything goes inside a display item's child list, and the display
     // item itself will be clipped.
@@ -1935,6 +1945,13 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
     resultList.AppendNewToTop(
         new (aBuilder) nsDisplayOpacity(aBuilder, this, &resultList));
   }
+  /* If we have sticky positioning, wrap it in a sticky position item.
+   */
+  if (useStickyPosition) {
+    resultList.AppendNewToTop(
+        new (aBuilder) nsDisplayStickyPosition(aBuilder, this, this,
+                                               &resultList));
+  }
 
   /* If we're going to apply a transformation and don't have preserve-3d set, wrap 
    * everything in an nsDisplayTransform. If there's nothing in the list, don't add 
@@ -1960,13 +1977,6 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
   }
 
   aList->AppendToTop(&resultList);
-}
-
-static bool
-IsRootScrollFrameActive(nsIPresShell* aPresShell)
-{
-  nsIScrollableFrame* sf = aPresShell->GetRootScrollFrameAsScrollable();
-  return sf && sf->IsScrollingActive();
 }
 
 static nsDisplayItem*
@@ -2105,7 +2115,8 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
 
   bool isPositioned = disp->IsPositioned(child);
   bool isStackingContext =
-    (isPositioned && pos->mZIndex.GetUnit() == eStyleUnit_Integer) ||
+    (isPositioned && (disp->mPosition == NS_STYLE_POSITION_STICKY ||
+                      pos->mZIndex.GetUnit() == eStyleUnit_Integer)) ||
      isVisuallyAtomic || (aFlags & DISPLAY_CHILD_FORCE_STACKING_CONTEXT);
 
   if (isVisuallyAtomic || isPositioned || (!isSVG && disp->IsFloating(child)) ||
@@ -2126,7 +2137,8 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
   // active, that's pointless and the extra layer(s) created may be wasteful.
   bool buildFixedPositionItem = disp->mPosition == NS_STYLE_POSITION_FIXED &&
     !child->GetParent()->GetParent() && !aBuilder->IsInFixedPosition() &&
-    IsRootScrollFrameActive(PresContext()->PresShell()) && !isSVG;
+    IsScrollFrameActive(PresContext()->PresShell()->GetRootScrollFrameAsScrollable()) &&
+    !isSVG;
 
   nsDisplayListBuilder::AutoBuildingDisplayList
     buildingForChild(aBuilder, child, pseudoStackingContext, buildFixedPositionItem);
@@ -3545,6 +3557,21 @@ nsIFrame::ContentOffsets nsFrame::CalcContentOffsetsFromFramePoint(nsPoint aPoin
   return OffsetsForSingleFrame(this, aPoint);
 }
 
+void
+nsIFrame::AssociateImage(const nsStyleImage& aImage, nsPresContext* aPresContext)
+{
+  if (aImage.GetType() != eStyleImageType_Image) {
+    return;
+  }
+
+  imgIRequest *req = aImage.GetImageData();
+  mozilla::css::ImageLoader* loader =
+    aPresContext->Document()->StyleImageLoader();
+
+  // If this fails there's not much we can do ...
+  loader->AssociateRequestToFrame(req, this);
+}
+
 NS_IMETHODIMP
 nsFrame::GetCursor(const nsPoint& aPoint,
                    nsIFrame::Cursor& aCursor)
@@ -4492,9 +4519,14 @@ nsIFrame::IsLeaf() const
 
 class LayerActivity {
 public:
-  LayerActivity(nsIFrame* aFrame) : mFrame(aFrame), mChangeHint(nsChangeHint(0)) {}
+  LayerActivity(nsIFrame* aFrame)
+    : mFrame(aFrame)
+    , mChangeHint(nsChangeHint(0))
+    , mMutationCount(0)
+  {}
   ~LayerActivity();
   nsExpirationState* GetExpirationState() { return &mState; }
+  uint32_t GetMutationCount() { return mMutationCount; }
 
   nsIFrame* mFrame;
   nsExpirationState mState;
@@ -4503,6 +4535,7 @@ public:
   // The presence of those bits indicates whether opacity or transform
   // changes have been detected.
   nsChangeHint mChangeHint;
+  uint32_t mMutationCount;
 };
 
 class LayerActivityTracker MOZ_FINAL : public nsExpirationTracker<LayerActivity,4> {
@@ -4573,6 +4606,7 @@ nsIFrame::MarkLayersActive(nsChangeHint aChangeHint)
     gLayerActivityTracker->AddObject(layerActivity);
     properties.Set(LayerActivityProperty(), layerActivity);
   }
+  layerActivity->mMutationCount++;
   NS_UpdateHint(layerActivity->mChangeHint, aChangeHint);
 }
 
@@ -4588,6 +4622,9 @@ nsIFrame::AreLayersMarkedActive(nsChangeHint aChangeHint)
   LayerActivity* layerActivity =
     static_cast<LayerActivity*>(Properties().Get(LayerActivityProperty()));
   if (layerActivity && (layerActivity->mChangeHint & aChangeHint)) {
+    if (aChangeHint & nsChangeHint_UpdateOpacityLayer) {
+      return layerActivity->GetMutationCount() > 1;
+    }
     return true;
   }
   if (aChangeHint & nsChangeHint_UpdateTransformLayer &&
@@ -5044,18 +5081,37 @@ ComputeOutlineAndEffectsRect(nsIFrame* aFrame,
   return r;
 }
 
-nsPoint
-nsIFrame::GetRelativeOffset(const nsStyleDisplay* aDisplay) const
+void
+nsIFrame::MovePositionBy(const nsPoint& aTranslation)
 {
-  if (!aDisplay ||
-      aDisplay->IsRelativelyPositioned(this)) {
-    nsPoint *offsets = static_cast<nsPoint*>
-      (Properties().Get(ComputedOffsetProperty()));
-    if (offsets) {
-      return *offsets;
-    }
+  nsPoint position = GetNormalPosition() + aTranslation;
+
+  const nsMargin* computedOffsets = nullptr;
+  if (IsRelativelyPositioned()) {
+    computedOffsets = static_cast<nsMargin*>
+      (Properties().Get(nsIFrame::ComputedOffsetProperty()));
   }
-  return nsPoint(0,0);
+  nsHTMLReflowState::ApplyRelativePositioning(this, computedOffsets ?
+                                              *computedOffsets : nsMargin(),
+                                              &position);
+  NS_ASSERTION(StyleDisplay()->mPosition == NS_STYLE_POSITION_STICKY ||
+               GetPosition() + aTranslation == position,
+               "MovePositionBy should always lead to the movement "
+               "specified, unless the frame is position:sticky");
+  SetPosition(position);
+}
+
+nsPoint
+nsIFrame::GetNormalPosition() const
+{
+  // It might be faster to first check
+  // StyleDisplay()->IsRelativelyPositionedStyle().
+  nsPoint* normalPosition = static_cast<nsPoint*>
+    (Properties().Get(NormalPositionProperty()));
+  if (normalPosition) {
+    return *normalPosition;
+  }
+  return GetPosition();
 }
 
 nsRect
@@ -5134,8 +5190,8 @@ nsFrame::UpdateOverflow()
   nsRect rect(nsPoint(0, 0), GetSize());
   nsOverflowAreas overflowAreas(rect, rect);
 
-  bool isBox = IsBoxFrame() || IsBoxWrapped();
-  if (!isBox || (!IsCollapsed() && !DoesClipChildren())) {
+  if (!DoesClipChildren() &&
+      !(IsCollapsed() && (IsBoxFrame() || IsBoxWrapped()))) {
     nsLayoutUtils::UnionChildOverflow(this, overflowAreas);
   }
 
@@ -7326,7 +7382,7 @@ nsIFrame::IsFocusable(int32_t *aTabIndex, bool aWithMouse)
       // will be enough to make them keyboard scrollable.
       nsIScrollableFrame *scrollFrame = do_QueryFrame(this);
       if (scrollFrame &&
-          scrollFrame->GetScrollbarStyles() != nsIScrollableFrame::ScrollbarStyles(NS_STYLE_OVERFLOW_HIDDEN, NS_STYLE_OVERFLOW_HIDDEN) &&
+          scrollFrame->GetScrollbarStyles() != ScrollbarStyles(NS_STYLE_OVERFLOW_HIDDEN, NS_STYLE_OVERFLOW_HIDDEN) &&
           !scrollFrame->GetScrollRange().IsEqualEdges(nsRect(0, 0, 0, 0))) {
           // Scroll bars will be used for overflow
           isFocusable = true;
@@ -7699,7 +7755,7 @@ nsFrame::DoLayout(nsBoxLayoutState& aState)
 
       // ensure our size is what we think is should be. Someone could have
       // reset the frame to be smaller or something dumb like that. 
-      SetSize(nsSize(ourRect.width, ourRect.height));
+      SetSize(ourRect.Size());
     }
   }
 
@@ -7751,15 +7807,6 @@ nsFrame::BoxReflow(nsBoxLayoutState&        aState,
   printf("\n");
   gIndent2++;
 #endif
-
-  //printf("width=%d, height=%d\n", aWidth, aHeight);
-  /*
-  nsIFrame* parent;
-  GetParentBox(&parent);
-
- // if (parent->GetStateBits() & NS_STATE_CURRENTLY_IN_DEBUG)
-  //   printf("In debug\n");
-  */
 
   nsBoxLayoutMetrics *metrics = BoxMetrics();
   nsReflowStatus status = NS_FRAME_COMPLETE;
@@ -7837,30 +7884,35 @@ nsFrame::BoxReflow(nsBoxLayoutState&        aState,
     parentReflowState.mComputedBorderPadding +=
       parentReflowState.mComputedPadding;
 
-    // XXX Is it OK that this reflow state has no parent reflow state?
-    // (It used to have a bogus parent, skipping all the boxes).
-    nsSize availSize(aWidth, NS_INTRINSICSIZE);
-    nsHTMLReflowState reflowState(aPresContext, this, aRenderingContext,
-                                  availSize,
-                                  nsHTMLReflowState::DUMMY_PARENT_REFLOW_STATE);
-
     // Construct the parent chain manually since constructing it normally
     // messes up dimensions.
     const nsHTMLReflowState *outerReflowState = aState.OuterReflowState();
     NS_ASSERTION(!outerReflowState || outerReflowState->frame != this,
                  "in and out of XUL on a single frame?");
+    const nsHTMLReflowState* parentRS;
     if (outerReflowState && outerReflowState->frame == parentFrame) {
       // We're a frame (such as a text control frame) that jumps into
       // box reflow and then straight out of it on the child frame.
       // This means we actually have a real parent reflow state.
       // nsLayoutUtils::InflationMinFontSizeFor used to need this to be
       // linked up correctly for text control frames, so do so here).
-      reflowState.parentReflowState = outerReflowState;
-      reflowState.mCBReflowState = outerReflowState;
+      parentRS = outerReflowState;
     } else {
-      reflowState.parentReflowState = &parentReflowState;
-      reflowState.mCBReflowState = &parentReflowState;
+      parentRS = &parentReflowState;
     }
+
+    // XXX Is it OK that this reflow state has only one ancestor?
+    // (It used to have a bogus parent, skipping all the boxes).
+    nsSize availSize(aWidth, NS_INTRINSICSIZE);
+    nsHTMLReflowState reflowState(aPresContext, *parentRS, this,
+                                  availSize, -1, -1,
+                                  nsHTMLReflowState::DUMMY_PARENT_REFLOW_STATE);
+
+    // XXX_jwir3: This is somewhat fishy. If this is actually changing the value
+    //            here (which it might be), then we should make sure that it's
+    //            correct the first time around, rather than changing it later.
+    reflowState.mCBReflowState = parentRS;
+
     reflowState.mReflowDepth = aState.GetReflowDepth();
 
     // mComputedWidth and mComputedHeight are content-box, not
@@ -8105,6 +8157,25 @@ nsIFrame::CreateOwnLayerIfNeeded(nsDisplayListBuilder* aBuilder,
     aList->AppendNewToTop(new (aBuilder) 
         nsDisplayOwnLayer(aBuilder, this, aList));
   }
+}
+
+bool
+nsIFrame::IsSelected() const
+{
+  return (GetContent() && GetContent()->IsSelectionDescendant()) ?
+    IsFrameSelected() : false;
+}
+
+void
+nsIFrame::DestroySurface(void* aPropertyValue)
+{
+  static_cast<gfxASurface*>(aPropertyValue)->Release();
+}
+
+void
+nsIFrame::DestroyRegion(void* aPropertyValue)
+{
+  delete static_cast<nsRegion*>(aPropertyValue);
 }
 
 // Box layout debugging

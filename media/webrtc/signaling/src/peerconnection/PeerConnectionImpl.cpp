@@ -4,8 +4,10 @@
 
 #include <string>
 
+#include "base/histogram.h"
 #include "vcm.h"
 #include "CSFLog.h"
+#include "timecard.h"
 #include "ccapi_call_info.h"
 #include "CC_SIPCCCallInfo.h"
 #include "ccapi_device_info.h"
@@ -36,14 +38,14 @@
 #include "nsDOMDataChannelDeclarations.h"
 
 #ifdef MOZILLA_INTERNAL_API
-#include "nsContentUtils.h"
+#include "mozilla/TimeStamp.h"
+#include "mozilla/Telemetry.h"
 #include "nsDOMJSUtils.h"
 #include "nsIDocument.h"
 #include "nsIScriptError.h"
 #include "nsPrintfCString.h"
 #include "nsURLHelper.h"
 #include "nsNetUtil.h"
-#include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/RTCConfigurationBinding.h"
 #include "MediaStreamList.h"
 #include "nsIScriptGlobalObject.h"
@@ -69,6 +71,15 @@ class nsIDOMDataChannel;
 static const char* logTag = "PeerConnectionImpl";
 static const int DTLS_FINGERPRINT_LENGTH = 64;
 static const int MEDIA_STREAM_MUTE = 0x80;
+
+PRLogModuleInfo *signalingLogInfo() {
+  static PRLogModuleInfo *logModuleInfo = nullptr;
+  if (!logModuleInfo) {
+    logModuleInfo = PR_NewLogModule("signaling");
+  }
+  return logModuleInfo;
+}
+
 
 namespace sipcc {
 
@@ -247,6 +258,9 @@ public:
         // providing non-fatal warnings.
         mPC->ClearSdpParseErrorMessages();
         mObserver->OnSetRemoteDescriptionSuccess();
+#ifdef MOZILLA_INTERNAL_API
+        mPC->startCallTelem();
+#endif
         break;
 
       case SETLOCALDESCERROR:
@@ -319,7 +333,8 @@ private:
 NS_IMPL_ISUPPORTS1(PeerConnectionImpl, IPeerConnection)
 
 PeerConnectionImpl::PeerConnectionImpl()
-: mRole(kRoleUnknown)
+: mTimeCard(PR_LOG_TEST(signalingLogInfo(),PR_LOG_ERROR) ?
+            create_timecard() : nullptr)
   , mCall(NULL)
   , mReadyState(kNew)
   , mSignalingState(kSignalingStable)
@@ -337,10 +352,17 @@ PeerConnectionImpl::PeerConnectionImpl()
 #endif
   CSFLogInfo(logTag, "%s: PeerConnectionImpl constructor for %s",
              __FUNCTION__, mHandle.c_str());
+  STAMP_TIMECARD(mTimeCard, "Constructor Completed");
 }
 
 PeerConnectionImpl::~PeerConnectionImpl()
 {
+  if (mTimeCard) {
+    STAMP_TIMECARD(mTimeCard, "Destructor Invoked");
+    print_timecard(mTimeCard);
+    destroy_timecard(mTimeCard);
+    mTimeCard = nullptr;
+  }
   // This aborts if not on main thread (in Debug builds)
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
   if (PeerConnectionCtx::isActive()) {
@@ -583,11 +605,13 @@ PeerConnectionImpl::Initialize(IPeerConnectionObserver* aObserver,
 
   mHandle = hex;
 
+  STAMP_TIMECARD(mTimeCard, "Initializing PC Ctx");
   res = PeerConnectionCtx::InitializeGlobal(mThread);
   NS_ENSURE_SUCCESS(res, res);
 
   PeerConnectionCtx *pcctx = PeerConnectionCtx::GetInstance();
   MOZ_ASSERT(pcctx);
+  STAMP_TIMECARD(mTimeCard, "Done Initializing PC Ctx");
 
   mCall = pcctx->createCall();
   if(!mCall.get()) {
@@ -624,8 +648,10 @@ PeerConnectionImpl::Initialize(IPeerConnectionObserver* aObserver,
   mCall->setPeerConnection(mHandle);
   PeerConnectionCtx::GetInstance()->mPeerConnections[mHandle] = this;
 
+  STAMP_TIMECARD(mTimeCard, "Generating DTLS Identity");
   // Create the DTLS Identity
   mIdentity = DtlsIdentity::Generate();
+  STAMP_TIMECARD(mTimeCard, "Done Generating DTLS Identity");
 
   if (!mIdentity) {
     CSFLogError(logTag, "%s: Generate returned NULL", __FUNCTION__);
@@ -654,14 +680,6 @@ PeerConnectionImpl::Initialize(IPeerConnectionObserver* aObserver,
       __FUNCTION__, static_cast<uint32_t>(res));
     return res;
   }
-
-#ifndef MOZILLA_INTERNAL_API
-  // Busy-wait until we are ready, for C++ unit tests. Remove when tests are fixed.
-  CSFLogDebug(logTag, "%s: Sleeping until kStarted", __FUNCTION__);
-  while(PeerConnectionCtx::GetInstance()->sipcc_state() != kStarted) {
-    PR_Sleep(100);
-  }
-#endif
 
   return NS_OK;
 }
@@ -950,7 +968,7 @@ PeerConnectionImpl::ConvertConstraints(
     }
     for (uint32_t i = 0; i < length; i++) {
       JS::Rooted<JS::Value> element(aCx);
-      if (!JS_GetElement(aCx, array, i, element.address()) ||
+      if (!JS_GetElement(aCx, array, i, &element) ||
           !element.isObject()) {
         return NS_ERROR_FAILURE;
       }
@@ -999,12 +1017,14 @@ PeerConnectionImpl::CreateOffer(MediaConstraints& constraints)
 {
   PC_AUTO_ENTER_API_CALL(true);
 
-  mRole = kRoleOfferer;  // TODO(ekr@rtfm.com): Interrogate SIPCC here?
+  Timecard *tc = mTimeCard;
+  mTimeCard = nullptr;
+  STAMP_TIMECARD(tc, "Create Offer");
 
   cc_media_constraints_t* cc_constraints = nullptr;
   constraints.buildArray(&cc_constraints);
 
-  mCall->createOffer(cc_constraints);
+  mCall->createOffer(cc_constraints, tc);
   return NS_OK;
 }
 
@@ -1027,12 +1047,14 @@ PeerConnectionImpl::CreateAnswer(MediaConstraints& constraints)
 {
   PC_AUTO_ENTER_API_CALL(true);
 
-  mRole = kRoleAnswerer;  // TODO(ekr@rtfm.com): Interrogate SIPCC here?
+  Timecard *tc = mTimeCard;
+  mTimeCard = nullptr;
+  STAMP_TIMECARD(tc, "Create Answer");
 
   cc_media_constraints_t* cc_constraints = nullptr;
   constraints.buildArray(&cc_constraints);
 
-  mCall->createAnswer(cc_constraints);
+  mCall->createAnswer(cc_constraints, tc);
   return NS_OK;
 }
 
@@ -1046,8 +1068,13 @@ PeerConnectionImpl::SetLocalDescription(int32_t aAction, const char* aSDP)
     return NS_ERROR_FAILURE;
   }
 
+  Timecard *tc = mTimeCard;
+  mTimeCard = nullptr;
+  STAMP_TIMECARD(tc, "Set Local Description");
+
   mLocalRequestedSDP = aSDP;
-  mCall->setLocalDescription((cc_jsep_action_t)aAction, mLocalRequestedSDP);
+  mCall->setLocalDescription((cc_jsep_action_t)aAction,
+                             mLocalRequestedSDP, tc);
   return NS_OK;
 }
 
@@ -1061,8 +1088,13 @@ PeerConnectionImpl::SetRemoteDescription(int32_t action, const char* aSDP)
     return NS_ERROR_FAILURE;
   }
 
+  Timecard *tc = mTimeCard;
+  mTimeCard = nullptr;
+  STAMP_TIMECARD(tc, "Set Remote Description");
+
   mRemoteRequestedSDP = aSDP;
-  mCall->setRemoteDescription((cc_jsep_action_t)action, mRemoteRequestedSDP);
+  mCall->setRemoteDescription((cc_jsep_action_t)action,
+                              mRemoteRequestedSDP, tc);
   return NS_OK;
 }
 
@@ -1070,7 +1102,11 @@ NS_IMETHODIMP
 PeerConnectionImpl::AddIceCandidate(const char* aCandidate, const char* aMid, unsigned short aLevel) {
   PC_AUTO_ENTER_API_CALL(true);
 
-  mCall->addICECandidate(aCandidate, aMid, aLevel);
+  Timecard *tc = mTimeCard;
+  mTimeCard = nullptr;
+  STAMP_TIMECARD(tc, "Add Ice Candidate");
+
+  mCall->addICECandidate(aCandidate, aMid, aLevel, tc);
   return NS_OK;
 }
 
@@ -1328,6 +1364,14 @@ PeerConnectionImpl::ShutdownMedia()
   if (!mMedia)
     return;
 
+#ifdef MOZILLA_INTERNAL_API
+  // End of call to be recorded in Telemetry
+  if (!mStartTime.IsNull()){
+    mozilla::TimeDuration timeDelta = mozilla::TimeStamp::Now() - mStartTime;
+    Telemetry::Accumulate(Telemetry::WEBRTC_CALL_DURATION, timeDelta.ToSeconds());
+  }
+#endif
+
   // Forget the reference so that we can transfer it to
   // SelfDestruct().
   mMedia.forget().get()->SelfDestruct();
@@ -1355,6 +1399,12 @@ PeerConnectionImpl::onCallEvent(ccapi_call_event_e aCallEvent,
 
   cc_call_state_t event = aInfo->getCallState();
   std::string statestr = aInfo->callStateToString(event);
+  Timecard *timecard = aInfo->takeTimecard();
+
+  if (timecard) {
+    mTimeCard = timecard;
+    STAMP_TIMECARD(mTimeCard, "Operation Completed");
+  }
 
   if (CCAPI_CALL_EV_CREATED != aCallEvent && CCAPI_CALL_EV_STATE != aCallEvent) {
     CSFLogDebug(logTag, "%s: **** CALL HANDLE IS: %s, **** CALL STATE IS: %s",
@@ -1504,7 +1554,24 @@ PeerConnectionImpl::IceStateChange_m(IceState aState)
 
   mIceState = aState;
 
-#ifdef MOZILLA_INTERNAL_API
+  switch (mIceState) {
+    case kIceGathering:
+      STAMP_TIMECARD(mTimeCard, "Ice state: gathering");
+      break;
+    case kIceWaiting:
+      STAMP_TIMECARD(mTimeCard, "Ice state: waiting");
+      break;
+    case kIceChecking:
+      STAMP_TIMECARD(mTimeCard, "Ice state: checking");
+      break;
+    case kIceConnected:
+      STAMP_TIMECARD(mTimeCard, "Ice state: connected");
+      break;
+    case kIceFailed:
+      STAMP_TIMECARD(mTimeCard, "Ice state: failed");
+      break;
+  }
+
   nsCOMPtr<IPeerConnectionObserver> pco = do_QueryReferent(mPCObserver);
   if (!pco) {
     return NS_OK;
@@ -1515,7 +1582,6 @@ PeerConnectionImpl::IceStateChange_m(IceState aState)
                              // static_cast required to work around old C++ compiler on Android NDK r5c
                              static_cast<int>(IPeerConnectionObserver::kIceState)),
                 NS_DISPATCH_NORMAL);
-#endif
   return NS_OK;
 }
 
@@ -1545,6 +1611,22 @@ PeerConnectionImpl::GetSdpParseErrors() {
   return mSDPParseErrorMessages;
 }
 
+#ifdef MOZILLA_INTERNAL_API
+//Telemetry for when calls start
+void
+PeerConnectionImpl::startCallTelem() {
+  // Start time for calls
+  mStartTime = mozilla::TimeStamp::Now();
+
+  // Increment session call counter
+#ifdef MOZILLA_INTERNAL_API
+  int &cnt = PeerConnectionCtx::GetInstance()->mConnectionCounter;
+  Telemetry::GetHistogramById(Telemetry::WEBRTC_CALL_COUNT)->Subtract(cnt);
+  cnt++;
+  Telemetry::GetHistogramById(Telemetry::WEBRTC_CALL_COUNT)->Add(cnt);
+#endif
+}
+#endif
 
 #ifdef MOZILLA_INTERNAL_API
 static nsresult

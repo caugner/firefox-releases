@@ -7,7 +7,6 @@
 #include "ipc/IPCMessageUtils.h"
 #include "nsCOMPtr.h"
 #include "nsDOMUIEvent.h"
-#include "nsIPresShell.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMNode.h"
@@ -15,7 +14,6 @@
 #include "nsContentUtils.h"
 #include "nsEventStateManager.h"
 #include "nsIFrame.h"
-#include "nsIScrollableFrame.h"
 #include "mozilla/Util.h"
 #include "mozilla/Assertions.h"
 #include "prtime.h"
@@ -82,7 +80,7 @@ nsDOMUIEvent::Constructor(const mozilla::dom::GlobalObject& aGlobal,
                           const mozilla::dom::UIEventInit& aParam,
                           mozilla::ErrorResult& aRv)
 {
-  nsCOMPtr<mozilla::dom::EventTarget> t = do_QueryInterface(aGlobal.Get());
+  nsCOMPtr<mozilla::dom::EventTarget> t = do_QueryInterface(aGlobal.GetAsSupports());
   nsRefPtr<nsDOMUIEvent> e = new nsDOMUIEvent(t, nullptr, nullptr);
   bool trusted = e->Init(t);
   aRv = e->InitUIEvent(aType, aParam.mBubbles, aParam.mCancelable, aParam.mView,
@@ -350,7 +348,7 @@ nsDOMUIEvent::IsChar() const
     case NS_KEY_EVENT:
       return static_cast<nsKeyEvent*>(mEvent)->isChar;
     case NS_TEXT_EVENT:
-      return static_cast<nsKeyEvent*>(mEvent)->isChar;
+      return static_cast<nsTextEvent*>(mEvent)->isChar;
     default:
       return false;
   }
@@ -408,25 +406,25 @@ nsDOMUIEvent::Deserialize(const IPC::Message* aMsg, void** aIter)
 //     we fail to build on Mac at calling mozilla::ArrayLength().
 struct nsModifierPair
 {
-  mozilla::widget::Modifier modifier;
+  mozilla::Modifier modifier;
   const char* name;
 };
 static const nsModifierPair kPairs[] = {
-  { widget::MODIFIER_ALT,        NS_DOM_KEYNAME_ALT },
-  { widget::MODIFIER_ALTGRAPH,   NS_DOM_KEYNAME_ALTGRAPH },
-  { widget::MODIFIER_CAPSLOCK,   NS_DOM_KEYNAME_CAPSLOCK },
-  { widget::MODIFIER_CONTROL,    NS_DOM_KEYNAME_CONTROL },
-  { widget::MODIFIER_FN,         NS_DOM_KEYNAME_FN },
-  { widget::MODIFIER_META,       NS_DOM_KEYNAME_META },
-  { widget::MODIFIER_NUMLOCK,    NS_DOM_KEYNAME_NUMLOCK },
-  { widget::MODIFIER_SCROLLLOCK, NS_DOM_KEYNAME_SCROLLLOCK },
-  { widget::MODIFIER_SHIFT,      NS_DOM_KEYNAME_SHIFT },
-  { widget::MODIFIER_SYMBOLLOCK, NS_DOM_KEYNAME_SYMBOLLOCK },
-  { widget::MODIFIER_OS,         NS_DOM_KEYNAME_OS }
+  { MODIFIER_ALT,        NS_DOM_KEYNAME_ALT },
+  { MODIFIER_ALTGRAPH,   NS_DOM_KEYNAME_ALTGRAPH },
+  { MODIFIER_CAPSLOCK,   NS_DOM_KEYNAME_CAPSLOCK },
+  { MODIFIER_CONTROL,    NS_DOM_KEYNAME_CONTROL },
+  { MODIFIER_FN,         NS_DOM_KEYNAME_FN },
+  { MODIFIER_META,       NS_DOM_KEYNAME_META },
+  { MODIFIER_NUMLOCK,    NS_DOM_KEYNAME_NUMLOCK },
+  { MODIFIER_SCROLLLOCK, NS_DOM_KEYNAME_SCROLLLOCK },
+  { MODIFIER_SHIFT,      NS_DOM_KEYNAME_SHIFT },
+  { MODIFIER_SYMBOLLOCK, NS_DOM_KEYNAME_SYMBOLLOCK },
+  { MODIFIER_OS,         NS_DOM_KEYNAME_OS }
 };
 
 /* static */
-mozilla::widget::Modifiers
+mozilla::Modifiers
 nsDOMUIEvent::ComputeModifierState(const nsAString& aModifiersList)
 {
   if (aModifiersList.IsEmpty()) {
@@ -462,6 +460,9 @@ nsDOMUIEvent::ComputeModifierState(const nsAString& aModifiersList)
 bool
 nsDOMUIEvent::GetModifierStateInternal(const nsAString& aKey)
 {
+  if (!NS_IS_INPUT_EVENT(mEvent)) {
+    MOZ_CRASH("mEvent must be nsInputEvent or derived class");
+  }
   nsInputEvent* inputEvent = static_cast<nsInputEvent*>(mEvent);
   if (aKey.EqualsLiteral(NS_DOM_KEYNAME_SHIFT)) {
     return inputEvent->IsShift();

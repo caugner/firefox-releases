@@ -3,32 +3,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsCOMPtr.h"
-#include "nsHTMLParts.h"
-#include "nsFrame.h"
+#include "nsMathMLContainerFrame.h"
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
-#include "nsCSSAnonBoxes.h"
 #include "nsStyleContext.h"
-#include "nsStyleConsts.h"
 #include "nsINameSpaceManager.h"
 #include "nsRenderingContext.h"
-
 #include "nsIDOMMutationEvent.h"
-#include "nsFrameManager.h"
-#include "nsStyleChangeList.h"
-
 #include "nsGkAtoms.h"
-#include "nsMathMLParts.h"
-#include "nsMathMLContainerFrame.h"
 #include "nsAutoPtr.h"
-#include "nsStyleSet.h"
 #include "nsDisplayList.h"
-#include "nsCSSFrameConstructor.h"
 #include "nsIReflowCallback.h"
 #include "mozilla/Likely.h"
 #include "nsIScriptError.h"
 #include "nsContentUtils.h"
+#include "nsMathMLElement.h"
 
 using namespace mozilla;
 
@@ -1523,7 +1512,7 @@ nsMathMLContainerFrame::ReportErrorToConsole(const char*       errorMsgId,
                                              uint32_t          aParamCount)
 {
   return nsContentUtils::ReportToConsole(nsIScriptError::errorFlag,
-                                         "MathML", mContent->OwnerDoc(),
+                                         NS_LITERAL_CSTRING("MathML"), mContent->OwnerDoc(),
                                          nsContentUtils::eMATHML_PROPERTIES,
                                          errorMsgId, aParams, aParamCount);
 }
@@ -1542,6 +1531,14 @@ nsMathMLContainerFrame::ReportChildCountError()
 {
   const PRUnichar* arg = mContent->Tag()->GetUTF16String();
   return ReportErrorToConsole("ChildCountIncorrect", &arg, 1);
+}
+
+nsresult
+nsMathMLContainerFrame::ReportInvalidChildError(nsIAtom* aChildTag)
+{
+  const PRUnichar* argv[] =
+    { aChildTag->GetUTF16String(), mContent->Tag()->GetUTF16String() };
+  return ReportErrorToConsole("InvalidChild", argv, 2);
 }
 
 //==========================

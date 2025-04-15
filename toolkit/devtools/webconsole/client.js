@@ -1,4 +1,4 @@
-/* -*- Mode: js2; js2-basic-offset: 2; indent-tabs-mode: nil; -*- */
+/* -*- js2-basic-offset: 2; indent-tabs-mode: nil; -*- */
 /* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -148,8 +148,8 @@ WebConsoleClient.prototype = {
   /**
    * Get Web Console-related preferences on the server.
    *
-   * @param object aPreferences
-   *        An object with the preferences you want to retrieve.
+   * @param array aPreferences
+   *        An array with the preferences you want to retrieve.
    * @param function [aOnResponse]
    *        Optional function to invoke when the response is received.
    */

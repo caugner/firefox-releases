@@ -6,12 +6,9 @@
 #ifdef IBMBIDI
 
 #include "nsBidiPresUtils.h"
-#include "nsTextFragment.h"
 #include "nsGkAtoms.h"
 #include "nsPresContext.h"
 #include "nsRenderingContext.h"
-#include "nsIServiceManager.h"
-#include "nsFrameManager.h"
 #include "nsBidiUtils.h"
 #include "nsCSSFrameConstructor.h"
 #include "nsContainerFrame.h"
@@ -20,7 +17,7 @@
 #include "nsFirstLetterFrame.h"
 #include "nsUnicodeProperties.h"
 #include "nsTextFrame.h"
-#include "nsStyleStructInlines.h"
+#include "nsBlockFrame.h"
 #include <algorithm>
 
 #undef NOISY_BIDI
@@ -57,7 +54,6 @@ struct BidiParagraphData {
 
   void Init(nsBlockFrame *aBlockFrame)
   {
-    mContentToFrameIndex.Init();
     mBidiEngine = new nsBidi();
     mPrevContent = nullptr;
     mParagraphDepth = 0;
@@ -114,7 +110,6 @@ struct BidiParagraphData {
   // Initialise a sub-paragraph from its containing paragraph
   void Init(BidiParagraphData *aBpd)
   {
-    mContentToFrameIndex.Init();
     mBidiEngine = new nsBidi();
     mPrevContent = nullptr;
     mIsVisual = aBpd->mIsVisual;
@@ -1465,8 +1460,6 @@ nsBidiPresUtils::RepositionInlineFrames(BidiLineData *aBld,
   int32_t count = aBld->mVisualFrames.Length();
   int32_t index;
   nsContinuationStates continuationStates;
-
-  continuationStates.Init();
 
   // Initialize continuation states to (nullptr, 0) for
   // each frame on the line.

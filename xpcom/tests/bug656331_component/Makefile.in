@@ -5,18 +5,8 @@
 
 # Blatantly copied from xpcom/tests/component.
 
-DEPTH		= @DEPTH@
-topsrcdir	= @top_srcdir@
-srcdir		= @srcdir@
-VPATH		= @srcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
-LIBRARY_NAME	= test656331
 IS_COMPONENT	= 1
 FORCE_SHARED_LIB = 1
-
-include $(topsrcdir)/config/config.mk
 
 MANIFEST_FILE = bug656331.manifest
 

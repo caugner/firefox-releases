@@ -14,8 +14,6 @@
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/quota/Client.h"
 #include "mozilla/dom/quota/QuotaManager.h"
-#include "nsContentUtils.h"
-#include "nsDOMClassInfo.h"
 #include "nsDOMLists.h"
 #include "nsJSUtils.h"
 #include "nsProxyRelease.h"
@@ -199,6 +197,8 @@ IDBDatabase::Create(IDBWrapperCache* aOwnerCache,
   db->mDatabaseId = databaseInfo->id;
   db->mName = databaseInfo->name;
   db->mFilePath = databaseInfo->filePath;
+  db->mPersistenceType = databaseInfo->persistenceType;
+  db->mGroup = databaseInfo->group;
   databaseInfo.swap(db->mDatabaseInfo);
   db->mASCIIOrigin = aASCIIOrigin;
   db->mFileManager = aFileManager;
@@ -229,8 +229,7 @@ IDBDatabase::FromStorage(nsIOfflineStorage* aStorage)
 }
 
 IDBDatabase::IDBDatabase()
-: mDatabaseId(0),
-  mActorChild(nullptr),
+: mActorChild(nullptr),
   mActorParent(nullptr),
   mContentParent(nullptr),
   mInvalidated(false),
@@ -704,7 +703,7 @@ IDBDatabase::MozCreateFileHandle(const nsAString& aName,
     return nullptr;
   }
 
-  nsRefPtr<IDBRequest> request = IDBRequest::Create(nullptr, this, nullptr);
+  nsRefPtr<IDBRequest> request = IDBRequest::Create(this, nullptr);
 
   nsRefPtr<CreateFileHelper> helper =
     new CreateFileHelper(this, request, aName,

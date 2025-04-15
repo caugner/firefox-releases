@@ -52,7 +52,7 @@ bool
 Bridge(const PrivateIPDLInterface&,
        AsyncChannel* aParentChannel, ProcessHandle aParentProcess,
        AsyncChannel* aChildChannel, ProcessHandle aChildProcess,
-       ProtocolId aProtocol)
+       ProtocolId aProtocol, ProtocolId aChildProtocol)
 {
   ProcessId parentId = GetProcId(aParentProcess);
   ProcessId childId = GetProcId(aChildProcess);
@@ -71,7 +71,7 @@ Bridge(const PrivateIPDLInterface&,
                                               aProtocol)) ||
       !aChildChannel->Send(new ChannelOpened(childSide,
                                              parentId,
-                                             aProtocol))) {
+                                             aChildProtocol))) {
     CloseDescriptor(parentSide);
     CloseDescriptor(childSide);
     return false;
@@ -83,7 +83,7 @@ bool
 Open(const PrivateIPDLInterface&,
      AsyncChannel* aOpenerChannel, ProcessHandle aOtherProcess,
      Transport::Mode aOpenerMode,
-     ProtocolId aProtocol)
+     ProtocolId aProtocol, ProtocolId aChildProtocol)
 {
   bool isParent = (Transport::MODE_SERVER == aOpenerMode);
   ProcessHandle thisHandle = GetCurrentProcessHandle();
@@ -102,7 +102,7 @@ Open(const PrivateIPDLInterface&,
   }
 
   Message* parentMsg = new ChannelOpened(parentSide, childId, aProtocol);
-  Message* childMsg = new ChannelOpened(childSide, parentId, aProtocol);
+  Message* childMsg = new ChannelOpened(childSide, parentId, aChildProtocol);
   nsAutoPtr<Message> messageForUs(isParent ? parentMsg : childMsg);
   nsAutoPtr<Message> messageForOtherSide(!isParent ? parentMsg : childMsg);
   if (!aOpenerChannel->Echo(messageForUs.forget()) ||
@@ -131,6 +131,29 @@ ProtocolErrorBreakpoint(const char* aMsg)
     // reproduce.  Log always in the hope that someone finds the error
     // message.
     printf_stderr("IPDL protocol error: %s\n", aMsg);
+}
+
+void
+FatalError(const char* aProtocolName, const char* aMsg,
+           ProcessHandle aHandle, bool aIsParent)
+{
+  ProtocolErrorBreakpoint(aMsg);
+
+  nsAutoCString formattedMessage("IPDL error [");
+  formattedMessage.AppendASCII(aProtocolName);
+  formattedMessage.AppendLiteral("]: \"");
+  formattedMessage.AppendASCII(aMsg);
+  if (aIsParent) {
+    formattedMessage.AppendLiteral("\". Killing child side as a result.");
+    NS_ERROR(formattedMessage.get());
+
+    if (!base::KillProcess(aHandle, base::PROCESS_END_KILLED_BY_USER, false)) {
+      NS_ERROR("May have failed to kill child!");
+    }
+  } else {
+    formattedMessage.AppendLiteral("\". abort()ing as a result.");
+    NS_RUNTIMEABORT(formattedMessage.get());
+  }
 }
 
 } // namespace ipc

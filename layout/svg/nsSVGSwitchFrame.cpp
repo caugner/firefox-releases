@@ -51,7 +51,9 @@ public:
                                 const nsDisplayListSet& aLists) MOZ_OVERRIDE;
 
   // nsISVGChildFrame interface:
-  NS_IMETHOD PaintSVG(nsRenderingContext* aContext, const nsIntRect *aDirtyRect);
+  NS_IMETHOD PaintSVG(nsRenderingContext* aContext,
+                      const nsIntRect *aDirtyRect,
+                      nsIFrame* aTransformRoot) MOZ_OVERRIDE;
   NS_IMETHODIMP_(nsIFrame*) GetFrameForPoint(const nsPoint &aPoint);
   NS_IMETHODIMP_(nsRect) GetCoveredRegion();
   virtual void ReflowSVG();
@@ -105,7 +107,8 @@ nsSVGSwitchFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
 NS_IMETHODIMP
 nsSVGSwitchFrame::PaintSVG(nsRenderingContext* aContext,
-                           const nsIntRect *aDirtyRect)
+                           const nsIntRect *aDirtyRect,
+                           nsIFrame* aTransformRoot)
 {
   NS_ASSERTION(!NS_SVGDisplayListPaintingEnabled() ||
                (mState & NS_FRAME_IS_NONDISPLAY),
@@ -117,7 +120,7 @@ nsSVGSwitchFrame::PaintSVG(nsRenderingContext* aContext,
 
   nsIFrame *kid = GetActiveChildFrame();
   if (kid) {
-    nsSVGUtils::PaintFrameWithEffects(aContext, aDirtyRect, kid);
+    nsSVGUtils::PaintFrameWithEffects(aContext, aDirtyRect, kid, aTransformRoot);
   }
   return NS_OK;
 }
@@ -177,6 +180,8 @@ nsSVGSwitchFrame::ReflowSVG()
   // need to remove it _after_ recursing over our children so that they know
   // the initial reflow is currently underway.
 
+  bool isFirstReflow = (mState & NS_FRAME_FIRST_REFLOW);
+
   bool outerSVGHasHadFirstReflow =
     (GetParent()->GetStateBits() & NS_FRAME_FIRST_REFLOW) == 0;
 
@@ -201,7 +206,7 @@ nsSVGSwitchFrame::ReflowSVG()
     }
   }
 
-  if (mState & NS_FRAME_FIRST_REFLOW) {
+  if (isFirstReflow) {
     // Make sure we have our filter property (if any) before calling
     // FinishAndStoreOverflow (subsequent filter changes are handled off
     // nsChangeHint_UpdateEffects):

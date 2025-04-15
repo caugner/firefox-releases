@@ -30,8 +30,14 @@ SpecialPowers.addPermission("contacts-write", true, document);
 SpecialPowers.addPermission("contacts-read", true, document);
 SpecialPowers.addPermission("contacts-create", true, document);
 
+var isAndroid = (navigator.userAgent.indexOf("Android") !== -1);
+var androidVersion = SpecialPowers.Cc['@mozilla.org/system-info;1']
+                                  .getService(SpecialPowers.Ci.nsIPropertyBag2)
+                                  .getProperty('version');
+
 function onFailure() {
   ok(false, "in on Failure!");
+  next();
 }
 
 var number1 = {
@@ -53,6 +59,16 @@ var shortNumber = "888";
 var properties2 = {
   name: "Testname2",
   tel: [{type: ["work"], value: shortNumber, carrier: "testCarrier"}]
+};
+
+var number3 = {
+  international1: "0041557932012345",
+  international2: "+557932012345"
+};
+
+var properties3 = {
+  name: "Testname2",
+  tel: [{value: number3.international2}]
 };
 
 var req;
@@ -162,11 +178,15 @@ var steps = [
   },
   function() {
     ok(true, "Modifying number");
-    findResult1.tel[0].value = number2.local;
-    req = mozContacts.save(findResult1);
-    req.onsuccess = function () {
-      next();
-    };
+    if (!findResult1) {
+      SpecialPowers.executeSoon(next);
+    } else {
+      findResult1.tel[0].value = number2.local;
+      req = mozContacts.save(findResult1);
+      req.onsuccess = function () {
+        next();
+      };
+    }
   },
   function () {
     ok(true, "Searching for local number");
@@ -220,7 +240,42 @@ var steps = [
   },
   function () {
     ok(true, "Deleting database");
-    req = mozContacts.clear()
+    req = mozContacts.clear();
+    req.onsuccess = function () {
+      ok(true, "Deleted the database");
+      next();
+    }
+    req.onerror = onFailure;
+  },
+  function () {
+    ok(true, "Adding a new contact with country code");
+    createResult1 = new mozContact();
+    createResult1.init(properties3);
+    req = navigator.mozContacts.save(createResult1);
+    req.onsuccess = function () {
+      ok(createResult1.id, "The contact now has an ID.");
+      sample_id1 = createResult1.id;
+      next();
+    };
+    req.onerror = onFailure;
+  },
+  function () {
+    ok(true, "Searching for international number with prefix");
+    var options = {filterBy: ["tel"],
+                   filterOp: "match",
+                   filterValue: number3.international1};
+    req = mozContacts.find(options);
+    req.onsuccess = function () {
+      ok(req.result.length == 1, "Found exactly 1 contact.");
+      findResult1 = req.result[0];
+      ok(findResult1.id == sample_id1, "Same ID");
+      next();
+    };
+    req.onerror = onFailure;
+  },
+  function () {
+    ok(true, "Deleting database");
+    req = mozContacts.clear();
     req.onsuccess = function () {
       ok(true, "Deleted the database");
       next();
@@ -247,8 +302,14 @@ function next() {
   index += 1;
 }
 
-SimpleTest.waitForExplicitFinish();
-addLoadEvent(next);
+// Skip tests on Android < 4.0 due to test failures on tbpl (see bugs 897924 & 888891)
+if (!isAndroid || androidVersion >= 14) {
+  SimpleTest.waitForExplicitFinish();
+  addLoadEvent(next);
+} else {
+  ok(true, "Skip tests on Android < 4.0 (bugs 897924 & 888891");
+}
+
 </script>
 </pre>
 </body>

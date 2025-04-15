@@ -6,18 +6,16 @@
 #ifndef nsXBLSerialize_h__
 #define nsXBLSerialize_h__
 
-#include "jsapi.h"
-
-#include "nsIScriptContext.h"
 #include "nsIObjectInputStream.h"
 #include "nsIObjectOutputStream.h"
 #include "nsINameSpaceManager.h"
+#include "js/TypeDecls.h"
 
 typedef uint8_t XBLBindingSerializeDetails;
 
 // A version number to ensure we don't load cached data in a different
 // file format.
-#define XBLBinding_Serialize_Version 0x00000001
+#define XBLBinding_Serialize_Version 0x00000003
 
 // Set for the first binding in a document
 #define XBLBinding_Serialize_IsFirstBinding 1
@@ -47,6 +45,7 @@ typedef uint8_t XBLBindingSerializeDetails;
 #define XBLBinding_Serialize_Handler 8
 #define XBLBinding_Serialize_Image 9
 #define XBLBinding_Serialize_Stylesheet 10
+#define XBLBinding_Serialize_Attribute 0xA
 #define XBLBinding_Serialize_Mask 0x0F
 #define XBLBinding_Serialize_ReadOnly 0x80
 
@@ -77,13 +76,11 @@ typedef uint8_t XBLBindingSerializeDetails;
 PR_STATIC_ASSERT(XBLBinding_Serialize_CustomNamespace >= kNameSpaceID_LastBuiltin);
 
 nsresult
-XBL_SerializeFunction(nsIScriptContext* aContext,
-                      nsIObjectOutputStream* aStream,
+XBL_SerializeFunction(nsIObjectOutputStream* aStream,
                       JS::Handle<JSObject*> aFunctionObject);
 
 nsresult
-XBL_DeserializeFunction(nsIScriptContext* aContext,
-                        nsIObjectInputStream* aStream,
+XBL_DeserializeFunction(nsIObjectInputStream* aStream,
                         JS::MutableHandle<JSObject*> aFunctionObject);
 
 #endif // nsXBLSerialize_h__

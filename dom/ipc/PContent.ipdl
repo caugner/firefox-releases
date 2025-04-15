@@ -11,6 +11,7 @@ include protocol PCompositor;
 include protocol PCrashReporter;
 include protocol PExternalHelperApp;
 include protocol PDeviceStorageRequest;
+include protocol PFMRadio;
 include protocol PHal;
 include protocol PImageBridge;
 include protocol PIndexedDB;
@@ -19,6 +20,7 @@ include protocol PNecko;
 include protocol PSms;
 include protocol PSpeechSynthesis;
 include protocol PStorage;
+include protocol PTelephony;
 include protocol PTestShell;
 include protocol PJavaScript;
 include DOMTypes;
@@ -34,6 +36,7 @@ include "mozilla/HalTypes.h";
 include "mozilla/layout/RenderFrameUtils.h";
 include "mozilla/net/NeckoMessageUtils.h";
 include "nsGeoPositionIPCSerialiser.h";
+include "gfxPoint.h";
 
 using GeoPosition;
 using PrefTuple;
@@ -47,6 +50,7 @@ using IPC::Principal;
 using mozilla::null_t;
 using mozilla::void_t;
 using mozilla::dom::AudioChannelType;
+using mozilla::dom::AudioChannelState;
 using mozilla::dom::BlobConstructorParams;
 using mozilla::dom::NativeThreadId;
 using mozilla::hal::ProcessPriority;
@@ -125,6 +129,40 @@ union DeviceStorageParams
   DeviceStorageAvailableParams;
 };
 
+struct FMRadioRequestEnableParams
+{
+  double frequency;
+};
+
+struct FMRadioRequestDisableParams
+{
+
+};
+
+struct FMRadioRequestSetFrequencyParams
+{
+  double frequency;
+};
+
+struct FMRadioRequestSeekParams
+{
+  bool upward;
+};
+
+struct FMRadioRequestCancelSeekParams
+{
+
+};
+
+union FMRadioRequestParams
+{
+  FMRadioRequestEnableParams;
+  FMRadioRequestDisableParams;
+  FMRadioRequestSetFrequencyParams;
+  FMRadioRequestSeekParams;
+  FMRadioRequestCancelSeekParams;
+};
+
 union PrefValue {
   nsCString;
   int32_t;
@@ -153,6 +191,7 @@ rpc protocol PContent
     manages PCrashReporter;
     manages PDeviceStorageRequest;
     manages PExternalHelperApp;
+    manages PFMRadio;
     manages PHal;
     manages PIndexedDB;
     manages PMemoryReportRequest;
@@ -160,6 +199,7 @@ rpc protocol PContent
     manages PSms;
     manages PSpeechSynthesis;
     manages PStorage;
+    manages PTelephony;
     manages PTestShell;
     manages PJavaScript;
 
@@ -267,12 +307,20 @@ child:
                    nsCString reasons);
 
     FileSystemUpdate(nsString fsName, nsString mountPoint, int32_t fsState,
-                     int32_t mountGeneration);
+                     int32_t mountGeneration, bool isMediaPresent,
+                     bool isSharing);
 
     NotifyProcessPriorityChanged(ProcessPriority priority);
     MinimizeMemoryUsage();
     CancelMinimizeMemoryUsage();
 
+    /**
+     * Used to manage nsIStyleSheetService across processes.
+     */
+    async LoadAndRegisterSheet(URIParams uri, uint32_t type);
+    async UnregisterSheet(URIParams uri, uint32_t type);
+
+    NotifyPhoneStateChange(nsString newState);
 parent:
     /**
      * Tell the content process some attributes of itself.  This is
@@ -309,7 +357,11 @@ parent:
 
     PStorage();
 
+    PTelephony();
+
     PBluetooth();
+
+    PFMRadio();
 
     // Services remoting
 
@@ -344,25 +396,10 @@ parent:
 
     CloseAlert(nsString name);
 
-    /**
-     * Tests permission for a provided principal using the permission
-     * manager.
-     *
-     * @param principal
-     *   The principal to test for the permissions.
-     * @param type
-     *   The type of permission to for the principal.
-     *
-     * NOTE: The principal is untrusted in the parent process. Only
-     *       principals that can live in the content process should
-     *       be provided.
-     */
-    sync TestPermissionFromPrincipal(Principal principal, nsCString type)
-        returns (uint32_t permission);
-
     PExternalHelperApp(OptionalURIParams uri, nsCString aMimeContentType,
                        nsCString aContentDisposition, bool aForceSave,
-                       int64_t aContentLength, OptionalURIParams aReferrer);
+                       int64_t aContentLength, OptionalURIParams aReferrer,
+                       nullable PBrowser aBrowser);
 
     AddGeolocationListener(Principal principal, bool highAccuracy);
     RemoveGeolocationListener();
@@ -401,15 +438,18 @@ parent:
     async FirstIdle();
 
     // Get Muted from the main AudioChannelService.
-    sync AudioChannelGetMuted(AudioChannelType aType, bool aElementHidden,
+    sync AudioChannelGetState(AudioChannelType aType, bool aElementHidden,
                               bool aElementWasHidden)
-        returns (bool value);
+        returns (AudioChannelState value);
 
-    sync AudioChannelRegisterType(AudioChannelType aType);
+    sync AudioChannelRegisterType(AudioChannelType aType, bool aWithVideo);
     sync AudioChannelUnregisterType(AudioChannelType aType,
-                                    bool aElementHidden);
+                                    bool aElementHidden,
+                                    bool aWithVideo);
 
     async AudioChannelChangedNotification();
+    async AudioChannelChangeDefVolChannel(AudioChannelType aType,
+                                          bool aHidden);
 
     async FilePathUpdateNotify(nsString aType,
                                nsString aStorageName,
@@ -418,14 +458,15 @@ parent:
     // get nsIVolumeService to broadcast volume information
     async BroadcastVolume(nsString volumeName);
 
-    async RecordingDeviceEvents(nsString recordingStatus);
-
     // Notify the parent that the child has finished handling a system message.
     async SystemMessageHandled();
 
     // called by the child (test code only) to propagate volume changes to the parent
     async CreateFakeVolume(nsString fsName, nsString mountPoint);
     async SetFakeVolumeState(nsString fsName, int32_t fsState);
+
+    sync KeywordToURI(nsCString keyword)
+        returns (OptionalInputStreamParams postData, OptionalURIParams uri);
 
 both:
      AsyncMessage(nsString aMessage, ClonedMessageData aData, CpowEntry[] aCpows);

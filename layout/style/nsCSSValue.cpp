@@ -12,13 +12,15 @@
 #include "nsIDocument.h"
 #include "nsIPrincipal.h"
 #include "nsCSSProps.h"
-#include "nsContentUtils.h"
 #include "nsStyleUtil.h"
 #include "CSSCalc.h"
 #include "nsNetUtil.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/css/ImageLoader.h"
 #include "mozilla/Likely.h"
+#include "gfxFontConstants.h"
+#include "nsPresContext.h"
+#include "imgRequestProxy.h"
 
 namespace css = mozilla::css;
 
@@ -57,11 +59,6 @@ nsCSSValue::nsCSSValue(const nsString& aValue, nsCSSUnit aUnit)
   NS_ABORT_IF_FALSE(UnitHasStringValue(), "not a string value");
   if (UnitHasStringValue()) {
     mValue.mString = BufferFromString(aValue).get();
-    if (MOZ_UNLIKELY(!mValue.mString)) {
-      // XXXbz not much we can do here; just make sure that our promise of a
-      // non-null mValue.mString holds for string units.
-      mUnit = eCSSUnit_Null;
-    }
   }
   else {
     mUnit = eCSSUnit_Null;
@@ -346,11 +343,6 @@ void nsCSSValue::SetStringValue(const nsString& aValue,
   NS_ABORT_IF_FALSE(UnitHasStringValue(), "not a string unit");
   if (UnitHasStringValue()) {
     mValue.mString = BufferFromString(aValue).get();
-    if (MOZ_UNLIKELY(!mValue.mString)) {
-      // XXXbz not much we can do here; just make sure that our promise of a
-      // non-null mValue.mString holds for string units.
-      mUnit = eCSSUnit_Null;
-    }
   } else
     mUnit = eCSSUnit_Null;
 }
@@ -833,6 +825,20 @@ nsCSSValue::AppendToString(nsCSSProperty aProperty, nsAString& aResult) const
   else if (eCSSUnit_Enumerated == unit) {
     int32_t intValue = GetIntValue();
     switch(aProperty) {
+
+
+    case eCSSProperty_text_combine_horizontal:
+      if (intValue <= NS_STYLE_TEXT_COMBINE_HORIZ_ALL) {
+        AppendASCIItoUTF16(nsCSSProps::LookupPropertyValue(aProperty, intValue),
+                           aResult);
+      } else if (intValue == NS_STYLE_TEXT_COMBINE_HORIZ_DIGITS_2) {
+        aResult.AppendLiteral("digits 2");
+      } else if (intValue == NS_STYLE_TEXT_COMBINE_HORIZ_DIGITS_3) {
+        aResult.AppendLiteral("digits 3");
+      } else {
+        aResult.AppendLiteral("digits 4");
+      }
+      break;
 
     case eCSSProperty_text_decoration_line:
       if (NS_STYLE_TEXT_DECORATION_LINE_NONE == intValue) {
@@ -1806,8 +1812,6 @@ css::ImageValue::ImageValue(nsIURI* aURI, nsStringBuffer* aString,
   if (!loadingDoc) {
     loadingDoc = aDocument;
   }
-
-  mRequests.Init();
 
   loadingDoc->StyleImageLoader()->LoadImage(aURI, aOriginPrincipal, aReferrer,
                                             this);

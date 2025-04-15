@@ -42,7 +42,7 @@ class BreakpadSampler;
 
 class TableTicker: public Sampler {
  public:
-  TableTicker(int aInterval, int aEntrySize,
+  TableTicker(double aInterval, int aEntrySize,
               const char** aFeatures, uint32_t aFeatureCount,
               const char** aThreadNameFilters, uint32_t aFilterCount)
     : Sampler(aInterval, true, aEntrySize)
@@ -120,7 +120,8 @@ class TableTicker: public Sampler {
                                                aInfo->Stack(),
                                                aInfo->ThreadId(),
                                                aInfo->GetPlatformData(),
-                                               aInfo->IsMainThread());
+                                               aInfo->IsMainThread(),
+                                               aInfo->StackTop());
     profile->addTag(ProfileEntry('m', "Start"));
 
     aInfo->SetProfile(profile);
@@ -156,7 +157,7 @@ class TableTicker: public Sampler {
 
   void ToStreamAsJSON(std::ostream& stream);
   virtual JSObject *ToJSObject(JSContext *aCx);
-  JSCustomObject *GetMetaJSCustomObject(JSAObjectBuilder& b);
+  template <typename Builder> typename Builder::Object GetMetaJSCustomObject(Builder& b);
 
   bool HasUnwinderThread() const { return mUnwinderThread; }
   bool ProfileJS() const { return mProfileJS; }
@@ -175,7 +176,7 @@ protected:
   // Not implemented on platforms which do not support backtracing
   void doNativeBacktrace(ThreadProfile &aProfile, TickSample* aSample);
 
-  void BuildJSObject(JSAObjectBuilder& b, JSCustomObject* profile);
+  template <typename Builder> void BuildJSObject(Builder& b, typename Builder::ObjectHandle profile);
 
   // This represent the application's main thread (SAMPLER_INIT)
   ThreadProfile* mPrimaryThreadProfile;

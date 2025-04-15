@@ -295,6 +295,8 @@ this.PushService = {
         // online, it is likely that these statements will be no-ops.
         if (this._udpServer) {
           this._udpServer.close();
+          // Set to null since this is checked in _listenForUDPWakeup()
+          this._udpServer = null;
         }
 
         this._shutdownWS();
@@ -415,6 +417,20 @@ this.PushService = {
    */
   _willBeWokenUpByUDP: false,
 
+  /**
+   * Sends a message to the Push Server through an open websocket.
+   * typeof(msg) shall be an object
+   */
+  _wsSendMessage: function(msg) {
+    if (!this._ws) {
+      debug("No WebSocket initialized. Cannot send a message.");
+      return;
+    }
+    msg = JSON.stringify(msg);
+    debug("Sending message: " + msg);
+    this._ws.sendMsg(msg);
+  },
+
   init: function() {
     debug("init()");
     if (!prefs.get("enabled"))
@@ -432,8 +448,6 @@ this.PushService = {
     this._alarmID = null;
 
     this._requestTimeout = prefs.get("requestTimeout");
-
-    this._udpPort = prefs.get("udp.port");
 
     this._startListeningIfChannelsPresent();
 
@@ -504,6 +518,7 @@ this.PushService = {
 
     if (this._udpServer) {
       this._udpServer.close();
+      this._udpServer = null;
     }
 
     // All pending requests (ideally none) are dropped at this point. We
@@ -622,9 +637,20 @@ this.PushService = {
 
   /** |delay| should be in milliseconds. */
   _setAlarm: function(delay) {
+    // Bug 909270: Since calls to AlarmService.add() are async, calls must be
+    // 'queued' to ensure only one alarm is ever active.
+    if (this._settingAlarm) {
+        // onSuccess will handle the set. Overwriting the variable enforces the
+        // last-writer-wins semantics.
+        this._queuedAlarmDelay = delay;
+        this._waitingForAlarmSet = true;
+        return;
+    }
+
     // Stop any existing alarm.
     this._stopAlarm();
 
+    this._settingAlarm = true;
     AlarmService.add(
       {
         date: new Date(Date.now() + delay),
@@ -634,6 +660,12 @@ this.PushService = {
       function onSuccess(alarmID) {
         this._alarmID = alarmID;
         debug("Set alarm " + delay + " in the future " + this._alarmID);
+        this._settingAlarm = false;
+
+        if (this._waitingForAlarmSet) {
+          this._waitingForAlarmSet = false;
+          this._setAlarm(this._queuedAlarmDelay);
+        }
       }.bind(this)
     )
   },
@@ -688,7 +720,7 @@ this.PushService = {
       // handle the exception, as the lack of a pong will lead to the socket
       // being reset.
       try {
-        this._ws.sendMsg('{}');
+        this._wsSendMessage({});
       } catch (e) {
       }
 
@@ -929,7 +961,7 @@ this.PushService = {
       this._shutdownWS();
     }
 
-    this._ws.sendMsg(JSON.stringify(data));
+    this._wsSendMessage(data);
     // Process the next one as soon as possible.
     setTimeout(this._processNextRequestInQueue.bind(this), 0);
   },
@@ -1261,6 +1293,10 @@ this.PushService = {
     // Since we've had a successful connection reset the retry fail count.
     this._retryFailCount = 0;
 
+    // Openning an available UDP port.
+    // _listenForUDPWakeup will return the opened port number
+    this._udpPort = this._listenForUDPWakeup();
+
     var data = {
       messageType: "hello",
     }
@@ -1286,7 +1322,7 @@ this.PushService = {
       // On success, ids is an array, on error its not.
       data["channelIDs"] = ids.map ?
                            ids.map(function(el) { return el.channelID; }) : [];
-      this._ws.sendMsg(JSON.stringify(data));
+      this._wsSendMessage(data);
       this._currentState = STATE_WAITING_FOR_HELLO;
     }
 
@@ -1304,14 +1340,17 @@ this.PushService = {
   _wsOnStop: function(context, statusCode) {
     debug("wsOnStop()");
 
-    this._shutdownWS();
-
     if (statusCode != Cr.NS_OK &&
         !(statusCode == Cr.NS_BASE_STREAM_CLOSED && this._willBeWokenUpByUDP)) {
       debug("Socket error " + statusCode);
       this._reconnectAfterBackoff();
     }
 
+    // Bug 896919. We always shutdown the WebSocket, even if we need to
+    // reconnect. This works because _reconnectAfterBackoff() is "async"
+    // (there is a minimum delay of the pref retryBaseInterval, which by default
+    // is 5000ms), so that function will open the WebSocket again.
+    this._shutdownWS();
   },
 
   _wsOnMessageAvailable: function(context, message) {
@@ -1378,7 +1417,6 @@ this.PushService = {
       debug("Server closed with promise to wake up");
       this._willBeWokenUpByUDP = true;
       // TODO: there should be no pending requests
-      this._listenForUDPWakeup();
     }
   },
 
@@ -1402,9 +1440,11 @@ this.PushService = {
 
     this._udpServer = Cc["@mozilla.org/network/server-socket-udp;1"]
                         .createInstance(Ci.nsIUDPServerSocket);
-    this._udpServer.init(this._udpPort, false);
+    this._udpServer.init(-1, false);
     this._udpServer.asyncListen(this);
     debug("listenForUDPWakeup listening on " + this._udpPort);
+
+    return this._udpServer.port;
   },
 
   /**
@@ -1424,6 +1464,7 @@ this.PushService = {
    */
   onStopListening: function(aServ, aStatus) {
     debug("UDP Server socket was shutdown. Status: " + aStatus);
+    this._udpPort = undefined;
     this._beginWSSetup();
   },
 
@@ -1435,6 +1476,11 @@ this.PushService = {
   _getNetworkState: function() {
     debug("getNetworkState()");
     try {
+      if (!prefs.get("udp.wakeupEnabled")) {
+        debug("UDP support disabled, we do not send any carrier info");
+        throw "UDP disabled";
+      }
+
       var nm = Cc["@mozilla.org/network/manager;1"].getService(Ci.nsINetworkManager);
       if (nm.active && nm.active.type == Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE) {
         var mcp = Cc["@mozilla.org/ril/content-helper;1"].getService(Ci.nsIMobileConnectionProvider);

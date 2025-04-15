@@ -5,6 +5,7 @@
 
 #include "JSCustomObjectBuilder.h"
 
+#include "mozilla/Util.h" // for ArrayLength
 #include "nsDataHashtable.h"
 #include "nsStringGlue.h"
 #include "nsTArray.h"
@@ -104,9 +105,7 @@ void EscapeToStream(std::ostream& stream, const char* str) {
 
 class JSCustomObject {
 public:
-  JSCustomObject() {
-    mProperties.Init();
-  }
+  JSCustomObject() {}
   ~JSCustomObject();
 
   friend std::ostream& operator<<(std::ostream& stream, JSCustomObject* entry);
@@ -230,10 +229,6 @@ PLDHashOperator HashTableFree(const nsACString& aKey, PropertyValue* aValue, voi
 JSCustomObject::~JSCustomObject()
 {
   mProperties.EnumerateRead(HashTableFree, nullptr);
-}
-
-JSAObjectBuilder::~JSAObjectBuilder()
-{
 }
 
 JSCustomObjectBuilder::JSCustomObjectBuilder()

@@ -173,6 +173,12 @@
 #define GIO_MODULE
 #endif
 
+#if defined(MOZ_SYNTH_PICO)
+#define SYNTH_PICO_MODULE MODULE(synthpico)
+#else
+#define SYNTH_PICO_MODULE
+#endif
+
 #define XUL_MODULES                          \
     MODULE(nsUConvModule)                    \
     MODULE(nsI18nModule)                     \
@@ -232,6 +238,7 @@
     MODULE(jsdebugger)                       \
     PEERCONNECTION_MODULE                    \
     GIO_MODULE                               \
+    SYNTH_PICO_MODULE                        \
     MODULE(DiskSpaceWatcherModule)           \
     /* end of list */
 
@@ -240,6 +247,10 @@
 
 XUL_MODULES
 
+#ifdef MOZ_WIDGET_GONK
+MODULE(WifiProxyServiceModule)
+#endif
+
 #undef MODULE
 
 #define MODULE(_name) \
@@ -247,6 +258,9 @@ XUL_MODULES
 
 extern const mozilla::Module *const *const kPStaticModules[] = {
   XUL_MODULES
+#ifdef MOZ_WIDGET_GONK
+MODULE(WifiProxyServiceModule)
+#endif
   NULL
 };
 

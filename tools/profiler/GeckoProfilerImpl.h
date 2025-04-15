@@ -2,6 +2,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+// IWYU pragma: private, include "GeckoProfiler.h"
 
 #ifndef TOOLS_SPS_SAMPLER_H_
 #define TOOLS_SPS_SAMPLER_H_
@@ -12,11 +13,9 @@
 #include <algorithm>
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/Assertions.h"
-#include "mozilla/TimeStamp.h"
 #include "mozilla/Util.h"
 #include "nsAlgorithm.h"
 #include "nscore.h"
-#include "jsfriendapi.h"
 #include "GeckoProfilerFunc.h"
 #include "PseudoStack.h"
 #include "nsISupports.h"
@@ -36,6 +35,10 @@
 struct PseudoStack;
 class TableTicker;
 class JSCustomObject;
+
+namespace mozilla {
+class TimeStamp;
+}
 
 extern mozilla::ThreadLocal<PseudoStack *> tlsPseudoStack;
 extern mozilla::ThreadLocal<TableTicker *> tlsTicker;

@@ -22,31 +22,24 @@
 #include "nsCOMPtr.h"
 #include "imgIContainer.h"
 #include "nsIProperties.h"
-#include "nsITimer.h"
-#include "nsIRequest.h"
 #include "nsTArray.h"
 #include "imgFrame.h"
 #include "nsThreadUtils.h"
 #include "DiscardTracker.h"
-#include "nsISupportsImpl.h"
+#include "Orientation.h"
+#include "nsIObserver.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/TimeStamp.h"
-#include "mozilla/Telemetry.h"
-#include "mozilla/LinkedList.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/WeakPtr.h"
 #include "mozilla/Mutex.h"
-#include "gfx2DGlue.h"
 #ifdef DEBUG
   #include "imgIContainerDebug.h"
 #endif
 
-// This will enable FrameAnimator approach to image animation.  Before doing
-// so, make sure bug 899861 symptoms are gone.
-// #define USE_FRAME_ANIMATOR 1
-
 class nsIInputStream;
 class nsIThreadPool;
+class nsIRequest;
 
 #define NS_RASTERIMAGE_CID \
 { /* 376ff2c1-9bf6-418a-b143-3340c00112f7 */         \
@@ -190,13 +183,11 @@ public:
   /* Callbacks for decoders */
   nsresult SetFrameAsNonPremult(uint32_t aFrameNum, bool aIsNonPremult);
 
-  /**
-   * Sets the size of the container. This should only be called by the
-   * decoder. This function may be called multiple times, but will throw an
-   * error if subsequent calls do not match the first.
+  /** Sets the size and inherent orientation of the container. This should only
+   * be called by the decoder. This function may be called multiple times, but
+   * will throw an error if subsequent calls do not match the first.
    */
-  nsresult SetSize(int32_t aWidth, int32_t aHeight);
-
+  nsresult SetSize(int32_t aWidth, int32_t aHeight, Orientation aOrientation);
 
   /**
    * Ensures that a given frame number exists with the given parameters, and
@@ -324,22 +315,6 @@ private:
   }
 
   nsresult OnImageDataCompleteCore(nsIRequest* aRequest, nsISupports*, nsresult aStatus);
-
-#ifndef USE_FRAME_ANIMATOR
-  struct Anim
-  {
-    //! Area of the first frame that needs to be redrawn on subsequent loops.
-    nsIntRect                  firstFrameRefreshArea;
-    uint32_t                   currentAnimationFrameIndex; // 0 to numFrames-1
-
-    // the time that the animation advanced to the current frame
-    TimeStamp                  currentAnimationFrameTime;
-
-    Anim() :
-      currentAnimationFrameIndex(0)
-    {}
-  };
-#endif
 
   /**
    * Each RasterImage has a pointer to one or zero heap-allocated
@@ -548,35 +523,6 @@ private:
                      uint32_t aFlags,
                      gfxImageSurface **_retval);
 
-#ifndef USE_FRAME_ANIMATOR
-  /**
-   * Advances the animation. Typically, this will advance a single frame, but it
-   * may advance multiple frames. This may happen if we have infrequently
-   * "ticking" refresh drivers (e.g. in background tabs), or extremely short-
-   * lived animation frames.
-   *
-   * @param aTime the time that the animation should advance to. This will
-   *              typically be <= TimeStamp::Now().
-   *
-   * @param [out] aDirtyRect a pointer to an nsIntRect which encapsulates the
-   *        area to be repainted after the frame is advanced.
-   *
-   * @returns true, if the frame was successfully advanced, false if it was not
-   *          able to be advanced (e.g. the frame to which we want to advance is
-   *          still decoding). Note: If false is returned, then aDirtyRect will
-   *          remain unmodified.
-   */
-  bool AdvanceFrame(mozilla::TimeStamp aTime, nsIntRect* aDirtyRect);
-
-  /**
-   * Gets the length of a single loop of this image, in milliseconds.
-   *
-   * If this image is not finished decoding, is not animated, or it is animated
-   * but does not loop, returns 0.
-   */
-  uint32_t GetSingleLoopTime() const;
-#endif
-
   /**
    * Deletes and nulls out the frame in mFrames[framenum].
    *
@@ -592,39 +538,11 @@ private:
   imgFrame* GetDrawableImgFrame(uint32_t framenum);
   imgFrame* GetCurrentImgFrame();
   uint32_t GetCurrentImgFrameIndex() const;
-#ifndef USE_FRAME_ANIMATOR
-  mozilla::TimeStamp GetCurrentImgFrameEndTime() const;
-#endif
 
   size_t SizeOfDecodedWithComputedFallbackIfHeap(gfxASurface::MemoryLocation aLocation,
                                                  mozilla::MallocSizeOf aMallocSizeOf) const;
 
-#ifdef USE_FRAME_ANIMATOR
   void EnsureAnimExists();
-#else
-  inline void EnsureAnimExists()
-  {
-    if (!mAnim) {
-
-      // Create the animation context
-      mAnim = new Anim();
-
-      // We don't support discarding animated images (See bug 414259).
-      // Lock the image and throw away the key.
-      //
-      // Note that this is inefficient, since we could get rid of the source
-      // data too. However, doing this is actually hard, because we're probably
-      // calling ensureAnimExists mid-decode, and thus we're decoding out of
-      // the source buffer. Since we're going to fix this anyway later, and
-      // since we didn't kill the source data in the old world either, locking
-      // is acceptable for the moment.
-      LockImage();
-
-      // Notify our observers that we are starting animation.
-      CurrentStatusTracker().RecordImageIsAnimated();
-    }
-  }
-#endif
 
   nsresult InternalAddFrameHelper(uint32_t framenum, imgFrame *frame,
                                   uint8_t **imageData, uint32_t *imageLength,
@@ -660,6 +578,7 @@ private:
 
 private: // data
   nsIntSize                  mSize;
+  Orientation                mOrientation;
 
   // Whether our frames were decoded using any special flags.
   // Some flags (e.g. unpremultiplied data) may not be compatible
@@ -682,14 +601,7 @@ private: // data
   // IMPORTANT: if you use mAnim in a method, call EnsureImageIsDecoded() first to ensure
   // that the frames actually exist (they may have been discarded to save memory, or
   // we maybe decoding on draw).
-#ifdef USE_FRAME_ANIMATOR
   FrameAnimator* mAnim;
-#else
-  RasterImage::Anim*        mAnim;
-
-  //! # loops remaining before animation stops (-1 no stop)
-  int32_t                    mLoopCount;
-#endif
 
   // Discard members
   uint32_t                   mLockCount;
@@ -730,10 +642,6 @@ private: // data
   bool                       mInDecoder;
   // END LOCKED MEMBER VARIABLES
 
-  // Notification state. Used to avoid recursive notifications.
-  ImageStatusDiff            mStatusDiff;
-  bool                       mNotifying:1;
-
   // Boolean flags (clustered together to conserve space):
   bool                       mHasSize:1;       // Has SetSize() been called?
   bool                       mDecodeOnDraw:1;  // Decoding on draw?
@@ -765,10 +673,6 @@ private: // data
   bool                       mPendingError:1;
 
   // Decoding
-  nsresult RequestDecodeIfNeeded(nsresult aStatus,
-                                 eShutdownIntent aIntent,
-                                 bool aDone,
-                                 bool aWasSize);
   nsresult WantDecodedFrames();
   nsresult SyncDecode();
   nsresult InitDecoder(bool aDoSizeDecode, bool aIsSynchronous = false);
@@ -838,12 +742,6 @@ protected:
 inline NS_IMETHODIMP RasterImage::GetAnimationMode(uint16_t *aAnimationMode) {
   return GetAnimationModeInternal(aAnimationMode);
 }
-
-#ifndef USE_FRAME_ANIMATOR
-inline NS_IMETHODIMP RasterImage::SetAnimationMode(uint16_t aAnimationMode) {
-  return SetAnimationModeInternal(aAnimationMode);
-}
-#endif
 
 // Asynchronous Decode Requestor
 //

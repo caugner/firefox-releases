@@ -55,9 +55,12 @@ namespace net {
 // Windows requires longer buffers for some reason.
 const int kIPv4CStrBufSize = 22;
 const int kIPv6CStrBufSize = 65;
+const int kNetAddrMaxCStrBufSize = kIPv6CStrBufSize;
 #else
 const int kIPv4CStrBufSize = 16;
 const int kIPv6CStrBufSize = 46;
+const int kLocalCStrBufSize = 108;
+const int kNetAddrMaxCStrBufSize = kLocalCStrBufSize;
 #endif
 
 // This was all created at a time in which we were using NSPR for host
@@ -114,6 +117,7 @@ union NetAddr {
 class NetAddrElement : public LinkedListElement<NetAddrElement> {
 public:
   NetAddrElement(const PRNetAddr *prNetAddr);
+  NetAddrElement(const NetAddrElement& netAddr);
   ~NetAddrElement();
 
   NetAddr mAddress;
@@ -121,13 +125,23 @@ public:
 
 class AddrInfo {
 public:
+  // Creates an AddrInfo object. It calls the AddrInfo(const char*, const char*)
+  // to initialize the host and the cname.
   AddrInfo(const char *host, const PRAddrInfo *prAddrInfo, bool disableIPv4,
            const char *cname);
+
+  // Creates a basic AddrInfo object (initialize only the host and the cname).
+  AddrInfo(const char *host, const char *cname);
   ~AddrInfo();
+
+  void AddAddress(NetAddrElement *address);
 
   char *mHostName;
   char *mCanonicalName;
   LinkedList<NetAddrElement> mAddresses;
+
+private:
+  void Init(const char *host, const char *cname);
 };
 
 // Copies the contents of a PRNetAddr to a NetAddr.

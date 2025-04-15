@@ -160,8 +160,12 @@ typedef struct {
 // more info. The FTP protocol is not checked so advanced users can set the FTP
 // handler to another application and still have Firefox check if it is the
 // default HTTP and HTTPS handler.
+// *** Do not add additional checks here unless you skip them when aForAllTypes
+// is false below***.
 static SETTING gSettings[] = {
   // File Handler Class
+  // ***keep this as the first entry because when aForAllTypes is not set below
+  // it will skip over this check.***
   { MAKE_KEY_NAME1("FirefoxHTML", SOC), VAL_OPEN, OLD_VAL_OPEN },
 
   // Protocol Handler Class - for Vista and above
@@ -223,8 +227,8 @@ LaunchHelper(nsAutoString& aPath)
   STARTUPINFOW si = {sizeof(si), 0};
   PROCESS_INFORMATION pi = {0};
 
-  if (!CreateProcessW(NULL, (LPWSTR)aPath.get(), NULL, NULL, FALSE, 0, NULL,
-                      NULL, &si, &pi)) {
+  if (!CreateProcessW(nullptr, (LPWSTR)aPath.get(), nullptr, nullptr, FALSE,
+                      0, nullptr, nullptr, &si, &pi)) {
     return NS_ERROR_FAILURE;
   }
 
@@ -355,13 +359,19 @@ IsAARDefaultHTML(IApplicationAssociationRegistration* pAAR,
   return SUCCEEDED(hr);
 }
 
+/*
+ * Query's the AAR for the default status.
+ * This only checks for FirefoxURL and if aCheckAllTypes is set, then
+ * it also checks for FirefoxHTML.  Note that those ProgIDs are shared
+ * by all Firefox browsers.
+*/
 bool
 nsWindowsShellService::IsDefaultBrowserVista(bool aCheckAllTypes,
                                              bool* aIsDefaultBrowser)
 {
   IApplicationAssociationRegistration* pAAR;
   HRESULT hr = CoCreateInstance(CLSID_ApplicationAssociationRegistration,
-                                NULL,
+                                nullptr,
                                 CLSCTX_INPROC,
                                 IID_IApplicationAssociationRegistration,
                                 (void**)&pAAR);
@@ -403,13 +413,6 @@ nsWindowsShellService::IsDefaultBrowser(bool aStartupCheck,
   if (aStartupCheck)
     mCheckedThisSession = true;
 
-  // Check if we only care about a lightweight check, and make sure this
-  // only has an effect on Win8 and later.
-  if (!aForAllTypes && IsWin8OrLater()) {
-    return IsDefaultBrowserVista(false,
-                                 aIsDefaultBrowser) ? NS_OK : NS_ERROR_FAILURE;
-  }
-
   // Assume we're the default unless one of the several checks below tell us
   // otherwise.
   *aIsDefaultBrowser = true;
@@ -430,10 +433,15 @@ nsWindowsShellService::IsDefaultBrowser(bool aStartupCheck,
   nsresult rv;
   PRUnichar currValue[MAX_BUF];
 
-  SETTING* settings;
+  SETTING* settings = gSettings;
+  if (!aForAllTypes && IsWin8OrLater()) {
+    // Skip over the file handler check
+    settings++;
+  }
+
   SETTING* end = gSettings + sizeof(gSettings) / sizeof(SETTING);
 
-  for (settings = gSettings; settings < end; ++settings) {
+  for (; settings < end; ++settings) {
     NS_ConvertUTF8toUTF16 keyName(settings->keyName);
     NS_ConvertUTF8toUTF16 valueData(settings->valueData);
     int32_t offset = valueData.Find("%APPPATH%");
@@ -447,7 +455,8 @@ nsWindowsShellService::IsDefaultBrowser(bool aStartupCheck,
 
     ::ZeroMemory(currValue, sizeof(currValue));
     DWORD len = sizeof currValue;
-    res = ::RegQueryValueExW(theKey, L"", NULL, NULL, (LPBYTE)currValue, &len);
+    res = ::RegQueryValueExW(theKey, L"", nullptr, nullptr,
+                             (LPBYTE)currValue, &len);
     // Close the key that was opened.
     ::RegCloseKey(theKey);
     if (REG_FAILED(res) ||
@@ -489,7 +498,7 @@ nsWindowsShellService::IsDefaultBrowser(bool aStartupCheck,
   // Only check if Firefox is the default browser on Vista and above if the
   // previous checks show that Firefox is the default browser.
   if (*aIsDefaultBrowser) {
-    IsDefaultBrowserVista(true, aIsDefaultBrowser);
+    IsDefaultBrowserVista(aForAllTypes, aIsDefaultBrowser);
   }
 
   // To handle the case where DDE isn't disabled due for a user because there
@@ -497,7 +506,7 @@ nsWindowsShellService::IsDefaultBrowser(bool aStartupCheck,
   // default browser and if dde is disabled for each handler
   // and if it isn't disable it. When Firefox is not the default browser the
   // helper application will disable dde for each handler.
-  if (*aIsDefaultBrowser) {
+  if (*aIsDefaultBrowser && aForAllTypes) {
     // Check ftp settings
 
     end = gDDESettings + sizeof(gDDESettings) / sizeof(SETTING);
@@ -516,8 +525,8 @@ nsWindowsShellService::IsDefaultBrowser(bool aStartupCheck,
 
       ::ZeroMemory(currValue, sizeof(currValue));
       DWORD len = sizeof currValue;
-      res = ::RegQueryValueExW(theKey, L"", NULL, NULL, (LPBYTE)currValue,
-                               &len);
+      res = ::RegQueryValueExW(theKey, L"", nullptr, nullptr,
+                               (LPBYTE)currValue, &len);
       // Close the key that was opened.
       ::RegCloseKey(theKey);
       if (REG_FAILED(res) || PRUnichar('\0') != *currValue) {
@@ -525,9 +534,9 @@ nsWindowsShellService::IsDefaultBrowser(bool aStartupCheck,
         // Delete the key along with all of its childrean and then recreate it.
         const nsString &flatName = PromiseFlatString(keyName);
         ::SHDeleteKeyW(HKEY_CURRENT_USER, flatName.get());
-        res = ::RegCreateKeyExW(HKEY_CURRENT_USER, flatName.get(), 0, NULL,
-                                REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL,
-                                &theKey, NULL);
+        res = ::RegCreateKeyExW(HKEY_CURRENT_USER, flatName.get(), 0, nullptr,
+                                REG_OPTION_NON_VOLATILE, KEY_SET_VALUE,
+                                nullptr, &theKey, nullptr);
         if (REG_FAILED(res)) {
           // If disabling DDE fails try to disable it using the helper
           // application when setting Firefox as the default browser.
@@ -564,7 +573,7 @@ nsWindowsShellService::IsDefaultBrowser(bool aStartupCheck,
 
     ::ZeroMemory(currValue, sizeof(currValue));
     DWORD len = sizeof currValue;
-    res = ::RegQueryValueExW(theKey, L"", NULL, NULL, (LPBYTE)currValue,
+    res = ::RegQueryValueExW(theKey, L"", nullptr, nullptr, (LPBYTE)currValue,
                              &len);
 
     // Don't update the FTP protocol handler's shell open command when the
@@ -606,27 +615,27 @@ DynSHOpenWithDialog(HWND hwndParent, const OPENASINFO *poainfo)
 {
   typedef HRESULT (WINAPI * SHOpenWithDialogPtr)(HWND hwndParent,
                                                  const OPENASINFO *poainfo);
-  static SHOpenWithDialogPtr SHOpenWithDialogFn = NULL;
-  if (!SHOpenWithDialogFn) {
-    // shell32.dll is in the knownDLLs list so will always be loaded from the
-    // system32 directory.
-    static const PRUnichar kSehllLibraryName[] =  L"shell32.dll";
-    HMODULE shellDLL = ::LoadLibraryW(kSehllLibraryName);
-    if (!shellDLL) {
-      return NS_ERROR_FAILURE;
-    }
-
-    SHOpenWithDialogFn =
-      (SHOpenWithDialogPtr)GetProcAddress(shellDLL, "SHOpenWithDialog");
-    FreeLibrary(shellDLL);
-
-    if (!SHOpenWithDialogFn) {
-      return NS_ERROR_FAILURE;
-    }
+  
+  // shell32.dll is in the knownDLLs list so will always be loaded from the
+  // system32 directory.
+  static const PRUnichar kSehllLibraryName[] =  L"shell32.dll";
+  HMODULE shellDLL = ::LoadLibraryW(kSehllLibraryName);
+  if (!shellDLL) {
+    return NS_ERROR_FAILURE;
   }
 
-  return SUCCEEDED(SHOpenWithDialogFn(hwndParent, poainfo)) ? NS_OK :
-                                                              NS_ERROR_FAILURE;
+  SHOpenWithDialogPtr SHOpenWithDialogFn =
+    (SHOpenWithDialogPtr)GetProcAddress(shellDLL, "SHOpenWithDialog");
+
+  if (!SHOpenWithDialogFn) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsresult rv = 
+    SUCCEEDED(SHOpenWithDialogFn(hwndParent, poainfo)) ? NS_OK :
+                                                         NS_ERROR_FAILURE;
+  FreeLibrary(shellDLL);
+  return rv;
 }
 
 nsresult
@@ -650,8 +659,8 @@ nsWindowsShellService::LaunchControlPanelDefaultPrograms()
   si.dwFlags = STARTF_USESHOWWINDOW;
   si.wShowWindow = SW_SHOWDEFAULT;
   PROCESS_INFORMATION pi = {0};
-  if (!CreateProcessW(controlEXEPath, params, NULL, NULL, FALSE, 0, NULL,
-                      NULL, &si, &pi)) {
+  if (!CreateProcessW(controlEXEPath, params, nullptr, nullptr, FALSE,
+                      0, nullptr, nullptr, &si, &pi)) {
     return NS_ERROR_FAILURE;
   }
   CloseHandle(pi.hProcess);
@@ -665,11 +674,11 @@ nsWindowsShellService::LaunchHTTPHandlerPane()
 {
   OPENASINFO info;
   info.pcszFile = L"http";
-  info.pcszClass = NULL;
+  info.pcszClass = nullptr;
   info.oaifInFlags = OAIF_FORCE_REGISTRATION | 
                      OAIF_URL_PROTOCOL |
                      OAIF_REGISTER_EXT;
-  return DynSHOpenWithDialog(NULL, &info);
+  return DynSHOpenWithDialog(nullptr, &info);
 }
 
 NS_IMETHODIMP
@@ -1028,8 +1037,8 @@ nsWindowsShellService::OpenApplication(int32_t aApplication)
   ::ZeroMemory(&si, sizeof(STARTUPINFOW));
   ::ZeroMemory(&pi, sizeof(PROCESS_INFORMATION));
 
-  BOOL success = ::CreateProcessW(NULL, (LPWSTR)path.get(), NULL,
-                                  NULL, FALSE, 0, NULL,  NULL,
+  BOOL success = ::CreateProcessW(nullptr, (LPWSTR)path.get(), nullptr,
+                                  nullptr, FALSE, 0, nullptr,  nullptr,
                                   &si, &pi);
   if (!success)
     return NS_ERROR_FAILURE;

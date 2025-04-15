@@ -13,6 +13,7 @@
 #include "mozilla/dom/IDBIndexBinding.h"
 #include "mozilla/dom/IDBObjectStoreBinding.h"
 #include "nsCycleCollectionParticipant.h"
+#include "nsThreadUtils.h"
 
 #include "mozilla/dom/indexedDB/IDBRequest.h"
 #include "mozilla/dom/indexedDB/IDBTransaction.h"
@@ -108,7 +109,7 @@ public:
                               uint32_t aTag,
                               uint32_t aData,
                               void* aClosure);
-  static JSBool
+  static bool
   StructuredCloneWriteCallback(JSContext* aCx,
                                JSStructuredCloneWriter* aWriter,
                                JS::Handle<JSObject*> aObj,
@@ -243,7 +244,7 @@ public:
   void
   SetInfo(ObjectStoreInfo* aInfo);
 
-  static JSClass sDummyPropJSClass;
+  static const JSClass sDummyPropJSClass;
 
   // nsWrapperCache
   virtual JSObject*

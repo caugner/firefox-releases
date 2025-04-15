@@ -1202,6 +1202,7 @@
           }
 
           this.hidden = true;
+
           var fastFind = this.browser.fastFind;
           fastFind.setSelectionModeAndRepaint
             (this.nsISelectionController.SELECTION_ON);

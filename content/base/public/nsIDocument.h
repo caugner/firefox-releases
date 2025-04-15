@@ -26,6 +26,7 @@
 #include "nsPropertyTable.h"             // for member
 #include "nsTHashtable.h"                // for member
 #include "mozilla/dom/DocumentBinding.h"
+#include "Units.h"
 
 class imgIRequest;
 class nsAString;
@@ -50,6 +51,7 @@ class nsIDOMDocument;
 class nsIDOMDocumentFragment;
 class nsIDOMDocumentType;
 class nsIDOMElement;
+class nsIDOMNodeFilter;
 class nsIDOMNodeList;
 class nsIDOMXPathExpression;
 class nsIDOMXPathNSResolver;
@@ -98,15 +100,16 @@ class Element;
 struct ElementRegistrationOptions;
 class EventTarget;
 class FrameRequestCallback;
-class GlobalObject;
 class HTMLBodyElement;
 class Link;
+class GlobalObject;
 class NodeFilter;
 class NodeIterator;
 class ProcessingInstruction;
 class Touch;
 class TreeWalker;
 class UndoManager;
+class XPathEvaluator;
 template<typename> class OwningNonNull;
 template<typename> class Sequence;
 
@@ -116,8 +119,8 @@ typedef CallbackObjectHolder<NodeFilter, nsIDOMNodeFilter> NodeFilterHolder;
 } // namespace mozilla
 
 #define NS_IDOCUMENT_IID \
-{ 0x62cca591, 0xa030, 0x4117, \
- { 0x9b, 0x80, 0xdc, 0xd3, 0x66, 0xbb, 0xb5, 0x9 } }
+{ 0x56a350f4, 0xc286, 0x440c, \
+  { 0x85, 0xb1, 0xb6, 0x55, 0x77, 0xeb, 0x63, 0xfd } }
 
 // Flag for AddStyleSheet().
 #define NS_STYLESHEET_FROM_CATALOG                (1 << 0)
@@ -149,6 +152,7 @@ NS_GetContentList(nsINode* aRootNode,
 // Gecko.
 class nsIDocument : public nsINode
 {
+  typedef mozilla::dom::GlobalObject GlobalObject;
 public:
   typedef mozilla::dom::Element Element;
 
@@ -267,12 +271,7 @@ public:
     }
     return mDocumentBaseURI ? mDocumentBaseURI : mDocumentURI;
   }
-  virtual already_AddRefed<nsIURI> GetBaseURI() const MOZ_OVERRIDE
-  {
-    nsCOMPtr<nsIURI> uri = GetDocBaseURI();
-
-    return uri.forget();
-  }
+  virtual already_AddRefed<nsIURI> GetBaseURI() const MOZ_OVERRIDE;
 
   virtual nsresult SetBaseURI(nsIURI* aURI) = 0;
 
@@ -624,8 +623,7 @@ public:
    */
   Element* GetRootElement() const;
 
-  virtual nsViewportInfo GetViewportInfo(uint32_t aDisplayWidth,
-                                         uint32_t aDisplayHeight) = 0;
+  virtual nsViewportInfo GetViewportInfo(const mozilla::ScreenIntSize& aDisplaySize) = 0;
 
   /**
    * True iff this doc will ignore manual character encoding overrides.
@@ -1923,7 +1921,7 @@ public:
     return GetScopeObject();
   }
   static already_AddRefed<nsIDocument>
-    Constructor(const mozilla::dom::GlobalObject& aGlobal,
+    Constructor(const GlobalObject& aGlobal,
                 mozilla::ErrorResult& rv);
   virtual mozilla::dom::DOMImplementation*
     GetImplementation(mozilla::ErrorResult& rv) = 0;
@@ -2173,6 +2171,8 @@ protected:
   {
     return mContentType;
   }
+
+  mozilla::dom::XPathEvaluator* XPathEvaluator();
 
   nsCString mReferrer;
   nsString mLastModified;
@@ -2429,6 +2429,8 @@ protected:
   uint8_t mDefaultElementType;
 
   uint32_t mInSyncOperationCount;
+
+  nsRefPtr<mozilla::dom::XPathEvaluator> mXPathEvaluator;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIDocument, NS_IDOCUMENT_IID)

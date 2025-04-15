@@ -13,9 +13,7 @@
 #include "nsIObserver.h"
 #include "nsServiceManagerUtils.h"
 #include "nsWidgetsCID.h"
-#include "nsXPCOMCIDInternal.h"
 #include "prlog.h"
-#include "VideoUtils.h"
 #include "mozilla/Attributes.h"
 #include "TrackUnionStream.h"
 #include "ImageContainer.h"
@@ -954,9 +952,9 @@ MediaStreamGraphImpl::PrepareUpdatesToMainThreadState(bool aFinalUpdate)
 {
   mMonitor.AssertCurrentThreadOwns();
 
-  // We don't want to update the main thread about timing update when we are not
-  // running in realtime.
-  if (ShouldUpdateMainThread()) {
+  // We don't want to frequently update the main thread about timing update
+  // when we are not running in realtime.
+  if (aFinalUpdate || ShouldUpdateMainThread()) {
     mStreamUpdates.SetCapacity(mStreamUpdates.Length() + mStreams.Length());
     for (uint32_t i = 0; i < mStreams.Length(); ++i) {
       MediaStream* stream = mStreams[i];
@@ -1478,8 +1476,8 @@ MediaStreamGraphImpl::RunInStableState()
       if (mLifecycleState <= LIFECYCLE_WAITING_FOR_MAIN_THREAD_CLEANUP) {
         MessageBlock* block = mMessageQueue.AppendElement();
         block->mMessages.SwapElements(mCurrentTaskMessageQueue);
-        block->mGraphUpdateIndex = mGraphUpdatesSent;
-        ++mGraphUpdatesSent;
+        block->mGraphUpdateIndex = mNextGraphUpdateIndex;
+        ++mNextGraphUpdateIndex;
         EnsureNextIterationLocked(lock);
       }
 
@@ -1914,6 +1912,40 @@ MediaStream::RemoveListener(MediaStreamListener* aListener)
 }
 
 void
+MediaStream::RunAfterPendingUpdates(nsRefPtr<nsIRunnable> aRunnable)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  MediaStreamGraphImpl* graph = GraphImpl();
+
+  // Special case when a non-realtime graph has not started, to ensure the
+  // runnable will run in finite time.
+  if (!(graph->mRealtime || graph->mNonRealtimeProcessing)) {
+    aRunnable->Run();
+  }
+
+  class Message : public ControlMessage {
+  public:
+    explicit Message(MediaStream* aStream,
+                     already_AddRefed<nsIRunnable> aRunnable)
+      : ControlMessage(aStream)
+      , mRunnable(aRunnable) {}
+    virtual void Run() MOZ_OVERRIDE
+    {
+      mStream->Graph()->
+        DispatchToMainThreadAfterStreamStateUpdate(mRunnable.forget());
+    }
+    virtual void RunDuringShutdown() MOZ_OVERRIDE
+    {
+      mRunnable->Run();
+    }
+  private:
+    nsRefPtr<nsIRunnable> mRunnable;
+  };
+
+  graph->AppendMessage(new Message(this, aRunnable.forget()));
+}
+
+void
 MediaStream::SetTrackEnabledImpl(TrackID aTrackID, bool aEnabled)
 {
   if (aEnabled) {
@@ -2129,6 +2161,21 @@ SourceMediaStream::EndAllTrackAndFinish()
   }
   FinishWithLockHeld();
   // we will call NotifyFinished() to let GetUserMedia know
+}
+
+TrackTicks
+SourceMediaStream::GetBufferedTicks(TrackID aID)
+{
+  StreamBuffer::Track* track  = mBuffer.FindTrack(aID);
+  if (track) {
+    MediaSegment* segment = track->GetSegment();
+    if (segment) {
+      return segment->GetDuration() -
+        track->TimeToTicksRoundDown(
+          GraphTimeToStreamTime(GraphImpl()->mStateComputedTime));
+    }
+  }
+  return 0;
 }
 
 void

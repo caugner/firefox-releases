@@ -6,8 +6,6 @@
 
 MODULE = 'gl'
 
-# NOTE: Please keep gl_provider in sync with Makefile.in until all variables
-# are moved over.
 gl_provider = 'Null'
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
@@ -15,18 +13,12 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
 elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
     gl_provider = 'CGL'
 elif CONFIG['MOZ_WIDGET_GTK']:
-    if CONFIG['fdef MOZ_PLATFORM_MAEMO']:
-        gl_provider = 'EGL'
-    else:
-        if CONFIG['MOZ_EGL_XRENDER_COMPOSITE']:
-            gl_provider = 'EGL'
-        else:
-            gl_provider = 'GLX'
-elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'qt':
-    if CONFIG['fdef MOZ_PLATFORM_MAEMO']:
+    if CONFIG['MOZ_EGL_XRENDER_COMPOSITE']:
         gl_provider = 'EGL'
     else:
         gl_provider = 'GLX'
+elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'qt':
+    gl_provider = 'GLX'
 elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'android':
     gl_provider = 'EGL'
 elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
@@ -37,6 +29,7 @@ if CONFIG['MOZ_GL_PROVIDER']:
 
 EXPORTS += [
     'ForceDiscreteGPUHelperCGL.h',
+    'GLConsts.h',
     'GLContext.h',
     'GLContextProvider.h',
     'GLContextProviderImpl.h',
@@ -47,12 +40,16 @@ EXPORTS += [
     'GLLibraryLoader.h',
     'GLScreenBuffer.h',
     'GLTextureImage.h',
+    'GLTypes.h',
+    'GfxTexturesReporter.h',
     'SharedSurface.h',
     'SharedSurfaceEGL.h',
     'SharedSurfaceGL.h',
     'SurfaceFactory.h',
     'SurfaceStream.h',
     'SurfaceTypes.h',
+    'TextureGarbageBin.h',
+    'VBOArena.h',
 ]
 
 if CONFIG['MOZ_X11']:
@@ -66,7 +63,6 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
     ]
     CPP_SOURCES += [
         'GLContextProviderEGL.cpp',
-        'GLLibraryEGL.cpp',
         'SharedSurfaceANGLE.cpp',
     ]
 if CONFIG['MOZ_ENABLE_SKIA_GPU']:
@@ -94,23 +90,30 @@ else:
         'GLContextProvider%s.cpp' % gl_provider,
     ]
 
-if gl_provider == 'EGL':
-    CPP_SOURCES += [
-        'GLLibraryEGL.cpp',
-    ]
-
 CPP_SOURCES += [
     'GLContext.cpp',
-    'GLContextExtensionGroupQueries.cpp',
+    'GLContextFeatures.cpp',
     'GLContextTypes.cpp',
     'GLContextUtils.cpp',
     'GLLibraryLoader.cpp',
     'GLScreenBuffer.cpp',
     'GLTextureImage.cpp',
+    'GfxTexturesReporter.cpp',
     'SharedSurface.cpp',
+    'GLLibraryEGL.cpp',
     'SharedSurfaceEGL.cpp',
     'SharedSurfaceGL.cpp',
     'SurfaceFactory.cpp',
     'SurfaceStream.cpp',
+    'VBOArena.cpp',
+    'TextureGarbageBin.cpp',
 ]
+
+FAIL_ON_WARNINGS = True
+
+LIBXUL_LIBRARY = True
+
+MSVC_ENABLE_PGO = True
+
+LIBRARY_NAME = 'gl'
 

@@ -9,9 +9,13 @@
 #include "nscore.h"
 #include "pldhash.h"
 #include "nsDebug.h"
-#include <new>
+#include "mozilla/MemoryChecking.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/Move.h"
 #include "mozilla/fallible.h"
+#include "mozilla/PodOperations.h"
+
+#include <new>
 
 // helper function for nsTHashtable::Clear()
 NS_COM_GLUE PLDHashOperator
@@ -45,9 +49,10 @@ PL_DHashStubEnumRemove(PLDHashTable    *table,
  *
  *     EntryType(KeyTypePointer aKey);
  *
- *     // the copy constructor must be defined, even if AllowMemMove() == true
- *     // or you will cause link errors!
- *     EntryType(const EntryType& aEnt);
+ *     // A copy or C++11 Move constructor must be defined, even if
+ *     // AllowMemMove() == true, otherwise you will cause link errors.
+ *     EntryType(const EntryType& aEnt);  // Either this...
+ *     EntryType(EntryType&& aEnt);       // ...or this
  *
  *     // the destructor must be defined... or you will cause link errors!
  *     ~EntryType();
@@ -63,7 +68,7 @@ PL_DHashStubEnumRemove(PLDHashTable    *table,
  *
  *     // ALLOW_MEMMOVE can we move this class with memmove(), or do we have
  *     // to use the copy constructor?
- *     enum { ALLOW_MEMMOVE = PR_(TRUE or FALSE) };
+ *     enum { ALLOW_MEMMOVE = true/false };
  *   }</pre>
  *
  * @see nsInterfaceHashtable
@@ -78,36 +83,23 @@ class nsTHashtable
   typedef mozilla::fallible_t fallible_t;
 
 public:
-  /**
-   * A dummy constructor; you must call Init() before using this class.
-   */
-  nsTHashtable();
+  // Separate constructors instead of default aInitSize parameter since
+  // otherwise the default no-arg constructor isn't found.
+  nsTHashtable()
+  {
+    Init(PL_DHASH_MIN_SIZE);
+  }
+  explicit nsTHashtable(uint32_t aInitSize)
+  {
+    Init(aInitSize);
+  }
 
   /**
    * destructor, cleans up and deallocates
    */
   ~nsTHashtable();
 
-  /**
-   * Initialize the table.  This function must be called before any other
-   * class operations.  This can fail due to OOM conditions.
-   * @param initSize the initial number of buckets in the hashtable, default 16
-   * @return true if the class was initialized properly.
-   */
-  void Init(uint32_t initSize = PL_DHASH_MIN_SIZE)
-  {
-    if (!Init(initSize, fallible_t()))
-      NS_RUNTIMEABORT("OOM");
-  }
-  bool Init(const fallible_t&) NS_WARN_UNUSED_RESULT
-  { return Init(PL_DHASH_MIN_SIZE, fallible_t()); }
-  bool Init(uint32_t initSize, const fallible_t&) NS_WARN_UNUSED_RESULT;
-
-  /**
-   * Check whether the table has been initialized. This can be useful for static hashtables.
-   * @return the initialization state of the class.
-   */
-  bool IsInitialized() const { return !!mTable.entrySize; }
+  nsTHashtable(nsTHashtable<EntryType>&& aOther);
 
   /**
    * Return the generation number for the table. This increments whenever
@@ -275,9 +267,6 @@ public:
   size_t SizeOfExcludingThis(SizeOfEntryExcludingThisFun sizeOfEntryExcludingThis,
                              mozilla::MallocSizeOf mallocSizeOf, void *userArg = NULL) const
   {
-    if (!IsInitialized()) {
-      return 0;
-    }
     if (sizeOfEntryExcludingThis) {
       s_SizeOfArgs args = { sizeOfEntryExcludingThis, userArg };
       return PL_DHashTableSizeOfExcludingThis(&mTable, s_SizeOfStub, mallocSizeOf, &args);
@@ -361,10 +350,16 @@ protected:
 
 private:
   // copy constructor, not implemented
-  nsTHashtable(nsTHashtable<EntryType>& toCopy);
+  nsTHashtable(nsTHashtable<EntryType>& toCopy) MOZ_DELETE;
+
+  /**
+   * Initialize the table.
+   * @param initSize the initial number of buckets in the hashtable
+   */
+  void Init(uint32_t aInitSize);
 
   // assignment operator, not implemented
-  nsTHashtable<EntryType>& operator= (nsTHashtable<EntryType>& toEqual);
+  nsTHashtable<EntryType>& operator= (nsTHashtable<EntryType>& toEqual) MOZ_DELETE;
 };
 
 //
@@ -372,10 +367,17 @@ private:
 //
 
 template<class EntryType>
-nsTHashtable<EntryType>::nsTHashtable()
+nsTHashtable<EntryType>::nsTHashtable(
+  nsTHashtable<EntryType>&& aOther)
+  : mTable(mozilla::Move(aOther.mTable))
 {
-  // entrySize is our "I'm initialized" indicator
-  mTable.entrySize = 0;
+  // aOther shouldn't touch mTable after this, because we've stolen the table's
+  // pointers but not overwitten them.
+  MOZ_MAKE_MEM_UNDEFINED(aOther.mTable, sizeof(aOther.mTable));
+
+  // Indicate that aOther is not initialized.  This will make its destructor a
+  // nop, which is what we want.
+  aOther.mTable.entrySize = 0;
 }
 
 template<class EntryType>
@@ -386,15 +388,9 @@ nsTHashtable<EntryType>::~nsTHashtable()
 }
 
 template<class EntryType>
-bool
-nsTHashtable<EntryType>::Init(uint32_t initSize, const fallible_t&)
+void
+nsTHashtable<EntryType>::Init(uint32_t aInitSize)
 {
-  if (mTable.entrySize)
-  {
-    NS_ERROR("nsTHashtable::Init() should not be called twice.");
-    return true;
-  }
-
   static PLDHashTableOps sOps = 
   {
     ::PL_DHashAllocTable,
@@ -407,19 +403,13 @@ nsTHashtable<EntryType>::Init(uint32_t initSize, const fallible_t&)
     s_InitEntry
   };
 
-  if (!EntryType::ALLOW_MEMMOVE)
-  {
+  if (!EntryType::ALLOW_MEMMOVE) {
     sOps.moveEntry = s_CopyEntry;
   }
   
-  if (!PL_DHashTableInit(&mTable, &sOps, nullptr, sizeof(EntryType), initSize))
-  {
-    // if failed, reset "flag"
-    mTable.entrySize = 0;
-    return false;
+  if (!PL_DHashTableInit(&mTable, &sOps, nullptr, sizeof(EntryType), aInitSize)) {
+    NS_RUNTIMEABORT("OOM");
   }
-
-  return true;
 }
 
 // static definitions
@@ -451,7 +441,7 @@ nsTHashtable<EntryType>::s_CopyEntry(PLDHashTable          *table,
   EntryType* fromEntry =
     const_cast<EntryType*>(reinterpret_cast<const EntryType*>(from));
 
-  new(to) EntryType(*fromEntry);
+  new(to) EntryType(mozilla::Move(*fromEntry));
 
   fromEntry->~EntryType();
 }

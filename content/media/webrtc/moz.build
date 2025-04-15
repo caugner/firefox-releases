@@ -23,3 +23,7 @@ CPP_SOURCES += [
     'MediaEngineDefault.cpp',
 ]
 
+LIBXUL_LIBRARY = True
+
+LIBRARY_NAME = 'gkconwebrtc_s'
+

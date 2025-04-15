@@ -14,17 +14,16 @@
 #include "nsAutoPtr.h"
 #include "nsTArray.h"
 #include "AudioContext.h"
-#include "AudioSegment.h"
-#include "AudioNodeEngine.h"
-
-struct JSContext;
-class JSObject;
+#include "js/TypeDecls.h"
 
 namespace mozilla {
 
 class ErrorResult;
+class ThreadSharedFloatArrayBufferList;
 
 namespace dom {
+
+class AudioContext;
 
 /**
  * An AudioBuffer keeps its data either in the mJSChannels objects, which

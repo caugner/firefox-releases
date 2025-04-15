@@ -6,11 +6,12 @@
 
 #include "AudioBufferSourceNode.h"
 #include "mozilla/dom/AudioBufferSourceNodeBinding.h"
+#include "mozilla/dom/AudioParam.h"
 #include "nsMathUtils.h"
 #include "AudioNodeEngine.h"
 #include "AudioNodeStream.h"
 #include "AudioDestinationNode.h"
-#include "PannerNode.h"
+#include "AudioParamTimeline.h"
 #include "speex/speex_resampler.h"
 #include <limits>
 
@@ -222,9 +223,9 @@ public:
         static_cast<float*>(const_cast<void*>(aOutput->mChannelData[i])) +
         aBufferOffset;
 
-      speex_resampler_process_float(resampler, i,
-                                    inputData, &inSamples,
-                                    outputData, &outSamples);
+      WebAudioUtils::SpeexResamplerProcess(resampler, i,
+                                           inputData, &inSamples,
+                                           outputData, &outSamples);
 
       aFramesRead = inSamples;
       aFramesWritten = outSamples;
@@ -412,7 +413,7 @@ public:
     // We've finished if we've gone past mStop, or if we're past mDuration when
     // looping is disabled.
     if (currentPosition >= mStop ||
-        (!mLoop && currentPosition - mStart + mOffset > mDuration)) {
+        (!mLoop && currentPosition - mStart + mOffset >= mDuration)) {
       *aFinished = true;
     }
   }

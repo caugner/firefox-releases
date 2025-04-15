@@ -307,6 +307,16 @@ public:
       mMatchNameSpaceId == aKey.mMatchNameSpaceId;
   }
 
+  /**
+   * Sets the state to LIST_DIRTY and clears mElements array.
+   * @note This is the only acceptable way to set state to LIST_DIRTY.
+   */
+  void SetDirty()
+  {
+    mState = LIST_DIRTY;
+    Reset();
+  }
+
 protected:
   /**
    * Returns whether the element matches our criterion
@@ -357,16 +367,6 @@ protected:
    * all the nodes we can find.
    */
   inline void BringSelfUpToDate(bool aDoFlush);
-
-  /**
-   * Sets the state to LIST_DIRTY and clears mElements array.
-   * @note This is the only acceptable way to set state to LIST_DIRTY.
-   */
-  void SetDirty()
-  {
-    mState = LIST_DIRTY;
-    Reset();
-  }
 
   /**
    * To be called from non-destructor locations that want to remove from caches.

@@ -55,7 +55,6 @@ struct JSSettings
     JSSettings_JSGC_HIGH_FREQUENCY_HEAP_GROWTH_MAX,
     JSSettings_JSGC_HIGH_FREQUENCY_LOW_LIMIT,
     JSSettings_JSGC_HIGH_FREQUENCY_HIGH_LIMIT,
-    JSSettings_JSGC_ANALYSIS_PURGE_TRIGGER,
     JSSettings_JSGC_ALLOCATION_THRESHOLD,
     JSSettings_JSGC_SLICE_TIME_BUDGET,
     JSSettings_JSGC_DYNAMIC_HEAP_GROWTH,
@@ -164,7 +163,7 @@ struct JSSettings
 };
 
 // All of these are implemented in RuntimeService.cpp
-JSBool
+bool
 ResolveWorkerClasses(JSContext* aCx, JS::Handle<JSObject*> aObj, JS::Handle<jsid> aId,
                      unsigned aFlags, JS::MutableHandle<JSObject*> aObjp);
 
@@ -231,7 +230,7 @@ ThrowDOMExceptionForNSResult(JSContext* aCx, nsresult aNSResult);
 // (implying no setter at all), which will not throw when set in non-strict
 // code but will in strict code.  Old code should use this only for temporary
 // compatibility reasons.
-extern JSBool
+extern bool
 GetterOnlyJSNative(JSContext* aCx, unsigned aArgc, JS::Value* aVp);
 
 END_WORKERS_NAMESPACE

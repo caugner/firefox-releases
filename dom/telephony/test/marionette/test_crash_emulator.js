@@ -2,6 +2,7 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 MARIONETTE_TIMEOUT = 60000;
+MARIONETTE_HEAD_JS = 'head.js';
 
 SpecialPowers.addPermission("telephony", true, document);
 
@@ -10,35 +11,35 @@ let outNumber = "5555551111";
 let outgoingCall;
 
 function getExistingCalls() {
-  runEmulatorCmd("gsm list", function(result) {
+  emulator.run("gsm list", function(result) {
     log("Initial call list: " + result);
     if (result[0] == "OK") {
       dial();
     } else {
       cancelExistingCalls(result);
-    };
+    }
   });
 }
 
 function cancelExistingCalls(callList) {
   if (callList.length && callList[0] != "OK") {
     // Existing calls remain; get rid of the next one in the list
-    nextCall = callList.shift().split(' ')[2].trim();
+    nextCall = callList.shift().split(/\s+/)[2].trim();
     log("Cancelling existing call '" + nextCall +"'");
-    runEmulatorCmd("gsm cancel " + nextCall, function(result) {
+    emulator.run("gsm cancel " + nextCall, function(result) {
       if (result[0] == "OK") {
         cancelExistingCalls(callList);
       } else {
         log("Failed to cancel existing call");
         cleanUp();
-      };
+      }
     });
   } else {
     // No more calls in the list; give time for emulator to catch up
     waitFor(dial, function() {
-      return (telephony.calls.length == 0);
+      return (telephony.calls.length === 0);
     });
-  };
+  }
 }
 
 function dial() {
@@ -48,7 +49,7 @@ function dial() {
   outgoingCall.onalerting = function onalerting(event) {
     log("Received 'alerting' call event.");
     answer();
-  };  
+  };
 }
 
 function answer() {
@@ -64,7 +65,7 @@ function answer() {
       return(callDuration >= 2000);
     });
   };
-  runEmulatorCmd("gsm accept " + outNumber);
+  emulator.run("gsm accept " + outNumber);
 }
 
 function cleanUp(){
@@ -73,4 +74,6 @@ function cleanUp(){
   finish();
 }
 
-getExistingCalls();
+startTest(function() {
+  getExistingCalls();
+});

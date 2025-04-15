@@ -9,6 +9,7 @@
 #include "mozilla/dom/EventSourceBinding.h"
 #include "mozilla/Util.h"
 
+#include "js/OldDebugAPI.h"
 #include "nsNetUtil.h"
 #include "nsMimeTypes.h"
 #include "nsDOMMessageEvent.h"
@@ -20,7 +21,6 @@
 #include "nsIConsoleService.h"
 #include "nsIObserverService.h"
 #include "nsIScriptObjectPrincipal.h"
-#include "jsdbgapi.h"
 #include "nsJSUtils.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsIScriptError.h"
@@ -89,7 +89,8 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(EventSource)
       tmp->mListenerManager->MarkForCC();
     }
     if (!isBlack && tmp->PreservingWrapper()) {
-      xpc_UnmarkGrayObject(tmp->GetWrapperPreserveColor());
+      // This marks the wrapper black.
+      tmp->GetWrapper();
     }
     return true;
   }
@@ -285,12 +286,13 @@ EventSource::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 }
 
 /* static */ already_AddRefed<EventSource>
-EventSource::Constructor(const GlobalObject& aGlobal, const nsAString& aURL,
+EventSource::Constructor(const GlobalObject& aGlobal,
+                         const nsAString& aURL,
                          const EventSourceInit& aEventSourceInitDict,
                          ErrorResult& aRv)
 {
   nsRefPtr<EventSource> eventSource = new EventSource();
-  aRv = eventSource->Init(aGlobal.Get(), aURL,
+  aRv = eventSource->Init(aGlobal.GetAsSupports(), aURL,
                           aEventSourceInitDict.mWithCredentials);
   return eventSource.forget();
 }

@@ -25,7 +25,6 @@
 #include "nsNetUtil.h"
 #include "nsCOMPtr.h"
 #include "nsString.h"
-#include "nsReadableUtils.h"
 #include "nsIAtom.h"
 #include "nsColor.h"
 #include "nsCSSPseudoClasses.h"
@@ -509,6 +508,7 @@ protected:
   bool ParseSize();
   bool ParseTextDecoration();
   bool ParseTextDecorationLine(nsCSSValue& aValue);
+  bool ParseTextCombineHorizontal(nsCSSValue& aValue);
   bool ParseTextOverflow(nsCSSValue& aValue);
 
   bool ParseShadowItem(nsCSSValue& aValue, bool aIsBoxShadow);
@@ -572,6 +572,7 @@ protected:
   bool SetValueToURL(nsCSSValue& aValue, const nsString& aURL);
   bool TranslateDimension(nsCSSValue& aValue, int32_t aVariantMask,
                             float aNumber, const nsString& aUnit);
+  bool ParseImageOrientation(nsCSSValue& aAngle);
   bool ParseImageRect(nsCSSValue& aImage);
   bool ParseElement(nsCSSValue& aValue);
   bool ParseColorStop(nsCSSValueGradient* aGradient);
@@ -608,6 +609,7 @@ protected:
   /* Functions for filter parsing */
   bool ParseFilter();
   bool ParseSingleFilter(nsCSSValue* aValue);
+  bool ParseDropShadow(nsCSSValue* aValue);
 
   /* Find and return the namespace ID associated with aPrefix.
      If aPrefix has not been declared in an @namespace rule, returns
@@ -4981,7 +4983,8 @@ CSSParserImpl::TranslateDimension(nsCSSValue& aValue,
   VARIANT_GRADIENT | \
   VARIANT_TIMING_FUNCTION | \
   VARIANT_ALL | \
-  VARIANT_CALC
+  VARIANT_CALC | \
+  VARIANT_OPENTYPE_SVG_KEYWORD
 
 // Note that callers passing VARIANT_CALC in aVariantMask will get
 // full-range parsing inside the calc() expression, and the code that
@@ -5128,6 +5131,18 @@ CSSParserImpl::ParseVariant(nsCSSValue& aValue,
             !IsParsingCompoundProperty()) {
           aValue.SetSystemFontValue();
           return true;
+        }
+      }
+      if ((aVariantMask & VARIANT_OPENTYPE_SVG_KEYWORD) != 0) {
+        static bool sOpentypeSVGEnabled;
+        static bool sOpentypeSVGEnabledCached = false;
+        if (!sOpentypeSVGEnabledCached) {
+          sOpentypeSVGEnabledCached = true;
+          Preferences::AddBoolVarCache(&sOpentypeSVGEnabled,
+                                       "gfx.font_rendering.opentype_svg.enabled");
+        }
+        if (sOpentypeSVGEnabled) {
+          aVariantMask |= VARIANT_KEYWORD;
         }
       }
       if ((aVariantMask & VARIANT_KEYWORD) != 0) {
@@ -5460,6 +5475,47 @@ CSSParserImpl::SetValueToURL(nsCSSValue& aValue, const nsString& aURL)
     new mozilla::css::URLValue(buffer, mBaseURI, mSheetURI, mSheetPrincipal);
   aValue.SetURLValue(urlVal);
   return true;
+}
+
+/**
+ * Parse the image-orientation property, which has the grammar:
+ * <angle> flip? | flip | from-image
+ */
+bool
+CSSParserImpl::ParseImageOrientation(nsCSSValue& aValue)
+{
+  if (ParseVariant(aValue, VARIANT_INHERIT, nullptr)) {
+    // 'inherit' and 'initial' must be alone
+    return true;
+  }
+
+  // Check for an angle with optional 'flip'.
+  nsCSSValue angle;
+  if (ParseVariant(angle, VARIANT_ANGLE, nullptr)) {
+    nsCSSValue flip;
+
+    if (ParseVariant(flip, VARIANT_KEYWORD, nsCSSProps::kImageOrientationFlipKTable)) {
+      nsRefPtr<nsCSSValue::Array> array = nsCSSValue::Array::Create(2);
+      array->Item(0) = angle;
+      array->Item(1) = flip;
+      aValue.SetArrayValue(array, eCSSUnit_Array);
+    } else {
+      aValue = angle;
+    }
+    
+    return true;
+  }
+
+  // The remaining possibilities (bare 'flip' and 'from-image') are both
+  // keywords, so we can handle them at the same time.
+  nsCSSValue keyword;
+  if (ParseVariant(keyword, VARIANT_KEYWORD, nsCSSProps::kImageOrientationKTable)) {
+    aValue = keyword;
+    return true;
+  }
+
+  // All possibilities failed.
+  return false;
 }
 
 /**
@@ -6603,10 +6659,14 @@ CSSParserImpl::ParseSingleValueProperty(nsCSSValue& aValue,
         return ParseFontFeatureSettings(aValue);
       case eCSSProperty_font_weight:
         return ParseFontWeight(aValue);
+      case eCSSProperty_image_orientation:
+        return ParseImageOrientation(aValue);
       case eCSSProperty_marks:
         return ParseMarks(aValue);
       case eCSSProperty_text_decoration_line:
         return ParseTextDecorationLine(aValue);
+      case eCSSProperty_text_combine_horizontal:
+        return ParseTextCombineHorizontal(aValue);
       case eCSSProperty_text_overflow:
         return ParseTextOverflow(aValue);
       default:
@@ -8514,8 +8574,9 @@ CSSParserImpl::ParseFont()
     eCSSProperty_font_weight
   };
 
+  // font-variant-alternates enabled ==> layout.css.font-features.enabled is true
   bool featuresEnabled =
-    mozilla::Preferences::GetBool("layout.css.font-features.enabled");
+    nsCSSProps::IsEnabled(eCSSProperty_font_variant_alternates);
   nsCSSValue  family;
   if (ParseVariant(family, VARIANT_HK, nsCSSProps::kFontKTable)) {
     if (ExpectEndProperty()) {
@@ -9563,7 +9624,7 @@ CSSParserImpl::ParseTextDecoration()
     return false;
   }
 
-  nsCSSValue blink, line, style, color;
+  nsCSSValue line, style, color;
   switch (value.GetUnit()) {
     case eCSSUnit_Enumerated: {
       // We shouldn't accept decoration line style and color via
@@ -9575,7 +9636,6 @@ CSSParserImpl::ParseTextDecoration()
 
       int32_t intValue = value.GetIntValue();
       if (intValue == eDecorationNone) {
-        blink.SetIntValue(NS_STYLE_TEXT_BLINK_NONE, eCSSUnit_Enumerated);
         line.SetIntValue(NS_STYLE_TEXT_DECORATION_LINE_NONE,
                          eCSSUnit_Enumerated);
         break;
@@ -9597,18 +9657,14 @@ CSSParserImpl::ParseTextDecoration()
         intValue |= newValue;
       }
 
-      blink.SetIntValue((intValue & eDecorationBlink) != 0 ?
-                          NS_STYLE_TEXT_BLINK_BLINK : NS_STYLE_TEXT_BLINK_NONE,
-                        eCSSUnit_Enumerated);
-      line.SetIntValue((intValue & ~eDecorationBlink), eCSSUnit_Enumerated);
+      line.SetIntValue(intValue, eCSSUnit_Enumerated);
       break;
     }
     default:
-      blink = line = color = style = value;
+      line = color = style = value;
       break;
   }
 
-  AppendValue(eCSSProperty_text_blink, blink);
   AppendValue(eCSSProperty_text_decoration_line, line);
   AppendValue(eCSSProperty_text_decoration_color, color);
   AppendValue(eCSSProperty_text_decoration_style, style);
@@ -9626,7 +9682,7 @@ CSSParserImpl::ParseTextDecorationLine(nsCSSValue& aValue)
         // look for more keywords
         nsCSSValue  keyword;
         int32_t index;
-        for (index = 0; index < 2; index++) {
+        for (index = 0; index < 3; index++) {
           if (ParseEnum(keyword, nsCSSProps::kTextDecorationLineKTable)) {
             int32_t newValue = keyword.GetIntValue();
             if (newValue == NS_STYLE_TEXT_DECORATION_LINE_NONE ||
@@ -9668,6 +9724,43 @@ CSSParserImpl::ParseTextOverflow(nsCSSValue& aValue)
     aValue.SetPairValue(left, right);
   else {
     aValue = left;
+  }
+  return true;
+}
+
+bool
+CSSParserImpl::ParseTextCombineHorizontal(nsCSSValue& aValue)
+{
+  if (!ParseVariant(aValue, VARIANT_HK,
+                    nsCSSProps::kTextCombineHorizontalKTable)) {
+    return false;
+  }
+
+  // if 'digits', need to check for an explicit number [2, 3, 4]
+  if (eCSSUnit_Enumerated == aValue.GetUnit() &&
+      aValue.GetIntValue() == NS_STYLE_TEXT_COMBINE_HORIZ_DIGITS_2) {
+    if (!GetToken(true)) {
+      return true;
+    }
+    if (mToken.mType == eCSSToken_Number && mToken.mIntegerValid) {
+      switch (mToken.mInteger) {
+        case 2:  // already set, nothing to do
+          break;
+        case 3:
+          aValue.SetIntValue(NS_STYLE_TEXT_COMBINE_HORIZ_DIGITS_3,
+                             eCSSUnit_Enumerated);
+          break;
+        case 4:
+          aValue.SetIntValue(NS_STYLE_TEXT_COMBINE_HORIZ_DIGITS_4,
+                             eCSSUnit_Enumerated);
+          break;
+        default:
+          // invalid digits value
+          return false;
+      }
+    } else {
+      UngetToken();
+    }
   }
   return true;
 }
@@ -10061,6 +10154,32 @@ bool CSSParserImpl::ParseTransformOrigin(bool aPerspective)
 }
 
 /**
+ * Reads a drop-shadow value. At the moment the Filter Effects specification
+ * just expects one shadow item. Should this ever change to a list of shadow
+ * items, use ParseShadowList instead.
+ */
+bool
+CSSParserImpl::ParseDropShadow(nsCSSValue* aValue)
+{
+  // Use nsCSSValueList to reuse the shadow resolving code in
+  // nsRuleNode and nsComputedDOMStyle.
+  nsCSSValue shadow;
+  nsCSSValueList* cur = shadow.SetListValue();
+  if (!ParseShadowItem(cur->mValue, false))
+    return false;
+
+  if (!ExpectSymbol(')', true))
+    return false;
+
+  nsCSSValue::Array* dropShadow = aValue->InitFunction(eCSSKeyword_drop_shadow, 1);
+
+  // Copy things over.
+  dropShadow->Item(1) = shadow;
+
+  return true;
+}
+
+/**
  * Reads a single url or filter function from the tokenizer stream, reporting an
  * error if something goes wrong.
  */
@@ -10087,11 +10206,24 @@ CSSParserImpl::ParseSingleFilter(nsCSSValue* aValue)
     return false;
   }
 
+  nsCSSKeyword functionName = nsCSSKeywords::LookupKeyword(mToken.mIdent);
+  // Parse drop-shadow independently of the other filter functions
+  // because of its more complex characteristics.
+  if (functionName == eCSSKeyword_drop_shadow) {
+    if (ParseDropShadow(aValue)) {
+      return true;
+    } else {
+      // Unrecognized filter function.
+      REPORT_UNEXPECTED_TOKEN(PEExpectedNoneOrURLOrFilterFunction);
+      SkipUntil(')');
+      return false;
+    }
+  }
+
   // Set up the parsing rules based on the filter function.
   int32_t variantMask = VARIANT_PN;
   bool rejectNegativeArgument = true;
   bool clampArgumentToOne = false;
-  nsCSSKeyword functionName = nsCSSKeywords::LookupKeyword(mToken.mIdent);
   switch (functionName) {
     case eCSSKeyword_blur:
       variantMask = VARIANT_LCALC | VARIANT_NONNEGATIVE_DIMENSION;
@@ -10719,8 +10851,10 @@ bool
 CSSParserImpl::ParsePaint(nsCSSProperty aPropID)
 {
   nsCSSValue x, y;
-  if (!ParseVariant(x, VARIANT_HCK | VARIANT_NONE | VARIANT_URL,
-                    nsCSSProps::kObjectPatternKTable)) {
+
+  if (!ParseVariant(x, VARIANT_HC | VARIANT_NONE | VARIANT_URL |
+                       VARIANT_OPENTYPE_SVG_KEYWORD,
+                    nsCSSProps::kContextPatternKTable)) {
     return false;
   }
 
@@ -10747,8 +10881,10 @@ bool
 CSSParserImpl::ParseDasharray()
 {
   nsCSSValue value;
-  if (ParseVariant(value, VARIANT_HK | VARIANT_NONE,
-                   nsCSSProps::kStrokeObjectValueKTable)) {
+
+  if (ParseVariant(value, VARIANT_INHERIT | VARIANT_NONE |
+                          VARIANT_OPENTYPE_SVG_KEYWORD,
+                   nsCSSProps::kStrokeContextValueKTable)) {
     // 'inherit', 'initial', and 'none' are only allowed on their own
     if (!ExpectEndProperty()) {
       return false;

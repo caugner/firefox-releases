@@ -9,6 +9,7 @@ import java.util.Iterator;
 import org.json.JSONObject;
 import org.mozilla.gecko.AppConstants;
 import org.mozilla.gecko.SysInfo;
+import org.mozilla.gecko.background.common.GlobalConstants;
 import org.mozilla.gecko.background.common.log.Logger;
 
 import android.content.ContentProvider;
@@ -54,7 +55,13 @@ public class EnvironmentBuilder {
   public static interface ProfileInformationProvider {
     public boolean isBlocklistEnabled();
     public boolean isTelemetryEnabled();
+    public boolean isAcceptLangUserSet();
     public long getProfileCreationTime();
+
+    public String getDistributionString();
+    public String getOSLocale();
+    public String getAppLocale();
+
     public JSONObject getAddonsJSON();
   }
 
@@ -77,7 +84,7 @@ public class EnvironmentBuilder {
     e.sysName = SysInfo.getName();
     e.sysVersion = SysInfo.getReleaseVersion();
 
-    e.profileCreation = (int) (info.getProfileCreationTime() / HealthReportConstants.MILLISECONDS_PER_DAY);
+    e.profileCreation = (int) (info.getProfileCreationTime() / GlobalConstants.MILLISECONDS_PER_DAY);
 
     // Corresponds to Gecko pref "extensions.blocklist.enabled".
     e.isBlocklistEnabled = (info.isBlocklistEnabled() ? 1 : 0);
@@ -120,6 +127,12 @@ public class EnvironmentBuilder {
     }
 
     e.addons = addons;
+
+    // v2 environment fields.
+    e.distribution = info.getDistributionString();
+    e.osLocale = info.getOSLocale();
+    e.appLocale = info.getAppLocale();
+    e.acceptLangSet = info.isAcceptLangUserSet() ? 1 : 0;
   }
 
   /**

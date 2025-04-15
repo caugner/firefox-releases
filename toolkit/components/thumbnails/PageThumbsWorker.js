@@ -153,8 +153,8 @@ let Agent = {
     return File.makeDir(path, options);
   },
 
-  copy: function Agent_copy(source, dest) {
-    return File.copy(source, dest);
+  copy: function Agent_copy(source, dest, options) {
+    return File.copy(source, dest, options);
   },
 
   wipe: function Agent_wipe(path) {
@@ -176,6 +176,10 @@ let Agent = {
     } finally {
       iterator.close();
     }
-   }
+  },
+
+  exists: function Agent_exists(path) {
+    return File.exists(path);
+  },
 };
 

@@ -34,6 +34,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/osfile.jsm");
 Cu.import("resource://gre/modules/osfile/_PromiseWorker.jsm", this);
 Cu.import("resource://gre/modules/Promise.jsm");
+Cu.import("resource://gre/modules/AsyncShutdown.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "TelemetryStopwatch",
   "resource://gre/modules/TelemetryStopwatch.jsm");
@@ -67,15 +68,15 @@ this._SessionFile = {
   /**
    * Write the contents of the session file, asynchronously.
    */
-  write: function (aData, aOptions = {}) {
-    return SessionFileInternal.write(aData, aOptions);
+  write: function (aData) {
+    return SessionFileInternal.write(aData);
   },
   /**
    * Writes the initial state to disk again only to change the session's load
    * state. This must only be called once, it will throw an error otherwise.
    */
   writeLoadStateOnceAfterStartup: function (aLoadState) {
-    return SessionFileInternal.writeLoadStateOnceAfterStartup(aLoadState);
+    SessionFileInternal.writeLoadStateOnceAfterStartup(aLoadState);
   },
   /**
    * Create a backup copy, asynchronously.
@@ -95,7 +96,7 @@ this._SessionFile = {
    * Wipe the contents of the session file, asynchronously.
    */
   wipe: function () {
-    return SessionFileInternal.wipe();
+    SessionFileInternal.wipe();
   }
 };
 
@@ -147,6 +148,18 @@ let SessionFileInternal = {
    * The path to sessionstore.bak
    */
   backupPath: OS.Path.join(OS.Constants.Path.profileDir, "sessionstore.bak"),
+
+  /**
+   * The promise returned by the latest call to |write|.
+   * We use it to ensure that AsyncShutdown.profileBeforeChange cannot
+   * interrupt a call to |write|.
+   */
+  _latestWrite: null,
+
+  /**
+   * |true| once we have decided to stop receiving write instructiosn
+   */
+  _isClosed: false,
 
   /**
    * Utility function to safely read a file synchronously.
@@ -209,13 +222,16 @@ let SessionFileInternal = {
     });
   },
 
-  write: function (aData, aOptions) {
+  write: function (aData) {
+    if (this._isClosed) {
+      return Promise.reject(new Error("_SessionFile is closed"));
+    }
     let refObj = {};
-    return TaskUtils.spawn(function task() {
+    return this._latestWrite = TaskUtils.spawn(function task() {
       TelemetryStopwatch.start("FX_SESSION_RESTORE_WRITE_FILE_LONGEST_OP_MS", refObj);
 
       try {
-        let promise = SessionWorker.post("write", [aData, aOptions]);
+        let promise = SessionWorker.post("write", [aData]);
         // At this point, we measure how long we stop the main thread
         TelemetryStopwatch.finish("FX_SESSION_RESTORE_WRITE_FILE_LONGEST_OP_MS", refObj);
 
@@ -227,11 +243,20 @@ let SessionFileInternal = {
         Cu.reportError("Could not write session state file " + this.path
                        + ": " + ex);
       }
+      // At this stage, we are done writing. If shutdown has started,
+      // we will want to stop receiving write instructions.
+      if (Services.startup.shuttingDown) {
+        this._isClosed = true;
+      }
+      // In rare cases, we may already have other writes pending,
+      // which we need to flush before shutdown proceeds. AsyncShutdown
+      // uses _latestWrite to determine what needs to be flushed during
+      // shutdown.
     }.bind(this));
   },
 
   writeLoadStateOnceAfterStartup: function (aLoadState) {
-    return SessionWorker.post("writeLoadStateOnceAfterStartup", [aLoadState]).then(msg => {
+    SessionWorker.post("writeLoadStateOnceAfterStartup", [aLoadState]).then(msg => {
       this._recordTelemetry(msg.telemetry);
       return msg;
     });
@@ -246,7 +271,7 @@ let SessionFileInternal = {
   },
 
   wipe: function () {
-    return SessionWorker.post("wipe");
+    SessionWorker.post("wipe");
   },
 
   _recordTelemetry: function(telemetry) {
@@ -277,3 +302,11 @@ let SessionWorker = (function () {
     }
   };
 })();
+
+// Ensure that we can write sessionstore.js cleanly before the profile
+// becomes unaccessible.
+AsyncShutdown.profileBeforeChange.addBlocker(
+  "SessionFile: Finish writing the latest sessionstore.js",
+  function() {
+    return _SessionFile._latestWrite;
+  });

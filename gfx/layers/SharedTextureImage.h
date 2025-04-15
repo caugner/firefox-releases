@@ -6,9 +6,14 @@
 #ifndef GFX_SHAREDTEXTUREIMAGE_H
 #define GFX_SHAREDTEXTUREIMAGE_H
 
-#include "ImageContainer.h"
-#include "GLContext.h"
-#include "GLContextProvider.h"
+#include "GLContextProvider.h"          // for GLContextProvider
+#include "ImageContainer.h"             // for Image
+#include "ImageTypes.h"                 // for ImageFormat::SHARED_TEXTURE
+#include "gfxPoint.h"                   // for gfxIntSize
+#include "nsCOMPtr.h"                   // for already_AddRefed
+#include "nsSize.h"                     // for nsIntSize
+
+class gfxASurface;
 
 // Split into a separate header from ImageLayers.h due to GLContext.h dependence
 // Implementation remains in ImageLayers.cpp
@@ -21,7 +26,7 @@ class SharedTextureImage : public Image {
 public:
   struct Data {
     gl::SharedTextureHandle mHandle;
-    gl::GLContext::SharedTextureShareType mShareType;
+    gl::SharedTextureShareType mShareType;
     gfxIntSize mSize;
     bool mInverted;
   };

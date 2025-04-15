@@ -344,6 +344,10 @@ function do_check_icons(aActual, aExpected) {
   }
 }
 
+// Record the error (if any) from trying to save the XPI
+// database at shutdown time
+let gXPISaveError = null;
+
 /**
  * Starts up the add-on manager as if it was started by the application.
  *
@@ -396,31 +400,16 @@ function shutdownManager() {
   if (!gInternalManager)
     return;
 
-  let obs = AM_Cc["@mozilla.org/observer-service;1"].
-            getService(AM_Ci.nsIObserverService);
+  let shutdownDone = false;
 
-  let xpiShutdown = false;
-  obs.addObserver({
-    observe: function(aSubject, aTopic, aData) {
-      xpiShutdown = true;
-      obs.removeObserver(this, "xpi-provider-shutdown");
-    }
-  }, "xpi-provider-shutdown", false);
-
-  let repositoryShutdown = false;
-  obs.addObserver({
-    observe: function(aSubject, aTopic, aData) {
-      repositoryShutdown = true;
-      obs.removeObserver(this, "addon-repository-shutdown");
-    }
-  }, "addon-repository-shutdown", false);
-
-  obs.notifyObservers(null, "quit-application-granted", null);
+  Services.obs.notifyObservers(null, "quit-application-granted", null);
   let scope = Components.utils.import("resource://gre/modules/AddonManager.jsm");
-  scope.AddonManagerInternal.shutdown();
-  gInternalManager = null;
+  scope.AddonManagerInternal.shutdown()
+    .then(
+        () => shutdownDone = true,
+        err => shutdownDone = true);
 
-  AddonRepository.shutdown();
+  gInternalManager = null;
 
   // Load the add-ons list as it was after application shutdown
   loadAddonsList();
@@ -428,19 +417,19 @@ function shutdownManager() {
   // Clear any crash report annotations
   gAppInfo.annotations = {};
 
-  let thr = AM_Cc["@mozilla.org/thread-manager;1"].
-            getService(AM_Ci.nsIThreadManager).
-            mainThread;
+  let thr = Services.tm.mainThread;
 
   // Wait until we observe the shutdown notifications
-  while (!repositoryShutdown || !xpiShutdown) {
-    if (thr.hasPendingEvents())
-      thr.processNextEvent(false);
+  while (!shutdownDone) {
+    thr.processNextEvent(true);
   }
 
   // Force the XPIProvider provider to reload to better
   // simulate real-world usage.
   scope = Components.utils.import("resource://gre/modules/XPIProvider.jsm");
+  // This would be cleaner if I could get it as the rejection reason from
+  // the AddonManagerInternal.shutdown() promise
+  gXPISaveError = scope.XPIProvider._shutdownError;
   AddonManagerPrivate.unregisterProvider(scope.XPIProvider);
   Components.utils.unload("resource://gre/modules/XPIProvider.jsm");
 }
@@ -999,19 +988,19 @@ function prepare_test(aExpectedEvents, aExpectedInstalls, aNext) {
 // Checks if all expected events have been seen and if so calls the callback
 function check_test_completed(aArgs) {
   if (!gNext)
-    return;
+    return undefined;
 
   if (gExpectedInstalls instanceof Array &&
       gExpectedInstalls.length > 0)
-    return;
+    return undefined;
   else for each (let installList in gExpectedInstalls) {
     if (installList.length > 0)
-      return;
+      return undefined;
   }
 
   for (let id in gExpectedEvents) {
     if (gExpectedEvents[id].length > 0)
-      return;
+      return undefined;
   }
 
   return gNext.apply(null, aArgs);
@@ -1187,6 +1176,7 @@ if ("nsIWindowsRegKey" in AM_Ci) {
         if (value.name == aName)
           return value.value;
       }
+      return null;
     }
   };
 
@@ -1291,7 +1281,7 @@ do_register_cleanup(function addon_cleanup() {
   var dirEntries = gTmpD.directoryEntries
                         .QueryInterface(AM_Ci.nsIDirectoryEnumerator);
   var entry;
-  while (entry = dirEntries.nextFile) {
+  while ((entry = dirEntries.nextFile)) {
     do_throw("Found unexpected file in temporary directory: " + entry.leafName);
   }
   dirEntries.close();
@@ -1392,6 +1382,60 @@ function do_exception_wrap(func) {
       do_report_unexpected_exception(e);
     }
   };
+}
+
+const EXTENSIONS_DB = "extensions.json";
+let gExtensionsJSON = gProfD.clone();
+gExtensionsJSON.append(EXTENSIONS_DB);
+
+/**
+ * Change the schema version of the JSON extensions database
+ */
+function changeXPIDBVersion(aNewVersion) {
+  let jData = loadJSON(gExtensionsJSON);
+  jData.schemaVersion = aNewVersion;
+  saveJSON(jData, gExtensionsJSON);
+}
+
+/**
+ * Raw load of a JSON file
+ */
+function loadJSON(aFile) {
+  let data = "";
+  let fstream = Components.classes["@mozilla.org/network/file-input-stream;1"].
+          createInstance(Components.interfaces.nsIFileInputStream);
+  let cstream = Components.classes["@mozilla.org/intl/converter-input-stream;1"].
+          createInstance(Components.interfaces.nsIConverterInputStream);
+  fstream.init(aFile, -1, 0, 0);
+  cstream.init(fstream, "UTF-8", 0, 0);
+  let (str = {}) {
+    let read = 0;
+    do {
+      read = cstream.readString(0xffffffff, str); // read as much as we can and put it in str.value
+      data += str.value;
+    } while (read != 0);
+  }
+  cstream.close();
+  do_print("Loaded JSON file " + aFile.path);
+  return(JSON.parse(data));
+}
+
+/**
+ * Raw save of a JSON blob to file
+ */
+function saveJSON(aData, aFile) {
+  do_print("Starting to save JSON file " + aFile.path);
+  let stream = FileUtils.openSafeFileOutputStream(aFile);
+  let converter = AM_Cc["@mozilla.org/intl/converter-output-stream;1"].
+    createInstance(AM_Ci.nsIConverterOutputStream);
+  converter.init(stream, "UTF-8", 0, 0x0000);
+  // XXX pretty print the JSON while debugging
+  converter.writeString(JSON.stringify(aData, null, 2));
+  converter.flush();
+  // nsConverterOutputStream doesn't finish() safe output streams on close()
+  FileUtils.closeSafeFileOutputStream(stream);
+  converter.close();
+  do_print("Done saving JSON file " + aFile.path);
 }
 
 /**

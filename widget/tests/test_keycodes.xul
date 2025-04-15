@@ -43,6 +43,24 @@
 const IS_MAC = navigator.platform.indexOf("Mac") == 0;
 const IS_WIN = navigator.platform.indexOf("Win") == 0;
 
+/**
+ * Firefox infobar UI can have access keys which conflict with this test. Really
+ * stupid workaround until we can move this test into its own chrome window.
+ */
+function clearInfobars()
+{
+  var Ci = Components.interfaces;
+
+  var browser = window.top.QueryInterface(Ci.nsIInterfaceRequestor)
+                  .getInterface(Ci.nsIWebNavigation)
+                  .QueryInterface(Ci.nsIDocShell).chromeEventHandler;
+  var chromeWin = browser.ownerDocument.defaultView;
+  var nb = chromeWin.gBrowser.getNotificationBox(browser);
+  for (let n of nb.allNotifications) {
+    nb.removeNotification(n, true);
+  }
+}
+
 function synthesizeNativeKey(aLayout, aKeyCode, aModifiers, aSystemChars,
                              aSystemUnmodifiedChars, aWindow)
 {
@@ -1195,6 +1213,14 @@ function runKeyEventTests()
             nsIDOMKeyEvent.DOM_VK_RETURN, "", SHOULD_DELIVER_ALL, KeyboardEvent.DOM_KEY_LOCATION_NUMPAD);
     testKey({layout:"US", keyCode:MAC_VK_ANSI_KeypadEnter, numLock:1, command:1, chars:"\u0003", unmodifiedChars:"\u0003"},
             nsIDOMKeyEvent.DOM_VK_RETURN, "", SHOULD_DELIVER_KEYDOWN_KEYPRESS, KeyboardEvent.DOM_KEY_LOCATION_NUMPAD);
+    testKey({layout:"US", keyCode:MAC_VK_JIS_KeypadComma, numLock:1, shift:1, chars:",", unmodifiedChars:","},
+            nsIDOMKeyEvent.DOM_VK_SEPARATOR, ",", SHOULD_DELIVER_ALL, KeyboardEvent.DOM_KEY_LOCATION_NUMPAD);
+    testKey({layout:"US", keyCode:MAC_VK_JIS_KeypadComma, numLock:1, ctrl:1, chars:",", unmodifiedChars:","},
+            nsIDOMKeyEvent.DOM_VK_SEPARATOR, ",", SHOULD_DELIVER_ALL, KeyboardEvent.DOM_KEY_LOCATION_NUMPAD);
+    testKey({layout:"US", keyCode:MAC_VK_JIS_KeypadComma, numLock:1, alt:1, chars:",", unmodifiedChars:","},
+            nsIDOMKeyEvent.DOM_VK_SEPARATOR, ",", SHOULD_DELIVER_ALL, KeyboardEvent.DOM_KEY_LOCATION_NUMPAD);
+    testKey({layout:"US", keyCode:MAC_VK_JIS_KeypadComma, numLock:1, command:1, chars:",", unmodifiedChars:","},
+            nsIDOMKeyEvent.DOM_VK_SEPARATOR, ",", SHOULD_DELIVER_KEYDOWN_KEYPRESS, KeyboardEvent.DOM_KEY_LOCATION_NUMPAD);
 
     // French, numeric
     testKey({layout:"French", keyCode:MAC_VK_ANSI_1, chars:"\u0026", unmodifiedChars:"\u0026"},
@@ -2362,6 +2388,8 @@ function runTest()
   }
 
   SimpleTest.waitForExplicitFinish();
+
+  clearInfobars();
 
   runKeyEventTests();
   runAccessKeyTests();

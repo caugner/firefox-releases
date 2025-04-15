@@ -373,8 +373,6 @@ ProcessPriorityManagerImpl::GetSingleton()
 ProcessPriorityManagerImpl::ProcessPriorityManagerImpl()
 {
   MOZ_ASSERT(XRE_GetProcessType() == GeckoProcessType_Default);
-  mParticularManagers.Init();
-  mHighPriorityChildIDs.Init();
 }
 
 void
@@ -868,7 +866,9 @@ ParticularProcessPriorityManager::ComputePriority()
   }
 
   if (isVisible) {
-    return PROCESS_PRIORITY_FOREGROUND;
+    return HasAppType("keyboard") ?
+      PROCESS_PRIORITY_FOREGROUND_KEYBOARD :
+      PROCESS_PRIORITY_FOREGROUND;
   }
 
   if ((mHoldsCPUWakeLock || mHoldsHighPriorityWakeLock) &&

@@ -15,8 +15,8 @@
 
 %{C++
 #include "nsColor.h"
-#include "nsRect.h"
-#include "gfxContext.h"
+class gfxContext;
+class nsRect;
 %}
 
 [ref] native nsConstRect(const nsRect);
@@ -41,8 +41,9 @@ interface nsIDOMClientRect;
 interface nsIURI;
 interface nsIDOMEventTarget;
 interface nsIRunnable;
+interface nsICompositionStringSynthesizer;
 
-[scriptable, uuid(cbe333d7-5b2c-4a9b-b99b-e6e388afa62b)]
+[scriptable, uuid(dd45c6ae-9d80-46ef-86d7-f2795a48a77b)]
 interface nsIDOMWindowUtils : nsISupports {
 
   /**
@@ -787,44 +788,12 @@ interface nsIDOMWindowUtils : nsISupports {
                             in AString aLocale);
 
   /**
-   * Synthesize a text event to the window.
+   * Creating synthesizer of composition string on the window.
    *
    * Cannot be accessed from unprivileged context (not content-accessible)
    * Will throw a DOM security error if called without chrome privileges.
-   *
-   * Currently, this method doesn't support 4 or more clauses composition
-   * string.
-   *
-   * @param aCompositionString  composition string
-   * @param a*ClauseLengh       the length of nth clause, set 0 when you
-   *                            don't need second or third clause.
-   * @param a*ClauseAttr        the attribute of nth clause, uese following
-   *                            const values.
-   * @param aCaretStart         the caret position in the composition string,
-   *                            if you set negative value, this method don't
-   *                            set the caret position to the event.
-   * @param aCaretLength        the caret length, if this is one or more,
-   *                            the caret will be wide caret, otherwise,
-   *                            it's collapsed.
-   *                            XXX nsEditor doesn't support wide caret yet.
    */
-
-  // NOTE: These values must be same to NS_TEXTRANGE_* in nsGUIEvent.h
-
-  const unsigned long COMPOSITION_ATTR_RAWINPUT              = 0x02;
-  const unsigned long COMPOSITION_ATTR_SELECTEDRAWTEXT       = 0x03;
-  const unsigned long COMPOSITION_ATTR_CONVERTEDTEXT         = 0x04;
-  const unsigned long COMPOSITION_ATTR_SELECTEDCONVERTEDTEXT = 0x05;
-
-  void sendTextEvent(in AString aCompositionString,
-                     in long aFirstClauseLength,
-                     in unsigned long aFirstClauseAttr,
-                     in long aSecondClauseLength,
-                     in unsigned long aSecondClauseAttr,
-                     in long aThirdClauseLength,
-                     in unsigned long aThirdClauseAttr,
-                     in long aCaretStart,
-                     in long aCaretLength);
+  nsICompositionStringSynthesizer createCompositionStringSynthesizer();
 
   /**
    * Synthesize a query content event. Note that the result value returned here
@@ -1034,26 +1003,13 @@ interface nsIDOMWindowUtils : nsISupports {
    * Put the window into a state where scripts are frozen and events
    * suppressed, for use when the window has launched a modal prompt.
    */
-  [noscript] void enterModalState();
+  void enterModalState();
 
   /**
    * Resume normal window state, where scripts can run and events are
    * delivered.
    */
-  [noscript] void leaveModalState();
-
-  /**
-   * Same as enterModalState, but returns the window associated with the
-   * current JS context.
-   */
-  nsIDOMWindow enterModalStateWithWindow();
-
-  /**
-   * Same as leaveModalState, but takes a window associated with the active
-   * context when enterModalStateWithWindow was called. The currently context
-   * might be different at the moment (see bug 621764).
-   */
-  void leaveModalStateWithWindow(in nsIDOMWindow aWindow);
+  void leaveModalState();
 
   /**
    * Is the window is in a modal state? [See enterModalState()]
@@ -1191,6 +1147,12 @@ interface nsIDOMWindowUtils : nsISupports {
   nsIDOMElement findElementWithViewId(in nsViewID aId);
 
   /**
+   * Find the view ID for a given element. This is the reverse of
+   * findElementWithViewId().
+   */
+  nsViewID getViewId(in nsIDOMElement aElement);
+
+  /**
    * Checks the layer tree for this window and returns true
    * if all layers have transforms that are translations by integers,
    * no leaf layers overlap, and the union of the leaf layers is exactly
@@ -1236,7 +1198,9 @@ interface nsIDOMWindowUtils : nsISupports {
    * Get file ref count info for given database and file id.
    *
    */
+  [implicit_jscontext]
   boolean getFileReferences(in AString aDatabaseName, in long long aId,
+                            [optional] in jsval aOptions,
                             [optional] out long aRefCnt,
                             [optional] out long aDBRefCnt,
                             [optional] out long aSliceRefCnt);
