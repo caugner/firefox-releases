@@ -14,6 +14,7 @@
 #include "nsIFile.h"
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
+#include "nsReadableUtils.h"
 #include "nsURLHelper.h"
 #include "nsEscape.h"
 
@@ -32,12 +33,15 @@ static NS_DEFINE_CID(kSubstitutingURLCID, NS_SUBSTITUTINGURL_CID);
 // SubstitutingURL : overrides nsStandardURL::GetFile to provide nsIFile resolution
 //---------------------------------------------------------------------------------
 
-NS_IMPL_ISUPPORTS(SubstitutingURL::Mutator,
-                  nsIURISetters,
-                  nsIURIMutator,
-                  nsIStandardURLMutator,
-                  nsIURLMutator,
-                  nsIFileURLMutator)
+// The list of interfaces should be in sync with nsStandardURL
+// Queries this list of interfaces. If none match, it queries mURI.
+NS_IMPL_NSIURIMUTATOR_ISUPPORTS(SubstitutingURL::Mutator,
+                                nsIURISetters,
+                                nsIURIMutator,
+                                nsIStandardURLMutator,
+                                nsIURLMutator,
+                                nsIFileURLMutator,
+                                nsISerializable)
 
 nsresult
 SubstitutingURL::EnsureFile()
@@ -303,8 +307,11 @@ SubstitutingProtocolHandler::SetSubstitution(const nsACString& root, nsIURI *bas
 }
 
 nsresult
-SubstitutingProtocolHandler::SetSubstitutionWithFlags(const nsACString& root, nsIURI *baseURI, uint32_t flags)
+SubstitutingProtocolHandler::SetSubstitutionWithFlags(const nsACString& origRoot, nsIURI *baseURI, uint32_t flags)
 {
+  nsAutoCString root;
+  ToLowerCase(origRoot, root);
+
   if (!baseURI) {
     mSubstitutions.Remove(root);
     NotifyObservers(root, baseURI);
@@ -346,9 +353,12 @@ SubstitutingProtocolHandler::SetSubstitutionWithFlags(const nsACString& root, ns
 }
 
 nsresult
-SubstitutingProtocolHandler::GetSubstitution(const nsACString& root, nsIURI **result)
+SubstitutingProtocolHandler::GetSubstitution(const nsACString& origRoot, nsIURI **result)
 {
   NS_ENSURE_ARG_POINTER(result);
+
+  nsAutoCString root;
+  ToLowerCase(origRoot, root);
 
   SubstitutionEntry entry;
   if (mSubstitutions.Get(root, &entry)) {
@@ -364,6 +374,12 @@ SubstitutingProtocolHandler::GetSubstitution(const nsACString& root, nsIURI **re
 nsresult
 SubstitutingProtocolHandler::GetSubstitutionFlags(const nsACString& root, uint32_t* flags)
 {
+#ifdef DEBUG
+  nsAutoCString lcRoot;
+  ToLowerCase(root, lcRoot);
+  MOZ_ASSERT(root.Equals(lcRoot), "GetSubstitutionFlags should never receive mixed-case root name");
+#endif
+
   *flags = 0;
   SubstitutionEntry entry;
   if (mSubstitutions.Get(root, &entry)) {
@@ -376,9 +392,13 @@ SubstitutingProtocolHandler::GetSubstitutionFlags(const nsACString& root, uint32
 }
 
 nsresult
-SubstitutingProtocolHandler::HasSubstitution(const nsACString& root, bool *result)
+SubstitutingProtocolHandler::HasSubstitution(const nsACString& origRoot, bool *result)
 {
   NS_ENSURE_ARG_POINTER(result);
+
+  nsAutoCString root;
+  ToLowerCase(origRoot, root);
+
   *result = HasSubstitution(root);
   return NS_OK;
 }

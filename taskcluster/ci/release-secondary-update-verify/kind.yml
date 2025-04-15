@@ -13,7 +13,6 @@ kind-dependencies:
 transforms:
    - taskgraph.transforms.release_deps:transforms
    - taskgraph.transforms.update_verify:transforms
-   - taskgraph.transforms.release_notifications:transforms
    - taskgraph.transforms.task:transforms
 
 job-defaults:
@@ -55,7 +54,7 @@ jobs:
          kind: test
          tier: 1
       attributes:
-         build_platform: linux64
+         build_platform: linux64-nightly
 
    firefox-secondary-linux:
       description: linux secondary channel update verify
@@ -66,7 +65,7 @@ jobs:
          kind: test
          tier: 1
       attributes:
-         build_platform: linux
+         build_platform: linux-nightly
 
    firefox-secondary-win64:
       description: win64 secondary channel update verify
@@ -77,7 +76,7 @@ jobs:
          kind: test
          tier: 1
       attributes:
-         build_platform: win64
+         build_platform: win64-nightly
 
    firefox-secondary-win32:
       description: win32 secondary channel update verify
@@ -88,7 +87,7 @@ jobs:
          kind: test
          tier: 1
       attributes:
-         build_platform: win32
+         build_platform: win32-nightly
 
    firefox-secondary-macosx64:
       description: macosx64 secondary channel update verify
@@ -99,4 +98,4 @@ jobs:
          kind: test
          tier: 1
       attributes:
-         build_platform: macosx64
+         build_platform: macosx64-nightly
