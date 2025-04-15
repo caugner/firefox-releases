@@ -1,27 +1,44 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is the Gopher protocol code.
  *
- * The Initial Developer of the Original Code is Bradley Baetz.
- * Portions created by Bradley Baetz are Copyright (C) 2000 Bradley Baetz.
- * All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Bradley Baetz.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
- *  Bradley Baetz <bbaetz@student.usyd.edu.au>
- *  Darin Fisher <darin@netscape.com>
- */
+ * Contributor(s):
+ *   Bradley Baetz <bbaetz@student.usyd.edu.au>
+ *   Darin Fisher <darin@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
-// gopher implementation - based on datetime and finger implimentations
+// gopher implementation - based on datetime and finger implementations
 // and documentation
 
 #include "nsGopherChannel.h"
@@ -58,7 +75,6 @@ extern PRLogModuleInfo* gGopherLog;
 // nsGopherChannel methods
 nsGopherChannel::nsGopherChannel()
     : mContentLength(-1),
-      mListFormat(FORMAT_HTML),
       mType(-1),
       mStatus(NS_OK),
       mIsPending(PR_FALSE)
@@ -74,12 +90,11 @@ nsGopherChannel::~nsGopherChannel()
 #endif
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS6(nsGopherChannel,
+NS_IMPL_THREADSAFE_ISUPPORTS5(nsGopherChannel,
                               nsIChannel,
                               nsIRequest,
                               nsIStreamListener,
                               nsIRequestObserver,
-                              nsIDirectoryListing,
                               nsITransportEventSink)
 
 nsresult
@@ -245,6 +260,8 @@ nsGopherChannel::AsyncOpen(nsIStreamListener *aListener, nsISupports *ctxt)
     PR_LOG(gGopherLog, PR_LOG_DEBUG, ("nsGopherChannel::AsyncOpen() called [this=%x]\n",
                                       this));
 
+    // get callback interfaces...
+
     nsresult rv;
 
     PRInt32 port;
@@ -280,7 +297,6 @@ nsGopherChannel::AsyncOpen(nsIStreamListener *aListener, nsISupports *ctxt)
         if (eventQ)
             mTransport->SetEventSink(this, eventQ);
     }
-    mTransport->SetSecurityCallbacks(mCallbacks);
 
     // open buffered, asynchronous socket input stream, and use a input stream
     // pump to read from it.
@@ -333,67 +349,55 @@ nsGopherChannel::GetContentType(nsACString &aContentType)
 
     switch(mType) {
     case '0':
-        aContentType = NS_LITERAL_CSTRING(TEXT_HTML);
+    case 'h':
+        aContentType.AssignLiteral(TEXT_HTML);
         break;
     case '1':
-        switch (mListFormat) {
-        case nsIDirectoryListing::FORMAT_RAW:
-            aContentType = NS_LITERAL_CSTRING("text/gopher-dir");
-            break;
-        default:
-            NS_WARNING("Unknown directory type");
-            // fall through
-        case nsIDirectoryListing::FORMAT_HTML:
-            aContentType = NS_LITERAL_CSTRING(TEXT_HTML);
-            break;
-        case nsIDirectoryListing::FORMAT_HTTP_INDEX:
-            aContentType = NS_LITERAL_CSTRING(APPLICATION_HTTP_INDEX_FORMAT);
-            break;
-        }
+        aContentType.AssignLiteral(APPLICATION_HTTP_INDEX_FORMAT);
         break;
     case '2': // CSO search - unhandled, should not be selectable
-        aContentType = NS_LITERAL_CSTRING(TEXT_HTML);
+        aContentType.AssignLiteral(TEXT_HTML);
         break;
     case '3': // "Error" - should not be selectable
-        aContentType = NS_LITERAL_CSTRING(TEXT_HTML);
+        aContentType.AssignLiteral(TEXT_HTML);
         break;
     case '4': // "BinHexed Macintosh file"
-        aContentType = NS_LITERAL_CSTRING(APPLICATION_BINHEX);
+        aContentType.AssignLiteral(APPLICATION_BINHEX);
         break;
     case '5':
         // "DOS binary archive of some sort" - is the mime-type correct?
-        aContentType = NS_LITERAL_CSTRING(APPLICATION_OCTET_STREAM);
+        aContentType.AssignLiteral(APPLICATION_OCTET_STREAM);
         break;
     case '6':
-        aContentType = NS_LITERAL_CSTRING(APPLICATION_UUENCODE);
+        aContentType.AssignLiteral(APPLICATION_UUENCODE);
         break;
     case '7': // search - returns a directory listing
-        aContentType = NS_LITERAL_CSTRING(APPLICATION_HTTP_INDEX_FORMAT);
+        aContentType.AssignLiteral(APPLICATION_HTTP_INDEX_FORMAT);
         break;
     case '8': // telnet - type doesn't make sense
-        aContentType = NS_LITERAL_CSTRING(TEXT_PLAIN);
+        aContentType.AssignLiteral(TEXT_PLAIN);
         break;
     case '9': // "Binary file!"
-        aContentType = NS_LITERAL_CSTRING(APPLICATION_OCTET_STREAM);
+        aContentType.AssignLiteral(APPLICATION_OCTET_STREAM);
         break;
     case 'g':
-        aContentType = NS_LITERAL_CSTRING(IMAGE_GIF);
+        aContentType.AssignLiteral(IMAGE_GIF);
         break;
     case 'i': // info line- should not be selectable
-        aContentType = NS_LITERAL_CSTRING(TEXT_HTML);
+        aContentType.AssignLiteral(TEXT_HTML);
         break;
     case 'I':
-        aContentType = NS_LITERAL_CSTRING(IMAGE_GIF);
+        aContentType.AssignLiteral(IMAGE_GIF);
         break;
     case 'T': // tn3270 - type doesn't make sense
-        aContentType = NS_LITERAL_CSTRING(TEXT_PLAIN);
+        aContentType.AssignLiteral(TEXT_PLAIN);
         break;
     default:
         if (!mContentTypeHint.IsEmpty()) {
             aContentType = mContentTypeHint;
         } else {
             NS_WARNING("Unknown gopher type");
-            aContentType = NS_LITERAL_CSTRING(UNKNOWN_CONTENT_TYPE);
+            aContentType.AssignLiteral(UNKNOWN_CONTENT_TYPE);
         }
         break;
     }
@@ -408,17 +412,16 @@ nsGopherChannel::GetContentType(nsACString &aContentType)
 NS_IMETHODIMP
 nsGopherChannel::SetContentType(const nsACString &aContentType)
 {
-    if (mIsPending) {
-        // only changes mContentCharset if a charset is parsed
-        NS_ParseContentType(aContentType, mContentType, mContentCharset);
-    } else {
-        // We are being given a content-type hint.  Since we have no ways of
-        // determining a charset on our own, just set mContentCharset from the
-        // charset part of this.        
-        nsCAutoString charsetBuf;
-        NS_ParseContentType(aContentType, mContentTypeHint, mContentCharset);
-    }
-    
+    // If AsyncOpen has been called, then treat this value as a content-type
+    // override.  Otherwise, treat it as a content-type hint.
+    //
+    // In the case in which we are being given a content-type hint, we have no
+    // ways of determining a charset on our own, so just set mContentCharset
+    // from the charset part of this.
+
+    nsCString *contentType = mIsPending ? &mContentType : &mContentTypeHint;
+    // Not in libnecko, so can't use net_ParseContentType
+    NS_ParseContentType(aContentType, *contentType, mContentCharset);
     return NS_OK;
 }
 
@@ -464,6 +467,7 @@ NS_IMETHODIMP
 nsGopherChannel::SetLoadGroup(nsILoadGroup* aLoadGroup)
 {
     mLoadGroup = aLoadGroup;
+    mProgressSink = nsnull;
     return NS_OK;
 }
 
@@ -483,25 +487,17 @@ nsGopherChannel::SetOwner(nsISupports* aOwner)
 }
 
 NS_IMETHODIMP
-nsGopherChannel::GetNotificationCallbacks(nsIInterfaceRequestor* *aNotificationCallbacks)
+nsGopherChannel::GetNotificationCallbacks(nsIInterfaceRequestor* *aCallbacks)
 {
-    *aNotificationCallbacks = mCallbacks.get();
-    NS_IF_ADDREF(*aNotificationCallbacks);
+    NS_IF_ADDREF(*aCallbacks = mCallbacks);
     return NS_OK;
 }
 
 NS_IMETHODIMP
-nsGopherChannel::SetNotificationCallbacks(nsIInterfaceRequestor* aNotificationCallbacks)
+nsGopherChannel::SetNotificationCallbacks(nsIInterfaceRequestor* aCallbacks)
 {
-    mCallbacks = aNotificationCallbacks;
-    if (mCallbacks) {
-        mPrompter = do_GetInterface(mCallbacks);
-        mProgressSink = do_GetInterface(mCallbacks);
-    }
-    else {
-        mPrompter = 0;
-        mProgressSink = 0;
-    }
+    mCallbacks = aCallbacks;
+    mProgressSink = nsnull;
     return NS_OK;
 }
 
@@ -550,6 +546,11 @@ nsGopherChannel::OnStopRequest(nsIRequest* aRequest, nsISupports* aContext,
     mTransport->Close(mStatus);
     mTransport = 0;
     mPump = 0;
+
+    // Drop notification callbacks to prevent cycles.
+    mCallbacks = 0;
+    mProgressSink = 0;
+
     return NS_OK;
 }
 
@@ -590,17 +591,11 @@ nsGopherChannel::SendRequest()
         if (pos == -1) {
             // We require a query string here - if we don't have one,
             // then we need to ask the user
-            if (!mPrompter) {
-                if (mLoadGroup) {
-                    nsCOMPtr<nsIInterfaceRequestor> cbs;
-                    rv = mLoadGroup->GetNotificationCallbacks(getter_AddRefs(cbs));
-                    if (NS_SUCCEEDED(rv))
-                        mPrompter = do_GetInterface(cbs);
-                }
-                if (!mPrompter) {
-                    NS_ERROR("We need a prompter!");
-                    return NS_ERROR_FAILURE;
-                }
+            nsCOMPtr<nsIPrompt> prompter;
+            NS_QueryNotificationCallbacks(mCallbacks, mLoadGroup, prompter);
+            if (!prompter) {
+                NS_ERROR("We need a prompter!");
+                return NS_ERROR_FAILURE;
             }
 
             if (!mStringBundle) {
@@ -622,7 +617,7 @@ nsGopherChannel::SendRequest()
                                                       getter_Copies(promptTitle));
 
             if (NS_FAILED(rv) || !mStringBundle)
-                promptTitle.Assign(NS_LITERAL_STRING("Search"));
+                promptTitle.AssignLiteral("Search");
 
 
             if (mStringBundle)
@@ -630,12 +625,12 @@ nsGopherChannel::SendRequest()
                                                       getter_Copies(promptText));
 
             if (NS_FAILED(rv) || !mStringBundle)
-                promptText.Assign(NS_LITERAL_STRING("Enter a search term:"));
+                promptText.AssignLiteral("Enter a search term:");
 
 
             nsXPIDLString search;
             PRBool res;
-            mPrompter->Prompt(promptTitle.get(),
+            prompter->Prompt(promptTitle.get(),
                               promptText.get(),
                               getter_Copies(search),
                               NULL,
@@ -645,7 +640,7 @@ nsGopherChannel::SendRequest()
                 return NS_ERROR_FAILURE;
     
             mRequest.Append('\t');
-            mRequest.AppendWithConversion(search.get());
+            AppendUTF16toUTF8(search, mRequest); // XXX Is UTF-8 the right thing?
 
             // and update our uri
             nsCAutoString spec;
@@ -654,7 +649,7 @@ nsGopherChannel::SendRequest()
                 return rv;
 
             spec.Append('?');
-            spec.AppendWithConversion(search.get());
+            AppendUTF16toUTF8(search, spec);
             rv = mUrl->SetSpec(spec);
             if (NS_FAILED(rv))
                 return rv;
@@ -700,43 +695,16 @@ nsGopherChannel::PushStreamConverters(nsIStreamListener *listener, nsIStreamList
     // What we now do depends on what type of file we have
     if (mType=='1' || mType=='7') {
         // Send the directory format back for a directory
-        switch (mListFormat) {
-        case nsIDirectoryListing::FORMAT_RAW:
-            break;
-        default:
-            // fall through
-        case nsIDirectoryListing::FORMAT_HTML:
-            // XXX - work arround bug 126417. We have to do the chaining
-            // manually so that we don't crash
-            {
-                nsCOMPtr<nsIStreamListener> tmpListener;
-                rv = StreamConvService->AsyncConvertData(
-                       NS_LITERAL_STRING(APPLICATION_HTTP_INDEX_FORMAT).get(),
-                       NS_LITERAL_STRING(TEXT_HTML).get(),
-                       listener,
-                       mUrl, 
-                       getter_AddRefs(tmpListener));
-                if (NS_FAILED(rv)) break;
-                rv = StreamConvService->AsyncConvertData(NS_LITERAL_STRING("text/gopher-dir").get(),
-                       NS_LITERAL_STRING(APPLICATION_HTTP_INDEX_FORMAT).get(),
-                       tmpListener,
-                       mUrl,
-                       getter_AddRefs(converterListener));
-            }
-            break;
-        case nsIDirectoryListing::FORMAT_HTTP_INDEX:
-            rv = StreamConvService->AsyncConvertData(NS_LITERAL_STRING("text/gopher-dir").get(), 
-                   NS_LITERAL_STRING(APPLICATION_HTTP_INDEX_FORMAT).get(),
-                   listener,
-                   mUrl,
-                   getter_AddRefs(converterListener));
-            break;
-        }
+        rv = StreamConvService->AsyncConvertData("text/gopher-dir", 
+               APPLICATION_HTTP_INDEX_FORMAT,
+               listener,
+               mUrl,
+               getter_AddRefs(converterListener));
         if (NS_FAILED(rv)) return rv;
     } else if (mType=='0') {
         // Convert general file
-        rv = StreamConvService->AsyncConvertData(NS_LITERAL_STRING("text/plain").get(),
-                                                 NS_LITERAL_STRING("text/html").get(),
+        rv = StreamConvService->AsyncConvertData("text/plain",
+                                                 "text/html",
                                                  listener,
                                                  mListenerContext,
                                                  getter_AddRefs(converterListener));
@@ -756,42 +724,15 @@ nsGopherChannel::PushStreamConverters(nsIStreamListener *listener, nsIStreamList
 }
 
 NS_IMETHODIMP
-nsGopherChannel::SetListFormat(PRUint32 format)
-{
-    // Convert the pref value
-    if (format == FORMAT_PREF) {
-        format = FORMAT_HTML; // default
-        nsCOMPtr<nsIPrefBranch> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
-        if (prefs) {
-            PRInt32 sFormat;
-            if (NS_SUCCEEDED(prefs->GetIntPref("network.dir.format", &sFormat)))
-                format = sFormat;
-        }
-    }
-    if (format != FORMAT_RAW &&
-        format != FORMAT_HTML &&
-        format != FORMAT_HTTP_INDEX) {
-        NS_WARNING("invalid directory format");
-        return NS_ERROR_FAILURE;
-    }
-    mListFormat = format;
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGopherChannel::GetListFormat(PRUint32 *format)
-{
-    *format = mListFormat;
-    return NS_OK;
-}
-
-NS_IMETHODIMP
 nsGopherChannel::OnTransportStatus(nsITransport *trans, nsresult status,
-                                   PRUint32 progress, PRUint32 progressMax)
+                                   PRUint64 progress, PRUint64 progressMax)
 {
+    if (!mProgressSink)
+        NS_QueryNotificationCallbacks(mCallbacks, mLoadGroup, mProgressSink);
+
     // suppress status notification if channel is no longer pending!
     if (mProgressSink && NS_SUCCEEDED(mStatus) && mPump && !(mLoadFlags & LOAD_BACKGROUND)) {
-        NS_ConvertUTF8toUCS2 host(mHost);
+        NS_ConvertUTF8toUTF16 host(mHost);
         mProgressSink->OnStatus(this, nsnull, status, host.get());
 
         if (status == nsISocketTransport::STATUS_RECEIVING_FROM ||

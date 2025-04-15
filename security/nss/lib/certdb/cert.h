@@ -1,40 +1,43 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  * cert.h - public data structures and prototypes for the certificate library
  *
- * $Id: cert.h,v 1.43 2003/12/03 00:09:04 wchang0222%aol.com Exp $
+ * $Id: cert.h,v 1.53 2005/03/09 23:02:47 neil.williams%sun.com Exp $
  */
 
 #ifndef _CERT_H_
@@ -248,6 +251,26 @@ CERT_CreateCertificateRequest (CERTName *name, CERTSubjectPublicKeyInfo *spki,
 extern void CERT_DestroyCertificateRequest(CERTCertificateRequest *r);
 
 /*
+** Start adding extensions to a certificate request.
+*/
+void *
+CERT_StartCertificateRequestAttributes(CERTCertificateRequest *req);
+
+/*
+** Reformat the certifcate extension list into a CertificateRequest
+** attribute list.
+*/
+SECStatus
+CERT_FinishCertificateRequestAttributes(CERTCertificateRequest *req);
+
+/*
+** Extract the Extension Requests from a DER CertRequest attribute list.
+*/
+SECStatus
+CERT_GetCertificateRequestExtensions(CERTCertificateRequest *req,
+                                     CERTCertExtension ***exts);
+
+/*
 ** Extract a public key object from a certificate
 */
 extern SECKEYPublicKey *CERT_ExtractPublicKey(CERTCertificate *cert);
@@ -319,6 +342,14 @@ extern SECStatus CERT_NameFromDERCert(SECItem *derCert, SECItem *derName);
 */
 extern SECStatus CERT_IssuerNameFromDERCert(SECItem *derCert, 
 					    SECItem *derName);
+
+extern SECItem *
+CERT_EncodeGeneralName(CERTGeneralName *genName, SECItem *dest,
+		       PRArenaPool *arena);
+
+extern CERTGeneralName *
+CERT_DecodeGeneralName(PRArenaPool *arena, SECItem *encodedName,
+		       CERTGeneralName  *genName);
 
 
 
@@ -417,6 +448,7 @@ CERT_DecodeDERCrlWithFlags(PRArenaPool *narena, SECItem *derSignedCrl,
 #define CRL_DECODE_DONT_COPY_DER            0x00000001
 #define CRL_DECODE_SKIP_ENTRIES             0x00000002
 #define CRL_DECODE_KEEP_BAD_CRL             0x00000004
+#define CRL_DECODE_ADOPT_HEAP_DER           0x00000008
 
 /* complete the decoding of a partially decoded CRL, ie. decode the
    entries. Note that entries is an optional field in a CRL, so the
@@ -440,6 +472,21 @@ extern void CERT_DestroyCrl (CERTSignedCrl *crl);
 /* this is a hint to flush the CRL cache. crlKey is the DER subject of
    the issuer (CA). */
 void CERT_CRLCacheRefreshIssuer(CERTCertDBHandle* dbhandle, SECItem* crlKey);
+
+/* add the specified DER CRL object to the CRL cache. Doing so will allow
+   certificate verification functions (such as CERT_VerifyCertificate)
+   to automatically find and make use of this CRL object.
+   Once a CRL is added to the CRL cache, the application must hold on to
+   the object's memory, because the cache will reference it directly. The
+   application can only free the object after it calls CERT_UncacheCRL to
+   remove it from the CRL cache.
+*/
+SECStatus CERT_CacheCRL(CERTCertDBHandle* dbhandle, SECItem* newcrl);
+
+/* remove a previously added CRL object from the CRL cache. It is OK
+   for the application to free the memory after a successful removal
+*/
+SECStatus CERT_UncacheCRL(CERTCertDBHandle* dbhandle, SECItem* oldcrl);
 
 /*
 ** Decode a certificate and put it into the temporary certificate database
@@ -646,13 +693,6 @@ CERT_VerifyCertChain(CERTCertDBHandle *handle, CERTCertificate *cert,
 		     void *wincx, CERTVerifyLog *log);
 
 /*
-** This must only be called on a cert that is known to have an issuer
-** with an invalid time
-*/
-extern CERTCertificate *
-CERT_FindExpiredIssuer (CERTCertDBHandle *handle, CERTCertificate *cert);
-
-/*
 ** Read a base64 ascii encoded DER certificate and convert it to our
 ** internal format.
 **	"certstr" is a null-terminated string containing the certificate
@@ -709,13 +749,6 @@ extern char *CERT_HTMLCertInfo(CERTCertificate *cert, PRBool showImages,
 ** moved elsewhere?
 */
 extern SECItem *CERT_DecodeAVAValue(const SECItem *derAVAValue);
-
-/*
- * take a DER certificate and decode it into a certificate structure
- */
-CERTCertificate *
-CERT_DecodeDERCertificate(SECItem *derSignedCert, PRBool copyDER,
-                         char *nickname);
 
 
 
@@ -810,6 +843,13 @@ CERT_EncodeAltNameExtension(PRArenaPool *arena,  CERTGeneralName  *value, SECIte
 */
 extern SECStatus CERT_FinishExtensions(void *exthandle);
 
+/*
+** Merge an external list of extensions into a cert's extension list, adding one
+** only when its OID matches none of the cert's existing extensions. Call this
+** immediately before calling CERT_FinishExtensions().
+*/
+SECStatus
+CERT_MergeExtensions(void *exthandle, CERTCertExtension **exts);
 
 /* If the extension is found, return its criticality and value.
 ** This allocate storage for the returning extension value.
@@ -964,7 +1004,20 @@ extern SECStatus CERT_FindCRLExtension
 extern SECStatus
    CERT_FindInvalidDateExten (CERTCrl *crl, int64 *value);
 
-extern void *CERT_StartCRLExtensions (CERTCrl *crl);
+/*
+** Set up a crl for adding X509v3 extensions.  Returns an opaque handle
+** used by routines that take an exthandle (void*) argument .
+**	"crl" is the CRL we are adding extensions to
+*/
+extern void *CERT_StartCRLExtensions(CERTCrl *crl);
+
+/*
+** Set up a crl entry for adding X509v3 extensions.  Returns an opaque handle
+** used by routines that take an exthandle (void*) argument .
+**	"crl" is the crl we are adding certs entries to
+**      "entry" is the crl entry we are adding extensions to
+*/
+extern void *CERT_StartCRLEntryExtensions(CERTCrl *crl, CERTCrlEntry *entry);
 
 extern CERTCertNicknames *CERT_GetCertNicknames (CERTCertDBHandle *handle,
 						 int what, void *wincx);
@@ -1093,6 +1146,33 @@ CERT_DestroyCertificatePoliciesExtension(CERTCertificatePolicies *policies);
 
 CERTUserNotice *
 CERT_DecodeUserNotice(SECItem *noticeItem);
+
+extern CERTGeneralName *
+CERT_DecodeAltNameExtension(PRArenaPool *arena, SECItem *EncodedAltName);
+
+extern CERTNameConstraints *
+CERT_DecodeNameConstraintsExtension(PRArenaPool *arena, 
+                                    SECItem *encodedConstraints);
+
+/* returns addr of a NULL termainated array of pointers to CERTAuthInfoAccess */
+extern CERTAuthInfoAccess **
+CERT_DecodeAuthInfoAccessExtension(PRArenaPool *arena,
+				   SECItem     *encodedExtension);
+
+extern CERTPrivKeyUsagePeriod *
+CERT_DecodePrivKeyUsagePeriodExtension(PLArenaPool *arena, SECItem *extnValue);
+
+extern CERTGeneralName *
+CERT_GetNextGeneralName(CERTGeneralName *current);
+
+extern CERTGeneralName *
+CERT_GetPrevGeneralName(CERTGeneralName *current);
+
+CERTNameConstraint *
+CERT_GetNextNameConstraint(CERTNameConstraint *current);
+
+CERTNameConstraint *
+CERT_GetPrevNameConstraint(CERTNameConstraint *current);
 
 void
 CERT_DestroyUserNotice(CERTUserNotice *userNotice);

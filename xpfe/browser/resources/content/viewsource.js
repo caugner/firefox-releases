@@ -1,25 +1,41 @@
 /* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s): 
- *    Doron Rosenberg (doronr@naboonline.com) 
- *    Neil Rashbrook (neil@parkwaycc.co.uk)
- */
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.  Portions created by Netscape are Copyright (C) Netscape Communications Corporation.  All Rights Reserved.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Doron Rosenberg (doronr@naboonline.com)
+ *   Neil Rashbrook (neil@parkwaycc.co.uk)
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 const pageLoaderIface = Components.interfaces.nsIWebPageDescriptor;
 const nsISelectionPrivate = Components.interfaces.nsISelectionPrivate;
@@ -136,7 +152,7 @@ function viewSource(url)
           // This allows the content to be fetched from the cache (if
           // possible) rather than the network...
           //
-          PageLoader.LoadPage(arg, pageLoaderIface.DISPLAY_AS_SOURCE);
+          PageLoader.loadPage(arg, pageLoaderIface.DISPLAY_AS_SOURCE);
           // The content was successfully loaded from the page cookie.
           loadFromURL = false;
         }
@@ -149,11 +165,16 @@ function viewSource(url)
 
   if (loadFromURL) {
     //
+    // We need to set up session history to give us a page descriptor.
+    //
+    var webNavigation = getBrowser().webNavigation;
+    webNavigation.sessionHistory = Components.classes["@mozilla.org/browser/shistory;1"].createInstance();
+    //
     // Currently, an exception is thrown if the URL load fails...
     //
     var loadFlags = Components.interfaces.nsIWebNavigation.LOAD_FLAGS_NONE;
     var viewSrcUrl = "view-source:" + url;
-    getBrowser().webNavigation.loadURI(viewSrcUrl, loadFlags, null, null, null);
+    webNavigation.loadURI(viewSrcUrl, loadFlags, null, null, null);
   }
 
   //check the view_source.wrap_long_lines pref and set the menuitem's checked attribute accordingly
@@ -173,7 +194,7 @@ function viewSource(url)
     document.getElementById("menu_highlightSyntax").setAttribute("hidden", "true");
   }
 
-  window._content.focus();
+  window.content.focus();
 
   return true;
 }
@@ -190,7 +211,7 @@ function onLoadContent()
   document.getElementById('cmd_goToLine').removeAttribute('disabled');
 
   // Register a listener so that we can show the caret position on the status bar.
-  window._content.getSelection()
+  window.content.getSelection()
    .QueryInterface(nsISelectionPrivate)
    .addSelectionListener(gSelectionListener);
 }
@@ -275,7 +296,7 @@ function ViewSourceGoToLine()
 
 function goToLine(line)
 {
-  var viewsource = window._content.document.body;
+  var viewsource = window.content.document.body;
 
   //
   // The source document is made up of a number of pre elements with
@@ -308,7 +329,7 @@ function goToLine(line)
     return false;
   }
 
-  var selection = window._content.getSelection();
+  var selection = window.content.getSelection();
   selection.removeAllRanges();
 
   // In our case, the range's startOffset is after "\n" on the previous line.
@@ -365,7 +386,7 @@ function updateStatusBar()
 
   var statusBarField = document.getElementById("statusbar-line-col");
 
-  var selection = window._content.getSelection();
+  var selection = window.content.getSelection();
   if (!selection.focusNode) {
     statusBarField.label = '';
     return;
@@ -420,7 +441,7 @@ function findLocation(pre, line, node, offset, interlinePosition, result)
   //
   // Walk through each of the text nodes and count newlines.
   //
-  var treewalker = window._content.document
+  var treewalker = window.content.document
       .createTreeWalker(pre, NodeFilter.SHOW_TEXT, null, false);
 
   //
@@ -505,14 +526,14 @@ function findLocation(pre, line, node, offset, interlinePosition, result)
     }
   }
 
-  return found;
+  return found || ("range" in result);
 }
 
 //function to toggle long-line wrapping and set the view_source.wrap_long_lines 
 //pref to persist the last state
 function wrapLongLines()
 {
-  var myWrap = window._content.document.body;
+  var myWrap = window.content.document.body;
 
   if (myWrap.className == '')
     myWrap.className = 'wrap';
@@ -543,16 +564,22 @@ function highlightSyntax()
   gPrefs.setBoolPref("view_source.syntax_highlight", highlightSyntax);
 
   var PageLoader = getBrowser().webNavigation.QueryInterface(pageLoaderIface);
-  PageLoader.LoadPage(PageLoader.currentDescriptor, pageLoaderIface.DISPLAY_NORMAL);
+  PageLoader.loadPage(PageLoader.currentDescriptor, pageLoaderIface.DISPLAY_NORMAL);
 }
 
 // Fix for bug 136322: this function overrides the function in
-// browser.js to call PageLoader.LoadPage() instead of BrowserReloadWithFlags()
+// browser.js to call PageLoader.loadPage() instead of BrowserReloadWithFlags()
 function BrowserSetForcedCharacterSet(aCharset)
 {
   var docCharset = getBrowser().docShell.QueryInterface(
                             Components.interfaces.nsIDocCharset);
   docCharset.charset = aCharset;
   var PageLoader = getBrowser().webNavigation.QueryInterface(pageLoaderIface);
-  PageLoader.LoadPage(PageLoader.currentDescriptor, pageLoaderIface.DISPLAY_NORMAL);
+  PageLoader.loadPage(PageLoader.currentDescriptor, pageLoaderIface.DISPLAY_NORMAL);
+}
+
+function updateSavePageItems()
+{
+  var autoDownload = gPrefs.getBoolPref("browser.download.autoDownload");
+  goSetMenuValue("savepage", autoDownload ? "valueSave" : "valueSaveAs");
 }

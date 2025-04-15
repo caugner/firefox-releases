@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,14 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
- *   Adam Lock <adamlock@eircom.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -29,11 +27,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -68,12 +66,14 @@
 #include "nsIWidget.h"
 #include "nsIWebBrowserFocus.h"
 #include "nsAppDirectoryServiceDefs.h"
+#include "nsIComponentRegistrar.h"
 
 #include "nsIDOMWindow.h"
 #include "nsIDOMHTMLAnchorElement.h"
 #include "nsIDOMNSDocument.h"
 
 #include "nsEmbedAPI.h"
+#include "nsEmbedCID.h"
 
 #define HACK_NON_REENTRANCY
 #ifdef HACK_NON_REENTRANCY
@@ -88,7 +88,6 @@ static HANDLE s_hHackedNonReentrancy = NULL;
 
 static NS_DEFINE_CID(kPromptServiceCID, NS_PROMPTSERVICE_CID);
 static NS_DEFINE_CID(kHelperAppLauncherDialogCID, NS_HELPERAPPLAUNCHERDIALOG_CID);
-static NS_DEFINE_CID(kPrefCID, NS_PREF_CID);
 
 class PrintListener : public nsIWebProgressListener
 {
@@ -182,7 +181,7 @@ CMozillaBrowser::CMozillaBrowser()
     mBrowserHelperListCount = 0;
 
     // Name of the default profile to use
-    mProfileName = NS_LITERAL_STRING("MozillaControl");
+    mProfileName.AssignLiteral("MozillaControl");
 
     // Initialise the web browser
     Initialize();
@@ -444,7 +443,7 @@ LRESULT CMozillaBrowser::OnCreate(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL&
                 ios->GetProtocolHandler(kDesignModeScheme, getter_AddRefs(ph));
                 if (ph &&
                     NS_SUCCEEDED(ph->GetScheme(phScheme)) &&
-                    phScheme.EqualsIgnoreCase(kDesignModeScheme))
+                    phScheme.LowerCaseEqualsASCII(kDesignModeScheme))
                 {
                     Navigate(const_cast<BSTR>(kDesignModeURL), NULL, NULL, NULL, NULL);
                 }
@@ -610,24 +609,14 @@ LRESULT CMozillaBrowser::OnSaveAs(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL
     memset(&SaveFileName, 0, sizeof(SaveFileName));
     SaveFileName.lStructSize = sizeof(SaveFileName);
     SaveFileName.hwndOwner = m_hWnd;
-    SaveFileName.hInstance = NULL;
     SaveFileName.lpstrFilter = "Web Page, HTML Only (*.htm;*.html)\0*.htm;*.html\0Text File (*.txt)\0*.txt\0"; 
-    SaveFileName.lpstrCustomFilter = NULL; 
-    SaveFileName.nMaxCustFilter = NULL; 
     SaveFileName.nFilterIndex = 1; 
     SaveFileName.lpstrFile = szFile; 
     SaveFileName.nMaxFile = sizeof(szFile); 
     SaveFileName.lpstrFileTitle = szFileTitle;
     SaveFileName.nMaxFileTitle = sizeof(szFileTitle); 
-    SaveFileName.lpstrInitialDir = NULL; 
-    SaveFileName.lpstrTitle = NULL; 
     SaveFileName.Flags = OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT; 
-    SaveFileName.nFileOffset = NULL; 
-    SaveFileName.nFileExtension = NULL; 
     SaveFileName.lpstrDefExt = "htm"; 
-    SaveFileName.lCustData = NULL; 
-    SaveFileName.lpfnHook = NULL; 
-    SaveFileName.lpTemplateName = NULL; 
 
     //Get the title of the current web page to set as the default filename.
     char szTmp[_MAX_FNAME] = "untitled";
@@ -790,9 +779,8 @@ LRESULT CMozillaBrowser::OnViewSource(WORD wNotifyCode, WORD wID, HWND hWndCtl, 
     nsCAutoString aURI;
     uri->GetSpec(aURI);
 
-    nsAutoString strURI;
-    strURI.Assign(NS_LITERAL_STRING("view-source:"));
-    strURI.Append(NS_ConvertUTF8toUCS2(aURI));
+    nsAutoString strURI(NS_LITERAL_STRING("view-source:"));
+    AppendUTF8toUTF16(aURI, strURI);
 
     // Ask the client to create a window to view the source in
     CIPtr(IDispatch) spDispNew;
@@ -1034,7 +1022,7 @@ HRESULT CMozillaBrowser::Initialize()
     rv = NS_InitEmbedding(binDir, directoryProvider);
 
     // Load preferences service
-    mPrefs = do_GetService(kPrefCID, &rv);
+    mPrefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
     if (NS_FAILED(rv))
     {
         NG_ASSERT(0);
@@ -1052,20 +1040,27 @@ HRESULT CMozillaBrowser::Initialize()
         nsCOMPtr<nsIFactory> promptFactory;
         rv = NS_NewPromptServiceFactory(getter_AddRefs(promptFactory));
         if (NS_FAILED(rv)) return rv;
-        rv = nsComponentManager::RegisterFactory(kPromptServiceCID,
+
+        nsCOMPtr<nsIComponentRegistrar> registrar;
+        rv = NS_GetComponentRegistrar(getter_AddRefs(registrar));
+        if (NS_FAILED(rv)) return rv;
+
+        rv = registrar->RegisterFactory(kPromptServiceCID,
             "Prompt Service",
-            "@mozilla.org/embedcomp/prompt-service;1",
-            promptFactory,
-            PR_TRUE); // replace existing
+            NS_PROMPTSERVICE_CONTRACTID,
+            promptFactory);
+        if (NS_FAILED(rv)) return rv;
 
         // Helper app launcher dialog
         nsCOMPtr<nsIFactory> helperAppDlgFactory;
         rv = NS_NewHelperAppLauncherDlgFactory(getter_AddRefs(helperAppDlgFactory));
-        rv = nsComponentManager::RegisterFactory(kHelperAppLauncherDialogCID,
+        if (NS_FAILED(rv)) return rv;
+
+        rv = registrar->RegisterFactory(kHelperAppLauncherDialogCID,
             "Helper App Launcher Dialog",
             "@mozilla.org/helperapplauncherdialog;1",
-            helperAppDlgFactory,
-            PR_TRUE); // replace existing
+            helperAppDlgFactory);
+        if (NS_FAILED(rv)) return rv;
 
         // create our local object
         CWindowCreator *creator = new CWindowCreator();
@@ -1124,7 +1119,7 @@ HRESULT CMozillaBrowser::Terminate()
     {
 #endif
 
-    mPrefs = nsnull;
+    mPrefBranch = nsnull;
     NS_TermEmbedding();
 
 #ifdef HACK_NON_REENTRANCY
@@ -1503,8 +1498,8 @@ HRESULT CMozillaBrowser::PrintDocument(BOOL promptUser)
     // Disable print progress dialog (XUL)
     PRBool oldShowPrintProgress = FALSE;
     const char *kShowPrintProgressPref = "print.show_print_progress";
-    mPrefs->GetBoolPref(kShowPrintProgressPref, &oldShowPrintProgress);
-    mPrefs->SetBoolPref(kShowPrintProgressPref, PR_FALSE);
+    mPrefBranch->GetBoolPref(kShowPrintProgressPref, &oldShowPrintProgress);
+    mPrefBranch->SetBoolPref(kShowPrintProgressPref, PR_FALSE);
 
     // Print
     PrintListener *listener = new PrintListener;
@@ -1520,7 +1515,7 @@ HRESULT CMozillaBrowser::PrintDocument(BOOL promptUser)
     {
         printSettings->SetPrintSilent(oldPrintSilent);
     }
-    mPrefs->SetBoolPref(kShowPrintProgressPref, oldShowPrintProgress);
+    mPrefBranch->SetBoolPref(kShowPrintProgressPref, oldShowPrintProgress);
 
     return S_OK;
 }
@@ -1729,12 +1724,12 @@ nsresult CMozillaBrowser::GetDOMWindow(nsIDOMWindow **aDOMWindow)
     return mWebBrowser->GetContentDOMWindow(aDOMWindow);
 }
 
-nsresult CMozillaBrowser::GetPrefs(nsIPref **aPrefs)
+nsresult CMozillaBrowser::GetPrefs(nsIPrefBranch **aPrefBranch)
 {
-    if (mPrefs)
-        *aPrefs = mPrefs;
-    NS_IF_ADDREF(*aPrefs);
-    return (*aPrefs) ? NS_OK : NS_ERROR_FAILURE;
+    if (mPrefBranch)
+        *aPrefBranch = mPrefBranch;
+    NS_IF_ADDREF(*aPrefBranch);
+    return (*aPrefBranch) ? NS_OK : NS_ERROR_FAILURE;
 }
 
 PRBool CMozillaBrowser::BrowserIsValid()

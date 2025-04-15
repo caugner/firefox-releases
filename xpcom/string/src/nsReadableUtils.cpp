@@ -1,25 +1,40 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 2000 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Scott Collins <scc@mozilla.org> (original author)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsReadableUtils.h"
 #include "nsMemory.h"
@@ -301,6 +316,8 @@ char*
 ToNewCString( const nsAString& aSource )
   {
     char* result = AllocateStringCopy(aSource, (char*)0);
+    if (!result)
+      return nsnull;
 
     nsAString::const_iterator fromBegin, fromEnd;
     LossyConvertEncoding<PRUnichar, char> converter(result);
@@ -322,6 +339,8 @@ ToNewUTF8String( const nsAString& aSource, PRUint32 *aUTF8Count )
 
     char *result = NS_STATIC_CAST(char*,
         nsMemory::Alloc(calculator.Size() + 1));
+    if (!result)
+      return nsnull;
 
     ConvertUTF16toUTF8 converter(result);
     copy_string(aSource.BeginReading(start), aSource.EndReading(end),
@@ -338,6 +357,8 @@ ToNewCString( const nsACString& aSource )
     // no conversion needed, just allocate a buffer of the correct length and copy into it
 
     char* result = AllocateStringCopy(aSource, (char*)0);
+    if (!result)
+      return nsnull;
 
     nsACString::const_iterator fromBegin, fromEnd;
     char* toBegin = result;
@@ -352,6 +373,8 @@ ToNewUnicode( const nsAString& aSource )
     // no conversion needed, just allocate a buffer of the correct length and copy into it
 
     PRUnichar* result = AllocateStringCopy(aSource, (PRUnichar*)0);
+    if (!result)
+      return nsnull;
 
     nsAString::const_iterator fromBegin, fromEnd;
     PRUnichar* toBegin = result;
@@ -364,6 +387,8 @@ PRUnichar*
 ToNewUnicode( const nsACString& aSource )
   {
     PRUnichar* result = AllocateStringCopy(aSource, (PRUnichar*)0);
+    if (!result)
+      return nsnull;
 
     nsACString::const_iterator fromBegin, fromEnd;
     LossyConvertEncoding<char, PRUnichar> converter(result);
@@ -385,6 +410,8 @@ UTF8ToNewUnicode( const nsACString& aSource, PRUint32 *aUTF16Count )
 
     PRUnichar *result = NS_STATIC_CAST(PRUnichar*,
         nsMemory::Alloc(sizeof(PRUnichar) * (calculator.Length() + 1)));
+    if (!result)
+      return nsnull;
 
     ConvertUTF8toUTF16 converter(result);
     copy_string(aSource.BeginReading(start), aSource.EndReading(end),
@@ -613,6 +640,7 @@ class ConvertToUpperCase
         }
   };
 
+#ifdef MOZ_V1_STRING_ABI
 NS_COM
 void
 ToUpperCase( nsACString& aCString )
@@ -621,6 +649,7 @@ ToUpperCase( nsACString& aCString )
     ConvertToUpperCase converter;
     copy_string(aCString.BeginWriting(fromBegin), aCString.EndWriting(fromEnd), converter);
   }
+#endif
 
 NS_COM
 void
@@ -701,6 +730,7 @@ class ConvertToLowerCase
         }
   };
 
+#ifdef MOZ_V1_STRING_ABI
 NS_COM
 void
 ToLowerCase( nsACString& aCString )
@@ -709,6 +739,7 @@ ToLowerCase( nsACString& aCString )
     ConvertToLowerCase converter;
     copy_string(aCString.BeginWriting(fromBegin), aCString.EndWriting(fromEnd), converter);
   }
+#endif
 
 NS_COM
 void
@@ -1047,48 +1078,6 @@ StringEndsWith( const nsACString& aSource, const nsACString& aSubstring,
   }
 
 
-
-template <class CharT>
-class CalculateHashCode
-  {
-    public:
-      typedef CharT char_type;
-      typedef PRUint32 hashcode_type;
-      typedef CharT value_type;
-
-      CalculateHashCode() : mHashCode(0)  { }
-      hashcode_type GetHashCode() const { return mHashCode; }
-
-      PRUint32 write( const CharT* chars, PRUint32 N )
-        {
-          for ( const CharT *end = chars + N; chars < end; ++chars)
-            mHashCode = (mHashCode>>28) ^ (mHashCode<<4) ^ PRUint32(*chars);
-          return N;
-        }
-
-    private:
-      hashcode_type mHashCode;
-  };
-
-NS_COM PRUint32 HashString( const nsAString& aStr )
-  {
-    CalculateHashCode<nsAString::char_type> sink;
-    nsAString::const_iterator begin, end;
-    aStr.BeginReading(begin);
-    aStr.EndReading(end);
-    copy_string(begin, end, sink);
-    return sink.GetHashCode();
-  }
-
-NS_COM PRUint32 HashString( const nsACString& aStr )
-  {
-    CalculateHashCode<nsACString::char_type> sink;
-    nsACString::const_iterator begin, end;
-    aStr.BeginReading(begin);
-    aStr.EndReading(end);
-    copy_string(begin, end, sink);
-    return sink.GetHashCode();
-  }
 
 static const PRUnichar empty_buffer[1] = { '\0' };
 

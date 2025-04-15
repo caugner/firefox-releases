@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -42,13 +41,13 @@
  * and attributes) that have the same name, prefix and namespace ID within
  * the same document.
  *
- * nsINodeInfoManager is an interface to an object that manages a list of
+ * nsNodeInfoManager's are internal objects that manage a list of
  * nsINodeInfo's, every document object should hold a strong reference to
- * a nsINodeInfoManager and every nsINodeInfo also holds a strong reference
+ * a nsNodeInfoManager and every nsINodeInfo also holds a strong reference
  * to their owning manager. When a nsINodeInfo is no longer used it will
  * automatically remove itself from its owner manager, and when all
- * nsINodeInfo's have been removed from a nsINodeInfoManager and all external
- * references are released the nsINodeInfoManager deletes itself.
+ * nsINodeInfo's have been removed from a nsNodeInfoManager and all external
+ * references are released the nsNodeInfoManager deletes itself.
  *
  * -- jst@netscape.com
  */
@@ -62,91 +61,17 @@
 #include "nsDOMString.h"
 #include "nsINameSpaceManager.h"
 #include "nsCOMPtr.h"
-#include "nsCOMArray.h"
 
 // Forward declarations
-class nsINodeInfo;
 class nsIDocument;
 class nsIURI;
 class nsIPrincipal;
-
+class nsNodeInfoManager;
 
 // IID for the nsINodeInfo interface
-#define NS_INODEINFO_IID       \
-{ 0x93dbfd8c, 0x2fb3, 0x4ef5, \
-  {0xa2, 0xa0, 0xcf, 0xf2, 0x69, 0x6f, 0x07, 0x88} }
-
-// IID for the nsINodeInfoManager interface
-#define NS_INODEINFOMANAGER_IID \
-{ 0xb622469b, 0x4dcf, 0x45c4, \
-  {0xb0, 0xb9, 0xa7, 0x32, 0xbc, 0xee, 0xa5, 0xcc} }
-
-#define NS_NODEINFOMANAGER_CONTRACTID "@mozilla.org/layout/nodeinfomanager;1"
-
-
-class nsINodeInfoManager : public nsISupports
-{
-public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_INODEINFOMANAGER_IID)
-
-  nsINodeInfoManager()
-    : mDocument(nsnull)
-  {
-  }
-
-  virtual ~nsINodeInfoManager() { }
-
-  /*
-   * Initialize the nodeinfo manager with a document.
-   */
-  virtual nsresult Init(nsIDocument *aDocument) = 0;
-
-  /*
-   * Release the reference to the document, this will be called when
-   * the document is going away.
-   */
-  virtual void DropDocumentReference() = 0;
-
-  /*
-   * Methods for creating nodeinfo's from atoms and/or strings.
-   */
-  virtual nsresult GetNodeInfo(nsIAtom *aName, nsIAtom *aPrefix,
-                               PRInt32 aNamespaceID,
-                               nsINodeInfo** aNodeInfo) = 0;
-  virtual nsresult GetNodeInfo(const nsAString& aName, nsIAtom *aPrefix,
-                               PRInt32 aNamespaceID,
-                               nsINodeInfo** aNodeInfo) = 0;
-  virtual nsresult GetNodeInfo(const nsAString& aQualifiedName,
-                               const nsAString& aNamespaceURI,
-                               nsINodeInfo** aNodeInfo) = 0;
-  virtual nsresult GetNodeInfo(const nsAString& aName, nsIAtom *aPrefix,
-                               const nsAString& aNamespaceURI,
-                               nsINodeInfo** aNodeInfo) = 0;
-
-  /*
-   * Retrieve a pointer to the document that owns this node info
-   * manager.
-   */
-  nsIDocument* GetDocument() const
-  {
-    return mDocument;
-  }
-
-  /**
-   * Gets the principal of the document associated with this.
-   */
-  virtual nsresult GetDocumentPrincipal(nsIPrincipal** aPrincipal) = 0;
-  
-  /**
-   * Sets the principal of the nodeinfo manager. This should only be called
-   * when this nodeinfo manager isn't connected to an nsIDocument.
-   */
-  virtual nsresult SetDocumentPrincipal(nsIPrincipal* aPrincipal) = 0;
-  
-protected:
-  nsIDocument *mDocument; // WEAK
-};
-
+#define NS_INODEINFO_IID      \
+{ 0x290ecd20, 0xb3cb, 0x11d8, \
+  { 0xb2, 0x67, 0x00, 0x0a, 0x95, 0xdc, 0x23, 0x4c } }
 
 class nsINodeInfo : public nsISupports
 {
@@ -158,8 +83,6 @@ public:
       mOwnerManager(nsnull)
   {
   }
-
-  virtual ~nsINodeInfo() { }
 
   /*
    * Get the name from this node as a string, this does not include the prefix.
@@ -272,10 +195,11 @@ public:
     mIDAttributeAtom = aID;
   }
 
-  /*
-   * Get the owning node info manager, this will never return null.
+  /**
+   * Get the owning node info manager. Only to be used inside Gecko, you can't
+   * really do anything with the pointer outside Gecko anyway.
    */
-  nsINodeInfoManager* NodeInfoManager() const
+  nsNodeInfoManager *NodeInfoManager() const
   {
     return mOwnerManager;
   }
@@ -314,7 +238,7 @@ public:
   }
 
   PRBool Equals(nsIAtom *aNameAtom, nsIAtom *aPrefixAtom,
-                             PRInt32 aNamespaceID) const
+                PRInt32 aNamespaceID) const
   {
     return ((mInner.mName == aNameAtom) &&
             (mInner.mPrefix == aPrefixAtom) &&
@@ -338,40 +262,14 @@ public:
   virtual PRBool QualifiedNameEquals(const nsACString& aQualifiedName) const = 0;
 
   /*
-   * This is a convinience method that creates a new nsINodeInfo that differs
-   * only by name from the one this is called on.
-   */
-  nsresult NameChanged(nsIAtom *aName, nsINodeInfo** aResult)
-  {
-    return mOwnerManager->GetNodeInfo(aName, mInner.mPrefix,
-                                      mInner.mNamespaceID, aResult);
-  }
-
-  /*
-   * This is a convinience method that creates a new nsINodeInfo that differs
-   * only by prefix from the one this is called on.
-   */
-  nsresult PrefixChanged(nsIAtom *aPrefix, nsINodeInfo** aResult)
-  {
-    return mOwnerManager->GetNodeInfo(mInner.mName, aPrefix,
-                                      mInner.mNamespaceID, aResult);
-  }
-
-  /*
    * Retrieve a pointer to the document that owns this node info.
    */
-  nsIDocument* GetDocument() const
-  {
-    return mOwnerManager->GetDocument();
-  }
+  virtual nsIDocument* GetDocument() const = 0;
 
   /*
    * Retrieve a pointer to the principal for the document of this node info.
    */
-  nsresult GetDocumentPrincipal(nsIPrincipal** aPrincipal) const
-  {
-    return mOwnerManager->GetDocumentPrincipal(aPrincipal);
-  }
+  virtual nsIPrincipal *GetDocumentPrincipal() const = 0;
 
 protected:
   /*
@@ -407,10 +305,7 @@ protected:
   nsNodeInfoInner mInner;
 
   nsCOMPtr<nsIAtom> mIDAttributeAtom;
-  nsINodeInfoManager* mOwnerManager; // Strong reference!
+  nsNodeInfoManager* mOwnerManager; // Strong reference!
 };
-
-nsresult
-NS_NewNodeInfoManager(nsINodeInfoManager** aResult);
 
 #endif /* nsINodeInfo_h___ */

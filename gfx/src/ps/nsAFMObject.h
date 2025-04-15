@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -165,19 +164,19 @@ struct AFM_Single_Char_Metrics
 {
 
   PRInt32   mCharacter_Code;      // default charcode (-1 if not encoded) 
-  double    mW0x;                 // character width x in writing direction 0, 
-  double    mW0y;                 // character width y in writing direction 0
-  double    mW1x;                 // character width x in writing direction 1
-  double    mW1y;                 // character width y in writing direction 1
+  float     mW0x;                 // character width x in writing direction 0, 
+  float     mW0y;                 // character width y in writing direction 0
+  float     mW1x;                 // character width x in writing direction 1
+  float     mW1y;                 // character width y in writing direction 1
   //char      *mName;             // character name ,  not using currently
   //double    mVv_x;              // local VVector x ,  not using currently
   //double    mVv_y;              // local VVector y ,  not using currently
 
   // character bounding box. 
-  double    mLlx;
-  double    mLly;
-  double    mUrx;
-  double    mUry;
+  float     mLlx;
+  float     mLly;
+  float     mUrx;
+  float     mUry;
 
   //double num_ligatures;      
 
@@ -196,10 +195,10 @@ struct fontInformation
   const char *mFullName;
   const char *mFamilyName;
   const char *mWeight;
-  double      mFontBBox_llx;
-  double      mFontBBox_lly;
-  double      mFontBBox_urx;
-  double      mFontBBox_ury;
+  float       mFontBBox_llx;
+  float       mFontBBox_lly;
+  float       mFontBBox_urx;
+  float       mFontBBox_ury;
   const char *mVersion;
   char       *mNotice;         // DO NOT MAKE "const" (125341)
   const char *mEncodingScheme;
@@ -208,15 +207,15 @@ struct fontInformation
   const char *mCharacterSet;
   PRInt32     mCharacters;
   PRBool      mIsBaseFont;
-  double      mVVector_0;
-  double      mVVector_1;
+  float       mVVector_0;
+  float       mVVector_1;
   PRBool      mIsFixedV;
-  double      mCapHeight;
-  double      mXHeight;
-  double      mAscender;
-  double      mDescender;
-  double      mUnderlinePosition;
-  double      mUnderlineThickness;
+  float       mCapHeight;
+  float       mXHeight;
+  float       mAscender;
+  float       mDescender;
+  float       mUnderlinePosition;
+  float       mUnderlineThickness;
 
   PRInt32     mNumCharacters;
   AFMscm     *mAFMCharMetrics;
@@ -378,6 +377,7 @@ protected:
    * @return -- the current floating point
    */
   void    GetAFMNumber (double *aFloat){GetToken();*aFloat = atof (mToken);}
+  void    GetAFMNumber (float  *aFloat){GetToken();*aFloat = atof (mToken);}
 
   /** ---------------------------------------------------
    * Get a boolean from the currently parsed file
@@ -424,8 +424,8 @@ struct AFM_SubstituteFonts
   const char*         mFamily;
   PRUint16            mWeight;
   PRUint8             mStyle;
-  AFMFontInformation* mFontInfo;
-  AFMscm*             mCharInfo;
+  const AFMFontInformation* mFontInfo;
+  const AFMscm*             mCharInfo;
   PRInt32             mIndex;
 };
 

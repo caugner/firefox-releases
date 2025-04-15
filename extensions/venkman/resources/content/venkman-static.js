@@ -1,40 +1,44 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/ 
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * License. 
+ * License.
  *
- * The Original Code is The JavaScript Debugger
- * 
+ * The Original Code is The JavaScript Debugger.
+ *
  * The Initial Developer of the Original Code is
- * Netscape Communications Corporation
- * Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.
- *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the MPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the MPL or the GPL.
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Robert Ginda, <rginda@netscape.com>, original author
+ *   Robert Ginda, <rginda@netscape.com>, original author
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
-const __vnk_version        = "0.9.84";
-const __vnk_requiredLocale = "0.9.84";
+const __vnk_version        = "0.9.83";
+const __vnk_requiredLocale = "0.9.83";
 var   __vnk_versionSuffix  = "";
 
 const __vnk_counter_url = 
@@ -526,9 +530,6 @@ function init()
     createMainMenu(document);
     createMainToolbar(document);
 
-    // Must be done after menus are "here", since it corrects them for the host.
-    initApplicationCompatibility();
-
     console.ui = {
         "status-text": document.getElementById ("status-text"),
         "profile-button": document.getElementById ("maintoolbar:profile-tb"),
@@ -577,7 +578,8 @@ function init()
                  MT_WARN);
     }
 
-    console.initialized = true;
+    // Delay being "done" until the window is up.
+    setTimeout(initPost, 100);
 
     if (console.prefs["saveSettingsOnExit"])
     {
@@ -590,44 +592,9 @@ function init()
     dd ("}");
 }
 
-function initApplicationCompatibility()
+function initPost()
 {
-    // This routine does nothing more than tweak the UI based on the host 
-    // application.
-
-    var windowMenu = document.getElementById("windowMenu");
-
-    // Set up simple host and platform information.
-    console.host = "Mozilla";
-    if (!windowMenu.firstChild)
-        console.host = "Firefox";
-
-    console.platform = "Unknown";
-    if (navigator.platform.search(/mac/i) > -1)
-        console.platform = "Mac";
-    if (navigator.platform.search(/win/i) > -1)
-        console.platform = "Windows";
-    if (navigator.platform.search(/linux/i) > -1)
-        console.platform = "Linux";
-
-    console.hostPlatform = console.host + console.platform;
-
-    // The menus and the component bar need to be hidden on some hosts.
-    var winMenu   = document.getElementById("windowMenu");
-    var tasksMenu = document.getElementById("tasksMenu");
-    //var toolsMenu = document.getElementById("mainmenu:tools");
-    var comBar    = document.getElementById("component-bar");
-
-    if (console.host == "Firefox") {
-        tasksMenu.parentNode.removeChild(tasksMenu);
-        winMenu.parentNode.removeChild(winMenu);
-    } else {
-        comBar.collapsed = false;
-    }
-
-    //if ((console.host != "Firefox") || (console.platform == "Linux")) {
-    //    toolsMenu.parentNode.removeChild(toolsMenu);
-    //}
+    console.initialized = true;
 }
 
 function destroy ()
@@ -691,41 +658,24 @@ function fetchLaunchCount()
         }
     };
     
-    var r = new XMLHttpRequest();
-    r.onload = onLoad;
-    r.open ("GET",
-            __vnk_counter_url + "?local=" + console.prefs["startupCount"] +
-            "&version=" + __vnk_version);
-    r.send (null);
+    try
+    {
+        var r = new XMLHttpRequest();
+        r.onload = onLoad;
+        r.open ("GET",
+                __vnk_counter_url + "?local=" + console.prefs["startupCount"] +
+                "&version=" + __vnk_version);
+        r.send (null);
+    }
+    catch (ex)
+    {
+        // Oops. Probably missing the xmlextras extension, can't really do 
+        // much about that.
+        display(getMsg(MSN_LAUNCH_COUNT,
+                       [console.prefs["startupCount"], MSG_VAL_UNKNOWN]));
+    }
 }
     
-function getCommandEnabled(command)
-{
-    try {
-        var dispatcher = top.document.commandDispatcher;
-        var controller = dispatcher.getControllerForCommand(command);
-        
-        return controller.isCommandEnabled(command);
-    }
-    catch (e)
-    {
-        return false;
-    }
-}
-
-function doCommand(command)
-{
-    try {
-        var dispatcher = top.document.commandDispatcher;
-        var controller = dispatcher.getControllerForCommand(command);
-        if (controller && controller.isCommandEnabled(command))
-            controller.doCommand(command);
-    }
-    catch (e)
-    {
-    }
-}
-
 console.__defineGetter__ ("userAgent", con_ua);
 function con_ua ()
 {

@@ -3,44 +3,44 @@
  * SSLSockets supported.  Only one type is still supported.
  * Various other functions.
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Portions created by Sun Microsystems, Inc. are Copyright (C) 2003
- * Sun Microsystems, Inc. All Rights Reserved.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *	Dr Stephen Henson <stephen.henson@gemplus.com>
- *	Dr Vipul Gupta <vipul.gupta@sun.com>, Sun Microsystems Laboratories
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
+ *   Dr Stephen Henson <stephen.henson@gemplus.com>
+ *   Dr Vipul Gupta <vipul.gupta@sun.com>, Sun Microsystems Laboratories
  *
- * $Id: sslsock.c,v 1.31.44.1 2004/10/15 21:13:57 wchang0222%aol.com Exp $
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
+/* $Id: sslsock.c,v 1.37 2005/04/06 21:35:45 nelsonb%netscape.com Exp $ */
 #include "seccomon.h"
 #include "cert.h"
 #include "keyhi.h"
@@ -163,6 +163,7 @@ static sslOptions ssl_defaults = {
     PR_FALSE,	/* fdx                */
     PR_TRUE,	/* v2CompatibleHello  */
     PR_TRUE,	/* detectRollBack     */
+    PR_FALSE,   /* noStepDown         */
 };
 
 sslSessionIDLookupFunc  ssl_sid_lookup;
@@ -244,6 +245,7 @@ ssl_DupSocket(sslSocket *os)
 	ss->fdx                = os->fdx;
 	ss->v2CompatibleHello  = os->v2CompatibleHello;
 	ss->detectRollBack     = os->detectRollBack;
+	ss->noStepDown         = os->noStepDown;
 
 	ss->peerID             = !os->peerID ? NULL : PORT_Strdup(os->peerID);
 	ss->url                = !os->url    ? NULL : PORT_Strdup(os->url);
@@ -603,6 +605,12 @@ SSL_OptionSet(PRFileDesc *fd, PRInt32 which, PRBool on)
 	ss->detectRollBack = on;
         break;
 
+      case SSL_NO_STEP_DOWN:        
+	ss->noStepDown     = on;         
+	if (on) 
+	    SSL_DisableExportCipherSuites(fd);
+	break;
+
       default:
 	PORT_SetError(SEC_ERROR_INVALID_ARGS);
 	rv = SECFailure;
@@ -648,6 +656,7 @@ SSL_OptionGet(PRFileDesc *fd, PRInt32 which, PRBool *pOn)
     case SSL_ENABLE_FDX:          on = ss->fdx;                break;
     case SSL_V2_COMPATIBLE_HELLO: on = ss->v2CompatibleHello;  break;
     case SSL_ROLLBACK_DETECTION:  on = ss->detectRollBack;     break;
+    case SSL_NO_STEP_DOWN:        on = ss->noStepDown;         break;
 
     default:
 	PORT_SetError(SEC_ERROR_INVALID_ARGS);
@@ -686,6 +695,7 @@ SSL_OptionGetDefault(PRInt32 which, PRBool *pOn)
     case SSL_ENABLE_FDX:          on = ssl_defaults.fdx;                break;
     case SSL_V2_COMPATIBLE_HELLO: on = ssl_defaults.v2CompatibleHello;  break;
     case SSL_ROLLBACK_DETECTION:  on = ssl_defaults.detectRollBack;     break;
+    case SSL_NO_STEP_DOWN:        on = ssl_defaults.noStepDown;         break;
 
     default:
 	PORT_SetError(SEC_ERROR_INVALID_ARGS);
@@ -777,6 +787,12 @@ SSL_OptionSetDefault(PRInt32 which, PRBool on)
 	ssl_defaults.detectRollBack = on;
 	break;
 
+      case SSL_NO_STEP_DOWN:        
+	ssl_defaults.noStepDown     = on;         
+	if (on)
+	    SSL_DisableDefaultExportCipherSuites();
+	break;
+
       default:
 	PORT_SetError(SEC_ERROR_INVALID_ARGS);
 	return SECFailure;
@@ -854,6 +870,10 @@ SSL_CipherPrefSetDefault(PRInt32 which, PRBool enabled)
 {
     SECStatus rv;
     
+    if (enabled && ssl_defaults.noStepDown && SSL_IsExportCipherSuite(which)) {
+    	PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
+	return SECFailure;
+    }
     if (SSL_IS_SSL2_CIPHER(which)) {
 	rv = ssl2_CipherPrefSetDefault(which, enabled);
     } else {
@@ -887,6 +907,10 @@ SSL_CipherPrefSet(PRFileDesc *fd, PRInt32 which, PRBool enabled)
     
     if (!ss) {
 	SSL_DBG(("%d: SSL[%d]: bad socket in CipherPrefSet", SSL_GETPID(), fd));
+	return SECFailure;
+    }
+    if (enabled && ss->noStepDown && SSL_IsExportCipherSuite(which)) {
+    	PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
 	return SECFailure;
     }
     if (SSL_IS_SSL2_CIPHER(which)) {
@@ -1873,6 +1897,7 @@ ssl_NewSocket(void)
 	ss->fdx                = ssl_defaults.fdx;
 	ss->v2CompatibleHello  = ssl_defaults.v2CompatibleHello;
 	ss->detectRollBack     = ssl_defaults.detectRollBack;
+	ss->noStepDown         = ssl_defaults.noStepDown;
 	ss->noCache            = ssl_defaults.noCache;
 	ss->peerID             = NULL;
 	ss->rTimeout	       = PR_INTERVAL_NO_TIMEOUT;

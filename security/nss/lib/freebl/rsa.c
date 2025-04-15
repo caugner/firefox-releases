@@ -1,41 +1,43 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
- * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- */
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is the Netscape security libraries.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  * RSA key generation, public key op, private key op.
  *
- * $Id: rsa.c,v 1.33 2003/12/19 23:50:45 nelsonb%netscape.com Exp $
+ * $Id: rsa.c,v 1.35.14.1 2005/10/10 23:22:50 wtchang%redhat.com Exp $
  */
 
 #include "secerr.h"
@@ -63,6 +65,11 @@
 
 #define MAX_RSA_MODULUS  1024 /* bytes, 8k bits */
 #define MAX_RSA_EXPONENT    8 /* bytes, 64 bits */
+
+/* exponent should not be greater than modulus */
+#define BAD_RSA_KEY_SIZE(modLen, expLen) \
+    ((expLen) > (modLen) || (modLen) > MAX_RSA_MODULUS || \
+    (expLen) > MAX_RSA_EXPONENT)
 
 /*
 ** RSABlindingParamsStr
@@ -229,7 +236,8 @@ RSA_NewKey(int keySizeInBits, SECItem *publicExponent)
     RSAPrivateKey *key = NULL;
     PRArenaPool *arena = NULL;
     /* Require key size to be a multiple of 16 bits. */
-    if (!publicExponent || keySizeInBits % 16 != 0) {
+    if (!publicExponent || keySizeInBits % 16 != 0 ||
+	    BAD_RSA_KEY_SIZE(keySizeInBits/8, publicExponent->len)) {
 	PORT_SetError(SEC_ERROR_INVALID_ARGS);
 	return NULL;
     }
@@ -313,7 +321,7 @@ RSA_PublicKeyOp(RSAPublicKey  *key,
                 unsigned char *output, 
                 const unsigned char *input)
 {
-    unsigned int modLen, expLen;
+    unsigned int modLen, expLen, offset;
     mp_int n, e, m, c;
     mp_err err   = MP_OKAY;
     SECStatus rv = SECSuccess;
@@ -332,8 +340,7 @@ RSA_PublicKeyOp(RSAPublicKey  *key,
     modLen = rsa_modulusLen(&key->modulus);
     expLen = rsa_modulusLen(&key->publicExponent);
     /* 1.  Obtain public key (n, e) */
-    if (expLen > modLen || modLen > MAX_RSA_MODULUS || expLen > MAX_RSA_EXPONENT) {
-	/* exponent should not be greater than modulus */
+    if (BAD_RSA_KEY_SIZE(modLen, expLen)) {
     	PORT_SetError(SEC_ERROR_INVALID_KEY);
 	rv = SECFailure;
 	goto cleanup;
@@ -346,7 +353,14 @@ RSA_PublicKeyOp(RSAPublicKey  *key,
 	rv = SECFailure;
 	goto cleanup;
     }
-    /* 2.  Represent message as integer in range [0..n-1] */
+    /* 2. check input out of range (needs to be in range [0..n-1]) */
+    offset = (key->modulus.data[0] == 0) ? 1 : 0; /* may be leading 0 */
+    if (memcmp(input, key->modulus.data + offset, modLen) >= 0) {
+        PORT_SetError(SEC_ERROR_INPUT_LEN);
+        rv = SECFailure;
+        goto cleanup;
+    }
+    /* 2 bis.  Represent message as integer in range [0..n-1] */
     CHECK_MPI_OK( mp_read_unsigned_octets(&m, input, modLen) );
     /* 3.  Compute c = m**e mod n */
 #ifdef USE_MPI_EXPT_D

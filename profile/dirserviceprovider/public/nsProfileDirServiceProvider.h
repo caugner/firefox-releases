@@ -39,10 +39,19 @@
 // Interfaces Needed
 #include "nsIDirectoryService.h"
 #include "nsILocalFile.h"
+
+#include "nsCOMPtr.h"
+#include "nsDirectoryServiceUtils.h"
+#include "nsComponentManagerUtils.h"
+#include "nsServiceManagerUtils.h"
+
+#ifdef MOZILLA_INTERNAL_API
 #include "nsString.h"
+#else
+#include "nsEmbedString.h"
+#endif
 
 // Forward Declarations
-class nsIAtom;
 class nsProfileLock;
 
 // --------------------------------------------------------------------------------------
@@ -66,9 +75,13 @@ public:
     *                      It does not need to exist before calling this
     *                      method. If it does not, it will be created and
     *                      defaults will be copied to it. 
+    * @param aLocalProfileDir
+    *                      Directory for local profile data, e.g. Cache.
+    *                      If null, aProfileDir will be used for this purpose.
     */
 
-   virtual nsresult        SetProfileDir(nsIFile* aProfileDir);
+   virtual nsresult        SetProfileDir(nsIFile* aProfileDir,
+                                         nsIFile* aLocalProfileDir = nsnull);
 
   /**
    * Register
@@ -102,29 +115,17 @@ protected:
 
 protected:
 
-  // Atoms for file locations
-  static nsIAtom*          sApp_PrefsDirectory50;
-  static nsIAtom*          sApp_PreferencesFile50;
-  static nsIAtom*          sApp_UserProfileDirectory50;
-  static nsIAtom*          sApp_UserChromeDirectory;
-  static nsIAtom*          sApp_LocalStore50;
-  static nsIAtom*          sApp_History50;
-  static nsIAtom*          sApp_UsersPanels50;
-  static nsIAtom*          sApp_UsersMimeTypes50;
-  static nsIAtom*          sApp_BookmarksFile50;
-  static nsIAtom*          sApp_DownloadsFile50;
-  static nsIAtom*          sApp_SearchFile50;
-  static nsIAtom*          sApp_MailDirectory50;
-  static nsIAtom*          sApp_ImapMailDirectory50;
-  static nsIAtom*          sApp_NewsDirectory50;
-  static nsIAtom*          sApp_MessengerFolderCache50;
-
   nsCOMPtr<nsIFile>        mProfileDir;
+  nsCOMPtr<nsIFile>        mLocalProfileDir;
   nsProfileLock*           mProfileDirLock;
   PRPackedBool             mNotifyObservers;
 
   PRPackedBool             mSharingEnabled;
+#ifndef MOZILLA_INTERNAL_API
+  nsEmbedString            mNonSharedDirName;
+#else
   nsString                 mNonSharedDirName;
+#endif
   nsCOMPtr<nsIFile>        mNonSharedProfileDir;
 };
 

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,27 +14,27 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
- * Seth Spitzer <sspitzer@netscape.com>
- * Bhuvan Racham <racham@netscape.com>
- * Scott MacGregor <mscott@netscape.com>
+ * Contributor(s):
+ *   Seth Spitzer <sspitzer@netscape.com>
+ *   Bhuvan Racham <racham@netscape.com>
+ *   Scott MacGregor <mscott@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -53,9 +53,9 @@
 #include "nsITimer.h"
 #include "nsCOMPtr.h"
 #include "nsString.h"
-#include "nsIPref.h"
 #include "nsInt64.h"
 #include "nsISupportsArray.h"
+#include "nsIObserver.h"
 
 // this function is exported by shell32.dll version 5.60 or later (Windows XP or greater)
 extern "C"
@@ -73,7 +73,7 @@ class nsIStringBundle;
 
 class nsMessengerWinIntegration : public nsIMessengerOSIntegration,
                                   public nsIFolderListener,
-                                  public nsIAlertListener
+                                  public nsIObserver
 {
 public:
   nsMessengerWinIntegration();
@@ -83,12 +83,14 @@ public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIMESSENGEROSINTEGRATION
   NS_DECL_NSIFOLDERLISTENER
-  NS_DECL_NSIALERTLISTENER
+  NS_DECL_NSIOBSERVER
 
 private:
-  
-  static NOTIFYICONDATAW mWideBiffIconData; 
-  static NOTIFYICONDATA  mAsciiBiffIconData;
+  nsresult AlertFinished();
+  nsresult AlertClicked();
+
+  static NOTIFYICONDATAW sWideBiffIconData; 
+  static NOTIFYICONDATA  sNativeBiffIconData;
 
   void InitializeBiffStatusIcon(); 
   void FillToolTipInfo();
@@ -119,8 +121,8 @@ private:
   // what type of server is associated with the default account
   PRPackedBool    mDefaultAccountMightHaveAnInbox;
 
-  // first time the unread count changes, we need to update registry
-  PRPackedBool mFirstTimeFolderUnreadCountChanged;
+  // True if the timer is running
+  PRPackedBool mUnreadTimerActive;
 
   nsresult ResetCurrent();
   nsresult RemoveCurrentFromRegistry();
@@ -154,11 +156,6 @@ private:
 
   PRInt32   mCurrentUnreadCount;
   PRInt32   mLastUnreadCountWrittenToRegistry;
-
-  nsInt64   mIntervalTime;
-
-  HWND mMailNotificationWindow;
-  nsresult CreateMailNotificationWindow();
 };
 
 #endif // __nsMessengerWinIntegration_h

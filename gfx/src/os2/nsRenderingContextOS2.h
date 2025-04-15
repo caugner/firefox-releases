@@ -1,21 +1,40 @@
-/*
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
- * Software distributed under the License is distributed on an "AS IS"
- * basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See the
- * License for the specific language governing rights and limitations
- * under the License.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is the Mozilla OS/2 libraries.
  *
- * The Initial Developer of the Original Code is John Fairhurst,
- * <john_fairhurst@iname.com>.  Portions created by John Fairhurst are
- * Copyright (C) 1999 John Fairhurst. All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * John Fairhurst, <john_fairhurst@iname.com>.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): Henry Sobotka <sobotka@axess.com>
+ * Contributor(s):
+ *   Henry Sobotka <sobotka@axess.com>
+ *   Pierre Phaneuf <pp@ludusdesign.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK *****
  *
  * This Original Code has been modified by IBM Corporation. Modifications made by IBM 
  * described herein are Copyright (c) International Business Machines Corporation, 2000.
@@ -61,7 +80,7 @@ public:
   NS_DECL_ISUPPORTS
 
   NS_IMETHOD Init(nsIDeviceContext* aContext, nsIWidget *aWindow);
-  NS_IMETHOD Init(nsIDeviceContext* aContext, nsDrawingSurface aSurface);
+  NS_IMETHOD Init(nsIDeviceContext* aContext, nsIDrawingSurface* aSurface);
 
   NS_IMETHOD Reset(void);
 
@@ -72,18 +91,18 @@ public:
                                 PRUint32 aFlags);
   NS_IMETHOD UnlockDrawingSurface(void);
 
-  NS_IMETHOD SelectOffScreenDrawingSurface(nsDrawingSurface aSurface);
-  NS_IMETHOD GetDrawingSurface(nsDrawingSurface *aSurface);
+  NS_IMETHOD SelectOffScreenDrawingSurface(nsIDrawingSurface* aSurface);
+  NS_IMETHOD GetDrawingSurface(nsIDrawingSurface* *aSurface);
   NS_IMETHOD GetHints(PRUint32& aResult);
 
   NS_IMETHOD PushState(void);
-  NS_IMETHOD PopState(PRBool &aClipState);
+  NS_IMETHOD PopState(void);
 
   NS_IMETHOD IsVisibleRect(const nsRect& aRect, PRBool &aClipState);
 
-  NS_IMETHOD SetClipRect(const nsRect& aRect, nsClipCombine aCombine, PRBool &aCilpState);
+  NS_IMETHOD SetClipRect(const nsRect& aRect, nsClipCombine aCombine);
   NS_IMETHOD GetClipRect(nsRect &aRect, PRBool &aClipState);
-  NS_IMETHOD SetClipRegion(const nsIRegion& aRegion, nsClipCombine aCombine, PRBool &aClipState);
+  NS_IMETHOD SetClipRegion(const nsIRegion& aRegion, nsClipCombine aCombine);
   NS_IMETHOD CopyClipRegion(nsIRegion &aRegion);
   NS_IMETHOD GetClipRegion(nsIRegion **aRegion);
 
@@ -102,11 +121,10 @@ public:
   NS_IMETHOD Scale(float aSx, float aSy);
   NS_IMETHOD GetCurrentTransform(nsTransform2D *&aTransform);
 
-  NS_IMETHOD CreateDrawingSurface(const nsRect& aBounds, PRUint32 aSurfFlags, nsDrawingSurface &aSurface);
-  NS_IMETHOD DestroyDrawingSurface(nsDrawingSurface aDS);
+  NS_IMETHOD CreateDrawingSurface(const nsRect& aBounds, PRUint32 aSurfFlags, nsIDrawingSurface* &aSurface);
+  NS_IMETHOD DestroyDrawingSurface(nsIDrawingSurface* aDS);
 
   NS_IMETHOD DrawLine(nscoord aX0, nscoord aY0, nscoord aX1, nscoord aY1);
-  NS_IMETHOD DrawStdLine(nscoord aX0, nscoord aY0, nscoord aX1, nscoord aY1); 
   NS_IMETHOD DrawPolyline(const nsPoint aPoints[], PRInt32 aNumPoints);
 
   NS_IMETHOD DrawRect(const nsRect& aRect);
@@ -120,8 +138,6 @@ public:
 
   NS_IMETHOD DrawPolygon(const nsPoint aPoints[], PRInt32 aNumPoints);
   NS_IMETHOD FillPolygon(const nsPoint aPoints[], PRInt32 aNumPoints);
-
-  NS_IMETHOD FillStdPolygon(const nsPoint aPoints[], PRInt32 aNumPoints);
 
   NS_IMETHOD DrawEllipse(const nsRect& aRect);
   NS_IMETHOD DrawEllipse(nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight);
@@ -181,12 +197,12 @@ public:
                         PRInt32 aFontID,
                         const nscoord* aSpacing);
 
-  NS_IMETHOD CopyOffScreenBits(nsDrawingSurface aSrcSurf, PRInt32 aSrcX, PRInt32 aSrcY,
+  NS_IMETHOD CopyOffScreenBits(nsIDrawingSurface* aSrcSurf, PRInt32 aSrcX, PRInt32 aSrcY,
                                const nsRect &aDestBounds, PRUint32 aCopyFlags);
   //~~~
   NS_IMETHOD RetrieveCurrentNativeGraphicData(PRUint32 * ngd);
 
-  NS_IMETHOD CreateDrawingSurface(HPS aPS, nsDrawingSurface &aSurface, nsIWidget *aWidget);
+  NS_IMETHOD CreateDrawingSurface(HPS aPS, nsIDrawingSurface* &aSurface, nsIWidget *aWidget);
 
 #ifdef MOZ_MATHML
   NS_IMETHOD

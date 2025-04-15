@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,29 +14,28 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: David W. Hyatt (hyatt@netscape.com)
+ *   Original Author: David W. Hyatt (hyatt@netscape.com)
  *   Dean Tessman <dean_tessman@hotmail.com>
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *   Robert O'Callahan <roc+moz@cs.cmu.edu>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -68,9 +67,7 @@
 #include "nsIDOMNSUIEvent.h"
 #include "nsIDOMEventTarget.h"
 #include "nsIDOMNSEvent.h"
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
-#include "nsIServiceManagerUtils.h"
+#include "nsServiceManagerUtils.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptSecurityManager.h"
 
@@ -78,7 +75,7 @@
 #include "nsIPopupBoxObject.h"
 
 // for event firing in context menus
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsIEventStateManager.h"
 
@@ -234,18 +231,9 @@ XULPopupListenerImpl::PreLaunchPopup(nsIDOMEvent* aMouseEvent)
   if (preventDefault && targetNode && popupType == eXULPopupType_context) {
     // Someone called preventDefault on a context menu.
     // Let's make sure they are allowed to do so.
-    nsCOMPtr<nsIPrefService> prefService =
-      do_GetService(NS_PREFSERVICE_CONTRACTID);
-
-    NS_ENSURE_TRUE(prefService, NS_ERROR_FAILURE);
-
-    nsCOMPtr<nsIPrefBranch> prefBranch;
-    prefService->GetBranch(nsnull, getter_AddRefs(prefBranch));
-
-    PRBool eventEnabled;
-    nsresult rv = prefBranch->GetBoolPref("dom.event.contextmenu.enabled",
-                                          &eventEnabled);
-    if (NS_SUCCEEDED(rv) && !eventEnabled) {
+    PRBool eventEnabled =
+      nsContentUtils::GetBoolPref("dom.event.contextmenu.enabled", PR_TRUE);
+    if (!eventEnabled) {
       // The user wants his contextmenus.  Let's make sure that this is a website
       // and not chrome since there could be places in chrome which don't want
       // contextmenus.
@@ -341,7 +329,6 @@ XULPopupListenerImpl::FireFocusOnTargetContent(nsIDOMNode* aTargetNode)
   rv = aTargetNode->GetOwnerDocument(getter_AddRefs(domDoc));
   if(NS_SUCCEEDED(rv) && domDoc)
   {
-    nsCOMPtr<nsIPresContext> context;
     nsCOMPtr<nsIDocument> tempdoc = do_QueryInterface(domDoc);
 
     // Get nsIDOMElement for targetNode
@@ -349,7 +336,8 @@ XULPopupListenerImpl::FireFocusOnTargetContent(nsIDOMNode* aTargetNode)
     if (!shell)
       return NS_ERROR_FAILURE;
 
-    shell->GetPresContext(getter_AddRefs(context));
+    // strong reference to keep this from going away between events
+    nsCOMPtr<nsPresContext> context = shell->GetPresContext();
  
     nsCOMPtr<nsIContent> content = do_QueryInterface(aTargetNode);
     nsIFrame* targetFrame;
@@ -366,10 +354,7 @@ XULPopupListenerImpl::FireFocusOnTargetContent(nsIDOMNode* aTargetNode)
     nsIFrame* currFrame = targetFrame;
     // Look for the nearest enclosing focusable frame.
     while (currFrame) {
-        const nsStyleUserInterface* ui = currFrame->GetStyleUserInterface();
-        if ((ui->mUserFocus != NS_STYLE_USER_FOCUS_IGNORE) &&
-            (ui->mUserFocus != NS_STYLE_USER_FOCUS_NONE)) 
-        {
+        if (currFrame->IsFocusable()) {
           newFocus = currFrame->GetContent();
           nsCOMPtr<nsIDOMElement> domElement(do_QueryInterface(newFocus));
           if (domElement) {
@@ -461,43 +446,43 @@ static void ConvertPosition(nsIDOMElement* aPopupElt, nsString& aAnchor, nsStrin
   if (position.IsEmpty())
     return;
 
-  if (position.Equals(NS_LITERAL_STRING("before_start"))) {
-    aAnchor.Assign(NS_LITERAL_STRING("topleft"));
-    aAlign.Assign(NS_LITERAL_STRING("bottomleft"));
+  if (position.EqualsLiteral("before_start")) {
+    aAnchor.AssignLiteral("topleft");
+    aAlign.AssignLiteral("bottomleft");
   }
-  else if (position.Equals(NS_LITERAL_STRING("before_end"))) {
-    aAnchor.Assign(NS_LITERAL_STRING("topright"));
-    aAlign.Assign(NS_LITERAL_STRING("bottomright"));
+  else if (position.EqualsLiteral("before_end")) {
+    aAnchor.AssignLiteral("topright");
+    aAlign.AssignLiteral("bottomright");
   }
-  else if (position.Equals(NS_LITERAL_STRING("after_start"))) {
-    aAnchor.Assign(NS_LITERAL_STRING("bottomleft"));
-    aAlign.Assign(NS_LITERAL_STRING("topleft"));
+  else if (position.EqualsLiteral("after_start")) {
+    aAnchor.AssignLiteral("bottomleft");
+    aAlign.AssignLiteral("topleft");
   }
-  else if (position.Equals(NS_LITERAL_STRING("after_end"))) {
-    aAnchor.Assign(NS_LITERAL_STRING("bottomright"));
-    aAlign.Assign(NS_LITERAL_STRING("topright"));
+  else if (position.EqualsLiteral("after_end")) {
+    aAnchor.AssignLiteral("bottomright");
+    aAlign.AssignLiteral("topright");
   }
-  else if (position.Equals(NS_LITERAL_STRING("start_before"))) {
-    aAnchor.Assign(NS_LITERAL_STRING("topleft"));
-    aAlign.Assign(NS_LITERAL_STRING("topright"));
+  else if (position.EqualsLiteral("start_before")) {
+    aAnchor.AssignLiteral("topleft");
+    aAlign.AssignLiteral("topright");
   }
-  else if (position.Equals(NS_LITERAL_STRING("start_after"))) {
-    aAnchor.Assign(NS_LITERAL_STRING("bottomleft"));
-    aAlign.Assign(NS_LITERAL_STRING("bottomright"));
+  else if (position.EqualsLiteral("start_after")) {
+    aAnchor.AssignLiteral("bottomleft");
+    aAlign.AssignLiteral("bottomright");
   }
-  else if (position.Equals(NS_LITERAL_STRING("end_before"))) {
-    aAnchor.Assign(NS_LITERAL_STRING("topright"));
-    aAlign.Assign(NS_LITERAL_STRING("topleft"));
+  else if (position.EqualsLiteral("end_before")) {
+    aAnchor.AssignLiteral("topright");
+    aAlign.AssignLiteral("topleft");
   }
-  else if (position.Equals(NS_LITERAL_STRING("end_after"))) {
-    aAnchor.Assign(NS_LITERAL_STRING("bottomright"));
-    aAlign.Assign(NS_LITERAL_STRING("bottomleft"));
+  else if (position.EqualsLiteral("end_after")) {
+    aAnchor.AssignLiteral("bottomright");
+    aAlign.AssignLiteral("bottomleft");
   }
-  else if (position.Equals(NS_LITERAL_STRING("overlap"))) {
-    aAnchor.Assign(NS_LITERAL_STRING("topleft"));
-    aAlign.Assign(NS_LITERAL_STRING("topleft"));
+  else if (position.EqualsLiteral("overlap")) {
+    aAnchor.AssignLiteral("topleft");
+    aAlign.AssignLiteral("topleft");
   }
-  else if (position.Equals(NS_LITERAL_STRING("after_pointer")))
+  else if (position.EqualsLiteral("after_pointer"))
     aY += 21;
 }
 
@@ -519,7 +504,7 @@ XULPopupListenerImpl::LaunchPopup(PRInt32 aClientX, PRInt32 aClientY)
 
   nsAutoString type(NS_LITERAL_STRING("popup"));
   if ( popupType == eXULPopupType_context ) {
-    type.Assign(NS_LITERAL_STRING("context"));
+    type.AssignLiteral("context");
     
     // position the menu two pixels down and to the right from the current
     // mouse position. This makes it easier to dismiss the menu by just
@@ -532,9 +517,9 @@ XULPopupListenerImpl::LaunchPopup(PRInt32 aClientX, PRInt32 aClientY)
   mElement->GetAttribute(type, identifier);
 
   if (identifier.IsEmpty()) {
-    if (type.Equals(NS_LITERAL_STRING("popup")))
+    if (type.EqualsLiteral("popup"))
       mElement->GetAttribute(NS_LITERAL_STRING("menu"), identifier);
-    else if (type.Equals(NS_LITERAL_STRING("context")))
+    else if (type.EqualsLiteral("context"))
       mElement->GetAttribute(NS_LITERAL_STRING("contextmenu"), identifier);
     if (identifier.IsEmpty())
       return rv;
@@ -554,7 +539,7 @@ XULPopupListenerImpl::LaunchPopup(PRInt32 aClientX, PRInt32 aClientY)
   // Handle the _child case for popups and context menus
   nsCOMPtr<nsIDOMElement> popupContent;
 
-  if (identifier == NS_LITERAL_STRING("_child")) {
+  if (identifier.EqualsLiteral("_child")) {
     nsCOMPtr<nsIContent> popup;
 
     GetImmediateChild(content, nsXULAtoms::menupopup, getter_AddRefs(popup));

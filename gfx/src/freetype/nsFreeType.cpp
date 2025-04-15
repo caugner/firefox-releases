@@ -1,12 +1,12 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ex: set tabstop=8 softtabstop=2 shiftwidth=2 expandtab: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1 
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/ 
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -24,16 +24,16 @@
  *   Brian Stell <bstell@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -96,7 +96,7 @@ static NS_DEFINE_CID(kCharSetManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
 // Define the FreeType2 functions we resolve at run time.
 // see the comment near nsFreeType2::DoneFace() for more info
 //
-#define NS_FT2_OFFSET(f) (int)&((nsFreeType2*)0)->f
+#define NS_FT2_OFFSET(f) (long)&((nsFreeType2*)0)->f
 FtFuncList nsFreeType2::FtFuncs [] = {
   {"FT_Done_Face",            NS_FT2_OFFSET(nsFT_Done_Face),            PR_TRUE},
   {"FT_Done_FreeType",        NS_FT2_OFFSET(nsFT_Done_FreeType),        PR_TRUE},
@@ -244,7 +244,13 @@ nsFreeType2::InitFreeType(FT_Library *library)
 { 
   // call the FreeType2 function via the function pointer
   FT_Error error = nsFT_Init_FreeType(library);
-  return error ? NS_ERROR_FAILURE : NS_OK;
+  if (error)
+  {
+    FREETYPE_PRINTF(("\n\n*********\nFreeType initialization error = %d",
+                         error));
+    return NS_ERROR_FAILURE;
+  }
+  else return NS_OK;
 } 
  
 NS_IMETHODIMP
@@ -636,7 +642,6 @@ nsFreeType2::Init()
 PRBool
 nsFreeType2::InitLibrary()
 {
-  FT_Error error;
 #ifdef MOZ_MATHML
   // do not yet support MathML
   // goto cleanup_and_return;
@@ -653,8 +658,6 @@ nsFreeType2::InitLibrary()
   // use "this->" to make sure it is obivious we are calling the member func
   nsresult rv = this->InitFreeType(&mFreeTypeLibrary);
   if (NS_FAILED(rv)) {
-    FREETYPE_PRINTF(("\n\n*********\nFreeType initialization error = %d",
-                         error));
     mFreeTypeLibrary = nsnull;
     goto cleanup_and_return;
   }
@@ -783,9 +786,7 @@ nsFreeType2::GetCharSetManager()
     //
     // get the sCharSetManager
     //
-    nsServiceManager::GetService(kCharSetManagerCID,
-                                 NS_GET_IID(nsICharsetConverterManager),
-                                 (nsISupports**) &sCharSetManager);
+    CallGetService(kCharSetManagerCID, &sCharSetManager);
     NS_ASSERTION(sCharSetManager,"failed to create the charset manager");
   }
   return sCharSetManager;

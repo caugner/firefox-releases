@@ -47,6 +47,9 @@
 #include "nsIRDFService.h"
 #include "nsIRDFDataSource.h"
 #include "nsIRDFRemoteDataSource.h"
+#include "nsITreeView.h"
+#include "nsITreeSelection.h"
+#include "nsITreeBoxObject.h"
 #include "nsIDateTimeFormat.h"
 #include "nsIInputStream.h"
 #include "mozISqlConnection.h"
@@ -67,9 +70,10 @@ class ColumnInfo {
 	   PRInt32 aType,
 	   PRInt32 aSize,
 	   PRInt32 aMod,
+           PRBool aIsPrimaryKey,
            nsIRDFResource* aProperty) {
       void* place = aAllocator.Alloc(sizeof(ColumnInfo));
-      return place ? ::new(place) ColumnInfo(aName, aType, aSize, aMod, aProperty) : nsnull;
+      return place ? ::new(place) ColumnInfo(aName, aType, aSize, aMod, aIsPrimaryKey, aProperty) : nsnull;
     }
 
     static void
@@ -78,11 +82,13 @@ class ColumnInfo {
       aAllocator.Free(aColumnInfo, sizeof(ColumnInfo));
     }
 
-    ColumnInfo(PRUnichar* aName, PRInt32 aType, PRInt32 aSize, PRInt32 aMod, nsIRDFResource* aProperty)
+    ColumnInfo(PRUnichar* aName, PRInt32 aType, PRInt32 aSize, PRInt32 aMod,
+               PRBool aIsPrimaryKey, nsIRDFResource* aProperty)
       : mName(aName),
         mType(aType),
         mSize(aSize),
         mMod(aMod),
+        mIsPrimaryKey(aIsPrimaryKey),
 	mProperty(aProperty) {
       NS_IF_ADDREF(mProperty);
     }
@@ -97,6 +103,7 @@ class ColumnInfo {
     PRInt32             mType;
     PRInt32             mSize;
     PRInt32             mMod;
+    PRBool              mIsPrimaryKey;
     nsIRDFResource*     mProperty;
 
   private:
@@ -285,7 +292,8 @@ class Row {
 class mozSqlResult : public mozISqlResult,
                      public mozISqlDataSource,
                      public nsIRDFDataSource,
-                     public nsIRDFRemoteDataSource
+                     public nsIRDFRemoteDataSource,
+                     public nsITreeView
 {
   public:
     mozSqlResult(mozISqlConnection* aConnection,
@@ -296,13 +304,30 @@ class mozSqlResult : public mozISqlResult,
 
     NS_DECL_ISUPPORTS
 
-    NS_DECL_MOZISQLRESULT
+    //NS_DECL_MOZISQLRESULT
+    NS_IMETHOD GetDisplayNullAsText(PRBool *aDisplayNullAsText);
+    NS_IMETHOD SetDisplayNullAsText(PRBool aDisplayNullAsText);
+    NS_IMETHOD GetConnection(mozISqlConnection * *aConnection);
+    NS_IMETHOD GetQuery(nsAString & aQuery);
+    NS_IMETHOD GetTableName(nsAString & aTableName);
+    //NS_IMETHOD GetRowCount(PRInt32 *aRowCount);
+    NS_IMETHOD GetColumnCount(PRInt32 *aColumnCount);
+    NS_IMETHOD GetColumnName(PRInt32 aColumnIndex, nsAString & _retval);
+    NS_IMETHOD GetColumnIndex(const nsAString & aColumnName, PRInt32 *_retval);
+    NS_IMETHOD GetColumnType(PRInt32 aColumnIndex, PRInt32 *_retval);
+    NS_IMETHOD GetColumnTypeAsString(PRInt32 aColumnIndex, nsAString & _retval);
+    NS_IMETHOD GetColumnDisplaySize(PRInt32 aColumnIndex, PRInt32 *_retval);
+    NS_IMETHOD Enumerate(mozISqlResultEnumerator **_retval);
+    NS_IMETHOD Open(mozISqlInputStream **_retval);
+    NS_IMETHOD Reload(void);
 
     NS_DECL_MOZISQLDATASOURCE
 
     NS_DECL_NSIRDFDATASOURCE
 
     NS_DECL_NSIRDFREMOTEDATASOURCE
+
+    NS_DECL_NSITREEVIEW
 
     friend class mozSqlResultEnumerator;
     friend class mozSqlResultStream;
@@ -316,10 +341,10 @@ class mozSqlResult : public mozISqlResult,
     void ClearRows();
 
     nsresult EnsureTableName();
-    nsresult EnsurePrimaryKeys();
+    virtual nsresult EnsurePrimaryKeys();
 
     void AppendValue(Cell* aCell, nsAutoString& aValues);
-    nsresult AppendKeys(Row* aRow, nsAutoString& aKeys);
+    virtual nsresult AppendKeys(Row* aRow, nsAutoString& aKeys);
     nsresult GetValues(Row* aRow, mozISqlResult** aResult, PRBool aUseID);
     nsresult CopyValues(mozISqlResult* aResult, Row* aRow);
 
@@ -338,9 +363,11 @@ class mozSqlResult : public mozISqlResult,
     static nsIRDFResource*              kSQL_ResultRoot;
     static nsIRDFResource*              kNC_Child;
     static nsIRDFLiteral*               kNullLiteral;
+    static nsIRDFLiteral*               kEmptyLiteral;
     static nsIRDFLiteral*               kTrueLiteral;
     static nsIRDFLiteral*               kFalseLiteral;
 
+    PRBool                              mDisplayNullAsText;
     nsCOMPtr<mozISqlConnection>         mConnection;
     nsString                            mErrorMessage;
     nsString                            mQuery;
@@ -350,6 +377,8 @@ class mozSqlResult : public mozISqlResult,
     nsVoidArray                         mRows;
     nsObjectHashtable                   mSources;
     nsCOMArray<nsIRDFObserver>          mObservers;
+    nsCOMPtr<nsITreeSelection>          mSelection;
+    nsCOMPtr<nsITreeBoxObject>          mBoxObject;
     nsCOMPtr<mozISqlResultEnumerator>   mPrimaryKeys;
     PRInt32                             mCanInsert;
     PRInt32                             mCanUpdate;
@@ -394,8 +423,8 @@ class mozSqlResultStream : public mozISqlInputStream,
 
   private:
     mozSqlResult*               mResult;
-    char*                       mBuffer;
-    PRUint32                    mLength;
+    nsCAutoString               mBuffer;
+    PRBool                      mInitialized;
     PRUint32                    mPosition;
 };
 

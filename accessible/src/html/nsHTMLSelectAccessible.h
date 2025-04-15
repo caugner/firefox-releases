@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,38 +14,37 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Original Author: Eric Vaughan (evaughan@netscape.com)
- *
  * Contributor(s):
- *           Aaron Leventhal (aaronl@netscape.com)
- *           Kyle Yuan (kyle.yuan@sun.com)
+ *   Aaron Leventhal (aaronl@netscape.com)
+ *   Kyle Yuan (kyle.yuan@sun.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #ifndef __nsHTMLSelectAccessible_h__
 #define __nsHTMLSelectAccessible_h__
 
 #include "nsIAccessibleSelectable.h"
+#include "nsAccessibilityAtoms.h"
+#include "nsFormControlAccessible.h"
 #include "nsIDOMHTMLOptionsCollection.h"
 #include "nsIDOMHTMLOptionElement.h"
 #include "nsIDOMNode.h"
-#include "nsFormControlAccessible.h"
 #include "nsIAccessibilityService.h"
 
 /**
@@ -72,8 +71,7 @@
 /*
  * The HTML implementation of nsIAccessibleSelectable.
  */
-class nsHTMLSelectableAccessible : public nsAccessibleWrap,
-                                   public nsIAccessibleSelectable
+class nsHTMLSelectableAccessible : public nsAccessibleWrap
 {
 public:
 
@@ -82,6 +80,8 @@ public:
 
   nsHTMLSelectableAccessible(nsIDOMNode* aDOMNode, nsIWeakReference* aShell);
   virtual ~nsHTMLSelectableAccessible() {}
+
+  NS_IMETHOD GetName(nsAString &aName) { return GetHTMLName(aName, PR_FALSE); }
 
 protected:
 
@@ -106,8 +106,8 @@ protected:
     void Select(PRBool aSelect);
     void AddAccessibleIfSelected(nsIAccessibilityService *aAccService, 
                                  nsIMutableArray *aSelectedAccessibles, 
-                                 nsIPresContext *aContext);
-    PRBool GetAccessibleIfSelected(PRInt32 aIndex, nsIAccessibilityService *aAccService, nsIPresContext *aContext, nsIAccessible **_retval);
+                                 nsPresContext *aContext);
+    PRBool GetAccessibleIfSelected(PRInt32 aIndex, nsIAccessibilityService *aAccService, nsPresContext *aContext, nsIAccessible **_retval);
 
     PRBool Advance();
   };
@@ -128,9 +128,17 @@ public:
   /* ----- nsIAccessible ----- */
   NS_IMETHOD GetRole(PRUint32 *aRole);
   NS_IMETHOD GetState(PRUint32 *_retval);
-  NS_IMETHOD GetFirstChild(nsIAccessible **aFirstChild);
-  NS_IMETHOD GetLastChild(nsIAccessible **aFirstChild);
-  NS_IMETHOD GetChildCount(PRInt32 *aAccChildCount) ;
+  void CacheChildren(PRBool aWalkAnonContent);
+
+protected:
+  already_AddRefed<nsIAccessible>
+    AccessibleForOption(nsIAccessibilityService *aAccService,
+                        nsIContent *aContent,
+                        nsIAccessible *aLastGoodAccessible);
+  already_AddRefed<nsIAccessible>
+    CacheOptSiblings(nsIAccessibilityService *aAccService,
+                     nsIContent *aParentContent,
+                     nsIAccessible *aLastGoodAccessible);
 };
 
 /*
@@ -146,14 +154,13 @@ public:
   /* ----- nsIAccessible ----- */
   NS_IMETHOD DoAction(PRUint8 index);
   NS_IMETHOD GetActionName(PRUint8 index, nsAString& _retval);
-  NS_IMETHOD GetNextSibling(nsIAccessible **_retval);
   NS_IMETHOD GetNumActions(PRUint8 *_retval);
-  NS_IMETHOD GetPreviousSibling(nsIAccessible **_retval);
   NS_IMETHOD GetState(PRUint32 *_retval);
   NS_IMETHOD GetRole(PRUint32 *aRole);
-  NS_IMETHOD GetParent(nsIAccessible **aParent);
   NS_IMETHOD GetName(nsAString& aName);
+  nsIFrame*  GetBoundsFrame();
   static nsresult GetFocusedOptionNode(nsIDOMNode *aListNode, nsIDOMNode **aFocusedOptionNode);
+  static void SelectionChangedIfOption(nsIContent *aPossibleOption);
 };
 
 /*
@@ -195,10 +202,13 @@ public:
   NS_IMETHOD GetLastChild(nsIAccessible **_retval);
   NS_IMETHOD GetFirstChild(nsIAccessible **_retval);
   NS_IMETHOD GetValue(nsAString& _retval);
+  NS_IMETHOD GetDescription(nsAString& aDescription);
   NS_IMETHOD Shutdown();
   NS_IMETHOD Init();
 
 protected:
+  already_AddRefed<nsIAccessible> GetFocusedOptionAccessible();
+
   // Hold references to our generated children
   // So that we can shut them down when we need to
   nsCOMPtr<nsIAccessible> mComboboxTextFieldAccessible;

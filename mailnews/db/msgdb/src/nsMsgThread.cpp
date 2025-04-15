@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -125,14 +125,12 @@ nsresult nsMsgThread::InitCachedValues()
 
 NS_IMETHODIMP		nsMsgThread::SetThreadKey(nsMsgKey threadKey)
 {
-  nsresult ret = NS_OK;
-  
   m_threadKey = threadKey;
   // by definition, the initial thread key is also the thread root key.
   SetThreadRootKey(threadKey);
-  ret = m_mdbDB->UInt32ToRowCellColumn(m_metaRow, m_mdbDB->m_threadIdColumnToken, threadKey);
   // gotta set column in meta row here.
-  return ret;
+  return m_mdbDB->UInt32ToRowCellColumn(
+                    m_metaRow, m_mdbDB->m_threadIdColumnToken, threadKey);
 }
 
 NS_IMETHODIMP	nsMsgThread::GetThreadKey(nsMsgKey *result)
@@ -161,11 +159,9 @@ NS_IMETHODIMP nsMsgThread::GetFlags(PRUint32 *result)
 
 NS_IMETHODIMP nsMsgThread::SetFlags(PRUint32 flags)
 {
-  nsresult ret = NS_OK;
-  
   m_flags = flags;
-  ret = m_mdbDB->UInt32ToRowCellColumn(m_metaRow, m_mdbDB->m_threadFlagsColumnToken, m_flags);
-  return ret;
+  return m_mdbDB->UInt32ToRowCellColumn(
+                    m_metaRow, m_mdbDB->m_threadFlagsColumnToken, m_flags);
 }
 
 NS_IMETHODIMP nsMsgThread::SetSubject(const char *subject)
@@ -177,8 +173,8 @@ NS_IMETHODIMP nsMsgThread::GetSubject(char **result)
 {
   if (!result)
     return NS_ERROR_NULL_POINTER;
-  nsresult ret = m_mdbDB->RowCellColumnToCharPtr(m_metaRow, m_mdbDB->m_threadSubjectColumnToken, result);
-  return ret;
+  return m_mdbDB->RowCellColumnToCharPtr(
+                    m_metaRow, m_mdbDB->m_threadSubjectColumnToken, result);
 }
 
 NS_IMETHODIMP nsMsgThread::GetNumChildren(PRUint32 *result)
@@ -232,7 +228,7 @@ nsresult nsMsgThread::RerootThread(nsIMsgDBHdr *newParentOfOldRoot, nsIMsgDBHdr 
   ReparentNonReferenceChildrenOf(oldRoot, newRoot, announcer);
   if (ancestorHdr)
   {
-    nsIMsgHdr *msgHdr = ancestorHdr;
+    nsIMsgDBHdr *msgHdr = ancestorHdr;
     nsMsgHdr* rootMsgHdr = NS_STATIC_CAST(nsMsgHdr*, msgHdr);          // closed system, cast ok
     nsIMdbRow *newRootHdrRow = rootMsgHdr->GetMDBRow();
     // move the  root hdr to pos 0.
@@ -253,7 +249,7 @@ NS_IMETHODIMP nsMsgThread::AddChild(nsIMsgDBHdr *child, nsIMsgDBHdr *inReplyTo, 
   PRBool parentKeyNeedsSetting = PR_TRUE;
   
   nsIMdbRow *hdrRow = hdr->GetMDBRow();
-  hdr->GetFlags(&newHdrFlags);
+  hdr->GetRawFlags(&newHdrFlags);
   hdr->GetMessageKey(&newHdrKey);
   hdr->GetDateInSeconds(&msgDate);
   if (msgDate > m_newestMsgDate)
@@ -294,54 +290,68 @@ NS_IMETHODIMP nsMsgThread::AddChild(nsIMsgDBHdr *child, nsIMsgDBHdr *inReplyTo, 
   
   PRBool hdrMoved = PR_FALSE;
   nsCOMPtr <nsIMsgDBHdr> curHdr;
-  for (childIndex = 0; childIndex < numChildren; childIndex++)
+
+  // This is an ugly but simple fix for a difficult problem. Basically, when we add
+  // a message to a thread, we have to run through the thread to see if the new
+  // message is a parent of an existing message in the thread, and adjust things
+  // accordingly. If you thread by subject, and you have a large folder with
+  // messages w/ all the same subject, this code can take a really long time. So the
+  // pragmatic thing is to say that for threads with more than 1000 messages, it's
+  // simply not worth dealing with the case where the parent comes in after the
+  // child. Threads with more than 1000 messages are pretty unwieldy anyway.
+  // See Bug 90452
+
+  if (numChildren < 1000)
   {
-    nsMsgKey msgKey;
-    
-    ret = GetChildHdrAt(childIndex, getter_AddRefs(curHdr));
-    if (NS_SUCCEEDED(ret) && curHdr)
+    for (childIndex = 0; childIndex < numChildren; childIndex++)
     {
-      if (hdr->IsParentOf(curHdr))
+      nsMsgKey msgKey;
+    
+      ret = GetChildHdrAt(childIndex, getter_AddRefs(curHdr));
+      if (NS_SUCCEEDED(ret) && curHdr)
       {
-        nsMsgKey oldThreadParent;
-        mdb_pos outPos;
-        // move this hdr before the current header.
-        if (!hdrMoved)
+        if (hdr->IsParentOf(curHdr))
         {
-        m_mdbTable->MoveRow(m_mdbDB->GetEnv(), hdrRow, -1, childIndex, &outPos);
-          hdrMoved = PR_TRUE;
-        curHdr->GetThreadParent(&oldThreadParent);
-        curHdr->GetMessageKey(&msgKey);
-          nsCOMPtr <nsIMsgDBHdr> curParent;
-          m_mdbDB->GetMsgHdrForKey(oldThreadParent, getter_AddRefs(curParent));
-          if (curParent && hdr->IsAncestorOf(curParent))
+          nsMsgKey oldThreadParent;
+          mdb_pos outPos;
+          // move this hdr before the current header.
+          if (!hdrMoved)
           {
-            nsMsgKey curParentKey;
-            curParent->GetMessageKey(&curParentKey);
-            if (curParentKey == m_threadRootKey)
+            m_mdbTable->MoveRow(m_mdbDB->GetEnv(), hdrRow, -1, childIndex, &outPos);
+            hdrMoved = PR_TRUE;
+            curHdr->GetThreadParent(&oldThreadParent);
+            curHdr->GetMessageKey(&msgKey);
+            nsCOMPtr <nsIMsgDBHdr> curParent;
+            m_mdbDB->GetMsgHdrForKey(oldThreadParent, getter_AddRefs(curParent));
+            if (curParent && hdr->IsAncestorOf(curParent))
             {
-              m_mdbTable->MoveRow(m_mdbDB->GetEnv(), hdrRow, -1, 0, &outPos);
-              RerootThread(child, curParent, announcer);
+              nsMsgKey curParentKey;
+              curParent->GetMessageKey(&curParentKey);
+              if (curParentKey == m_threadRootKey)
+              {
+                m_mdbTable->MoveRow(m_mdbDB->GetEnv(), hdrRow, -1, 0, &outPos);
+                RerootThread(child, curParent, announcer);
+                parentKeyNeedsSetting = PR_FALSE;
+              }
+            }
+            else if (msgKey == m_threadRootKey)
+            {
+              RerootThread(child, curHdr, announcer);
               parentKeyNeedsSetting = PR_FALSE;
             }
           }
-          else if (msgKey == m_threadRootKey)
-        {
-          RerootThread(child, curHdr, announcer);
-          parentKeyNeedsSetting = PR_FALSE;
-        }
-        }
-        curHdr->SetThreadParent(newHdrKey);
-        if (msgKey == newHdrKey)
-          parentKeyNeedsSetting = PR_FALSE;
+          curHdr->SetThreadParent(newHdrKey);
+          if (msgKey == newHdrKey)
+            parentKeyNeedsSetting = PR_FALSE;
         
-        // OK, this is a reparenting - need to send notification
-        if (announcer)
-          announcer->NotifyParentChangedAll(msgKey, oldThreadParent, newHdrKey, nsnull);
-#ifdef DEBUG_bienvenu1
-        if (newHdrKey != m_threadKey)
-          printf("adding second level child\n");
-#endif
+          // OK, this is a reparenting - need to send notification
+          if (announcer)
+            announcer->NotifyParentChangedAll(msgKey, oldThreadParent, newHdrKey, nsnull);
+  #ifdef DEBUG_bienvenu1
+          if (newHdrKey != m_threadKey)
+            printf("adding second level child\n");
+  #endif
+        }
       }
     }
   }
@@ -411,7 +421,6 @@ nsresult nsMsgThread::ReparentNonReferenceChildrenOf(nsIMsgDBHdr *oldTopLevelHdr
     if (NS_SUCCEEDED(ret) && curHdr)
     {
       nsMsgKey oldThreadParent, curHdrKey;
-      nsIMsgDBHdr *curMsgHdr = curHdr;
       nsMsgHdr* oldTopLevelMsgHdr = NS_STATIC_CAST(nsMsgHdr*, oldTopLevelHdr);      // closed system, cast ok
       curHdr->GetThreadParent(&oldThreadParent);
       curHdr->GetMessageKey(&curHdrKey);
@@ -430,11 +439,11 @@ nsresult nsMsgThread::ReparentNonReferenceChildrenOf(nsIMsgDBHdr *oldTopLevelHdr
 
 NS_IMETHODIMP nsMsgThread::GetChildKeyAt(PRInt32 aIndex, nsMsgKey *result)
 {
-  nsresult ret = NS_OK;
-  mdbOid oid;
+  nsresult ret;
 
+  mdbOid oid;
   ret = m_mdbTable->PosToOid( m_mdbDB->GetEnv(), aIndex, &oid);
-  if (ret == 0)
+  if (NS_SUCCEEDED(ret))
     *result = oid.mOid_Id;
 
   return ret;
@@ -442,13 +451,13 @@ NS_IMETHODIMP nsMsgThread::GetChildKeyAt(PRInt32 aIndex, nsMsgKey *result)
 
 NS_IMETHODIMP nsMsgThread::GetChildAt(PRInt32 aIndex, nsIMsgDBHdr **result)
 {
-  nsresult ret = NS_OK;
+  nsresult ret;
+
   mdbOid oid;
-  nsIMdbRow *hdrRow = nsnull;
-  
   ret = m_mdbTable->PosToOid( m_mdbDB->GetEnv(), aIndex, &oid);
-  if (ret == NS_OK)
+  if (NS_SUCCEEDED(ret))
   {
+    nsIMdbRow *hdrRow = nsnull;
     //do I have to release hdrRow?
     ret = m_mdbTable->PosToRow(m_mdbDB->GetEnv(), aIndex, &hdrRow); 
     if(NS_SUCCEEDED(ret) && hdrRow)
@@ -457,16 +466,16 @@ NS_IMETHODIMP nsMsgThread::GetChildAt(PRInt32 aIndex, nsIMsgDBHdr **result)
     }
   }
   
-  return (ret == NS_OK) ? NS_OK : NS_MSG_MESSAGE_NOT_FOUND;
+  return (NS_SUCCEEDED(ret)) ? NS_OK : NS_MSG_MESSAGE_NOT_FOUND;
 }
 
 
 NS_IMETHODIMP nsMsgThread::GetChild(nsMsgKey msgKey, nsIMsgDBHdr **result)
 {
-  nsresult ret = NS_OK;
+  nsresult ret;
+
   mdb_bool	hasOid;
   mdbOid		rowObjectId;
-  
   
   if (!result || !m_mdbTable)
     return NS_ERROR_NULL_POINTER;
@@ -479,18 +488,20 @@ NS_IMETHODIMP nsMsgThread::GetChild(nsMsgKey msgKey, nsIMsgDBHdr **result)
   {
     nsIMdbRow *hdrRow = nsnull;
     ret = m_mdbDB->m_mdbStore->GetRow(m_mdbDB->GetEnv(), &rowObjectId,  &hdrRow);
-    if (ret == NS_OK && hdrRow && m_mdbDB)
+    if (NS_SUCCEEDED(ret) && hdrRow && m_mdbDB)
     {
       ret = m_mdbDB->CreateMsgHdr(hdrRow,  msgKey, result);
     }
   }
+
   return ret;
 }
 
 
 NS_IMETHODIMP nsMsgThread::GetChildHdrAt(PRInt32 aIndex, nsIMsgDBHdr **result)
 {
-  nsresult ret = NS_OK;
+  nsresult ret;
+
   nsIMdbRow* resultRow;
   mdb_pos pos = aIndex - 1;
   
@@ -505,8 +516,8 @@ NS_IMETHODIMP nsMsgThread::GetChildHdrAt(PRInt32 aIndex, nsIMsgDBHdr **result)
   
   nsIMdbTableRowCursor *rowCursor;
   ret = m_mdbTable->GetTableRowCursor(m_mdbDB->GetEnv(), pos, &rowCursor);
-  if (ret != 0)
-    return  NS_ERROR_FAILURE;
+  if (NS_FAILED(ret))
+    return ret;
   
   ret = rowCursor->NextRow(m_mdbDB->GetEnv(), &resultRow, &pos);
   NS_RELEASE(rowCursor);
@@ -519,24 +530,20 @@ NS_IMETHODIMP nsMsgThread::GetChildHdrAt(PRInt32 aIndex, nsIMsgDBHdr **result)
   if (resultRow->GetOid(m_mdbDB->GetEnv(), &outOid) == NS_OK)
     key = outOid.mOid_Id;
   
-  ret = m_mdbDB->CreateMsgHdr(resultRow, key, result);
-  if (NS_FAILED(ret)) 
-    return ret;
-  return ret;
+  return m_mdbDB->CreateMsgHdr(resultRow, key, result);
 }
 
 
 NS_IMETHODIMP nsMsgThread::RemoveChildAt(PRInt32 aIndex)
 {
-  nsresult ret = NS_OK;
-
-  return ret;
+  return NS_OK;
 }
 
 
 nsresult nsMsgThread::RemoveChild(nsMsgKey msgKey)
 {
-  nsresult ret = NS_OK;
+  nsresult ret;
+
   mdbOid		rowObjectId;
   rowObjectId.mOid_Id = msgKey;
   rowObjectId.mOid_Scope = m_mdbDB->m_hdrRowScopeToken;
@@ -629,14 +636,8 @@ nsresult nsMsgThread::ReparentChildrenOf(nsMsgKey oldParent, nsMsgKey newParent,
 
 NS_IMETHODIMP nsMsgThread::MarkChildRead(PRBool bRead)
 {
-  nsresult ret = NS_OK;
-  
-  if(bRead)
-    ChangeUnreadChildCount(-1);
-  else
-    ChangeUnreadChildCount(1);
-  
-  return ret;
+  ChangeUnreadChildCount(bRead ? -1 : 1);
+  return NS_OK;
 }
 
 class nsMsgThreadEnumerator : public nsISimpleEnumerator {
@@ -658,6 +659,7 @@ protected:
   
   nsresult                Prefetch();
   
+  nsIMdbTableRowCursor*   mRowCursor;
   nsCOMPtr <nsIMsgDBHdr>  mResultHdr;
   nsMsgThread*	          mThread;
   nsMsgKey                mThreadParentKey;
@@ -672,7 +674,7 @@ protected:
 
 nsMsgThreadEnumerator::nsMsgThreadEnumerator(nsMsgThread *thread, nsMsgKey startKey,
                                              nsMsgThreadEnumeratorFilter filter, void* closure)
-                                             : mDone(PR_FALSE),
+                                             : mRowCursor(nsnull), mDone(PR_FALSE),
                                              mFilter(filter), mClosure(closure), mFoundChildren(PR_FALSE)
 {
   mThreadParentKey = startKey;
@@ -886,28 +888,15 @@ NS_IMETHODIMP nsMsgThreadEnumerator::HasMoreElements(PRBool *aResult)
   return NS_OK;
 }
 
-static nsresult
-nsMsgThreadUnreadFilter(nsIMsgDBHdr* msg, void* closure)
-{
-    nsMsgDatabase* db = (nsMsgDatabase*)closure;
-    PRBool wasRead = PR_TRUE;
-    nsresult rv = db->IsHeaderRead(msg, &wasRead);
-    if (NS_FAILED(rv))
-        return rv;
-    return !wasRead ? NS_OK : NS_ERROR_FAILURE;
-}
-
 NS_IMETHODIMP nsMsgThread::EnumerateMessages(nsMsgKey parentKey, nsISimpleEnumerator* *result)
 {
-    nsresult ret = NS_OK;
     nsMsgThreadEnumerator* e = new nsMsgThreadEnumerator(this, parentKey, nsnull, nsnull);
     if (e == nsnull)
         return NS_ERROR_OUT_OF_MEMORY;
     NS_ADDREF(e);
     *result = e;
-    return NS_OK;
 
-    return ret;
+    return NS_OK;
 }
 
 nsresult nsMsgThread::ReparentMsgsWithInvalidParent(PRUint32 numChildren, nsMsgKey threadParentKey)
@@ -939,7 +928,6 @@ nsresult nsMsgThread::ReparentMsgsWithInvalidParent(PRUint32 numChildren, nsMsgK
 
 NS_IMETHODIMP nsMsgThread::GetRootHdr(PRInt32 *resultIndex, nsIMsgDBHdr **result)
 {
-  nsresult ret;
   if (!result)
     return NS_ERROR_NULL_POINTER;
   
@@ -947,12 +935,14 @@ NS_IMETHODIMP nsMsgThread::GetRootHdr(PRInt32 *resultIndex, nsIMsgDBHdr **result
   
   if (m_threadRootKey != nsMsgKey_None)
   {
-    ret = GetChildHdrForKey(m_threadRootKey, result, resultIndex);
+    nsresult ret = GetChildHdrForKey(m_threadRootKey, result, resultIndex);
     if (NS_SUCCEEDED(ret) && *result)
       return ret;
     else
     {
+#ifdef DEBUG_bienvenu
       printf("need to reset thread root key\n");
+#endif
       PRUint32 numChildren;
       nsMsgKey threadParentKey = nsMsgKey_None;
       GetNumChildren(&numChildren);
@@ -996,7 +986,8 @@ NS_IMETHODIMP nsMsgThread::GetRootHdr(PRInt32 *resultIndex, nsIMsgDBHdr **result
 
 nsresult nsMsgThread::ChangeChildCount(PRInt32 delta)
 {
-  nsresult ret = NS_OK;
+  nsresult ret;
+
   PRUint32 childCount = 0;
   m_mdbDB->RowCellColumnToUInt32(m_metaRow, m_mdbDB->m_threadChildrenColumnToken, childCount);
   
@@ -1014,7 +1005,8 @@ nsresult nsMsgThread::ChangeChildCount(PRInt32 delta)
 
 nsresult nsMsgThread::ChangeUnreadChildCount(PRInt32 delta)
 {
-  nsresult ret = NS_OK;
+  nsresult ret;
+
   PRUint32 childCount = 0;
   m_mdbDB->RowCellColumnToUInt32(m_metaRow, m_mdbDB->m_threadUnreadChildrenColumnToken, childCount);
   childCount += delta;

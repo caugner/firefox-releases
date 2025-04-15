@@ -1,25 +1,43 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 2000 Netscape Communications Corporation.
- * All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Stuart Parmenter <pavlov@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
+
+#include <string.h>
 
 #include "nscore.h"
 #include "plstr.h"
@@ -48,6 +66,8 @@ static PRLibrary *elib = nsnull;
 #define ESD_STEREO (0x0020) 
 #define ESD_STREAM (0x0000)
 #define ESD_PLAY (0x1000)
+
+#define WAV_MIN_LENGTH 44
 
 typedef int (PR_CALLBACK *EsdOpenSoundType)(const char *host);
 typedef int (PR_CALLBACK *EsdCloseType)(int);
@@ -104,19 +124,19 @@ nsSound::Init()
   return NS_OK;
 }
 
-#define GET_WORD(s, i) ((unsigned char)s[i+1] << 8) | (unsigned char)s[i]
-#define GET_DWORD(s, i) ((unsigned char)s[i+3] << 24) | ((unsigned char)s[i+2] << 16) | ((unsigned char)s[i+1] << 8) | (unsigned char)s[i]
+#define GET_WORD(s, i) (s[i+1] << 8) | s[i]
+#define GET_DWORD(s, i) (s[i+3] << 24) | (s[i+2] << 16) | (s[i+1] << 8) | s[i]
 
 NS_IMETHODIMP nsSound::OnStreamComplete(nsIStreamLoader *aLoader,
                                         nsISupports *context,
                                         nsresult aStatus,
-                                        PRUint32 stringLen,
-                                        const char *string)
+                                        PRUint32 dataLen,
+                                        const PRUint8 *data)
 {
 
-#ifdef DEBUG
   // print a load error on bad status
   if (NS_FAILED(aStatus)) {
+#ifdef DEBUG
     if (aLoader) {
       nsCOMPtr<nsIRequest> request;
       aLoader->GetRequest(getter_AddRefs(request));
@@ -133,8 +153,9 @@ NS_IMETHODIMP nsSound::OnStreamComplete(nsIStreamLoader *aLoader,
         }
       }
     }
-  }
 #endif
+    return aStatus;
+  }
 
   int fd, mask = 0;
 
@@ -143,43 +164,48 @@ NS_IMETHODIMP nsSound::OnStreamComplete(nsIStreamLoader *aLoader,
   unsigned short format, channels = 1, block_align, bits_per_sample=0;
 
 
-  if (PL_strncmp(string, "RIFF", 4)) {
+  if (memcmp(data, "RIFF", 4)) {
 #ifdef DEBUG
     printf("We only support WAV files currently.\n");
 #endif
     return NS_ERROR_FAILURE;
   }
 
-  PRUint32 i;
-  for (i= 0; i < stringLen; i++) {
+  if (dataLen <= WAV_MIN_LENGTH) {
+      NS_WARNING("WAV files should be longer than 44 bytes.");
+      return NS_ERROR_FAILURE;
+  }
 
-    if (i+3 <= stringLen) 
-      if ((string[i] == 'f') &&
-          (string[i+1] == 'm') &&
-          (string[i+2] == 't') &&
-          (string[i+3] == ' ')) {
+  PRUint32 i;
+  for (i= 0; i < dataLen; i++) {
+
+    if (i+3 <= dataLen) 
+      if ((data[i] == 'f') &&
+          (data[i+1] == 'm') &&
+          (data[i+2] == 't') &&
+          (data[i+3] == ' ')) {
         i += 4;
 
         /* length of the rest of this subblock (should be 16 for PCM data */
-        //        long len = GET_DWORD(string, i);
+        //        long len = GET_DWORD(data, i);
         i+=4;
 
-        format = GET_WORD(string, i);
+        format = GET_WORD(data, i);
         i+=2;
 
-        channels = GET_WORD(string, i);
+        channels = GET_WORD(data, i);
         i+=2;
 
-        samples_per_sec = GET_DWORD(string, i);
+        samples_per_sec = GET_DWORD(data, i);
         i+=4;
 
-        avg_bytes_per_sec = GET_DWORD(string, i);
+        avg_bytes_per_sec = GET_DWORD(data, i);
         i+=4;
 
-        block_align = GET_WORD(string, i);
+        block_align = GET_WORD(data, i);
         i+=2;
 
-        bits_per_sample = GET_WORD(string, i);
+        bits_per_sample = GET_WORD(data, i);
         i+=2;
 
         rate = samples_per_sec;
@@ -215,8 +241,28 @@ NS_IMETHODIMP nsSound::OnStreamComplete(nsIStreamLoader *aLoader,
   }
 
   /* write data out */
-  write(fd, string, stringLen);
-  
+  // ESD only handle little-endian data. 
+  // Swap the byte order if we're on a big-endian architecture.
+#ifdef IS_BIG_ENDIAN
+  if (bits_per_sample == 8)
+    write(fd, data, dataLen);
+  else {
+    PRUint8 *buf = new PRUint8[dataLen - WAV_MIN_LENGTH];
+    // According to the wav file format, the first 44 bytes are headers.
+    // We don't really need to send them.
+    if (!buf)
+      return NS_ERROR_OUT_OF_MEMORY;
+    for (PRUint32 j = 0; j < dataLen - WAV_MIN_LENGTH - 1; j += 2) {
+      buf[j] = data[j + WAV_MIN_LENGTH + 1];
+      buf[j + 1] = data[j + WAV_MIN_LENGTH];
+    }
+    write(fd, buf, (dataLen - WAV_MIN_LENGTH));
+    delete [] buf;
+  }
+#else
+  write(fd, data, dataLen);
+#endif
+
   close(fd);
 
   return NS_OK;

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -117,10 +117,10 @@ void nsFolderCompactState::CleanupTempFilesAfterError()
 
 nsresult nsFolderCompactState::BuildMessageURI(const char *baseURI, PRUint32 key, nsCString& uri)
 {
-	uri.Append(baseURI);
-	uri.Append('#');
-	uri.AppendInt(key);
-	return NS_OK;
+  uri.Append(baseURI);
+  uri.Append('#');
+  uri.AppendInt(key);
+  return NS_OK;
 }
 
 
@@ -269,7 +269,7 @@ nsresult nsFolderCompactState::ShowStatusMsg(const PRUnichar *aMsg)
   {
     m_window->GetStatusFeedback(getter_AddRefs(statusFeedback));
     if (statusFeedback && aMsg)
-      return statusFeedback->ShowStatusString (aMsg);
+      return statusFeedback->SetStatusString (aMsg);
   }
   return NS_OK;
 }
@@ -411,27 +411,51 @@ nsFolderCompactState::FinishCompact()
   // close down database of the original folder and remove the folder node
   // and all it's message node from the tree
   m_folder->ForceDBClosed();
+
+  PRBool folderRenameSucceeded = PR_FALSE;
+  PRBool msfRenameSucceeded = PR_FALSE;
     // remove the old folder and database
-  fileSpec.Delete(PR_FALSE);
   summarySpec.Delete(PR_FALSE);
-    // rename the copied folder and database to be the original folder and
-    // database 
-  m_fileSpec.Rename(leafName.get());
-  newSummarySpec.Rename(dbName.get());
- 
+  if (!summarySpec.Exists())
+  {
+    fileSpec.Delete(PR_FALSE);
+    if (!fileSpec.Exists())
+    {
+      // rename the copied folder and database to be the original folder and
+      // database 
+      rv = m_fileSpec.Rename(leafName.get());
+      NS_ASSERTION(NS_SUCCEEDED(rv), "error renaming compacted folder");
+      if (NS_SUCCEEDED(rv))
+      {
+        folderRenameSucceeded = PR_TRUE;
+        rv = newSummarySpec.Rename(dbName.get());
+        NS_ASSERTION(NS_SUCCEEDED(rv), "error renaming compacted folder's db");
+        msfRenameSucceeded = NS_SUCCEEDED(rv);
+      }
+    }
+  }
+  NS_ASSERTION(msfRenameSucceeded && folderRenameSucceeded, "rename failed in compact");
+  if (!folderRenameSucceeded)
+    m_fileSpec.Delete(PR_FALSE);
+  if (!msfRenameSucceeded)
+    newSummarySpec.Delete(PR_FALSE);
   rv = ReleaseFolderLock();
   NS_ASSERTION(NS_SUCCEEDED(rv),"folder lock not released successfully");
-  m_folder->SetDBTransferInfo(transferInfo);
+  if (msfRenameSucceeded && folderRenameSucceeded)
+  {
+    m_folder->SetDBTransferInfo(transferInfo);
 
-  nsCOMPtr <nsIDBFolderInfo> dbFolderInfo;
+    nsCOMPtr <nsIDBFolderInfo> dbFolderInfo;
 
-  m_folder->GetDBFolderInfoAndDB(getter_AddRefs(dbFolderInfo), getter_AddRefs(m_db));
+    m_folder->GetDBFolderInfoAndDB(getter_AddRefs(dbFolderInfo), getter_AddRefs(m_db));
 
-  // since we're transferring info from the old db, we need to reset the expunged bytes,
-  // and set the summary valid again.
-  if(dbFolderInfo)
-    dbFolderInfo->SetExpungedBytes(0);
-  m_db->Close(PR_TRUE);
+    // since we're transferring info from the old db, we need to reset the expunged bytes,
+    // and set the summary valid again.
+    if(dbFolderInfo)
+      dbFolderInfo->SetExpungedBytes(0);
+  }
+  if (m_db)
+    m_db->Close(PR_TRUE);
   m_db = nsnull;
 
   m_folder->NotifyCompactCompleted();
@@ -455,6 +479,17 @@ nsFolderCompactState::ReleaseFolderLock()
   return result;
 }
 
+void nsFolderCompactState::ShowDoneStatus()
+{
+  if (m_folder)
+  {
+    nsXPIDLString statusString;
+    nsresult rv = m_folder->GetStringWithFolderNameFromBundle("compactingDone", getter_Copies(statusString));
+    if (statusString && NS_SUCCEEDED(rv))
+      ShowStatusMsg(statusString);
+  }
+}
+
 nsresult
 nsFolderCompactState::CompactNextFolder()
 {
@@ -474,7 +509,10 @@ nsFolderCompactState::CompactNextFolder()
          folder->CompactAllOfflineStores(m_window, m_offlineFolderArray);
      }
      else
+     {
+       ShowDoneStatus();
        return rv;
+     }
        
    } 
    nsCOMPtr<nsIMsgFolder> folder = do_QueryElementAt(m_folderArray,
@@ -482,6 +520,8 @@ nsFolderCompactState::CompactNextFolder()
 
    if (NS_SUCCEEDED(rv) && folder)
      rv = Compact(folder, m_compactingOfflineFolders, m_window);                    
+    else
+      ShowDoneStatus();
    return rv;
 }
 
@@ -617,6 +657,7 @@ nsFolderCompactState::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
           if (srcDB)
           {
             srcDB->SetSummaryValid(PR_FALSE);
+            srcDB->Commit(nsMsgDBCommitType::kLargeCommit);
             srcDB->ForceClosed();
           }
         }
@@ -748,6 +789,9 @@ nsOfflineStoreCompactState::FinishCompact()
   m_db->GetDBFolderInfo(getter_AddRefs(dbFolderInfo));
   if (dbFolderInfo)
     dbFolderInfo->SetExpungedBytes(0);
+  // this forces the m_folder to update mExpungedBytes from the db folder info.
+  PRUint32 expungedBytes;
+  m_folder->GetExpungedBytes(&expungedBytes);
   m_folder->UpdateSummaryTotals(PR_TRUE);
   m_db->SetSummaryValid(PR_TRUE);
   m_db->Commit(nsMsgDBCommitType::kLargeCommit);

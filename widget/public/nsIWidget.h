@@ -1,11 +1,11 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -46,7 +46,7 @@
 
 #include "prthread.h"
 #include "nsEvent.h"
-#include "nsString.h"
+#include "nsCOMPtr.h"
 
 // forward declarations
 class   nsIAppShell;
@@ -62,8 +62,9 @@ struct  nsFont;
 class   nsIMenuBar;
 class   nsIEventListener;
 class   nsIRollupListener;
-struct  nsGUIEvent;
+class   nsGUIEvent;
 struct  nsColorMap;
+class   imgIContainer;
 
 /**
  * Callback function that processes events.
@@ -79,21 +80,22 @@ typedef nsEventStatus (*PR_CALLBACK EVENT_CALLBACK)(nsGUIEvent *event);
  * Flags for the getNativeData function.
  * See getNativeData()
  */
-#define NS_NATIVE_WINDOW    0
-#define NS_NATIVE_GRAPHIC   1
-#define NS_NATIVE_COLORMAP  2
-#define NS_NATIVE_WIDGET    3
-#define NS_NATIVE_DISPLAY   4
-#define NS_NATIVE_REGION		5
-#define NS_NATIVE_OFFSETX		6
-#define NS_NATIVE_OFFSETY		7
-#define NS_NATIVE_PLUGIN_PORT	8
+#define NS_NATIVE_WINDOW      0
+#define NS_NATIVE_GRAPHIC     1
+#define NS_NATIVE_COLORMAP    2
+#define NS_NATIVE_WIDGET      3
+#define NS_NATIVE_DISPLAY     4
+#define NS_NATIVE_REGION      5
+#define NS_NATIVE_OFFSETX     6
+#define NS_NATIVE_OFFSETY     7
+#define NS_NATIVE_PLUGIN_PORT 8
 #define NS_NATIVE_SCREEN      9
+#define NS_NATIVE_SHELLWIDGET 10      // Get the shell GtkWidget
 
-// {18032AD5-B265-11d1-AA2A-000000000000}
+// e7f09105-d21b-406a-89d5-e6b731b8f665
 #define NS_IWIDGET_IID \
-{ 0x18032ad5, 0xb265, 0x11d1, \
-{ 0xaa, 0x2a, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 } }
+{ 0xe7f09105, 0xd21b, 0x406a, \
+  { 0x89, 0xd5, 0xe6, 0xb7, 0x31, 0xb8, 0xf6, 0x65 } }
 
 
 // Hide the native window systems real window type so as to avoid
@@ -119,7 +121,9 @@ enum nsWindowType {     // Don't alter previously encoded enum values - 3rd part
   // plugin window
   eWindowType_plugin,
   // java plugin window
-  eWindowType_java
+  eWindowType_java,
+  // MacOSX sheet (special dialog class)
+  eWindowType_sheet
 };
 
 enum nsBorderStyle
@@ -152,9 +156,6 @@ enum nsBorderStyle
   // show the close button
   eBorderStyle_close    = 1 << 7,
 
-  // sheet hint (Mac OS X)
-  eBorderStyle_sheet    = 1 << 8,
-
   // whatever the OS wants... i.e. don't do anything
   eBorderStyle_default  = -1
 };
@@ -171,25 +172,17 @@ enum nsCursor {   ///(normal cursor,       usually rendered as an arrow)
                 eCursor_select, 
                   ///(can hyper-link,      usually rendered as a human hand)
                 eCursor_hyperlink, 
-                  ///(west/east sizing,    usually rendered as ->||<-)
-                eCursor_sizeWE,
-                  ///(north/south sizing,  usually rendered as sizeWE rotated 90 degrees)
-                eCursor_sizeNS,
+                  ///(north/south/west/east edge sizing)
+                eCursor_n_resize,
+                eCursor_s_resize,
+                eCursor_w_resize,
+                eCursor_e_resize,
                   ///(corner sizing)
-                eCursor_sizeNW,
-                eCursor_sizeSE,
-                eCursor_sizeNE,
-                eCursor_sizeSW,
-                eCursor_arrow_north,
-                eCursor_arrow_north_plus,
-                eCursor_arrow_south,
-                eCursor_arrow_south_plus,
-                eCursor_arrow_west,
-                eCursor_arrow_west_plus,
-                eCursor_arrow_east,
-                eCursor_arrow_east_plus,
+                eCursor_nw_resize,
+                eCursor_se_resize,
+                eCursor_ne_resize,
+                eCursor_sw_resize,
                 eCursor_crosshair,
-                //Don't know what 'move' cursor should be.  See CSS2.
                 eCursor_move,
                 eCursor_help,
                 eCursor_copy, // CSS3
@@ -199,19 +192,27 @@ enum nsCursor {   ///(normal cursor,       usually rendered as an arrow)
                 eCursor_grab,
                 eCursor_grabbing,
                 eCursor_spinning,
-                eCursor_count_up,
-                eCursor_count_down,
-                eCursor_count_up_down,
                 eCursor_zoom_in,
                 eCursor_zoom_out,
+                eCursor_not_allowed,
+                eCursor_col_resize,
+                eCursor_row_resize,
+                eCursor_no_drop,
+                eCursor_vertical_text,
+                eCursor_all_scroll,
+                eCursor_nesw_resize,
+                eCursor_nwse_resize,
+                eCursor_ns_resize,
+                eCursor_ew_resize,
                 // This one better be the last one in this list.
                 eCursorCount
                 }; 
 
 enum nsContentType {
   eContentTypeInherit = -1,
-  eContentTypeUI = 0,         // eContentTypeUI must equal 0
-  eContentTypeContent = 1     // eContentTypeUI must equal 1
+  eContentTypeUI = 0,
+  eContentTypeContent = 1,
+  eContentTypeContentFrame = 2
 };
 
 enum nsTopLevelWidgetZPlacement { // for PlaceBehind()
@@ -257,6 +258,12 @@ class nsIWidget : public nsISupports {
 
     NS_DEFINE_STATIC_IID_ACCESSOR(NS_IWIDGET_IID)
 
+    nsIWidget()
+      : mLastChild(nsnull)
+      , mPrevSibling(nsnull)
+    {}
+
+        
     /**
      * Create and initialize a widget. 
      *
@@ -274,6 +281,9 @@ class nsIWidget : public nsISupports {
      * automatically clear the window to the background color. The 
      * calling code must handle paint messages and clear the background 
      * itself. 
+     *
+     * aInitData cannot be eWindowType_popup here; popups cannot be
+     * hooked into the nsIWidget hierarchy.
      *
      * @param     parent or null if it's a top level window
      * @param     aRect     the widget dimension
@@ -358,13 +368,48 @@ class nsIWidget : public nsISupports {
     virtual nsIWidget* GetParent(void) = 0;
 
     /**
-     * Return an nsEnumerator over the children of this widget.
-     *
-     * @return an enumerator over the list of children or nsnull if it does not
-     * have any children
-     *
+     * Return the first child of this widget.  Will return null if
+     * there are no children.
      */
-    virtual nsIEnumerator*  GetChildren(void) = 0;
+    nsIWidget* GetFirstChild() const {
+        return mFirstChild;
+    }
+    
+    /**
+     * Return the last child of this widget.  Will return null if
+     * there are no children.
+     */
+    nsIWidget* GetLastChild() const {
+        return mLastChild;
+    }
+
+    /**
+     * Return the next sibling of this widget
+     */
+    nsIWidget* GetNextSibling() const {
+        return mNextSibling;
+    }
+    
+    /**
+     * Set the next sibling of this widget
+     */
+    void SetNextSibling(nsIWidget* aSibling) {
+        mNextSibling = aSibling;
+    }
+    
+    /**
+     * Return the previous sibling of this widget
+     */
+    nsIWidget* GetPrevSibling() const {
+        return mPrevSibling;
+    }
+
+    /**
+     * Set the previous sibling of this widget
+     */
+    void SetPrevSibling(nsIWidget* aSibling) {
+        mPrevSibling = aSibling;
+    }
 
     /**
      * Show or hide this widget
@@ -602,6 +647,18 @@ class nsIWidget : public nsISupports {
 
     NS_IMETHOD SetCursor(nsCursor aCursor) = 0;
 
+    /**
+     * Sets an image as the cursor for this widget.
+     *
+     * @param aCursor the cursor to set
+     * @param aX the X coordinate of the hotspot (from left).
+     * @param aY the Y coordinate of the hotspot (from top).
+     * @retval NS_ERROR_NOT_IMPLEMENTED if setting images as cursors is not
+     *         supported
+     */
+    NS_IMETHOD SetCursor(imgIContainer* aCursor,
+                         PRUint32 aHotspotX, PRUint32 aHotspotY) = 0;
+
     /** 
      * Get the window type of this widget
      *
@@ -668,7 +725,7 @@ class nsIWidget : public nsISupports {
     /**
      * Invalidate the widget and repaint it.
      *
-     * @param aIsSynchronouse PR_TRUE then repaint synchronously. If PR_FALSE repaint later.
+     * @param aIsSynchronous PR_TRUE then repaint synchronously. If PR_FALSE repaint later.
      * @see #Update()
      */
 
@@ -809,7 +866,7 @@ class nsIWidget : public nsISupports {
      * @param aTitle string displayed as the title of the widget
      */
 
-    NS_IMETHOD SetTitle(const nsString& aTitle) = 0;
+    NS_IMETHOD SetTitle(const nsAString& aTitle) = 0;
 
     /**
      * Set the widget's icon.
@@ -888,7 +945,7 @@ class nsIWidget : public nsISupports {
     NS_IMETHOD SetPreferredSize(PRInt32 aWidth, PRInt32 aHeight) = 0;
 
     /**
-     * Dispatches and event to the widget
+     * Dispatches an event to the widget
      *
      */
     NS_IMETHOD DispatchEvent(nsGUIEvent* event, nsEventStatus & aStatus) = 0;
@@ -907,7 +964,7 @@ class nsIWidget : public nsISupports {
      */
     NS_IMETHOD EnableDragDrop(PRBool aEnable) = 0;
    
-    virtual void  ConvertToDeviceCoordinates(nscoord	&aX,nscoord	&aY) = 0;
+    virtual void  ConvertToDeviceCoordinates(nscoord &aX,nscoord &aY) = 0;
 
     /**
      * Enables/Disables system mouse capture.
@@ -932,7 +989,7 @@ class nsIWidget : public nsISupports {
      * Enables/Disables system capture of any and all events that would cause a
      * dropdown to be rolled up, This method ignores the aConsumeRollupEvent 
      * parameter when aDoCapture is FALSE
-     * @param aCapture PR_TRUE enables capture, PR_FALSE disables capture 
+     * @param aDoCapture PR_TRUE enables capture, PR_FALSE disables capture 
      * @param aConsumeRollupEvent PR_TRUE consumes the rollup event, PR_FALSE dispatches rollup event
      *
      */
@@ -976,6 +1033,18 @@ class nsIWidget : public nsISupports {
      */
     NS_IMETHOD GetLastInputEventTime(PRUint32& aTime) = 0;
 
+
+protected:
+    // keep the list of children.  We also keep track of our siblings.
+    // The ownership model is as follows: parent holds a strong ref to
+    // the first element of the list, and each element holds a strong
+    // ref to the next element in the list.  The prevsibling and
+    // lastchild pointers are weak, which is fine as long as they are
+    // maintained properly.
+    nsCOMPtr<nsIWidget> mFirstChild;
+    nsIWidget* mLastChild;
+    nsCOMPtr<nsIWidget> mNextSibling;
+    nsIWidget* mPrevSibling;
 };
 
 #endif // nsIWidget_h__

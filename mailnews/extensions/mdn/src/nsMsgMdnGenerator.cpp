@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Jeff Tsai <jt95070@netscape.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -40,7 +40,6 @@
 #include "nsMsgMdnGenerator.h"
 #include "nsImapCore.h"
 #include "nsIMsgImapMailFolder.h"
-#include "nsIMIMEService.h"
 #include "nsMsgMimeCID.h"
 #include "nsIMsgAccountManager.h"
 #include "nsMsgBaseCID.h"
@@ -61,7 +60,6 @@
 #include "nsIPrompt.h"
 #include "nsIMsgCompUtils.h"
 #include "nsIPrefService.h"
-#include "nsIPrefBranchInternal.h"
 #include "nsIPrefBranch.h"
 #include "nsIStringBundle.h"
 
@@ -184,7 +182,7 @@ nsresult nsMsgMdnGenerator::StoreMDNSentFlag(nsIMsgFolder *folder,
     nsMsgKeyArray keyArray;
     keyArray.Add(key);
     return imapFolder->StoreImapFlags(kImapMsgMDNSentFlag, PR_TRUE,
-                               keyArray.GetArray(), keyArray.GetSize());
+                               keyArray.GetArray(), keyArray.GetSize(), nsnull);
 }
 
 PRBool nsMsgMdnGenerator::ProcessSendMode()
@@ -909,7 +907,22 @@ nsresult nsMsgMdnGenerator::InitAndProcess()
         do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID, &rv);
     if (accountManager && m_server)
     {
-        rv = accountManager->GetFirstIdentityForServer(m_server, getter_AddRefs(m_identity));
+        if (!m_identity)
+        {
+          // check if this is a message delivered to the global inbox,
+          // in which case we find the originating account's identity.
+          nsXPIDLCString accountKey;
+          m_headers->ExtractHeader(HEADER_X_MOZILLA_ACCOUNT_KEY, PR_FALSE,
+                               getter_Copies(accountKey));
+          nsCOMPtr <nsIMsgAccount> account;
+          if (!accountKey.IsEmpty())
+            accountManager->GetAccount(accountKey, getter_AddRefs(account));
+          if (account)
+            account->GetIncomingServer(getter_AddRefs(m_server));
+          
+          if (m_server)
+            rv = accountManager->GetFirstIdentityForServer(m_server, getter_AddRefs(m_identity));
+        }
         NS_ENSURE_SUCCESS(rv,rv);
 
         if (m_identity)

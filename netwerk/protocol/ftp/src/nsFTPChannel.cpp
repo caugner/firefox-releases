@@ -1,11 +1,12 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim:set ts=4 sts=4 sw=4 et cin: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +15,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +23,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -39,7 +40,6 @@
 #include "nsFTPChannel.h"
 #include "nsIStreamListener.h"
 #include "nsIServiceManager.h"
-#include "nsIMIMEService.h"
 #include "nsNetUtil.h"
 #include "nsMimeTypes.h"
 #include "nsIProxyObjectManager.h"
@@ -48,6 +48,7 @@
 #include "nsIPrefBranch.h"
 #include "nsIStreamConverterService.h"
 #include "nsISocketTransport.h"
+#include "nsURLHelper.h"
 
 #if defined(PR_LOGGING)
 extern PRLogModuleInfo* gFTPLog;
@@ -80,14 +81,13 @@ PRTimeToSeconds(PRTime t_usec)
 nsFTPChannel::nsFTPChannel()
     : mIsPending(0),
       mLoadFlags(LOAD_NORMAL),
-      mListFormat(FORMAT_HTML),
       mSourceOffset(0),
       mAmount(0),
       mContentLength(-1),
       mFTPState(nsnull),
-      mLock(nsnull),
       mStatus(NS_OK),
-      mCanceled(PR_FALSE)
+      mCanceled(PR_FALSE),
+      mStartPos(LL_MaxUint())
 {
 }
 
@@ -99,11 +99,10 @@ nsFTPChannel::~nsFTPChannel()
     PR_LOG(gFTPLog, PR_LOG_ALWAYS, ("~nsFTPChannel() for %s", spec.get()));
 #endif
     NS_IF_RELEASE(mFTPState);
-    if (mLock) PR_DestroyLock(mLock);
 }
 
-NS_IMPL_ADDREF(nsFTPChannel)
-NS_IMPL_RELEASE(nsFTPChannel)
+NS_IMPL_ADDREF_INHERITED(nsFTPChannel, nsHashPropertyBag)
+NS_IMPL_RELEASE_INHERITED(nsFTPChannel, nsHashPropertyBag)
 
 NS_INTERFACE_MAP_BEGIN(nsFTPChannel)
     NS_INTERFACE_MAP_ENTRY(nsIChannel)
@@ -116,35 +115,18 @@ NS_INTERFACE_MAP_BEGIN(nsFTPChannel)
     NS_INTERFACE_MAP_ENTRY(nsIStreamListener)
     NS_INTERFACE_MAP_ENTRY(nsIRequestObserver)
     NS_INTERFACE_MAP_ENTRY(nsICacheListener)
-    NS_INTERFACE_MAP_ENTRY(nsIDirectoryListing)
-    if (aIID.Equals(NS_GET_IID(nsIProperties))) {
-        if (!mProperties) {
-            mProperties =
-                do_CreateInstance(NS_PROPERTIES_CONTRACTID, (nsIChannel *) this);
-            NS_ENSURE_STATE(mProperties);
-        }
-        return mProperties->QueryInterface(aIID, aInstancePtr);
-    }
-    else
-    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIChannel)
-NS_INTERFACE_MAP_END
+NS_INTERFACE_MAP_END_INHERITING(nsHashPropertyBag)
 
 nsresult
 nsFTPChannel::Init(nsIURI* uri, nsIProxyInfo* proxyInfo, nsICacheSession* session)
 {
-    nsresult rv = NS_OK;
+    nsresult rv = nsHashPropertyBag::Init();
+    if (NS_FAILED(rv))
+        return rv;
 
     // setup channel state
     mURL = uri;
     mProxyInfo = proxyInfo;
-
-    rv = mURL->GetAsciiHost(mHost);
-    if (NS_FAILED(rv)) return rv;
-
-    if (!mLock) {
-        mLock = PR_NewLock();
-        if (!mLock) return NS_ERROR_OUT_OF_MEMORY;
-    }
 
     mIOService = do_GetIOService(&rv);
     if (NS_FAILED(rv)) return rv;
@@ -192,7 +174,6 @@ nsFTPChannel::Cancel(nsresult status) {
             this, status, mCanceled));
 
     NS_ASSERTION(NS_FAILED(status), "shouldn't cancel with a success code");
-    nsAutoLock lock(mLock);
     
     if (mCanceled) 
         return NS_OK;
@@ -213,7 +194,6 @@ nsFTPChannel::Suspend(void) {
     PR_LOG(gFTPLog, PR_LOG_DEBUG, 
            ("nsFTPChannel::Suspend() called [this=%x]\n", this));
 
-    nsAutoLock lock(mLock);
     if (mFTPState) {
         return mFTPState->Suspend();
     }
@@ -226,7 +206,6 @@ nsFTPChannel::Resume(void) {
     PR_LOG(gFTPLog, PR_LOG_DEBUG, 
            ("nsFTPChannel::Resume() called [this=%x]\n", this));
 
-    nsAutoLock lock(mLock);
     if (mFTPState) {
         return mFTPState->Resume();
     }
@@ -285,20 +264,34 @@ nsFTPChannel::GenerateCacheKey(nsACString &cacheKey)
 NS_IMETHODIMP
 nsFTPChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctxt)
 {
-    return AsyncOpenAt(listener, ctxt, PRUint32(-1), nsnull);
+    nsresult rv = AsyncOpenAt(listener, ctxt, mStartPos, mEntityID);
+    // mEntityID no longer needed, clear it to avoid returning a wrong entity
+    // id when someone asks us
+    mEntityID.Truncate();
+    return rv;
 }
 
 NS_IMETHODIMP
-nsFTPChannel::GetEntityID(nsIResumableEntityID **entityID)
+nsFTPChannel::ResumeAt(PRUint64 aStartPos, const nsACString& aEntityID)
 {
-    *entityID = mEntityID;
-    NS_IF_ADDREF(*entityID);
+    mEntityID = aEntityID;
+    mStartPos = aStartPos;
     return NS_OK;
 }
 
 NS_IMETHODIMP
+nsFTPChannel::GetEntityID(nsACString& entityID)
+{
+    if (mEntityID.IsEmpty())
+      return NS_ERROR_NOT_RESUMABLE;
+
+    entityID = mEntityID;
+    return NS_OK;
+}
+
+nsresult
 nsFTPChannel::AsyncOpenAt(nsIStreamListener *listener, nsISupports *ctxt,
-                          PRUint32 startPos, nsIResumableEntityID* entityID)
+                          PRUint64 startPos, const nsACString& entityID)
 {
     PRInt32 port;
     nsresult rv = mURL->GetPort(&port);
@@ -315,10 +308,8 @@ nsFTPChannel::AsyncOpenAt(nsIStreamListener *listener, nsISupports *ctxt,
     mUserContext = ctxt;
 
     // Add this request to the load group
-    if (mLoadGroup) {
-        rv = mLoadGroup->AddRequest(this, nsnull);
-        if (NS_FAILED(rv)) return rv;
-    }
+    if (mLoadGroup)
+        mLoadGroup->AddRequest(this, nsnull);
     PRBool offline;
 
     // If we're starting from the beginning, then its OK to use the cache,
@@ -327,7 +318,7 @@ nsFTPChannel::AsyncOpenAt(nsIStreamListener *listener, nsISupports *ctxt,
     // Note that ftp doesn't store metadata, so disable caching if there was
     // an entityID. Storing this metadata isn't worth it until we can
     // get partial data out of the cache anyway...
-    if (mCacheSession && !mUploadStream && !entityID &&
+    if (mCacheSession && !mUploadStream && entityID.IsEmpty() &&
         (startPos==0 || startPos==PRUint32(-1))) {
         mIOService->GetOffline(&offline);
 
@@ -345,10 +336,11 @@ nsFTPChannel::AsyncOpenAt(nsIStreamListener *listener, nsISupports *ctxt,
         nsCAutoString cacheKey;
         GenerateCacheKey(cacheKey);
 
-        rv = mCacheSession->AsyncOpenCacheEntry(cacheKey.get(),
+        rv = mCacheSession->AsyncOpenCacheEntry(cacheKey,
                                                 accessRequested,
                                                 this);
-        if (NS_SUCCEEDED(rv)) return rv;
+        if (NS_SUCCEEDED(rv))
+            return rv;
         
         // If we failed to use the cache, try without
         PR_LOG(gFTPLog, PR_LOG_DEBUG,
@@ -356,20 +348,50 @@ nsFTPChannel::AsyncOpenAt(nsIStreamListener *listener, nsISupports *ctxt,
     }
     
     return SetupState(startPos, entityID);
+    // XXX this function must not fail since we have already called AddRequest!
+}
+
+void
+nsFTPChannel::GetFTPEventSink(nsCOMPtr<nsIFTPEventSink> &aResult)
+{
+    if (!mFTPEventSink) {
+        nsCOMPtr<nsIFTPEventSink> ftpSink;
+        GetCallback(ftpSink);
+        if (ftpSink)
+            NS_GetProxyForObject(NS_CURRENT_EVENTQ,
+                                 NS_GET_IID(nsIFTPEventSink),
+                                 ftpSink,
+                                 PROXY_ASYNC | PROXY_ALWAYS,
+                                 getter_AddRefs(mFTPEventSink));
+    }
+    aResult = mFTPEventSink;
+}
+
+void
+nsFTPChannel::InitProgressSink()
+{
+    // Build a proxy for the progress event sink since we may need to call it
+    // while we are deep inside some of our state logic, and we wouldn't want
+    // to worry about some weird re-entrancy scenario.
+    nsCOMPtr<nsIProgressEventSink> progressSink;
+    NS_QueryNotificationCallbacks(mCallbacks, mLoadGroup, progressSink);
+    if (progressSink)
+        NS_GetProxyForObject(NS_CURRENT_EVENTQ,
+                             NS_GET_IID(nsIProgressEventSink),
+                             progressSink,
+                             PROXY_ASYNC | PROXY_ALWAYS,
+                             getter_AddRefs(mProgressSink));
 }
 
 nsresult 
-nsFTPChannel::SetupState(PRUint32 startPos, nsIResumableEntityID* entityID)
+nsFTPChannel::SetupState(PRUint64 startPos, const nsACString& entityID)
 {
     if (!mFTPState) {
         NS_NEWXPCOM(mFTPState, nsFtpState);
         if (!mFTPState) return NS_ERROR_OUT_OF_MEMORY;
         NS_ADDREF(mFTPState);
     }
-    nsresult rv = mFTPState->Init(this, 
-                                  mPrompter, 
-                                  mAuthPrompter, 
-                                  mFTPEventSink, 
+    nsresult rv = mFTPState->Init(this,
                                   mCacheEntry,
                                   mProxyInfo,
                                   startPos,
@@ -405,10 +427,8 @@ nsFTPChannel::SetLoadFlags(PRUint32 aLoadFlags)
 NS_IMETHODIMP
 nsFTPChannel::GetContentType(nsACString &aContentType)
 {
-    nsAutoLock lock(mLock);
-
     if (mContentType.IsEmpty()) {
-        aContentType = NS_LITERAL_CSTRING(UNKNOWN_CONTENT_TYPE);
+        aContentType.AssignLiteral(UNKNOWN_CONTENT_TYPE);
     } else {
         aContentType = mContentType;
     }
@@ -420,8 +440,8 @@ nsFTPChannel::GetContentType(nsACString &aContentType)
 NS_IMETHODIMP
 nsFTPChannel::SetContentType(const nsACString &aContentType)
 {
-    nsAutoLock lock(mLock);
-    NS_ParseContentType(aContentType, mContentType, mContentCharset);
+    PRBool dummy;
+    net_ParseContentType(aContentType, mContentType, mContentCharset, &dummy);
     return NS_OK;
 }
 
@@ -442,7 +462,6 @@ nsFTPChannel::SetContentCharset(const nsACString &aContentCharset)
 NS_IMETHODIMP
 nsFTPChannel::GetContentLength(PRInt32 *aContentLength)
 {
-    nsAutoLock lock(mLock);
     *aContentLength = mContentLength;
     return NS_OK;
 }
@@ -450,7 +469,6 @@ nsFTPChannel::GetContentLength(PRInt32 *aContentLength)
 NS_IMETHODIMP
 nsFTPChannel::SetContentLength(PRInt32 aContentLength)
 {
-    nsAutoLock lock(mLock);
     mContentLength = aContentLength;
     return NS_OK;
 }
@@ -467,6 +485,8 @@ NS_IMETHODIMP
 nsFTPChannel::SetLoadGroup(nsILoadGroup* aLoadGroup)
 {
     mLoadGroup = aLoadGroup;
+    mProgressSink = nsnull;
+    mFTPEventSink = nsnull;
     return NS_OK;
 }
 
@@ -496,61 +516,8 @@ NS_IMETHODIMP
 nsFTPChannel::SetNotificationCallbacks(nsIInterfaceRequestor* aNotificationCallbacks)
 {
     mCallbacks = aNotificationCallbacks;
-
-    if (mCallbacks) {
-
-        // nsIProgressEventSink
-        nsCOMPtr<nsIProgressEventSink> sink;
-        (void)mCallbacks->GetInterface(NS_GET_IID(nsIProgressEventSink), 
-                                       getter_AddRefs(sink));
-
-        if (sink)
-            NS_GetProxyForObject(NS_CURRENT_EVENTQ, 
-                                 NS_GET_IID(nsIProgressEventSink), 
-                                 sink, 
-                                 PROXY_ASYNC | PROXY_ALWAYS, 
-                                 getter_AddRefs(mEventSink));
-
-        
-        // nsIFTPEventSink
-        nsCOMPtr<nsIFTPEventSink> ftpSink;
-        (void)mCallbacks->GetInterface(NS_GET_IID(nsIFTPEventSink),
-                                       getter_AddRefs(ftpSink));
-        
-        if (ftpSink)
-            NS_GetProxyForObject(NS_CURRENT_EVENTQ, 
-                                 NS_GET_IID(nsIFTPEventSink), 
-                                 sink, 
-                                 PROXY_ASYNC | PROXY_ALWAYS, 
-                                 getter_AddRefs(mFTPEventSink));        
-
-        // nsIPrompt
-        nsCOMPtr<nsIPrompt> prompt;
-        (void)mCallbacks->GetInterface(NS_GET_IID(nsIPrompt),
-                                       getter_AddRefs(prompt));
-
-        NS_ASSERTION ( prompt, "Channel doesn't have a prompt!!!" );
-
-        if (prompt)
-            NS_GetProxyForObject(NS_CURRENT_EVENTQ, 
-                                 NS_GET_IID(nsIPrompt), 
-                                 prompt, 
-                                 PROXY_SYNC, 
-                                 getter_AddRefs(mPrompter));
-
-        // nsIAuthPrompt
-        nsCOMPtr<nsIAuthPrompt> aPrompt;
-        (void)mCallbacks->GetInterface(NS_GET_IID(nsIAuthPrompt),
-                                       getter_AddRefs(aPrompt));
-
-        if (aPrompt)
-            NS_GetProxyForObject(NS_CURRENT_EVENTQ, 
-                                 NS_GET_IID(nsIAuthPrompt), 
-                                 aPrompt, 
-                                 PROXY_SYNC, 
-                                 getter_AddRefs(mAuthPrompter));
-
-    }
+    mProgressSink = nsnull;
+    mFTPEventSink = nsnull;
     return NS_OK;
 }
 
@@ -563,15 +530,16 @@ nsFTPChannel::GetSecurityInfo(nsISupports * *aSecurityInfo)
 
 // nsIInterfaceRequestor method
 NS_IMETHODIMP
-nsFTPChannel::GetInterface(const nsIID &anIID, void **aResult ) {
+nsFTPChannel::GetInterface(const nsIID &aIID, void **aResult)
+{
     // capture the progress event sink stuff. pass the rest through.
-    if (anIID.Equals(NS_GET_IID(nsIProgressEventSink))) {
+    if (aIID.Equals(NS_GET_IID(nsIProgressEventSink))) {
         *aResult = NS_STATIC_CAST(nsIProgressEventSink*, this);
         NS_ADDREF(this);
         return NS_OK;
-    } else {
-        return mCallbacks ? mCallbacks->GetInterface(anIID, aResult) : NS_ERROR_NO_INTERFACE;
     }
+    NS_QueryNotificationCallbacks(mCallbacks, mLoadGroup, aIID, aResult);
+    return aResult ? NS_OK : NS_ERROR_NO_INTERFACE;
 }
 
 // nsIProgressEventSink methods
@@ -579,6 +547,9 @@ NS_IMETHODIMP
 nsFTPChannel::OnStatus(nsIRequest *request, nsISupports *aContext,
                        nsresult aStatus, const PRUnichar* aStatusArg)
 {
+    if (!mProgressSink)
+        InitProgressSink();
+
     if (aStatus == NS_NET_STATUS_CONNECTED_TO)
     {
         // The state machine needs to know that the data connection
@@ -590,21 +561,26 @@ nsFTPChannel::OnStatus(nsIRequest *request, nsISupports *aContext,
             NS_ERROR("ftp state is null.");
     }
 
-    if (!mEventSink || (mLoadFlags & LOAD_BACKGROUND) || !mIsPending || NS_FAILED(mStatus))
+    if (!mProgressSink || (mLoadFlags & LOAD_BACKGROUND) || !mIsPending || NS_FAILED(mStatus))
         return NS_OK;
 
-    return mEventSink->OnStatus(this, mUserContext, aStatus,
-                                NS_ConvertASCIItoUCS2(mHost).get());
+    nsCAutoString host;
+    mURL->GetHost(host);
+    return mProgressSink->OnStatus(this, mUserContext, aStatus,
+                                NS_ConvertUTF8toUTF16(host).get());
 }
 
 NS_IMETHODIMP
 nsFTPChannel::OnProgress(nsIRequest *request, nsISupports* aContext,
-                         PRUint32 aProgress, PRUint32 aProgressMax)
+                         PRUint64 aProgress, PRUint64 aProgressMax)
 {
-    if (!mEventSink || (mLoadFlags & LOAD_BACKGROUND) || !mIsPending)
+    if (!mProgressSink)
+        InitProgressSink();
+
+    if (!mProgressSink || (mLoadFlags & LOAD_BACKGROUND) || !mIsPending)
         return NS_OK;
 
-    return mEventSink->OnProgress(this, mUserContext, 
+    return mProgressSink->OnProgress(this, mUserContext, 
                                   aProgress, aProgressMax);
 }
 
@@ -651,6 +627,12 @@ nsFTPChannel::OnStopRequest(nsIRequest *request, nsISupports* aContext,
         NS_RELEASE(mFTPState);
     }
     mIsPending = PR_FALSE;
+
+    // Drop notification callbacks to prevent cycles.
+    mCallbacks = nsnull;
+    mProgressSink = nsnull;
+    mFTPEventSink = nsnull;
+
     return rv;
 }
 
@@ -666,8 +648,9 @@ nsFTPChannel::OnStartRequest(nsIRequest *request, nsISupports *aContext)
         request->GetStatus(&mStatus);
     
     nsCOMPtr<nsIResumableChannel> resumable = do_QueryInterface(request);
-    if (resumable)
-        resumable->GetEntityID(getter_AddRefs(mEntityID));
+    if (resumable) {
+        resumable->GetEntityID(mEntityID);
+    }
     
     nsresult rv = NS_OK;
     if (mListener) {
@@ -676,10 +659,9 @@ nsFTPChannel::OnStartRequest(nsIRequest *request, nsISupports *aContext)
             nsCOMPtr<nsIStreamConverterService> serv =
                 do_GetService("@mozilla.org/streamConverters;1", &rv);
             if (NS_SUCCEEDED(rv)) {
-                NS_ConvertASCIItoUCS2 from(UNKNOWN_CONTENT_TYPE);
                 nsCOMPtr<nsIStreamListener> converter;
-                rv = serv->AsyncConvertData(from.get(),
-                                            NS_LITERAL_STRING("*/*").get(),
+                rv = serv->AsyncConvertData(UNKNOWN_CONTENT_TYPE,
+                                            "*/*",
                                             mListener,
                                             mUserContext,
                                             getter_AddRefs(converter));
@@ -726,7 +708,7 @@ nsFTPChannel::OnCacheEntryAvailable(nsICacheEntryDescriptor *entry,
         mCacheEntry = entry;
     }
     
-    rv = SetupState(PRUint32(-1),nsnull);
+    rv = SetupState(PRUint32(-1), EmptyCString());
 
     if (NS_FAILED(rv)) {
         Cancel(rv);
@@ -750,32 +732,3 @@ nsFTPChannel::GetUploadStream(nsIInputStream **stream)
     return NS_OK;
 }
 
-NS_IMETHODIMP
-nsFTPChannel::SetListFormat(PRUint32 format)
-{
-    // Convert the pref value
-    if (format == FORMAT_PREF) {
-        format = FORMAT_HTML; // default
-        nsCOMPtr<nsIPrefBranch> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
-        if (prefs) {
-            PRInt32 sFormat;
-            if (NS_SUCCEEDED(prefs->GetIntPref("network.dir.format", &sFormat)))
-                format = sFormat;
-        }
-    }
-    if (format != FORMAT_RAW &&
-        format != FORMAT_HTML &&
-        format != FORMAT_HTTP_INDEX) {
-        NS_WARNING("invalid directory format");
-        return NS_ERROR_FAILURE;
-    }
-    mListFormat = format;
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsFTPChannel::GetListFormat(PRUint32 *format)
-{
-    *format = mListFormat;
-    return NS_OK;
-}

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
@@ -22,22 +22,29 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
+#ifdef MOZ_LOGGING
+// This has to be before the pre-compiled header
+#define FORCE_PR_LOG /* Allow logging in the release build */
+#endif
 
 #include "msgCore.h"
 #include "nsMsgOfflineImapOperation.h"
 #include "nsReadableUtils.h"
+
+PRLogModuleInfo *IMAPOffline;
 
 /* Implementation file */
 NS_IMPL_ISUPPORTS1(nsMsgOfflineImapOperation, nsIMsgOfflineImapOperation)
@@ -67,7 +74,10 @@ nsMsgOfflineImapOperation::nsMsgOfflineImapOperation(nsMsgDatabase *db, nsIMdbRo
   NS_ADDREF(m_mdb);
   m_mdbRow = row;
   m_newFlags = 0;
-
+  m_mdb->GetUint32Property(m_mdbRow, PROP_OPERATION, (PRUint32 *) &m_operation, 0);
+  m_mdb->GetUint32Property(m_mdbRow, PROP_MESSAGE_KEY, &m_messageKey, 0);
+  m_mdb->GetUint32Property(m_mdbRow, PROP_OPERATION_FLAGS, &m_operationFlags, 0);
+  m_mdb->GetUint32Property(m_mdbRow, PROP_NEW_FLAGS, (PRUint32 *) &m_newFlags, 0);
 }
 
 nsMsgOfflineImapOperation::~nsMsgOfflineImapOperation()
@@ -79,22 +89,26 @@ nsMsgOfflineImapOperation::~nsMsgOfflineImapOperation()
 NS_IMETHODIMP nsMsgOfflineImapOperation::GetOperation(nsOfflineImapOperationType *aOperation)
 {
   NS_ENSURE_ARG(aOperation);
-  nsresult rv = m_mdb->GetUint32Property(m_mdbRow, PROP_OPERATION, (PRUint32 *) aOperation, 0);
-  m_operation = *aOperation;
-  return rv;
+  *aOperation = m_operation;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgOfflineImapOperation::SetOperation(nsOfflineImapOperationType aOperation)
 {
+  if (PR_LOG_TEST(IMAPOffline, PR_LOG_ALWAYS))
+    PR_LOG(IMAPOffline, PR_LOG_ALWAYS, ("msg id %x setOperation was %x add %x", m_messageKey, m_operation, aOperation));
+
   m_operation |= aOperation;
-  return m_mdb->SetUint32Property(m_mdbRow, PROP_OPERATION, aOperation);
+  return m_mdb->SetUint32Property(m_mdbRow, PROP_OPERATION, m_operation);
 }
 
 /* void clearOperation (in nsOfflineImapOperationType operation); */
-NS_IMETHODIMP nsMsgOfflineImapOperation::ClearOperation(nsOfflineImapOperationType operation)
+NS_IMETHODIMP nsMsgOfflineImapOperation::ClearOperation(nsOfflineImapOperationType aOperation)
 {
-  m_operation &= ~operation;
-  switch (operation)
+  if (PR_LOG_TEST(IMAPOffline, PR_LOG_ALWAYS))
+    PR_LOG(IMAPOffline, PR_LOG_ALWAYS, ("msg id %x clearOperation was %x clear %x", m_messageKey, m_operation, aOperation));
+  m_operation &= ~aOperation;
+  switch (aOperation)
   {
   case kMsgMoved:
   case kAppendTemplate:
@@ -112,9 +126,8 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::ClearOperation(nsOfflineImapOperationTy
 NS_IMETHODIMP nsMsgOfflineImapOperation::GetMessageKey(nsMsgKey *aMessageKey)
 {
   NS_ENSURE_ARG(aMessageKey);
-  nsresult rv = m_mdb->GetUint32Property(m_mdbRow, PROP_MESSAGE_KEY, &m_messageKey, 0);
   *aMessageKey = m_messageKey;
-  return rv;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgOfflineImapOperation::SetMessageKey(nsMsgKey aMessageKey)
@@ -128,12 +141,14 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::SetMessageKey(nsMsgKey aMessageKey)
 NS_IMETHODIMP nsMsgOfflineImapOperation::GetFlagOperation(imapMessageFlagsType *aFlagOperation)
 {
   NS_ENSURE_ARG(aFlagOperation);
-  nsresult rv = m_mdb->GetUint32Property(m_mdbRow, PROP_OPERATION_FLAGS, &m_operationFlags, 0);
   *aFlagOperation = m_operationFlags;
-  return rv;
+  return NS_OK;
 }
+
 NS_IMETHODIMP nsMsgOfflineImapOperation::SetFlagOperation(imapMessageFlagsType aFlagOperation)
 {
+  if (PR_LOG_TEST(IMAPOffline, PR_LOG_ALWAYS))
+    PR_LOG(IMAPOffline, PR_LOG_ALWAYS, ("msg id %x setFlagOperation was %x add %x", m_messageKey, m_operationFlags, aFlagOperation));
   SetOperation(kFlagsChanged);
   nsresult rv = SetNewFlags(aFlagOperation);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -153,6 +168,8 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::GetNewFlags(imapMessageFlagsType *aNewF
 
 NS_IMETHODIMP nsMsgOfflineImapOperation::SetNewFlags(imapMessageFlagsType aNewFlags)
 {
+  if (PR_LOG_TEST(IMAPOffline, PR_LOG_ALWAYS) && m_newFlags != aNewFlags)
+    PR_LOG(IMAPOffline, PR_LOG_ALWAYS, ("msg id %x SetNewFlags was %x to %x", m_messageKey, m_newFlags, aNewFlags));
   m_newFlags = aNewFlags;
   return m_mdb->SetUint32Property(m_mdbRow, PROP_NEW_FLAGS, m_newFlags);
 }
@@ -169,6 +186,8 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::GetDestinationFolderURI(char * *aDestin
 
 NS_IMETHODIMP nsMsgOfflineImapOperation::SetDestinationFolderURI(const char * aDestinationFolderURI)
 {
+  if (PR_LOG_TEST(IMAPOffline, PR_LOG_ALWAYS))
+    PR_LOG(IMAPOffline, PR_LOG_ALWAYS, ("msg id %x SetDestinationFolderURI to %s", m_messageKey, aDestinationFolderURI));
   m_moveDestination.Adopt(aDestinationFolderURI ? nsCRT::strdup(aDestinationFolderURI) : 0);
   return m_mdb->SetProperty(m_mdbRow, PROP_MOVE_DEST_FOLDER_URI, aDestinationFolderURI);
 }
@@ -271,3 +290,40 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::GetCopyDestination(PRInt32 copyIndex, c
     return NS_ERROR_NULL_POINTER;
 }
 
+void nsMsgOfflineImapOperation::Log(PRLogModuleInfo *logFile)
+{
+  if (!IMAPOffline)
+    IMAPOffline = PR_NewLogModule("IMAPOFFLINE");
+  if (!PR_LOG_TEST(IMAPOffline, PR_LOG_ALWAYS))
+    return;
+//  const long kMoveResult			= 0x8;
+//  const long kAppendDraft        = 0x10;
+//  const long kAddedHeader		= 0x20;
+//  const long kDeletedMsg			= 0x40;
+//  const long kMsgMarkedDeleted	= 0x80;
+//  const long kAppendTemplate     = 0x100;
+//  const long kDeleteAllMsgs		= 0x200;
+  if (m_operation & nsIMsgOfflineImapOperation::kFlagsChanged)
+  {
+      PR_LOG(IMAPOffline, PR_LOG_ALWAYS, ("msg id %x changeFlag:%x", m_messageKey, m_newFlags));
+  }
+  if (m_operation & nsIMsgOfflineImapOperation::kMsgMoved)
+  {
+    nsXPIDLCString moveDestFolder;
+    GetDestinationFolderURI(getter_Copies(moveDestFolder));
+
+    PR_LOG(IMAPOffline, PR_LOG_ALWAYS, ("msg id %x moveTo:%s", m_messageKey, moveDestFolder.get()));
+  }
+  if (m_operation & nsIMsgOfflineImapOperation::kMsgCopy)
+  {
+    nsXPIDLCString copyDests;
+    m_mdb->GetProperty(m_mdbRow, PROP_COPY_DESTS, getter_Copies(copyDests));
+
+    PR_LOG(IMAPOffline, PR_LOG_ALWAYS, ("msg id %x moveTo:%s", m_messageKey, copyDests.get()));
+  }
+  if (m_operation & nsIMsgOfflineImapOperation::kAppendDraft)
+  {
+    PR_LOG(IMAPOffline, PR_LOG_ALWAYS, ("msg id %x append draft", m_messageKey));
+  }
+
+}

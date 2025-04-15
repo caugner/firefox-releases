@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -42,32 +41,30 @@
 #include "nsDocument.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsIHttpEventSink.h"
+#include "nsIChannelEventSink.h"
 #include "nsIDOMXMLDocument.h"
 #include "nsIScriptContext.h"
-#include "nsIHTMLStyleSheet.h"
+#include "nsHTMLStyleSheet.h"
 #include "nsIHTMLCSSStyleSheet.h"
 #include "nsIEventQueueService.h"
 
 class nsIParser;
 class nsIDOMNode;
-class nsICSSLoader;
 class nsIURI;
+class nsIChannel;
 
 class nsXMLDocument : public nsDocument,
                       public nsIInterfaceRequestor,
-                      public nsIHttpEventSink
+                      public nsIChannelEventSink
 {
 public:
   nsXMLDocument();
   virtual ~nsXMLDocument();
 
-  NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr);
-
-  NS_IMETHOD_(nsrefcnt) AddRef(void);
-  NS_IMETHOD_(nsrefcnt) Release(void);
+  NS_DECL_ISUPPORTS_INHERITED
 
   virtual void Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup);
+  virtual void ResetToURI(nsIURI *aURI, nsILoadGroup *aLoadGroup);
 
   virtual nsresult StartDocumentLoad(const char* aCommand, nsIChannel* channel,
                                      nsILoadGroup* aLoadGroup,
@@ -78,6 +75,8 @@ public:
 
   virtual void EndLoad();
 
+  virtual PRBool IsLoadedAsData();
+
   // nsIDOMNode interface
   NS_IMETHOD CloneNode(PRBool aDeep, nsIDOMNode** aReturn);
 
@@ -85,13 +84,11 @@ public:
   NS_IMETHOD GetElementById(const nsAString& aElementId,
                             nsIDOMElement** aReturn);
 
-  virtual nsICSSLoader* GetCSSLoader();
-
   // nsIInterfaceRequestor
   NS_DECL_NSIINTERFACEREQUESTOR
 
   // nsIHTTPEventSink
-  NS_DECL_NSIHTTPEVENTSINK
+  NS_DECL_NSICHANNELEVENTSINK
 
   // nsIDOMXMLDocument
   NS_DECL_NSIDOMXMLDOCUMENT
@@ -99,24 +96,22 @@ public:
   virtual nsresult Init();
 
 protected:
-  // subclass hooks for sheet ordering
-  virtual void InternalAddStyleSheet(nsIStyleSheet* aSheet, PRUint32 aFlags);
-  virtual void InternalInsertStyleSheetAt(nsIStyleSheet* aSheet, PRInt32 aIndex);
-  virtual nsIStyleSheet* InternalGetStyleSheetAt(PRInt32 aIndex) const;
-  virtual PRInt32 InternalGetNumberOfStyleSheets() const;
-
   virtual nsresult GetLoadGroup(nsILoadGroup **aLoadGroup);
-
-  // For additional catalog sheets (if any) needed to layout the XML vocabulary
-  // of the document. Catalog sheets are kept at the beginning of our array of
-  // style sheets and this counter is used as an offset to distinguish them
-  PRInt32 mCatalogSheetCount;
 
   nsCOMPtr<nsIEventQueueService> mEventQService;
 
   nsCOMPtr<nsIScriptContext> mScriptContext;
+
+  // mChannelIsPending indicates whether we're currently asynchronously loading
+  // data from mChannel (via document.load() or normal load).  It's set to true
+  // when we first find out about the channel (StartDocumentLoad) and set to
+  // false in EndLoad or if ResetToURI() is called.  In the latter case our
+  // mChannel is also cancelled.  Note that if this member is true, mChannel
+  // cannot be null.
+  PRPackedBool mChannelIsPending;
   PRPackedBool mCrossSiteAccessEnabled;
   PRPackedBool mLoadedAsData;
+  PRPackedBool mLoadedAsInteractiveData;
   PRPackedBool mAsync;
   PRPackedBool mLoopingForSyncLoad;
 };

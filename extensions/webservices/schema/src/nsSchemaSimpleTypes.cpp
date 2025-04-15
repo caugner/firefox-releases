@@ -1,25 +1,40 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications.  Portions created by Netscape Communications are
- * Copyright (C) 2001 by Netscape Communications.  All
- * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Vidur Apparao <vidur@netscape.com> (original author)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsSchemaPrivate.h"
 
@@ -44,167 +59,166 @@ NS_IMPL_ISUPPORTS4_CI(nsSchemaBuiltinType,
                       nsISchemaBuiltinType)
 
 /* readonly attribute wstring targetNamespace; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaBuiltinType::GetTargetNamespace(nsAString& aTargetNamespace)
 {
-  aTargetNamespace.Assign(NS_LITERAL_STRING(NS_SCHEMA_2001_NAMESPACE));
+  aTargetNamespace.AssignLiteral(NS_SCHEMA_2001_NAMESPACE);
   
   return NS_OK;
 }
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaBuiltinType::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaBuiltinType::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   return NS_OK;
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
-nsSchemaBuiltinType::Clear()
+NS_IMETHODIMP nsSchemaBuiltinType::Clear()
 {
   return NS_OK;
 }
 
 /* readonly attribute wstring name; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaBuiltinType::GetName(nsAString& aName)
 {
   switch(mBuiltinType) {
     case BUILTIN_TYPE_ANYTYPE:
-      aName.Assign(NS_LITERAL_STRING("anyType"));
+      aName.AssignLiteral("anyType");
       break;
     case BUILTIN_TYPE_STRING:
-      aName.Assign(NS_LITERAL_STRING("string"));
+      aName.AssignLiteral("string");
       break;
     case BUILTIN_TYPE_NORMALIZED_STRING:
-      aName.Assign(NS_LITERAL_STRING("normalizedString"));
+      aName.AssignLiteral("normalizedString");
       break;
     case BUILTIN_TYPE_TOKEN:
-      aName.Assign(NS_LITERAL_STRING("token"));
+      aName.AssignLiteral("token");
       break;
     case BUILTIN_TYPE_BYTE:
-      aName.Assign(NS_LITERAL_STRING("byte"));
+      aName.AssignLiteral("byte");
       break;
     case BUILTIN_TYPE_UNSIGNEDBYTE:
-      aName.Assign(NS_LITERAL_STRING("unsignedByte"));
+      aName.AssignLiteral("unsignedByte");
       break;
     case BUILTIN_TYPE_BASE64BINARY:
-      aName.Assign(NS_LITERAL_STRING("base64Binary"));
+      aName.AssignLiteral("base64Binary");
       break;
     case BUILTIN_TYPE_HEXBINARY:
-      aName.Assign(NS_LITERAL_STRING("hexBinary"));
+      aName.AssignLiteral("hexBinary");
       break;
     case BUILTIN_TYPE_INTEGER:
-      aName.Assign(NS_LITERAL_STRING("integer"));
+      aName.AssignLiteral("integer");
       break;
     case BUILTIN_TYPE_POSITIVEINTEGER:
-      aName.Assign(NS_LITERAL_STRING("positiveInteger"));
+      aName.AssignLiteral("positiveInteger");
       break;
     case BUILTIN_TYPE_NEGATIVEINTEGER:
-      aName.Assign(NS_LITERAL_STRING("negativeInteger"));
+      aName.AssignLiteral("negativeInteger");
       break;
     case BUILTIN_TYPE_NONNEGATIVEINTEGER:
-      aName.Assign(NS_LITERAL_STRING("nonNegativeInteger"));
+      aName.AssignLiteral("nonNegativeInteger");
       break;
     case BUILTIN_TYPE_NONPOSITIVEINTEGER:
-      aName.Assign(NS_LITERAL_STRING("nonPositiveInteger"));
+      aName.AssignLiteral("nonPositiveInteger");
       break;
     case BUILTIN_TYPE_INT:
-      aName.Assign(NS_LITERAL_STRING("int"));
+      aName.AssignLiteral("int");
       break;
     case BUILTIN_TYPE_UNSIGNEDINT:
-      aName.Assign(NS_LITERAL_STRING("unsignedInt"));
+      aName.AssignLiteral("unsignedInt");
       break;
     case BUILTIN_TYPE_LONG:
-      aName.Assign(NS_LITERAL_STRING("long"));
+      aName.AssignLiteral("long");
       break;
     case BUILTIN_TYPE_UNSIGNEDLONG:
-      aName.Assign(NS_LITERAL_STRING("unsignedLong"));
+      aName.AssignLiteral("unsignedLong");
       break;
     case BUILTIN_TYPE_SHORT:
-      aName.Assign(NS_LITERAL_STRING("short"));
+      aName.AssignLiteral("short");
       break;
     case BUILTIN_TYPE_UNSIGNEDSHORT:
-      aName.Assign(NS_LITERAL_STRING("unsignedShort"));
+      aName.AssignLiteral("unsignedShort");
       break;
     case BUILTIN_TYPE_DECIMAL:
-      aName.Assign(NS_LITERAL_STRING("decimal"));
+      aName.AssignLiteral("decimal");
       break;
     case BUILTIN_TYPE_FLOAT:
-      aName.Assign(NS_LITERAL_STRING("float"));
+      aName.AssignLiteral("float");
       break;
     case BUILTIN_TYPE_DOUBLE:
-      aName.Assign(NS_LITERAL_STRING("double"));
+      aName.AssignLiteral("double");
       break;
     case BUILTIN_TYPE_BOOLEAN:
-      aName.Assign(NS_LITERAL_STRING("boolean"));
+      aName.AssignLiteral("boolean");
       break;
     case BUILTIN_TYPE_TIME:
-      aName.Assign(NS_LITERAL_STRING("time"));
+      aName.AssignLiteral("time");
       break;
     case BUILTIN_TYPE_DATETIME:
-      aName.Assign(NS_LITERAL_STRING("dateTime"));
+      aName.AssignLiteral("dateTime");
       break;
     case BUILTIN_TYPE_DURATION:
-      aName.Assign(NS_LITERAL_STRING("duration"));
+      aName.AssignLiteral("duration");
       break;
     case BUILTIN_TYPE_DATE:
-      aName.Assign(NS_LITERAL_STRING("date"));
+      aName.AssignLiteral("date");
       break;
     case BUILTIN_TYPE_GMONTH:
-      aName.Assign(NS_LITERAL_STRING("gMonth"));
+      aName.AssignLiteral("gMonth");
       break;
     case BUILTIN_TYPE_GYEAR:
-      aName.Assign(NS_LITERAL_STRING("gYear"));
+      aName.AssignLiteral("gYear");
       break;
     case BUILTIN_TYPE_GYEARMONTH:
-      aName.Assign(NS_LITERAL_STRING("gYearMonth"));
+      aName.AssignLiteral("gYearMonth");
       break;
     case BUILTIN_TYPE_GDAY:
-      aName.Assign(NS_LITERAL_STRING("gDay"));
+      aName.AssignLiteral("gDay");
       break;
     case BUILTIN_TYPE_GMONTHDAY:
-      aName.Assign(NS_LITERAL_STRING("gMonthDay"));
+      aName.AssignLiteral("gMonthDay");
       break;
     case BUILTIN_TYPE_NAME:
-      aName.Assign(NS_LITERAL_STRING("name"));
+      aName.AssignLiteral("name");
       break;
     case BUILTIN_TYPE_QNAME:
-      aName.Assign(NS_LITERAL_STRING("QName"));
+      aName.AssignLiteral("QName");
       break;
     case BUILTIN_TYPE_NCNAME:
-      aName.Assign(NS_LITERAL_STRING("NCName"));
+      aName.AssignLiteral("NCName");
       break;
     case BUILTIN_TYPE_ANYURI:
-      aName.Assign(NS_LITERAL_STRING("anyURI"));
+      aName.AssignLiteral("anyURI");
       break;
     case BUILTIN_TYPE_LANGUAGE:
-      aName.Assign(NS_LITERAL_STRING("language"));
+      aName.AssignLiteral("language");
       break;
     case BUILTIN_TYPE_ID:
-      aName.Assign(NS_LITERAL_STRING("ID"));
+      aName.AssignLiteral("ID");
       break;
     case BUILTIN_TYPE_IDREF:
-      aName.Assign(NS_LITERAL_STRING("IDREF"));
+      aName.AssignLiteral("IDREF");
       break;
     case BUILTIN_TYPE_IDREFS:
-      aName.Assign(NS_LITERAL_STRING("IDREFS"));
+      aName.AssignLiteral("IDREFS");
       break;
     case BUILTIN_TYPE_ENTITY:
-      aName.Assign(NS_LITERAL_STRING("ENTITY"));
+      aName.AssignLiteral("ENTITY");
       break;
     case BUILTIN_TYPE_ENTITIES:
-      aName.Assign(NS_LITERAL_STRING("ENTITIES"));
+      aName.AssignLiteral("ENTITIES");
       break;
     case BUILTIN_TYPE_NOTATION:
-      aName.Assign(NS_LITERAL_STRING("NOTATION"));
+      aName.AssignLiteral("NOTATION");
       break;
     case BUILTIN_TYPE_NMTOKEN:
-      aName.Assign(NS_LITERAL_STRING("NMTOKEN"));
+      aName.AssignLiteral("NMTOKEN");
       break;
     case BUILTIN_TYPE_NMTOKENS:
-      aName.Assign(NS_LITERAL_STRING("NMTOKENS"));
+      aName.AssignLiteral("NMTOKENS");
       break;
     default:
       NS_ERROR("Unknown builtin type!");
@@ -215,7 +229,7 @@ nsSchemaBuiltinType::GetName(nsAString& aName)
 }
 
 /* readonly attribute unsigned short schemaType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaBuiltinType::GetSchemaType(PRUint16 *aSchemaType)
 {
   NS_ENSURE_ARG_POINTER(aSchemaType);
@@ -226,7 +240,7 @@ nsSchemaBuiltinType::GetSchemaType(PRUint16 *aSchemaType)
 }
 
 /* readonly attribute unsigned short simpleType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaBuiltinType::GetSimpleType(PRUint16 *aSimpleType)
 {
   NS_ENSURE_ARG_POINTER(aSimpleType);
@@ -237,7 +251,7 @@ nsSchemaBuiltinType::GetSimpleType(PRUint16 *aSimpleType)
 }
 
 /* readonly attribute unsigned short builtinType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaBuiltinType::GetBuiltinType(PRUint16 *aBuiltinType)
 {
   NS_ENSURE_ARG_POINTER(aBuiltinType);
@@ -268,9 +282,9 @@ NS_IMPL_ISUPPORTS4_CI(nsSchemaListType,
                       nsISchemaSimpleType,
                       nsISchemaListType)
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaListType::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaListType::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   if (mIsResolved) {
     return NS_OK;
@@ -280,7 +294,7 @@ nsSchemaListType::Resolve()
   mIsResolved = PR_TRUE;
   if (mListType && mSchema) {
     nsCOMPtr<nsISchemaType> type;
-    rv = mSchema->ResolveTypePlaceholder(mListType, getter_AddRefs(type));
+    rv = mSchema->ResolveTypePlaceholder(aErrorHandler, mListType, getter_AddRefs(type));
     if (NS_FAILED(rv)) {
       return NS_ERROR_FAILURE;
     }
@@ -289,13 +303,13 @@ nsSchemaListType::Resolve()
       return NS_ERROR_FAILURE;
     }
   }
-  rv = mListType->Resolve();
+  rv = mListType->Resolve(aErrorHandler);
 
   return rv;
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaListType::Clear()
 {
   if (mIsCleared) {
@@ -312,7 +326,7 @@ nsSchemaListType::Clear()
 }
 
 /* readonly attribute wstring name; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaListType::GetName(nsAString& aName)
 {
   aName.Assign(mName);
@@ -321,7 +335,7 @@ nsSchemaListType::GetName(nsAString& aName)
 }
 
 /* readonly attribute unsigned short schemaType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaListType::GetSchemaType(PRUint16 *aSchemaType)
 {
   NS_ENSURE_ARG_POINTER(aSchemaType);
@@ -332,7 +346,7 @@ nsSchemaListType::GetSchemaType(PRUint16 *aSchemaType)
 }
 
 /* readonly attribute unsigned short simpleType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaListType::GetSimpleType(PRUint16 *aSimpleType)
 {
   NS_ENSURE_ARG_POINTER(aSimpleType);
@@ -343,13 +357,12 @@ nsSchemaListType::GetSimpleType(PRUint16 *aSimpleType)
 }
 
 /* readonly attribute nsISchemaSimpleType listType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaListType::GetListType(nsISchemaSimpleType * *aListType)
 {
   NS_ENSURE_ARG_POINTER(aListType);
 
-  *aListType = mListType;
-  NS_IF_ADDREF(*aListType);
+  NS_IF_ADDREF(*aListType = mListType);
 
   return NS_OK;
 }
@@ -383,34 +396,28 @@ NS_IMPL_ISUPPORTS4_CI(nsSchemaUnionType,
                       nsISchemaSimpleType,
                       nsISchemaUnionType)
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaUnionType::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaUnionType::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   if (mIsResolved) {
     return NS_OK;
   }
 
   mIsResolved = PR_TRUE;
-  nsresult rv;
-  PRUint32 i, count;
-  mUnionTypes.Count(&count);
-  for (i = 0; i < count; i++) {
-    nsCOMPtr<nsISchemaType> type;
-    
-    rv = mUnionTypes.QueryElementAt(i, NS_GET_IID(nsISchemaType),
-                                    getter_AddRefs(type));
-    if (NS_FAILED(rv)) {
-      return NS_ERROR_FAILURE;
-    }
-    if (mSchema) {
-      rv = mSchema->ResolveTypePlaceholder(type,
-                                           getter_AddRefs(type));
+  if (mSchema) {
+    PRUint32 i, count;
+    count = mUnionTypes.Count();
+    for (i = 0; i < count; ++i) {
+      nsCOMPtr<nsISchemaType> type;
+      nsresult rv = mSchema->ResolveTypePlaceholder(aErrorHandler, mUnionTypes.ObjectAt(i),
+                                                    getter_AddRefs(type));
       if (NS_FAILED(rv)) {
         return NS_ERROR_FAILURE;
       }
-      mUnionTypes.ReplaceElementAt(type, i);
-      rv = type->Resolve();
+      nsCOMPtr<nsISchemaSimpleType> simpleType = do_QueryInterface(type);
+      mUnionTypes.ReplaceObjectAt(simpleType, i);
+      rv = type->Resolve(aErrorHandler);
       if (NS_FAILED(rv)) {
         return rv;
       }
@@ -421,7 +428,7 @@ nsSchemaUnionType::Resolve()
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaUnionType::Clear()
 {
   if (mIsCleared) {
@@ -429,17 +436,10 @@ nsSchemaUnionType::Clear()
   }
 
   mIsCleared = PR_TRUE;
-  nsresult rv;
   PRUint32 i, count;
-  mUnionTypes.Count(&count);
-  for (i = 0; i < count; i++) {
-    nsCOMPtr<nsISchemaSimpleType> type;
-    
-    rv = mUnionTypes.QueryElementAt(i, NS_GET_IID(nsISchemaSimpleType),
-                                    getter_AddRefs(type));
-    if (NS_SUCCEEDED(rv)) {
-      type->Clear();
-    }
+  count = mUnionTypes.Count();
+  for (i = 0; i < count; ++i) {
+    mUnionTypes.ObjectAt(i)->Clear();
   }
   mUnionTypes.Clear();
 
@@ -447,7 +447,7 @@ nsSchemaUnionType::Clear()
 }
 
 /* readonly attribute wstring name; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaUnionType::GetName(nsAString& aName)
 {
   aName.Assign(mName);
@@ -456,7 +456,7 @@ nsSchemaUnionType::GetName(nsAString& aName)
 }
 
 /* readonly attribute unsigned short schemaType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaUnionType::GetSchemaType(PRUint16 *aSchemaType)
 {
   NS_ENSURE_ARG_POINTER(aSchemaType);
@@ -467,7 +467,7 @@ nsSchemaUnionType::GetSchemaType(PRUint16 *aSchemaType)
 }
 
 /* readonly attribute unsigned short simpleType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaUnionType::GetSimpleType(PRUint16 *aSimpleType)
 {
   NS_ENSURE_ARG_POINTER(aSimpleType);
@@ -478,22 +478,29 @@ nsSchemaUnionType::GetSimpleType(PRUint16 *aSimpleType)
 }
 
 /* readonly attribute PRUint32 unionTypeCount; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaUnionType::GetUnionTypeCount(PRUint32 *aUnionTypeCount)
 {
   NS_ENSURE_ARG_POINTER(aUnionTypeCount);
 
-  return mUnionTypes.Count(aUnionTypeCount);
+  *aUnionTypeCount = mUnionTypes.Count();
+
+  return NS_OK;
 }
 
 /* nsISchemaSimpleType getUnionType (in PRUint32 index); */
-NS_IMETHODIMP 
-nsSchemaUnionType::GetUnionType(PRUint32 index, nsISchemaSimpleType **_retval)
+NS_IMETHODIMP
+nsSchemaUnionType::GetUnionType(PRUint32 aIndex, nsISchemaSimpleType** aResult)
 {
-  NS_ENSURE_ARG_POINTER(_retval);
+  NS_ENSURE_ARG_POINTER(aResult);
 
-  return mUnionTypes.QueryElementAt(index, NS_GET_IID(nsISchemaSimpleType),
-                                    (void**)_retval);
+  if (aIndex >= (PRUint32)mUnionTypes.Count()) {
+    return NS_ERROR_FAILURE;
+  }
+
+  NS_ADDREF(*aResult = mUnionTypes.ObjectAt(aIndex));
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -501,7 +508,7 @@ nsSchemaUnionType::AddUnionType(nsISchemaSimpleType* aType)
 {
   NS_ENSURE_ARG(aType);
 
-  return mUnionTypes.AppendElement(aType);
+  return mUnionTypes.AppendObject(aType) ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
 ////////////////////////////////////////////////////////////
@@ -525,9 +532,9 @@ NS_IMPL_ISUPPORTS4_CI(nsSchemaRestrictionType,
                       nsISchemaSimpleType,
                       nsISchemaRestrictionType)
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaRestrictionType::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaRestrictionType::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   if (mIsResolved) {
     return NS_OK;
@@ -537,7 +544,7 @@ nsSchemaRestrictionType::Resolve()
   mIsResolved = PR_TRUE;
   if (mBaseType && mSchema) {
     nsCOMPtr<nsISchemaType> type;
-    rv = mSchema->ResolveTypePlaceholder(mBaseType, getter_AddRefs(type));
+    rv = mSchema->ResolveTypePlaceholder(aErrorHandler, mBaseType, getter_AddRefs(type));
     if (NS_FAILED(rv)) {
       return NS_ERROR_FAILURE;
     }
@@ -545,14 +552,14 @@ nsSchemaRestrictionType::Resolve()
     if (!mBaseType) {
       return NS_ERROR_FAILURE;
     }
-    rv = mBaseType->Resolve();
+    rv = mBaseType->Resolve(aErrorHandler);
   }
 
   return rv;
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaRestrictionType::Clear()
 {
   if (mIsCleared) {
@@ -565,17 +572,10 @@ nsSchemaRestrictionType::Clear()
     mBaseType = nsnull;
   }
 
-  nsresult rv;
   PRUint32 i, count;
-  mFacets.Count(&count);
-  for (i = 0; i < count; i++) {
-    nsCOMPtr<nsISchemaFacet> facet;
-    
-    rv = mFacets.QueryElementAt(i, NS_GET_IID(nsISchemaFacet),
-                                getter_AddRefs(facet));
-    if (NS_SUCCEEDED(rv)) {
-      facet->Clear();
-    }
+  count = mFacets.Count();
+  for (i = 0; i < count; ++i) {
+    mFacets.ObjectAt(i)->Clear();
   }
   mFacets.Clear();
 
@@ -583,7 +583,7 @@ nsSchemaRestrictionType::Clear()
 }
 
 /* readonly attribute wstring name; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaRestrictionType::GetName(nsAString& aName)
 {
   aName.Assign(mName);
@@ -592,7 +592,7 @@ nsSchemaRestrictionType::GetName(nsAString& aName)
 }
 
 /* readonly attribute unsigned short schemaType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaRestrictionType::GetSchemaType(PRUint16 *aSchemaType)
 {
   NS_ENSURE_ARG_POINTER(aSchemaType);
@@ -603,7 +603,7 @@ nsSchemaRestrictionType::GetSchemaType(PRUint16 *aSchemaType)
 }
 
 /* readonly attribute unsigned short simpleType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaRestrictionType::GetSimpleType(PRUint16 *aSimpleType)
 {
   NS_ENSURE_ARG_POINTER(aSimpleType);
@@ -614,37 +614,43 @@ nsSchemaRestrictionType::GetSimpleType(PRUint16 *aSimpleType)
 }
 
 /* readonly attribute nsISchemaSimpleType baseType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaRestrictionType::GetBaseType(nsISchemaSimpleType * *aBaseType)
 {
   NS_ENSURE_ARG_POINTER(aBaseType);
 
-  *aBaseType = mBaseType;
-  NS_IF_ADDREF(*aBaseType);
+  NS_IF_ADDREF(*aBaseType = mBaseType);
 
   return NS_OK;
 }
 
 /* readonly attribute PRUint32 facetCount; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaRestrictionType::GetFacetCount(PRUint32 *aFacetCount)
 {
   NS_ENSURE_ARG_POINTER(aFacetCount);
 
-  return mFacets.Count(aFacetCount);
+  *aFacetCount = mFacets.Count();
+
+  return NS_OK;
 }
 
 /* nsISchemaFacet getFacet(in PRUint32 index); */
-NS_IMETHODIMP 
-nsSchemaRestrictionType::GetFacet(PRUint32 index, nsISchemaFacet **_retval)
+NS_IMETHODIMP
+nsSchemaRestrictionType::GetFacet(PRUint32 aIndex, nsISchemaFacet** aResult)
 {
-  NS_ENSURE_ARG_POINTER(_retval);
+  NS_ENSURE_ARG_POINTER(aResult);
 
-  return mFacets.QueryElementAt(index, NS_GET_IID(nsISchemaFacet),
-                                (void**)_retval);
+  if (aIndex >= (PRUint32)mFacets.Count()) {
+    return NS_ERROR_FAILURE;
+  }
+
+  NS_ADDREF(*aResult = mFacets.ObjectAt(aIndex));
+
+  return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaRestrictionType::SetBaseType(nsISchemaSimpleType* aBaseType)
 {
   NS_ENSURE_ARG(aBaseType);
@@ -654,12 +660,12 @@ nsSchemaRestrictionType::SetBaseType(nsISchemaSimpleType* aBaseType)
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaRestrictionType::AddFacet(nsISchemaFacet* aFacet)
 {
   NS_ENSURE_ARG(aFacet);
 
-  return mFacets.AppendElement(aFacet);
+  return mFacets.AppendObject(aFacet) ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
 ////////////////////////////////////////////////////////////
@@ -683,22 +689,22 @@ NS_IMPL_ISUPPORTS3_CI(nsSchemaTypePlaceholder,
                       nsISchemaSimpleType)
 
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaTypePlaceholder::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaTypePlaceholder::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   return NS_OK;
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaTypePlaceholder::Clear()
 {
   return NS_OK;
 }
 
 /* readonly attribute wstring name; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaTypePlaceholder::GetName(nsAString& aName)
 {
   aName.Assign(mName);
@@ -707,7 +713,7 @@ nsSchemaTypePlaceholder::GetName(nsAString& aName)
 }
 
 /* readonly attribute unsigned short schemaType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaTypePlaceholder::GetSchemaType(PRUint16 *aSchemaType)
 {
   NS_ENSURE_ARG_POINTER(aSchemaType);
@@ -718,7 +724,7 @@ nsSchemaTypePlaceholder::GetSchemaType(PRUint16 *aSchemaType)
 }
 
 /* readonly attribute unsigned short simpleType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaTypePlaceholder::GetSimpleType(PRUint16 *aSimpleType)
 {
   return NS_ERROR_FAILURE;
@@ -743,15 +749,15 @@ NS_IMPL_ISUPPORTS2_CI(nsSchemaFacet,
                       nsISchemaComponent,
                       nsISchemaFacet)
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaFacet::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaFacet::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   return NS_OK;
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaFacet::Clear()
 {
   return NS_OK;
@@ -774,7 +780,7 @@ nsSchemaFacet::SetIsFixed(PRBool aIsFixed)
 }
 
 /* readonly attribute unsigned short facetType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaFacet::GetFacetType(PRUint16 *aFacetType)
 {
   NS_ENSURE_ARG_POINTER(aFacetType);
@@ -785,7 +791,7 @@ nsSchemaFacet::GetFacetType(PRUint16 *aFacetType)
 }
 
 /* readonly attribute AString value; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaFacet::GetValue(nsAString & aValue)
 {
   if ((mFacetType == FACET_TYPE_TOTALDIGITS) ||
@@ -803,7 +809,7 @@ nsSchemaFacet::GetValue(nsAString & aValue)
 }
 
 /* readonly attribute PRUint32 lengthValue; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaFacet::GetLengthValue(PRUint32 *aLengthValue)
 {
   NS_ENSURE_ARG_POINTER(aLengthValue);
@@ -820,7 +826,7 @@ nsSchemaFacet::GetLengthValue(PRUint32 *aLengthValue)
 }
 
 /* readonly attribute PRUint32 digitsValue; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaFacet::GetDigitsValue(PRUint32 *aDigitsValue)
 {
   NS_ENSURE_ARG_POINTER(aDigitsValue);
@@ -836,7 +842,7 @@ nsSchemaFacet::GetDigitsValue(PRUint32 *aDigitsValue)
 }
 
 /* readonly attribute unsigned short whitespaceValue; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaFacet::GetWhitespaceValue(PRUint16 *aWhitespaceValue)
 {
   NS_ENSURE_ARG_POINTER(aWhitespaceValue);
@@ -851,7 +857,7 @@ nsSchemaFacet::GetWhitespaceValue(PRUint16 *aWhitespaceValue)
 }
 
 /* readonly attribute boolean isfixed; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaFacet::GetIsfixed(PRBool *aIsFixed)
 {
   NS_ENSURE_ARG_POINTER(aIsFixed);
@@ -861,7 +867,7 @@ nsSchemaFacet::GetIsfixed(PRBool *aIsFixed)
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaFacet::SetValue(const nsAString& aStrValue)
 {
   mStrValue.Assign(aStrValue);

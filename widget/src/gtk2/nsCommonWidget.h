@@ -14,9 +14,9 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code mozilla.org code.
+ * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code Christopher Blizzard
+ * The Initial Developer of the Original Code is Christopher Blizzard
  * <blizzard@mozilla.org>.  Portions created by the Initial Developer
  * are Copyright (C) 2001 the Initial Developer. All Rights Reserved.
  *
@@ -43,6 +43,8 @@
 #include "nsGUIEvent.h"
 #include <gdk/gdkevents.h>
 
+#ifdef MOZ_LOGGING
+
 // make sure that logging is enabled before including prlog.h
 #define FORCE_PR_LOG
 
@@ -57,6 +59,15 @@ extern PRLogModuleInfo *gWidgetDrawLog;
 #define LOGFOCUS(args) PR_LOG(gWidgetFocusLog, 4, args)
 #define LOGIM(args) PR_LOG(gWidgetIMLog, 4, args)
 #define LOGDRAW(args) PR_LOG(gWidgetDrawLog, 4, args)
+
+#else
+
+#define LOG(args)
+#define LOGFOCUS(args)
+#define LOGIM(args)
+#define LOGDRAW(args)
+
+#endif /* MOZ_LOGGING */
 
 class nsCommonWidget : public nsBaseWidget {
 public:
@@ -126,8 +137,11 @@ protected:
     PRPackedBool        mIsDestroyed;
 
     // This is a flag that tracks if we need to resize a widget or
-    // window before we call |Show| on that widget.
+    // window when we show it.
     PRPackedBool        mNeedsResize;
+    // This is a flag that tracks if we need to move a widget or
+    // window when we show it.
+    PRPackedBool        mNeedsMove;
     // Should we send resize events on all resizes?
     PRPackedBool        mListenForResizes;
     // This flag tracks if we're hidden or shown.

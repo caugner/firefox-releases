@@ -1,27 +1,44 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Justin Bradford <jab@atdot.org>
  *   Bradley Baetz <bbaetz@acm.org>
  *   Darin Fisher <darin@meer.net>
- */
+ *   Malcolm Smith <malsmith@cs.rmit.edu.au>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nspr.h"
 #include "nsString.h"
@@ -29,7 +46,9 @@
 
 #include "nsIServiceManager.h"
 #include "nsIDNSService.h"
+#include "nsIDNSRecord.h"
 #include "nsISOCKSSocketInfo.h"
+#include "nsISocketProvider.h"
 #include "nsSOCKSIOLayer.h"
 #include "nsNetCID.h"
 
@@ -52,20 +71,28 @@ class nsSOCKSSocketInfo : public nsISOCKSSocketInfo
 public:
     nsSOCKSSocketInfo();
     virtual ~nsSOCKSSocketInfo() {}
-    
+
     NS_DECL_ISUPPORTS
     NS_DECL_NSISOCKSSOCKETINFO
 
-    void Init(PRInt32 version, const char *proxyHost, PRInt32 proxyPort);
-    
-    const nsCString &ProxyHost() { return mProxyHost; }
-    PRInt32          ProxyPort() { return mProxyPort; }
-    PRInt32          Version()   { return mVersion; }
+    void Init(PRInt32 version,
+              const char *proxyHost,
+              PRInt32 proxyPort,
+              const char *destinationHost,
+              PRUint32 flags);
+
+    const nsCString &DestinationHost() { return mDestinationHost; }
+    const nsCString &ProxyHost()       { return mProxyHost; }
+    PRInt32          ProxyPort()       { return mProxyPort; }
+    PRInt32          Version()         { return mVersion; }
+    PRUint32         Flags()           { return mFlags; }
 
 private:
+    nsCString mDestinationHost;
     nsCString mProxyHost;
-    PRInt32	  mProxyPort;
+    PRInt32   mProxyPort;
     PRInt32   mVersion;   // SOCKS version 4 or 5
+    PRUint32  mFlags;
     PRNetAddr mInternalProxyAddr;
     PRNetAddr mExternalProxyAddr;
     PRNetAddr mDestinationAddr;
@@ -74,6 +101,7 @@ private:
 nsSOCKSSocketInfo::nsSOCKSSocketInfo()
     : mProxyPort(-1)
     , mVersion(-1)
+    , mFlags(0)
 {
     PR_InitializeNetAddr(PR_IpAddrAny, 0, &mInternalProxyAddr);
     PR_InitializeNetAddr(PR_IpAddrAny, 0, &mExternalProxyAddr);
@@ -81,11 +109,13 @@ nsSOCKSSocketInfo::nsSOCKSSocketInfo()
 }
 
 void
-nsSOCKSSocketInfo::Init(PRInt32 version, const char *proxyHost, PRInt32 proxyPort)
+nsSOCKSSocketInfo::Init(PRInt32 version, const char *proxyHost, PRInt32 proxyPort, const char *host, PRUint32 flags)
 {
-    mVersion   = version;
-    mProxyHost = proxyHost;
-    mProxyPort = proxyPort;
+    mVersion         = version;
+    mProxyHost       = proxyHost;
+    mProxyPort       = proxyPort;
+    mDestinationHost = host;
+    mFlags           = flags;
 }
 
 NS_IMPL_THREADSAFE_ISUPPORTS1(nsSOCKSSocketInfo, nsISOCKSSocketInfo)
@@ -166,17 +196,17 @@ ConnectSOCKS5(PRFileDesc *fd, const PRNetAddr *addr, PRNetAddr *extAddr, PRInter
         LOGERROR(("PR_Send() failed. Wrote: %d bytes; Expected: %d.", write_len, request_len));
         return NS_ERROR_FAILURE;
     }
-    
+
     // get the server's response. Use PR_Recv() instead of 
     response_len = 2;
     response_len = PR_Recv(fd, response, response_len, 0, timeout);
-    
+
     if (response_len <= 0) {
 
         LOGERROR(("PR_Recv() failed. response_len = %d.", response_len));
         return NS_ERROR_FAILURE;
     }
-    
+
     if (response[0] != 0x05) {
         // it's a either not SOCKS or not our version
         LOGERROR(("Not a SOCKS 5 reply. Expected: 5; received: %x", response[0]));
@@ -206,67 +236,119 @@ ConnectSOCKS5(PRFileDesc *fd, const PRNetAddr *addr, PRNetAddr *extAddr, PRInter
             LOGERROR(("Uncrecognized authentication method received: %x", response[1]));
             return NS_ERROR_FAILURE;
     }
-    
+
     // we are now authenticated, so lets tell
     // the server where to connect to
-    
-    request_len = 6;
-    
+
+    request_len = 0;
+
     request[0] = 0x05; // SOCKS version 5
     request[1] = 0x01; // CONNECT command
     request[2] = 0x00; // obligatory reserved field (perfect for MS tampering!)
-    
-    if (PR_NetAddrFamily(addr) == PR_AF_INET) {
-        
+
+    // get destination port
+    PRInt32 destPort = PR_ntohs(PR_NetAddrInetPort(addr));
+    nsSOCKSSocketInfo * info = (nsSOCKSSocketInfo*) fd->secret;
+
+    if (info->Flags() & nsISocketProvider::PROXY_RESOLVES_HOST) {
+
+        LOGDEBUG(("using server to resolve hostnames rather than resolving it first\n"));
+
+        // if the PROXY_RESOLVES_HOST flag is set, we assume
+        // that the transport wants us to pass the SOCKS server the 
+        // hostname and port and let it do the name resolution.
+
+        // the real destination hostname and port was stored
+        // in our info object earlier when this layer was created.
+
+        const nsCString& destHost = info->DestinationHost();
+
+        LOGDEBUG(("host:port -> %s:%li", destHost.get(), destPort));
+
+        request[3] = 0x03; // encoding of destination address (3 == hostname)
+
+        int host_len = destHost.Length();
+        if (host_len > 255) {
+            // SOCKS5 transmits the length of the hostname in a single char.
+            // This gives us an absolute limit of 255 chars in a hostname, and
+            // there's nothing we can do to extend it.  I don't think many
+            // hostnames will ever be bigger than this, so hopefully it's an
+            // uneventful abort condition.
+            LOGERROR (("Hostname too big for SOCKS5."));
+            return NS_ERROR_INVALID_ARG;
+        }
+        request[4] = (char) host_len;
+        request_len = 5;
+
+        // Send the initial header first...
+        write_len = PR_Send(fd, request, request_len, 0, timeout);
+        if (write_len != request_len) {
+            // bad write
+            LOGERROR(("PR_Send() failed sending connect command. Wrote: %d bytes; Expected: %d.", write_len, request_len));
+            return NS_ERROR_FAILURE;
+        }
+
+        // Now send the hostname...
+        write_len = PR_Send(fd, destHost.get(), host_len, 0, timeout);
+        if (write_len != host_len) {
+            // bad write
+            LOGERROR(("PR_Send() failed sending connect command. Wrote: %d bytes; Expected: %d.", write_len, host_len));
+            return NS_ERROR_FAILURE;
+        }
+
+        // There's no data left because we just sent it.
+        request_len = 0;
+
+    } else if (PR_NetAddrFamily(addr) == PR_AF_INET) {
+
         request[3] = 0x01; // encoding of destination address (1 == IPv4)
-        request_len += 4;
-        
+        request_len = 8;   // 4 for address, 4 SOCKS headers
+
         char * ip = (char*)(&addr->inet.ip);
         request[4] = *ip++;
         request[5] = *ip++;
         request[6] = *ip++;
         request[7] = *ip++;
-        
+
     } else if (PR_NetAddrFamily(addr) == PR_AF_INET6) {
-        
+
         request[3] = 0x04; // encoding of destination address (4 == IPv6)
-        request_len += 16;
-        
+        request_len = 20;  // 16 for address, 4 SOCKS headers
+
         char * ip = (char*)(&addr->ipv6.ip.pr_s6_addr);
-        request[4] = *ip++; request[5] = *ip++; request[6] = *ip++; request[7] = *ip++;
-        request[8] = *ip++; request[9] = *ip++; request[10] = *ip++; request[11] = *ip++;
-        request[12] = *ip++; request[13] = *ip++; request[14] = *ip++; request[15] = *ip++;
-        request[16] = *ip++; request[17] = *ip++; request[18] = *ip++; request[19] = *ip++;
-        
+        request[4] = *ip++; request[5] = *ip++; 
+        request[6] = *ip++; request[7] = *ip++;
+        request[8] = *ip++; request[9] = *ip++; 
+        request[10] = *ip++; request[11] = *ip++;
+        request[12] = *ip++; request[13] = *ip++; 
+        request[14] = *ip++; request[15] = *ip++;
+        request[16] = *ip++; request[17] = *ip++; 
+        request[18] = *ip++; request[19] = *ip++;
+
         // we're going to test to see if this address can
         // be mapped back into IPv4 without loss. if so,
         // we'll use IPv4 instead, as reliable SOCKS server 
         // support for IPv6 is probably questionable.
-        
+
         if (PR_IsNetAddrType(addr, PR_IpAddrV4Mapped)) {
-            
             request[3] = 0x01; // ipv4 encoding
             request[4] = request[16];
             request[5] = request[17];
             request[6] = request[18];
             request[7] = request[19];
             request_len -= 12;
-            
         }
-        
     } else {
-        
         // Unknown address type
         LOGERROR(("Don't know what kind of IP address this is."));
         return NS_ERROR_FAILURE;
     }
-    
-    // destination port
-    PRUint16 destPort = PR_htons(PR_NetAddrInetPort(addr));
-    
-    request[request_len-2] = (unsigned char)(destPort >> 8);
-    request[request_len-1] = (unsigned char)destPort;
-    
+
+    // add the destination port to the request
+    request[request_len] = (unsigned char)(destPort >> 8);
+    request[request_len+1] = (unsigned char)destPort;
+    request_len += 2;
+
     write_len = PR_Send(fd, request, request_len, 0, timeout);
     if (write_len != request_len) {
 
@@ -274,7 +356,7 @@ ConnectSOCKS5(PRFileDesc *fd, const PRNetAddr *addr, PRNetAddr *extAddr, PRInter
         LOGERROR(("PR_Send() failed sending connect command. Wrote: %d bytes; Expected: %d.", write_len, request_len));
         return NS_ERROR_FAILURE;
     }
-    
+
     response_len = 22;
     response_len = PR_Recv(fd, response, response_len, 0, timeout);
     if (response_len <= 0) {
@@ -283,14 +365,14 @@ ConnectSOCKS5(PRFileDesc *fd, const PRNetAddr *addr, PRNetAddr *extAddr, PRInter
         LOGERROR(("PR_Recv() failed getting connect command reply. response_len = %d.", response_len));
         return NS_ERROR_FAILURE;
     }
-    
+
     if (response[0] != 0x05) {
 
         // bad response
         LOGERROR(("Not a SOCKS 5 reply. Expected: 5; received: %x", response[0]));
         return NS_ERROR_FAILURE;
     }
-    
+
     switch(response[1]) {
         case 0x00:  break;      // success
         case 0x01:  LOGERROR(("SOCKS 5 server rejected connect request: 01, General SOCKS server failure."));
@@ -312,10 +394,10 @@ ConnectSOCKS5(PRFileDesc *fd, const PRNetAddr *addr, PRNetAddr *extAddr, PRInter
         default:    LOGERROR(("SOCKS 5 server rejected connect request: %x.", response[1]));
                     return NS_ERROR_FAILURE;
 
-        
+
     }
-    
-    
+
+
     // get external bound address (this is what 
     // the outside world sees as "us")
     char *ip = nsnull;
@@ -323,30 +405,34 @@ ConnectSOCKS5(PRFileDesc *fd, const PRNetAddr *addr, PRNetAddr *extAddr, PRInter
 
     switch (response[3]) {
         case 0x01: // IPv4
-            
+
             extPort = (response[8] << 8) | response[9];
-            
+
             PR_SetNetAddr(PR_IpAddrAny, PR_AF_INET, extPort, extAddr);
-            
+
             ip = (char*)(&extAddr->inet.ip);
             *ip++ = response[4];
             *ip++ = response[5];
             *ip++ = response[6];
             *ip++ = response[7];
-            
+
             break;
         case 0x04: // IPv6
-            
+
             extPort = (response[20] << 8) | response[21];
-            
+
             PR_SetNetAddr(PR_IpAddrAny, PR_AF_INET6, extPort, extAddr);
-            
+
             ip = (char*)(&extAddr->ipv6.ip.pr_s6_addr);
-            *ip++ = response[4]; *ip++ = response[5]; *ip++ = response[6]; *ip++ = response[7];
-            *ip++ = response[8]; *ip++ = response[9]; *ip++ = response[10]; *ip++ = response[11];
-            *ip++ = response[12]; *ip++ = response[13]; *ip++ = response[14]; *ip++ = response[15];
-            *ip++ = response[16]; *ip++ = response[17]; *ip++ = response[18]; *ip++ = response[19];
-            
+            *ip++ = response[4]; *ip++ = response[5]; 
+            *ip++ = response[6]; *ip++ = response[7];
+            *ip++ = response[8]; *ip++ = response[9]; 
+            *ip++ = response[10]; *ip++ = response[11];
+            *ip++ = response[12]; *ip++ = response[13]; 
+            *ip++ = response[14]; *ip++ = response[15];
+            *ip++ = response[16]; *ip++ = response[17]; 
+            *ip++ = response[18]; *ip++ = response[19];
+
             break;
         case 0x03: // FQDN (should not get this back)
         default: // unknown format
@@ -371,47 +457,20 @@ ConnectSOCKS4(PRFileDesc *fd, const PRNetAddr *addr, PRIntervalTime timeout)
 
     unsigned char request[12];
     int request_len = 0;
+    int write_len;
     unsigned char response[10];
     int response_len = 0;
+    char *ip = nsnull;
 
     request[0] = 0x04; // SOCKS version 4
     request[1] = 0x01; // CD command code -- 1 for connect
 
     // destination port
-    PRUint16 destPort = PR_htons(PR_NetAddrInetPort(addr));
+    PRInt32 destPort = PR_ntohs(PR_NetAddrInetPort(addr));
 
+    // store the port
     request[2] = (unsigned char)(destPort >> 8);
     request[3] = (unsigned char)destPort;
-
-    // destination IP 
-    char * ip = nsnull;
-
-    // IPv4
-    if (PR_NetAddrFamily(addr) == PR_AF_INET) 
-        ip = (char*)(&addr->inet.ip);
-
-    // IPv6
-    else if (PR_NetAddrFamily(addr) == PR_AF_INET6) {
-
-        // IPv4 address encoded in an IPv6 address
-        if (PR_IsNetAddrType(addr, PR_IpAddrV4Mapped))
-            ip = (char*)(&addr->ipv6.ip.pr_s6_addr[12]);
-        else {
-            LOGERROR(("IPv6 not supported in SOCK 4."));
-            return NS_ERROR_FAILURE;	// SOCKS 4 can't do IPv6
-        }
-    }
-
-    else {
-
-        LOGERROR(("Don't know what kind of IP address this is."));
-        return NS_ERROR_FAILURE;		// don't recognize this type
-    }
-
-    request[4] = *ip++;
-    request[5] = *ip++;
-    request[6] = *ip++;
-    request[7] = *ip++;
 
     // username
     request[8] = 'M';
@@ -421,13 +480,89 @@ ConnectSOCKS4(PRFileDesc *fd, const PRNetAddr *addr, PRIntervalTime timeout)
     request[11] = 0x00;
 
     request_len = 12;
-    int write_len = PR_Send(fd, request, request_len, 0, timeout);
-    if (write_len != request_len) {
 
-        LOGERROR(("PR_Send() failed. Wrote: %d bytes; Expected: %d.", write_len, request_len));
-        return NS_ERROR_FAILURE;
+    nsSOCKSSocketInfo * info = (nsSOCKSSocketInfo*) fd->secret;
+
+    if (info->Flags() & nsISocketProvider::PROXY_RESOLVES_HOST) {
+
+        LOGDEBUG(("using server to resolve hostnames rather than resolving it first\n"));
+
+        // if the PROXY_RESOLVES_HOST flag is set, we assume that the
+        // transport wants us to pass the SOCKS server the hostname
+        // and port and let it do the name resolution.
+
+        // an extension to SOCKS 4, called 4a, specifies a way
+        // to do this, so we'll try that and hope the
+        // server supports it.
+
+        // the real destination hostname and port was stored
+        // in our info object earlier when this layer was created.
+
+        const nsCString& destHost = info->DestinationHost();
+
+        LOGDEBUG(("host:port -> %s:%li\n", destHost.get(), destPort));
+
+        // the IP portion of the query is set to this special address.
+        request[4] = 0;
+        request[5] = 0;
+        request[6] = 0;
+        request[7] = 1;
+
+        write_len = PR_Send(fd, request, request_len, 0, timeout);
+        if (write_len != request_len) {
+            LOGERROR(("PR_Send() failed. Wrote: %d bytes; Expected: %d.", write_len, request_len));
+            return NS_ERROR_FAILURE;
+        }
+
+        // Remember the NULL.
+        int host_len = destHost.Length() + 1;
+
+        write_len = PR_Send(fd, destHost.get(), host_len, 0, timeout);
+        if (write_len != host_len) {
+            LOGERROR(("PR_Send() failed. Wrote: %d bytes; Expected: %d.", write_len, host_len));
+            return NS_ERROR_FAILURE;
+        }
+
+        // No data to send, just sent it.
+        request_len = 0;
+
+    } else if (PR_NetAddrFamily(addr) == PR_AF_INET) { // IPv4
+
+        // store the ip
+        ip = (char*)(&addr->inet.ip);
+        request[4] = *ip++;
+        request[5] = *ip++;
+        request[6] = *ip++;
+        request[7] = *ip++;
+
+    } else if (PR_NetAddrFamily(addr) == PR_AF_INET6) { // IPv6
+
+        // IPv4 address encoded in an IPv6 address
+        if (PR_IsNetAddrType(addr, PR_IpAddrV4Mapped)) {
+            // store the ip
+            ip = (char*)(&addr->ipv6.ip.pr_s6_addr[12]);
+            request[4] = *ip++;
+            request[5] = *ip++;
+            request[6] = *ip++;
+            request[7] = *ip++;
+        } else {
+            LOGERROR(("IPv6 is not supported in SOCKS 4."));
+            return NS_ERROR_FAILURE;	// SOCKS 4 can't do IPv6
+        }
+
+    } else {
+        LOGERROR(("Don't know what kind of IP address this is."));
+        return NS_ERROR_FAILURE;		// don't recognize this type
     }
-    
+
+    if (request_len > 0) {
+        write_len = PR_Send(fd, request, request_len, 0, timeout);
+        if (write_len != request_len) {
+            LOGERROR(("PR_Send() failed. Wrote: %d bytes; Expected: %d.", write_len, request_len));
+            return NS_ERROR_FAILURE;
+        }
+    }
+
     // get the server's response
     response_len = 8;	// size of the response
     response_len = PR_Recv(fd, response, response_len, 0, timeout);
@@ -436,7 +571,7 @@ ConnectSOCKS4(PRFileDesc *fd, const PRNetAddr *addr, PRIntervalTime timeout)
         LOGERROR(("PR_Recv() failed. response_len = %d.", response_len));
         return NS_ERROR_FAILURE;
     }
-    
+
     if ((response[0] != 0x00) && (response[0] != 0x04)) {
         // Novell BorderManager sends a response of type 4, should be zero
         // According to the spec. Cope with this brokenness.        
@@ -461,10 +596,10 @@ nsSOCKSIOLayerConnect(PRFileDesc *fd, const PRNetAddr *addr, PRIntervalTime /*ti
 {
 
     PRStatus status;
-    
+
     nsSOCKSSocketInfo * info = (nsSOCKSSocketInfo*) fd->secret;
     if (info == NULL) return PR_FAILURE;
-    
+
     // First, we need to look up our proxy...
     const nsCString &proxyHost = info->ProxyHost();
 
@@ -481,7 +616,7 @@ nsSOCKSIOLayerConnect(PRFileDesc *fd, const PRNetAddr *addr, PRIntervalTime /*ti
         nsCOMPtr<nsIDNSService> dns;
         nsCOMPtr<nsIDNSRecord> rec; 
         nsresult rv;
-        
+
         dns = do_GetService(NS_DNSSERVICE_CONTRACTID, &rv);
         if (NS_FAILED(rv))
             return PR_FAILURE;
@@ -496,38 +631,38 @@ nsSOCKSIOLayerConnect(PRFileDesc *fd, const PRNetAddr *addr, PRIntervalTime /*ti
     }
 
     info->SetInternalProxyAddr(&proxyAddr);
-    
+
     // For now, we'll do this as a blocking connect,
     // but with nspr 4.1, the necessary functions to
     // do a non-blocking connect will be available
-    
+
     // Preserve the non-blocking state of the socket
     PRBool nonblocking;
     PRSocketOptionData sockopt;
     sockopt.option = PR_SockOpt_Nonblocking;
     status = PR_GetSocketOption(fd, &sockopt);
-    
+
     if (PR_SUCCESS != status) {
         LOGERROR(("PR_GetSocketOption() failed. status = %x.", status));
         return status;
     }
-    
+
     // Store blocking option
     nonblocking = sockopt.value.non_blocking;
-    
+
     sockopt.option = PR_SockOpt_Nonblocking;
     sockopt.value.non_blocking = PR_FALSE;
     status = PR_SetSocketOption(fd, &sockopt);
-    
+
     if (PR_SUCCESS != status) {
         LOGERROR(("PR_SetSocketOption() failed. status = %x.", status));
         return status;
     }
-    
+
     // Now setup sockopts, so we can restore the value later.
     sockopt.option = PR_SockOpt_Nonblocking;
     sockopt.value.non_blocking = nonblocking;
-    
+
 
     // This connectWait should be long enough to connect to local proxy
     // servers, but not much longer. Since this protocol negotiation
@@ -540,17 +675,17 @@ nsSOCKSIOLayerConnect(PRFileDesc *fd, const PRNetAddr *addr, PRIntervalTime /*ti
 
     // Connect to the proxy server.
     status = fd->lower->methods->connect(fd->lower, &proxyAddr, connectWait);
-    
+
     if (PR_SUCCESS != status) {
         LOGERROR(("Failed to TCP connect to the proxy server (%s): timeout = %d, status = %x.",proxyHost.get(), connectWait, status));
         PR_SetSocketOption(fd, &sockopt);
         return status;
     }
-    
-    
+
+
     // We are now connected to the SOCKS proxy server.
     // Now we will negotiate a connection to the desired server.
-    
+
     // External IP address returned from ConnectSOCKS5(). Not supported in SOCKS4.
     PRNetAddr extAddr;	
     PR_InitializeNetAddr(PR_IpAddrNull, 0, &extAddr);
@@ -583,16 +718,16 @@ nsSOCKSIOLayerConnect(PRFileDesc *fd, const PRNetAddr *addr, PRIntervalTime /*ti
 
     }
 
-    
+
     info->SetDestinationAddr((PRNetAddr*)addr);
     info->SetExternalProxyAddr(&extAddr);
-    
+
     // restore non-blocking option
     PR_SetSocketOption(fd, &sockopt);
-    
+
     // we're set-up and connected. 
     // this socket can be used as normal now.
-    
+
     return PR_SUCCESS;
 }
 
@@ -601,13 +736,13 @@ nsSOCKSIOLayerClose(PRFileDesc *fd)
 {
     nsSOCKSSocketInfo * info = (nsSOCKSSocketInfo*) fd->secret;
     PRDescIdentity id = PR_GetLayersIdentity(fd);
-    
+
     if (info && id == nsSOCKSIOLayerIdentity)
     {
         NS_RELEASE(info);
         fd->identity = PR_INVALID_IO_LAYER;
     }
-    
+
     return fd->lower->methods->close(fd->lower);
 }
 
@@ -641,7 +776,7 @@ nsSOCKSIOLayerGetName(PRFileDesc *fd, PRNetAddr *addr)
         if (info->GetExternalProxyAddr(&addr) == NS_OK)
             return PR_SUCCESS;
     }
-    
+
     return PR_FAILURE;
 }
 
@@ -649,12 +784,12 @@ static PRStatus PR_CALLBACK
 nsSOCKSIOLayerGetPeerName(PRFileDesc *fd, PRNetAddr *addr)
 {
     nsSOCKSSocketInfo * info = (nsSOCKSSocketInfo*) fd->secret;
-    
+
     if (info != NULL && addr != NULL) {
         if (info->GetDestinationAddr(&addr) == NS_OK)
             return PR_SUCCESS;
     }
-    
+
     return PR_FAILURE;
 }
 
@@ -673,6 +808,7 @@ nsSOCKSIOLayerAddToSocket(PRInt32 family,
                           const char *proxyHost,
                           PRInt32 proxyPort,
                           PRInt32 socksVersion,
+                          PRUint32 flags,
                           PRFileDesc *fd, 
                           nsISupports** info)
 {
@@ -683,7 +819,7 @@ nsSOCKSIOLayerAddToSocket(PRInt32 family,
     {
         nsSOCKSIOLayerIdentity		= PR_GetUniqueIdentity("SOCKS layer");
         nsSOCKSIOLayerMethods		= *PR_GetDefaultIOMethods();
-        
+
         nsSOCKSIOLayerMethods.connect	= nsSOCKSIOLayerConnect;
         nsSOCKSIOLayerMethods.bind	= nsSOCKSIOLayerBind;
         nsSOCKSIOLayerMethods.acceptread = nsSOCKSIOLayerAcceptRead;
@@ -692,7 +828,7 @@ nsSOCKSIOLayerAddToSocket(PRInt32 family,
         nsSOCKSIOLayerMethods.accept	= nsSOCKSIOLayerAccept;
         nsSOCKSIOLayerMethods.listen	= nsSOCKSIOLayerListen;
         nsSOCKSIOLayerMethods.close	= nsSOCKSIOLayerClose;
-        
+
         firstTime			= PR_FALSE;
 
 #if defined(PR_LOGGING)
@@ -700,19 +836,19 @@ nsSOCKSIOLayerAddToSocket(PRInt32 family,
 #endif
 
     }
-    
+
     LOGDEBUG(("Entering nsSOCKSIOLayerAddToSocket()."));
-    
+
     PRFileDesc *	layer;
     PRStatus	rv;
-    
+
     layer = PR_CreateIOLayerStub(nsSOCKSIOLayerIdentity, &nsSOCKSIOLayerMethods);
     if (! layer)
     {
         LOGERROR(("PR_CreateIOLayerStub() failed."));
         return NS_ERROR_FAILURE;
     }
-    
+
     nsSOCKSSocketInfo * infoObject = new nsSOCKSSocketInfo();
     if (!infoObject)
     {
@@ -721,12 +857,12 @@ nsSOCKSIOLayerAddToSocket(PRInt32 family,
         PR_DELETE(layer);
         return NS_ERROR_FAILURE;
     }
-    
+
     NS_ADDREF(infoObject);
-    infoObject->Init(socksVersion, proxyHost, proxyPort);
+    infoObject->Init(socksVersion, proxyHost, proxyPort, host, flags);
     layer->secret = (PRFilePrivate*) infoObject;
     rv = PR_PushIOLayer(fd, PR_GetLayersIdentity(fd), layer);
-    
+
     if (NS_FAILED(rv))
     {
         LOGERROR(("PR_PushIOLayer() failed. rv = %x.", rv));
@@ -734,7 +870,7 @@ nsSOCKSIOLayerAddToSocket(PRInt32 family,
         PR_DELETE(layer);
         return NS_ERROR_FAILURE;
     }
-    
+
     *info = infoObject;
     NS_ADDREF(*info);
     return NS_OK;

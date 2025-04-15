@@ -12,12 +12,12 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * IBM Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2002
- * IBM Corporation. All Rights Reserved.
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   IBM Corporation
@@ -37,6 +37,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "Expr.h"
+#include "ExprResult.h"
 
 txLiteralExpr::txLiteralExpr(double aDbl)
     : mValue(new NumberResult(aDbl, nsnull))
@@ -59,6 +60,7 @@ txLiteralExpr::evaluate(txIEvalContext* aContext, txAExprResult** aResult)
     return NS_OK;
 }
 
+#ifdef TX_TO_STRING
 void
 txLiteralExpr::toString(nsAString& aStr)
 {
@@ -84,3 +86,4 @@ txLiteralExpr::toString(nsAString& aStr)
         }
     }
 }
+#endif

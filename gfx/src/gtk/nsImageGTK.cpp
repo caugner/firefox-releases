@@ -1,26 +1,42 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- *    Stuart Parmenter <pavlov@netscape.com>
- *    Tim Rowley <tor@cs.brown.edu>
- */
+ *   Stuart Parmenter <pavlov@netscape.com>
+ *   Tim Rowley <tor@cs.brown.edu>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 #include <gtk/gtk.h>
 #include <gdk/gdkx.h>
 
@@ -54,7 +70,15 @@
 static GdkGC *s1bitGC = nsnull;
 static GdkGC *sXbitGC = nsnull;
 
+/* XFree86 <= 4.3 has a bug in their stipple code (fbgc.c < 1.13) that
+   prevents us from doing fast tiling. */
+static PRBool sNeedSlowTile = PR_FALSE;
+
+#ifdef MOZ_WIDGET_GTK2
+NS_IMPL_ISUPPORTS2(nsImageGTK, nsIImage, nsIGdkPixbufImage)
+#else
 NS_IMPL_ISUPPORTS1(nsImageGTK, nsIImage)
+#endif
 
 //------------------------------------------------------------
 
@@ -91,17 +115,17 @@ nsImageGTK::nsImageGTK()
 nsImageGTK::~nsImageGTK()
 {
   if(nsnull != mImageBits) {
-    delete[] mImageBits;
+    free(mImageBits);
     mImageBits = nsnull;
   }
 
   if (nsnull != mAlphaBits) {
-    delete[] mAlphaBits;
+    free(mAlphaBits);
     mAlphaBits = nsnull;
   }
 
   if (nsnull != mTrueAlphaBits) {
-    delete[] mTrueAlphaBits;
+    free(mTrueAlphaBits);
     mTrueAlphaBits = nsnull;
   }
 
@@ -122,6 +146,15 @@ nsImageGTK::~nsImageGTK()
   printf("nsImageGTK::~nsImageGTK(this=%p)\n",
          this);
 #endif
+}
+
+/* static */ void
+nsImageGTK::Startup()
+{
+  Display *dpy = GDK_DISPLAY();
+
+  if (strstr(ServerVendor(dpy), "XFree86") && VendorRelease(dpy) < 40400000)
+    sNeedSlowTile = PR_TRUE;
 }
 
 /* static */ void
@@ -173,7 +206,9 @@ nsresult nsImageGTK::Init(PRInt32 aWidth, PRInt32 aHeight,
   // create the memory for the image
   ComputeMetrics();
 
-  mImageBits = (PRUint8*) new PRUint8[mSizeImage];
+  mImageBits = (PRUint8*)malloc(mSizeImage);
+  if (!mImageBits)
+    return NS_ERROR_OUT_OF_MEMORY;
 
   switch(aMaskRequirements)
   {
@@ -183,8 +218,9 @@ nsresult nsImageGTK::Init(PRInt32 aWidth, PRInt32 aHeight,
 
       // 32-bit align each row
       mTrueAlphaRowBytes = (mTrueAlphaRowBytes + 3) & ~0x3;
-      mTrueAlphaBits = new PRUint8[mTrueAlphaRowBytes * aHeight];
-      memset(mTrueAlphaBits, 0, mTrueAlphaRowBytes*aHeight);
+      mTrueAlphaBits = (PRUint8*)calloc(mTrueAlphaRowBytes * aHeight, 1);
+      if (!mTrueAlphaBits)
+        return NS_ERROR_OUT_OF_MEMORY;
 
       // FALL THROUGH
 
@@ -195,8 +231,9 @@ nsresult nsImageGTK::Init(PRInt32 aWidth, PRInt32 aHeight,
       // 32-bit align each row
       mAlphaRowBytes = (mAlphaRowBytes + 3) & ~0x3;
 
-      mAlphaBits = new PRUint8[mAlphaRowBytes * aHeight];
-      memset(mAlphaBits, 0, mAlphaRowBytes*aHeight);
+      mAlphaBits = (PRUint8*)calloc(mAlphaRowBytes * aHeight, 1);
+      if (!mAlphaBits)
+        return NS_ERROR_OUT_OF_MEMORY;
       break;
 
     default:
@@ -274,6 +311,16 @@ void nsImageGTK::ImageUpdated(nsIDeviceContext *aContext,
     mDecodedX2 = aUpdateRect->XMost();
 }
 
+/** ---------------------------------------------------
+ *  See documentation in nsIImage.h
+ */
+PRBool nsImageGTK::GetIsImageComplete() {
+  return mDecodedX1 == 0 &&
+         mDecodedY1 == 0 &&
+         mDecodedX2 == mWidth &&
+         mDecodedY2 == mHeight;
+}
+
 void nsImageGTK::UpdateCachedImage()
 {
 #ifdef TRACE_IMAGE_ALLOCATION
@@ -340,7 +387,7 @@ void nsImageGTK::UpdateCachedImage()
           mAlphaPixmap = 0;
         }
         if (mAlphaBits) {
-          delete [] mAlphaBits;
+          free(mAlphaBits);
           mAlphaBits = mTrueAlphaBits;
           mAlphaRowBytes = mTrueAlphaRowBytes;
           mTrueAlphaBits = 0;
@@ -414,7 +461,7 @@ void nsImageGTK::UpdateCachedImage()
                                    GDK_RGB_DITHER_MAX,
                                    mImageBits + mRowBytes*rect->y + 3*rect->x,
                                    mRowBytes,
-                                   rect->x, rect->y);
+                                   0, 0);
     }
 
     if (mAlphaDepth==1) {
@@ -545,7 +592,7 @@ XlibRectStretch(PRInt32 srcWidth, PRInt32 srcHeight,
   if (!skipHorizontal)
     XlibStretchHorizontal(xd1, xd2, xs1, xs2, scaleStartY, scaleEndY,
                           startColumn, endColumn,
-                          (skipVertical?MAX(dstOrigX,0):0),(skipVertical?MAX(dstOrigY,0):0),
+                          skipVertical?dstOrigX:-startColumn, skipVertical?dstOrigY:-scaleStartY,
                           aSrcImage, aTmpImage, (skipVertical?gc:copygc));
   
   if (!skipVertical) {
@@ -553,7 +600,7 @@ XlibRectStretch(PRInt32 srcWidth, PRInt32 srcHeight,
       if ((yd1 >= startRow) && (yd1 <= endRow)) {
         gdk_draw_pixmap(aDstImage, gc, aTmpImage,
                         (skipHorizontal?startColumn:0), ys1-scaleStartY,
-                        (dstOrigX>0?dstOrigX:0), dstOrigY+yd1,
+                        aDX, dstOrigY+yd1,
                         endColumn-startColumn, 1);
       }
       while (e>=0) {
@@ -600,7 +647,7 @@ XlibStretchHorizontal(long x1, long x2, long y1, long y2,
   for (d=0; d<=dx; d++) {
     if ((x1 >= startColumn) && (x1 <= endColumn)) {
       gdk_draw_pixmap(aDstImage, gc, aSrcImage,
-                      y1, ymin, x1-startColumn+offsetX, 0+offsetY,
+                      y1, ymin, x1+offsetX, ymin+offsetY,
                       1, ymax-ymin);
     }
     while (e>=0) {
@@ -618,7 +665,7 @@ XlibStretchHorizontal(long x1, long x2, long y1, long y2,
 
 // Draw the bitmap, this method has a source and destination coordinates
 NS_IMETHODIMP
-nsImageGTK::Draw(nsIRenderingContext &aContext, nsDrawingSurface aSurface,
+nsImageGTK::Draw(nsIRenderingContext &aContext, nsIDrawingSurface* aSurface,
                  PRInt32 aSX, PRInt32 aSY, PRInt32 aSWidth, PRInt32 aSHeight,
                  PRInt32 aDX, PRInt32 aDY, PRInt32 aDWidth, PRInt32 aDHeight)
 {
@@ -825,6 +872,8 @@ nsImageGTK::Draw(nsIRenderingContext &aContext, nsDrawingSurface aSurface,
 
       if (gdk_rgb_get_visual()->depth <= 8) {
         PRUint8 *scaledRGB = (PRUint8 *)nsMemory::Alloc(3*dstWidth*dstHeight);
+        if (!scaledRGB)
+          break;
         RectStretch(mWidth, mHeight,
                     dstWidth, dstHeight,
                     0, 0, dstWidth-1, dstHeight-1,
@@ -1247,7 +1296,7 @@ nsImageGTK::DrawCompositedGeneral(PRBool isLSB, PRBool flipBytes,
 
 void
 nsImageGTK::DrawComposited(nsIRenderingContext &aContext,
-                           nsDrawingSurface aSurface,
+                           nsIDrawingSurface* aSurface,
                            PRInt32 srcWidth, PRInt32 srcHeight,
                            PRInt32 dstWidth, PRInt32 dstHeight,
                            PRInt32 dstOrigX, PRInt32 dstOrigY,
@@ -1285,6 +1334,10 @@ nsImageGTK::DrawComposited(nsIRenderingContext &aContext,
 
   unsigned char *readData = 
     (unsigned char *)nsMemory::Alloc(3*readWidth*readHeight);
+  if (!readData) {
+    XDestroyImage(ximage);
+    return;
+  }
 
   PRUint8 *scaledImage = 0;
   PRUint8 *scaledAlpha = 0;
@@ -1386,7 +1439,7 @@ nsImageGTK::DrawComposited(nsIRenderingContext &aContext,
 
 void
 nsImageGTK::DrawCompositeTile(nsIRenderingContext &aContext,
-                              nsDrawingSurface aSurface,
+                              nsIDrawingSurface* aSurface,
                               PRInt32 aSX, PRInt32 aSY,
                               PRInt32 aSWidth, PRInt32 aSHeight,
                               PRInt32 aDX, PRInt32 aDY,
@@ -1446,6 +1499,10 @@ nsImageGTK::DrawCompositeTile(nsIRenderingContext &aContext,
 
   unsigned char *readData = 
     (unsigned char *)nsMemory::Alloc(3*readWidth*readHeight);
+  if (!readData) {
+    XDestroyImage(ximage);
+    return;
+  }
 
   PRBool isLSB;
   unsigned test = 1;
@@ -1621,7 +1678,7 @@ void nsImageGTK::SetupGCForAlpha(GdkGC *aGC, PRInt32 aX, PRInt32 aY)
 // Draw the bitmap, this draw just has destination coordinates
 NS_IMETHODIMP
 nsImageGTK::Draw(nsIRenderingContext &aContext,
-                 nsDrawingSurface aSurface,
+                 nsIDrawingSurface* aSurface,
                  PRInt32 aX, PRInt32 aY,
                  PRInt32 aWidth, PRInt32 aHeight)
 {
@@ -1641,7 +1698,7 @@ nsImageGTK::Draw(nsIRenderingContext &aContext,
 void nsImageGTK::TilePixmap(GdkPixmap *src, GdkPixmap *dest, 
                             PRInt32 aSXOffset, PRInt32 aSYOffset,
                             const nsRect &destRect, 
-                            const nsRect &clipRect, PRBool useClip)
+                            const nsRect &clipRect, PRBool aHaveClip)
 {
   GdkGC *gc;
   GdkGCValues values;
@@ -1654,7 +1711,7 @@ void nsImageGTK::TilePixmap(GdkPixmap *src, GdkPixmap *dest,
   valuesMask = GdkGCValuesMask(GDK_GC_FILL | GDK_GC_TILE | GDK_GC_TS_X_ORIGIN | GDK_GC_TS_Y_ORIGIN);
   gc = gdk_gc_new_with_values(src, &values, valuesMask);
 
-  if (useClip) {
+  if (aHaveClip) {
     GdkRectangle gdkrect = {clipRect.x, clipRect.y, clipRect.width, clipRect.height};
     gdk_gc_set_clip_rectangle(gc, &gdkrect);
   }
@@ -1673,9 +1730,54 @@ void nsImageGTK::TilePixmap(GdkPixmap *src, GdkPixmap *dest,
   gdk_gc_unref(gc);
 }
 
+void nsImageGTK::SlowTile(nsDrawingSurfaceGTK *aSurface,
+                          const nsRect &aTileRect,
+                          PRInt32 aSXOffset, PRInt32 aSYOffset,
+                          const nsRect& aClipRect, PRBool aHaveClip)
+{
+  GdkPixmap *tileImg;
+  GdkPixmap *tileMask;
+
+  nsRect tmpRect(0,0,aTileRect.width, aTileRect.height);
+
+  tileImg = gdk_pixmap_new(nsnull, aTileRect.width, 
+                           aTileRect.height, aSurface->GetDepth());
+#ifdef MOZ_WIDGET_GTK2
+  gdk_drawable_set_colormap(GDK_DRAWABLE(tileImg), gdk_rgb_get_colormap());
+#endif
+
+  TilePixmap(mImagePixmap, tileImg, aSXOffset, aSYOffset, tmpRect,
+             tmpRect, PR_FALSE);
+
+  // tile alpha mask
+  tileMask = gdk_pixmap_new(nsnull, aTileRect.width, aTileRect.height,
+                            mAlphaDepth);
+  TilePixmap(mAlphaPixmap, tileMask, aSXOffset, aSYOffset, tmpRect,
+             tmpRect, PR_FALSE);
+
+  GdkGC *fgc = gdk_gc_new(aSurface->GetDrawable());
+  gdk_gc_set_clip_mask(fgc, (GdkBitmap*)tileMask);
+  gdk_gc_set_clip_origin(fgc, aTileRect.x, aTileRect.y);
+
+  nsRect drawRect = aTileRect;
+  if (aHaveClip) {
+    drawRect.IntersectRect(drawRect, aClipRect);
+  }
+
+  // and copy it back
+  gdk_window_copy_area(aSurface->GetDrawable(), fgc, drawRect.x,
+                       drawRect.y, tileImg,
+                       drawRect.x - aTileRect.x, drawRect.y - aTileRect.y,
+                       drawRect.width, drawRect.height);
+  gdk_gc_unref(fgc);
+
+  gdk_pixmap_unref(tileImg);
+  gdk_pixmap_unref(tileMask);
+}
+
 
 NS_IMETHODIMP nsImageGTK::DrawTile(nsIRenderingContext &aContext,
-                                   nsDrawingSurface aSurface,
+                                   nsIDrawingSurface* aSurface,
                                    PRInt32 aSXOffset, PRInt32 aSYOffset,
                                    PRInt32 aPadX, PRInt32 aPadY,
                                    const nsRect &aTileRect)
@@ -1737,10 +1839,9 @@ NS_IMETHODIMP nsImageGTK::DrawTile(nsIRenderingContext &aContext,
             aX1 = aTileRect.x + aTileRect.width;
 
     // Set up clipping and call Draw().
-    PRBool clipState;
     aContext.PushState();
     ((nsRenderingContextGTK&)aContext).SetClipRectInPixels(
-      aTileRect, nsClipCombine_kIntersect, clipState);
+      aTileRect, nsClipCombine_kIntersect);
     ((nsRenderingContextGTK&)aContext).UpdateGC();
 
     if (mAlphaDepth==8) {
@@ -1759,55 +1860,62 @@ NS_IMETHODIMP nsImageGTK::DrawTile(nsIRenderingContext &aContext,
                PR_MIN(validHeight, aY1-y));
     }
 
-    aContext.PopState(clipState);
+    aContext.PopState();
 
     return NS_OK;
   }
 
+  nsRect clipRect;
+  PRBool isNonEmpty;
+  PRBool haveClip = NS_SUCCEEDED(aContext.GetClipRect(clipRect, isNonEmpty));
+  if (haveClip && !isNonEmpty) {
+    return NS_OK;
+  }
+    
   if (mAlphaDepth == 1) {
-    GdkPixmap *tileImg;
-    GdkPixmap *tileMask;
+    if (sNeedSlowTile) {
+      SlowTile(drawing, aTileRect, aSXOffset, aSYOffset, clipRect, haveClip);
+      return NS_OK;
+    }
 
-    nsRect tmpRect(0,0,aTileRect.width, aTileRect.height);
+    GdkGC *tileGC;
+    GdkGCValues values;
+    GdkGCValuesMask valuesMask;
 
-    tileImg = gdk_pixmap_new(nsnull, aTileRect.width, 
-                             aTileRect.height, drawing->GetDepth());
-#ifdef MOZ_WIDGET_GTK2
-    gdk_drawable_set_colormap(GDK_DRAWABLE(tileImg), gdk_rgb_get_colormap());
-#endif
-    TilePixmap(mImagePixmap, tileImg, aSXOffset, aSYOffset, tmpRect,
-               tmpRect, PR_FALSE);
+    memset(&values, 0, sizeof(GdkGCValues));
+    values.fill = GDK_STIPPLED;
+    values.function = GDK_AND;
+    values.stipple = mAlphaPixmap;
+    values.ts_x_origin = aTileRect.x - aSXOffset;
+    values.ts_y_origin = aTileRect.y - aSYOffset;
+    valuesMask = GdkGCValuesMask(GDK_GC_FOREGROUND | GDK_GC_FUNCTION | 
+                                 GDK_GC_FILL | GDK_GC_STIPPLE | 
+                                 GDK_GC_TS_X_ORIGIN | GDK_GC_TS_Y_ORIGIN);
+    tileGC = gdk_gc_new_with_values(drawing->GetDrawable(), &values, valuesMask);
+    
+    if (haveClip) {
+      GdkRectangle gdkrect = {clipRect.x, clipRect.y,
+                              clipRect.width, clipRect.height};
+      gdk_gc_set_clip_rectangle(tileGC, &gdkrect);
+    }
 
+    gdk_draw_rectangle(drawing->GetDrawable(), tileGC, PR_TRUE,
+                       aTileRect.x, aTileRect.y,
+                       aTileRect.width, aTileRect.height);
 
-    // tile alpha mask
-    tileMask = gdk_pixmap_new(nsnull, aTileRect.width, aTileRect.height,
-                              mAlphaDepth);
-    TilePixmap(mAlphaPixmap, tileMask, aSXOffset, aSYOffset, tmpRect,
-               tmpRect, PR_FALSE);
+    gdk_gc_set_fill(tileGC, GDK_TILED);
+    gdk_gc_set_function(tileGC, GDK_OR);
+    gdk_gc_set_tile(tileGC, mImagePixmap);
 
-    GdkGC *fgc = gdk_gc_new(drawing->GetDrawable());
-    gdk_gc_set_clip_mask(fgc, (GdkBitmap*)tileMask);
-    gdk_gc_set_clip_origin(fgc, aTileRect.x, aTileRect.y);
+    gdk_draw_rectangle(drawing->GetDrawable(), tileGC, PR_TRUE,
+                       aTileRect.x, aTileRect.y,
+                       aTileRect.width, aTileRect.height);
 
-    // and copy it back
-    gdk_window_copy_area(drawing->GetDrawable(), fgc, aTileRect.x,
-                         aTileRect.y, tileImg, 0, 0,
-                         aTileRect.width, aTileRect.height);
-    gdk_gc_unref(fgc);
-
-    gdk_pixmap_unref(tileImg);
-    gdk_pixmap_unref(tileMask);
-
+    gdk_gc_unref(tileGC);
   } else {
-
     // In the non-alpha case, gdk can tile for us
-
-    nsRect clipRect;
-    PRBool isValid;
-    aContext.GetClipRect(clipRect, isValid);
-
     TilePixmap(mImagePixmap, drawing->GetDrawable(), aSXOffset, aSYOffset,
-               aTileRect, clipRect, PR_FALSE);
+               aTileRect, clipRect, haveClip);
   }
 
   mFlags = 0;
@@ -1823,20 +1931,35 @@ nsresult nsImageGTK::Optimize(nsIDeviceContext* aContext)
   if (!mOptimized)
     UpdateCachedImage();
 
+  if (mAlphaBits && mTrueAlphaBits) {
+    // 8-bit alpha image turned out to be 1-bit - blacken transparent
+    // areas so that we can draw it using the fast tile path
+    for (PRInt32 y = 0; y < mHeight; y++)
+      for (PRInt32 x = 0; x < mWidth; x++)
+        if (!mTrueAlphaBits[y * mTrueAlphaRowBytes + x]) {
+          mImageBits[y * mRowBytes + 3 * x]     = 0;
+          mImageBits[y * mRowBytes + 3 * x + 1] = 0;
+          mImageBits[y * mRowBytes + 3 * x + 2] = 0;
+        }
+    nsRect rect(0, 0, mWidth, mHeight);
+    ImageUpdated(nsnull, 0, &rect);
+    UpdateCachedImage();
+  }
+
   if ((gdk_rgb_get_visual()->depth > 8) && (mAlphaDepth != 8)) {
     if(nsnull != mImageBits) {
-      delete[] mImageBits;
+      free(mImageBits);
       mImageBits = nsnull;
     }
 
     if (nsnull != mAlphaBits) {
-      delete[] mAlphaBits;
+      free(mAlphaBits);
       mAlphaBits = nsnull;
     }
   }
     
   if (mTrueAlphaBits) {
-    delete[] mTrueAlphaBits;
+    free(mTrueAlphaBits);
     mTrueAlphaBits = nsnull;
   }
 
@@ -1867,8 +1990,9 @@ nsImageGTK::LockImagePixels(PRBool aMaskPixels)
                               0, 0, mWidth, mHeight,
                               AllPlanes, XYPixmap);
 
-    mAlphaBits = new PRUint8[mAlphaRowBytes * mHeight];
-    memset(mAlphaBits, 0, mAlphaRowBytes * mHeight);
+    mAlphaBits = (PRUint8*)calloc(mAlphaRowBytes * mHeight, 1);
+    if (!mAlphaBits)
+      return NS_ERROR_OUT_OF_MEMORY;
 
     for (PRInt32 y = 0; y < mHeight; ++y) {
       PRUint8 *alphaTarget = mAlphaBits + y*mAlphaRowBytes;
@@ -1904,7 +2028,10 @@ nsImageGTK::LockImagePixels(PRBool aMaskPixels)
                       0, 0, mWidth, mHeight,
                       AllPlanes, XYPixmap);
 
-  mImageBits = (PRUint8*) new PRUint8[mSizeImage];
+  mImageBits = (PRUint8*)malloc(mSizeImage);
+  if (!mImageBits)
+    return NS_ERROR_OUT_OF_MEMORY;
+
   GdkVisual *visual = gdk_rgb_get_visual();
   GdkColormap *colormap = gdk_rgb_get_cmap();
 
@@ -2083,3 +2210,90 @@ NS_IMETHODIMP nsImageGTK::DrawToImage(nsIImage* aDstImage,
 
   return NS_OK;
 }
+
+#ifdef MOZ_WIDGET_GTK2
+static void pixbuf_free(guchar* data, gpointer) {
+  nsMemory::Free(data);
+}
+
+NS_IMETHODIMP_(GdkPixbuf*)
+nsImageGTK::GetGdkPixbuf() {
+  // Init ensures that we only have 24bpp images
+  NS_ASSERTION(mNumBytesPixel == 3, "Unexpected color depth");
+
+  nsresult rv = LockImagePixels(PR_FALSE);
+  NS_ENSURE_SUCCESS(rv, nsnull);
+
+  // Since UnlockImagePixels potentially frees the image data (and since the
+  // buffer might outlive this object anyway), we have to copy the data.
+  guchar* pixels = NS_STATIC_CAST(guchar*,
+      nsMemory::Clone(mImageBits, mRowBytes * mHeight));
+  UnlockImagePixels(PR_FALSE);
+  if (!pixels)
+    return nsnull;
+
+  GdkPixbuf *pixbuf = gdk_pixbuf_new_from_data(pixels,
+      GDK_COLORSPACE_RGB,
+      PR_FALSE,
+      8,
+      mWidth,
+      mHeight,
+      mRowBytes,
+      pixbuf_free,
+      nsnull);
+  if (!pixbuf)
+    return nsnull;
+
+  if (!GetHasAlphaMask()) {
+    // No alpha channel -> we are done
+    return pixbuf;
+  }
+
+  GdkPixbuf *alphaPixbuf = gdk_pixbuf_add_alpha(pixbuf, FALSE, 0, 0, 0);
+  g_object_unref(pixbuf);
+  if (!alphaPixbuf)
+    return nsnull;
+
+  LockImagePixels(PR_TRUE);
+
+  PRInt32 alphaBytesPerRow = GetAlphaLineStride();
+  PRUint8 *alphaBits = GetAlphaBits();
+
+  // Run through alphaBits and copy the alpha mask into the pixbuf's
+  // alpha channel.
+  PRUint8 *maskRow = alphaBits;
+  PRUint8 *pixbufRow = gdk_pixbuf_get_pixels(alphaPixbuf);
+
+  gint pixbufRowStride = gdk_pixbuf_get_rowstride(alphaPixbuf);
+  gint pixbufChannels = gdk_pixbuf_get_n_channels(alphaPixbuf);
+
+  for (PRInt32 y = 0; y < mHeight; ++y) {
+    PRUint8 *pixbufPixel = pixbufRow;
+    PRUint8 *maskPixel = maskRow;
+
+    // If using 1-bit alpha, we must expand it to 8-bit
+    PRUint32 bitPos = 7;
+
+    for (PRInt32 x = 0; x < mWidth; ++x) {
+      if (mAlphaDepth == 1) {
+        pixbufPixel[pixbufChannels - 1] = ((*maskPixel >> bitPos) & 1) ? 255 : 0;
+        if (bitPos-- == 0) { // wrapped around, move forward a byte
+          ++maskPixel;
+          bitPos = 7;
+        }
+      } else {
+        pixbufPixel[pixbufChannels - 1] = *maskPixel++;
+      }
+
+      pixbufPixel += pixbufChannels;
+    }
+
+    pixbufRow += pixbufRowStride;
+    maskRow += alphaBytesPerRow;
+  }
+
+  UnlockImagePixels(PR_TRUE);
+  return alphaPixbuf;
+}
+
+#endif

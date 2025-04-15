@@ -1,7 +1,10 @@
-/Makefile.com/1.2.2.4/Wed Feb 26 23:53:37 2003//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.1.2.1/Tue Jan  7 15:29:33 2003//TFIREFOX_1_0_RELEASE
-/Makefile.targ/1.2.2.4/Wed Feb 26 23:53:37 2003//TFIREFOX_1_0_RELEASE
-/bld_awk_pkginfo.ksh/1.2.2.1/Tue Jan  7 15:29:34 2003//TFIREFOX_1_0_RELEASE
+/Makefile-devl.com/1.2.2.2/Tue Mar  8 02:17:36 2005//TFIREFOX_1_5_RELEASE
+/Makefile-devl.targ/1.2.2.2/Tue Mar  8 02:17:36 2005//TFIREFOX_1_5_RELEASE
+/Makefile.com/1.2.2.6/Tue Mar  8 02:17:36 2005//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.1.2.3/Tue Mar  8 02:17:36 2005//TFIREFOX_1_5_RELEASE
+/Makefile.targ/1.2.2.6/Tue Mar  8 02:17:36 2005//TFIREFOX_1_5_RELEASE
+/bld_awk_pkginfo.ksh/1.2.2.2/Tue Mar  8 02:17:36 2005//TFIREFOX_1_5_RELEASE
+/proto64.mk/1.2.2.2/Tue Mar  8 02:17:36 2005//TFIREFOX_1_5_RELEASE
 D/SUNWpr////
-D/SUNWprx////
+D/SUNWprd////
 D/common_files////

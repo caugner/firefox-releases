@@ -2,12 +2,12 @@
 /* vim:expandtab:shiftwidth=2:tabstop=4:
  */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -16,28 +16,28 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998, 2003
+ * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *   rhp@netscape.com
- *   Jungshik Shin <jshin@mailaps.org>                 
+ *   Jungshik Shin <jshin@mailaps.org>
  *   John G Myers   <jgmyers@netscape.com>
  *   Takayuki Tei   <taka@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -56,6 +56,7 @@
 #include "nsIServiceManager.h"
 #include "nsMIMEHeaderParamImpl.h"
 #include "nsReadableUtils.h"
+#include "nsNativeCharsetUtils.h"
 
 // static functions declared below are moved from mailnews/mime/src/comi18n.cpp
   
@@ -90,9 +91,8 @@ nsMIMEHeaderParamImpl::GetParameter(const nsACString& aHeaderVal,
     nsXPIDLCString charset;
     rv = GetParameterInternal(PromiseFlatCString(aHeaderVal).get(), aParamName, 
                               getter_Copies(charset), aLang, getter_Copies(med));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    NS_ASSERTION(!aTryLocaleCharset, "aTryLocaleCharset not yet supported !");
+    if (NS_FAILED(rv))
+        return rv; 
 
     // convert to UTF-8 after charset conversion and RFC 2047 decoding 
     // if necessary.
@@ -108,14 +108,21 @@ nsMIMEHeaderParamImpl::GetParameter(const nsACString& aHeaderVal,
           cvtUTF8(do_GetService(NS_UTF8CONVERTERSERVICE_CONTRACTID, &rv));
         if (NS_SUCCEEDED(rv) &&
             NS_SUCCEEDED(cvtUTF8->ConvertStringToUTF8(str1, 
-                PromiseFlatCString(aFallbackCharset).get(), PR_FALSE, str2))) 
+                PromiseFlatCString(aFallbackCharset).get(), PR_FALSE, str2))) {
           CopyUTF8toUTF16(str2, aResult);
-        else
-          CopyUTF8toUTF16(str1, aResult);
+          return NS_OK;
+        }
     }
-    else
-        CopyUTF8toUTF16(str1, aResult);
-    return NS_OK;
+
+    if (IsUTF8(str1)) {
+      CopyUTF8toUTF16(str1, aResult);
+      return NS_OK;
+    }
+
+    if (aTryLocaleCharset) 
+      return NS_CopyNativeToUnicode(str1, aResult);
+
+    return NS_ERROR_FAILURE;
 }
 
 // moved almost verbatim from mimehdrs.cpp

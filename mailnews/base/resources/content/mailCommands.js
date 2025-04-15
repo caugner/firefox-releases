@@ -1,39 +1,64 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
- */
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 
 function DoRDFCommand(dataSource, command, srcArray, argumentArray)
 {
 	var commandResource = RDF.GetResource(command);
 	if(commandResource) {
-      try {
-		dataSource.DoCommand(srcArray, commandResource, argumentArray);
-      }
-      catch(e) { 
-        if (command == "http://home.netscape.com/NC-rdf#NewFolder") {
-          throw(e); // so that the dialog does not automatically close.
-        }
-        dump("Exception : In mail commands" + e + "\n");
-      }
+    try {
+      if (!argumentArray)
+        argumentArray = Components.classes["@mozilla.org/supports-array;1"]
+                        .createInstance(Components.interfaces.nsISupportsArray);
+
+      if (argumentArray)
+        argumentArray.AppendElement(msgWindow);
+		  dataSource.DoCommand(srcArray, commandResource, argumentArray);
     }
+    catch(e) { 
+      if (command == "http://home.netscape.com/NC-rdf#NewFolder") {
+        throw(e); // so that the dialog does not automatically close.
+      }
+      dump("Exception : In mail commands" + e + "\n");
+    }
+  }
 }
+
 
 function GetNewMessages(selectedFolders, server, compositeDataSource)
 {
@@ -48,14 +73,13 @@ function GetNewMessages(selectedFolders, server, compositeDataSource)
 			var nsIMsgFolder = Components.interfaces.nsIMsgFolder;
 			msgFolder.biffState = nsIMsgFolder.nsMsgBiffState_NoMail;
 
-			if (msgFolder.hasNewMessages)
-				msgFolder.clearNewMessages();
+  		msgFolder.clearNewMessages();
 		}
 		
 		if(compositeDataSource)
 		{
 			var folderResource = msgFolder.QueryInterface(Components.interfaces.nsIRDFResource);
-		    var folderArray = Components.classes["@mozilla.org/supports-array;1"].createInstance(Components.interfaces.nsISupportsArray);
+		  var folderArray = Components.classes["@mozilla.org/supports-array;1"].createInstance(Components.interfaces.nsISupportsArray);
 			folderArray.AppendElement(folderResource);
 		  var serverArray = Components.classes["@mozilla.org/supports-array;1"].createInstance(Components.interfaces.nsISupportsArray);
       serverArray.AppendElement(server);
@@ -71,40 +95,46 @@ function getBestIdentity(identities, optionalHint)
 {
   var identity = null;
 
-  // if we have more than one identity and a hint to help us pick one
-  if (identities.Count() > 1 && optionalHint) {
-    // iterate over all of the identities
-    var tempID;
-    for (id = 0; id < identities.Count(); id++) { 
-      tempID = identities.GetElementAt(id).QueryInterface(Components.interfaces.nsIMsgIdentity);
-      if (optionalHint.search(tempID.email) >= 0) {
-        identity = tempID;
-        break;
-      }
-    }
-
-    // if we could not find an exact email address match within the hint fields then maybe the message
-    // was to a mailing list. In this scenario, we won't have a match based on email address. 
-    // Before we just give up, try and search for just a shared domain between the the hint and 
-    // the email addresses for our identities. Hey, it is better than nothing and in the case
-    // of multiple matches here, we'll end up picking the first one anyway which is what we would have done
-    // if we didn't do this second search. This helps the case for corporate users where mailing lists will have the same domain
-    // as one of your multiple identities.
-
-    if (!identity) {
+  try
+  {
+    // if we have more than one identity and a hint to help us pick one
+    if (identities.Count() > 1 && optionalHint) {
+      // normalize case on the optional hint to improve our chances of finding a match
+      optionalHint = optionalHint.toLowerCase();
+      // iterate over all of the identities
+      var tempID;
       for (id = 0; id < identities.Count(); id++) { 
         tempID = identities.GetElementAt(id).QueryInterface(Components.interfaces.nsIMsgIdentity);
-
-        // extract out the partial domain
-        var start = tempID.email.lastIndexOf("@"); // be sure to include the @ sign in our search to reduce the risk of false positives
-  
-        if (optionalHint.search(tempID.email.slice(start, tempID.email.length)) >= 0) {
+        if (optionalHint.indexOf(tempID.email.toLowerCase()) >= 0) {
           identity = tempID;
           break;
         }
       }
+
+      // if we could not find an exact email address match within the hint fields then maybe the message
+      // was to a mailing list. In this scenario, we won't have a match based on email address. 
+      // Before we just give up, try and search for just a shared domain between the the hint and 
+      // the email addresses for our identities. Hey, it is better than nothing and in the case
+      // of multiple matches here, we'll end up picking the first one anyway which is what we would have done
+      // if we didn't do this second search. This helps the case for corporate users where mailing lists will have the same domain
+      // as one of your multiple identities.
+
+      if (!identity) {
+        for (id = 0; id < identities.Count(); id++) { 
+          tempID = identities.GetElementAt(id).QueryInterface(Components.interfaces.nsIMsgIdentity);
+
+          // extract out the partial domain
+          var start = tempID.email.lastIndexOf("@"); // be sure to include the @ sign in our search to reduce the risk of false positives
+  
+          if (optionalHint.search(tempID.email.slice(start, tempID.email.length).toLowerCase()) >= 0) {
+            identity = tempID;
+            break;
+          }
+        }
+      }
     }
   }
+  catch (ex) {dump (ex + "\n");}
 
   // still no matches? Give up and pick the first one like we used to.
   if (!identity)
@@ -142,112 +172,123 @@ function GetNextNMessages(folder)
 // type is a nsIMsgCompType and format is a nsIMsgCompFormat
 function ComposeMessage(type, format, folder, messageArray) 
 {
-	var msgComposeType = Components.interfaces.nsIMsgCompType;
-	var identity = null;
-	var newsgroup = null;
-	var server;
+    var msgComposeType = Components.interfaces.nsIMsgCompType;
+    var identity = null;
+    var newsgroup = null;
+    var server;
 
-	//dump("ComposeMessage folder="+folder+"\n");
-	try 
-	{
-		if(folder)
-		{
-			// get the incoming server associated with this uri
-			server = folder.server;
-
-			// if they hit new or reply and they are reading a newsgroup
-			// turn this into a new post or a reply to group.
-      if (!folder.isServer && server.type == "nntp" && type == msgComposeType.New)
-			{
-        type = msgComposeType.NewsPost;
-        newsgroup = folder.folderURL;
-			}
-
-      // 
-      identity = getIdentityForServer(server);
-      // dump("identity = " + identity + "\n");
-		}
-	}
-	catch (ex) 
-	{
-        	dump("failed to get an identity to pre-select: " + ex + "\n");
-	}
-
-	//dump("\nComposeMessage from XUL: " + identity + "\n");
-	var uri = null;
-
-	if (! msgComposeService)
-	{
-		dump("### msgComposeService is invalid\n");
-		return;
-	}
-	
-	if (type == msgComposeType.New) //new message
-	{
-		//dump("OpenComposeWindow with " + identity + "\n");
-
-    // if the addressbook sidebar panel is open and has focus, get
-    // the selected addresses from it
-    if (document.commandDispatcher.focusedWindow.document.documentElement.hasAttribute("selectedaddresses"))
-      NewMessageToSelectedAddresses(type, format, identity);
-
-    else
-      msgComposeService.OpenComposeWindow(null, null, type, format, identity, msgWindow);
-		return;
-	}
-  else if (type == msgComposeType.NewsPost) 
-	{
-		//dump("OpenComposeWindow with " + identity + " and " + newsgroup + "\n");
-		msgComposeService.OpenComposeWindow(null, newsgroup, type, format, identity, msgWindow);
-		return;
-	}
-		
-	messenger.SetWindow(window, msgWindow);
-			
-	var object = null;
-	
-	if (messageArray && messageArray.length > 0)
-	{
-		uri = "";
-		for (var i = 0; i < messageArray.length; i ++)
-		{	
-			var messageUri = messageArray[i];
-
-      var hdr = messenger.messageServiceFromURI(messageUri).messageURIToMsgHdr(messageUri);
-      var hintForIdentity = (type == msgComposeType.Template) ? hdr.author : hdr.recipients + hdr.ccList;
-      var accountKey = hdr.accountKey;
-      if (accountKey.length > 0)
+    //dump("ComposeMessage folder="+folder+"\n");
+    try 
+    {
+      if (folder)
       {
-        var account = accountManager.getAccount(accountKey);
-        if (account)
-          server = account.incomingServer;
+        // get the incoming server associated with this uri
+        server = folder.server;
+
+        // if they hit new or reply and they are reading a newsgroup
+        // turn this into a new post or a reply to group.
+        if (!folder.isServer && server.type == "nntp" && type == msgComposeType.New)
+        {
+          type = msgComposeType.NewsPost;
+          newsgroup = folder.folderURL;
+        }
+
+        // 
+        identity = getIdentityForServer(server);
+        // dump("identity = " + identity + "\n");
+      }
+    }
+    catch (ex) 
+    {
+      dump("failed to get an identity to pre-select: " + ex + "\n");
+    }
+
+    //dump("\nComposeMessage from XUL: " + identity + "\n");
+    var uri = null;
+
+    if (! msgComposeService)
+    {
+      dump("### msgComposeService is invalid\n");
+      return;
+    }
+
+    if (type == msgComposeType.New) //new message
+    {
+      //dump("OpenComposeWindow with " + identity + "\n");
+
+      // if the addressbook sidebar panel is open and has focus, get
+      // the selected addresses from it
+      if (document.commandDispatcher.focusedWindow.document.documentElement.hasAttribute("selectedaddresses"))
+        NewMessageToSelectedAddresses(type, format, identity);
+      else
+        msgComposeService.OpenComposeWindow(null, null, type, format, identity, msgWindow);
+      return;
+    }
+    else if (type == msgComposeType.NewsPost) 
+    {
+      //dump("OpenComposeWindow with " + identity + " and " + newsgroup + "\n");
+      msgComposeService.OpenComposeWindow(null, newsgroup, type, format, identity, msgWindow);
+      return;
+    }
+
+    messenger.SetWindow(window, msgWindow);
+
+    var object = null;
+
+    if (messageArray && messageArray.length > 0)
+    {
+      uri = "";
+      for (var i = 0; i < messageArray.length; i ++)
+      {
+        var messageUri = messageArray[i];
+
+        var hdr = messenger.messageServiceFromURI(messageUri).messageURIToMsgHdr(messageUri);
+        var hintForIdentity = (type == msgComposeType.Template) ? hdr.author : hdr.recipients + hdr.ccList;
+        var accountKey = hdr.accountKey;
+        if (accountKey.length > 0)
+        {
+          var account = accountManager.getAccount(accountKey);
+          if (account)
+            server = account.incomingServer;
+        }
+
+        if (server)
+          identity = getIdentityForServer(server, hintForIdentity);
+
+        if (!identity || hintForIdentity.search(identity.email) < 0)
+        {
+          server = folder.server;
+          if (server)
+          {
+            var tmpIdentity = getIdentityForServer(server, hintForIdentity);
+            if (tmpIdentity && hintForIdentity.search(tmpIdentity.email) >= 0)
+              identity = tmpIdentity;
+          }
+        }
+
+        if (type == msgComposeType.Reply || type == msgComposeType.ReplyAll || type == msgComposeType.ForwardInline ||
+            type == msgComposeType.ReplyToGroup || type == msgComposeType.ReplyToSender || 
+            type == msgComposeType.ReplyToSenderAndGroup ||
+            type == msgComposeType.Template || type == msgComposeType.Draft)
+        {
+          msgComposeService.OpenComposeWindow(null, messageUri, type, format, identity, msgWindow);
+          //limit the number of new compose windows to 8. Why 8? I like that number :-)
+          if (i == 7)
+            break;
+        }
+        else
+        {
+          if (i) 
+            uri += ","
+          uri += messageUri;
+        }
       }
 
-      if (server)
-        identity = getIdentityForServer(server, hintForIdentity);
-
-			if (type == msgComposeType.Reply || type == msgComposeType.ReplyAll || type == msgComposeType.ForwardInline ||
-				type == msgComposeType.ReplyToGroup || type == msgComposeType.ReplyToSender || 
-				type == msgComposeType.ReplyToSenderAndGroup ||
-				type == msgComposeType.Template || type == msgComposeType.Draft)
-			{
-				msgComposeService.OpenComposeWindow(null, messageUri, type, format, identity, msgWindow);
-        //limit the number of new compose windows to 8. Why 8? I like that number :-)
-        if (i == 7)
-          break;
-			}
-			else
-			{
-				if (i) 
-					uri += ","
-				uri += messageUri;
-			}
-		}
-		if (type == msgComposeType.ForwardAsAttachment)
-			msgComposeService.OpenComposeWindow(null, uri, type, format, identity, msgWindow);
-	}
-	else
-		dump("### nodeList is invalid\n");
+      if (type == msgComposeType.ForwardAsAttachment)
+        msgComposeService.OpenComposeWindow(null, uri, type, format, identity, msgWindow);
+    }
+    else
+      dump("### nodeList is invalid\n");
 }
 
 function NewMessageToSelectedAddresses(type, format, identity) {
@@ -395,7 +436,7 @@ function SaveAsFile(uri)
     var filename = null;
     try {
       var subject = messenger.messageServiceFromURI(uri)
-                             .messageURIToMsgHdr(uri).subject;
+                             .messageURIToMsgHdr(uri).mime2DecodedSubject;
       filename = GenerateValidFilename(subject, ".eml");
     }
     catch (ex) {}
@@ -488,68 +529,71 @@ const nsIJunkMailPlugin = Components.interfaces.nsIJunkMailPlugin;
 const nsIMsgDBHdr = Components.interfaces.nsIMsgDBHdr;
 
 var gJunkmailComponent;
-var gJunkKeys = [];
-var gJunkTargetFolder;
 
-function saveJunkMsgForAction(aServer, aMsgURI, aClassification)
+function determineActionsForJunkMsgs(aView, aIndices, aActionParams)
 {
-  // we only care when the message gets marked as junk
-  if (aClassification == nsIJunkMailPlugin.GOOD)
+  
+  // we use some arbitrary message to determine the
+  // message server
+  var msgURI = aView.getURIForViewIndex(aIndices[0]);
+  var msgHdr = messenger.messageServiceFromURI(msgURI).messageURIToMsgHdr(msgURI);
+  var server = msgHdr.folder.server;
+
+  var spamSettings = server.spamSettings;
+
+  // note we will do moves/marking as read even if the spam
+  // feature is disabled, since the user has asked to use it
+  // despite the disabling
+  
+  // note also that we will only act on messages which
+  // _the_current_run_ of the classifier has classified as
+  // junk, rather than on all junk messages in the folder
+
+  aActionParams.markRead = spamSettings.markAsReadOnSpam;
+  aActionParams.junkTargetFolder = null;
+ 
+  if (!spamSettings.moveOnSpam) 
     return;
  
-  var spamSettings = aServer.spamSettings
- 
-  // if the spam feature is disabled,
-  // or if the move functionality is turned off, bail out.
-  // the user could still run the JMC manually,
-  // but let's not move in that scenario
-  if (!spamSettings.level || !spamSettings.moveOnSpam)
-    return;   
-  
-  var msgHdr = messenger.messageServiceFromURI(aMsgURI).messageURIToMsgHdr(aMsgURI);
-  
   // don't move if we are already in the junk folder
   if (msgHdr.folder.flags & MSG_FOLDER_FLAG_JUNK)
     return;
  
   var spamFolderURI = spamSettings.spamFolderURI;
   if (!spamFolderURI)
-    return;
-  
-  var spamFolder = GetMsgFolderFromUri(spamFolderURI);
-
-  if (spamFolder) 
   {
-    gJunkKeys[gJunkKeys.length] = msgHdr.messageKey;
-    gJunkTargetFolder = spamFolder;
+    dump('no spam folder!');
+    return;
   }
+  
+  aActionParams.junkTargetFolder = GetMsgFolderFromUri(spamFolderURI);
 }
 
-function performActionOnJunkMsgs()
+function performActionsOnJunkMsgs(aIndices)
 {
-  if (!gJunkKeys.length)
-  {
-    gJunkTargetFolder = [];
-    return;
-  }
-
-  var indices = new Array(gJunkKeys.length);
-  for (var i=0;i<gJunkKeys.length;i++)
-    indices[i] = gDBView.findIndexFromKey(gJunkKeys[i], true /* expand */);
-
   var treeView = gDBView.QueryInterface(Components.interfaces.nsITreeView);
+  var actionParams = { markRead: false, junkTargetFolder: null };
+  determineActionsForJunkMsgs(treeView,aIndices,actionParams);
+
+  if (!aIndices.length)
+    return;
+
   var treeSelection = treeView.selection;
   treeSelection.clearSelection();
    
   // select the messages
-  for (i=0;i<indices.length;i++)
-    treeSelection.rangedSelect(indices[i], indices[i], true /* augment */);
+  for (i=0;i<aIndices.length;i++)
+    treeSelection.rangedSelect(aIndices[i], aIndices[i], true /* augment */);
 
-  SetNextMessageAfterDelete();  
-  gDBView.doCommandWithFolder(nsMsgViewCommandType.moveMessages, gJunkTargetFolder);
-  
-  gJunkKeys = [];
-  gJunkTargetFolder = null;
+  if (actionParams.markRead)
+    MarkSelectedMessagesRead(true);
+
+  if (actionParams.junkTargetFolder)
+  {
+    SetNextMessageAfterDelete();  
+    gDBView.doCommandWithFolder(nsMsgViewCommandType.moveMessages, actionParams.junkTargetFolder);
+  }
+  treeSelection.clearSelection();
 }
 
 function getJunkmailComponent()
@@ -559,19 +603,19 @@ function getJunkmailComponent()
     }
 }
 
-function analyze(aMsgHdr, aNextFunction)
+function analyzeMessageForJunk(aMsgHdr, aMsgIndex, aJunkMsgIndices, aLastMessage, aWhiteListDirectory)
 {
     var listener = {
-        onMessageClassified: function(aMsgURI, aClassification)
+        onMessageClassified: function(aClassifiedMsgURI, aClassification)
         {
-            // XXX todo
+            // XXX TODO
             // update status bar, or a progress dialog
             // running junk mail controls manually, on a large folder
             // can take a while, and the user doesn't know when we are done.
-            dump(aMsgURI + ' is ' 
-                 + (aClassification == nsIJunkMailPlugin.JUNK
-                    ? 'JUNK' : 'GOOD') + '\n');
-            // XXX TODO, make the cut off 50, like in nsMsgSearchTerm.cpp
+            
+            // XXX TODO
+            // make the cut off 50, like in nsMsgSearchTerm.cpp
+            
             var score = 
                 aClassification == nsIJunkMailPlugin.JUNK ? "100" : "0";
 
@@ -582,26 +626,25 @@ function analyze(aMsgHdr, aNextFunction)
             db.setStringProperty(aMsgHdr.messageKey, "junkscore", score);
             db.setStringProperty(aMsgHdr.messageKey, "junkscoreorigin", 
                                  "plugin");
-            saveJunkMsgForAction(aMsgHdr.folder.server, aMsgURI, aClassification);
-            aNextFunction();
+             
+            if (aClassification == nsIJunkMailPlugin.JUNK)
+              aJunkMsgIndices.push(aMsgIndex);
+            
+            if (aLastMessage) 
+              performActionsOnJunkMsgs(aJunkMsgIndices);
         }
     };
 
     // if we are whitelisting, check if the email address is in the whitelist addressbook.
-    var spamSettings = aMsgHdr.folder.server.spamSettings;
-    if (spamSettings.useWhiteList && spamSettings.whiteListAbURI)
+    if (aWhiteListDirectory)
     {
-      var whiteListDirectory = RDF.GetResource(spamSettings.whiteListAbURI).QueryInterface(Components.interfaces.nsIAbMDBDirectory);
       var headerParser = Components.classes["@mozilla.org/messenger/headerparser;1"].getService(Components.interfaces.nsIMsgHeaderParser);
       var authorEmailAddress = headerParser.extractHeaderAddressMailboxes(null, aMsgHdr.author);
-      if (whiteListDirectory.hasCardForEmailAddress(authorEmailAddress))
-      {
+      if (aWhiteListDirectory.hasCardForEmailAddress(authorEmailAddress))
         // skip over this message, like we do on incoming mail
         // the difference is it could be marked as junk from previous analysis
         // or from being manually marked by the user.
-        aNextFunction();
         return;
-      }
     }
 
     var messageURI = aMsgHdr.folder.generateMessageURI(aMsgHdr.messageKey)
@@ -609,7 +652,7 @@ function analyze(aMsgHdr, aNextFunction)
     gJunkmailComponent.classifyMessage(messageURI, msgWindow, listener);
 }
 
-function analyzeFolderForJunk()
+function filterFolderForJunk()
 {
   MsgJunkMailInfo(true);
   var view = GetDBView();
@@ -622,49 +665,39 @@ function analyzeFolderForJunk()
   if (!count)
     return;
 
-  var messages = new Array(count)
+  var junkMsgsArray = new Array;
+
+  var tmpMsgURI = view.getURIForViewIndex(0);
+  var tmpMsgHdr = messenger.messageServiceFromURI(tmpMsgURI).messageURIToMsgHdr(tmpMsgURI);
+  var spamSettings = tmpMsgHdr.folder.server.spamSettings;
+  var whiteListDirectory;
+  if (spamSettings.useWhiteList && spamSettings.whiteListAbURI)
+    whiteListDirectory = RDF.GetResource(spamSettings.whiteListAbURI).QueryInterface(Components.interfaces.nsIAbMDBDirectory);
+
+  getJunkmailComponent();
+
   for (var i = 0; i < count; i++) {
-    messages[i] = view.getURIForViewIndex(i);
+    var msgIndex = i;
+    var msgURI = view.getURIForViewIndex(i);
+    var msgHdr = messenger.messageServiceFromURI(msgURI).messageURIToMsgHdr(msgURI);
+    analyzeMessageForJunk(msgHdr,msgIndex,junkMsgsArray,(i == count-1),whiteListDirectory);
   }
-  analyzeMessages(messages);
-}
-
-// not used yet, but soon
-function analyzeMessagesForJunk()
-{
-  var messages = GetSelectedMessages();
-  analyzeMessages(messages);
-}
-
-function analyzeMessages(messages)
-{
-    function processNext()
-    {
-        if (counter < messages.length) {
-            var messageUri = messages[counter];
-            var message = messenger.messageServiceFromURI(messageUri).messageURIToMsgHdr(messageUri);
-            ++counter;
-            analyze(message, processNext);
-        }
-        else {
-            dump('[bayesian filter message analysis complete.]\n');
-            gJunkmailComponent.endBatch();
-            performActionOnJunkMsgs();
-        }
-    }
-
-    getJunkmailComponent();
-    var counter = 0;
-    gJunkmailComponent.startBatch();
-    dump('[bayesian filter message analysis begins.]\n');
-    processNext();
 }
 
 function JunkSelectedMessages(setAsJunk)
 {
-    MsgJunkMailInfo(true);
-    gDBView.doCommand(setAsJunk ? nsMsgViewCommandType.junk
-                      : nsMsgViewCommandType.unjunk);
+  MsgJunkMailInfo(true);
+
+  // When the user explicitly marks a message as junk, he doesn't want it to
+  // stay unread (even if he does want that for automatically-classified ones),
+  // so we always mark as read here (pref-independent, see bug 220933).
+  // Note that this behaviour should match the one in the back end for marking
+  // as junk via clicking the 'junk' column.
+  if (setAsJunk)
+    MarkSelectedMessagesRead(true);
+
+  gDBView.doCommand(setAsJunk ? nsMsgViewCommandType.junk
+                              : nsMsgViewCommandType.unjunk);
 }
 
 function deleteJunkInFolder()

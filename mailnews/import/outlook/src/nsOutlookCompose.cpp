@@ -1,20 +1,40 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.0 (the "NPL"); you may not use this file except in
- * compliance with the NPL.  You may obtain a copy of the NPL at
- * http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the NPL is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the NPL
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * NPL.
+ * License.
  *
- * The Initial Developer of this code under the NPL is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.  All Rights
- * Reserved.
- */
+ * The Original Code is mozilla.org Code.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 
 #include "nscore.h"
@@ -31,6 +51,7 @@
 #include "nsIProxyObjectManager.h"
 #include "nsProxiedService.h"
 #include "nsMsgI18N.h"
+#include "nsNativeCharsetUtils.h"
 
 #include "nsMsgBaseCID.h"
 #include "nsMsgCompCID.h"
@@ -48,7 +69,6 @@
 #include "OutlookDebugLog.h"
 
 #include "nsMimeTypes.h"
-#include "nsIPref.h"
 #include "nsMsgUtils.h"
 
 static NS_DEFINE_CID( kMsgSendCID, NS_MSGSEND_CID);
@@ -214,7 +234,7 @@ nsresult nsOutlookCompose::CreateIdentity( void)
     if (NS_FAILED(rv)) return( rv);
 	rv = accMgr->CreateIdentity( &m_pIdentity);
 	nsString	name;
-	name.Assign(NS_LITERAL_STRING("Import Identity"));
+	name.AssignLiteral("Import Identity");
 	if (m_pIdentity) {
 		m_pIdentity->SetFullName( name.get());
 		m_pIdentity->SetIdentityName( name.get());
@@ -240,7 +260,7 @@ nsresult nsOutlookCompose::CreateComponents( void)
 	
 	NS_IF_RELEASE( m_pMsgFields);
 	if (!m_pMsgSend) {
-		rv = nsComponentManager::CreateInstance( kMsgSendCID, nsnull, NS_GET_IID( nsIMsgSend), (void **) &m_pMsgSend); 
+		rv = CallCreateInstance( kMsgSendCID, &m_pMsgSend); 
 		if (NS_SUCCEEDED( rv) && m_pMsgSend) {
 			nsCOMPtr<nsIProxyObjectManager> proxyMgr = 
 			         do_GetService(kProxyObjectManagerCID, &rv);
@@ -262,7 +282,7 @@ nsresult nsOutlookCompose::CreateComponents( void)
 	}
 
 	if (NS_SUCCEEDED(rv) && m_pMsgSend) { 
-	    rv = nsComponentManager::CreateInstance( kMsgCompFieldsCID, nsnull, nsCOMTypeInfo<nsIMsgCompFields>::GetIID(), (void **) &m_pMsgFields); 
+	    rv = CallCreateInstance( kMsgCompFieldsCID, &m_pMsgFields); 
 		if (NS_SUCCEEDED(rv) && m_pMsgFields) {
 			// IMPORT_LOG0( "nsOutlookCompose - CreateComponents succeeded\n");
 			m_pMsgFields->SetForcePlainText( PR_FALSE);
@@ -494,7 +514,7 @@ void nsOutlookCompose::ExtractType( nsString& str)
 	// valid multipart!
 	if (str.Length() > 10) {
 		str.Left( tStr, 10);
-		if (tStr.Equals(NS_LITERAL_STRING("multipart/"), nsCaseInsensitiveStringComparator()))
+		if (tStr.LowerCaseEqualsLiteral("multipart/"))
 			str.Truncate();
 	}
 }
@@ -564,18 +584,6 @@ nsMsgAttachedFile * nsOutlookCompose::GetLocalAttachments( void)
 	return( a);
 }
 
-void nsOutlookCompose::ConvertSystemStringToUnicode( const char *pStr, nsString& uniStr)
-{
-  if (!m_pImportService)
-    m_pImportService = do_GetService(NS_IMPORTSERVICE_CONTRACTID);
-  NS_ASSERTION(m_pImportService, "no import service, can't convert");
-
-  if (m_pImportService)
-    m_pImportService->SystemStringToUnicode( pStr, uniStr);
-  else
-    uniStr.AssignWithConversion( pStr);
-}
-
 // Test a message send????
 nsresult nsOutlookCompose::SendTheMessage( nsIFileSpec *pMsg, nsMsgDeliverMode mode, nsCString &useThisCType)
 {
@@ -587,25 +595,25 @@ nsresult nsOutlookCompose::SendTheMessage( nsIFileSpec *pMsg, nsMsgDeliverMode m
 	
 	// IMPORT_LOG0( "Outlook Compose created necessary components\n");
 
-	nsString	bodyType;
-	nsString	charSet;
-	nsString	headerVal;
+	nsAutoString	bodyType;
+	nsAutoString	charSet;
+	nsAutoString	headerVal;
     nsCAutoString asciiHeaderVal;
 
 	GetHeaderValue( m_Headers.get(), m_Headers.Length(), "From:", headerVal);
 	if (!headerVal.IsEmpty())
-		m_pMsgFields->SetFrom( headerVal.get());
+		m_pMsgFields->SetFrom( headerVal);
 	GetHeaderValue( m_Headers.get(), m_Headers.Length(), "To:", headerVal);
 	if (!headerVal.IsEmpty())
-		m_pMsgFields->SetTo( headerVal.get());
+		m_pMsgFields->SetTo( headerVal);
 	GetHeaderValue( m_Headers.get(), m_Headers.Length(), "Subject:", headerVal);
 	if (!headerVal.IsEmpty())
-		m_pMsgFields->SetSubject( headerVal.get());
+		m_pMsgFields->SetSubject( headerVal);
 	GetHeaderValue( m_Headers.get(), m_Headers.Length(), "Content-type:", headerVal);
 
   // If callers pass in a content type then use it, else get it from the header.
   if (!useThisCType.IsEmpty())
-   bodyType.Assign(NS_ConvertASCIItoUCS2(useThisCType.get()));
+    CopyASCIItoUTF16(useThisCType, bodyType);
   else
   {
 	bodyType = headerVal;
@@ -614,32 +622,31 @@ nsresult nsOutlookCompose::SendTheMessage( nsIFileSpec *pMsg, nsMsgDeliverMode m
 	ExtractCharset( headerVal);
   // Use platform charset as default if the msg doesn't specify one
   // (ie, no 'charset' param in the Content-Type: header). As the last
-  // resort we'll use the mail defaul charset.
+  // resort we'll use the mail default charset.
   if (headerVal.IsEmpty())
   {
     headerVal.AssignWithConversion(nsMsgI18NFileSystemCharset());
     if (headerVal.IsEmpty())
     { // last resort
       nsXPIDLString defaultCharset;
-      nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &rv));
-      if (NS_SUCCEEDED(rv))
-        rv = prefs->GetLocalizedUnicharPref("mailnews.view_default_charset", getter_Copies(defaultCharset));
-      headerVal.Assign(defaultCharset.IsEmpty() ? NS_LITERAL_STRING("ISO-8859-1").get() : defaultCharset.get());
+      NS_GetLocalizedUnicharPreferenceWithDefault(nsnull, "mailnews.view_default_charset",
+                                                  NS_LITERAL_STRING("ISO-8859-1"), defaultCharset);
+      headerVal = defaultCharset;
     }
   }
-  m_pMsgFields->SetCharacterSet( NS_LossyConvertUCS2toASCII(headerVal).get() );
+  m_pMsgFields->SetCharacterSet( NS_LossyConvertUTF16toASCII(headerVal).get() );
   charSet = headerVal;
 	GetHeaderValue( m_Headers.get(), m_Headers.Length(), "CC:", headerVal);
 	if (!headerVal.IsEmpty())
-		m_pMsgFields->SetCc( headerVal.get());
+		m_pMsgFields->SetCc( headerVal);
 	GetHeaderValue( m_Headers.get(), m_Headers.Length(), "Message-ID:", headerVal);
 	if (!headerVal.IsEmpty()) {
-        asciiHeaderVal.AssignWithConversion(headerVal);
+        LossyCopyUTF16toASCII(headerVal, asciiHeaderVal);
 		m_pMsgFields->SetMessageId(asciiHeaderVal.get());
     }
 	GetHeaderValue( m_Headers.get(), m_Headers.Length(), "Reply-To:", headerVal);
 	if (!headerVal.IsEmpty())
-		m_pMsgFields->SetReplyTo( headerVal.get());
+		m_pMsgFields->SetReplyTo( headerVal);
 
 	// what about all of the other headers?!?!?!?!?!?!
 	char *pMimeType = nsnull;
@@ -653,12 +660,11 @@ nsresult nsOutlookCompose::SendTheMessage( nsIFileSpec *pMsg, nsMsgDeliverMode m
 
   // Do body conversion here
   nsString	uniBody;
-  ConvertSystemStringToUnicode( m_Body.get(), uniBody);
+  NS_CopyNativeToUnicode( m_Body, uniBody);
 
-  nsCString	body, theCharset;
-  theCharset.AssignWithConversion(charSet);
-
-  rv = nsMsgI18NConvertFromUnicode( theCharset, uniBody, body);
+  nsCString body;
+  rv = nsMsgI18NConvertFromUnicode( NS_LossyConvertUTF16toASCII(charSet).get(),
+                                    uniBody, body);
   uniBody.Truncate();
 
 	rv = m_pSendProxy->CreateAndSendMessage(

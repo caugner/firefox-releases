@@ -23,6 +23,7 @@
  *      Kin Blas <kin@netscape.com>
  *      Akkana Peck <akkana@netscape.com>
  *      Charley Manske <cmanske@netscape.com>
+ *      Neil Deakin <neil@mozdevgroup.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -51,7 +52,7 @@
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
 #include "nsISupportsPrimitives.h"
-#include "nsIServiceManagerUtils.h"
+#include "nsServiceManagerUtils.h"
 #include "nsIChromeRegistry.h"
 #include "nsString.h"
 #include "nsReadableUtils.h"
@@ -139,10 +140,7 @@ nsEditorSpellCheck::InitSpellChecker(nsIEditor* aEditor, PRBool aEnableSelection
     }
   }
 
-  rv = nsComponentManager::CreateInstance(NS_SPELLCHECKER_CONTRACTID,
-                                          nsnull,
-                                          NS_GET_IID(nsISpellChecker),
-                                       (void **)getter_AddRefs(mSpellChecker));
+  mSpellChecker = do_CreateInstance(NS_SPELLCHECKER_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!mSpellChecker)
@@ -180,7 +178,7 @@ nsEditorSpellCheck::InitSpellChecker(nsIEditor* aEditor, PRBool aEnableSelection
       nsCAutoString utf8DictName;
       rv = packageRegistry->GetSelectedLocale(NS_LITERAL_CSTRING("editor"),
                                               utf8DictName);
-      CopyUTF8toUTF16(utf8DictName, dictName);
+      AppendUTF8toUTF16(utf8DictName, dictName);
     }
   }
 
@@ -240,6 +238,17 @@ nsEditorSpellCheck::CheckCurrentWord(const PRUnichar *aSuggestedWord,
   DeleteSuggestedWordList();
   return mSpellChecker->CheckWord(nsDependentString(aSuggestedWord),
                                   aIsMisspelled, &mSuggestedWordList);
+}
+
+NS_IMETHODIMP    
+nsEditorSpellCheck::CheckCurrentWordNoSuggest(const PRUnichar *aSuggestedWord,
+                                              PRBool *aIsMisspelled)
+{
+  if (!mSpellChecker)
+    return NS_NOINTERFACE;
+
+  return mSpellChecker->CheckWord(nsDependentString(aSuggestedWord),
+                                  aIsMisspelled, nsnull);
 }
 
 NS_IMETHODIMP    

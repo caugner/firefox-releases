@@ -43,6 +43,8 @@
 #include "nsIAccessibleTable.h"
 #include "nsXULTreeAccessible.h"
 
+typedef class nsXULTreeitemAccessible nsXULTreeitemAccessibleWrap;
+
 class nsXULTreeAccessibleWrap : public nsXULTreeAccessible,
                                 public nsIAccessibleTable
 {
@@ -53,6 +55,9 @@ public:
   nsXULTreeAccessibleWrap(nsIDOMNode* aDOMNode, nsIWeakReference* aShell);
   virtual ~nsXULTreeAccessibleWrap() {}
 
+  NS_IMETHOD GetChildCount(PRInt32 *_retval);
+  NS_IMETHOD ChangeSelection(PRInt32 aIndex, PRUint8 aMethod, PRBool *aSelState);
+    
 private:
   nsCOMPtr<nsIAccessible> mCaption;
   nsString mSummary;

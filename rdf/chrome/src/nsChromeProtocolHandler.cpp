@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -42,6 +42,7 @@
 */
 
 #include "nsChromeProtocolHandler.h"
+#include "nsChromeRegistry.h"
 #include "nsCOMPtr.h"
 #include "nsContentCID.h"
 #include "nsCRT.h"
@@ -68,6 +69,7 @@
 #include "nsIXULPrototypeDocument.h"
 #endif
 #include "nsNetCID.h"
+#include "nsNetUtil.h"
 #include "nsXPIDLString.h"
 #include "nsString.h"
 #include "prlog.h"
@@ -348,7 +350,7 @@ nsCachedChromeChannel::SetNotificationCallbacks(nsIInterfaceRequestor * aNotific
 NS_IMETHODIMP
 nsCachedChromeChannel::GetContentType(nsACString &aContentType)
 {
-    aContentType = NS_LITERAL_CSTRING("mozilla.application/cached-xul");
+    aContentType.AssignLiteral("mozilla.application/cached-xul");
     return NS_OK;
 }
 
@@ -594,21 +596,7 @@ nsChromeProtocolHandler::NewURI(const nsACString &aSpec,
     // Canonify the "chrome:" URL; e.g., so that we collapse
     // "chrome://navigator/content/" and "chrome://navigator/content"
     // and "chrome://navigator/content/navigator.xul".
-
-    // Try the global cache first.
-    nsCOMPtr<nsIChromeRegistry> reg = gChromeRegistry;
-
-    // If that fails, the service has not been instantiated yet; let's
-    // do that now.
-    if (!reg) {
-        reg = do_GetService(NS_CHROMEREGISTRY_CONTRACTID, &rv);
-        if (NS_FAILED(rv))
-            return rv;
-    }
-
-    NS_ASSERTION(reg, "Must have a chrome registry by now");
-    
-    rv = reg->Canonify(uri);
+    rv = nsChromeRegistry::Canonify(uri);
     if (NS_FAILED(rv))
         return rv;
 
@@ -632,7 +620,7 @@ nsChromeProtocolHandler::NewChannel(nsIURI* aURI,
         nsCOMPtr<nsIURI> debugClone;
         debug_rv = aURI->Clone(getter_AddRefs(debugClone));
         if (NS_SUCCEEDED(debug_rv)) {
-            debug_rv = debugReg->Canonify(debugClone);
+            debug_rv = nsChromeRegistry::Canonify(debugClone);
             if (NS_SUCCEEDED(debug_rv)) {
                 PRBool same;
                 debug_rv = aURI->Equals(debugClone, &same);
@@ -695,16 +683,12 @@ nsChromeProtocolHandler::NewChannel(nsIURI* aURI,
             if (NS_FAILED(rv)) return rv;
         }
 
-        nsCAutoString spec;
-        rv = reg->ConvertChromeURL(aURI, spec);
-        if (NS_FAILED(rv)) return rv;
-
-        nsCOMPtr<nsIIOService> ioServ(do_GetService(kIOServiceCID, &rv));
-        if (NS_FAILED(rv)) return rv;
-
         nsCOMPtr<nsIURI> chromeURI;
-        rv = ioServ->NewURI(spec, nsnull, nsnull, getter_AddRefs(chromeURI));
+        rv = reg->ConvertChromeURL(aURI, getter_AddRefs(chromeURI));
         if (NS_FAILED(rv)) return rv;
+
+        nsCOMPtr<nsIIOService> ioServ (do_GetIOService());
+        if (!ioServ) return NS_ERROR_FAILURE;
 
         rv = ioServ->NewChannelFromURI(chromeURI, getter_AddRefs(result));
         if (NS_FAILED(rv)) return rv;
@@ -726,14 +710,12 @@ nsChromeProtocolHandler::NewChannel(nsIURI* aURI,
         rv = result->SetOriginalURI(aURI);
         if (NS_FAILED(rv)) return rv;
 
-        // Get a system principal for xul files and set the owner
+        // Get a system principal for content files and set the owner
         // property of the result
         nsCOMPtr<nsIURL> url = do_QueryInterface(aURI);
-        nsCAutoString fileExtension;
-        rv = url->GetFileExtension(fileExtension);
-        if (PL_strcasecmp(fileExtension.get(), "xul") == 0 ||
-            PL_strcasecmp(fileExtension.get(), "html") == 0 ||
-            PL_strcasecmp(fileExtension.get(), "xml") == 0)
+        nsCAutoString path;
+        rv = url->GetPath(path);
+        if (StringBeginsWith(path, NS_LITERAL_CSTRING("/content/")))
         {
             nsCOMPtr<nsIScriptSecurityManager> securityManager =
                      do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);

@@ -1,24 +1,40 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Christopher Blizzard.
- * Portions created by Christopher Blizzard are Copyright (C)
- * Christopher Blizzard.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Christopher Blizzard. Portions created by Christopher Blizzard are Copyright (C) Christopher Blizzard.  All Rights Reserved.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Christopher Blizzard <blizzard@mozilla.org>
  *   Ramiro Estrugo <ramiro@eazel.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include <stdio.h>
 
@@ -40,7 +56,7 @@
 
 #include "gtkmozembedmarshal.h"
 
-#define NEW_TOOLKIT_STRING(x) ToNewUTF8String(x)
+#define NEW_TOOLKIT_STRING(x) g_strdup(NS_ConvertUTF16toUTF8(x).get())
 #define GET_OBJECT_CLASS_TYPE(x) G_OBJECT_CLASS_TYPE(x)
 
 #endif /* MOZ_WIDGET_GTK2 */
@@ -53,14 +69,18 @@
 // so we get the right marshaler for gtk 1.2
 #define gtkmozembed_VOID__INT_UINT \
   gtk_marshal_NONE__INT_INT
-#define gtkmozembed_VOID__POINTER_INT_INT \
+#define gtkmozembed_VOID__STRING_INT_INT \
   gtk_marshal_NONE__POINTER_INT_INT
-#define gtkmozembed_VOID__POINTER_INT_UINT \
+#define gtkmozembed_VOID__STRING_INT_UINT \
   gtk_marshal_NONE__POINTER_INT_INT
 #define gtkmozembed_VOID__POINTER_INT_POINTER \
   gtk_marshal_NONE__POINTER_INT_POINTER
+#define gtkmozembed_BOOL__STRING \
+  gtk_marshal_BOOL__POINTER
 
-#define NEW_TOOLKIT_STRING(x) ToNewCString(x)
+#define G_SIGNAL_TYPE_STATIC_SCOPE 0
+
+#define NEW_TOOLKIT_STRING(x) g_strdup(NS_LossyConvertUTF16toASCII(x).get())
 #define GET_OBJECT_CLASS_TYPE(x) (GTK_OBJECT_CLASS(x)->type)
 
 // Some "massaged" enum information for the GTK Type System
@@ -83,6 +103,8 @@ static GtkFlagValue gtk_moz_embed_progress_flags_values[] = {
     "GTK_MOZ_EMBED_FLAG_IS_NETWORK", "is-network" },
   { GTK_MOZ_EMBED_FLAG_IS_WINDOW,
     "GTK_MOZ_EMBED_FLAG_IS_WINDOW", "is-window" },
+  { GTK_MOZ_EMBED_FLAG_RESTORING,
+    "GTK_MOZ_EMBED_FLAG_RESTORING", "restoring" },
   { 0,
     NULL, NULL }
 };
@@ -220,20 +242,6 @@ handle_toplevel_focus_out(GtkMozArea    *aArea,
 			  GtkMozEmbed   *aEmbed);
 #endif /* MOZ_WIDGET_GTK */
 
-#ifdef MOZ_WIDGET_GTK2
-// signal handlers for tracking the focus in and focus out events on
-// the toplevel window.
-
-static gint
-handle_toplevel_focus_in(GtkWidget     *aWidget,
-			 GdkEventFocus *aEvent,
-			 EmbedPrivate  *aPrivate);
-static gint
-handle_toplevel_focus_out(GtkWidget     *aWidget,
-			  GdkEventFocus *aEvent,
-			  EmbedPrivate  *aPrivate);
-#endif /* MOZ_WIDGET_GTK2 */
-
 // globals for this type of widget
 
 static GtkBinClass *embed_parent_class;
@@ -269,12 +277,10 @@ static void
 gtk_moz_embed_class_init(GtkMozEmbedClass *klass)
 {
   GtkContainerClass  *container_class;
-  GtkBinClass        *bin_class;
   GtkWidgetClass     *widget_class;
   GtkObjectClass     *object_class;
   
   container_class = GTK_CONTAINER_CLASS(klass);
-  bin_class       = GTK_BIN_CLASS(klass);
   widget_class    = GTK_WIDGET_CLASS(klass);
   object_class    = GTK_OBJECT_CLASS(klass);
 
@@ -334,8 +340,9 @@ gtk_moz_embed_class_init(GtkMozEmbedClass *klass)
 		   GTK_RUN_FIRST,
 		   GET_OBJECT_CLASS_TYPE(klass),
 		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, progress_all),
-		   gtkmozembed_VOID__POINTER_INT_INT,
-		   GTK_TYPE_NONE, 3, GTK_TYPE_POINTER,
+		   gtkmozembed_VOID__STRING_INT_INT,
+		   GTK_TYPE_NONE, 3,
+		   GTK_TYPE_STRING | G_SIGNAL_TYPE_STATIC_SCOPE,
 		   GTK_TYPE_INT, GTK_TYPE_INT);
   moz_embed_signals[NET_STATE] =
     gtk_signal_new("net_state",
@@ -349,8 +356,9 @@ gtk_moz_embed_class_init(GtkMozEmbedClass *klass)
 		   GTK_RUN_FIRST,
 		   GET_OBJECT_CLASS_TYPE(klass),
 		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, net_state_all),
-		   gtkmozembed_VOID__POINTER_INT_UINT,
-		   GTK_TYPE_NONE, 3, GTK_TYPE_POINTER,
+		   gtkmozembed_VOID__STRING_INT_UINT,
+		   GTK_TYPE_NONE, 3,
+		   GTK_TYPE_STRING | G_SIGNAL_TYPE_STATIC_SCOPE,
 		   GTK_TYPE_INT, GTK_TYPE_UINT);
   moz_embed_signals[NET_START] =
     gtk_signal_new("net_start",
@@ -392,8 +400,9 @@ gtk_moz_embed_class_init(GtkMozEmbedClass *klass)
 		   GTK_RUN_LAST,
 		   GET_OBJECT_CLASS_TYPE(klass),
 		   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, open_uri),
-		   gtk_marshal_BOOL__POINTER,
-		   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+		   gtkmozembed_BOOL__STRING,
+		   GTK_TYPE_BOOL, 1, GTK_TYPE_STRING |
+		                     G_SIGNAL_TYPE_STATIC_SCOPE);
   moz_embed_signals[SIZE_TO] =
     gtk_signal_new("size_to",
 		   GTK_RUN_LAST,
@@ -479,7 +488,27 @@ gtk_moz_embed_class_init(GtkMozEmbedClass *klass)
 		   gtkmozembed_VOID__POINTER_INT_POINTER,
 		   GTK_TYPE_NONE, 3,
 		   GTK_TYPE_POINTER, GTK_TYPE_INT, GTK_TYPE_POINTER);
-
+  moz_embed_signals[DOM_ACTIVATE] =
+    gtk_signal_new("dom_activate",
+                   GTK_RUN_LAST,
+                   GET_OBJECT_CLASS_TYPE(klass),
+                   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_activate),
+                   gtk_marshal_BOOL__POINTER,
+                   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+  moz_embed_signals[DOM_FOCUS_IN] =
+    gtk_signal_new("dom_focus_in",
+                   GTK_RUN_LAST,
+                   GET_OBJECT_CLASS_TYPE(klass),
+                   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_focus_in),
+                   gtk_marshal_BOOL__POINTER,
+                   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
+  moz_embed_signals[DOM_FOCUS_OUT] =
+    gtk_signal_new("dom_focus_out",
+                   GTK_RUN_LAST,
+                   GET_OBJECT_CLASS_TYPE(klass),
+                   GTK_SIGNAL_OFFSET(GtkMozEmbedClass, dom_focus_out),
+                   gtk_marshal_BOOL__POINTER,
+                   GTK_TYPE_BOOL, 1, GTK_TYPE_POINTER);
 #ifdef MOZ_WIDGET_GTK
   gtk_object_class_add_signals(object_class, moz_embed_signals,
 			       EMBED_LAST_SIGNAL);
@@ -577,21 +606,6 @@ gtk_moz_embed_realize(GtkWidget *widget)
   rv = embedPrivate->Realize(&alreadyRealized);
   g_return_if_fail(NS_SUCCEEDED(rv));
 
-  GtkWidget *child_widget = GTK_BIN(widget)->child;
-#ifdef MOZ_WIDGET_GTK2
-  GtkWidget *toplevel = gtk_widget_get_toplevel(widget);
-  gtk_signal_connect_while_alive(GTK_OBJECT(toplevel),
-				 "focus_in_event",
-				 GTK_SIGNAL_FUNC(handle_toplevel_focus_in),
-				 embedPrivate,
-				 GTK_OBJECT(child_widget));
-  gtk_signal_connect_while_alive(GTK_OBJECT(toplevel),
-				 "focus_out_event",
-				 GTK_SIGNAL_FUNC(handle_toplevel_focus_out),
-				 embedPrivate,
-				 GTK_OBJECT(child_widget));
-#endif /* MOZ_WIDGET_GTK2 */
-
   // if we're already realized we don't need to hook up to anything below
   if (alreadyRealized)
     return;
@@ -600,6 +614,7 @@ gtk_moz_embed_realize(GtkWidget *widget)
     embedPrivate->LoadCurrentURI();
 
   // connect to the focus out event for the child
+  GtkWidget *child_widget = GTK_BIN(widget)->child;
   gtk_signal_connect_while_alive(GTK_OBJECT(child_widget),
 				 "focus_out_event",
 				 GTK_SIGNAL_FUNC(handle_child_focus_out),
@@ -643,16 +658,6 @@ gtk_moz_embed_unrealize(GtkWidget *widget)
   if (embedPrivate) {
     embedPrivate->Unrealize();
   }
-
-#ifdef MOZ_WIDGET_GTK2
-  GtkWidget *toplevel = gtk_widget_get_toplevel(widget);
-  gtk_signal_disconnect_by_func(GTK_OBJECT(toplevel),
-                                GTK_SIGNAL_FUNC(handle_toplevel_focus_in),
-                                embedPrivate);
-  gtk_signal_disconnect_by_func(GTK_OBJECT(toplevel),
-                                GTK_SIGNAL_FUNC(handle_toplevel_focus_out),
-                                embedPrivate);
-#endif /* MOZ_WIDGET_GTK2 */
 
   if (GTK_WIDGET_CLASS(embed_parent_class)->unrealize)
     (* GTK_WIDGET_CLASS(embed_parent_class)->unrealize)(widget);
@@ -784,30 +789,6 @@ handle_toplevel_focus_out(GtkMozArea    *aArea,
 }
 #endif /* MOZ_WIDGET_GTK */
 
-#ifdef MOZ_WIDGET_GTK2
-/* static */
-gint
-handle_toplevel_focus_in(GtkWidget     *aWidget,
-			 GdkEventFocus *aEvent,
-			 EmbedPrivate  *aPrivate)
-{
-  aPrivate->TopLevelFocusIn();
-
-  return FALSE;
-}
-
-/* static */
-gint
-handle_toplevel_focus_out(GtkWidget     *aWidget,
-			  GdkEventFocus *aEvent,
-			  EmbedPrivate  *aPrivate)
-{
-  aPrivate->TopLevelFocusOut();
-
-  return FALSE;
-}
-#endif /* MOZ_WIDGET_GTK2 */
-
 // Widget methods
 
 void
@@ -823,7 +804,7 @@ gtk_moz_embed_pop_startup(void)
 }
 
 void
-gtk_moz_embed_set_comp_path(char *aPath)
+gtk_moz_embed_set_comp_path(const char *aPath)
 {
   EmbedPrivate::SetCompPath(aPath);
 }
@@ -836,7 +817,7 @@ gtk_moz_embed_set_app_components(const nsModuleComponentInfo* aComps,
 }
 
 void
-gtk_moz_embed_set_profile_path(char *aDir, char *aName)
+gtk_moz_embed_set_profile_path(const char *aDir, const char *aName)
 {
   EmbedPrivate::SetProfilePath(aDir, aName);
 }
@@ -951,7 +932,7 @@ gtk_moz_embed_render_data(GtkMozEmbed *embed, const char *data,
   embedPrivate = (EmbedPrivate *)embed->data;
 
   embedPrivate->OpenStream(base_uri, mime_type);
-  embedPrivate->AppendToStream(data, len);
+  embedPrivate->AppendToStream((const PRUint8*)data, len);
   embedPrivate->CloseStream();
 }
 
@@ -980,7 +961,7 @@ void gtk_moz_embed_append_data(GtkMozEmbed *embed, const char *data,
   g_return_if_fail (GTK_WIDGET_REALIZED(GTK_WIDGET(embed)));
 
   embedPrivate = (EmbedPrivate *)embed->data;
-  embedPrivate->AppendToStream(data, len);
+  embedPrivate->AppendToStream((const PRUint8*)data, len);
 }
 
 void
@@ -1001,18 +982,14 @@ gtk_moz_embed_get_link_message(GtkMozEmbed *embed)
 {
   char *retval = nsnull;
   EmbedPrivate *embedPrivate;
-  nsXPIDLCString embedString;
 
   g_return_val_if_fail ((embed != NULL), (char *)NULL);
   g_return_val_if_fail (GTK_IS_MOZ_EMBED(embed), (char *)NULL);
 
   embedPrivate = (EmbedPrivate *)embed->data;
 
-  if (embedPrivate->mWindow) {
-    *getter_Copies(embedString) =
-      NEW_TOOLKIT_STRING(embedPrivate->mWindow->mLinkMessage);
-    retval = strdup(embedString);
-  }
+  if (embedPrivate->mWindow)
+    retval = NEW_TOOLKIT_STRING(embedPrivate->mWindow->mLinkMessage);
 
   return retval;
 }
@@ -1022,18 +999,14 @@ gtk_moz_embed_get_js_status(GtkMozEmbed *embed)
 {
   char *retval = nsnull;
   EmbedPrivate *embedPrivate;
-  nsXPIDLCString embedString;
 
   g_return_val_if_fail ((embed != NULL), (char *)NULL);
   g_return_val_if_fail (GTK_IS_MOZ_EMBED(embed), (char *)NULL);
 
   embedPrivate = (EmbedPrivate *)embed->data;
 
-  if (embedPrivate->mWindow) {
-    *getter_Copies(embedString) =
-      NEW_TOOLKIT_STRING(embedPrivate->mWindow->mJSStatus);
-    retval = strdup(embedString);
-  }
+  if (embedPrivate->mWindow)
+    retval = NEW_TOOLKIT_STRING(embedPrivate->mWindow->mJSStatus);
 
   return retval;
 }
@@ -1043,18 +1016,14 @@ gtk_moz_embed_get_title(GtkMozEmbed *embed)
 {
   char *retval = nsnull;
   EmbedPrivate *embedPrivate;
-  nsXPIDLCString embedString;
 
   g_return_val_if_fail ((embed != NULL), (char *)NULL);
   g_return_val_if_fail (GTK_IS_MOZ_EMBED(embed), (char *)NULL);
 
   embedPrivate = (EmbedPrivate *)embed->data;
 
-  if (embedPrivate->mWindow) {
-    *getter_Copies(embedString) = 
-      NEW_TOOLKIT_STRING(embedPrivate->mWindow->mTitle);
-    retval = strdup(embedString);
-  }
+  if (embedPrivate->mWindow)
+    retval = NEW_TOOLKIT_STRING(embedPrivate->mWindow->mTitle);
 
   return retval;
 }
@@ -1064,17 +1033,14 @@ gtk_moz_embed_get_location(GtkMozEmbed *embed)
 {
   char *retval = nsnull;
   EmbedPrivate *embedPrivate;
-  nsXPIDLCString embedString;
 
   g_return_val_if_fail ((embed != NULL), (char *)NULL);
   g_return_val_if_fail (GTK_IS_MOZ_EMBED(embed), (char *)NULL);
 
   embedPrivate = (EmbedPrivate *)embed->data;
   
-  if (embedPrivate->mURI.Length()) {
-    *getter_Copies(embedString) = NEW_TOOLKIT_STRING(embedPrivate->mURI);
-    retval = strdup(embedString);
-  }
+  if (!embedPrivate->mURI.IsEmpty())
+    retval = NEW_TOOLKIT_STRING(embedPrivate->mURI);
 
   return retval;
 }
@@ -1127,7 +1093,7 @@ gtk_moz_embed_set_chrome_mask(GtkMozEmbed *embed, guint32 flags)
 
   embedPrivate = (EmbedPrivate *)embed->data;
 
-  embedPrivate->mChromeMask = flags;
+  embedPrivate->SetChromeMask(flags);
 }
 
 guint32
@@ -1261,9 +1227,6 @@ gtk_moz_embed_get_link_message_unichar (GtkMozEmbed *embed)
 }
 
 // class and instance initialization
-
-GtkType
-gtk_moz_embed_single_get_type(void);
 
 static void
 gtk_moz_embed_single_class_init(GtkMozEmbedSingleClass *klass);

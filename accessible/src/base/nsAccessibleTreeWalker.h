@@ -20,11 +20,11 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: Aaron Leventhal (aaronl@netscape.com)
+ *   Original Author: Aaron Leventhal (aaronl@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -50,12 +50,17 @@
 #include "nsIBindingManager.h"
 #include "nsIWeakReference.h"
 
+enum { eSiblingsUninitialized = -1, eSiblingsWalkFrames = -2 };
+
 struct WalkState {
   nsCOMPtr<nsIAccessible> accessible;
   nsCOMPtr<nsIDOMNode> domNode;
   nsCOMPtr<nsIDOMNodeList> siblingList;
-  PRInt32 siblingIndex;  // Holds a state flag or an index into the siblingList
+  nsIContent *parentContent; // For walking normal DOM
   WalkState *prevState;
+  nsIFrame *frame;     // Helps avoid GetPrimaryFrameFor() calls
+  PRInt32 siblingIndex;    // Holds a state flag or an index into the siblingList
+  PRBool isHidden;         // Don't enter subtree if hidden
 };
  
 /** This class is used to walk the DOM tree. It skips
@@ -70,24 +75,22 @@ public:
   virtual ~nsAccessibleTreeWalker();
 
   NS_IMETHOD GetNextSibling();
-  NS_IMETHOD GetPreviousSibling();
   NS_IMETHOD GetParent();
   NS_IMETHOD GetFirstChild();
-  NS_IMETHOD GetLastChild();
+
   WalkState mState;
-  WalkState mInitialState;
 
 protected:
-  NS_IMETHOD GetChildBefore(nsIDOMNode* aParent, nsIDOMNode* aChild);
-  PRBool IsHidden();
   PRBool GetAccessible();
   NS_IMETHOD GetFullTreeParentNode(nsIDOMNode *aChildNode, nsIDOMNode **aParentNodeOut);
-  void GetSiblings(nsIDOMNode *aOneOfTheSiblings);
   void GetKids(nsIDOMNode *aParent);
 
   void ClearState();
   NS_IMETHOD PushState();
   NS_IMETHOD PopState();
+
+  void UpdateFrame(PRBool aTryFirstChild);
+  void GetNextDOMNode();
 
   nsCOMPtr<nsIWeakReference> mWeakShell;
   nsCOMPtr<nsIAccessibilityService> mAccService;

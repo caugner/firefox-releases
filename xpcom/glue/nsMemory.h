@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,22 +22,23 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #ifndef nsMemory_h__
 #define nsMemory_h__
 
+#include "nsXPCOM.h"
 #include "nsIMemory.h"
 
 #define NS_MEMORY_CONTRACTID "@mozilla.org/xpcom/memory-service;1"
@@ -63,12 +64,18 @@
 class nsMemory
 {
 public:
-    static NS_COM void*      Alloc(size_t size);
-    static NS_COM void*      Realloc(void* ptr, size_t size);
-    static NS_COM void       Free(void* ptr);
-    static NS_COM nsresult   HeapMinimize(PRBool aImmediate);
-    static NS_COM void*      Clone(const void* ptr, size_t size);
-    static NS_COM nsIMemory* GetGlobalMemoryService();       // AddRefs
+    static NS_HIDDEN_(void*) Alloc(size_t size)
+        { return NS_Alloc(size); }
+
+    static NS_HIDDEN_(void*) Realloc(void* ptr, PRSize size)
+        { return NS_Realloc(ptr, size); }
+
+    static NS_HIDDEN_(void) Free(void* ptr)
+        { NS_Free(ptr); }
+
+    static NS_COM_GLUE nsresult   HeapMinimize(PRBool aImmediate);
+    static NS_COM_GLUE void*      Clone(const void* ptr, PRSize size);
+    static NS_COM_GLUE nsIMemory* GetGlobalMemoryService();       // AddRefs
 };
 
 /** 
@@ -105,7 +112,7 @@ public:
         PRInt32 iter_ = PRInt32(size);                                        \
         while (--iter_ >= 0)                                                  \
             freeFunc((array)[iter_]);                                         \
-        nsMemory::Free((array));                                              \
+        NS_Free((array));                                                     \
     PR_END_MACRO
 
 // convenience macros for commonly used calls.  mmmmm.  syntactic sugar.
@@ -121,7 +128,7 @@ public:
  * @param array     The array to be freed.
  */
 #define NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(size, array)                    \
-    NS_FREE_XPCOM_POINTER_ARRAY((size), (array), nsMemory::Free)
+    NS_FREE_XPCOM_POINTER_ARRAY((size), (array), NS_Free)
 
 /**
  * Macro to free an array of pointers to nsISupports (or classes

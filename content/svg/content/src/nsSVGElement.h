@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,27 +14,27 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Crocodile Clips Ltd..
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef __NS_SVGELEMENT_H__
 #define __NS_SVGELEMENT_H__
@@ -51,19 +51,17 @@
 #include "nsISVGValue.h"
 #include "nsISVGValueObserver.h"
 #include "nsWeakReference.h"
-#include "nsISVGStyleValue.h"
 #include "nsISVGContent.h"
+#include "nsICSSStyleRule.h"
 
-class nsSVGElement : public nsGenericElement,    // :nsIHTMLContent:nsIXMLContent:nsIStyledContent:nsIContent
+class nsSVGElement : public nsGenericElement,    // :nsIXMLContent:nsIStyledContent:nsIContent
                      public nsISVGValueObserver, 
                      public nsSupportsWeakReference, // :nsISupportsWeakReference
                      public nsISVGContent
 {
 protected:
-  nsSVGElement();
+  nsSVGElement(nsINodeInfo *aNodeInfo);
   virtual ~nsSVGElement();
-
-  nsresult Init(nsINodeInfo* aNodeInfo);
 
 public:
   // nsISupports
@@ -71,8 +69,13 @@ public:
 
   // nsIContent interface methods
 
-  virtual void SetParent(nsIContent* aParent);
+  virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
+                              nsIContent* aBindingParent,
+                              PRBool aCompileEventHandlers);
+  virtual void UnbindFromTree(PRBool aDeep = PR_TRUE,
+                              PRBool aNullParent = PR_TRUE);
   virtual nsIAtom *GetIDAttributeName() const;
+  virtual nsIAtom *GetClassAttributeName() const;
   nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
                    const nsAString& aValue, PRBool aNotify)
   {
@@ -81,21 +84,23 @@ public:
   virtual nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
                            nsIAtom* aPrefix, const nsAString& aValue,
                            PRBool aNotify);
-
-  virtual nsresult SetBindingParent(nsIContent* aParent);
-
-  // nsIStyledContent
-  NS_IMETHOD GetID(nsIAtom** aResult) const;
-//   virtual const nsAttrValue* GetClasses() const;
-//   NS_IMETHOD HasClass(nsIAtom* aClass) const;
+  virtual nsresult UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
+                             PRBool aNotify);
+  
+  virtual PRBool IsContentOfType(PRUint32 aFlags) const;
   
   NS_IMETHOD WalkContentStyleRules(nsRuleWalker* aRuleWalker);
-  NS_IMETHOD GetInlineStyleRule(nsICSSStyleRule** aStyleRule);
+  NS_IMETHOD SetInlineStyleRule(nsICSSStyleRule* aStyleRule, PRBool aNotify);
+  virtual nsICSSStyleRule* GetInlineStyleRule();
 
   static const MappedAttributeEntry sFillStrokeMap[];
   static const MappedAttributeEntry sGraphicsMap[];
   static const MappedAttributeEntry sTextContentElementsMap[];
   static const MappedAttributeEntry sFontSpecificationMap[];
+  static const MappedAttributeEntry sGradientStopMap[];
+  static const MappedAttributeEntry sViewportsMap[];
+  static const MappedAttributeEntry sMarkersMap[];
+  static const MappedAttributeEntry sColorMap[];
   
   // nsIDOMNode
   NS_IMETHOD IsSupported(const nsAString& aFeature, const nsAString& aVersion, PRBool* aReturn);
@@ -107,8 +112,10 @@ public:
   NS_IMETHOD GetViewportElement(nsIDOMSVGElement** aViewportElement);
 
   // nsISVGValueObserver
-  NS_IMETHOD WillModifySVGObservable(nsISVGValue* observable);
-  NS_IMETHOD DidModifySVGObservable (nsISVGValue* observable);
+  NS_IMETHOD WillModifySVGObservable(nsISVGValue* observable,
+                                     nsISVGValue::modificationType aModType);
+  NS_IMETHOD DidModifySVGObservable (nsISVGValue* observable,
+                                     nsISVGValue::modificationType aModType);
 
   // nsISupportsWeakReference
   // implementation inherited from nsSupportsWeakReference
@@ -117,6 +124,9 @@ public:
   virtual void ParentChainChanged(); 
   
 protected:
+  // Hooks for subclasses
+  virtual PRBool IsEventName(nsIAtom* aName);
+
   /**
    * Set attribute and (if needed) notify documentobservers and fire off
    * mutation events.
@@ -141,15 +151,44 @@ protected:
                             PRBool aFireMutation,
                             PRBool aNotify);
 
-  nsresult CopyNode(nsSVGElement* dest, PRBool deep);
   void UpdateContentStyleRule();
   nsISVGValue* GetMappedAttribute(PRInt32 aNamespaceID, nsIAtom* aName);
   nsresult AddMappedSVGValue(nsIAtom* aName, nsISupports* aValue,
                              PRInt32 aNamespaceID = kNameSpaceID_None);
   
+  static PRBool IsGraphicElementEventName(nsIAtom* aName);
+  static nsIAtom* GetEventNameForAttr(nsIAtom* aAttr);
+
   nsCOMPtr<nsICSSStyleRule> mContentStyleRule;
   nsAttrAndChildArray mMappedAttributes;
-  nsCOMPtr<nsISVGStyleValue> mStyle;
 };
+
+/**
+ * A macro to implement the NS_NewSVGXXXElement() functions.
+ */
+#define NS_IMPL_NS_NEW_SVG_ELEMENT(_elementName)                             \
+nsresult                                                                     \
+NS_NewSVG##_elementName##Element(nsIContent **aResult,                       \
+                                 nsINodeInfo *aNodeInfo)                     \
+{                                                                            \
+  nsSVG##_elementName##Element *it =                                         \
+    new nsSVG##_elementName##Element(aNodeInfo);                             \
+  if (!it)                                                                   \
+    return NS_ERROR_OUT_OF_MEMORY;                                           \
+                                                                             \
+  NS_ADDREF(it);                                                             \
+                                                                             \
+  nsresult rv = it->Init();                                                  \
+                                                                             \
+  if (NS_FAILED(rv)) {                                                       \
+    NS_RELEASE(it);                                                          \
+    return rv;                                                               \
+  }                                                                          \
+                                                                             \
+  *aResult = it;                                                             \
+                                                                             \
+  return rv;                                                                 \
+}
+
 
 #endif // __NS_SVGELEMENT_H__

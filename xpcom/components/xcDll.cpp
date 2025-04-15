@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -55,6 +55,7 @@
 #include "nsCRT.h"
 #include "nsString.h"
 #include "nsITimelineService.h"
+#include "nsModule.h"
 #ifdef DEBUG
 #if defined(VMS)
 #include <lib$routines.h>
@@ -102,7 +103,7 @@ nsDll::GetDisplayPath(nsACString& aLeafName)
     m_dllSpec->GetNativeLeafName(aLeafName);
     
     if (aLeafName.IsEmpty())
-        aLeafName.Assign(NS_LITERAL_CSTRING("unknown!"));
+        aLeafName.AssignLiteral("unknown!");
 }
 
 PRBool
@@ -136,120 +137,10 @@ PRBool nsDll::Load(void)
         nsTraceRefcntImpl::SetActivityIsLegal(PR_FALSE);
 #endif
         
-    // Load any library dependencies
-    //   The Component Loader Manager may hold onto some extra data
-    //   set by either the native component loader or the native 
-    //   component.  We assume that this data is a space delimited
-    //   listing of dependent libraries which are required to be
-    //   loaded prior to us loading the given component.  Once, the
-    //   component is loaded into memory, we can release our hold 
-    //   on the dependent libraries with the assumption that the 
-    //   component library holds a reference via the OS so loader.
-
-#if defined(XP_UNIX)
-    nsCOMPtr<nsIComponentLoaderManager> manager = do_QueryInterface(m_loader->mCompMgr);
-    if (!manager)
-        return PR_TRUE;
-
-    nsXPIDLCString extraData;
-    manager->GetOptionalData(m_dllSpec, nsnull, getter_Copies(extraData));
-    
-#ifdef UNLOAD_DEPENDENT_LIBS
-    nsVoidArray dependentLibArray;
-#endif
-
-    // if there was any extra data, treat it as a listing of dependent libs
-    if (extraData != nsnull) 
-    {
-        // all dependent libraries are suppose to be in the "gre" directory.
-        // note that the gre directory is the same as the "bin" directory, 
-        // when there isn't a real "gre" found.
-
-        nsXPIDLCString path;
-        nsCOMPtr<nsIFile> file;
-        NS_GetSpecialDirectory(NS_GRE_DIR, getter_AddRefs(file));
-        
-        if (!file)
-            return NS_ERROR_FAILURE;
-
-        // we are talking about a file in the GRE dir.  Lets append something
-        // stupid right now, so that later we can just set the leaf name.
-        file->AppendNative(NS_LITERAL_CSTRING("dummy"));
-
-        char *buffer = strdup(extraData); 
-        if (!buffer)
-            return NS_ERROR_OUT_OF_MEMORY;
-
-        char* newStr;
-        char *token = nsCRT::strtok(buffer, " ", &newStr);
-        while (token!=nsnull)
-        {
-            nsCStringKey key(token);
-            if (m_loader->mLoadedDependentLibs.Get(&key)) {
-                token = nsCRT::strtok(newStr, " ", &newStr);
-                continue;
-            }
-
-            m_loader->mLoadedDependentLibs.Put(&key, (void*)1);
-
-            nsXPIDLCString libpath;
-            file->SetNativeLeafName(nsDependentCString(token));
-            file->GetNativePath(path);
-            if (!path)
-                return NS_ERROR_FAILURE;
-
-            // Load this dependent library with the global flag and stash 
-            // the result for later so that we can unload it.
-            PRLibSpec libSpec;
-            libSpec.type = PR_LibSpec_Pathname;
-
-            // if the depend library path starts with a / we are 
-            // going to assume that it is a full path and should
-            // be loaded without prepending the gre diretory 
-            // location.  We could have short circuited the 
-            // SetNativeLeafName above, but this is clearer and
-            // the common case is a relative path.
-
-            if (token[0] == '/')
-                libSpec.value.pathname = token;
-            else
-                libSpec.value.pathname = path;
-            
-            PRLibrary* lib = PR_LoadLibraryWithFlags(libSpec, PR_LD_LAZY|PR_LD_GLOBAL);
-            // if we couldn't load the dependent library.  We did the best we
-            // can.  Now just let us fail later if this really was a required
-            // dependency.
-#ifdef UNLOAD_DEPENDENT_LIBS
-            if (lib) 
-                dependentLibArray.AppendElement((void*)lib);
-#endif
-                
-            token = nsCRT::strtok(newStr, " ", &newStr);
-        }
-        free(buffer);
-    }
-#endif
-
     // load the component
     nsCOMPtr<nsILocalFile> lf(do_QueryInterface(m_dllSpec));
     NS_ASSERTION(lf, "nsIFile here must implement a nsILocalFile"); 
     lf->Load(&m_instance);
-
-#if defined(XP_UNIX)
-    // Unload any of library dependencies we loaded earlier. The assumption  
-    // here is that the component will have a "internal" reference count to
-    // the dependency library we just loaded.  
-    // XXX should we unload later - or even at all?
-
-#ifdef UNLOAD_DEPENDENT_LIBS
-    if (extraData != nsnull)
-    {
-        PRInt32 arrayCount = dependentLibArray.Count();
-        for (PRInt32 index = 0; index < arrayCount; index++)
-            PR_UnloadLibrary((PRLibrary*)dependentLibArray.ElementAt(index));
-    }
-#endif
-#endif
 
 #ifdef NS_BUILD_REFCNT_LOGGING
         nsTraceRefcntImpl::SetActivityIsLegal(PR_TRUE);

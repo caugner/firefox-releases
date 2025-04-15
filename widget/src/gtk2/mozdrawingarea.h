@@ -14,9 +14,9 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code mozilla.org code.
+ * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code Christopher Blizzard
+ * The Initial Developer of the Original Code is Christopher Blizzard
  * <blizzard@mozilla.org>.  Portions created by the Initial Developer
  * are Copyright (C) 2001 the Initial Developer. All Rights Reserved.
  *
@@ -72,6 +72,8 @@ struct _MozDrawingareaClass
 GtkType         moz_drawingarea_get_type       (void);
 MozDrawingarea *moz_drawingarea_new            (MozDrawingarea *parent,
                                                 MozContainer *widget_parent);
+void            moz_drawingarea_reparent       (MozDrawingarea *drawingarea,
+                                                GdkWindow *aNewParent);
 void            moz_drawingarea_move           (MozDrawingarea *drawingarea,
                                                 gint x, gint y);
 void            moz_drawingarea_resize         (MozDrawingarea *drawingarea,

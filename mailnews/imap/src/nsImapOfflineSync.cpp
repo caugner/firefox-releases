@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -112,7 +112,7 @@ nsImapOfflineSync::OnStopRunningUrl(nsIURI* url, nsresult exitCode)
   nsCOMPtr<nsIImapUrl> imapUrl = do_QueryInterface(url);
 
   if (imapUrl)
-    nsImapProtocol::LogImapUrl(NS_SUCCEEDED(rv) ? "offline imap url succeeded:" : "offline imap url failed:", imapUrl);
+    nsImapProtocol::LogImapUrl(NS_SUCCEEDED(rv) ? "offline imap url succeeded " : "offline imap url failed ", imapUrl);
   // NS_BINDING_ABORTED is used for the user pressing stop, which
   // should cause us to abort the offline process. Other errors
   // should allow us to continue.
@@ -140,6 +140,8 @@ nsresult nsImapOfflineSync::AdvanceToNextServer()
 
   if (!m_allServers)
   {
+    NS_ASSERTION(!m_currentServer, "this shouldn't be set");
+    m_currentServer = nsnull;
     nsCOMPtr<nsIMsgAccountManager> accountManager = 
              do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID, &rv);
     NS_ASSERTION(accountManager && NS_SUCCEEDED(rv), "couldn't get account mgr");
@@ -206,7 +208,6 @@ nsresult nsImapOfflineSync::AdvanceToNextFolder()
 
   if (NS_SUCCEEDED(rv) && m_serverEnumerator)
   {
-    // ### argh, this doesn't go into sub-folders of each folder.
     nsCOMPtr <nsISupports> supports;
     rv = m_serverEnumerator->CurrentItem(getter_AddRefs(supports));
     m_currentFolder = do_QueryInterface(supports);
@@ -228,25 +229,30 @@ void nsImapOfflineSync::AdvanceToFirstIMAPFolder()
   while (NS_SUCCEEDED(rv) && m_currentFolder && !imapFolder);
 }
 
-void nsImapOfflineSync::ProcessFlagOperation(nsIMsgOfflineImapOperation *currentOp)
+void nsImapOfflineSync::ProcessFlagOperation(nsIMsgOfflineImapOperation *op)
 {
+  nsCOMPtr <nsIMsgOfflineImapOperation> currentOp = op;
   nsMsgKeyArray matchingFlagKeys;
   PRUint32 currentKeyIndex = m_KeyIndex;
+
   imapMessageFlagsType matchingFlags;
   currentOp->GetNewFlags(&matchingFlags);
   imapMessageFlagsType flagOperation;
   imapMessageFlagsType newFlags;
-	
+  PRBool flagsMatch = PR_TRUE;	
   do
   {	// loop for all messsages with the same flags
-    nsMsgKey curKey;
-    currentOp->GetMessageKey(&curKey);
-    matchingFlagKeys.Add(curKey);
-    currentOp->ClearOperation(nsIMsgOfflineImapOperation::kFlagsChanged);
+    if (flagsMatch)
+    {
+      nsMsgKey curKey;
+      currentOp->GetMessageKey(&curKey);
+      matchingFlagKeys.Add(curKey);
+      currentOp->ClearOperation(nsIMsgOfflineImapOperation::kFlagsChanged);
+    }
     currentOp = nsnull;
     if (++currentKeyIndex < m_CurrentKeys.GetSize())
       m_currentDB->GetOfflineOpForKey(m_CurrentKeys[currentKeyIndex], PR_FALSE,
-        &currentOp);
+        getter_AddRefs(currentOp));
     if (currentOp)
     {
       // init the operation in the currentOp, so we don't crunch it if&when we
@@ -256,9 +262,9 @@ void nsImapOfflineSync::ProcessFlagOperation(nsIMsgOfflineImapOperation *current
       currentOp->GetFlagOperation(&flagOperation);
       currentOp->GetNewFlags(&newFlags);
     }
-  } while (currentOp && (flagOperation & nsIMsgOfflineImapOperation::kFlagsChanged) && (newFlags == matchingFlags) );
-	
-  currentOp = nsnull;
+    flagsMatch = (flagOperation & nsIMsgOfflineImapOperation::kFlagsChanged)
+                  && (newFlags == matchingFlags);
+  } while (currentOp);
 	
   if (matchingFlagKeys.GetSize() > 0)
   {
@@ -329,7 +335,7 @@ nsImapOfflineSync::ProcessAppendMsgOperation(nsIMsgOfflineImapOperation *current
             rv = destFolder->GetOfflineStoreInputStream(getter_AddRefs(offlineStoreInputStream));
             if (NS_SUCCEEDED(rv) && offlineStoreInputStream)
             {
-              nsCOMPtr<nsIRandomAccessStore> seekStream = do_QueryInterface(offlineStoreInputStream);
+              nsCOMPtr<nsISeekableStream> seekStream = do_QueryInterface(offlineStoreInputStream);
               NS_ASSERTION(seekStream, "non seekable stream - can't read from offline msg");
               if (seekStream)
               {
@@ -373,11 +379,12 @@ nsImapOfflineSync::ProcessAppendMsgOperation(nsIMsgOfflineImapOperation *current
                       rv = copyService->CopyFileMessage(tempFileSpec, destFolder,
                       /* nsIMsgDBHdr* msgToReplace */ nsnull,
                       PR_TRUE /* isDraftOrTemplate */,
+                      0, // new msg flags - are there interesting flags here?
                         this,
                         m_window);
                   }
                   else
-                    m_curTempFile->Delete(PR_FALSE);
+                    tempFileSpec->Delete(PR_FALSE);
                 }
                 currentOp->ClearOperation(nsIMsgOfflineImapOperation::kAppendDraft);
                 m_currentDB->DeleteHeader(mailHdr, nsnull, PR_TRUE, PR_TRUE);
@@ -393,14 +400,14 @@ nsImapOfflineSync::ProcessAppendMsgOperation(nsIMsgOfflineImapOperation *current
 }
 
 
-void nsImapOfflineSync::ProcessMoveOperation(nsIMsgOfflineImapOperation *currentOp)
+void nsImapOfflineSync::ProcessMoveOperation(nsIMsgOfflineImapOperation *op)
 {
   nsMsgKeyArray matchingFlagKeys ;
   PRUint32 currentKeyIndex = m_KeyIndex;
   nsXPIDLCString moveDestination;
-  currentOp->GetDestinationFolderURI(getter_Copies(moveDestination));
+  op->GetDestinationFolderURI(getter_Copies(moveDestination));
   PRBool moveMatches = PR_TRUE;
-  
+  nsCOMPtr <nsIMsgOfflineImapOperation> currentOp = op;
   do 
   {	// loop for all messsages with the same destination
     if (moveMatches)
@@ -415,7 +422,7 @@ void nsImapOfflineSync::ProcessMoveOperation(nsIMsgOfflineImapOperation *current
     if (++currentKeyIndex < m_CurrentKeys.GetSize())
     {
       nsXPIDLCString nextDestination;
-      nsresult rv = m_currentDB->GetOfflineOpForKey(m_CurrentKeys[currentKeyIndex], PR_FALSE, &currentOp);
+      nsresult rv = m_currentDB->GetOfflineOpForKey(m_CurrentKeys[currentKeyIndex], PR_FALSE, getter_AddRefs(currentOp));
       moveMatches = PR_FALSE;
       if (NS_SUCCEEDED(rv) && currentOp)
       {
@@ -765,25 +772,24 @@ nsresult nsImapOfflineSync::ProcessNextOperation()
       PRInt32 curFolderUidValidity;
       folderInfo->GetImapUidValidity(&curFolderUidValidity);
       PRBool uidvalidityChanged = (!m_pseudoOffline && folderFlags & MSG_FOLDER_FLAG_IMAPBOX) && (GetCurrentUIDValidity() != curFolderUidValidity);
-      nsIMsgOfflineImapOperation *currentOp = nsnull;
+      nsCOMPtr <nsIMsgOfflineImapOperation> currentOp;
       if (uidvalidityChanged)
         DeleteAllOfflineOpsForCurrentDB();
       else
-        m_currentDB->GetOfflineOpForKey(m_CurrentKeys[m_KeyIndex], PR_FALSE, &currentOp);
+        m_currentDB->GetOfflineOpForKey(m_CurrentKeys[m_KeyIndex], PR_FALSE, getter_AddRefs(currentOp));
       
       if (currentOp)
       {
         nsOfflineImapOperationType opType; 
         
-        if (currentOp)
-          currentOp->GetOperation(&opType);
+        currentOp->GetOperation(&opType);
         // loop until we find the next db record that matches the current playback operation
         while (currentOp && !(opType & mCurrentPlaybackOpType))
         {
           currentOp = nsnull;
           ++m_KeyIndex;
           if (m_KeyIndex < m_CurrentKeys.GetSize())
-            m_currentDB->GetOfflineOpForKey(m_CurrentKeys[m_KeyIndex], PR_FALSE, &currentOp);
+            m_currentDB->GetOfflineOpForKey(m_CurrentKeys[m_KeyIndex], PR_FALSE, getter_AddRefs(currentOp));
           if (currentOp)
             currentOp->GetOperation(&opType);
         }

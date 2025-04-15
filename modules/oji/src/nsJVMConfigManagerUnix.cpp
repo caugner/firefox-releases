@@ -1,4 +1,4 @@
-/* -*- Mode: IDL; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -316,8 +316,8 @@ nsJVMConfigManagerUnix::ParseLine(nsAString& aLine)
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsAutoString testPathStr(pathStr);
-    if (type.Equals(NS_LITERAL_STRING("jdk")))
-        testPathStr.Append(NS_LITERAL_STRING("/jre"));
+    if (type.EqualsLiteral("jdk"))
+        testPathStr.AppendLiteral("/jre");
 
     testPathStr.Append(mozillaPluginPath);
     testPath->InitWithPath(testPathStr);
@@ -468,9 +468,9 @@ nsJVMConfigManagerUnix::GetNSVersion(nsAString& _retval)
     // ns7 is for mozilla1.3 or later
     // ns610 is for earlier version of mozilla.
     if (version >= 1.3) {
-        _retval.Assign(NS_LITERAL_STRING("ns7"));
+        _retval.AssignLiteral("ns7");
     } else {
-        _retval.Assign(NS_LITERAL_STRING("ns610"));
+        _retval.AssignLiteral("ns610");
     }
 
     return NS_OK;
@@ -567,9 +567,9 @@ nsJVMConfigManagerUnix::AddDirectory(nsAString& aHomeDirName)
     PRBool exists;
     testPath->Exists(&exists);
     if (exists) {
-        type.Assign(NS_LITERAL_STRING("jdk"));
+        type.AssignLiteral("jdk");
     } else {
-        type.Assign(NS_LITERAL_STRING("jre"));
+        type.AssignLiteral("jre");
         testPath->InitWithPath(aHomeDirName);
     }
 
@@ -615,8 +615,8 @@ nsJVMConfigManagerUnix::AddDirectory(nsAString& aHomeDirName)
     nsJVMConfig* config = NS_STATIC_CAST(nsJVMConfig *,
                                          mJVMConfigList.Get(&key));
     if (!config) {
-        config = new nsJVMConfig(version, type, nsString(), arch, path,
-                                 mozPluginPath, nsString());
+        config = new nsJVMConfig(version, type, EmptyString(), arch, path,
+                                 mozPluginPath, EmptyString());
         NS_ENSURE_TRUE(config, NS_ERROR_OUT_OF_MEMORY);
         mJVMConfigList.Put(&key, NS_STATIC_CAST(void *, config));
         NS_ADDREF(config);
@@ -629,9 +629,9 @@ PRBool
 nsJVMConfigManagerUnix::TestArch(nsILocalFile* aPluginPath, nsAString& aArch)
 {
 #ifdef SPARC
-    aArch.Assign(NS_LITERAL_STRING("sparc"));
+    aArch.AssignLiteral("sparc");
 #else
-    aArch.Assign(NS_LITERAL_STRING("i386"));
+    aArch.AssignLiteral("i386");
 #endif
     return TestExists(aPluginPath, aArch);
 }
@@ -646,7 +646,7 @@ nsJVMConfigManagerUnix::TestNSVersion(nsILocalFile* aArchPath,
 
     aNSVersion.Assign(versionStr);
 #if (NS_COMPILER_GNUC3)
-    aNSVersion.Append(NS_LITERAL_STRING("-gcc32"));
+    aNSVersion.AppendLiteral("-gcc32");
 #endif
     return TestExists(aArchPath, aNSVersion);
 }

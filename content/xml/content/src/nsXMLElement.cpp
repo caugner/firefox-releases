@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -47,7 +46,6 @@
 #include "nsIDocShell.h"
 #include "nsIEventStateManager.h"
 #include "nsIDOMEvent.h"
-#include "nsINameSpace.h"
 #include "nsINameSpaceManager.h"
 #include "nsINodeInfo.h"
 #include "nsIURL.h"
@@ -62,42 +60,29 @@
 #include "nsStyleConsts.h"
 #include "nsIPresShell.h"
 #include "nsGUIEvent.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIBrowserDOMWindow.h"
-#include "nsIPrefBranch.h"
-#include "nsIPrefService.h"
 #include "nsIDOMCSSStyleDeclaration.h"
 #include "nsIDOMViewCSS.h"
 #include "nsIXBLService.h"
-#include "nsIXBLBinding.h"
 #include "nsIBindingManager.h"
 
 nsresult
 NS_NewXMLElement(nsIContent** aInstancePtrResult, nsINodeInfo *aNodeInfo)
 {
-  NS_ENSURE_ARG_POINTER(aInstancePtrResult);
-  *aInstancePtrResult = nsnull;
-
-  nsXMLElement* it = new nsXMLElement();
-
+  nsXMLElement* it = new nsXMLElement(aNodeInfo);
   if (!it) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  NS_ADDREF(it);
-  nsresult rv = it->Init(aNodeInfo);
-
-  if (NS_FAILED(rv)) {
-    NS_RELEASE(it);
-    return rv;
-  }
-
-  *aInstancePtrResult = NS_STATIC_CAST(nsIXMLContent *, it);
+  NS_ADDREF(*aInstancePtrResult = it);
 
   return NS_OK;
 }
 
-nsXMLElement::nsXMLElement() : mIsLink(PR_FALSE)
+nsXMLElement::nsXMLElement(nsINodeInfo *aNodeInfo)
+  : nsGenericElement(aNodeInfo),
+    mIsLink(PR_FALSE)
 {
 }
 
@@ -144,7 +129,6 @@ nsXMLElement::QueryInterface(REFNSIID aIID, void** aInstancePtr)
 NS_IMPL_ADDREF_INHERITED(nsXMLElement, nsGenericElement)
 NS_IMPL_RELEASE_INHERITED(nsXMLElement, nsGenericElement)
 
-
 nsresult
 nsXMLElement::SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, nsIAtom* aPrefix,
                       const nsAString& aValue, PRBool aNotify)
@@ -155,7 +139,7 @@ nsXMLElement::SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, nsIAtom* aPrefix,
     //       we do not need to check other attributes. If there
     //       is no href attribute, then this link is simply
     //       untraversible [XLink 3.2].
-    mIsLink = aValue.Equals(NS_LITERAL_STRING("simple"));
+    mIsLink = aValue.EqualsLiteral("simple");
 
     // We will check for actuate="onLoad" in MaybeTriggerAutoLink
   }
@@ -165,7 +149,7 @@ nsXMLElement::SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, nsIAtom* aPrefix,
 }
 
 static nsresult
-DocShellToPresContext(nsIDocShell *aShell, nsIPresContext **aPresContext)
+DocShellToPresContext(nsIDocShell *aShell, nsPresContext **aPresContext)
 {
   *aPresContext = nsnull;
 
@@ -240,33 +224,24 @@ nsXMLElement::MaybeTriggerAutoLink(nsIDocShell *aShell)
           break;
 
         // XXX Should probably do this using atoms 
-        if (value.Equals(NS_LITERAL_STRING("new"))) {
-          nsCOMPtr<nsIPrefBranch> prefBranch =
-            do_GetService(NS_PREFSERVICE_CONTRACTID);
+        if (value.EqualsLiteral("new")) {
+          if (nsContentUtils::GetBoolPref("dom.disable_open_during_load")) {
+            // disabling open during load
 
-          PRBool boolPref = PR_FALSE;
-          PRInt32 intPref = nsIBrowserDOMWindow::OPEN_NEWWINDOW;
-          if (prefBranch) {
-            prefBranch->GetBoolPref("dom.disable_open_during_load", &boolPref);
-            if (boolPref) {
-              // disabling open during load
-
-              return NS_OK;
-            }
-
-            prefBranch->GetIntPref("browser.link.open_newwindow",
-                                    &intPref);
+            return NS_OK;
           }
-          if (intPref != nsIBrowserDOMWindow::OPEN_CURRENTWINDOW) {
-            // not blocking new windows
+
+          if (nsContentUtils::GetIntPref("browser.link.open_newwindow",
+                                     nsIBrowserDOMWindow::OPEN_NEWWINDOW) ==
+              nsIBrowserDOMWindow::OPEN_NEWWINDOW) {
             verb = eLinkVerb_New;
           }
-        } else if (value.Equals(NS_LITERAL_STRING("replace"))) {
+        } else if (value.EqualsLiteral("replace")) {
           // We want to actually stop processing the current document now.
           // We do this by returning the correct value so that the one
           // that called us knows to stop processing.
           verb = eLinkVerb_Replace;
-        } else if (value.Equals(NS_LITERAL_STRING("embed"))) {
+        } else if (value.EqualsLiteral("embed")) {
           // XXX TODO
           break;
         }
@@ -283,10 +258,10 @@ nsXMLElement::MaybeTriggerAutoLink(nsIDocShell *aShell)
           nsCOMPtr<nsIURI> uri;
           rv = nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(uri),
                                                          value,
-                                                         mDocument,
+                                                         GetOwnerDoc(),
                                                          base);
           if (NS_SUCCEEDED(rv)) {
-            nsCOMPtr<nsIPresContext> pc;
+            nsCOMPtr<nsPresContext> pc;
             rv = DocShellToPresContext(aShell, getter_AddRefs(pc));
             if (NS_SUCCEEDED(rv)) {
               rv = TriggerLink(pc, verb, base, uri,
@@ -304,7 +279,7 @@ nsXMLElement::MaybeTriggerAutoLink(nsIDocShell *aShell)
 }
 
 nsresult
-nsXMLElement::HandleDOMEvent(nsIPresContext* aPresContext,
+nsXMLElement::HandleDOMEvent(nsPresContext* aPresContext,
                              nsEvent* aEvent,
                              nsIDOMEvent** aDOMEvent,
                              PRUint32 aFlags,
@@ -318,6 +293,7 @@ nsXMLElement::HandleDOMEvent(nsIPresContext* aPresContext,
 
   if (mIsLink && (NS_OK == ret) && (nsEventStatus_eIgnore == *aEventStatus) &&
       !(aFlags & NS_EVENT_FLAG_CAPTURE) && !(aFlags & NS_EVENT_FLAG_SYSTEM_EVENT)) {
+    nsIDocument *document = GetCurrentDoc();
     switch (aEvent->message) {
     case NS_MOUSE_LEFT_BUTTON_DOWN:
       {
@@ -338,9 +314,8 @@ nsXMLElement::HandleDOMEvent(nsIPresContext* aPresContext,
           }
           nsAutoString show, href;
           nsLinkVerb verb = eLinkVerb_Undefined; // basically means same as replace
-          nsGenericElement::GetAttr(kNameSpaceID_XLink, nsHTMLAtoms::href,
-                                    href);
-          if (href.IsEmpty()) {
+          nsCOMPtr<nsIURI> uri = nsContentUtils::GetXLinkURI(this);
+          if (!uri) {
             *aEventStatus = nsEventStatus_eConsumeDoDefault; 
             break;
           }
@@ -349,34 +324,21 @@ nsXMLElement::HandleDOMEvent(nsIPresContext* aPresContext,
                                     show);
 
           // XXX Should probably do this using atoms 
-          if (show.Equals(NS_LITERAL_STRING("new"))) {
-            nsCOMPtr<nsIPrefBranch> prefBranch =
-              do_GetService(NS_PREFSERVICE_CONTRACTID);
-
-            PRInt32 newWindowTreatment = nsIBrowserDOMWindow::OPEN_NEWWINDOW;
-            if (prefBranch) {
-              prefBranch->GetIntPref("browser.link.open_newwindow",
-                                      &newWindowTreatment);
-            }
-            if (newWindowTreatment != nsIBrowserDOMWindow::OPEN_CURRENTWINDOW) {
+          if (show.EqualsLiteral("new")) {
+            if (nsContentUtils::GetIntPref("browser.link.open_newwindow",
+                                      nsIBrowserDOMWindow::OPEN_NEWWINDOW) ==
+                nsIBrowserDOMWindow::OPEN_NEWWINDOW) {
               verb = eLinkVerb_New;
             }
-          } else if (show.Equals(NS_LITERAL_STRING("replace"))) {
+          } else if (show.EqualsLiteral("replace")) {
             verb = eLinkVerb_Replace;
-          } else if (show.Equals(NS_LITERAL_STRING("embed"))) {
+          } else if (show.EqualsLiteral("embed")) {
             verb = eLinkVerb_Embed;
           }
 
           nsCOMPtr<nsIURI> baseURI = GetBaseURI();
-          nsCOMPtr<nsIURI> uri;
-          ret = nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(uri),
-                                                          href,
-                                                          mDocument,
-                                                          baseURI);
-          if (NS_SUCCEEDED(ret)) {
-            ret = TriggerLink(aPresContext, verb, baseURI, uri, EmptyString(),
-                              PR_TRUE, PR_TRUE);
-          }
+          ret = TriggerLink(aPresContext, verb, baseURI, uri,
+                            EmptyString(), PR_TRUE, PR_TRUE);
 
           *aEventStatus = nsEventStatus_eConsumeDoDefault; 
         }
@@ -395,7 +357,8 @@ nsXMLElement::HandleDOMEvent(nsIPresContext* aPresContext,
 
           //fire click
           nsGUIEvent* guiEvent = NS_STATIC_CAST(nsGUIEvent*, aEvent);
-          nsMouseEvent event(NS_MOUSE_LEFT_CLICK, guiEvent->widget);
+          nsMouseEvent event(NS_IS_TRUSTED_EVENT(aEvent), NS_MOUSE_LEFT_CLICK,
+                             guiEvent->widget, nsMouseEvent::eReal);
           event.point = aEvent->point;
           event.refPoint = aEvent->refPoint;
           event.clickCount = 1;
@@ -429,7 +392,7 @@ nsXMLElement::HandleDOMEvent(nsIPresContext* aPresContext,
         nsCOMPtr<nsIURI> uri;
         ret = nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(uri),
                                                         href,
-                                                        mDocument,
+                                                        document,
                                                         baseURI);
         if (NS_SUCCEEDED(ret)) {
           ret = TriggerLink(aPresContext, eLinkVerb_Replace, baseURI, uri,
@@ -456,51 +419,24 @@ nsXMLElement::HandleDOMEvent(nsIPresContext* aPresContext,
   return ret;
 }
 
-NS_IMETHODIMP
-nsXMLElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
+PRBool
+nsXMLElement::IsFocusable(PRInt32 *aTabIndex)
 {
-  NS_ENSURE_ARG_POINTER(aReturn);
-  *aReturn = nsnull;
-
-  nsXMLElement* it = new nsXMLElement();
-
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  NS_ADDREF(it);
-  nsCOMPtr<nsISupports> kungFuDeathGrip(NS_STATIC_CAST(nsIContent *, this));
-
-  nsresult rv = it->Init(mNodeInfo);
-
-  if (NS_FAILED(rv)) {
-    NS_RELEASE(it);
-    return rv;
-  }
-
-  CopyInnerTo(it, aDeep);
-
-  rv = CallQueryInterface(it, aReturn);
-  NS_RELEASE(it);
-  return rv;
-}
-
-// nsIStyledContent implementation
-
-NS_IMETHODIMP
-nsXMLElement::GetID(nsIAtom** aResult) const
-{
-  nsIAtom* atom = GetIDAttributeName();
-
-  *aResult = nsnull;
-  nsresult rv = NS_OK;
-  if (atom) {
-    nsAutoString value;
-    rv = nsGenericElement::GetAttr(kNameSpaceID_None, atom, value);
-    if (NS_SUCCEEDED(rv)) {
-      *aResult = NS_NewAtom(value);
+  nsCOMPtr<nsIURI> linkURI = nsContentUtils::GetLinkURI(this);
+  if (linkURI) {
+    if (aTabIndex) {
+      *aTabIndex = ((sTabFocusModel & eTabFocus_linksMask) == 0 ? -1 : 0);
     }
+    return PR_TRUE;
   }
 
-  return rv;
+  if (aTabIndex) {
+    *aTabIndex = -1;
+  }
+
+  return PR_FALSE;
 }
+
+
+NS_IMPL_DOM_CLONENODE(nsXMLElement)
+

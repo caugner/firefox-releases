@@ -1,41 +1,40 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 2001 Netscape Communications Corporation.  All 
- * Rights Reserved.
- * 
- * Portions created by Sun Microsystems, Inc. are Copyright (C) 2003
- * Sun Microsystems, Inc. All Rights Reserved.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *	Dr Vipul Gupta <vipul.gupta@sun.com>, Sun Microsystems Laboratories
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
+ *   Dr Vipul Gupta <vipul.gupta@sun.com>, Sun Microsystems Laboratories
  *
- * $Id: sslinfo.c,v 1.6 2003/02/27 01:31:34 nelsonb%netscape.com Exp $
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
+/* $Id: sslinfo.c,v 1.11 2005/04/06 21:35:45 nelsonb%netscape.com Exp $ */
 #include "ssl.h"
 #include "sslimpl.h"
 #include "sslproto.h"
@@ -223,4 +222,59 @@ SECStatus SSL_GetCipherSuiteInfo(PRUint16 cipherSuite,
     }
     PORT_SetError(SEC_ERROR_INVALID_ARGS);
     return SECFailure;
+}
+
+/* This function might be a candidate to be public. 
+ * Disables all export ciphers in the default set of enabled ciphers.
+ */
+SECStatus 
+SSL_DisableDefaultExportCipherSuites(void)
+{
+    const SSLCipherSuiteInfo * pInfo = suiteInfo;
+    unsigned int i;
+    SECStatus rv;
+
+    for (i = 0; i < NUM_SUITEINFOS; ++i, ++pInfo) {
+    	if (pInfo->isExportable) {
+	    rv = SSL_CipherPrefSetDefault(pInfo->cipherSuite, PR_FALSE);
+	    PORT_Assert(rv == SECSuccess);
+	}
+    }
+    return SECSuccess;
+}
+
+/* This function might be a candidate to be public, 
+ * except that it takes an sslSocket pointer as an argument.
+ * A Public version would take a PRFileDesc pointer.
+ * Disables all export ciphers in the default set of enabled ciphers.
+ */
+SECStatus 
+SSL_DisableExportCipherSuites(PRFileDesc * fd)
+{
+    const SSLCipherSuiteInfo * pInfo = suiteInfo;
+    unsigned int i;
+    SECStatus rv;
+
+    for (i = 0; i < NUM_SUITEINFOS; ++i, ++pInfo) {
+    	if (pInfo->isExportable) {
+	    rv = SSL_CipherPrefSet(fd, pInfo->cipherSuite, PR_FALSE);
+	    PORT_Assert(rv == SECSuccess);
+	}
+    }
+    return SECSuccess;
+}
+
+/* Tells us if the named suite is exportable 
+ * returns false for unknown suites.
+ */
+PRBool
+SSL_IsExportCipherSuite(PRUint16 cipherSuite)
+{
+    unsigned int i;
+    for (i = 0; i < NUM_SUITEINFOS; i++) {
+    	if (suiteInfo[i].cipherSuite == cipherSuite) {
+	    return (PRBool)(suiteInfo[i].isExportable);
+	}
+    }
+    return PR_FALSE;
 }

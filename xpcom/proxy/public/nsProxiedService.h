@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,21 +23,21 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef __nsProxiedServiceManager_h_
-#define __nsProxiedServiceManager_h_
+#ifndef nsProxiedService_h_
+#define nsProxiedService_h_
 
 #include "nsIServiceManager.h"
 #include "nsIProxyObjectManager.h"
@@ -94,71 +94,45 @@
 
 class nsProxiedService
 {
- public:
-   
+public:
     nsProxiedService(const nsCID &aClass, const nsIID &aIID, 
-                     nsIEventQueue* pIProxyQueue, PRBool always, nsresult*rv)
+                     nsIEventQueue* aEventQ, PRBool always, nsresult* rv)
     {
-       *rv = nsServiceManager::GetService(aClass, 
-                                          aIID, 
-                                          getter_AddRefs(mService));
-       if (NS_FAILED(*rv)) return;
-       InitProxy(aIID, pIProxyQueue, always, rv);
+        nsCOMPtr<nsISupports> svc = do_GetService(aClass, rv);
+        if (NS_SUCCEEDED(*rv))
+            InitProxy(svc, aIID, aEventQ, always, rv);
     }
 
     nsProxiedService(const char* aContractID, const nsIID &aIID, 
-                     nsIEventQueue* pIProxyQueue, PRBool always, nsresult*rv)
+                     nsIEventQueue* aEventQ, PRBool always, nsresult* rv)
     {
-       *rv = nsServiceManager::GetService(aContractID, 
-                                          aIID, 
-                                          getter_AddRefs(mService));
-       if (NS_FAILED(*rv)) return;
-       InitProxy(aIID, pIProxyQueue, always, rv);
-    }
-
-    void InitProxy(const nsIID &aIID, nsIEventQueue* pIProxyQueue,
-                   PRBool always, nsresult*rv)
-    {
-       static NS_DEFINE_CID(kProxyObjectManagerCID, NS_PROXYEVENT_MANAGER_CID);
-
-       nsCOMPtr<nsIProxyObjectManager> pIProxyObjectManager = 
-                do_GetService(kProxyObjectManagerCID, rv);
-       if (NS_FAILED(*rv)) return;
-
-       PRInt32 proxyType = PROXY_SYNC;
-       if (always) proxyType |= PROXY_ALWAYS;
-       *rv = pIProxyObjectManager->GetProxyForObject(pIProxyQueue, 
-                                                  aIID, 
-                                                  mService,
-                                                  proxyType, 
-                                                  getter_AddRefs(mProxiedService));
+        nsCOMPtr<nsISupports> svc = do_GetService(aContractID, rv);
+        if (NS_SUCCEEDED(*rv))
+            InitProxy(svc, aIID, aEventQ, always, rv);
     }
     
-    ~nsProxiedService()
+    operator nsISupports*() const
     {
+        return mProxiedService;
     }
 
-   nsISupports* operator->() const
-   {
-       NS_PRECONDITION(mProxiedService != 0, "Your code should test the error result from the constructor.");
-       return mProxiedService;
-   }
+private:
 
-   PRBool operator==(const nsISupports* other)
-   {
-      return ((mProxiedService == other) || (mService == other));
-   }
+    void InitProxy(nsISupports *aObj, const nsIID &aIID,
+                   nsIEventQueue* aEventQ, PRBool always, nsresult*rv)
+    {
+        PRInt32 proxyType = PROXY_SYNC;
+        if (always)
+            proxyType |= PROXY_ALWAYS;
 
-   operator nsISupports*() const
-   {
-       return mProxiedService;
-   }
+        *rv = NS_GetProxyForObject(aEventQ, 
+                                   aIID, 
+                                   aObj,
+                                   proxyType, 
+                                   getter_AddRefs(mProxiedService));
+    }
 
- protected:
-   nsCOMPtr<nsISupports> mProxiedService;
-   nsCOMPtr<nsISupports> mService;
- 
- };
+    nsCOMPtr<nsISupports> mProxiedService;
+};
 
-
-#endif //__nsProxiedServiceManager_h_
+#endif // nsProxiedService_h_

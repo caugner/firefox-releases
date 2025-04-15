@@ -121,10 +121,10 @@ nsLoadSaveContentSink::SetParser(nsIParser* aParser)
   return mBaseSink->SetParser(aParser);
 }
 
-NS_IMETHODIMP
-nsLoadSaveContentSink::FlushPendingNotifications(void)
+void
+nsLoadSaveContentSink::FlushPendingNotifications(mozFlushType aType)
 {
-  return mBaseSink->FlushPendingNotifications();
+  mBaseSink->FlushPendingNotifications(aType);
 }
 
 NS_IMETHODIMP
@@ -191,10 +191,11 @@ nsLoadSaveContentSink::HandleProcessingInstruction(const PRUnichar *aTarget,
 }
 
 NS_IMETHODIMP
-nsLoadSaveContentSink::HandleXMLDeclaration(const PRUnichar* aData,
-                                            PRUint32 aLength)
+nsLoadSaveContentSink::HandleXMLDeclaration(const PRUnichar *aVersion,
+                                            const PRUnichar *aEncoding,
+                                            PRInt32 aStandalone)
 {
-  return mExpatSink->HandleXMLDeclaration(aData, aLength);
+  return mExpatSink->HandleXMLDeclaration(aVersion, aEncoding, aStandalone);
 }
 
 NS_IMETHODIMP

@@ -23,7 +23,7 @@
       </xul:hbox>
     </content>
     
-    <implementation implements="nsIAccessibleProvider, nsIDOMXULTextboxElement">
+    <implementation implements="nsIAccessibleProvider, nsIDOMXULTextBoxElement">
       <property name="accessible">
         <getter>
           <![CDATA[
@@ -47,19 +47,23 @@
                                   onget="return this.inputField.value;"/>
       <property name="type"       onset="this.inputField.type = val; return val;"
                                   onget="return this.inputField.type;"/>
-      <property name="maxLength"  onset="this.inputField.maxlength = val; return val;"
-                                  onget="return this.inputField.maxlength;"/>
+      <property name="maxLength"  onset="this.inputField.maxLength = val; return val;"
+                                  onget="return this.inputField.maxLength;"/>
       <property name="disabled"   onset="this.inputField.disabled = val;
                                          if (val) this.setAttribute('disabled', 'true');
                                          else this.removeAttribute('disabled'); return val;"
                                   onget="return this.inputField.disabled;"/>
+      <property name="tabIndex"   onget="return parseInt(this.getAttribute('tabindex'));"
+                                  onset="this.inputField.tabIndex = val;
+                                         if (val) this.setAttribute('tabindex', val);
+                                         else this.removeAttribute('tabindex'); return val;"/>
       <property name="size"       onset="this.inputField.size = val; return val;"
                                   onget="return this.inputField.size;"/>
       <property name="readonly"   onset="this.inputField.readonly = val;
                                          if (val) this.setAttribute('readonly', 'true');
                                          else this.removeAttribute('readonly'); return val;"
                                   onget="return this.inputField.readonly;"/>
-                            
+
       <method name="select">
         <body>
           this.inputField.select();
@@ -151,6 +155,7 @@
           if (this._timer)
             clearTimeout(this._timer);
           this._fireCommand(this);
+          event.preventDefault();
         ]]>
       </handler>
     </handlers>
@@ -160,7 +165,7 @@
     <content>
       <xul:hbox class="textbox-input-box" flex="1" xbl:inherits="context">
         <html:textarea class="textbox-textarea" flex="1" anonid="input"
-                       xbl:inherits="onfocus,onblur,xbl:text=value,disabled,rows,cols,readonly,wrap"><children/></html:textarea>
+                       xbl:inherits="onfocus,onblur,xbl:text=value,disabled,tabindex,rows,cols,readonly,wrap"><children/></html:textarea>
       </xul:hbox>
     </content>
   </binding>
@@ -168,12 +173,12 @@
   <binding id="input-box">
     <content context="_child">
       <children/>
-      <xul:menupopup onpopupshowing="if (document.commandDispatcher.focusedElement != this.parentNode.firstChild) 
+      <xul:menupopup anonid="input-box-contextmenu"
+                     onpopupshowing="if (document.commandDispatcher.focusedElement != this.parentNode.firstChild)
                                        this.parentNode.firstChild.focus();
                                      this.parentNode.doPopupItemEnabling(this);"
                      oncommand="this.parentNode.doCommand(event.originalTarget.getAttribute('cmd'));event.preventBubble();">
         <xul:menuitem label="&undoCmd.label;" accesskey="&undoCmd.accesskey;" cmd="cmd_undo"/>
-        <xul:menuitem label="&redoCmd.label;" accesskey="&redoCmd.accesskey;" cmd="cmd_redo"/>
         <xul:menuseparator/>
         <xul:menuitem label="&cutCmd.label;" accesskey="&cutCmd.accesskey;" cmd="cmd_cut"/>
         <xul:menuitem label="&copyCmd.label;" accesskey="&copyCmd.accesskey;" cmd="cmd_copy"/>
@@ -190,7 +195,7 @@
         <body>
           <![CDATA[
             var children = popupNode.childNodes;
-            for (var i = 0; i < children.length; i++) {              
+            for (var i = 0; i < children.length; i++) {
               var command = children[i].getAttribute("cmd");
               if (command) {
                 var controller = document.commandDispatcher.getControllerForCommand(command);

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -20,9 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: Aaron Leventhal (aaronl@netscape.com)
- * Contributors:    
- *
+ *   Original Author: Aaron Leventhal <aaronl@netscape.com>    
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -30,11 +28,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -57,7 +55,7 @@
 #include "nsWeakReference.h"
 #include "nsIAppStartupNotifier.h"
 #include "nsIPresShell.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsISelection.h"
 #include "nsIDOMRange.h"
 #include "nsIDOMWindow.h"
@@ -117,6 +115,7 @@ public:
   NS_IMETHOD HandleEndComposition(nsIDOMEvent* aCompositionEvent);
   NS_IMETHOD HandleQueryComposition(nsIDOMEvent* aCompositionEvent);
   NS_IMETHOD HandleQueryReconversion(nsIDOMEvent* aCompositionEvent);
+  NS_IMETHOD HandleQueryCaretRect(nsIDOMEvent* aCompositionEvent);
 
   // ----- nsIScrollPositionListener --------------------
   NS_IMETHOD ScrollPositionWillChange(nsIScrollableView *aView, 
@@ -168,7 +167,7 @@ protected:
   // Get selection and selection controller for current pres shell
   void GetSelection(nsIPresShell *aPresShell, nsISelectionController **aSelCon, 
                     nsISelection **aDomSel);
-  PRBool IsRangeVisible(nsIPresShell *aPresShell, nsIPresContext *aPresContext,
+  PRBool IsRangeVisible(nsIPresShell *aPresShell, nsPresContext *aPresContext,
                          nsIDOMRange *aRange, PRBool aMustBeVisible, 
                          PRBool aGetTopVisibleLeaf,
                          nsIDOMRange **aNewRange);
@@ -179,10 +178,14 @@ protected:
                                PRBool aIsFirstVisiblePreferred, 
                                PRBool aCanUseDocSelection,
                                nsIPresShell **aPresShell, 
-                               nsIPresContext **aPresContext);
+                               nsPresContext **aPresContext);
   void DisplayStatus(PRBool aSuccess, nsIContent *aFocusedContent, 
                      PRBool aClearStatus, const PRUnichar *aText = nsnull);
   nsresult GetTranslatedString(const nsAString& aKey, nsAString& aStringOut);
+
+  // Get the pres shell from mFocusedWeakShell and return it only if it is
+  // still attached to the DOM window.
+  NS_HIDDEN_(already_AddRefed<nsIPresShell>) GetPresShell();
 
   // Used by GetInstance and ReleaseInstance
   static nsTypeAheadFind *sInstance;

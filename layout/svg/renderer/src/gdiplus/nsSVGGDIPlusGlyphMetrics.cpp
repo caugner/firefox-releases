@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,27 +14,27 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Crocodile Clips Ltd..
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include <windows.h>
 
@@ -49,7 +49,7 @@ using namespace Gdiplus;
 #include "nsISVGGlyphMetricsSource.h"
 #include "nsPromiseFlatString.h"
 #include "nsFont.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsDeviceContextWin.h"
 #include "nsISVGGDIPlusGlyphMetrics.h"
 #include "nsSVGGDIPlusGlyphMetrics.h"
@@ -72,7 +72,7 @@ using namespace Gdiplus;
  */
 class nsWindowsDC {
 public:
-  nsWindowsDC(nsIPresContext* presContext);
+  nsWindowsDC(nsPresContext* presContext);
   ~nsWindowsDC();
   operator HDC() { return mHDC; }
 private:
@@ -84,7 +84,7 @@ private:
 /** @} */
 
 
-nsWindowsDC::nsWindowsDC(nsIPresContext* presContext)
+nsWindowsDC::nsWindowsDC(nsPresContext* presContext)
 {
   nsIDeviceContext* devicecontext = presContext->DeviceContext();
 
@@ -149,7 +149,7 @@ private:
   nsCOMPtr<nsISVGGlyphMetricsSource> mSource;
   
 public:
-  static nsDataHashtable<nsStringHashKey,nsDependentString*> sFontAliases;
+  static nsDataHashtable<nsStringHashKey,const nsString*> sFontAliases;
 };
 
 /** @} */
@@ -157,7 +157,7 @@ public:
 //----------------------------------------------------------------------
 // implementation:
 
-nsDataHashtable<nsStringHashKey,nsDependentString*>
+nsDataHashtable<nsStringHashKey,const nsString*>
 nsSVGGDIPlusGlyphMetrics::sFontAliases;
 
 nsSVGGDIPlusGlyphMetrics::nsSVGGDIPlusGlyphMetrics(nsISVGGlyphMetricsSource *src)
@@ -390,7 +390,7 @@ NS_IMETHODIMP_(void)
 nsSVGGDIPlusGlyphMetrics::GetSubBoundingRect(PRUint32 charoffset, PRUint32 count,
                                              RectF* retval)
 {
-  nsCOMPtr<nsIPresContext> presContext;
+  nsCOMPtr<nsPresContext> presContext;
   mSource->GetPresContext(getter_AddRefs(presContext));
   NS_ASSERTION(presContext, "null prescontext");
 
@@ -505,14 +505,14 @@ static PRBool FindFontFamily(const nsString& aFamily, PRBool aGeneric, void *aDa
     delete family;
     
     //try alias if there is one:
-    nsDependentString *alias = nsnull;
+    const nsString *alias = nsnull;
     nsAutoString canonical_name(aFamily);
     ToLowerCase(canonical_name);
     nsSVGGDIPlusGlyphMetrics::sFontAliases.Get(canonical_name, &alias);
     if (alias) {
       // XXX this might cause a stack-overflow if there are cyclic
       // aliases in sFontAliases
-      retval = FindFontFamily(nsString(*alias), PR_FALSE, aData);
+      retval = FindFontFamily(*alias, PR_FALSE, aData);
     }
   }
 
@@ -524,7 +524,7 @@ nsSVGGDIPlusGlyphMetrics::InitializeFontInfo()
 {
   if (mFont) return; // already initialized
 
-  nsCOMPtr<nsIPresContext> presContext;
+  nsCOMPtr<nsPresContext> presContext;
   mSource->GetPresContext(getter_AddRefs(presContext));
   if (!presContext) {
     NS_ERROR("null prescontext");
@@ -574,7 +574,7 @@ void
 nsSVGGDIPlusGlyphMetrics::GetGlobalTransform(Matrix *matrix)
 {
   nsCOMPtr<nsIDOMSVGMatrix> ctm;
-  mSource->GetCTM(getter_AddRefs(ctm));
+  mSource->GetCanvasTM(getter_AddRefs(ctm));
   NS_ASSERTION(ctm, "graphic source didn't specify a ctm");
   
   float m[6];
@@ -617,7 +617,7 @@ nsSVGGDIPlusGlyphMetrics::PrepareGraphics(Graphics &g)
 float
 nsSVGGDIPlusGlyphMetrics::GetPixelScale()
 {
-  nsCOMPtr<nsIPresContext> presContext;
+  nsCOMPtr<nsPresContext> presContext;
   mSource->GetPresContext(getter_AddRefs(presContext));
   if (!presContext) {
     NS_ERROR("null prescontext");

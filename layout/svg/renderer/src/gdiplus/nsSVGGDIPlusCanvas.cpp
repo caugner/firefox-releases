@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,27 +14,27 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Crocodile Clips Ltd..
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include <windows.h>
 
@@ -50,9 +50,12 @@ using namespace Gdiplus;
 #include "nsIRenderingContext.h"
 #include "nsIDeviceContext.h"
 #include "nsTransform2D.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsRect.h"
 #include "nsIRenderingContextWin.h"
+#include "nsIDOMSVGMatrix.h"
+#include "nsISVGGDIPlusSurface.h"
+#include "nsVoidArray.h"
 
 /**
  * \addtogroup gdiplus_renderer GDI+ Rendering Engine
@@ -67,7 +70,7 @@ class nsSVGGDIPlusCanvas : public nsISVGGDIPlusCanvas
 public:
   nsSVGGDIPlusCanvas();
   ~nsSVGGDIPlusCanvas();
-  nsresult Init(nsIRenderingContext* ctx, nsIPresContext* presContext,
+  nsresult Init(nsIRenderingContext* ctx, nsPresContext* presContext,
                 const nsRect & dirtyRect);
 
   // nsISupports interface:
@@ -78,17 +81,22 @@ public:
 
   // nsISVGGDIPlusCanvas interface:
   NS_IMETHOD_(Graphics*) GetGraphics();
-  
+  NS_IMETHOD_(Region*) GetClipRegion();
 
 private:
   nsCOMPtr<nsIRenderingContext> mMozContext;
-  nsCOMPtr<nsIPresContext> mPresContext;
+  nsCOMPtr<nsPresContext> mPresContext;
   Graphics *mGraphics;
+  nsVoidArray mClipStack;
+  nsVoidArray mSurfaceStack;
+  Region mClipRegion;
+  PRUint16 mRenderMode;
+
 #ifdef SVG_GDIPLUS_ENABLE_OFFSCREEN_BUFFER
   Bitmap *mOffscreenBitmap;
   Graphics *mOffscreenGraphics;
   HDC mOffscreenHDC;
-  nsDrawingSurface mTempBuffer; // temp storage for during DC locking
+  nsIDrawingSurface* mTempBuffer; // temp storage for during DC locking
 #endif
 };
 
@@ -120,7 +128,7 @@ nsSVGGDIPlusCanvas::~nsSVGGDIPlusCanvas()
 
 nsresult
 nsSVGGDIPlusCanvas::Init(nsIRenderingContext* ctx,
-                         nsIPresContext* presContext,
+                         nsPresContext* presContext,
                          const nsRect & dirtyRect)
 {
   mPresContext = presContext;
@@ -177,6 +185,8 @@ nsSVGGDIPlusCanvas::Init(nsIRenderingContext* ctx,
 #else
   mGraphics->TranslateTransform(dx/scale, dy/scale, MatrixOrderPrepend);
 #endif
+
+  mRenderMode = SVG_RENDER_MODE_NORMAL;
   
   return NS_OK;
 }
@@ -184,7 +194,7 @@ nsSVGGDIPlusCanvas::Init(nsIRenderingContext* ctx,
 nsresult
 NS_NewSVGGDIPlusCanvas(nsISVGRendererCanvas **result,
                        nsIRenderingContext *ctx,
-                       nsIPresContext *presContext,
+                       nsPresContext *presContext,
                        const nsRect & dirtyRect)
 {
   nsSVGGDIPlusCanvas* pg = new nsSVGGDIPlusCanvas();
@@ -265,9 +275,9 @@ nsSVGGDIPlusCanvas::UnlockRenderingContext()
   return NS_OK;
 }
 
-/** Implements nsIPresContext getPresContext(); */
+/** Implements nsPresContext getPresContext(); */
 NS_IMETHODIMP
-nsSVGGDIPlusCanvas::GetPresContext(nsIPresContext **_retval)
+nsSVGGDIPlusCanvas::GetPresContext(nsPresContext **_retval)
 {
   *_retval = mPresContext;
   NS_IF_ADDREF(*_retval);
@@ -319,4 +329,194 @@ nsSVGGDIPlusCanvas::GetGraphics()
 #endif
 }
 
+NS_IMETHODIMP
+nsSVGGDIPlusCanvas::GetRenderMode(PRUint16 *aMode)
+{
+  *aMode = mRenderMode;
+  return NS_OK;
+}
 
+NS_IMETHODIMP
+nsSVGGDIPlusCanvas::SetRenderMode(PRUint16 aMode)
+{
+  if (mRenderMode == SVG_RENDER_MODE_CLIP && aMode == SVG_RENDER_MODE_NORMAL)
+    mGraphics->SetClip(&mClipRegion, CombineModeIntersect);
+  mRenderMode = aMode;
+  return NS_OK;
+}
+
+NS_IMETHODIMP_(Region*)
+nsSVGGDIPlusCanvas::GetClipRegion()
+{
+  return &mClipRegion;
+}
+
+/** Implements pushClip(); */
+NS_IMETHODIMP
+nsSVGGDIPlusCanvas::PushClip()
+{
+  Region *region = new Region;
+  if (region)
+    mGraphics->GetClip(region);
+  // append even if we failed to allocate the region so push/pop match
+  mClipStack.AppendElement((void *)region);
+
+  mClipRegion.MakeEmpty();
+
+  return NS_OK;
+}
+
+/** Implements popClip(); */
+NS_IMETHODIMP
+nsSVGGDIPlusCanvas::PopClip()
+{
+  PRUint32 count = mClipStack.Count();
+  if (count == 0)
+    return NS_OK;
+
+  Region *region = (Region *)mClipStack[count-1];
+  if (region) {
+    mGraphics->SetClip(region);
+    delete region;
+  }
+  mClipStack.RemoveElementAt(count-1);
+
+  return NS_OK;
+}
+
+/** Implements setClipRect(in nsIDOMSVGMatrix canvasTM, in float x, in float y,
+    in float width, in float height); */
+NS_IMETHODIMP
+nsSVGGDIPlusCanvas::SetClipRect(nsIDOMSVGMatrix *aCTM, float aX, float aY,
+                                float aWidth, float aHeight)
+{
+  if (!aCTM)
+    return NS_ERROR_FAILURE;
+
+  float m[6];
+  float val;
+  aCTM->GetA(&val);
+  m[0] = val;
+    
+  aCTM->GetB(&val);
+  m[1] = val;
+    
+  aCTM->GetC(&val);  
+  m[2] = val;  
+    
+  aCTM->GetD(&val);  
+  m[3] = val;  
+  
+  aCTM->GetE(&val);
+  m[4] = val;
+  
+  aCTM->GetF(&val);
+  m[5] = val;
+
+  Matrix matrix(m[0], m[1], m[2], m[3], m[4], m[5]);
+  RectF rect(aX, aY, aWidth, aHeight);
+  Region clip(rect);
+  clip.Transform(&matrix);
+  mGraphics->SetClip(&clip, CombineModeIntersect);
+
+  return NS_OK;
+}
+
+/** Implements pushSurface(in nsISVGRendereerSurface surface); */
+NS_IMETHODIMP
+nsSVGGDIPlusCanvas::PushSurface(nsISVGRendererSurface *aSurface)
+{
+  nsCOMPtr<nsISVGGDIPlusSurface> gdiplusSurface = do_QueryInterface(aSurface);
+  if (!gdiplusSurface)
+    return NS_ERROR_FAILURE;
+
+  mSurfaceStack.AppendElement((void *)mGraphics);
+  mGraphics = new Graphics(gdiplusSurface->GetSurface());
+  if (!mGraphics) {
+    PopSurface();
+    return NS_ERROR_FAILURE;
+  }
+    
+  mGraphics->Clear(Color(0,0,0,0));
+  return NS_OK;
+}
+
+/** Implements popSurface(); */
+NS_IMETHODIMP
+nsSVGGDIPlusCanvas::PopSurface()
+{
+  PRUint32 count = mSurfaceStack.Count();
+  if (count != 0) {
+    delete mGraphics;
+    mGraphics = (Graphics *)mSurfaceStack[count - 1];
+    mSurfaceStack.RemoveElementAt(count - 1);
+  }
+
+  return NS_OK;
+}
+
+/** Implements  void compositeSurface(in nsISVGRendererSurface surface,
+                                      in unsigned long x, in unsigned long y,
+                                      in float opacity); */
+NS_IMETHODIMP
+nsSVGGDIPlusCanvas::CompositeSurface(nsISVGRendererSurface *aSurface,
+                                     PRUint32 aX, PRUint32 aY, float aOpacity)
+{
+  nsCOMPtr<nsISVGGDIPlusSurface> gdiplusSurface = do_QueryInterface(aSurface);
+  if (!gdiplusSurface)
+    return NS_ERROR_FAILURE;
+
+  ColorMatrix cxform;
+  memset(&cxform, 0, sizeof(ColorMatrix));
+  cxform.m[0][0] = cxform.m[1][1] = cxform.m[2][2] = cxform.m[4][4] = 1.0f;
+  cxform.m[3][3] = aOpacity;
+  ImageAttributes attrib;
+  attrib.SetColorMatrix(&cxform);
+
+  PRUint32 width, height;
+  aSurface->GetWidth(&width);
+  aSurface->GetHeight(&height);
+
+  Rect rect(aX, aY, width, height);
+
+  mGraphics->DrawImage(gdiplusSurface->GetSurface(),
+                       rect, 0, 0, width, height, UnitPixel, &attrib);
+
+  return NS_OK;
+}
+
+/** Implements  void compositeSurface(in nsISVGRendererSurface surface,
+                                      in nsIDOMSVGMatrix canvasTM,
+                                      in float opacity); */
+NS_IMETHODIMP
+nsSVGGDIPlusCanvas::CompositeSurfaceMatrix(nsISVGRendererSurface *aSurface,
+                                           nsIDOMSVGMatrix *aCTM, float aOpacity)
+{
+  float m[6];
+  float val;
+  aCTM->GetA(&val);
+  m[0] = val;
+    
+  aCTM->GetB(&val);
+  m[1] = val;
+    
+  aCTM->GetC(&val);  
+  m[2] = val;  
+    
+  aCTM->GetD(&val);  
+  m[3] = val;  
+  
+  aCTM->GetE(&val);
+  m[4] = val;
+  
+  aCTM->GetF(&val);
+  m[5] = val;
+
+  Matrix xform(m[0], m[1], m[2], m[3], m[4], m[5]), orig;
+
+  mGraphics->GetTransform(&orig);
+  mGraphics->MultiplyTransform(&xform);
+  CompositeSurface(aSurface, 0, 0, aOpacity);
+  mGraphics->SetTransform(&orig);
+  return NS_OK;
+}

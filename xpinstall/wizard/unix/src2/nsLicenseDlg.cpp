@@ -1,26 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code, 
- * released March 31, 1998. 
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications 
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
- * Contributor(s): 
- *     Samir Gehani <sgehani@netscape.com>
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Samir Gehani <sgehani@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsLicenseDlg.h"
 #include "nsXInstaller.h"
@@ -41,28 +56,16 @@ nsLicenseDlg::Back(GtkWidget *aWidget, gpointer aData)
 {
     DUMP("Back");
     if (aData != gCtx->ldlg) return;
+#ifdef MOZ_WIDGET_GTK
     if (gCtx->bMoving) 
     {
         gCtx->bMoving = FALSE;
         return;
     }
+#endif
     
-// XXX call gCtx->me->Shutdown() ?
     gtk_main_quit();
     return;
-
-#if 0
-    // hide this notebook page
-    gCtx->ldlg->Hide(nsXInstallerDlg::BACKWARD_MOVE);
-
-    // disconnect this dlg's nav btn signal handlers
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
-
-    // show the prev dlg
-    gCtx->wdlg->Show(nsXInstallerDlg::BACKWARD_MOVE);
-    gCtx->bMoving = TRUE;
-#endif
 }
 
 void
@@ -70,22 +73,22 @@ nsLicenseDlg::Next(GtkWidget *aWidget, gpointer aData)
 {
     DUMP("Next");
     if (aData != gCtx->ldlg) return;
+#ifdef MOZ_WIDGET_GTK
     if (gCtx->bMoving) 
     {
         gCtx->bMoving = FALSE;
         return;
     }
+#endif
 
     // hide this notebook page
-    gCtx->ldlg->Hide(nsXInstallerDlg::FORWARD_MOVE);
-
-    // disconnect this dlg's nav btn signal handlers
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
+    gCtx->ldlg->Hide();
 
     // show the next dlg
-    gCtx->sdlg->Show(nsXInstallerDlg::FORWARD_MOVE);
+    gCtx->sdlg->Show();
+#ifdef MOZ_WIDGET_GTK
     gCtx->bMoving = TRUE;
+#endif
 }
 
 int
@@ -126,9 +129,15 @@ BAIL:
 }
 
 int
-nsLicenseDlg::Show(int aDirection)
+nsLicenseDlg::Show()
 {
     int err = OK;
+    if (!mShowDlg)
+    {
+       gCtx->sdlg->Show();
+       return err;
+    }
+    
     char *licenseContents = NULL;
 
     XI_VERIFY(gCtx);
@@ -152,6 +161,7 @@ nsLicenseDlg::Show(int aDirection)
             goto BAIL;
         }
 
+#if defined(MOZ_WIDGET_GTK)
         // create a new scrollable textarea and add it to the table
         GtkWidget *text = gtk_text_new(NULL, NULL);
         GdkFont *font = gdk_font_load( LICENSE_FONT );
@@ -175,6 +185,24 @@ nsLicenseDlg::Show(int aDirection)
 			static_cast<GtkAttachOptions>(GTK_EXPAND | GTK_SHRINK | GTK_FILL),
 			0, 0);
         gtk_widget_show(vscrollbar);
+#elif defined(MOZ_WIDGET_GTK2)
+        GtkWidget *text = gtk_scrolled_window_new (NULL, NULL);
+        GtkWidget *textview = gtk_text_view_new();
+        GtkTextBuffer *textbuffer;
+
+        textbuffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(textview));
+        gtk_text_buffer_set_text (textbuffer, licenseContents, -1);
+        gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (text),
+            GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+        gtk_container_add (GTK_CONTAINER (text), textview);
+        gtk_text_view_set_editable(GTK_TEXT_VIEW(textview), FALSE);
+        gtk_text_view_set_cursor_visible (GTK_TEXT_VIEW(textview), FALSE);
+        gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(textview), GTK_WRAP_WORD);
+        gtk_table_attach(GTK_TABLE(mTable), text, 1, 2, 0, 1,
+            static_cast<GtkAttachOptions>(GTK_FILL | GTK_EXPAND ),
+            static_cast<GtkAttachOptions>(GTK_FILL | GTK_EXPAND), 0, 0);
+        gtk_widget_show_all(text);
+#endif
 
         mWidgetsInit = TRUE;
     }
@@ -190,14 +218,11 @@ nsLicenseDlg::Show(int aDirection)
     gCtx->nextID = gtk_signal_connect(GTK_OBJECT(gCtx->next), "clicked",
                    GTK_SIGNAL_FUNC(nsLicenseDlg::Next), gCtx->ldlg);
 
-    // show back button if we came from the welcome dlg
-    if (aDirection == nsXInstallerDlg::FORWARD_MOVE)
-        if (gCtx->back)
-            gtk_widget_show(gCtx->back); 
-
+    GTK_WIDGET_SET_FLAGS(gCtx->next, GTK_CAN_DEFAULT);
+    gtk_widget_grab_default(gCtx->next);
+    gtk_widget_grab_focus(gCtx->next);
+    
     // always change the button titles to Accept/Decline
-    gtk_container_remove(GTK_CONTAINER(gCtx->next), gCtx->nextLabel);
-    gtk_container_remove(GTK_CONTAINER(gCtx->back), gCtx->backLabel);
     gCtx->acceptLabel = gtk_label_new(gCtx->Res("ACCEPT"));
     gCtx->declineLabel = gtk_label_new(gCtx->Res("DECLINE"));
     gtk_container_add(GTK_CONTAINER(gCtx->next), gCtx->acceptLabel);
@@ -213,11 +238,21 @@ BAIL:
 }
 
 int
-nsLicenseDlg::Hide(int aDirection)
+nsLicenseDlg::Hide()
 {
     // hide all this dlg's widgets
     gtk_widget_hide(mTable);
 
+    // disconnect and remove this dlg's nav btns
+    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
+    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
+
+    gtk_container_remove(GTK_CONTAINER(gCtx->back), gCtx->declineLabel);
+    gtk_container_remove(GTK_CONTAINER(gCtx->next), gCtx->acceptLabel);
+
+    gtk_widget_hide(gCtx->back);
+    gtk_widget_hide(gCtx->next);
+    
     return OK;
 }
 

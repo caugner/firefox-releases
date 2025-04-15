@@ -1,7 +1,6 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
-
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Mozilla Public License Version
  * 1.1 (the "License"); you may not use this file except in compliance with
@@ -13,25 +12,32 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is mozilla.org code.
+ * The Original Code is Mac OSX New Mail Notification Code..
  *
- * Portions created by the Initial Developer are Copyright (C) 2004
+ * The Initial Developer of the Original Code is
+ * The Mozilla Foundation.
+ * Portions created by the Initial Developer are Copyright (C) 2005
  * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
  *
  * Contributor(s):
  *  Scott MacGregor <mscott@mozilla.org>
  *  Jon Baumgartner <jon@bergenstreetsoftware.com>
+ *  
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
  * ***** END LICENSE BLOCK ***** */
-
-#ifdef MOZ_LOGGING
-#define FORCE_PR_LOG
-#endif
-
-
+ 
 #include "nscore.h"
-
 #include "nsMessengerOSXIntegration.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIMsgMailSession.h"
@@ -55,21 +61,11 @@
 #include "nsIBaseWindow.h"
 #include "nsIWidget.h"
 #include "nsIObserverService.h"
-
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h" 
 #include "nsIMessengerWindowService.h"
 #include "prprf.h"
 #include "nsIWeakReference.h"
-
-#include "prlog.h"
-#if defined(PR_LOGGING)
-//
-// export NSPR_LOG_MODULES=OSXIntegeration:5
-//
-static PRLogModuleInfo *gOSXIntegrationLog = nsnull;
-#define LOG(args) PR_LOG(gOSXIntegrationLog, PR_LOG_DEBUG, args)
-#else
-#define LOG(args)
-#endif
 
 #include <Carbon/Carbon.h>
 
@@ -77,11 +73,6 @@ static PRLogModuleInfo *gOSXIntegrationLog = nsnull;
 
 nsMessengerOSXIntegration::nsMessengerOSXIntegration()
 {
-#if defined(PR_LOGGING)
-    if (!gOSXIntegrationLog)
-        gOSXIntegrationLog = PR_NewLogModule("OSXIntegration");
-#endif
-
   mBiffStateAtom = do_GetAtom("BiffState");
 
   mBiffIconVisible = PR_FALSE;
@@ -133,28 +124,26 @@ nsMessengerOSXIntegration::Init()
 }
 
 NS_IMETHODIMP
-nsMessengerOSXIntegration::OnItemPropertyChanged(nsISupports *, nsIAtom *, char const *, char const *)
+nsMessengerOSXIntegration::OnItemPropertyChanged(nsIRDFResource *, nsIAtom *, char const *, char const *)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMessengerOSXIntegration::OnItemUnicharPropertyChanged(nsISupports *, nsIAtom *, const PRUnichar *, const PRUnichar *)
+nsMessengerOSXIntegration::OnItemUnicharPropertyChanged(nsIRDFResource *, nsIAtom *, const PRUnichar *, const PRUnichar *)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMessengerOSXIntegration::OnItemRemoved(nsISupports *, nsISupports *, const char *)
+nsMessengerOSXIntegration::OnItemRemoved(nsIRDFResource *, nsISupports *)
 {
   return NS_OK;
 }
 
 PRInt32 nsMessengerOSXIntegration::CountNewMessages()
 {
-
   // iterate over all the folders in mFoldersWithNewMail
-  nsCOMPtr<nsISupports> supports;
   nsCOMPtr<nsIMsgFolder> folder;
   nsCOMPtr<nsIWeakReference> weakReference;
   PRInt32 numNewMessages = 0;
@@ -165,8 +154,7 @@ PRInt32 nsMessengerOSXIntegration::CountNewMessages()
 
   for (PRUint32 index = 0; index < count; index++)
   {
-    supports = getter_AddRefs(mFoldersWithNewMail->ElementAt(index));
-    weakReference = do_QueryInterface(supports);
+    weakReference = do_QueryElementAt(mFoldersWithNewMail, index);
     folder = do_QueryReferent(weakReference);
     if (folder)
     {
@@ -184,27 +172,25 @@ PRInt32 nsMessengerOSXIntegration::CountNewMessages()
 nsresult nsMessengerOSXIntegration::OnAlertFinished(const PRUnichar * aAlertCookie)
 {
   nsresult rv = NS_OK;
+  nsCOMPtr<nsIPrefBranch> prefBranch (do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
   
-  nsCOMPtr<nsIPref> prefService;
-  prefService = do_GetService(NS_PREF_CONTRACTID, &rv);  
   PRBool bounceDockIcon = PR_FALSE; 
-  
-  if (prefService)
-    prefService->GetBoolPref("mail.biff.animate_dock_icon", &bounceDockIcon);
+  prefBranch->GetBoolPref("mail.biff.animate_dock_icon", &bounceDockIcon);
 
-   // This will call GetAttention(), which will bounce the dock icon.
+  // This will call GetAttention(), which will bounce the dock icon.
   if (!mSuppressBiffIcon)
   {
     nsCOMPtr<nsIWindowMediator> mediator (do_GetService(NS_WINDOWMEDIATOR_CONTRACTID));
     if (bounceDockIcon && mediator)
     {
-        nsCOMPtr<nsIDOMWindowInternal> domWindow;
-        mediator->GetMostRecentWindow(NS_LITERAL_STRING("mail:3pane").get(), getter_AddRefs(domWindow));
-        if (domWindow)
-        {         
-            nsCOMPtr<nsIDOMChromeWindow> chromeWindow(do_QueryInterface(domWindow));
-            chromeWindow->GetAttention();
-        }
+      nsCOMPtr<nsIDOMWindowInternal> domWindow;
+      mediator->GetMostRecentWindow(NS_LITERAL_STRING("mail:3pane").get(), getter_AddRefs(domWindow));
+      if (domWindow)
+	  {
+        nsCOMPtr<nsIDOMChromeWindow> chromeWindow(do_QueryInterface(domWindow));
+        chromeWindow->GetAttention();
+	  }
     }
 
     // This will change the dock icon.     
@@ -246,23 +232,23 @@ nsresult nsMessengerOSXIntegration::OnAlertFinished(const PRUnichar * aAlertCook
     FMFont fmFont;
     OSStatus err = ::FMGetFontFromFontFamilyInstance(family, fontStyle, &fmFont,
                                                      nsnull);
-    if (err != noErr) {
-        NS_WARNING("FMGetFontFromFontFamilyInstance failed");
-        ::EndCGContextForApplicationDockTile(context);
-        return NS_ERROR_FAILURE;
+    if (err != noErr) 
+	{
+	  NS_WARNING("FMGetFontFromFontFamilyInstance failed");
+	  ::EndCGContextForApplicationDockTile(context);
+	  return NS_ERROR_FAILURE;
     }
 
     ATSUStyle style;
     err = ::ATSUCreateStyle(&style);
-    if (err != noErr) {
-        NS_WARNING("ATSUCreateStyle failed");
-        ::EndCGContextForApplicationDockTile(context);
-
-        return NS_ERROR_FAILURE;
-        }
+    if (err != noErr) 
+	{
+      NS_WARNING("ATSUCreateStyle failed");
+	  ::EndCGContextForApplicationDockTile(context);
+      return NS_ERROR_FAILURE;
+	}
         
     Fixed size = Long2Fix(24);
-    RGBColor black = { 0x0, 0x0, 0x0 };
     RGBColor white = { 0xFFFF, 0xFFFF, 0xFFFF };
     
     ATSUAttributeTag tags[3] = { kATSUFontTag, kATSUSizeTag, kATSUColorTag };
@@ -285,7 +271,8 @@ nsresult nsMessengerOSXIntegration::OnAlertFinished(const PRUnichar * aAlertCook
                                             kATSUFromTextBeginning,
                                             kATSUToTextEnd, total.Length(), 1,
                                             &runLengths, &style, &textLayout);
-    if (err != noErr) {
+    if (err != noErr) 
+	{
         NS_WARNING("ATSUCreateTextLayoutWithTextPtr failed");
         ::ATSUDisposeStyle(style);
         ::EndCGContextForApplicationDockTile(context);
@@ -299,11 +286,11 @@ nsresult nsMessengerOSXIntegration::OnAlertFinished(const PRUnichar * aAlertCook
 
     err = ::ATSUSetLayoutControls(textLayout, 1, layoutTags, layoutValueSizes,
                                   layoutValues);
-    if (err != noErr) {
+    if (err != noErr) 
+	{
         NS_WARNING("ATSUSetLayoutControls failed");
         ::ATSUDisposeStyle(style);
         ::EndCGContextForApplicationDockTile(context);
-
         return NS_ERROR_FAILURE;
     }
 
@@ -311,11 +298,11 @@ nsresult nsMessengerOSXIntegration::OnAlertFinished(const PRUnichar * aAlertCook
     err = ::ATSUMeasureTextImage(textLayout, kATSUFromTextBeginning,
                                  kATSUToTextEnd, Long2Fix(0), Long2Fix(0),
                                  &boundingBox);
-    if (err != noErr) {
+    if (err != noErr) 
+	{
         NS_WARNING("ATSUMeasureTextImage failed");
         ::ATSUDisposeStyle(style);
         ::EndCGContextForApplicationDockTile(context);
-
         return NS_ERROR_FAILURE;
     }
 
@@ -339,81 +326,19 @@ nsresult nsMessengerOSXIntegration::OnAlertFinished(const PRUnichar * aAlertCook
 }
 
 NS_IMETHODIMP
-nsMessengerOSXIntegration::OnItemPropertyFlagChanged(nsISupports *item, nsIAtom *property, PRUint32 oldFlag, PRUint32 newFlag)
-{
-  nsresult rv = NS_OK;
-   
-  // if we got new mail bounce the Dock icon and/or apply badge to Dock icon
-	if (mBiffStateAtom == property && mFoldersWithNewMail)
-	{
-    nsCOMPtr<nsIMsgFolder> folder = do_QueryInterface(item);
-    NS_ENSURE_TRUE(folder, NS_OK);
-
-		if (newFlag == nsIMsgFolder::nsMsgBiffState_NewMail) 
-    {
-      // if the icon is not already visible, only show a system tray icon iff 
-      // we are performing biff (as opposed to the user getting new mail)
-      if (!mBiffIconVisible)
-      {
-        PRBool performingBiff = PR_FALSE;
-        nsCOMPtr<nsIMsgIncomingServer> server;
-        folder->GetServer(getter_AddRefs(server));
-        if (server)
-          server->GetPerformingBiff(&performingBiff);
-        if (!performingBiff) 
-          return NS_OK; // kick out right now...
-      }
-      nsCOMPtr<nsIWeakReference> weakFolder = do_GetWeakReference(folder); 
-
-      // remove the element if it is already in the array....
-      PRUint32 count = 0;
-      PRUint32 index = 0; 
-      mFoldersWithNewMail->Count(&count);
-      nsCOMPtr<nsISupports> supports;
-      nsCOMPtr<nsIMsgFolder> oldFolder;
-      nsCOMPtr<nsIWeakReference> weakReference;
-      for (index = 0; index < count; index++)
-      {
-        supports = getter_AddRefs(mFoldersWithNewMail->ElementAt(index));
-        weakReference = do_QueryInterface(supports);
-        oldFolder = do_QueryReferent(weakReference);
-        if (oldFolder == folder) // if they point to the same folder
-          break;
-        oldFolder = nsnull;
-      }
-
-      if (oldFolder)
-        mFoldersWithNewMail->ReplaceElementAt(weakFolder, index);
-      else
-        mFoldersWithNewMail->AppendElement(weakFolder);
-      // now regenerate the tooltip
-      OnAlertFinished(nsnull);  
-    }
-    else if (newFlag == nsIMsgFolder::nsMsgBiffState_NoMail)
-    {
-      // we are always going to remove the icon whenever we get our first no mail
-      // notification. 
-
-      mFoldersWithNewMail->Clear(); 
-      if (mBiffIconVisible) 
-      {
-        RestoreApplicationDockTileImage();
-        mBiffIconVisible = PR_FALSE;
-      }
-    }
-  } // if the biff property changed
-  
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMessengerOSXIntegration::OnItemAdded(nsISupports *, nsISupports *, const char *)
+nsMessengerOSXIntegration::OnItemPropertyFlagChanged(nsIMsgDBHdr *item, nsIAtom *property, PRUint32 oldFlag, PRUint32 newFlag)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMessengerOSXIntegration::OnItemBoolPropertyChanged(nsISupports *aItem,
+nsMessengerOSXIntegration::OnItemAdded(nsIRDFResource *, nsISupports *)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMessengerOSXIntegration::OnItemBoolPropertyChanged(nsIRDFResource *aItem,
                                                          nsIAtom *aProperty,
                                                          PRBool aOldValue,
                                                          PRBool aNewValue)
@@ -428,8 +353,65 @@ nsMessengerOSXIntegration::OnItemEvent(nsIMsgFolder *, nsIAtom *)
 }
 
 NS_IMETHODIMP
-nsMessengerOSXIntegration::OnItemIntPropertyChanged(nsISupports *aItem, nsIAtom *aProperty, PRInt32 aOldValue, PRInt32 aNewValue)
+nsMessengerOSXIntegration::OnItemIntPropertyChanged(nsIRDFResource *aItem, nsIAtom *aProperty, PRInt32 aOldValue, PRInt32 aNewValue)
 {
   nsresult rv;
+  // if we got new mail bounce the Dock icon and/or apply badge to Dock icon
+  if (mBiffStateAtom == aProperty && mFoldersWithNewMail)
+  {
+    nsCOMPtr<nsIMsgFolder> folder = do_QueryInterface(aItem);
+    NS_ENSURE_TRUE(folder, NS_OK);
+
+    if (aNewValue == nsIMsgFolder::nsMsgBiffState_NewMail) 
+    {
+      // if the icon is not already visible, only show a system tray icon iff 
+      // we are performing biff (as opposed to the user getting new mail)
+      if (!mBiffIconVisible)
+      {
+        PRBool performingBiff = PR_FALSE;
+        nsCOMPtr<nsIMsgIncomingServer> server;
+		folder->GetServer(getter_AddRefs(server));
+        if (server)
+		  server->GetPerformingBiff(&performingBiff);
+        if (!performingBiff) 
+          return NS_OK; // kick out right now...
+      }
+
+      nsCOMPtr<nsIWeakReference> weakFolder = do_GetWeakReference(folder); 
+      // remove the element if it is already in the array....
+      PRUint32 count = 0;
+      PRUint32 index = 0; 
+      mFoldersWithNewMail->Count(&count);
+      nsCOMPtr<nsIMsgFolder> oldFolder;
+      nsCOMPtr<nsIWeakReference> weakReference;
+      for (index = 0; index < count; index++)
+      {
+        weakReference = do_QueryElementAt(mFoldersWithNewMail, index);
+        oldFolder = do_QueryReferent(weakReference);
+        if (oldFolder == folder) // if they point to the same folder
+          break;
+        oldFolder = nsnull;
+      }
+
+	 if (oldFolder)
+       mFoldersWithNewMail->ReplaceElementAt(weakFolder, index);
+	 else
+       mFoldersWithNewMail->AppendElement(weakFolder);
+      // now regenerate the tooltip
+      OnAlertFinished(nsnull);  
+    }
+    else if (aNewValue == nsIMsgFolder::nsMsgBiffState_NoMail)
+	{
+      // we are always going to remove the icon whenever we get our first no mail
+      // notification. 
+      mFoldersWithNewMail->Clear(); 
+      if (mBiffIconVisible) 
+      {
+        RestoreApplicationDockTileImage();
+        mBiffIconVisible = PR_FALSE;
+      }
+    }
+  } // if the biff property changed
+  
   return NS_OK;
 }

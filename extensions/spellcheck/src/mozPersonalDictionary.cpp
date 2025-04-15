@@ -45,7 +45,7 @@
 #include "nsIObserverService.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "nsIWeakReference.h"
 #include "nsCRT.h"
 #include "nsNetUtil.h"
@@ -87,12 +87,12 @@ nsresult mozPersonalDictionary::Init()
   nsresult rv;
   nsCOMPtr<nsIObserverService> svc = 
            do_GetService("@mozilla.org/observer-service;1", &rv);
-  
+   
   if (NS_SUCCEEDED(rv) && svc) 
     rv = svc->AddObserver(this, "profile-do-change", PR_TRUE); // we want to reload the dictionary if the profile switches
 
   if (NS_FAILED(rv)) return rv;
-   
+
   Load();
   
   return NS_OK;
@@ -244,7 +244,9 @@ NS_IMETHODIMP mozPersonalDictionary::RemoveWord(const PRUnichar *aWord, const PR
 /* void IgnoreWord (in wstring word); */
 NS_IMETHODIMP mozPersonalDictionary::IgnoreWord(const PRUnichar *aWord)
 {
-  mIgnoreTable.PutEntry(aWord);
+  // avoid adding duplicate words to the ignore list
+  if (aWord && !mIgnoreTable.GetEntry(aWord)) 
+    mIgnoreTable.PutEntry(aWord);
   return NS_OK;
 }
 

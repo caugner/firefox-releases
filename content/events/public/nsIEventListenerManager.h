@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -43,19 +42,20 @@
 #include "nsISupports.h"
 #include "nsVoidArray.h"
 
-class nsIPresContext;
+class nsPresContext;
 class nsIDOMEventListener;
 class nsIScriptContext;
 class nsIDOMEventTarget;
 class nsIDOMEventGroup;
+class nsIAtom;
+struct JSObject;
 
 /*
  * Event listener manager interface.
  */
 #define NS_IEVENTLISTENERMANAGER_IID \
-{ /* cd91bcf0-ded9-11d1-bd85-00805f8ae3f4 */ \
-0xcd91bcf0, 0xded9, 0x11d1, \
-{0xbd, 0x85, 0x00, 0x80, 0x5f, 0x8a, 0xe3, 0xf4} }
+{0xc23b877c, 0xb396, 0x11d9, \
+{0x86, 0xbd, 0x00, 0x11, 0x24, 0x78, 0xd6, 0x26} }
 
 class nsIEventListenerManager : public nsISupports {
 
@@ -102,17 +102,21 @@ public:
   NS_IMETHOD AddScriptEventListener(nsISupports *aObject,
                                     nsIAtom *aName,
                                     const nsAString& aFunc,
-                                    PRBool aDeferCompilation) = 0;
+                                    PRBool aDeferCompilation,
+                                    PRBool aPermitUntrustedEvents) = 0;
 
 
   NS_IMETHOD RemoveScriptEventListener(nsIAtom *aName) = 0;
 
   /**
   * Registers an event listener that already exists on the given
-  * script object with the event listener manager.
-  * @param an event listener
+  * script object with the event listener manager. If the event
+  * listener is registerd from chrome code, the event listener will
+  * only ever receive trusted events.
+  * @param the name of an event listener
   */
   NS_IMETHOD RegisterScriptEventListener(nsIScriptContext *aContext,
+                                         JSObject *aScopeObject,
                                          nsISupports *aObject,
                                          nsIAtom* aName) = 0;
 
@@ -121,6 +125,7 @@ public:
   * script object for a given event type.
   * @param an event listener */
   NS_IMETHOD CompileScriptEventListener(nsIScriptContext *aContext,
+                                        JSObject *aScopeObject,
                                         nsISupports *aObject,
                                         nsIAtom* aName,
                                         PRBool *aDidCompile) = 0;
@@ -130,7 +135,7 @@ public:
   * Event flags live in nsGUIEvent.h
   * @param an event listener
   */
-  NS_IMETHOD HandleEvent(nsIPresContext* aPresContext,
+  NS_IMETHOD HandleEvent(nsPresContext* aPresContext,
                          nsEvent* aEvent,
                          nsIDOMEvent** aDOMEvent,
                          nsIDOMEventTarget* aCurrentTarget,
@@ -142,7 +147,7 @@ public:
   * (used rarely in the situation where methods on the event need to be
   * invoked prior to the processing of the event).
   */
-  NS_IMETHOD CreateEvent(nsIPresContext* aPresContext,
+  NS_IMETHOD CreateEvent(nsPresContext* aPresContext,
                          nsEvent* aEvent,
                          const nsAString& aEventType,
                          nsIDOMEvent** aDOMEvent) = 0;
@@ -182,6 +187,12 @@ public:
   * Loop pass for evaluation of system event listeners.
   */
   NS_IMETHOD GetSystemEventGroupLM(nsIDOMEventGroup** aGroup) = 0;
+
+  /**
+   * Allows us to quickly determine whether we have unload or beforeunload
+   * listeners registered.
+   */
+  virtual PRBool HasUnloadListeners() = 0;
 };
 
 nsresult

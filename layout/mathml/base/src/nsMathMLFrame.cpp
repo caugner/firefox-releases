@@ -1,24 +1,40 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla MathML Project.
- * 
- * The Initial Developer of the Original Code is The University Of 
- * Queensland.  Portions created by The University Of Queensland are
- * Copyright (C) 1999 The University Of Queensland.  All Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * The University Of Queensland.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Roger B. Sidje <rbs@maths.uq.edu.au>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsINameSpaceManager.h"
 #include "nsMathMLFrame.h"
@@ -40,23 +56,23 @@
 #include "nsContentCID.h"
 #include "nsAutoPtr.h"
 #include "nsStyleSet.h"
+#include "nsStyleUtil.h"
 static NS_DEFINE_CID(kCSSStyleSheetCID, NS_CSS_STYLESHEET_CID);
 
 
 NS_IMPL_QUERY_INTERFACE1(nsMathMLFrame, nsIMathMLFrame)
 
 NS_IMETHODIMP
-nsMathMLFrame::InheritAutomaticData(nsIPresContext* aPresContext,
-                                    nsIFrame*       aParent) 
+nsMathMLFrame::InheritAutomaticData(nsIFrame* aParent) 
 {
   mEmbellishData.flags = 0;
-  mEmbellishData.nextFrame = nsnull;
   mEmbellishData.coreFrame = nsnull;
   mEmbellishData.direction = NS_STRETCH_DIRECTION_UNSUPPORTED;
   mEmbellishData.leftSpace = 0;
   mEmbellishData.rightSpace = 0;
 
   mPresentationData.flags = 0;
+  mPresentationData.baseFrame = nsnull;
   mPresentationData.mstyle = nsnull;
   mPresentationData.scriptLevel = 0;
 
@@ -77,8 +93,7 @@ nsMathMLFrame::InheritAutomaticData(nsIPresContext* aPresContext,
 }
 
 NS_IMETHODIMP
-nsMathMLFrame::UpdatePresentationData(nsIPresContext* aPresContext,
-                                      PRInt32         aScriptLevelIncrement,
+nsMathMLFrame::UpdatePresentationData(PRInt32         aScriptLevelIncrement,
                                       PRUint32        aFlagsValues,
                                       PRUint32        aFlagsToUpdate)
 {
@@ -109,7 +124,7 @@ nsMathMLFrame::UpdatePresentationData(nsIPresContext* aPresContext,
 // extra leaf style contexts given to the MathMLChars are acessible to
 // the Style System via the Get/Set AdditionalStyleContext() APIs.
 /* static */ void
-nsMathMLFrame::ResolveMathMLCharStyle(nsIPresContext*  aPresContext,
+nsMathMLFrame::ResolveMathMLCharStyle(nsPresContext*  aPresContext,
                                       nsIContent*      aContent,
                                       nsStyleContext*  aParentStyleContext,
                                       nsMathMLChar*    aMathMLChar,
@@ -132,7 +147,6 @@ nsMathMLFrame::GetEmbellishDataFrom(nsIFrame*        aFrame,
 {
   // initialize OUT params
   aEmbellishData.flags = 0;
-  aEmbellishData.nextFrame = nsnull;
   aEmbellishData.coreFrame = nsnull;
   aEmbellishData.direction = NS_STRETCH_DIRECTION_UNSUPPORTED;
   aEmbellishData.leftSpace = 0;
@@ -156,6 +170,7 @@ nsMathMLFrame::GetPresentationDataFrom(nsIFrame*           aFrame,
 {
   // initialize OUT params
   aPresentationData.flags = 0;
+  aPresentationData.baseFrame = nsnull;
   aPresentationData.mstyle = nsnull;
   aPresentationData.scriptLevel = 0;
 
@@ -235,13 +250,10 @@ nsMathMLFrame::GetRuleThickness(nsIRenderingContext& aRenderingContext,
   // get the bounding metrics of the overbar char, the rendering context
   // is assumed to have been set with the font of the current style context
 #ifdef NS_DEBUG
-  const nsFont* myFont;
-  aFontMetrics->GetFont(myFont);
   nsCOMPtr<nsIFontMetrics> currFontMetrics;
   aRenderingContext.GetFontMetrics(*getter_AddRefs(currFontMetrics));
-  const nsFont* currFont;
-  currFontMetrics->GetFont(currFont);
-  NS_ASSERTION(currFont->Equals(*myFont), "unexpected state");
+  NS_ASSERTION(currFontMetrics->Font().Equals(aFontMetrics->Font()),
+      "unexpected state");
 #endif
   nscoord xHeight;
   aFontMetrics->GetXHeight(xHeight);
@@ -277,13 +289,10 @@ nsMathMLFrame::GetAxisHeight(nsIRenderingContext& aRenderingContext,
   // get the bounding metrics of the minus sign, the rendering context
   // is assumed to have been set with the font of the current style context
 #ifdef NS_DEBUG
-  const nsFont* myFont;
-  aFontMetrics->GetFont(myFont);
   nsCOMPtr<nsIFontMetrics> currFontMetrics;
   aRenderingContext.GetFontMetrics(*getter_AddRefs(currFontMetrics));
-  const nsFont* currFont;
-  currFontMetrics->GetFont(currFont);
-  NS_ASSERTION(currFont->Equals(*myFont), "unexpected state");
+  NS_ASSERTION(currFontMetrics->Font().Equals(aFontMetrics->Font()),
+	"unexpected state");
 #endif
   nscoord xHeight;
   aFontMetrics->GetXHeight(xHeight);
@@ -369,18 +378,18 @@ nsMathMLFrame::ParseNumericValue(nsString&   aString,
   if (unit.IsEmpty()) {
     cssUnit = eCSSUnit_Number; // no explicit unit, this is a number that will act as a multiplier
   }
-  else if (unit.Equals(NS_LITERAL_STRING("%"))) {
+  else if (unit.EqualsLiteral("%")) {
     aCSSValue.SetPercentValue(floatValue / 100.0f);
     return PR_TRUE;
   }
-  else if (unit.Equals(NS_LITERAL_STRING("em"))) cssUnit = eCSSUnit_EM;
-  else if (unit.Equals(NS_LITERAL_STRING("ex"))) cssUnit = eCSSUnit_XHeight;
-  else if (unit.Equals(NS_LITERAL_STRING("px"))) cssUnit = eCSSUnit_Pixel;
-  else if (unit.Equals(NS_LITERAL_STRING("in"))) cssUnit = eCSSUnit_Inch;
-  else if (unit.Equals(NS_LITERAL_STRING("cm"))) cssUnit = eCSSUnit_Centimeter;
-  else if (unit.Equals(NS_LITERAL_STRING("mm"))) cssUnit = eCSSUnit_Millimeter;
-  else if (unit.Equals(NS_LITERAL_STRING("pt"))) cssUnit = eCSSUnit_Point;
-  else if (unit.Equals(NS_LITERAL_STRING("pc"))) cssUnit = eCSSUnit_Pica;
+  else if (unit.EqualsLiteral("em")) cssUnit = eCSSUnit_EM;
+  else if (unit.EqualsLiteral("ex")) cssUnit = eCSSUnit_XHeight;
+  else if (unit.EqualsLiteral("px")) cssUnit = eCSSUnit_Pixel;
+  else if (unit.EqualsLiteral("in")) cssUnit = eCSSUnit_Inch;
+  else if (unit.EqualsLiteral("cm")) cssUnit = eCSSUnit_Centimeter;
+  else if (unit.EqualsLiteral("mm")) cssUnit = eCSSUnit_Millimeter;
+  else if (unit.EqualsLiteral("pt")) cssUnit = eCSSUnit_Point;
+  else if (unit.EqualsLiteral("pc")) cssUnit = eCSSUnit_Pica;
   else // unexpected unit
     return PR_FALSE;
 
@@ -389,7 +398,7 @@ nsMathMLFrame::ParseNumericValue(nsString&   aString,
 }
 
 /* static */ nscoord
-nsMathMLFrame::CalcLength(nsIPresContext*   aPresContext,
+nsMathMLFrame::CalcLength(nsPresContext*   aPresContext,
                           nsStyleContext*   aStyleContext,
                           const nsCSSValue& aCSSValue)
 {
@@ -402,9 +411,8 @@ nsMathMLFrame::CalcLength(nsIPresContext*   aPresContext,
   nsCSSUnit unit = aCSSValue.GetUnit();
 
   if (eCSSUnit_Pixel == unit) {
-    float p2t;
-    aPresContext->GetScaledPixelsToTwips(&p2t);
-    return NSFloatPixelsToTwips(aCSSValue.GetFloatValue(), p2t);
+    return NSFloatPixelsToTwips(aCSSValue.GetFloatValue(),
+                                aPresContext->ScaledPixelsToTwips());
   }
   else if (eCSSUnit_EM == unit) {
     const nsStyleFont* font = aStyleContext->GetStyleFont();
@@ -413,8 +421,7 @@ nsMathMLFrame::CalcLength(nsIPresContext*   aPresContext,
   else if (eCSSUnit_XHeight == unit) {
     nscoord xHeight;
     const nsStyleFont* font = aStyleContext->GetStyleFont();
-    nsCOMPtr<nsIFontMetrics> fm;
-    aPresContext->GetMetricsFor(font->mFont, getter_AddRefs(fm));
+    nsCOMPtr<nsIFontMetrics> fm = aPresContext->GetMetricsFor(font->mFont);
     fm->GetXHeight(xHeight);
     return NSToCoordRound(aCSSValue.GetFloatValue() * (float)xHeight);
   }
@@ -434,31 +441,31 @@ nsMathMLFrame::ParseNamedSpaceValue(nsIFrame*   aMathMLmstyleFrame,
   // See if it is one of the 'namedspace' (ranging 1/18em...7/18em)
   PRInt32 i = 0;
   nsIAtom* namedspaceAtom = nsnull;
-  if (aString.Equals(NS_LITERAL_STRING("veryverythinmathspace"))) {
+  if (aString.EqualsLiteral("veryverythinmathspace")) {
     i = 1;
     namedspaceAtom = nsMathMLAtoms::veryverythinmathspace_;
   }
-  else if (aString.Equals(NS_LITERAL_STRING("verythinmathspace"))) {
+  else if (aString.EqualsLiteral("verythinmathspace")) {
     i = 2;
     namedspaceAtom = nsMathMLAtoms::verythinmathspace_;
   }
-  else if (aString.Equals(NS_LITERAL_STRING("thinmathspace"))) {
+  else if (aString.EqualsLiteral("thinmathspace")) {
     i = 3;
     namedspaceAtom = nsMathMLAtoms::thinmathspace_;
   }
-  else if (aString.Equals(NS_LITERAL_STRING("mediummathspace"))) {
+  else if (aString.EqualsLiteral("mediummathspace")) {
     i = 4;
     namedspaceAtom = nsMathMLAtoms::mediummathspace_;
   }
-  else if (aString.Equals(NS_LITERAL_STRING("thickmathspace"))) {
+  else if (aString.EqualsLiteral("thickmathspace")) {
     i = 5;
     namedspaceAtom = nsMathMLAtoms::thickmathspace_;
   }
-  else if (aString.Equals(NS_LITERAL_STRING("verythickmathspace"))) {
+  else if (aString.EqualsLiteral("verythickmathspace")) {
     i = 6;
     namedspaceAtom = nsMathMLAtoms::verythickmathspace_;
   }
-  else if (aString.Equals(NS_LITERAL_STRING("veryverythickmathspace"))) {
+  else if (aString.EqualsLiteral("veryverythickmathspace")) {
     i = 7;
     namedspaceAtom = nsMathMLAtoms::veryverythickmathspace_;
   }
@@ -501,7 +508,7 @@ nsCSSMapping {
 };
 
 static void
-GetMathMLAttributeStyleSheet(nsIPresContext* aPresContext,
+GetMathMLAttributeStyleSheet(nsPresContext* aPresContext,
                              nsIStyleSheet** aSheet)
 {
   static const char kTitle[] = "Internal MathML/CSS Attribute Style Sheet";
@@ -534,26 +541,27 @@ GetMathMLAttributeStyleSheet(nsIPresContext* aPresContext,
   nsCOMPtr<nsICSSStyleSheet> cssSheet(do_CreateInstance(kCSSStyleSheetCID));
   if (!cssSheet)
     return;
-  cssSheet->SetURL(uri);
+  cssSheet->SetURIs(uri, uri);
+  cssSheet->SetTitle(NS_ConvertASCIItoUCS2(kTitle));
+  // all done, no further activity from the net involved, so we better do this
+  cssSheet->SetComplete();
+
   nsCOMPtr<nsIDOMCSSStyleSheet> domSheet(do_QueryInterface(cssSheet));
   if (domSheet) {
     PRUint32 index;
     domSheet->InsertRule(NS_LITERAL_STRING("@namespace url(http://www.w3.org/1998/Math/MathML);"),
                                            0, &index);
   }
-  cssSheet->SetTitle(NS_ConvertASCIItoUCS2(kTitle));
-
-  // all done, no further activity from the net involved, so we better do this
-  cssSheet->SetComplete();
 
   // insert the stylesheet into the styleset without notifying observers
-  styleSet->AppendStyleSheet(nsStyleSet::eAgentSheet, cssSheet);
+  // XXX Should this be at a different level?
+  styleSet->PrependStyleSheet(nsStyleSet::eAgentSheet, cssSheet);
   *aSheet = cssSheet;
   NS_ADDREF(*aSheet);
 }
 
 /* static */ PRInt32
-nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
+nsMathMLFrame::MapAttributesIntoCSS(nsPresContext* aPresContext,
                                     nsIContent*     aContent)
 {
   // normal case, quick return if there are no attributes
@@ -603,6 +611,8 @@ nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
     aContent->GetAttr(nameSpaceID, attrAtom, attrValue);
     if (attrValue.IsEmpty())
       continue;
+    nsAutoString escapedAttrValue;
+    nsStyleUtil::EscapeCSSString(attrValue, escapedAttrValue);
 
     // don't add rules that are already in mathml.css
     // (this will also clean up whitespace before units - see bug 125303)
@@ -624,7 +634,7 @@ nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
     // make a style rule that maps to the equivalent CSS property
     nsAutoString cssRule;
     cssRule.Assign(NS_LITERAL_STRING("[")  + attrName +
-                   NS_LITERAL_STRING("='") + attrValue +
+                   NS_LITERAL_STRING("='") + escapedAttrValue +
                    NS_LITERAL_STRING("']{") + cssProperty + NS_LITERAL_STRING("}"));
 
     if (!sheet) {
@@ -648,12 +658,10 @@ nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
     }
 
     // check for duplicate, if a similar rule is already there, don't bother to add another one
-    // XXX bug 142648 - GetSourceSelectorText is in the format *[color=blue] (i.e., no quotes...) 
-    // XXXrbs need to keep this in sync with the fix for bug 142648
     nsAutoString selector;
     selector.Assign(NS_LITERAL_STRING("*[") + attrName +
-                    NS_LITERAL_STRING("=") + attrValue +
-                    NS_LITERAL_STRING("]"));
+                    NS_LITERAL_STRING("=\"") + escapedAttrValue +
+                    NS_LITERAL_STRING("\"]"));
     PRInt32 k, count;
     cssSheet->StyleRuleCount(count);
     for (k = 0; k < count; ++k) {
@@ -661,10 +669,12 @@ nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
       nsCOMPtr<nsICSSRule> tmpRule;
       cssSheet->GetStyleRuleAt(k, *getter_AddRefs(tmpRule));
       nsCOMPtr<nsICSSStyleRule> tmpStyleRule = do_QueryInterface(tmpRule);
-      tmpStyleRule->GetSelectorText(tmpSelector);
-      if (tmpSelector.Equals(selector)) {
-        k = -1;
-        break;
+      if (tmpStyleRule) {
+        tmpStyleRule->GetSelectorText(tmpSelector);
+        if (tmpSelector.Equals(selector)) {
+          k = -1;
+          break;
+        }
       }
     }
     if (k >= 0) {
@@ -686,7 +696,7 @@ nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
 }
 
 /* static */ PRInt32
-nsMathMLFrame::MapAttributesIntoCSS(nsIPresContext* aPresContext,
+nsMathMLFrame::MapAttributesIntoCSS(nsPresContext* aPresContext,
                                     nsIFrame*       aFrame)
 {
   PRInt32 ruleCount = MapAttributesIntoCSS(aPresContext, aFrame->GetContent());

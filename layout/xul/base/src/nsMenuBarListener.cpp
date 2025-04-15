@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,27 +14,27 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: David W. Hyatt (hyatt@netscape.com)
+ *   Original Author: David W. Hyatt (hyatt@netscape.com)
  *   Dean Tessman <dean_tessman@hotmail.com>
  *   Mark Hammond <markh@ActiveState.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -46,14 +46,12 @@
 #include "nsIDOMNSUIEvent.h"
 #include "nsIDOMNSEvent.h"
 #include "nsGUIEvent.h"
-#include "nsIPrivateDOMEvent.h"                                                 
 
 // Drag & Drop, Clipboard
 #include "nsIServiceManager.h"
 #include "nsWidgetsCID.h"
 #include "nsCOMPtr.h"
 #include "nsIDOMKeyEvent.h"
-#include "nsIPresContext.h"
 #include "nsIContent.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMElement.h"
@@ -64,9 +62,7 @@
 #include "nsIViewManager.h"
 #include "nsIView.h"
 #include "nsISupportsArray.h"
-
-#include "nsIPrefBranch.h"
-#include "nsIPrefService.h"
+#include "nsContentUtils.h"
 
 /*
  * nsMenuBarListener implementation
@@ -76,10 +72,15 @@ NS_IMPL_ADDREF(nsMenuBarListener)
 NS_IMPL_RELEASE(nsMenuBarListener)
 NS_IMPL_QUERY_INTERFACE3(nsMenuBarListener, nsIDOMKeyListener, nsIDOMFocusListener, nsIDOMMouseListener)
 
+#define MODIFIER_SHIFT    1
+#define MODIFIER_CONTROL  2
+#define MODIFIER_ALT      4
+#define MODIFIER_META     8
 
 ////////////////////////////////////////////////////////////////////////
 
 PRInt32 nsMenuBarListener::mAccessKey = -1;
+PRUint32 nsMenuBarListener::mAccessKeyMask = 0;
 PRBool nsMenuBarListener::mAccessKeyFocuses = PR_FALSE;
 
 nsMenuBarListener::nsMenuBarListener(nsMenuBarFrame* aMenuBar) 
@@ -112,22 +113,25 @@ void nsMenuBarListener::InitAccessKey()
   // mac doesn't have menu shortcuts, other platforms use alt.
 #if !(defined(XP_MAC) || defined(XP_MACOSX))
   mAccessKey = nsIDOMKeyEvent::DOM_VK_ALT;
+  mAccessKeyMask = MODIFIER_ALT;
 #else
   mAccessKey = 0;
+  mAccessKeyMask = 0;
 #endif
 
   // Get the menu access key value from prefs, overriding the default:
-  nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID));
-  if (prefBranch)
-  {
-    nsresult rv = prefBranch->GetIntPref("ui.key.menuAccessKey", &mAccessKey);
-    rv |= prefBranch->GetBoolPref("ui.key.menuAccessKeyFocuses",
-                                  &mAccessKeyFocuses);
-#ifdef DEBUG_akkana
-    NS_ASSERTION(NS_SUCCEEDED(rv) && prefBranch,
-                 "Menubar listener couldn't get accel key from prefs!\n");
-#endif
-  }
+  mAccessKey = nsContentUtils::GetIntPref("ui.key.menuAccessKey", mAccessKey);
+  if (mAccessKey == nsIDOMKeyEvent::DOM_VK_SHIFT)
+    mAccessKeyMask = MODIFIER_SHIFT;
+  else if (mAccessKey == nsIDOMKeyEvent::DOM_VK_CONTROL)
+    mAccessKeyMask = MODIFIER_CONTROL;
+  else if (mAccessKey == nsIDOMKeyEvent::DOM_VK_ALT)
+    mAccessKeyMask = MODIFIER_ALT;
+  else if (mAccessKey == nsIDOMKeyEvent::DOM_VK_META)
+    mAccessKeyMask = MODIFIER_META;
+
+  mAccessKeyFocuses =
+    nsContentUtils::GetBoolPref("ui.key.menuAccessKeyFocuses");
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -137,15 +141,15 @@ nsMenuBarListener::KeyUp(nsIDOMEvent* aKeyEvent)
   InitAccessKey();
 
   //handlers shouldn't be triggered by non-trusted events.
-  if (aKeyEvent) {
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(aKeyEvent);
-    if (privateEvent) {
-      PRBool trustedEvent;
-      privateEvent->IsTrustedEvent(&trustedEvent);
-      if (!trustedEvent)
-        return NS_OK;
-    }
+  nsCOMPtr<nsIDOMNSEvent> domNSEvent = do_QueryInterface(aKeyEvent);
+  PRBool trustedEvent = PR_FALSE;
+
+  if (domNSEvent) {
+    domNSEvent->GetIsTrusted(&trustedEvent);
   }
+
+  if (!trustedEvent)
+    return NS_OK;
 
   if (mAccessKey && mAccessKeyFocuses)
   {
@@ -197,15 +201,14 @@ nsMenuBarListener::KeyPress(nsIDOMEvent* aKeyEvent)
   }
 
   //handlers shouldn't be triggered by non-trusted events.
-  if (aKeyEvent) {
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(aKeyEvent);
-    if (privateEvent) {
-      PRBool trustedEvent;
-      privateEvent->IsTrustedEvent(&trustedEvent);
-      if (!trustedEvent)
-        return NS_OK;
-    }
+  nsCOMPtr<nsIDOMNSEvent> domNSEvent = do_QueryInterface(aKeyEvent);
+  PRBool trustedEvent = PR_FALSE;
+  if (domNSEvent) {
+    domNSEvent->GetIsTrusted(&trustedEvent);
   }
+
+  if (!trustedEvent)
+    return NS_OK;
 
   nsresult retVal = NS_OK;  // default is to not consume event
   
@@ -230,7 +233,7 @@ nsMenuBarListener::KeyPress(nsIDOMEvent* aKeyEvent)
         mAccessKeyDown = PR_FALSE;
 
       // If charCode == 0, then it is not a printable character.
-      // Don't attempt to handle accesskey for non-printable characters
+      // Don't attempt to handle accesskey for non-printable characters.
       if (IsAccessKeyPressed(keyEvent) && charCode)
       {
         // Do shortcut navigation.
@@ -253,12 +256,7 @@ nsMenuBarListener::KeyPress(nsIDOMEvent* aKeyEvent)
 #if !defined(XP_MAC) && !defined(XP_MACOSX)
       // Also need to handle F10 specially on Non-Mac platform.
       else if (keyCode == NS_VK_F10) {
-        PRBool alt,ctrl,shift,meta;
-        keyEvent->GetAltKey(&alt);
-        keyEvent->GetCtrlKey(&ctrl);
-        keyEvent->GetShiftKey(&shift);
-        keyEvent->GetMetaKey(&meta);
-        if (!(shift || alt || meta)) {
+        if ((GetModifiers(keyEvent) & ~MODIFIER_CONTROL) == 0) {
           // The F10 key just went down by itself or with ctrl pressed.
           // In Windows, both of these activate the menu bar.
           mMenuBarFrame->ToggleMenuActiveState();
@@ -281,21 +279,38 @@ nsMenuBarListener::KeyPress(nsIDOMEvent* aKeyEvent)
 PRBool
 nsMenuBarListener::IsAccessKeyPressed(nsIDOMKeyEvent* aKeyEvent)
 {
-  PRBool access;
-  switch (mAccessKey)
-  {
-    case nsIDOMKeyEvent::DOM_VK_CONTROL:
-      aKeyEvent->GetCtrlKey(&access);
-      return access;
-    case nsIDOMKeyEvent::DOM_VK_ALT:
-      aKeyEvent->GetAltKey(&access);
-      return access;
-    case nsIDOMKeyEvent::DOM_VK_META:
-      aKeyEvent->GetMetaKey(&access);
-      return access;
-    default:
-      return PR_FALSE;
-  }
+  InitAccessKey();
+  // No other modifiers are allowed to be down except for Shift.
+  PRUint32 modifiers = GetModifiers(aKeyEvent);
+
+  return (mAccessKeyMask != MODIFIER_SHIFT &&
+          (modifiers & mAccessKeyMask) &&
+          (modifiers & ~(mAccessKeyMask | MODIFIER_SHIFT)) == 0);
+}
+
+PRUint32
+nsMenuBarListener::GetModifiers(nsIDOMKeyEvent* aKeyEvent)
+{
+  PRUint32 modifiers = 0;
+  PRBool modifier;
+
+  aKeyEvent->GetShiftKey(&modifier);
+  if (modifier)
+    modifiers |= MODIFIER_SHIFT;
+
+  aKeyEvent->GetCtrlKey(&modifier);
+  if (modifier)
+    modifiers |= MODIFIER_CONTROL;
+
+  aKeyEvent->GetAltKey(&modifier);
+  if (modifier)
+    modifiers |= MODIFIER_ALT;
+
+  aKeyEvent->GetMetaKey(&modifier);
+  if (modifier)
+    modifiers |= MODIFIER_META;
+
+  return modifiers;
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -305,15 +320,15 @@ nsMenuBarListener::KeyDown(nsIDOMEvent* aKeyEvent)
   InitAccessKey();
 
   //handlers shouldn't be triggered by non-trusted events.
-  if (aKeyEvent) {
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(aKeyEvent);
-    if (privateEvent) {
-      PRBool trustedEvent;
-      privateEvent->IsTrustedEvent(&trustedEvent);
-      if (!trustedEvent)
-        return NS_OK;
-    }
+  nsCOMPtr<nsIDOMNSEvent> domNSEvent = do_QueryInterface(aKeyEvent);
+  PRBool trustedEvent = PR_FALSE;
+
+  if (domNSEvent) {
+    domNSEvent->GetIsTrusted(&trustedEvent);
   }
+
+  if (!trustedEvent)
+    return NS_OK;
 
   if (mAccessKey && mAccessKeyFocuses)
   {
@@ -321,27 +336,12 @@ nsMenuBarListener::KeyDown(nsIDOMEvent* aKeyEvent)
     PRUint32 theChar;
     keyEvent->GetKeyCode(&theChar);
 
-    if (theChar == (PRUint32)mAccessKey) {
+    if (theChar == (PRUint32)mAccessKey && (GetModifiers(keyEvent) & ~mAccessKeyMask) == 0) {
       // No other modifiers can be down.
       // Especially CTRL.  CTRL+ALT == AltGR, and
       // we'll fuck up on non-US enhanced 102-key
       // keyboards if we don't check this.
-      PRBool ctrl = PR_FALSE;
-      if (mAccessKey != nsIDOMKeyEvent::DOM_VK_CONTROL)
-        keyEvent->GetCtrlKey(&ctrl);
-      PRBool alt=PR_FALSE;
-      if (mAccessKey != nsIDOMKeyEvent::DOM_VK_ALT)
-        keyEvent->GetAltKey(&alt);
-      PRBool shift=PR_FALSE;
-      if (mAccessKey != nsIDOMKeyEvent::DOM_VK_SHIFT)
-        keyEvent->GetShiftKey(&shift);
-      PRBool meta=PR_FALSE;
-      if (mAccessKey != nsIDOMKeyEvent::DOM_VK_META)
-        keyEvent->GetMetaKey(&meta);
-      if (!(ctrl || alt || shift || meta)) {
-        // The access key just went down by itself. Track this.
-        mAccessKeyDown = PR_TRUE;
-      }
+      mAccessKeyDown = PR_TRUE;
     }
     else {
       // Some key other than the access key just went down,
@@ -368,10 +368,10 @@ nsresult
 nsMenuBarListener::Blur(nsIDOMEvent* aEvent)
 {
   if (!mMenuBarFrame->IsOpen() && mMenuBarFrame->IsActive()) {
-	  mMenuBarFrame->ToggleMenuActiveState();
-	  PRBool handled;
+    mMenuBarFrame->ToggleMenuActiveState();
+    PRBool handled;
     mMenuBarFrame->Escape(handled);
-	  mAccessKeyDown = PR_FALSE;
+    mAccessKeyDown = PR_FALSE;
   }
   return NS_OK; // means I am NOT consuming event
 }
@@ -433,5 +433,3 @@ nsMenuBarListener::HandleEvent(nsIDOMEvent* aEvent)
 {
   return NS_OK;
 }
-
-

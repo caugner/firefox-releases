@@ -15,9 +15,9 @@
  * The Original Code is Mozilla Roaming code.
  *
  * The Initial Developer of the Original Code is 
- * Ben Bucksch <http://www.bucksch.org> of
- * Beonex <http://www.beonex.com>
- * Portions created by the Initial Developer are Copyright (C) 2002-2003
+ *   Ben Bucksch <http://www.bucksch.org> of
+ *   Beonex <http://www.beonex.com>
+ * Portions created by the Initial Developer are Copyright (C) 2002-2004
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
@@ -144,10 +144,8 @@ RoamingPrefs.prototype =
          In case roaming was never set up, we will fail below at reg reading
          and use the defaults in this. Set the default files list to some
          sensible values, which we will get from the default prefs. */
-      var pref = Components.classes["@mozilla.org/preferences-service;1"]
-                 .getService()
-                 .QueryInterface(Components.interfaces.nsIPrefService)
-                 .getDefaultBranch(null);
+      var pref = Components.classes["@mozilla.org/preferences;1"]
+                 .getService(Components.interfaces.nsIPrefBranch);
       var value = pref.getCharPref("roaming.default.files");
       this.Files = value.split(",");
     } catch (e) {}
@@ -157,8 +155,8 @@ RoamingPrefs.prototype =
       /* to understand the structure of the registry,
          see comment at the const defs above */
       // get the Roaming reg branch
-      registry = Components.classes["@mozilla.org/registry;1"]
-                           .createInstance(Components.interfaces.nsIRegistry);
+      var registry = Components.classes["@mozilla.org/registry;1"]
+                     .createInstance(Components.interfaces.nsIRegistry);
       registry.openWellKnownRegistry(registry.ApplicationRegistry);
       this.registry = registry;
       var profMan = Components.classes["@mozilla.org/profile/manager;1"]
@@ -311,7 +309,7 @@ RoamingPrefs.prototype =
   verifyData : function()
   {
     if (!this.Enabled)
-      return;
+      return true;
 
     var errorProp; // see showError();
     var errorVal;  // dito
@@ -395,11 +393,8 @@ RoamingPrefs.prototype =
   {
     try
     {
-      var bundle = Components.classes["@mozilla.org/intl/stringbundle;1"]
-                  .getService()
-                  .QueryInterface(Components.interfaces.nsIStringBundleService)
-                  .createBundle("chrome://sroaming/locale/prefs.properties");
-      var dialogTitle = bundle.GetStringFromName("RoamingErrorTitle");
+      var bundle = document.getElementById("bundle_roaming_prefs");
+      var dialogTitle = bundle.getString("RoamingErrorTitle");
       var text = dialogTitle + "\n";
       if (val)
         text += bundle.formatStringFromName(prop, [val], 1);
@@ -424,15 +419,6 @@ function SwitchDeck(page, deckElement)
   deckElement.setAttribute("selectedIndex", page);
 }
 
-function EnableElement(enabled, triggerElement, elementID)
-{
-  var element = document.getElementById(elementID);
-  if(!enabled)
-    element.setAttribute("disabled", "true");
-  else
-    element.removeAttribute("disabled");
-}
-
 function EnableTree(enabled, element)
 {
   if (!element || !element.setAttribute)
@@ -449,13 +435,33 @@ function EnableTree(enabled, element)
     EnableTree(enabled, children.item(i));
 }
 
-function InitElement(elementID)
-{
-  var e = document.getElementById(elementID);
-  eval(e.getAttribute("oncommand").replace(/this/g, "e")); //hackish, but WFM
-}
-
 function E(elementID)
 {
   return document.getElementById(elementID);
+}
+
+function Browse()
+{
+  const nsIFilePicker = Components.interfaces.nsIFilePicker;
+
+  var fp = Components.classes["@mozilla.org/filepicker;1"]
+           .createInstance(nsIFilePicker);
+  var currentFolder = Components.classes["@mozilla.org/file/local;1"]
+                      .createInstance(Components.interfaces.nsILocalFile);
+  var currentFolderTextbox = document.getElementById("copyDir");
+  
+  try {
+    currentFolder.initWithPath(currentFolderTextbox.value);
+    fp.displayDirectory = currentFolder;
+  }
+  catch (ex) {
+    dump("initWithPath failed. Reason: " + ex);
+  }
+
+  fp.init(window, E("browseButton").getAttribute("filepickertitle"),
+          nsIFilePicker.modeGetFolder);
+  
+  if (fp.show() == nsIFilePicker.returnOK)
+    // convert the nsILocalFile into a nsIFileSpec 
+    currentFolderTextbox.value = fp.file.path;
 }

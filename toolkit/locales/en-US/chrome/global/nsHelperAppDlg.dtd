@@ -15,24 +15,27 @@
 <!ENTITY intro.attachment.label "The site has suggested that &quot;#3&quot; be handled as an attachment. It is of type #2 (#1) and located at:">
 <!ENTITY intro.attachment.noDesc.label "The site has suggested that &quot;#3&quot; be handled as an attachment. It is of type #2 and located at:">
 
+<!ENTITY intro.sniffed.label "#4 has detected that the file &quot;#3&quot; is likely to be of type #2 (#1). The file is located at:">
+<!ENTITY intro.sniffed.noDesc.label "#4 has detected that the file &quot;#3&quot; is likely to be of type #2. The file is located at:">
+
 <!ENTITY prompt.label          "What should #1 do with this file?">
 
 <!ENTITY alwaysHandle.label     "Always perform this action when handling files of this type">
-<!ENTITY alwaysHandle.accesskey "a">
+<!ENTITY alwaysHandle.accesskey "A">
 
 <!ENTITY saveToDisk.label      "Save it to disk">
-<!ENTITY saveToDisk.accesskey  "s">
+<!ENTITY saveToDisk.accesskey  "S">
 
 <!ENTITY useSystemDefault.label        "Open it with the default application (#1)">
 <!ENTITY useSystemDefault.noDesc.label "Open it with the default application">
-<!ENTITY useSystemDefault.accesskey    "o">
+<!ENTITY useSystemDefault.accesskey    "O">
 
 <!-- LOCALIZATION NOTE:  do not localize "#1" -->
 <!ENTITY openUsing.label       "Open it with">
 <!ENTITY openUsing.accesskey   "w">
 
 <!ENTITY chooseApp.label       "Choose...">
-<!ENTITY chooseApp.accesskey   "c">
+<!ENTITY chooseApp.accesskey   "C">
 
 <!ENTITY chooseAppFilePickerTitle "Choose Helper Application">
 

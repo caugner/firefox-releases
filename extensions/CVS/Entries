@@ -1,6 +1,7 @@
-/.cvsignore/1.1/Wed Mar 31 08:30:26 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.14/Fri Dec 29 22:10:32 2000//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Wed Mar 31 08:30:26 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.15/Sun Apr 18 22:13:14 2004//TFIREFOX_1_5_RELEASE
 D/access-builtin////
+D/auth////
 D/content-packs////
 D/cookie////
 D/cview////
@@ -11,12 +12,19 @@ D/gnomevfs////
 D/help////
 D/inspector////
 D/irc////
+D/java////
 D/layout-debug////
+D/lightning////
 D/manticore////
+D/mono////
 D/negotiateauth////
 D/p3p////
+D/permissions////
 D/pref////
 D/python////
+D/reporter////
+D/schema-validation////
+D/spatialnavigation////
 D/spellcheck////
 D/sql////
 D/sroaming////
@@ -27,7 +35,9 @@ D/typeaheadfind////
 D/universalchardet////
 D/venkman////
 D/wallet////
+D/webdav////
 D/webservices////
+D/xforms////
 D/xml-rpc////
 D/xmlextras////
 D/xmlterm////

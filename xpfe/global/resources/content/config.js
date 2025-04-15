@@ -1,27 +1,43 @@
 /* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
  *
- * Contributors:
- *  Chip Clark <chipc@netscape.com>
- *  Seth Spitzer <sspitzer@netscape.com>
- *  Neil Rashbrook <neil@parkwaycc.co.uk>
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Chip Clark <chipc@netscape.com>
+ *   Seth Spitzer <sspitzer@netscape.com>
+ *   Neil Rashbrook <neil@parkwaycc.co.uk>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 const nsIPrefLocalizedString = Components.interfaces.nsIPrefLocalizedString;
 const nsISupportsString = Components.interfaces.nsISupportsString;
@@ -39,7 +55,7 @@ const nsAtomService_CONTRACTID = "@mozilla.org/atom-service;1";
 
 const gPromptService = Components.classes[nsPrompt_CONTRACTID].getService(nsIPromptService);
 const gPrefService = Components.classes[nsPrefService_CONTRACTID].getService(nsIPrefService);
-const gPrefBranch = gPrefService.getBranch(null).QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+const gPrefBranch = gPrefService.getBranch(null).QueryInterface(Components.interfaces.nsIPrefBranch2);
 const gClipboardHelper = Components.classes[nsClipboardHelper_CONTRACTID].getService(nsIClipboardHelper);
 const gAtomService = Components.classes[nsAtomService_CONTRACTID].getService(nsIAtomService);
 
@@ -67,9 +83,9 @@ var view = {
     if (!(index in gPrefView))
       return "";
     
-    var value = gPrefView[index][col];
+    var value = gPrefView[index][col.id];
 
-    switch (col) {
+    switch (col.id) {
       case "lockCol":           
         return gLockStrs[value];
       case "typeCol":
@@ -83,27 +99,26 @@ var view = {
     if (index in gPrefView)
       prop.AppendElement(gLockAtoms[gPrefView[index].lockCol]);
   },
-  getColumnProperties : function(col, elt, prop) {},
+  getColumnProperties : function(col, prop) {},
   treebox : null,
   selection : null,
   isContainer : function(index) { return false; },
   isContainerOpen : function(index) { return false; },
   isContainerEmpty : function(index) { return false; },
   isSorted : function() { return true; },
-  canDropOn : function(index) { return false; },
-  canDropBeforeAfter : function(index, before) { return false; },
-  drop : function(row,orientation) {},
+  canDrop : function(index, orientation) { return false; },
+  drop : function(row, orientation) {},
   setTree : function(out) { this.treebox = out; },
   getParentIndex: function(rowIndex) { return -1; },
   hasNextSibling: function(rowIndex, afterIndex) { return false; },
   getLevel: function(index) { return 1; },
-  getImageSrc: function(row, colID) { return ""; },
+  getImageSrc: function(row, col) { return ""; },
   toggleOpenState : function(index) {},
-  cycleHeader: function(colID, elt) {
+  cycleHeader: function(col) {
     var index = this.selection.currentIndex;
-    if (colID == gSortedColumn)
+    if (col.id == gSortedColumn)
       gSortDirection = -gSortDirection;
-    if (colID == gSortedColumn && gFastIndex == gPrefArray.length) {
+    if (col.id == gSortedColumn && gFastIndex == gPrefArray.length) {
       gPrefArray.reverse();
       if (gPrefView != gPrefArray)
         gPrefView.reverse();
@@ -120,18 +135,18 @@ var view = {
       }
       var old = document.getElementById(gSortedColumn);
       old.setAttribute("sortDirection", "");
-      gPrefArray.sort(gSortFunction = gSortFunctions[colID]);
+      gPrefArray.sort(gSortFunction = gSortFunctions[col.id]);
       if (gPrefView != gPrefArray) {
-        if (colID == gSortedColumn)
+        if (col.id == gSortedColumn)
           gPrefView.reverse();
         else
           gPrefView.sort(gSortFunction);
       }
-      gSortedColumn = colID;
+      gSortedColumn = col.id;
       if (pref)
         index = getIndexOfPref(pref);
     }
-    elt.setAttribute("sortDirection", gSortDirection > 0 ? "ascending" : "descending");
+    col.element.setAttribute("sortDirection", gSortDirection > 0 ? "ascending" : "descending");
     this.treebox.invalidate();
     if (index >= 0) {
       this.selection.select(index);
@@ -140,12 +155,13 @@ var view = {
     gFastIndex = gPrefArray.length;
   },
   selectionChanged : function() {},
-  cycleCell: function(row, colID) {},
-  isEditable: function(row, colID) {return false; },
-  setCellText: function(row, colID, value) {},
+  cycleCell: function(row, col) {},
+  isEditable: function(row, col) {return false; },
+  setCellValue: function(row, col, value) {},
+  setCellText: function(row, col, value) {},
   performAction: function(action) {},
   performActionOnRow: function(action, row) {},
-  performActionOnCell: function(action, row, colID) {},
+  performActionOnCell: function(action, row, col) {},
   isSeparator: function(index) {return false; }
 };
 
@@ -297,7 +313,6 @@ function onConfigLoad()
 {
   // Load strings
   gConfigBundle = document.getElementById("configBundle");
-  document.title = gConfigBundle.getString("title");
 
   gLockStrs[PREF_IS_DEFAULT_VALUE] = gConfigBundle.getString("default");
   gLockStrs[PREF_IS_USER_SET] = gConfigBundle.getString("user");
@@ -320,13 +335,13 @@ function onConfigLoad()
   }
 
   var descending = document.getElementsByAttribute("sortDirection", "descending");
-  if (descending.length) {
+  if (descending.item(0)) {
     gSortedColumn = descending[0].id;
     gSortDirection = -1;
   }
   else {
     var ascending = document.getElementsByAttribute("sortDirection", "ascending");
-    if (ascending.length)
+    if (ascending.item(0))
       gSortedColumn = ascending[0].id;
     else
       document.getElementById(gSortedColumn).setAttribute("sortDirection", "ascending");
@@ -416,15 +431,39 @@ const gSortFunctions =
   valueCol: valueColSortFunction
 };
 
-function updateContextMenu(popup) {
-  if (view.selection.currentIndex < 0)
-    return false;
-  var pref = gPrefView[view.selection.currentIndex];
-  var reset = popup.lastChild;
-  reset.setAttribute("disabled", pref.lockCol != PREF_IS_USER_SET);
-  var modify = reset.previousSibling;
-  modify.setAttribute("disabled", pref.lockCol == PREF_IS_LOCKED);
-  return true;
+function updateContextMenu()
+{
+  var lockCol = PREF_IS_LOCKED;
+  var typeCol = nsIPrefBranch.PREF_STRING;
+  var valueCol = "";
+  var copyDisabled = true;
+
+  if (view.selection.currentIndex >= 0) {
+    var prefRow = gPrefView[view.selection.currentIndex];
+    lockCol = prefRow.lockCol;
+    typeCol = prefRow.typeCol;
+    valueCol = prefRow.valueCol;
+    copyDisabled = false;
+  }
+
+  var copyName = document.getElementById("copyName");
+  copyName.setAttribute("disabled", copyDisabled);
+
+  var copyValue = document.getElementById("copyValue");
+  copyValue.setAttribute("disabled", copyDisabled);
+
+  var resetSelected = document.getElementById("resetSelected");
+  resetSelected.setAttribute("disabled", lockCol != PREF_IS_USER_SET);
+
+  var canToggle = typeCol == nsIPrefBranch.PREF_BOOL && valueCol != "";
+
+  var modifySelected = document.getElementById("modifySelected");
+  modifySelected.setAttribute("disabled", lockCol == PREF_IS_LOCKED);
+  modifySelected.hidden = canToggle;
+
+  var toggleSelected = document.getElementById("toggleSelected");
+  toggleSelected.setAttribute("disabled", lockCol == PREF_IS_LOCKED);
+  toggleSelected.hidden = !canToggle;
 }
 
 function copyName()
@@ -439,7 +478,8 @@ function copyValue()
 
 function ModifySelected()
 {
-  ModifyPref(gPrefView[view.selection.currentIndex]);
+  if (view.selection.currentIndex >= 0)
+    ModifyPref(gPrefView[view.selection.currentIndex]);
 }
 
 function ResetSelected()
@@ -452,13 +492,12 @@ function NewPref(type)
 {
   var result = { value: "" };
   var dummy = { value: 0 };
-  // XXX get these from a string bundle
   if (gPromptService.prompt(window,
                             gConfigBundle.getFormattedString("new_title", [gTypeStrs[type]]),
                             gConfigBundle.getString("new_prompt"),
                             result,
                             null,
-                            dummy)) {
+                            dummy) && result.value) {
     var pref;
     if (result.value in gPrefHash)
       pref = gPrefHash[result.value];
@@ -469,7 +508,8 @@ function NewPref(type)
   }
 }
 
-function gotoPref(pref) {
+function gotoPref(pref)
+{
   // make sure the pref exists and is displayed in the current view
   var index = pref in gPrefHash ? getViewIndexOfPref(gPrefHash[pref]) : -1;
   if (index >= 0) {
@@ -485,29 +525,39 @@ function ModifyPref(entry)
 {
   if (entry.lockCol == PREF_IS_LOCKED)
     return false;
-  var result = { value: entry.valueCol };
-  var dummy = { value: 0 };
-  // XXX get this from a string bundle
-  if (!gPromptService.prompt(window,
-                             gConfigBundle.getFormattedString("modify_title", [gTypeStrs[entry.typeCol]]),
-                             entry.prefCol,
-                             result,
-                             null,
-                             dummy))
-    return false;
-  switch (entry.typeCol) {
-    case nsIPrefBranch.PREF_BOOL:
-      gPrefBranch.setBoolPref(entry.prefCol, eval(result.value));
-      break;
-    case nsIPrefBranch.PREF_INT:
-      gPrefBranch.setIntPref(entry.prefCol, eval(result.value));
-      break;
-    default:
-    case nsIPrefBranch.PREF_STRING:
+  var title = gConfigBundle.getFormattedString("modify_title", [gTypeStrs[entry.typeCol]]);
+  if (entry.typeCol == nsIPrefBranch.PREF_BOOL) {
+    var check = { value: entry.valueCol == "false" };
+    if (!entry.valueCol && !gPromptService.select(window, title, entry.prefCol, 2, [false, true], check))
+      return false;
+    gPrefBranch.setBoolPref(entry.prefCol, check.value);
+  } else {
+    var result = { value: entry.valueCol };
+    var dummy = { value: 0 };
+    if (!gPromptService.prompt(window, title, entry.prefCol, result, null, dummy))
+      return false;
+    if (entry.typeCol == nsIPrefBranch.PREF_INT) {
+      // | 0 converts to integer or 0; - 0 to float or NaN.
+      // Thus, this check should catch all cases.
+      var val = result.value | 0;
+      if (val != result.value - 0) {
+        var err_title = gConfigBundle.getString("nan_title");
+        var err_text = gConfigBundle.getString("nan_text");
+        gPromptService.alert(window, err_title, err_text);
+        return false;
+      }
+      gPrefBranch.setIntPref(entry.prefCol, val);
+    } else {
       var supportsString = Components.classes[nsSupportsString_CONTRACTID].createInstance(nsISupportsString);
       supportsString.data = result.value;
       gPrefBranch.setComplexValue(entry.prefCol, nsISupportsString, supportsString);
-      break;
+    }
   }
+
+  // Fire event for accessibility
+  var event = document.createEvent('Events');
+  event.initEvent('NameChange', false, true);
+  document.getElementById("configTree").dispatchEvent(event);
+
   return true;
 }

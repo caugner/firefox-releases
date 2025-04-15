@@ -1,22 +1,38 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "MPL"); you may not use this file
- * except in compliance with the MPL. You may obtain a copy of
- * the MPL at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the MPL is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the MPL for the specific language governing
- * rights and limitations under the MPL.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is XMLterm.
- * 
- * The Initial Developer of the Original Code is Ramalingam Saravanan.
- * Portions created by Ramalingam Saravanan <svn@xmlterm.org> are
- * Copyright (C) 1999 Ramalingam Saravanan. All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Ramalingam Saravanan.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 // mozXMLTermStream.cpp: implementation of mozIXMLTermStream
 // to display HTML/XML streams as documents
@@ -34,8 +50,9 @@
 #include "nsIServiceManager.h"
 #include "nsIContentViewer.h"
 #include "nsIDocumentViewer.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIPresShell.h"
+#include "nsIContentViewerContainer.h"
 
 #include "nsIViewManager.h"
 #include "nsIScrollableView.h"
@@ -112,7 +129,7 @@ NS_IMETHODIMP mozXMLTermStream::Open(nsIDOMWindowInternal* aDOMWindow,
     // Open stream in named subframe of current frame
     XMLT_LOG(mozXMLTermStream::Open,22,("frameName=%s\n", frameName));
 
-    nsAutoString innerFrameName; innerFrameName.AssignWithConversion(frameName);
+    nsAutoString innerFrameName; innerFrameName.AssignASCII(frameName);
 
     // Get DOM IFRAME element
     nsCOMPtr<nsIDOMDocument> domDoc;
@@ -149,7 +166,7 @@ NS_IMETHODIMP mozXMLTermStream::Open(nsIDOMWindowInternal* aDOMWindow,
     if (NS_FAILED(result))
       return NS_ERROR_FAILURE;
 
-    if (!tagName.EqualsIgnoreCase("iframe"))
+    if (!tagName.LowerCaseEqualsLiteral("iframe"))
       return NS_ERROR_FAILURE;
 
     if (mMaxResizeHeight > 0) {
@@ -356,15 +373,15 @@ NS_IMETHODIMP mozXMLTermStream::SizeToContentHeight(PRInt32 maxHeight)
     return NS_ERROR_FAILURE;
 
   // Get pres context
-  nsCOMPtr<nsIPresContext> presContext;
+  nsCOMPtr<nsPresContext> presContext;
   result = docShell->GetPresContext(getter_AddRefs(presContext));
   if (NS_FAILED(result) || !presContext)
     return NS_ERROR_FAILURE;
 
   // Get scrollable view
-  nsCOMPtr<nsIScrollableView> scrollableView;
+  nsIScrollableView* scrollableView;
   result = mozXMLTermUtils::GetPresContextScrollableView(presContext,
-                                              getter_AddRefs(scrollableView));
+                                                         &scrollableView);
   if (NS_FAILED(result) || !scrollableView)
     return NS_ERROR_FAILURE;
 
@@ -548,8 +565,8 @@ NS_IMETHODIMP mozXMLTermStream::Write(const PRUnichar* buf)
 
   XMLT_WARNING("mozXMLTermStream::Write: str=%s\n", mUTF8Buffer.get());
 
-  XMLT_LOG(mozXMLTermStream::Write,51,("returning mUTF8Offset=%d\n",
-                                       mUTF8Offset));
+  XMLT_LOG(mozXMLTermStream::Write,51,
+           ("returning mUTF8Offset=%u\n", mUTF8Offset));
 
   return NS_OK;
 }

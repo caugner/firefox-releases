@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,7 +44,8 @@
 #include "nsCOMPtr.h"
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "nsIAbDirectory.h"
 #include "plbase64.h"
 #include "nsIAddrBookSession.h"
@@ -125,6 +126,7 @@ nsAbCardProperty::nsAbCardProperty(void)
 	m_LastModDate = 0;
 
 	m_PreferMailFormat = nsIAbPreferMailFormat::unknown;
+	m_PopularityIndex = 0;
 	m_IsMailList = PR_FALSE;
 }
 
@@ -176,6 +178,18 @@ nsresult nsAbCardProperty::SetAttributeName(const PRUnichar *aName, nsString& ar
 {
   if (aName)
     arrtibute = aName;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsAbCardProperty::GetPopularityIndex(PRUint32 *aPopularityIndex)
+{
+  *aPopularityIndex = m_PopularityIndex;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsAbCardProperty::SetPopularityIndex(PRUint32 aPopularityIndex)
+{
+  m_PopularityIndex = aPopularityIndex;
   return NS_OK;
 }
 
@@ -388,7 +402,7 @@ NS_IMETHODIMP nsAbCardProperty::GetCardValue(const char *attrname, PRUnichar **v
           // fix me?  LDAP code gets here
           PRUint32 lastModifiedDate;
           rv = GetLastModifiedDate(&lastModifiedDate);
-          *value = nsCRT::strdup(NS_LITERAL_STRING("0Z").get()); 
+          *value = ToNewUnicode(NS_LITERAL_STRING("0Z")); 
         }
       }
       else
@@ -403,24 +417,24 @@ NS_IMETHODIMP nsAbCardProperty::GetCardValue(const char *attrname, PRUnichar **v
     case 'P':
       switch (attrname[2]) { 
         case 'e':
-	  PRUint32 format;
+        {
+          PRUint32 format;
           rv = GetPreferMailFormat(&format);
-          const PRUnichar *formatStr;
 
           switch (format) {
             case nsIAbPreferMailFormat::html:
-              formatStr = NS_LITERAL_STRING("html").get();
+              *value = ToNewUnicode(NS_LITERAL_STRING("html"));
               break;
-            case nsIAbPreferMailFormat::plaintext :
-              formatStr = NS_LITERAL_STRING("plaintext").get();
+            case nsIAbPreferMailFormat::plaintext:
+              *value = ToNewUnicode(NS_LITERAL_STRING("plaintext"));
               break;
             case nsIAbPreferMailFormat::unknown:
             default :
-              formatStr = NS_LITERAL_STRING("unknown").get();
+              *value = ToNewUnicode(NS_LITERAL_STRING("unknown"));
               break;
           }
-          *value = nsCRT::strdup(formatStr);
           break;
+        }
         case 'g':
           if (strlen(attrname) <= 11)
           rv = GetPagerNumber(value);
@@ -1220,6 +1234,10 @@ NS_IMETHODIMP nsAbCardProperty::Copy(nsIAbCard* srcCard)
 	srcCard->GetPreferMailFormat(&format);
 	SetPreferMailFormat(format);
 
+	PRUint32 popularityIndex;
+	srcCard->GetPopularityIndex(&popularityIndex);
+	SetPopularityIndex(popularityIndex);
+
 	srcCard->GetWorkPhone(getter_Copies(str));
 	SetWorkPhone(str);
 	srcCard->GetHomePhone(getter_Copies(str));
@@ -1540,9 +1558,9 @@ NS_IMETHODIMP nsAbCardProperty::ConvertToBase64EncodedXML(char **result)
   nsresult rv;
   nsString xmlStr;
 
-  xmlStr.Append(NS_LITERAL_STRING("<?xml version=\"1.0\"?>\n").get());
-  xmlStr.Append(NS_LITERAL_STRING("<?xml-stylesheet type=\"text/css\" href=\"chrome://messenger/content/addressbook/print.css\"?>\n").get());
-  xmlStr.Append(NS_LITERAL_STRING("<directory>\n").get());
+  xmlStr.AppendLiteral("<?xml version=\"1.0\"?>\n"
+                       "<?xml-stylesheet type=\"text/css\" href=\"chrome://messenger/content/addressbook/print.css\"?>\n"
+                       "<directory>\n");
 
   // Get Address Book string and set it as title of XML document
   nsCOMPtr<nsIStringBundle> bundle;
@@ -1553,9 +1571,9 @@ NS_IMETHODIMP nsAbCardProperty::ConvertToBase64EncodedXML(char **result)
       nsXPIDLString addrBook;
       rv = bundle->GetStringFromName(NS_LITERAL_STRING("addressBook").get(), getter_Copies(addrBook));
       if (NS_SUCCEEDED(rv)) {
-        xmlStr.Append(NS_LITERAL_STRING("<title xmlns=\"http://www.w3.org/1999/xhtml\">").get());
+        xmlStr.AppendLiteral("<title xmlns=\"http://www.w3.org/1999/xhtml\">");
         xmlStr.Append(addrBook);
-        xmlStr.Append(NS_LITERAL_STRING("</title>\n").get());
+        xmlStr.AppendLiteral("</title>\n");
       }
     }
   }
@@ -1564,8 +1582,8 @@ NS_IMETHODIMP nsAbCardProperty::ConvertToBase64EncodedXML(char **result)
   rv = ConvertToXMLPrintData(getter_Copies(xmlSubstr));
   NS_ENSURE_SUCCESS(rv,rv);
 
-  xmlStr.Append(xmlSubstr.get());
-  xmlStr.Append(NS_LITERAL_STRING("</directory>\n").get());
+  xmlStr.Append(xmlSubstr);
+  xmlStr.AppendLiteral("</directory>\n");
 
   *result = PL_Base64Encode(NS_ConvertUCS2toUTF8(xmlStr).get(), 0, nsnull);
   return (*result ? NS_OK : NS_ERROR_OUT_OF_MEMORY);
@@ -1576,13 +1594,7 @@ NS_IMETHODIMP nsAbCardProperty::ConvertToXMLPrintData(PRUnichar **aXMLSubstr)
   NS_ENSURE_ARG_POINTER(aXMLSubstr);
 
   nsresult rv;
-  nsString xmlStr;
-
-  nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv,rv);
-  
-  nsCOMPtr<nsIPrefBranch> prefBranch;
-  rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
+  nsCOMPtr<nsIPrefBranch> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv,rv);
   
   PRInt32 generatedNameFormat;
@@ -1599,7 +1611,9 @@ NS_IMETHODIMP nsAbCardProperty::ConvertToXMLPrintData(PRUnichar **aXMLSubstr)
   nsCOMPtr<mozITXTToHTMLConv> conv = do_CreateInstance(MOZ_TXTTOHTMLCONV_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv,rv);
 
-  xmlStr.Append(NS_LITERAL_STRING("<GeneratedName>\n").get());
+  nsString xmlStr;
+  xmlStr.SetCapacity(4096); // to reduce allocations. should be enough for most cards
+  xmlStr.AssignLiteral("<GeneratedName>\n");
 
   nsCOMPtr<nsIStringBundle> bundle;
 
@@ -1614,56 +1628,49 @@ NS_IMETHODIMP nsAbCardProperty::ConvertToXMLPrintData(PRUnichar **aXMLSubstr)
   NS_ENSURE_SUCCESS(rv, rv);
 
   xmlStr.Append(heading);
-
-  xmlStr.Append(NS_LITERAL_STRING(" ").get());
+  xmlStr.Append(PRUnichar(' '));
 
   // use ScanTXT to convert < > & to safe values.
   nsXPIDLString safeText;
   if (!generatedName.IsEmpty()) {
-    rv = conv->ScanTXT(generatedName.get(), mozITXTToHTMLConv::kEntities , getter_Copies(safeText));
+    rv = conv->ScanTXT(generatedName, mozITXTToHTMLConv::kEntities , getter_Copies(safeText));
     NS_ENSURE_SUCCESS(rv,rv);
   }
 
-  if (!safeText.IsEmpty())
-    xmlStr.Append(safeText.get());
-  else {
+  if (safeText.IsEmpty()) {
     nsXPIDLString primaryEmail;
     rv = GetCardValue(kPriEmailColumn, getter_Copies(primaryEmail));
     NS_ENSURE_SUCCESS(rv,rv);
 
     // use ScanTXT to convert < > & to safe values.
-    nsXPIDLString safeText;
-    rv = conv->ScanTXT(primaryEmail.get(), mozITXTToHTMLConv::kEntities, getter_Copies(safeText));
+    rv = conv->ScanTXT(primaryEmail, mozITXTToHTMLConv::kEntities, getter_Copies(safeText));
     NS_ENSURE_SUCCESS(rv,rv);
-
-    xmlStr.Append(safeText.get());
   }
+  xmlStr.Append(safeText);
           
-  xmlStr.Append(NS_LITERAL_STRING("</GeneratedName>\n").get());
+  xmlStr.AppendLiteral("</GeneratedName>\n"
+                       "<table><tr><td>");
 
-  xmlStr.Append(NS_LITERAL_STRING("<table><tr><td>").get());
+  rv = AppendSection(NAME_ATTRS_ARRAY, sizeof(NAME_ATTRS_ARRAY)/sizeof(AppendItem), EmptyString(), conv, xmlStr);
 
-  rv = AppendSection(NAME_ATTRS_ARRAY, sizeof(NAME_ATTRS_ARRAY)/sizeof(AppendItem), nsnull, conv, xmlStr);
+  xmlStr.AppendLiteral("</td></tr><tr><td>");
 
-  xmlStr.Append(NS_LITERAL_STRING("</td></tr>").get());
-  xmlStr.Append(NS_LITERAL_STRING("<tr><td>").get());
-
-  rv = AppendSection(PHONE_ATTRS_ARRAY, sizeof(PHONE_ATTRS_ARRAY)/sizeof(AppendItem), NS_LITERAL_STRING("headingPhone").get(), conv, xmlStr);
+  rv = AppendSection(PHONE_ATTRS_ARRAY, sizeof(PHONE_ATTRS_ARRAY)/sizeof(AppendItem), NS_LITERAL_STRING("headingPhone"), conv, xmlStr);
 
   if (!m_IsMailList) {
-    rv = AppendSection(CUSTOM_ATTRS_ARRAY, sizeof(CUSTOM_ATTRS_ARRAY)/sizeof(AppendItem), NS_LITERAL_STRING("headingOther").get(), conv, xmlStr);
+    rv = AppendSection(CUSTOM_ATTRS_ARRAY, sizeof(CUSTOM_ATTRS_ARRAY)/sizeof(AppendItem), NS_LITERAL_STRING("headingOther"), conv, xmlStr);
   }
   else {
-
-    rv = AppendSection(CUSTOM_ATTRS_ARRAY, sizeof(CUSTOM_ATTRS_ARRAY)/sizeof(AppendItem), NS_LITERAL_STRING("headingDescription").get(), conv, xmlStr);
+    rv = AppendSection(CUSTOM_ATTRS_ARRAY, sizeof(CUSTOM_ATTRS_ARRAY)/sizeof(AppendItem), NS_LITERAL_STRING("headingDescription"),
+         conv, xmlStr);
     
-    xmlStr.Append(NS_LITERAL_STRING("<section><sectiontitle>").get());
+    xmlStr.AppendLiteral("<section><sectiontitle>");
 
     rv = bundle->GetStringFromName(NS_LITERAL_STRING("headingAddresses").get(), getter_Copies(heading));
     NS_ENSURE_SUCCESS(rv, rv);
 
     xmlStr.Append(heading);
-    xmlStr.Append(NS_LITERAL_STRING("</sectiontitle>").get());
+    xmlStr.AppendLiteral("</sectiontitle>");
 
     nsCOMPtr<nsIRDFService> rdfService = do_GetService("@mozilla.org/rdf/rdf-service;1", &rv);
     NS_ENSURE_SUCCESS(rv,rv);
@@ -1688,42 +1695,40 @@ NS_IMETHODIMP nsAbCardProperty::ConvertToXMLPrintData(PRUnichar **aXMLSubstr)
           nsCOMPtr <nsIAbCard> listCard = do_QueryElementAt(addresses, i, &rv);
           NS_ENSURE_SUCCESS(rv,rv);
 
-          xmlStr.Append(NS_LITERAL_STRING("<PrimaryEmail>\n").get());
+          xmlStr.AppendLiteral("<PrimaryEmail>\n");
 
           rv = listCard->GetDisplayName(getter_Copies(displayName));
           NS_ENSURE_SUCCESS(rv,rv);
 
           // use ScanTXT to convert < > & to safe values.
           nsXPIDLString safeText;
-          rv = conv->ScanTXT(displayName.get(), mozITXTToHTMLConv::kEntities, getter_Copies(safeText));
+          rv = conv->ScanTXT(displayName, mozITXTToHTMLConv::kEntities, getter_Copies(safeText));
           NS_ENSURE_SUCCESS(rv,rv);
-          xmlStr.Append(safeText.get());
+          xmlStr.Append(safeText);
 
-          xmlStr.Append(NS_LITERAL_STRING(" &lt;").get());
+          xmlStr.AppendLiteral(" &lt;");
           
           rv = listCard->GetPrimaryEmail(getter_Copies(primaryEmail));
           NS_ENSURE_SUCCESS(rv,rv);
 
           // use ScanTXT to convert < > & to safe values.
-          rv = conv->ScanTXT(primaryEmail.get(), mozITXTToHTMLConv::kEntities, getter_Copies(safeText));
+          rv = conv->ScanTXT(primaryEmail, mozITXTToHTMLConv::kEntities, getter_Copies(safeText));
           NS_ENSURE_SUCCESS(rv,rv);
-          xmlStr.Append(safeText.get());
+          xmlStr.Append(safeText);
 
-          xmlStr.Append(NS_LITERAL_STRING("&gt;").get());
-          
-          xmlStr.Append(NS_LITERAL_STRING("</PrimaryEmail>\n").get());
+          xmlStr.AppendLiteral("&gt;</PrimaryEmail>\n");
         }
       }
     }
-    xmlStr.Append(NS_LITERAL_STRING("</section>").get());
+    xmlStr.AppendLiteral("</section>");
   }
 
-  xmlStr.Append(NS_LITERAL_STRING("</td><td>").get());
+  xmlStr.AppendLiteral("</td><td>");
 
-  rv = AppendSection(HOME_ATTRS_ARRAY, sizeof(HOME_ATTRS_ARRAY)/sizeof(AppendItem), NS_LITERAL_STRING("headingHome").get(), conv, xmlStr);
-  rv = AppendSection(WORK_ATTRS_ARRAY, sizeof(WORK_ATTRS_ARRAY)/sizeof(AppendItem), NS_LITERAL_STRING("headingWork").get(), conv, xmlStr);
+  rv = AppendSection(HOME_ATTRS_ARRAY, sizeof(HOME_ATTRS_ARRAY)/sizeof(AppendItem), NS_LITERAL_STRING("headingHome"), conv, xmlStr);
+  rv = AppendSection(WORK_ATTRS_ARRAY, sizeof(WORK_ATTRS_ARRAY)/sizeof(AppendItem), NS_LITERAL_STRING("headingWork"), conv, xmlStr);
   
-  xmlStr.Append(NS_LITERAL_STRING("</td></tr></table>").get());
+  xmlStr.AppendLiteral("</td></tr></table>");
 
   *aXMLSubstr = ToNewUnicode(xmlStr);
 
@@ -1742,28 +1747,29 @@ nsresult nsAbCardProperty::AppendData(const char *aAttrName, mozITXTToHTMLConv *
   nsAutoString attrNameStr;
   attrNameStr.AssignWithConversion(aAttrName);
   
-  aResult.Append(NS_LITERAL_STRING("<").get());
-  aResult.Append(attrNameStr.get());
-  aResult.Append(NS_LITERAL_STRING(">").get());
+  aResult.Append(PRUnichar('<'));
+  aResult.Append(attrNameStr);
+  aResult.Append(PRUnichar('>'));
   
   // use ScanTXT to convert < > & to safe values.
   nsXPIDLString safeText;
-  rv = aConv->ScanTXT(attrValue.get(), mozITXTToHTMLConv::kEntities, getter_Copies(safeText));
+  rv = aConv->ScanTXT(attrValue, mozITXTToHTMLConv::kEntities, getter_Copies(safeText));
   NS_ENSURE_SUCCESS(rv,rv);
-  aResult.Append(safeText.get());
+  aResult.Append(safeText);
 
-  aResult.Append(NS_LITERAL_STRING("</").get());
-  aResult.Append(attrNameStr.get());
-  aResult.Append(NS_LITERAL_STRING(">").get());
+  aResult.AppendLiteral("</");
+  aResult.Append(attrNameStr);
+  aResult.Append(PRUnichar('>'));
 
   return NS_OK;
 }
 
-nsresult nsAbCardProperty::AppendSection(AppendItem *aArray, PRInt16 aCount, const PRUnichar *aHeading, mozITXTToHTMLConv *aConv, nsString &aResult) 
+nsresult nsAbCardProperty::AppendSection(AppendItem *aArray, PRInt16 aCount, const nsAFlatString& aHeading,
+                                         mozITXTToHTMLConv *aConv, nsString &aResult)
 {
   nsresult rv;
 
-  aResult.Append(NS_LITERAL_STRING("<section>").get());
+  aResult.AppendLiteral("<section>");
 
   nsXPIDLString attrValue;
   PRBool sectionIsEmpty = PR_TRUE;
@@ -1775,8 +1781,8 @@ nsresult nsAbCardProperty::AppendSection(AppendItem *aArray, PRInt16 aCount, con
     sectionIsEmpty &= attrValue.IsEmpty();
   }
 
-  if (!sectionIsEmpty && aHeading) {
-	  nsCOMPtr<nsIStringBundle> bundle;
+  if (!sectionIsEmpty && !aHeading.IsEmpty()) {
+    nsCOMPtr<nsIStringBundle> bundle;
 
     nsCOMPtr<nsIStringBundleService> stringBundleService = do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv); 
     NS_ENSURE_SUCCESS(rv,rv);
@@ -1785,12 +1791,12 @@ nsresult nsAbCardProperty::AppendSection(AppendItem *aArray, PRInt16 aCount, con
     NS_ENSURE_SUCCESS(rv,rv); 
   
     nsXPIDLString heading;
-    rv = bundle->GetStringFromName(aHeading, getter_Copies(heading));
+    rv = bundle->GetStringFromName(aHeading.get(), getter_Copies(heading));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    aResult.Append(NS_LITERAL_STRING("<sectiontitle>").get());
+    aResult.AppendLiteral("<sectiontitle>");
     aResult.Append(heading);
-    aResult.Append(NS_LITERAL_STRING("</sectiontitle>").get());
+    aResult.AppendLiteral("</sectiontitle>");
   }
 
   for (i=0;i<aCount;i++) {
@@ -1798,7 +1804,7 @@ nsresult nsAbCardProperty::AppendSection(AppendItem *aArray, PRInt16 aCount, con
     NS_ASSERTION(NS_SUCCEEDED(rv), "append callback failed");
   }
 
-  aResult.Append(NS_LITERAL_STRING("</section>").get());
+  aResult.AppendLiteral("</section>");
 
   return NS_OK;
 }
@@ -1815,19 +1821,19 @@ nsresult AppendLine(nsAbCardProperty *aCard, AppendItem *aItem, mozITXTToHTMLCon
   nsAutoString attrNameStr;
   attrNameStr.AssignWithConversion(aItem->mColumn);
   
-  aResult.Append(NS_LITERAL_STRING("<").get());
-  aResult.Append(attrNameStr.get());
-  aResult.Append(NS_LITERAL_STRING(">").get());
+  aResult.Append(PRUnichar('<'));
+  aResult.Append(attrNameStr);
+  aResult.Append(PRUnichar('>'));
   
   // use ScanTXT to convert < > & to safe values.
   nsXPIDLString safeText;
-  rv = aConv->ScanTXT(attrValue.get(), mozITXTToHTMLConv::kEntities, getter_Copies(safeText));
+  rv = aConv->ScanTXT(attrValue, mozITXTToHTMLConv::kEntities, getter_Copies(safeText));
   NS_ENSURE_SUCCESS(rv,rv);
-  aResult.Append(safeText.get());
+  aResult.Append(safeText);
 
-  aResult.Append(NS_LITERAL_STRING("</").get());
-  aResult.Append(attrNameStr.get());
-  aResult.Append(NS_LITERAL_STRING(">").get());
+  aResult.AppendLiteral("</");
+  aResult.Append(attrNameStr);
+  aResult.Append(PRUnichar('>'));
 
   return NS_OK;
 }
@@ -1857,17 +1863,15 @@ nsresult AppendLabel(nsAbCardProperty *aCard, AppendItem *aItem, mozITXTToHTMLCo
   rv = bundle->GetStringFromName(NS_ConvertASCIItoUCS2(aItem->mLabel).get(), getter_Copies(label));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  aResult.Append(NS_LITERAL_STRING("<labelrow><label>").get());
+  aResult.AppendLiteral("<labelrow><label>");
 
-  aResult.Append(label.get());
-  aResult.Append(NS_LITERAL_STRING(": ").get());
-
-  aResult.Append(NS_LITERAL_STRING("</label>").get());
+  aResult.Append(label);
+  aResult.AppendLiteral(": </label>");
 
   rv = AppendLine(aCard, aItem, aConv, aResult);
   NS_ENSURE_SUCCESS(rv,rv);
 
-  aResult.Append(NS_LITERAL_STRING("</labelrow>").get());
+  aResult.AppendLiteral("</labelrow>");
   
   return NS_OK;
 }
@@ -1875,11 +1879,7 @@ nsresult AppendLabel(nsAbCardProperty *aCard, AppendItem *aItem, mozITXTToHTMLCo
 nsresult AppendCityStateZip(nsAbCardProperty *aCard, AppendItem *aItem, mozITXTToHTMLConv *aConv, nsString &aResult) 
 {
   nsresult rv;
-
-  nsXPIDLString attrValue;
-  
   AppendItem item;
-  
   const char *stateCol, *zipCol;
 
   if (strcmp(aItem->mColumn, kHomeCityColumn) == 0) {

@@ -1,25 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* vim:set ts=4 sw=4 sts=4 et cin: */
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications.  Portions created by Netscape Communications are
- * Copyright (C) 2001 by Netscape Communications.  All
- * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Darin Fisher <darin@netscape.com> (original author)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsHttpConnection.h"
 #include "nsHttpTransaction.h"
@@ -52,7 +68,6 @@ nsHttpConnection::nsHttpConnection()
     : mTransaction(nsnull)
     , mConnInfo(nsnull)
     , mLock(nsnull)
-    , mSuspendCount(0)
     , mLastReadTime(0)
     , mIdleTimeout(0)
     , mKeepAlive(PR_TRUE) // assume to keep-alive by default
@@ -267,6 +282,16 @@ nsHttpConnection::OnHeadersAvailable(nsAHttpTransaction *trans,
     NS_ASSERTION(PR_GetCurrentThread() == gSocketThread, "wrong thread");
     NS_ENSURE_ARG_POINTER(trans);
     NS_ASSERTION(responseHead, "No response head?");
+
+    // If the server issued an explicit timeout, then we need to close down the
+    // socket transport.  We pass an error code of NS_ERROR_NET_RESET to
+    // trigger the transactions 'restart' mechanism.  We tell it to reset its
+    // response headers so that it will be ready to receive the new response.
+    if (responseHead->Status() == 408) {
+        Close(NS_ERROR_NET_RESET);
+        *reset = PR_TRUE;
+        return NS_OK;
+    }
 
     // we won't change our keep-alive policy unless the server has explicitly
     // told us to do so.
@@ -564,7 +589,8 @@ nsHttpConnection::OnSocketWritable()
             // here to reflect the fact that we are waiting.  this message will be
             // trumped (overwritten) if the server responds quickly.
             //
-            mTransaction->OnTransportStatus(nsISocketTransport::STATUS_WAITING_FOR, 0);
+            mTransaction->OnTransportStatus(nsISocketTransport::STATUS_WAITING_FOR,
+                                            LL_ZERO);
 
             rv = mSocketIn->AsyncWait(this, 0, 0, nsnull); // start reading
             again = PR_FALSE;
@@ -686,7 +712,7 @@ nsHttpConnection::SetupSSLProxyConnect()
 
     buf.Truncate();
     request.Flatten(buf, PR_FALSE);
-    buf.Append("\r\n");
+    buf.AppendLiteral("\r\n");
 
     return NS_NewCStringInputStream(getter_AddRefs(mSSLProxyConnectStream), buf);
 }
@@ -755,8 +781,8 @@ nsHttpConnection::OnOutputStreamReady(nsIAsyncOutputStream *out)
 NS_IMETHODIMP
 nsHttpConnection::OnTransportStatus(nsITransport *trans,
                                     nsresult status,
-                                    PRUint32 progress,
-                                    PRUint32 progressMax)
+                                    PRUint64 progress,
+                                    PRUint64 progressMax)
 {
     if (mTransaction)
         mTransaction->OnTransportStatus(status, progress);
@@ -771,8 +797,12 @@ nsHttpConnection::OnTransportStatus(nsITransport *trans,
 NS_IMETHODIMP
 nsHttpConnection::GetInterface(const nsIID &iid, void **result)
 {
-    NS_ASSERTION(PR_GetCurrentThread() == gSocketThread, "wrong thread");
-
+    // NOTE: This function is only called on the UI thread via sync proxy from
+    //       the socket transport thread.  If that weren't the case, then we'd
+    //       have to worry about the possibility of mTransaction going away
+    //       part-way through this function call.  See CloseTransaction.
+    NS_ASSERTION(PR_GetCurrentThread() != gSocketThread, "wrong thread");
+ 
     if (mTransaction) {
         nsCOMPtr<nsIInterfaceRequestor> callbacks;
         mTransaction->GetSecurityCallbacks(getter_AddRefs(callbacks));

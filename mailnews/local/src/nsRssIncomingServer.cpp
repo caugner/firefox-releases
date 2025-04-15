@@ -19,7 +19,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * David Bienvenu <bienvenu@nventure.com>
+ *   David Bienvenu <bienvenu@nventure.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -41,7 +41,6 @@
 #include "nsINewsBlogFeedDownloader.h"
 #include "nsIMsgMailSession.h"
 #include "nsMsgBaseCID.h"
-#include "nsIRDFResource.h"
 
 #include "nsIMsgLocalMailFolder.h"
 #include "nsIDBFolderInfo.h"
@@ -188,7 +187,7 @@ NS_IMETHODIMP nsRssIncomingServer::PerformBiff(nsIMsgWindow *aMsgWindow)
 NS_IMETHODIMP nsRssIncomingServer::GetNewMail(nsIMsgWindow *aMsgWindow, nsIUrlListener *aUrlListener, nsIMsgFolder *aFolder, nsIURI **_retval)
 {
   NS_ENSURE_ARG_POINTER(aFolder);
-  
+
   // before we even try to get New Mail, check to see if the passed in folder was the root folder.
   // If it was, then call PerformBiff which will properly walk through each RSS folder, asking it to check for new Mail.
   PRBool rootFolder = PR_FALSE;
@@ -217,9 +216,8 @@ NS_IMETHODIMP nsRssIncomingServer::GetNewMail(nsIMsgWindow *aMsgWindow, nsIUrlLi
         aFolder->GetName(getter_Copies(folderName));
         folderInfo->GetCharPtrProperty("feedUrl", getter_Copies(url));
 
-        if (!url.IsEmpty())
-          rv = rssDownloader->DownloadFeed(url.get(), 
-                                           aFolder, PR_FALSE, folderName.get(), aUrlListener, aMsgWindow);
+        rv = rssDownloader->DownloadFeed(url.get(), 
+                                         aFolder, PR_FALSE, folderName.get(), aUrlListener, aMsgWindow);
       }
     }
   }
@@ -235,7 +233,7 @@ NS_IMETHODIMP nsRssIncomingServer::GetLocalStoreType(char **type)
 
 NS_IMETHODIMP nsRssIncomingServer::GetAccountManagerChrome(nsAString& aResult)
 {
-    aResult = NS_LITERAL_STRING("am-newsblog.xul");
+    aResult.AssignLiteral("am-newsblog.xul");
     return NS_OK;
 }
 
@@ -267,8 +265,7 @@ NS_IMETHODIMP nsRssIncomingServer::GetCanSearchMessages(PRBool *canSearchMessage
   return NS_OK;
 }
 
-
-NS_IMETHODIMP nsRssIncomingServer::OnItemAdded(nsISupports *parentItem, nsISupports *item, const char *viewString)
+NS_IMETHODIMP nsRssIncomingServer::OnItemAdded(nsIRDFResource *parentItem, nsISupports *item)
 {
   nsCOMPtr<nsIMsgFolder> folder = do_QueryInterface(item);
   // just kick out with a success code if the item in question is not a folder
@@ -330,33 +327,33 @@ NS_IMETHODIMP nsRssIncomingServer::OnItemAdded(nsISupports *parentItem, nsISuppo
   return rv;
 }
 
-NS_IMETHODIMP nsRssIncomingServer::OnItemRemoved(nsISupports *parentItem, nsISupports *item, const char *viewString)
+NS_IMETHODIMP nsRssIncomingServer::OnItemRemoved(nsIRDFResource *parentItem, nsISupports *item)
 {
  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsRssIncomingServer::OnItemPropertyChanged(nsISupports *item, nsIAtom *property, const char *oldValue, const char *newValue)
+NS_IMETHODIMP nsRssIncomingServer::OnItemPropertyChanged(nsIRDFResource *item, nsIAtom *property, const char *oldValue, const char *newValue)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsRssIncomingServer::OnItemIntPropertyChanged(nsISupports *item, nsIAtom *property, PRInt32 oldValue, PRInt32 newValue)
+NS_IMETHODIMP nsRssIncomingServer::OnItemIntPropertyChanged(nsIRDFResource *item, nsIAtom *property, PRInt32 oldValue, PRInt32 newValue)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsRssIncomingServer::OnItemBoolPropertyChanged(nsISupports *item, nsIAtom *property, PRBool oldValue, PRBool newValue)
+NS_IMETHODIMP nsRssIncomingServer::OnItemBoolPropertyChanged(nsIRDFResource *item, nsIAtom *property, PRBool oldValue, PRBool newValue)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsRssIncomingServer::OnItemUnicharPropertyChanged(nsISupports *item, nsIAtom *property, const PRUnichar *oldValue, const PRUnichar *newValue)
+NS_IMETHODIMP nsRssIncomingServer::OnItemUnicharPropertyChanged(nsIRDFResource *item, nsIAtom *property, const PRUnichar *oldValue, const PRUnichar *newValue)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 
-NS_IMETHODIMP nsRssIncomingServer::OnItemPropertyFlagChanged(nsISupports *item, nsIAtom *property, PRUint32 oldFlag, PRUint32 newFlag)
+NS_IMETHODIMP nsRssIncomingServer::OnItemPropertyFlagChanged(nsIMsgDBHdr *item, nsIAtom *property, PRUint32 oldFlag, PRUint32 newFlag)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }

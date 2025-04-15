@@ -18,6 +18,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Valia Vaneeva <fattie@altlinux.ru>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -38,10 +39,22 @@
 #ifdef MOZ_ENABLE_PGSQL
 #include "mozSqlConnectionPgsql.h"
 #endif
+#ifdef MOZ_ENABLE_SQLITE
+#include "mozSqlConnectionSqlite.h"
+#endif
+#ifdef MOZ_ENABLE_MYSQL
+#include "mozSqlConnectionMysql.h"
+#endif
 
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(mozSqlService, Init)
 #ifdef MOZ_ENABLE_PGSQL
 NS_GENERIC_FACTORY_CONSTRUCTOR(mozSqlConnectionPgsql)
+#endif
+#ifdef MOZ_ENABLE_SQLITE
+NS_GENERIC_FACTORY_CONSTRUCTOR(mozSqlConnectionSqlite)
+#endif
+#ifdef MOZ_ENABLE_MYSQL
+NS_GENERIC_FACTORY_CONSTRUCTOR(mozSqlConnectionMysql)
 #endif
 
 static nsModuleComponentInfo components[] =
@@ -55,14 +68,28 @@ static nsModuleComponentInfo components[] =
     MOZ_SQLSERVICE_CID,
     MOZ_SQLDATASOURCE_CONTRACTID,
     mozSqlServiceConstructor
-  },
+  }
 #ifdef MOZ_ENABLE_PGSQL
-  { MOZ_SQLCONNECTIONPGSQL_CLASSNAME,
+  ,{ MOZ_SQLCONNECTIONPGSQL_CLASSNAME,
     MOZ_SQLCONNECTIONPGSQL_CID,
     MOZ_SQLCONNECTIONPGSQL_CONTRACTID,
     mozSqlConnectionPgsqlConstructor
   }
 #endif
+#ifdef MOZ_ENABLE_SQLITE
+  ,{ MOZ_SQLCONNECTIONSQLITE_CLASSNAME,
+    MOZ_SQLCONNECTIONSQLITE_CID,
+    MOZ_SQLCONNECTIONSQLITE_CONTRACTID,
+    mozSqlConnectionSqliteConstructor
+  }
+#endif
+#ifdef MOZ_ENABLE_MYSQL
+  ,{ MOZ_SQLCONNECTIONMYSQL_CLASSNAME,
+    MOZ_SQLCONNECTIONMYSQL_CID,
+    MOZ_SQLCONNECTIONMYSQL_CONTRACTID,
+    mozSqlConnectionMysqlConstructor
+  }
+#endif
 };
 
-NS_IMPL_NSGETMODULE("sql", components)
+NS_IMPL_NSGETMODULE(mozSqlModule, components)

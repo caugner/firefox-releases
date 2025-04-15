@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,32 +14,33 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Crocodile Clips Ltd..
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsSVGPathSeg.h"
 #include "prdtoa.h"
 #include "nsSVGValue.h"
 #include "nsTextFormatter.h"
+#include "nsContentUtils.h"
 
 //----------------------------------------------------------------------
 // implementation helper macros
@@ -56,7 +57,7 @@ NS_IMETHODIMP                                                           \
 cname::GetPathSegTypeAsLetter(nsAString & aPathSegTypeAsLetter)         \
 {                                                                       \
   aPathSegTypeAsLetter.Truncate();                                      \
-  aPathSegTypeAsLetter.Append(NS_LITERAL_STRING(letter));               \
+  aPathSegTypeAsLetter.AppendLiteral(letter);               \
   return NS_OK;                                                         \
 }
 
@@ -122,15 +123,15 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegClosePath)
 NS_IMETHODIMP
 nsSVGPathSegClosePath::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegClosePath::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
 nsSVGPathSegClosePath::GetValueString(nsAString& aValue)
 {
   aValue.Truncate();
-  aValue.Append(NS_LITERAL_STRING("z"));
+  aValue.AppendLiteral("z");
   
   return NS_OK;
 }
@@ -195,8 +196,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegMovetoAbs)
 NS_IMETHODIMP
 nsSVGPathSegMovetoAbs::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegMovetoAbs::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -303,8 +304,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegMovetoRel)
 NS_IMETHODIMP
 nsSVGPathSegMovetoRel::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegMovetoRel::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -410,8 +411,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegLinetoAbs)
 NS_IMETHODIMP
 nsSVGPathSegLinetoAbs::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegLinetoAbs::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -518,8 +519,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegLinetoRel)
 NS_IMETHODIMP
 nsSVGPathSegLinetoRel::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegLinetoRel::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -632,8 +633,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegCurvetoCubicAbs)
 NS_IMETHODIMP
 nsSVGPathSegCurvetoCubicAbs::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegCurvetoCubicAbs::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -803,8 +804,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegCurvetoCubicRel)
 NS_IMETHODIMP
 nsSVGPathSegCurvetoCubicRel::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegCurvetoCubicRel::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -970,8 +971,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegCurvetoQuadraticAbs)
 NS_IMETHODIMP
 nsSVGPathSegCurvetoQuadraticAbs::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegCurvetoQuadraticAbs::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -1110,8 +1111,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegCurvetoQuadraticRel)
 NS_IMETHODIMP
 nsSVGPathSegCurvetoQuadraticRel::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegCurvetoQuadraticRel::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -1256,8 +1257,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegArcAbs)
 NS_IMETHODIMP
 nsSVGPathSegArcAbs::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegArcAbs::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -1445,8 +1446,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegArcRel)
 NS_IMETHODIMP
 nsSVGPathSegArcRel::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegArcRel::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -1623,8 +1624,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegLinetoHorizontalAbs)
 NS_IMETHODIMP
 nsSVGPathSegLinetoHorizontalAbs::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegLinetoHorizontalAbs::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -1715,8 +1716,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegLinetoHorizontalRel)
 NS_IMETHODIMP
 nsSVGPathSegLinetoHorizontalRel::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegLinetoHorizontalRel::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -1807,8 +1808,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegLinetoVerticalAbs)
 NS_IMETHODIMP
 nsSVGPathSegLinetoVerticalAbs::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegLinetoVerticalAbs::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -1899,8 +1900,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegLinetoVerticalRel)
 NS_IMETHODIMP
 nsSVGPathSegLinetoVerticalRel::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegLinetoVerticalRel::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -1995,8 +1996,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegCurvetoCubicSmoothAbs)
 NS_IMETHODIMP
 nsSVGPathSegCurvetoCubicSmoothAbs::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegCurvetoCubicSmoothAbs::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -2134,8 +2135,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegCurvetoCubicSmoothRel)
 NS_IMETHODIMP
 nsSVGPathSegCurvetoCubicSmoothRel::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegCurvetoCubicSmoothRel::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -2270,8 +2271,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegCurvetoQuadraticSmoothAbs)
 NS_IMETHODIMP
 nsSVGPathSegCurvetoQuadraticSmoothAbs::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegCurvetoQuadraticSmoothAbs::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -2377,8 +2378,8 @@ NS_IMPL_NSISUPPORTS_SVGPATHSEG(SVGPathSegCurvetoQuadraticSmoothRel)
 NS_IMETHODIMP
 nsSVGPathSegCurvetoQuadraticSmoothRel::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGPathSegCurvetoQuadraticSmoothRel::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP

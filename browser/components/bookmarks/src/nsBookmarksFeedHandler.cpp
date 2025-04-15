@@ -697,7 +697,9 @@ nsFeedLoadListener::TryParseAsSimpleRSS ()
 
                                 nsAutoString rel;
                                 linkElem->GetAttribute(NS_LITERAL_STRING("rel"), rel);
-                                if (rel.Equals(NS_LITERAL_STRING("alternate"))) {
+                                if (rel.Equals(NS_LITERAL_STRING("alternate")) ||
+                                    rel.IsEmpty())
+                                {
                                     rv = linkElem->GetAttribute(NS_LITERAL_STRING("href"), linkStr);
                                     if (NS_FAILED(rv)) break; // out of while(childNode) loop
                                 }
@@ -903,7 +905,7 @@ nsBookmarksService::UpdateLivemarkChildren(nsIRDFResource* aSource)
 
     nsCOMPtr<nsIChannel> channel;
     rv = NS_NewChannel(getter_AddRefs(channel), uri, nsnull, nsnull, nsnull,
-                       nsIRequest::LOAD_BACKGROUND | nsIRequest::LOAD_BYPASS_CACHE);
+                       nsIRequest::LOAD_BACKGROUND | nsIRequest::VALIDATE_ALWAYS);
     if (NS_FAILED(rv)) UNLOCK_AND_RETURN_RV;
 
     rv = channel->AsyncOpen(listener, nsnull);

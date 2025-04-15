@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,34 +14,34 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is Alex Fritze.
- * 
+ * The Initial Developer of the Original Code is
+ * Alex Fritze.
  * Portions created by the Initial Developer are Copyright (C) 2003
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex@croczilla.com> (original author)
+ *   Alex Fritze <alex@croczilla.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include"gdk-pixbuf/gdk-pixbuf.h"
 #include "nsCOMPtr.h"
 #include "nsISVGLibartBitmap.h"
 #include "nsIRenderingContext.h"
 #include "nsIDeviceContext.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsRect.h"
 #include "nsIComponentManager.h"
 #include "nsDrawingSurfaceGTK.h"
@@ -61,7 +61,7 @@ public:
   nsSVGLibartBitmapGdk();
   ~nsSVGLibartBitmapGdk();
   nsresult Init(nsIRenderingContext *ctx,
-                nsIPresContext* presContext,
+                nsPresContext* presContext,
                 const nsRect & rect);
 
   // nsISupports interface:
@@ -82,7 +82,7 @@ private:
   nsRect mBufferRect;
   GdkPixbuf *mBuffer;
   nsRect mLockRect;
-  nsDrawingSurface mTempSurface;
+  nsIDrawingSurface* mTempSurface;
 };
 
 /** @} */
@@ -105,7 +105,7 @@ nsSVGLibartBitmapGdk::~nsSVGLibartBitmapGdk()
 
 nsresult
 nsSVGLibartBitmapGdk::Init(nsIRenderingContext* ctx,
-                           nsIPresContext* presContext,
+                           nsPresContext* presContext,
                            const nsRect & rect)
 {
   mRenderingContext = ctx;
@@ -119,7 +119,7 @@ nsSVGLibartBitmapGdk::Init(nsIRenderingContext* ctx,
 nsresult
 NS_NewSVGLibartBitmap(nsISVGLibartBitmap **result,
                       nsIRenderingContext *ctx,
-                      nsIPresContext* presContext,
+                      nsPresContext* presContext,
                       const nsRect & rect)
 {
   nsSVGLibartBitmapGdk* bm = new nsSVGLibartBitmapGdk();
@@ -194,7 +194,7 @@ nsSVGLibartBitmapGdk::LockRenderingContext(const nsRect& rect, nsIRenderingConte
   
   nsDrawingSurfaceGTK *surface=nsnull;
   mRenderingContext->CreateDrawingSurface(rect, NS_CREATEDRAWINGSURFACE_FOR_PIXEL_ACCESS,
-                                          (nsDrawingSurface&)surface);
+                                          (nsIDrawingSurface*&)surface);
   NS_ASSERTION(surface, "could not create drawing surface");
 
   // copy from pixbuf to surface
@@ -225,11 +225,10 @@ nsSVGLibartBitmapGdk::UnlockRenderingContext()
 { 
   NS_ASSERTION(mTempSurface, "no temporary surface. multiple unlock calls?");
   nsDrawingSurfaceGTK *surface=nsnull;
-  mRenderingContext->GetDrawingSurface((nsDrawingSurface*)&surface);
+  mRenderingContext->GetDrawingSurface((nsIDrawingSurface**)&surface);
   NS_ASSERTION(surface, "null surface");
 
-  PRBool clipEmpty;
-  mRenderingContext->PopState(clipEmpty);
+  mRenderingContext->PopState();
   mRenderingContext->SelectOffScreenDrawingSurface(mTempSurface);
   mTempSurface = nsnull;
   
@@ -248,7 +247,7 @@ nsSVGLibartBitmapGdk::Flush()
 {
 
   nsDrawingSurfaceGTK *surface=nsnull;
-  mRenderingContext->GetDrawingSurface((nsDrawingSurface*)&surface);
+  mRenderingContext->GetDrawingSurface((nsIDrawingSurface**)&surface);
   NS_ASSERTION(surface, "null drawing surface");
 
   GdkDrawable *drawable = surface->GetDrawable();

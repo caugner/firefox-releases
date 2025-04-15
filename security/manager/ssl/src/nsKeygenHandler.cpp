@@ -1,24 +1,40 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 extern "C" {
 #include "secdert.h"
@@ -294,12 +310,24 @@ GetSlotWithMechanism(PRUint32 aMechanism,
 
         // Allocate the slot name buffer //
         tokenNameList = NS_STATIC_CAST(PRUnichar**, nsMemory::Alloc(sizeof(PRUnichar *) * numSlots));
+        if (!tokenNameList) {
+            rv = NS_ERROR_OUT_OF_MEMORY;
+            goto loser;
+        }
+
         i = 0;
         slotElement = PK11_GetFirstSafe(slotList);
         while (slotElement) {
-			tokenNameList[i] = ToNewUnicode(NS_ConvertUTF8toUCS2(PK11_GetTokenName(slotElement->slot)));
+            tokenNameList[i] = UTF8ToNewUnicode(nsDependentCString(PK11_GetTokenName(slotElement->slot)));
             slotElement = PK11_GetNextSafe(slotList, slotElement, PR_FALSE);
-            i++;
+            if (tokenNameList[i])
+                i++;
+            else {
+                // OOM. adjust numSlots so we don't free unallocated memory. 
+                numSlots = i;
+                rv = NS_ERROR_OUT_OF_MEMORY;
+                goto loser;
+            }
         }
 
 		/* Throw up the token list dialog and get back the token */
@@ -311,7 +339,10 @@ GetSlotWithMechanism(PRUint32 aMechanism,
 
     {
       nsPSMUITracker tracker;
-      if (tracker.isUIForbidden()) {
+      if (!tokenNameList || !*tokenNameList) {
+          rv = NS_ERROR_OUT_OF_MEMORY;
+      }
+      else if (tracker.isUIForbidden()) {
         rv = NS_ERROR_NOT_AVAILABLE;
       }
       else {
@@ -346,7 +377,7 @@ loser:
           PK11_FreeSlotList(slotList);
       }
       if (tokenNameList) {
-          nsMemory::Free(tokenNameList);
+          NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(numSlots, tokenNameList);
       }
       return rv;
 }
@@ -378,20 +409,21 @@ nsKeygenFormProcessor::GetPublicKey(nsAString& aValue, nsAString& aChallenge,
     SECItem pkacItem;
     SECItem signedItem;
     CERTPublicKeyAndChallenge pkac;
+    pkac.challenge.data = nsnull;
     SECKeySizeChoiceInfo *choice = SECKeySizeChoiceList;
     nsIGeneratingKeypairInfoDialogs * dialogs;
     nsKeygenThread *KeygenRunnable = 0;
     nsCOMPtr<nsIKeygenThread> runnable;
 
     // Get the key size //
-    while (choice) {
+    while (choice->name) {
         if (aValue.Equals(choice->name)) {
             keysize = choice->size;
             break;
         }
         choice++;
     }
-    if (!choice) {
+    if (!keysize) {
         goto loser;
     }
 
@@ -401,17 +433,22 @@ nsKeygenFormProcessor::GetPublicKey(nsAString& aValue, nsAString& aChallenge,
     }
 
     // Set the keygen mechanism
-    if (aKeyType.IsEmpty() || aKeyType.EqualsIgnoreCase("rsa")) {
+    if (aKeyType.IsEmpty() || aKeyType.LowerCaseEqualsLiteral("rsa")) {
         type = rsaKey;
         keyGenMechanism = CKM_RSA_PKCS_KEY_PAIR_GEN;
-    } else if (aKeyType.EqualsIgnoreCase("dsa")) {
+    } else if (aKeyType.LowerCaseEqualsLiteral("dsa")) {
         char * end;
         pqgString = ToNewCString(aPqg);
+        if (!pqgString) {
+            rv = NS_ERROR_OUT_OF_MEMORY;
+            goto loser;
+        }
+
         type = dsaKey;
         keyGenMechanism = CKM_DSA_KEY_PAIR_GEN;
         if (strcmp(pqgString, "null") == 0)
             goto loser;
-            str = pqgString;
+        str = pqgString;
         do {
             end = strchr(str, ',');
             if (end != nsnull)
@@ -524,8 +561,12 @@ found_match:
      * set up the PublicKeyAndChallenge data structure, then DER encode it
      */
     pkac.spki = spkiItem;
-	pkac.challenge.len = aChallenge.Length();
+    pkac.challenge.len = aChallenge.Length();
     pkac.challenge.data = (unsigned char *)ToNewCString(aChallenge);
+    if (!pkac.challenge.data) {
+        rv = NS_ERROR_OUT_OF_MEMORY;
+        goto loser;
+    }
     
     sec_rv = DER_Encode(arena, &pkacItem, CERTPublicKeyAndChallengeTemplate, &pkac);
     if ( sec_rv != SECSuccess ) {
@@ -545,6 +586,10 @@ found_match:
      * Convert the signed public key and challenge into base64/ascii.
      */
     keystring = BTOA_DataToAscii(signedItem.data, signedItem.len);
+    if (!keystring) {
+        rv = NS_ERROR_OUT_OF_MEMORY;
+        goto loser;
+    }
 
     CopyASCIItoUTF16(keystring, aOutPublicKey);
     nsCRT::free(keystring);
@@ -577,13 +622,19 @@ loser:
     if (KeygenRunnable) {
       NS_RELEASE(KeygenRunnable);
     }
+    if (pqgString) {
+        nsMemory::Free(pqgString);
+    }
+    if (pkac.challenge.data) {
+        nsMemory::Free(pkac.challenge.data);
+    }
     return rv;
 }
 
 NS_METHOD 
 nsKeygenFormProcessor::ProcessValue(nsIDOMHTMLElement *aElement, 
-				    const nsString& aName, 
-				    nsString& aValue) 
+				    const nsAString& aName, 
+				    nsAString& aValue) 
 { 
   nsresult rv = NS_OK;
   nsCOMPtr<nsIDOMHTMLSelectElement>selectElement;
@@ -596,13 +647,13 @@ nsKeygenFormProcessor::ProcessValue(nsIDOMHTMLElement *aElement,
     nsAutoString pqgValue;
 
     res = selectElement->GetAttribute(NS_LITERAL_STRING("_moz-type"), keygenvalue);
-    if (NS_CONTENT_ATTR_HAS_VALUE == res && keygenvalue.Equals(NS_LITERAL_STRING("-mozilla-keygen"))) {
+    if (NS_CONTENT_ATTR_HAS_VALUE == res && keygenvalue.EqualsLiteral("-mozilla-keygen")) {
 
       res = selectElement->GetAttribute(NS_LITERAL_STRING("pqg"), pqgValue);
       res = selectElement->GetAttribute(NS_LITERAL_STRING("keytype"), keyTypeValue);
       if (NS_FAILED(res) || keyTypeValue.IsEmpty()) {
         // If this field is not present, we default to rsa.
-  	    keyTypeValue.Assign(NS_LITERAL_STRING("rsa"));
+  	    keyTypeValue.AssignLiteral("rsa");
       }
       res = selectElement->GetAttribute(NS_LITERAL_STRING("challenge"), challengeValue);
       rv = GetPublicKey(aValue, challengeValue, keyTypeValue, 
@@ -613,9 +664,9 @@ nsKeygenFormProcessor::ProcessValue(nsIDOMHTMLElement *aElement,
   return rv; 
 } 
 
-NS_METHOD nsKeygenFormProcessor::ProvideContent(const nsString& aFormType, 
+NS_METHOD nsKeygenFormProcessor::ProvideContent(const nsAString& aFormType, 
 						nsVoidArray& aContent, 
-						nsString& aAttribute) 
+						nsAString& aAttribute) 
 { 
   if (Compare(aFormType, NS_LITERAL_STRING("SELECT"), 
     nsCaseInsensitiveStringComparator()) == 0) {
@@ -623,7 +674,7 @@ NS_METHOD nsKeygenFormProcessor::ProvideContent(const nsString& aFormType,
       nsString *str = new nsString(choice->name);
       aContent.AppendElement(str);
     }
-    aAttribute.Assign(NS_LITERAL_STRING("-mozilla-keygen"));
+    aAttribute.AssignLiteral("-mozilla-keygen");
   }
   return NS_OK;
 } 

@@ -41,35 +41,82 @@
 #define _nsXULAppAPI_h__
 
 #include "prtypes.h"
-class nsILocalFile;
+#include "nsID.h"
+#include "nscore.h"
+#include "nsXPCOM.h"
+
+// XXXbsmedberg - eventually we're going to freeze the XULAPI
+// symbols, and we don't want every consumer to define MOZ_ENABLE_LIBXUL.
+// Reverse the logic so that those who aren't using libxul have to do the
+// work.
+#ifdef MOZ_ENABLE_LIBXUL
+#ifdef IMPL_XULAPI
+#define XULAPI NS_EXPORT
+#else
+#define XULAPI NS_IMPORT
+#endif
+#else
+#define XULAPI
+#endif
 
 /**
  * Application-specific data needed to start the apprunner.
+ *
+ * @status UNDER_REVIEW - This API is under review to be frozen, but isn't
+ *                        frozen yet. Use with caution.
  */
-
 struct nsXREAppData
 {
   /**
-   * The name of the application vendor. This must be ASCII, and is normally
-   * mixed-case, e.g. "Mozilla".
+   * This should be set to sizeof(nsXREAppData). This structure may be
+   * extended in future releases, and this ensures that binary compatibility
+   * is maintained.
    */
-  const char *appVendor;
+  PRUint32 size;
+
+  /**
+   * The directory of the application to be run. May be null if the
+   * xulrunner and the app are installed into the same directory.
+   */
+  nsILocalFile* directory;
+
+  /**
+   * The name of the application vendor. This must be ASCII, and is normally
+   * mixed-case, e.g. "Mozilla". Optional (may be null), but highly
+   * recommended. Must not be the empty string.
+   */
+  const char *vendor;
 
   /**
    * The name of the application. This must be ASCII, and is normally
-   * mixed-case, e.g. "Firefox".
+   * mixed-case, e.g. "Firefox". Required (must not be null or an empty
+   * string).
    */
-  const char *appName;
+  const char *name;
 
   /**
-   * The major version, e.g. "0.8.0+"
+   * The major version, e.g. "0.8.0+". Optional (may be null), but
+   * required for advanced application features such as the extension
+   * manager and update service. Must not be the empty string.
    */
-  const char *appVersion;
+  const char *version;
 
   /** 
    * The application's build identifier, e.g. "2004051604"
    */
-  const char *appBuildID;
+  const char *buildID;
+
+  /**
+   * The application's UUID. Used by the extension manager to determine
+   * compatible extensions. Optional, but required for advanced application
+   * features such as the extension manager and update service.
+   *
+   * This has traditionally been in the form
+   * "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}" but for new applications
+   * a more readable form is encouraged: "appname@vendor.tld". Only
+   * the following characters are allowed: a-z A-Z 0-9 - . @ _ { } *
+   */
+  const char *ID;
 
   /**
    * The copyright information to print for the -h commandline flag,
@@ -77,24 +124,100 @@ struct nsXREAppData
    */
   const char *copyright;
 
-  PRBool useStartupPrefs; // XXXbsmedberg this is going away
+  /**
+   * Combination of NS_XRE_ prefixed flags (defined below).
+   */
+  PRUint32 flags;
 };
+
+/**
+ * Indicates whether or not the profile migrator service may be
+ * invoked at startup when creating a profile.
+ */
+#define NS_XRE_ENABLE_PROFILE_MIGRATOR (1 << 1)
+
+/**
+ * Indicates whether or not the extension manager service should be
+ * initialized at startup.
+ */
+#define NS_XRE_ENABLE_EXTENSION_MANAGER (1 << 2)
+
+/**
+ * The contract id for the nsIXULAppInfo service.
+ */
+#define XULAPPINFO_SERVICE_CONTRACTID \
+  "@mozilla.org/xre/app-info;1"
+
+/**
+ * A directory service key which provides the platform-correct
+ * "application data" directory.
+ * Windows: Documents and Settings\<User>\Application Data\<Vendor>\<Application>
+ * Unix: ~/.<vendor>/<application>
+ * Mac: ~/Library/Application Supports/<Application>
+ */
+#define XRE_USER_APP_DATA_DIR "UAppData"
+
+/**
+ * A directory service key which provides a list of all enabled extension
+ * directories. The list includes compatible platform-specific extension
+ * subdirectories.
+ *
+ * @note The directory list will have no members when the application is
+ *       launched in safe mode.
+ */
+#define XRE_EXTENSIONS_DIR_LIST "XREExtDL"
+
+/**
+ * A directory service key which provides the executable file used to
+ * launch the current process.  This is the same value returned by the
+ * XRE_GetBinaryPath function defined below.
+ */
+#define XRE_EXECUTABLE_FILE "XREExeF"
 
 /**
  * Begin an XUL application. Does not return until the user exits the
  * application.
- * @param aAppData Information about the application being run.
+ *
+ * @param argc/argv Command-line parameters to pass to the application. These
+ *                  are in the "native" character set.
+ *
+ * @param aAppData  Information about the application to be run.
+ *
  * @return         A native result code suitable for returning from main().
  *
  * @note           If the binary is linked against the  standalone XPCOM glue,
  *                 XPCOMGlueStartup() should be called before this method.
  *
  * @note           XXXbsmedberg Nobody uses the glue yet, but there is a
- *                 potentital problem: on windows, the glue calls
+ *                 potential problem: on windows, the standalone glue calls
  *                 SetCurrentDirectory, and relative paths on the command line
  *                 won't be correct.
  */
+extern "C" XULAPI int
+XRE_main(int argc, char* argv[],
+         const nsXREAppData* aAppData);
 
-int xre_main(int argc, char* argv[], const nsXREAppData* aAppData);
+/**
+ * Given a path relative to the current working directory (or an absolute
+ * path), return an appropriate nsILocalFile object.
+ */
+extern "C" XULAPI nsresult
+XRE_GetFileFromPath(const char *aPath, nsILocalFile* *aResult);
+
+/**
+ * Get the path of the running application binary and store it in aResult.
+ * @param argv0   The value passed as argv[0] of main(). This value is only
+ *                used on *nix, and only when other methods of determining
+ *                the binary path have failed.
+ */
+extern "C" XULAPI nsresult
+XRE_GetBinaryPath(const char *argv0, nsILocalFile* *aResult);
+
+/**
+ * Get the static components built in to libxul.
+ */
+extern "C" XULAPI void
+XRE_GetStaticComponents(nsStaticModuleInfo const **aStaticComponents,
+                        PRUint32 *aComponentCount);
 
 #endif // _nsXULAppAPI_h__

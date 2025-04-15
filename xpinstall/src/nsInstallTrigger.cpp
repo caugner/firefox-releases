@@ -1,18 +1,18 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is Mozilla Communicator client code.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
  * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
@@ -22,18 +22,19 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
 
 #include "nsSoftwareUpdate.h"
 #include "nsXPInstallManager.h"
@@ -57,6 +58,7 @@
 #include "nsIDocument.h"
 #include "nsIPrincipal.h"
 #include "nsIObserverService.h"
+#include "nsIPropertyBag2.h"
 
 #include "nsIComponentManager.h"
 #include "nsIServiceManager.h"
@@ -118,9 +120,8 @@ nsInstallTrigger::SetScriptObject(void *aScriptObject)
 
 NS_IMETHODIMP
 nsInstallTrigger::HandleContent(const char * aContentType,
-                                const char * aCommand,
-                                nsISupports* aWindowContext,
-                                nsIRequest*  aRequest)
+                                nsIInterfaceRequestor* aWindowContext,
+                                nsIRequest* aRequest)
 {
     nsresult rv = NS_OK;
     if (!aRequest)
@@ -149,10 +150,10 @@ nsInstallTrigger::HandleContent(const char * aContentType,
 
 
     // Save the referrer if any, for permission checks
-    static const char kReferrerProperty[] = "docshell.internalReferrer";
+    NS_NAMED_LITERAL_STRING(referrerProperty, "docshell.internalReferrer");
     PRBool useReferrer = PR_FALSE;
     nsCOMPtr<nsIURI> referringURI;
-    nsCOMPtr<nsIProperties> channelprops(do_QueryInterface(channel));
+    nsCOMPtr<nsIPropertyBag2> channelprops(do_QueryInterface(channel));
 
     if (channelprops)
     {
@@ -160,18 +161,17 @@ nsInstallTrigger::HandleContent(const char * aContentType,
         // channels support our internal-referrer property).
         //
         // It's possible docshell explicitly set a null referrer in the case
-        // of typed, pasted, or bookmarked URLs and the like. In this null
-        // referrer case we get NS_ERROR_NO_INTERFACE rather than the usual
-        // NS_ERROR_FAILURE that indicates the property was not set at all.
+        // of typed, pasted, or bookmarked URLs and the like. In such a case
+        // we get a success return value with null pointer.
         //
         // A null referrer is automatically whitelisted as an explicit user
         // action (though they'll still get the confirmation dialog). For a
         // missing referrer we go to our fall-back plan of using the XPI
         // location for whitelisting purposes.
-        rv = channelprops->Get(kReferrerProperty,
-                               NS_GET_IID(nsIURI),
-                               getter_AddRefs(referringURI));
-        if (NS_SUCCEEDED(rv) || rv == NS_ERROR_NO_INTERFACE)
+        rv = channelprops->GetPropertyAsInterface(referrerProperty,
+                                                  NS_GET_IID(nsIURI),
+                                                  getter_AddRefs(referringURI));
+        if (NS_SUCCEEDED(rv))
             useReferrer = PR_TRUE;
     }
 
@@ -181,12 +181,12 @@ nsInstallTrigger::HandleContent(const char * aContentType,
 
 
     // Get the global object of the target window for StartSoftwareUpdate
-    nsCOMPtr<nsIScriptGlobalObject> globalObject;
+    nsIScriptGlobalObject* globalObject;
     nsCOMPtr<nsIScriptGlobalObjectOwner> globalObjectOwner = 
                                          do_QueryInterface(aWindowContext);
     if ( globalObjectOwner )
     {
-        globalObjectOwner->GetScriptGlobalObject(getter_AddRefs(globalObject));
+        globalObject = globalObjectOwner->GetScriptGlobalObject();
     }
     if ( !globalObject )
         return NS_ERROR_INVALID_ARG;
@@ -347,6 +347,9 @@ nsInstallTrigger::AllowInstall(nsIURI* aLaunchURI)
         {
             // check prefs for permission updates before testing URI
             updatePermissions( XPINSTALL_WHITELIST_ADD,
+                               nsIPermissionManager::ALLOW_ACTION,
+                               permissionMgr, prefBranch );
+            updatePermissions( XPINSTALL_WHITELIST_ADD_103,
                                nsIPermissionManager::ALLOW_ACTION,
                                permissionMgr, prefBranch );
             updatePermissions( XPINSTALL_BLACKLIST_ADD,

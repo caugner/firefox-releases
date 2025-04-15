@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,22 +24,21 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "msgCore.h"    // precompiled header...
 #include "nsXPIDLString.h"
 #include "nsReadableUtils.h"
-#include "nsIPref.h"
 #include "nsIIOService.h"
 
 #include "nsIStreamListener.h"
@@ -59,9 +58,6 @@
 #include "nsIRDFService.h"
 #include "nsRDFCID.h"
 #include "prmem.h"
-
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
 
 #include "nsIStringBundle.h"
 #include "nsIServiceManager.h"
@@ -154,12 +150,12 @@ nsAddbookProtocolHandler::NewChannel(nsIURI *aURI, nsIChannel **_retval)
 
   if (mAddbookOperation == nsIAddbookUrlOperation::InvalidUrl) {
     nsAutoString errorString;
-    errorString.Append(NS_LITERAL_STRING("Unsupported format/operation requested for ").get());
+    errorString.AssignLiteral("Unsupported format/operation requested for ");
     nsCAutoString spec;
     rv = aURI->GetSpec(spec);
     NS_ENSURE_SUCCESS(rv,rv);
 
-    errorString.Append(NS_ConvertUTF8toUCS2(spec));
+    AppendUTF8toUTF16(spec, errorString);
     rv = GenerateXMLOutputChannel(errorString, addbookUrl, aURI, _retval);
     NS_ENSURE_SUCCESS(rv,rv);
     return NS_OK;
@@ -177,17 +173,17 @@ nsAddbookProtocolHandler::NewChannel(nsIURI *aURI, nsIChannel **_retval)
       pipeOut->Close();
       
       return NS_NewInputStreamChannel(_retval, aURI, pipeIn,
-          NS_LITERAL_CSTRING("x-application-addvcard"));
+          NS_LITERAL_CSTRING("application/x-addvcard"));
   }
 
   nsString output;
   rv = GeneratePrintOutput(addbookUrl, output);
   if (NS_FAILED(rv)) {
-    output.Assign(NS_LITERAL_STRING("failed to print. url=").get());
+    output.AssignLiteral("failed to print. url=");
     nsCAutoString spec;
     rv = aURI->GetSpec(spec);
     NS_ENSURE_SUCCESS(rv,rv);
-    output.Append(NS_ConvertUTF8toUCS2(spec));
+    AppendUTF8toUTF16(spec, output);
   }
  
   rv = GenerateXMLOutputChannel(output, addbookUrl, aURI, _retval);
@@ -266,9 +262,9 @@ nsAddbookProtocolHandler::BuildDirectoryXML(nsIAbDirectory *aDirectory,
   nsCOMPtr<nsIEnumerator> cardsEnumerator;
   nsCOMPtr<nsIAbCard> card;
 
-  aOutput.Append(NS_LITERAL_STRING("<?xml version=\"1.0\"?>\n").get());
-  aOutput.Append(NS_LITERAL_STRING("<?xml-stylesheet type=\"text/css\" href=\"chrome://messenger/content/addressbook/print.css\"?>\n").get());
-  aOutput.Append(NS_LITERAL_STRING("<directory>\n").get());
+  aOutput.AppendLiteral("<?xml version=\"1.0\"?>\n"
+                        "<?xml-stylesheet type=\"text/css\" href=\"chrome://messenger/content/addressbook/print.css\"?>\n"
+                        "<directory>\n");
 
   // Get Address Book string and set it as title of XML document
   nsCOMPtr<nsIStringBundle> bundle;
@@ -279,9 +275,9 @@ nsAddbookProtocolHandler::BuildDirectoryXML(nsIAbDirectory *aDirectory,
       nsXPIDLString addrBook;
       rv = bundle->GetStringFromName(NS_LITERAL_STRING("addressBook").get(), getter_Copies(addrBook));
       if (NS_SUCCEEDED(rv)) {
-        aOutput.Append(NS_LITERAL_STRING("<title xmlns=\"http://www.w3.org/1999/xhtml\">").get());
+        aOutput.AppendLiteral("<title xmlns=\"http://www.w3.org/1999/xhtml\">");
         aOutput.Append(addrBook);
-        aOutput.Append(NS_LITERAL_STRING("</title>\n").get());
+        aOutput.AppendLiteral("</title>\n");
       }
     }
   }
@@ -302,14 +298,14 @@ nsAddbookProtocolHandler::BuildDirectoryXML(nsIAbDirectory *aDirectory,
         rv = card->ConvertToXMLPrintData(getter_Copies(xmlSubstr));
         NS_ENSURE_SUCCESS(rv,rv);
 
-        aOutput.Append(NS_LITERAL_STRING("<separator/>").get());
-        aOutput.Append(xmlSubstr.get());
+        aOutput.AppendLiteral("<separator/>");
+        aOutput.Append(xmlSubstr);
       }
     }
-	aOutput.Append(NS_LITERAL_STRING("<separator/>").get());
+    aOutput.AppendLiteral("<separator/>");
   }
 
-  aOutput.Append(NS_LITERAL_STRING("</directory>\n").get());
+  aOutput.AppendLiteral("</directory>\n");
 
   return NS_OK;
 }

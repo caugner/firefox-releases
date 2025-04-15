@@ -1,37 +1,42 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the mozilla.org LDAP XPCOM SDK.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s): Dan Mosedale <dmose@mozilla.org>
- *                 Warren Harris <warren@netscape.com>
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Dan Mosedale <dmose@mozilla.org>
+ *   Warren Harris <warren@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsLDAPInternal.h"
 #include "nsLDAPConnection.h"
@@ -59,7 +64,7 @@ static NS_DEFINE_IID(kIProgressEventSink, NS_IPROGRESSEVENTSINK_IID);
 NS_IMPL_THREADSAFE_ISUPPORTS3(nsLDAPChannel, 
                               nsIChannel, 
                               nsIRequest,   
-                              nsILDAPMessageListener);
+                              nsILDAPMessageListener)
 
 nsLDAPChannel::nsLDAPChannel()
 {
@@ -191,7 +196,7 @@ nsLDAPChannel::Cancel(nsresult aStatus)
 
         // if this fails in a non-debug build, there's not much we can do
         //
-        rv = mCurrentOperation->Abandon();
+        rv = mCurrentOperation->AbandonExt();
         NS_ASSERTION(NS_SUCCEEDED(rv), "nsLDAPChannel::Cancel(): "
                      "mCurrentOperation->Abandon() failed\n");
         
@@ -230,6 +235,10 @@ nsLDAPChannel::Cancel(nsresult aStatus)
         if (NS_FAILED(rv)) 
             return rv;
     }
+
+    // Drop notification callbacks to prevent cycles.
+    mCallbacks = nsnull;
+    mEventSink = nsnull;
 
     return NS_OK;
 }
@@ -313,7 +322,7 @@ nsLDAPChannel::SetLoadFlags(nsLoadFlags aLoadFlags)
 NS_IMETHODIMP
 nsLDAPChannel::GetContentType(nsACString &aContentType)
 {
-    aContentType = NS_LITERAL_CSTRING(TEXT_PLAIN);
+    aContentType.AssignLiteral(TEXT_PLAIN);
     return NS_OK;
 }
 
@@ -885,6 +894,10 @@ nsLDAPChannel::OnLDAPSearchResult(nsILDAPMessage *aMessage)
         }
     }
 
+    // Drop notification callbacks to prevent cycles.
+    mCallbacks = nsnull;
+    mEventSink = nsnull;
+
     return NS_OK;
 }
 
@@ -897,7 +910,7 @@ nsLDAPChannel::OnLDAPSearchEntry(nsILDAPMessage *aMessage)
 {
     nsresult rv;
     nsCAutoString dn;
-    nsString entry;
+    nsCString entry;
 
     PR_LOG(gLDAPLogModule, PR_LOG_DEBUG, ("entry returned!\n"));
 
@@ -908,8 +921,7 @@ nsLDAPChannel::OnLDAPSearchEntry(nsILDAPMessage *aMessage)
     NS_ENSURE_SUCCESS(rv, rv);
 
     entry.SetCapacity(256);
-    entry = NS_LITERAL_STRING("dn: ") + NS_ConvertUTF8toUCS2(dn)
-        + NS_LITERAL_STRING("\n");
+    entry = NS_LITERAL_CSTRING("dn: ") + dn + NS_LITERAL_CSTRING("\n");
 
     char **attrs;
     PRUint32 attrCount;
@@ -947,10 +959,10 @@ nsLDAPChannel::OnLDAPSearchEntry(nsILDAPMessage *aMessage)
         // print all values of this attribute
         //
         for ( PRUint32 j=0 ; j < valueCount; j++ ) {
-            AppendASCIItoUTF16(attrs[i], entry);
-            entry.Append(NS_LITERAL_STRING(": "));
-            entry.Append(vals[j]);
-            entry.Append(NS_LITERAL_STRING("\n"));
+            entry.Append(attrs[i]);
+            entry.Append(": ");
+            AppendUTF16toUTF8(vals[j], entry);
+            entry.Append('\n');
         }
         NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(valueCount, vals);
 
@@ -967,7 +979,7 @@ nsLDAPChannel::OnLDAPSearchEntry(nsILDAPMessage *aMessage)
 
     // separate this entry from the next
     //
-    entry.Append(NS_LITERAL_STRING("\n"));
+    entry.Append('\n');
 
     // do the write
     // XXX better err handling
@@ -975,8 +987,7 @@ nsLDAPChannel::OnLDAPSearchEntry(nsILDAPMessage *aMessage)
     PRUint32 bytesWritten = 0;
     PRUint32 entryLength = entry.Length();
 
-    rv = mReadPipeOut->Write(NS_ConvertUCS2toUTF8(entry).get(),
-                             entryLength, &bytesWritten);
+    rv = mReadPipeOut->Write(entry.get(), entryLength, &bytesWritten);
     NS_ENSURE_SUCCESS(rv, rv);
 
     // short writes shouldn't happen on blocking pipes!

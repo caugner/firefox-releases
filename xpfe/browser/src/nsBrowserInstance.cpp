@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,26 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Pierre Phaneuf <pp@ludusdesign.com>
- *    Travis Bogard <travis@netscape.com>
+ *   Pierre Phaneuf <pp@ludusdesign.com>
+ *   Travis Bogard <travis@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -45,12 +45,13 @@
 
 // Interfaces Needed
 #include "nsIBaseWindow.h"
+#include "nsIWebNavigationInfo.h"
+#include "nsDocShellCID.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIHttpProtocolHandler.h"
 #include "nsISHistory.h"
 #include "nsIWebNavigation.h"
-#include "nsPIDOMWindow.h"
 
 ///  Unsorted Includes
 
@@ -63,13 +64,10 @@
 #include "nsIScriptContext.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIDOMDocument.h"
-#include "nsIDocument.h"
 #include "nsIDOMWindowInternal.h"
 
 #include "nsIContentViewer.h"
 #include "nsIContentViewerEdit.h"
-#include "nsIWebShell.h"
-#include "nsIWebShellWindow.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsIWindowWatcher.h"
 #include "nsCOMPtr.h"
@@ -84,11 +82,8 @@
 #include "plevent.h"
 #include "plstr.h"
 
-#include "nsIAppShell.h"
-#include "nsIAppShellService.h"
-#include "nsAppShellCIDs.h"
+#include "nsIAppStartup.h"
 
-#include "nsIDocumentViewer.h"
 #include "nsIBrowserHistory.h"
 #include "nsDocShellCID.h"
 
@@ -98,14 +93,14 @@
 #include "nsDirectoryServiceDefs.h"
 
 #include "nsNetUtil.h"
+#ifndef MOZ_XUL_APP
 #include "nsICmdLineService.h"
+#endif
 
 // Stuff to implement file download dialog.
 #include "nsIProxyObjectManager.h" 
 
-#ifdef MOZ_PHOENIX
-#include "nsToolkitCompsCID.h"
-#endif
+#include "nsXPFEComponentsCID.h"
 
 // If DEBUG, NS_BUILD_REFCNT_LOGGING, MOZ_PERF_METRICS, or MOZ_JPROF is
 // defined, enable the PageCycler.
@@ -116,8 +111,6 @@
 /* Define Class IDs */
 static NS_DEFINE_CID(kPrefServiceCID,           NS_PREF_CID);
 static NS_DEFINE_CID(kProxyObjectManagerCID,    NS_PROXYEVENT_MANAGER_CID);
-static NS_DEFINE_CID(kAppShellServiceCID,       NS_APPSHELL_SERVICE_CID);
-static NS_DEFINE_CID(kCmdLineServiceCID,        NS_COMMANDLINE_SERVICE_CID);
 
 #ifdef DEBUG                                                           
 static int APP_DEBUG = 0; // Set to 1 in debugger to turn on debugging.
@@ -226,18 +219,21 @@ public:
       nsresult rv;
       // make sure our timer is stopped first
       StopTimer();
-      nsCOMPtr<nsIAppShellService> appShellServ = 
-               do_GetService(kAppShellServiceCID, &rv);
+
+      // XXX This needs to do a whole bunch of other stuff that
+      // globalOverlay.js's goQuitApplication does.
+      nsCOMPtr<nsIAppStartup> appStartup = 
+               do_GetService(NS_APPSTARTUP_CONTRACTID, &rv);
       if(NS_FAILED(rv)) return rv;
       nsCOMPtr<nsIProxyObjectManager> pIProxyObjectManager = 
                do_GetService(kProxyObjectManagerCID, &rv);
       if(NS_FAILED(rv)) return rv;
-      nsCOMPtr<nsIAppShellService> appShellProxy;
-      rv = pIProxyObjectManager->GetProxyForObject(NS_UI_THREAD_EVENTQ, NS_GET_IID(nsIAppShellService), 
-                                                appShellServ, PROXY_ASYNC | PROXY_ALWAYS,
-                                                getter_AddRefs(appShellProxy));
+      nsCOMPtr<nsIAppStartup> appStartupProxy;
+      rv = pIProxyObjectManager->GetProxyForObject(NS_UI_THREAD_EVENTQ, NS_GET_IID(nsIAppStartup),
+                                                   appStartup, PROXY_ASYNC | PROXY_ALWAYS,
+                                                   getter_AddRefs(appStartupProxy));
 
-      (void)appShellProxy->Quit(nsIAppShellService::eAttemptQuit);
+      (void)appStartupProxy->Quit(nsIAppStartup::eAttemptQuit);
       return NS_ERROR_FAILURE;
     }
   }
@@ -522,12 +518,14 @@ nsBrowserInstance::GetCmdLineURLUsed(PRBool* aCmdLineURLUsed)
 NS_IMETHODIMP    
 nsBrowserInstance::StartPageCycler(PRBool* aIsPageCycling)
 {
+  *aIsPageCycling = PR_FALSE;
+
+#ifndef MOZ_XUL_APP
   nsresult rv;
 
-  *aIsPageCycling = PR_FALSE;
   if (!sCmdLineURLUsed) {
     nsCOMPtr<nsICmdLineService> cmdLineArgs = 
-             do_GetService(kCmdLineServiceCID, &rv);
+             do_GetService(NS_COMMANDLINESERVICE_CONTRACTID, &rv);
     if (NS_FAILED(rv)) {
       if (APP_DEBUG) fprintf(stderr, "Could not obtain CmdLine processing service\n");
       return NS_ERROR_FAILURE;
@@ -571,6 +569,7 @@ nsBrowserInstance::StartPageCycler(PRBool* aIsPageCycling)
     }
 #endif //ENABLE_PAGE_CYCLER
   }
+#endif // MOZ_XUL_APP
   return NS_OK;
 }
 
@@ -615,10 +614,10 @@ nsBrowserInstance::Close()
   return NS_OK;
 }
 
+#ifndef MOZ_XUL_APP
 //*****************************************************************************
 // nsBrowserInstance: Helpers
 //*****************************************************************************
-
 
 ////////////////////////////////////////////////////////////////////////
 // browserCntHandler is a content handler component that registers
@@ -634,26 +633,19 @@ nsBrowserInstance::Close()
 // return DOM objects. And we need a dom window to bootstrap the browser
 /////////////////////////////////////////////////////////////////////////
 
+NS_IMPL_ISUPPORTS1(nsChromeStartupHandler, nsICmdLineHandler)
+CMDLINEHANDLER_IMPL(nsChromeStartupHandler, "-chrome", "", "",
+                    "Load the specified chrome.",
+                    NS_CHROMESTARTUPHANDLER_CONTRACTID,
+                    "Chrome Startup Handler", PR_TRUE, "", PR_FALSE)
 
-NS_IMPL_ADDREF(nsBrowserContentHandler)
-NS_IMPL_RELEASE(nsBrowserContentHandler)
-
-NS_INTERFACE_MAP_BEGIN(nsBrowserContentHandler)
-   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIContentHandler)
-   NS_INTERFACE_MAP_ENTRY(nsIContentHandler)
-   NS_INTERFACE_MAP_ENTRY(nsICmdLineHandler)
-NS_INTERFACE_MAP_END
-
-nsBrowserContentHandler::nsBrowserContentHandler()
-{
-}
-
-nsBrowserContentHandler::~nsBrowserContentHandler()
-{
-}
-
-CMDLINEHANDLER_OTHERS_IMPL(nsBrowserContentHandler,"-chrome","general.startup.browser","Load the specified chrome.", PR_TRUE, PR_FALSE)
-CMDLINEHANDLER_REGISTERPROC_IMPL(nsBrowserContentHandler, "Browser Startup Handler", NS_BROWSERSTARTUPHANDLER_CONTRACTID)
+NS_IMPL_ISUPPORTS2(nsBrowserContentHandler, nsIContentHandler, nsICmdLineHandler)
+CMDLINEHANDLER_OTHERS_IMPL(nsBrowserContentHandler, "-browser",
+                           "general.startup.browser", "Load the browser.",
+                           PR_TRUE, PR_TRUE)
+CMDLINEHANDLER_REGISTERPROC_IMPL(nsBrowserContentHandler,
+                                 "Browser Startup Handler",
+                                 NS_BROWSERSTARTUPHANDLER_CONTRACTID)
 NS_IMETHODIMP nsBrowserContentHandler::GetChromeUrlForTask(char **aChromeUrlForTask) {
 
   if (!aChromeUrlForTask)
@@ -793,10 +785,26 @@ NS_IMETHODIMP nsBrowserContentHandler::GetDefaultArgs(PRUnichar **aDefaultArgs)
 }
 
 NS_IMETHODIMP nsBrowserContentHandler::HandleContent(const char * aContentType,
-                                                     const char * aCommand,
-                                                     nsISupports * aWindowContext,
+                                                     nsIInterfaceRequestor * aWindowContext,
                                                      nsIRequest * aRequest)
 {
+  NS_PRECONDITION(aContentType, "Must have a content type");
+
+  // Verify that we can handle this content, to avoid infinite window opening
+  // loops
+  nsresult rv;
+  nsCOMPtr<nsIWebNavigationInfo> webNavInfo =
+    do_GetService(NS_WEBNAVIGATION_INFO_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  PRUint32 typeSupported;
+  rv = webNavInfo->IsTypeSupported(nsDependentCString(aContentType), nsnull,
+                                   &typeSupported);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!typeSupported)
+      return NS_ERROR_WONT_HANDLE_CONTENT;
+
   // create a new browser window to handle the content
   NS_ENSURE_ARG(aRequest);
   nsCOMPtr<nsIDOMWindow> parentWindow;
@@ -825,3 +833,5 @@ NS_IMETHODIMP nsBrowserContentHandler::HandleContent(const char * aContentType,
 
   return NS_OK;
 }
+
+#endif // MOZ_XUL_APP

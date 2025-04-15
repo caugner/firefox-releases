@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -107,7 +107,6 @@ nsMsgLineBuffer::nsMsgLineBuffer(nsMsgLineBufferHandler *handler, PRBool convert
   m_handler = handler;
   m_convertNewlinesP = convertNewlinesP;
   m_lookingForCRLF = PR_TRUE;
-  m_ignoreCRLFs = PR_FALSE;
 }
 
 nsMsgLineBuffer::~nsMsgLineBuffer()
@@ -140,43 +139,40 @@ PRInt32	nsMsgLineBuffer::BufferInput(const char *net_buffer, PRInt32 net_buffer_
         const char *net_buffer_end = net_buffer + net_buffer_size;
         const char *newline = 0;
         const char *s;
-        
-        if (!m_ignoreCRLFs)
+
+        for (s = net_buffer; s < net_buffer_end; s++)
         {
-          for (s = net_buffer; s < net_buffer_end; s++)
-          {
-            if (m_lookingForCRLF) {
-              /* Move forward in the buffer until the first newline.
-                 Stop when we see CRLF, CR, or LF, or the end of the buffer.
-                 *But*, if we see a lone CR at the *very end* of the buffer,
-                 treat this as if we had reached the end of the buffer without
-                 seeing a line terminator.  This is to catch the case of the
-                 buffers splitting a CRLF pair, as in "FOO\r\nBAR\r" "\nBAZ\r\n".
-              */
-              if (*s == nsCRT::CR || *s == nsCRT::LF) {
-                newline = s;
-                if (newline[0] == nsCRT::CR) {
-                  if (s == net_buffer_end - 1) {
-                    /* CR at end - wait for the next character. */
-                    newline = 0;
-                    break;
-                  }
-                  else if (newline[1] == nsCRT::LF) {
-                    /* CRLF seen; swallow both. */
-                    newline++;
-                  }
+          if (m_lookingForCRLF) {
+            /* Move forward in the buffer until the first newline.
+               Stop when we see CRLF, CR, or LF, or the end of the buffer.
+               *But*, if we see a lone CR at the *very end* of the buffer,
+               treat this as if we had reached the end of the buffer without
+               seeing a line terminator.  This is to catch the case of the
+               buffers splitting a CRLF pair, as in "FOO\r\nBAR\r" "\nBAZ\r\n".
+            */
+            if (*s == nsCRT::CR || *s == nsCRT::LF) {
+              newline = s;
+              if (newline[0] == nsCRT::CR) {
+                if (s == net_buffer_end - 1) {
+                  /* CR at end - wait for the next character. */
+                  newline = 0;
+                  break;
                 }
-                newline++;
-                break;
+                else if (newline[1] == nsCRT::LF) {
+                  /* CRLF seen; swallow both. */
+                  newline++;
+                }
               }
+              newline++;
+              break;
             }
-            else {
-              /* if not looking for a CRLF, stop at CR or LF.  (for example, when parsing the newsrc file).  this fixes #9896, where we'd lose the last line of anything we'd parse that used CR as the line break. */
-              if (*s == nsCRT::CR || *s == nsCRT::LF) {
-                newline = s;
-                newline++;
-                break;
-              }
+          }
+          else {
+            /* if not looking for a CRLF, stop at CR or LF.  (for example, when parsing the newsrc file).  this fixes #9896, where we'd lose the last line of anything we'd parse that used CR as the line break. */
+            if (*s == nsCRT::CR || *s == nsCRT::LF) {
+              newline = s;
+              newline++;
+              break;
             }
           }
         }
@@ -332,7 +328,7 @@ void nsMsgLineStreamBuffer::ClearBuffer()
 // Note to people wishing to modify this function: Be *VERY CAREFUL* this is a critical function used by all of
 // our mail protocols including imap, nntp, and pop. If you screw it up, you could break a lot of stuff.....
 
-char * nsMsgLineStreamBuffer::ReadNextLine(nsIInputStream * aInputStream, PRUint32 &aNumBytesInLine, PRBool &aPauseForMoreData, nsresult *prv)
+char * nsMsgLineStreamBuffer::ReadNextLine(nsIInputStream * aInputStream, PRUint32 &aNumBytesInLine, PRBool &aPauseForMoreData, nsresult *prv, PRBool addLineTerminator)
 {
   // try to extract a line from m_inputBuffer. If we don't have an entire line, 
   // then read more bytes out from the stream. If the stream is empty then wait
@@ -436,7 +432,7 @@ char * nsMsgLineStreamBuffer::ReadNextLine(nsIInputStream * aInputStream, PRUint
       aNumBytesInLine--;
     
     // PR_CALLOC zeros out the allocated line
-    char* newLine = (char*) PR_CALLOC(aNumBytesInLine+1);
+    char* newLine = (char*) PR_CALLOC(aNumBytesInLine + (addLineTerminator ? MSG_LINEBREAK_LEN : 0) + 1);
     if (!newLine)
     {
       aNumBytesInLine = 0;
@@ -445,6 +441,11 @@ char * nsMsgLineStreamBuffer::ReadNextLine(nsIInputStream * aInputStream, PRUint
     }
     
     memcpy(newLine, startOfLine, aNumBytesInLine); // copy the string into the new line buffer
+    if (addLineTerminator)
+    {
+      memcpy(newLine + aNumBytesInLine, MSG_LINEBREAK, MSG_LINEBREAK_LEN);
+      aNumBytesInLine += MSG_LINEBREAK_LEN;
+    }
     
     if (m_eatCRLFs)
       endOfLine += 1; // advance past LF or CR if we haven't already done so...

@@ -245,7 +245,7 @@ STDMETHODIMP CMapiImp::SendMail( unsigned long aSession, lpnsMapiMessage aMessag
     aMessage->lpFiles = aFiles ;
 
     PR_LOG(MAPI, PR_LOG_DEBUG, ("CMapiImp::SendMail flags=%x subject: %s sender: %s\n", 
-      aFlags, (char *) aMessage->lpszSubject, (aMessage->lpOriginator) ? aMessage->lpOriginator->lpszAddress : "") );
+      aFlags, (char *) aMessage->lpszSubject, (aMessage->lpOriginator) ? aMessage->lpOriginator->lpszAddress : ""));
 
     /** create nsIMsgCompFields obj and populate it **/
     nsCOMPtr<nsIMsgCompFields> pCompFields = do_CreateInstance(NS_MSGCOMPFIELDS_CONTRACTID, &rv) ;

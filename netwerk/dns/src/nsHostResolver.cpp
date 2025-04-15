@@ -35,6 +35,10 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#if defined(MOZ_LOGGING)
+#define FORCE_PR_LOG
+#endif
+
 #if defined(HAVE_RES_NINIT)
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -60,6 +64,7 @@
 #include "prlog.h"
 #include "pldhash.h"
 #include "plstr.h"
+#include "nsURLHelper.h"
 
 //----------------------------------------------------------------------------
 
@@ -235,7 +240,7 @@ HostDB_ClearEntry(PLDHashTable *table,
 {
     LOG(("evicting record\n"));
     nsHostDBEnt *he = NS_STATIC_CAST(nsHostDBEnt *, entry);
-#if defined(PR_LOGGING)
+#if defined(DEBUG) && defined(PR_LOGGING)
     if (!he->rec->addr_info)
         LOG(("%s: => no addr_info\n", he->rec->host));
     else {
@@ -379,6 +384,11 @@ nsHostResolver::ResolveHost(const char            *host,
 
     LOG(("nsHostResolver::ResolveHost [host=%s]\n", host));
 
+    // ensure that we are working with a valid hostname before proceeding.  see
+    // bug 304904 for details.
+    if (!net_IsValidHostName(nsDependentCString(host)))
+        return NS_ERROR_UNKNOWN_HOST;
+
     // if result is set inside the lock, then we need to issue the
     // callback before returning.
     nsRefPtr<nsHostRecord> result;
@@ -453,7 +463,8 @@ void
 nsHostResolver::DetachCallback(const char            *host,
                                PRUint16               flags,
                                PRUint16               af,
-                               nsResolveHostCallback *callback)
+                               nsResolveHostCallback *callback,
+                               nsresult               status)
 {
     nsRefPtr<nsHostRecord> rec;
     {
@@ -477,10 +488,10 @@ nsHostResolver::DetachCallback(const char            *host,
         }
     }
 
-    // complete callback with an error code; this would only be done
-    // if the record was in the process of being resolved.
+    // complete callback with the given status code; this would only be done if
+    // the record was in the process of being resolved.
     if (rec)
-        callback->OnLookupComplete(this, rec, NS_ERROR_ABORT);
+        callback->OnLookupComplete(this, rec, status);
 }
 
 nsresult

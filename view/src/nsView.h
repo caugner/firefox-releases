@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -40,6 +40,7 @@
 
 #include "nsIView.h"
 #include "nsIWidget.h"
+#include "nsRegion.h"
 #include "nsRect.h"
 #include "nsCRT.h"
 #include "nsIFactory.h"
@@ -55,26 +56,39 @@ class nsIViewManager;
 class nsViewManager;
 class nsZPlaceholderView;
 
-// IID for the nsIClipView interface
-#define NS_ICLIPVIEW_IID    \
-{ 0x4cc36160, 0xd282, 0x11d2, \
-{ 0x90, 0x67, 0x00, 0x60, 0xb0, 0xf1, 0x99, 0xa2 } }
+// View flags private to the view module
 
-class nsIClipView : public nsISupports
-{
-public:
-  NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICLIPVIEW_IID)
-};
+// indicates that the view is or contains a placeholder view
+#define NS_VIEW_FLAG_CONTAINS_PLACEHOLDER 0x0100
 
+// Flag to determine whether the view will check if events can be handled
+// by its children or just handle the events itself
+#define NS_VIEW_FLAG_DONT_CHECK_CHILDREN  0x0200
+
+// indicates that the view should not be bitblt'd when moved
+// or scrolled and instead must be repainted
+#define NS_VIEW_FLAG_DONT_BITBLT          0x0400
+
+// set if this view is clipping its normal descendants
+// to its bounds. When this flag is set, child views
+// bounds need not be inside this view's bounds.
+#define NS_VIEW_FLAG_CLIP_CHILDREN_TO_BOUNDS      0x0800
+
+// set if this view is clipping its descendants (including
+// placeholders) to its bounds
+#define NS_VIEW_FLAG_CLIP_PLACEHOLDERS_TO_BOUNDS  0x1000
+
+// set if this view has positioned its widget at least once
+#define NS_VIEW_FLAG_HAS_POSITIONED_WIDGET 0x2000
 
 class nsView : public nsIView
 {
 public:
-  nsView();
+  nsView(nsViewManager* aViewManager = nsnull,
+         nsViewVisibility aVisibility = nsViewVisibility_kShow);
 
   NS_DECL_AND_IMPL_ZEROING_OPERATOR_NEW
 
-  // nsISupports
   NS_IMETHOD  QueryInterface(const nsIID& aIID, void** aInstancePtr);
 
   /**
@@ -112,7 +126,8 @@ public:
    * The x and y coordinates may be < 0, indicating that the view extends above
    * or to the left of its origin position.
    */
-  virtual void SetDimensions(const nsRect &aRect, PRBool aPaint = PR_TRUE);
+  virtual void SetDimensions(const nsRect &aRect, PRBool aPaint = PR_TRUE,
+                             PRBool aResizeWidget = PR_TRUE);
   void GetDimensions(nsRect &aRect) const { aRect = mDimBounds; aRect.x -= mPosX; aRect.y -= mPosY; }
   void GetDimensions(nsSize &aSize) const { aSize.width = mDimBounds.width; aSize.height = mDimBounds.height; }
 
@@ -198,11 +213,6 @@ public:
    */
   NS_IMETHOD  SetContentTransparency(PRBool aTransparent);
   /**
-   * Gets the dirty region associated with this view. Used by the view
-   * manager.
-   */
-  nsresult GetDirtyRegion(nsIRegion*& aRegion);
-  /**
    * Set the widget associated with this view.
    * @param aWidget widget to associate with view. It is an error
    *        to associate a widget with more than one view. To disassociate
@@ -216,17 +226,15 @@ public:
   /**
    * @return the view's dimensions after clipping by ancestors is applied
    * (the rect is relative to the view's origin)
+   * @param aStopAtView do not consider clipping imposed by views above this view
+   * on the ancestor chain
    */
-  nsRect GetClippedRect();
-
-  /**
-   * Sync your widget size and position with the view
-   */
-  NS_IMETHOD SynchWidgetSizePosition();
-
+  nsRect GetClippedRect(nsIView* aStopAtView = nsnull);
 
   // Helper function to get the view that's associated with a widget
-  static nsView*  GetViewFor(nsIWidget* aWidget);
+  static nsView* GetViewFor(nsIWidget* aWidget) {
+    return NS_STATIC_CAST(nsView*, nsIView::GetViewFor(aWidget));
+  }
 
   // Helper function to get mouse grabbing off this view (by moving it to the
   // parent, if we can)
@@ -249,6 +257,17 @@ public:
   // These are defined exactly the same in nsIView, but for now they have to be redeclared
   // here because of stupid C++ method hiding rules
 
+  PRBool HasNonEmptyDirtyRegion() {
+    return mDirtyRegion && !mDirtyRegion->IsEmpty();
+  }
+  nsRegion* GetDirtyRegion() {
+    if (!mDirtyRegion) {
+      mDirtyRegion = new nsRegion();
+      NS_ASSERTION(mDirtyRegion, "Out of memory!");
+    }
+    return mDirtyRegion;
+  }
+
   void InsertChild(nsView *aChild, nsView *aSibling);
   void RemoveChild(nsView *aChild);
 
@@ -270,24 +289,29 @@ public:
   // Just write "pt -= view->GetPosition();"
   // When everything's converted to nsPoint, this can go away.
   void ConvertFromParentCoords(nscoord* aX, nscoord* aY) const { *aX -= mPosX; *aY -= mPosY; }
-  void ResetWidgetPosition(PRBool aRecurse);
+  void ResetWidgetBounds(PRBool aRecurse, PRBool aMoveOnly, PRBool aInvalidateChangedSize);
   void SetPositionIgnoringChildWidgets(nscoord aX, nscoord aY);
   nsresult LoadWidget(const nsCID &aClassIID);
 
-protected:
+  // Update the cached RootViewManager for all view manager descendents,
+  // If the hierarchy is being removed, aViewManagerParent points to the view
+  // manager for the hierarchy's old parent, and will have its mouse grab
+  // released if it points to any view in this view hierarchy.
+  void InvalidateHierarchy(nsViewManager *aViewManagerParent);
+
   virtual ~nsView();
 
 protected:
-  nsZPlaceholderView*mZParent;
+  // Do the actual work of ResetWidgetBounds, unconditionally.  Don't
+  // call this method if we have no widget.
+  void DoResetWidgetBounds(PRBool aMoveOnly, PRBool aInvalidateChangedSize);
+  
+  nsZPlaceholderView* mZParent;
 
   // mClipRect is relative to the view's origin.
-  nsRect*         mClipRect;
-  nsIRegion*      mDirtyRegion;
-  PRPackedBool    mChildRemoved;
-
-private:
-  NS_IMETHOD_(nsrefcnt) AddRef(void);
-  NS_IMETHOD_(nsrefcnt) Release(void);
+  nsRect*      mClipRect;
+  nsRegion*    mDirtyRegion;
+  PRPackedBool mChildRemoved;
 };
 
 #endif

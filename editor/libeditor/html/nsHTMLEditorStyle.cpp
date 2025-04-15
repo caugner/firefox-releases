@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Daniel Glazman <glazman@netscape.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsUnicharUtils.h"
@@ -769,7 +768,7 @@ nsresult nsHTMLEditor::RemoveStyleInside(nsIDOMNode *aNode,
   }  
   if ( aProperty == nsEditProperty::font &&    // or node is big or small and we are setting font size
        (nsHTMLEditUtils::IsBig(aNode) || nsHTMLEditUtils::IsSmall(aNode)) &&
-       aAttribute->Equals(NS_LITERAL_STRING("size"),nsCaseInsensitiveStringComparator()))       
+       aAttribute->LowerCaseEqualsLiteral("size"))       
   {
     res = RemoveContainer(aNode);  // if we are setting font size, remove any nested bigs and smalls
   }
@@ -799,7 +798,7 @@ PRBool nsHTMLEditor::IsOnlyAttribute(nsIDOMNode *aNode,
     if (attrString.Equals(*aAttribute,nsCaseInsensitiveStringComparator())) continue;
     // if it's a special _moz... attribute, keep looking
     attrString.Left(tmp,4);
-    if (tmp.Equals(NS_LITERAL_STRING("_moz"),nsCaseInsensitiveStringComparator())) continue;
+    if (tmp.LowerCaseEqualsLiteral("_moz")) continue;
     // otherwise, it's another attribute, so return false
     return PR_FALSE;
   }
@@ -1368,7 +1367,7 @@ nsresult nsHTMLEditor::RemoveInlinePropertyImpl(nsIAtom *aProperty, const nsAStr
             // remove is applied; but we found no element in the ancestors of startNode
             // carrying specified styles; assume it comes from a rule and let's try to
             // insert a span "inverting" the style
-            nsAutoString value; value.AssignWithConversion("-moz-editor-invert-value");
+            nsAutoString value; value.AssignLiteral("-moz-editor-invert-value");
             PRInt32 startOffset, endOffset;
             range->GetStartOffset(&startOffset);
             range->GetEndOffset(&endOffset);
@@ -1431,7 +1430,7 @@ nsresult nsHTMLEditor::RemoveInlinePropertyImpl(nsIAtom *aProperty, const nsAStr
               // carrying specified styles; assume it comes from a rule and let's try to
               // insert a span "inverting" the style
               if (mHTMLCSSUtils->IsCSSInvertable(aProperty, aAttribute)) {
-                nsAutoString value; value.AssignWithConversion("-moz-editor-invert-value");
+                nsAutoString value; value.AssignLiteral("-moz-editor-invert-value");
                 SetInlinePropertyOnNode(node, aProperty, aAttribute, &value);
               }
             }
@@ -1502,7 +1501,7 @@ nsHTMLEditor::RelativeFontChange( PRInt32 aSizeChange)
     if (!CanContainTag(selectedNode, tag)) return NS_OK;
 
     // manipulating text attributes on a collapsed selection only sets state for the next text insertion
-    return mTypeInState->SetProp(atom, nsAutoString(), nsAutoString());
+    return mTypeInState->SetProp(atom, EmptyString(), EmptyString());
   }
   
   // wrap with txn batching, rules sniffing, and selection preservation code
@@ -1712,8 +1711,8 @@ nsHTMLEditor::RelativeFontChangeHelper( PRInt32 aSizeChange,
 
   nsresult res = NS_OK;
   nsAutoString tag;
-  if (aSizeChange == 1) tag.Assign(NS_LITERAL_STRING("big"));
-  else tag.Assign(NS_LITERAL_STRING("small"));
+  if (aSizeChange == 1) tag.AssignLiteral("big");
+  else tag.AssignLiteral("small");
   nsCOMPtr<nsIDOMNodeList> childNodes;
   PRInt32 j;
   PRUint32 childCount;
@@ -1775,8 +1774,8 @@ nsHTMLEditor::RelativeFontChangeOnNode( PRInt32 aSizeChange,
   nsresult res = NS_OK;
   nsCOMPtr<nsIDOMNode> tmp;
   nsAutoString tag;
-  if (aSizeChange == 1) tag.Assign(NS_LITERAL_STRING("big"));
-  else tag.Assign(NS_LITERAL_STRING("small"));
+  if (aSizeChange == 1) tag.AssignLiteral("big");
+  else tag.AssignLiteral("small");
   
   // is it the opposite of what we want?  
   if ( ((aSizeChange == 1) && nsHTMLEditUtils::IsSmall(aNode)) || 

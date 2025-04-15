@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsMsgSend.h"
@@ -81,14 +81,11 @@
 #include "nsIAbAddressCollecter.h"
 #include "nsAbBaseCID.h"
 #include "nsCOMPtr.h"
-#include "nsIDNSService.h"
 #include "mozITXTToHTMLConv.h"
 #include "nsIMsgStatusFeedback.h"
 #include "nsIMsgMailSession.h"
 #include "nsTextFormatter.h"
-#include "nsIWebShell.h"
 #include "nsIPrompt.h"
-#include "nsIAppShellService.h"
 #include "nsMailHeaders.h"
 #include "nsIDocShell.h"
 #include "nsMimeTypes.h"
@@ -105,12 +102,12 @@
 #include "nsMsgUtils.h"
 #include "nsIMsgMdnGenerator.h"
 #include "nsISmtpServer.h"
-#include "nsIMsgCompose.h"
 #include "nsIRDFService.h"
 #include "nsRDFCID.h"
 #include "nsIMsgAccountManager.h"
-#include "nsNativeCharsetUtils.h" 
+#include "nsNativeCharsetUtils.h"
 #include "nsIAbCard.h"
+#include "nsIMsgProgress.h"
 
 static NS_DEFINE_CID(kRDFServiceCID, NS_RDFSERVICE_CID);
 
@@ -520,51 +517,29 @@ char * mime_get_stream_write_buffer(void)
   return mime_mailto_stream_write_buffer;
 }
 
-static PRBool isEmpty( const char* _pHeaderLine )
+static PRBool isEmpty(const char* aString)
 {
-	return ( nsnull == _pHeaderLine ) || ( 0 == *_pHeaderLine );
+  return (!aString) || (!*aString);
 }
 
-void nsMsgComposeAndSend::GenerateMessageId( )
+void nsMsgComposeAndSend::GenerateMessageId()
 {
-  // When only saving the message, do not generate an id
-  // This is because when really sending the message later, the characteristics which control the
-  // generation may have changed, so we want to re-check them then (which we would not do if there is
-  // already an id present).
-  if  (   ( nsIMsgCompDeliverMode::Now == m_deliver_mode )
-      ||  ( nsIMsgCompDeliverMode::Later == m_deliver_mode )
-      )
+  if (isEmpty(mCompFields->GetMessageId()))
   {
-    // is there already a message id?
-    if ( isEmpty( mCompFields->GetMessageId() ) )
-    { // nope. check if we need to generate one
-
-      // spec:
-      // * if there is at least one mail target, we always generate an id
-      // * if there are only news targets, we check the preference "generate_news_message_id"
-      // * (then) if and only if the preference exists and is set to true, we do generate an id
-
-      if  (   isEmpty( mCompFields->GetTo() )
-          &&  isEmpty( mCompFields->GetCc() )
-          &&  isEmpty( mCompFields->GetBcc() )
-          ) 
-      { // no mail target. assume news targets (messages without both mail and news targets
-        // would not make sense, would they?)
-
-        // what does the identity say 'bout message id generation?
-        PRBool bGenerateMessageId = PR_FALSE;
-        mUserIdentity->GetBoolAttribute( "generate_news_message_id", &bGenerateMessageId );
-          // Note: if the preference is not found, this defaults to PR_FALSE. As we do not initially write
-          // this pref when deploying Mozilla, this means that by default, no ids are generated for news targets.
-        if ( !bGenerateMessageId )
-          return;
-      }
-
-      // here we are, finally required to generate an id ....
-      char* msgID = msg_generate_message_id( mUserIdentity );
-      mCompFields->SetMessageId( msgID );
-      PR_FREEIF( msgID );
+    if (isEmpty(mCompFields->GetTo()) &&
+        isEmpty(mCompFields->GetCc()) &&
+        isEmpty(mCompFields->GetBcc()) &&
+        !isEmpty(mCompFields->GetNewsgroups()))
+    {
+      PRBool generateNewsMessageId = PR_FALSE;
+      mUserIdentity->GetBoolAttribute("generate_news_message_id", &generateNewsMessageId);
+      if (!generateNewsMessageId)
+        return;
     }
+
+    char* msgID = msg_generate_message_id(mUserIdentity);
+    mCompFields->SetMessageId(msgID);
+    PR_Free(msgID);
   }
 }
 
@@ -738,7 +713,8 @@ nsMsgComposeAndSend::GatherMimeAttachments()
       {
         nsAutoString error_msg;
         nsAutoString path;
-        NS_CopyNativeToUnicode(nsDependentCString(mHTMLFileSpec->GetNativePathCString()), path);
+        NS_CopyNativeToUnicode(
+          nsDependentCString(mHTMLFileSpec->GetNativePathCString()), path);
         nsMsgBuildErrorMessageByID(NS_MSG_UNABLE_TO_OPEN_TMP_FILE, error_msg, &path, nsnull);
         mSendReport->SetMessage(nsIMsgSendReport::process_Current, error_msg.get(), PR_FALSE);
       }
@@ -822,7 +798,8 @@ nsMsgComposeAndSend::GatherMimeAttachments()
     {
       nsAutoString error_msg;
       nsAutoString path;
-      NS_CopyNativeToUnicode(nsDependentCString(mTempFileSpec->GetNativePathCString()), path);
+      NS_CopyNativeToUnicode(
+        nsDependentCString(mTempFileSpec->GetNativePathCString()), path);
       nsMsgBuildErrorMessageByID(NS_MSG_UNABLE_TO_OPEN_TMP_FILE, error_msg, &path, nsnull);
       mSendReport->SetMessage(nsIMsgSendReport::process_Current, error_msg.get(), PR_FALSE);
     }
@@ -852,6 +829,9 @@ nsMsgComposeAndSend::GatherMimeAttachments()
   PR_FREEIF(m_attachment1_encoding);
   if (m_attachment1_body)
     mCompFields->GetBodyIsAsciiOnly(&body_is_us_ascii);
+
+  if (mCompFields->GetForceMsgEncoding())
+    body_is_us_ascii = PR_FALSE;
 
   if (nsMsgI18Nstateful_charset(mCompFields->GetCharacterSet()) ||
       body_is_us_ascii)
@@ -1470,13 +1450,14 @@ nsMsgComposeAndSend::GetEmbeddedObjectInfo(nsIDOMNode *node, nsMsgAttachmentData
   {
     nsAutoString attributeValue;
     if (NS_SUCCEEDED(domElement->GetAttribute(NS_LITERAL_STRING("moz-do-not-send"), attributeValue)))
-      if (attributeValue.Equals(NS_LITERAL_STRING("true"), nsCaseInsensitiveStringComparator()))
+      if (attributeValue.LowerCaseEqualsLiteral("true"))
         return NS_OK;
   }
     
   // Now, we know the types of objects this node can be, so we will do
   // our query interface here and see what we come up with 
   nsCOMPtr<nsIDOMHTMLBodyElement>     body = (do_QueryInterface(node));
+  // XXX convert to use nsIImageLoadingContent?
   nsCOMPtr<nsIDOMHTMLImageElement>    image = (do_QueryInterface(node));
   nsCOMPtr<nsIDOMHTMLLinkElement>     link = (do_QueryInterface(node));
   nsCOMPtr<nsIDOMHTMLAnchorElement>   anchor = (do_QueryInterface(node));
@@ -1488,7 +1469,7 @@ nsMsgComposeAndSend::GetEmbeddedObjectInfo(nsIDOMNode *node, nsMsgAttachmentData
     if (NS_SUCCEEDED(body->GetBackground(tUrl)))
     {
       nsCAutoString turlC;
-      turlC.AssignWithConversion(tUrl);
+      CopyUTF16toUTF8(tUrl, turlC);
       if (NS_SUCCEEDED(nsMsgNewURL(&attachment->url, turlC.get())))      
         NS_IF_ADDREF(attachment->url);
       else
@@ -1505,7 +1486,7 @@ nsMsgComposeAndSend::GetEmbeddedObjectInfo(nsIDOMNode *node, nsMsgAttachmentData
     if (NS_FAILED(image->GetSrc(tUrl)))
       return NS_ERROR_FAILURE;
     nsCAutoString turlC;
-    turlC.AssignWithConversion(tUrl);
+    CopyUTF16toUTF8(tUrl, turlC);
     if (NS_FAILED(nsMsgNewURL(&attachment->url, turlC.get())))
     {
       // Well, the first time failed...which means we probably didn't get
@@ -1529,13 +1510,13 @@ nsMsgComposeAndSend::GetEmbeddedObjectInfo(nsIDOMNode *node, nsMsgAttachmentData
         
         // Ok, now get the path to the root doc and tack on the name we
         // got from the GetSrc() call....
-        NS_ConvertUTF8toUCS2 workURL(spec);
+        NS_ConvertUTF8toUTF16 workURL(spec);
         
         PRInt32 loc = workURL.RFind("/");
         if (loc >= 0)
           workURL.SetLength(loc+1);
         workURL.Append(tUrl);
-        NS_ConvertUCS2toUTF8 workurlC(workURL);
+        NS_ConvertUTF16toUTF8 workurlC(workURL);
         if (NS_FAILED(nsMsgNewURL(&attachment->url, workurlC.get())))
         {
           // rhp - just try to continue and send it without this image.
@@ -1548,11 +1529,11 @@ nsMsgComposeAndSend::GetEmbeddedObjectInfo(nsIDOMNode *node, nsMsgAttachmentData
     
     rv = image->GetName(tName);
     NS_ENSURE_SUCCESS(rv, rv);
-    attachment->real_name = ToNewCString(tName);
+    attachment->real_name = ToNewCString(tName); // XXX i18n
     
     image->GetLongDesc(tDesc);
     NS_ENSURE_SUCCESS(rv, rv);
-    attachment->description = ToNewCString(tDesc);
+    attachment->description = ToNewCString(tDesc); // XXX i18n
     
   }
   else if (link)        // Is this a link?
@@ -1563,7 +1544,7 @@ nsMsgComposeAndSend::GetEmbeddedObjectInfo(nsIDOMNode *node, nsMsgAttachmentData
     rv = link->GetHref(tUrl);
     NS_ENSURE_SUCCESS(rv, rv);
     nsCAutoString turlC;
-    turlC.AssignWithConversion(tUrl);
+    CopyUTF16toUTF8(tUrl, turlC);
     rv = nsMsgNewURL(&attachment->url, turlC.get());
     NS_ENSURE_SUCCESS(rv, rv);
     
@@ -1578,7 +1559,7 @@ nsMsgComposeAndSend::GetEmbeddedObjectInfo(nsIDOMNode *node, nsMsgAttachmentData
     rv = anchor->GetHref(tUrl);
     NS_ENSURE_SUCCESS(rv, rv);
     nsCAutoString turlC;
-    turlC.AssignWithConversion(tUrl);
+    CopyUTF16toUTF8(tUrl, turlC);
     rv = nsMsgNewURL(&attachment->url, turlC.get());
     NS_ENSURE_SUCCESS(rv, rv);
     
@@ -1699,7 +1680,8 @@ nsMsgComposeAndSend::GetBodyFromEditor()
   // 
   // Query the editor, get the body of HTML!
   //
-  nsString  format; format.AssignWithConversion(TEXT_HTML);
+  nsString  format;
+  format.AssignLiteral(TEXT_HTML);
   PRUint32  flags = nsIDocumentEncoder::OutputFormatted  | nsIDocumentEncoder::OutputNoFormattingInPre;
   nsAutoString bodyStr;
   PRUnichar* bodyText = nsnull;
@@ -1770,7 +1752,11 @@ nsMsgComposeAndSend::GetBodyFromEditor()
     rv = nsMsgI18NSaveAsCharset(mCompFields->GetForcePlainText() ? TEXT_PLAIN : attachment1_type, 
                                 aCharset, bodyText, getter_Copies(outCString), nsnull, &isAsciiOnly);
 
+    if (mCompFields->GetForceMsgEncoding())
+      isAsciiOnly = PR_FALSE;
+
     mCompFields->SetBodyIsAsciiOnly(isAsciiOnly);
+      
     // body contains characters outside the current mail charset,
     // ask whether to convert to UTF-8 (bug 233361). do this only for text/plain
     if ((NS_ERROR_UENC_NOMAPPING == rv) && mCompFields->GetForcePlainText()) {
@@ -1787,17 +1773,25 @@ nsMsgComposeAndSend::GetBodyFromEditor()
            getter_Copies(outCString), getter_Copies(fallbackCharset));
 
       if (NS_ERROR_UENC_NOMAPPING == rv) {
-        PRBool sendInUTF8;
-        nsCOMPtr<nsIPrompt> prompt;
-        GetDefaultPrompt(getter_AddRefs(prompt));
-        rv = nsMsgAskBooleanQuestionByID(prompt, NS_ERROR_MSG_MULTILINGUAL_SEND,
-                                         &sendInUTF8);
-        if (!sendInUTF8) {
-          Recycle(bodyText);
-          return NS_ERROR_MSG_MULTILINGUAL_SEND;
+        PRBool needToCheckCharset;
+        mCompFields->GetNeedToCheckCharset(&needToCheckCharset);
+        if (needToCheckCharset) {
+          nsCOMPtr<nsIPrompt> prompt;
+          GetDefaultPrompt(getter_AddRefs(prompt));
+          PRInt32 answer = nsMsgAskAboutUncoveredCharacters(prompt);
+          switch (answer) {
+            case 0 : // convert to UTF-8
+              CopyUTF16toUTF8(bodyText, outCString);
+              mCompFields->SetCharacterSet("UTF-8"); // tag as UTF-8
+              break; 
+            case 1 : // send anyway 
+              break;
+            case 2 : // return to the editor
+            default :
+              Recycle(bodyText);
+              return NS_ERROR_MSG_MULTILINGUAL_SEND;
+          }
         }
-        CopyUTF16toUTF8(bodyText, outCString);
-        mCompFields->SetCharacterSet("UTF-8"); // tag as UTF-8
       }
       // re-label to the fallback charset
       else if (fallbackCharset)
@@ -2313,8 +2307,14 @@ nsMsgComposeAndSend::AddCompFieldLocalAttachments()
               if (NS_SUCCEEDED(rv))
               {
                 rv = fileUrl->GetFileExtension(fileExt);
-                if (NS_SUCCEEDED(rv) && !fileExt.IsEmpty())
-                  mimeFinder->GetTypeFromExtension(fileExt.get(), &(m_attachments[newLoc].m_type));
+                if (NS_SUCCEEDED(rv) && !fileExt.IsEmpty()) {
+                  nsCAutoString type;
+                  mimeFinder->GetTypeFromExtension(fileExt, type);
+#if !defined(XP_MAC) && !defined(XP_MACOSX)
+                  if (!type.Equals("multipart/appledouble"))  // can't do apple double on non-macs
+#endif
+                  m_attachments[newLoc].m_type = ToNewCString(type);
+                }
               }
 
               //Then try using the url if we still haven't figured out the content type
@@ -2324,15 +2324,16 @@ nsMsgComposeAndSend::AddCompFieldLocalAttachments()
                 if (NS_SUCCEEDED(rv))
                 {
                   rv = fileUrl->GetFileExtension(fileExt);
-                  if (NS_SUCCEEDED(rv) && !fileExt.IsEmpty())
-                    mimeFinder->GetTypeFromExtension(fileExt.get(), &(m_attachments[newLoc].m_type));
+                  if (NS_SUCCEEDED(rv) && !fileExt.IsEmpty()) {
+                    nsCAutoString type;
+                    mimeFinder->GetTypeFromExtension(fileExt, type);
+#if !defined(XP_MAC) && !defined(XP_MACOSX)
+                  if (!type.Equals("multipart/appledouble"))  // can't do apple double on non-macs
+#endif
+                    m_attachments[newLoc].m_type = ToNewCString(type);
+                  }
                 }
               }
-#if !defined(XP_MAC) && !defined(XP_MACOSX)
-              if (m_attachments[newLoc].m_type && 
-                  !strcmp(m_attachments[newLoc].m_type, "multipart/appledouble"))
-                PR_FREEIF(m_attachments[newLoc].m_type);
-#endif
             }
           }
         }
@@ -3002,11 +3003,16 @@ nsMsgComposeAndSend::InitCompositionFields(nsMsgCompFields *fields)
   mCompFields->SetUuEncodeAttachments(fields->GetUuEncodeAttachments());
 
   mCompFields->SetBodyIsAsciiOnly(fields->GetBodyIsAsciiOnly());
+  mCompFields->SetForceMsgEncoding(fields->GetForceMsgEncoding());
 
   nsCOMPtr<nsISupports> secInfo;
   fields->GetSecurityInfo(getter_AddRefs(secInfo));
 
   mCompFields->SetSecurityInfo(secInfo);
+
+  PRBool needToCheckCharset;
+  fields->GetNeedToCheckCharset(&needToCheckCharset);
+  mCompFields->SetNeedToCheckCharset(needToCheckCharset);
 
   // Check the fields for legitimacy...
   //
@@ -3451,17 +3457,20 @@ nsMsgComposeAndSend::DeliverFileAsMail()
   if (mCompFields->GetTo() && *mCompFields->GetTo())
   {
     PL_strcat (buf2, mCompFields->GetTo());
-    addressCollecter->CollectAddress(mCompFields->GetTo(), collectAddresses /* create card if one doesn't exist */, sendFormat);
+    if (addressCollecter)
+      addressCollecter->CollectAddress(mCompFields->GetTo(), collectAddresses /* create card if one doesn't exist */, sendFormat);
   }
   if (mCompFields->GetCc() && *mCompFields->GetCc()) {
     if (*buf2) PL_strcat (buf2, ",");
       PL_strcat (buf2, mCompFields->GetCc());
-    addressCollecter->CollectAddress(mCompFields->GetCc(), collectAddresses /* create card if one doesn't exist */, sendFormat);
+    if (addressCollecter)
+      addressCollecter->CollectAddress(mCompFields->GetCc(), collectAddresses /* create card if one doesn't exist */, sendFormat);
   }
   if (mCompFields->GetBcc() && *mCompFields->GetBcc()) {
     if (*buf2) PL_strcat (buf2, ",");
       PL_strcat (buf2, mCompFields->GetBcc());
-    addressCollecter->CollectAddress(mCompFields->GetBcc(), collectAddresses /* create card if one doesn't exist */, sendFormat);
+    if (addressCollecter)
+      addressCollecter->CollectAddress(mCompFields->GetBcc(), collectAddresses /* create card if one doesn't exist */, sendFormat);
   }
 
   // We need undo groups to keep only the addresses
@@ -3664,7 +3673,10 @@ nsMsgComposeAndSend::DoDeliveryExitProcessing(nsIURI * aUri, nsresult aExitCode,
 #endif
 
     nsXPIDLString eMsg; 
-    if (aExitCode == NS_ERROR_SMTP_SEND_FAILED || aExitCode == NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER)
+    if (aExitCode == NS_ERROR_SMTP_SEND_FAILED ||
+        aExitCode == NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER ||
+        aExitCode == NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER_WITH_STARTTLS1 ||
+        aExitCode == NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER_WITH_STARTTLS2)
       FormatStringWithSMTPHostNameByID(aExitCode, getter_Copies(eMsg));
     else
     mComposeBundle->GetStringByID(aExitCode, getter_Copies(eMsg));
@@ -3936,6 +3948,7 @@ nsMsgComposeAndSend::NotifyListenerOnStopCopy(nsresult aStatus)
     nsMsgAskBooleanQuestionByID(prompt, NS_MSG_ERROR_DOING_FCC, &retry, nsnull /* what title */);
     if (retry)
     {
+      mSendProgress = nsnull; // this was cancelled, so we need to clear it.
       return DoFcc();
     }
 
@@ -4335,7 +4348,8 @@ nsMsgComposeAndSend::MimeDoFCC(nsFileSpec       *input_file,
     {
       nsAutoString error_msg;
       nsAutoString path;
-      NS_CopyNativeToUnicode(nsDependentCString(tFileSpec->GetNativePathCString()), path); 
+      NS_CopyNativeToUnicode(
+        nsDependentCString(tFileSpec->GetNativePathCString()), path);
       nsMsgBuildErrorMessageByID(NS_MSG_UNABLE_TO_OPEN_TMP_FILE, error_msg, &path, nsnull);
       mSendReport->SetMessage(nsIMsgSendReport::process_Current, error_msg.get(), PR_FALSE);
     }
@@ -4355,7 +4369,8 @@ nsMsgComposeAndSend::MimeDoFCC(nsFileSpec       *input_file,
     {
       nsAutoString error_msg;
       nsAutoString path;
-      NS_CopyNativeToUnicode(nsDependentCString(input_file->GetNativePathCString()), path);
+      NS_CopyNativeToUnicode(
+        nsDependentCString(input_file->GetNativePathCString()), path);
       nsMsgBuildErrorMessageByID(NS_MSG_UNABLE_TO_OPEN_FILE, error_msg, &path, nsnull);
       mSendReport->SetMessage(nsIMsgSendReport::process_Current, error_msg.get(), PR_FALSE);
     }
@@ -4447,7 +4462,7 @@ nsMsgComposeAndSend::MimeDoFCC(nsFileSpec       *input_file,
   {
     char       *buf = 0;
     PRUint16   flags = 0;
-
+    
     // for save as draft and send later, we want to leave the message as unread.
     // See Bug #198087
     if (mode == nsMsgQueueForLater)
@@ -4830,6 +4845,12 @@ nsresult nsMsgComposeAndSend::Abort()
     mRunningRequest = nsnull;
   }
   
+  if (mCopyObj)
+  {
+    nsCOMPtr<nsIMsgCopyService> copyService = do_GetService(NS_MSGCOPYSERVICE_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    copyService->NotifyCompletion(mCopyFileSpec, mCopyObj->mDstFolder, NS_ERROR_ABORT);
+  }
   mAbortInProcess = PR_FALSE;
   return NS_OK;
 }

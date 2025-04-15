@@ -25,7 +25,7 @@
  * DEALINGS IN THE SOFTWARE.
  *
  * Contributor(s):
- *   Chak Nanga <chak@netscape.com> 
+ *   Chak Nanga <chak@netscape.com>
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -36,6 +36,7 @@
 #include "nsString.h"
 #include "nsILocalFile.h"
 #include "nsIURI.h"
+#include "nsNetError.h"
 #include "nsIMIMEInfo.h"
 #include "nsIDOMWindow.h"
 #include "nsIEmbeddingSiteWindow.h"
@@ -210,7 +211,7 @@ CWnd* CHelperAppLauncherDialog::GetParentFromContext(nsISupports *aWindowContext
 //
 NS_IMETHODIMP CHelperAppLauncherDialog::Show(nsIHelperAppLauncher *aLauncher, 
                                              nsISupports *aContext,
-                                             PRBool aForced)
+                                             PRUint32 aReason)
 {
     ResourceState setState;
 
@@ -221,7 +222,7 @@ NS_IMETHODIMP CHelperAppLauncherDialog::Show(nsIHelperAppLauncher *aLauncher,
     {
         // User chose Cancel - just cancel the download
 
-        aLauncher->Cancel();
+        aLauncher->Cancel(NS_BINDING_ABORTED);
 
         return NS_OK;
     }
@@ -313,8 +314,8 @@ BOOL CChooseActionDlg::OnInitDialog()
         // Retrieve and set the Mime type of the content we're downloading
         // in the content type field of the dialog box
         //
-        nsXPIDLCString mimeType;
-        nsresult rv = mimeInfo->GetMIMEType(getter_Copies(mimeType));
+        nsCAutoString mimeType;
+        nsresult rv = mimeInfo->GetMIMEType(mimeType);
         if(NS_SUCCEEDED(rv)) 
         {
             CStatic *pMimeType = (CStatic *)GetDlgItem(IDC_CONTENT_TYPE);
@@ -358,8 +359,8 @@ void CChooseActionDlg::InitWithPreferredAction(nsIMIMEInfo* aMimeInfo)
 
     // See if we can get the appname
     //
-    nsXPIDLString appDesc;
-    nsresult rv = aMimeInfo->GetApplicationDescription(getter_Copies(appDesc));
+    nsAutoString appDesc;
+    nsresult rv = aMimeInfo->GetApplicationDescription(appDesc);
     if(NS_SUCCEEDED(rv)) 
     {
         USES_CONVERSION;
@@ -587,7 +588,7 @@ BOOL CProgressDlg::OnInitDialog()
 void CProgressDlg::OnCancel() 
 {
     if(m_HelperAppLauncher)
-        m_HelperAppLauncher->Cancel();
+        m_HelperAppLauncher->Cancel(NS_BINDING_ABORTED);
 
 	DestroyWindow();
 }

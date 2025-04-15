@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,30 +14,29 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998, 1999
+ * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsMsgCopyService.h"
-#include "nsVoidArray.h"
 #include "nsMsgKeyArray.h"
 #include "nspr.h"
 #include "nsIFileSpec.h"
@@ -83,6 +82,7 @@ MOZ_DECL_CTOR_COUNTER(nsCopyRequest)
 nsCopyRequest::nsCopyRequest() :
     m_requestType(nsCopyMessagesType),
     m_isMoveOrDraftOrTemplate(PR_FALSE),
+    m_newMsgFlags(0),
     m_processed(PR_FALSE)
 {
   MOZ_COUNT_CTOR(nsCopyRequest);
@@ -106,7 +106,7 @@ nsCopyRequest::~nsCopyRequest()
 nsresult
 nsCopyRequest::Init(nsCopyRequestType type, nsISupports* aSupport,
                     nsIMsgFolder* dstFolder,
-                    PRBool bVal, nsIMsgCopyServiceListener* listener,
+                    PRBool bVal, PRUint32 newMsgFlags, nsIMsgCopyServiceListener* listener,
                     nsIMsgWindow* msgWindow, PRBool allowUndo)
 {
   nsresult rv = NS_OK;
@@ -115,6 +115,7 @@ nsCopyRequest::Init(nsCopyRequestType type, nsISupports* aSupport,
   m_dstFolder = dstFolder;
   m_isMoveOrDraftOrTemplate = bVal;
   m_allowUndo = allowUndo;
+  m_newMsgFlags = newMsgFlags;
   if (listener)
       m_listener = listener;
   if (msgWindow)
@@ -252,6 +253,7 @@ nsMsgCopyService::DoNextCopy()
     for (i=0; i < cnt; i++)
     {
       copyRequest = (nsCopyRequest*) m_copyRequests.ElementAt(i);
+      copySource = nsnull;
       scnt = copyRequest->m_copySourceArray.Count();
       if (!copyRequest->m_processed)
       {
@@ -318,6 +320,7 @@ nsMsgCopyService::DoNextCopy()
                 rv = copyRequest->m_dstFolder->CopyFileMessage
                     (aSpec, aMessage,
                      copyRequest->m_isMoveOrDraftOrTemplate,
+                     copyRequest->m_newMsgFlags,
                      copyRequest->m_msgWindow,
                      copyRequest->m_listener);
             }
@@ -418,8 +421,9 @@ nsMsgCopyService::CopyMessages(nsIMsgFolder* srcFolder, /* UI src folder */
 
   aSupport = do_QueryInterface(srcFolder, &rv);
 
-  rv = copyRequest->Init(nsCopyMessagesType, aSupport, dstFolder, 
-                         isMove, listener, window, allowUndo);
+  rv = copyRequest->Init(nsCopyMessagesType, aSupport, dstFolder, isMove, 
+                        0 /* new msg flags, not used */, listener, 
+                         window, allowUndo);
   if (NS_FAILED(rv)) 
     goto done;
 
@@ -516,7 +520,7 @@ nsMsgCopyService::CopyFolders( nsISupportsArray* folders,
   if (!copyRequest) return NS_ERROR_OUT_OF_MEMORY;
   
   rv = copyRequest->Init(nsCopyFoldersType, support, dstFolder, 
-    isMove, listener, window, PR_FALSE);
+    isMove, 0 /* new msg flags, not used */ , listener, window, PR_FALSE);
   NS_ENSURE_SUCCESS(rv,rv);
   
   curFolder = do_QueryInterface(support, &rv);
@@ -542,6 +546,7 @@ nsMsgCopyService::CopyFileMessage(nsIFileSpec* fileSpec,
                                   nsIMsgFolder* dstFolder,
                                   nsIMsgDBHdr* msgToReplace,
                                   PRBool isDraft,
+                                  PRUint32 aMsgFlags,
                                   nsIMsgCopyServiceListener* listener,
                                   nsIMsgWindow* window)
 {
@@ -562,7 +567,7 @@ nsMsgCopyService::CopyFileMessage(nsIFileSpec* fileSpec,
   if (NS_FAILED(rv)) goto done;
 
   rv = copyRequest->Init(nsCopyFileMessageType, fileSupport, dstFolder,
-                         isDraft, listener, window, PR_FALSE);
+                         isDraft, aMsgFlags, listener, window, PR_FALSE);
   if (NS_FAILED(rv)) goto done;
 
   if (msgToReplace)
@@ -596,10 +601,24 @@ nsMsgCopyService::NotifyCompletion(nsISupports* aSupport,
 {
   nsresult rv;
   rv = DoNextCopy();
-  nsCopyRequest* copyRequest = FindRequest(aSupport, dstFolder);
+  nsCopyRequest* copyRequest = nsnull;
+  do
+  {
+    // loop for copy requests, because if we do a cross server folder copy,
+    // we'll have a copy request for the folder copy, which will in turn
+    // generate a copy request for the messages in the folder, which
+    // will have the same src support.
+    copyRequest = FindRequest(aSupport, dstFolder);
 
-  if (copyRequest && copyRequest->m_processed) 
-    ClearRequest(copyRequest, result);
+    if (copyRequest)
+    {
+      if (copyRequest->m_processed) 
+        ClearRequest(copyRequest, result);
+      else
+        break;
+    }
+  }
+  while (copyRequest);
 
   return rv;
 }

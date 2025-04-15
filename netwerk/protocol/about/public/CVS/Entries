@@ -1,4 +1,5 @@
-/.cvsignore/1.1/Sat Jul  3 08:32:37 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.4/Sat Dec 28 01:14:16 2002//TFIREFOX_1_0_RELEASE
-/nsIAboutModule.idl/1.11/Fri Sep 28 20:09:15 2001//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Sat Jul  3 08:32:37 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.6.8.1/Wed Sep 14 04:18:36 2005//TFIREFOX_1_5_RELEASE
+/nsAboutProtocolUtils.h/1.1.2.2/Wed Sep 14 04:18:36 2005//TFIREFOX_1_5_RELEASE
+/nsIAboutModule.idl/1.13/Fri Jul 15 21:49:25 2005//TFIREFOX_1_5_RELEASE
 D

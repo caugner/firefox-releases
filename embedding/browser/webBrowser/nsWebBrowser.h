@@ -1,24 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla browser.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications, Inc.  Portions created by Netscape are
- * Copyright (C) 1999, Mozilla.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Travis Bogard <travis@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef nsWebBrowser_h__
 #define nsWebBrowser_h__
@@ -47,8 +64,10 @@
 #include "nsIWebBrowserSetup.h"
 #include "nsIWebBrowserPersist.h"
 #include "nsIWebBrowserFocus.h"
+#include "nsIWebBrowserStream.h"
 #include "nsIWindowWatcher.h"
 #include "nsIPrintSettings.h"
+#include "nsEmbedStream.h"
 
 #include "nsVoidArray.h"
 #include "nsWeakPtr.h"
@@ -80,6 +99,11 @@ public:
     nsIID mID;
 };
 
+//  {F1EAC761-87E9-11d3-AF80-00A024FFC08C} - 
+#define NS_WEBBROWSER_CID \
+{0xf1eac761, 0x87e9, 0x11d3, { 0xaf, 0x80, 0x00, 0xa0, 0x24, 0xff, 0xc0, 0x8c }}
+
+
 class nsWebBrowser : public nsIWebBrowser,
                      public nsIWebNavigation,
                      public nsIWebBrowserSetup,
@@ -91,6 +115,7 @@ class nsWebBrowser : public nsIWebBrowser,
                      public nsIWebBrowserPersist,
                      public nsIWebBrowserFocus,
                      public nsIWebProgressListener,
+                     public nsIWebBrowserStream,
                      public nsSupportsWeakReference
 {
 friend class nsDocShellTreeOwner;
@@ -108,7 +133,9 @@ public:
     NS_DECL_NSIWEBNAVIGATION
     NS_DECL_NSIWEBBROWSERSETUP
     NS_DECL_NSIWEBBROWSERPERSIST
+    NS_DECL_NSICANCELABLE
     NS_DECL_NSIWEBBROWSERFOCUS
+    NS_DECL_NSIWEBBROWSERSTREAM
     NS_DECL_NSIWEBPROGRESSLISTENER
 
 protected:
@@ -141,7 +168,6 @@ protected:
    nativeWindow               mParentNativeWindow;
    nsIWebProgressListener    *mProgressListener;
    nsCOMPtr<nsIWebProgress>      mWebProgress;
-   nsCOMPtr<nsISecureBrowserUI> mSecurityUI;
 
    nsCOMPtr<nsIPrintSettings> mPrintSettings;
 
@@ -154,9 +180,12 @@ protected:
    PRUint32                       mPersistResult;
    PRUint32                       mPersistFlags;
 
+   // stream
+   nsEmbedStream                 *mStream;
+   nsCOMPtr<nsISupports>          mStreamGuard;
+
    //Weak Reference interfaces...
    nsIWidget*                 mParentWidget;
-   nsIDocShellTreeItem*       mParent; 
    nsVoidArray *              mListenerArray;
    
 #if (defined(XP_MAC) || defined(XP_MACOSX)) && !defined(MOZ_WIDGET_COCOA)

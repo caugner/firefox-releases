@@ -1,22 +1,38 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "MPL"); you may not use this file
- * except in compliance with the MPL. You may obtain a copy of
- * the MPL at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the MPL is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the MPL for the specific language governing
- * rights and limitations under the MPL.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is XMLterm.
- * 
- * The Initial Developer of the Original Code is Ramalingam Saravanan.
- * Portions created by Ramalingam Saravanan <svn@xmlterm.org> are
- * Copyright (C) 1999 Ramalingam Saravanan. All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Ramalingam Saravanan.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 // mozXMLTermSession.cpp: implementation of mozXMLTermSession class
 
@@ -54,8 +70,6 @@
 #include "nsIViewManager.h"
 #include "nsIScrollableView.h"
 
-#include "nsIHTMLContent.h"
-
 #include "mozXMLT.h"
 #include "mozIXMLTerminal.h"
 #include "mozIXMLTermStream.h"
@@ -63,6 +77,7 @@
 #include "mozXMLTermSession.h"
 #include "nsISelectionController.h"
 #include "nsReadableUtils.h"
+#include "nsIDocument.h"
 
 /////////////////////////////////////////////////////////////////////////
 // mozXMLTermSession definition
@@ -219,7 +234,7 @@ NS_IMETHODIMP mozXMLTermSession::Init(mozIXMLTerminal* aXMLTerminal,
   // Locate document body node
   nsCOMPtr<nsIDOMNodeList> nodeList;
   nsAutoString bodyTag;
-  bodyTag.Assign(NS_LITERAL_STRING("body"));
+  bodyTag.AssignLiteral("body");
   result = vDOMHTMLDocument->GetElementsByTagName(bodyTag,
                                                   getter_AddRefs(nodeList));
   if (NS_FAILED(result) || !nodeList)
@@ -247,7 +262,7 @@ NS_IMETHODIMP mozXMLTermSession::Init(mozIXMLTerminal* aXMLTerminal,
 
   nsCOMPtr<nsIDOMElement> sessionElement;
   nsAutoString sessionID;
-  sessionID.AssignWithConversion(sessionElementNames[SESSION_ELEMENT]);
+  sessionID.AssignASCII(sessionElementNames[SESSION_ELEMENT]);
   result = vDOMHTMLDocument->GetElementById(sessionID,
                                             getter_AddRefs(sessionElement));
 
@@ -470,7 +485,7 @@ NS_IMETHODIMP mozXMLTermSession::ReadAll(mozILineTermAux* lineTermAux,
     result = lineTermAux->ReadAux(&opcodes, &opvals, &buf_row, &buf_col,
                                   &buf_str, &buf_style);
     if (NS_FAILED(result)) {
-      abortCode.Assign(NS_LITERAL_STRING("lineTermReadAux"));
+      abortCode.AssignLiteral("lineTermReadAux");
       break;
     }
 
@@ -577,7 +592,7 @@ NS_IMETHODIMP mozXMLTermSession::ReadAll(mozILineTermAux* lineTermAux,
 
         if (streamIsSecure) {
           // Secure stream, i.e., prefixed with cookie; fragments allowed
-          streamURL.Assign(NS_LITERAL_STRING("chrome://xmlterm/content/xmltblank.html"));
+          streamURL.AssignLiteral("chrome://xmlterm/content/xmltblank.html");
 
           if (opcodes & LTERM_JSSTREAM_CODE) {
             // Javascript stream 
@@ -590,7 +605,7 @@ NS_IMETHODIMP mozXMLTermSession::ReadAll(mozILineTermAux* lineTermAux,
 
         } else {
           // Insecure stream; do not display
-          streamURL.Assign(NS_LITERAL_STRING("http://in.sec.ure"));
+          streamURL.AssignLiteral("http://in.sec.ure");
           streamMarkupType = INSECURE_FRAGMENT;
         }
 
@@ -861,7 +876,7 @@ NS_IMETHODIMP mozXMLTermSession::ReadAll(mozILineTermAux* lineTermAux,
 
           PRInt32 j;
           for (j=NO_META_COMMAND+1; j<META_COMMAND_TYPES; j++) {
-            if (temString.EqualsWithConversion(metaCommandNames[j])) {
+            if (temString.EqualsASCII(metaCommandNames[j])) {
               mMetaCommandType = (MetaCommandType) j;
               break;
             }
@@ -920,7 +935,7 @@ NS_IMETHODIMP mozXMLTermSession::ReadAll(mozILineTermAux* lineTermAux,
             {
               // Construct Javascript command to handle default meta command
               nsAutoString JSCommand;
-	      JSCommand.Assign(NS_LITERAL_STRING("MetaDefault(\""));
+	      JSCommand.AssignLiteral("MetaDefault(\"");
               JSCommand.Append(commandArgs);
               JSCommand.Append(NS_LITERAL_STRING("\");"));
 
@@ -943,16 +958,16 @@ NS_IMETHODIMP mozXMLTermSession::ReadAll(mozILineTermAux* lineTermAux,
             {
               // Display URL using IFRAME
               nsAutoString url;
-	      url.Assign(NS_LITERAL_STRING("http:"));
+	      url.AssignLiteral("http:");
               url.Append(commandArgs);
               nsAutoString width;
-	      width.Assign(NS_LITERAL_STRING("100%"));
+	      width.AssignLiteral("100%");
               nsAutoString height;
-	      height.Assign(NS_LITERAL_STRING("100"));
+	      height.AssignLiteral("100");
               result = NewIFrame(mOutputBlockNode, mCurrentEntryNumber,
                                  2, url, width, height);
               if (NS_FAILED(result))
-                metaCommandOutput.Assign(NS_LITERAL_STRING("Error in displaying URL\n"));
+                metaCommandOutput.AssignLiteral("Error in displaying URL\n");
 
             }
             break;
@@ -986,12 +1001,12 @@ NS_IMETHODIMP mozXMLTermSession::ReadAll(mozILineTermAux* lineTermAux,
               lsCommand.SetLength(0);
 
               if (!commandArgs.IsEmpty()) {
-                lsCommand.Append(NS_LITERAL_STRING("cd "));
+                lsCommand.AppendLiteral("cd ");
                 lsCommand.Append(commandArgs);
-                lsCommand.Append(NS_LITERAL_STRING(";"));
+                lsCommand.AppendLiteral(";");
               }
 
-              lsCommand.Append(NS_LITERAL_STRING("ls -dF `pwd`/*\n"));
+              lsCommand.AppendLiteral("ls -dF `pwd`/*\n");
 
               //mXMLTerminal->SendText(lsCommand);
 
@@ -1013,7 +1028,7 @@ NS_IMETHODIMP mozXMLTermSession::ReadAll(mozILineTermAux* lineTermAux,
             XMLT_LOG(mozXMLTermSession::ReadAll,62,("metaCommandOutput\n"));
 
             // Ignore the string "false", if that's the only output
-            if (metaCommandOutput.Equals(NS_LITERAL_STRING("false")))
+            if (metaCommandOutput.EqualsLiteral("false"))
               metaCommandOutput.SetLength(0);
 
             // Check metacommand output for markup (secure)
@@ -1236,7 +1251,7 @@ NS_IMETHODIMP mozXMLTermSession::ExportHTML(const PRUnichar* aFilename,
 
   if (style) {
     cString.Append("<style type='text/css'>\n");
-    cString.AppendWithConversion(style);
+    AppendUTF16toUTF8(style, cString);
     cString.Append("</style>\n");
   }
 
@@ -1245,7 +1260,7 @@ NS_IMETHODIMP mozXMLTermSession::ExportHTML(const PRUnichar* aFilename,
   cString.Append(";</script>\n");
   cString.Append("<script language='JavaScript' src='xmlt.js'></script>\n</head>");
 
-  cString.AppendWithConversion(htmlString);
+  AppendUTF16toUTF8(htmlString, cString);
 
   cString.Append("</html>\n");
 
@@ -1422,7 +1437,7 @@ NS_IMETHODIMP mozXMLTermSession::AutoDetectMarkup(const nsString& aString,
   if (str.First() == U_LESSTHAN) {
     // Markup tag detected
     str.CompressWhitespace();
-    str.Append(NS_LITERAL_STRING(" "));
+    str.AppendLiteral(" ");
 
     if ( (str.Find("<!DOCTYPE HTML",PR_TRUE) == 0) ||
          (str.Find("<BASE ",PR_TRUE) == 0) ||
@@ -1554,7 +1569,7 @@ NS_IMETHODIMP mozXMLTermSession::InitStream(const nsString& streamURL,
       break;
 
     case XML_DOCUMENT:
-      contentType = "text/xml";
+      contentType = "application/xml";
       break;
 
     default:
@@ -1562,7 +1577,7 @@ NS_IMETHODIMP mozXMLTermSession::InitStream(const nsString& streamURL,
       break;
     }
 
-    nsCAutoString url; url.AssignWithConversion(streamURL);
+    NS_ConvertUTF16toUTF8 url(streamURL);
     result = mXMLTermStream->Open(outerDOMWindow, iframeName.get(),
                                   url.get(),
                                   contentType.get(), 800);
@@ -1621,11 +1636,11 @@ NS_IMETHODIMP mozXMLTermSession::BreakOutput(PRBool positionCursorBelow)
       // Handle stream output error messages
       switch (mOutputMarkupType) {
       case INSECURE_FRAGMENT:
-        mFragmentBuffer.Assign(NS_LITERAL_STRING("XMLTerm: *Error* Insecure stream data; is LTERM_COOKIE set?"));
+        mFragmentBuffer.AssignLiteral("XMLTerm: *Error* Insecure stream data; is LTERM_COOKIE set?");
         break;
 
       case INCOMPLETE_FRAGMENT:
-        mFragmentBuffer.Assign(NS_LITERAL_STRING("XMLTerm: *Error* Incomplete stream data"));
+        mFragmentBuffer.AssignLiteral("XMLTerm: *Error* Incomplete stream data");
         break;
 
       default:
@@ -1650,7 +1665,7 @@ NS_IMETHODIMP mozXMLTermSession::BreakOutput(PRBool positionCursorBelow)
                                               mFragmentBuffer,
                                               jsOutput);
       if (NS_FAILED(result))
-        jsOutput.Assign(NS_LITERAL_STRING("Error in JavaScript execution\n"));
+        jsOutput.AssignLiteral("Error in JavaScript execution\n");
 
       mFragmentBuffer.SetLength(0);
 
@@ -1762,7 +1777,7 @@ NS_IMETHODIMP mozXMLTermSession::ProcessOutput(const nsString& aString,
 
         } else {
           mOutputMarkupType = OVERFLOW_FRAGMENT;
-          mFragmentBuffer.Assign(NS_LITERAL_STRING("XMLTerm: *Error* Stream data overflow ("));
+          mFragmentBuffer.AssignLiteral("XMLTerm: *Error* Stream data overflow (");
           mFragmentBuffer.AppendInt(strLen,10);
           mFragmentBuffer.Append(NS_LITERAL_STRING(" chars)"));
         break;
@@ -1779,7 +1794,7 @@ NS_IMETHODIMP mozXMLTermSession::ProcessOutput(const nsString& aString,
       if (newline || streamOutput) {
         nsAutoString str(aString);
         if (newline)
-          str.Append(NS_LITERAL_STRING("\n"));
+          str.AppendLiteral("\n");
 
         result = mXMLTermStream->Write(str.get());
         if (NS_FAILED(result)) {
@@ -1827,11 +1842,11 @@ NS_IMETHODIMP mozXMLTermSession::LimitOutputLines(PRBool deleteAllOld)
   if (NS_FAILED(result))
     return result;
 
-  if (!attValue.EqualsWithConversion(sessionElementNames[WARNING_ELEMENT])) {
+  if (!attValue.EqualsASCII(sessionElementNames[WARNING_ELEMENT])) {
     // Create warning message element
     nsCOMPtr<nsIDOMNode> divNode, textNode;
     nsAutoString tagName(NS_LITERAL_STRING("div"));
-    nsAutoString elementName; elementName.AssignWithConversion(sessionElementNames[WARNING_ELEMENT]);
+    nsAutoString elementName; elementName.AssignASCII(sessionElementNames[WARNING_ELEMENT]);
     result = NewElementWithText(tagName, elementName, -1,
                                 mOutputBlockNode, divNode, textNode,
                                 firstChild);
@@ -1841,9 +1856,9 @@ NS_IMETHODIMP mozXMLTermSession::LimitOutputLines(PRBool deleteAllOld)
     firstChild = divNode;
 
     nsAutoString warningMsg;
-    warningMsg.Assign(NS_LITERAL_STRING("XMLTerm: *WARNING* Command output truncated to "));
+    warningMsg.AssignLiteral("XMLTerm: *WARNING* Command output truncated to ");
     warningMsg.AppendInt(300,10);
-    warningMsg.Append(NS_LITERAL_STRING(" lines"));
+    warningMsg.AppendLiteral(" lines");
     result = SetDOMText(textNode, warningMsg);
   }
 
@@ -1875,7 +1890,7 @@ NS_IMETHODIMP mozXMLTermSession::LimitOutputLines(PRBool deleteAllOld)
 
       } else {
 
-        if (attValue.EqualsWithConversion(sessionElementNames[MIXED_ELEMENT])) {
+        if (attValue.EqualsASCII(sessionElementNames[MIXED_ELEMENT])) {
           // Delete single line containing mixed style output
           deleteNode = 1;
           decrementedLineCount = 1;
@@ -1883,9 +1898,9 @@ NS_IMETHODIMP mozXMLTermSession::LimitOutputLines(PRBool deleteAllOld)
           XMLT_LOG(mozXMLTermSession::LimitOutputLines,79,
                    ("deleted mixed line\n"));
 
-        } else if ( (attValue.EqualsWithConversion(sessionElementNames[STDIN_ELEMENT]))  ||
-                    (attValue.EqualsWithConversion(sessionElementNames[STDOUT_ELEMENT])) ||
-                    (attValue.EqualsWithConversion(sessionElementNames[STDERR_ELEMENT]))) {
+        } else if ( (attValue.EqualsASCII(sessionElementNames[STDIN_ELEMENT]))  ||
+                    (attValue.EqualsASCII(sessionElementNames[STDOUT_ELEMENT])) ||
+                    (attValue.EqualsASCII(sessionElementNames[STDERR_ELEMENT]))) {
           // Delete first line from STDIN/STDOUT/STDERR PRE output
 
           nsCOMPtr<nsIDOMNode> textNode;
@@ -2005,17 +2020,17 @@ NS_IMETHODIMP mozXMLTermSession::AppendOutput(const nsString& aString,
 
     if (uniformStyle == LTERM_STDIN_STYLE) {
       preDisplayType = PRE_STDIN_NODE;
-      elementName.AssignWithConversion(sessionElementNames[STDIN_ELEMENT]);
+      elementName.AssignASCII(sessionElementNames[STDIN_ELEMENT]);
       XMLT_LOG(mozXMLTermSession::AppendOutput,72, ("PRE_STDIN_NODE\n"));
 
     } else if (uniformStyle == LTERM_STDERR_STYLE) {
       preDisplayType = PRE_STDERR_NODE;
-      elementName.AssignWithConversion(sessionElementNames[STDERR_ELEMENT]);
+      elementName.AssignASCII(sessionElementNames[STDERR_ELEMENT]);
       XMLT_LOG(mozXMLTermSession::AppendOutput,72, ("PRE_STDERR_NODE\n"));
 
     } else {
       preDisplayType = PRE_STDOUT_NODE;
-      elementName.AssignWithConversion(sessionElementNames[STDOUT_ELEMENT]);
+      elementName.AssignASCII(sessionElementNames[STDOUT_ELEMENT]);
       XMLT_LOG(mozXMLTermSession::AppendOutput,72, ("PRE_STDOUT_NODE\n"));
     }
 
@@ -2115,7 +2130,7 @@ NS_IMETHODIMP mozXMLTermSession::AppendOutput(const nsString& aString,
       return result;
 
     // Create new DIV node
-    nsAutoString elementName; elementName.AssignWithConversion(sessionElementNames[MIXED_ELEMENT]);
+    nsAutoString elementName; elementName.AssignASCII(sessionElementNames[MIXED_ELEMENT]);
     nsCOMPtr<nsIDOMNode> divNode;
     nsAutoString tagName(NS_LITERAL_STRING("div"));
     result = NewElement(tagName, elementName, -1,
@@ -2140,7 +2155,7 @@ NS_IMETHODIMP mozXMLTermSession::AppendOutput(const nsString& aString,
       currentStyle = strStyle[0];
 
     mOutputTextOffset = 0;
-    tagName.Assign(NS_LITERAL_STRING("pre"));
+    tagName.AssignLiteral("pre");
 
     PR_ASSERT(strLength > 0);
 
@@ -2150,13 +2165,13 @@ NS_IMETHODIMP mozXMLTermSession::AppendOutput(const nsString& aString,
         // Change of style or end of string
         switch (currentStyle) {
         case LTERM_STDIN_STYLE:
-          elementName.AssignWithConversion(sessionElementNames[STDIN_ELEMENT]);
+          elementName.AssignASCII(sessionElementNames[STDIN_ELEMENT]);
           break;
         case LTERM_STDERR_STYLE:
-          elementName.AssignWithConversion(sessionElementNames[STDERR_ELEMENT]);
+          elementName.AssignASCII(sessionElementNames[STDERR_ELEMENT]);
           break;
         default:
-          elementName.AssignWithConversion(sessionElementNames[STDOUT_ELEMENT]);
+          elementName.AssignASCII(sessionElementNames[STDOUT_ELEMENT]);
           break;
         }
 
@@ -2331,26 +2346,26 @@ NS_IMETHODIMP mozXMLTermSession::AppendLineLS(const nsString& aString,
     aString.Mid(pathname, wordBegin, wordEnd-wordBegin+1-dropSuffix);
 
     // Append to markup string
-    markupString.Assign(NS_LITERAL_STRING("<span class=\""));
-    markupString.AssignWithConversion(fileTypeNames[fileType]);
-    markupString.Assign(NS_LITERAL_STRING("\""));
+    markupString.AssignLiteral("<span class=\"");
+    markupString.AssignASCII(fileTypeNames[fileType]);
+    markupString.AssignLiteral("\"");
 
     int j;
     for (j=0; j<SESSION_EVENT_TYPES; j++) {
-      markupString.Assign(NS_LITERAL_STRING(" on"));
-      markupString.AssignWithConversion(sessionEventNames[j]);
-      markupString.Assign(NS_LITERAL_STRING("=\"return HandleEvent(event, '"));
-      markupString.AssignWithConversion(sessionEventNames[j]);
-      markupString.Assign(NS_LITERAL_STRING("','"));
-      markupString.AssignWithConversion(fileTypeNames[fileType]);
-      markupString.Assign(NS_LITERAL_STRING("',-#,'"));
+      markupString.AssignLiteral(" on");
+      markupString.AssignASCII(sessionEventNames[j]);
+      markupString.AssignLiteral("=\"return HandleEvent(event, '");
+      markupString.AssignASCII(sessionEventNames[j]);
+      markupString.AssignLiteral("','");
+      markupString.AssignASCII(fileTypeNames[fileType]);
+      markupString.AssignLiteral("',-#,'");
       markupString.Assign(pathname);
       markupString.Assign(NS_LITERAL_STRING("');\""));
     }
 
-    markupString.Assign(NS_LITERAL_STRING(">"));
+    markupString.AssignLiteral(">");
     markupString.Assign(filename);
-    markupString.Assign(NS_LITERAL_STRING("</span>"));
+    markupString.AssignLiteral("</span>");
 
     // Search for new word
     wordBegin = wordEnd+1;
@@ -2668,7 +2683,7 @@ NS_IMETHODIMP mozXMLTermSession::DeepSanitizeFragment(
     tagName.SetLength(0);
     result = domElement->GetTagName(tagName);
 
-    if (NS_SUCCEEDED(result) && tagName.EqualsIgnoreCase("script")) {
+    if (NS_SUCCEEDED(result) && tagName.LowerCaseEqualsLiteral("script")) {
       // Remove script element and return
 
       XMLT_WARNING("mozXMLTermSession::DeepSanitizeFragment: Warning - rejected SCRIPT element in inserted HTML fragment\n");
@@ -2693,8 +2708,8 @@ NS_IMETHODIMP mozXMLTermSession::DeepSanitizeFragment(
     nsAutoString attName, attValue;
 
     for (j=0; j<SESSION_EVENT_TYPES; j++) {
-      attName.Assign(NS_LITERAL_STRING("on"));
-      attName.AppendWithConversion(sessionEventNames[j]);
+      attName.AssignLiteral("on");
+      attName.AppendASCII(sessionEventNames[j]);
 
       attValue.SetLength(0);
       result = domElement->GetAttribute(attName, attValue);
@@ -2733,7 +2748,7 @@ NS_IMETHODIMP mozXMLTermSession::DeepSanitizeFragment(
 
                   attrName.Left(prefix,2);
 
-                  if (prefix.EqualsIgnoreCase("on")) {
+                  if (prefix.LowerCaseEqualsLiteral("on")) {
                     // Delete event handler attribute
 
                     XMLT_LOG(mozXMLTermSession::DeepSanitizeFragment,79,
@@ -2756,7 +2771,7 @@ NS_IMETHODIMP mozXMLTermSession::DeepSanitizeFragment(
 
     if (entryNumber >= 0) {
       // Process ID attribute
-      attName.Assign(NS_LITERAL_STRING("id"));
+      attName.AssignLiteral("id");
 
       attValue.SetLength(0);
       result = domElement->GetAttribute(attName, attValue);
@@ -2770,8 +2785,8 @@ NS_IMETHODIMP mozXMLTermSession::DeepSanitizeFragment(
 
     for (j=0; j<SESSION_EVENT_TYPES; j++) {
       // Re-introduce sanitized event attribute values
-      attName.Assign(NS_LITERAL_STRING("on"));
-      attName.AppendWithConversion(sessionEventNames[j]);
+      attName.AssignLiteral("on");
+      attName.AppendASCII(sessionEventNames[j]);
       attValue = eventAttrVals[j];
 
       if (!attValue.IsEmpty()) {
@@ -2826,8 +2841,8 @@ NS_IMETHODIMP mozXMLTermSession::DeepRefreshEventHandlers(
 
   // Refresh event attributes
   for (j=0; j<SESSION_EVENT_TYPES; j++) {
-    attName.Assign(NS_LITERAL_STRING("on"));
-    attName.AppendWithConversion(sessionEventNames[j]);
+    attName.AssignLiteral("on");
+    attName.AppendASCII(sessionEventNames[j]);
 
     XMLT_LOG(mozXMLTermSession::DeepRefreshEventHandlers,89,
              ("Refreshing on%s attribute\n",sessionEventNames[j] ));
@@ -3014,7 +3029,7 @@ void mozXMLTermSession::PositionOutputCursor(mozILineTermAux* lineTermAux)
     // Append dummy output line
     nsCOMPtr<nsIDOMNode> spanNode, textNode;
     nsAutoString tagName(NS_LITERAL_STRING("span"));
-    nsAutoString elementName; elementName.AssignWithConversion(sessionElementNames[STDOUT_ELEMENT]);
+    nsAutoString elementName; elementName.AssignASCII(sessionElementNames[STDOUT_ELEMENT]);
     result = NewElementWithText(tagName, elementName, -1,
                                 mOutputBlockNode, spanNode, textNode);
 
@@ -3077,7 +3092,10 @@ NS_IMETHODIMP mozXMLTermSession::ScrollToBottomLeft(void)
   if (NS_FAILED(result) || !presShell)
     return NS_ERROR_FAILURE;
 
-  presShell->FlushPendingNotifications(PR_FALSE);
+  nsIDocument* doc = presShell->GetDocument();
+  if (doc) {
+    doc->FlushPendingNotifications(Flush_Layout);
+  }
 
   // Get DOM Window
   nsCOMPtr<nsIDocShell> docShell;
@@ -3247,7 +3265,7 @@ NS_IMETHODIMP mozXMLTermSession::NewEntry(const nsString& aPrompt)
     // Not first entry
 
     // Add event attributes to current command element
-    nsAutoString cmdName; cmdName.AssignWithConversion(sessionElementNames[COMMAND_ELEMENT]);
+    nsAutoString cmdName; cmdName.AssignASCII(sessionElementNames[COMMAND_ELEMENT]);
     result = SetEventAttributes(cmdName,
                                 mCurrentEntryNumber,
                                 mCommandSpanNode);
@@ -3286,8 +3304,8 @@ NS_IMETHODIMP mozXMLTermSession::NewEntry(const nsString& aPrompt)
 
   // Create "entry" element
   nsCOMPtr<nsIDOMNode> entryNode;
-  tagName.Assign(NS_LITERAL_STRING("div"));
-  name.AssignWithConversion(sessionElementNames[ENTRY_ELEMENT]);
+  tagName.AssignLiteral("div");
+  name.AssignASCII(sessionElementNames[ENTRY_ELEMENT]);
   result = NewElement(tagName, name, mCurrentEntryNumber,
                       mSessionNode, entryNode);
   if (NS_FAILED(result) || !entryNode) {
@@ -3302,8 +3320,8 @@ NS_IMETHODIMP mozXMLTermSession::NewEntry(const nsString& aPrompt)
 
   // Create "input" element containing "prompt" and "command" elements
   nsCOMPtr<nsIDOMNode> inputNode;
-  tagName.Assign(NS_LITERAL_STRING("div"));
-  name.AssignWithConversion(sessionElementNames[INPUT_ELEMENT]);
+  tagName.AssignLiteral("div");
+  name.AssignASCII(sessionElementNames[INPUT_ELEMENT]);
   result = NewElement(tagName, name, mCurrentEntryNumber,
                       mCurrentEntryNode, inputNode);
   if (NS_FAILED(result) || !inputNode) {
@@ -3314,8 +3332,8 @@ NS_IMETHODIMP mozXMLTermSession::NewEntry(const nsString& aPrompt)
 
   // Create prompt element
   nsCOMPtr<nsIDOMNode> promptSpanNode;
-  tagName.Assign(NS_LITERAL_STRING("span"));
-  name.AssignWithConversion(sessionElementNames[PROMPT_ELEMENT]);
+  tagName.AssignLiteral("span");
+  name.AssignASCII(sessionElementNames[PROMPT_ELEMENT]);
   result = NewElement(tagName, name, mCurrentEntryNumber,
                       inputNode, promptSpanNode);
   if (NS_FAILED(result) || !promptSpanNode) {
@@ -3340,8 +3358,8 @@ NS_IMETHODIMP mozXMLTermSession::NewEntry(const nsString& aPrompt)
     // Create text node + image node as child of prompt element
     nsCOMPtr<nsIDOMNode> spanNode, textNode;
 
-    tagName.Assign(NS_LITERAL_STRING("span"));
-    name.Assign(NS_LITERAL_STRING("noicons"));
+    tagName.AssignLiteral("span");
+    name.AssignLiteral("noicons");
     result = NewElementWithText(tagName, name, -1,
                                 promptSpanNode, spanNode, textNode);
     if (NS_FAILED(result) || !spanNode || !textNode) {
@@ -3363,7 +3381,7 @@ NS_IMETHODIMP mozXMLTermSession::NewEntry(const nsString& aPrompt)
       return NS_ERROR_FAILURE;
 
     // Create IMG element
-    tagName.Assign(NS_LITERAL_STRING("img"));
+    tagName.AssignLiteral("img");
     nsCOMPtr<nsIDOMElement> imgElement;
     result = domDoc->CreateElement(tagName, getter_AddRefs(imgElement));
     if (NS_FAILED(result) || !imgElement)
@@ -3374,12 +3392,12 @@ NS_IMETHODIMP mozXMLTermSession::NewEntry(const nsString& aPrompt)
     nsAutoString attValue(NS_LITERAL_STRING("icons"));
     imgElement->SetAttribute(attName, attValue);
 
-    attName.Assign(NS_LITERAL_STRING("src"));
-    attValue.Assign(NS_LITERAL_STRING("chrome://xmlterm/skin/wheel.gif"));
+    attName.AssignLiteral("src");
+    attValue.AssignLiteral("chrome://xmlterm/skin/wheel.gif");
     imgElement->SetAttribute(attName, attValue);
 
-    attName.Assign(NS_LITERAL_STRING("align"));
-    attValue.Assign(NS_LITERAL_STRING("middle"));
+    attName.AssignLiteral("align");
+    attValue.AssignLiteral("middle");
     imgElement->SetAttribute(attName, attValue);
 
     // Append IMG element
@@ -3425,8 +3443,8 @@ NS_IMETHODIMP mozXMLTermSession::NewEntry(const nsString& aPrompt)
 
   // Create command element
   nsCOMPtr<nsIDOMNode> newCommandSpanNode;
-  tagName.Assign(NS_LITERAL_STRING("span"));
-  name.AssignWithConversion(sessionElementNames[COMMAND_ELEMENT]);
+  tagName.AssignLiteral("span");
+  name.AssignASCII(sessionElementNames[COMMAND_ELEMENT]);
   result = NewElement(tagName, name, mCurrentEntryNumber,
                       inputNode, newCommandSpanNode);
   if (NS_FAILED(result) || !newCommandSpanNode) {
@@ -3446,8 +3464,8 @@ NS_IMETHODIMP mozXMLTermSession::NewEntry(const nsString& aPrompt)
 
   // Create output element and append as child of current entry element
   nsCOMPtr<nsIDOMNode> divNode;
-  tagName.Assign(NS_LITERAL_STRING("div"));
-  name.AssignWithConversion(sessionElementNames[OUTPUT_ELEMENT]);
+  tagName.AssignLiteral("div");
+  name.AssignASCII(sessionElementNames[OUTPUT_ELEMENT]);
   result = NewElement(tagName, name, mCurrentEntryNumber,
                       mCurrentEntryNode, divNode);
 
@@ -3699,8 +3717,8 @@ NS_IMETHODIMP mozXMLTermSession::NewRow(nsIDOMNode* beforeRowNode,
   val.AppendInt(mScreenCols,10);
   preElement->SetAttribute(att, val);
 
-  att.Assign(NS_LITERAL_STRING("rows"));
-  val.Assign(NS_LITERAL_STRING("1"));
+  att.AssignLiteral("rows");
+  val.AssignLiteral("1");
   preElement->SetAttribute(att, val);
 
   if (beforeRowNode) {
@@ -3829,19 +3847,19 @@ NS_IMETHODIMP mozXMLTermSession::DisplayRow(const nsString& aString,
 
         switch (currentStyle) {
         case LTERM_STDOUT_STYLE | LTERM_BOLD_STYLE:
-          elementName.Assign(NS_LITERAL_STRING("boldstyle"));
+          elementName.AssignLiteral("boldstyle");
           break;
         case LTERM_STDOUT_STYLE | LTERM_ULINE_STYLE:
-          elementName.Assign(NS_LITERAL_STRING("underlinestyle"));
+          elementName.AssignLiteral("underlinestyle");
           break;
         case LTERM_STDOUT_STYLE | LTERM_BLINK_STYLE:
-          elementName.Assign(NS_LITERAL_STRING("blinkstyle"));
+          elementName.AssignLiteral("blinkstyle");
           break;
         case LTERM_STDOUT_STYLE | LTERM_INVERSE_STYLE:
-          elementName.Assign(NS_LITERAL_STRING("inversestyle"));
+          elementName.AssignLiteral("inversestyle");
           break;
         default:
-          elementName.Assign(NS_LITERAL_STRING("boldstyle"));
+          elementName.AssignLiteral("boldstyle");
           break;
         }
 
@@ -4152,32 +4170,32 @@ NS_IMETHODIMP mozXMLTermSession::NewIFrame(nsIDOMNode* parentNode,
 
   // Set attributes
   if (number >= 0) {
-    attName.Assign(NS_LITERAL_STRING("name"));
-    attValue.Assign(NS_LITERAL_STRING("iframe"));
+    attName.AssignLiteral("name");
+    attValue.AssignLiteral("iframe");
     attValue.AppendInt(number,10);
     newElement->SetAttribute(attName, attValue);
   }
 
-  attName.Assign(NS_LITERAL_STRING("frameborder"));
+  attName.AssignLiteral("frameborder");
   attValue.SetLength(0);
   attValue.AppendInt(frameBorder,10);
   newElement->SetAttribute(attName, attValue);
 
   if (!src.IsEmpty()) {
     // Set SRC attribute
-    attName.Assign(NS_LITERAL_STRING("src"));
+    attName.AssignLiteral("src");
     newElement->SetAttribute(attName, src);
   }
 
   if (!width.IsEmpty()) {
     // Set WIDTH attribute
-    attName.Assign(NS_LITERAL_STRING("width"));
+    attName.AssignLiteral("width");
     newElement->SetAttribute(attName, width);
   }
 
   if (!height.IsEmpty()) {
     // Set HEIGHT attribute
-    attName.Assign(NS_LITERAL_STRING("height"));
+    attName.AssignLiteral("height");
     newElement->SetAttribute(attName, height);
   }
 
@@ -4211,13 +4229,13 @@ NS_IMETHODIMP mozXMLTermSession::SetEventAttributes(const nsString& name,
   int j;
   for (j=0; j<SESSION_EVENT_TYPES; j++) {
     nsAutoString attName(NS_LITERAL_STRING("on"));
-    attName.AppendWithConversion(sessionEventNames[j]);
+    attName.AppendASCII(sessionEventNames[j]);
 
     nsAutoString attValue(NS_LITERAL_STRING("return HandleEvent(event, '"));
-    attValue.AppendWithConversion(sessionEventNames[j]);
-    attValue.Append(NS_LITERAL_STRING("','"));
+    attValue.AppendASCII(sessionEventNames[j]);
+    attValue.AppendLiteral("','");
     attValue.Append(name);
-    attValue.Append(NS_LITERAL_STRING("','"));
+    attValue.AppendLiteral("','");
     attValue.AppendInt(number,10);
     attValue.Append(NS_LITERAL_STRING("','');"));
 
@@ -4293,8 +4311,8 @@ PRBool mozXMLTermSession::IsPREInlineNode(nsIDOMNode* aNode)
       nsAutoString tagName; tagName.SetLength(0);
       result = domElement->GetTagName(tagName);
       if (NS_SUCCEEDED(result)) {
-        isPREInlineNode = tagName.EqualsIgnoreCase("span") ||
-                          tagName.EqualsIgnoreCase("a");
+        isPREInlineNode = tagName.LowerCaseEqualsLiteral("span") ||
+                          tagName.LowerCaseEqualsLiteral("a");
       }
     }
   }
@@ -4324,7 +4342,7 @@ NS_IMETHODIMP mozXMLTermSession::ToHTMLString(nsIDOMNode* aNode,
   XMLT_LOG(mozXMLTermSession::ToHTMLString,80,("\n"));
 
   nsAutoString newIndentString (indentString);
-  newIndentString.Append(NS_LITERAL_STRING("  "));
+  newIndentString.AppendLiteral("  ");
 
   htmlString.SetLength(0);
 
@@ -4345,10 +4363,10 @@ NS_IMETHODIMP mozXMLTermSession::ToHTMLString(nsIDOMNode* aNode,
       if (!insidePRENode) {
         htmlString += indentString;
       }
-      htmlString.Append(NS_LITERAL_STRING("<"));
+      htmlString.AppendLiteral("<");
       htmlString += tagName;
 
-      PRBool isPRENode = tagName.EqualsIgnoreCase("pre");
+      PRBool isPRENode = tagName.LowerCaseEqualsLiteral("pre");
 
       nsCOMPtr<nsIDOMNamedNodeMap> namedNodeMap(nsnull);
       result = aNode->GetAttributes(getter_AddRefs(namedNodeMap));
@@ -4373,15 +4391,15 @@ NS_IMETHODIMP mozXMLTermSession::ToHTMLString(nsIDOMNode* aNode,
 
                 result = attr->GetName(attrName);
                 if (NS_SUCCEEDED(result)) {
-                  htmlString.Append(NS_LITERAL_STRING(" "));
+                  htmlString.AppendLiteral(" ");
                   htmlString.Append(attrName);
                 }
 
                 result = attr->GetValue(attrValue);
                 if (NS_SUCCEEDED(result) && !attrName.IsEmpty()) {
-                  htmlString.Append(NS_LITERAL_STRING("=\""));
+                  htmlString.AppendLiteral("=\"");
                   htmlString.Append(attrValue);
-                  htmlString.Append(NS_LITERAL_STRING("\""));
+                  htmlString.AppendLiteral("\"");
                 }
               }
             }
@@ -4390,7 +4408,7 @@ NS_IMETHODIMP mozXMLTermSession::ToHTMLString(nsIDOMNode* aNode,
       }
 
       if (!deepContent) {
-        htmlString.Append(NS_LITERAL_STRING(">"));
+        htmlString.AppendLiteral(">");
 
       } else {
         // Iterate over all child nodes to generate deep content
@@ -4413,27 +4431,27 @@ NS_IMETHODIMP mozXMLTermSession::ToHTMLString(nsIDOMNode* aNode,
 
         if (!htmlInner.IsEmpty()) {
           if (insidePRENode)
-            htmlString.Append(NS_LITERAL_STRING("\n>"));
+            htmlString.AppendLiteral("\n>");
           else
-            htmlString.Append(NS_LITERAL_STRING(">\n"));
+            htmlString.AppendLiteral(">\n");
 
           htmlString += htmlInner;
 
           if (!insidePRENode)
             htmlString += indentString;
         } else {
-          htmlString.Append(NS_LITERAL_STRING(">"));
+          htmlString.AppendLiteral(">");
         }
 
-        htmlString.Append(NS_LITERAL_STRING("</"));
+        htmlString.AppendLiteral("</");
         htmlString += tagName;
 
         if (insidePRENode)
-          htmlString.Append(NS_LITERAL_STRING("\n"));
-        htmlString.Append(NS_LITERAL_STRING(">"));
+          htmlString.AppendLiteral("\n");
+        htmlString.AppendLiteral(">");
 
         if (!insidePRENode)
-          htmlString.Append(NS_LITERAL_STRING("\n"));
+          htmlString.AppendLiteral("\n");
       }
     }
   }
@@ -4581,7 +4599,7 @@ void mozXMLTermSession::TraverseDOMTree(FILE* fileStream,
         // Print selected attribute values
         int j;
         for (j=0; j<PRINT_ATTRIBUTE_NAMES; j++) {
-          nsAutoString attName; attName.AssignWithConversion (printAttributeNames[j]);
+          nsAutoString attName; attName.AssignASCII (printAttributeNames[j]);
           nsAutoString attValue;
 	  attValue.SetLength(0);
 

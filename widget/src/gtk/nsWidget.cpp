@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Graham Dennis <u3952328@anu.edu.au>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -96,7 +96,7 @@ PRBool nsWidget::OnKey(nsKeyEvent &aEvent)
     // before we dispatch a key, check if it's the context menu key.
     // If so, send a context menu key event instead.
     if (IsContextMenuKey(aEvent)) {
-      nsMouseEvent contextMenuEvent;
+      nsMouseEvent contextMenuEvent(PR_TRUE, 0, nsnull, nsMouseEvent::eReal);
       ConvertKeyEventToContextMenuEvent(&aEvent, &contextMenuEvent);
       ret = DispatchWindowEvent(&contextMenuEvent);
     }
@@ -123,6 +123,7 @@ ConvertKeyEventToContextMenuEvent(const nsKeyEvent* inKeyEvent,
                                   nsMouseEvent* outCMEvent)
 {
   *(nsInputEvent *)outCMEvent = *(nsInputEvent *)inKeyEvent;
+  outCMEvent->eventStructType = NS_MOUSE_EVENT;
   outCMEvent->message = NS_CONTEXTMENU_KEY;
   outCMEvent->isShift = outCMEvent->isControl = PR_FALSE;
   outCMEvent->isAlt = outCMEvent->isMeta = PR_FALSE;
@@ -492,6 +493,44 @@ NS_IMETHODIMP nsWidget::CaptureRollupEvents(nsIRollupListener * aListener, PRBoo
   return NS_OK;
 }
 
+GdkWindow* nsWidget::GetLayeringWindow()
+{
+  return mWidget->window;
+}
+
+void nsWidget::ResetZOrder()
+{
+    if (!GetNextSibling()) {
+        GdkWindow* window = GetLayeringWindow();
+        if (window) {
+            gdk_window_raise(window);
+        }
+    } else {
+        // Move this widget and all the widgets above it to the top, in
+        // the right order
+        for (nsWidget* w = this; w;
+             w = NS_STATIC_CAST(nsWidget*, w->GetNextSibling())) {
+            GdkWindow* window = w->GetLayeringWindow();
+            if (window) {
+                gdk_window_raise(window);
+            }
+        }
+    }
+}
+
+NS_IMETHODIMP nsWidget::SetZIndex(PRInt32 aZIndex)
+{
+    nsIWidget* oldPrev = GetPrevSibling();
+
+    nsBaseWidget::SetZIndex(aZIndex);
+
+    if (GetPrevSibling() != oldPrev) {
+        ResetZOrder();
+    }
+
+    return NS_OK;
+}
+
 NS_IMETHODIMP nsWidget::IsVisible(PRBool &aState)
 {
   if (mWidget)
@@ -607,10 +646,8 @@ NS_IMETHODIMP nsWidget::Resize(PRInt32 aWidth, PRInt32 aHeight, PRBool aRepaint)
     gtk_widget_set_usize(mWidget, aWidth, aHeight);
 
   ResetInternalVisibility();
-  PRInt32 childCount = mChildren.Count();
-  PRInt32 index;
-  for (index = 0; index < childCount; index++) {
-    NS_STATIC_CAST(nsWidget*, mChildren[index])->ResetInternalVisibility();
+  for (nsIWidget* kid = mFirstChild; kid; kid = kid->GetNextSibling()) {
+    NS_STATIC_CAST(nsWidget*, kid)->ResetInternalVisibility();
   }
 
   return NS_OK;
@@ -641,7 +678,7 @@ PRBool nsWidget::OnResize(nsSizeEvent *event)
 
 PRBool nsWidget::OnResize(nsRect &aRect)
 {
-  nsSizeEvent event(NS_SIZE, this);
+  nsSizeEvent event(PR_TRUE, NS_SIZE, this);
 
   InitEvent(event);
 
@@ -681,7 +718,7 @@ PRBool nsWidget::OnMove(PRInt32 aX, PRInt32 aY)
 
     ResetInternalVisibility();
 
-    nsGUIEvent event(NS_MOVE, this);
+    nsGUIEvent event(PR_TRUE, NS_MOVE, this);
     InitEvent(event);
     event.point.x = aX;
     event.point.y = aY;
@@ -841,50 +878,36 @@ NS_IMETHODIMP nsWidget::SetCursor(nsCursor aCursor)
         newCursor = gdk_cursor_new(GDK_HAND2);
         break;
 
-      case eCursor_sizeWE:
-        /* GDK_SB_H_DOUBLE_ARROW <==>.  The ideal choice is: =>||<= */
-        newCursor = gdk_cursor_new(GDK_SB_H_DOUBLE_ARROW);
-        break;
-
-      case eCursor_sizeNS:
-        /* Again, should be =>||<= rotated 90 degrees. */
-        newCursor = gdk_cursor_new(GDK_SB_V_DOUBLE_ARROW);
-        break;
-      
-      case eCursor_sizeNW:
-        newCursor = gdk_cursor_new(GDK_TOP_LEFT_CORNER);
-        break;
-
-      case eCursor_sizeSE:
-        newCursor = gdk_cursor_new(GDK_BOTTOM_RIGHT_CORNER);
-        break;
-
-      case eCursor_sizeNE:
-        newCursor = gdk_cursor_new(GDK_TOP_RIGHT_CORNER);
-        break;
-
-      case eCursor_sizeSW:
-        newCursor = gdk_cursor_new(GDK_BOTTOM_LEFT_CORNER);
-        break;
-
-      case eCursor_arrow_north:
-      case eCursor_arrow_north_plus:
+      case eCursor_n_resize:
         newCursor = gdk_cursor_new(GDK_TOP_SIDE);
         break;
-
-      case eCursor_arrow_south:
-      case eCursor_arrow_south_plus:
+      
+      case eCursor_s_resize:
         newCursor = gdk_cursor_new(GDK_BOTTOM_SIDE);
         break;
-
-      case eCursor_arrow_west:
-      case eCursor_arrow_west_plus:
+      
+      case eCursor_w_resize:
         newCursor = gdk_cursor_new(GDK_LEFT_SIDE);
         break;
 
-      case eCursor_arrow_east:
-      case eCursor_arrow_east_plus:
+      case eCursor_e_resize:
         newCursor = gdk_cursor_new(GDK_RIGHT_SIDE);
+        break;
+
+      case eCursor_nw_resize:
+        newCursor = gdk_cursor_new(GDK_TOP_LEFT_CORNER);
+        break;
+
+      case eCursor_se_resize:
+        newCursor = gdk_cursor_new(GDK_BOTTOM_RIGHT_CORNER);
+        break;
+
+      case eCursor_ne_resize:
+        newCursor = gdk_cursor_new(GDK_TOP_RIGHT_CORNER);
+        break;
+
+      case eCursor_sw_resize:
+        newCursor = gdk_cursor_new(GDK_BOTTOM_LEFT_CORNER);
         break;
 
       case eCursor_crosshair:
@@ -899,12 +922,13 @@ NS_IMETHODIMP nsWidget::SetCursor(nsCursor aCursor)
         newCursor = gdk_cursor_new(GDK_QUESTION_ARROW);
         break;
 
-      case eCursor_copy: // CSS3
+      case eCursor_copy:
       case eCursor_alias:
-      case eCursor_context_menu:
         // XXX: these CSS3 cursors need to be implemented
-        // For CSS3 Cursor Definitions, See:
-        // http://www.w3.org/TR/css3-ui/
+        break;
+
+      case eCursor_context_menu:
+        newCursor = gdk_cursor_new(GDK_RIGHTBUTTON);
         break;
 
       case eCursor_cell:
@@ -920,14 +944,49 @@ NS_IMETHODIMP nsWidget::SetCursor(nsCursor aCursor)
         newCursor = gdk_cursor_new(GDK_EXCHANGE);
         break;
 
-      case eCursor_count_up:
-      case eCursor_count_down:
-      case eCursor_count_up_down:
-        // XXX: these CSS3 cursors need to be implemented
+      case eCursor_zoom_in:
+        newCursor = gdk_cursor_new(GDK_PLUS);
         break;
 
-      case eCursor_zoom_in:
       case eCursor_zoom_out:
+        newCursor = gdk_cursor_new(GDK_EXCHANGE);
+        break;
+
+      case eCursor_not_allowed:
+      case eCursor_no_drop:
+        newCursor = gdk_cursor_new(GDK_X_CURSOR);
+        break;
+
+      case eCursor_col_resize:
+        newCursor = gdk_cursor_new(GDK_SB_H_DOUBLE_ARROW);
+        break;
+
+      case eCursor_row_resize:
+        newCursor = gdk_cursor_new(GDK_SB_V_DOUBLE_ARROW);
+        break;
+
+      case eCursor_vertical_text:
+        newCursor = gdk_cursor_new(GDK_XTERM);
+        break;
+
+      case eCursor_all_scroll:
+        newCursor = gdk_cursor_new(GDK_FLEUR);
+        break;
+
+      case eCursor_nesw_resize:
+        newCursor = gdk_cursor_new(GDK_TOP_RIGHT_CORNER);
+        break;
+
+      case eCursor_nwse_resize:
+        newCursor = gdk_cursor_new(GDK_TOP_LEFT_CORNER);
+        break;
+
+      case eCursor_ns_resize:
+        newCursor = gdk_cursor_new(GDK_SB_V_DOUBLE_ARROW);
+        break;
+
+      case eCursor_ew_resize:
+        newCursor = gdk_cursor_new(GDK_SB_H_DOUBLE_ARROW);
         break;
 
       default:
@@ -1189,7 +1248,7 @@ NS_IMETHODIMP nsWidget::SetPreferredSize(PRInt32 aWidth, PRInt32 aHeight)
   return NS_OK;
 }
 
-NS_IMETHODIMP nsWidget::SetTitle(const nsString &aTitle)
+NS_IMETHODIMP nsWidget::SetTitle(const nsAString &aTitle)
 {
   gtk_widget_set_name(mWidget, "foo");
   return NS_OK;
@@ -1226,6 +1285,9 @@ nsresult nsWidget::CreateWidget(nsIWidget *aParent,
      aInitData->mWindowType == eWindowType_toplevel ||
      aInitData->mWindowType == eWindowType_invisible) ?
     nsnull : aParent;
+
+  NS_ASSERTION(aInitData->mWindowType != eWindowType_popup ||
+               !aParent, "Popups should not be hooked into nsIWidget hierarchy");
 
   BaseCreate(baseParent, aRect, aHandleEventFunction, aContext,
              aAppShell, aToolkit, aInitData);
@@ -1394,7 +1456,7 @@ PRBool nsWidget::DispatchWindowEvent(nsGUIEvent* event)
 
 PRBool nsWidget::DispatchStandardEvent(PRUint32 aMsg)
 {
-  nsGUIEvent event(aMsg, this);
+  nsGUIEvent event(PR_TRUE, aMsg, this);
   InitEvent(event);
   PRBool result = DispatchWindowEvent(&event);
   return result;
@@ -1665,7 +1727,7 @@ nsWidget::OnMotionNotifySignal(GdkEventMotion * aGdkMotionEvent)
   if (mIsDestroying)
     return;
 
-  nsMouseEvent event(NS_MOUSE_MOVE);
+  nsMouseEvent event(PR_TRUE, NS_MOUSE_MOVE, nsnull, nsMouseEvent::eReal);
 
   // If there is a button motion target, use that instead of the
   // current widget
@@ -1745,6 +1807,9 @@ nsWidget::OnMotionNotifySignal(GdkEventMotion * aGdkMotionEvent)
 /* virtual */ void
 nsWidget::OnEnterNotifySignal(GdkEventCrossing * aGdkCrossingEvent)
 {
+  if (aGdkCrossingEvent->subwindow != NULL)
+    return;
+
   // If there is a button motion target, then we can ignore this
   // event since what the gecko event system expects is for
   // only motion events to be sent to that widget, even if the
@@ -1757,7 +1822,7 @@ nsWidget::OnEnterNotifySignal(GdkEventCrossing * aGdkCrossingEvent)
     return;
   }
 
-  nsMouseEvent event(NS_MOUSE_ENTER, this);
+  nsMouseEvent event(PR_TRUE, NS_MOUSE_ENTER, this, nsMouseEvent::eReal);
 
   if (aGdkCrossingEvent != NULL) 
   {
@@ -1776,6 +1841,9 @@ nsWidget::OnEnterNotifySignal(GdkEventCrossing * aGdkCrossingEvent)
 /* virtual */ void
 nsWidget::OnLeaveNotifySignal(GdkEventCrossing * aGdkCrossingEvent)
 {
+  if (aGdkCrossingEvent->subwindow != NULL)
+    return;
+
   // If there is a button motion target, then we can ignore this
   // event since what the gecko event system expects is for
   // only motion events to be sent to that widget, even if the
@@ -1788,7 +1856,7 @@ nsWidget::OnLeaveNotifySignal(GdkEventCrossing * aGdkCrossingEvent)
     return;
   }
 
-  nsMouseEvent event(NS_MOUSE_EXIT, this);
+  nsMouseEvent event(PR_TRUE, NS_MOUSE_EXIT, this, nsMouseEvent::eReal);
 
   if (aGdkCrossingEvent != NULL) 
   {
@@ -1809,7 +1877,7 @@ nsWidget::OnLeaveNotifySignal(GdkEventCrossing * aGdkCrossingEvent)
 /* virtual */ void
 nsWidget::OnButtonPressSignal(GdkEventButton * aGdkButtonEvent)
 {
-  nsMouseScrollEvent scrollEvent(NS_MOUSE_SCROLL, this);
+  nsMouseScrollEvent scrollEvent(PR_TRUE, NS_MOUSE_SCROLL, this);
   PRUint32 eventType = 0;
 
   // If you double click in GDK, it will actually generate a single
@@ -1890,7 +1958,7 @@ nsWidget::OnButtonPressSignal(GdkEventButton * aGdkButtonEvent)
     break;
   }
 
-  nsMouseEvent event(eventType, this);
+  nsMouseEvent event(PR_TRUE, eventType, this, nsMouseEvent::eReal);
   InitMouseEvent(aGdkButtonEvent, event);
 
   // Set the button motion target and remeber the widget and root coords
@@ -1916,7 +1984,8 @@ nsWidget::OnButtonPressSignal(GdkEventButton * aGdkButtonEvent)
   // if we're a right-button-down on linux, we're trying to
   // popup a context menu. send that event to gecko also.
   if (eventType == NS_MOUSE_RIGHT_BUTTON_DOWN) {
-    nsMouseEvent contextMenuEvent(NS_CONTEXTMENU, this);
+    nsMouseEvent contextMenuEvent(PR_TRUE, NS_CONTEXTMENU, this,
+                                  nsMouseEvent::eReal);
     InitMouseEvent(aGdkButtonEvent, contextMenuEvent);
     DispatchMouseEvent(contextMenuEvent);
   }
@@ -1957,7 +2026,7 @@ nsWidget::OnButtonReleaseSignal(GdkEventButton * aGdkButtonEvent)
     break;
 	}
 
-  nsMouseEvent event(eventType, this);
+  nsMouseEvent event(PR_TRUE, eventType, this, nsMouseEvent::eReal);
   InitMouseEvent(aGdkButtonEvent, event);
 
   if (sButtonMotionTarget) {
@@ -1996,7 +2065,7 @@ nsWidget::OnFocusInSignal(GdkEventFocus * aGdkFocusEvent)
 
   GTK_WIDGET_SET_FLAGS(mWidget, GTK_HAS_FOCUS);
 
-  nsFocusEvent event(NS_GOTFOCUS, this);
+  nsFocusEvent event(PR_TRUE, NS_GOTFOCUS, this);
 
 //  event.time = aGdkFocusEvent->time;;
 //  event.time = PR_Now();
@@ -2016,7 +2085,7 @@ nsWidget::OnFocusOutSignal(GdkEventFocus * aGdkFocusEvent)
 
   GTK_WIDGET_UNSET_FLAGS(mWidget, GTK_HAS_FOCUS);
 
-  nsFocusEvent event(NS_LOSTFOCUS, this);
+  nsFocusEvent event(PR_TRUE, NS_LOSTFOCUS, this);
 
 //  event.time = aGdkFocusEvent->time;;
 //  event.time = PR_Now();
@@ -2060,7 +2129,7 @@ nsWidget::InstallSignal(GtkWidget *   aWidget,
 //////////////////////////////////////////////////////////////////
 void 
 nsWidget::InitMouseEvent(GdkEventButton * aGdkButtonEvent,
-						 nsMouseEvent &anEvent)
+                         nsMouseEvent &anEvent)
 {
   if (aGdkButtonEvent != NULL) {
     anEvent.point.x = nscoord(aGdkButtonEvent->x);
@@ -2243,19 +2312,8 @@ void
 nsWidget::ThemeChanged()
 {
   // Dispatch a NS_THEMECHANGED event for each of our children, recursively
-  nsCOMPtr<nsIEnumerator> children = dont_AddRef(GetChildren());
-  if (children) {
-    nsCOMPtr<nsISupports> isupp;
-
-    while (NS_SUCCEEDED(children->CurrentItem(getter_AddRefs(isupp))) && isupp) {
-
-      nsWidget* child = NS_REINTERPRET_CAST(nsWidget*, isupp.get());
-      child->ThemeChanged();
-
-      if (NS_FAILED(children->Next())) {
-        break;
-      }
-    }
+  for (nsIWidget* kid = mFirstChild; kid; kid = kid->GetNextSibling()) {
+    NS_STATIC_CAST(nsWidget*, kid)->ThemeChanged();
   }
 
   DispatchStandardEvent(NS_THEMECHANGED);
@@ -2326,6 +2384,18 @@ void nsWidget::SetBackgroundColorNative(GdkColor *aColorNor,
 NS_IMETHODIMP nsWidget::ResetInputState()
 {
   return NS_OK;
+}
+
+NS_IMETHODIMP nsWidget::SetIMEOpenState(PRBool aState) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP nsWidget::GetIMEOpenState(PRBool* aState) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP nsWidget::CancelIMEComposition() {
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 /* virtual */

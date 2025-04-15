@@ -1,26 +1,43 @@
 #!/usr/bin/perl -w
 # 
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
-#  
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
-#  
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
+#
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
+#
 # The Original Code is Mozilla Communicator client code, released
 # March 31, 1998.
-# 
-# The Initial Developer of the Original Code is Netscape
-# Communications Corporation. Portions created by Netscape are
-# Copyright (C) 1998-1999 Netscape Communications Corporation. All
-# Rights Reserved.
-# 
-# Contributor(s): 
-# Jonathan Granrose (granrose@netscape.com)
-# Jean-Jacques Enser (jj@netscape.com)
+#
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1998-1999
+# the Initial Developer. All Rights Reserved.
+#
+# Contributor(s):
+#   Jonathan Granrose (granrose@netscape.com)
+#   Jean-Jacques Enser (jj@netscape.com)
+#
+# Alternatively, the contents of this file may be used under the terms of
+# either of the GNU General Public License Version 2 or later (the "GPL"),
+# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
 # xptlink.pl -
 #
@@ -28,23 +45,12 @@
 # a single .xpt file to improve startup performance.
 #
 
-# load modules
-use Cwd;
-#use File::Basename;
-#use File::Copy;
-#use File::Find;
-#use File::Path;
-#use File::stat;
 use Getopt::Long;
 
 # initialize variables
-$saved_cwd        = cwd();
-$component        = "";		# current component being copied
-$PD               = "";		# file Path Delimiter ( /, \, or :)
-$bindir           = "";		# directory for xpt files ("bin" or "viewer")
 $srcdir           = "";		# root directory being copied from
 $destdir          = "";		# root directory being copied to
-$os               = "";  	# os type (MSDOS, Unix)
+$finaldir         = "";   # where to put the final linked XPT
 $verbose          = 0;		# shorthand for --debug 1
 $debug            = 0;		# controls amount of debug output
 $help             = 0;		# flag: if set, print usage
@@ -52,12 +58,22 @@ $help             = 0;		# flag: if set, print usage
 # get command line options
 $return = GetOptions(	"source|s=s",           \$srcdir,
 			"destination|d=s",      \$destdir,
-			"os|o=s",               \$os,
+      "final|f=s",            \$finaldir,
 			"help|h",               \$help,
 			"debug=i",              \$debug,
 			"verbose|v",            \$verbose,
 			"<>",                   \&do_badargument
 			);
+
+if ($finaldir ne "") {
+  $bindir = "";
+}
+else {
+  $bindir = "bin/";
+}
+
+# remove extra slashes from $destdir
+$destdir =~ s:/+:/:g;
 
 # set debug level
 if ($verbose && !($debug)) {
@@ -76,11 +92,6 @@ if (! $return)
 }
 
 $xptdirs = ();	# directories in the destination directory
-$xptfiles = ();	# list of xpt files found in current directory
-$file = "";		# file from file list
-$files = ();	# file list for removing .xpt files
-$cmdline = "";	# command line passed to system() call
-$i = 0;			# generic counter var
 
 ($debug >= 1) && print "\nLinking .xpt files...\n";
 ($debug >= 2) && print "do_xptlink():\n";
@@ -92,76 +103,79 @@ opendir (DESTDIR, "$destdir") ||
 ($debug >= 4) && print "xptdirs: @xptdirs\n";
 closedir (DESTDIR);
 
-foreach $component (@xptdirs) {
+foreach my $component (@xptdirs) {
 	($debug >= 1) && print "[$component]\n";
-	chdir ("$destdir$PD$component");
-	if (( $os eq "MacOS" && -d "$PD$bindir$PD"."components") || ( -d "$bindir$PD"."components")) {
-		if ( $os eq "MacOS" ) {
-			chdir (":$bindir$PD"."components") ;
-		} else {
-			chdir ("$bindir$PD"."components") ;
-		}	
-		if (( -f "$component".".xpt" ) || ( -f ":$component".".xpt" )) {
-			warn "Warning:  file ".$component.".xpt already exists.\n";
-		}
-		
+
+  print ("Checking for '$destdir/$component/$bindir"."components'\n") if $debug >= 3;
+
+  if (-d "$destdir/$component/$bindir"."components") {
+    warn "File '$destdir/$component/$bindir"."components/$component.xpt' already exists."
+        if -f "$destdir/$component/$bindir"."components/$component.xpt";
+
 		# create list of .xpt files in cwd
-		($debug >= 4) && print "opendir: $destdir$PD$component$PD$bindir$PD"."components\n";
-		opendir (COMPDIR, "$destdir$PD$component$PD$bindir$PD"."components") ||
-			die "Error: cannot open $destdir$PD$component$PD$bindir$PD"."components.  Exiting...\n";
+   my @xptfiles;
+
+		($debug >= 4) && print "opendir: $destdir/$component/$bindir"."components\n";
+		opendir (COMPDIR, "$destdir/$component/$bindir"."components") ||
+			die "Error: cannot open $destdir/$component/$bindir"."components.  Exiting...\n";
 		($debug >= 3) && print "Creating list of .xpt files...\n";
-		@files = sort ( grep (!/^\./, readdir (COMPDIR)));
-		foreach $file (@files) {
+		my @files = sort ( grep (!/^\./, readdir (COMPDIR)));
+		foreach my $file (@files) {
 			($debug >= 6) && print "$file\n";
 			if ( $file =~ /\.xpt$/ ) {
-				$xptfiles[$i] = $file;
-				$i++;
+                            push @xptfiles, "$destdir/$component/$bindir"."components/$file";
 				($debug >= 8) && print "xptfiles:\t@xptfiles\n";
 			}
 		}
 		closedir (COMPDIR);
 
 		# merge .xpt files into one if we found any in the dir
-		if ( $#xptfiles >=1 ) {
-			if ( $os eq "MacOS" ) {
-				$cmdline = "'$srcdir$PD"."xpt_link' $component".".xpt.new"." @xptfiles";
-			} else {
-				$cmdline = "$srcdir$PD$bindir$PD"."xpt_link $component".".xpt.new"." @xptfiles";
-			}
-			($debug >= 4) && print "$cmdline\n";
-			system($cmdline);
+		if ( scalar(@xptfiles) ) {
+      my ($merged, $fmerged);
+      if ($finaldir ne "") {
+        $merged = "$finaldir/$component.xpt";
+      }
+      else {
+        $fmerged = "$destdir/$component/$bindir"."components/$component.xpt";
+        $merged = $fmerged.".new";
+      }
 
-			# remove old .xpt files in the component directory if xpt_link succeeded
-			if	(( -f "$component".".xpt.new" ) ||
-				(( -f "$PD$component".".xpt.new" ) && ( $os eq "MacOS" ))) {
-				($debug >= 2) && print "Deleting individual xpt files.\n";
-				foreach $file (@xptfiles) {
-					($debug >= 4) && print "\t$file";
-					unlink ("$destdir$PD$component$PD$bindir$PD"."components"."$PD$file") ||
-						warn "Warning: couldn't unlink file $file.\n";
-					($debug >= 4) && print "\t\tdeleted\n";
-				}
-				($debug >= 4) && print "\n";
-			} else {
-				die "Error: xpt_link failed.  Exiting...\n";
-			}
-			($debug >= 2) && print "Renaming $component".".xpt.new as $component".".xpt.\n";
-			if ( $os eq "MacOS" ) {
-				rename (":$component".".xpt.new", ":$component".".xpt") ||
-					warn "Warning: rename of $component".".xpt.new as ".$component.".xpt failed.\n";
-			} else {
-				rename ("$component".".xpt.new", "$component".".xpt") ||
-					warn "Warning: rename of $component".".xpt.new as ".$component.".xpt failed.\n";
+      my @realxptfiles;
+      my $realmerged;
+      if ($^O eq "cygwin") {
+          @realxptfiles = map {my $file = `cygpath -t mixed $_`;
+                               chomp $file;
+                               $file} @xptfiles;
+	  $realmerged = `cygpath -t mixed $merged`;
+	  chomp $realmerged;
+      }
+      else {
+          @realxptfiles = @xptfiles;
+	  $realmerged = $merged;
+      }
+
+      my $cmdline = "$srcdir/bin/xpt_link $realmerged @realxptfiles";
+			($debug >= 4) && print "$cmdline\n";
+			system($cmdline) == 0 || die ("'$cmdline' failed");
+
+      if ($finaldir eq "") {
+        # remove old .xpt files in the component directory.
+        ($debug >= 2) && print "Deleting individual xpt files.\n";
+        for my $file (@xptfiles) {
+          ($debug >= 4) && print "\t$file";
+          unlink ($file) ||
+              die "Couldn't unlink file $file.\n";
+          ($debug >= 4) && print "\t\tdeleted\n\n";
+        }
+
+        ($debug >= 2) && print "Renaming $merged as $fmerged\n";
+        rename ($merged, $fmerged) ||
+            die "Rename of '$merged' to '$fmerged' failed.\n";
 			}
 		}
 	}
-	# reinitialize vars for next component
-	@xptfiles = ();
-	$i = 0;
 }
 ($debug >= 1) && print "Linking .xpt files completed.\n";
-
-chdir ($saved_cwd);
 
 exit (0);
 
@@ -198,30 +212,6 @@ sub check_arguments
 	} elsif ((! -d $destdir) || (! -w $destdir)) {
 		print "Error: destination directory \"$destdir\" is not a directory or is not writeable.\n";
 		$exitval += 2;
-	}
-
-	# check OS == {mac|unix|dos}
-	if ($os eq "") {
-		print "Error: OS type (--os) not specified.\n";
-		$exitval += 8;
-	} elsif ( $os =~ /mac/i ) {
-		$os = "MacOS";
-		$PD = ":";
-		$bindir = "viewer";
-		($debug >= 4) && print " OS: $os\n";
-	} elsif ( $os =~ /dos/i ) {
-		$os = "MSDOS";
-		$PD = "/";
-		$bindir = "bin";
-		($debug >= 4) && print " OS: $os\n";
-	} elsif ( $os =~ /unix/i ) {
-		$os = "Unix";       # can be anything but MacOS, MSDOS, or VMS
-		$PD = "/";
-		$bindir = "bin";
-		($debug >= 4) && print " OS: Unix\n";
-	} else {
-		print "Error: OS type \"$os\" unknown.\n";
-		$exitval += 16;
 	}
 
 	if ($exitval) {

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -51,7 +51,6 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsFtpConnectionThread.h"
 #include "netCore.h"
-#include "nsXPIDLString.h"
 #include "nsIStreamListener.h"
 #include "nsAutoLock.h"
 #include "nsIPrompt.h"
@@ -60,8 +59,7 @@
 #include "nsIUploadChannel.h"
 #include "nsIProxyInfo.h"
 #include "nsIResumableChannel.h"
-#include "nsIResumableEntityID.h"
-#include "nsIDirectoryListing.h"
+#include "nsHashPropertyBag.h"
 
 #include "nsICacheService.h"
 #include "nsICacheEntryDescriptor.h"
@@ -76,17 +74,17 @@
 
 #define FTP_CACHE_CONTROL_CONNECTION 1
 
-class nsFTPChannel : public nsIFTPChannel,
+class nsFTPChannel : public nsHashPropertyBag,
+                     public nsIFTPChannel,
                      public nsIUploadChannel,
                      public nsIInterfaceRequestor,
                      public nsIProgressEventSink,
                      public nsIStreamListener, 
                      public nsICacheListener,
-                     public nsIResumableChannel,
-                     public nsIDirectoryListing
+                     public nsIResumableChannel
 {
 public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_ISUPPORTS_INHERITED
     NS_DECL_NSIREQUEST
     NS_DECL_NSICHANNEL
     NS_DECL_NSIUPLOADCHANNEL
@@ -97,7 +95,6 @@ public:
     NS_DECL_NSIREQUESTOBSERVER
     NS_DECL_NSICACHELISTENER
     NS_DECL_NSIRESUMABLECHANNEL
-    NS_DECL_NSIDIRECTORYLISTING
     
     // nsFTPChannel methods:
     nsFTPChannel();
@@ -108,9 +105,23 @@ public:
                   nsIProxyInfo* proxyInfo,
                   nsICacheSession* session);
 
-    nsresult SetupState(PRUint32 startPos, nsIResumableEntityID* entityID);
+    nsresult SetupState(PRUint64 startPos, const nsACString& entityID);
     nsresult GenerateCacheKey(nsACString &cacheKey);
     
+    nsresult AsyncOpenAt(nsIStreamListener *listener, nsISupports *ctxt,
+                         PRUint64 startPos, const nsACString& entityID);
+
+    // Helper function to simplify getting notification callbacks.
+    template <class T>
+    void GetCallback(nsCOMPtr<T> &aResult) {
+        GetInterface(NS_GET_IID(T), getter_AddRefs(aResult));
+    }
+
+    // Helper function for getting the nsIFTPEventSink.
+    void GetFTPEventSink(nsCOMPtr<nsIFTPEventSink> &aResult);
+
+protected:
+    void InitProgressSink();
 
 protected:
     nsCOMPtr<nsIURI>                mOriginalURI;
@@ -119,15 +130,12 @@ protected:
     nsCOMPtr<nsIInputStream>        mUploadStream;
 
     // various callback interfaces
-    nsCOMPtr<nsIProgressEventSink>  mEventSink;
-    nsCOMPtr<nsIPrompt>             mPrompter;
+    nsCOMPtr<nsIProgressEventSink>  mProgressSink;
     nsCOMPtr<nsIFTPEventSink>       mFTPEventSink;
-    nsCOMPtr<nsIAuthPrompt>         mAuthPrompter;
     nsCOMPtr<nsIInterfaceRequestor> mCallbacks;
 
     PRBool                          mIsPending;
     PRUint32                        mLoadFlags;
-    PRUint32                        mListFormat;
 
     PRUint32                        mSourceOffset;
     PRInt32                         mAmount;
@@ -141,21 +149,17 @@ protected:
 
     nsFtpState*                     mFTPState;   
 
-    nsCString                       mHost;
-    PRLock*                         mLock;
     nsCOMPtr<nsISupports>           mUserContext;
     nsresult                        mStatus;
     PRPackedBool                    mCanceled;
 
     nsCOMPtr<nsIIOService>          mIOService;
 
-    // mProperties must be nsISupports, not nsIProperties, due to aggregation
-    nsCOMPtr<nsISupports>           mProperties;
-
     nsCOMPtr<nsICacheSession>         mCacheSession;
     nsCOMPtr<nsICacheEntryDescriptor> mCacheEntry;
     nsCOMPtr<nsIProxyInfo>            mProxyInfo;
-    nsCOMPtr<nsIResumableEntityID>    mEntityID;
+    nsCString                         mEntityID;
+    PRUint64                          mStartPos;
 };
 
 #endif /* nsFTPChannel_h___ */

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -45,18 +45,28 @@
 #include "nsError.h"
 #include "nsString.h"
 
-/* valid mask values for NET_Escape() and NET_EscapedSize(). */
+/**
+ * Valid mask values for nsEscape
+ */
 typedef enum {
-	url_XAlphas		= PR_BIT(0)
-,	url_XPAlphas	= PR_BIT(1)
-,	url_Path		= PR_BIT(2)
+ 	url_All       = 0         /**< %-escape every byte uncondtionally */
+,	url_XAlphas   = PR_BIT(0) /**< Normal escape - leave alphas intact, escape the rest */
+,	url_XPAlphas  = PR_BIT(1) /**< As url_XAlphas, but convert spaces (0x20) to '+' and plus to %2B */
+,	url_Path      = PR_BIT(2) /**< As url_XAlphas, but don't escape slash ('/') */
 } nsEscapeMask;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * Escape the given string according to mask
+ * @param str The string to escape
+ * @param mask How to escape the string
+ * @return A newly allocated escaped string that must be free'd with
+ *         nsCRT::free, or null on failure
+ */
 NS_COM char * nsEscape(const char * str, nsEscapeMask mask);
-	/* Caller must use nsCRT::free() on the result */
 
 NS_COM char * nsUnescape(char * str);
 	/* decode % escaped hex codes into character values,
@@ -129,7 +139,7 @@ enum EscapeMask {
  */
 NS_COM PRBool NS_EscapeURL(const char *str,
                            PRInt32 len,
-                           PRInt16 flags,
+                           PRUint32 flags,
                            nsACString &result);
 
 /**
@@ -145,7 +155,7 @@ NS_COM PRBool NS_EscapeURL(const char *str,
  */
 NS_COM PRBool NS_UnescapeURL(const char *str,
                              PRInt32 len,
-                             PRInt16 flags,
+                             PRUint32 flags,
                              nsACString &result);
 
 /** returns resultant string length **/
@@ -162,7 +172,7 @@ NS_EscapeURL(const nsASingleFragmentCString &part, PRInt16 partType, nsACString 
     return part;
 }
 inline const nsACString &
-NS_UnescapeURL(const nsASingleFragmentCString &str, PRInt16 flags, nsACString &result) {
+NS_UnescapeURL(const nsASingleFragmentCString &str, PRUint32 flags, nsACString &result) {
     const char *temp;
     if (NS_UnescapeURL(str.BeginReading(temp), str.Length(), flags, result))
         return result;

@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is mozilla.org code.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
@@ -20,8 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Peter Van der Beken <peterv@netscape.com> (original author)
- *
+ *   Peter Van der Beken <peterv@propagandism.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -48,12 +47,14 @@
 #include "nsIDOMClassInfo.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMDocumentFragment.h"
+#include "nsIDOMNodeList.h"
 #include "nsIIOService.h"
 #include "nsILoadGroup.h"
 #include "nsIScriptLoader.h"
 #include "nsIStringBundle.h"
 #include "nsIURI.h"
 #include "nsNetUtil.h"
+#include "nsXPathResult.h"
 #include "txExecutionState.h"
 #include "txMozillaTextOutput.h"
 #include "txMozillaXMLOutput.h"
@@ -61,6 +62,8 @@
 #include "XMLUtils.h"
 #include "txUnknownHandler.h"
 #include "txXSLTProcessor.h"
+#include "nsIPrincipal.h"
+#include "jsapi.h"
 
 static NS_DEFINE_CID(kXMLDocumentCID, NS_XMLDOCUMENT_CID);
 
@@ -125,7 +128,7 @@ txToDocHandlerFactory::createHandlerWith(txOutputFormat* aFormat,
 
         case eHTMLOutput:
         {
-            *aHandler = new txMozillaXMLOutput(nsString(),
+            *aHandler = new txMozillaXMLOutput(EmptyString(),
                                                kNameSpaceID_None,
                                                aFormat, mSourceDocument,
                                                mResultDocument, mObserver);
@@ -292,31 +295,7 @@ txMozillaXSLTProcessor::TransformDocument(nsIDOMNode* aSourceDOM,
 
     mSource = aSourceDOM;
 
-    nsAutoPtr<txXPathNode> sourceNode(txXPathNativeNode::createXPathNode(aSourceDOM));
-    if (!sourceNode) {
-        return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    nsCOMPtr<nsIDOMDocument> sourceDOMDocument;
-    aSourceDOM->GetOwnerDocument(getter_AddRefs(sourceDOMDocument));
-    if (!sourceDOMDocument) {
-        sourceDOMDocument = do_QueryInterface(aSourceDOM);
-    }
-
-    txExecutionState es(mStylesheet);
-
-    txToDocHandlerFactory handlerFactory(&es, sourceDOMDocument, aOutputDoc,
-                                         nsnull);
-    es.mOutputHandlerFactory = &handlerFactory;
-
-    es.init(*sourceNode, &mVariables);
-
-    // Process root of XML source document
-    rv = txXSLTProcessor::execute(es);
-    // XXX setup exception context, bug 204658
-    es.end();
-
-    return rv;
+    return TransformToDoc(aOutputDoc, nsnull);
 }
 
 NS_IMETHODIMP
@@ -350,36 +329,7 @@ txMozillaXSLTProcessor::DoTransform()
     NS_ENSURE_TRUE(mStylesheet, NS_ERROR_UNEXPECTED);
     NS_ASSERTION(mObserver, "no observer");
 
-    nsAutoPtr<txXPathNode> sourceNode(txXPathNativeNode::createXPathNode(mSource));
-    if (!sourceNode) {
-        return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    nsCOMPtr<nsIDOMDocument> sourceDOMDocument;
-    mSource->GetOwnerDocument(getter_AddRefs(sourceDOMDocument));
-    if (!sourceDOMDocument) {
-        sourceDOMDocument = do_QueryInterface(mSource);
-    }
-
-    txExecutionState es(mStylesheet);
-
-    // XXX Need to add error observers
-
-    txToDocHandlerFactory handlerFactory(&es, sourceDOMDocument, nsnull,
-                                         mObserver);
-    es.mOutputHandlerFactory = &handlerFactory;
-
-    es.init(*sourceNode, &mVariables);
-
-    // Process root of XML source document
-    nsresult rv = txXSLTProcessor::execute(es);
-    if (NS_FAILED(rv) && mObserver) {
-        // XXX set up context information, bug 204655
-        reportError(rv, nsnull, nsnull);
-    }
-    es.end();
-
-    return rv;
+    return TransformToDoc(nsnull, nsnull);
 }
 
 NS_IMETHODIMP
@@ -439,36 +389,49 @@ txMozillaXSLTProcessor::TransformToDocument(nsIDOMNode *aSource,
     nsresult rv = ensureStylesheet();
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsAutoPtr<txXPathNode> sourceNode(txXPathNativeNode::createXPathNode(aSource));
+    mSource = aSource;
+
+    return TransformToDoc(nsnull, aResult);
+}
+
+nsresult
+txMozillaXSLTProcessor::TransformToDoc(nsIDOMDocument *aOutputDoc,
+                                       nsIDOMDocument **aResult)
+{
+    nsAutoPtr<txXPathNode> sourceNode(txXPathNativeNode::createXPathNode(mSource));
     if (!sourceNode) {
         return NS_ERROR_OUT_OF_MEMORY;
     }
 
     nsCOMPtr<nsIDOMDocument> sourceDOMDocument;
-    aSource->GetOwnerDocument(getter_AddRefs(sourceDOMDocument));
+    mSource->GetOwnerDocument(getter_AddRefs(sourceDOMDocument));
     if (!sourceDOMDocument) {
-        sourceDOMDocument = do_QueryInterface(aSource);
+        sourceDOMDocument = do_QueryInterface(mSource);
     }
 
     txExecutionState es(mStylesheet);
 
     // XXX Need to add error observers
 
-    txToDocHandlerFactory handlerFactory(&es, sourceDOMDocument, nsnull,
-                                         nsnull);
+    txToDocHandlerFactory handlerFactory(&es, sourceDOMDocument, aOutputDoc,
+                                         mObserver);
     es.mOutputHandlerFactory = &handlerFactory;
 
     es.init(*sourceNode, &mVariables);
 
     // Process root of XML source document
-    rv = txXSLTProcessor::execute(es);
-    // XXX setup exception context, bug 204658
-    es.end();
-
+    nsresult rv = txXSLTProcessor::execute(es);
+    es.end(rv);
     if (NS_SUCCEEDED(rv)) {
-        txAOutputXMLEventHandler* handler =
-            NS_STATIC_CAST(txAOutputXMLEventHandler*, es.mOutputHandler);
-        handler->getOutputDocument(aResult);
+        if (aResult) {
+            txAOutputXMLEventHandler* handler =
+                NS_STATIC_CAST(txAOutputXMLEventHandler*, es.mOutputHandler);
+            handler->getOutputDocument(aResult);
+        }
+    }
+    else if (mObserver) {
+        // XXX set up context information, bug 204655
+        reportError(rv, nsnull, nsnull);
     }
 
     return rv;
@@ -511,7 +474,7 @@ txMozillaXSLTProcessor::TransformToFragment(nsIDOMNode *aSource,
     // Process root of XML source document
     rv = txXSLTProcessor::execute(es);
     // XXX setup exception context, bug 204658
-    es.end();
+    es.end(rv);
 
     return rv;
 }
@@ -522,8 +485,11 @@ txMozillaXSLTProcessor::SetParameter(const nsAString & aNamespaceURI,
                                      nsIVariant *aValue)
 {
     NS_ENSURE_ARG(aValue);
+
+    nsCOMPtr<nsIVariant> value = aValue;
+
     PRUint16 dataType;
-    aValue->GetDataType(&dataType);
+    value->GetDataType(&dataType);
     switch (dataType) {
         // Number
         case nsIDataType::VTYPE_INT8:
@@ -551,14 +517,145 @@ txMozillaXSLTProcessor::SetParameter(const nsAString & aNamespaceURI,
         case nsIDataType::VTYPE_UTF8STRING:
         case nsIDataType::VTYPE_CSTRING:
         case nsIDataType::VTYPE_ASTRING:
+        {
+            break;
+        }
 
         // Nodeset
         case nsIDataType::VTYPE_INTERFACE:
         case nsIDataType::VTYPE_INTERFACE_IS:
+        {
+            nsCOMPtr<nsISupports> supports;
+            nsresult rv = value->GetAsISupports(getter_AddRefs(supports));
+            NS_ENSURE_SUCCESS(rv, rv);
+
+            nsCOMPtr<nsIDOMNode> node = do_QueryInterface(supports);
+            if (node) {
+                if (!URIUtils::CanCallerAccess(node)) {
+                    return NS_ERROR_DOM_SECURITY_ERR;
+                }
+
+                break;
+            }
+
+            nsCOMPtr<nsIXPathResult> xpathResult = do_QueryInterface(supports);
+            if (xpathResult) {
+                nsRefPtr<txAExprResult> result;
+                nsresult rv = xpathResult->GetExprResult(getter_AddRefs(result));
+                NS_ENSURE_SUCCESS(rv, rv);
+
+                if (result->getResultType() == txAExprResult::NODESET) {
+                    txNodeSet *nodeSet =
+                        NS_STATIC_CAST(txNodeSet*,
+                                       NS_STATIC_CAST(txAExprResult*, result));
+
+                    nsCOMPtr<nsIDOMNode> node;
+                    PRInt32 i, count = nodeSet->size();
+                    for (i = 0; i < count; ++i) {
+                        rv = txXPathNativeNode::getNode(nodeSet->get(i),
+                                                        getter_AddRefs(node));
+                        NS_ENSURE_SUCCESS(rv, rv);
+
+                        if (!URIUtils::CanCallerAccess(node)) {
+                            return NS_ERROR_DOM_SECURITY_ERR;
+                        }
+                    }
+                }
+
+                // Clone the nsXPathResult so that mutations don't affect this
+                // variable.
+                nsCOMPtr<nsIXPathResult> clone;
+                rv = xpathResult->Clone(getter_AddRefs(clone));
+                NS_ENSURE_SUCCESS(rv, rv);
+
+                nsCOMPtr<nsIWritableVariant> variant =
+                    do_CreateInstance("@mozilla.org/variant;1", &rv);
+                NS_ENSURE_SUCCESS(rv, rv);
+
+                rv = variant->SetAsISupports(clone);
+                NS_ENSURE_SUCCESS(rv, rv);
+
+                value = variant;
+
+                break;
+            }
+
+            nsCOMPtr<nsIDOMNodeList> nodeList = do_QueryInterface(supports);
+            if (nodeList) {
+                PRUint32 length;
+                nodeList->GetLength(&length);
+
+                nsCOMPtr<nsIDOMNode> node;
+                PRUint32 i;
+                for (i = 0; i < length; ++i) {
+                    nodeList->Item(i, getter_AddRefs(node));
+
+                    if (!URIUtils::CanCallerAccess(node)) {
+                        return NS_ERROR_DOM_SECURITY_ERR;
+                    }
+                }
+
+                break;
+            }
+
+            // Random JS Objects will be converted to a string.
+            nsCOMPtr<nsIXPConnectJSObjectHolder> holder =
+                do_QueryInterface(supports);
+            if (holder) {
+                break;
+            }
+
+            // We don't know how to handle this type of param.
+            return NS_ERROR_ILLEGAL_VALUE;
+        }
+
         case nsIDataType::VTYPE_ARRAY:
         {
-            // This might still be an error, but we'll only
-            // find out later since we lazily evaluate.
+            PRUint16 type;
+            nsIID iid;
+            PRUint32 count;
+            void* array;
+            nsresult rv = value->GetAsArray(&type, &iid, &count, &array);
+            NS_ENSURE_SUCCESS(rv, rv);
+
+            if (type != nsIDataType::VTYPE_INTERFACE &&
+                type != nsIDataType::VTYPE_INTERFACE_IS) {
+                nsMemory::Free(array);
+
+                // We only support arrays of DOM nodes.
+                return NS_ERROR_ILLEGAL_VALUE;
+            }
+
+            nsISupports** values = NS_STATIC_CAST(nsISupports**, array);
+
+            PRUint32 i;
+            for (i = 0; i < count; ++i) {
+                nsISupports *supports = values[i];
+                nsCOMPtr<nsIDOMNode> node = do_QueryInterface(supports);
+
+                if (node) {
+                    rv = URIUtils::CanCallerAccess(node) ? NS_OK :
+                         NS_ERROR_DOM_SECURITY_ERR;
+                }
+                else {
+                    // We only support arrays of DOM nodes.
+                    rv = NS_ERROR_ILLEGAL_VALUE;
+                }
+
+                if (NS_FAILED(rv)) {
+                    while (i < count) {
+                        NS_RELEASE(values[i++]);
+                    }
+                    nsMemory::Free(array);
+
+                    return rv;
+                }
+
+                NS_RELEASE(supports);
+            }
+
+            nsMemory::Free(array);
+
             break;
         }
 
@@ -576,11 +673,11 @@ txMozillaXSLTProcessor::SetParameter(const nsAString & aNamespaceURI,
 
     txVariable* var = (txVariable*)mVariables.get(varName);
     if (var) {
-        var->setValue(aValue);
+        var->setValue(value);
         return NS_OK;
     }
 
-    var = new txVariable(aValue);
+    var = new txVariable(value);
     NS_ENSURE_TRUE(var, NS_ERROR_OUT_OF_MEMORY);
 
     return mVariables.add(varName, var);
@@ -643,9 +740,9 @@ txMozillaXSLTProcessor::Reset()
 
 NS_IMETHODIMP
 txMozillaXSLTProcessor::LoadStyleSheet(nsIURI* aUri, nsILoadGroup* aLoadGroup,
-                                       nsIURI* aReferrerUri)
+                                       nsIPrincipal* aCallerPrincipal)
 {
-    nsresult rv = TX_LoadSheet(aUri, this, aLoadGroup, aReferrerUri);
+    nsresult rv = TX_LoadSheet(aUri, this, aLoadGroup, aCallerPrincipal);
     if (NS_FAILED(rv) && mObserver) {
         // This is most likely a network or security error, just
         // use the uri as context.
@@ -688,7 +785,7 @@ txMozillaXSLTProcessor::reportError(nsresult aResult,
             do_GetService(NS_STRINGBUNDLE_CONTRACTID);
         if (sbs) {
             nsXPIDLString errorText;
-            sbs->FormatStatusMessage(aResult, nsString().get(),
+            sbs->FormatStatusMessage(aResult, EmptyString().get(),
                                      getter_Copies(errorText));
 
             nsXPIDLString errorMessage;
@@ -752,8 +849,10 @@ txMozillaXSLTProcessor::notifyError()
         return;
     }
 
-    rootContent->SetDocument(document, PR_FALSE, PR_TRUE);
-    document->SetRootContent(rootContent);
+    rv = document->SetRootContent(rootContent);
+    if (NS_FAILED(rv)) {
+        return;
+    }
 
     nsCOMPtr<nsIDOMText> text;
     rv = errorDocument->CreateTextNode(mErrorText, getter_AddRefs(text));
@@ -881,16 +980,6 @@ txMozillaXSLTProcessor::ContentInserted(nsIDocument* aDocument,
 }
 
 void
-txMozillaXSLTProcessor::ContentReplaced(nsIDocument* aDocument,
-                                        nsIContent* aContainer,
-                                        nsIContent* aOldChild,
-                                        nsIContent* aNewChild,
-                                        PRInt32 aIndexInContainer)
-{
-    mStylesheet = nsnull;
-}
-
-void
 txMozillaXSLTProcessor::ContentRemoved(nsIDocument* aDocument,
                                        nsIContent* aContainer,
                                        nsIContent* aChild,
@@ -975,25 +1064,153 @@ txVariable::Convert(nsIVariant *aValue, txAExprResult** aResult)
         case nsIDataType::VTYPE_INTERFACE:
         case nsIDataType::VTYPE_INTERFACE_IS:
         {
-            nsID *iid;
             nsCOMPtr<nsISupports> supports;
-            nsresult rv = aValue->GetAsInterface(&iid, getter_AddRefs(supports));
+            nsresult rv = aValue->GetAsISupports(getter_AddRefs(supports));
             NS_ENSURE_SUCCESS(rv, rv);
-            if (iid) {
-                // XXX Figure out what the user added and if we can do
-                //     anything with it.
-                //     nsIDOMNode, nsIDOMNodeList, nsIDOMXPathResult
-                nsMemory::Free(iid);
+
+            nsCOMPtr<nsIDOMNode> node = do_QueryInterface(supports);
+            if (node) {
+                nsAutoPtr<txXPathNode> xpathNode(txXPathNativeNode::createXPathNode(node));
+                if (!xpathNode) {
+                    return NS_ERROR_FAILURE;
+                }
+
+                *aResult = new txNodeSet(*xpathNode, nsnull);
+                if (!*aResult) {
+                    return NS_ERROR_OUT_OF_MEMORY;
+                }
+
+                NS_ADDREF(*aResult);
+
+                return NS_OK;
             }
+
+            nsCOMPtr<nsIXPathResult> xpathResult = do_QueryInterface(supports);
+            if (xpathResult) {
+                return xpathResult->GetExprResult(aResult);
+            }
+
+            nsCOMPtr<nsIDOMNodeList> nodeList = do_QueryInterface(supports);
+            if (nodeList) {
+                nsRefPtr<txNodeSet> nodeSet = new txNodeSet(nsnull);
+                if (!nodeSet) {
+                    return NS_ERROR_OUT_OF_MEMORY;
+                }
+
+                PRUint32 length;
+                nodeList->GetLength(&length);
+
+                nsCOMPtr<nsIDOMNode> node;
+                PRUint32 i;
+                for (i = 0; i < length; ++i) {
+                    nodeList->Item(i, getter_AddRefs(node));
+
+                    nsAutoPtr<txXPathNode> xpathNode(
+                        txXPathNativeNode::createXPathNode(node));
+                    if (!xpathNode) {
+                        return NS_ERROR_FAILURE;
+                    }
+
+                    nodeSet->add(*xpathNode);
+                }
+
+                NS_ADDREF(*aResult = nodeSet);
+
+                return NS_OK;
+            }
+
+            // Convert random JS Objects to a string.
+            nsCOMPtr<nsIXPConnectJSObjectHolder> holder =
+                do_QueryInterface(supports);
+            if (holder) {
+                nsCOMPtr<nsIXPConnect> xpc =
+                    do_GetService(nsIXPConnect::GetCID(), &rv);
+                NS_ENSURE_SUCCESS(rv, rv);
+                
+                nsCOMPtr<nsIXPCNativeCallContext> cc;
+                rv = xpc->GetCurrentNativeCallContext(getter_AddRefs(cc));
+                NS_ENSURE_SUCCESS(rv, rv);
+
+                JSContext* cx;
+                rv = cc->GetJSContext(&cx);
+                NS_ENSURE_SUCCESS(rv, rv);
+
+                JSObject *jsobj;
+                rv = holder->GetJSObject(&jsobj);
+                NS_ENSURE_SUCCESS(rv, rv);
+
+                JSString *str = JS_ValueToString(cx, OBJECT_TO_JSVAL(jsobj));
+                NS_ENSURE_TRUE(str, NS_ERROR_FAILURE);
+
+                const PRUnichar *strChars =
+                    NS_REINTERPRET_CAST(const PRUnichar*,
+                                        ::JS_GetStringChars(str));
+                nsDependentString value(strChars, ::JS_GetStringLength(str));
+
+                *aResult = new StringResult(value, nsnull);
+                if (!*aResult) {
+                    return NS_ERROR_OUT_OF_MEMORY;
+                }
+
+                NS_ADDREF(*aResult);
+
+                return NS_OK;
+            }
+
             break;
         }
 
         case nsIDataType::VTYPE_ARRAY:
         {
-            // XXX Figure out what the user added and if we can do
-            //     anything with it. Array of Nodes. 
-            break;
+            PRUint16 type;
+            nsIID iid;
+            PRUint32 count;
+            void* array;
+            nsresult rv = aValue->GetAsArray(&type, &iid, &count, &array);
+            NS_ENSURE_SUCCESS(rv, rv);
+
+            NS_ASSERTION(type == nsIDataType::VTYPE_INTERFACE ||
+                         type == nsIDataType::VTYPE_INTERFACE_IS,
+                         "Huh, we checked this in SetParameter?");
+
+            nsISupports** values = NS_STATIC_CAST(nsISupports**, array);
+
+            nsRefPtr<txNodeSet> nodeSet = new txNodeSet(nsnull);
+            if (!nodeSet) {
+                NS_FREE_XPCOM_ISUPPORTS_POINTER_ARRAY(count, values);
+
+                return NS_ERROR_OUT_OF_MEMORY;
+            }
+
+            PRUint32 i;
+            for (i = 0; i < count; ++i) {
+                nsISupports *supports = values[i];
+                nsCOMPtr<nsIDOMNode> node = do_QueryInterface(supports);
+                NS_ASSERTION(node, "Huh, we checked this in SetParameter?");
+
+                nsAutoPtr<txXPathNode> xpathNode(
+                    txXPathNativeNode::createXPathNode(node));
+                if (!xpathNode) {
+                    while (i < count) {
+                        NS_RELEASE(values[i++]);
+                    }
+                    nsMemory::Free(array);
+
+                    return NS_ERROR_FAILURE;
+                }
+
+                nodeSet->add(*xpathNode);
+
+                NS_RELEASE(supports);
+            }
+
+            nsMemory::Free(array);
+
+            NS_ADDREF(*aResult = nodeSet);
+
+            return NS_OK;
         }
     }
+
     return NS_ERROR_ILLEGAL_VALUE;
 }

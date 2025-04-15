@@ -184,29 +184,49 @@ nsGNOMERegistry::Startup()
   // crash on exit.
 }
 
-/* static */ PRBool
-nsGNOMERegistry::HandlerExists(const char *aProtocolScheme)
+/**
+ * Finds the application for a given protocol.
+ *
+ * @param aProtocolScheme
+ *        Protocol to look up. For example, "ghelp" or "mailto".
+ *
+ * @return UTF-8 string identifying the application. Must be freed with
+ *         g_free.
+ *         NULL on error.
+ */
+static gchar* getAppForScheme(const nsACString& aProtocolScheme)
 {
   if (!gconfLib)
-    return PR_FALSE;
+    return nsnull;
 
   GConfClient *client = _gconf_client_get_default();
   NS_ASSERTION(client, "no gconf client");
 
   nsCAutoString gconfPath(NS_LITERAL_CSTRING("/desktop/gnome/url-handlers/") +
-                          nsDependentCString(aProtocolScheme) +
+                          aProtocolScheme +
                           NS_LITERAL_CSTRING("/command"));
 
   gchar *app = _gconf_client_get_string(client, gconfPath.get(), NULL);
   g_object_unref(G_OBJECT(client));
 
+  return app;
+}
+
+/* static */ PRBool
+nsGNOMERegistry::HandlerExists(const char *aProtocolScheme)
+{
+  gchar *app = getAppForScheme(nsDependentCString(aProtocolScheme));
+
   if (app) {
     g_free(app);
+    GConfClient *client = _gconf_client_get_default();
 
     nsCAutoString enabledPath(NS_LITERAL_CSTRING("/desktop/gnome/url-handlers/") +
                               nsDependentCString(aProtocolScheme) +
                               NS_LITERAL_CSTRING("/enabled"));
     gboolean isEnabled = _gconf_client_get_bool(client, enabledPath.get(), NULL);
+
+    g_object_unref(G_OBJECT(client));
 
     return isEnabled ? PR_TRUE : PR_FALSE;
   }
@@ -230,6 +250,19 @@ nsGNOMERegistry::LoadURL(nsIURI *aURL)
 
   return NS_ERROR_FAILURE;
 }
+
+/* static */ void
+nsGNOMERegistry::GetAppDescForScheme(const nsACString& aScheme,
+                                     nsAString& aDesc)
+{
+  char *app = getAppForScheme(aScheme);
+
+  if (app) {
+    CopyUTF8toUTF16(app, aDesc);
+    g_free(app);
+  }
+}
+
 
 /* static */ already_AddRefed<nsMIMEInfoBase>
 nsGNOMERegistry::GetFromExtension(const char *aFileExt)
@@ -263,20 +296,18 @@ nsGNOMERegistry::GetFromType(const char *aMIMEType)
   if (!handlerApp)
     return nsnull;
 
-  nsRefPtr<nsMIMEInfoImpl> mimeInfo = new nsMIMEInfoImpl();
+  nsRefPtr<nsMIMEInfoImpl> mimeInfo = new nsMIMEInfoImpl(aMIMEType);
   NS_ENSURE_TRUE(mimeInfo, nsnull);
-
-  mimeInfo->SetMIMEType(aMIMEType);
 
   // Get the list of extensions and append then to the mimeInfo.
   GList *extensions = _gnome_vfs_mime_get_extensions_list(aMIMEType);
   for (GList *extension = extensions; extension; extension = extension->next)
-    mimeInfo->AppendExtension((const char *) extension->data);
+    mimeInfo->AppendExtension(nsDependentCString((const char *) extension->data));
 
   _gnome_vfs_mime_extensions_list_free(extensions);
 
   const char *description = _gnome_vfs_mime_get_description(aMIMEType);
-  mimeInfo->SetDescription(NS_ConvertUTF8toUCS2(description).get());
+  mimeInfo->SetDescription(NS_ConvertUTF8toUCS2(description));
 
   // Convert UTF-8 registry value to filesystem encoding, which
   // g_find_program_in_path() uses.
@@ -303,7 +334,7 @@ nsGNOMERegistry::GetFromType(const char *aMIMEType)
                         getter_AddRefs(appFile));
   if (appFile) {
     mimeInfo->SetDefaultApplication(appFile);
-    mimeInfo->SetDefaultDescription(NS_ConvertUTF8toUCS2(handlerApp->name).get());
+    mimeInfo->SetDefaultDescription(NS_ConvertUTF8toUCS2(handlerApp->name));
     mimeInfo->SetPreferredAction(nsIMIMEInfo::useSystemDefault);
   }
 

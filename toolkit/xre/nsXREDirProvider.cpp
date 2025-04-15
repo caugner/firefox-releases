@@ -23,6 +23,7 @@
  *  Brian Ryner <bryner@brianryner.com>
  *  Benjamin Smedberg <bsmedberg@covad.net>
  *  Ben Goodger <ben@mozilla.org>
+ *  Jens Bannmann <jens.b@web.de>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -47,6 +48,7 @@
 #include "nsILocalFile.h"
 #include "nsIObserverService.h"
 #include "nsIProfileChangeStatus.h"
+#include "nsIToolkitChromeRegistry.h"
 
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsDirectoryServiceDefs.h"
@@ -62,6 +64,10 @@
 #ifdef XP_WIN
 #include <windows.h>
 #include <shlobj.h>
+// This is not defined by VC6. 
+#ifndef CSIDL_LOCAL_APPDATA
+#define CSIDL_LOCAL_APPDATA             0x001C
+#endif
 #endif
 #ifdef XP_MACOSX
 #include "nsILocalFileMac.h"
@@ -100,104 +106,51 @@ nsXREDirProvider::~nsXREDirProvider()
 }
 
 nsresult
-nsXREDirProvider::Initialize()
+nsXREDirProvider::Initialize(nsIFile *aXULAppDir)
 { 
-  // We need to use platform-specific hackery to find the
-  // path of this executable. This is copied, with some modifications, from
-  // nsGREDirServiceProvider.cpp
-#ifdef XP_WIN
-  char exePath[MAXPATHLEN];
-  if ( ! ::GetModuleFileName(0, exePath, MAXPATHLEN) )
+  mXULAppDir = aXULAppDir;
+
+  nsCOMPtr<nsILocalFile> lf;
+  nsresult rv = XRE_GetBinaryPath(gArgv[0], getter_AddRefs(lf));
+  if (NS_FAILED(rv))
+    return rv;
+
+  nsCOMPtr<nsIFile> appDir;
+  rv = lf->GetParent(getter_AddRefs(appDir));
+  if (NS_FAILED(rv))
+    return rv;
+
+  mAppDir = do_QueryInterface(appDir);
+  if (!mAppDir)
     return NS_ERROR_FAILURE;
 
-  // chop off the executable name by finding the rightmost backslash
-  char* lastSlash = strrchr(exePath, '\\');
-  if (!lastSlash) return NS_ERROR_FAILURE;
-
-  *(lastSlash) = '\0';
-  return NS_NewNativeLocalFile(nsDependentCString(exePath), PR_TRUE,
-                               getter_AddRefs(mAppDir));
-
-#elif defined(XP_MACOSX)
-  // Works even if we're not bundled.
-  CFBundleRef appBundle = CFBundleGetMainBundle();
-  if (!appBundle) return NS_ERROR_FAILURE;
-
-  nsresult rv = NS_ERROR_FAILURE;
-
-  CFURLRef bundleURL = CFBundleCopyExecutableURL(appBundle);
-  if (bundleURL) {
-    CFURLRef parentURL = CFURLCreateCopyDeletingLastPathComponent(kCFAllocatorDefault, bundleURL);
-    if (parentURL) {
-      rv = NS_NewNativeLocalFile(EmptyCString(), PR_TRUE,
-                                 getter_AddRefs(mAppDir));
-      if (NS_SUCCEEDED(rv)) {
-        nsCOMPtr<nsILocalFileMac> appDirMac (do_QueryInterface(mAppDir, &rv));
-        if (NS_SUCCEEDED(rv)) {
-          rv = appDirMac->InitWithCFURL(parentURL);
-        }
-      }
-
-      CFRelease(parentURL);
-    }
-    CFRelease(bundleURL);
-  }
-
-  return rv;
-
-#elif defined(XP_UNIX)
-  // Because we do have access to argv[0], we can get the application
-  // path with certitude, instead of using MOZILLA_FIVE_HOME or
-  // guessing from the CWD like nsGREDirServiceProvider does.
-  char* lastSlash = strrchr(gBinaryPath, '/');
-  if (!lastSlash) return NS_ERROR_FAILURE;
-
-  nsDependentCSubstring appDir(gBinaryPath, lastSlash);
-  return NS_NewNativeLocalFile(appDir, PR_TRUE, getter_AddRefs(mAppDir));
-
-#elif defined(XP_OS2)
-  PPIB ppib;
-  PTIB ptib;
-  char appDir[MAXPATHLEN];
-  char* p;
-  DosGetInfoBlocks( &ptib, &ppib);
-  DosQueryModuleName( ppib->pib_hmte, MAXPATHLEN, appDir);
-  p = strrchr( appDir, '\\'); // XXX DBCS misery
-  if (!p) return NS_ERROR_FAILURE;
-
-  *p  = '\0';
-  return NS_NewNativeLocalFile(nsDependentCString(appDir), PR_TRUE, getter_AddRefs(mAppDir));
-
-#elif defined(XP_BEOS)
-  int32 cookie = 0;
-  image_info info;
-  char *p;
-
-  if(get_next_image_info(0, &cookie, &info) != B_OK)
-    return NS_ERROR_FAILURE;
-
-  p = strrchr(info.name, '/');
-  if (!p) return NS_ERROR_FAILURE;
-
-  *p = 0;
-  return NS_NewNativeLocalFile(nsDependentCString(info.name), PR_TRUE, getter_AddRefs(mAppDir));
-#elif
-#error Oops, you need platform-specific code here
-#endif
+  return NS_OK;
 }
 
 nsresult
-nsXREDirProvider::SetProfileDir(nsIFile* aDir)
+nsXREDirProvider::SetProfile(nsIFile* aDir, nsIFile* aLocalDir)
 {
-  NS_ASSERTION(aDir, "We don't support no-profile apps yet!");
+  NS_ASSERTION(aDir && aLocalDir, "We don't support no-profile apps yet!");
 
 #ifdef DEBUG_bsmedberg
-  nsCAutoString path;
+  nsCAutoString path, path2;
   aDir->GetNativePath(path);
-  printf("nsXREDirProvider::SetProfileDir('%s')\n", path.get());
+  aLocalDir->GetNativePath(path2);
+  printf("nsXREDirProvider::SetProfile('%s', '%s')\n", path.get(), path2.get());
 #endif
 
+  nsresult rv;
+  
+  rv = EnsureDirectoryExists(aDir);
+  if (NS_FAILED(rv))
+    return rv;
+
+  rv = EnsureDirectoryExists(aLocalDir);
+  if (NS_FAILED(rv))
+    return rv;
+
   mProfileDir = aDir;
+  mProfileLocalDir = aLocalDir;
   return NS_OK;
 }
 
@@ -240,12 +193,13 @@ nsXREDirProvider::GetFile(const char* aProperty, PRBool* aPersistent,
   {
     rv = mAppDir->Clone(getter_AddRefs(file));
     if (NS_SUCCEEDED(rv)) {
-      rv = file->AppendNative(nsDependentCString("defaults"));
+      rv = file->AppendNative(NS_LITERAL_CSTRING("defaults"));
       if (NS_SUCCEEDED(rv))
-        rv = file->AppendNative(nsDependentCString("pref"));
+        rv = file->AppendNative(NS_LITERAL_CSTRING("pref"));
     }
   }
-  else if (!strcmp(aProperty, NS_APP_APPLICATION_REGISTRY_DIR)) {
+  else if (!strcmp(aProperty, NS_APP_APPLICATION_REGISTRY_DIR) ||
+           !strcmp(aProperty, XRE_USER_APP_DATA_DIR)) {
     rv = GetUserAppDataDirectory((nsILocalFile**)(nsIFile**) getter_AddRefs(file));
   }
   else if (!strcmp(aProperty, NS_APP_APPLICATION_REGISTRY_FILE)) {
@@ -256,84 +210,109 @@ nsXREDirProvider::GetFile(const char* aProperty, PRBool* aPersistent,
     rv = GetUserAppDataDirectory((nsILocalFile**)(nsIFile**) getter_AddRefs(file));
 
 #if !defined(XP_UNIX) || defined(XP_MACOSX)
-    rv |= file->AppendNative(nsDependentCString("Profiles"));
+    rv |= file->AppendNative(NS_LITERAL_CSTRING("Profiles"));
 #endif
 
     // We must create the profile directory here if it does not exist.
     rv |= EnsureDirectoryExists(file);
   }
+  else if (!strcmp(aProperty, NS_APP_USER_PROFILES_LOCAL_ROOT_DIR)) {
+    rv = GetUserLocalDataDirectory((nsILocalFile**)(nsIFile**) getter_AddRefs(file));
+
+#if !defined(XP_UNIX) || defined(XP_MACOSX)
+    rv |= file->AppendNative(NS_LITERAL_CSTRING("Profiles"));
+#endif
+
+    // We must create the profile directory here if it does not exist.
+    rv |= EnsureDirectoryExists(file);
+  }
+  else if (!strcmp(aProperty, XRE_EXECUTABLE_FILE)) {
+    nsCOMPtr<nsILocalFile> lf;
+    rv = XRE_GetBinaryPath(gArgv[0], getter_AddRefs(lf));
+    if (NS_SUCCEEDED(rv))
+      file = lf;
+  }
+  else if (mXULAppDir && !strcmp(aProperty, "resource:app")) {
+    rv = mXULAppDir->Clone(getter_AddRefs(file));
+  }
   else if (mProfileDir) {
+    // We need to allow component, xpt, and chrome registration to
+    // occur prior to the profile-after-change notification.
     if (!strcmp(aProperty, NS_XPCOM_COMPONENT_REGISTRY_FILE)) {
       rv = mProfileDir->Clone(getter_AddRefs(file));
-      rv |= file->AppendNative(nsDependentCString("compreg.dat"));
+      rv |= file->AppendNative(NS_LITERAL_CSTRING("compreg.dat"));
     }
     else if (!strcmp(aProperty, NS_XPCOM_XPTI_REGISTRY_FILE)) {
       rv = mProfileDir->Clone(getter_AddRefs(file));
-      rv |= file->AppendNative(nsDependentCString("xpti.dat"));
+      rv |= file->AppendNative(NS_LITERAL_CSTRING("xpti.dat"));
     }
-    if (mProfileNotified) {
+    else if (!strcmp(aProperty, NS_APP_USER_CHROME_DIR)) {
+      rv = mProfileDir->Clone(getter_AddRefs(file));
+      rv |= file->AppendNative(NS_LITERAL_CSTRING("chrome"));
+    }
+    else if (!strcmp(aProperty, NS_APP_PROFILE_DIR_STARTUP) && mProfileDir) {
+      return mProfileDir->Clone(aFile);
+    }
+    else if (mProfileNotified) {
       if (!strcmp(aProperty, NS_APP_USER_PROFILE_50_DIR) ||
           !strcmp(aProperty, NS_APP_PREFS_50_DIR)) {
         return mProfileDir->Clone(aFile);
       }
+      else if (!strcmp(aProperty, NS_APP_USER_PROFILE_LOCAL_50_DIR)) {
+        return mProfileLocalDir->Clone(aFile);
+      }
       else if (!strcmp(aProperty, NS_APP_PREFS_50_FILE)) {
         rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("prefs.js"));
+        rv |= file->AppendNative(NS_LITERAL_CSTRING("prefs.js"));
       }
-      // XXXbsmedberg this needs rethinking... many of these are app-specific,
-      // and apps are going to add new stuff. I don't have a good solution,
-      // yet.
-      else if (!strcmp(aProperty, NS_APP_USER_CHROME_DIR)) {
+      else if (!strcmp(aProperty, NS_LOCALSTORE_UNSAFE_FILE)) {
         rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("chrome"));
+        rv |= file->AppendNative(NS_LITERAL_CSTRING("localstore.rdf"));
       }
       else if (!strcmp(aProperty, NS_APP_LOCALSTORE_50_FILE)) {
         rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("localstore.rdf"));
-        EnsureProfileFileExists(file);
+        if (gSafeMode) {
+          rv |= file->AppendNative(NS_LITERAL_CSTRING("localstore-safe.rdf"));
+          file->Remove(PR_FALSE);
+        }
+        else {
+          rv |= file->AppendNative(NS_LITERAL_CSTRING("localstore.rdf"));
+          EnsureProfileFileExists(file);
+        }
       }
       else if (!strcmp(aProperty, NS_APP_HISTORY_50_FILE)) {
         rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("history.dat"));
-      }
-      else if (!strcmp(aProperty, NS_APP_USER_PANELS_50_FILE)) {
-        rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("panels.rdf"));
-        EnsureProfileFileExists(file);
+        rv |= file->AppendNative(NS_LITERAL_CSTRING("history.dat"));
       }
       else if (!strcmp(aProperty, NS_APP_USER_MIMETYPES_50_FILE)) {
         rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("mimeTypes.rdf"));
+        rv |= file->AppendNative(NS_LITERAL_CSTRING("mimeTypes.rdf"));
         EnsureProfileFileExists(file);
       }
-      else if (!strcmp(aProperty, NS_APP_BOOKMARKS_50_FILE)) {
+      else if (!strcmp(aProperty, NS_APP_STORAGE_50_FILE)) {
         rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("bookmarks.html"));
+        rv |= file->AppendNative(NS_LITERAL_CSTRING("storage.sdb"));
       }
       else if (!strcmp(aProperty, NS_APP_DOWNLOADS_50_FILE)) {
         rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("downloads.rdf"));
+        rv |= file->AppendNative(NS_LITERAL_CSTRING("downloads.rdf"));
       }
-      else if (!strcmp(aProperty, NS_APP_SEARCH_50_FILE)) {
-        rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("search.rdf"));
-        EnsureProfileFileExists(file);
-      }
+      // XXXbsmedberg move these defines into application-specific providers.
       else if (!strcmp(aProperty, NS_APP_MAIL_50_DIR)) {
         rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("Mail"));
+        rv |= file->AppendNative(NS_LITERAL_CSTRING("Mail"));
       }
       else if (!strcmp(aProperty, NS_APP_IMAP_MAIL_50_DIR)) {
         rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("ImapMail"));
+        rv |= file->AppendNative(NS_LITERAL_CSTRING("ImapMail"));
       }
       else if (!strcmp(aProperty, NS_APP_NEWS_50_DIR)) {
         rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("News"));
+        rv |= file->AppendNative(NS_LITERAL_CSTRING("News"));
       }
       else if (!strcmp(aProperty, NS_APP_MESSENGER_FOLDER_CACHE_50_DIR)) {
         rv = mProfileDir->Clone(getter_AddRefs(file));
-        rv |= file->AppendNative(nsDependentCString("panacea.dat"));
+        rv |= file->AppendNative(NS_LITERAL_CSTRING("panacea.dat"));
       }
     }
   }
@@ -345,33 +324,91 @@ nsXREDirProvider::GetFile(const char* aProperty, PRBool* aPersistent,
 }
 
 static void
-LoadDirsIntoArray(nsIFile* aComponentsList, nsCOMArray<nsIFile>& aDirectories)
+LoadDirsIntoArray(nsIFile* aComponentsList, const char* aSection,
+                  const char *const* aAppendList,
+                  nsCOMArray<nsIFile>& aDirectories)
 {
   nsINIParser parser;
   nsCOMPtr<nsILocalFile> lf(do_QueryInterface(aComponentsList));
-  parser.Init(lf);
+  nsresult rv =  parser.Init(lf);
+  if (NS_FAILED(rv))
+    return;
 
-  char parserBuf[MAXPATHLEN];
-  nsresult rv = parser.GetString("Extra Files", "Count", parserBuf, MAXPATHLEN);
-  if (NS_SUCCEEDED(rv)) {
-    PRInt32 count = atoi(parserBuf);
-    char buf[10];
-    nsCOMPtr<nsIFile> parent;
-    aComponentsList->GetParent(getter_AddRefs(parent));
-    for (PRInt32 i = 0; i < count; ++i) {
-      sprintf(buf, "File%d", i);
+  NS_NAMED_LITERAL_CSTRING(platform, "platform");
+  NS_NAMED_LITERAL_CSTRING(osTarget, OS_TARGET);
+#ifdef TARGET_OS_ABI
+  NS_NAMED_LITERAL_CSTRING(targetOSABI, TARGET_OS_ABI);
+#endif
 
-      rv = parser.GetString("Extra Files", buf, parserBuf, MAXPATHLEN);
-      if (NS_SUCCEEDED(rv)) {
-        nsCOMPtr<nsILocalFile> lfParent(do_QueryInterface(parent));
-        nsCOMPtr<nsILocalFile> dir(do_CreateInstance("@mozilla.org/file/local;1"));
-        dir->SetRelativeDescriptor(lfParent, nsDependentCString(parserBuf));
-        nsCOMPtr<nsIFile> dirAsFile(do_QueryInterface(dir));
-        aDirectories.AppendObject(dirAsFile);
-      }
+  PRInt32 i = 0;
+  do {
+    nsCAutoString buf("Extension");
+    buf.AppendInt(i++);
+
+    nsCAutoString path;
+    rv = parser.GetString(aSection, buf.get(), path);
+    if (NS_FAILED(rv))
+      break;
+
+    nsCOMPtr<nsILocalFile> dir = do_CreateInstance("@mozilla.org/file/local;1", &rv);
+    if (NS_FAILED(rv))
+      continue;
+
+    nsCOMPtr<nsIFile> platformDir;
+#ifdef TARGET_OS_ABI
+    nsCOMPtr<nsIFile> platformABIDir;
+#endif
+    rv = dir->SetPersistentDescriptor(path);
+    if (NS_FAILED(rv))
+      continue;
+
+    rv = dir->Clone(getter_AddRefs(platformDir));
+    if (NS_FAILED(rv))
+      continue;
+
+    platformDir->AppendNative(platform);
+    platformDir->AppendNative(osTarget);
+
+#ifdef TARGET_OS_ABI
+    rv = dir->Clone(getter_AddRefs(platformABIDir));
+    if (NS_FAILED(rv))
+      continue;
+
+    platformABIDir->AppendNative(platform);
+    platformABIDir->AppendNative(targetOSABI);
+#endif
+
+    const char* const* a = aAppendList;
+    while (*a) {
+      nsDependentCString directory(*a);
+      dir->AppendNative(directory);
+      platformDir->AppendNative(directory);
+#ifdef TARGET_OS_ABI
+      platformABIDir->AppendNative(directory);
+#endif
+      ++a;
     }
+
+    PRBool exists;
+    rv = dir->Exists(&exists);
+    if (NS_SUCCEEDED(rv) && exists)
+      aDirectories.AppendObject(dir);
+
+    rv = platformDir->Exists(&exists);
+    if (NS_SUCCEEDED(rv) && exists)
+      aDirectories.AppendObject(platformDir);
+
+#ifdef TARGET_OS_ABI
+    rv = platformABIDir->Exists(&exists);
+    if (NS_SUCCEEDED(rv) && exists)
+      aDirectories.AppendObject(platformABIDir);
+#endif
   }
+  while (PR_TRUE);
 }
+
+static const char *const kAppendChromeManifests[] =
+  { "chrome.manifest", nsnull };
 
 NS_IMETHODIMP
 nsXREDirProvider::GetFiles(const char* aProperty, nsISimpleEnumerator** aResult)
@@ -379,19 +416,41 @@ nsXREDirProvider::GetFiles(const char* aProperty, nsISimpleEnumerator** aResult)
   nsresult rv = NS_OK;
   *aResult = nsnull;
 
-  if (!strcmp(aProperty, NS_XPCOM_COMPONENT_DIR_LIST)) {
+  nsCOMPtr<nsIFile> profileFile;
+  if (mProfileDir) {
+    mProfileDir->Clone(getter_AddRefs(profileFile));
+    profileFile->AppendNative(NS_LITERAL_CSTRING("extensions.ini"));
+  }
+
+  if (!strcmp(aProperty, XRE_EXTENSIONS_DIR_LIST)) {
+    nsCOMArray<nsIFile> directories;
+    
+    if (mProfileDir && !gSafeMode) {
+      static const char *const kAppendNothing[] = { nsnull };
+
+      LoadDirsIntoArray(profileFile, "ExtensionDirs",
+                        kAppendNothing, directories);
+    }
+
+    rv = NS_NewArrayEnumerator(aResult, directories);
+  }
+  else if (!strcmp(aProperty, NS_XPCOM_COMPONENT_DIR_LIST)) {
     nsCOMArray<nsIFile> directories;
 
-    nsCOMPtr<nsIFile> appFile;
-    mAppDir->Clone(getter_AddRefs(appFile));
-    appFile->AppendNative(nsDependentCString("components.ini"));
-    LoadDirsIntoArray(appFile, directories);
+    if (mXULAppDir) {
+      nsCOMPtr<nsIFile> file;
+      mXULAppDir->Clone(getter_AddRefs(file));
+      file->AppendNative(NS_LITERAL_CSTRING("components"));
+      PRBool exists;
+      if (NS_SUCCEEDED(file->Exists(&exists)) && exists)
+        directories.AppendObject(file);
+    }
 
-    nsCOMPtr<nsIFile> profileFile;
-    if (mProfileDir) {
-      mProfileDir->Clone(getter_AddRefs(profileFile));
-      profileFile->AppendNative(nsDependentCString("components.ini"));
-      LoadDirsIntoArray(profileFile, directories);
+    if (mProfileDir && !gSafeMode) {
+      static const char *const kAppendCompDir[] = { "components", nsnull };
+
+      LoadDirsIntoArray(profileFile, "ExtensionDirs",
+                        kAppendCompDir, directories);
     }
 
     rv = NS_NewArrayEnumerator(aResult, directories);
@@ -399,19 +458,112 @@ nsXREDirProvider::GetFiles(const char* aProperty, nsISimpleEnumerator** aResult)
   else if (!strcmp(aProperty, NS_APP_PREFS_DEFAULTS_DIR_LIST)) {
     nsCOMArray<nsIFile> directories;
 
-    nsCOMPtr<nsIFile> appFile;
-    mAppDir->Clone(getter_AddRefs(appFile));
-    appFile->AppendNative(nsDependentCString("defaults.ini"));
-    LoadDirsIntoArray(appFile, directories);
+    if (mXULAppDir) {
+      nsCOMPtr<nsIFile> file;
+      mXULAppDir->Clone(getter_AddRefs(file));
+      file->AppendNative(NS_LITERAL_CSTRING("defaults"));
+      file->AppendNative(NS_LITERAL_CSTRING("preferences"));
+      PRBool exists;
+      if (NS_SUCCEEDED(file->Exists(&exists)) && exists)
+        directories.AppendObject(file);
+    }
 
-    nsCOMPtr<nsIFile> profileFile;
-    if (mProfileDir) {
-      mProfileDir->Clone(getter_AddRefs(profileFile));
-      profileFile->AppendNative(nsDependentCString("defaults.ini"));
-      LoadDirsIntoArray(profileFile, directories);
+    if (mProfileDir && !gSafeMode) {
+      static const char *const kAppendPrefDir[] = { "defaults", "preferences", nsnull };
+
+      LoadDirsIntoArray(profileFile, "ExtensionDirs",
+                        kAppendPrefDir, directories);
     }
 
     rv = NS_NewArrayEnumerator(aResult, directories);
+  }
+  else if (!strcmp(aProperty, NS_CHROME_MANIFESTS_FILE_LIST)) {
+    nsCOMArray<nsIFile> manifests;
+
+    nsCOMPtr<nsIFile> manifest;
+    mAppDir->Clone(getter_AddRefs(manifest));
+    manifest->AppendNative(NS_LITERAL_CSTRING("chrome"));
+    manifests.AppendObject(manifest);
+
+    if (mXULAppDir) {
+      nsCOMPtr<nsIFile> file;
+      mXULAppDir->Clone(getter_AddRefs(file));
+      file->AppendNative(NS_LITERAL_CSTRING("chrome"));
+      PRBool exists;
+      if (NS_SUCCEEDED(file->Exists(&exists)) && exists)
+        manifests.AppendObject(file);
+
+      mXULAppDir->Clone(getter_AddRefs(file));
+      file->AppendNative(NS_LITERAL_CSTRING("chrome.manifest"));
+      if (NS_SUCCEEDED(file->Exists(&exists)) && exists)
+        manifests.AppendObject(file);
+    }
+
+    if (mProfileDir && !gSafeMode) {
+      LoadDirsIntoArray(profileFile, "ExtensionDirs",
+                        kAppendChromeManifests, manifests);
+    }
+
+    rv = NS_NewArrayEnumerator(aResult, manifests);
+  }  
+  else if (!strcmp(aProperty, NS_SKIN_MANIFESTS_FILE_LIST)) {
+    nsCOMArray<nsIFile> manifests;
+    if (mProfileDir && !gSafeMode) {
+      LoadDirsIntoArray(profileFile, "ThemeDirs",
+                        kAppendChromeManifests, manifests);
+    }
+
+    rv = NS_NewArrayEnumerator(aResult, manifests);
+  }
+  else if (!strcmp(aProperty, NS_APP_CHROME_DIR_LIST)) {
+    // NS_APP_CHROME_DIR_LIST is only used to get default (native) icons
+    // for OS window decoration.
+
+    nsCOMArray<nsIFile> directories;
+
+    if (mXULAppDir) {
+      nsCOMPtr<nsIFile> file;
+      mXULAppDir->Clone(getter_AddRefs(file));
+      file->AppendNative(NS_LITERAL_CSTRING("chrome"));
+      PRBool exists;
+      if (NS_SUCCEEDED(file->Exists(&exists)) && exists)
+        directories.AppendObject(file);
+    }
+
+    if (mProfileDir && !gSafeMode) {
+      static const char *const kAppendChromeDir[] = { "chrome", nsnull };
+
+      LoadDirsIntoArray(profileFile, "ExtensionDirs",
+                        kAppendChromeDir, directories);
+    }
+
+    rv = NS_NewArrayEnumerator(aResult, directories);
+  }
+  else if (!strcmp(aProperty, NS_APP_PLUGINS_DIR_LIST)) {
+    nsCOMArray<nsIFile> directories;
+
+    // The root dirserviceprovider does quite a bit for us: we're mainly
+    // interested in xulapp and extension-provided plugins.
+    if (mXULAppDir) {
+      nsCOMPtr<nsIFile> file;
+      mXULAppDir->Clone(getter_AddRefs(file));
+      file->AppendNative(NS_LITERAL_CSTRING("plugins"));
+      PRBool exists;
+      if (NS_SUCCEEDED(file->Exists(&exists)) && exists)
+        directories.AppendObject(file);
+    }
+
+    if (mProfileDir && !gSafeMode) {
+      static const char *const kAppendPlugins[] = { "plugins", nsnull };
+
+      LoadDirsIntoArray(profileFile, "ExtensionDirs",
+                        kAppendPlugins, directories);
+    }
+
+    rv = NS_NewArrayEnumerator(aResult, directories);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = NS_SUCCESS_AGGREGATE_RESULT;
   }
   else
     rv = NS_ERROR_FAILURE;
@@ -515,8 +667,33 @@ GetProfileFolderName(char* aProfileFolderName, const char* aSource)
   *aProfileFolderName = '\0';
 }
 
+#ifdef XP_WIN
+static nsresult
+GetShellFolderPath(int folder, char result[MAXPATHLEN])
+{
+  LPMALLOC pMalloc;
+  LPITEMIDLIST pItemIDList = NULL;
+
+  if (!SUCCEEDED(SHGetMalloc(&pMalloc)))
+    return NS_ERROR_OUT_OF_MEMORY;
+
+  nsresult rv;
+  if (SUCCEEDED(SHGetSpecialFolderLocation(NULL, folder, &pItemIDList)) &&
+      SUCCEEDED(SHGetPathFromIDList(pItemIDList, result))) {
+    rv = NS_OK;
+  } else {
+    rv = NS_ERROR_NOT_AVAILABLE;
+  }
+
+  if (pItemIDList)
+    pMalloc->Free(pItemIDList);
+  pMalloc->Release();
+  return rv;
+}
+#endif
+
 nsresult
-nsXREDirProvider::GetUserAppDataDirectory(nsILocalFile** aFile)
+nsXREDirProvider::GetUserDataDirectory(nsILocalFile** aFile, PRBool aLocal)
 {
   NS_ASSERTION(gAppData, "gAppData not initialized!");
 
@@ -525,13 +702,19 @@ nsXREDirProvider::GetUserAppDataDirectory(nsILocalFile** aFile)
   nsCOMPtr<nsILocalFile> localDir;
 
 #if defined(XP_MACOSX)
-   FSRef fsRef;
+  FSRef fsRef;
+  OSType folderType;
+  if (aLocal) {
+    folderType = kCachedDataFolderType;
+  } else {
 #ifdef MOZ_THUNDERBIRD 
-  OSErr err = ::FSFindFolder(kUserDomain, kDomainLibraryFolderType, kCreateFolder, &fsRef);
+    folderType = kDomainLibraryFolderType;
 #else
-  OSErr err = ::FSFindFolder(kUserDomain, kApplicationSupportFolderType, kCreateFolder, &fsRef);
+    folderType = kApplicationSupportFolderType;
 #endif 
-  if (err) return NS_ERROR_FAILURE;
+  }
+  OSErr err = ::FSFindFolder(kUserDomain, folderType, kCreateFolder, &fsRef);
+  NS_ENSURE_FALSE(err, NS_ERROR_FAILURE);
 
   rv = NS_NewNativeLocalFile(EmptyCString(), PR_TRUE, getter_AddRefs(localDir));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -545,45 +728,41 @@ nsXREDirProvider::GetUserAppDataDirectory(nsILocalFile** aFile)
   // Note that MacOS ignores the vendor when creating the profile hierarchy - all
   // application preferences directories live alongside one another in 
   // ~/Library/Application Support/
-  rv = dirFileMac->AppendNative(nsDependentCString(gAppData->appName));
+  rv = dirFileMac->AppendNative(nsDependentCString(gAppData->name));
   NS_ENSURE_SUCCESS(rv, rv);
 #elif defined(XP_WIN)
-  LPMALLOC pMalloc;
-  LPITEMIDLIST pItemIDList = NULL;
+  char path[MAXPATHLEN];
 
-  if (!SUCCEEDED(SHGetMalloc(&pMalloc)))
-    return NS_ERROR_OUT_OF_MEMORY;
+  // CSIDL_LOCAL_APPDATA is only defined on newer versions of Windows.  If the
+  // OS does not understand it, then we'll fallback to the regular APPDATA
+  // location.  If neither is defined, then we fallback to the Windows folder.
 
-  char appDataPath[MAXPATHLEN];
+  if (aLocal)
+    rv = GetShellFolderPath(CSIDL_LOCAL_APPDATA, path);
+  if (!aLocal || NS_FAILED(rv))
+    rv = GetShellFolderPath(CSIDL_APPDATA, path);
 
-  if (SUCCEEDED(SHGetSpecialFolderLocation(NULL, CSIDL_APPDATA, &pItemIDList)) &&
-      SUCCEEDED(SHGetPathFromIDList(pItemIDList, appDataPath))) {
-  } else {
-    if (!GetWindowsDirectory(appDataPath, MAXPATHLEN)) {
-      NS_WARNING("Aaah, no windows directory!");
-      return NS_ERROR_FAILURE;
-    }
+  if (NS_FAILED(rv) && !GetWindowsDirectory(path, sizeof(path))) {
+    NS_WARNING("Aaah, no windows directory!");
+    return NS_ERROR_FAILURE;
   }
 
-  if (pItemIDList) pMalloc->Free(pItemIDList);
-  pMalloc->Release();
-
-  rv = NS_NewNativeLocalFile(nsDependentCString(appDataPath),
+  rv = NS_NewNativeLocalFile(nsDependentCString(path),
                              PR_TRUE, getter_AddRefs(localDir));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (gAppData->appVendor) {
-    rv = localDir->AppendNative(nsDependentCString(gAppData->appVendor));
+  if (gAppData->vendor) {
+    rv = localDir->AppendNative(nsDependentCString(gAppData->vendor));
     NS_ENSURE_SUCCESS(rv, rv);
   }
-  rv = localDir->AppendNative(nsDependentCString(gAppData->appName));
+  rv = localDir->AppendNative(nsDependentCString(gAppData->name));
   NS_ENSURE_SUCCESS(rv, rv);
 
 #elif defined(XP_OS2)
 #if 0 /* For OS/2 we want to always use MOZILLA_HOME */
   // we want an environment variable of the form
   // FIREFOX_HOME, etc
-  nsDependentCString envVar(nsDependentCString(gAppData->appName));
+  nsDependentCString envVar(nsDependentCString(gAppData->name));
   envVar.Append("_HOME");
   char *pHome = getenv(envVar.get());
 #endif
@@ -603,11 +782,11 @@ nsXREDirProvider::GetUserAppDataDirectory(nsILocalFile** aFile)
   }
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (gAppData->appVendor) {
-    rv = localDir->AppendNative(nsDependentCString(gAppData->appVendor));
+  if (gAppData->vendor) {
+    rv = localDir->AppendNative(nsDependentCString(gAppData->vendor));
     NS_ENSURE_SUCCESS(rv, rv);
   }
-  rv = localDir->AppendNative(nsDependentCString(gAppData->appName));
+  rv = localDir->AppendNative(nsDependentCString(gAppData->name));
   NS_ENSURE_SUCCESS(rv, rv);
 
 #elif defined(XP_BEOS)
@@ -623,11 +802,11 @@ nsXREDirProvider::GetUserAppDataDirectory(nsILocalFile** aFile)
                              getter_AddRefs(localDir));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (gAppData->appVendor) {
-    rv = localDir->AppendNative(nsDependentCString(gAppData->appVendor));
+  if (gAppData->vendor) {
+    rv = localDir->AppendNative(nsDependentCString(gAppData->vendor));
     NS_ENSURE_SUCCESS(rv, rv);
   }
-  rv = localDir->AppendNative(nsDependentCString(gAppData->appName));
+  rv = localDir->AppendNative(nsDependentCString(gAppData->name));
   NS_ENSURE_SUCCESS(rv, rv);
 
 #elif defined(XP_UNIX)
@@ -644,18 +823,18 @@ nsXREDirProvider::GetUserAppDataDirectory(nsILocalFile** aFile)
  
   // Offset 1 for the outermost folder to make it hidden (i.e. using the ".")
   char* writing = profileFolderName + 1;
-  if (gAppData->appVendor) {
-    GetProfileFolderName(writing, gAppData->appVendor);
+  if (gAppData->vendor) {
+    GetProfileFolderName(writing, gAppData->vendor);
     
     rv = localDir->AppendNative(nsDependentCString(profileFolderName));
     NS_ENSURE_SUCCESS(rv, rv);
  
     char temp[MAXPATHLEN];
-    GetProfileFolderName(temp, gAppData->appName);
+    GetProfileFolderName(temp, gAppData->name);
     appNameFolder = temp;
   }
   else {
-    GetProfileFolderName(writing, gAppData->appName);
+    GetProfileFolderName(writing, gAppData->name);
     appNameFolder = profileFolderName;
   }
   rv = localDir->AppendNative(nsDependentCString(appNameFolder));
@@ -679,7 +858,7 @@ nsXREDirProvider::EnsureDirectoryExists(nsIFile* aDirectory)
   nsresult rv = aDirectory->Exists(&exists);
   NS_ENSURE_SUCCESS(rv, rv);
   if (!exists)
-    rv = aDirectory->Create(nsIFile::DIRECTORY_TYPE, 0775);
+    rv = aDirectory->Create(nsIFile::DIRECTORY_TYPE, 0700);
 
   return rv;
 }
@@ -719,8 +898,8 @@ nsXREDirProvider::GetProfileDefaultsDir(nsIFile* *aResult)
   rv = mAppDir->Clone(getter_AddRefs(defaultsDir));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = defaultsDir->AppendNative(nsDependentCString("defaults"));
-  rv |= defaultsDir->AppendNative(nsDependentCString("profile"));
+  rv = defaultsDir->AppendNative(NS_LITERAL_CSTRING("defaults"));
+  rv |= defaultsDir->AppendNative(NS_LITERAL_CSTRING("profile"));
   NS_ENSURE_SUCCESS(rv, rv);
 
   NS_ADDREF(*aResult = defaultsDir);

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,11 +27,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -40,6 +39,7 @@
 #include "nsIDOMNode.h"
 #include "nsIDOMClassInfo.h"
 #include "nsIOutputStream.h"
+#include "nsIContent.h"
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
 #include "nsIDocumentEncoder.h"
@@ -127,54 +127,59 @@ SetUpEncoder(nsIDOMNode *aRoot, const nsACString& aCharset,
 static nsresult
 CheckSameOrigin(nsIDOMNode *aRoot)
 {
-  // Get JSContext from stack.
-  nsCOMPtr<nsIJSContextStack> stack =
-    do_GetService("@mozilla.org/js/xpc/ContextStack;1");
+  // Make sure that the caller has permission to access the root
 
-  JSContext *cx = nsnull;
-  nsresult rv = NS_OK;
+  // Be sure to QI to either nsIContent or nsIDocument to make sure
+  // we're passed a naitve object.
 
-  if (stack) {
-    rv = stack->Peek(&cx);
-    NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIContent> content(do_QueryInterface(aRoot));
+  nsCOMPtr<nsIDocument> doc;
+
+  if (content) {
+    doc = content->GetOwnerDoc();
+
+    if (!doc) {
+      // Orphan node, permit access.
+
+      return NS_OK;
+    }
+  } else {
+    doc = do_QueryInterface(aRoot);
+
+    if (!doc) {
+      // We got a non-native object.
+
+      return NS_ERROR_INVALID_POINTER;
+    }
   }
 
-  if (cx) {
-    // We're called from script, make sure the caller and the root are
-    // from the same origin...
+  nsCOMPtr<nsIURI> root_uri;
 
-    nsCOMPtr<nsIDOMDocument> owner_doc(do_QueryInterface(aRoot));
+  nsIPrincipal *principal = doc->GetPrincipal();
 
-    if (!owner_doc) {
-      aRoot->GetOwnerDocument(getter_AddRefs(owner_doc));
+  if (principal) {
+    principal->GetURI(getter_AddRefs(root_uri));
+  }
+
+  if (root_uri) {
+    nsresult rv;
+    nsCOMPtr<nsIScriptSecurityManager> secMan = 
+      do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    PRBool ubrEnabled = PR_FALSE;
+    rv = secMan->IsCapabilityEnabled("UniversalBrowserRead", &ubrEnabled);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (ubrEnabled) {
+      // UniversalBrowserRead is enabled (or we're not called from
+      // script), permit access.
+      return NS_OK;
     }
 
-    nsCOMPtr<nsIDocument> doc(do_QueryInterface(owner_doc));
-
-    if (doc) {
-      nsCOMPtr<nsIURI> root_uri;
-
-      nsIPrincipal *principal = doc->GetPrincipal();
-
-      if (principal) {
-        principal->GetURI(getter_AddRefs(root_uri));
-      }
-
-      if (root_uri) {
-        nsCOMPtr<nsIScriptSecurityManager> secMan = 
-          do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        rv = secMan->CheckSameOrigin(cx, root_uri);
-
-        if (NS_FAILED(rv)) {
-          // The node that's being serialized comes from a different
-          // origin than the calling script comes from...
-
-          return rv;
-        }
-      }
-    }      
+    // Check if the caller (if any) is from the same origin that the
+    // root is from.
+    return secMan->CheckSameOrigin(nsnull, root_uri);
   }
 
   return NS_OK;

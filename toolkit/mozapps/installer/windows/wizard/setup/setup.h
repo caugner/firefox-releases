@@ -1,26 +1,41 @@
 /* -*- Mode: C; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code,
- * released March 31, 1998.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
- * Contributor(s): 
- *     Sean Su <ssu@netscape.com>
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Sean Su <ssu@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef _SETUP_H_
 #define _SETUP_H_
@@ -62,11 +77,18 @@ typedef int PRInt32;
 #define FILE_IDI_GETREDIRECT            "getredirect.idi"
 #define FILE_INI_REDIRECT               "redirect.ini"
 #define FILE_WGET_LOG                   "wget.log"
-#define WIZ_TEMP_DIR                    "ns_temp"
 #define FILE_INSTALL_LOG                "install_wizard.log"
 #define FILE_INSTALL_STATUS_LOG         "install_status.log"
 #define FILE_ALL_JS                     "all-proxy.js"
 #define VR_DEFAULT_PRODUCT_NAME         "Mozilla"
+
+#ifdef MOZ_PHOENIX
+#define WIZ_TEMP_DIR                    "ff_temp"
+#elif defined(MOZ_THUNDERBIRD)
+#define WIZ_TEMP_DIR                    "tb_temp"
+#else
+#define WIZ_TEMP_DIR                    "ns_temp"
+#endif
 
 #define FORCE_ADD_TO_UNINSTALL_LOG        TRUE
 #define DO_NOT_FORCE_ADD_TO_UNINSTALL_LOG FALSE
@@ -434,8 +456,6 @@ typedef struct dlgAdditionalOptions
   LPSTR szMessage0;
   LPSTR szMessage1;
   BOOL  bSaveInstaller;
-  BOOL  bRecaptureHomepage;
-  BOOL  bShowHomepageOption;
   DWORD dwUseProtocol;
   BOOL  bUseProtocolSettings;
   BOOL  bShowProtocols;
@@ -489,10 +509,8 @@ typedef struct dlgInstallSuccessful
   LPSTR szMessageHeader;
   LPSTR szMessage0;
   LPSTR szMessage1;
-  LPSTR szResetHomepage;
   LPSTR szRegistryKey;
   LPSTR szLaunchApp;
-  BOOL bResetHomepageChecked;
   BOOL bLaunchAppChecked;
 } diIS;
 

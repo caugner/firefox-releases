@@ -1,37 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/ 
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * License. 
+ * License.
  *
- * The Original Code is The JavaScript Debugger
- * 
+ * The Original Code is The JavaScript Debugger.
+ *
  * The Initial Developer of the Original Code is
- * Netscape Communications Corporation
- * Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.
- *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the MPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the MPL or the GPL.
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Robert Ginda, <rginda@netscape.com>, original author
+ *   Robert Ginda, <rginda@netscape.com>, original author
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 function initProfiler ()
 {
@@ -93,6 +97,10 @@ function pro_sumscript (scriptWrapper, key)
         var min_ms = roundTo(jsdScript.minExecutionTime, 2);
         var max_ms = roundTo(jsdScript.maxExecutionTime, 2);
         var avg_ms = roundTo(jsdScript.totalExecutionTime / ccount, 2);
+        var own_tot_ms = roundTo(jsdScript.totalOwnExecutionTime, 2);
+        var own_min_ms = roundTo(jsdScript.minOwnExecutionTime, 2);
+        var own_max_ms = roundTo(jsdScript.maxOwnExecutionTime, 2);
+        var own_avg_ms = roundTo(jsdScript.totalOwnExecutionTime / ccount, 2);
         var recurse = jsdScript.maxRecurseDepth;
 
         var summary = new Object();
@@ -101,17 +109,23 @@ function pro_sumscript (scriptWrapper, key)
         summary.avg = avg_ms;
         summary.min = min_ms;
         summary.max = max_ms;
+        summary.own_avg = own_avg_ms;
+        summary.own_min = own_min_ms;
+        summary.own_max = own_max_ms;
+        summary.own_total = own_tot_ms;
         summary.recurse = recurse;
         summary.url = jsdScript.fileName;
         summary.file = getFileFromPath(summary.url);
         summary.base = jsdScript.baseLineNumber;
         summary.end = summary.base + jsdScript.lineExtent;
         summary.fun = scriptWrapper.functionName;
+        var own_str = getMsg(MSN_FMT_PROFILE_STR2, [own_tot_ms, own_min_ms,
+                                                    own_max_ms, own_avg_ms]);
         summary.str = getMsg(MSN_FMT_PROFILE_STR,
                              [summary.fun, summary.base, summary.end, ccount,
                               (summary.recurse ?
                                getMsg(MSN_FMT_PROFILE_RECURSE, recurse) : ""),
-                              tot_ms, min_ms, max_ms, avg_ms]);
+                              tot_ms, min_ms, max_ms, avg_ms, own_str]);
         summary.key = summary[key];
         return summary;
     }
@@ -262,6 +276,10 @@ function pro_rptinst (profileReport, scriptInstance, sectionData)
             "\\$min-time"        : summary.min,
             "\\$avg-time"        : summary.avg,
             "\\$total-time"      : summary.total,
+            "\\$own-max-time"   : summary.own_max,
+            "\\$own-min-time"   : summary.own_min,
+            "\\$own-avg-time"   : summary.own_avg,
+            "\\$own-total-time" : summary.own_total,
             "\\$call-count"      : summary.ccount,
             "\\$recurse-depth"   : summary.recurse,
             "\\$function-name"   : fromUnicode(summary.fun, MSG_REPORT_CHARSET),

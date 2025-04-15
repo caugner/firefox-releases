@@ -1,7 +1,48 @@
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is mozilla.org code.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000-2002
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   David Bienvenu <bienvenu@mozilla.org>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
+
 var gMsgFolder;
 var gServerTypeFolder = null;
 var gPreselectedFolderURI = null;
 var gParentMsgWindow = null;
+var gNameTextbox;
+var gOldName;
+var gOkButton;
+var gLockedPref = null;
 
 // services used
 var RDF;
@@ -38,8 +79,8 @@ var gFolderPropsSink = {
     setFolderPermissions: function(folderPermissions)
     {
       var permissionsLabel = document.getElementById("folderPermissions.text");
-      if (permissionsLabel)
-        permissionsLabel.setAttribute("value",folderPermissions);
+      var descTextNode =  document.createTextNode(folderPermissions);
+      permissionsLabel.appendChild(descTextNode);
     },
 
     serverDoesntSupportACL : function()
@@ -101,6 +142,10 @@ var gFolderPropsSink = {
 
 };
 
+function doEnabling()
+{
+  gOkButton.disabled = !gNameTextbox.value;
+}
 
 function folderPropsOKButton()
 {
@@ -122,20 +167,36 @@ function folderPropsOKButton()
       gMsgFolder.setFlag(MSG_FOLDER_FLAG_CHECK_NEW);
     else
       gMsgFolder.clearFlag(MSG_FOLDER_FLAG_CHECK_NEW);
+
+    var retentionSettings = saveCommonRetentionSettings();
+    retentionSettings.useServerDefaults = document.getElementById("retention.useDefault").checked;
+    gMsgFolder.retentionSettings = retentionSettings;
+
   }
-  return true;
+
+  try
+  {
+    // This throws an exception when an illegal folder name was entered.
+    okCallback(gNameTextbox.value, gOldName, gPreselectedFolderURI);
+
+    return true;
+  }
+  catch (e)
+  {
+    return false;
+  }
 }
 
 function folderPropsOnLoad()
 {
-  dump("folder props loaded"+'\n');
+  gOkButton = document.documentElement.getButton("accept");
 
   RDF = Components.classes["@mozilla.org/rdf/rdf-service;1"].getService(Components.interfaces.nsIRDFService);
 
   // look in arguments[0] for parameters
   if (window.arguments && window.arguments[0]) {
     if ( window.arguments[0].title ) {
-      top.window.title = window.arguments[0].title;
+      document.title = window.arguments[0].title;
     }
     if ( window.arguments[0].okCallback ) {
       top.okCallback = window.arguments[0].okCallback;
@@ -156,17 +217,17 @@ function folderPropsOnLoad()
 
   if(window.arguments[0].name)
   {
-    var name = document.getElementById("name");
-    name.value = window.arguments[0].name;
+    // Initialize name textbox with the given name and remember this
+    // value so we can tell whether the folder needs to be renamed
+    // when the dialog is accepted.
+    gNameTextbox = document.getElementById("name");
+    gNameTextbox.value = gOldName = window.arguments[0].name;
 
 //  name.setSelectionRange(0,-1);
 //  name.focusTextField();
   }
 
   gServerTypeFolder = window.arguments[0].serverType;
-
-  dump("preselectfolder uri = "+gPreselectedFolderURI+'\n');
-  dump("serverType = "+gServerTypeFolder+'\n');
 
   if (window.arguments && window.arguments[0]) {
     if (window.arguments[0].msgWindow) {
@@ -183,6 +244,9 @@ function folderPropsOnLoad()
     dump("no gMsgFolder preselectfolder uri = "+gPreselectedFolderURI+'\n');
 
   if (gMsgFolder) {
+    if (gMsgFolder.canRename)
+      gNameTextbox.removeAttribute("readonly");
+
     if (gMsgFolder.flags & MSG_FOLDER_FLAG_OFFLINE) {
 
       if(gServerTypeFolder == "imap" || gServerTypeFolder == "pop3")
@@ -219,7 +283,11 @@ function folderPropsOnLoad()
       imapFolder.fillInFolderProps(gFolderPropsSink);
 
   }
-  
+
+  var retentionSettings = gMsgFolder.retentionSettings;
+  initCommonRetentionSettings(retentionSettings);
+  document.getElementById("retention.useDefault").checked = retentionSettings.useServerDefaults;
+    
   // select the initial tab
   if (window.arguments[0].tabID) {
     // set index for starting panel on the <tabpanel> element
@@ -233,7 +301,9 @@ function folderPropsOnLoad()
     catch (ex) {}
   }
   hideShowControls(gServerTypeFolder);
-  
+  onCheckKeepMsg();
+  onUseDefaultRetentionSettings();
+
   moveToAlertPosition();
 }
 
@@ -331,3 +401,8 @@ function onFolderPrivileges()
 }
 
 
+function onUseDefaultRetentionSettings()
+{
+  var useDefault = document.getElementById("retention.useDefault").checked;
+  document.getElementById('retention.keepMsg').disabled = useDefault;
+}

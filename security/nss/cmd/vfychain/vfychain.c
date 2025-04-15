@@ -1,35 +1,38 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /****************************************************************************
  *  Read in a cert chain from one or more files, and verify the chain for
@@ -198,12 +201,12 @@ readCertFile(const char * fileName, PRBool isAscii)
     if (cc < 0)
     	return cert;
     if (!remaining || cc > 0) { /* file was too big. */
-	fprintf(stderr, "cert file %s was too big.\n");
+	fprintf(stderr, "cert file %s was too big.\n", fileName);
 	return cert;
     }
     total = pb - certBuf;
     if (!total) { /* file was empty */
-	fprintf(stderr, "cert file %s was empty.\n");
+	fprintf(stderr, "cert file %s was empty.\n", fileName);
 	return cert;
     }
     if (isAscii) {
@@ -230,7 +233,6 @@ main(int argc, char *argv[], char *envp[])
 {
     char *               certDir      = NULL;
     char *               progName     = NULL;
-    char *               cipherString = NULL;
     CERTCertificate *    cert;
     CERTCertificate *    firstCert    = NULL;
     CERTCertDBHandle *   defaultDB    = NULL;
@@ -239,6 +241,7 @@ main(int argc, char *argv[], char *envp[])
     SECCertificateUsage  certUsage    = certificateUsageSSLServer;
     PLOptState *         optstate;
     PLOptStatus          status;
+    int                  rv = 1;
 
     PR_Init( PR_SYSTEM_THREAD, PR_PRIORITY_NORMAL, 1);
 
@@ -276,7 +279,7 @@ breakout:
     if (secStatus != SECSuccess) {
 	exitErr("NSS_Init");
     }
-
+    SECU_RegisterDynamicOids();
 
     while (status == PL_OPT_OK) {
 	switch(optstate->option) {
@@ -312,15 +315,18 @@ breakout:
 	fprintf(stderr, "Chain is bad, %d = %s\n", err, SECU_Strerror(err));
 	SECU_printCertProblems(stderr, defaultDB, firstCert, 
 			  PR_TRUE, certUsage, NULL, verbose);
+    	rv = 1;
     } else {
     	fprintf(stderr, "Chain is good!\n");
+	rv = 0;
     }
 
 punt:
     forgetCerts();
     if (NSS_Shutdown() != SECSuccess) {
-	exit(1);
+	SECU_PrintError(progName, "NSS_Shutdown");
+	rv = 1;
     }
     PR_Cleanup();
-    return 0;
+    return rv;
 }

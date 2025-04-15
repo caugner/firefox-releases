@@ -37,15 +37,64 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsAttrAndChildArray.h"
-#include "nsIContent.h"
+#include "nsGenericHTMLElement.h"
 #include "prmem.h"
 #include "prbit.h"
 #include "nsString.h"
-#include "nsIHTMLStyleSheet.h"
+#include "nsHTMLStyleSheet.h"
 #include "nsRuleWalker.h"
 #include "nsMappedAttributes.h"
 #include "nsUnicharUtils.h"
 #include "nsAutoPtr.h"
+
+#define NUM_INDEX_CACHE_SLOTS 5
+#define INDEX_CACHE_CHILD_LIMIT 15
+
+struct IndexCacheSlot
+{
+  const nsAttrAndChildArray* array;
+  PRInt32 index;
+};
+
+// This is inited to all zeroes since it's static. Though even if it wasn't
+// the worst thing that'd happen is a small inefficency if you'd get a false
+// positive cachehit.
+static IndexCacheSlot indexCache[NUM_INDEX_CACHE_SLOTS];
+
+static
+void
+AddIndexToCache(const nsAttrAndChildArray* aArray, PRInt32 aIndex)
+{
+  NS_ASSERTION(NUM_INDEX_CACHE_SLOTS > 1, "too few cache slots");
+
+  if (indexCache[0].array != aArray) {
+    PRUint32 i;
+    for (i = 1; i < NUM_INDEX_CACHE_SLOTS - 1; ++i) {
+      if (indexCache[i].array == aArray) {
+        break;
+      }
+    }
+    memmove(&indexCache[1], &indexCache[0], i * sizeof(IndexCacheSlot));
+    indexCache[0].array = aArray;
+  }
+  
+  indexCache[0].index = aIndex;
+}
+
+static
+PRInt32
+GetIndexFromCache(const nsAttrAndChildArray* aArray)
+{
+  PRUint32 i;
+  for (i = 0; i < NUM_INDEX_CACHE_SLOTS; ++i) {
+    if (indexCache[i].array == aArray) {
+      return indexCache[i].index;
+    }
+  }
+  
+  return -1;
+}
+
 
 /**
  * Due to a compiler bug in VisualAge C++ for AIX, we need to return the 
@@ -161,19 +210,6 @@ nsAttrAndChildArray::RemoveChildAt(PRUint32 aPos)
   SetChildCount(childCount - 1);
 }
 
-void
-nsAttrAndChildArray::ReplaceChildAt(nsIContent* aChild, PRUint32 aPos)
-{
-  NS_ASSERTION(aPos < ChildCount(), "out-of-bounds");
-  void** pos = mImpl->mBuffer + AttrSlotsSize() + aPos;
-  nsIContent* child = NS_STATIC_CAST(nsIContent*, *pos);
-  *pos = aChild;
-
-  // Make sure to addref first, in case aChild == child
-  NS_ADDREF(aChild);
-  NS_RELEASE(child);
-}
-
 PRInt32
 nsAttrAndChildArray::IndexOfChild(nsIContent* aPossibleChild) const
 {
@@ -181,7 +217,63 @@ nsAttrAndChildArray::IndexOfChild(nsIContent* aPossibleChild) const
     return -1;
   }
   void** children = mImpl->mBuffer + AttrSlotsSize();
-  PRUint32 i, count = ChildCount();
+  // Use signed here since we compare count to cursor which has to be signed
+  PRInt32 i, count = ChildCount();
+
+  if (count >= INDEX_CACHE_CHILD_LIMIT) {
+    PRInt32 cursor = GetIndexFromCache(this);
+    // Need to compare to count here since we may have removed children since
+    // the index was added to the cache.
+    // We're also relying on that GetIndexFromCache returns -1 if no cached
+    // index was found.
+    if (cursor >= count) {
+      cursor = -1;
+    }
+
+    // Seek outward from the last found index. |inc| will change sign every
+    // run through the loop. |sign| just exists to make sure the absolute
+    // value of |inc| increases each time through.
+    PRInt32 inc = 1, sign = 1;
+    while (cursor >= 0 && cursor < count) {
+      if (children[cursor] == aPossibleChild) {
+        AddIndexToCache(this, cursor);
+
+        return cursor;
+      }
+
+      cursor += inc;
+      inc = -inc - sign;
+      sign = -sign;
+    }
+
+    // We ran into one 'edge'. Add inc to cursor once more to get back to
+    // the 'side' where we still need to search, then step in the |sign|
+    // direction.
+    cursor += inc;
+
+    if (sign > 0) {
+      for (; cursor < count; ++cursor) {
+        if (children[cursor] == aPossibleChild) {
+          AddIndexToCache(this, cursor);
+
+          return NS_STATIC_CAST(PRInt32, cursor);
+        }
+      }
+    }
+    else {
+      for (; cursor >= 0; --cursor) {
+        if (children[cursor] == aPossibleChild) {
+          AddIndexToCache(this, cursor);
+
+          return NS_STATIC_CAST(PRInt32, cursor);
+        }
+      }
+    }
+
+    // The child wasn't even in the remaining children
+    return -1;
+  }
+
   for (i = 0; i < count; ++i) {
     if (children[i] == aPossibleChild) {
       return NS_STATIC_CAST(PRInt32, i);
@@ -433,8 +525,8 @@ nsAttrAndChildArray::IndexOfAttr(nsIAtom* aLocalName, PRInt32 aNamespaceID) cons
 nsresult
 nsAttrAndChildArray::SetAndTakeMappedAttr(nsIAtom* aLocalName,
                                           nsAttrValue& aValue,
-                                          nsIHTMLContent* aContent,
-                                          nsIHTMLStyleSheet* aSheet)
+                                          nsGenericHTMLElement* aContent,
+                                          nsHTMLStyleSheet* aSheet)
 {
   nsRefPtr<nsMappedAttributes> mapped;
   nsresult rv = GetModifiableMapped(aContent, aSheet, PR_TRUE,
@@ -448,7 +540,7 @@ nsAttrAndChildArray::SetAndTakeMappedAttr(nsIAtom* aLocalName,
 }
 
 nsresult
-nsAttrAndChildArray::SetMappedAttrStyleSheet(nsIHTMLStyleSheet* aSheet)
+nsAttrAndChildArray::SetMappedAttrStyleSheet(nsHTMLStyleSheet* aSheet)
 {
   if (!mImpl || !mImpl->mMappedAttrs ||
       aSheet == mImpl->mMappedAttrs->GetStyleSheet()) {
@@ -525,7 +617,9 @@ nsAttrAndChildArray::Clear()
   PRUint32 end = slotCount * ATTRSIZE + ChildCount();
   for (i = slotCount * ATTRSIZE; i < end; ++i) {
     nsIContent* child = NS_STATIC_CAST(nsIContent*, mImpl->mBuffer[i]);
-    child->SetParent(nsnull); // XXX is it better to let the owner do this?
+    // making this PR_FALSE so tree teardown doesn't end up being
+    // O(N*D) (number of nodes times average depth of tree).
+    child->UnbindFromTree(PR_FALSE); // XXX is it better to let the owner do this?
     NS_RELEASE(child);
   }
 
@@ -554,8 +648,8 @@ nsAttrAndChildArray::MappedAttrCount() const
 }
 
 nsresult
-nsAttrAndChildArray::GetModifiableMapped(nsIHTMLContent* aContent,
-                                         nsIHTMLStyleSheet* aSheet,
+nsAttrAndChildArray::GetModifiableMapped(nsGenericHTMLElement* aContent,
+                                         nsHTMLStyleSheet* aSheet,
                                          PRBool aWillAddAttr,
                                          nsMappedAttributes** aModifiable)
 {
@@ -572,8 +666,8 @@ nsAttrAndChildArray::GetModifiableMapped(nsIHTMLContent* aContent,
 
   NS_ASSERTION(aContent, "Trying to create modifiable without content");
 
-  nsMapRuleToAttributesFunc mapRuleFunc;
-  aContent->GetAttributeMappingFunction(mapRuleFunc);
+  nsMapRuleToAttributesFunc mapRuleFunc =
+    aContent->GetAttributeMappingFunction();
   *aModifiable = new nsMappedAttributes(aSheet, mapRuleFunc);
   NS_ENSURE_TRUE(*aModifiable, NS_ERROR_OUT_OF_MEMORY);
 
@@ -600,10 +694,9 @@ nsAttrAndChildArray::MakeMappedUnique(nsMappedAttributes* aAttributes)
     return NS_OK;
   }
 
-  nsRefPtr<nsMappedAttributes> mapped;
-  nsresult rv = aAttributes->GetStyleSheet()->
-    UniqueMappedAttributes(aAttributes, *getter_AddRefs(mapped));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsRefPtr<nsMappedAttributes> mapped =
+    aAttributes->GetStyleSheet()->UniqueMappedAttributes(aAttributes);
+  NS_ENSURE_TRUE(mapped, NS_ERROR_OUT_OF_MEMORY);
 
   if (mapped != aAttributes) {
     // Reset the stylesheet of aAttributes so that it doesn't spend time

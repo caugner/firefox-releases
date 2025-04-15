@@ -135,6 +135,19 @@ JS_BEGIN_EXTERN_C
 #define JSFUN_FLAGS_MASK        0xf8    /* overlay JSFUN_* attributes */
 
 /*
+ * Re-use JSFUN_LAMBDA, which applies only to scripted functions, for use in
+ * JSFunctionSpec arrays that specify generic native prototype methods, i.e.,
+ * methods of a class prototype that are exposed as static methods taking an
+ * extra leading argument: the generic |this| parameter.
+ *
+ * If you set this flag in a JSFunctionSpec struct's flags initializer, then
+ * that struct must live at least as long as the native static method object
+ * created due to this flag by JS_DefineFunctions or JS_InitClass.  Typically
+ * JSFunctionSpec structs are allocated in static arrays.
+ */
+#define JSFUN_GENERIC_NATIVE    JSFUN_LAMBDA
+
+/*
  * Well-known JS values.  The extern'd variables are initialized when the
  * first JSContext is created by JS_NewContext (see below).
  */
@@ -437,10 +450,26 @@ JS_StringToVersion(const char *string);
 #define JSOPTION_PRIVATE_IS_NSISUPPORTS \
                                 JS_BIT(3)       /* context private data points
                                                    to an nsISupports subclass */
-#define JSOPTION_COMPILE_N_GO   JS_BIT(4)       /* one-shot compile+execute,
-                                                   enables compile-time scope
-                                                   chain resolution of consts
-                                                   in many cases, e.g. */
+#define JSOPTION_COMPILE_N_GO   JS_BIT(4)       /* caller of JS_Compile*Script
+                                                   promises to execute compiled
+                                                   script once only; enables
+                                                   compile-time scope chain
+                                                   resolution of consts. */
+#define JSOPTION_ATLINE         JS_BIT(5)       /* //@line number ["filename"]
+                                                   option supported for the
+                                                   XUL preprocessor and kindred
+                                                   beasts. */
+#define JSOPTION_XML            JS_BIT(6)       /* EMCAScript for XML support:
+                                                   parse <!-- --> as a token,
+                                                   not backward compatible with
+                                                   the comment-hiding hack used
+                                                   in HTML script tags. */
+#define JSOPTION_NATIVE_BRANCH_CALLBACK \
+                                JS_BIT(7)       /* the branch callback set by
+                                                   JS_SetBranchCallback may be
+                                                   called with a null script
+                                                   parameter, by native code
+                                                   that loops intensively */
 
 extern JS_PUBLIC_API(uint32)
 JS_GetOptions(JSContext *cx);
@@ -489,6 +518,15 @@ JS_ResolveStandardClass(JSContext *cx, JSObject *obj, jsval id,
 
 extern JS_PUBLIC_API(JSBool)
 JS_EnumerateStandardClasses(JSContext *cx, JSObject *obj);
+
+/*
+ * Enumerate any already-resolved standard class ids into ida, or into a new
+ * JSIdArray if ida is null.  Return the augmented array on success, null on
+ * failure with ida (if it was non-null on entry) destroyed.
+ */
+extern JS_PUBLIC_API(JSIdArray *)
+JS_EnumerateResolvedStandardClasses(JSContext *cx, JSObject *obj,
+                                    JSIdArray *ida);
 
 extern JS_PUBLIC_API(JSObject *)
 JS_GetScopeChain(JSContext *cx);
@@ -562,12 +600,66 @@ JS_RemoveRootRT(JSRuntime *rt, void *rp);
  * JS_GC entry point clears them for the context on which GC is being forced.
  * Embeddings may need to do likewise for all contexts.
  *
- * XXXbe See bug 40757 (http://bugzilla.mozilla.org/show_bug.cgi?id=40757),
- * which proposes switching (with an #ifdef, alas, if we want to maintain API
- * compatibility) to a JNI-like extensible local root frame stack model.
+ * See the scoped local root API immediately below for a better way to manage
+ * newborns in cases where native hooks (functions, getters, setters, etc.)
+ * create many GC-things, potentially without connecting them to predefined
+ * local roots such as *rval or argv[i] in an active native function.  Using
+ * JS_EnterLocalRootScope disables updating of the context's per-gc-thing-type
+ * newborn roots, until control flow unwinds and leaves the outermost nesting
+ * local root scope.
  */
 extern JS_PUBLIC_API(void)
 JS_ClearNewbornRoots(JSContext *cx);
+
+/*
+ * Scoped local root management allows native functions, getter/setters, etc.
+ * to avoid worrying about the newborn root pigeon-holes, overloading local
+ * roots allocated in argv and *rval, or ending up having to call JS_Add*Root
+ * and JS_RemoveRoot to manage global roots temporarily.
+ *
+ * Instead, calling JS_EnterLocalRootScope and JS_LeaveLocalRootScope around
+ * the body of the native hook causes the engine to allocate a local root for
+ * each newborn created in between the two API calls, using a local root stack
+ * associated with cx.  For example:
+ *
+ *    JSBool
+ *    my_GetProperty(JSContext *cx, JSObject *obj, jsval id, jsval *vp)
+ *    {
+ *        JSBool ok;
+ *
+ *        if (!JS_EnterLocalRootScope(cx))
+ *            return JS_FALSE;
+ *        ok = my_GetPropertyBody(cx, obj, id, vp);
+ *        JS_LeaveLocalRootScope(cx);
+ *        return ok;
+ *    }
+ *
+ * NB: JS_LeaveLocalRootScope must be called once for every prior successful
+ * call to JS_EnterLocalRootScope.  If JS_EnterLocalRootScope fails, you must
+ * not make the matching JS_LeaveLocalRootScope call.
+ *
+ * In case a native hook allocates many objects or other GC-things, but the
+ * native protects some of those GC-things by storing them as property values
+ * in an object that is itself protected, the hook can call JS_ForgetLocalRoot
+ * to free the local root automatically pushed for the now-protected GC-thing.
+ *
+ * JS_ForgetLocalRoot works on any GC-thing allocated in the current local
+ * root scope, but it's more time-efficient when called on references to more
+ * recently created GC-things.  Calling it successively on other than the most
+ * recently allocated GC-thing will tend to average the time inefficiency, and
+ * may risk O(n^2) growth rate, but in any event, you shouldn't allocate too
+ * many local roots if you can root as you go (build a tree of objects from
+ * the top down, forgetting each latest-allocated GC-thing immediately upon
+ * linking it to its parent).
+ */
+extern JS_PUBLIC_API(JSBool)
+JS_EnterLocalRootScope(JSContext *cx);
+
+extern JS_PUBLIC_API(void)
+JS_LeaveLocalRootScope(JSContext *cx);
+
+extern JS_PUBLIC_API(void)
+JS_ForgetLocalRoot(JSContext *cx, void *thing);
 
 #ifdef DEBUG
 extern JS_PUBLIC_API(void)
@@ -648,7 +740,7 @@ extern JS_PUBLIC_API(JSBool)
 JS_IsAboutToBeFinalized(JSContext *cx, void *thing);
 
 /*
- * Add an external string finalizer, one created by JS_NewExternalString (see
+ * Add a finalizer for external strings created by JS_NewExternalString (see
  * below) using a type-code returned from this function, and that understands
  * how to free or release the memory pointed at by JS_GetStringChars(str).
  *
@@ -730,7 +822,19 @@ struct JSClass {
     JSXDRObjectOp       xdrObject;
     JSHasInstanceOp     hasInstance;
     JSMarkOp            mark;
-    jsword              spare;
+    JSReserveSlotsOp    reserveSlots;
+};
+
+struct JSExtendedClass {
+    JSClass             base;
+    JSEqualityOp        equality;
+    JSObjectOp          outerObject;
+    JSObjectOp          innerObject;
+    jsword              reserved0;
+    jsword              reserved1;
+    jsword              reserved2;
+    jsword              reserved3;
+    jsword              reserved4;
 };
 
 #define JSCLASS_HAS_PRIVATE             (1<<0)  /* objects have private slot */
@@ -742,6 +846,9 @@ struct JSClass {
                                                    object in prototype chain
                                                    passed in via *objp in/out
                                                    parameter */
+#define JSCLASS_CONSTRUCT_PROTOTYPE     (1<<6)  /* call constructor on class
+                                                   prototype */
+#define JSCLASS_DOCUMENT_OBSERVER       (1<<7)  /* DOM document observer */
 
 /*
  * To reserve slots fetched and stored via JS_Get/SetReservedSlot, bitwise-or
@@ -751,14 +858,21 @@ struct JSClass {
 #define JSCLASS_RESERVED_SLOTS_SHIFT    8       /* room for 8 flags below */
 #define JSCLASS_RESERVED_SLOTS_WIDTH    8       /* and 16 above this field */
 #define JSCLASS_RESERVED_SLOTS_MASK     JS_BITMASK(JSCLASS_RESERVED_SLOTS_WIDTH)
-#define JSCLASS_HAS_RESERVED_SLOTS(n)   (((n) & JSCLASS_RESERVED_SLOTS_MASK)   \
+#define JSCLASS_HAS_RESERVED_SLOTS(n)   (((n) & JSCLASS_RESERVED_SLOTS_MASK)  \
                                          << JSCLASS_RESERVED_SLOTS_SHIFT)
 #define JSCLASS_RESERVED_SLOTS(clasp)   (((clasp)->flags                      \
-                                          >> JSCLASS_RESERVED_SLOTS_SHIFT)     \
+                                          >> JSCLASS_RESERVED_SLOTS_SHIFT)    \
                                          & JSCLASS_RESERVED_SLOTS_MASK)
+
+#define JSCLASS_HIGH_FLAGS_SHIFT        (JSCLASS_RESERVED_SLOTS_SHIFT +       \
+                                         JSCLASS_RESERVED_SLOTS_WIDTH)
+
+/* True if JSClass is really a JSExtendedClass. */
+#define JSCLASS_IS_EXTENDED             (1<<(JSCLASS_HIGH_FLAGS_SHIFT+0))
 
 /* Initializer for unused members of statically initialized JSClass structs. */
 #define JSCLASS_NO_OPTIONAL_MEMBERS     0,0,0,0,0,0,0,0
+#define JSCLASS_NO_RESERVED_MEMBERS     0,0,0,0,0
 
 /* For detailed comments on these function pointer types, see jspubtd.h. */
 struct JSObjectOps {
@@ -791,6 +905,15 @@ struct JSObjectOps {
     JSSetRequiredSlotOp setRequiredSlot;
 };
 
+struct JSXMLObjectOps {
+    JSObjectOps         base;
+    JSGetMethodOp       getMethod;
+    JSSetMethodOp       setMethod;
+    JSEnumerateValuesOp enumerateValues;
+    JSEqualityOp        equality;
+    JSConcatenateOp     concatenate;
+};
+
 /*
  * Classes that expose JSObjectOps via a non-null getObjectOps class hook may
  * derive a property structure from this struct, return a pointer to it from
@@ -819,6 +942,16 @@ JS_ValueToId(JSContext *cx, jsval v, jsid *idp);
 extern JS_PUBLIC_API(JSBool)
 JS_IdToValue(JSContext *cx, jsid id, jsval *vp);
 
+/*
+ * The magic XML namespace id is int-tagged, but not a valid integer jsval.
+ * Global object classes in embeddings that enable JS_HAS_XML_SUPPORT (E4X)
+ * should handle this id specially before converting id via JSVAL_TO_INT.
+ */
+#define JS_DEFAULT_XML_NAMESPACE_ID ((jsid) JSVAL_VOID)
+
+/*
+ * JSNewResolveOp flag bits.
+ */
 #define JSRESOLVE_QUALIFIED     0x01    /* resolve a qualified property id */
 #define JSRESOLVE_ASSIGNING     0x02    /* resolve on the left of assignment */
 #define JSRESOLVE_DETECTING     0x04    /* 'if (o.p)...' or '(o.p) ?...:...' */
@@ -888,6 +1021,9 @@ JS_GetClass(JSObject *obj);
 
 extern JS_PUBLIC_API(JSBool)
 JS_InstanceOf(JSContext *cx, JSObject *obj, JSClass *clasp, jsval *argv);
+
+extern JS_PUBLIC_API(JSBool)
+JS_HasInstance(JSContext *cx, JSObject *obj, jsval v, JSBool *bp);
 
 extern JS_PUBLIC_API(void *)
 JS_GetPrivate(JSContext *cx, JSObject *obj);
@@ -961,6 +1097,18 @@ JS_GetPropertyAttributes(JSContext *cx, JSObject *obj, const char *name,
                          uintN *attrsp, JSBool *foundp);
 
 /*
+ * The same, but if the property is native, return its getter and setter via
+ * *getterp and *setterp, respectively (and only if the out parameter pointer
+ * is not null).
+ */
+extern JS_PUBLIC_API(JSBool)
+JS_GetPropertyAttrsGetterAndSetter(JSContext *cx, JSObject *obj,
+                                   const char *name,
+                                   uintN *attrsp, JSBool *foundp,
+                                   JSPropertyOp *getterp,
+                                   JSPropertyOp *setterp);
+
+/*
  * Set the attributes of a property on a given object.
  *
  * If the object does not have a property by that name, *foundp will be
@@ -994,6 +1142,10 @@ extern JS_PUBLIC_API(JSBool)
 JS_GetProperty(JSContext *cx, JSObject *obj, const char *name, jsval *vp);
 
 extern JS_PUBLIC_API(JSBool)
+JS_GetMethod(JSContext *cx, JSObject *obj, const char *name, JSObject **objp,
+             jsval *vp);
+
+extern JS_PUBLIC_API(JSBool)
 JS_SetProperty(JSContext *cx, JSObject *obj, const char *name, jsval *vp);
 
 extern JS_PUBLIC_API(JSBool)
@@ -1019,6 +1171,18 @@ extern JS_PUBLIC_API(JSBool)
 JS_GetUCPropertyAttributes(JSContext *cx, JSObject *obj,
                            const jschar *name, size_t namelen,
                            uintN *attrsp, JSBool *foundp);
+
+/*
+ * The same, but if the property is native, return its getter and setter via
+ * *getterp and *setterp, respectively (and only if the out parameter pointer
+ * is not null).
+ */
+extern JS_PUBLIC_API(JSBool)
+JS_GetUCPropertyAttrsGetterAndSetter(JSContext *cx, JSObject *obj,
+                                     const jschar *name, size_t namelen,
+                                     uintN *attrsp, JSBool *foundp,
+                                     JSPropertyOp *getterp,
+                                     JSPropertyOp *setterp);
 
 /*
  * Set the attributes of a property on a given object.
@@ -1110,6 +1274,22 @@ JS_ClearScope(JSContext *cx, JSObject *obj);
 extern JS_PUBLIC_API(JSIdArray *)
 JS_Enumerate(JSContext *cx, JSObject *obj);
 
+/*
+ * Create an object to iterate over enumerable properties of obj, in arbitrary
+ * property definition order.  NB: This differs from longstanding for..in loop
+ * order, which uses order of property definition in obj.
+ */
+extern JS_PUBLIC_API(JSObject *)
+JS_NewPropertyIterator(JSContext *cx, JSObject *obj);
+
+/*
+ * Return true on success with *idp containing the id of the next enumerable
+ * property to visit using iterobj, or JSVAL_VOID if there is no such property
+ * left to visit.  Return false on error.
+ */
+extern JS_PUBLIC_API(JSBool)
+JS_NextProperty(JSContext *cx, JSObject *iterobj, jsid *idp);
+
 extern JS_PUBLIC_API(JSBool)
 JS_CheckAccess(JSContext *cx, JSObject *obj, jsid id, JSAccessMode mode,
                jsval *vp, uintN *attrsp);
@@ -1130,12 +1310,16 @@ JS_SetReservedSlot(JSContext *cx, JSObject *obj, uint32 index, jsval v);
  */
 struct JSPrincipals {
     char *codebase;
+
+    /* XXX unspecified and unused by Mozilla code -- can we remove these? */
     void * (* JS_DLL_CALLBACK getPrincipalArray)(JSContext *cx, JSPrincipals *);
     JSBool (* JS_DLL_CALLBACK globalPrivilegesEnabled)(JSContext *cx, JSPrincipals *);
 
     /* Don't call "destroy"; use reference counting macros below. */
     jsrefcount refcount;
-    void (* JS_DLL_CALLBACK destroy)(JSContext *cx, struct JSPrincipals *);
+
+    void   (* JS_DLL_CALLBACK destroy)(JSContext *cx, JSPrincipals *);
+    JSBool (* JS_DLL_CALLBACK subsume)(JSPrincipals *, JSPrincipals *);
 };
 
 #ifdef JS_THREADSAFE
@@ -1160,7 +1344,7 @@ extern JS_PUBLIC_API(JSPrincipalsTranscoder)
 JS_SetPrincipalsTranscoder(JSRuntime *rt, JSPrincipalsTranscoder px);
 
 extern JS_PUBLIC_API(JSObjectPrincipalsFinder)
-JS_SetObjectPrincipalsFinder(JSContext *cx, JSObjectPrincipalsFinder fop);
+JS_SetObjectPrincipalsFinder(JSRuntime *rt, JSObjectPrincipalsFinder fop);
 
 /************************************************************************/
 
@@ -1575,6 +1759,7 @@ struct JSLocaleCallbacks {
     JSLocaleToUpperCase     localeToUpperCase;
     JSLocaleToLowerCase     localeToLowerCase;
     JSLocaleCompare         localeCompare;
+    JSLocaleToUnicode       localeToUnicode;
 };
 
 /*
@@ -1753,6 +1938,14 @@ JS_DropExceptionState(JSContext *cx, JSExceptionState *state);
 extern JS_PUBLIC_API(JSErrorReport *)
 JS_ErrorFromException(JSContext *cx, jsval v);
 
+/*
+ * Given a reported error's message and JSErrorReport struct pointer, throw
+ * the corresponding exception on cx.
+ */
+extern JS_PUBLIC_API(JSBool)
+JS_ThrowReportedError(JSContext *cx, const char *message,
+                      JSErrorReport *reportp);
+
 #ifdef JS_THREADSAFE
 
 /*
@@ -1770,7 +1963,7 @@ JS_GetContextThread(JSContext *cx);
 extern JS_PUBLIC_API(jsword)
 JS_SetContextThread(JSContext *cx);
 
-extern JS_PUBLIC_API(intN)
+extern JS_PUBLIC_API(jsword)
 JS_ClearContextThread(JSContext *cx);
 
 #endif /* JS_THREADSAFE */

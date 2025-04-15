@@ -111,24 +111,31 @@ interface nsIXPCConstructor : nsISupports
 };
 
 /**
-* interface of JavaScript's 'Components' object
+* interface of object returned by Components.utils.Sandbox.
 */
-[scriptable, uuid(a6035b0c-3e28-42ad-95b9-e60d33cb075d)]
-interface nsIXPCComponents : nsISupports
+[scriptable, uuid(4f8ae0dc-d266-4a32-875b-6a9de71a8ce9)]
+interface nsIXPCComponents_utils_Sandbox : nsISupports
 {
-    readonly attribute nsIScriptableInterfaces      interfaces;
-    readonly attribute nsIScriptableInterfacesByID  interfacesByID;
-    readonly attribute nsIXPCComponents_Classes     classes;
-    readonly attribute nsIXPCComponents_ClassesByID classesByID;
-    readonly attribute nsIStackFrame                stack;
-    readonly attribute nsIXPCComponents_Results     results;
-    readonly attribute nsIComponentManager          manager;
+};
 
-    readonly attribute nsIXPCComponents_ID          ID;
-    readonly attribute nsIXPCComponents_Exception   Exception;
-    readonly attribute nsIXPCComponents_Constructor Constructor;
+/**
+* interface of Components.utils
+*/
+[scriptable, uuid(bcd54a63-34d9-468c-9a55-0fb5d2d8c677)]
+interface nsIXPCComponents_Utils : nsISupports
+{
 
-    boolean isSuccessCode(in nsresult result);
+    /* reportError is designed to be called from JavaScript only.
+     *
+     * It will report a JS Error object to the JS console, and return. It
+     * is meant for use in exception handler blocks which want to "eat"
+     * an exception, but still want to report it to the console.
+     *
+     * It must be called with one param, usually an object which was caught by
+     * an exception handler.  If it is not a JS error object, the parameter
+     * is converted to a string and reported as a new error.
+     */
+    void reportError();
 
     /* lookupMethod is designed to be called from JavaScript only.
      *
@@ -144,6 +151,53 @@ interface nsIXPCComponents : nsISupports
      * any other use.
      */
     void lookupMethod();
+
+    readonly attribute nsIXPCComponents_utils_Sandbox Sandbox;
+
+    /*
+     * evalInSandbox is only meant to be called from JavaScript.
+     *
+     * evalInSandbox evaluates the provided source string in the given sandbox.
+     * It returns the result of the evaluation to the caller.
+     *
+     * var s = new C.u.Sandbox("http://www.mozilla.org");
+     * var res = C.u.evalInSandbox("var five = 5; 2 + five", s);
+     * var outerFive = s.five;
+     * s.seven = res;
+     * var thirtyFive = C.u.evalInSandbox("five * seven", s);
+     */
+    void evalInSandbox(in AString source/*, obj */);
+};
+
+/**
+* interface of JavaScript's 'Components' object
+*/
+[scriptable, uuid(155809f1-71f1-47c5-be97-d812ba560405)]
+interface nsIXPCComponents : nsISupports
+{
+    readonly attribute nsIScriptableInterfaces      interfaces;
+    readonly attribute nsIScriptableInterfacesByID  interfacesByID;
+    readonly attribute nsIXPCComponents_Classes     classes;
+    readonly attribute nsIXPCComponents_ClassesByID classesByID;
+    readonly attribute nsIStackFrame                stack;
+    readonly attribute nsIXPCComponents_Results     results;
+    readonly attribute nsIComponentManager          manager;
+    readonly attribute nsIXPCComponents_Utils       utils;
+
+    readonly attribute nsIXPCComponents_ID          ID;
+    readonly attribute nsIXPCComponents_Exception   Exception;
+    readonly attribute nsIXPCComponents_Constructor Constructor;
+
+    boolean isSuccessCode(in nsresult result);
+
+    /* DEPRECATED: use Components.utils.lookupMethod instead.
+     * (But are you sure you really want this method any more?
+     *  See http://developer-test.mozilla.org/en/docs/XPCNativeWrapper )
+     */
+    void lookupMethod();
+
+    /* DEPRECATED: use Components.utils.reportError instead. */
+    void reportError();
 
     /* 'lastResult' is accessable via JavaScript only */
     /* 'returnCode' is accessable via JavaScript only */

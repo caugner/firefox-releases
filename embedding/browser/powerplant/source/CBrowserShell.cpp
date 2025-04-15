@@ -1,24 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla browser.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications, Inc.  Portions created by Netscape are
- * Copyright (C) 1999, Mozilla.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Conrad Carlen <ccarlen@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef __CBrowserShell__
 #include "CBrowserShell.h"
@@ -183,7 +200,7 @@ NS_IMETHODIMP CBrowserShellProgressListener::OnStateChange(nsIWebProgress *aWebP
             NS_ENSURE_TRUE(channel, NS_ERROR_FAILURE);
             nsCAutoString contentType;
             channel->GetContentType(contentType);
-            if (contentType.Equals(NS_LITERAL_CSTRING("text/html")))
+            if (contentType.EqualsLiteral("text/html"))
                 mUseRealProgFlag = true;
         }
         
@@ -547,13 +564,13 @@ Boolean CBrowserShell::ObeyCommand(PP_PowerPlant::CommandT inCommand, void* ioPa
                 nsAutoString temp;
                 rv = mContextMenuInfo->GetAssociatedLink(temp);
                 ThrowIfError_(rv);
-                nsCAutoString urlSpec = NS_ConvertUCS2toUTF8(temp);
+                NS_ConvertUTF16toUTF8 urlSpec(temp);
 
                 if (inCommand == cmd_OpenLinkInNewWindow) {
                     nsCAutoString referrer;
                     rv = GetFocusedWindowURL(temp);
                     if (NS_SUCCEEDED(rv))
-                        referrer = NS_ConvertUCS2toUTF8(temp);
+                        AppendUTF16toUTF8(temp, referrer);
                     PostOpenURLEvent(urlSpec, referrer);
                 }
                 else
@@ -602,7 +619,7 @@ Boolean CBrowserShell::ObeyCommand(PP_PowerPlant::CommandT inCommand, void* ioPa
                 rv = GetCurrentURL(currentURL);
                 ThrowIfError_(rv);
                 currentURL.Insert("view-source:", 0);
-                PostOpenURLEvent(currentURL, nsCString());
+                PostOpenURLEvent(currentURL, EmptyCString());
             }
             break;
 
@@ -644,7 +661,7 @@ Boolean CBrowserShell::ObeyCommand(PP_PowerPlant::CommandT inCommand, void* ioPa
                 rv = imgURI->GetSpec(temp);
                 ThrowIfError_(rv);
                 if (inCommand == cmd_ViewImage)
-                    PostOpenURLEvent(temp, nsCString());
+                    PostOpenURLEvent(temp, EmptyCString());
                 else
                     UScrap::SetData(kScrapFlavorTypeText, temp.get(), temp.Length());
             }
@@ -659,7 +676,7 @@ Boolean CBrowserShell::ObeyCommand(PP_PowerPlant::CommandT inCommand, void* ioPa
                 nsCAutoString temp;
                 rv = uri->GetSpec(temp);
                 ThrowIfError_(rv);
-                PostOpenURLEvent(temp, nsCString());                
+                PostOpenURLEvent(temp, EmptyCString());
             }
             break;
         
@@ -1088,13 +1105,13 @@ NS_METHOD CBrowserShell::SaveDocument(ESaveFormat inSaveFormat)
     if (NS_FAILED(rv))
       return rv;
 
-    return SaveInternal(documentURI, domDocument, nsString(), false, inSaveFormat);     // don't bypass cache
+    return SaveInternal(documentURI, domDocument, EmptyString(), false, inSaveFormat);     // don't bypass cache
 }
 
 // Save link target
 NS_METHOD CBrowserShell::SaveLink(nsIURI* inURI)
 {
-    return SaveInternal(inURI, nsnull, nsString(), true, eSaveFormatHTML);     // bypass cache
+    return SaveInternal(inURI, nsnull, EmptyString(), true, eSaveFormatHTML);     // bypass cache
 }
 
 const char* const kPersistContractID = "@mozilla.org/embedding/browser/nsWebBrowserPersist;1";
@@ -1120,8 +1137,8 @@ NS_METHOD CBrowserShell::SaveInternal(nsIURI* inURI, nsIDOMDocument* inDocument,
     nsAutoString tmpNo; tmpNo.AppendInt(tmpRandom++);
     nsAutoString saveFile(NS_LITERAL_STRING("-sav"));
     saveFile += tmpNo;
-    saveFile += NS_LITERAL_STRING("tmp");
-    tmpFile->Append(saveFile); 
+    saveFile.Append(NS_LITERAL_STRING("tmp"));
+    tmpFile->Append(saveFile);
     
     // Get the post data if we're an HTML doc.
     nsCOMPtr<nsIInputStream> postData;

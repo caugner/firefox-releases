@@ -262,7 +262,7 @@ nsresult nsHeaderSniffer::PerformSave(nsIURI* inOriginalURI)
         if (!mimeService)
             return rv;
         nsCOMPtr<nsIMIMEInfo> mimeInfo;
-        rv = mimeService->GetFromTypeAndExtension(mContentType.get(), nsnull, getter_AddRefs(mimeInfo));
+        rv = mimeService->GetFromTypeAndExtension(mContentType, EmptyCString(), getter_AddRefs(mimeInfo));
         if (!mimeInfo)
           return rv;
 
@@ -339,10 +339,12 @@ nsresult nsHeaderSniffer::InitiateDownload(nsISupports* inSourceData, nsString& 
 
   PRInt64 timeNow = PR_Now();
   
-  nsCOMPtr<nsIDownload> downloader = do_CreateInstance(NS_DOWNLOAD_CONTRACTID);
+  nsCOMPtr<nsIDownload> downloader = do_CreateInstance(NS_TRANSFER_CONTRACTID);
   // dlListener attaches to its progress dialog here, which gains ownership
-  rv = downloader->Init(inOriginalURI, destFile, inFileName.get(), nsnull, timeNow, webPersist);
+  rv = downloader->Init(inOriginalURI, destFile, inFileName, nsnull, timeNow, webPersist);
   if (NS_FAILED(rv)) return rv;
+
+  webPersist->SetProgressListener(downloader);
     
   PRInt32 flags = nsIWebBrowserPersist::PERSIST_FLAGS_NO_CONVERSION | 
                   nsIWebBrowserPersist::PERSIST_FLAGS_REPLACE_EXISTING_FILES;

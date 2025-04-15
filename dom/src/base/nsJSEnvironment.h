@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #ifndef nsJSEnvironment_h___
@@ -47,7 +46,7 @@
 #include "nsIXPCScriptNotify.h"
 #include "nsITimer.h"
 #include "prtime.h"
-
+class nsIXPConnectJSObjectHolder;
 
 class nsJSContext : public nsIScriptContext,
                     public nsIXPCScriptNotify,
@@ -65,7 +64,7 @@ public:
                                   const char *aURL,
                                   PRUint32 aLineNo,
                                   const char* aVersion,
-                                  nsAString& aRetValue,
+                                  nsAString *aRetValue,
                                   PRBool* aIsUndefined);
   virtual nsresult EvaluateStringWithValue(const nsAString& aScript,
                                      void *aScopeObject,
@@ -90,6 +89,7 @@ public:
                                  PRBool* aIsUndefined);
   virtual nsresult CompileEventHandler(void *aTarget,
                                        nsIAtom *aName,
+                                       const char *aEventName,
                                        const nsAString& aBody,
                                        const char *aURL,
                                        PRUint32 aLineNo,
@@ -120,8 +120,8 @@ public:
   virtual void ScriptEvaluated(PRBool aTerminated);
   virtual void SetOwner(nsIScriptContextOwner* owner);
   virtual nsIScriptContextOwner *GetOwner();
-  virtual void SetTerminationFunction(nsScriptTerminationFunc aFunc,
-                                      nsISupports* aRef);
+  virtual nsresult SetTerminationFunction(nsScriptTerminationFunc aFunc,
+                                          nsISupports* aRef);
   virtual PRBool GetScriptsEnabled();
   virtual void SetScriptsEnabled(PRBool aEnabled, PRBool aFireTimeouts);
 
@@ -130,14 +130,20 @@ public:
 
   virtual void SetGCOnDestruction(PRBool aGCOnDestruction);
 
+  virtual nsresult InitClasses(JSObject *aGlobalObj);
+
+  virtual void WillInitializeContext();
+  virtual void DidInitializeContext();
+
   NS_DECL_NSIXPCSCRIPTNOTIFY
 
   NS_DECL_NSITIMERCALLBACK
 
 protected:
-  nsresult InitClasses();
   nsresult InitializeExternalClasses();
-  nsresult InitializeLiveConnectClasses();
+  nsresult InitializeLiveConnectClasses(JSObject *aGlobalObj);
+  // aHolder should be holding our global object
+  nsresult FindXPCNativeWrapperClass(nsIXPConnectJSObjectHolder *aHolder);
 
   void FireGCTimer();
 
@@ -146,10 +152,62 @@ private:
   PRUint32 mNumEvaluations;
 
   nsIScriptContextOwner* mOwner;  /* NB: weak reference, not ADDREF'd */
-  nsScriptTerminationFunc mTerminationFunc;
 
-  nsCOMPtr<nsISupports> mTerminationFuncArg;
+protected:
+  struct TerminationFuncHolder;
+  friend struct TerminationFuncHolder;
+  
+  struct TerminationFuncClosure
+  {
+    TerminationFuncClosure(nsScriptTerminationFunc aFunc,
+                           nsISupports* aArg,
+                           TerminationFuncClosure* aNext) :
+      mTerminationFunc(aFunc),
+      mTerminationFuncArg(aArg),
+      mNext(aNext)
+    {
+    }
+    ~TerminationFuncClosure()
+    {
+      delete mNext;
+    }
+    
+    nsScriptTerminationFunc mTerminationFunc;
+    nsCOMPtr<nsISupports> mTerminationFuncArg;
+    TerminationFuncClosure* mNext;
+  };
 
+  struct TerminationFuncHolder
+  {
+    TerminationFuncHolder(nsJSContext* aContext)
+      : mContext(aContext),
+        mTerminations(aContext->mTerminations)
+    {
+      aContext->mTerminations = nsnull;
+    }
+    ~TerminationFuncHolder()
+    {
+      // Have to be careful here.  mContext might have picked up new
+      // termination funcs while the script was evaluating.  Prepend whatever
+      // we have to the current termination funcs on the context (since our
+      // termination funcs were posted first).
+      if (mTerminations) {
+        TerminationFuncClosure* cur = mTerminations;
+        while (cur->mNext) {
+          cur = cur->mNext;
+        }
+        cur->mNext = mContext->mTerminations;
+        mContext->mTerminations = mTerminations;
+      }
+    }
+
+    nsJSContext* mContext;
+    TerminationFuncClosure* mTerminations;
+  };
+  
+  TerminationFuncClosure* mTerminations;
+
+private:
   PRPackedBool mIsInitialized;
   PRPackedBool mScriptsEnabled;
   PRPackedBool mGCOnDestruction;
@@ -180,9 +238,10 @@ private:
   static JSRuntime *sRuntime;
 
 public:
-  static nsresult Init();
+  // called from the module Ctor to initialize statics
+  static void Startup();
 
-  static nsJSEnvironment *GetScriptingEnvironment();
+  static nsresult Init();
 
   static nsresult CreateNewContext(nsIScriptContext **aContext);
 

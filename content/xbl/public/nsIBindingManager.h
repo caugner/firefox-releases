@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,33 +14,32 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: David W. Hyatt (hyatt@netscape.com)
- *
+ *   Original Author: David W. Hyatt (hyatt@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
-/*
-
-  Private interface to the XBL Binding
-
+/**
+ * Private interface to the XBL Binding.  This interface is currently
+ * undergoing deCOMtamination and some methods are only accessible from
+ * inside of gklayout.
 */
 
 #ifndef nsIBinding_Manager_h__
@@ -49,7 +48,8 @@
 #include "nsISupports.h"
 
 class nsIContent;
-class nsIXBLBinding;
+class nsIDocument;
+class nsXBLBinding;
 class nsIXBLDocumentInfo;
 class nsIAtom;
 class nsIStreamListener;
@@ -58,17 +58,16 @@ class nsIXPConnectWrappedJS;
 class nsIDOMNodeList;
 class nsVoidArray;
 
-// {55D70FE0-C8E5-11d3-97FB-00400553EEF0}
 #define NS_IBINDING_MANAGER_IID \
-{ 0x55d70fe0, 0xc8e5, 0x11d3, { 0x97, 0xfb, 0x0, 0x40, 0x5, 0x53, 0xee, 0xf0 } }
+{ 0x92281eaa, 0x89c4, 0x4457, { 0x8f, 0x8d, 0xca, 0x92, 0xbf, 0xbe, 0x0f, 0x50 } }
 
 class nsIBindingManager : public nsISupports
 {
 public:
   NS_DEFINE_STATIC_IID_ACCESSOR(NS_IBINDING_MANAGER_IID)
 
-  NS_IMETHOD GetBinding(nsIContent* aContent, nsIXBLBinding** aResult) = 0;
-  NS_IMETHOD SetBinding(nsIContent* aContent, nsIXBLBinding* aBinding) = 0;
+  virtual nsXBLBinding* GetBinding(nsIContent* aContent) = 0;
+  NS_IMETHOD SetBinding(nsIContent* aContent, nsXBLBinding* aBinding) = 0;
 
   NS_IMETHOD GetInsertionParent(nsIContent* aContent, nsIContent** aResult)=0;
   NS_IMETHOD SetInsertionParent(nsIContent* aContent, nsIContent* aResult)=0;
@@ -140,22 +139,25 @@ public:
    * anonymous content tree. Specifically, aChild should be inserted
    * beneath aResult at the index specified by aIndex.
    */
-  NS_IMETHOD GetInsertionPoint(nsIContent* aParent, nsIContent* aChild, nsIContent** aResult, PRUint32* aIndex) = 0;
+  virtual nsIContent* GetInsertionPoint(nsIContent* aParent,
+                                        nsIContent* aChild,
+                                        PRUint32* aIndex) = 0;
 
   /**
    * Return the unfiltered insertion point for the specified parent
    * element. If other filtered insertion points exist,
    * aMultipleInsertionPoints will be set to true.
    */
-  NS_IMETHOD GetSingleInsertionPoint(nsIContent* aParent, nsIContent** aResult, PRUint32* aIndex,  
-                                     PRBool* aMultipleInsertionPoints) = 0;
+  virtual nsIContent* GetSingleInsertionPoint(nsIContent* aParent,
+                                              PRUint32* aIndex,  
+                                              PRBool* aMultipleInsertionPoints) = 0;
 
   NS_IMETHOD AddLayeredBinding(nsIContent* aContent, nsIURI* aURL) = 0;
   NS_IMETHOD RemoveLayeredBinding(nsIContent* aContent, nsIURI* aURL) = 0;
   NS_IMETHOD LoadBindingDocument(nsIDocument* aDocument, nsIURI* aURL,
                                  nsIDocument** aResult) = 0;
 
-  NS_IMETHOD AddToAttachedQueue(nsIXBLBinding* aBinding)=0;
+  NS_IMETHOD AddToAttachedQueue(nsXBLBinding* aBinding)=0;
   NS_IMETHOD ClearAttachedQueue()=0;
   NS_IMETHOD ProcessAttachedQueue()=0;
 
@@ -169,7 +171,6 @@ public:
   NS_IMETHOD GetLoadingDocListener(nsIURI* aURL, nsIStreamListener** aResult) = 0;
   NS_IMETHOD RemoveLoadingDocListener(nsIURI* aURL) = 0;
 
-  NS_IMETHOD InheritsStyle(nsIContent* aContent, PRBool* aResult) = 0;
   NS_IMETHOD FlushSkinBindings() = 0;
 
   NS_IMETHOD GetBindingImplementation(nsIContent* aContent, REFNSIID aIID, void** aResult)=0;

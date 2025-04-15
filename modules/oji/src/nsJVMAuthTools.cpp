@@ -1,4 +1,4 @@
-/* -*- Mode: IDL; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -211,7 +211,7 @@ nsJVMAuthTools::SetAuthenticationInfo(const char* protocol,
                                                schemeString,
                                                realmString,
                                                EmptyCString(),
-                                               nsString(), 
+                                               EmptyString(), 
                                                NS_ConvertUTF8toUCS2(username),
                                                NS_ConvertUTF8toUCS2(password));
     return rv;

@@ -43,7 +43,11 @@
 #include "nsMemory.h"
 #include "prefapi.h"
 
+#ifndef MOZ_NO_XPCOM_OBSOLETE
 #include "nsIFileSpec.h"
+#endif
+
+#include "nsString.h"
 #include "nsILocalFile.h"
 #include "nsIPrefBranch.h"
 #include "nsIPrefLocalizedString.h"
@@ -73,7 +77,7 @@ public:
   /* Use xpidl-generated macro to declare everything required by nsIPref */
   NS_DECL_ISUPPORTS
   NS_DECL_NSIPREFBRANCH
-  NS_DECL_NSIPREFBRANCHINTERNAL
+  NS_DECL_NSIPREFBRANCH2
   NS_DECL_NSISECURITYPREF
   NS_DECL_NSIOBSERVER
   NS_FORWARD_NSIPREFSERVICE(mPrefService->)
@@ -124,7 +128,15 @@ nsPref* nsPref::gInstance = NULL;
 static PRInt32 g_InstanceCount = 0;
 
 
-NS_IMPL_THREADSAFE_ISUPPORTS7(nsPref, nsIPref, nsIPrefService, nsIObserver, nsIPrefBranch, nsIPrefBranchInternal, nsISecurityPref, nsISupportsWeakReference)
+NS_IMPL_THREADSAFE_ISUPPORTS8(nsPref,
+                              nsIPref,
+                              nsIPrefService,
+                              nsIObserver,
+                              nsIPrefBranch,
+                              nsIPrefBranch2,
+                              nsIPrefBranchInternal,
+                              nsISecurityPref,
+                              nsISupportsWeakReference)
 
 //----------------------------------------------------------------------------------------
 nsPref::nsPref()
@@ -345,7 +357,7 @@ NS_IMETHODIMP nsPref::AddObserver(const char *aDomain, nsIObserver *aObserver, P
 {
   nsresult rv;
 
-  nsCOMPtr<nsIPrefBranchInternal> prefBranch = do_QueryInterface(mPrefService, &rv);
+  nsCOMPtr<nsIPrefBranch2> prefBranch = do_QueryInterface(mPrefService, &rv);
   if (NS_SUCCEEDED(rv))
     rv = prefBranch->AddObserver(aDomain, aObserver, aHoldWeak);
   return rv;
@@ -355,7 +367,7 @@ NS_IMETHODIMP nsPref::RemoveObserver(const char *aDomain, nsIObserver *aObserver
 {
   nsresult rv;
 
-  nsCOMPtr<nsIPrefBranchInternal> prefBranch = do_QueryInterface(mPrefService, &rv);
+  nsCOMPtr<nsIPrefBranch2> prefBranch = do_QueryInterface(mPrefService, &rv);
   if (NS_SUCCEEDED(rv))
     rv = prefBranch->RemoveObserver(aDomain, aObserver);
   return rv;
@@ -469,16 +481,23 @@ NS_IMETHODIMP nsPref::GetDefaultLocalizedUnicharPref(const char *pref, PRUnichar
 
 NS_IMETHODIMP nsPref::GetFilePref(const char *pref, nsIFileSpec **_retval)
 {
+#ifdef MOZ_NO_XPCOM_OBSOLETE
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
   nsresult rv;
 
   nsCOMPtr<nsIPrefBranch> prefBranch = do_QueryInterface(mPrefService, &rv);
   if (NS_SUCCEEDED(rv))
     rv = prefBranch->GetComplexValue(pref, NS_GET_IID(nsIFileSpec), (void **)_retval);
   return rv;
+#endif
 }
 
 NS_IMETHODIMP nsPref::SetFilePref(const char *pref, nsIFileSpec *value, PRBool setDefault)
 {
+#ifdef MOZ_NO_XPCOM_OBSOLETE
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
   nsresult  rv;
 
   if (setDefault) {
@@ -489,6 +508,7 @@ NS_IMETHODIMP nsPref::SetFilePref(const char *pref, nsIFileSpec *value, PRBool s
       rv = prefBranch->SetComplexValue(pref, NS_GET_IID(nsIFileSpec), value);
   }
     return rv;
+#endif
 }
 
 NS_IMETHODIMP nsPref::GetFileXPref(const char *pref, nsILocalFile **_retval)

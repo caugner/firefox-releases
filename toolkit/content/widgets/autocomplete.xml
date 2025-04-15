@@ -2,38 +2,40 @@
 
 # -*- Mode: HTML -*-
 # ***** BEGIN LICENSE BLOCK *****
-# The contents of this file are subject to the Mozilla Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/MPL/
-# 
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
-# 
-# The Original Code is mozilla.org browser.
-# 
-# The Initial Developer of the Original Code is Joe Hewitt.
-# Portions created by the Initial Developer are
-# Copyright (C) 2003 the Initial Developer.  All
-# Rights Reserved.
-# 
-# Contributor(s):
-#     Pierre Chanial (p_ch@verizon.net)
-#     Dean Tessman   (dean_tessman@hotmail.com)
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
-# Alternatively, the contents of this file may be used under the
-# terms of the GNU General Public License Version 2 or later (the
-# "GPL"), in which case the provisions of the GPL are applicable 
-# instead of those above.  If you wish to allow use of your 
-# version of this file only under the terms of the GPL and not to
-# allow others to use your version of this file under the MPL,
-# indicate your decision by deleting the provisions above and
-# replace them with the notice and other provisions required by
-# the GPL.  If you do not delete the provisions above, a recipient
-# may use your version of this file under either the MPL or the
-# GPL.
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
+#
+# The Original Code is mozilla.org browser.
+#
+# The Initial Developer of the Original Code is
+# Joe Hewitt.
+# Portions created by the Initial Developer are Copyright (C) 2003
+# the Initial Developer. All Rights Reserved.
+#
+# Contributor(s):
+#   Pierre Chanial (p_ch@verizon.net)
+#   Dean Tessman   (dean_tessman@hotmail.com)
+#
+# Alternatively, the contents of this file may be used under the terms of
+# either the GNU General Public License Version 2 or later (the "GPL"), or
+# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
 #
 # ***** END LICENSE BLOCK *****
 
@@ -61,7 +63,7 @@
                       flex="1" allowevents="true"
                       xbl:inherits="tooltiptext=inputtooltiptext,onfocus,onblur,value,type,maxlength,disabled,size,readonly,userAction"/>
         </xul:hbox>
-        <xul:image class="info-icon" xbl:inherits="src=infoicon,tooltiptext=infotext"/>
+        <children includes="hbox"/>
       </xul:hbox>
       
       <xul:dropmarker anonid="historydropmarker" class="autocomplete-history-dropmarker"
@@ -82,9 +84,6 @@
       </field>
 
       <constructor><![CDATA[
-        // set default property values
-        this.ifSetAttribute("disablehistory", true);
-
         mController = Components.classes["@mozilla.org/autocomplete/controller;1"].
                         createInstance(Components.interfaces.nsIAutoCompleteController);
       ]]></constructor>
@@ -94,9 +93,13 @@
       <property name="accessible">
         <getter>
           <![CDATA[
+            // enablehistory="true": dropmarker shows up, so expose as a combobox.
+            // enablehistory="false" (default): no dropmarker, so expose as a textfield.
             var accService = Components.classes["@mozilla.org/accessibilityService;1"].
                               getService(Components.interfaces.nsIAccessibilityService);
-            return accService.createXULComboboxAccessible(this);
+            return (this.getAttribute("enablehistory") == 'true') ?
+                         accService.createXULComboboxAccessible(this) :
+                         accService.createXULTextBoxAccessible(this);
           ]]>
         </getter>
       </property>
@@ -134,6 +137,10 @@
                 onset="this.setAttribute('completedefaultindex', val); return val;"
                 onget="return this.getAttribute('completedefaultindex') == 'true';"/>
 
+      <property name="completeSelectedIndex"
+                onset="this.setAttribute('completeselectedindex', val); return val;"
+                onget="return this.getAttribute('completeselectedindex') == 'true';"/>
+
       <property name="forceComplete"
                 onset="this.setAttribute('forcecomplete', val); return val;"
                 onget="return this.getAttribute('forcecomplete') == 'true';"/>
@@ -166,8 +173,19 @@
       </method>
 
       <property name="textValue"
-                onget="return this.value;"
-                onset="return this.value = val;"/>
+                onget="return this.value;">
+        <setter><![CDATA[
+          // Completing a result should simulate the user typing the result,
+          // so fire an input event.
+          this.value = val;
+          var evt = document.createEvent("UIEvents");
+          evt.initUIEvent("input", true, false, window, 0);
+          this.mIgnoreInput = true;
+          this.dispatchEvent(evt);
+          this.mIgnoreInput = false;
+          return this.value;
+        ]]></setter>
+      </property>
 
       <property name="selectionStart"
                 onget="return this.mInputElt.selectionStart;"/>
@@ -217,9 +235,7 @@
                 onset="this.setAttribute('crop',val); return val;"
                 onget="return this.getAttribute('crop');"/>
 
-      <property name="label"
-                onset="this.setAttribute('label',val); return val;"
-                onget="return this.getAttribute('label');"/>
+      <property name="label" readonly="true" onget="return this.mInputElt.value;"/>
 
       <property name="open"
                 onget="return this.getAttribute('open') == 'true';">
@@ -238,8 +254,17 @@
       <!-- =================== PUBLIC MEMBERS =================== -->
 
       <property name="value"
-                onget="return this.mInputElt.value;"
-                onset="this.mIgnoreInput = true; this.mInputElt.value = val; this.mIgnoreInput = false; return val;"/>
+                onget="return this.mInputElt.value;">
+        <setter><![CDATA[
+          this.mIgnoreInput = true;
+          this.mInputElt.value = val;
+          this.mIgnoreInput = false;
+          var event = document.createEvent('Events');
+          event.initEvent('ValueChange', true, true);
+          this.mInputElt.dispatchEvent(event);
+          return val;
+        ]]></setter>
+      </property>
 
       <property name="focused" readonly="true"
                 onget="return this.getAttribute('focused') == 'true';"/>
@@ -310,6 +335,15 @@
         ]]></body>
       </method>
       
+      <method name="toggleHistoryPopup">
+        <body><![CDATA[
+          if (!this.popup.mPopupOpen)
+            this.showHistoryPopup();
+          else
+            this.closePopup();
+        ]]></body>
+      </method>
+      
       <!-- ::::::::::::: event dispatching ::::::::::::: -->
 
       <method name="fireEvent">
@@ -339,7 +373,7 @@
           var cancel = false;
           const IController = Components.interfaces.nsIAutoCompleteController;
           
-          if (!this.disableKeyNavigation) {
+          if (!this.disableKeyNavigation && !aEvent.ctrlKey && !aEvent.altKey) {
             switch (aEvent.keyCode) {
               case KeyEvent.DOM_VK_TAB:
                 if (this.tabScrolling && this.popup.mPopupOpen)
@@ -356,6 +390,9 @@
                 break;
               case KeyEvent.DOM_VK_RIGHT:
                 cancel = this.mController.handleKeyNavigation(IController.KEY_RIGHT);
+                break;
+              case KeyEvent.DOM_VK_HOME:
+                cancel = this.mController.handleKeyNavigation(IController.KEY_HOME);
                 break;
               case KeyEvent.DOM_VK_PAGE_UP:
                 cancel = this.mController.handleKeyNavigation(IController.KEY_PAGE_UP);
@@ -374,10 +411,23 @@
               this.mEnterEvent = aEvent;
               cancel = this.mController.handleEnter();
               break;
+#ifdef XP_MACOSX
+            case KeyEvent.DOM_VK_BACK_SPACE:
+#endif
             case KeyEvent.DOM_VK_DELETE:
               if (aEvent.shiftKey)
                 cancel = this.mController.handleDelete();
               break;
+            case KeyEvent.DOM_VK_DOWN:
+            case KeyEvent.DOM_VK_UP:
+              if (aEvent.altKey)
+                this.toggleHistoryPopup();
+              break;
+#ifndef XP_MACOSX
+            case KeyEvent.DOM_VK_F4:
+              this.toggleHistoryPopup();
+              break;
+#endif
           }
 
           if (cancel) {
@@ -412,28 +462,35 @@
         ]]></body>
       </method>
 
+      <method name="_focus"> <!-- doesn't reset this.mController -->
+        <body><![CDATA[
+          this._dontBlur = true;
+          this.focus();
+          this._dontBlur = false;
+        ]]></body>
+      </method>
+
     </implementation>
 
     <handlers>
       <handler event="input"
-               action="if (!this.mIgnoreInput) this.mController.handleText(false);"/>
+               action="if (!this.mIgnoreInput &amp;&amp; this.mController.input == this) this.mController.handleText(false);"/>
 
       <handler event="keypress" phase="capturing"
                action="return this.onKeyPress(event);"/>
+
+      <handler event="compositionstart" phase="capturing"
+               action="if (this.mController.input == this) this.mController.handleStartComposition();"/>
+
+      <handler event="compositionend" phase="capturing"
+               action="if (this.mController.input == this) this.mController.handleEndComposition();"/>
 
       <handler event="focus" phase="capturing"
                action="this.attachController();"/>
 
       <handler event="blur" phase="capturing"
-               action="this.detachController();"/>
+               action="if (!this._dontBlur) this.detachController();"/>
                
-      <handler event="dblclick">
-      <![CDATA[
-        if (event.originalTarget.className == "info-icon" && event.button == 0)
-          return this.fireEvent("infoclick");
-        return true;
-      ]]>
-      </handler>
     </handlers>
   </binding> 
 
@@ -472,9 +529,14 @@
       <property name="selectedIndex"
                 onget="return this.tree.currentIndex;">
         <setter><![CDATA[
-          this.tree.treeBoxObject.selection.select(val);
+          this.tree.view.selection.select(val);
           if (this.tree.treeBoxObject.height > 0)
             this.tree.treeBoxObject.ensureRowIsVisible(val < 0 ? 0 : val);
+          // Fire select event on xul:tree so that accessibility API
+          // support layer can fire appropriate accessibility events.
+          var event = document.createEvent('Events');
+          event.initEvent("select", true, true);
+          this.tree.dispatchEvent(event);
           return val;
         ]]></setter>
       </property>
@@ -529,6 +591,9 @@
           try {
             var amount = aPage ? 5 : 1;
             this.selectedIndex = this.getNextIndex(aReverse, amount, this.selectedIndex, this.tree.view.rowCount-1);
+            if (this.selectedIndex == -1) {
+              this.input._focus();
+            }
           } catch (ex) {
             // do nothing - occasionally timer-related js errors happen here
             // e.g. "this.selectedIndex has no properties", when you type fast and hit a
@@ -693,11 +758,13 @@
         <parameter name="aEvent"/>
         <body><![CDATA[
            var row = {}; var col = {}; var obj = {};
-           var x = aEvent.screenX - this.boxObject.screenX + this.boxObject.x;
-           var y = aEvent.screenY - this.boxObject.screenY + this.boxObject.y;
+           // XXXbz We really want client*, but event.client* is bogus inside a
+           // popup!
+           var x = aEvent.screenX - document.documentElement.boxObject.screenX;
+           var y = aEvent.screenY - document.documentElement.boxObject.screenY;
            this.parentNode.treeBoxObject.getCellAt(x, y, row, col, obj);
            if (row.value >= 0)
-             return {row: row.value, column: col.value};
+             return {row: row.value, column: col.value.id};
            else
             return null;
         ]]></body>
@@ -712,7 +779,7 @@
         if (new Date() - this.mLastMoveTime > 30) {
          var rc = this.getHoverCell(event);
          if (rc && rc.row != this.parentNode.currentIndex)
-            this.parentNode.treeBoxObject.selection.select(rc.row);
+            this.parentNode.view.selection.select(rc.row);
          this.mLastMoveTime = new Date();
         }
       ]]></handler>

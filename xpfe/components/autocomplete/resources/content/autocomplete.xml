@@ -66,11 +66,17 @@
       <!-- =================== PUBLIC PROPERTIES =================== -->
 
       <property name="value"
-                onset="this.ignoreInputEvent = true;
-                       this.mInputElt.value = val;
-                       this.ignoreInputEvent = false;
-                       return val;"
-                onget="return this.mInputElt ? this.mInputElt.value : null;"/>
+                onget="return this.mInputElt.value;">
+        <setter><![CDATA[
+          this.ignoreInputEvent = true;
+          this.mInputElt.value = val;
+          this.ignoreInputEvent = false;
+          var event = document.createEvent('Events');
+          event.initEvent('ValueChange', true, true);
+          this.mInputElt.dispatchEvent(event);
+          return val;
+        ]]></setter>
+      </property>
   
       <property name="focused"
                 onget="return this.getAttribute('focused') == 'true';"/>
@@ -130,7 +136,13 @@
       <property name="autoFillAfterMatch"
                 onset="this.setAttribute('autoFillAfterMatch', val); return val;"
                 onget="return this.getAttribute('autoFillAfterMatch') == 'true';"/>
-                
+
+      <!--  if this attribute is set, allow different style for 
+            non auto-completed lines -->
+      <property name="highlightNonMatches"
+                onset="this.setAttribute('highlightNonMatches', val); return val;"
+                onget="return this.getAttribute('highlightNonMatches') == 'true';"/>
+
       <!-- toggles a second column in the results list which contains
            the string in the comment field of each autocomplete result -->
       <property name="showCommentColumn"
@@ -234,8 +246,11 @@
       <property name="accessible">
         <getter>
           <![CDATA[
+            // disablehistory="false": dropmarker shows up, so expose as a combobox.
+            // disablehistory="true" (default): no dropmarker, so expose as a textfield.
             var accService = Components.classes["@mozilla.org/accessibilityService;1"].getService(Components.interfaces.nsIAccessibilityService);
-            return accService.createXULComboboxAccessible(this);
+            return (this.getAttribute("disablehistory") == 'true') ? accService.createXULTextBoxAccessible(this) : 
+                                                                     accService.createXULComboboxAccessible(this);
           ]]>
         </getter>
       </property>
@@ -247,8 +262,7 @@
       <property name="crop" onset="this.setAttribute('crop',val); return val;"
                             onget="return this.getAttribute('crop');"/>
 
-      <property name="label" onset="this.setAttribute('label',val); return val;"
-                             onget="return this.getAttribute('label');"/>
+      <property name="label" readonly="true" onget="return this.mInputElt.value;"/>
 
       <property name="open">
         <getter>
@@ -513,13 +527,14 @@
       <!--  -->
       <method name="startLookup">
         <body><![CDATA[
-          var str = this.value;
-          
+          var str = this.currentSearchString;
+
           this.isSearching = true;
           this.mSessionReturns = this.sessionCount;
           this.mFailureCount = 0;
           this.mFailureItems = 0;
           this.mDefaultMatchFilled = false; // clear out our prefill state.
+          this.removeAttribute("noMatchesFound");
 
           // tell each session to start searching...
           for (var name in this.mSessions)
@@ -656,6 +671,9 @@
           else
             this.removeAttribute("nomatch");
           
+          if (!this.mDefaultMatchFilled && this.highlightNonMatches)
+            this.setAttribute("noMatchesFound", true);
+          
           // if we have processed all of our searches, and none of them gave us a default index,
           // then we should try to auto fill the input field with the first match. 
           // note: autoFillInput is smart enough to kick out if we've already prefilled something...
@@ -680,28 +698,36 @@
             // set textbox value to either override value, or default search result 
             var val = this.resultsPopup.getOverrideValue();
             if (val) {
-              this.value = val;
+              this.setTextValue(val);
               this.mNeedToFinish = false;
             } else if (this.mTransientValue || !this.forceComplete ||
                        !(this.mNeedToComplete || aForceComplete)) {
               this.mNeedToFinish = false;
+            } else if (this.isWaiting) {
+              // if the user typed, the search results are out of date, so let
+              // the search finish, and tell it to come back here when it's done
+              this.mFinishAfterSearch = true;
+              this.mFireAfterSearch = aFireTextCommand;
+              return;
             } else {
               // we want to use the default item index for the first session which gave us a valid
               // default item index...
               for (var name in this.mLastResults) {
                 var results = this.mLastResults[name];
-               if (results && results.items.Count() > 0 && results.defaultItemIndex != -1)
-               {
-                  this.value = this.getSessionValueAt(name, results.defaultItemIndex);
+                if (results && results.items.Count() > 0 && results.defaultItemIndex != -1)
+                {
+                  val = this.getSessionValueAt(name, results.defaultItemIndex);
+                  this.setTextValue(val);
+                  this.mDefaultMatchFilled = true;
                   this.mNeedToFinish = false;
-                 break;
-               }
+                  break;
+                }
               }
 
               if (this.mNeedToFinish) {
                 // if a search is happening at this juncture, bail out of this function
                 // and let the search finish, and tell it to come back here when it's done
-                if (this.isSearching || this.isWaiting) {
+                if (this.isSearching) {
                   this.mFinishAfterSearch = true;
                   this.mFireAfterSearch = aFireTextCommand;
                   return;
@@ -710,7 +736,12 @@
                 this.mNeedToFinish = false;
                 var defaultSession = this.getDefaultSession();
                 if (defaultSession)
-                    this.value = this.getSessionValueAt(defaultSession, 0); // preselect the first one...
+                {
+                    // preselect the first one
+                    var first = this.getSessionValueAt(defaultSession, 0);
+                    this.setTextValue(first);
+                    this.mDefaultMatchFilled = true;
+                }
               }
             }
 
@@ -723,6 +754,7 @@
           }
           
           this.mNeedToComplete = false;
+          this.removeAttribute("noMatchesFound");
           this.clearTimer();
 
           if (aFireTextCommand)
@@ -737,17 +769,17 @@
           var errItem=null;
           var val = this.resultsPopup.getOverrideValue();
             if (val)
-              this.value = val;
+              this.setTextValue(val);
           else if (this.resultsPopup.selectedIndex != null &&
                    !this.noMatch) {
             if (this.getSessionStatusAt(this.resultsPopup.selectedIndex) ==
                 Components.interfaces.nsIAutoCompleteStatus.failureItems) {
-              this.value = this.currentSearchString;
+              this.setTextValue(this.currentSearchString);
               this.mTransientValue = true;
               errItem = this.getResultAt(this.resultsPopup.selectedIndex);
             } else { 
-              this.value = this.getResultValueAt(
-                                             this.resultsPopup.selectedIndex);
+              this.setTextValue(this.getResultValueAt(
+                                             this.resultsPopup.selectedIndex));
             }
           }
 
@@ -774,7 +806,7 @@
 
           var ok = this._fireEvent("textrevert");
           if ((ok || ok == undefined) && val)
-            this.value = val;
+            this.setTextValue(val);
 
           this.userAction = "typing";
 
@@ -823,6 +855,7 @@
           var str = this.value;
           this.currentSearchString = str;
           this.resultsPopup.selectedIndex = null;
+          this.removeAttribute("noMatchesFound");
           
           // We want to autocomplete only if the user is editing at the end of the text
           if (this.mInputElt.selectionEnd >= str.length)
@@ -921,6 +954,15 @@
       </method>
 
       <!--  -->
+      <method name="processStartComposition">
+        <body><![CDATA[
+          this.finishAutoComplete(false, false, null);
+          this.clearTimer();
+          this.closeResultPopup();
+        ]]></body>
+      </method>
+
+      <!--  -->
       <method name="keyNavigation">
         <parameter name="aEvent"/>
         <body><![CDATA[
@@ -955,17 +997,17 @@
               if (this.getSessionStatusAt(selected) == 
                   Components.interfaces.nsIAutoCompleteStatus.failureItems) { 
                 if (this.currentSearchString)
-                  this.value = this.currentSearchString;
+                  this.setTextValue(this.currentSearchString);
               } else {
-                this.value = this.getResultValueAt(selected);
+                this.setTextValue(this.getResultValueAt(selected));
               }
               this.mTransientValue = true;
             } else {
               if (this.currentSearchString)
-                this.value = this.currentSearchString;
+                this.setTextValue(this.currentSearchString);
               this.mTransientValue = false;
             }
-            
+
             // move cursor to the end
             this.mInputElt.setSelectionRange(this.value.length, this.value.length);
             this.ignoreInputEvent = false;
@@ -982,14 +1024,14 @@
         <parameter name="aUseFirstMatchIfNoDefault"/>
         <body><![CDATA[
           if (this.mDefaultMatchFilled) return;
-            
+
           if (!this.mFinishAfterSearch && this.autoFill && 
               this.mLastKeyCode != KeyEvent.DOM_VK_BACK_SPACE &&
               this.mLastKeyCode != KeyEvent.DOM_VK_DELETE) {
             var indexToUse = aResults.defaultItemIndex;
             if (aUseFirstMatchIfNoDefault && indexToUse == -1)
-              indexToUse = 0;      
-              
+              indexToUse = 0; 
+
             if (indexToUse != -1) {
               var resultValue = this.getSessionValueAt(aSessionName, indexToUse);
               var match = resultValue.toLowerCase();
@@ -997,17 +1039,18 @@
               this.ignoreInputEvent = true;
               if (match.indexOf(entry) == 0) {
                 var endPoint = this.value.length;
-                this.value = this.value + resultValue.substr(endPoint);
+                this.setTextValue(this.value + resultValue.substr(endPoint));
                 this.mInputElt.setSelectionRange(endPoint, this.value.length);
               } else {
                 if (this.autoFillAfterMatch) {
-                  this.value = this.value + " >> " + resultValue;
+                  this.setTextValue(this.value + " >> " + resultValue);
                   this.mInputElt.setSelectionRange(entry.length, this.value.length);
                 } else {
                   var postIndex = resultValue.indexOf(this.value);
                   if (postIndex >= 0) {
                     var startPt = this.value.length;
-                    this.value = this.value + resultValue.substr(startPt+postIndex);
+                    this.setTextValue(this.value + 
+                                      resultValue.substr(startPt+postIndex));
                     this.mInputElt.setSelectionRange(startPt, this.value.length);
                   }
                 }
@@ -1070,6 +1113,22 @@
             this.resultsPopup.adjustHeight();
 
           this.noMatch = true;
+        ]]></body>
+      </method>
+
+      <!--  -->
+      <method name="setTextValue">
+        <parameter name="aValue"/>
+        <body><![CDATA[
+          // Completing a result should simulate the user typing the result,
+          // so fire an input event.
+          this.value = aValue;
+          var evt = document.createEvent("UIEvents");
+          evt.initUIEvent("input", true, false, window, 0);
+          var oldIgnoreInput = this.ignoreInputEvent;
+          this.ignoreInputEvent = true;
+          this.dispatchEvent(evt);
+          this.ignoreInputEvent = oldIgnoreInput;
         ]]></body>
       </method>
 
@@ -1168,8 +1227,14 @@
             
             this.mBoxObject.invalidateRow(aRow);
             
-            if (aRow != null)
+            if (aRow != null) {
               this.mBoxObject.ensureRowIsVisible(aRow);
+              // Fire select event on xul:tree so that accessibility API 
+              // support layer can fire appropriate accessibility events.
+              var event = document.createEvent('Events');
+              event.initEvent("select", true, true);
+              this.mTree.element.dispatchEvent(event);
+            }
           },
           
           get selectedIndex()
@@ -1230,11 +1295,11 @@
             }
           },
           
-          getCellText: function(aRow, aColId)
+          getCellText: function(aRow, aCol)
           {
             var result = this.mTextbox.getResultAt(aRow);
             if (!result) return "";
-            return aColId == "value" ? result.value : (aColId == "comment" ? result.comment : "");
+            return aCol.id == "value" ? result.value : (aCol.id == "comment" ? result.comment : "");
           },
 
           getRowProperties: function(aIndex, aProperties) 
@@ -1243,7 +1308,7 @@
               aProperties.AppendElement(this.mAtomSelected);
           },
 
-          getCellProperties: function(aIndex, aColId, aProperties)
+          getCellProperties: function(aIndex, aCol, aProperties)
           {
             this.getRowProperties(aIndex, aProperties);
 
@@ -1251,7 +1316,7 @@
             // to the property list so that we can style this column
             // using that property
             try { 
-              if (aColId == "value") {
+              if (aCol.id == "value") {
                 var className = this.mTextbox.getResultAt(aIndex).className;
                   if ( className != "" ) {
                     aProperties.AppendElement(this.createAtom(className));
@@ -1263,16 +1328,16 @@
             } 
           },
 
-          getColumnProperties: function(aColId, aColElt, aProperties) 
+          getColumnProperties: function(aCol, aProperties) 
           {
           },
           
           getParentIndex: function(aRowIndex) { },
           hasNextSibling: function(aRowIndex, aAfterIndex) { },
           getLevel: function(aIndex) {},
-          getImageSrc: function(aRow, aColId) {},
-          getProgressMode: function(aRow, aColId) {},
-          getCellValue: function(aRow, aColId) {},
+          getImageSrc: function(aRow, aCol) {},
+          getProgressMode: function(aRow, aCol) {},
+          getCellValue: function(aRow, aCol) {},
           isContainer: function(aIndex) {},
           isContainerOpen: function(aIndex) {},
           isContainerEmpty: function(aIndex) {},
@@ -1280,13 +1345,14 @@
           isSorted: function() {},
           toggleOpenState: function(aIndex) {},
           selectionChanged: function() {},
-          cycleHeader: function(aColId, aElt) {},
-          cycleCell: function(aRow, aColId) {},
-          isEditable: function(aRow, aColId) {},
-          setCellText: function(aRow, aColId, aValue) {},
+          cycleHeader: function(aCol) {},
+          cycleCell: function(aRow, aCol) {},
+          isEditable: function(aRow, aCol) {},
+          setCellValue: function(aRow, aCol, aValue) {},
+          setCellText: function(aRow, aCol, aValue) {},
           performAction: function(aAction) {},
           performActionOnRow: function(aAction, aRow) {},
-          performActionOnCell: function(aAction, aRow, aColId) {}
+          performActionOnCell: function(aAction, aRow, aCol) {}
         });
       ]]></field>
 
@@ -1298,6 +1364,9 @@
 
       <handler event="keypress" phase="capturing"
                 action="return this.processKeyPress(event);"/>
+
+      <handler event="compositionstart" phase="capturing"
+                action="this.processStartComposition();"/>
 
       <handler event="focus" phase="capturing"
                action="this.userAction = 'typing';"/>
@@ -1349,11 +1418,11 @@
       </property>
 
      <property name="pageCount"
-               onget="return this.tree.treeBoxObject.getPageCount();"/>
+               onget="return this.tree.treeBoxObject.getPageLength();"/>
 
-      <property name="selectedIndex"
-                onget="return this.textbox.view.selectedIndex"
-                onset="this.textbox.view.selectedIndex = val; return val;"/>
+     <property name="selectedIndex"
+               onget="return this.textbox.view.selectedIndex"
+               onset="this.textbox.view.selectedIndex = val; return val;"/>
 
      <field name="mLastRows">0</field>
 
@@ -1494,6 +1563,8 @@
     <implementation>
       <property name="textbox"
                 onget="return this.__AUTOCOMPLETE_BOX__;"/>
+      <property name="currentIndex" onget="return this.textbox.view.selectedIndex;"
+                                    onset="this.textbox.view.selectedIndex = val; return val;"/>
     </implementation>
   </binding>
 
@@ -1508,11 +1579,13 @@
         <parameter name="aEvent"/>
         <body><![CDATA[
            var row = {}; var col = {}; var obj = {};
-           var x = aEvent.screenX - this.boxObject.screenX + this.boxObject.x;
-           var y = aEvent.screenY - this.boxObject.screenY + this.boxObject.y;
+           // XXXbz We really want client*, but event.client* is bogus inside a
+           // popup!
+           var x = aEvent.screenX - document.documentElement.boxObject.screenX;
+           var y = aEvent.screenY - document.documentElement.boxObject.screenY;
            this.textbox.view.treeBoxObject.getCellAt(x, y, row, col, obj);
            if (row.value >= 0)
-             return {row: row.value, column: col.value};
+             return {row: row.value, column: col.value.id};
            else
             return null;
         ]]></body>

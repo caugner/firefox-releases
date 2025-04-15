@@ -28,10 +28,22 @@
                 onget="return this.getAttribute('group');"
                 onset="this.setAttribute('group', val); return val;"/>
 
-      <property name="open"
-                onget="return this.hasAttribute('open');"
-                onset="if (val) this.setAttribute('open', 'true');
-                       else this.removeAttribute('open'); return val;"/>
+      <property name="open" onget="return this.hasAttribute('open');">
+        <setter><![CDATA[
+          if (this.boxObject instanceof
+              Components.interfaces.nsIMenuBoxObject) {
+            this.boxObject.openMenu(val);
+          } else {
+            // Fall back to just setting the attribute
+            if (val) {
+              this.setAttribute('open', 'true');
+            } else {
+              this.removeAttribute('open');
+            }
+          }
+          return val;
+        ]]></setter>
+      </property>
 
       <property name="checked" onget="return this.hasAttribute('checked');">
         <setter><![CDATA[
@@ -158,7 +170,6 @@
           this.fireAccessKeyButton(buttonBox, charPressedLower);
       ]]>
       </handler>
-
     </handlers>
   </binding>
 
@@ -174,7 +185,7 @@
                 align="center" pack="center" flex="1">
         <children>
           <xul:image class="button-icon" xbl:inherits="src=image"/>
-          <xul:label class="button-text" xbl:inherits="value=label,accesskey,crop" flex="1"/>
+          <xul:label class="button-text" xbl:inherits="value=label,accesskey,crop"/>
         </children>
       </xul:hbox>
     </content>
@@ -193,7 +204,12 @@
         </children>
       </xul:hbox>
     </content>
-  </binding>           
+
+    <handlers>
+      <handler event="keypress" keycode="VK_RETURN" action="this.open = true;"/>
+      <handler event="keypress" key=" " action="this.open = true;"/>
+    </handlers>
+  </binding>
 
   <binding id="menu-button-base"
            extends="chrome://global/content/bindings/button.xml#button-base">

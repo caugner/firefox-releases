@@ -39,8 +39,6 @@
 
 #define MAPI_STARTUP_ARG       "/MAPIStartUp"
 
-#define MAPI_STARTUP_ARG       "/MAPIStartUp"
-
 #ifdef MOZ_LOGGING
 // this has to be before the pre-compiled header
 #define FORCE_PR_LOG /* Allow logging in the release build */
@@ -48,25 +46,24 @@
 #include <mapidefs.h>
 #include <mapi.h>
 #include <tchar.h>
-
+#include <direct.h>
 #include "nsCOMPtr.h"
 #include "nsIComponentManager.h"
 #include "nsIServiceManager.h"
 #include "nsISupports.h"
 #include "nsIPromptService.h"
-#include "nsAppShellCIDs.h"
-#include "nsIDOMWindowInternal.h"
+#include "nsIAppStartup.h" 
 #include "nsIAppShellService.h"
+#include "nsIDOMWindowInternal.h"
 #include "nsINativeAppSupport.h"
-#include "nsICmdLineService.h"
-#include "nsIProfileInternal.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsXPIDLString.h"
 #include "nsReadableUtils.h"
 #include "nsMsgBaseCID.h"
 #include "nsIStringBundle.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "nsString.h"
 #include "nsUnicharUtils.h"
 #include "nsIMsgAttachment.h"
@@ -74,6 +71,7 @@
 #include "nsIMsgComposeParams.h"
 #include "nsIMsgCompose.h"
 #include "nsMsgCompCID.h"
+#include "nsXPFEComponentsCID.h" 
 #include "nsIMsgSend.h"
 #include "nsIProxyObjectManager.h"
 #include "nsIMsgComposeService.h"
@@ -87,10 +85,13 @@
 #include "msgMapiMain.h"
 #include "nsNetUtil.h"
 
+#include "nsEmbedCID.h"
+
+#ifndef MOZ_XUL_APP
+#include "nsICmdLineService.h"
+#endif
+
 extern PRLogModuleInfo *MAPI;
-
-
-static NS_DEFINE_CID(kCmdLineServiceCID, NS_COMMANDLINE_SERVICE_CID);
 
 class nsMAPISendListener : public nsIMsgSendListener
 {
@@ -160,21 +161,21 @@ PRBool nsMapiHook::isMapiService = PR_FALSE;
 
 PRBool nsMapiHook::Initialize()
 {
+#ifndef MOZ_THUNDERBIRD 
     nsresult rv;
     nsCOMPtr<nsINativeAppSupport> native;
+    nsCOMPtr<nsICmdLineService> cmdLineArgs (do_GetService(NS_COMMANDLINESERVICE_CONTRACTID, &rv));
+    if (NS_FAILED(rv)) return PR_FALSE; 
 
-    nsCOMPtr<nsICmdLineService> cmdLineArgs(do_GetService(kCmdLineServiceCID, &rv));
-    if (NS_FAILED(rv)) return PR_FALSE;
+    nsCOMPtr<nsIAppStartup> appStartup (do_GetService(NS_APPSTARTUP_CONTRACTID, &rv));
+    if (NS_FAILED(rv)) return PR_FALSE; 
 
-    nsCOMPtr<nsIAppShellService> appShell (do_GetService( "@mozilla.org/appshell/appShellService;1", &rv));
-    if (NS_FAILED(rv)) return PR_FALSE;
-
-    rv = appShell->GetNativeAppSupport( getter_AddRefs( native ));
+    rv = appStartup->GetNativeAppSupport(getter_AddRefs(native)); 
     if (NS_FAILED(rv)) return PR_FALSE;
 
     rv = native->EnsureProfile(cmdLineArgs);
     if (NS_FAILED(rv)) return PR_FALSE;
-
+#endif
     return PR_TRUE;
 }
 
@@ -189,11 +190,8 @@ PRBool nsMapiHook::DisplayLoginDialog(PRBool aLogin, PRUnichar **aUsername,
 {
     nsresult rv;
     PRBool btnResult = PR_FALSE;
-
-    nsCOMPtr<nsIAppShellService> appShell(do_GetService( "@mozilla.org/appshell/appShellService;1", &rv));
-    if (NS_FAILED(rv) || !appShell) return PR_FALSE;
    
-    nsCOMPtr<nsIPromptService> dlgService(do_GetService("@mozilla.org/embedcomp/prompt-service;1", &rv));
+    nsCOMPtr<nsIPromptService> dlgService(do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
     if (NS_SUCCEEDED(rv) && dlgService)
     {
         nsCOMPtr<nsIStringBundleService> bundleService(do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv));
@@ -205,13 +203,13 @@ PRBool nsMapiHook::DisplayLoginDialog(PRBool aLogin, PRUnichar **aUsername,
 
         nsCOMPtr<nsIStringBundle> brandBundle;
         rv = bundleService->CreateBundle(
-                        "chrome://global/locale/brand.properties",
+                        "chrome://branding/locale/brand.properties",
                         getter_AddRefs(brandBundle));
         if (NS_FAILED(rv)) return PR_FALSE;
 
         nsXPIDLString brandName;
         rv = brandBundle->GetStringFromName(
-                           NS_LITERAL_STRING("brandShortName").get(),
+                           NS_LITERAL_STRING("brandFullName").get(),
                            getter_Copies(brandName));
         if (NS_FAILED(rv)) return PR_FALSE;
         
@@ -301,10 +299,10 @@ nsMapiHook::IsBlindSendAllowed()
 {
     PRBool enabled = PR_FALSE;
     PRBool warn = PR_TRUE;
-    nsCOMPtr<nsIPref> prefs = do_GetService(NS_PREF_CONTRACTID);
-    if (prefs) {
-        prefs->GetBoolPref(PREF_MAPI_WARN_PRIOR_TO_BLIND_SEND,&warn);
-            prefs->GetBoolPref(PREF_MAPI_BLIND_SEND_ENABLED,&enabled);
+    nsCOMPtr<nsIPrefBranch> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID);
+    if (prefBranch) {
+        prefBranch->GetBoolPref(PREF_MAPI_WARN_PRIOR_TO_BLIND_SEND, &warn);
+        prefBranch->GetBoolPref(PREF_MAPI_BLIND_SEND_ENABLED, &enabled);
     } 
     if (!enabled)
         return PR_FALSE;
@@ -330,18 +328,17 @@ nsMapiHook::IsBlindSendAllowed()
                                         getter_Copies(dontShowAgainMessage));
     if (NS_FAILED(rv)) return PR_FALSE;
 
-    nsCOMPtr<nsIPromptService> dlgService(do_GetService("@mozilla.org/embedcomp/prompt-service;1", &rv));
+    nsCOMPtr<nsIPromptService> dlgService(do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
     if (NS_FAILED(rv) || !dlgService) return PR_FALSE;
     
     PRBool continueToWarn = PR_TRUE;
     PRBool okayToContinue = PR_FALSE;
     dlgService->ConfirmCheck(nsnull, nsnull, warningMsg, dontShowAgainMessage, &continueToWarn, &okayToContinue);
         
-    if (!continueToWarn && okayToContinue && prefs)
-        prefs->SetBoolPref(PREF_MAPI_WARN_PRIOR_TO_BLIND_SEND,PR_FALSE);
+    if (!continueToWarn && okayToContinue && prefBranch)
+        prefBranch->SetBoolPref(PREF_MAPI_WARN_PRIOR_TO_BLIND_SEND, PR_FALSE);
     
     return okayToContinue;
-        
 }
 
 // this is used for Send without UI
@@ -389,8 +386,10 @@ nsresult nsMapiHook::BlindSendMail (unsigned long aSession, nsIMsgCompFields * a
     if (NS_FAILED(rv) || (!pMsgComposeParams) ) return rv ;
 
     // populate the compose params
+    PRBool forcePlainText;
+    aCompFields->GetForcePlainText(&forcePlainText);
     pMsgComposeParams->SetType(nsIMsgCompType::New);
-    pMsgComposeParams->SetFormat(nsIMsgCompFormat::Default);
+    pMsgComposeParams->SetFormat(forcePlainText ? nsIMsgCompFormat::PlainText : nsIMsgCompFormat::HTML);
     pMsgComposeParams->SetIdentity(pMsgId);
     pMsgComposeParams->SetComposeFields(aCompFields); 
     pMsgComposeParams->SetSendListener(sendListener) ;
@@ -437,7 +436,7 @@ nsresult nsMapiHook::PopulateCompFields(lpnsMapiMessage aMessage,
     {
         char * From = aMessage->lpOriginator->lpszAddress ;
         nsAutoString FromStr; FromStr.AssignWithConversion(From);
-        aCompFields->SetFrom (FromStr.get()) ;
+        aCompFields->SetFrom (FromStr) ;
     }
 
     nsAutoString To ;
@@ -482,9 +481,9 @@ nsresult nsMapiHook::PopulateCompFields(lpnsMapiMessage aMessage,
 
     PR_LOG(MAPI, PR_LOG_DEBUG, ("to: %s cc: %s bcc: %s \n", NS_ConvertUCS2toUTF8(To).get(), NS_ConvertUCS2toUTF8(Cc).get(), NS_ConvertUCS2toUTF8(Bcc).get()));
     // set To, Cc, Bcc
-    aCompFields->SetTo (To.get()) ;
-    aCompFields->SetCc (Cc.get()) ;
-    aCompFields->SetBcc (Bcc.get()) ;
+    aCompFields->SetTo (To) ;
+    aCompFields->SetCc (Cc) ;
+    aCompFields->SetBcc (Bcc) ;
 
     // set subject
     if (aMessage->lpszSubject)
@@ -492,7 +491,7 @@ nsresult nsMapiHook::PopulateCompFields(lpnsMapiMessage aMessage,
         nsAutoString Subject;
 
         Subject.AssignWithConversion(aMessage->lpszSubject);
-        aCompFields->SetSubject(Subject.get()) ;
+        aCompFields->SetSubject(Subject) ;
     }
 
     // handle attachments as File URL
@@ -505,8 +504,12 @@ nsresult nsMapiHook::PopulateCompFields(lpnsMapiMessage aMessage,
         nsString Body;
         Body.AssignWithConversion(aMessage->lpszNoteText);
         if (Body.Last() != nsCRT::LF)
-          Body.AppendWithConversion(CRLF);
-        rv = aCompFields->SetBody(Body.get()) ;
+          Body.AppendLiteral(CRLF); 
+
+        if (Body.Find("<html>") == kNotFound)
+          aCompFields->SetForcePlainText(PR_TRUE);
+
+        rv = aCompFields->SetBody(Body) ;
     }
 
 #ifdef RAJIV_DEBUG
@@ -571,10 +574,17 @@ nsresult nsMapiHook::HandleAttachments (nsIMsgCompFields * aCompFields, PRInt32 
             // a value for lpszFileName, use it. Otherwise stick with leafName
             if (aFiles[i].lpszFileName)
             {
+              nsAutoString wholeFileName;
                 if (aIsUnicode)
-                    leafName.Assign(aFiles[i].lpszFileName);
+                    wholeFileName.Assign(aFiles[i].lpszFileName);
                 else
-                    ConvertToUnicode(nsMsgI18NFileSystemCharset(), (char *) aFiles[i].lpszFileName, leafName);
+                    ConvertToUnicode(nsMsgI18NFileSystemCharset(), (char *) aFiles[i].lpszFileName, wholeFileName);
+                // need to find the last '\' and find the leafname from that.
+                PRInt32 lastSlash = wholeFileName.RFindChar(PRUnichar('\\'));
+                if (lastSlash != kNotFound)
+                  wholeFileName.Right(leafName, wholeFileName.Length() - lastSlash - 1);
+                else
+                  leafName.Assign(wholeFileName);
             }
             else 
               pFile->GetLeafName (leafName);
@@ -590,7 +600,6 @@ nsresult nsMapiHook::HandleAttachments (nsIMsgCompFields * aCompFields, PRInt32 
              {
                rv = pTempFile->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0777);
                NS_ENSURE_SUCCESS(rv, rv);
-               pTempFile->GetLeafName(leafName);
                pTempFile->Remove(PR_FALSE); // remove so we can copy over it.
              }
             // copy the file to its new location and file name
@@ -629,7 +638,7 @@ nsresult nsMapiHook::PopulateCompFieldsWithConversion(lpnsMapiMessage aMessage,
     {
         nsAutoString From ;
         From.AssignWithConversion((char *) aMessage->lpOriginator->lpszAddress);
-        aCompFields->SetFrom (From.get()) ;
+        aCompFields->SetFrom (From) ;
     }
 
     nsAutoString To ;
@@ -674,9 +683,9 @@ nsresult nsMapiHook::PopulateCompFieldsWithConversion(lpnsMapiMessage aMessage,
     }
     
     // set To, Cc, Bcc
-    aCompFields->SetTo (To.get()) ;
-    aCompFields->SetCc (Cc.get()) ;
-    aCompFields->SetBcc (Bcc.get()) ;
+    aCompFields->SetTo (To) ;
+    aCompFields->SetCc (Cc) ;
+    aCompFields->SetBcc (Bcc) ;
 
     PR_LOG(MAPI, PR_LOG_DEBUG, ("to: %s cc: %s bcc: %s \n", NS_ConvertUCS2toUTF8(To).get(), NS_ConvertUCS2toUTF8(Cc).get(), NS_ConvertUCS2toUTF8(Bcc).get()));
 
@@ -689,7 +698,7 @@ nsresult nsMapiHook::PopulateCompFieldsWithConversion(lpnsMapiMessage aMessage,
             platformCharSet.Assign(nsMsgI18NFileSystemCharset());
         rv = ConvertToUnicode(platformCharSet.get(), (char *) aMessage->lpszSubject, Subject);
         if (NS_FAILED(rv)) return rv ;         
-        aCompFields->SetSubject(Subject.get()) ;
+        aCompFields->SetSubject(Subject) ;
     }
 
     // handle attachments as File URL
@@ -705,8 +714,12 @@ nsresult nsMapiHook::PopulateCompFieldsWithConversion(lpnsMapiMessage aMessage,
         rv = ConvertToUnicode(platformCharSet.get(), (char *) aMessage->lpszNoteText, Body);
         if (NS_FAILED(rv)) return rv ;
         if (Body.Last() != nsCRT::LF)
-          Body.AppendWithConversion(CRLF);
-        rv = aCompFields->SetBody(Body.get()) ;
+          Body.AppendLiteral(CRLF); 
+
+        if (Body.Find("<html>") == kNotFound)
+          aCompFields->SetForcePlainText(PR_TRUE);
+
+        rv = aCompFields->SetBody(Body) ;
     }
 
 #ifdef RAJIV_DEBUG
@@ -754,7 +767,7 @@ nsresult nsMapiHook::PopulateCompFieldsForSendDocs(nsIMsgCompFields * aCompField
 
     // only 1 file is to be sent, no delim specified
     if (strDelimChars.IsEmpty())
-        strDelimChars.Assign(NS_LITERAL_STRING(";"));
+        strDelimChars.AssignLiteral(";");
 
     PRInt32 offset = 0 ;
     PRInt32 FilePathsLen = strFilePaths.Length() ;
@@ -797,7 +810,20 @@ nsresult nsMapiHook::PopulateCompFieldsForSendDocs(nsIMsgCompFields * aCompField
                 FilePathsLen -= offset + strDelimChars.Length();
             }
 
+            if (RemainingPaths[1] != ':' && RemainingPaths[1] != '\\') 
+            {
+              char cwd[MAX_PATH];  
+              if (_getdcwd(_getdrive(), cwd, MAX_PATH)) 
+              {
+                nsAutoString cwdStr;
+                CopyASCIItoUTF16(cwd, cwdStr);
+                cwdStr.Append('\\');
+                RemainingPaths.Insert(cwdStr, 0);
+              }
+            }
+
             pFile->InitWithPath (RemainingPaths) ;
+
             rv = pFile->Exists(&bExist) ;
             if (NS_FAILED(rv) || (!bExist) ) return NS_ERROR_FILE_TARGET_DOES_NOT_EXIST ;
 
@@ -807,7 +833,7 @@ nsresult nsMapiHook::PopulateCompFieldsForSendDocs(nsIMsgCompFields * aCompField
             if(NS_FAILED(rv) || leafName.IsEmpty()) return rv ;
 
             if (!Subject.IsEmpty()) 
-                Subject.AppendWithConversion(", ");
+                Subject.AppendLiteral(", ");
             Subject += leafName;
 
             // create MsgCompose attachment object
@@ -834,7 +860,7 @@ nsresult nsMapiHook::PopulateCompFieldsForSendDocs(nsIMsgCompFields * aCompField
             if (NS_FAILED(rv)) return rv ;
         }
 
-        rv = aCompFields->SetBody(Subject.get()) ;
+        rv = aCompFields->SetBody(Subject) ;
     }
 
     return rv ;
@@ -854,6 +880,9 @@ nsresult nsMapiHook::ShowComposerWindow (unsigned long aSession, nsIMsgCompField
     nsCOMPtr<nsIMsgComposeParams> pMsgComposeParams (do_CreateInstance(NS_MSGCOMPOSEPARAMS_CONTRACTID, &rv));
     if (NS_FAILED(rv) || (!pMsgComposeParams) ) return rv ;
 
+    PRBool forcePlainText;
+    aCompFields->GetForcePlainText(&forcePlainText);
+    pMsgComposeParams->SetFormat(forcePlainText ? nsIMsgCompFormat::Default : nsIMsgCompFormat::HTML);
     // populate the compose params
     pMsgComposeParams->SetType(nsIMsgCompType::New);
     pMsgComposeParams->SetFormat(nsIMsgCompFormat::Default);

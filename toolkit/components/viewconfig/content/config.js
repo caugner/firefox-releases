@@ -54,7 +54,7 @@ const nsAtomService_CONTRACTID = "@mozilla.org/atom-service;1";
 
 const gPromptService = Components.classes[nsPrompt_CONTRACTID].getService(nsIPromptService);
 const gPrefService = Components.classes[nsPrefService_CONTRACTID].getService(nsIPrefService);
-const gPrefBranch = gPrefService.getBranch(null).QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+const gPrefBranch = gPrefService.getBranch(null).QueryInterface(Components.interfaces.nsIPrefBranch2);
 const gClipboardHelper = Components.classes[nsClipboardHelper_CONTRACTID].getService(nsIClipboardHelper);
 const gAtomService = Components.classes[nsAtomService_CONTRACTID].getService(nsIAtomService);
 
@@ -82,9 +82,9 @@ var view = {
     if (!(index in gPrefView))
       return "";
     
-    var value = gPrefView[index][col];
+    var value = gPrefView[index][col.id];
 
-    switch (col) {
+    switch (col.id) {
       case "lockCol":           
         return gLockStrs[value];
       case "typeCol":
@@ -98,27 +98,26 @@ var view = {
     if (index in gPrefView)
       prop.AppendElement(gLockAtoms[gPrefView[index].lockCol]);
   },
-  getColumnProperties : function(col, elt, prop) {},
+  getColumnProperties : function(col, prop) {},
   treebox : null,
   selection : null,
   isContainer : function(index) { return false; },
   isContainerOpen : function(index) { return false; },
   isContainerEmpty : function(index) { return false; },
   isSorted : function() { return true; },
-  canDropOn : function(index) { return false; },
-  canDropBeforeAfter : function(index, before) { return false; },
-  drop : function(row,orientation) {},
+  canDrop : function(index, orientation) { return false; },
+  drop : function(row, orientation) {},
   setTree : function(out) { this.treebox = out; },
   getParentIndex: function(rowIndex) { return -1; },
   hasNextSibling: function(rowIndex, afterIndex) { return false; },
   getLevel: function(index) { return 1; },
-  getImageSrc: function(row, colID) { return ""; },
+  getImageSrc: function(row, col) { return ""; },
   toggleOpenState : function(index) {},
-  cycleHeader: function(colID, elt) {
+  cycleHeader: function(col) {
     var index = this.selection.currentIndex;
-    if (colID == gSortedColumn)
+    if (col.id == gSortedColumn)
       gSortDirection = -gSortDirection;
-    if (colID == gSortedColumn && gFastIndex == gPrefArray.length) {
+    if (col.id == gSortedColumn && gFastIndex == gPrefArray.length) {
       gPrefArray.reverse();
       if (gPrefView != gPrefArray)
         gPrefView.reverse();
@@ -135,18 +134,18 @@ var view = {
       }
       var old = document.getElementById(gSortedColumn);
       old.setAttribute("sortDirection", "");
-      gPrefArray.sort(gSortFunction = gSortFunctions[colID]);
+      gPrefArray.sort(gSortFunction = gSortFunctions[col.id]);
       if (gPrefView != gPrefArray) {
-        if (colID == gSortedColumn)
+        if (col.id == gSortedColumn)
           gPrefView.reverse();
         else
           gPrefView.sort(gSortFunction);
       }
-      gSortedColumn = colID;
+      gSortedColumn = col.id;
       if (pref)
         index = getIndexOfPref(pref);
     }
-    elt.setAttribute("sortDirection", gSortDirection > 0 ? "ascending" : "descending");
+    col.element.setAttribute("sortDirection", gSortDirection > 0 ? "ascending" : "descending");
     this.treebox.invalidate();
     if (index >= 0) {
       this.selection.select(index);
@@ -155,12 +154,13 @@ var view = {
     gFastIndex = gPrefArray.length;
   },
   selectionChanged : function() {},
-  cycleCell: function(row, colID) {},
-  isEditable: function(row, colID) {return false; },
-  setCellText: function(row, colID, value) {},
+  cycleCell: function(row, col) {},
+  isEditable: function(row, col) {return false; },
+  setCellValue: function(row, col, value) {},
+  setCellText: function(row, col, value) {},
   performAction: function(action) {},
   performActionOnRow: function(action, row) {},
-  performActionOnCell: function(action, row, colID) {},
+  performActionOnCell: function(action, row, col) {},
   isSeparator: function(index) {return false; }
 };
 
@@ -335,13 +335,13 @@ function onConfigLoad()
   }
 
   var descending = document.getElementsByAttribute("sortDirection", "descending");
-  if (descending.length) {
+  if (descending.item(0)) {
     gSortedColumn = descending[0].id;
     gSortDirection = -1;
   }
   else {
     var ascending = document.getElementsByAttribute("sortDirection", "ascending");
-    if (ascending.length)
+    if (ascending.item(0))
       gSortedColumn = ascending[0].id;
     else
       document.getElementById(gSortedColumn).setAttribute("sortDirection", "ascending");
@@ -464,6 +464,15 @@ function updateContextMenu()
   var toggleSelected = document.getElementById("toggleSelected");
   toggleSelected.setAttribute("disabled", lockCol == PREF_IS_LOCKED);
   toggleSelected.hidden = !canToggle;
+  
+  var entry = gPrefView[view.selection.currentIndex];
+  var isLocked = gPrefBranch.prefIsLocked(entry.prefCol);
+
+  // These might not exist (bug 289136)
+  try {
+    document.getElementById("lockSelected").hidden = isLocked;
+    document.getElementById("unlockSelected").hidden = !isLocked;
+  } catch (ex) {}
 }
 
 function copyName()
@@ -497,7 +506,7 @@ function NewPref(type)
                             gConfigBundle.getString("new_prompt"),
                             result,
                             null,
-                            dummy)) {
+                            dummy) && result.value) {
     var pref;
     if (result.value in gPrefHash)
       pref = gPrefHash[result.value];
@@ -544,5 +553,26 @@ function ModifyPref(entry)
       gPrefBranch.setComplexValue(entry.prefCol, nsISupportsString, supportsString);
     }
   }
+  
+  gPrefService.savePrefFile(null);
+  
+  // Fire event for accessibility
+  var event = document.createEvent('Events');
+  event.initEvent('NameChange', false, true);
+  document.getElementById("configTree").dispatchEvent(event);
+
   return true;
 }
+
+function LockSelected()
+{
+  var entry = gPrefView[view.selection.currentIndex];
+  gPrefBranch.lockPref(entry.prefCol);
+}
+
+function UnlockSelected()
+{
+  var entry = gPrefView[view.selection.currentIndex];
+  gPrefBranch.unlockPref(entry.prefCol);
+}
+

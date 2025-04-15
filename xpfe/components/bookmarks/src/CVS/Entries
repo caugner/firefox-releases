@@ -1,5 +1,5 @@
-/.cvsignore/1.1/Fri Jun 11 02:48:18 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.33/Sun Jul 13 22:28:55 2003//TFIREFOX_1_0_RELEASE
-/nsBookmarksService.cpp/1.313.6.2/Wed Aug 25 04:01:04 2004//TFIREFOX_1_0_RELEASE
-/nsBookmarksService.h/1.38/Tue Oct 21 17:20:28 2003//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Fri Jun 11 02:48:18 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.37/Tue Apr  5 14:50:14 2005//TFIREFOX_1_5_RELEASE
+/nsBookmarksService.cpp/1.336/Tue Aug  9 04:47:57 2005//TFIREFOX_1_5_RELEASE
+/nsBookmarksService.h/1.39/Sat Apr 17 16:51:21 2004//TFIREFOX_1_5_RELEASE
 D

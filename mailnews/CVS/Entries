@@ -1,9 +1,9 @@
-/.cvsignore/1.1/Mon Dec 21 22:16:01 1998//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.40/Fri Jan 16 19:15:30 2004//TFIREFOX_1_0_RELEASE
-/jar.mn/1.69.6.9/Sat Oct 16 20:55:26 2004//TFIREFOX_1_0_RELEASE
-/mailnews.js/3.217.6.9/Thu Oct 28 22:49:51 2004//TFIREFOX_1_0_RELEASE
-/mailnews.pkg/1.2/Wed Jan  7 01:21:47 2004//TFIREFOX_1_0_RELEASE
-/makefiles/1.78/Wed Feb  4 14:23:50 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Mon Dec 21 22:16:01 1998//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.41/Sat Apr 17 18:32:11 2004//TFIREFOX_1_5_RELEASE
+/jar.mn/1.99/Mon Aug  8 18:28:57 2005//TFIREFOX_1_5_RELEASE
+/mailnews.js/3.249.2.2/Tue Sep 27 21:33:48 2005//TFIREFOX_1_5_RELEASE
+/mailnews.pkg/1.2/Wed Jan  7 01:21:47 2004//TFIREFOX_1_5_RELEASE
+/makefiles/1.79/Tue Apr 13 18:16:33 2004//TFIREFOX_1_5_RELEASE
 D/addrbook////
 D/base////
 D/build////

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,42 +14,40 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsIDOMHTMLTableCaptionElem.h"
 #include "nsIDOMEventReceiver.h"
-#include "nsIHTMLContent.h"
 #include "nsGenericHTMLElement.h"
 #include "nsHTMLAtoms.h"
 #include "nsStyleConsts.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsMappedAttributes.h"
-#include "nsRuleNode.h"
+#include "nsRuleData.h"
 
 class nsHTMLTableCaptionElement :  public nsGenericHTMLElement,
                                    public nsIDOMHTMLTableCaptionElement
 {
 public:
-  nsHTMLTableCaptionElement();
+  nsHTMLTableCaptionElement(nsINodeInfo *aNodeInfo);
   virtual ~nsHTMLTableCaptionElement();
 
   // nsISupports
@@ -70,41 +68,16 @@ public:
   virtual PRBool ParseAttribute(nsIAtom* aAttribute,
                                 const nsAString& aValue,
                                 nsAttrValue& aResult);
-  NS_IMETHOD AttributeToString(nsIAtom* aAttribute,
-                               const nsHTMLValue& aValue,
-                               nsAString& aResult) const;
-  NS_IMETHOD GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const;
+  virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction() const;
   NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
 };
 
-nsresult
-NS_NewHTMLTableCaptionElement(nsIHTMLContent** aInstancePtrResult,
-                              nsINodeInfo *aNodeInfo, PRBool aFromParser)
-{
-  NS_ENSURE_ARG_POINTER(aInstancePtrResult);
 
-  nsHTMLTableCaptionElement* it = new nsHTMLTableCaptionElement();
-
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsresult rv = it->Init(aNodeInfo);
-
-  if (NS_FAILED(rv)) {
-    delete it;
-
-    return rv;
-  }
-
-  *aInstancePtrResult = NS_STATIC_CAST(nsIHTMLContent *, it);
-  NS_ADDREF(*aInstancePtrResult);
-
-  return NS_OK;
-}
+NS_IMPL_NS_NEW_HTML_ELEMENT(TableCaption)
 
 
-nsHTMLTableCaptionElement::nsHTMLTableCaptionElement()
+nsHTMLTableCaptionElement::nsHTMLTableCaptionElement(nsINodeInfo *aNodeInfo)
+  : nsGenericHTMLElement(aNodeInfo)
 {
 }
 
@@ -125,39 +98,13 @@ NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLTableCaptionElement,
 NS_HTML_CONTENT_INTERFACE_MAP_END
 
 
-nsresult
-nsHTMLTableCaptionElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
-{
-  NS_ENSURE_ARG_POINTER(aReturn);
-  *aReturn = nsnull;
-
-  nsHTMLTableCaptionElement* it = new nsHTMLTableCaptionElement();
-
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsCOMPtr<nsIDOMNode> kungFuDeathGrip(it);
-
-  nsresult rv = it->Init(mNodeInfo);
-
-  if (NS_FAILED(rv))
-    return rv;
-
-  CopyInnerTo(it, aDeep);
-
-  *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
-
-  NS_ADDREF(*aReturn);
-
-  return NS_OK;
-}
+NS_IMPL_DOM_CLONENODE(nsHTMLTableCaptionElement)
 
 
 NS_IMPL_STRING_ATTR(nsHTMLTableCaptionElement, Align, align)
 
 
-static const nsHTMLValue::EnumTable kCaptionAlignTable[] = {
+static const nsAttrValue::EnumTable kCaptionAlignTable[] = {
   { "left",  NS_SIDE_LEFT },
   { "right", NS_SIDE_RIGHT },
   { "top",   NS_SIDE_TOP},
@@ -177,31 +124,14 @@ nsHTMLTableCaptionElement::ParseAttribute(nsIAtom* aAttribute,
   return nsGenericHTMLElement::ParseAttribute(aAttribute, aValue, aResult);
 }
 
-NS_IMETHODIMP
-nsHTMLTableCaptionElement::AttributeToString(nsIAtom* aAttribute,
-                                      const nsHTMLValue& aValue,
-                                      nsAString& aResult) const
-{
-  if (aAttribute == nsHTMLAtoms::align) {
-    if (eHTMLUnit_Enumerated == aValue.GetUnit()) {
-      aValue.EnumValueToString(kCaptionAlignTable, aResult);
-
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
-  }
-
-  return nsGenericHTMLElement::AttributeToString(aAttribute, aValue, aResult);
-}
-
 static 
 void MapAttributesIntoRule(const nsMappedAttributes* aAttributes, nsRuleData* aData)
 {
   if (aData->mSID == eStyleStruct_TableBorder) {
     if (aData->mTableData->mCaptionSide.GetUnit() == eCSSUnit_Null) {
-      nsHTMLValue value;
-      aAttributes->GetAttribute(nsHTMLAtoms::align, value);
-      if (value.GetUnit() == eHTMLUnit_Enumerated)
-        aData->mTableData->mCaptionSide.SetIntValue(value.GetIntValue(), eCSSUnit_Enumerated);
+      const nsAttrValue* value = aAttributes->GetAttr(nsHTMLAtoms::align);
+      if (value && value->Type() == nsAttrValue::eEnum)
+        aData->mTableData->mCaptionSide.SetIntValue(value->GetEnumValue(), eCSSUnit_Enumerated);
     }
   }
 
@@ -226,9 +156,8 @@ nsHTMLTableCaptionElement::IsAttributeMapped(const nsIAtom* aAttribute) const
 
 
 
-NS_IMETHODIMP
-nsHTMLTableCaptionElement::GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const
+nsMapRuleToAttributesFunc
+nsHTMLTableCaptionElement::GetAttributeMappingFunction() const
 {
-  aMapRuleFunc = &MapAttributesIntoRule;
-  return NS_OK;
+  return &MapAttributesIntoRule;
 }

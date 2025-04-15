@@ -1,27 +1,42 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code, 
- * released March 31, 1998. 
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications 
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
- * Contributor(s): 
- *     Daniel Veditz <dveditz@netscape.com>
- *     Pierre Phaneuf <pp@ludusdesign.com>
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Daniel Veditz <dveditz@netscape.com>
+ *   Pierre Phaneuf <pp@ludusdesign.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "xpistub.h"
 
@@ -55,11 +70,6 @@
 #define COMPONENT_REG "component.reg"
 #endif
 
-#ifdef XP_MAC
-#define COMPONENT_REG "\pComponent Registry"
-#include "MoreFilesExtras.h"
-#endif
-
 #ifdef XP_UNIX
 #include <unistd.h>
 #define COMPONENT_REG "component.reg"
@@ -82,34 +92,16 @@ PRInt32 gInstallStatus;
 //------------------------------------------------------------------------
 //          XPI_Init()
 //------------------------------------------------------------------------
-PR_PUBLIC_API(nsresult) XPI_Init(   
-#ifdef XP_MAC
-                                    const FSSpec&       aXPIStubDir, 
-                                    const FSSpec&       aProgramDir,
-#else
-                                    const char*         aProgramDir,
-#endif
-                                    const char*         aLogName,
-                                    pfnXPIProgress      progressCB )
+PR_PUBLIC_API(nsresult) XPI_Init( const char*         aProgramDir,
+                                  const char*         aLogName,
+                                  pfnXPIProgress      progressCB )
 {
     nsresult              rv;
 
     //--------------------------------------------------------------------
     // Initialize XPCOM and AutoRegister() its components
     //--------------------------------------------------------------------
-#ifdef XP_MAC
-    nsCOMPtr<nsILocalFileMac>	binDir;
-    rv = NS_NewLocalFileWithFSSpec((FSSpec*)&aXPIStubDir, PR_FALSE, getter_AddRefs(binDir));
-    if (NS_FAILED(rv)) return rv;
-    
-    rv = NS_InitXPCOM2(&gServiceMgr, binDir, nsnull);
-    
-    // binDir is contaminated now.  Need compDir to pass to AutoRegister.
-    nsCOMPtr<nsILocalFileMac>	compDir;
-    rv = NS_NewLocalFileWithFSSpec((FSSpec*)&aXPIStubDir, PR_FALSE, getter_AddRefs(compDir));
-    if (NS_FAILED(rv)) return rv;
-
-#elif defined(XP_WIN) || defined(XP_OS2)
+#if defined(XP_WIN) || defined(XP_OS2)
 
  #ifdef XP_OS2_EMX
     char componentPath[MAX_PATH];
@@ -158,7 +150,7 @@ PR_PUBLIC_API(nsresult) XPI_Init(
     nsCOMPtr<nsIComponentRegistrar> registrar = do_QueryInterface(gServiceMgr);
     NS_ASSERTION(registrar, "Null nsIComponentRegistrar");
 
-#if defined(XP_UNIX) || defined(XP_MAC)
+#if defined(XP_UNIX)
     rv = registrar->AutoRegister(compDir);
 #else
     rv = registrar->AutoRegister(nsnull);
@@ -174,10 +166,7 @@ PR_PUBLIC_API(nsresult) XPI_Init(
     // registered with the service manager. We keep a local pointer to it 
     // so it stays alive througout.
     //--------------------------------------------------------------------
-    rv = nsComponentManager::CreateInstance(kSoftwareUpdateCID, 
-                                            nsnull,
-                                            NS_GET_IID(nsISoftwareUpdate),
-                                            (void**) &gXPI);
+    rv = CallCreateInstance(kSoftwareUpdateCID, &gXPI);
     if (NS_FAILED(rv))
         return rv;
 
@@ -189,14 +178,19 @@ PR_PUBLIC_API(nsresult) XPI_Init(
     nsCOMPtr<nsPIXPIStubHook>   hook = do_QueryInterface(gXPI);
     nsCOMPtr<nsILocalFile>      iDirSpec;
   
-#if XP_MAC
-	nsCOMPtr<nsILocalFileMac> iMacDirSpec;
-	NS_NewLocalFileWithFSSpec((FSSpec *)&aProgramDir, PR_TRUE, getter_AddRefs(iMacDirSpec));
-	iDirSpec = do_QueryInterface(iMacDirSpec);
-#else
+    if (aProgramDir)
+    {
 	NS_NewNativeLocalFile(nsDependentCString(aProgramDir), PR_TRUE, getter_AddRefs(iDirSpec));
-#endif    
-    
+    }
+    else
+    {
+       nsCOMPtr<nsIProperties> directoryService = 
+          do_GetService(NS_DIRECTORY_SERVICE_CONTRACTID, &rv);
+
+       directoryService->Get(NS_XPCOM_CURRENT_PROCESS_DIR, NS_GET_IID(nsILocalFile), 
+                             getter_AddRefs(iDirSpec));
+    }
+
     if (hook && iDirSpec)
     {
         rv = hook->StubInitialize( iDirSpec, aLogName );
@@ -246,11 +240,7 @@ PR_PUBLIC_API(void) XPI_Exit()
 //          XPI_Install()
 //------------------------------------------------------------------------
 PR_PUBLIC_API(PRInt32) XPI_Install(
-#ifdef XP_MAC
-                                    const FSSpec& aFile,
-#else
                                     const char*   aFile,
-#endif
                                     const char*   aArgs, 
                                     long          aFlags )
 {
@@ -260,13 +250,7 @@ PR_PUBLIC_API(PRInt32) XPI_Install(
 
     gInstallStatus = -322; // unique stub error code
     
-#if XP_MAC
-	nsCOMPtr<nsILocalFileMac> iMacFile;
-	NS_NewLocalFileWithFSSpec((FSSpec *)&aFile, PR_TRUE, getter_AddRefs(iMacFile));
-	iFile = do_QueryInterface(iMacFile);
-#else
-	NS_NewNativeLocalFile(nsDependentCString(aFile), PR_TRUE, getter_AddRefs(iFile));
-#endif  
+    NS_NewNativeLocalFile(nsDependentCString(aFile), PR_TRUE, getter_AddRefs(iFile));
 
     if (iFile && gXPI)
         rv = gXPI->InstallJar( iFile,

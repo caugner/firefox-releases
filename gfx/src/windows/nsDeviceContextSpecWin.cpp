@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -50,10 +49,11 @@
 #include "nsReadableUtils.h"
 #include "nsGfxCIID.h"
 
-// For NS_CopyNativeToUnicode
-#include "nsNativeCharsetUtils.h"
 #include "nsIWindowWatcher.h"
 #include "nsIDOMWindow.h"
+
+// For NS_CopyNativeToUnicode
+#include "nsNativeCharsetUtils.h"
 
 // File Picker
 #include "nsILocalFile.h"
@@ -123,6 +123,9 @@ const NativePaperSizes kPaperSizes[] = {
   {DMPAPER_LETTER,    8.5,   11.0,  PR_TRUE},
   {DMPAPER_LEGAL,     8.5,   14.0,  PR_TRUE},
   {DMPAPER_A4,        210.0, 297.0, PR_FALSE},
+  {DMPAPER_B4,        250.0, 354.0, PR_FALSE}, 
+  {DMPAPER_B5,        182.0, 257.0, PR_FALSE},
+#ifndef WINCE
   {DMPAPER_TABLOID,   11.0,  17.0,  PR_TRUE},
   {DMPAPER_LEDGER,    17.0,  11.0,  PR_TRUE},
   {DMPAPER_STATEMENT, 5.5,   8.5,   PR_TRUE},
@@ -134,8 +137,6 @@ const NativePaperSizes kPaperSizes[] = {
   {DMPAPER_ESHEET,    34.0,  44.0,  PR_TRUE},  
   {DMPAPER_LETTERSMALL, 8.5, 11.0,  PR_TRUE},  
   {DMPAPER_A4SMALL,   210.0, 297.0, PR_FALSE}, 
-  {DMPAPER_B4,        250.0, 354.0, PR_FALSE}, 
-  {DMPAPER_B5,        182.0, 257.0, PR_FALSE},
   {DMPAPER_FOLIO,     8.5,   13.0,  PR_TRUE},
   {DMPAPER_QUARTO,    215.0, 275.0, PR_FALSE},
   {DMPAPER_10X14,     10.0,  14.0,  PR_TRUE},
@@ -161,6 +162,7 @@ const NativePaperSizes kPaperSizes[] = {
   {DMPAPER_FANFOLD_US,   14.875, 11.0, PR_TRUE},  
   {DMPAPER_FANFOLD_STD_GERMAN, 8.5, 12.0, PR_TRUE},  
   {DMPAPER_FANFOLD_LGL_GERMAN, 8.5, 13.0, PR_TRUE},  
+#endif // WINCE
 };
 const PRInt32 kNumPaperSizes = 41;
 
@@ -213,6 +215,9 @@ static PRUnichar * GetDefaultPrinterNameFromGlobalPrinters()
 static nsresult 
 EnumerateNativePrinters(DWORD aWhichPrinters, LPTSTR aPrinterName, PRBool& aIsFound, PRBool& aIsFile)
 {
+#ifdef WINCE
+  aIsFound = PR_FALSE;
+#else
   DWORD             dwSizeNeeded = 0;
   DWORD             dwNumItems   = 0;
   LPPRINTER_INFO_2  lpInfo        = NULL;
@@ -243,6 +248,7 @@ EnumerateNativePrinters(DWORD aWhichPrinters, LPTSTR aPrinterName, PRBool& aIsFo
   }
 
   ::HeapFree(GetProcessHeap (), 0, lpInfo);
+#endif
   return NS_OK;
 }
 
@@ -252,6 +258,7 @@ CheckForPrintToFileWithName(LPTSTR aPrinterName, PRBool& aIsFile)
 {
   PRBool isFound = PR_FALSE;
   aIsFile = PR_FALSE;
+#ifndef WINCE
   nsresult rv = EnumerateNativePrinters(PRINTER_ENUM_LOCAL, aPrinterName, isFound, aIsFile);
   if (isFound) return;
 
@@ -263,7 +270,7 @@ CheckForPrintToFileWithName(LPTSTR aPrinterName, PRBool& aIsFile)
 
   rv = EnumerateNativePrinters(PRINTER_ENUM_REMOTE, aPrinterName, isFound, aIsFile);
   if (isFound) return;
-
+#endif
 }
 
 static nsresult 
@@ -290,7 +297,7 @@ GetFileNameForPrintSettings(nsIPrintSettings* aPS)
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIWindowWatcher> wwatch =
-    do_GetService(NS_WINDOWWATCHER_CONTRACTID, &rv);
+    (do_GetService(NS_WINDOWWATCHER_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIDOMWindow> window;
@@ -373,7 +380,9 @@ CheckForPrintToFile(nsIPrintSettings* aPS, LPTSTR aPrinterName, PRUnichar* aUPri
   if (aPrinterName) {
     CheckForPrintToFileWithName(aPrinterName, toFile);
   } else {
-    CheckForPrintToFileWithName(NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aUPrinterName).get()), toFile);
+    nsCAutoString nativeName;
+    NS_CopyUnicodeToNative(nsDependentString(aUPrinterName), nativeName);
+    CheckForPrintToFileWithName(NS_CONST_CAST(char*, nativeName.get()), toFile);
   }
 #endif
   // Since the driver wasn't a "Print To File" Driver, check to see
@@ -383,7 +392,7 @@ CheckForPrintToFile(nsIPrintSettings* aPS, LPTSTR aPrinterName, PRUnichar* aUPri
     aPS->GetToFileName(getter_Copies(toFileName));
     if (toFileName) {
       if (*toFileName) {
-        if (toFileName.Equals(NS_LITERAL_STRING("FILE:"))) {
+        if (toFileName.EqualsLiteral("FILE:")) {
           // this skips the setting of the "print to file" info below
           // which we don't want to do.
           return NS_OK; 
@@ -650,6 +659,9 @@ static void DisplayLastError()
 nsresult
 nsDeviceContextSpecWin::GetDataFromPrinter(const PRUnichar * aName, nsIPrintSettings* aPS)
 {
+#ifdef WINCE 
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
   nsresult rv = NS_ERROR_FAILURE;
 
   if (!GlobalPrinters::GetInstance()->PrintersAreAllocated()) {
@@ -662,27 +674,35 @@ nsDeviceContextSpecWin::GetDataFromPrinter(const PRUnichar * aName, nsIPrintSett
   }
 
   HANDLE hPrinter = NULL;
-  BOOL status = ::OpenPrinter(NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aName).get()), &hPrinter, NULL);
+  nsCAutoString nativeName;
+  NS_CopyUnicodeToNative(nsDependentString(aName), nativeName);
+  BOOL status = ::OpenPrinter(NS_CONST_CAST(char*, nativeName.get()),
+                              &hPrinter, NULL);
   if (status) {
 
     LPDEVMODE   pDevMode;
     DWORD       dwNeeded, dwRet;
 
     // Allocate a buffer of the correct size.
-    dwNeeded = DocumentProperties(gParentWnd, hPrinter, NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aName).get()), 
-                                  NULL, NULL, 0);
+    dwNeeded = ::DocumentProperties(gParentWnd, hPrinter,
+                                    NS_CONST_CAST(char*, nativeName.get()),
+                                    NULL, NULL, 0);
 
     pDevMode = (LPDEVMODE)::HeapAlloc (::GetProcessHeap(), HEAP_ZERO_MEMORY, dwNeeded);
     if (!pDevMode) return NS_ERROR_FAILURE;
 
     // Get the default DevMode for the printer and modify it for our needs.
-    dwRet = DocumentProperties(gParentWnd, hPrinter, NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aName).get()),
+    dwRet = DocumentProperties(gParentWnd, hPrinter, 
+                               NS_CONST_CAST(char*, nativeName.get()),
                                pDevMode, NULL, DM_OUT_BUFFER);
 
     if (dwRet == IDOK && aPS) {
       SetupDevModeFromSettings(pDevMode, aPS);
       // Sets back the changes we made to the DevMode into the Printer Driver
-      dwRet = ::DocumentProperties(gParentWnd, hPrinter, NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aName).get()), pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER);
+      dwRet = ::DocumentProperties(gParentWnd, hPrinter,
+                                   NS_CONST_CAST(char*, nativeName.get()),
+                                   pDevMode, pDevMode,
+                                   DM_IN_BUFFER | DM_OUT_BUFFER);
     }
 
     if (dwRet != IDOK) {
@@ -695,7 +715,7 @@ nsDeviceContextSpecWin::GetDataFromPrinter(const PRUnichar * aName, nsIPrintSett
 
     SetDevMode(pDevMode); // cache the pointer and takes responsibility for the memory
 
-    SetDeviceName(NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aName).get()));
+    SetDeviceName(NS_CONST_CAST(char*, nativeName.get()));
   
     // The driver should be NULL for Win95/Win98
     OSVERSIONINFO os;
@@ -710,10 +730,11 @@ nsDeviceContextSpecWin::GetDataFromPrinter(const PRUnichar * aName, nsIPrintSett
     rv = NS_OK;
   } else {
     rv = NS_ERROR_GFX_PRINTER_NAME_NOT_FOUND;
-    PR_PL(("***** nsDeviceContextSpecWin::GetDataFromPrinter - Couldn't open printer: [%s]\n", NS_ConvertUCS2toUTF8(aName).get()));
+    PR_PL(("***** nsDeviceContextSpecWin::GetDataFromPrinter - Couldn't open printer: [%s]\n", nativeName.get()));
     DISPLAY_LAST_ERROR
   }
   return rv;
+#endif // WINCE
 }
 
 //----------------------------------------------------------------------------------
@@ -912,8 +933,8 @@ nsPrinterEnumeratorWin::EnumeratePrinters(PRUint32* aCount, PRUnichar*** aResult
   PRInt32 printerInx = 0;
   while( count < numItems ) {
     LPTSTR name = GlobalPrinters::GetInstance()->GetItemFromList(printerInx++);
-    nsString newName; 
-    newName.AssignWithConversion(name);
+    nsAutoString newName; 
+    NS_CopyNativeToUnicode(nsDependentCString(name), newName);
     PRUnichar *str = ToNewUnicode(newName);
     if (!str) {
       CleanupArray(array, count);
@@ -932,9 +953,15 @@ nsPrinterEnumeratorWin::EnumeratePrinters(PRUint32* aCount, PRUnichar*** aResult
 // Display the AdvancedDocumentProperties for the selected Printer
 NS_IMETHODIMP nsPrinterEnumeratorWin::DisplayPropertiesDlg(const PRUnichar *aPrinterName, nsIPrintSettings* aPrintSettings)
 {
+#ifdef WINCE
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
   nsresult rv = NS_ERROR_FAILURE;
   HANDLE hPrinter = NULL;
-  BOOL status = ::OpenPrinter(NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aPrinterName).get()), &hPrinter, NULL);
+  nsCAutoString nativeName;
+  NS_CopyUnicodeToNative(nsDependentString(aPrinterName), nativeName);
+  BOOL status = ::OpenPrinter(NS_CONST_CAST(char*, nativeName.get()),
+                              &hPrinter, NULL);
   if (status) {
 
     LPDEVMODE   pDevMode;
@@ -943,33 +970,36 @@ NS_IMETHODIMP nsPrinterEnumeratorWin::DisplayPropertiesDlg(const PRUnichar *aPri
 
     // Get the buffer correct buffer size
     dwNeeded = ::DocumentProperties(gParentWnd, hPrinter,
-                                   NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aPrinterName).get()), NULL, NULL, 0);
+                                   NS_CONST_CAST(char*, nativeName.get()),
+                                   NULL, NULL, 0);
 
     // Allocate a buffer of the correct size.
     pNewDevMode = (LPDEVMODE)::HeapAlloc (::GetProcessHeap(), HEAP_ZERO_MEMORY, dwNeeded);
     if (!pNewDevMode) return NS_ERROR_FAILURE;
 
-    dwRet = ::DocumentProperties(gParentWnd, hPrinter, NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aPrinterName).get()), 
-                               pNewDevMode, NULL, DM_OUT_BUFFER);
+    dwRet = ::DocumentProperties(gParentWnd, hPrinter,
+                                 NS_CONST_CAST(char*, nativeName.get()),
+                                 pNewDevMode, NULL, DM_OUT_BUFFER);
 
     if (dwRet != IDOK) {
        ::HeapFree(::GetProcessHeap(), 0, pNewDevMode);
        ::ClosePrinter(hPrinter);
-       PR_PL(("***** nsDeviceContextSpecWin::DisplayPropertiesDlg - Couldn't get DocumentProperties (pNewDevMode) for [%s]\n", NS_ConvertUCS2toUTF8(aPrinterName).get()));
+       PR_PL(("***** nsDeviceContextSpecWin::DisplayPropertiesDlg - Couldn't get DocumentProperties (pNewDevMode) for [%s]\n", nativeName.get()));
        return NS_ERROR_FAILURE;
     }
 
     pDevMode = (LPDEVMODE)::HeapAlloc (::GetProcessHeap(), HEAP_ZERO_MEMORY, dwNeeded);
     if (!pDevMode) return NS_ERROR_FAILURE;
 
-    dwRet = ::DocumentProperties(gParentWnd, hPrinter, NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aPrinterName).get()), 
-                               pDevMode, NULL, DM_OUT_BUFFER);
+    dwRet = ::DocumentProperties(gParentWnd, hPrinter,
+                                 NS_CONST_CAST(char*, nativeName.get()),
+                                 pDevMode, NULL, DM_OUT_BUFFER);
 
     if (dwRet != IDOK) {
        ::HeapFree(::GetProcessHeap(), 0, pDevMode);
        ::HeapFree(::GetProcessHeap(), 0, pNewDevMode);
        ::ClosePrinter(hPrinter);
-       PR_PL(("***** nsDeviceContextSpecWin::DisplayPropertiesDlg - Couldn't get DocumentProperties (pDevMode) for [%s]\n", NS_ConvertUCS2toUTF8(aPrinterName).get()));
+       PR_PL(("***** nsDeviceContextSpecWin::DisplayPropertiesDlg - Couldn't get DocumentProperties (pDevMode) for [%s]\n", nativeName.get()));
        return NS_ERROR_FAILURE;
     }
 
@@ -980,9 +1010,14 @@ NS_IMETHODIMP nsPrinterEnumeratorWin::DisplayPropertiesDlg(const PRUnichar *aPri
       // Display the Dialog and get the new DevMode
 #if 0 // need more to do more work to see why AdvancedDocumentProperties fails 
       // when cancel is pressed
-      LONG stat = ::AdvancedDocumentProperties(gParentWnd, hPrinter, NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aPrinterName).get()), pNewDevMode, pDevMode);
+      LONG stat = ::AdvancedDocumentProperties(gParentWnd, hPrinter,
+                                               NS_CONST_CAST(char*, nativeName.get()),
+                                               pNewDevMode, pDevMode);
 #else
-      LONG stat = ::DocumentProperties(gParentWnd, hPrinter, NS_CONST_CAST(char*, NS_ConvertUCS2toUTF8(aPrinterName).get()), pDevMode, NULL, DM_IN_PROMPT|DM_OUT_BUFFER);
+      LONG stat = ::DocumentProperties(gParentWnd, hPrinter,
+                                       NS_CONST_CAST(char*, nativeName.get()),
+                                       pDevMode, NULL,
+                                       DM_IN_PROMPT|DM_OUT_BUFFER);
 #endif
       if (stat == IDOK) {
         // Now set the print options from the native Page Setup
@@ -999,11 +1034,12 @@ NS_IMETHODIMP nsPrinterEnumeratorWin::DisplayPropertiesDlg(const PRUnichar *aPri
 
   } else {
     rv = NS_ERROR_GFX_PRINTER_NAME_NOT_FOUND;
-    PR_PL(("***** nsDeviceContextSpecWin::DisplayPropertiesDlg - Couldn't open printer [%s]\n", NS_ConvertUCS2toUTF8(aPrinterName).get()));
+    PR_PL(("***** nsDeviceContextSpecWin::DisplayPropertiesDlg - Couldn't open printer [%s]\n", nativeName.get()));
     DISPLAY_LAST_ERROR
   }
 
   return rv;
+#endif //WINCE
 }
 
 //----------------------------------------------------------------------------------
@@ -1040,7 +1076,7 @@ nsresult
 GlobalPrinters::EnumerateNativePrinters()
 {
   nsresult rv = NS_ERROR_GFX_PRINTER_NO_PRINTER_AVAILABLE;
-
+#ifndef WINCE
   PR_PL(("-----------------------\n"));
   PR_PL(("EnumerateNativePrinters\n"));
 
@@ -1064,7 +1100,7 @@ GlobalPrinters::EnumerateNativePrinters()
     rv = NS_OK;
   }
   PR_PL(("-----------------------\n"));
-
+#endif
   return rv;
 }
 
@@ -1073,6 +1109,7 @@ GlobalPrinters::EnumerateNativePrinters()
 void 
 GlobalPrinters::GetDefaultPrinterName(LPTSTR& aDefaultPrinterName)
 {
+#ifndef WINCE
   aDefaultPrinterName = nsnull;
   TCHAR szDefaultPrinterName[1024];    
   DWORD status = GetProfileString("windows", "device", 0, szDefaultPrinterName, sizeof(szDefaultPrinterName)/sizeof(TCHAR));
@@ -1090,6 +1127,9 @@ GlobalPrinters::GetDefaultPrinterName(LPTSTR& aDefaultPrinterName)
   }
 
   PR_PL(("DEFAULT PRINTER [%s]\n", aDefaultPrinterName));
+#else
+  aDefaultPrinterName = "UNKNOWN";
+#endif
 }
 
 //----------------------------------------------------------------------------------

@@ -51,6 +51,11 @@ interface mozISqlInputStream;
 interface mozISqlResult : nsISupports
 {
   /**
+   * By default, this value is false.
+   */
+  attribute boolean displayNullAsText;
+
+  /**
    * The connection used to execute the query
    */
   readonly attribute mozISqlConnection connection;
@@ -140,7 +145,19 @@ interface mozISqlResult : nsISupports
   mozISqlResultEnumerator enumerate();
 
   /**
-   * Returns a stream which may be used to return the rows as HTML.
+   * Returns a stream which may be used to return the rows as XML.
+   *
+   * The XML format is:
+   * <?xml version="1.0"?>
+   * <document>
+   *   <body>
+   *     <row>
+   *       <cell>value11</cell>
+   *       <cell>value12</cell>
+   *       ...
+   *     </row>
+   *   </body>
+   * </document>
    *
    * @return               the input stream
    */

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,27 +14,27 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: David W. Hyatt (hyatt@netscape.com)
+ *   Original Author: David W. Hyatt (hyatt@netscape.com)
  *   Dean Tessman <dean_tessman@hotmail.com>
  *   Mark Hammond <markh@ActiveState.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,7 +44,6 @@
 #include "nsIDOMEventReceiver.h"
 #include "nsIDOMEventListener.h"
 #include "nsIDOMNSUIEvent.h"
-#include "nsIDOMNSEvent.h"
 #include "nsGUIEvent.h"
 
 // Drag & Drop, Clipboard
@@ -52,8 +51,8 @@
 #include "nsWidgetsCID.h"
 #include "nsCOMPtr.h"
 #include "nsIDOMKeyEvent.h"
-#include "nsIPrivateDOMEvent.h"
-#include "nsIPresContext.h"
+#include "nsIDOMNSEvent.h"
+#include "nsPresContext.h"
 #include "nsIContent.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMElement.h"
@@ -146,16 +145,8 @@ nsMenuListener::KeyDown(nsIDOMEvent* aKeyEvent)
 
   // Since a menu was open, eat the event to keep other event
   // listeners from becoming confused.
-
-  nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aKeyEvent));
-
-  if (nsevent) {
-    nsevent->PreventBubble();
-    nsevent->PreventCapture();
-  }
-
+  aKeyEvent->StopPropagation();
   aKeyEvent->PreventDefault();
-
   return NS_ERROR_BASE; // I am consuming event
 }
 
@@ -163,25 +154,20 @@ nsMenuListener::KeyDown(nsIDOMEvent* aKeyEvent)
 nsresult
 nsMenuListener::KeyPress(nsIDOMEvent* aKeyEvent)
 {
-  // if event has already been handled, bail
-  nsCOMPtr<nsIDOMNSUIEvent> uiEvent ( do_QueryInterface(aKeyEvent) );
-  if ( uiEvent ) {
-    PRBool eventHandled = PR_FALSE;
-    uiEvent->GetPreventDefault ( &eventHandled );
-    if ( eventHandled )
-      return NS_OK;       // don't consume event
-  }
-  
+  // Don't check prevent default flag -- menus always get first shot at key events.
+  // When a menu is open, the prevent default flag on a keypress is always set, so
+  // that no one else uses the key event.
+
   //handlers shouldn't be triggered by non-trusted events.
-  if (aKeyEvent) {
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(aKeyEvent);
-    if (privateEvent) {
-      PRBool trustedEvent;
-      privateEvent->IsTrustedEvent(&trustedEvent);
-      if (!trustedEvent)
-        return NS_OK;
-    }
+  nsCOMPtr<nsIDOMNSEvent> domNSEvent = do_QueryInterface(aKeyEvent);
+  PRBool trustedEvent = PR_FALSE;
+
+  if (domNSEvent) {
+    domNSEvent->GetIsTrusted(&trustedEvent);
   }
+
+  if (!trustedEvent)
+    return NS_OK;
 
   nsCOMPtr<nsIDOMKeyEvent> keyEvent = do_QueryInterface(aKeyEvent);
   PRUint32 theChar;
@@ -200,7 +186,10 @@ nsMenuListener::KeyPress(nsIDOMEvent* aKeyEvent)
   }
   else if (theChar == NS_VK_ESCAPE) {
     // Close one level.
+    // Prevents us from getting destroyed by Escape(), we need to return to ourselves
+    NS_ADDREF_THIS();
 	  mMenuParent->Escape(handled);
+    NS_RELEASE_THIS();
     if (!handled)
       mMenuParent->DismissChain();
   }
@@ -230,15 +219,8 @@ nsMenuListener::KeyPress(nsIDOMEvent* aKeyEvent)
     }
   }
 
-  nsCOMPtr<nsIDOMNSEvent> nsevent(do_QueryInterface(aKeyEvent));
-
-  if (nsevent) {
-    nsevent->PreventBubble();
-    nsevent->PreventCapture();
-  }
-
+  aKeyEvent->StopPropagation();
   aKeyEvent->PreventDefault();
-
   return NS_ERROR_BASE; // I am consuming event
 }
 

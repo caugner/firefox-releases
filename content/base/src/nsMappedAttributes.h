@@ -40,17 +40,17 @@
 #define nsMappedAttributes_h___
 
 #include "nsAttrAndChildArray.h"
-#include "nsIHTMLContent.h"
+#include "nsGenericHTMLElement.h"
 #include "nsIStyleRule.h"
 
 class nsIAtom;
-class nsIHTMLStyleSheet;
+class nsHTMLStyleSheet;
 class nsRuleWalker;
 
 class nsMappedAttributes : public nsIStyleRule
 {
 public:
-  nsMappedAttributes(nsIHTMLStyleSheet* aSheet,
+  nsMappedAttributes(nsHTMLStyleSheet* aSheet,
                      nsMapRuleToAttributesFunc aMapRuleFunc);
 
   void* operator new(size_t size, PRUint32 aAttrCount = 1) CPP_THROW_NEW;
@@ -60,7 +60,6 @@ public:
   NS_DECL_ISUPPORTS
 
   nsresult SetAndTakeAttr(nsIAtom* aAttrName, nsAttrValue& aValue);
-  nsresult GetAttribute(nsIAtom* aAttrName, nsHTMLValue& aValue) const;
   const nsAttrValue* GetAttr(nsIAtom* aAttrName) const;
 
   PRUint32 Count() const
@@ -75,8 +74,8 @@ public:
   {
     mSheet = nsnull;
   }
-  void SetStyleSheet(nsIHTMLStyleSheet* aSheet);
-  nsIHTMLStyleSheet* GetStyleSheet()
+  void SetStyleSheet(nsHTMLStyleSheet* aSheet);
+  nsHTMLStyleSheet* GetStyleSheet()
   {
     return mSheet;
   }
@@ -97,7 +96,6 @@ public:
   
 
   // nsIStyleRule 
-  NS_IMETHOD GetStyleSheet(nsIStyleSheet*& aSheet) const;
   NS_IMETHOD MapRuleInfoInto(nsRuleData* aRuleData);
 #ifdef DEBUG
   NS_METHOD List(FILE* out = stdout, PRInt32 aIndent = 0) const;
@@ -133,7 +131,7 @@ private:
 #ifdef DEBUG
   PRUint16 mBufferSize;
 #endif
-  nsIHTMLStyleSheet* mSheet; //weak
+  nsHTMLStyleSheet* mSheet; //weak
   nsMapRuleToAttributesFunc mRuleMapper;
   void* mAttrs[1];
 };

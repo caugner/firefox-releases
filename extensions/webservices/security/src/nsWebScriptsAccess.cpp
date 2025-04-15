@@ -59,7 +59,7 @@
 #include "nsISOAPBlock.h"
 #include "nsIVariant.h"
 #include "nsIPrefService.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "nsIJSContextStack.h"
 
 #define WSA_GRANT_ACCESS_TO_ALL     (1 << 0)
@@ -214,7 +214,7 @@ nsWebScriptsAccess::GetDocument(const nsACString& aDeclFilePath,
                              PR_FALSE, empty, empty);
   NS_ENSURE_SUCCESS(rv, rv);
     
-  rv = mRequest->OverrideMimeType(NS_LITERAL_CSTRING("text/xml"));
+  rv = mRequest->OverrideMimeType(NS_LITERAL_CSTRING("application/xml"));
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = mRequest->Send(0);
@@ -735,7 +735,7 @@ nsWebScriptsAccess::IsPublicService(const char* aHost, PRBool* aReturn)
 
   block->SetName(NS_LITERAL_STRING("fqdn"));
 
-  nsCOMPtr <nsIWritableVariant> variant =
+  nsCOMPtr<nsIWritableVariant> variant =
     do_CreateInstance(NS_VARIANT_CONTRACTID, &rv);
 
   if (NS_FAILED(rv))

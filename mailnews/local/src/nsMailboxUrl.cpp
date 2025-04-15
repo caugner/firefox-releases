@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -58,6 +58,7 @@
 #include "nsIMsgFolder.h"
 #include "prprf.h"
 #include "nsISupportsObsolete.h"
+#include "nsIMsgMailSession.h"
 
 // we need this because of an egcs 1.0 (and possibly gcc) compiler bug
 // that doesn't allow you to call ::nsISupports::GetIID() inside of a class
@@ -289,6 +290,23 @@ nsresult nsMailboxUrl::GetMsgHdrForKey(nsMsgKey  msgKey, nsIMsgDBHdr ** aMsgHdr)
       rv = msgDBService->OpenMailDBFromFileSpec(dbFileSpec, PR_FALSE, PR_FALSE, (nsIMsgDatabase **) getter_AddRefs(mailDB));
     if (NS_SUCCEEDED(rv) && mailDB) // did we get a db back?
       rv = mailDB->GetMsgHdrForKey(msgKey, aMsgHdr);
+    else
+    {
+      if (!m_msgWindow)
+      {
+        nsCOMPtr<nsIMsgMailSession> mailSession = do_GetService(NS_MSGMAILSESSION_CONTRACTID, &rv);
+        NS_ENSURE_SUCCESS(rv, rv);
+        mailSession->GetTopmostMsgWindow(getter_AddRefs(m_msgWindow));
+      }
+      // maybe this is .eml file we're trying to read. See if we can get a header from the header sink.
+      if (m_msgWindow)
+      {
+        nsCOMPtr <nsIMsgHeaderSink> headerSink;
+        m_msgWindow->GetMsgHeaderSink(getter_AddRefs(headerSink));
+        if (headerSink)
+          return headerSink->GetDummyMsgHeader(aMsgHdr);
+      }
+    }
   }
   else
     rv = NS_ERROR_NULL_POINTER;
@@ -486,6 +504,24 @@ NS_IMETHODIMP nsMailboxUrl::GetFolderCharset(char ** aCharacterSet)
 {
   nsCOMPtr<nsIMsgFolder> folder;
   nsresult rv = GetFolder(getter_AddRefs(folder));
+#if 0
+  if (NS_FAILED(rv))
+  {
+    nsCOMPtr<nsIPrefLocalizedString> pls;
+    nsCOMPtr<nsIPrefBranch> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv,rv);
+    rv = prefBranch->GetComplexValue("mailnews.view_default_charset",
+      NS_GET_IID(nsIPrefLocalizedString), getter_AddRefs(pls));
+    if (NS_SUCCEEDED(rv)) 
+    {
+      nsXPIDLString ucsval;
+      pls->ToString(getter_Copies(ucsval));
+      if (ucsval)
+        *aCharacterSet = ToNewCString(ucsval);
+      return rv;
+    }
+  }
+#endif
   NS_ENSURE_SUCCESS(rv,rv);
   NS_ENSURE_TRUE(folder, NS_ERROR_FAILURE);
   folder->GetCharset(aCharacterSet);

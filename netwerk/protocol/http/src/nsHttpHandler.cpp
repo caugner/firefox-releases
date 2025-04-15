@@ -1,24 +1,26 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* vim:set ts=4 sw=4 sts=4 et cin: */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications.  Portions created by Netscape Communications are
- * Copyright (C) 2001 by Netscape Communications.  All
- * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Darin Fisher <darin@netscape.com> (original author)
  *   Gagan Saksena <gagan@netscape.com>
  *   Pierre Phaneuf <pp@ludusdesign.com>
@@ -27,7 +29,21 @@
  *   Gervase Markham <gerv@gerv.net>
  *   Bradley Baetz <bbaetz@netscape.com>
  *   Benjamin Smedberg <bsmedberg@covad.net>
- */
+ *   Josh Aas <josh@mozilla.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsHttp.h"
 #include "nsHttpHandler.h"
@@ -45,7 +61,7 @@
 #include "nsCategoryManagerUtils.h"
 #include "nsICacheService.h"
 #include "nsIPrefService.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "nsIPrefLocalizedString.h"
 #include "nsISocketProviderService.h"
 #include "nsISocketProvider.h"
@@ -55,6 +71,7 @@
 #include "nsAutoLock.h"
 #include "prprf.h"
 #include "nsReadableUtils.h"
+#include "nsQuickSort.h"
 
 #if defined(XP_UNIX) || defined(XP_BEOS)
 #include <sys/utsname.h>
@@ -62,10 +79,6 @@
 
 #if defined(XP_WIN)
 #include <windows.h>
-#endif
-
-#if defined(XP_MAC)
-#include <Gestalt.h>
 #endif
 
 #ifdef DEBUG
@@ -181,9 +194,13 @@ nsHttpHandler::~nsHttpHandler()
 nsresult
 nsHttpHandler::Init()
 {
-    nsresult rv = NS_OK;
+    nsresult rv;
 
     LOG(("nsHttpHandler::Init\n"));
+
+    rv = nsHttp::CreateAtomTable();
+    if (NS_FAILED(rv))
+        return rv;
 
     mIOService = do_GetService(kIOServiceCID, &rv);
     if (NS_FAILED(rv)) {
@@ -194,7 +211,7 @@ nsHttpHandler::Init()
     InitUserAgentComponents();
 
     // monitor some preference changes
-    nsCOMPtr<nsIPrefBranchInternal> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID);
+    nsCOMPtr<nsIPrefBranch2> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID);
     if (prefBranch) {
         prefBranch->AddObserver(HTTP_PREF_PREFIX, this, PR_TRUE);
         prefBranch->AddObserver(UA_PREF_PREFIX, this, PR_TRUE);
@@ -206,7 +223,7 @@ nsHttpHandler::Init()
         PrefsChanged(prefBranch, nsnull);
     }
 
-    mMisc = NS_LITERAL_CSTRING("rv:" MOZILLA_VERSION);
+    mMisc.AssignLiteral("rv:" MOZILLA_VERSION);
 
 #if DEBUG
     // dump user agent prefs
@@ -220,6 +237,7 @@ nsHttpHandler::Init()
     LOG(("> vendor = %s\n", mVendor.get()));
     LOG(("> vendor-sub = %s\n", mVendorSub.get()));
     LOG(("> vendor-comment = %s\n", mVendorComment.get()));
+    LOG(("> extra = %s\n", mExtraUA.get()));
     LOG(("> product = %s\n", mProduct.get()));
     LOG(("> product-sub = %s\n", mProductSub.get()));
     LOG(("> product-comment = %s\n", mProductComment.get()));
@@ -417,16 +435,14 @@ nsHttpHandler::GetCacheSession(nsCacheStoragePolicy storagePolicy,
 }
 
 nsresult
-nsHttpHandler::GetEventQueueService(nsIEventQueueService **result)
+nsHttpHandler::GetCurrentEventQ(nsIEventQueue **result)
 {
     if (!mEventQueueService) {
         nsresult rv;
         mEventQueueService = do_GetService(kEventQueueServiceCID, &rv);
         if (NS_FAILED(rv)) return rv;
     }
-    *result = mEventQueueService;
-    NS_ADDREF(*result);
-    return NS_OK;
+    return mEventQueueService->ResolveEventQueue(NS_CURRENT_EVENTQ, result);
 }
 
 nsresult
@@ -448,19 +464,6 @@ nsHttpHandler::GetCookieService()
     if (!mCookieService)
         mCookieService = do_GetService(kCookieServiceCID);
     return mCookieService;
-}
-
-nsresult
-nsHttpHandler::GetMimeService(nsIMIMEService **result)
-{
-    if (!mMimeService) {
-        nsresult rv;
-        mMimeService = do_GetService("@mozilla.org/mime;1", &rv);
-        if (NS_FAILED(rv)) return rv;
-    }
-    *result = mMimeService;
-    NS_ADDREF(*result);
-    return NS_OK;
 }
 
 nsresult 
@@ -526,6 +529,7 @@ nsHttpHandler::BuildUserAgent()
                            mVendor.Length() +
                            mVendorSub.Length() +
                            mVendorComment.Length() +
+                           mExtraUA.Length() +
                            22);
 
     // Application portion
@@ -537,16 +541,16 @@ nsHttpHandler::BuildUserAgent()
     // Application comment
     mUserAgent += '(';
     mUserAgent += mPlatform;
-    mUserAgent += "; ";
+    mUserAgent.AppendLiteral("; ");
     mUserAgent += mSecurity;
-    mUserAgent += "; ";
+    mUserAgent.AppendLiteral("; ");
     mUserAgent += mOscpu;
     if (!mLanguage.IsEmpty()) {
-        mUserAgent += "; ";
+        mUserAgent.AppendLiteral("; ");
         mUserAgent += mLanguage;
     }
     if (!mMisc.IsEmpty()) {
-        mUserAgent += "; ";
+        mUserAgent.AppendLiteral("; ");
         mUserAgent += mMisc;
     }
     mUserAgent += ')';
@@ -560,7 +564,7 @@ nsHttpHandler::BuildUserAgent()
             mUserAgent += mProductSub;
         }
         if (!mProductComment.IsEmpty()) {
-            mUserAgent += " (";
+            mUserAgent.AppendLiteral(" (");
             mUserAgent += mProductComment;
             mUserAgent += ')';
         }
@@ -575,11 +579,14 @@ nsHttpHandler::BuildUserAgent()
             mUserAgent += mVendorSub;
         }
         if (!mVendorComment.IsEmpty()) {
-            mUserAgent += " (";
+            mUserAgent.AppendLiteral(" (");
             mUserAgent += mVendorComment;
             mUserAgent += ')';
         }
     }
+
+    if (!mExtraUA.IsEmpty())
+        mUserAgent += mExtraUA;
 }
 
 void
@@ -587,14 +594,14 @@ nsHttpHandler::InitUserAgentComponents()
 {
 
       // Gather platform.
-    mPlatform.Adopt(nsCRT::strdup(
+    mPlatform.AssignLiteral(
 #if defined(MOZ_WIDGET_PHOTON)
     "Photon"
 #elif defined(XP_OS2)
     "OS/2"
 #elif defined(XP_WIN)
     "Windows"
-#elif defined(XP_MAC) || defined(XP_MACOSX)
+#elif defined(XP_MACOSX)
     "Macintosh"
 #elif defined(XP_BEOS)
     "BeOS"
@@ -603,7 +610,7 @@ nsHttpHandler::InitUserAgentComponents()
 #else
     "X11"
 #endif
-    ));
+    );
 
     // Gather OS/CPU.
 #if defined(XP_OS2)
@@ -611,71 +618,107 @@ nsHttpHandler::InitUserAgentComponents()
     DosQuerySysInfo(QSV_VERSION_MINOR, QSV_VERSION_MINOR,
                     &os2ver, sizeof(os2ver));
     if (os2ver == 11)
-        mOscpu.Adopt(nsCRT::strdup("2.11"));
+        mOscpu.AssignLiteral("2.11");
     else if (os2ver == 30)
-        mOscpu.Adopt(nsCRT::strdup("Warp 3"));
+        mOscpu.AssignLiteral("Warp 3");
     else if (os2ver == 40)
-        mOscpu.Adopt(nsCRT::strdup("Warp 4"));
+        mOscpu.AssignLiteral("Warp 4");
     else if (os2ver == 45)
-        mOscpu.Adopt(nsCRT::strdup("Warp 4.5"));
+        mOscpu.AssignLiteral("Warp 4.5");
 
+#elif defined(WINCE)
+    OSVERSIONINFO info = { sizeof(OSVERSIONINFO) };
+    if (GetVersionEx(&info)) {
+        char *buf = PR_smprintf("Windows CE %ld.%ld",
+                                info.dwMajorVersion,
+                                info.dwMinorVersion);
+        if (buf) {
+            mOscpu = buf;
+            PR_smprintf_free(buf);
+        }
+    }
 #elif defined(XP_WIN)
     OSVERSIONINFO info = { sizeof(OSVERSIONINFO) };
     if (GetVersionEx(&info)) {
         if (info.dwPlatformId == VER_PLATFORM_WIN32_NT) {
             if (info.dwMajorVersion      == 3)
-                mOscpu.Adopt(nsCRT::strdup("WinNT3.51"));
+                mOscpu.AssignLiteral("WinNT3.51");
             else if (info.dwMajorVersion == 4)
-                mOscpu.Adopt(nsCRT::strdup("WinNT4.0"));
+                mOscpu.AssignLiteral("WinNT4.0");
             else {
                 char *buf = PR_smprintf("Windows NT %ld.%ld",
                                         info.dwMajorVersion,
                                         info.dwMinorVersion);
                 if (buf) {
-                    mOscpu.Adopt(nsCRT::strdup(buf));
+                    mOscpu = buf;
                     PR_smprintf_free(buf);
                 }
             }
         } else if (info.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS &&
                    info.dwMajorVersion == 4) {
             if (info.dwMinorVersion == 90)
-                mOscpu.Adopt(nsCRT::strdup("Win 9x 4.90"));  // Windows Me
+                mOscpu.AssignLiteral("Win 9x 4.90");  // Windows Me
             else if (info.dwMinorVersion > 0)
-                mOscpu.Adopt(nsCRT::strdup("Win98"));
+                mOscpu.AssignLiteral("Win98");
             else
-                mOscpu.Adopt(nsCRT::strdup("Win95"));
+                mOscpu.AssignLiteral("Win95");
         } else {
             char *buf = PR_smprintf("Windows %ld.%ld",
                                     info.dwMajorVersion,
                                     info.dwMinorVersion);
             if (buf) {
-                mOscpu.Adopt(nsCRT::strdup(buf));
+                mOscpu = buf;
                 PR_smprintf_free(buf);
             }
         }
     }
-#elif defined (XP_MACOSX)
-    mOscpu.Adopt(nsCRT::strdup("PPC Mac OS X Mach-O"));
-#elif defined (XP_MAC)
-    long version;
-    if (::Gestalt(gestaltSystemVersion, &version) == noErr && version >= 0x00001000)
-        mOscpu.Adopt(nsCRT::strdup("PPC Mac OS X"));
-    else
-        mOscpu.Adopt(nsCRT::strdup("PPC"));
+#elif defined (XP_MACOSX) && defined(__ppc__)
+    mOscpu.AssignLiteral("PPC Mac OS X Mach-O");
+#elif defined (XP_MACOSX) && defined(__i386__)
+    mOscpu.AssignLiteral("Intel Mac OS X");
 #elif defined (XP_UNIX) || defined (XP_BEOS)
     struct utsname name;
     
     int ret = uname(&name);
     if (ret >= 0) {
-        nsCString buf;  
+        nsCAutoString buf;
         buf =  (char*)name.sysname;
-        buf += ' ';
-        buf += (char*)name.machine;
+
+        if (strcmp(name.machine, "x86_64") == 0 &&
+            sizeof(void *) == sizeof(PRInt32)) {
+            // We're running 32-bit code on x86_64. Make this browser
+            // look like it's running on i686 hardware, but append "
+            // (x86_64)" to the end of the oscpu identifier to be able
+            // to differentiate this from someone running 64-bit code
+            // on x86_64..
+
+            buf += " i686 (x86_64)";
+        } else {
+            buf += ' ';
+
+#ifdef AIX
+            // AIX uname returns machine specific info in the uname.machine
+            // field and does not return the cpu type like other platforms.
+            // We use the AIX version and release numbers instead.
+            buf += (char*)name.version;
+            buf += '.';
+            buf += (char*)name.release;
+#else
+            buf += (char*)name.machine;
+#endif
+        }
+
         mOscpu.Assign(buf);
     }
 #endif
 
     mUserAgentIsDirty = PR_TRUE;
+}
+
+static int StringCompare(const void* s1, const void* s2, void*)
+{
+    return nsCRT::strcmp(*NS_STATIC_CAST(const char *const *, s1),
+                         *NS_STATIC_CAST(const char *const *, s2));
 }
 
 void
@@ -687,6 +730,8 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
     LOG(("nsHttpHandler::PrefsChanged [pref=%s]\n", pref));
 
 #define PREF_CHANGED(p) ((pref == nsnull) || !PL_strcmp(pref, p))
+#define MULTI_PREF_CHANGED(p) \
+  ((pref == nsnull) || !PL_strncmp(pref, p, sizeof(p) - 1))
 
     //
     // UA components
@@ -697,14 +742,14 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
         prefs->GetCharPref(UA_PREF("appName"),
             getter_Copies(mAppName));
         if (mAppName.IsEmpty())
-            mAppName.Adopt(nsCRT::strdup(UA_APPNAME));
+            mAppName.AssignLiteral(UA_APPNAME);
         mUserAgentIsDirty = PR_TRUE;
     }
     if (PREF_CHANGED(UA_PREF("appVersion"))) {
         prefs->GetCharPref(UA_PREF("appVersion"),
             getter_Copies(mAppVersion));
         if (mAppVersion.IsEmpty())
-            mAppVersion.Adopt(nsCRT::strdup(UA_APPVERSION));
+            mAppVersion.AssignLiteral(UA_APPVERSION);
         mUserAgentIsDirty = PR_TRUE;
     }
 
@@ -722,6 +767,36 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
     if (PREF_CHANGED(UA_PREF("vendorComment"))) {
         prefs->GetCharPref(UA_PREF("vendorComment"),
             getter_Copies(mVendorComment));
+        mUserAgentIsDirty = PR_TRUE;
+    }
+
+    if (MULTI_PREF_CHANGED(UA_PREF("extra."))) {
+        mExtraUA.Truncate();
+
+        // Unfortunately, we can't do this using the pref branch.
+        nsCOMPtr<nsIPrefService> service =
+            do_GetService(NS_PREFSERVICE_CONTRACTID);
+        nsCOMPtr<nsIPrefBranch> branch;
+        service->GetBranch(UA_PREF("extra."), getter_AddRefs(branch));
+        if (branch) {
+            PRUint32 extraCount;
+            char **extraItems;
+            rv = branch->GetChildList("", &extraCount, &extraItems);
+            if (NS_SUCCEEDED(rv) && extraItems) {
+                NS_QuickSort(extraItems, extraCount, sizeof(extraItems[0]),
+                             StringCompare, nsnull);
+                for (char **item = extraItems,
+                      **item_end = extraItems + extraCount;
+                     item < item_end; ++item) {
+                    nsXPIDLCString valStr;
+                    branch->GetCharPref(*item, getter_Copies(valStr));
+                    if (!valStr.IsEmpty())
+                        mExtraUA += NS_LITERAL_CSTRING(" ") + valStr;
+                }
+                NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(extraCount, extraItems);
+            }
+        }
+
         mUserAgentIsDirty = PR_TRUE;
     }
 
@@ -746,7 +821,7 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
     if (PREF_CHANGED(UA_PREF("security"))) {
         prefs->GetCharPref(UA_PREF("security"), getter_Copies(mSecurity));
         if (!mSecurity)
-            mSecurity.Adopt(nsCRT::strdup(UA_APPSECURITY_FALLBACK));
+            mSecurity.AssignLiteral(UA_APPSECURITY_FALLBACK);
         mUserAgentIsDirty = PR_TRUE;
     }
 
@@ -943,14 +1018,6 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
             mSendSecureXSiteReferrer = cVar;
     }
 
-    /*
-    if (bChangedAll || PL_strcmp(pref, "network.http.connect.timeout") == 0)
-        prefs->GetIntPref("network.http.connect.timeout", &mConnectTimeout);
-
-    if (bChangedAll || PL_strcmp(pref, "network.http.request.timeout") == 0)
-        prefs->GetIntPref("network.http.request.timeout", &mRequestTimeout);
-    */
-
     if (PREF_CHANGED(HTTP_PREF("accept.default"))) {
         nsXPIDLCString accept;
         rv = prefs->GetCharPref(HTTP_PREF("accept.default"),
@@ -1065,6 +1132,7 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
     }
 
 #undef PREF_CHANGED
+#undef MULTI_PREF_CHANGED
 }
 
 /**
@@ -1093,7 +1161,7 @@ PrepareAcceptLanguages(const char *i_AcceptLanguages, nsACString &o_AcceptLangua
     PRInt32 available;
 
     o_Accept = nsCRT::strdup(i_AcceptLanguages);
-    if (nsnull == o_Accept)
+    if (!o_Accept)
         return NS_ERROR_OUT_OF_MEMORY;
     for (p = o_Accept, n = size = 0; '\0' != *p; p++) {
         if (*p == ',') n++;
@@ -1102,8 +1170,10 @@ PrepareAcceptLanguages(const char *i_AcceptLanguages, nsACString &o_AcceptLangua
 
     available = size + ++n * 11 + 1;
     q_Accept = new char[available];
-    if ((char *) 0 == q_Accept)
-        return nsnull;
+    if (!q_Accept) {
+        nsCRT::free(o_Accept);
+        return NS_ERROR_OUT_OF_MEMORY;
+    }
     *q_Accept = '\0';
     q = 1.0;
     dec = q / (double) n;
@@ -1143,7 +1213,7 @@ PrepareAcceptLanguages(const char *i_AcceptLanguages, nsACString &o_AcceptLangua
 nsresult
 nsHttpHandler::SetAcceptLanguages(const char *aAcceptLanguages) 
 {
-    nsCString buf;
+    nsCAutoString buf;
     nsresult rv = PrepareAcceptLanguages(aAcceptLanguages, buf);
     if (NS_SUCCEEDED(rv))
         mAcceptLanguages.Assign(buf);
@@ -1312,7 +1382,7 @@ NS_IMPL_THREADSAFE_ISUPPORTS5(nsHttpHandler,
 NS_IMETHODIMP
 nsHttpHandler::GetScheme(nsACString &aScheme)
 {
-    aScheme = NS_LITERAL_CSTRING("http");
+    aScheme.AssignLiteral("http");
     return NS_OK;
 }
 
@@ -1379,13 +1449,19 @@ nsHttpHandler::AllowPort(PRInt32 port, const char *scheme, PRBool *_retval)
 
 NS_IMETHODIMP
 nsHttpHandler::NewProxiedChannel(nsIURI *uri,
-                                 nsIProxyInfo* proxyInfo,
+                                 nsIProxyInfo* givenProxyInfo,
                                  nsIChannel **result)
 {
     nsHttpChannel *httpChannel = nsnull;
 
     LOG(("nsHttpHandler::NewProxiedChannel [proxyInfo=%p]\n",
-        proxyInfo));
+        givenProxyInfo));
+    
+    nsCOMPtr<nsProxyInfo> proxyInfo;
+    if (givenProxyInfo) {
+        proxyInfo = do_QueryInterface(givenProxyInfo);
+        NS_ENSURE_ARG(proxyInfo);
+    }
 
     PRBool https;
     nsresult rv = uri->SchemeIs("https", &https);
@@ -1660,7 +1736,7 @@ nsHttpsHandler::Init()
 NS_IMETHODIMP
 nsHttpsHandler::GetScheme(nsACString &aScheme)
 {
-    aScheme = NS_LITERAL_CSTRING("https");
+    aScheme.AssignLiteral("https");
     return NS_OK;
 }
 

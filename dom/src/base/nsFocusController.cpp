@@ -1,25 +1,42 @@
 /* -*- Mode: C++; tab-width: 3; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla browser.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications, Inc.  Portions created by Netscape are
- * Copyright (C) 1999, Mozilla.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   David W. Hyatt <hyatt@netscape.com> (Original Author)
  *   Dan Rosen <dr@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsIContent.h"
 #include "nsIControllers.h"
@@ -28,11 +45,10 @@
 #include "nsIDOMElement.h"
 #include "nsIDOMNSHTMLInputElement.h"
 #include "nsIDOMNSHTMLTextAreaElement.h"
-#include "nsIDOMUIEvent.h"
 #include "nsIDOMNSEvent.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsIDocument.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsPIDOMWindow.h"
@@ -46,7 +62,8 @@
 #include "nsIDocShellTreeItem.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsIServiceManagerUtils.h"
+#include "nsServiceManagerUtils.h"
+#include "nsGlobalWindow.h"
 
 #ifdef MOZ_XUL
 #include "nsIDOMXULDocument.h"
@@ -59,7 +76,8 @@ nsFocusController::nsFocusController(void)
 : mSuppressFocus(0), 
   mSuppressFocusScroll(PR_FALSE), 
   mActive(PR_FALSE),
-  mUpdateWindowWatcher(PR_FALSE)
+  mUpdateWindowWatcher(PR_FALSE),
+  mNeedUpdateCommands(PR_FALSE)
 {
 }
 
@@ -67,8 +85,8 @@ nsFocusController::~nsFocusController(void)
 {
 }
 
-NS_IMPL_ISUPPORTS4(nsFocusController, nsIFocusController,
-                   nsIDOMFocusListener, nsIDOMEventListener, nsSupportsWeakReference)
+NS_IMPL_ISUPPORTS4(nsFocusController, nsIFocusController, nsIDOMFocusListener,
+                   nsIDOMEventListener, nsSupportsWeakReference)
 
 NS_IMETHODIMP
 nsFocusController::Create(nsIFocusController** aResult)
@@ -110,13 +128,14 @@ nsFocusController::SetFocusedElement(nsIDOMElement* aElement)
   else if (aElement) 
     mPreviousElement = aElement;
 
+  mNeedUpdateCommands = mNeedUpdateCommands || mCurrentElement != aElement;
   mCurrentElement = aElement;
 
   if (!mSuppressFocus) {
     // Need to update focus commands when focus switches from
     // an element to no element, so don't test mCurrentElement
     // before updating.
-    UpdateCommands(NS_LITERAL_STRING("focus"));
+    UpdateCommands();
   }
   return NS_OK;
 }
@@ -133,18 +152,34 @@ nsFocusController::RewindFocusState()
 NS_IMETHODIMP
 nsFocusController::SetFocusedWindow(nsIDOMWindowInternal* aWindow)
 {
-  if (aWindow && (mCurrentWindow != aWindow)) {
-    nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(aWindow);
+  nsCOMPtr<nsPIDOMWindow> pwin = do_QueryInterface(aWindow);
+
+  if (pwin) {
+    pwin = pwin->GetOuterWindow();
+  }
+
+  NS_ASSERTION(!pwin || !pwin->IsInnerWindow(),
+               "Uh, inner window can't have focus!");
+
+  nsCOMPtr<nsIDOMWindowInternal> win = do_QueryInterface(pwin);
+
+  if (win && (mCurrentWindow != win)) {
+    nsCOMPtr<nsIScriptGlobalObject> sgo = do_QueryInterface(win);
     if (sgo) {
       nsCOMPtr<nsIBaseWindow> basewin = do_QueryInterface(sgo->GetDocShell());
       if (basewin)
         basewin->SetFocus();
     }
   }
-  if(mCurrentWindow) mPreviousWindow = mCurrentWindow;
-  else if (aWindow) mPreviousWindow = aWindow;
 
-  mCurrentWindow = aWindow;
+  if (mCurrentWindow) {
+    mPreviousWindow = mCurrentWindow;
+  } else if (win) {
+    mPreviousWindow = win;
+  }
+
+  mNeedUpdateCommands = mNeedUpdateCommands || mCurrentWindow != win;
+  mCurrentWindow = win;
 
   if (mUpdateWindowWatcher) {
     NS_ASSERTION(mActive, "This shouldn't happen");
@@ -157,32 +192,45 @@ nsFocusController::SetFocusedWindow(nsIDOMWindowInternal* aWindow)
 }
 
 
-NS_IMETHODIMP
-nsFocusController::UpdateCommands(const nsAString& aEventName)
+void
+nsFocusController::UpdateCommands()
 {
+  if (!mNeedUpdateCommands) {
+    return;
+  }
+  nsCOMPtr<nsIDOMWindowInternal> window;
+  nsCOMPtr<nsIDocument> doc;
   if (mCurrentWindow) {
-    mCurrentWindow->UpdateCommands(aEventName);
+    window = mCurrentWindow;
+    nsCOMPtr<nsIDOMWindow> domWin(do_QueryInterface(window));
+    nsCOMPtr<nsIDOMDocument> domDoc;
+    domWin->GetDocument(getter_AddRefs(domDoc));
+    doc = do_QueryInterface(domDoc);
   }
   else if (mCurrentElement) {
     nsCOMPtr<nsIDOMDocument> domDoc;
     mCurrentElement->GetOwnerDocument(getter_AddRefs(domDoc));
     if (domDoc) {
-      nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
- 
-      nsCOMPtr<nsIDOMWindowInternal> window(do_QueryInterface(doc->GetScriptGlobalObject()));
-      if (window)
-        window->UpdateCommands(aEventName);
+      doc = do_QueryInterface(domDoc);
+      window = do_QueryInterface(doc->GetScriptGlobalObject());
     }
   }
-  return NS_OK;
+
+  // If there is no presshell, it's a zombie document which can't handle the command updates
+  if (window && doc && doc->GetNumberOfShells()) {
+    // Not a zombie document, so we can handle the command update
+    window->UpdateCommands(NS_LITERAL_STRING("focus"));
+    mNeedUpdateCommands = PR_FALSE;
+  }
 }
 
   
 NS_IMETHODIMP
 nsFocusController::GetControllers(nsIControllers** aResult)
 {
-  //XXX: we should fix this so there's a generic interface that describes controllers, 
-  //     so this code would have no special knowledge of what object might have controllers.
+  // XXX: we should fix this so there's a generic interface that
+  // describes controllers, so this code would have no special
+  // knowledge of what object might have controllers.
   if (mCurrentElement) {
 
 #ifdef MOZ_XUL
@@ -191,16 +239,19 @@ nsFocusController::GetControllers(nsIControllers** aResult)
       return xulElement->GetControllers(aResult);
 #endif
 
-    nsCOMPtr<nsIDOMNSHTMLTextAreaElement> htmlTextArea(do_QueryInterface(mCurrentElement));
+    nsCOMPtr<nsIDOMNSHTMLTextAreaElement> htmlTextArea =
+      do_QueryInterface(mCurrentElement);
     if (htmlTextArea)
       return htmlTextArea->GetControllers(aResult);
 
-    nsCOMPtr<nsIDOMNSHTMLInputElement> htmlInputElement(do_QueryInterface(mCurrentElement));
+    nsCOMPtr<nsIDOMNSHTMLInputElement> htmlInputElement =
+      do_QueryInterface(mCurrentElement);
     if (htmlInputElement)
       return htmlInputElement->GetControllers(aResult);
   }
   else if (mCurrentWindow) {
-    nsCOMPtr<nsIDOMWindowInternal> domWindow(do_QueryInterface(mCurrentWindow));
+    nsCOMPtr<nsIDOMWindowInternal> domWindow =
+      do_QueryInterface(mCurrentWindow);
     if (domWindow)
       return domWindow->GetControllers(aResult);
   }
@@ -246,9 +297,11 @@ nsFocusController::MoveFocus(PRBool aForward, nsIDOMElement* aElt)
   if (!shell)
     return NS_OK;
 
+  // Make sure frames have been constructed before shifting focus, bug 273092.
+  shell->FlushPendingNotifications(Flush_Frames);
+
   // Retrieve the context
-  nsCOMPtr<nsIPresContext> presContext;
-  shell->GetPresContext(getter_AddRefs(presContext));
+  nsCOMPtr<nsPresContext> presContext = shell->GetPresContext();
 
   // Make this ESM shift the focus per our instructions.
   presContext->EventStateManager()->ShiftFocus(aForward, content);
@@ -282,18 +335,16 @@ nsFocusController::Focus(nsIDOMEvent* aEvent)
     // but we don't hear the subsequent focus to the Ender window.
     nsCOMPtr<nsIDOMDocument> ownerDoc;
     domElement->GetOwnerDocument(getter_AddRefs(ownerDoc));
-    nsCOMPtr<nsIDOMWindowInternal> domWindow;
-    GetParentWindowFromDocument(ownerDoc, getter_AddRefs(domWindow));
+    nsCOMPtr<nsIDOMWindowInternal> domWindow = GetWindowFromDocument(ownerDoc);
     if (domWindow)
       SetFocusedWindow(domWindow);
   }
   else {
     // We're focusing a window.  We only want to do an update commands
     // if no element is focused.
-    nsCOMPtr<nsIDOMWindowInternal> domWindow;
     nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(t);
     if (domDoc) {
-      GetParentWindowFromDocument(domDoc, getter_AddRefs(domWindow));
+      nsCOMPtr<nsIDOMWindowInternal> domWindow = GetWindowFromDocument(domDoc);
       if (domWindow) {
         SetFocusedWindow(domWindow);
         if (mCurrentElement) {
@@ -309,8 +360,9 @@ nsFocusController::Focus(nsIDOMEvent* aEvent)
         else
           mPreviousElement = nsnull;
 
-        if (!mCurrentElement)
-          UpdateCommands(NS_LITERAL_STRING("focus"));
+        if (!mCurrentElement) {
+          UpdateCommands();
+        }
       }
     }
   }
@@ -337,10 +389,9 @@ nsFocusController::Blur(nsIDOMEvent* aEvent)
     SetFocusedElement(nsnull);
   }
   
-  nsCOMPtr<nsIDOMWindowInternal> domWindow;
   nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(t);
   if (domDoc) {
-    GetParentWindowFromDocument(domDoc, getter_AddRefs(domWindow));
+    nsCOMPtr<nsIDOMWindowInternal> domWindow = GetWindowFromDocument(domDoc);
     if (domWindow)
       SetFocusedWindow(nsnull);
   }
@@ -348,34 +399,38 @@ nsFocusController::Blur(nsIDOMEvent* aEvent)
   return NS_OK;
 }
 
-nsresult
-nsFocusController::GetParentWindowFromDocument(nsIDOMDocument* aDocument, nsIDOMWindowInternal** aWindow)
+nsPIDOMWindow *
+nsFocusController::GetWindowFromDocument(nsIDOMDocument* aDocument)
 {
-	NS_ENSURE_ARG_POINTER(aWindow);
+  nsCOMPtr<nsIDocument> doc = do_QueryInterface(aDocument);
+  if (!doc)
+    return NS_OK;
 
-  nsCOMPtr<nsIDocument> objectOwner = do_QueryInterface(aDocument);
-  if(!objectOwner) return NS_OK;
+  nsCOMPtr<nsPIDOMWindow> win =
+    do_QueryInterface(doc->GetScriptGlobalObject());
 
-  nsCOMPtr<nsIDOMWindowInternal> domWindow = do_QueryInterface(objectOwner->GetScriptGlobalObject());
-  *aWindow = domWindow;
-  NS_IF_ADDREF(*aWindow);
-  return NS_OK;
+  if (win && win->IsInnerWindow()) {
+    return win->GetOuterWindow();
+  }
+
+  return win;
 }
 
 NS_IMETHODIMP
-nsFocusController::GetControllerForCommand(const char * aCommand, nsIController** _retval)
+nsFocusController::GetControllerForCommand(const char * aCommand,
+                                           nsIController** _retval)
 {
   NS_ENSURE_ARG_POINTER(_retval);	
   *_retval = nsnull;
 
   nsCOMPtr<nsIControllers> controllers;
+  nsCOMPtr<nsIController> controller;
+
   GetControllers(getter_AddRefs(controllers));
   if(controllers) {
-    nsCOMPtr<nsIController> controller;
     controllers->GetControllerForCommand(aCommand, getter_AddRefs(controller));
     if(controller) {
-      *_retval = controller;
-      NS_ADDREF(*_retval);
+      controller.swap(*_retval);
       return NS_OK;
     }
   }
@@ -385,33 +440,34 @@ nsFocusController::GetControllerForCommand(const char * aCommand, nsIController*
     // Move up to the window.
     nsCOMPtr<nsIDOMDocument> domDoc;
     mCurrentElement->GetOwnerDocument(getter_AddRefs(domDoc));
-    nsCOMPtr<nsIDOMWindowInternal> domWindow;
-    GetParentWindowFromDocument(domDoc, getter_AddRefs(domWindow));
-    currentWindow = do_QueryInterface(domWindow);
+    currentWindow = do_QueryInterface(GetWindowFromDocument(domDoc));
   }
   else if (mCurrentWindow) {
-    nsCOMPtr<nsPIDOMWindow> privateWin = do_QueryInterface(mCurrentWindow);
-    privateWin->GetPrivateParent(getter_AddRefs(currentWindow));
+    nsGlobalWindow *win =
+      NS_STATIC_CAST(nsGlobalWindow *,
+                     NS_STATIC_CAST(nsIDOMWindowInternal *, mCurrentWindow));
+    currentWindow = win->GetPrivateParent();
   }
   else return NS_OK;
 
   while(currentWindow) {
-    nsCOMPtr<nsIDOMWindowInternal> domWindow = do_QueryInterface(currentWindow);
-    if(domWindow) {
-      nsCOMPtr<nsIControllers> controllers2;
-      domWindow->GetControllers(getter_AddRefs(controllers2));
-      if(controllers2) {
-        nsCOMPtr<nsIController> controller;
-        controllers2->GetControllerForCommand(aCommand, getter_AddRefs(controller));
-        if(controller) {
-          *_retval = controller;
-          NS_ADDREF(*_retval);
-          return NS_OK;
-        }
+    nsCOMPtr<nsIDOMWindowInternal> domWindow(do_QueryInterface(currentWindow));
+
+    nsCOMPtr<nsIControllers> controllers2;
+    domWindow->GetControllers(getter_AddRefs(controllers2));
+    if(controllers2) {
+      controllers2->GetControllerForCommand(aCommand,
+                                            getter_AddRefs(controller));
+      if(controller) {
+        controller.swap(*_retval);
+        return NS_OK;
       }
-    } 
-    nsCOMPtr<nsPIDOMWindow> parentPWindow = currentWindow;
-    parentPWindow->GetPrivateParent(getter_AddRefs(currentWindow));
+    }
+
+    nsGlobalWindow *win =
+      NS_STATIC_CAST(nsGlobalWindow *,
+                     NS_STATIC_CAST(nsIDOMWindowInternal *, currentWindow));
+    currentWindow = win->GetPrivateParent();
   }
   
   return NS_OK;
@@ -457,9 +513,14 @@ nsFocusController::SetSuppressFocus(PRBool aSuppressFocus, const char* aReason)
     NS_ASSERTION(PR_FALSE, "Attempt to decrement focus controller's suppression when no suppression active!\n");
 
   // we are unsuppressing after activating, so update focus-related commands
-  // we need this to update commands in the case where an element is focused.
-  if (!mSuppressFocus && mCurrentElement)
-    UpdateCommands(NS_LITERAL_STRING("focus"));
+  // we need this to update command, including the case where there is no element
+  // because nsPresShell::UnsuppressPainting may have just now unsuppressed
+  // focus on the currently focused window
+  if (!mSuppressFocus) {
+    // Always update commands if we have a current element
+    mNeedUpdateCommands = mNeedUpdateCommands || mCurrentElement;
+    UpdateCommands();
+  }
   
   return NS_OK;
 }

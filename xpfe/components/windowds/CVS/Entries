@@ -1,6 +1,6 @@
-/.cvsignore/1.1/Mon Apr 22 13:54:39 2002//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.5/Sun Jul 13 22:28:59 2003//TFIREFOX_1_0_RELEASE
-/nsIWindowDataSource.idl/1.1/Wed Apr 24 18:19:01 2002//TFIREFOX_1_0_RELEASE
-/nsWindowDataSource.cpp/1.17/Fri May 23 12:03:39 2003//TFIREFOX_1_0_RELEASE
-/nsWindowDataSource.h/1.5/Thu Jan  9 00:08:47 2003//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Mon Apr 22 13:54:39 2002//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.7/Fri Mar 18 21:23:47 2005//TFIREFOX_1_5_RELEASE
+/nsIWindowDataSource.idl/1.2/Sat Apr 17 16:51:34 2004//TFIREFOX_1_5_RELEASE
+/nsWindowDataSource.cpp/1.18/Sat Apr 17 16:51:34 2004//TFIREFOX_1_5_RELEASE
+/nsWindowDataSource.h/1.6/Sat Apr 17 16:51:34 2004//TFIREFOX_1_5_RELEASE
 D

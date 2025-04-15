@@ -1,12 +1,13 @@
-/.cvsignore/1.1/Thu Jan 14 00:42:10 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.20.308.1/Tue Aug  3 05:34:54 2004//TFIREFOX_1_0_RELEASE
-/nsIMimeContentTypeHandler.h/1.8/Wed Jun 26 03:38:44 2002//TFIREFOX_1_0_RELEASE
-/nsIMimeConverter.idl/1.1.4.1/Tue Aug  3 05:34:54 2004//TFIREFOX_1_0_RELEASE
-/nsIMimeEmitter.idl/1.14/Fri Mar 29 16:47:04 2002//TFIREFOX_1_0_RELEASE
-/nsIMimeHeaders.idl/1.5/Thu Mar 28 21:34:38 2002//TFIREFOX_1_0_RELEASE
-/nsIMimeMiscStatus.idl/1.15.76.4/Thu Jul  8 04:01:16 2004//TFIREFOX_1_0_RELEASE
-/nsIMimeObjectClassAccess.h/1.10/Wed Jun 26 03:38:45 2002//TFIREFOX_1_0_RELEASE
-/nsIMimeStreamConverter.idl/1.17/Tue Nov 12 19:51:52 2002//TFIREFOX_1_0_RELEASE
-/nsIMsgHeaderParser.idl/1.13/Mon Mar  8 00:29:30 2004//TFIREFOX_1_0_RELEASE
-/nsMailHeaders.h/1.9/Thu Feb  5 21:14:15 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Thu Jan 14 00:42:10 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.23/Fri Apr 15 17:52:51 2005//TFIREFOX_1_5_RELEASE
+/nsIMimeContentTypeHandler.h/1.11/Fri Apr 15 17:52:51 2005//TFIREFOX_1_5_RELEASE
+/nsIMimeConverter.idl/1.3/Wed Dec  1 22:26:58 2004//TFIREFOX_1_5_RELEASE
+/nsIMimeEmitter.idl/1.15/Sat Apr 17 18:33:12 2004//TFIREFOX_1_5_RELEASE
+/nsIMimeHeaders.idl/1.6/Sat Apr 17 18:33:12 2004//TFIREFOX_1_5_RELEASE
+/nsIMimeMiscStatus.idl/1.22/Wed Jun  1 19:04:20 2005//TFIREFOX_1_5_RELEASE
+/nsIMimeObjectClassAccess.h/1.11/Sat Apr 17 18:33:12 2004//TFIREFOX_1_5_RELEASE
+/nsIMimeStreamConverter.idl/1.19/Wed Feb  9 01:40:24 2005//TFIREFOX_1_5_RELEASE
+/nsIMsgHeaderParser.idl/1.14/Sat Apr 17 18:33:12 2004//TFIREFOX_1_5_RELEASE
+/nsISimpleMimeConverter.idl/1.1/Fri Apr 15 18:12:08 2005//TFIREFOX_1_5_RELEASE
+/nsMailHeaders.h/1.11/Mon Feb 28 17:10:57 2005//TFIREFOX_1_5_RELEASE
 D

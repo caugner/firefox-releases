@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,21 +22,24 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsIFactory.h"
 #include "nsISupports.h"
+#include "nsIComponentManager.h"
+#include "nsIGenericFactory.h"
+
 #include "nsWidgetsCID.h"
 
 #include "nsToolkit.h"
@@ -49,10 +52,6 @@
 #include "nsMenuX.h"
 #include "nsMenuItemX.h"
 
-#define nsMenuBar nsMenuBarX
-#define nsMenu nsMenuX
-#define nsMenuItem nsMenuItemX
-
 #include "nsClipboard.h"
 #include "nsClipboardHelper.h"
 #include "nsTransferable.h"
@@ -60,21 +59,12 @@
 #include "nsDragService.h"
 #include "nsDragHelperService.h"
 
-#if USE_NATIVE_VERSION
-# include "nsCheckButton.h"
-#endif
-
 #include "nsLookAndFeel.h"
-
-#include "nsIComponentManager.h"
 
 #include "nsSound.h"
 #include "nsNativeScrollbar.h"
 
 #include "nsBidiKeyboard.h"
-
-
-#include "nsIGenericFactory.h"
 
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsCocoaWindow)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsChildView)
@@ -82,12 +72,11 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsFilePicker)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsAppShellCocoa)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsToolkit)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsLookAndFeel)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsMenuBar)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsMenu)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsMenuItem)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsMenuBarX)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsMenuX)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsMenuItemX)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsNativeScrollbar)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSound)
-//NS_GENERIC_FACTORY_CONSTRUCTOR(nsFileSpecWithUIImpl)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsTransferable)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsHTMLFormatConverter)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsClipboard)
@@ -96,7 +85,7 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsDragService)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDragHelperService)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsBidiKeyboard)
 
-static nsModuleComponentInfo components[] =
+static const nsModuleComponentInfo gComponents[] =
 {
 	{	"nsWindow",
 		NS_WINDOW_CID,
@@ -129,15 +118,15 @@ static nsModuleComponentInfo components[] =
 	{	"Menubar",
 		NS_MENUBAR_CID,
 		"@mozilla.org/widget/menubar/mac;1",
-		nsMenuBarConstructor },
+		nsMenuBarXConstructor },
 	{	"Menu",
 		NS_MENU_CID,
 		"@mozilla.org/widget/menu/mac;1",
-		nsMenuConstructor },
+		nsMenuXConstructor },
 	{	"MenuItem",
 		NS_MENUITEM_CID,
 		"@mozilla.org/widget/menuitem/mac;1",
-		nsMenuItemConstructor },
+		nsMenuItemXConstructor },
 	{ 	"Sound",
 		NS_SOUND_CID,
 		"@mozilla.org/sound;1",
@@ -176,4 +165,4 @@ static nsModuleComponentInfo components[] =
 		nsNativeScrollbarConstructor }
 };
 
-NS_IMPL_NSGETMODULE(nsWidgetMacModule, components)
+NS_IMPL_NSGETMODULE(nsWidgetMacModule, gComponents)

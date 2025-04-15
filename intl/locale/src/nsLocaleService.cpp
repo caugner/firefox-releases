@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -41,7 +40,7 @@
 #include "nsILocaleService.h"
 #include "nsLocale.h"
 #include "nsLocaleCID.h"
-#include "nsIComponentManager.h"
+#include "nsServiceManagerUtils.h"
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
 #include "prprf.h"
@@ -170,7 +169,7 @@ nsLocaleService::nsLocaleService(void)
     : mSystemLocale(0), mApplicationLocale(0)
 {
 #if defined(XP_WIN)
-    nsCOMPtr<nsIWin32Locale> win32Converter = do_CreateInstance(NS_WIN32LOCALE_CONTRACTID);
+    nsCOMPtr<nsIWin32Locale> win32Converter = do_GetService(NS_WIN32LOCALE_CONTRACTID);
 
     NS_ASSERTION(win32Converter, "nsLocaleService: can't get win32 converter\n");
 
@@ -200,7 +199,7 @@ nsLocaleService::nsLocaleService(void)
     }
 #endif
 #if (defined(XP_UNIX) && !defined(XP_MACOSX)) || defined(XP_BEOS)
-    nsCOMPtr<nsIPosixLocale> posixConverter = do_CreateInstance(NS_POSIXLOCALE_CONTRACTID);
+    nsCOMPtr<nsIPosixLocale> posixConverter = do_GetService(NS_POSIXLOCALE_CONTRACTID);
 
     nsAutoString xpLocale, platformLocale;
     if (posixConverter) {
@@ -215,21 +214,21 @@ nsLocaleService::nsLocaleService(void)
         for( i = 0; i < LocaleListLength; i++ ) {
             nsresult result;
             char* lc_temp = setlocale(posix_locale_category[i], "");
-            category.AssignWithConversion(LocaleList[i]);
-            category_platform.AssignWithConversion(LocaleList[i]);
-            category_platform.Append(NS_LITERAL_STRING("##PLATFORM"));
+            CopyASCIItoUTF16(LocaleList[i], category);
+            category_platform = category; 
+            category_platform.AppendLiteral("##PLATFORM");
             if (lc_temp != nsnull) {
                 result = posixConverter->GetXPLocale(lc_temp, xpLocale);
-                platformLocale.AssignWithConversion(lc_temp);
+                CopyASCIItoUTF16(lc_temp, platformLocale);
             } else {
                 char* lang = getenv("LANG");
                 if ( lang == nsnull ) {
-                    platformLocale.Assign(NS_LITERAL_STRING("en_US"));
+                    platformLocale.AssignLiteral("en_US");
                     result = posixConverter->GetXPLocale("en-US", xpLocale);
-            }
+                }
                 else {
+                    CopyASCIItoUTF16(lang, platformLocale);
                     result = posixConverter->GetXPLocale(lang, xpLocale); 
-                    platformLocale.AssignWithConversion(lang);
                 }
             }
             if (NS_FAILED(result)) {
@@ -244,7 +243,7 @@ nsLocaleService::nsLocaleService(void)
        
 #endif // XP_UNIX || XP_BEOS
 #if defined(XP_OS2)
-    nsCOMPtr<nsIOS2Locale> os2Converter = do_CreateInstance(NS_OS2LOCALE_CONTRACTID);
+    nsCOMPtr<nsIOS2Locale> os2Converter = do_GetService(NS_OS2LOCALE_CONTRACTID);
     nsAutoString xpLocale;
     if (os2Converter) {
         nsAutoString category;
@@ -360,7 +359,7 @@ nsLocaleService::nsLocaleService(void)
         long script = GetScriptManagerVariable(smSysScript);
         long lang = GetScriptVariable(smSystemScript,smScriptLang);
         long region = GetScriptManagerVariable(smRegionCode);
-        nsCOMPtr<nsIMacLocale> macConverter = do_CreateInstance(NS_MACLOCALE_CONTRACTID);
+        nsCOMPtr<nsIMacLocale> macConverter = do_GetService(NS_MACLOCALE_CONTRACTID);
         if (macConverter) {
             nsresult result;
             nsAutoString xpLocale;

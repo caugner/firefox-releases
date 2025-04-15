@@ -1,7 +1,7 @@
 <!-- extracted from content/pref-fonts.xul -->
 
 <!-- LOCALIZATION NOTE : FILE 'Fonts' prefs dialog -->
-<!ENTITY  lHeader                                 "Fonts">
+<!ENTITY  pref.fonts.title                        "Fonts">
 
 <!ENTITY  language.label                          "Fonts for:">
 <!ENTITY  language.accesskey                      "t">
@@ -37,13 +37,22 @@
 <!ENTITY  font.langGroup.baltic                   "Baltic">
 <!ENTITY  font.langGroup.el                       "Greek">
 <!ENTITY  font.langGroup.turkish                  "Turkish">
-<!ENTITY  font.langGroup.unicode                  "Unicode">
+<!ENTITY  font.langGroup.unicode                  "Other Languages">
 <!ENTITY  font.langGroup.user-def                 "User Defined">
 <!ENTITY  font.langGroup.thai                     "Thai">
 <!ENTITY  font.langGroup.hebrew                   "Hebrew">
 <!ENTITY  font.langGroup.arabic                   "Arabic">
 <!ENTITY  font.langGroup.devanagari               "Devanagari">
 <!ENTITY  font.langGroup.tamil                    "Tamil">
+<!ENTITY  font.langGroup.armenian                 "Armenian">
+<!ENTITY  font.langGroup.bengali                  "Bengali">
+<!ENTITY  font.langGroup.canadian                 "Unified Canadian Syllabary">
+<!ENTITY  font.langGroup.ethiopic                 "Ethiopic">
+<!ENTITY  font.langGroup.georgian                 "Georgian">
+<!ENTITY  font.langGroup.gujarati                 "Gujarati">
+<!ENTITY  font.langGroup.gurmukhi                 "Gurmukhi">
+<!ENTITY  font.langGroup.khmer                    "Khmer">
+<!ENTITY  font.langGroup.malayalam                "Malayalam">
 <!-- Minimum font size -->
 <!ENTITY minSize.label                            "Minimum font size:">
 <!ENTITY minSize.accesskey                        "z">

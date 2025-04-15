@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -52,11 +51,11 @@ class nsIAtom;
 
 typedef struct {
   nsIDOMEventListener* mListener;
-  PRUint8 mFlags;
-  PRUint8 mSubType;
-  PRUint8 mHandlerIsString;
-  PRUint8 mSubTypeCapture;
+  PRUint16 mFlags;
   PRUint16 mGroupFlags;
+  PRUint8  mSubType;
+  PRUint8  mHandlerIsString;
+  PRUint8  mSubTypeCapture;
 } nsListenerStruct;
 
 //These define the internal type of the EventListenerManager
@@ -84,13 +83,19 @@ enum EventArrayType {
   eEventArrayType_XUL = 11,
   eEventArrayType_Scroll = 12,
   eEventArrayType_Mutation = 13,
+  eEventArrayType_DOMUI = 14,
+  eEventArrayType_PageTransition = 15,
+#ifdef MOZ_SVG
+  eEventArrayType_SVG = 16,
+  eEventArrayType_SVGZoom = 17,
+#endif // MOZ_SVG
   eEventArrayType_Hash,
   eEventArrayType_None
 };
 
 //Keep this in line with event array types, not counting
 //types HASH and NONE
-#define EVENT_ARRAY_TYPE_LENGTH 14
+#define EVENT_ARRAY_TYPE_LENGTH eEventArrayType_Hash
 
 /*
  * Event listener manager
@@ -126,26 +131,29 @@ public:
   NS_IMETHOD AddScriptEventListener(nsISupports *aObject,
                                     nsIAtom *aName,
                                     const nsAString& aFunc,
-                                    PRBool aDeferCompilation); 
+                                    PRBool aDeferCompilation,
+                                    PRBool aPermitUntrustedEvents);
   NS_IMETHOD RegisterScriptEventListener(nsIScriptContext *aContext,
+                                         JSObject *aScopeObject,
                                          nsISupports *aObject,
                                          nsIAtom* aName);
   NS_IMETHOD RemoveScriptEventListener(nsIAtom *aName);
   NS_IMETHOD CompileScriptEventListener(nsIScriptContext *aContext,
+                                        JSObject *aScopeObject,
                                         nsISupports *aObject,
                                         nsIAtom* aName, PRBool *aDidCompile);
 
   NS_IMETHOD CaptureEvent(PRInt32 aEventTypes);
   NS_IMETHOD ReleaseEvent(PRInt32 aEventTypes);
 
-  NS_IMETHOD HandleEvent(nsIPresContext* aPresContext, 
+  NS_IMETHOD HandleEvent(nsPresContext* aPresContext, 
                          nsEvent* aEvent, 
                          nsIDOMEvent** aDOMEvent,
                          nsIDOMEventTarget* aCurrentTarget,
                          PRUint32 aFlags,
                          nsEventStatus* aEventStatus);
 
-  NS_IMETHOD CreateEvent(nsIPresContext* aPresContext, 
+  NS_IMETHOD CreateEvent(nsPresContext* aPresContext, 
                          nsEvent* aEvent,
                          const nsAString& aEventType,
                          nsIDOMEvent** aDOMEvent);
@@ -162,6 +170,8 @@ public:
   }
 
   NS_IMETHOD GetSystemEventGroupLM(nsIDOMEventGroup** aGroup);
+
+  virtual PRBool HasUnloadListeners();
 
   static nsresult GetIdentifiersForType(nsIAtom* aType,
                                         EventArrayType* aArrayType,
@@ -191,14 +201,17 @@ protected:
                               PRUint32 aSubType,
                               PRUint32 aPhaseFlags);
   nsresult CompileEventHandlerInternal(nsIScriptContext *aContext,
+                                       JSObject *aScopeObject,
                                        nsISupports *aObject,
                                        nsIAtom *aName,
                                        nsListenerStruct *aListenerStruct,
+                                       nsIDOMEventTarget* aCurrentTarget,
                                        PRUint32 aSubType);
   nsListenerStruct* FindJSEventListener(EventArrayType aType);
   nsresult SetJSEventListener(nsIScriptContext *aContext,
-                              nsISupports *aObject, nsIAtom* aName,
-                              PRBool aIsString);
+                              JSObject *aScopeObject, nsISupports *aObject,
+                              nsIAtom* aName, PRBool aIsString,
+                              PRBool aPermitUntrustedEvents);
   nsresult AddEventListener(nsIDOMEventListener *aListener, 
                             EventArrayType aType, 
                             PRInt32 aSubType,
@@ -215,11 +228,11 @@ protected:
   nsresult FlipCaptureBit(PRInt32 aEventTypes, PRBool aInitCapture);
   nsVoidArray* GetListenersByType(EventArrayType aType, nsHashKey* aKey, PRBool aCreate);
   EventArrayType GetTypeForIID(const nsIID& aIID);
-  nsresult FixContextMenuEvent(nsIPresContext* aPresContext,
+  nsresult FixContextMenuEvent(nsPresContext* aPresContext,
                                nsIDOMEventTarget* aCurrentTarget,
                                nsEvent* aEvent,
                                nsIDOMEvent** aDOMEvent);
-  void GetCoordinatesFor(nsIDOMElement *aCurrentEl, nsIPresContext *aPresContext,
+  void GetCoordinatesFor(nsIDOMElement *aCurrentEl, nsPresContext *aPresContext,
                          nsIPresShell *aPresShell, nsPoint& aTargetPt);
   nsresult GetDOM2EventGroup(nsIDOMEventGroup** aGroup);
 
@@ -272,11 +285,12 @@ protected:
 #define NS_EVENT_BITS_TEXT_TEXT      0x01
 
 //nsIDOMCompositionListener
-#define NS_EVENT_BITS_COMPOSITION_NONE      0x00
-#define NS_EVENT_BITS_COMPOSITION_START     0x01
-#define NS_EVENT_BITS_COMPOSITION_END		0x02
-#define NS_EVENT_BITS_COMPOSITION_QUERY		0x04
-#define NS_EVENT_BITS_COMPOSITION_RECONVERSION 0x08
+#define NS_EVENT_BITS_COMPOSITION_NONE           0x00
+#define NS_EVENT_BITS_COMPOSITION_START          0x01
+#define NS_EVENT_BITS_COMPOSITION_END            0x02
+#define NS_EVENT_BITS_COMPOSITION_QUERY          0x04
+#define NS_EVENT_BITS_COMPOSITION_RECONVERSION   0x08
+#define NS_EVENT_BITS_COMPOSITION_QUERYCARETRECT 0x10
 
 //nsIDOMFocusListener
 #define NS_EVENT_BITS_FOCUS_NONE    0x00
@@ -337,5 +351,30 @@ protected:
 #define NS_EVENT_BITS_CONTEXT_NONE  0x00
 #define NS_EVENT_BITS_CONTEXT_MENU  0x01
 
+// nsIDOMUIListener
+#define NS_EVENT_BITS_UI_NONE      0x00
+#define NS_EVENT_BITS_UI_ACTIVATE  0x01
+#define NS_EVENT_BITS_UI_FOCUSIN   0x02
+#define NS_EVENT_BITS_UI_FOCUSOUT  0x04
+
+// nsIDOMPageTransitionListener
+#define NS_EVENT_BITS_PAGETRANSITION_NONE 0x00
+#define NS_EVENT_BITS_PAGETRANSITION_SHOW 0x01
+#define NS_EVENT_BITS_PAGETRANSITION_HIDE 0x02
+
+#ifdef MOZ_SVG
+// nsIDOMSVGEventListener
+#define NS_EVENT_BITS_SVG_NONE      0x00
+#define NS_EVENT_BITS_SVG_LOAD      0x01
+#define NS_EVENT_BITS_SVG_UNLOAD    0x02
+#define NS_EVENT_BITS_SVG_ABORT     0x04
+#define NS_EVENT_BITS_SVG_ERROR     0x08
+#define NS_EVENT_BITS_SVG_RESIZE    0x10
+#define NS_EVENT_BITS_SVG_SCROLL    0x20
+
+// nsIDOMSVGZoomEventListener
+#define NS_EVENT_BITS_SVGZOOM_NONE  0x00
+#define NS_EVENT_BITS_SVGZOOM_ZOOM  0x01
+#endif // MOZ_SVG
 
 #endif // nsEventListenerManager_h__

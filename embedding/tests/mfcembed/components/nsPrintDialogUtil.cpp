@@ -1,44 +1,38 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: Mozilla-sample-code 1.0
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * Copyright (c) 2002 Netscape Communications Corporation and
+ * other contributors
  *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this Mozilla sample software and associated documentation files
+ * (the "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to permit
+ * persons to whom the Software is furnished to do so, subject to the
+ * following conditions:
  *
- * The Original Code is mozilla.org code.
+ * The above copyright notice and this permission notice shall be included
+ * in all copies or substantial portions of the Software.
  *
- * The Initial Developer of the Original Code is 
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  *
  * Contributor(s):
- *
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #ifdef MOZ_REQUIRE_CURRENT_SDK
 #undef WINVER
 #define WINVER 0x0500
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0500
 #endif
 
 /* -------------------------------------------------------------------
@@ -76,6 +70,9 @@ WIN_LIBS=                                       \
 #include "nsUnitConversion.h"
 #include "nsIPrintOptions.h"
 #include "nsGfxCIID.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
+
 static NS_DEFINE_IID(kPrinterEnumeratorCID, NS_PRINTER_ENUMERATOR_CID);
 
 #include "nsRect.h"
@@ -836,6 +833,23 @@ static PRUnichar * GetDefaultPrinterNameFromGlobalPrinters()
   return printerName;
 }
 
+// Determine whether we have a completely native dialog
+// or whether we cshould extend it
+static PRBool ShouldExtendPrintDialog()
+{
+  nsresult rv;
+  nsCOMPtr<nsIPrefService> prefs =
+    do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, PR_TRUE);
+  nsCOMPtr<nsIPrefBranch> prefBranch;
+  rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
+  NS_ENSURE_SUCCESS(rv, PR_TRUE);
+
+  PRBool result;
+  rv = prefBranch->GetBoolPref("print.extend_native_print_dialog", &result);
+  NS_ENSURE_SUCCESS(rv, PR_TRUE);
+  return result;
+}
 
 //------------------------------------------------------------------
 // Displays the native Print Dialog
@@ -908,19 +922,6 @@ ShowNativePrintDialog(HWND              aHWnd,
   }
   aPrintSettings->GetHowToEnableFrameUI(&howToEnableFrameUI);
 
-  // Determine whether we have a completely native dialog
-  // or whether we cshould extend it
-  // true  - do only the native
-  // false - extend the dialog
-  PRPackedBool doExtend = PR_FALSE;
-  nsCOMPtr<nsIStringBundle> strBundle;
-  if (NS_SUCCEEDED(GetLocalizedBundle(PRINTDLG_PROPERTIES, getter_AddRefs(strBundle)))) {
-    nsAutoString doExtendStr;
-    if (NS_SUCCEEDED(GetLocalizedString(strBundle, "extend", doExtendStr))) {
-      doExtend = doExtendStr.Equals(NS_LITERAL_STRING("true"));
-    }
-  }
-
   prntdlg.nFromPage           = 0xFFFF;
   prntdlg.nToPage             = 0xFFFF;
   prntdlg.nMinPage            = 1;
@@ -934,7 +935,7 @@ ShowNativePrintDialog(HWND              aHWnd,
   prntdlg.hInstance           = NULL;
   prntdlg.lpPrintTemplateName = NULL;
 
-  if (!doExtend) {
+  if (!ShouldExtendPrintDialog()) {
     prntdlg.lCustData         = NULL;
     prntdlg.lpfnPrintHook     = NULL;
   } else {
@@ -1218,19 +1219,6 @@ ShowNativePrintDialogEx(HWND              aHWnd,
     aPrintSettings->GetHowToEnableFrameUI(&howToEnableFrameUI);
   }
 
-  // Determine whether we have a completely native dialog
-  // or whether we cshould extend it
-  // true  - do only the native
-  // false - extend the dialog
-  PRPackedBool doExtend = PR_FALSE;
-  nsCOMPtr<nsIStringBundle> strBundle;
-  if (NS_SUCCEEDED(GetLocalizedBundle(PRINTDLG_PROPERTIES, getter_AddRefs(strBundle)))) {
-    nsAutoString doExtendStr;
-    if (NS_SUCCEEDED(GetLocalizedString(strBundle, "extend", doExtendStr))) {
-      doExtend = doExtendStr.EqualsIgnoreCase("true");
-    }
-  }
-
   // At the moment we can only support one page range
   // from all the documentation I can find, it appears that this 
   // will get cleanup automatically when the struct goes away
@@ -1246,7 +1234,7 @@ ShowNativePrintDialogEx(HWND              aHWnd,
   prntdlg.nMaxPage       = 0xFFFF;
   prntdlg.nCopies        = 1;
 
-  if (doExtend) {
+  if (ShouldExtendPrintDialog()) {
     // lLcalize the Property Sheet (Tab) title
     char* pTitle = NULL;
     nsString optionsStr;

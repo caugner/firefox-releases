@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsCOMPtr.h"
@@ -46,7 +46,6 @@
 #include "nsCRT.h"
 #include "nsEscape.h"
 #include "nsMsgMessageFlags.h"
-#include "nsMimeAddress.h"
 #include "comi18n.h"
 #include "nsMailHeaders.h"
 #include "msgCore.h"
@@ -60,23 +59,22 @@
 // Forward declares...
 PRInt32 MimeHeaders_build_heads_list(MimeHeaders *hdrs);
 
-static char *
-MimeHeaders_convert_header_value(MimeDisplayOptions *opt, char **value)
+static void
+MimeHeaders_convert_header_value(MimeDisplayOptions *opt, nsAFlatCString &value)
 {
   char        *converted;
 
-  if (!*value)
-    return *value;
+  if (value.IsEmpty())
+    return;
 
   if (opt && opt->rfc1522_conversion_p)
   {
-    converted = MIME_DecodeMimeHeader(*value, opt->default_charset, 
+    converted = MIME_DecodeMimeHeader(value.get(), opt->default_charset,
                                       opt->override_charset, PR_TRUE);
 
     if (converted)
     {
-      PR_FREEIF(*value);
-      *value = converted;
+      value.Adopt(converted);
     }
   }
   else
@@ -85,11 +83,8 @@ MimeHeaders_convert_header_value(MimeDisplayOptions *opt, char **value)
     // from the previous implementation.  It may be that this is dead
     // code, in which case opt->rfc1522_conversion_p is no longer
     // needed.
-    PR_FREEIF(*value);
-    *value = nsnull;
+    value.Truncate();
   }
-
-  return(*value);
 }
 
 
@@ -557,10 +552,6 @@ MimeHeaders_write_all_headers (MimeHeaders *hdrs, MimeDisplayOptions *opt, PRBoo
                       : hdrs->heads[i+1]);
     char *colon, *ocolon;
     char *contents = end;
-    char *name = 0;
-    char *hdr_value;
-
-    hdr_value = 0;
     
     /* Hack for BSD Mailbox delimiter. */
     if (i == 0 && head[0] == 'F' && !strncmp(head, "From ", 5))
@@ -592,42 +583,30 @@ MimeHeaders_write_all_headers (MimeHeaders *hdrs, MimeDisplayOptions *opt, PRBoo
     while (end > contents && nsCRT::IsAsciiSpace(end[-1]))
       end--;
     
-    name = (char *)PR_MALLOC(colon - head + 1);
-    if (!name) return MIME_OUT_OF_MEMORY;
-    memcpy(name, head, colon - head);
-    name[colon - head] = 0;
-  
+    nsCAutoString name(Substring(head, colon));
+    nsCAutoString hdr_value;
+
     if ( (end - contents) > 0 )
     {
-      hdr_value = (char *)PR_MALLOC(end - contents + 1);
-      if (!hdr_value)
-      {
-        PR_Free(name);
-        return MIME_OUT_OF_MEMORY;
-      }
-      memcpy(hdr_value, contents, end - contents);
-      hdr_value[end - contents] = 0;
+      hdr_value = Substring(contents, end);
     }
     
-    MimeHeaders_convert_header_value(opt, &hdr_value);
+    MimeHeaders_convert_header_value(opt, hdr_value);
     // if we're saving as html, we need to convert headers from utf8 to message charset, if any
     if (opt->format_out == nsMimeOutput::nsMimeMessageSaveAs && charset)
     {
-      char *convertedStr;
-      if (NS_SUCCEEDED(ConvertFromUnicode(charset, NS_ConvertUTF8toUCS2(hdr_value), &convertedStr)))
+      nsCAutoString convertedStr;
+      if (NS_SUCCEEDED(ConvertFromUnicode(charset, NS_ConvertUTF8toUTF16(hdr_value),
+                       convertedStr)))
       {
-        PR_FREEIF(hdr_value);
         hdr_value = convertedStr;
       }
     }
 
     if (attachment)
-      status = mimeEmitterAddAttachmentField(opt, name, hdr_value);
+      status = mimeEmitterAddAttachmentField(opt, name.get(), hdr_value.get());
     else
-      status = mimeEmitterAddHeaderField(opt, name, hdr_value);
-
-    PR_Free(name);
-    PR_FREEIF(hdr_value);
+      status = mimeEmitterAddHeaderField(opt, name.get(), hdr_value.get());
     
     if (status < 0) return status;
     if (!wrote_any_p) 

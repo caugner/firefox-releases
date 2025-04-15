@@ -59,10 +59,10 @@
 <!ENTITY bookmarksMenu.label "Bookmarks">
 <!ENTITY bookmarksMenu.accesskey "B">
 <!ENTITY addCurPageAsCmd.label "Bookmark This Page...">
-<!ENTITY addCurPageAsCmd.accesskey "B">
 <!ENTITY addCurPageAsCmd.commandkey "d">
 <!ENTITY manBookmarksCmd.label "Manage Bookmarks...">
 <!ENTITY manBookmarksCmd.accesskey "M">
+<!ENTITY bookmarkAllCmd.label "Bookmark All Tabs...">
 
 <!ENTITY backCmd.label                "Back">
 <!ENTITY backCmd.accesskey            "B">
@@ -75,6 +75,7 @@
 <!ENTITY reloadButton.tooltip         "Reload current page">
 <!ENTITY stopCmd.label                "Stop">
 <!ENTITY stopCmd.accesskey            "S">
+<!ENTITY stopCmd.macCommandKey        ".">
 <!ENTITY stopButton.tooltip           "Stop loading this page">
 <!ENTITY goButton.label               "Go">
 <!ENTITY goButton.tooltip             "Type a location in the address field, then click Go">
@@ -165,6 +166,9 @@
 <!ENTITY preferencesCmdUnix.label       "Preferences">
 <!ENTITY preferencesCmdUnix.accesskey     "n"> 
 
+<!ENTITY clearPrivateDataCmd.label            "Clear Private Data">
+<!ENTITY clearPrivateDataCmd.accesskey        "P">
+
 <!ENTITY viewMenu.label         "View"> 
 <!ENTITY viewMenu.accesskey       "V"> 
 <!ENTITY viewToolbarsMenu.label       "Toolbars"> 
@@ -180,15 +184,8 @@
 <!ENTITY goHomeCmd.accesskey "h">
 <!ENTITY earlierHistory.label "Earlier History">
 
-<!ENTITY helpMenu.label         "Help"> 
-<!ENTITY helpMenu.accesskey     "H"> 
-<!-- LOCALIZATION NOTE some localizations of Windows (ex:french, german) use "?"
-                       for the help button in the menubar but Gnome does not.   -->
-<!ENTITY helpMenuWin.label      "Help"> 
-<!ENTITY helpMenuWin.accesskey  "H"> 
-
-<!ENTITY aboutCmd.label         "About &brandFullName;">
-<!ENTITY aboutCmd.accesskey       "A">
+<!ENTITY releaseCmd.accesskey "R">
+<!ENTITY releaseCmd.label     "Release Notes">
 
 <!ENTITY openCmd.commandkey           "l">
 <!ENTITY urlbar.accesskey             "d">
@@ -248,8 +245,8 @@
 <!ENTITY viewImageCmd.accesskey       "I">
 <!ENTITY viewBGImageCmd.label         "View Background Image">
 <!ENTITY viewBGImageCmd.accesskey     "w">
-<!ENTITY setWallpaperCmd.label        "Set As Wallpaper...">
-<!ENTITY setWallpaperCmd.accesskey    "S">
+<!ENTITY setDesktopBackgroundCmd.label      "Set As Desktop Background...">
+<!ENTITY setDesktopBackgroundCmd.accesskey  "S">
 <!ENTITY bookmarkPageCmd.label        "Bookmark This Page...">
 <!ENTITY bookmarkPageCmd.accesskey    "m">
 <!ENTITY bookmarkLinkCmd.label        "Bookmark This Link...">
@@ -297,7 +294,7 @@
 <!ENTITY textZoomResetCmd.label         "Normal">
 <!ENTITY textZoomResetCmd.accesskey     "N">
 <!ENTITY textSize.label                 "Text Size">
-<!ENTITY textSize.accesskey             "S">
+<!ENTITY textSize.accesskey             "z">
 
 <!ENTITY mailMenu.label                   "Mail &amp; News">
 <!ENTITY mailMenu.accesskey               "M">
@@ -321,8 +318,6 @@
 <!ENTITY copyButton.tooltip             "Copy">
 <!ENTITY pasteButton.tooltip            "Paste">
 
-<!ENTITY findOnSearchBarCmd.label       "Find in This Page">
-
 <!ENTITY quitApplicationCmdWin.label       "Exit"> 
 <!ENTITY quitApplicationCmdWin.accesskey   "x">
 <!ENTITY goBackCmd.commandKey "[">
@@ -333,12 +328,6 @@
 <!ENTITY closeCmd.label                 "Close">  
 <!ENTITY closeCmd.key                   "W">  
 <!ENTITY closeCmd.accesskey             "C">
-
-<!ENTITY minimizeWindow.key "m">
-<!ENTITY minimizeWindow.label "Minimize">
-<!ENTITY bringAllToFront.label "Bring All to Front">
-<!ENTITY zoomWindow.label "Zoom">
-<!ENTITY windowMenu.label "Window">
 
 <!ENTITY pageStyleMenu.label "Page Style">
 <!ENTITY pageStyleMenu.accesskey "y">
@@ -352,29 +341,19 @@
 <!ENTITY pageReportIcon.tooltip            "Change popup blocking settings for this web site">
 
 <!ENTITY allowPopups.accesskey "p">
+<!-- On Windows we use the term "Options" to describe settings, but
+     on Linux and Mac OS X we use "Preferences" - carry that distinction
+     over into this string, which is used in the "popup blocked" info bar . -->
+<!ENTITY editPopupSettingsUnix.label "Edit Popup Blocker Preferences...">
 <!ENTITY editPopupSettings.label "Edit Popup Blocker Options...">
 <!ENTITY editPopupSettings.accesskey "E">
 <!ENTITY dontShowMessage.accesskey "D">
-
-<!ENTITY tellAFriend.label "Tell a Friend">
-<!ENTITY tellAFriend.accesskey "T">
-<!ENTITY promote.label "Promote &brandShortName;">
-<!ENTITY promote.accesskey "P">
 
 <!ENTITY bidiSwitchPageDirectionItem.label        "Switch Page Direction">
 <!ENTITY bidiSwitchPageDirectionItem.accesskey    "g">
 <!ENTITY bidiSwitchTextDirectionItem.label        "Switch Text Direction">
 <!ENTITY bidiSwitchTextDirectionItem.accesskey    "w">
 <!ENTITY bidiSwitchTextDirectionItem.commandkey   "X">
-
-<!ENTITY find.label "Find:">
-<!ENTITY findNext.label "Find Next">
-<!ENTITY findNext.tooltip "Find the next occurrence of the phrase">
-<!ENTITY findPrevious.label "Find Previous">
-<!ENTITY findPrevious.tooltip "Find the previous occurrence of the phrase">
-<!ENTITY findCloseButton.tooltip "Close Find bar">
-<!ENTITY highlight.label "Highlight">
-<!ENTITY highlight.tooltip "Highlight all occurrences of the phrase (Ctrl+Enter)">
 
 <!ENTITY findOnCmd.label     "Find in This Page...">
 <!ENTITY findOnCmd.accesskey "F">

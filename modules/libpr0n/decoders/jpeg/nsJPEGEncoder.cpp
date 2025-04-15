@@ -1,26 +1,39 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
- * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 2001 Netscape Communications Corporation.
- * All Rights Reserved.
- * 
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is the JPEG image encoder.
+ *
+ * The Initial Developer of the Original Code is 
+ * Scott MacGregor <mscott@mozilla.org>.
+ * Portions created by the Initial Developer are Copyright (C) 2005
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- *   Scott MacGregor <mscott@mozilla.org>
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifdef MOZ_LOGGING
 // sorry, this has to be before the pre-compiled header
@@ -150,77 +163,70 @@ NS_IMETHODIMP nsJPEGEncoder::EncodeClipboardImage(nsIClipboardImage * aClipboard
   // this is windows only....
   STGMEDIUM stm;
   nsresult rv = aClipboardImage->GetNativeImage( (void *) &stm);
-
-  if (NS_FAILED(rv)) 
-    return rv;
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // test...try writing the bitmap to a file
   nsCOMPtr<nsIFile> fileToUse;
-  nsAutoString fileName;
-  fileName.AssignWithConversion("moz-screenshot.jpg");
   NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(fileToUse));
 
-  fileToUse->Append(fileName);
+  fileToUse->Append(NS_LITERAL_STRING("moz-screenshot.jpg"));
   nsCOMPtr<nsILocalFile> path = do_QueryInterface(fileToUse);
   path->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
 
   rv = NS_NewLocalFileOutputStream(getter_AddRefs(mOutputStream), path);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  if (NS_FAILED(rv))
-    return rv;
-
-  // FROM HERE ON OUT, it is critical that we do not return early in this routine.
-  // we must release our lock and release stm before exiting
+  // It is critical that we do not return early in this routine from here on out.
+  // We must release our lock and release stm before exiting
   HGLOBAL hGlobal = stm.hGlobal;
-  BYTE  * pGlobal = (BYTE  *)::GlobalLock (hGlobal) ;
-  
+  BYTE  * pGlobal = (BYTE  *)::GlobalLock (hGlobal);  
   BITMAPINFO * bitMapInfo = (BITMAPINFO *) pGlobal;
 
   rv = initCompressionInfo();
-  if (NS_FAILED(rv))
-    return rv;
-
-  mInfo.in_color_space = JCS_RGB;
-  mInfo.input_components = 3;
-  mInfo.data_precision = 8;
-  mInfo.image_width = (JDIMENSION) bitMapInfo->bmiHeader.biWidth;
-  mInfo.image_height = (JDIMENSION) bitMapInfo->bmiHeader.biHeight;
-
-  unsigned char * rgbData = (unsigned char *) malloc (bitMapInfo->bmiHeader.biWidth * bitMapInfo->bmiHeader.biHeight * 3 /* RGB */);
-
-  if (rgbData)
+  if (NS_SUCCEEDED(rv))
   {
-    rv = ConvertColorBitMap((unsigned char *) (pGlobal + bitMapInfo->bmiHeader.biSize), bitMapInfo, rgbData);
-    if (NS_SUCCEEDED(rv))
+    mInfo.in_color_space = JCS_RGB;
+    mInfo.input_components = 3;
+    mInfo.data_precision = 8;
+    mInfo.image_width = (JDIMENSION) bitMapInfo->bmiHeader.biWidth;
+    mInfo.image_height = (JDIMENSION) bitMapInfo->bmiHeader.biHeight;
+
+    unsigned char * rgbData = (unsigned char *) malloc (bitMapInfo->bmiHeader.biWidth * bitMapInfo->bmiHeader.biHeight * 3 /* RGB */);
+
+    if (rgbData)
     {
-      jpeg_set_defaults(&mInfo);
-
-      if ( bitMapInfo->bmiHeader.biXPelsPerMeter > 0 &&  bitMapInfo->bmiHeader.biYPelsPerMeter > 0) 
+      rv = ConvertColorBitMap((unsigned char *) (pGlobal + bitMapInfo->bmiHeader.biSize), bitMapInfo, rgbData);
+      if (NS_SUCCEEDED(rv))
       {
-        /* Set JFIF density parameters from the BMP data */
-        mInfo.X_density = (UINT16) ( bitMapInfo->bmiHeader.biXPelsPerMeter/100); /* 100 cm per meter */
-        mInfo.Y_density = (UINT16) ( bitMapInfo->bmiHeader.biYPelsPerMeter/100);
-        mInfo.density_unit = 2;	/* dots/cm */
+        jpeg_set_defaults(&mInfo);
+
+        if ( bitMapInfo->bmiHeader.biXPelsPerMeter > 0 &&  bitMapInfo->bmiHeader.biYPelsPerMeter > 0) 
+        {
+          /* Set JFIF density parameters from the BMP data */
+          mInfo.X_density = (UINT16) ( bitMapInfo->bmiHeader.biXPelsPerMeter/100); /* 100 cm per meter */
+          mInfo.Y_density = (UINT16) ( bitMapInfo->bmiHeader.biYPelsPerMeter/100);
+          mInfo.density_unit = 2;	/* dots/cm */
+        }
+
+        jpeg_start_compress(&mInfo, TRUE);
+
+        PRInt32 row_stride = bitMapInfo->bmiHeader.biWidth * 3;
+        JSAMPROW row_pointer[1];
+
+        while (mInfo.next_scanline < mInfo.image_height) 
+        {
+          row_pointer[0] = &rgbData[mInfo.next_scanline * row_stride];
+          jpeg_write_scanlines(&mInfo, row_pointer, 1);
+        }
+
+        jpeg_finish_compress(&mInfo);
       }
 
-      jpeg_start_compress(&mInfo, TRUE);
+      free(rgbData);
+    } // if rgbdata
 
-      PRInt32 row_stride = bitMapInfo->bmiHeader.biWidth * 3;
-      JSAMPROW row_pointer[1];
-
-      while (mInfo.next_scanline < mInfo.image_height) 
-      {
-        row_pointer[0] = &rgbData[mInfo.next_scanline * row_stride];
-        jpeg_write_scanlines(&mInfo, row_pointer, 1);
-      }
-
-      jpeg_finish_compress(&mInfo);
-    }
-
-    free(rgbData);
-  } // if rgbdata
-
-  jpeg_destroy_compress(&mInfo);
+    jpeg_destroy_compress(&mInfo);
+  }
 
   // close the output file stream. we are done with it
   mOutputStream->Close();
@@ -237,7 +243,8 @@ NS_IMETHODIMP nsJPEGEncoder::EncodeClipboardImage(nsIClipboardImage * aClipboard
 
 void InvertRows(unsigned char * aInitialBuffer, PRUint32 sizeOfBuffer, PRUint32 numBytesPerRow)
 {
-  if (!numBytesPerRow) return; 
+  if (!numBytesPerRow) 
+    return; 
 
   PRUint32 numRows = sizeOfBuffer / numBytesPerRow;
   void * temporaryRowHolder = (void *) nsMemory::Alloc(numBytesPerRow);
@@ -291,7 +298,8 @@ nsresult ConvertColorBitMap(unsigned char * buffer, PBITMAPINFO pBitMapInfo, uns
     colorMasks.blue = (*((PRUint32*)&(pBitMapInfo->bmiColors[2]))); 
     CalcBitShift(&colorMasks);
     buffer += 3 * sizeof(DWORD);
-  } else if (pBitMapInfo->bmiHeader.biCompression == BI_RGB && !imageSize)  // BI_RGB can have a size of zero which means we figure it out
+  } 
+  else if (pBitMapInfo->bmiHeader.biCompression == BI_RGB && !imageSize)  // BI_RGB can have a size of zero which means we figure it out
   {
     // XXX: note use rowSize here and not biWidth. rowSize accounts for the DWORD padding for each row
     imageSize = rowSize * pBitMapInfo->bmiHeader.biHeight;
@@ -417,7 +425,6 @@ nsresult ConvertColorBitMap(unsigned char * buffer, PBITMAPINFO pBitMapInfo, uns
         {
           // advance index to skip over remaining padding bytes
           index += (rowSize - pos);
-
         }
         numPixelsLeftInRow = pBitMapInfo->bmiHeader.biWidth;
         pos = 0; 
@@ -433,37 +440,40 @@ nsresult ConvertColorBitMap(unsigned char * buffer, PBITMAPINFO pBitMapInfo, uns
 
 static void calcBitmask(PRUint32 aMask, PRUint8& aBegin, PRUint8& aLength)
 {
-    // find the rightmost 1
-    PRUint8 pos;
-    PRBool started = PR_FALSE;
-    aBegin = aLength = 0;
-    for (pos = 0; pos <= 31; pos++) {
-        if (!started && (aMask & (1 << pos))) {
-            aBegin = pos;
-            started = PR_TRUE;
-        }
-        else if (started && !(aMask & (1 << pos))) {
-            aLength = pos - aBegin;
-            break;
-        }
+  // find the rightmost 1
+  PRUint8 pos;
+  PRBool started = PR_FALSE;
+  aBegin = aLength = 0;
+  for (pos = 0; pos <= 31; pos++) 
+  {
+    if (!started && (aMask & (1 << pos))) 
+    {
+        aBegin = pos;
+        started = PR_TRUE;
     }
+    else if (started && !(aMask & (1 << pos))) 
+    {
+        aLength = pos - aBegin;
+        break;
+    }
+  }
 }
 
 void CalcBitShift(bitFields * aColorMask)
 {
-    PRUint8 begin, length;
-    // red
-    calcBitmask(aColorMask->red, begin, length);
-    aColorMask->redRightShift = begin;
-    aColorMask->redLeftShift = 8 - length;
-    // green
-    calcBitmask(aColorMask->green, begin, length);
-    aColorMask->greenRightShift = begin;
-    aColorMask->greenLeftShift = 8 - length;
-    // blue
-    calcBitmask(aColorMask->blue, begin, length);
-    aColorMask->blueRightShift = begin;
-    aColorMask->blueLeftShift = 8 - length;
+  PRUint8 begin, length;
+  // red
+  calcBitmask(aColorMask->red, begin, length);
+  aColorMask->redRightShift = begin;
+  aColorMask->redLeftShift = 8 - length;
+  // green
+  calcBitmask(aColorMask->green, begin, length);
+  aColorMask->greenRightShift = begin;
+  aColorMask->greenLeftShift = 8 - length;
+  // blue
+  calcBitmask(aColorMask->blue, begin, length);
+  aColorMask->blueRightShift = begin;
+  aColorMask->blueLeftShift = 8 - length;
 }
 
 /******************************************************************************/

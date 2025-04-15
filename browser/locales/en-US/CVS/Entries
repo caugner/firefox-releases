@@ -1,8 +1,10 @@
-/README.txt/1.1.2.1/Mon Oct 18 23:42:12 2004//TFIREFOX_1_0_RELEASE
-/defines.inc/1.1.2.4/Thu Sep 16 13:00:43 2004//TFIREFOX_1_0_RELEASE
-/extra-jar.mn/1.1.2.1/Thu Sep 30 18:56:57 2004//TFIREFOX_1_0_RELEASE
-/firefox-l10n.js/1.1.2.1/Sat Oct 16 03:07:43 2004//TFIREFOX_1_0_RELEASE
+/README.txt/1.2/Tue Nov 30 08:22:49 2004//TFIREFOX_1_5_RELEASE
+/defines.inc/1.2.18.1/Wed Sep 21 12:22:01 2005//TFIREFOX_1_5_RELEASE
+/extra-jar.mn/1.2/Tue Nov 30 08:22:49 2004//TFIREFOX_1_5_RELEASE
+/firefox-l10n.js/1.2/Tue Nov 30 08:22:49 2004//TFIREFOX_1_5_RELEASE
 D/chrome////
 D/installer////
+D/os2////
 D/profile////
 D/searchplugins////
+D/updater////

@@ -14,9 +14,9 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code mozilla.org code.
+ * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code Christopher Blizzard
+ * The Initial Developer of the Original Code is Christopher Blizzard
  * <blizzard@mozilla.org>.  Portions created by the Initial Developer
  * are Copyright (C) 2001 the Initial Developer. All Rights Reserved.
  *
@@ -44,6 +44,7 @@ nsCommonWidget::nsCommonWidget()
     mIsTopLevel       = PR_FALSE;
     mIsDestroyed      = PR_FALSE;
     mNeedsResize      = PR_FALSE;
+    mNeedsMove        = PR_FALSE;
     mListenForResizes = PR_FALSE;
     mIsShown          = PR_FALSE;
     mNeedsShow        = PR_FALSE;
@@ -128,6 +129,9 @@ nsCommonWidget::InitMouseScrollEvent(nsMouseScrollEvent &aEvent,
         break;
     }
 
+    aEvent.point.x = nscoord(aGdkEvent->x);
+    aEvent.point.y = nscoord(aGdkEvent->y);
+
     aEvent.isShift   = (aGdkEvent->state & GDK_SHIFT_MASK)
         ? PR_TRUE : PR_FALSE;
     aEvent.isControl = (aGdkEvent->state & GDK_CONTROL_MASK)
@@ -157,7 +161,7 @@ nsCommonWidget::InitKeyEvent(nsKeyEvent &aEvent, GdkEventKey *aGdkEvent)
 void
 nsCommonWidget::DispatchGotFocusEvent(void)
 {
-    nsGUIEvent event(NS_GOTFOCUS, this);
+    nsGUIEvent event(PR_TRUE, NS_GOTFOCUS, this);
     nsEventStatus status;
     DispatchEvent(&event, status);
 }
@@ -165,7 +169,7 @@ nsCommonWidget::DispatchGotFocusEvent(void)
 void
 nsCommonWidget::DispatchLostFocusEvent(void)
 {
-    nsGUIEvent event(NS_LOSTFOCUS, this);
+    nsGUIEvent event(PR_TRUE, NS_LOSTFOCUS, this);
     nsEventStatus status;
     DispatchEvent(&event, status);
 }
@@ -173,7 +177,7 @@ nsCommonWidget::DispatchLostFocusEvent(void)
 void
 nsCommonWidget::DispatchActivateEvent(void)
 {
-    nsGUIEvent event(NS_ACTIVATE, this);
+    nsGUIEvent event(PR_TRUE, NS_ACTIVATE, this);
     nsEventStatus status;
     DispatchEvent(&event, status);
 }
@@ -181,7 +185,7 @@ nsCommonWidget::DispatchActivateEvent(void)
 void
 nsCommonWidget::DispatchDeactivateEvent(void)
 {
-    nsGUIEvent event(NS_DEACTIVATE, this);
+    nsGUIEvent event(PR_TRUE, NS_DEACTIVATE, this);
     nsEventStatus status;
     DispatchEvent(&event, status);
 }
@@ -189,7 +193,7 @@ nsCommonWidget::DispatchDeactivateEvent(void)
 void
 nsCommonWidget::DispatchResizeEvent(nsRect &aRect, nsEventStatus &aStatus)
 {
-    nsSizeEvent event(NS_SIZE, this);
+    nsSizeEvent event(PR_TRUE, NS_SIZE, this);
 
     event.windowSize = &aRect;
     event.point.x = aRect.x;
@@ -245,10 +249,14 @@ nsCommonWidget::Show(PRBool aState)
 
     // If someone is showing this window and it needs a resize then
     // resize the widget.
-    if (aState && mNeedsResize) {
-        LOG(("\tresizing\n"));
-        NativeResize(mBounds.x, mBounds.y, mBounds.width, mBounds.height,
-                     PR_FALSE);
+    if (aState) {
+        if (mNeedsMove) {
+            LOG(("\tresizing\n"));
+            NativeResize(mBounds.x, mBounds.y, mBounds.width, mBounds.height,
+                         PR_FALSE);
+        } else if (mNeedsResize) {
+            NativeResize(mBounds.width, mBounds.height, PR_FALSE);
+        }
     }
 
     NativeShow(aState);
@@ -275,7 +283,12 @@ nsCommonWidget::Resize(PRInt32 aWidth, PRInt32 aHeight, PRBool aRepaint)
         if (AreBoundsSane()) {
             // Yep?  Resize the window
             //Maybe, the toplevel has moved
-            if (mIsTopLevel)
+
+            // Note that if the widget needs to be shown because it
+            // was previously insane in Resize(x,y,w,h), then we need
+            // to set the x and y here too, because the widget wasn't
+            // moved back then
+            if (mIsTopLevel || mNeedsShow)
                 NativeResize(mBounds.x, mBounds.y,
                              mBounds.width, mBounds.height, aRepaint);
             else
@@ -374,6 +387,7 @@ nsCommonWidget::Resize(PRInt32 aX, PRInt32 aY, PRInt32 aWidth, PRInt32 aHeight,
         }
         else {
             mNeedsResize = PR_TRUE;
+            mNeedsMove = PR_TRUE;
         }
     }
 
@@ -438,7 +452,7 @@ nsCommonWidget::OnDestroy(void)
 
     nsCOMPtr<nsIWidget> kungFuDeathGrip = this;
 
-    nsGUIEvent event(NS_DESTROY, this);
+    nsGUIEvent event(PR_TRUE, NS_DESTROY, this);
     nsEventStatus status;
     DispatchEvent(&event, status);
 }

@@ -1,25 +1,42 @@
-/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* ex: set tabstop=8 softtabstop=2 shiftwidth=2 expandtab: */
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
- *   Ken Herron <kherron@newsguy.com>
+ *   Ken Herron <kherron@fastmail.us>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK *****
  *
  * This Original Code has been modified by IBM Corporation. Modifications made by IBM 
  * described herein are Copyright (c) International Business Machines Corporation, 2000.
@@ -61,16 +78,14 @@
 #include "nsBuildID.h"
 #endif /* !NS_BUILD_ID */
 
+#include "nsPrintfCString.h"
+
 #include "prenv.h"
 #include "prprf.h"
 #include "prerror.h"
 
 #include <errno.h>
 #include <sys/wait.h>
-
-#ifdef MOZ_ENABLE_FREETYPE2
-#include "nsType8.h"
-#endif
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo *nsPostScriptObjLM = PR_NewLogModule("nsPostScriptObj");
@@ -182,11 +197,12 @@ PrintAsDSCTextline(FILE *f, const char *text, int maxlen)
 nsPostScriptObj::nsPostScriptObj() :
   mPrintSetup(nsnull),
   mPrintContext(nsnull),
-  mTitle(nsnull)
+  mTitle(nsnull),
+  mScriptFP(nsnull)
 {
   PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("nsPostScriptObj::nsPostScriptObj()\n"));
 
-  nsServiceManager::GetService(kPrefCID, NS_GET_IID(nsIPref), (nsISupports**) &gPrefs);
+  CallGetService(kPrefCID, &gPrefs);
 
   gLangGroups = new nsHashtable();
 }
@@ -199,24 +215,11 @@ nsPostScriptObj::~nsPostScriptObj()
 {
   PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("nsPostScriptObj::~nsPostScriptObj()\n"));
 
-  // The mPrintContext can be null
-  // if  opening the PostScript document
-  // fails.  Giving an invalid path, relative path
-  // or a directory which the user does not have
-  // write permissions for will fail to open a document
-  // see bug 85535 
-  if (mPrintContext) {
-    if (mPrintSetup->out) {
-      fclose(mPrintSetup->out);
-      mPrintSetup->out = nsnull;
-    }
-    if (mPrintSetup->tmpBody) {
-      fclose(mPrintSetup->tmpBody);
-      mPrintSetup->tmpBody = nsnull;
-    }  
-  
-    finalize_translation();
-  }
+  if (mScriptFP)
+    fclose(mScriptFP);
+  if (mDocScript)
+    mDocScript->Remove(PR_FALSE);
+  finalize_translation();
 
   // Cleanup things allocated along the way
   if (nsnull != mTitle){
@@ -224,20 +227,14 @@ nsPostScriptObj::~nsPostScriptObj()
   }
 
   if (nsnull != mPrintContext){
-    if (nsnull != mPrintContext->prInfo){
-      delete mPrintContext->prInfo;
-    }
-    if (nsnull != mPrintContext->prSetup){
-      delete mPrintContext->prSetup;
-    }
+    delete mPrintContext->prInfo;
+    delete mPrintContext->prSetup;
     delete mPrintContext;
     mPrintContext = nsnull;
   }
 
-  if (nsnull != mPrintSetup) {
-	  delete mPrintSetup;
-	  mPrintSetup = nsnull;
-  }
+  delete mPrintSetup;
+  mPrintSetup = nsnull;
 
   NS_IF_RELEASE(gPrefs);
 
@@ -246,11 +243,6 @@ nsPostScriptObj::~nsPostScriptObj()
     delete gLangGroups;
     gLangGroups = nsnull;
   }
-
-  if (mDocProlog)
-    mDocProlog->Remove(PR_FALSE);
-  if (mDocScript)
-    mDocScript->Remove(PR_FALSE);
 
   PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("nsPostScriptObj::~nsPostScriptObj(): printing done."));
 }
@@ -271,11 +263,8 @@ nsresult
 nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
 {
   PRBool      isGray,
-              isAPrinter,
               isFirstPageFirst;
   int         landscape;
-  const char *printername;
-  nsresult    rv;
 
   PrintInfo* pi = new PrintInfo(); 
   mPrintSetup = new PrintSetup();
@@ -286,8 +275,8 @@ nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
     mPrintSetup->color = PR_TRUE;              // Image output 
     mPrintSetup->deep_color = PR_TRUE;         // 24 bit color output 
     mPrintSetup->reverse = 0;                  // Output order, 0 is acsending 
+    mPrintSetup->num_copies = 1;
     if ( aSpec != nsnull ) {
-      aSpec->GetCopies(mPrintSetup->num_copies);
       aSpec->GetGrayscale( isGray );
       if ( isGray == PR_TRUE ) {
         mPrintSetup->color = PR_FALSE; 
@@ -297,107 +286,14 @@ nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
       aSpec->GetFirstPageFirst( isFirstPageFirst );
       if ( isFirstPageFirst == PR_FALSE )
         mPrintSetup->reverse = 1;
-
-      // Clean up tempfile remnants of any previous print job
-      if (mDocProlog)
-        mDocProlog->Remove(PR_FALSE);
-      if (mDocScript)
-        mDocScript->Remove(PR_FALSE);
-               
-      aSpec->GetToPrinter( isAPrinter );
-      if (isAPrinter) {
-        /* Define the destination printer (queue). 
-         * We assume that the print command is set to 
-         * "lpr ${MOZ_PRINTER_NAME:+'-P'}${MOZ_PRINTER_NAME}" 
-         * - which means that if the ${MOZ_PRINTER_NAME} env var is not empty
-         * the "-P" option of lpr will be set to the printer name.
-         */
-
-        /* get printer name */
-        aSpec->GetPrinterName(&printername);
-        
-        /* do not set the ${MOZ_PRINTER_NAME} env var if we want the default 
-         * printer */
-        if (printername)
-        {
-          /* strip the leading NS_POSTSCRIPT_DRIVER_NAME string */
-          printername = printername + NS_POSTSCRIPT_DRIVER_NAME_LEN;
-          
-          if (!strcmp(printername, "default"))
-            printername = "";
-        }
-        else 
-          printername = "";
-
-        /* Construct an environment string MOZ_PRINTER_NAME=<printername>
-         * and add it to the environment.
-         * On a POSIX system the original buffer becomes part of the
-         * environment, so it must remain valid until replaced. To preserve
-         * the ability to unload shared libraries, we have to either remove
-         * the string from the environment at unload time or else store the
-         * string in the heap, where it'll be left behind after unloading
-         * the library.
-         */
-        static char *moz_printer_string;
-        char *old_printer_string = moz_printer_string;
-        moz_printer_string = PR_smprintf("MOZ_PRINTER_NAME=%s", printername);
-#ifdef DEBUG
-        printf("setting '%s'\n", moz_printer_string);
-#endif
-
-        if (!moz_printer_string) {
-          /* We're probably out of memory */
-          moz_printer_string = old_printer_string;
-          return (PR_OUT_OF_MEMORY_ERROR == PR_GetError()) ? 
-            NS_ERROR_OUT_OF_MEMORY : NS_ERROR_UNEXPECTED;
-        }
-        else {
-          PR_SetEnv(moz_printer_string);
-          if (old_printer_string)
-            PR_smprintf_free(old_printer_string);
-        }
-
-        aSpec->GetCommand(&mPrintSetup->print_cmd);
-        // Create a temporary file for the document prolog
-        rv = mTempfileFactory.CreateTempFile(getter_AddRefs(mDocProlog),
-            &mPrintSetup->out, "w+");
-        NS_ENSURE_SUCCESS(rv, NS_ERROR_GFX_PRINTER_FILE_IO_ERROR);
-        NS_POSTCONDITION(nsnull != mPrintSetup->out,
-          "CreateTempFile succeeded but no file handle");
-
-      } else {
-        const char *path;
-        aSpec->GetPath(&path);
-        rv = NS_NewNativeLocalFile(nsDependentCString(path),
-          PR_FALSE, getter_AddRefs(mDocProlog));
-        rv = mDocProlog->OpenANSIFileDesc("w", &mPrintSetup->out);
-        if (NS_FAILED(rv))
-          return NS_ERROR_GFX_PRINTER_COULD_NOT_OPEN_FILE;
-        NS_POSTCONDITION(nsnull != mPrintSetup->out,
-          "OpenANSIFileDesc succeeded but no file handle");
-        mPrintSetup->print_cmd = NULL;	// Indicate print-to-file
-      }
-
-      // Open the temporary file for the document script (printable content)
-      rv = mTempfileFactory.CreateTempFile(getter_AddRefs(mDocScript),
-          &mPrintSetup->tmpBody, "w+");
-      if (NS_FAILED(rv)) {
-        fclose(mPrintSetup->out);
-        mPrintSetup->out = nsnull;
-        mDocProlog->Remove(PR_FALSE);
-        mDocProlog = nsnull;
-        return NS_ERROR_GFX_PRINTER_FILE_IO_ERROR;
-      }
-      NS_POSTCONDITION(nsnull != mPrintSetup->tmpBody,
-        "CreateTempFile succeeded but no file handle");
     } else 
         return NS_ERROR_FAILURE;
 
-    /* make sure the open worked */
+    /* Open a temporary file for the document body */
+    nsresult rv = mTempfileFactory.CreateTempFile(
+	getter_AddRefs(mDocScript), &mScriptFP, "a+");
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_GFX_PRINTER_FILE_IO_ERROR);
 
-    if (!mPrintSetup->out)
-      return NS_ERROR_GFX_PRINTER_CMD_FAILURE;
-      
     mPrintContext = new PSContext();
     memset(mPrintContext, 0, sizeof(struct PSContext_));
     memset(pi, 0, sizeof(struct PrintInfo_));
@@ -462,12 +358,23 @@ nsPostScriptObj::Init( nsIDeviceContextSpecPS *aSpec )
     // begin the document
     initialize_translation(mPrintSetup);
 
-    begin_document();	
     mPageNumber = 1;                  // we are on the first page
+
+    // read the printer properties file
+    NS_LoadPersistentPropertiesFromURISpec(getter_AddRefs(mPrinterProps),
+      NS_LITERAL_CSTRING("resource:/res/unixpsfonts.properties"));
+
     return NS_OK;
     } else {
     return NS_ERROR_FAILURE;
     }
+}
+
+void
+nsPostScriptObj::SetNumCopies(int aNumCopies)
+{
+  NS_PRECONDITION(mPrintSetup, "mPrintSetup must not be NULL");
+  mPrintSetup->num_copies = aNumCopies;
 }
 
 /** ---------------------------------------------------
@@ -496,14 +403,14 @@ nsPostScriptObj::initialize_translation(PrintSetup* pi)
 }
 
 /** ---------------------------------------------------
- *  See documentation in nsPostScriptObj.h
- *	@update 2/1/99 dwc
+ *  Write the document prolog.
+ *  @param aHandle File handle which receives the prolog
  */
 void 
-nsPostScriptObj::begin_document()
+nsPostScriptObj::write_prolog(FILE *aHandle, PRBool aFTPEnable)
 {
-int i;
-FILE *f;
+  int i;
+  FILE *f = aHandle;
 
   nscoord paper_width = mPrintContext->prSetup->width;
   nscoord paper_height = mPrintContext->prSetup->height;
@@ -521,29 +428,26 @@ FILE *f;
   else
     orientation = "Portrait";
 
-  f = mPrintContext->prSetup->out;
+  float fWidth = NSTwipsToFloatPoints(paper_width);
+  float fHeight = NSTwipsToFloatPoints(paper_height);
+
   fprintf(f, "%%!PS-Adobe-3.0\n");
   fprintf(f, "%%%%BoundingBox: 0 0 %s %s\n",
-    fpCString(NSTwipsToFloatPoints(paper_width)).get(),
-    fpCString(NSTwipsToFloatPoints(paper_height)).get());
+    fpCString(NSToCoordRound(fWidth)).get(),
+    fpCString(NSToCoordRound(fHeight)).get());
+  fprintf(f, "%%%%HiResBoundingBox: 0 0 %s %s\n",
+    fpCString(fWidth).get(),
+    fpCString(fHeight).get());
 
   fprintf(f, "%%%%Creator: Mozilla PostScript module (%s/%lu)\n",
              "rv:" MOZILLA_VERSION, (unsigned long)NS_BUILD_ID);
   fprintf(f, "%%%%DocumentData: Clean8Bit\n");
   fprintf(f, "%%%%DocumentPaperSizes: %s\n", mPrintSetup->paper_name);
   fprintf(f, "%%%%Orientation: %s\n", orientation);
+  fprintf(f, "%%%%Pages: %d\n", (int) mPageNumber - 1);
 
-  // hmm, n_pages is always zero so don't use it
-#if 0
-  fprintf(f, "%%%%Pages: %d\n", (int) mPrintContext->prInfo->n_pages);
-#else
-  fprintf(f, "%%%%Pages: (atend)\n");
-#endif
-
-  if (mPrintContext->prSetup->reverse)
-	  fprintf(f, "%%%%PageOrder: Descend\n");
-  else
-	  fprintf(f, "%%%%PageOrder: Ascend\n");
+  fprintf(f, "%%%%PageOrder: %s\n",
+      mPrintContext->prSetup->reverse ? "Descend" : "Ascend");
 
   if (nsnull != mPrintContext->prInfo->doc_title) {
     // DSC spec: max line length is 255 characters
@@ -552,16 +456,10 @@ FILE *f;
     fprintf(f, "\n");
   }
 
-#ifdef NOTYET
-  fprintf(f, "%%%%For: %n", user_name_stuff);
-#endif
   fprintf(f, "%%%%EndComments\n");
 
   // general comments: Mozilla-specific 
-#ifdef NOTYET
-  fprintf(f, "\n%% MozillaURL: %s\n", mPrintContext->prSetup->url->address);
-#endif
-  fprintf(f, "%% MozillaCharsetName: iso-8859-1\n\n");
+  fputs("% MozillaCharsetName: iso-8859-1\n\n", f);
     
     // now begin prolog 
   fprintf(f, "%%%%BeginProlog\n");
@@ -569,8 +467,11 @@ FILE *f;
   // Tell the printer what size paper it should use
   fprintf(f,
     "/setpagedevice where\n"			// Test for the feature
-    "{ pop 1 dict\n"				// Set up a dictionary
+    "{ pop 2 dict\n"
     "  dup /PageSize [ %s %s ] put\n"		// Paper dimensions
+    "  dup /Policies 1 dict\n"
+    "    dup /PageSize 3 put\n"			// Select the nearest page size to fit
+    "  put\n"
     "  setpagedevice\n"				// Install settings
     "} if\n", 
     fpCString(NSTwipsToFloatPoints(paper_width)).get(),
@@ -612,12 +513,48 @@ FILE *f;
     "  ifelse\n"
     "  bind def\n");
 
-  for(i=0;i<NUM_AFM_FONTS;i++){
+  // Procedure to stroke a rectangle. Coordinates are rounded
+  // to device pixel boundaries. See Adobe Technical notes 5111 and
+  // 5126 and the "Scan Conversion" section of the PS Language
+  // Reference for background.
+  fprintf(f, "%s",
+    "/Mrect { % x y w h Mrect -\n"
+    "  2 index add\n"		// x y w h+y
+    "  4 1 roll\n"		// h+y x y w
+    "  2 index add\n"		// h+y x y w+x
+    "  4 1 roll\n"		// w+x h+y x y
+    "  transform round .1 add exch round .1 add exch itransform\n"
+    "  4 -2 roll\n"		// x' y' w+x h+x
+    "  transform round .1 sub exch round .1 sub exch itransform\n"
+    "  2 index sub\n"		// x' y' w'+x h'
+    "  4 1 roll\n"		// h' x' y' w'+x
+    "  2 index sub\n"		// h' x' y' w'
+    "  4 1 roll\n"		// w' h' x' y'
+    "  moveto\n"		// w' h'
+    "  dup 0 exch rlineto\n"	// w' h'
+    "  exch 0 rlineto\n"	// h'
+    "  neg 0 exch rlineto\n"	// -
+    "  closepath\n"
+    "} bind def\n"
+
+    // Setstrokeadjust, or null if not supported
+    "/Msetstrokeadjust /setstrokeadjust where\n"
+    "  { pop /setstrokeadjust } { /pop } ifelse\n"
+    "  load def\n"
+
+    "\n"
+    );
+
+  if (aFTPEnable) {
+    fprintf(f, "%%%%EndProlog\n");
+    return;
+  }
+
+  for(i = 0;i < NUM_AFM_FONTS; i++){
     fprintf(f, 
       "/F%d /%s Mfr\n"
       "/f%d { dup /csize exch def /F%d Msf } bind def\n",
       i, gSubstituteFonts[i].mPSName, i, i);
-
   }
 
   fprintf(f, "%s",
@@ -1681,7 +1618,9 @@ FILE *f;
     "16#FB4B	/afii57700 def\n"
     "end\n"
     "def\n"
+    );
 
+  fprintf(f, "%s",
     "10 dict dup begin\n"
     "  /FontType 3 def\n"
     "  /FontMatrix [.001 0 0 .001 0 0 ] def\n"
@@ -1740,7 +1679,9 @@ FILE *f;
     "    } for\n"
     "    show pop pop\n"
     "} def\n"
+    );
 
+  fprintf(f, "%s",
     "/draw_undefined_char\n"
     "{\n"
     "  csize /NoglyphFont Msf (a) show\n"
@@ -1879,59 +1820,37 @@ FILE *f;
     "  /unicodeshow1 { real_glyph_unicodeshow } bind def\n"
     "  /unicodeshow2 { real_unicodeshow_native } bind def\n"
     "} bind def\n"
-
-    // Procedure to stroke a rectangle. Coordinates are rounded
-    // to device pixel boundaries. See Adobe Technical notes 5111 and
-    // 5126 and the "Scan Conversion" section of the PS Language
-    // Reference for background.
-    "/Mrect { % x y w h Mrect -\n"
-    "  2 index add\n"		// x y w h+y
-    "  4 1 roll\n"		// h+y x y w
-    "  2 index add\n"		// h+y x y w+x
-    "  4 1 roll\n"		// w+x h+y x y
-    "  transform round .1 add exch round .1 add exch itransform\n"
-    "  4 -2 roll\n"		// x' y' w+x h+x
-    "  transform round .1 sub exch round .1 sub exch itransform\n"
-    "  2 index sub\n"		// x' y' w'+x h'
-    "  4 1 roll\n"		// h' x' y' w'+x
-    "  2 index sub\n"		// h' x' y' w'
-    "  4 1 roll\n"		// w' h' x' y'
-    "  moveto\n"		// w' h'
-    "  dup 0 exch rlineto\n"	// w' h'
-    "  exch 0 rlineto\n"	// h'
-    "  neg 0 exch rlineto\n"	// -
-    "  closepath\n"
-    "} bind def\n"
-
-    // Setstrokeadjust, or null if not supported
-    "/Msetstrokeadjust /setstrokeadjust where\n"
-    "  { pop /setstrokeadjust } { /pop } ifelse\n"
-    "  load def\n"
-
-    "\n"
     );
 
-  // read the printer properties file
-  NS_LoadPersistentPropertiesFromURISpec(getter_AddRefs(mPrinterProps),
-    NS_LITERAL_CSTRING("resource:/res/unixpsfonts.properties"));
-
   // setup prolog for each langgroup
-  initlanggroup();
+  initlanggroup(f);
 
   fprintf(f, "%%%%EndProlog\n");
 }
 
 /** ---------------------------------------------------
- *  See documentation in nsPostScriptObj.h
- *	@update 20/01/03 louie
+ *  Copy the body of the print job to a stream.
+ *  @param aDestHandle Stream which will receive the print job.
+ *  @return NS_OK on success.
+ *          NS_ERROR_GFX_PRINTER_FILE_IO_ERROR on any I/O error.
  */
-void
-nsPostScriptObj::add_cid_check()
+nsresult
+nsPostScriptObj::write_script(FILE *aDestHandle)
 {
-#ifdef MOZ_ENABLE_FREETYPE2
-  AddCIDCheckCode(mPrintContext->prSetup->out);
-#endif
+  NS_PRECONDITION(aDestHandle, "Handle must not be NULL");
+  char buf[BUFSIZ];
+  size_t readAmt;
+
+  rewind(mScriptFP);
+  while ((readAmt = fread(buf, 1, sizeof buf, mScriptFP))) {
+    size_t writeAmt = fwrite(buf, 1, readAmt, aDestHandle);
+    if (readAmt != writeAmt)
+      break;
+  }
+  return ferror(mScriptFP) || ferror(aDestHandle) ?
+    NS_ERROR_GFX_PRINTER_FILE_IO_ERROR : NS_OK;
 }
+
 
 /** ---------------------------------------------------
  *  See documentation in nsPostScriptObj.h
@@ -1940,26 +1859,27 @@ nsPostScriptObj::add_cid_check()
 void 
 nsPostScriptObj::begin_page()
 {
-FILE *f;
-
-  f = mPrintContext->prSetup->tmpBody;
-  fprintf(f, "%%%%Page: %d %d\n", mPageNumber, mPageNumber);
-  fprintf(f, "%%%%BeginPageSetup\n");
-  if(mPrintSetup->num_copies != 1) {
-    fprintf(f, "1 dict dup /NumCopies %d put setpagedevice\n",
-      mPrintSetup->num_copies);
+  fprintf(mScriptFP, "%%%%Page: %d %d\n", mPageNumber, mPageNumber);
+  fprintf(mScriptFP, "%%%%BeginPageSetup\n");
+  if(mPrintSetup->num_copies > 1) {
+    fprintf(mScriptFP, 
+      "/setpagedevice where\n"
+      "{ pop 1 dict dup /NumCopies %d put setpagedevice }\n"
+      "{ userdict /#copies %d put } ifelse\n",
+      mPrintSetup->num_copies, mPrintSetup->num_copies);
   }
-  fprintf(f,"/pagelevel save def\n");
+  fprintf(mScriptFP,"/pagelevel save def\n");
   // Rescale the coordinate system from points to twips.
   scale(1.0 / TWIPS_PER_POINT_FLOAT, 1.0 / TWIPS_PER_POINT_FLOAT);
   // Rotate and shift the coordinate system for landscape
   if (mPrintContext->prSetup->landscape){
-    fprintf(f, "90 rotate 0 -%d translate\n", mPrintContext->prSetup->height);
+    fprintf(mScriptFP, "90 rotate 0 -%d translate\n",
+	mPrintContext->prSetup->height);
   }
 
   // Try to turn on automatic stroke adjust
-  fputs("true Msetstrokeadjust\n", f);
-  fprintf(f, "%%%%EndPageSetup\n");
+  fputs("true Msetstrokeadjust\n", mScriptFP);
+  fprintf(mScriptFP, "%%%%EndPageSetup\n");
 
   // need to reset all U2Ntable
   gLangGroups->Enumerate(ResetU2Ntable, nsnull);
@@ -1972,8 +1892,7 @@ FILE *f;
 void 
 nsPostScriptObj::end_page()
 {
-  fprintf(mPrintContext->prSetup->tmpBody, "pagelevel restore\n");
-  fprintf(mPrintContext->prSetup->tmpBody, "showpage\n");
+  fputs("pagelevel restore showpage\n", mScriptFP);
   mPageNumber++;
 }
 
@@ -1984,114 +1903,16 @@ nsPostScriptObj::end_page()
 nsresult 
 nsPostScriptObj::end_document()
 {
-  nsresult rv;
   PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("nsPostScriptObj::end_document()\n"));
+  NS_PRECONDITION(mScriptFP, "No script file handle");
 
-  // insurance against breakage
-  if (!mPrintContext || !mPrintContext->prSetup|| !mPrintContext->prSetup->out || !mPrintSetup) 
-    return NS_ERROR_GFX_PRINTER_CMD_FAILURE;
-
-  FILE *f = mPrintContext->prSetup->out;
-  
-  // output "tmpBody"
-  char   buffer[256];
-  size_t length;
-        
-  if (!mPrintContext->prSetup->tmpBody)
-    return NS_ERROR_GFX_PRINTER_CMD_FAILURE;
-    
-  /* Reset file pointer to the beginning of the temp tmpBody file... */
-  fseek(mPrintContext->prSetup->tmpBody, 0, SEEK_SET);
-
-  /* Copy the document script (body) to the end of the prolog (header) */
-  while ((length = fread(buffer, 1, sizeof(buffer),
-          mPrintContext->prSetup->tmpBody)) > 0)  {
-    fwrite(buffer, 1, length, f);
-  }
-
-  /* Close the script file handle and dispose of the temporary file */
-  if (mPrintSetup->tmpBody) {
-    fclose(mPrintSetup->tmpBody);
-    mPrintSetup->tmpBody = nsnull;
-  }
-  mDocScript->Remove(PR_FALSE);
-  mDocScript = nsnull;
-  
   // Finish up the document.
-  // n_pages is zero so use mPageNumber
-  fprintf(f, "%%%%Trailer\n");
-  fprintf(f, "%%%%Pages: %d\n", (int) mPageNumber - 1);
-  fprintf(f, "%%%%EOF\n");
+  fprintf(mScriptFP, "%%%%Trailer\n");
+  fprintf(mScriptFP, "%%%%EOF\n");
 
-  if (!mPrintSetup->print_cmd) {
-    PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("print to file completed.\n"));
-    fclose(mPrintSetup->out);
-    rv = NS_OK;
-  }  
-  else {
-    PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("piping job to '%s'\n", mPrintSetup->print_cmd));
-        
-#ifdef VMS
-    // VMS can't print to a pipe, so issue a print command for the
-    // mDocProlog file. Also, we do not delete the print file here since
-    // on OpenVMS we can not delete the file until after it has actually
-    // printed (we use a default print command of "print /delete" to take
-    // care of it).
-
-    fclose(mPrintSetup->out);
-
-    nsCAutoString prologFile;
-    rv = mDocProlog->GetNativePath(prologFile);
-    if (NS_SUCCEEDED(rv)) {
-      char *prologFileExternal = GENERIC_EXTERNAL_NAME(prologFile.get(),0);
-      char *VMSPrintCommand =
-        PR_smprintf("%s %s", mPrintSetup->print_cmd, prologFileExternal);
-      free(prologFileExternal);
-      if (!VMSPrintCommand)
-        rv = NS_ERROR_OUT_OF_MEMORY;
-      else {
-        PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("VMS print command '%s'\n", 
-          VMSPrintCommand));
-        int VMSstatus = system(VMSPrintCommand);
-        PR_smprintf_free(VMSPrintCommand);
-        PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("VMS print status = %d\n",
-          VMSstatus));
-        rv = WIFEXITED(VMSstatus) ? NS_OK : NS_ERROR_GFX_PRINTER_CMD_FAILURE;
-      }
-    }
-#else
-    // On *nix, popen() the print command and pipe the contents of
-    // mDocProlog into it.
-
-    FILE  *pipe;
-
-    pipe = popen(mPrintSetup->print_cmd, "w");
-    if (!pipe)
-      rv = NS_ERROR_GFX_PRINTER_CMD_FAILURE;
-    else {
-      unsigned long job_size = 0;
-    
-      /* Reset file pointer to the beginning of the temp file... */
-      fseek(mPrintSetup->out, 0, SEEK_SET);
-
-      while ((length = fread(buffer, 1, sizeof(buffer), mPrintSetup->out)) > 0)
-      {
-        fwrite(buffer, 1, length, pipe);
-        job_size += length;
-      }
-      fclose(mPrintSetup->out);
-      PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG,
-          ("piping done, copied %ld bytes.\n", job_size));
-      int exitStatus = pclose(pipe);
-      rv = WIFEXITED(exitStatus) ? NS_OK : NS_ERROR_GFX_PRINTER_CMD_FAILURE;
-    }
-    mDocProlog->Remove(PR_FALSE);
-#endif
-  }
-  mPrintSetup->out = nsnull;
-  mDocProlog = nsnull;
+  PR_LOG(nsPostScriptObjLM, PR_LOG_DEBUG, ("postscript generation completed.\n"));
   
-  return rv;
+  return ferror(mScriptFP) ?  NS_ERROR_GFX_PRINTER_FILE_IO_ERROR : NS_OK;
 }
 
 /** ---------------------------------------------------
@@ -2101,25 +1922,22 @@ nsPostScriptObj::end_document()
 void 
 nsPostScriptObj::show(const char* txt, int len, const char *align)
 {
-FILE *f;
-
-  f = mPrintContext->prSetup->tmpBody;
-  fprintf(f, "(");
+  fputc('(', mScriptFP);
 
   while (len-- > 0) {
     switch (*txt) {
 	    case '(':
 	    case ')':
 	    case '\\':
-        fprintf(f, "\\%c", *txt);
-		    break;
+	      fputc('\\', mScriptFP);
+	      // Fall through
 	    default:
-            fprintf(f, "%c", *txt);     
-		    break;
+	      fputc(*txt, mScriptFP);     
+	      break;
 	  }
 	  txt++;
   }
-  fprintf(f, ") %sshow\n", align);
+  fprintf(mScriptFP, ") %sshow\n", align);
 }
 
 /** ---------------------------------------------------
@@ -2129,7 +1947,6 @@ FILE *f;
 void 
 nsPostScriptObj::preshow(const PRUnichar* txt, int len)
 {
-  FILE *f = mPrintContext->prSetup->tmpBody;
   unsigned char highbyte;
   PRUnichar uch;
 
@@ -2167,7 +1984,7 @@ nsPostScriptObj::preshow(const PRUnichar* txt, int len)
 	      ncode = new PRInt32;
 	      *ncode = code;
 	      gU2Ntable->Put(&key, ncode);
-	      fprintf(f, "%d <%x> u2nadd\n", uch, code);
+	      fprintf(mScriptFP, "%d <%x> u2nadd\n", uch, code);
             }
 	  }
 	}
@@ -2185,35 +2002,34 @@ void
 nsPostScriptObj::show(const PRUnichar* txt, int len,
                       const char *align, int aType)
 {
-  FILE *f = mPrintContext->prSetup->tmpBody;
   unsigned char highbyte, lowbyte;
   PRUnichar uch;
  
   if (aType == 1) {
     int i;
-    fprintf(f, "<");
+    fputc('<', mScriptFP);
     for (i=0; i < len; i++) {
       if (i == 0)
-        fprintf(f, "%04x", txt[i]);
+        fprintf(mScriptFP, "%04x", txt[i]);
       else
-        fprintf(f, " %04x", txt[i]);
+        fprintf(mScriptFP, " %04x", txt[i]);
     }
-    fprintf(f, "> show\n");
+    fputs("> show\n", mScriptFP);
     return;
   }
  
-  fprintf(f, "(");
+  fputc('(', mScriptFP);
 
   while (len-- > 0) {
     switch (*txt) {
         case 0x0028:     // '('
-            fprintf(f, "\\050\\000");
+            fputs("\\050\\000", mScriptFP);
 		    break;
         case 0x0029:     // ')' 
-            fprintf(f, "\\051\\000");
+            fputs("\\051\\000", mScriptFP);
 		    break;
         case 0x005c:     // '\\'
-            fprintf(f, "\\134\\000");
+            fputs("\\134\\000", mScriptFP);
 		    break;
 	    default:
           uch = *txt;
@@ -2223,28 +2039,55 @@ nsPostScriptObj::show(const PRUnichar* txt, int len,
           // we output all unicode chars in the 2x3 digits oct format for easier post-processing
           // Our 'show' command will always treat the second 3 digit oct as high 8-bits of unicode, independent of Endians
           if ( lowbyte < 8 )
-		      fprintf(f, "\\00%o", lowbyte  & 0xff);
+	    fprintf(mScriptFP, "\\00%o", lowbyte  & 0xff);
           else if ( lowbyte < 64  && lowbyte >= 8)
-            fprintf(f, "\\0%o", lowbyte & 0xff);
+	    fprintf(mScriptFP, "\\0%o", lowbyte & 0xff);
           else
-             fprintf(f, "\\%o", lowbyte & 0xff);      
+	    fprintf(mScriptFP, "\\%o", lowbyte & 0xff);      
 
           if ( highbyte < 8  )
-		      fprintf(f, "\\00%o", highbyte & 0xff);
+	    fprintf(mScriptFP, "\\00%o", highbyte & 0xff);
           else if ( highbyte < 64  && highbyte >= 8)
-            fprintf(f, "\\0%o", highbyte & 0xff);
+            fprintf(mScriptFP, "\\0%o", highbyte & 0xff);
           else
-             fprintf(f, "\\%o", highbyte & 0xff);      
+	    fprintf(mScriptFP, "\\%o", highbyte & 0xff);      
          
-		break;
+	  break;
 	  }
 	  txt++;
   }
-  fprintf(f, ") %sunicodeshow\n", align);
+  fprintf(mScriptFP, ") %sunicodeshow\n", align);
 }
 
+#if defined(MOZ_ENABLE_FREETYPE2) || defined(MOZ_ENABLE_XFT)
+void 
+nsPostScriptObj::show(const PRUnichar* aTxt, int aLen,
+                      const nsAFlatString& aCharList, PRUint16 aSubFontIdx)
+{
+  int i;
+  fputc('<', mScriptFP);
 
+  const PRUint16 subFontSize = nsPSFontGenerator::kSubFontSize;
 
+  // the character repertoire of a subfont (255 characters max)
+  const nsAString& repertoire = 
+        Substring(aCharList, aSubFontIdx * subFontSize,
+                  PR_MIN(subFontSize, 
+                  aCharList.Length() - aSubFontIdx * subFontSize));
+
+  for (i = 0; i < aLen; i++) {
+    // XXX This is a little inefficient, but printing is not perf. critical. 
+    NS_ASSERTION(repertoire.FindChar(aTxt[i]) != kNotFound,
+        "character is not covered by this subfont");
+      
+    // Type 1 encoding vector has 256 slots, but the 0-th slot is 
+    // reserved for /.notdef so that we use the 1st through 255th slots
+    // for actual characters (hence '+ 1')
+    fprintf(mScriptFP, "%02x", repertoire.FindChar(aTxt[i]) + 1); 
+  }
+  fputs("> show\n", mScriptFP);
+}
+#endif
 
 /** ---------------------------------------------------
  *  See documentation in nsPostScriptObj.h
@@ -2253,7 +2096,7 @@ nsPostScriptObj::show(const PRUnichar* txt, int len,
 void 
 nsPostScriptObj::moveto(nscoord x, nscoord y)
 {
-  fprintf(mPrintContext->prSetup->tmpBody, "%d %d moveto\n", x, y);
+  fprintf(mScriptFP, "%d %d moveto\n", x, y);
 }
 
 /** ---------------------------------------------------
@@ -2263,7 +2106,7 @@ nsPostScriptObj::moveto(nscoord x, nscoord y)
 void 
 nsPostScriptObj::lineto(nscoord aX, nscoord aY)
 {
-  fprintf(mPrintContext->prSetup->tmpBody, "%d %d lineto\n", aX, aY);
+  fprintf(mScriptFP, "%d %d lineto\n", aX, aY);
 }
 
 /** ---------------------------------------------------
@@ -2278,7 +2121,7 @@ nsPostScriptObj::arc(nscoord aWidth, nscoord aHeight,
   float aStartAngle,float aEndAngle)
 {
   // Arc definition
-  fprintf(mPrintContext->prSetup->tmpBody,
+  fprintf(mScriptFP,
       "%s %s matrix currentmatrix currentpoint translate\n"
       " 3 1 roll scale newpath 0 0 1 %s %s arc setmatrix\n",
       fpCString(aWidth * 0.5).get(), fpCString(aHeight * 0.5).get(),
@@ -2292,8 +2135,7 @@ nsPostScriptObj::arc(nscoord aWidth, nscoord aHeight,
 void 
 nsPostScriptObj::box(nscoord aX, nscoord aY, nscoord aW, nscoord aH)
 {
-  fprintf(mPrintContext->prSetup->tmpBody,
-    "%d %d %d %d Mrect ", aX, aY, aW, aH);
+  fprintf(mScriptFP, "%d %d %d %d Mrect ", aX, aY, aW, aH);
 }
 
 /** ---------------------------------------------------
@@ -2303,7 +2145,7 @@ nsPostScriptObj::box(nscoord aX, nscoord aY, nscoord aW, nscoord aH)
 void 
 nsPostScriptObj::box_subtract(nscoord aX, nscoord aY, nscoord aW, nscoord aH)
 {
-  fprintf(mPrintContext->prSetup->tmpBody,
+  fprintf(mScriptFP,
     "%d %d moveto 0 %d rlineto %d 0 rlineto 0 %d rlineto closepath ",
     aX, aY, aH, aW, -aH);
 }
@@ -2315,7 +2157,7 @@ nsPostScriptObj::box_subtract(nscoord aX, nscoord aY, nscoord aW, nscoord aH)
 void 
 nsPostScriptObj::clip()
 {
-  fprintf(mPrintContext->prSetup->tmpBody, " clip \n");
+  fputs(" clip\n", mScriptFP);
 }
 
 /** ---------------------------------------------------
@@ -2325,7 +2167,7 @@ nsPostScriptObj::clip()
 void 
 nsPostScriptObj::eoclip()
 {
-  fprintf(mPrintContext->prSetup->tmpBody, " eoclip \n");
+  fputs(" eoclip\n", mScriptFP);
 }
 
 /** ---------------------------------------------------
@@ -2335,7 +2177,7 @@ nsPostScriptObj::eoclip()
 void 
 nsPostScriptObj::clippath()
 {
-  fprintf(mPrintContext->prSetup->tmpBody, " clippath \n");
+  fputs(" clippath\n", mScriptFP);
 }
 
 /** ---------------------------------------------------
@@ -2345,7 +2187,7 @@ nsPostScriptObj::clippath()
 void 
 nsPostScriptObj::newpath()
 {
-  fprintf(mPrintContext->prSetup->tmpBody, " newpath \n");
+  fputs(" newpath\n", mScriptFP);
 }
 
 /** ---------------------------------------------------
@@ -2355,7 +2197,7 @@ nsPostScriptObj::newpath()
 void 
 nsPostScriptObj::closepath()
 {
-  fprintf(mPrintContext->prSetup->tmpBody, " closepath \n");
+  fputs(" closepath\n", mScriptFP);
 }
 
 /** ---------------------------------------------------
@@ -2365,7 +2207,7 @@ nsPostScriptObj::closepath()
 void 
 nsPostScriptObj::initclip()
 {
-  fprintf(mPrintContext->prSetup->tmpBody, " initclip \n");
+  fputs(" initclip\n", mScriptFP);
 }
 
 /** ---------------------------------------------------
@@ -2376,11 +2218,10 @@ void
 nsPostScriptObj::line(nscoord aX1, nscoord aY1,
   nscoord aX2, nscoord aY2, nscoord aThick)
 {
-  fprintf(mPrintContext->prSetup->tmpBody, "gsave %d setlinewidth\n ", aThick);
-  fprintf(mPrintContext->prSetup->tmpBody, " %d %d moveto %d %d lineto\n",
-    aX1, aY1, aX2, aY2);
+  fprintf(mScriptFP, "gsave %d setlinewidth\n ", aThick);
+  fprintf(mScriptFP, " %d %d moveto %d %d lineto\n", aX1, aY1, aX2, aY2);
   stroke();
-  fprintf(mPrintContext->prSetup->tmpBody, "grestore\n");
+  fprintf(mScriptFP, "grestore\n");
 }
 
 /** ---------------------------------------------------
@@ -2390,7 +2231,7 @@ nsPostScriptObj::line(nscoord aX1, nscoord aY1,
 void
 nsPostScriptObj::stroke()
 {
-  fprintf(mPrintContext->prSetup->tmpBody, " stroke \n");
+  fputs(" stroke\n", mScriptFP);
 }
 
 /** ---------------------------------------------------
@@ -2400,7 +2241,7 @@ nsPostScriptObj::stroke()
 void
 nsPostScriptObj::fill()
 {
-  fprintf(mPrintContext->prSetup->tmpBody, " fill \n");
+  fputs(" fill\n", mScriptFP);
 }
 
 /** ---------------------------------------------------
@@ -2410,7 +2251,7 @@ nsPostScriptObj::fill()
 void
 nsPostScriptObj::graphics_save()
 {
-  fprintf(mPrintContext->prSetup->tmpBody, " gsave \n");
+  fputs(" gsave\n", mScriptFP);
 }
 
 /** ---------------------------------------------------
@@ -2420,7 +2261,7 @@ nsPostScriptObj::graphics_save()
 void
 nsPostScriptObj::graphics_restore()
 {
-  fprintf(mPrintContext->prSetup->tmpBody, " grestore \n");
+  fputs(" grestore\n", mScriptFP);
 }
 
 
@@ -2432,8 +2273,8 @@ nsPostScriptObj::graphics_restore()
 void
 nsPostScriptObj::scale(float aX, float aY)
 {
-  fprintf(mPrintContext->prSetup->tmpBody, "%s %s scale\n",
-      fpCString(aX).get(), fpCString(aX).get());
+  fprintf(mScriptFP, "%s %s scale\n",
+      fpCString(aX).get(), fpCString(aY).get());
 }
 
 /** ---------------------------------------------------
@@ -2443,7 +2284,7 @@ nsPostScriptObj::scale(float aX, float aY)
 void 
 nsPostScriptObj::translate(nscoord x, nscoord y)
 {
-    fprintf(mPrintContext->prSetup->tmpBody, "%d %d translate\n", x, y);
+    fprintf(mScriptFP, "%d %d translate\n", x, y);
 }
 
 
@@ -2481,8 +2322,6 @@ void
 nsPostScriptObj::draw_image(nsIImage *anImage,
     const nsRect& sRect, const nsRect& iRect, const nsRect& dRect)
 {
-  FILE *f = mPrintContext->prSetup->tmpBody;
-  
   // If a final image dimension is 0 pixels, just return (see bug 191684)
   if ((0 == dRect.width) || (0 == dRect.height)) {
     return;
@@ -2500,7 +2339,7 @@ nsPostScriptObj::draw_image(nsIImage *anImage,
 
   // Save the current graphic state and define a PS variable that
   // can hold one line of pixel data.
-  fprintf(f, "gsave\n/rowdata %d string def\n",
+  fprintf(mScriptFP, "gsave\n/rowdata %d string def\n",
      mPrintSetup->color ? iRect.width * 3 : iRect.width);
  
   // Translate the coordinate origin to the corner of the rectangle where
@@ -2509,11 +2348,11 @@ nsPostScriptObj::draw_image(nsIImage *anImage,
   translate(dRect.x, dRect.y);
   box(0, 0, dRect.width, dRect.height);
   clip();
-  fprintf(f, "%d %d scale\n", dRect.width, dRect.height);
+  fprintf(mScriptFP, "%d %d scale\n", dRect.width, dRect.height);
 
   // Describe how the pixel data is to be interpreted: pixels per row,
   // rows, and bits per pixel (per component in color).
-  fprintf(f, "%d %d 8 ", iRect.width, iRect.height);
+  fprintf(mScriptFP, "%d %d 8 ", iRect.width, iRect.height);
 
   // Output the transformation matrix for the image. This is a bit tricky
   // to understand. PS image-drawing operations involve two transformation
@@ -2555,14 +2394,14 @@ nsPostScriptObj::draw_image(nsIImage *anImage,
     tmTY += tmSY;
     tmSY = -tmSY;
   }
-  fprintf(f, "[ %d 0 0 %d %d %d ]\n", tmSX, tmSY, tmTX, tmTY);
+  fprintf(mScriptFP, "[ %d 0 0 %d %d %d ]\n", tmSX, tmSY, tmTX, tmTY);
 
   // Output the data-reading procedure and the appropriate image command.
-  fputs(" { currentfile rowdata readhexstring pop }", f);
+  fputs(" { currentfile rowdata readhexstring pop }", mScriptFP);
   if (mPrintSetup->color)
-    fputs(" false 3 colorimage\n", f);
+    fputs(" false 3 colorimage\n", mScriptFP);
   else
-    fputs(" image\n", f);
+    fputs(" image\n", mScriptFP);
 
   // Output the image data. The entire image is written, even
   // if it's partially clipped in the document.
@@ -2578,12 +2417,13 @@ nsPostScriptObj::draw_image(nsIImage *anImage,
       PRUint8 *pixel = row + (x * 3);
       if (mPrintSetup->color)
         outputCount +=
-          fprintf(f, "%02x%02x%02x", pixel[0], pixel[1], pixel[2]);
+          fprintf(mScriptFP, "%02x%02x%02x", pixel[0], pixel[1], pixel[2]);
       else
         outputCount +=
-          fprintf(f, "%02x", NS_RGB_TO_GRAY(pixel[0], pixel[1], pixel[2]));
+          fprintf(mScriptFP, "%02x",
+	      NS_RGB_TO_GRAY(pixel[0], pixel[1], pixel[2]));
       if (outputCount >= 72) {
-        fputc('\n', f);
+        fputc('\n', mScriptFP);
         outputCount = 0;
       }
     }
@@ -2591,8 +2431,8 @@ nsPostScriptObj::draw_image(nsIImage *anImage,
   anImage->UnlockImagePixels(PR_FALSE);
 
   // Free the PS data buffer and restore the previous graphics state.
-  fputs("\n/rowdata where { /rowdata undef } if\n", f);
-  fputs("grestore\n", f);
+  fputs("\n/undef where { pop /rowdata where { /rowdata undef } if } if\n", mScriptFP);
+  fputs("grestore\n", mScriptFP);
 }
 
 
@@ -2614,10 +2454,9 @@ float greyBrightness;
     greyBrightness=NS_PS_GRAY(NS_RGB_TO_GRAY(NS_GET_R(aColor),
                                              NS_GET_G(aColor),
                                              NS_GET_B(aColor)));
-    fprintf(mPrintContext->prSetup->tmpBody, "%s setgray\n",
-      fpCString(greyBrightness).get());
+    fprintf(mScriptFP, "%s setgray\n", fpCString(greyBrightness).get());
   } else {
-    fprintf(mPrintContext->prSetup->tmpBody, "%s %s %s setrgbcolor\n",
+    fprintf(mScriptFP, "%s %s %s setrgbcolor\n",
       fpCString(NS_PS_RED(aColor)).get(),
       fpCString(NS_PS_GREEN(aColor)).get(),
       fpCString(NS_PS_BLUE(aColor)).get());
@@ -2626,10 +2465,11 @@ float greyBrightness;
 }
 
 
-void nsPostScriptObj::setfont(const nsCString aFontName, PRUint32 aHeight)
+void nsPostScriptObj::setfont(const nsCString& aFontName, PRUint32 aHeight,
+                              PRInt32 aSubFont)
 {
-  fprintf(mPrintContext->prSetup->tmpBody,
-          "%d /%s Msf\n", aHeight, aFontName.get());
+  fprintf(mScriptFP, "%d /%s.Set%d Msf\n", aHeight, aFontName.get(),
+          aSubFont);
 }
 
 /** ---------------------------------------------------
@@ -2642,11 +2482,7 @@ nsPostScriptObj::setscriptfont(PRInt16 aFontIndex,const nsString &aFamily,nscoor
 {
 int postscriptFont = 0;
 
-
-//    fprintf(mPrintContext->prSetup->out, "%% aFontIndex = %d, Family = %s, aStyle = %d, 
-//        aWeight=%d, postscriptfont = %d\n", aFontIndex, &aFamily, aStyle, aWeight, postscriptFont);
-  fprintf(mPrintContext->prSetup->tmpBody,"%d", aHeight);
-
+  fprintf(mScriptFP, "%d", aHeight);
  
   if( aFontIndex >= 0) {
     postscriptFont = aFontIndex;
@@ -2682,7 +2518,7 @@ int postscriptFont = 0;
 	}
     //#endif
    }
-   fprintf(mPrintContext->prSetup->tmpBody, " f%d\n", postscriptFont);
+   fprintf(mScriptFP, " f%d\n", postscriptFont);
 
 
 #if 0
@@ -2712,7 +2548,7 @@ int postscriptFont = 0;
 void 
 nsPostScriptObj::comment(const char *aTheComment)
 {
-  fprintf(mPrintContext->prSetup->tmpBody,"%%%s\n", aTheComment);
+  fprintf(mScriptFP, "%%%s\n", aTheComment);
 }
 
 /** ---------------------------------------------------
@@ -2722,13 +2558,11 @@ nsPostScriptObj::comment(const char *aTheComment)
 void
 nsPostScriptObj::setlanggroup(nsIAtom * aLangGroup)
 {
-  FILE *f = mPrintContext->prSetup->tmpBody;
-
   gEncoder = nsnull;
   gU2Ntable = nsnull;
 
   if (aLangGroup == nsnull) {
-    fprintf(f, "default_ls\n");
+    fputs("default_ls\n", mScriptFP);
     return;
   }
   nsAutoString langstr;
@@ -2740,12 +2574,12 @@ nsPostScriptObj::setlanggroup(nsIAtom * aLangGroup)
 
   if (linfo) {
     nsCAutoString str; str.AssignWithConversion(langstr);
-    fprintf(f, "%s_ls\n", str.get());
+    fprintf(mScriptFP, "%s_ls\n", str.get());
     gEncoder = linfo->mEncoder;
     gU2Ntable = linfo->mU2Ntable;
     return;
   } else {
-    fprintf(f, "default_ls\n");
+    fputs("default_ls\n", mScriptFP);
   }
 }
 
@@ -2792,20 +2626,20 @@ GetUnixPrinterFallbackSetting(const nsCAutoString& aKey, char** aVal)
   return PR_FALSE;
 }
 
-FILE * nsPostScriptObj::GetPrintFile()
-{
-  return(mPrintContext->prSetup->out);
-}
 
 const char* kNativeFontPrefix  = "print.postscript.nativefont.";
 const char* kUnicodeFontPrefix = "print.postscript.unicodefont.";
 
+struct PrefEnumClosure {
+  FILE *handle;			// Output file handle
+  nsPostScriptObj *psObj;	// Renderer
+};
+
 /* make <langgroup>_ls define for each LangGroup here */
 static void PrefEnumCallback(const char *aName, void *aClosure)
 {
-  nsPostScriptObj *psObj = (nsPostScriptObj*)aClosure;
-  FILE *f = psObj->GetPrintFile();
-
+  nsPostScriptObj *psObj = ((PrefEnumClosure *)aClosure)->psObj;
+  FILE *f = ((PrefEnumClosure *)aClosure)->handle;
   nsAutoString lang; lang.AssignWithConversion(aName);
 
 
@@ -2953,14 +2787,83 @@ static void PrefEnumCallback(const char *aName, void *aClosure)
  *	@update 5/30/00 katakai
  */
 void
-nsPostScriptObj::initlanggroup()
+nsPostScriptObj::initlanggroup(FILE *aHandle)
 {
+  PrefEnumClosure closure;
+  closure.handle = aHandle;
+  closure.psObj = this;
 
   /* check langgroup of preference */
   gPrefs->EnumerateChildren(kNativeFontPrefix,
-	    PrefEnumCallback, (void *) this);
+      PrefEnumCallback, (void *) &closure);
 
   gPrefs->EnumerateChildren(kUnicodeFontPrefix,
-	    PrefEnumCallback, (void *) this);
+      PrefEnumCallback, (void *) &closure);
 }
 
+
+ /** ---------------------------------------------------
+  *  See documentation in nsPostScriptObj.h
+  *  @update 3/6/2004 kherron
+  *  @update 3/25/2004 dantifer
+  */
+nsresult
+nsPostScriptObj::render_eps(const nsRect& aRect, nsEPSObjectPS &anEPS)
+{
+  FILE     *bfile = mScriptFP;
+  nsresult  rv;
+
+  NS_PRECONDITION(nsnull != bfile, "No document body file handle");
+
+  /* Set up EPSF state. See Adobe spec #5002 section 3.2 */
+  fputs(
+    "/b4_Inc_state save def\n"
+    "/dict_count countdictstack def\n"
+    "/op_count count 1 sub def\n"
+    "userdict begin\n"
+    "/showpage { } def\n"
+    "0 setgray 0 setlinecap 1 setlinewidth 0 setlinejoin\n"
+    "10 setmiterlimit [ ] 0 setdash newpath\n"
+    "/languagelevel where\n"
+    "{pop languagelevel\n"
+    "  1 ne\n"
+    "  {false setstrokeadjust false setoverprint\n"
+    "  } if\n"
+    "} if\n",
+    bfile);
+
+  /* Set up a clipping region around the EPS rectangle */
+  box(aRect.x, aRect.y, aRect.width, aRect.height);
+  clip();
+
+  /* translate to the lower left corner of the rectangle */
+  translate(aRect.x, aRect.y + aRect.height);
+
+  /* Rescale */
+  scale(
+    aRect.width / (anEPS.GetBoundingBoxURX() - anEPS.GetBoundingBoxLLX()),
+    -(aRect.height / (anEPS.GetBoundingBoxURY() - anEPS.GetBoundingBoxLLY()))
+  );
+
+  /* Translate to the EPSF origin. Can't use translate() here because
+  * it takes integers.
+  */
+  fprintf(bfile, "%s %s translate\n",
+    fpCString(-anEPS.GetBoundingBoxLLX()).get(),
+    fpCString(-anEPS.GetBoundingBoxLLY()).get()
+  );
+
+  /* embeding EPS file content */
+  comment("%BeginDocument: Mozilla-Internal");
+  rv = anEPS.WriteTo(bfile);
+  comment("%EndDocument");
+
+  /* Restore previous state */
+  fputs(
+    "count op_count sub { pop } repeat\n"
+    "countdictstack dict_count sub { end } repeat\n"
+    "b4_Inc_state restore\n",
+    bfile);
+
+  return rv;
+}

@@ -38,8 +38,10 @@
 #include "nsGNOMEShellService.h"
 #include "nsShellService.h"
 #include "nsIServiceManager.h"
+#include "nsILocalFile.h"
+#include "nsIProperties.h"
+#include "nsDirectoryServiceDefs.h"
 #include "nsIPrefService.h"
-#include "nsICmdLineService.h"
 #include "prenv.h"
 #include "nsString.h"
 #include "nsIGConfService.h"
@@ -52,6 +54,10 @@
 #include "nsIImageLoadingContent.h"
 #include "imgIRequest.h"
 #include "imgIContainer.h"
+#include "nsIImage.h"
+#ifdef MOZ_WIDGET_GTK2
+#include "nsIGdkPixbufImage.h"
+#endif
 #include "nsColor.h"
 
 #include <glib.h>
@@ -98,6 +104,8 @@ static const char kDesktopColorKey[] = DG_BACKGROUND "/primary_color";
 nsresult
 nsGNOMEShellService::Init()
 {
+  nsresult rv;
+
   // GConf and GnomeVFS _must_ be available, or we do not allow
   // CreateInstance to succeed.
 
@@ -112,39 +120,19 @@ nsGNOMEShellService::Init()
   // the locale encoding.  If it's not set, they use UTF-8.
   mUseLocaleFilenames = PR_GetEnv("G_BROKEN_FILENAMES") != nsnull;
 
-  // Get the path we were launched from.
-  nsCOMPtr<nsICmdLineService> cmdService =
-    do_GetService("@mozilla.org/appshell/commandLineService;1");
-  if (!cmdService)
-    return NS_ERROR_NOT_AVAILABLE;
+  nsCOMPtr<nsIProperties> dirSvc
+    (do_GetService("@mozilla.org/file/directory_service;1"));
+  NS_ENSURE_TRUE(dirSvc, NS_ERROR_NOT_AVAILABLE);
 
-  nsXPIDLCString programName;
-  cmdService->GetProgramName(getter_Copies(programName));
+  nsCOMPtr<nsILocalFile> appPath;
+  rv = dirSvc->Get(NS_XPCOM_CURRENT_PROCESS_DIR, NS_GET_IID(nsILocalFile),
+                   getter_AddRefs(appPath));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // Make sure we have an absolute pathname.
-  if (programName[0] != '/') {
-    // First search PATH if we were just launched as 'firefox-bin'.
-    // If we were launched as './firefox-bin', this will just return
-    // the original string.
+  rv = appPath->AppendNative(NS_LITERAL_CSTRING(MOZ_APP_NAME));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    gchar *appPath = g_find_program_in_path(programName.get());
-
-    // Now resolve it.
-    char resolvedPath[PATH_MAX] = "";
-    if (realpath(appPath, resolvedPath)) {
-      mAppPath.Assign(resolvedPath);
-    }
-
-    g_free(appPath);
-  } else {
-    mAppPath.Assign(programName);
-  }
-
-  // strip "-bin" off of the binary name
-  if (StringEndsWith(mAppPath, NS_LITERAL_CSTRING("-bin")))
-    mAppPath.SetLength(mAppPath.Length() - 4);
-
-  return NS_OK;
+  return appPath->GetNativePath(mAppPath);
 }
 
 NS_IMPL_ISUPPORTS1(nsGNOMEShellService, nsIShellService)
@@ -358,117 +346,27 @@ nsGNOMEShellService::SetShouldCheckDefaultBrowser(PRBool aShouldCheck)
 static nsresult
 WriteImage(const nsCString& aPath, gfxIImageFrame* aImage)
 {
-  PRInt32 width, height;
-  aImage->GetWidth(&width);
-  aImage->GetHeight(&height);
+  nsCOMPtr<nsIImage> img(do_GetInterface(aImage));
+  if (!img)
+      return NS_ERROR_NOT_AVAILABLE;
 
-  PRInt32 format;
-  aImage->GetFormat(&format);
+#ifndef MOZ_WIDGET_GTK2
+  return NS_ERROR_NOT_AVAILABLE;
+#else
+  nsCOMPtr<nsIGdkPixbufImage> pixImg(do_QueryInterface(img));
+  if (!pixImg)
+      return NS_ERROR_NOT_AVAILABLE;
 
-  aImage->LockImageData();
+  GdkPixbuf* pixbuf = pixImg->GetGdkPixbuf();
+  if (!pixbuf)
+      return NS_ERROR_NOT_AVAILABLE;
 
-  PRUint32 bytesPerRow;
-  aImage->GetImageBytesPerRow(&bytesPerRow);
-
-  PRUint32 bpp = bytesPerRow / width * 8;
-
-  // XXX If bpp is not 24, we will need to do something else, like
-  // allocate a new pixbuf and copy the data in ourselves.
-  if (bpp != 24)
-    return NS_ERROR_FAILURE;
-
-  PRUint8 *bits;
-  PRUint32 length;
-
-  aImage->GetImageData(&bits, &length);
-  if (!bits) return NS_ERROR_FAILURE;
-
-  GdkPixbuf *pixbuf = gdk_pixbuf_new_from_data(bits,
-                                               GDK_COLORSPACE_RGB,
-                                               PR_FALSE,
-                                               8,
-                                               width,
-                                               height,
-                                               bytesPerRow,
-                                               NULL,
-                                               NULL);
-
-  GdkPixbuf *alphaPixbuf = nsnull;
-
-  if (format == gfxIFormats::RGB_A1 || format == gfxIFormats::RGB_A8) {
-    aImage->LockAlphaData();
-
-    PRUint32 alphaBytesPerRow, alphaDepth, alphaLength;
-    aImage->GetAlphaBytesPerRow(&alphaBytesPerRow);
-
-#if 0
-    if (format == gfxIFormats::RGB_A1)
-      alphaDepth = 1;
-    else
-      alphaDepth = 8;
-#endif
-    switch (format) {
-    case gfxIFormats::RGB_A1:
-      alphaDepth = 1;
-      break;
-    case gfxIFormats::RGB_A8:
-      alphaDepth = 8;
-      break;
-    default:
-      // not reached
-      return NS_ERROR_UNEXPECTED;
-    }
-
-    PRUint8 *alphaBits;
-    aImage->GetAlphaData(&alphaBits, &alphaLength);
-
-    alphaPixbuf = gdk_pixbuf_add_alpha(pixbuf, FALSE, 0, 0, 0);
-
-    // Run through alphaBits and copy the alpha mask into the pixbuf's
-    // alpha channel.
-    PRUint8 *maskRow = alphaBits;
-    PRUint8 *pixbufRow = gdk_pixbuf_get_pixels(alphaPixbuf);
-
-    gint pixbufRowStride = gdk_pixbuf_get_rowstride(alphaPixbuf);
-    gint pixbufChannels = gdk_pixbuf_get_n_channels(alphaPixbuf);
-
-    for (PRInt32 y = 0; y < height; ++y) {
-      PRUint8 *pixbufPixel = pixbufRow;
-      PRUint8 *maskPixel = maskRow;
-
-      // If using 1-bit alpha, we must expand it to 8-bit
-      PRUint32 bitPos = 7;
-
-      for (PRInt32 x = 0; x < width; ++x) {
-        if (alphaDepth == 1) {
-          pixbufPixel[pixbufChannels - 1] = ((*maskPixel >> bitPos) & 1) ? 255 : 0;
-          if (bitPos-- == 0) { // wrapped around, move forward a byte
-            ++maskPixel;
-            bitPos = 7;
-          }
-        } else {
-          pixbufPixel[pixbufChannels - 1] = *maskPixel++;
-        }
-
-        pixbufPixel += pixbufChannels;
-      }
-
-      pixbufRow += pixbufRowStride;
-      maskRow += alphaBytesPerRow;
-    }
-  }
-
-  gboolean res = gdk_pixbuf_save(alphaPixbuf ? alphaPixbuf : pixbuf,
-                                 aPath.get(), "png", NULL, NULL);
-
-  if (alphaPixbuf) {
-    aImage->UnlockAlphaData();
-    g_object_unref(alphaPixbuf);
-  }
+  gboolean res = gdk_pixbuf_save(pixbuf, aPath.get(), "png", NULL, NULL);
 
   aImage->UnlockImageData();
   g_object_unref(pixbuf);
   return res ? NS_OK : NS_ERROR_FAILURE;
+#endif
 }
                  
 NS_IMETHODIMP
@@ -539,7 +437,7 @@ nsGNOMEShellService::SetDesktopBackground(nsIDOMElement* aElement,
   // (since we could be writing a new image on top of an existing
   // Firefox_wallpaper.png and nautilus doesn't monitor the file for changes)
   gconf->SetString(NS_LITERAL_CSTRING(kDesktopImageKey),
-                   NS_LITERAL_CSTRING(""));
+                   EmptyCString());
 
   gconf->SetString(NS_LITERAL_CSTRING(kDesktopImageKey), filePath);
   gconf->SetBool(NS_LITERAL_CSTRING(kDesktopDrawBGKey), PR_TRUE);
@@ -590,7 +488,7 @@ nsGNOMEShellService::SetDesktopBackgroundColor(PRUint32 aColor)
 }
 
 NS_IMETHODIMP
-nsGNOMEShellService::OpenPreferredApplication(PRInt32 aApplication)
+nsGNOMEShellService::OpenApplication(PRInt32 aApplication)
 {
   nsCAutoString scheme;
   if (aApplication == APPLICATION_MAIL)

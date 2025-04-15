@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,28 +14,27 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  - David W. Hyatt (hyatt@netscape.com)
- *  - Mike Pinkerton (pinkerton@netscape.com)
- *  - Akkana Peck (akkana@netscape.com)
- *
+ *   - David W. Hyatt (hyatt@netscape.com)
+ *   - Mike Pinkerton (pinkerton@netscape.com)
+ *   - Akkana Peck (akkana@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -68,6 +67,7 @@
 #include "nsXULAtoms.h"
 #include "nsIURI.h"
 #include "nsNetUtil.h"
+#include "nsContentUtils.h"
 
 class nsXBLSpecialDocInfo
 {
@@ -92,10 +92,7 @@ public:
   nsXBLSpecialDocInfo() : mInitialized(PR_FALSE) {};
 };
 
-const char nsXBLSpecialDocInfo::sHTMLBindingStr[] = "resource://gre/res/builtin/platformHTMLBindings.xml";
-// Allow for a userHTMLBindings.xml.
-// XXXbsmedberg Should be in the profile chrome directory, when we have a resource mapping for that
-const char nsXBLSpecialDocInfo::sUserHTMLBindingStr[] = "resource://gre/res/builtin/userHTMLBindings.xml";
+const char nsXBLSpecialDocInfo::sHTMLBindingStr[] = "chrome://global/content/platformHTMLBindings.xml";
 
 void nsXBLSpecialDocInfo::LoadDocInfo()
 {
@@ -120,16 +117,19 @@ void nsXBLSpecialDocInfo::LoadDocInfo()
                                       PR_TRUE, 
                                       getter_AddRefs(mHTMLBindings));
 
-  rv = bindingURI->SetSpec(NS_LITERAL_CSTRING(sUserHTMLBindingStr));
-  if (NS_FAILED(rv)) {
-    NS_ERROR("Shouldn't fail to set spec here");
-    return;
+  const nsAdoptingCString& userHTMLBindingStr =
+    nsContentUtils::GetCharPref("dom.userHTMLBindings.uri");
+  if (!userHTMLBindingStr.IsEmpty()) {
+    NS_NewURI(getter_AddRefs(bindingURI), userHTMLBindingStr);
+    if (!bindingURI) {
+      return;
+    }
+
+    xblService->LoadBindingDocumentInfo(nsnull, nsnull,
+                                        bindingURI,
+                                        PR_TRUE, 
+                                        getter_AddRefs(mUserHTMLBindings));
   }
-  
-  xblService->LoadBindingDocumentInfo(nsnull, nsnull,
-                                      bindingURI,
-                                      PR_TRUE, 
-                                      getter_AddRefs(mUserHTMLBindings));
 }
 
 //
@@ -254,10 +254,11 @@ nsXBLWindowHandler::WalkHandlersInternal(nsIDOMEvent* aEvent,
 {
   nsresult rv;
   nsXBLPrototypeHandler* currHandler = aHandler;
+  nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aEvent));
+  
   while (currHandler) {
 
     PRBool stopped;
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aEvent));
     privateEvent->IsDispatchStopped(&stopped);
     if (stopped)
       return NS_OK;
@@ -268,7 +269,7 @@ nsXBLWindowHandler::WalkHandlersInternal(nsIDOMEvent* aEvent,
       nsAutoString disabled;
       
       nsCOMPtr<nsIContent> elt = currHandler->GetHandlerElement();
-      nsCOMPtr<nsIDOMElement> commandElt(do_QueryInterface(elt));
+      nsCOMPtr<nsIDOMElement> commandElt;
 
       // See if we're in a XUL doc.
       if (mElement) {
@@ -276,21 +277,28 @@ nsXBLWindowHandler::WalkHandlersInternal(nsIDOMEvent* aEvent,
         nsAutoString command;
         elt->GetAttr(kNameSpaceID_None, nsXULAtoms::command, command);
         if (!command.IsEmpty()) {
-          // Locate the command element in question.
-          nsCOMPtr<nsIDOMDocument> domDoc(do_QueryInterface(elt->GetDocument()));
+          // Locate the command element in question.  Note that we
+          // know "elt" is in a doc if we're dealing with it here.
+          NS_ASSERTION(elt->IsInDoc(), "elt must be in document");
+          nsCOMPtr<nsIDOMDocument> domDoc(
+             do_QueryInterface(elt->GetCurrentDoc()));
           if (domDoc)
             domDoc->GetElementById(command, getter_AddRefs(commandElt));
 
           if (!commandElt) {
-            NS_ASSERTION(PR_FALSE, "A XUL <key> is observing a command that doesn't exist. Unable to execute key binding!\n");
+            NS_ERROR("A XUL <key> is observing a command that doesn't exist. Unable to execute key binding!\n");
             return NS_OK;
           }
         }
       }
 
+      if (!commandElt) {
+        commandElt = do_QueryInterface(elt);
+      }
+
       if (commandElt)
         commandElt->GetAttribute(NS_LITERAL_STRING("disabled"), disabled);
-      if (!disabled.Equals(NS_LITERAL_STRING("true"))) {
+      if (!disabled.EqualsLiteral("true")) {
         nsCOMPtr<nsIDOMEventReceiver> rec = mReceiver;
         if (mElement)
           rec = do_QueryInterface(commandElt);

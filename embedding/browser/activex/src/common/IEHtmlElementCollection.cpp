@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,14 +14,13 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
- *   Adam Lock <adamlock@eircom.net>
+ *   Adam Lock <adamlock@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -29,11 +28,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "stdafx.h"
@@ -76,6 +75,17 @@ CIEHtmlElementCollection::~CIEHtmlElementCollection()
     }
 }
 
+HRESULT CIEHtmlElementCollection::FindOrCreateIEElement(nsIDOMNode* domNode, IHTMLElement** pIHtmlElement)
+{
+    CComPtr<IUnknown> pNode;
+    HRESULT hr = CIEHtmlDomNode::FindOrCreateFromDOMNode(domNode, &pNode);
+    if (FAILED(hr))
+        return hr;
+    if (FAILED(pNode->QueryInterface(IID_IHTMLElement, (void**)pIHtmlElement)))
+        return E_UNEXPECTED;
+    return S_OK;
+}
+
 HRESULT CIEHtmlElementCollection::PopulateFromDOMHTMLCollection(nsIDOMHTMLCollection *pNodeList)
 {
     if (pNodeList == nsnull)
@@ -110,28 +120,11 @@ HRESULT CIEHtmlElementCollection::PopulateFromDOMHTMLCollection(nsIDOMHTMLCollec
         }
 
         // Create an equivalent IE element
-        CIEHtmlNode *pHtmlNode = NULL;
-        CIEHtmlElementInstance *pHtmlElement = NULL;
-        CIEHtmlElementInstance::FindFromDOMNode(childNode, &pHtmlNode);
-        if (!pHtmlNode)
-        {
-            CIEHtmlElementInstance::CreateInstance(&pHtmlElement);
-            if (!pHtmlElement)
-            {
-                NS_ASSERTION(0, "Could not create element");
-                return E_OUTOFMEMORY;
-            }
-            pHtmlElement->SetDOMNode(childNode);
-            pHtmlElement->SetParent(mParent);
-        }
-        else
-        {
-            pHtmlElement = (CIEHtmlElementInstance *) pHtmlNode;
-        }
-        if (pHtmlElement)
-        {
-            AddNode(pHtmlElement);
-        }
+        CComQIPtr<IHTMLElement> pHtmlElement;
+        HRESULT hr = FindOrCreateIEElement(childNode, &pHtmlElement);
+        if (FAILED(hr))
+            return hr;
+        AddNode(pHtmlElement);
     }
     return S_OK;
 }
@@ -182,28 +175,11 @@ HRESULT CIEHtmlElementCollection::PopulateFromDOMNode(nsIDOMNode *aDOMNode, BOOL
             while (currentNode)
             {
                 // Create an equivalent IE element
-                CIEHtmlNode *pHtmlNode = NULL;
-                CIEHtmlElementInstance *pHtmlElement = NULL;
-                CIEHtmlElementInstance::FindFromDOMNode(currentNode, &pHtmlNode);
-                if (!pHtmlNode)
-                {
-                    CIEHtmlElementInstance::CreateInstance(&pHtmlElement);
-                    if (!pHtmlElement)
-                    {
-                        NS_ASSERTION(0, "Could not create element");
-                        return E_OUTOFMEMORY;
-                    }
-                    pHtmlElement->SetDOMNode(currentNode);
-                    pHtmlElement->SetParent(mParent);
-                }
-                else
-                {
-                    pHtmlElement = (CIEHtmlElementInstance *) pHtmlNode;
-                }
-                if (pHtmlElement)
-                {
-                    AddNode(pHtmlElement);
-                }
+                CComQIPtr<IHTMLElement> pHtmlElement;
+                HRESULT hr = FindOrCreateIEElement(currentNode, &pHtmlElement);
+                if (FAILED(hr))
+                    return hr;
+                AddNode(pHtmlElement);
                 walker->NextNode(getter_AddRefs(currentNode));
             }
         }
@@ -218,7 +194,7 @@ HRESULT CIEHtmlElementCollection::PopulateFromDOMNode(nsIDOMNode *aDOMNode, BOOL
 }
 
 
-HRESULT CIEHtmlElementCollection::CreateFromDOMHTMLCollection(CIEHtmlNode *pParentNode, nsIDOMHTMLCollection *pNodeList, CIEHtmlElementCollection **pInstance)
+HRESULT CIEHtmlElementCollection::CreateFromDOMHTMLCollection(CNode *pParentNode, nsIDOMHTMLCollection *pNodeList, CIEHtmlElementCollection **pInstance)
 {
     if (pInstance == NULL || pParentNode == NULL)
     {
@@ -253,7 +229,7 @@ HRESULT CIEHtmlElementCollection::CreateFromDOMHTMLCollection(CIEHtmlNode *pPare
     return S_OK;
 }
 
-HRESULT CIEHtmlElementCollection::CreateFromParentNode(CIEHtmlNode *pParentNode, BOOL bRecurseChildren, CIEHtmlElementCollection **pInstance)
+HRESULT CIEHtmlElementCollection::CreateFromParentNode(CNode *pParentNode, BOOL bRecurseChildren, CIEHtmlElementCollection **pInstance)
 {
     if (pInstance == NULL || pParentNode == NULL)
     {
@@ -449,29 +425,14 @@ HRESULT STDMETHODCALLTYPE CIEHtmlElementCollection::get__newEnum(IUnknown __RPC_
             }
 
             // Store the element in the array
-            CIEHtmlNode *pHtmlNode = NULL;
-            CIEHtmlElementInstance *pHtmlElement = NULL;
-            CIEHtmlElementInstance::FindFromDOMNode(childNode, &pHtmlNode);
-            if (!pHtmlNode)
-            {
-                CIEHtmlElementInstance::CreateInstance(&pHtmlElement);
-                if (!pHtmlElement)
-                {
-                    NS_ASSERTION(0, "Could not create element");
-                    return E_OUTOFMEMORY;
-                }
-                pHtmlElement->SetDOMNode(childNode);
-                pHtmlElement->SetParent(mParent);
-            }
-            else
-            {
-                pHtmlElement = (CIEHtmlElementInstance *) pHtmlNode;
-            }
-
+            CComQIPtr<IHTMLElement> pHtmlElement;
+            HRESULT hr = FindOrCreateIEElement(childNode, &pHtmlElement);
+            if (FAILED(hr))
+                return hr;
             VARIANT *pVariant = &avObjects[nObject++];
             VariantInit(pVariant);
-            pVariant->vt = VT_UNKNOWN;
-            pHtmlElement->QueryInterface(IID_IUnknown, (void **) &pVariant->punkVal);
+            pVariant->vt = VT_DISPATCH;
+            pHtmlElement->QueryInterface(IID_IDispatch, (void **) &pVariant->pdispVal);
         }
     }
     else
@@ -480,11 +441,11 @@ HRESULT STDMETHODCALLTYPE CIEHtmlElementCollection::get__newEnum(IUnknown __RPC_
         for (nObject = 0; nObject < nObjects; nObject++)
         {
             VARIANT *pVariant = &avObjects[nObject];
-            IUnknown *pUnkObject = mNodeList[nObject];
+            IDispatch *pDispObject = mNodeList[nObject];
             VariantInit(pVariant);
-            pVariant->vt = VT_UNKNOWN;
-            pVariant->punkVal = pUnkObject;
-            pUnkObject->AddRef();
+            pVariant->vt = VT_DISPATCH;
+            pVariant->pdispVal = pDispObject;
+            pDispObject->AddRef();
         }
     }
 
@@ -532,6 +493,8 @@ HRESULT STDMETHODCALLTYPE CIEHtmlElementCollection::item(VARIANT name, VARIANT i
     case VT_UI4:
     case VT_I1:
     case VT_I2:
+    case VT_I1 | VT_BYREF:
+    case VT_I2 | VT_BYREF:
         // Coerce the variant into a long
         if (FAILED(VariantChangeType(&name, &name, 0, VT_I4)))
         {
@@ -550,8 +513,11 @@ HRESULT STDMETHODCALLTYPE CIEHtmlElementCollection::item(VARIANT name, VARIANT i
         return E_INVALIDARG;
     }
 
+    CIEHtmlElementCollectionInstance* pCollection = NULL;
+
     if (mDOMNodeList)
     {
+        CComQIPtr<IHTMLElement> pHtmlElement;
         // Search for the Nth element in the list
         PRUint32 elementCount = 0;
         PRUint32 length = 0;
@@ -600,60 +566,67 @@ HRESULT STDMETHODCALLTYPE CIEHtmlElementCollection::item(VARIANT name, VARIANT i
 
             if (grabThisNode)
             {
-                // TODO for named searches, we should create a collection here
-                // if index > 0, or 
-
-                // Return the element
-                CIEHtmlNode *pHtmlNode = NULL;
-                CIEHtmlElementInstance *pHtmlElement = NULL;
-                CIEHtmlElementInstance::FindFromDOMNode(childNode, &pHtmlNode);
-                if (!pHtmlNode)
+                if (pHtmlElement)
                 {
-                    CIEHtmlElementInstance::CreateInstance(&pHtmlElement);
-                    if (!pHtmlElement)
-                    {
-                        NS_ASSERTION(0, "Could not create element");
-                        return E_OUTOFMEMORY;
-                    }
-                    pHtmlElement->SetDOMNode(childNode);
-                    pHtmlElement->SetParent(mParent);
+                    if (pCollection == NULL)
+                        CIEHtmlElementCollectionInstance::CreateInstance(&pCollection);
+                    // Add existing to collection
+                    pCollection->AddNode(pHtmlElement);
                 }
-                else
-                {
-                    pHtmlElement = (CIEHtmlElementInstance *) pHtmlNode;
+                // Create new element:
+                HRESULT hr = FindOrCreateIEElement(childNode, &pHtmlElement);
+                if (FAILED(hr))
+                    return hr; 
+                ((CIEHtmlElement*)pHtmlElement.p)->SetParent(mParent);
                 }
-
-                // TODO named searches should carry on searching
-                pHtmlElement->QueryInterface(IID_IDispatch, (void **) pdisp);
-                return S_OK;
-            }
             elementCount++;
         }
-        // Index must have been out of range
-        return E_INVALIDARG;
+        // Return the element or collection :
+        if (pCollection != NULL)
+        {
+            // Add last created element to collection
+            pCollection->AddNode(pHtmlElement);
+            pCollection->QueryInterface(IID_IDispatch, (void **) pdisp);
+        }
+        else if (pHtmlElement != NULL)
+            pHtmlElement->QueryInterface(IID_IDispatch, (void **) pdisp);
     }
     else
     {
         if (searchForName)
         {
+            CComPtr<IHTMLElement> element = NULL;
             for (PRUint32 i = 0; i < mNodeListCount; i++)
             {
-                CComQIPtr<IHTMLElement> element = mNodeList[i];
-                if (element.p)
+                CComQIPtr<IHTMLElement> currElement = mNodeList[i];
+                if (currElement.p)
                 {
                     CComVariant elementName;
                     CComBSTR elementId;
-                    element->get_id(&elementId);
-                    element->getAttribute(L"name", 0, &elementName);
+                    currElement->get_id(&elementId);
+                    currElement->getAttribute(L"name", 0, &elementName);
                     if ((elementId && wcscmp(elementId, name.bstrVal) == 0) ||
                         (elementName.vt == VT_BSTR && elementName.bstrVal &&
-                             wcscmp(elementName.bstrVal, name.bstrVal) == 0))
+                        wcscmp(elementName.bstrVal, name.bstrVal) == 0))
                     {
-                        element->QueryInterface(IID_IDispatch, (void **) pdisp);
-                        break;
+                        if (element != NULL)
+                        {
+                            if (!pCollection)
+                                CIEHtmlElementCollectionInstance::CreateInstance(&pCollection);
+                            pCollection->AddNode(element);
+                        }
+                        element = currElement;
                     }
                 }
             }
+            // Return the element or collection :
+            if (pCollection != NULL)
+            {
+                pCollection->AddNode(element);
+                pCollection->QueryInterface(IID_IDispatch, (void **) pdisp);
+            }
+            else if (element != NULL)
+                element->QueryInterface(IID_IDispatch, (void **) pdisp);
         }
         else
         {
@@ -680,16 +653,73 @@ HRESULT STDMETHODCALLTYPE CIEHtmlElementCollection::item(VARIANT name, VARIANT i
 
 HRESULT STDMETHODCALLTYPE CIEHtmlElementCollection::tags(VARIANT tagName, IDispatch __RPC_FAR *__RPC_FAR *pdisp)
 {
-    if (pdisp == NULL)
+    if (pdisp == NULL || tagName.vt != VT_BSTR)
     {
         return E_INVALIDARG;
     }
     
     *pdisp = NULL;
 
-    // TODO
-    // iterate through collection looking for elements with matching tags
+    CIEHtmlElementCollectionInstance* pCollection = NULL;
+    CIEHtmlElementCollectionInstance::CreateInstance(&pCollection);
+    if (mNodeList)
+    {
+        for (PRUint32 i = 0; i < mNodeListCount; i++)
+        {
+            CComQIPtr<IHTMLElement> element = mNodeList[i];
+            if (element.p)
+            {
+                CComBSTR elementTagName;
+                element->get_tagName(&elementTagName);
+                if (elementTagName && _wcsicmp(elementTagName, tagName.bstrVal) == 0)
+                    pCollection->AddNode(element);
+            }
+        }
+        pCollection->QueryInterface(IID_IDispatch, (void**)pdisp);
+        return S_OK;
+    }
+    else if (mDOMNodeList)
+    {
+        PRUint32 length = 0;
+        mDOMNodeList->GetLength(&length);
+        for (PRUint32 i = 0; i < length; i++)
+        {
+            // Get the next item from the list
+            nsCOMPtr<nsIDOMNode> childNode;
+            mDOMNodeList->Item(i, getter_AddRefs(childNode));
+            if (!childNode)
+            {
+                // Empty node (unexpected, but try and carry on anyway)
+                NS_ASSERTION(0, "Could not get node");
+                continue;
+            }
+
+            // Skip nodes representing, text, attributes etc.
+            nsCOMPtr<nsIDOMElement> nodeAsElement = do_QueryInterface(childNode);
+            if (!nodeAsElement)
+            {
+                continue;
+            }
     
-    return E_NOTIMPL;
+            nsCOMPtr<nsIDOMHTMLElement> nodeAsHtmlElement = do_QueryInterface(childNode);
+            if (nodeAsHtmlElement)
+            {
+                nsAutoString elementTagName;
+                nodeAsHtmlElement->GetTagName(elementTagName);
+                if (_wcsicmp(elementTagName.get(), OLE2CW(tagName.bstrVal)) == 0)
+                {
+                    CComQIPtr<IHTMLElement> pHtmlElement;
+                    HRESULT hr = FindOrCreateIEElement(childNode, &pHtmlElement);
+                    if (FAILED(hr))
+                        return hr;
+                    //Add to collection :
+                    pCollection->AddNode(pHtmlElement);
+                }
+            }
+        }
+        pCollection->QueryInterface(IID_IDispatch, (void**)pdisp);
+        return S_OK;
+    }
+    return E_UNEXPECTED;
 }
 

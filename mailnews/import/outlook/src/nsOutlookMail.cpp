@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -53,7 +53,8 @@
 #include "nsOutlookStringBundle.h"
 #include "nsABBaseCID.h"
 #include "nsIAbCard.h"
-#include "nsAddrDatabase.h"
+#include "nsIAddrDatabase.h"
+#include "mdb.h"
 #include "OutlookDebugLog.h"
 #include "nsOutlookMail.h"
 #include "nsUnicharUtils.h"
@@ -84,7 +85,7 @@ typedef struct {
 #define	kNoMultiLine	-1
 
 static MAPIFields	gMapiFields[] = {
-	{ 35, kIsMultiLine, PR_COMMENT},
+	{ 35, kIsMultiLine, PR_BODY},
 	{ 6, kNoMultiLine, PR_BUSINESS_TELEPHONE_NUMBER},
 	{ 7, kNoMultiLine, PR_HOME_TELEPHONE_NUMBER},
 	{ 25, kNoMultiLine, PR_COMPANY_NAME},
@@ -217,9 +218,9 @@ nsresult nsOutlookMail::GetMailFolders( nsISupportsArray **pArray)
 PRBool nsOutlookMail::IsAddressBookNameUnique( nsString& name, nsString& list)
 {
 	nsString		usedName;
-	usedName.Append(NS_LITERAL_STRING("["));
+	usedName.AppendLiteral("[");
 	usedName.Append( name);
-	usedName.Append(NS_LITERAL_STRING("],"));
+	usedName.AppendLiteral("],");
 
 	return( list.Find( usedName) == -1);
 }
@@ -238,9 +239,9 @@ void nsOutlookMail::MakeAddressBookNameUnique( nsString& name, nsString& list)
 	}
 	
 	name = newName;
-	list.Append(NS_LITERAL_STRING("["));
+	list.AppendLiteral("[");
 	list.Append( name);
-	list.Append(NS_LITERAL_STRING("],"));
+	list.AppendLiteral("],");
 }
 
 nsresult nsOutlookMail::GetAddressBooks( nsISupportsArray **pArray)
@@ -360,10 +361,11 @@ void nsOutlookMail::SetDefaultContentType(CMapiMessage &msg, nsCString &cType)
   // here. Same thing when conten type is not being set at all.
   if (msg.GetMimeContentLen())
   {
-    // If content type is not multipart/alternative or mixed, return.
+    // If content type is not multipart/alternative or mixed or related, return.
     // for a multipart alternative with attachments, we get multipart mixed!
     if (nsCRT::strcasecmp(msg.GetMimeContent(), "multipart/alternative")
-      && nsCRT::strcasecmp(msg.GetMimeContent(), "multipart/mixed"))
+      && nsCRT::strcasecmp(msg.GetMimeContent(), "multipart/mixed")
+      && nsCRT::strcasecmp(msg.GetMimeContent(), "multipart/related"))
       return;
 
     // For multipart/alternative, if no body or boundary,
@@ -492,7 +494,7 @@ nsresult nsOutlookMail::ImportMailbox( PRUint32 *pDoneSoFar, PRBool *pAbort, PRI
       nsAutoString folderName(pName);
       nsMsgDeliverMode mode = nsIMsgSend::nsMsgDeliverNow;
       mode = nsIMsgSend::nsMsgSaveAsDraft;
-      if ( folderName.Equals(NS_LITERAL_STRING("Drafts"), nsCaseInsensitiveStringComparator()) )
+      if ( folderName.LowerCaseEqualsLiteral("drafts") )
         mode = nsIMsgSend::nsMsgSaveAsDraft;
 			
 			/*
@@ -732,8 +734,7 @@ PRBool nsOutlookMail::WriteAttachment( nsIFileSpec *pDest, CMapiMessage *pMsg)
 	// Now set up the encoder object
 
 	if (bResult) {
-		nsCOMPtr<nsIImportMimeEncode> encoder;
-		rv = nsComponentManager::CreateInstance( kImportMimeEncodeCID, nsnull, NS_GET_IID(nsIImportMimeEncode), getter_AddRefs( encoder));
+		nsCOMPtr<nsIImportMimeEncode> encoder = do_CreateInstance( kImportMimeEncodeCID, &rv);
 		if (NS_FAILED( rv)) {
 			IMPORT_LOG0( "*** Error creating mime encoder\n");
 			return( PR_FALSE);
@@ -982,7 +983,7 @@ nsresult nsOutlookMail::ImportAddresses( PRUint32 *pCount, PRUint32 *pTotal, con
 			if (pVal) {
 				type.Truncate( 0);
 				m_mapi.GetStringFromProp( pVal, type);
-				if (type.Equals(NS_LITERAL_CSTRING("IPM.Contact"))) {
+				if (type.EqualsLiteral("IPM.Contact")) {
 					// This is a contact, add it to the address book!
 					subject.Truncate( 0);
 					pVal = m_mapi.GetMapiProperty( lpMsg, PR_SUBJECT);
@@ -1000,7 +1001,7 @@ nsresult nsOutlookMail::ImportAddresses( PRUint32 *pCount, PRUint32 *pTotal, con
 						}
 					}
 				}
-        else if (type.Equals(NS_LITERAL_CSTRING("IPM.DistList")))
+        else if (type.EqualsLiteral("IPM.DistList"))
         {
           // This is a list/group, add it to the address book!
           subject.Truncate( 0);
@@ -1027,12 +1028,12 @@ nsresult nsOutlookMail::CreateList( const PRUnichar * pName,
   // If no name provided then we're done.
   if (!pName || !(*pName))
     return NS_OK;
-
+  
   nsresult rv = NS_ERROR_FAILURE;
   // Make sure we have db to work with.
   if (!pDb)
     return rv;
-
+  
   nsCOMPtr <nsIMdbRow> newListRow;
   rv = pDb->GetNewListRow(getter_AddRefs(newListRow));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1040,90 +1041,90 @@ nsresult nsOutlookMail::CreateList( const PRUnichar * pName,
   column.AssignWithConversion(pName);
   rv = pDb->AddListName(newListRow, column.get());
   NS_ENSURE_SUCCESS(rv, rv);
-
-    HRESULT             hr;
-    LPSPropValue aValue = NULL ;
-    ULONG aValueCount = 0 ;
-
-    LPSPropTagArray properties = NULL ;
-    m_mapi.MAPIAllocateBuffer(CbNewSPropTagArray(1),
-                       (void **)&properties) ;
-    properties->cValues = 1;
-    properties->aulPropTag [0] = m_mapi.GetEmailPropertyTag(pUserList, 0x8054);
-    hr = pUserList->GetProps(properties, 0, &aValueCount, &aValue) ;
-
-    SBinaryArray *sa=(SBinaryArray *)&aValue->Value.bin;
+  
+  HRESULT             hr;
+  LPSPropValue aValue = NULL ;
+  ULONG aValueCount = 0 ;
+  
+  LPSPropTagArray properties = NULL ;
+  m_mapi.MAPIAllocateBuffer(CbNewSPropTagArray(1),
+    (void **)&properties) ;
+  properties->cValues = 1;
+  properties->aulPropTag [0] = m_mapi.GetEmailPropertyTag(pUserList, 0x8054);
+  hr = pUserList->GetProps(properties, 0, &aValueCount, &aValue) ;
+  
+  SBinaryArray *sa=(SBinaryArray *)&aValue->Value.bin;
   if (!sa || !sa->lpbin)
     return NS_ERROR_NULL_POINTER;
-
-    LPENTRYID    lpEid;
-    ULONG        cbEid;
-    PRInt32        idx;
-    LPMESSAGE        lpMsg;
-    nsCString        type;
-    LPSPropValue    pVal;
-    nsString        subject;
-    PRUint32 total;
+  
+  LPENTRYID    lpEid;
+  ULONG        cbEid;
+  PRInt32        idx;
+  LPMESSAGE        lpMsg;
+  nsCString        type;
+  LPSPropValue    pVal;
+  nsString        subject;
+  PRUint32 total;
+  
+  
+  total=sa->cValues;
+  for (idx = 0;idx < sa->cValues ;idx++)
+  {
+    lpEid= (LPENTRYID) sa->lpbin[idx].lpb;
+    cbEid = sa->lpbin[idx].cb;
     
-
-    total=sa->cValues;
-    for (idx=0;idx<sa->cValues ;idx++)
+    
+    if (!m_mapi.OpenEntry(cbEid, lpEid, (LPUNKNOWN *) &lpMsg))
     {
-        lpEid= (LPENTRYID) sa->lpbin[idx].lpb;
-        cbEid = sa->lpbin[idx].cb;
-
-
-        if (!m_mapi.OpenEntry(cbEid, lpEid, (LPUNKNOWN *) &lpMsg))
+      
+      IMPORT_LOG1( "*** Error opening messages in mailbox: %S\n", pName);
+      return( NS_ERROR_FAILURE);
+    }
+    // This is a contact, add it to the address book!
+    subject.Truncate( 0);
+    pVal = m_mapi.GetMapiProperty( lpMsg, PR_SUBJECT);
+    if (pVal)
+      m_mapi.GetStringFromProp( pVal, subject);
+    
+    nsCOMPtr <nsIMdbRow> newRow;
+    nsCOMPtr <nsIMdbRow> oldRow;
+    pDb->GetNewRow( getter_AddRefs(newRow));
+    if (newRow) {
+      if (BuildCard( subject.get(), pDb, newRow, lpMsg, pFieldMap)) 
+      {
+        nsCOMPtr <nsIAbCard> userCard;
+        nsCOMPtr <nsIAbCard> newCard;
+        userCard = do_CreateInstance(NS_ABMDBCARD_CONTRACTID, &rv);
+        NS_ENSURE_SUCCESS(rv, rv);
+        pDb->InitCardFromRow(userCard,newRow);
+        
+        //add card to db
+        PRBool bl=PR_FALSE;
+        pDb->FindRowByCard(userCard,getter_AddRefs(oldRow));
+        if (oldRow)
         {
-            
-            IMPORT_LOG1( "*** Error opening messages in mailbox: %S\n", pName);
-            return( NS_ERROR_FAILURE);
+          newRow = oldRow;
         }
-                // This is a contact, add it to the address book!
-                subject.Truncate( 0);
-                pVal = m_mapi.GetMapiProperty( lpMsg, PR_SUBJECT);
-                if (pVal)
-                    m_mapi.GetStringFromProp( pVal, subject);
-                
-                    nsCOMPtr <nsIMdbRow> newRow;
-                    nsCOMPtr <nsIMdbRow> oldRow;
-                    pDb->GetNewRow( getter_AddRefs(newRow));
-                    if (newRow) {
-                        if (BuildCard( subject.get(), pDb, newRow, lpMsg, pFieldMap)) 
-                        {
-                            nsCOMPtr <nsIAbCard> userCard;
-                            nsCOMPtr <nsIAbCard> newCard;
-                            userCard = do_CreateInstance(NS_ABMDBCARD_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-                            pDb->InitCardFromRow(userCard,newRow);
-                            
-                            //add card to db
-                            PRBool bl=PR_FALSE;
-                            pDb->FindRowByCard(userCard,getter_AddRefs(oldRow));
-                            if (oldRow)
-                            {
-                                newRow = oldRow;
-                            }
-                            else
-                            {
-                                pDb->AddCardRowToDB( newRow);
-                            }
-                            
-                            //add card list
-                            pDb->AddListCardColumnsToRow(userCard,
-                                              newListRow,idx+1,
-                                              getter_AddRefs(newCard),PR_TRUE);
-
-                            
-                        }
-                    }
-
-
-            }
+        else
+        {
+          pDb->AddCardRowToDB( newRow);
+        }
+        
+        //add card list
+        pDb->AddListCardColumnsToRow(userCard,
+          newListRow,idx+1,
+          getter_AddRefs(newCard),PR_TRUE);
+        
+        
+      }
+    }
+    
+    
+  }
   
   rv = pDb->AddCardRowToDB(newListRow);
   NS_ENSURE_SUCCESS(rv, rv);
-
+  
   rv = pDb->SetListAddressTotal(newListRow, total);
   rv = pDb->AddListDirNode(newListRow);
   return rv;

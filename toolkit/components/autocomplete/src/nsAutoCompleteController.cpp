@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
- /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,18 +23,19 @@
  *   Joe Hewitt <hewitt@netscape.com> (Original Author)
  *   Dean Tessman <dean_tessman@hotmail.com>
  *   Johnny Stenback <jst@mozilla.jstenback.com>
+ *   Masayuki Nakano <masayuki@d-toybox.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -46,6 +47,7 @@
 #include "nsIAtomService.h"
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
+#include "nsITreeColumns.h"
 
 static const char *kAutoCompleteSearchCID = "@mozilla.org/autocomplete/search;1?name=";
 
@@ -57,6 +59,9 @@ nsAutoCompleteController::nsAutoCompleteController() :
   mEnterAfterSearch(PR_FALSE),
   mDefaultIndexCompleted(PR_FALSE),
   mBackspaced(PR_FALSE),
+  mPopupClosedByCompositionStart(PR_FALSE),
+  mIsIMEComposing(PR_FALSE),
+  mIgnoreHandleText(PR_FALSE),
   mSearchStatus(0),
   mRowCount(0),
   mSearchesOngoing(0)
@@ -164,24 +169,50 @@ nsAutoCompleteController::StartSearch(const nsAString &aSearchString)
 NS_IMETHODIMP
 nsAutoCompleteController::HandleText(PRBool aIgnoreSelection)
 {
+  if (!mInput) {
+    // Stop current search in case it's async.
+    StopSearch();
+    // Stop the queued up search on a timer
+    ClearSearchTimer();
+    // Note: if now is after blur and IME end composition,
+    // check mInput before calling.
+    // See https://bugzilla.mozilla.org/show_bug.cgi?id=193544#c31
+    NS_ERROR("Called before attaching to the control or after detaching from the control");
+    return NS_OK;
+  }
+
+  nsAutoString newValue;
+  mInput->GetTextValue(newValue);
+
+  // Note: the events occur in the following order when IME is used.
+  // 1. composition start event(HandleStartComposition)
+  // 2. composition end event(HandleEndComposition)
+  // 3. input event(HandleText)
+  // Note that the input event occurs if IME composition is cancelled, as well.
+  // In HandleEndComposition, we are processing the popup properly.
+  // Therefore, the input event after composition end event should do nothing.
+  // (E.g., calling StopSearch(), ClearSearchTimer() and ClosePopup().)
+  // If it is not, popup is always closed after composition end.
+  if (mIgnoreHandleText) {
+    mIgnoreHandleText = PR_FALSE;
+    if (newValue.Equals(mSearchString))
+      return NS_OK;
+    NS_ERROR("Now is after composition end event. But the value was changed.");
+  }
+
   // Stop current search in case it's async.
   StopSearch();
   // Stop the queued up search on a timer
   ClearSearchTimer();
-  
-  NS_ENSURE_TRUE(mInput, NS_ERROR_NULL_POINTER);
 
   PRBool disabled;
   mInput->GetDisableAutoComplete(&disabled);
   NS_ENSURE_TRUE(!disabled, NS_OK);
 
-  nsAutoString newValue;
-  mInput->GetTextValue(newValue);
-
   // Don't search again if the new string is the same as the last search
   if (newValue.Length() > 0 && newValue.Equals(mSearchString))
     return NS_OK;
-  
+
   // Determine if the user has removed text from the end (probably by backspacing)
   if (newValue.Length() < mSearchString.Length() &&
       Substring(mSearchString, 0, newValue.Length()).Equals(newValue))
@@ -230,9 +261,12 @@ nsAutoCompleteController::HandleEnter(PRBool *_retval)
   if (*_retval) {
     nsCOMPtr<nsIAutoCompletePopup> popup;
     mInput->GetPopup(getter_AddRefs(popup));
-    PRInt32 selectedIndex;
-    popup->GetSelectedIndex(&selectedIndex);
-    *_retval = selectedIndex >= 0;
+
+    if (popup) {
+      PRInt32 selectedIndex;
+      popup->GetSelectedIndex(&selectedIndex);
+      *_retval = selectedIndex >= 0;
+    }
   }
   
   ClearSearchTimer();
@@ -256,6 +290,62 @@ nsAutoCompleteController::HandleEscape(PRBool *_retval)
 }
 
 NS_IMETHODIMP
+nsAutoCompleteController::HandleStartComposition()
+{
+  NS_ENSURE_TRUE(!mIsIMEComposing, NS_OK);
+
+  mPopupClosedByCompositionStart = PR_FALSE;
+  mIsIMEComposing = PR_TRUE;
+
+  if (!mInput)
+    return NS_OK;
+
+  PRBool disabled;
+  mInput->GetDisableAutoComplete(&disabled);
+  if (disabled)
+    return NS_OK;
+
+  StopSearch();
+  ClearSearchTimer();
+
+  PRBool isOpen;
+  mInput->GetPopupOpen(&isOpen);
+  if (isOpen)
+    ClosePopup();
+  mPopupClosedByCompositionStart = isOpen;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsAutoCompleteController::HandleEndComposition()
+{
+  NS_ENSURE_TRUE(mIsIMEComposing, NS_OK);
+
+  mIsIMEComposing = PR_FALSE;
+  PRBool forceOpenPopup = mPopupClosedByCompositionStart;
+  mPopupClosedByCompositionStart = PR_FALSE;
+
+  if (!mInput)
+    return NS_OK;
+
+  nsAutoString value;
+  mInput->GetTextValue(value);
+  SetSearchString(EmptyString());
+  if (!value.IsEmpty()) {
+    // Show the popup with a filtered result set
+    HandleText(PR_TRUE);
+  } else if (forceOpenPopup) {
+    PRBool cancel;
+    HandleKeyNavigation(nsIAutoCompleteController::KEY_DOWN, &cancel);
+  }
+  // On here, |value| and |mSearchString| are same. Therefore, next HandleText should be
+  // ignored. Because there are no reason to research.
+  mIgnoreHandleText = PR_TRUE;
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsAutoCompleteController::HandleTab()
 {
   PRBool cancel;
@@ -267,7 +357,15 @@ nsAutoCompleteController::HandleKeyNavigation(PRUint16 aKey, PRBool *_retval)
 {
   // By default, don't cancel the event
   *_retval = PR_FALSE;
-  
+
+  if (!mInput) {
+    // Note: if now is after blur and IME end composition,
+    // check mInput before calling.
+    // See https://bugzilla.mozilla.org/show_bug.cgi?id=193544#c31
+    NS_ERROR("Called before attaching to the control or after detaching from the control");
+    return NS_OK;
+  }
+
   nsCOMPtr<nsIAutoCompletePopup> popup;
   mInput->GetPopup(getter_AddRefs(popup));
   NS_ENSURE_TRUE(popup != nsnull, NS_ERROR_FAILURE);
@@ -297,17 +395,23 @@ nsAutoCompleteController::HandleKeyNavigation(PRUint16 aKey, PRBool *_retval)
       popup->SelectBy(reverse, page);
 
       // Fill in the value of the textbox with whatever is selected in the popup
-      PRInt32 selectedIndex;
-      popup->GetSelectedIndex(&selectedIndex);
-      if (selectedIndex >= 0) {
-        //  A result is selected, so fill in its value
-        nsAutoString value;
-        if (NS_SUCCEEDED(GetResultValueAt(selectedIndex, PR_TRUE, value)))
-          CompleteValue(value, PR_FALSE);
-      } else {
-        // Nothing is selected, so fill in the last typed value
-        mInput->SetTextValue(mSearchString);
-        mInput->SelectTextRange(mSearchString.Length(), mSearchString.Length());
+      // if the completeSelectedIndex attribute is set
+      PRBool completeSelection;
+      mInput->GetCompleteSelectedIndex(&completeSelection);
+      if (completeSelection)
+      {
+        PRInt32 selectedIndex;
+        popup->GetSelectedIndex(&selectedIndex);
+        if (selectedIndex >= 0) {
+          //  A result is selected, so fill in its value
+          nsAutoString value;
+          if (NS_SUCCEEDED(GetResultValueAt(selectedIndex, PR_TRUE, value)))
+            CompleteValue(value, PR_FALSE);
+        } else {
+          // Nothing is selected, so fill in the last typed value
+          mInput->SetTextValue(mSearchString);
+          mInput->SelectTextRange(mSearchString.Length(), mSearchString.Length());
+        }
       }
     } else {
       // Open the popup if there has been a previous search, or else kick off a new search
@@ -320,12 +424,29 @@ nsAutoCompleteController::HandleKeyNavigation(PRUint16 aKey, PRBool *_retval)
       } else
         StartSearchTimer();
     }    
-  } else if (aKey == nsIAutoCompleteController::KEY_LEFT ||
-             aKey == nsIAutoCompleteController::KEY_RIGHT)
+  } else if (   aKey == nsIAutoCompleteController::KEY_LEFT 
+             || aKey == nsIAutoCompleteController::KEY_RIGHT 
+#ifndef XP_MACOSX
+             || aKey == nsIAutoCompleteController::KEY_HOME
+#endif
+            )
   {
-    // When the user arrows to the side, close the popup
-    ClearSearchTimer();
-    ClosePopup();
+    // The user hit a text-navigation key.
+    PRBool isOpen;
+    mInput->GetPopupOpen(&isOpen);
+    if (isOpen) {
+      PRInt32 selectedIndex;
+      popup->GetSelectedIndex(&selectedIndex);
+      if (selectedIndex >= 0) {
+        // The pop-up is open and has a selection, take its value
+        nsAutoString value;
+        if (NS_SUCCEEDED(GetResultValueAt(selectedIndex, PR_TRUE, value)))
+          CompleteValue(value, PR_FALSE);
+      }
+      // Close the pop-up even if nothing was selected
+      ClearSearchTimer();
+      ClosePopup();
+    }
   }
   
   return NS_OK;
@@ -510,7 +631,7 @@ nsAutoCompleteController::GetRowProperties(PRInt32 index, nsISupportsArray *prop
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::GetCellProperties(PRInt32 row, const PRUnichar *colID, nsISupportsArray *properties)
+nsAutoCompleteController::GetCellProperties(PRInt32 row, nsITreeColumn* col, nsISupportsArray* properties)
 {
   GetRowProperties(row, properties);
   
@@ -529,39 +650,40 @@ nsAutoCompleteController::GetCellProperties(PRInt32 row, const PRUnichar *colID,
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::GetColumnProperties(const PRUnichar *colID, nsIDOMElement *colElt, nsISupportsArray *properties)
+nsAutoCompleteController::GetColumnProperties(nsITreeColumn* col, nsISupportsArray* properties)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::GetImageSrc(PRInt32 row, const PRUnichar *colID, nsAString& _retval)
+nsAutoCompleteController::GetImageSrc(PRInt32 row, nsITreeColumn* col, nsAString& _retval)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::GetProgressMode(PRInt32 row, const PRUnichar *colID, PRInt32* _retval)
+nsAutoCompleteController::GetProgressMode(PRInt32 row, nsITreeColumn* col, PRInt32* _retval)
 {
   NS_NOTREACHED("tree has no progress cells");
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::GetCellValue(PRInt32 row, const PRUnichar *colID, nsAString& _retval)
+nsAutoCompleteController::GetCellValue(PRInt32 row, nsITreeColumn* col, nsAString& _retval)
 {  
   NS_NOTREACHED("all of our cells are text");
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::GetCellText(PRInt32 row, const PRUnichar *colID, nsAString& _retval)
+nsAutoCompleteController::GetCellText(PRInt32 row, nsITreeColumn* col, nsAString& _retval)
 {
-  nsDependentString columnId(colID);
+  const PRUnichar* colID;
+  col->GetIdConst(&colID);
   
-  if (columnId.Equals(NS_LITERAL_STRING("treecolAutoCompleteValue")))
+  if (NS_LITERAL_STRING("treecolAutoCompleteValue").Equals(colID))
     GetValueAt(row, _retval);
-  else if(columnId.Equals(NS_LITERAL_STRING("treecolAutoCompleteComment")))
+  else if (NS_LITERAL_STRING("treecolAutoCompleteComment").Equals(colID))
     GetCommentAt(row, _retval);
      
   return NS_OK;
@@ -643,25 +765,31 @@ nsAutoCompleteController::SelectionChanged()
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::SetCellText(PRInt32 row, const PRUnichar *colID, const PRUnichar *value)
+nsAutoCompleteController::SetCellValue(PRInt32 row, nsITreeColumn* col, const nsAString& value)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::CycleHeader(const PRUnichar *colID, nsIDOMElement *elt)
+nsAutoCompleteController::SetCellText(PRInt32 row, nsITreeColumn* col, const nsAString& value)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::CycleCell(PRInt32 row, const PRUnichar *colID)
+nsAutoCompleteController::CycleHeader(nsITreeColumn* col)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::IsEditable(PRInt32 row, const PRUnichar *colID, PRBool *_retval)
+nsAutoCompleteController::CycleCell(PRInt32 row, nsITreeColumn* col)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsAutoCompleteController::IsEditable(PRInt32 row, nsITreeColumn* col, PRBool *_retval)
 {
   *_retval = PR_FALSE;
   return NS_OK;
@@ -682,13 +810,7 @@ nsAutoCompleteController::IsSorted(PRBool *_retval)
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::CanDropOn(PRInt32 index, PRBool *_retval)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsAutoCompleteController::CanDropBeforeAfter(PRInt32 index, PRBool before, PRBool *_retval)
+nsAutoCompleteController::CanDrop(PRInt32 index, PRInt32 orientation, PRBool *_retval)
 {
   return NS_OK;
 }
@@ -712,7 +834,7 @@ nsAutoCompleteController::PerformActionOnRow(const PRUnichar *action, PRInt32 ro
 }
 
 NS_IMETHODIMP
-nsAutoCompleteController::PerformActionOnCell(const PRUnichar *action, PRInt32 row, const PRUnichar *colID)
+nsAutoCompleteController::PerformActionOnCell(const PRUnichar* action, PRInt32 row, nsITreeColumn* col)
 {
   return NS_OK;
 }
@@ -841,8 +963,8 @@ nsAutoCompleteController::EnterMatch()
   if (mSearchStatus == nsIAutoCompleteController::STATUS_SEARCHING) {
     mEnterAfterSearch = PR_TRUE;
     return NS_OK;
-  } else
-    mEnterAfterSearch = PR_FALSE;
+  }
+  mEnterAfterSearch = PR_FALSE;
   
   nsCOMPtr<nsIAutoCompletePopup> popup;
   mInput->GetPopup(getter_AddRefs(popup));
@@ -1046,7 +1168,7 @@ nsAutoCompleteController::CompleteValue(nsString &aValue, PRBool selectDifferenc
   iter = start;
 
   FindInReadable(mSearchString, iter, end,
-		 nsCaseInsensitiveStringComparator());
+         nsCaseInsensitiveStringComparator());
 
   if (iter == start) {
     // The textbox value matches the beginning of the default value,
@@ -1099,8 +1221,7 @@ nsAutoCompleteController::GetResultValueAt(PRInt32 aIndex, PRBool aValueOnly, ns
   if (searchResult == nsIAutoCompleteResult::RESULT_FAILURE) {
     if (aValueOnly)
       return NS_ERROR_FAILURE;
-    else
-      result->GetErrorDescription(_retval);
+    result->GetErrorDescription(_retval);
   } else if (searchResult == nsIAutoCompleteResult::RESULT_SUCCESS) {
     result->GetValueAt(rowIndex, _retval);
   }
@@ -1126,13 +1247,8 @@ nsAutoCompleteController::RowIndexToSearch(PRInt32 aRowIndex, PRInt32 *aSearchIn
     PRUint16 searchResult;
     result->GetSearchResult(&searchResult);
     
-    PRUint32 rowCount;
-    if (searchResult == nsIAutoCompleteResult::RESULT_FAILURE) {
-      nsAutoString error;
-      result->GetErrorDescription(error);
-      if (!error.IsEmpty())
-        rowCount = 1;
-    } else if (searchResult == nsIAutoCompleteResult::RESULT_SUCCESS) {
+    PRUint32 rowCount = 1;
+    if (searchResult == nsIAutoCompleteResult::RESULT_SUCCESS) {
       result->GetMatchCount(&rowCount);
     }
     

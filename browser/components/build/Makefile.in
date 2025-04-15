@@ -11,17 +11,16 @@ SHORT_LIBNAME = brwsrcmp
 EXPORT_LIBRARY = 1
 IS_COMPONENT = 1
 MODULE_NAME = nsBrowserCompsModule
+MOZILLA_INTERNAL_API = 1
 
 REQUIRES = \
 	xpcom \
 	string \
-	autocomplete \
-	mork \
 	pref \
 	rdf \
-	intl \
 	uriloader \
-	dom \
+	webbrowserpersist \
+	intl \
 	necko \
 	nkcache \
 	txmgr \
@@ -57,7 +56,7 @@ SHARED_LIBRARY_LIBS = \
 	$(DIST)/lib/$(LIB_PREFIX)migration_s.$(LIB_SUFFIX) \
 	$(NULL)
 
-ifneq (,$(filter windows mac gtk2, $(MOZ_WIDGET_TOOLKIT)))
+ifneq (,$(filter windows mac cocoa gtk2, $(MOZ_WIDGET_TOOLKIT)))
 SHARED_LIBRARY_LIBS += $(DIST)/lib/$(LIB_PREFIX)shellservice_s.$(LIB_SUFFIX)
 endif
 

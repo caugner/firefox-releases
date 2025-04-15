@@ -1,39 +1,42 @@
 /*
  * NSS utility functions
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
- * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- # $Id: dbinit.c,v 1.20 2003/05/30 23:31:30 wtc%netscape.com Exp $
- */
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is the Netscape security libraries.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
+/* $Id: dbinit.c,v 1.25 2005/03/29 18:21:18 nelsonb%netscape.com Exp $ */
 
 #include <ctype.h>
 #include "seccomon.h"
@@ -47,7 +50,7 @@
 #include "pkcs11i.h"
 
 static char *
-pk11_certdb_name_cb(void *arg, int dbVersion)
+sftk_certdb_name_cb(void *arg, int dbVersion)
 {
     const char *configdir = (const char *)arg;
     const char *dbver;
@@ -84,7 +87,7 @@ pk11_certdb_name_cb(void *arg, int dbVersion)
 }
     
 static char *
-pk11_keydb_name_cb(void *arg, int dbVersion)
+sftk_keydb_name_cb(void *arg, int dbVersion)
 {
     const char *configdir = (const char *)arg;
     const char *dbver;
@@ -115,13 +118,8 @@ pk11_keydb_name_cb(void *arg, int dbVersion)
     return dbname;
 }
 
-/* for now... we need to define vendor specific codes here.
- */
-#define CKR_CERTDB_FAILED	CKR_DEVICE_ERROR
-#define CKR_KEYDB_FAILED	CKR_DEVICE_ERROR
-
 const char *
-pk11_EvaluateConfigDir(const char *configdir,char **appName)
+sftk_EvaluateConfigDir(const char *configdir,char **appName)
 {
     if (PORT_Strncmp(configdir, MULTIACCESS, sizeof(MULTIACCESS)-1) == 0) {
 	char *cdir;
@@ -144,11 +142,11 @@ pk11_EvaluateConfigDir(const char *configdir,char **appName)
 }
 
 static CK_RV
-pk11_OpenCertDB(const char * configdir, const char *prefix, PRBool readOnly,
+sftk_OpenCertDB(const char * configdir, const char *prefix, PRBool readOnly,
     					    NSSLOWCERTCertDBHandle **certdbPtr)
 {
     NSSLOWCERTCertDBHandle *certdb = NULL;
-    CK_RV        crv = CKR_CERTDB_FAILED;
+    CK_RV        crv = CKR_NETSCAPE_CERTDB_FAILED;
     SECStatus    rv;
     char * name = NULL;
     char * appName = NULL;
@@ -157,7 +155,7 @@ pk11_OpenCertDB(const char * configdir, const char *prefix, PRBool readOnly,
 	prefix = "";
     }
 
-    configdir = pk11_EvaluateConfigDir(configdir, &appName);
+    configdir = sftk_EvaluateConfigDir(configdir, &appName);
 
     name = PR_smprintf("%s" PATH_SEPARATOR "%s",configdir,prefix);
     if (name == NULL) goto loser;
@@ -168,7 +166,7 @@ pk11_OpenCertDB(const char * configdir, const char *prefix, PRBool readOnly,
 
 /* fix when we get the DB in */
     rv = nsslowcert_OpenCertDB(certdb, readOnly, appName, prefix,
-				pk11_certdb_name_cb, (void *)name, PR_FALSE);
+				sftk_certdb_name_cb, (void *)name, PR_FALSE);
     if (rv == SECSuccess) {
 	crv = CKR_OK;
 	*certdbPtr = certdb;
@@ -182,7 +180,7 @@ loser:
 }
 
 static CK_RV
-pk11_OpenKeyDB(const char * configdir, const char *prefix, PRBool readOnly,
+sftk_OpenKeyDB(const char * configdir, const char *prefix, PRBool readOnly,
     						NSSLOWKEYDBHandle **keydbPtr)
 {
     NSSLOWKEYDBHandle *keydb;
@@ -192,17 +190,17 @@ pk11_OpenKeyDB(const char * configdir, const char *prefix, PRBool readOnly,
     if (prefix == NULL) {
 	prefix = "";
     }
-    configdir = pk11_EvaluateConfigDir(configdir, &appName);
+    configdir = sftk_EvaluateConfigDir(configdir, &appName);
 
     name = PR_smprintf("%s" PATH_SEPARATOR "%s",configdir,prefix);	
     if (name == NULL) 
-	return SECFailure;
+	return CKR_HOST_MEMORY;
     keydb = nsslowkey_OpenKeyDB(readOnly, appName, prefix, 
-					pk11_keydb_name_cb, (void *)name);
+					sftk_keydb_name_cb, (void *)name);
     PR_smprintf_free(name);
     if (appName) PORT_Free(appName);
     if (keydb == NULL)
-	return CKR_KEYDB_FAILED;
+	return CKR_NETSCAPE_KEYDB_FAILED;
     *keydbPtr = keydb;
 
     return CKR_OK;
@@ -227,7 +225,7 @@ pk11_OpenKeyDB(const char * configdir, const char *prefix, PRBool readOnly,
  * 			be opened.
  */
 CK_RV
-pk11_DBInit(const char *configdir, const char *certPrefix, 
+sftk_DBInit(const char *configdir, const char *certPrefix, 
 	    const char *keyPrefix, PRBool readOnly, 
 	    PRBool noCertDB, PRBool noKeyDB, PRBool forceOpen,
 	    NSSLOWCERTCertDBHandle **certdbPtr, NSSLOWKEYDBHandle **keydbPtr)
@@ -236,7 +234,7 @@ pk11_DBInit(const char *configdir, const char *certPrefix,
 
 
     if (!noCertDB) {
-	crv = pk11_OpenCertDB(configdir, certPrefix, readOnly, certdbPtr);
+	crv = sftk_OpenCertDB(configdir, certPrefix, readOnly, certdbPtr);
 	if (crv != CKR_OK) {
 	    if (!forceOpen) goto loser;
 	    crv = CKR_OK;
@@ -244,7 +242,7 @@ pk11_DBInit(const char *configdir, const char *certPrefix,
     }
     if (!noKeyDB) {
 
-	crv = pk11_OpenKeyDB(configdir, keyPrefix, readOnly, keydbPtr);
+	crv = sftk_OpenKeyDB(configdir, keyPrefix, readOnly, keydbPtr);
 	if (crv != CKR_OK) {
 	    if (!forceOpen) goto loser;
 	    crv = CKR_OK;
@@ -258,24 +256,22 @@ loser:
 
 
 void
-pk11_DBShutdown(NSSLOWCERTCertDBHandle *certHandle, 
+sftk_DBShutdown(NSSLOWCERTCertDBHandle *certHandle, 
 		NSSLOWKEYDBHandle *keyHandle)
 {
     if (certHandle) {
     	nsslowcert_ClosePermCertDB(certHandle);
 	PORT_Free(certHandle);
-	certHandle= NULL;
     }
 
     if (keyHandle) {
     	nsslowkey_CloseKeyDB(keyHandle);
-	keyHandle= NULL;
     }
 }
 
 static int rdbmapflags(int flags);
-static rdbfunc pk11_rdbfunc = NULL;
-static rdbstatusfunc pk11_rdbstatusfunc = NULL;
+static rdbfunc sftk_rdbfunc = NULL;
+static rdbstatusfunc sftk_rdbstatusfunc = NULL;
 
 /* NOTE: SHLIB_SUFFIX is defined on the command line */
 #define RDBLIB SHLIB_PREFIX"rdb."SHLIB_SUFFIX
@@ -286,10 +282,10 @@ DB * rdbopen(const char *appName, const char *prefix,
     PRLibrary *lib;
     DB *db;
 
-    if (pk11_rdbfunc) {
-	db = (*pk11_rdbfunc)(appName,prefix,type,rdbmapflags(flags));
-	if (!db && status && pk11_rdbstatusfunc) {
-	    *status = (*pk11_rdbstatusfunc)();
+    if (sftk_rdbfunc) {
+	db = (*sftk_rdbfunc)(appName,prefix,type,rdbmapflags(flags));
+	if (!db && status && sftk_rdbstatusfunc) {
+	    *status = (*sftk_rdbstatusfunc)();
 	}
 	return db;
     }
@@ -304,12 +300,12 @@ DB * rdbopen(const char *appName, const char *prefix,
     }
 
     /* get the entry points */
-    pk11_rdbstatusfunc = (rdbstatusfunc) PR_FindSymbol(lib,"rdbstatus");
-    pk11_rdbfunc = (rdbfunc) PR_FindSymbol(lib,"rdbopen");
-    if (pk11_rdbfunc) {
-	db = (*pk11_rdbfunc)(appName,prefix,type,rdbmapflags(flags));
-	if (!db && status && pk11_rdbstatusfunc) {
-	    *status = (*pk11_rdbstatusfunc)();
+    sftk_rdbstatusfunc = (rdbstatusfunc) PR_FindSymbol(lib,"rdbstatus");
+    sftk_rdbfunc = (rdbfunc) PR_FindSymbol(lib,"rdbopen");
+    if (sftk_rdbfunc) {
+	db = (*sftk_rdbfunc)(appName,prefix,type,rdbmapflags(flags));
+	if (!db && status && sftk_rdbstatusfunc) {
+	    *status = (*sftk_rdbstatusfunc)();
 	}
 	return db;
     }
@@ -389,7 +385,7 @@ db_InitComplete(DB *db)
     /* we should have addes a version number to the RDBS structure. Since we
      * didn't, we detect that we have and 'extended' structure if the rdbstatus
      * func exists */
-    if (!pk11_rdbstatusfunc) {
+    if (!sftk_rdbstatusfunc) {
 	return 0;
     }
 

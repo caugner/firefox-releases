@@ -1,25 +1,41 @@
 
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
- */
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 
 #include "xptcprivate.h"
@@ -147,16 +163,17 @@ PrepareAndDispatch(nsXPTCStubBase* self, PRUint32 methodIndex,
 }
 
 extern "C" int SharedStub(PRUint64,PRUint64,PRUint64,PRUint64,
- PRUint64,PRUint64,PRUint64,PRUint64,PRUint64);
+ PRUint64,PRUint64,PRUint64,PRUint64,PRUint64,PRUint64 *);
 
 /* Variable a0-a7 were put there so we can have access to the 8 input
    registers on Stubxyz entry */
 
 #define STUB_ENTRY(n) \
 nsresult nsXPTCStubBase::Stub##n(PRUint64 a1, \
-PRUint64 a2,PRUint64 a3,PRUint64 a4,PRUint64 a5,PRUint64 a6,PRUint64 a7) \
+PRUint64 a2,PRUint64 a3,PRUint64 a4,PRUint64 a5,PRUint64 a6,PRUint64 a7, \
+PRUint64 a8) \
 { uint64_t a0 = (uint64_t) this; \
- return SharedStub(a0,a1,a2,a3,a4,a5,a6,a7,(PRUint64) n); \
+ return SharedStub(a0,a1,a2,a3,a4,a5,a6,a7,(PRUint64) n, &a8); \
 }
 
 #define SENTINEL_ENTRY(n) \

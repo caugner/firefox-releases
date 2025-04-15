@@ -1,27 +1,40 @@
 /* -*- Mode: Text; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Chatzilla.
  *
- * The Initial Developer of the Original Code is New Dimensions Consulting,
- * Inc. Portions created by New Dimensions Consulting, Inc. are
- * Copyright (C) 1999 New Dimenstions Consulting, Inc. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * New Dimensions Consulting, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Robert Ginda, rginda@ndcico.com, original author
- * 
- * Styles for output window
+ *   Robert Ginda, rginda@ndcico.com, original author
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* 
  * This file contains the CSS rules for the output window in ChatZilla.
@@ -158,6 +171,8 @@ body.chatzilla-body {               /* The topmost container in the ChatZilla */
 /* links */
 a.chatzilla-link {
     text-decoration: none;
+    direction: ltr;
+    unicode-bidi: embed;
 }
 
 /* link hover effect */
@@ -344,39 +359,111 @@ a.chatzilla-link:hover {
 .chatzilla-emote:after {            /* empty span to attach :after images to   */
     margin-left: 3px;
     margin-right: 3px;
-    content: url(chrome://chatzilla/skin/images/face-dunno.gif);
+    content: url(chrome://chatzilla/skin/images/face-question.png);
+}
+
+.chatzilla-emote[type="face-alien"]:after {
+    content: url(chrome://chatzilla/skin/images/face-alien.png);
 }
 
 .chatzilla-emote[type="face-angry"]:after {
-    content: url(chrome://chatzilla/skin/images/face-angry.gif);
+    content: url(chrome://chatzilla/skin/images/face-angry.png);
+}
+
+.chatzilla-emote[type="face-arrow"]:after {
+    content: url(chrome://chatzilla/skin/images/face-arrow.png);
 }
 
 .chatzilla-emote[type="face-cry"]:after {
-    content: url(chrome://chatzilla/skin/images/face-cry.gif);
+    content: url(chrome://chatzilla/skin/images/face-cry.png);
 }
 
-.chatzilla-emote[type="face-frown"]:after {
-    content: url(chrome://chatzilla/skin/images/face-frown.gif);
+.chatzilla-emote[type="face-confused"]:after {
+    content: url(chrome://chatzilla/skin/images/face-confused.png);
 }
 
-.chatzilla-emote[type="face-screw"]:after {
-    content: url(chrome://chatzilla/skin/images/face-screw.gif);
+.chatzilla-emote[type="face-cool"]:after {
+    content: url(chrome://chatzilla/skin/images/face-cool.png);
+}
+
+.chatzilla-emote[type="face-dizzy"]:after {
+    content: url(chrome://chatzilla/skin/images/face-dizzy.png);
+}
+
+.chatzilla-emote[type="face-dizzy-back"]:after {
+    content: url(chrome://chatzilla/skin/images/face-dizzy-back.png);
+}
+
+.chatzilla-emote[type="face-eek"]:after {
+    content: url(chrome://chatzilla/skin/images/face-eek.png);
+}
+
+.chatzilla-emote[type="face-evil"]:after {
+    content: url(chrome://chatzilla/skin/images/face-evil.png);
+}
+
+.chatzilla-emote[type="face-exclaim"]:after {
+    content: url(chrome://chatzilla/skin/images/face-exclaim.png);
+}
+
+.chatzilla-emote[type="face-idea"]:after {
+    content: url(chrome://chatzilla/skin/images/face-idea.png);
+}
+
+.chatzilla-emote[type="face-laugh"]:after {
+    content: url(chrome://chatzilla/skin/images/face-laugh.png);
+}
+
+.chatzilla-emote[type="face-lol"]:after {
+    content: url(chrome://chatzilla/skin/images/face-lol.png);
+}
+
+.chatzilla-emote[type="face-mrgreen"]:after {
+    content: url(chrome://chatzilla/skin/images/face-mrgreen.png);
+}
+
+.chatzilla-emote[type="face-normal"]:after {
+    content: url(chrome://chatzilla/skin/images/face-normal.png);
+}
+
+.chatzilla-emote[type="face-question"]:after {
+    content: url(chrome://chatzilla/skin/images/face-question.png);
+}
+
+.chatzilla-emote[type="face-razz"]:after {
+    content: url(chrome://chatzilla/skin/images/face-razz.png);
+}
+
+.chatzilla-emote[type="face-red"]:after {
+    content: url(chrome://chatzilla/skin/images/face-red.png);
+}
+
+.chatzilla-emote[type="face-rofl"]:after {
+    content: url(chrome://chatzilla/skin/images/face-rofl.png);
+}
+
+.chatzilla-emote[type="face-rolleyes"]:after {
+    content: url(chrome://chatzilla/skin/images/face-rolleyes.png);
+}
+
+.chatzilla-emote[type="face-sad"]:after {
+    content: url(chrome://chatzilla/skin/images/face-sad.png);
 }
 
 .chatzilla-emote[type="face-smile"]:after {
-    content: url(chrome://chatzilla/skin/images/face-smile.gif);
+    content: url(chrome://chatzilla/skin/images/face-smile.png);
 }
 
-.chatzilla-emote[type="face-surprise"]:after {
-    content: url(chrome://chatzilla/skin/images/face-surprise.gif);
+.chatzilla-emote[type="face-surprised"]:after {
+    content: url(chrome://chatzilla/skin/images/face-surprised.png);
 }
 
 .chatzilla-emote[type="face-tongue"]:after {
-    content: url(chrome://chatzilla/skin/images/face-tongue.gif);
+    content: url(chrome://chatzilla/skin/images/face-tongue.png);
 }
 
 .chatzilla-emote[type="face-wink"]:after {
-    content: url(chrome://chatzilla/skin/images/face-wink.gif);
+    content: url(chrome://chatzilla/skin/images/face-wink.png);
 }
 
 /******************************************************************************
@@ -400,9 +487,9 @@ a.chatzilla-link:hover {
 }
 
 .msg-timestamp {                            /* .msg-timestamp = timestamp for */
-	font-style: normal !important;          /* the message, done using        */
-	vertical-align: top;                    /* :before and content.           */
-	white-space: nowrap;
+    font-style: normal !important;          /* the message, done using        */
+    vertical-align: top;                    /* :before and content.           */
+    white-space: nowrap;
 }
 
 .msg-type {                                 /* .msg-type = message type       */
@@ -438,31 +525,31 @@ a.chatzilla-link:hover {
  * ACTION: when a user performs a /me.
  * NOTIFY: when a server or user sends you a notification.
  */
-.msg-data[msg-user="|"],                     /* messages from common "bulk    */
-.msg-data[msg-user="||"],                    /* paste" nicks                  */
-.msg-data[msg-user="|||"],
-.msg-data[msg-user="]"],
-.msg-data[msg-user="["],
-.msg-data[msg-type="372"],                   /* MOTD                          */
-.msg-data[msg-type="EVAL-IN"],               /* /eval results                 */
-.msg-data[msg-type="EVAL-OUT"] {
+.msg[msg-user="|"] .msg-data,                /* messages from common "bulk    */
+.msg[msg-user="||"] .msg-data,               /* paste" nicks                  */
+.msg[msg-user="|||"] .msg-data,
+.msg[msg-user="]"] .msg-data,
+.msg[msg-user="["] .msg-data,
+.msg[msg-type="372"] .msg-data,              /* MOTD                          */
+.msg[msg-type="EVAL-IN"] .msg-data,          /* /eval results                 */
+.msg[msg-type="EVAL-OUT"] .msg-data {
     font-size: 90%;
     font-family: monospace;
 }
 
-.msg-data[msg-type="USAGE"] {
+.msg[msg-type="USAGE"] .msg-data {
     font-style: italic;
 }
 
-.msg-data[msg-type="HELP"] {
+.msg[msg-type="HELP"] .msg-data {
     font-weight: normal;
 }
 
-.msg-user[msg-type="ACTION"] {
+.msg[msg-type="ACTION"] .msg-user {
     font-style: italic;
 }
 
-.msg-user[important="true"] {
+.msg[important="true"] .msg-user {
     font-weight: bold;
 }
 
@@ -477,50 +564,50 @@ a.chatzilla-link:hover {
 .msg-user:after {
     content: ">";
 }
-.msg-user[important="true"]:before {
+.msg[important="true"] .msg-user:before {
     font-weight: bold;
 }
-.msg-user[important="true"]:after {
+.msg[important="true"] .msg-user:after {
     font-weight: bold;
 }
-.msg-user[msg-user$="ME!"]:before {
+.msg[msg-user$="ME!"] .msg-user:before {
     content: "<";
 }
-.msg-user[msg-user$="ME!"]:after {
+.msg[msg-user$="ME!"] .msg-user:after {
     content: ">";
 }
-.msg-user[msg-type="ACTION"]:before,
-.msg-user[msg-type="ACTION"]:after {
+.msg[msg-type="ACTION"] .msg-user:before,
+.msg[msg-type="ACTION"] .msg-user:after {
     content: "";
 }
-.msg-user[msg-type="NOTICE"]:before {
+.msg[msg-type="NOTICE"] .msg-user:before {
     content: "[";
 }
-.msg-user[msg-type="NOTICE"]:after {
+.msg[msg-type="NOTICE"] .msg-user:after {
     content: "]";
 }
 
 /* private messages *not* in a query window */
-.msg-user[dest-type="IRCUser"]:before {
+.msg[dest-type="IRCUser"] .msg-user:before {
     content: "to(";
 }
-.msg-user[msg-dest$="ME!"]:before {
+.msg[dest-type="IRCUser"][msg-dest$="ME!"] .msg-user:before {
     content: "from(";
 }
-.msg-user[dest-type="IRCUser"]:after {
+.msg[dest-type="IRCUser"] .msg-user:after {
     content: ")";
 }
 
 /* private messages in a query window */
-.msg-user[view-type="IRCUser"]:before {
+.msg[view-type="IRCUser"] .msg-user:before {
     content: "{";
 }
-.msg-user[view-type="IRCUser"]:after {
+.msg[view-type="IRCUser"] .msg-user:after {
     content: "}";
 }
-.msg-user[view-type="IRCUser"][msg-user$="ME!"]:before {
+.msg[view-type="IRCUser"][msg-dest$="ME!"] .msg-user:before {
     content: "{";
 }
-.msg-user[view-type="IRCUser"][msg-user$="ME!"]:after {
+.msg[view-type="IRCUser"][msg-dest$="ME!"] .msg-user:after {
     content: "}";
 }

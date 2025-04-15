@@ -71,7 +71,6 @@ char nsFilePicker::mLastUsedDirectory[MAX_PATH+1] = { 0 };
 nsFilePicker::nsFilePicker()
 {
   mSelectedType   = 1;
-  mDisplayDirectory = do_CreateInstance("@mozilla.org/file/local;1");
 }
 
 //-------------------------------------------------------------------------
@@ -118,10 +117,12 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
   PRBool result = PR_FALSE;
   PRUnichar fileBuffer[FILE_BUFFER_SIZE+1];
   wcsncpy(fileBuffer,  mDefault.get(), FILE_BUFFER_SIZE);
+  fileBuffer[FILE_BUFFER_SIZE] = '\0'; // null terminate in case copy truncated
 
   NS_NAMED_LITERAL_STRING(htmExt, "html");
   nsAutoString initialDir;
-  mDisplayDirectory->GetPath(initialDir);
+  if (mDisplayDirectory)
+    mDisplayDirectory->GetPath(initialDir);
 
   // If no display directory, re-use the last one.
   if(initialDir.IsEmpty()) {
@@ -165,12 +166,7 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
       }
   
       // free PIDL
-      LPMALLOC pMalloc = NULL;
-      ::SHGetMalloc(&pMalloc);
-      if(pMalloc) {
-         pMalloc->Free(list);
-         pMalloc->Release();
-      }
+      CoTaskMemFree(list);
     }
   }
   else {
@@ -210,9 +206,9 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
         // Should we test for ".cgi", ".asp", ".jsp" and other
         // "generated" html pages?
 
-        if ( ext.EqualsIgnoreCase(".htm")  ||
-             ext.EqualsIgnoreCase(".html") ||
-             ext.EqualsIgnoreCase(".shtml") ) {
+        if ( ext.LowerCaseEqualsLiteral(".htm")  ||
+             ext.LowerCaseEqualsLiteral(".html") ||
+             ext.LowerCaseEqualsLiteral(".shtml") ) {
           // This is supposed to append ".htm" if user doesn't supply an extension
           //XXX Actually, behavior is sort of weird:
           //    often appends ".html" even if you have an extension
@@ -222,38 +218,58 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
       }
     }
 
-    if (mMode == modeOpen) {
-      // FILE MUST EXIST!
-      ofn.Flags |= OFN_FILEMUSTEXIST;
-      result = nsToolkit::mGetOpenFileName(&ofn);
-    }
-    else if (mMode == modeOpenMultiple) {
-      ofn.Flags |= OFN_FILEMUSTEXIST | OFN_ALLOWMULTISELECT | OFN_EXPLORER;
-      result = nsToolkit::mGetOpenFileName(&ofn);
-    }
-    else if (mMode == modeSave) {
-      ofn.Flags |= OFN_NOREADONLYRETURN;
-      result = nsToolkit::mGetSaveFileName(&ofn);
-      if (!result) {
-        // Error, find out what kind.
-        if (::GetLastError() == ERROR_INVALID_PARAMETER ||
-            ::CommDlgExtendedError() == FNERR_INVALIDFILENAME) {
-          // probably the default file name is too long or contains illegal characters!
-          // Try again, without a starting file name.
-          ofn.lpstrFile[0] = 0;
-          result = nsToolkit::mGetSaveFileName(&ofn);
+    try {
+      if (mMode == modeOpen) {
+        // FILE MUST EXIST!
+        ofn.Flags |= OFN_FILEMUSTEXIST;
+        result = nsToolkit::mGetOpenFileName(&ofn);
+      }
+      else if (mMode == modeOpenMultiple) {
+        ofn.Flags |= OFN_FILEMUSTEXIST | OFN_ALLOWMULTISELECT | OFN_EXPLORER;
+        result = nsToolkit::mGetOpenFileName(&ofn);
+      }
+      else if (mMode == modeSave) {
+        ofn.Flags |= OFN_NOREADONLYRETURN;
+
+        // Don't follow shortcuts when saving a shortcut, this can be used
+        // to trick users (bug 271732)
+        NS_ConvertUTF16toUTF8 ext(mDefault);
+        ext.Trim(" .", PR_FALSE, PR_TRUE); // watch out for trailing space and dots
+        ToLowerCase(ext);
+        if (StringEndsWith(ext, NS_LITERAL_CSTRING(".lnk")) ||
+            StringEndsWith(ext, NS_LITERAL_CSTRING(".pif")) ||
+            StringEndsWith(ext, NS_LITERAL_CSTRING(".url")))
+          ofn.Flags |= OFN_NODEREFERENCELINKS;
+
+        result = nsToolkit::mGetSaveFileName(&ofn);
+        if (!result) {
+          // Error, find out what kind.
+          if (::GetLastError() == ERROR_INVALID_PARAMETER ||
+              ::CommDlgExtendedError() == FNERR_INVALIDFILENAME) {
+            // probably the default file name is too long or contains illegal characters!
+            // Try again, without a starting file name.
+            ofn.lpstrFile[0] = 0;
+            result = nsToolkit::mGetSaveFileName(&ofn);
+          }
         }
       }
+      else {
+        NS_ASSERTION(0, "unsupported mode"); 
+      }
     }
-    else {
-      NS_ASSERTION(0, "unsupported mode"); 
+    catch(...) {
+      MessageBox(ofn.hwndOwner,
+                 0,
+                 "The filepicker was unexpectedly closed by Windows.",
+                 MB_ICONERROR);
+      result = PR_FALSE;
     }
   
-    // Remember what filter type the user selected
-    mSelectedType = (PRInt16)ofn.nFilterIndex;
-
-    // Set user-selected location of file or directory
     if (result == PR_TRUE) {
+      // Remember what filter type the user selected
+      mSelectedType = (PRInt16)ofn.nFilterIndex;
+
+      // Set user-selected location of file or directory
       if (mMode == modeOpenMultiple) {
         nsresult rv = NS_NewISupportsArray(getter_AddRefs(mFiles));
         NS_ENSURE_SUCCESS(rv,rv);
@@ -317,19 +333,16 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
     nsCOMPtr<nsILocalFile> file(do_CreateInstance("@mozilla.org/file/local;1"));
     NS_ENSURE_TRUE(file, NS_ERROR_FAILURE);
 
-    // work around.  InitWithPath() will convert UCS2 to FS path !!!  corrupts unicode 
+    // XXX  InitWithPath() will convert UCS2 to FS path !!!  corrupts unicode 
     file->InitWithPath(mUnicodeFile);
     nsCOMPtr<nsIFile> dir;
     if (NS_SUCCEEDED(file->GetParent(getter_AddRefs(dir)))) {
-      nsCOMPtr<nsILocalFile> localDir(do_QueryInterface(dir));
-      if (localDir) {
+      mDisplayDirectory = do_QueryInterface(dir);
+      if (mDisplayDirectory) {
         nsAutoString newDir;
-        localDir->GetPath(newDir);
+        mDisplayDirectory->GetPath(newDir);
         if(!newDir.IsEmpty())
           mLastUsedUnicodeDirectory.Assign(newDir);
-        // Update mDisplayDirectory with this directory, also.
-        // Some callers rely on this.
-        mDisplayDirectory->InitWithPath(mLastUsedUnicodeDirectory);
       }
     }
 
@@ -338,6 +351,7 @@ NS_IMETHODIMP nsFilePicker::ShowW(PRInt16 *aReturnVal)
       //   we must check if file already exists
       PRBool exists = PR_FALSE;
       file->Exists(&exists);
+
       if (exists)
         returnOKorReplace = returnReplace;
     }
@@ -480,31 +494,6 @@ NS_IMETHODIMP nsFilePicker::SetFilterIndex(PRInt32 aFilterIndex)
 }
 
 //-------------------------------------------------------------------------
-//
-// Set the display directory
-//
-//-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::SetDisplayDirectory(nsILocalFile *aDirectory)
-{
-  mDisplayDirectory = aDirectory;
-  return NS_OK;
-}
-
-//-------------------------------------------------------------------------
-//
-// Get the display directory
-//
-//-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::GetDisplayDirectory(nsILocalFile **aDirectory)
-{
-  *aDirectory = mDisplayDirectory;
-  NS_IF_ADDREF(*aDirectory);
-  return NS_OK;
-}
-
-
-
-//-------------------------------------------------------------------------
 void nsFilePicker::InitNative(nsIWidget *aParent,
                               const nsAString& aTitle,
                               PRInt16 aMode)
@@ -521,14 +510,14 @@ nsFilePicker::AppendFilter(const nsAString& aTitle, const nsAString& aFilter)
   mFilterList.Append(aTitle);
   mFilterList.Append(PRUnichar('\0'));
 
-  if (aFilter.Equals(NS_LITERAL_STRING("..apps")))
-    mFilterList.Append(NS_LITERAL_STRING("*.exe;*.com"));
+  if (aFilter.EqualsLiteral("..apps"))
+    mFilterList.AppendLiteral("*.exe;*.com");
   else
   {
     nsAutoString filter(aFilter);
     filter.StripWhitespace();
-    if (filter.Equals(NS_LITERAL_STRING("*")))
-      filter.Append(NS_LITERAL_STRING(".*"));
+    if (filter.EqualsLiteral("*"))
+      filter.AppendLiteral(".*");
     mFilterList.Append(filter);
   }
 

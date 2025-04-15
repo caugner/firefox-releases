@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -297,105 +297,6 @@ PRUint32 nsCRT::HashCode(const PRUnichar* str, PRUint32* resultingStrLen)
 
   if ( resultingStrLen )
     *resultingStrLen = (s-str)-1;
-  return h;
-}
-
-PRUint32 nsCRT::HashCodeAsUTF8(const PRUnichar* str, PRUint32* resultingStrLen)
-{
-  PRUint32 h = 0;
-  const PRUnichar* s = str;
-
-  {
-    PRUint16 W1 = 0;      // the first UTF-16 word in a two word tuple
-    PRUint32 U = 0;       // the current char as UCS-4
-    int code_length = 0;  // the number of bytes in the UTF-8 sequence for the current char
-
-    PRUint16 W;
-    while ( (W = *s++) )
-      {
-          /*
-           * On the fly, decoding from UTF-16 (and/or UCS-2) into UTF-8 as per
-           *  http://www.ietf.org/rfc/rfc2781.txt
-           *  http://www.ietf.org/rfc/rfc2279.txt
-           */
-
-        if ( !W1 )
-          {
-            if ( W < 0xD800 || 0xDFFF < W )
-              {
-                U = W;
-                if ( W <= 0x007F )
-                  code_length = 1;
-                else if ( W <= 0x07FF )
-                  code_length = 2;
-                else
-                  code_length = 3;
-              }
-            else if ( /* 0xD800 <= W1 && */ W <= 0xDBFF )
-              W1 = W;
-          }
-        else
-          {
-              // as required by the standard, this code is careful to
-              //  throw out illegal sequences
-
-            if ( 0xDC00 <= W && W <= 0xDFFF )
-              {
-                U = PRUint32( (W1&0x03FF)<<10 | (W&0x3FFF) );
-                if ( U <= 0x001FFFFF )
-                  code_length = 4;
-                else if ( U <= 0x3FFFFFF )
-                  code_length = 5;
-                else
-                  code_length = 6;
-              }
-            W1 = 0;
-          }
-
-
-        if ( code_length > 0 )
-          {
-            static const PRUint16 sBytePrefix[7]  = { 0x0000, 0x0000, 0x00C0, 0x00E0, 0x00F0, 0x00F8, 0x00FC };
-            static const PRUint16 sShift[7]       = { 0, 0, 6, 12, 18, 24, 30 };
-
-              /*
-               * Unlike the algorithm in http://www.ietf.org/rfc/rfc2279.txt
-               *  we must calculate the bytes in left to right order so that
-               *  our hash result matches what the narrow version would calculate
-               *  on an already UTF-8 string.
-               */
-
-              // hash the first (and often, only, byte)
-            h = (h>>28) ^ (h<<4) ^ (sBytePrefix[code_length] | (U>>sShift[code_length]));
-
-              // an unrolled loop for hashing any remaining bytes in this sequence
-            switch ( code_length )
-              {  // falling through in each case
-                case 6:   h = (h>>28) ^ (h<<4) ^ (0x80 | ((U>>24) & 0x003F));
-                case 5:   h = (h>>28) ^ (h<<4) ^ (0x80 | ((U>>18) & 0x003F));
-                case 4:   h = (h>>28) ^ (h<<4) ^ (0x80 | ((U>>12) & 0x003F));
-                case 3:   h = (h>>28) ^ (h<<4) ^ (0x80 | ((U>>6 ) & 0x003F));
-                case 2:   h = (h>>28) ^ (h<<4) ^ (0x80 | ( U      & 0x003F));
-                default:  code_length = 0;
-                  break;
-              }
-          }
-      }
-  }
-
-  if ( resultingStrLen )
-    *resultingStrLen = (s-str)-1;
-  return h;
-}
-
-PRUint32 nsCRT::BufferHashCode(const char* s, PRUint32 len)
-{
-  PRUint32 h = 0;
-  const char* done = s + len;
-
-  while ( s < done )
-    h = (h>>28) ^ (h<<4) ^ PRUint8(*s++); // cast to unsigned to prevent possible sign extension
-
   return h;
 }
 

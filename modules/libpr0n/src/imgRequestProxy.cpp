@@ -1,31 +1,48 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 2001 Netscape Communications Corporation.
- * All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Stuart Parmenter <pavlov@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "imgRequestProxy.h"
 
 #include "nsIInputStream.h"
 #include "nsIComponentManager.h"
 #include "nsIServiceManager.h"
+#include "nsIMultiPartChannel.h"
 
 #include "nsAutoLock.h"
 #include "nsString.h"
@@ -39,7 +56,8 @@
 #include "nspr.h"
 
 
-NS_IMPL_THREADSAFE_ISUPPORTS2(imgRequestProxy, imgIRequest, nsIRequest)
+NS_IMPL_THREADSAFE_ISUPPORTS3(imgRequestProxy, imgIRequest, nsIRequest,
+                              nsISupportsPriority)
 
 imgRequestProxy::imgRequestProxy() :
   mOwner(nsnull),
@@ -142,7 +160,7 @@ void imgRequestProxy::AddToLoadGroup()
   }
 }
 
-void imgRequestProxy::RemoveFromLoadGroup()
+void imgRequestProxy::RemoveFromLoadGroup(PRBool releaseLoadGroup)
 {
   if (!mIsInLoadGroup)
     return;
@@ -157,8 +175,10 @@ void imgRequestProxy::RemoveFromLoadGroup()
   mLoadGroup->RemoveRequest(this, NS_OK, nsnull);
   mIsInLoadGroup = PR_FALSE;
 
-  // We're done with the loadgroup, release it.
-  mLoadGroup = nsnull;
+  if (releaseLoadGroup) {
+    // We're done with the loadgroup, release it.
+    mLoadGroup = nsnull;
+  }
 }
 
 
@@ -326,16 +346,43 @@ NS_IMETHODIMP imgRequestProxy::Clone(imgIDecoderObserver* aObserver,
     return rv;
   }
 
+  // Assign to *aClone before calling NotifyProxyListener so that if
+  // the caller expects to only be notified for requests it's already
+  // holding pointers to it won't be surprised.
+  *aClone = clone;
+
   // Send the notifications to the clone's observer
   mOwner->NotifyProxyListener(clone);
 
-  *aClone = clone;
+  return NS_OK;
+}
+
+/** nsISupportsPriority methods **/
+
+NS_IMETHODIMP imgRequestProxy::GetPriority(PRInt32 *priority)
+{
+  NS_ENSURE_STATE(mOwner);
+  *priority = mOwner->Priority();
+  return NS_OK;
+}
+
+NS_IMETHODIMP imgRequestProxy::SetPriority(PRInt32 priority)
+{
+  NS_ENSURE_STATE(mOwner && !mCanceled);
+  mOwner->AdjustPriority(this, priority - mOwner->Priority());
+  return NS_OK;
+}
+
+NS_IMETHODIMP imgRequestProxy::AdjustPriority(PRInt32 priority)
+{
+  NS_ENSURE_STATE(mOwner && !mCanceled);
+  mOwner->AdjustPriority(this, priority);
   return NS_OK;
 }
 
 /** imgIContainerObserver methods **/
 
-void imgRequestProxy::FrameChanged(imgIContainer *container, gfxIImageFrame *newframe, nsRect * dirtyRect)
+void imgRequestProxy::FrameChanged(imgIContainer *container, gfxIImageFrame *newframe, nsIntRect * dirtyRect)
 {
   LOG_FUNC(gImgLog, "imgRequestProxy::FrameChanged");
 
@@ -381,7 +428,7 @@ void imgRequestProxy::OnStartFrame(gfxIImageFrame *frame)
   }
 }
 
-void imgRequestProxy::OnDataAvailable(gfxIImageFrame *frame, const nsRect * rect)
+void imgRequestProxy::OnDataAvailable(gfxIImageFrame *frame, const nsIntRect * rect)
 {
   LOG_FUNC(gImgLog, "imgRequestProxy::OnDataAvailable");
 
@@ -444,6 +491,26 @@ void imgRequestProxy::OnStopRequest(nsIRequest *request, nsISupports *ctxt, nsre
   LOG_FUNC_WITH_PARAM(gImgLog, "imgRequestProxy::OnStopRequest", "name", name.get());
 #endif
 
-  RemoveFromLoadGroup();
+  // If we're expecting more data from a multipart channel, re-add ourself
+  // to the loadgroup so that the document doesn't lose track of the load.
+  PRBool lastPart = PR_TRUE;
+  if (mOwner->mIsMultiPartChannel) {
+    nsCOMPtr<nsIMultiPartChannel> mpc = do_QueryInterface(request);
+    if (mpc) {
+      mpc->GetIsLastPart(&lastPart);
+    }
+  }
+
+  // If the request is already a background request and there's more data
+  // coming, we can just leave the request in the loadgroup as-is.
+  if (lastPart || (mLoadFlags & nsIRequest::LOAD_BACKGROUND) == 0) {
+    RemoveFromLoadGroup(lastPart);
+    // More data is coming, so change the request to be a background request
+    // and put it back in the loadgroup.
+    if (!lastPart) {
+      mLoadFlags |= nsIRequest::LOAD_BACKGROUND;
+      AddToLoadGroup();
+    }
+  }
 }
 

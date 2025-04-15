@@ -12,12 +12,12 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Jonas Sicking.
  * Portions created by the Initial Developer are Copyright (C) 2002
- * Jonas Sicking. All Rights Reserved.
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Jonas Sicking <sicking@bigfoot.com>
@@ -38,7 +38,7 @@
 
 #include "txXSLTNumber.h"
 #include "nsReadableUtils.h"
-#include "primitives.h"
+#include "txCore.h"
 
 class txDecimalCounter : public txFormattedCounter {
 public:
@@ -196,7 +196,7 @@ void txDecimalCounter::appendNumber(PRInt32 aNumber, nsAString& aDest)
 
 void txAlphaCounter::appendNumber(PRInt32 aNumber, nsAString& aDest)
 {
-    PRUnichar buf[11];
+    PRUnichar buf[12];
     buf[11] = 0;
     PRInt32 pos = 11;
     while (aNumber > 0) {

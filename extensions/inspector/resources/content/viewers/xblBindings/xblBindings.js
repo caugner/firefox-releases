@@ -1,10 +1,10 @@
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -13,7 +13,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
@@ -21,18 +21,17 @@
  * Contributor(s):
  *   Joe Hewitt <hewitt@netscape.com> (original author)
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -172,25 +171,19 @@ XBLBindings.prototype =
   populateBindings: function()
   {
     var urls = this.mDOMUtils.getBindingURLs(this.mSubject);
+    var menulist = document.getElementById("mlBindings");
 
-    var popup = document.getElementById("mpBindings");
-    this.clearChildren(popup);
-    
-    while (urls.hasMoreElements()) {
-      var item = urls.getNext();
-      var url = item.QueryInterface(Components.interfaces.nsIAtom).toString();
-      var menu = document.createElement("menuitem");
-      menu.setAttribute("value", url);
-      menu.setAttribute("label", url);
-      popup.appendChild(menu);
+    menulist.removeAllItems();
+
+    var urlCount = urls.length;
+    var i;
+
+    for (i = 0; i < urlCount; ++i) {
+      var url = urls.queryElementAt(i, Components.interfaces.nsIURI).spec;
+      menulist.appendItem(url, url);
     }
     
-    var menulist = document.getElementById("mlBindings");
-    menulist.label = "";
-    if (!popup.childNodes.length)
-      menulist.value = "";
-    else
-      menulist.value = popup.childNodes[0].getAttribute("value");
+    menulist.selectedIndex = 0;
   },
   
   displayBinding: function(aURL)
@@ -198,7 +191,7 @@ XBLBindings.prototype =
     if (aURL) {
       var doc = document.implementation.createDocument(null, "", null);
       doc.addEventListener("load", gDocLoadListener, true);
-      doc.load(aURL, "text/xml");
+      doc.load(aURL, "application/xml");
     
       this.mBindingDoc = doc;
       this.mBindingURL = aURL;
@@ -386,9 +379,8 @@ XBLBindings.prototype =
   
   clearChildren: function(aEl)
   {
-    var kids = aEl.childNodes;
-    for (var i = kids.length-1; i >=0; --i)
-      aEl.removeChild(kids[i]);
+    while (aEl.hasChildNodes())
+      aEl.removeChild(aEl.lastChild);
   },
   
   readDOMText: function(aEl)
@@ -419,10 +411,10 @@ function MethodTreeView(aBinding)
 MethodTreeView.prototype = new inBaseTreeView();
 
 MethodTreeView.prototype.getCellText = 
-function(aRow, aColId) 
+function(aRow, aCol) 
 {
   var method = this.mMethods[aRow];
-  if (aColId == "olcMethodName") {
+  if (aCol.id == "olcMethodName") {
     var name = method.getAttribute("name");
     var params = method.getElementsByTagName("parameter");
     var pstr = "";
@@ -446,10 +438,10 @@ function PropTreeView(aBinding)
 PropTreeView.prototype = new inBaseTreeView();
 
 PropTreeView.prototype.getCellText = 
-function(aRow, aColId) 
+function(aRow, aCol) 
 {
   var prop = this.mProps[aRow];
-  if (aColId == "olcPropName") {
+  if (aCol.id == "olcPropName") {
     return prop.getAttribute("name");
   }
   
@@ -468,12 +460,12 @@ function HandlerTreeView(aBinding)
 HandlerTreeView.prototype = new inBaseTreeView();
 
 HandlerTreeView.prototype.getCellText = 
-function(aRow, aColId) 
+function(aRow, aCol) 
 {
   var handler = this.mHandlers[aRow];
-  if (aColId == "olcHandlerEvent") {
+  if (aCol.id == "olcHandlerEvent") {
     return handler.getAttribute("event");
-  } else if (aColId == "olcHandlerPhase") {
+  } else if (aCol.id == "olcHandlerPhase") {
     return handler.getAttribute("phase");
   }
   
@@ -501,12 +493,12 @@ function ResourceTreeView(aBinding)
 ResourceTreeView.prototype = new inBaseTreeView();
 
 ResourceTreeView.prototype.getCellText = 
-function(aRow, aColId) 
+function(aRow, aCol) 
 {
   var resource = this.mResources[aRow];
-  if (aColId == "olcResourceType") {
+  if (aCol.id == "olcResourceType") {
     return resource.localName;
-  } else if (aColId == "olcResourceSrc") {
+  } else if (aCol.id == "olcResourceSrc") {
     return resource.getAttribute("src");
   }
   

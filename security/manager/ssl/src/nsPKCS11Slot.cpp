@@ -1,37 +1,39 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
- * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s):
- *  Ian McGreer <mcgreer@netscape.com>
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- */
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is the Netscape security libraries.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Ian McGreer <mcgreer@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsPKCS11Slot.h"
 #include "nsPK11TokenDB.h"
@@ -58,7 +60,13 @@ nsPKCS11Slot::nsPKCS11Slot(PK11SlotInfo *slot)
 
   PK11_ReferenceSlot(slot);
   mSlot = slot;
+  mSeries = PK11_GetSlotSeries(slot);
+  refreshSlotInfo();
+}
 
+void
+nsPKCS11Slot::refreshSlotInfo()
+{
   CK_SLOT_INFO slot_info;
   if (PK11_GetSlotInfo(mSlot, &slot_info) == SECSuccess) {
     // Set the Description field
@@ -76,12 +84,14 @@ nsPKCS11Slot::nsPKCS11Slot(PK11SlotInfo *slot)
     mSlotManID = NS_ConvertUTF8toUCS2(cManID);
     mSlotManID.Trim(" ", PR_FALSE, PR_TRUE);
     // Set the Hardware Version field
+    mSlotHWVersion = EmptyString();
     mSlotHWVersion.AppendInt(slot_info.hardwareVersion.major);
-    mSlotHWVersion.Append(NS_LITERAL_STRING("."));
+    mSlotHWVersion.AppendLiteral(".");
     mSlotHWVersion.AppendInt(slot_info.hardwareVersion.minor);
     // Set the Firmware Version field
+    mSlotFWVersion = EmptyString();
     mSlotFWVersion.AppendInt(slot_info.firmwareVersion.major);
-    mSlotFWVersion.Append(NS_LITERAL_STRING("."));
+    mSlotFWVersion.AppendLiteral(".");
     mSlotFWVersion.AppendInt(slot_info.firmwareVersion.minor);
   }
 
@@ -125,7 +135,7 @@ nsPKCS11Slot::GetName(PRUnichar **aName)
   if (*csn) {
     *aName = ToNewUnicode(NS_ConvertUTF8toUCS2(csn));
   } else if (PK11_HasRootCerts(mSlot)) {
-    // This is a workaround to an NSS bug - the root certs module has
+    // This is a workaround to an Root Module bug - the root certs module has
     // no slot name.  Not bothering to localize, because this is a workaround
     // and for now all the slot names returned by NSS are char * anyway.
     *aName = ToNewUnicode(NS_LITERAL_STRING("Root Certificates"));
@@ -145,6 +155,10 @@ nsPKCS11Slot::GetDesc(PRUnichar **aDesc)
   if (isAlreadyShutDown())
     return NS_ERROR_NOT_AVAILABLE;
 
+  if (mSeries != PK11_GetSlotSeries(mSlot)) {
+    refreshSlotInfo();
+  }
+
   *aDesc = ToNewUnicode(mSlotDesc);
   if (!*aDesc) return NS_ERROR_OUT_OF_MEMORY;
   return NS_OK;
@@ -154,6 +168,9 @@ nsPKCS11Slot::GetDesc(PRUnichar **aDesc)
 NS_IMETHODIMP 
 nsPKCS11Slot::GetManID(PRUnichar **aManID)
 {
+  if (mSeries != PK11_GetSlotSeries(mSlot)) {
+    refreshSlotInfo();
+  }
   *aManID = ToNewUnicode(mSlotManID);
   if (!*aManID) return NS_ERROR_OUT_OF_MEMORY;
   return NS_OK;
@@ -163,6 +180,9 @@ nsPKCS11Slot::GetManID(PRUnichar **aManID)
 NS_IMETHODIMP 
 nsPKCS11Slot::GetHWVersion(PRUnichar **aHWVersion)
 {
+  if (mSeries != PK11_GetSlotSeries(mSlot)) {
+    refreshSlotInfo();
+  }
   *aHWVersion = ToNewUnicode(mSlotHWVersion);
   if (!*aHWVersion) return NS_ERROR_OUT_OF_MEMORY;
   return NS_OK;
@@ -172,6 +192,9 @@ nsPKCS11Slot::GetHWVersion(PRUnichar **aHWVersion)
 NS_IMETHODIMP 
 nsPKCS11Slot::GetFWVersion(PRUnichar **aFWVersion)
 {
+  if (mSeries != PK11_GetSlotSeries(mSlot)) {
+    refreshSlotInfo();
+  }
   *aFWVersion = ToNewUnicode(mSlotFWVersion);
   if (!*aFWVersion) return NS_ERROR_OUT_OF_MEMORY;
   return NS_OK;
@@ -200,6 +223,16 @@ nsPKCS11Slot::GetTokenName(PRUnichar **aName)
   nsNSSShutDownPreventionLock locker;
   if (isAlreadyShutDown())
     return NS_ERROR_NOT_AVAILABLE;
+
+  if (!PK11_IsPresent(mSlot)) {
+    *aName = nsnull;
+    return NS_OK;
+  }
+
+  if (mSeries != PK11_GetSlotSeries(mSlot)) {
+    refreshSlotInfo();
+  }
+
 
   *aName = ToNewUnicode(NS_ConvertUTF8toUCS2(PK11_GetTokenName(mSlot)));
   if (!*aName) return NS_ERROR_OUT_OF_MEMORY;
@@ -303,30 +336,35 @@ nsPKCS11Module::FindSlotByName(const PRUnichar *aName,
   if (isAlreadyShutDown())
     return NS_ERROR_NOT_AVAILABLE;
 
-  char *asciiname = NULL;
-  asciiname = ToNewUTF8String(nsDependentString(aName));
+  char *asciiname = ToNewUTF8String(nsDependentString(aName));
   PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("Getting \"%s\"\n", asciiname));
-  PK11SlotInfo *slotinfo = SECMOD_FindSlot(mModule, asciiname);
-  if (!slotinfo) {
-    // XXX *sigh*  if token is present, SECMOD_FindSlot goes by token
-    // name (huh?)  reimplement it here for the fun of it.
-    for (int i=0; i<mModule->slotCount; i++) {
-      if (nsCRT::strcmp(asciiname, PK11_GetSlotName(mModule->slots[i])) == 0) {
-        slotinfo = PK11_ReferenceSlot(mModule->slots[i]);
-        break;
-      }
-    }
-    if (!slotinfo) {
-      // XXX another workaround - the builtin module has no name
-      if (nsCRT::strcmp(asciiname, "Root Certificates") == 0) {
-        slotinfo = PK11_ReferenceSlot(mModule->slots[0]);
-      } else {
-        // give up
-        nsMemory::Free(asciiname);
-        return NS_ERROR_FAILURE;
-      }
-    }
+  PK11SlotInfo *slotinfo = NULL;
+  PK11SlotList *slotList = PK11_FindSlotsByNames(mModule->dllName, 
+        asciiname /* slotName */, NULL /* token Name */, PR_FALSE);
+  if (!slotList) {
+    /* name must be the token name */
+    slotList = PK11_FindSlotsByNames(mModule->dllName, 
+        NULL /*slot Name */, asciiname /* token Name */, PR_FALSE);
   }
+  if (slotList) {
+    /* should only be one */
+    if (slotList->head && slotList->head->slot) {
+      slotinfo =  PK11_ReferenceSlot(slotList->head->slot);
+    }
+    PK11_FreeSlotList(slotList);
+  }
+  if (!slotinfo) {
+    // workaround - the builtin module has no name
+    if (asciiname == nsnull) {
+      return NS_ERROR_FAILURE;
+    } else if (nsCRT::strcmp(asciiname, "Root Certificates") == 0) {
+      slotinfo = PK11_ReferenceSlot(mModule->slots[0]);
+    } else {
+      // give up
+      nsMemory::Free(asciiname);
+      return NS_ERROR_FAILURE;
+    }
+  } 
   nsMemory::Free(asciiname);
   nsCOMPtr<nsIPKCS11Slot> slot = new nsPKCS11Slot(slotinfo);
   PK11_FreeSlot(slotinfo);
@@ -351,12 +389,19 @@ nsPKCS11Module::ListSlots(nsIEnumerator **_retval)
   nsCOMPtr<nsISupportsArray> array;
   rv = NS_NewISupportsArray(getter_AddRefs(array));
   if (NS_FAILED(rv)) return rv;
+  /* applications which allow new slot creation (which Firefox now does
+   * since it uses the WaitForSlotEvent call) need to hold the
+   * ModuleList Read lock to prevent the slot array from changing out
+   * from under it. */
+  SECMODListLock *lock = SECMOD_GetDefaultModuleListLock();
+  SECMOD_GetReadLock(lock);
   for (i=0; i<mModule->slotCount; i++) {
     if (mModule->slots[i]) {
       nsCOMPtr<nsIPKCS11Slot> slot = new nsPKCS11Slot(mModule->slots[i]);
       array->AppendElement(slot);
     }
   }
+  SECMOD_ReleaseReadLock(lock);
   rv = array->Enumerate(_retval);
   return rv;
 }
@@ -461,6 +506,13 @@ nsPKCS11ModuleDB::ListModules(nsIEnumerator **_retval)
   /* lock down the list for reading */
   SECMODListLock *lock = SECMOD_GetDefaultModuleListLock();
   SECMOD_GetReadLock(lock);
+  while (list) {
+    nsCOMPtr<nsIPKCS11Module> module = new nsPKCS11Module(list->module);
+    array->AppendElement(module);
+    list = list->next;
+  }
+  /* Get the modules in the database that didn't load */
+  list = SECMOD_GetDeadModuleList();
   while (list) {
     nsCOMPtr<nsIPKCS11Module> module = new nsPKCS11Module(list->module);
     array->AppendElement(module);

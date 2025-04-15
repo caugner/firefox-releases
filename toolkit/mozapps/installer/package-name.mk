@@ -35,10 +35,6 @@
 #
 # ***** END LICENSE BLOCK *****
 
-ifndef AB_CD
-AB_CD = $(MOZ_UI_LOCALE)
-endif
-
 ifndef MOZ_PKG_APPNAME
 MOZ_PKG_APPNAME = $(MOZ_APP_NAME)
 endif
@@ -60,24 +56,14 @@ endif
 ifeq ($(TARGET_OS),linux-gnu)
 MOZ_PKG_PLATFORM := linux-$(TARGET_CPU)
 endif
+ifeq ($(OS_ARCH),OS2)
+MOZ_PKG_PLATFORM := os2
+endif
 
 # GTK2 is the default, so we mark gtk1 builds
 ifeq ($(MOZ_WIDGET_TOOLKIT),gtk)
 MOZ_PKG_PLATFORM := $(MOZ_PKG_PLATFORM)-gtk1
 endif
-
-ifdef MOZ_SVG
-MOZ_PKG_PLATFORM := $(MOZ_PKG_PLATFORM)-svg
-ifdef MOZ_SVG_RENDERER_GDIPLUG
-MOZ_PKG_PLATFORM := $(MOZ_PKG_PLATFORM)-gdiplus
-endif
-ifdef MOZ_SVG_RENDERER_LIBART
-MOZ_PKG_PLATFORM := $(MOZ_PKG_PLATFORM)-libart
-endif
-ifdef MOZ_SVG_RENDERER_CAIRO
-MOZ_PKG_PLATFORM := $(MOZ_PKG_PLATFORM)-cairo
-endif
-endif #MOZ_SVG
 endif #MOZ_PKG_PLATFORM
 
-PKG_BASENAME := $(MOZ_PKG_APPNAME)-$(MOZ_PKG_VERSION).$(AB_CD).$(MOZ_PKG_PLATFORM)
+PKG_BASENAME = $(MOZ_PKG_APPNAME)-$(MOZ_PKG_VERSION).$(AB_CD).$(MOZ_PKG_PLATFORM)

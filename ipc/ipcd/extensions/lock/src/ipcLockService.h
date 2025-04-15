@@ -1,3 +1,4 @@
+/* vim:set ts=4 sw=4 sts=4 et cindent: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -39,11 +40,9 @@
 #define ipcLockService_h__
 
 #include "ipcILockService.h"
-#include "ipcIService.h"
-#include "ipcIMessageObserver.h"
-#include "ipcList.h"
-#include "nsCOMPtr.h"
-#include "nsHashtable.h"
+#include "ipcdclient.h"
+
+//-----------------------------------------------------------------------------
 
 class ipcLockService : public ipcILockService
                      , public ipcIMessageObserver
@@ -53,18 +52,12 @@ public:
     NS_DECL_IPCILOCKSERVICE
     NS_DECL_IPCIMESSAGEOBSERVER
 
-    ipcLockService();
-    virtual ~ipcLockService();
-
-    nsresult Init();
+    NS_HIDDEN_(nsresult) Init();
 
 private:
-    void NotifyComplete(const char *lockName, nsresult status);
-
-    nsCOMPtr<ipcIService> mIPCService;
-
-    // map from lockname to locknotify for pending notifications
-    nsSupportsHashtable mPendingTable;
+    PRUintn mTPIndex;
 };
+
+//-----------------------------------------------------------------------------
 
 #endif // !ipcLockService_h__

@@ -5,17 +5,17 @@
 # Installer keys (don't translate strings in $$)
 #define SETUP_TITLE $ProductShortName$ Setup
 #define SETUP_WELCOME Welcome to %s
-#define SETUP_MESSAGE0 You are about to install %s $Version$.
+#define SETUP_MESSAGE0 You are about to install %s.
 #define SETUP_MESSAGE1 It is strongly recommended that you exit all Windows programs before running this Setup program.
 #define SETUP_MESSAGE1_UNIX It is strongly recommended that you exit all instances of %s before running this Setup program.
 #define SETUP_MESSAGE2 Click Cancel to quit Setup and then close any programs you have running.  Click Next to continue the Setup program.
-#define SETUP_MESSAGE3 Click Next to continue installing %s $Version$.
+#define SETUP_MESSAGE3 Click Next to continue installing %s.
 
 #define LICENSE_TITLE Software License Agreement
 #define LICENSE_SUBTITLE Terms and conditions for using this software.
 #define LICENSE_MESSAGE0 Please read the following license agreement. Use the scroll bar to view the rest of this agreement.
-#define LICENSE_ACCEPT I Accept the terms of the License Agreement
-#define LICENSE_DECLINE I do NOT Accept the terms of the License Agreement
+#define LICENSE_ACCEPT I &Accept the terms of the License Agreement
+#define LICENSE_DECLINE I do NO&T Accept the terms of the License Agreement
 
 #define SETUP_TYPE_TITLE Setup Type
 #define SETUP_TYPE_SUBTITLE Choose setup options.
@@ -87,10 +87,9 @@
 #define INSTALL_STATUSCOMP Currently Installing:
 
 #define COMPLETE_TITLE Install Complete
-#define COMPLETE_MESSAGE0 %s $Version$ was successfully installed.
+#define COMPLETE_MESSAGE0 %s was successfully installed.
 #define COMPLETE_MESSAGE1 Click Finish to complete Setup.
-#define COMPLETE_LAUNCH Launch %s $Version$ now.
-#define COMPLETE_RESET_HOMEPAGE Use Firefox Start as my Home Page.
+#define COMPLETE_LAUNCH Launch %s now.
 
 #define DL2_TITLE $ProductShortName$ Setup - Download
 #define DL2_MESSAGE0 Setup is downloading the required files now.  This may take some time depending on your network connection speed.
@@ -111,6 +110,9 @@
 
 #define QFA_SHORT Quality Feedback Agent
 #define QFA_LONG for reporting $ProductShortName$ crash information
+
+#define RPT_SHORT Website Reporter
+#define RPT_LONG for reporting $ProductShortName$ website compatibility problems
 
 #define CORE_PREPARING Preparing Install, please wait...
 #define INST_UNINST Installing the uninstaller, please wait...

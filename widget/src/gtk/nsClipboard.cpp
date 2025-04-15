@@ -1,27 +1,43 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1999-2000 Netscape Communications Corporation.
- * All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1999-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Stuart Parmenter <pavlov@netscape.com>
  *   Mike Pinkerton <pinkerton@netscape.com>
  *   Dan Rosen <dr@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsClipboard.h"
 
@@ -44,7 +60,6 @@
 #include "nsPrimitiveHelpers.h"
 
 #include "nsTextFormatter.h"
-#include "nsVoidArray.h"
 
 #include "nsIServiceManager.h"
 
@@ -625,7 +640,7 @@ nsClipboard::SelectionReceiver (GtkWidget *aWidget,
     if (NS_SUCCEEDED(rv))
       rv = platformCharsetService->GetCharset(kPlatformCharsetSel_Menu, platformCharset);
     if (NS_FAILED(rv))
-      platformCharset.Assign(NS_LITERAL_CSTRING("ISO-8859-1"));
+      platformCharset.AssignLiteral("ISO-8859-1");
       
     // get the decoder
     nsCOMPtr<nsICharsetConverterManager> ccm = do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);
@@ -957,7 +972,7 @@ void nsClipboard::SelectionGetCB(GtkWidget        *widget,
       if (NS_SUCCEEDED(rv))
         rv = platformCharsetService->GetCharset(kPlatformCharsetSel_Menu, platformCharset);
       if (NS_FAILED(rv))
-        platformCharset.Assign(NS_LITERAL_CSTRING("ISO-8859-1"));
+        platformCharset.AssignLiteral("ISO-8859-1");
       
       // get the encoder
       nsCOMPtr<nsICharsetConverterManager> ccm = do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);
@@ -1424,7 +1439,7 @@ void ConvertHTMLtoUCS2(char* data, PRInt32 dataLength,
 {
   nsCAutoString charset;
   GetHTMLCharset(data, dataLength, charset);// get charset of HTML
-  if (charset.Equals(NS_LITERAL_CSTRING("UTF-16"))) {//current mozilla
+  if (charset.EqualsLiteral("UTF-16")) {//current mozilla
     outUnicodeLen = dataLength / 2 - 1;
     *unicodeData = NS_REINTERPRET_CAST(PRUnichar*,
                    nsMemory::Alloc((outUnicodeLen + 1) * sizeof(PRUnichar)));
@@ -1434,7 +1449,7 @@ void ConvertHTMLtoUCS2(char* data, PRInt32 dataLength,
       (*unicodeData)[outUnicodeLen] = '\0';
     }
   }
-  else if (charset.Equals(NS_LITERAL_CSTRING("OLD-MOZILLA"))) {// old mozilla
+  else if (charset.EqualsLiteral("OLD-MOZILLA")) {// old mozilla
     outUnicodeLen = dataLength / 2;
     *unicodeData = NS_REINTERPRET_CAST(PRUnichar*,
                    nsMemory::Alloc((outUnicodeLen + 1) * sizeof(PRUnichar)));
@@ -1496,7 +1511,7 @@ void GetHTMLCharset(char* data, PRInt32 dataLength, nsACString& str)
   // if detect "FFFE" or "FEFF", assume utf-16
   PRUnichar* beginChar =  (PRUnichar*)data;
   if ((beginChar[0] == 0xFFFE) || (beginChar[0] == 0xFEFF)) {
-    str.Assign(NS_LITERAL_CSTRING("UTF-16"));
+    str.AssignLiteral("UTF-16");
     return;
   }
   // no "FFFE" and "FEFF", assume ASCII first to find "charset" info
@@ -1542,6 +1557,6 @@ void GetHTMLCharset(char* data, PRInt32 dataLength, nsACString& str)
   // TODO: it may also be "text/html" without "charset".
   // can't distinguish between them. Sochoose OLD-MOZILLA here to
   // make compitable with old-version mozilla
-  str.Assign(NS_LITERAL_CSTRING("OLD-MOZILLA"));
+  str.AssignLiteral("OLD-MOZILLA");
 }
 

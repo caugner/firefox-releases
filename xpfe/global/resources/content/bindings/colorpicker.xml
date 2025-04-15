@@ -5,7 +5,7 @@
    xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
    xmlns:xbl="http://www.mozilla.org/xbl">
 
-  <binding id="colorpicker">
+  <binding id="colorpicker" extends="chrome://global/content/bindings/general.xml#basecontrol">
     <resources>
       <stylesheet src="chrome://global/skin/colorpicker.css"/>
     </resources>
@@ -167,7 +167,7 @@
             }
           }
           var cells = this.mBox.getElementsByAttribute("color", val);
-          if (cells.length > 0) {
+          if (cells.item(0)) {
             this.selectCell(cells[0]);
             this.hoverCell(this.mSelectedCell);
           }
@@ -412,7 +412,7 @@
     </resources>
     
     <content>
-      <xul:hbox class="colorpicker-button-colorbox" anonid="colorbox" flex="1"/>
+      <xul:hbox class="colorpicker-button-colorbox" anonid="colorbox" flex="1" xbl:inherits="disabled"/>
 
       <xul:popupset>
         <xul:popup class="colorpicker-button-menupopup" anonid="colorpopup"
@@ -420,14 +420,14 @@
           onpopupshowing="this._colorPicker.onPopupShowing()"
           onpopuphiding="this._colorPicker.onPopupHiding()">
 
-          <xul:colorpicker xbl:inherits="palettename" allowevents="true" anonid="colorpicker"
+          <xul:colorpicker xbl:inherits="palettename,disabled" allowevents="true" anonid="colorpicker"
            onselect="this.parentNode.parentNode.parentNode.pickerChange()"/>
 
          </xul:popup>
        </xul:popupset>
     </content>
     
-    <implementation implements="nsIAccessibleProvider" >
+    <implementation implements="nsIAccessibleProvider, nsIDOMXULControlElement">
       <property name="accessible">
         <getter>
           <![CDATA[
@@ -533,6 +533,9 @@
       ]]></handler>
 
       <handler event="mousedown"><![CDATA[
+        if (this.disabled)
+          return;
+
         // Though I would prefer the open the popup using the built-in
         // popup="_child" mechanism, I can't use that because I can't seem to
         // get it to recognize the popupalign and popupanchor attributes that way

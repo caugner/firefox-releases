@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -62,8 +62,8 @@ enum nsRectVisibility {
 
 
 #define NS_IVIEWMANAGER_IID   \
-{ 0x3a8863d0, 0xa7f3, 0x11d1, \
-  { 0xa8, 0x24, 0x00, 0x40, 0x95, 0x9a, 0x28, 0xc9 } }
+{ 0xd9af8f22, 0xc64d, 0x4036, \
+  { 0x9e, 0x8b, 0x69, 0x5a, 0x63, 0x69, 0x3f, 0xd3 } }
 
 class nsIViewManager : public nsISupports
 {
@@ -79,6 +79,35 @@ public:
   NS_IMETHOD  Init(nsIDeviceContext* aContext) = 0;
 
   /**
+   * Create an ordinary view
+   * @param aBounds initial bounds for view
+   *        XXX We should eliminate this parameter; you can set the bounds after CreateView
+   * @param aParent intended parent for view. this is not actually set in the
+   *        nsIView through this method. it is only used by the initialization
+   *        code to walk up the view tree, if necessary, to find resources.
+   *        XXX We should eliminate this parameter!
+   * @param aVisibilityFlag initial visibility state of view
+   *        XXX We should eliminate this parameter; you can set it after CreateView
+   * @result The new view
+   */
+  NS_IMETHOD_(nsIView*) CreateView(const nsRect& aBounds,
+                                   const nsIView* aParent,
+                                   nsViewVisibility aVisibilityFlag = nsViewVisibility_kShow) = 0;
+
+  /**
+   * Create an scrollable view
+   * @param aBounds initial bounds for view
+   *        XXX We should eliminate this parameter; you can set the bounds after CreateScrollableView
+   * @param aParent intended parent for view. this is not actually set in the
+   *        nsIView through this method. it is only used by the initialization
+   *        code to walk up the view tree, if necessary, to find resources.
+   *        XXX We should eliminate this parameter!
+   * @result The new view
+   */
+  NS_IMETHOD_(nsIScrollableView*) CreateScrollableView(const nsRect& aBounds,
+                                                       const nsIView* aParent) = 0;
+
+  /**
    * Get the root of the view tree.
    * @result the root view
    */
@@ -86,24 +115,11 @@ public:
 
   /**
    * Set the root of the view tree. Does not destroy the current root view.
-   * At least one of following must be true:
-   * a) the aWidget parameter is an nsIWidget instance to render into 
-   *    that is not owned by any view and aView has no widget, or
-   * b) aView has a nsIWidget instance and aWidget is null, or
-   * c) aView has a parent view managed by a different view manager and
-   *    aWidget is null
+   * aView may have a parent view managed by a different view manager.
+   * aView may have a widget (anything but printing) or may not (printing).
    * @param aView view to set as root
-   * @param aWidget widget to render into. (Can not be owned by a view)
    */
-  NS_IMETHOD  SetRootView(nsIView *aView, nsIWidget* aWidget = nsnull) = 0;
-
-  /**
-   * Get/Set the offset within the root widget (see above) at which to render.
-   * @param aX out parameter for offset X in window in twips
-   * @param aY out parameter for offset Y in window in twips
-   */
-  NS_IMETHOD  GetWindowOffset(nscoord *aX, nscoord *aY) = 0;
-  NS_IMETHOD  SetWindowOffset(nscoord aX, nscoord aY) = 0;
+  NS_IMETHOD  SetRootView(nsIView *aView) = 0;
 
   /**
    * Get the dimensions of the root window. The dimensions are in
@@ -125,6 +141,11 @@ public:
   /**
    * Called to force a redrawing of any dirty areas.
    */
+  // XXXbz why is this exposed?  Shouldn't update view batches handle this?
+  // It's not like Composite() does what's expected inside a view update batch
+  // anyway, since dirty areas may not have been invalidated on the widget yet
+  // and widget changes may not have been propagated yet.  Maybe this should
+  // call FlushPendingInvalidates()?
   NS_IMETHOD  Composite(void) = 0;
 
   /**
@@ -269,6 +290,7 @@ public:
    * views (but not descendants through placeholder edges) must have their
    * bounds inside the bounds of this view
    *     if non-null, then we will clip this view's descendant views
+   * --- including descendants through placeholder edges ---
    * to the region. The region's bounds must be within the bounds of
    * this view. The descendant views' bounds need not be inside the bounds
    * of this view (because we're going to clip them anyway).
@@ -361,6 +383,9 @@ public:
    * prevent the view manager from refreshing.
    * @return error status
    */
+  // XXXbz callers of this function don't seem to realize that it disables
+  // refresh for the entire view manager hierarchy.... Maybe it shouldn't do
+  // that?
   NS_IMETHOD DisableRefresh(void) = 0;
 
   /**
@@ -382,9 +407,24 @@ public:
   /**
    * allow the view manager to refresh any damaged areas accumulated
    * after the BeginUpdateViewBatch() call.  this may cause a
-   * synchronous paint to occur inside the call if aUpdateFlags NS_VMREFRESH_IMMEDIATE is set
-   * @param aUpdateFlags see bottom of nsIViewManager.h for description
-   * @return error status
+   * synchronous paint to occur inside the call if aUpdateFlags
+   * NS_VMREFRESH_IMMEDIATE is set.
+   *
+   * If this is not the outermost view batch command, then this does
+   * nothing except that the specified flags are remembered. When the
+   * outermost batch finally ends, we merge together all the flags for the
+   * inner batches in the following way:
+   * -- If any batch specified NS_VMREFRESH_IMMEDIATE, then we use that flag
+   * (i.e. there is a synchronous paint under the last EndUpdateViewBatch)
+   * -- Otherwise if any batch specified NS_VMREFERSH_DEFERRED, then we use
+   * that flag (i.e. invalidation is deferred until the processing of an
+   * Invalidate PLEvent)
+   * -- Otherwise all batches specified NS_VMREFRESH_NO_SYNC and we honor
+   * that; all widgets are invalidated normally and will be painted the next
+   * time the toolkit chooses to update them.
+   *
+   * @param aUpdateFlags see bottom of nsIViewManager.h for
+   * description @return error status
    */
   NS_IMETHOD EndUpdateViewBatch(PRUint32 aUpdateFlags) = 0;
 
@@ -407,7 +447,29 @@ public:
   /**
    * Display the specified view. Used when printing.
    */
+   //XXXbz how is this different from UpdateView(NS_VMREFRESH_IMMEDIATE)?
   NS_IMETHOD Display(nsIView *aView, nscoord aX, nscoord aY, const nsRect& aClipRect) = 0;
+
+  /**
+   * Dump the specified view into a new offscreen rendering context.
+   * @param aRect is the region to capture into the offscreen buffer, in the view's
+   * coordinate system
+   * @param aUntrusted set to PR_TRUE if the contents may be passed to malicious
+   * agents. E.g. we might choose not to paint the contents of sensitive widgets
+   * such as the file name in a file upload widget, and we might choose not
+   * to paint themes.
+   * @param aIgnoreViewportScrolling ignore clipping/scrolling/scrollbar painting
+   * due to scrolling in the viewport
+   * @param aBackgroundColor a background color to render onto
+   * @param aRenderedContext gets set to a rendering context whose offscreen
+   * buffer can be locked to get the data. The buffer's size will be aRect's size.
+   * In all cases the caller must clean it up by calling
+   * cx->DestroyDrawingSurface(cx->GetDrawingSurface()).
+   */
+  NS_IMETHOD RenderOffscreen(nsIView* aView, nsRect aRect, PRBool aUntrusted,
+                             PRBool aIgnoreViewportScrolling,
+                             nscolor aBackgroundColor,
+                             nsIRenderingContext** aRenderedContext) = 0;
 
   /**
    * Add a listener to the view manager's composite listener list.
@@ -424,20 +486,10 @@ public:
   NS_IMETHOD RemoveCompositeListener(nsICompositeListener *aListener) = 0;
 
   /**
-   * Retrieve the widget that a view renders into.
-   * The view must be in the view hierarchy.
-   * @param aView the view to get the widget for 
-   * @param aWidget the widget that aView renders into.
-   * @result error status
+   * Retrieve the widget at the root of the view manager. This is the
+   * widget associated with the root view, if the root view exists and has
+   * a widget.
    */
-  NS_IMETHOD GetWidgetForView(nsIView *aView, nsIWidget **aWidget) = 0;
-
-  /**
-   * Retrieve the widget that a view manager renders into
-   * @param aWidget the widget that aView renders into.
-   * @result error status
-   */
-
   NS_IMETHOD GetWidget(nsIWidget **aWidget) = 0;
 
   /**
@@ -445,19 +497,11 @@ public:
    * Callers should use UpdateView(view, NS_VMREFRESH_IMMEDIATE) in most cases instead
    * @result error status
    */
+  // XXXbz Callers seem to be confused about this one... and it doesn't play
+  // right with view update batching at all (will miss updates).  Maybe this
+  // should call FlushPendingInvalidates()?
   NS_IMETHOD ForceUpdate() = 0;
   
-  /**
-   * Turn widget on or off widget movement caching
-   */
-  NS_IMETHOD IsCachingWidgetChanges(PRBool* aCaching)=0;
-
-  /**
-   * Pass true to cache widget changes. pass false to stop. When false is passed
-   * All widget changes will be applied.
-   */
-  NS_IMETHOD CacheWidgetChanges(PRBool aCache)=0;
-
   /**
    * Control double buffering of the display. If double buffering
    * is enabled the viewmanager is allowed to render to an offscreen
@@ -476,14 +520,6 @@ public:
    *                  PR_FALSE otherwise
    */
   NS_IMETHOD IsPainting(PRBool& aIsPainting)=0;
-
-
-  /**
-   * Flush pending invalidates which have been queued up
-   * between DisableRefresh and EnableRefresh calls. 
-   */
-  NS_IMETHOD FlushPendingInvalidates()=0;
-
 
   /**
    * Set the default background color that the view manager should use
@@ -524,12 +560,31 @@ public:
                                PRUint16 aMinTwips, 
                                nsRectVisibility *aRectVisibility)=0;
 
+  /**
+   * Dispatch a mouse move event based on the most recent mouse
+   * position.  This is used when the contents of the page moved
+   * (aFromScroll is false) or scrolled (aFromScroll is true).
+   */
+  NS_IMETHOD SynthesizeMouseMove(PRBool aFromScroll)=0;
 };
 
-//update view now?
+// Paint timing mode flags
+
+// intermediate: do no special timing processing; repaint when the
+// toolkit issues an expose event (which will happen *before* PLEvent
+// processing). This is essentially the default.
+#define NS_VMREFRESH_NO_SYNC            0
+
+// least immediate: we suppress invalidation, storing dirty areas in
+// views, and post an Invalidate PLEvent. The Invalidate event gets
+// processed after toolkit events such as window resize events!
+// This is only usable with EndUpdateViewBatch and EnableRefresh.
+#define NS_VMREFRESH_DEFERRED           0x0001
+
+// most immediate: force a call to nsViewManager::Composite, which
+// synchronously updates the window(s) right away before returning
 #define NS_VMREFRESH_IMMEDIATE          0x0002
-//prevent "sync painting"
-#define NS_VMREFRESH_NO_SYNC            0x0004
+
 //animate scroll operation
 #define NS_VMREFRESH_SMOOTHSCROLL       0x0008
 

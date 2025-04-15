@@ -45,7 +45,7 @@ interface nsIOutputStream;
 interface nsIMsgIncomingServer;
 interface nsIMsgDBHdr;
 
-[scriptable, uuid(24ca5ee5-4b0b-4d7b-b53c-13fa2279ccf0)]
+[scriptable, uuid(3D6A6BCF-B374-4c97-B8C7-CDBBFC5E447B)]
 interface nsISpamSettings: nsISupports {
   attribute nsIMsgIncomingServer server;
   
@@ -55,6 +55,7 @@ interface nsISpamSettings: nsISupports {
   attribute long level; 
 
   attribute boolean moveOnSpam;
+  attribute boolean markAsReadOnSpam;
 
   /**
    * Most consumers will just use spamFolderURI rather than accessing any of
@@ -89,6 +90,15 @@ interface nsISpamSettings: nsISupports {
   const long MANUAL_MARK_MODE_MOVE = 0;
   const long MANUAL_MARK_MODE_DELETE = 1;
 
+  /**
+   * integrate with server-side spam detection programs
+   */
+  attribute boolean useServerFilter;
+  attribute ACString serverFilterName;
+  const long TRUST_POSITIVES = 1;
+  const long TRUST_NEGATIVES = 2;
+  attribute long serverFilterTrustFlags;
+
   // for logging
   attribute boolean loggingEnabled;
   attribute nsIOutputStream logStream;
@@ -97,6 +107,6 @@ interface nsISpamSettings: nsISupports {
   void ensureLogFile();
   void flushLogIfNecessary();
   void logJunkHit(in nsIMsgDBHdr aMsgHdr, in boolean aMoveMessage);
-
+  void logJunkString(in string aLogText);
   void clone(in nsISpamSettings aSpamSettings); 
 };

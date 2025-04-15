@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,49 +14,48 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #ifndef nsIPrivateDOMEvent_h__
 #define nsIPrivateDOMEvent_h__
 
-#include "nsEvent.h"
 #include "nsISupports.h"
 
-class nsIPresContext;
+class nsPresContext;
 
 /*
  * Event listener manager interface.
  */
 #define NS_IPRIVATEDOMEVENT_IID \
-{ /* 80a98c80-2036-11d2-bd89-00805f8ae3f4 */ \
-0x80a98c80, 0x2036, 0x11d2, \
-{0xbd, 0x89, 0x00, 0x80, 0x5f, 0x8a, 0xe3, 0xf4} }
+{ /* 25e6626c-8e54-409b-87b5-2beceaac399e */ \
+0x25e6626c, 0x8e54, 0x409b, \
+{0x87, 0xb5, 0x2b, 0xec, 0xea, 0xac, 0x39, 0x9e} }
 
 class nsIDOMEventTarget;
 class nsIDOMEvent;
+class nsEvent;
 
-class nsIPrivateDOMEvent : public nsISupports {
-
+class nsIPrivateDOMEvent : public nsISupports
+{
 public:
   NS_DEFINE_STATIC_IID_ACCESSOR(NS_IPRIVATEDOMEVENT_IID)
 
@@ -67,19 +66,32 @@ public:
   NS_IMETHOD IsDispatchStopped(PRBool* aIsDispatchPrevented) = 0;
   NS_IMETHOD GetInternalNSEvent(nsEvent** aNSEvent) = 0;
   NS_IMETHOD HasOriginalTarget(PRBool* aResult)=0;
-  NS_IMETHOD IsTrustedEvent(PRBool* aResult)=0;
   NS_IMETHOD SetTrusted(PRBool aTrusted)=0;
 };
 
 nsresult
-NS_NewDOMEvent(nsIDOMEvent** aInstancePtrResult, nsIPresContext* aPresContext,
-               nsEvent *aEvent);
+NS_NewDOMEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, nsEvent *aEvent);
 nsresult
-NS_NewDOMUIEvent(nsIDOMEvent** aInstancePtrResult,
-                 nsIPresContext* aPresContext, const nsAString& aEventType,
-                 nsEvent *aEvent);
+NS_NewDOMUIEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, class nsGUIEvent *aEvent);
 nsresult
-NS_NewDOMMutationEvent(nsIDOMEvent** aResult, nsIPresContext* aPresContext, 
-                       nsEvent* aEvent);
+NS_NewDOMMouseEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, class nsInputEvent *aEvent);
+nsresult
+NS_NewDOMKeyboardEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, class nsKeyEvent *aEvent);
+nsresult
+NS_NewDOMMutationEvent(nsIDOMEvent** aResult, nsPresContext* aPresContext, class nsMutationEvent* aEvent);
+nsresult
+NS_NewDOMPopupBlockedEvent(nsIDOMEvent** aResult, nsPresContext* aPresContext, class nsPopupBlockedEvent* aEvent);
+nsresult
+NS_NewDOMTextEvent(nsIDOMEvent** aResult, nsPresContext* aPresContext, class nsTextEvent* aEvent);
+nsresult
+NS_NewDOMBeforeUnloadEvent(nsIDOMEvent** aResult, nsPresContext* aPresContext, class nsBeforePageUnloadEvent* aEvent);
+nsresult
+NS_NewDOMPageTransitionEvent(nsIDOMEvent** aResult, nsPresContext* aPresContext, class nsPageTransitionEvent* aEvent);
+#ifdef MOZ_SVG
+nsresult
+NS_NewDOMSVGEvent(nsIDOMEvent** aResult, nsPresContext* aPresContext, class nsEvent* aEvent);
+nsresult
+NS_NewDOMSVGZoomEvent(nsIDOMEvent** aResult, nsPresContext* aPresContext, class nsGUIEvent* aEvent);
+#endif // MOZ_SVG
 
 #endif // nsIPrivateDOMEvent_h__

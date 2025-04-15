@@ -38,15 +38,17 @@
 #include "nsIServiceManager.h"
 #include "nsIGenericFactory.h"
 #include "nsICategoryManager.h"
+#include "ipcdclient.h"
 #include "ipcService.h"
 #include "ipcConfig.h"
+#include "ipcCID.h"
 
 //-----------------------------------------------------------------------------
 // Define the contructor function for the objects
 //
 // NOTE: This creates an instance of objects by using the default constructor
 //-----------------------------------------------------------------------------
-NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(ipcService, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR(ipcService)
 
 // enable this code to make the IPC service auto-start.
 #if 0
@@ -88,10 +90,52 @@ ipcServiceUnregisterProc(nsIComponentManager *aCompMgr,
 // extensions
 
 #include "ipcLockService.h"
+#include "ipcLockCID.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(ipcLockService, Init)
 
 #include "tmTransactionService.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR(tmTransactionService)
+
+#ifdef BUILD_DCONNECT
+
+#include "ipcDConnectService.h"
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(ipcDConnectService, Init)
+
+// enable this code to make the IPC DCONNECT service auto-start.
+NS_METHOD
+ipcDConnectServiceRegisterProc(nsIComponentManager *aCompMgr,
+                               nsIFile *aPath,
+                               const char *registryLocation,
+                               const char *componentType,
+                               const nsModuleComponentInfo *info)
+{
+    //
+    // add ipcService to the XPCOM startup category
+    //
+    nsCOMPtr<nsICategoryManager> catman(do_GetService(NS_CATEGORYMANAGER_CONTRACTID));
+    if (catman) {
+        nsXPIDLCString prevEntry;
+        catman->AddCategoryEntry(NS_XPCOM_STARTUP_OBSERVER_ID, "ipcDConnectService",
+                                 IPC_DCONNECTSERVICE_CONTRACTID, PR_TRUE, PR_TRUE,
+                                 getter_Copies(prevEntry));
+    }
+    return NS_OK;
+}
+
+NS_METHOD
+ipcDConnectServiceUnregisterProc(nsIComponentManager *aCompMgr,
+                                 nsIFile *aPath,
+                                 const char *registryLocation,
+                                 const nsModuleComponentInfo *info)
+{
+    nsCOMPtr<nsICategoryManager> catman(do_GetService(NS_CATEGORYMANAGER_CONTRACTID));
+    if (catman)
+        catman->DeleteCategoryEntry(NS_XPCOM_STARTUP_OBSERVER_ID, 
+                                    IPC_DCONNECTSERVICE_CONTRACTID, PR_TRUE);
+    return NS_OK;
+}
+
+#endif // BUILD_DCONNECT
 
 //-----------------------------------------------------------------------------
 // Define a table of CIDs implemented by this module along with other
@@ -118,10 +162,35 @@ static const nsModuleComponentInfo components[] = {
     IPC_TRANSACTIONSERVICE_CID,
     IPC_TRANSACTIONSERVICE_CONTRACTID,
     tmTransactionServiceConstructor },
+
+#ifdef BUILD_DCONNECT
+  { IPC_DCONNECTSERVICE_CLASSNAME,
+    IPC_DCONNECTSERVICE_CID,
+    IPC_DCONNECTSERVICE_CONTRACTID,
+    ipcDConnectServiceConstructor,
+    ipcDConnectServiceRegisterProc,
+    ipcDConnectServiceUnregisterProc },
+#endif
 };
+
+//-----------------------------------------------------------------------------
+
+PR_STATIC_CALLBACK(nsresult)
+ipcdclient_init(nsIModule *module)
+{
+  return IPC_Init();
+}
+
+PR_STATIC_CALLBACK(void)
+ipcdclient_shutdown(nsIModule *module)
+{
+  IPC_Shutdown();
+}
 
 //-----------------------------------------------------------------------------
 // Implement the NSGetModule() exported function for your module
 // and the entire implementation of the module object.
 //-----------------------------------------------------------------------------
-NS_IMPL_NSGETMODULE(ipcd, components)
+NS_IMPL_NSGETMODULE_WITH_CTOR_DTOR(ipcdclient, components,
+                                   ipcdclient_init,
+                                   ipcdclient_shutdown)

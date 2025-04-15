@@ -1,38 +1,53 @@
 <?xml version="1.0"?>
 # -*- Mode: HTML -*-
 #
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
 #
 # The Original Code is Mozilla Communicator client code, released
 # March 31, 1998.
 #
-# The Initial Developer of the Original Code is Netscape
-# Communications Corporation. Portions created by Netscape are
-# Copyright (C) 1998-2000 Netscape Communications Corporation. All
-# Rights Reserved.
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1998-2000
+# the Initial Developer. All Rights Reserved.
 #
-# Contributor(s): 
+# Contributor(s):
 #   Blake Ross <blake@cs.stanford.edu>
 #   David Hyatt <hyatt@mozilla.org>
 #   Joe Hewitt <hewitt@netscape.com>
 #   Pierre Chanial <chanial@noos.fr>
 #   Dean Tessman <dean_tessman@hotmail.com>
+#
+# Alternatively, the contents of this file may be used under the terms of
+# either the GNU General Public License Version 2 or later (the "GPL"), or
+# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
 <?xml-stylesheet href="chrome://browser/skin/" type="text/css"?> 
 <?xml-stylesheet href="chrome://browser/content/browser.css" type="text/css"?>
 <?xml-stylesheet href="chrome://global/skin/findBar.css" type="text/css"?>
 
-#ifdef XP_MACOSX
-<?xul-overlay href="chrome://browser/content/macBrowserOverlay.xul"?>
-#endif
+<?xul-overlay href="chrome://browser/content/baseMenuOverlay.xul"?>
 
 # All DTD information is stored in a separate file so that it can be shared by
 # hiddenWindow.xul.
@@ -41,7 +56,7 @@
 <window id="main-window"
         xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
-        onload="Startup()" onunload="Shutdown()" onclose="return WindowIsClosing();"
+        onload="BrowserStartup()" onunload="BrowserShutdown()" onclose="return WindowIsClosing();"
         contenttitlesetting="true"
         title="&mainWindow.title;"
         titlemodifier="&mainWindow.title;"
@@ -50,15 +65,16 @@
         screenX="4" screenY="4"
         persist="screenX screenY width height sizemode"> 
 
-#ifndef XP_MACOSX
-# All JS files that browser.xul wishes to include *must* go into the browser-scripts.inc file
-# so that they can be shared by hiddenWindow.xul.
-#include browser-scripts.inc
+# All JS files which are not content (only) dependent that browser.xul
+# wishes to include *must* go into the global-scripts.inc file
+# so that they can be shared by macBrowserOverlay.xul.
+#include global-scripts.inc
+
+<script type="application/x-javascript" src="chrome://global/content/contentAreaUtils.js"/>
 
 # All sets except for popupsets (commands, keys, stringbundles and broadcasters) *must* go into the 
 # browser-sets.inc file for sharing with hiddenWindow.xul.
 #include browser-sets.inc
-#endif
 
   <popupset id="mainPopupSet">
     <popup id="backMenu" 
@@ -95,10 +111,8 @@
 
   </popupset>
 
-#ifndef XP_MACOSX
 # The hacky hidden tree used by the Go menu to build items.
 #include browser-gotreehack.inc
-#endif
 
   <!-- bookmarks context menu -->
   <popupset>
@@ -126,14 +140,9 @@
 #endif
              mode="icons" context="toolbar-context-menu">
       <toolbaritem id="menubar-items" align="center">
-#ifndef XP_MACOSX
 # The entire main menubar is placed into browser-menubar.inc, so that it can be shared by 
 # hiddenWindow.xul.
 #include browser-menubar.inc
-#endif
-      </toolbaritem>
-      <toolbaritem id="softwareupdate-item" title="&updatesItem.title;" align="center" pack="center">
-        <toolbarbutton type="updates" id="softwareupdate"/>
       </toolbaritem>
     </toolbar>
 
@@ -168,7 +177,7 @@
     
       <toolbarbutton id="reload-button" class="toolbarbutton-1 chromeclass-toolbar-additional"
                      label="&reloadCmd.label;"
-                     oncommand="if (event.shiftKey) BrowserReloadSkipCache(); else BrowserReload();"  
+                     command="Browser:Reload"
                      tooltiptext="&reloadButton.tooltip;"/>
                     
       <toolbarbutton id="stop-button" class="toolbarbutton-1 chromeclass-toolbar-additional"
@@ -189,6 +198,7 @@
                  type="autocomplete"
                  autocompletesearch="history" 
                  autocompletepopup="PopupAutoComplete"
+                 completeselectedindex="true"
                  tabscrolling="true"
                  showcommentcolumn="true"
                  enablehistory="true"
@@ -197,9 +207,8 @@
                  ontextreverted="return handleURLBarRevert();"
                  onfocus="URLBarFocusHandler(event, this);"
                  onmousedown="URLBarMouseDownHandler(event, this);"
-                 onclick="URLBarClickHandler(event, this);"
-                 oninfoclick="displaySecurityInfo();">
-          <deck id="page-proxy-deck">
+                 onclick="URLBarClickHandler(event, this);">
+          <deck id="page-proxy-deck" onclick="PageProxyClickHandler(event);">
             <image id="page-proxy-button"
                     ondraggesture="PageProxyDragGesture(event);"
                     tooltiptext="&proxyIcon.tooltip;"/>
@@ -213,6 +222,13 @@
                              this.parentNode.selectedIndex = 0;"
                     tooltiptext="&proxyIcon.tooltip;"/>
           </deck>
+          <hbox>
+            <button type="menu" style="-moz-user-focus: none" class="plain" id="feed-button" chromedir="&locale.dir;">
+              <menupopup onpopupshowing="return FeedHandler.buildFeedList(event);" position="after_end"
+                         oncommand="FeedHandler.addLiveBookmark(event.target.getAttribute('feed'));" />
+            </button>
+            <image id="lock-icon" onclick="displaySecurityInfo()"/>
+          </hbox>
         </textbox>
       </toolbaritem>
 
@@ -249,7 +265,7 @@
                onpopupshowing="BookmarksToolbar.setOpenedMenu(event);"
                onpopuphidden="BookmarksToolbar.unsetOpenedMenu(event);">
           <hbox id="bookmarks-ptf" class="bookmarks-toolbar-items" contextmenu="bookmarks-context-menu"
-                flex="1" style="min-width:0px; width:0px;margin-left: 3px;" 
+                flex="1" style="min-width:0px; width:0px;padding-left: 3px;" 
                 datasources="rdf:bookmarks rdf:files rdf:localsearch"
                 template="bookmarks-template" flags="dont-test-empty"
                 infer="forward-proxy"
@@ -280,8 +296,11 @@
                              ondragenter="nsDragAndDrop.dragEnter(event, BookmarksMenuDNDObserver); event.preventBubble()"
                              ondragexit="nsDragAndDrop.dragExit(event, BookmarksMenuDNDObserver); event.preventBubble()"
                              ondragover="nsDragAndDrop.dragOver(event, BookmarksMenuDNDObserver); event.preventBubble()">
-                <menupopup contextmenu="bookmarks-context-menu"
-                           onpopupshowing="if (event.target == this) BookmarksToolbar.updateOverflowMenu(this);"/>
+                <menupopup onpopupshowing="if (event.target == this) BookmarksToolbar.updateOverflowMenu(this);"
+#ifndef XP_MACOSX
+                           contextmenu="bookmarks-context-menu"
+#endif
+                           />
               </toolbarbutton>
             </hbox>
             <toolbarbutton class="bookmark-item bookmarks-toolbar-customize" mousethrough="never"
@@ -327,12 +346,18 @@
         <toolbarbutton id="new-tab-button" class="toolbarbutton-1 chromeclass-toolbar-additional"
                        label="&tabCmd.label;"
                        command="cmd_newNavigatorTab"
-                       tooltiptext="&newTabButton.tooltip;"/>
+                       tooltiptext="&newTabButton.tooltip;"
+                       ondragover="nsDragAndDrop.dragOver(event, newTabButtonObserver);"
+                       ondragdrop="nsDragAndDrop.drop(event, newTabButtonObserver);"
+                       ondragexit="nsDragAndDrop.dragExit(event, newTabButtonObserver);"/>         
 
         <toolbarbutton id="new-window-button" class="toolbarbutton-1 chromeclass-toolbar-additional"
                        label="&newNavigatorCmd.label;"
                        command="key_newNavigator"
-                       tooltiptext="&newWindowButton.tooltip;"/>
+                       tooltiptext="&newWindowButton.tooltip;"
+                       ondragover="nsDragAndDrop.dragOver(event, newWindowButtonObserver);"
+                       ondragdrop="nsDragAndDrop.drop(event, newWindowButtonObserver);"
+                       ondragexit="nsDragAndDrop.dragExit(event, newWindowButtonObserver);"/>
 
         <toolbarbutton id="cut-button" class="toolbarbutton-1 chromeclass-toolbar-additional"
                        label="&cutCmd.label;"
@@ -374,7 +399,7 @@
 
         <toolbarbutton id="close-button" class="toolbarbutton-1"
                        tooltiptext="&fullScreenClose.tooltip;"
-                       oncommand="window.close();"/>
+                       oncommand="BrowserTryToCloseWindow();"/>
       </hbox>
 #endif
     </toolbar>
@@ -404,7 +429,6 @@
                   flex="1" contenttooltip="aHTMLTooltip"
                   contentcontextmenu="contentAreaContextMenu"
                   onnewtab="BrowserOpenTab();"
-                  onkeyup="onBrowserKeyUp(event);"
                   autocompletepopup="PopupAutoComplete"
                   ondragdrop="nsDragAndDrop.drop(event, contentAreaDNDObserver);"
                   onclick="return contentAreaClick(event, false);"/>
@@ -436,7 +460,7 @@
                     class="statusbarpanel-menu-iconic" 
                     tooltiptext="&pageStyleIcon.tooltip;">
       <menupopup onpopupshowing="stylesheetFillPopup(this);"
-                 oncommand="stylesheetSwitchAll(window._content, event.target.getAttribute('data')); setStyleDisabled(false);">
+                 oncommand="stylesheetSwitchAll(window.content, event.target.getAttribute('data')); setStyleDisabled(false);">
         <menuitem label="&pageStyleNoStyle.label;" accesskey="&pageStyleNoStyle.accesskey;"
                   oncommand="setStyleDisabled(true); event.preventBubble();" type="radio" hidden="true"/>
         <menuitem label="&pageStylePersistentOnly.label;" accesskey="&pageStylePersistentOnly.accesskey;" type="radio" checked="true"/>
@@ -444,10 +468,6 @@
       </menupopup>
     </statusbarpanel>
 #endif
-    <statusbarpanel id="livemark-button" type="menu" class="statusbarpanel-menu-iconic" chromedir="&locale.dir;">
-      <menupopup onpopupshowing="return livemarkFillPopup(this);"
-                 oncommand="livemarkAddMark(window._content, event.target.getAttribute('data'));" />
-    </statusbarpanel>
   </statusbar>
 </window>
   

@@ -1,40 +1,43 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is this file as it was released on
- * January 3, 2001.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Jonas Sicking.
- * Portions created by Jonas Sicking are Copyright (C) 2000
- * Jonas Sicking.  All Rights Reserved.
+ * The Original Code is this file as it was released on January 3, 2001.
+ *
+ * The Initial Developer of the Original Code is
+ * Jonas Sicking.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Jonas Sicking <sicking@bigfoot.com> (Original Author)
  *   Gervase Markham <gerv@gerv.net>
  *   Heikki Toivonen <heikki@netscape.com>
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable
- * instead of those above.  If you wish to allow use of your
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
- */
+ * ***** END LICENSE BLOCK ***** */
 
 const XLinkNS = "http://www.w3.org/1999/xlink";
 const XULNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
@@ -102,6 +105,11 @@ function showMetadataFor(elem)
     // Each of them could be at a different level in the tree, so they each
     // need their own boolean to tell us to stop looking.
     while (elem && elem.nodeType == Node.ELEMENT_NODE) {
+        htmllocalname = "";
+        if (isHTMLElement(elem,"")) {
+            htmllocalname = elem.localName.toLowerCase();
+        }
+
         if (!onLink)   checkForLink(elem, htmllocalname);
         if (!onInsDel) checkForInsDel(elem, htmllocalname);
         if (!onQuote)  checkForQuote(elem, htmllocalname);
@@ -110,13 +118,8 @@ function showMetadataFor(elem)
         if (!onLang)   checkForLang(elem, htmllocalname);
           
         elem = elem.parentNode;
-
-        htmllocalname = "";
-        if (isHTMLElement(elem,"")) { 
-            htmllocalname = elem.localName.toLowerCase();
-        }
     }
-    
+
     // Decide which sections to show
     var onMisc = onTable || onTitle || onLang;
     if (!onMisc)   hideNode("misc-sec");
@@ -207,7 +210,7 @@ function checkForImage(elem, htmllocalname)
         }        
          
         if (imgType == "img") {
-            setInfo("image-desc", getAbsoluteURL(img.longDesc, img));
+            setInfo("image-desc", img.longDesc);
         } else {
             setInfo("image-desc", "");
         }
@@ -249,10 +252,14 @@ function checkForLink(elem, htmllocalname)
             break;
         case "":
         case "_self":
-            if (elem.ownerDocument != elem.ownerDocument.defaultView._content.document)
-                setInfo("link-target", gMetadataBundle.getString("sameFrameText"));
-            else
-                setInfo("link-target", gMetadataBundle.getString("sameWindowText"));
+            if (elem.ownerDocument.defaultView) {
+                if (elem.ownerDocument != elem.ownerDocument.defaultView.content.document)
+                    setInfo("link-target", gMetadataBundle.getString("sameFrameText"));
+                else
+                    setInfo("link-target", gMetadataBundle.getString("sameWindowText"));
+            } else {
+                hideNode("link-target");
+            }
             break;
         default:
             setInfo("link-target", "\"" + target + "\"");
@@ -261,8 +268,15 @@ function checkForLink(elem, htmllocalname)
         onLink = true;
     }
 
-    else if (elem.getAttributeNS(XLinkNS,"href") != "") {
-        setInfo("link-url", getAbsoluteURL(elem.getAttributeNS(XLinkNS,"href"),elem));
+    else if (elem.getAttributeNS(XLinkNS, "href") != "") {
+        var ioService = Components.classes["@mozilla.org/network/io-service;1"]
+                                  .getService(Components.interfaces.nsIIOService);
+        var url = elem.getAttributeNS(XLinkNS, "href");
+        try {
+            var baseURI = ioService.newURI(elem.baseURI, elem.ownerDocument.characterSet, null);
+            url = ioService.newURI(url, elem.ownerDocument.characterSet, baseURI).spec;
+        } catch (e) {}
+        setInfo("link-url", url);
         setInfo("link-lang", "");
         setInfo("link-type", "");
         setInfo("link-rel", "");
@@ -277,7 +291,7 @@ function checkForLink(elem, htmllocalname)
             break;
         case "":
         case "replace":
-            if (elem.ownerDocument != elem.ownerDocument.defaultView._content.document)
+            if (elem.ownerDocument != elem.ownerDocument.defaultView.content.document)
                 setInfo("link-target", gMetadataBundle.getString("sameFrameText"));
             else
                 setInfo("link-target", gMetadataBundle.getString("sameWindowText"));
@@ -295,7 +309,7 @@ function checkForInsDel(elem, htmllocalname)
 {
     if ((htmllocalname === "ins" || htmllocalname === "del") &&
         (elem.cite || elem.dateTime)) {
-        setInfo("insdel-cite", getAbsoluteURL(elem.cite, elem));
+        setInfo("insdel-cite", elem.cite);
         setInfo("insdel-date", elem.dateTime);
         onInsDel = true;
     } 
@@ -305,7 +319,7 @@ function checkForInsDel(elem, htmllocalname)
 function checkForQuote(elem, htmllocalname)
 {
     if ((htmllocalname === "q" || htmllocalname === "blockquote") && elem.cite) {
-        setInfo("quote-cite", getAbsoluteURL(elem.cite, elem));
+        setInfo("quote-cite", elem.cite);
         onQuote = true;
     } 
 }
@@ -374,30 +388,6 @@ function hideNode(id)
     document.getElementById(id).setAttribute("style", "display:none;" + style);
 }
 
-const nsIScriptSecurityManager = Components.interfaces.nsIScriptSecurityManager;
-
-// opens the link contained in the node's "value" attribute.
-function openLink(node)
-{
-    var url = node.getAttribute("value");
-    // Security-Critical: Only links to 'safe' protocols should be functional.
-    // Specifically, javascript: and data: URLs must be made non-functional
-    // here, because they will run with full privilege.
-    var safeurls = /^https?:|^file:|^chrome:|^resource:|^mailbox:|^imap:|^s?news:|^nntp:|^about:|^mailto:|^ftp:|^gopher:/i;
-    if (safeurls.test(url)) {
-        var secMan = Components.classes["@mozilla.org/scriptsecuritymanager;1"].getService().
-                         QueryInterface(nsIScriptSecurityManager);
-        try {
-            secMan.checkLoadURIStr(nodeView._content.document.location,
-                                   url, nsIScriptSecurityManager.STANDARD);
-        } catch (e) {
-            return;
-        }
-        nodeView._content.document.location = url;
-        window.close();
-    }
-}
-
 /*
  * Find <img> or <object> which uses an imagemap.
  * If more then one object is found we can't determine which one
@@ -444,51 +434,6 @@ function getImageForMap(map)
     return img;
 }
 
-/*
- * Takes care of XMLBase and <base>
- * url is the possibly relative url.
- * node is the node where the url was given (needed for XMLBase)
- *
- * This function is called in many places as a workaround for bug 72524
- * Once bug 72522 is fixed this code should use the Node.baseURI attribute
- *
- * for node==null or url=="", empty string is returned
- */
-function getAbsoluteURL(url, node)
-{
-    if (!url || !node)
-        return "";
-
-    var urlArr = new Array(url);
-    var doc = node.ownerDocument;
-
-    if (node.nodeType == Node.ATTRIBUTE_NODE)
-        node = node.ownerElement;
-
-    while (node && node.nodeType == Node.ELEMENT_NODE) {
-        if (node.getAttributeNS(XMLNS, "base") != "")
-            urlArr.unshift(node.getAttributeNS(XMLNS, "base"));
-
-        node = node.parentNode;
-    }
-
-    // Look for a <base>.
-    var baseTags = getHTMLElements(doc,"base");
-    if (baseTags && baseTags.length) {
-        urlArr.unshift(baseTags[baseTags.length - 1].getAttribute("href"));
-    }
-
-    // resolve everything from bottom up, starting with document location
-    var ioService = Components.classes["@mozilla.org/network/io-service;1"]
-                  .getService(Components.interfaces.nsIIOService);
-    var URL = ioService.newURI(doc.location.href, null, null);
-    for (var i=0; i<urlArr.length; i++) {
-        URL.spec = URL.resolve(urlArr[i]);
-    }
-
-    return URL.spec;
-}
-
 function getHTMLElements(node, name)
 {
     if (htmlMode)
@@ -514,29 +459,22 @@ function convertLanguageCode(abbr)
 {
     if (!abbr) return "";
     var result;
-    var language = "";
-    var region;
-    var is_region_set = false;
+    var region = "";
     var tokens = abbr.split("-");
+    var language = tokens.shift();
 
-    if (tokens[0] === "x" || tokens[0] === "i")
+    if (language == "x" || language == "i")
     {
-        // x and i prefixes mean unofficial ones. So we upper-case the first
+        // x and i prefixes mean unofficial ones. So we proper-case the next
         // word and leave the rest.
-        tokens.shift();
-
-        if (tokens[0])
+        if (tokens.length > 0)
         {
             // Upper-case first letter
             language = tokens[0].substr(0, 1).toUpperCase() + tokens[0].substr(1);
             tokens.shift();
 
-            if (tokens[0])
-            {
-                // Add on the rest as space-separated strings inside the brackets
-                region = tokens.join(" ");
-                is_region_set = true;
-            }
+            // Add on the rest as space-separated strings inside the brackets
+            region = tokens.join(" ");
         }
     }
     else
@@ -545,43 +483,26 @@ function convertLanguageCode(abbr)
         // and the rest as strings.
         try
         {
-            language = gLangBundle.getString(tokens[0]);
+            language = gLangBundle.getString(language);
         }
         catch (e) 
         {
-            // Language not present in lang bundle
-            language = tokens[0]; 
         }
 
-        tokens.shift();
-
-        if (tokens[0])
+        if (tokens.length > 0)
         {
             try
             {
-                // We don't add it on to the result immediately
-                // because we want to get the spacing right.
-                region = gRegionBundle.getString(tokens[0].toLowerCase());
-
-                tokens.shift();
-
-                if (tokens[0])
-                {
-                    // Add on the rest as space-separated strings inside the brackets
-                    region += " " + tokens.join(" ");
-                }
+                tokens[0] = gRegionBundle.getString(tokens[0].toLowerCase());
             }
             catch (e) 
             {
-                // Region not present in region bundle
-                region = tokens.join(" ");
             }
-
-            is_region_set = true;
+            region = tokens.join(" ");
         }
     }
 
-    if (is_region_set) {
+    if (region) {
         result = gMetadataBundle.getFormattedString("languageRegionFormat",
                                                     [language, region]);
     } else {

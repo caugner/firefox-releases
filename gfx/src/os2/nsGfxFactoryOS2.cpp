@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Christopher Blizzard.
  * Portions created by the Initial Developer are Copyright (C) 2000
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Christopher Blizzzard <blizzard@mozilla.org>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -76,7 +75,7 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsDeviceContextSpecFactoryOS2)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsFontEnumeratorOS2)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsFontList)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsScreenManagerOS2)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsPrintOptionsOS2)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsPrintOptionsOS2, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsPrinterEnumeratorOS2)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsPrintSession, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(gfxImageFrame)
@@ -93,10 +92,6 @@ typedef ULONG   HKEY;
                                 KEY_ENUMERATE_SUB_KEYS | KEY_NOTIFY
 #define ERROR_SUCCESS           0L
 
-LONG _System RegOpenKeyEx(HKEY, const char*, ULONG, ULONG, HKEY* );
-LONG _System RegQueryValueEx(HKEY, const char*, ULONG*, ULONG*, UCHAR*,
-                             ULONG*);
-
 static PRBool
 UseFTFunctions()
 {
@@ -112,21 +107,45 @@ UseFTFunctions()
       return PR_FALSE;
     }
 
+    // Test for availability of registry functions and query their addresses
+    APIRET rc;
+    HMODULE hmod = NULLHANDLE;
+    char LoadError[CCHMAXPATH];
+    rc = DosLoadModule(LoadError, CCHMAXPATH, "REGISTRY", &hmod);
+    if (rc != NO_ERROR) {
+      NS_WARNING("REGISTRY.DLL could not be loaded");
+      return PR_FALSE;
+    }
+    LONG _System (*APIENTRY RegOpenKeyEx)(HKEY, const char*, ULONG, ULONG,
+                                           HKEY* );
+    LONG _System (*APIENTRY RegQueryValueEx)(HKEY, const char*, ULONG*, ULONG*,
+                                              UCHAR*, ULONG*);
+
+    rc = DosQueryProcAddr(hmod, 0L, "RegOpenKeyExA", (PFN*)&RegOpenKeyEx);
+    rc += DosQueryProcAddr(hmod, 0L, "RegQueryValueExA", (PFN*)&RegQueryValueEx);
+    if (rc != NO_ERROR) {
+      NS_WARNING("Registry function(s) were not found in REGISTRY.DLL");
+      DosFreeModule(hmod);
+      return PR_FALSE;
+    }
+
     // Is FT2LIB enabled?
     HKEY key;
-    LONG result = ::RegOpenKeyEx(HKEY_CURRENT_USER,
-                                 "Software\\Innotek\\InnoTek Font Engine", 0,
-                                 KEY_READ, &key);
+    LONG result = RegOpenKeyEx(HKEY_CURRENT_USER,
+                               "Software\\Innotek\\InnoTek Font Engine", 0,
+                               KEY_READ, &key);
     if (result != ERROR_SUCCESS) {
+      DosFreeModule(hmod);
       return PR_FALSE;
     }
 
     ULONG value;
     ULONG length = sizeof(value);
-    result = ::RegQueryValueEx(key, "Enabled", NULL, NULL, (UCHAR*)&value,
-                               &length);
+    result = RegQueryValueEx(key, "Enabled", NULL, NULL, (UCHAR*)&value,
+                             &length);
     if (result != ERROR_SUCCESS || value == 0) {
       // check if "Innotek Font Engine" is disabled (value == 0)
+      DosFreeModule(hmod);
       return PR_FALSE;
     }
 
@@ -140,20 +159,24 @@ UseFTFunctions()
     strcpy(keystr, "Software\\Innotek\\InnoTek Font Engine\\Applications\\");
     strcat(keystr, name);
     strcat(keystr, ext);
-    result = ::RegOpenKeyEx(HKEY_CURRENT_USER, keystr, 0, KEY_READ, &key);
+    result = RegOpenKeyEx(HKEY_CURRENT_USER, keystr, 0, KEY_READ, &key);
     if (result != ERROR_SUCCESS) {
+      DosFreeModule(hmod);
       return PR_FALSE;
     }
-    result = ::RegQueryValueEx(key, "Enabled", NULL, NULL, (UCHAR*)&value,
-                               &length);
+    result = RegQueryValueEx(key, "Enabled", NULL, NULL, (UCHAR*)&value,
+                             &length);
     if (result != ERROR_SUCCESS || value == 0) {
       // check if FT2LIB is disabled for our application (value == 0)
+      DosFreeModule(hmod);
       return PR_FALSE;
     }
 
+    // REGISTRY.DLL use ends here
+    DosFreeModule(hmod);
+
     // Load lib and functions
-    HMODULE hmod = 0;
-    int rc = DosLoadModule(NULL, 0, "FT2LIB", &hmod);
+    rc = DosLoadModule(LoadError, 0, "FT2LIB", &hmod);
     if (rc == NO_ERROR) {
       rc = DosQueryProcAddr(hmod, 0, "Ft2EnableFontEngine",
                             (PFN*)&nsFontMetricsOS2FT::pfnFt2EnableFontEngine);
@@ -205,7 +228,7 @@ nsScriptableRegionConstructor(nsISupports *aOuter, REFNSIID aIID, void **aResult
 {
   nsresult rv;
 
-  nsIScriptableRegion *inst;
+  nsIScriptableRegion *inst = NULL;
 
   if ( !aResult )
   {

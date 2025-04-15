@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -101,7 +101,7 @@ nsresult nsMsgHdr::InitCachedValues()
     err = GetUInt32Column(m_mdb->m_messageSizeColumnToken, &m_messageSize);
     
     err = GetUInt32Column(m_mdb->m_dateColumnToken, &uint32Value);
-    nsMsgDatabase::Seconds2PRTime(uint32Value, &m_date);
+    Seconds2PRTime(uint32Value, &m_date);
     
     err = GetUInt32Column(m_mdb->m_messageThreadIdColumnToken, &m_threadId);
     err = GetUInt32Column(m_mdb->m_numReferencesColumnToken, &uint32Value);
@@ -282,14 +282,14 @@ NS_IMETHODIMP nsMsgHdr::MarkFlagged(PRBool bFlagged)
   return rv;
 }
 
-NS_IMETHODIMP nsMsgHdr::GetProperty(const char *propertyName, nsString &resultProperty)
+NS_IMETHODIMP nsMsgHdr::GetProperty(const char *propertyName, nsAString &resultProperty)
 {
-  return m_mdb->GetPropertyAsNSString(GetMDBRow(), propertyName, &resultProperty);
+  return m_mdb->GetPropertyAsNSString(GetMDBRow(), propertyName, resultProperty);
 }
 
-NS_IMETHODIMP nsMsgHdr::SetProperty(const char *propertyName, nsString &propertyStr)
+NS_IMETHODIMP nsMsgHdr::SetProperty(const char *propertyName, const nsAString &propertyStr)
 {
-  return m_mdb->SetPropertyFromNSString(m_mdbRow, propertyName, &propertyStr);
+  return m_mdb->SetPropertyFromNSString(m_mdbRow, propertyName, propertyStr);
 }
 
 NS_IMETHODIMP nsMsgHdr::SetStringProperty(const char *propertyName, const char *propertyValue)
@@ -336,7 +336,7 @@ nsresult nsMsgHdr::ParseReferences(const char *references)
 	return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgHdr::GetStringReference(PRInt32 refNum, nsCString &resultReference)
+NS_IMETHODIMP nsMsgHdr::GetStringReference(PRInt32 refNum, nsACString& resultReference)
 {
   nsresult err = NS_OK;
   
@@ -491,18 +491,18 @@ NS_IMETHODIMP nsMsgHdr::SetCCListArray(const char *names, const char *addresses,
 
 NS_IMETHODIMP nsMsgHdr::SetMessageSize(PRUint32 messageSize)
 {
-	SetUInt32Column(messageSize, m_mdb->m_messageSizeColumnToken);
-	m_messageSize = messageSize;
-    return NS_OK;
+  SetUInt32Column(messageSize, m_mdb->m_messageSizeColumnToken);
+  m_messageSize = messageSize;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgHdr::GetOfflineMessageSize(PRUint32 *result)
 {
-	PRUint32 size;
-	nsresult res = GetUInt32Column(m_mdb->m_offlineMessageSizeColumnToken, &size);
+  PRUint32 size;
+  nsresult res = GetUInt32Column(m_mdb->m_offlineMessageSizeColumnToken, &size);
 
-	*result = size;
-	return res;
+  *result = size;
+  return res;
 }
 
 NS_IMETHODIMP nsMsgHdr::SetOfflineMessageSize(PRUint32 messageSize)
@@ -526,7 +526,7 @@ NS_IMETHODIMP nsMsgHdr::SetDate(PRTime date)
 {
   m_date = date;
   PRUint32 seconds;
-  nsMsgDatabase::PRTime2Seconds(date, &seconds);
+  PRTime2Seconds(date, &seconds);
   return SetUInt32Column((PRUint32) seconds, m_mdb->m_dateColumnToken);
 }
 
@@ -599,7 +599,7 @@ NS_IMETHODIMP nsMsgHdr::GetMessageOffset(PRUint32 *result)
   GetRawFlags(&rawFlags);
   if (rawFlags & MSG_FLAG_OFFLINE)
   {
-  	return GetUInt32Column(m_mdb->m_offlineMsgOffsetColumnToken, result);
+    return GetUInt32Column(m_mdb->m_offlineMsgOffsetColumnToken, result);
   }
   else
   {

@@ -35,10 +35,20 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-// SYNTAX HINTS:  dashes are delimiters.  Use underscores instead.
-//  The first character after a period must be alphabetic.
+// XXX Toolkit-specific preferences should be moved into toolkit.js
 
-// pref("startup.homepage_override_url","chrome://browser-region/locale/region.properties");
+#filter substitution
+
+# SYNTAX HINTS:  dashes are delimiters.  Use underscores instead.
+#  The first character after a period must be alphabetic.
+
+#ifdef XP_UNIX
+#ifndef XP_MACOSX
+#define UNIX_BUT_NOT_MAC
+#endif
+#endif
+
+pref("startup.homepage_override_url","chrome://browser-region/locale/region.properties");
 pref("general.startup.browser", true);
 
 pref("browser.chromeURL","chrome://browser/content/");
@@ -49,29 +59,78 @@ pref("xpinstall.dialog.progress.chrome", "chrome://mozapps/content/extensions/ex
 pref("xpinstall.dialog.progress.type.skin", "Extension:Manager-themes");
 pref("xpinstall.dialog.progress.type.chrome", "Extension:Manager-extensions");
 
-// This is this application's unique identifier used by the Extension System to identify
-// this application as an extension target, and by the SmartUpdate system to identify
-// this application to the Update server.
-pref("app.id", "{ec8030f7-c20a-464f-9b0e-13a3a9e97384}");
-pref("app.version", 
-#expand __APP_VERSION__
-);
-pref("app.extensions.version", "1.0");
-pref("app.build_id", 
-#expand __BUILD_ID__
-);
+pref("extensions.getMoreExtensionsURL", "chrome://mozapps/locale/extensions/extensions.properties");
+pref("extensions.getMoreThemesURL", "chrome://mozapps/locale/extensions/extensions.properties");
+// Developers can set this to |true| if they are constantly changing files in their 
+// extensions directory so that the extension system does not constantly think that
+// their extensions are being updated and thus reregistered every time the app is
+// started.
+pref("extensions.ignoreMTimeChanges", false);
+// Enables some extra Extension System Logging (can reduce performance)
+pref("extensions.logging.enabled", false);
 
 // App-specific update preferences
-pref("app.update.enabled", true);               // Whether or not app updates are enabled
-pref("app.update.autoUpdateEnabled", true);     // Whether or not background app updates 
-                                                // are enabled
-pref("app.update.url", "chrome://mozapps/locale/update/update.properties");
-pref("app.update.updatesAvailable", false);
-pref("app.update.interval", 86400000);          // Check for updates to Firefox every day
-pref("app.update.lastUpdateDate", 0);           // UTC offset when last App update was 
-                                                // performed. 
-pref("app.update.performed", false);            // Whether or not an update has been 
-                                                // performed this session. 
+
+// Whether or not app updates are enabled
+pref("app.update.enabled", true);
+
+// This preference turns on app.update.mode and allows automatic download and
+// install to take place. We use a separate boolean toggle for this to make
+// the UI easier to construct.
+pref("app.update.auto", true);
+
+// Defines how the Application Update Service notifies the user about updates:
+//
+// AUM Set to:        Minor Releases:     Major Releases:
+// 0                  download no prompt  download no prompt
+// 1                  download no prompt  download no prompt if no incompatibilities
+// 2                  download no prompt  prompt
+//
+// See chart in nsUpdateService.js.in for more details
+//
+pref("app.update.mode", 1);
+
+// If set to true, the Update Service will present no UI for any event.
+pref("app.update.silent", false);
+
+// Update service URL:
+pref("app.update.url", "https://aus2.mozilla.org/update/1/%PRODUCT%/%VERSION%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/update.xml");
+// URL user can browse to manually if for some reason all update installation
+// attempts fail.  TODO: Change this URL
+pref("app.update.url.manual", "http://www.mozilla.org/products/firefox/");
+// A default value for the "More information about this update" link
+// supplied in the "An update is available" page of the update wizard. 
+pref("app.update.url.details", "chrome://browser-region/locale/region.properties");
+
+// User-settable override to app.update.url for testing purposes.
+//pref("app.update.url.override", "");
+
+// Interval: Time between checks for a new version (in seconds)
+//           default=1 day
+pref("app.update.interval", 86400);
+// Interval: Time before prompting the user to download a new version that 
+//           is available (in seconds) default=1 day
+pref("app.update.nagTimer.download", 86400);
+// Interval: Time before prompting the user to restart to install the latest
+//           download (in seconds) default=30 minutes
+pref("app.update.nagTimer.restart", 1800);
+// Interval: When all registered timers should be checked (in milliseconds)
+//           default=5 seconds
+pref("app.update.timer", 600000);
+
+// Whether or not we show a dialog box informing the user that the update was
+// successfully applied. This is off in Firefox by default since we show a 
+// upgrade start page instead! Other apps may wish to show this UI, and supply
+// a whatsNewURL field in their brand.properties that contains a link to a page
+// which tells users what's new in this new update.
+pref("app.update.showInstalledUI", false);
+
+// 0 = suppress prompting for incompatibilities if there are updates available
+//     to newer versions of installed addons that resolve them.
+// 1 = suppress prompting for incompatibilities only if there are VersionInfo
+//     updates available to installed addons that resolve them, not newer
+//     versions.
+pref("app.update.incompatible.mode", 0);
 
 // Symmetric (can be overridden by individual extensions) update preferences.
 // e.g.
@@ -81,54 +140,28 @@ pref("app.update.performed", false);            // Whether or not an update has 
 //  .. etc ..
 //
 pref("extensions.update.enabled", true);
-pref("extensions.update.autoUpdateEnabled", true);
 pref("extensions.update.url", "chrome://mozapps/locale/extensions/extensions.properties");
-pref("extensions.update.autoUpdate", false);    // Automatically download and install 
-                                                // updates to themes and extensions. 
-                                                // Does nothing at present. 
-pref("extensions.update.interval", 604800000);  // Check for updates to Extensions and 
-                                                // Themes every week
-pref("extensions.update.lastUpdateDate", 0);    // UTC offset when last Extension/Theme 
-                                                // update was performed. 
+pref("extensions.update.interval", 86400);  // Check for updates to Extensions and 
+                                            // Themes every week
 // Non-symmetric (not shared by extensions) extension-specific [update] preferences
 pref("extensions.getMoreExtensionsURL", "chrome://mozapps/locale/extensions/extensions.properties");
 pref("extensions.getMoreThemesURL", "chrome://mozapps/locale/extensions/extensions.properties");
-pref("extensions.update.severity.threshold", 5);// The number of pending Extension/Theme
-                                                // updates you can have before the update
-                                                // notifier goes from low->medium severity.
-pref("extensions.update.count", 0);             // The number of extension/theme/etc 
-                                                // updates available
 pref("extensions.dss.enabled", false);          // Dynamic Skin Switching                                               
 pref("extensions.dss.switchPending", false);    // Non-dynamic switch pending after next
                                                 // restart.
 
-// General Update preferences
-pref("update.interval", 3600000);               // Check each of the above intervals 
-                                                // every 60 mins
-pref("update.showSlidingNotification", true);   // Windows-only slide-up taskbar 
-                                                // notification.
-// These prefs relate to the number and severity of updates available. This is a 
-// cache that the browser notification mechanism uses to determine if it should show
-// status bar UI if updates are detected and the app is shut down before installing
-// them.
-// 0 = low    (extension/theme updates), 
-// 1 = medium (numerous extension/theme updates), 
-// 2 = high   (new version of Firefox/Security patch)
-pref("update.severity", 0); 
-
 pref("xpinstall.whitelist.add", "update.mozilla.org");
+pref("xpinstall.whitelist.add.103", "addons.mozilla.org");
 
 pref("keyword.enabled", true);
 pref("keyword.URL", "http://www.google.com/search?btnI=I%27m+Feeling+Lucky&ie=UTF-8&oe=UTF-8&q=");
 
+pref("general.useragent.locale", "@AB_CD@");
 pref("general.skins.selectedSkin", "classic/1.0");
-pref("general.useragent.vendor", "Firefox");
-pref("general.useragent.vendorSub", 
-#expand __APP_VERSION__
-);
+pref("general.useragent.extra.firefox", "Firefox/@APP_VERSION@");
 
 pref("general.smoothScroll", false);
-#ifdef XP_UNIX
+#ifdef UNIX_BUT_NOT_MAC
 pref("general.autoScroll", false);
 #else
 pref("general.autoScroll", true);
@@ -143,23 +176,20 @@ pref("browser.shell.checkDefaultBrowser", true);
 pref("browser.startup.page",                1);
 pref("browser.startup.homepage",	          "resource:/browserconfig.properties");
 
-// These values are deliberately non-localizable for official builds.
-pref("browser.startup.homepage_reset",      "resource:/browserconfig.properties");
-pref("browser.update.resetHomepage",        false);
-// "browser.startup.homepage_override" was for 4.x
-pref("browser.startup.homepage_override.1", false);
-
 pref("browser.cache.disk.capacity",         50000);
 pref("browser.enable_automatic_image_resizing", true);
 pref("browser.urlbar.matchOnlyTyped", false);
 pref("browser.chrome.site_icons", true);
 pref("browser.chrome.favicons", true);
-pref("browser.turbo.enabled", false);
 pref("browser.formfill.enable", true);
 
 pref("browser.download.useDownloadDir", true);
 pref("browser.download.folderList", 0);
+#ifdef XP_WIN
 pref("browser.download.manager.showAlertOnComplete", true);
+#else
+pref("browser.download.manager.showAlertOnComplete", false);
+#endif
 pref("browser.download.manager.showAlertInterval", 2000);
 pref("browser.download.manager.retention", 2);
 pref("browser.download.manager.showWhenStarting", true);
@@ -176,20 +206,35 @@ pref("browser.search.defaulturl",             "chrome://browser-region/locale/re
 // Ordering of Search Engines in the Engine list. 
 pref("browser.search.order.1",                "chrome://browser-region/locale/region.properties");
 pref("browser.search.order.2",                "chrome://browser-region/locale/region.properties");
-
-pref("browser.search.param.Google.1.default", "chrome://browser/content/searchconfig.properties");
-pref("browser.search.param.Google.1.custom",  "chrome://browser/content/searchconfig.properties");
-pref("browser.search.order.Yahoo.1",          "chrome://browser/content/searchconfig.properties");
-pref("browser.search.order.Yahoo.2",          "chrome://browser/content/searchconfig.properties");
-pref("browser.search.order.Yahoo",            "chrome://browser/content/searchconfig.properties");
+ 
+pref("browser.search.param.Google.1.default", "chrome://branding/content/searchconfig.properties");
+pref("browser.search.param.Google.1.custom",  "chrome://branding/content/searchconfig.properties");
+pref("browser.search.order.Yahoo.1",          "chrome://branding/content/searchconfig.properties");
+pref("browser.search.order.Yahoo.2",          "chrome://branding/content/searchconfig.properties");
+pref("browser.search.order.Yahoo",            "chrome://branding/content/searchconfig.properties");
 
 // basic search popup constraint: minimum sherlock plugin version displayed
 // (note: must be a string representation of a float or it'll default to 0.0)
 pref("browser.search.basic.min_ver", "0.0");
 
+// send ping to the server to update
+pref("browser.search.update", true);
+
 pref("browser.history.grouping", "day");
 pref("browser.sessionhistory.max_entries", 50);
- 
+
+// handle external links
+// 0=default window, 1=current window/tab, 2=new window, 3=new tab in most recent window
+pref("browser.link.open_external", 3);
+
+// handle links targeting new windows
+pref("browser.link.open_newwindow", 2);
+
+// 0: no restrictions - divert everything
+// 1: don't divert window.open at all
+// 2: don't divert window.open with features
+pref("browser.link.open_newwindow.restriction", 2);
+
 // Tab browser preferences.
 pref("browser.tabs.loadInBackground", true);
 pref("browser.tabs.loadFolderAndReplace", true);
@@ -197,8 +242,6 @@ pref("browser.tabs.opentabfor.middleclick", true);
 pref("browser.tabs.opentabfor.urlbar", true);
 pref("browser.tabs.loadDivertedInBackground", false);
 pref("browser.tabs.loadBookmarksInBackground", false);
-// XXXben - Hide Single Window mode prefs for 1.0 to avoid crashes (see 266759)
-pref("browser.tabs.showSingleWindowModePrefs", false);
 
 // Smart Browsing prefs
 pref("browser.related.enabled", true);
@@ -222,7 +265,11 @@ pref("dom.disable_window_open_feature.status",    true);
 // cannot do it by default because it affects UE for web applications.
 pref("dom.disable_window_open_feature.location",  false);
 pref("dom.disable_window_status_change",          true);
-
+// allow JS to move and resize existing windows
+pref("dom.disable_window_move_resize",            false);
+// prevent JS from monkeying with window focus, etc
+pref("dom.disable_window_flip",                   false);
+ 
 pref("browser.trim_user_and_password",            true);
 
 // popups.policy 1=allow,2=reject
@@ -230,11 +277,24 @@ pref("privacy.popups.policy",               1);
 pref("privacy.popups.usecustom",            true);
 pref("privacy.popups.firstTime",            true);
 pref("privacy.popups.showBrowserMessage",   true);
+ 
+pref("privacy.item.history",    true);
+pref("privacy.item.formdata",   true);
+pref("privacy.item.passwords",  false);
+pref("privacy.item.downloads",  true);
+pref("privacy.item.cookies",    false);
+pref("privacy.item.cache",      true);
+pref("privacy.item.siteprefs",  false);
+pref("privacy.item.sessions",   true);
 
+pref("privacy.sanitize.sanitizeOnShutdown", false);
+pref("privacy.sanitize.promptOnSanitize", true);
 
 pref("network.proxy.share_proxy_settings",  false); // use the same proxy settings for all protocols
+
 pref("network.cookie.cookieBehavior",       0); // cookies enabled
 pref("network.cookie.enableForCurrentSessionOnly", false);
+pref("network.cookie.denyRemovedCookies", false);
 
 // l12n and i18n
 pref("intl.accept_languages", "chrome://global/locale/intl.properties");
@@ -252,11 +312,25 @@ pref("intl.charset.detector", "chrome://global/locale/intl.properties");
 pref("intl.charset.default",  "chrome://global-platform/locale/intl.properties");
 pref("font.language.group", "chrome://global/locale/intl.properties");
 pref("intl.menuitems.alwaysappendaccesskeys","chrome://global/locale/intl.properties");
+pref("intl.menuitems.insertseparatorbeforeaccesskeys","chrome://global/locale/intl.properties");
 
 // 0=lines, 1=pages, 2=history , 3=text size
+#ifdef XP_MACOSX
+// On OS X, if the wheel has one axis only, shift+wheel comes through as a
+// horizontal scroll event. Thus, we can't assign anything other than normal
+// scrolling to shift+wheel.
+pref("mousewheel.withmetakey.action",3);
+pref("mousewheel.withmetakey.sysnumlines",false);
+pref("mousewheel.withcontrolkey.action",2);
+pref("mousewheel.withcontrolkey.sysnumlines",false);
+#else
 pref("mousewheel.withcontrolkey.action",3);
+pref("mousewheel.withcontrolkey.sysnumlines",false);
 pref("mousewheel.withshiftkey.action",2);
+pref("mousewheel.withshiftkey.sysnumlines",false);
+#endif
 pref("mousewheel.withaltkey.action",0);
+pref("mousewheel.withaltkey.sysnumlines",false);
 
 pref("profile.allow_automigration", false);   // setting to false bypasses automigration in the profile code
 
@@ -270,12 +344,7 @@ pref("alerts.slideIncrementTime", 10);
 pref("alerts.totalOpenTime", 4000);
 pref("alerts.height", 50);
 
-// update notifications prefs
-pref("update_notifications.enabled", true);
-pref("update_notifications.provider.0.frequency", 7); // number of days
-pref("update_notifications.provider.0.datasource", "chrome://browser-region/locale/region.properties");
-
-pref("browser.xul.error_pages.enabled", false);
+pref("browser.xul.error_pages.enabled", true);
 
 pref("signon.rememberSignons",              true);
 pref("signon.expireMasterPassword",         false);
@@ -309,11 +378,10 @@ pref("security.warn_leaving_secure.show_once", true);
 pref("security.warn_viewing_mixed.show_once", true);
 pref("security.warn_submit_insecure.show_once", true);
 
-pref("browser.urlbar.clickSelectsAll", true);
 #ifdef XP_UNIX
-#ifndef XP_MACOSX
 pref("browser.urlbar.clickSelectsAll", false);
-#endif
+#else
+pref("browser.urlbar.clickSelectsAll", true);
 #endif
 
 pref("accessibility.typeaheadfind", false);
@@ -324,5 +392,26 @@ pref("accessibility.typeaheadfind.flashBar", 1);
 // Disable the default plugin for firefox
 pref("plugin.default_plugin_disabled", true);
 
-// plugin finder service
-pref("pfs.datasource.url", "chrome://mozapps/locale/plugins/plugins.properties");
+// plugin finder service url
+pref("pfs.datasource.url", "https://pfs.mozilla.org/plugins/PluginFinderService.php?mimetype=%PLUGIN_MIMETYPE%&appID=%APP_ID%&appVersion=%APP_VERSION%&clientOS=%CLIENT_OS%&chromeLocale=%CHROME_LOCALE%");
+
+#ifdef XP_WIN
+pref("browser.preferences.instantApply", false);
+#else
+pref("browser.preferences.instantApply", true);
+#endif
+#ifdef XP_MACOSX
+pref("browser.preferences.animateFadeIn", true);
+#else
+pref("browser.preferences.animateFadeIn", false);
+#endif
+#ifndef XP_OS2
+pref("browser.display.screen_resolution", 96);
+#endif
+
+pref("browser.download.show_plugins_in_list", true);
+pref("browser.download.hide_plugins_without_extensions", true);
+
+// Setting this pref to |true| forces BiDi UI menu items and keyboard shortcuts
+// to be exposed. By default, only expose it for bidi-associated system locales.
+pref("bidi.browser.ui", false);

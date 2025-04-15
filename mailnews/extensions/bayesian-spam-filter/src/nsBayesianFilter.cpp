@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Seth Spitzer <sspitzer@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -378,10 +378,9 @@ void Tokenizer::tokenizeHeaders(nsIUTF8StringEnumerator * aHeaderNames, nsIUTF8S
       if (headerName.Equals("received"))
       {
         // look for the string "may be forged" in the received headers. sendmail sometimes adds this hint
-	  // XXX: these two lines aren't compiling on linux for some reason
+        // This does not compile on linux yet. Need to figure out why. Commenting out for now
         // if (FindInReadable(FORGED_RECEIVED_HEADER_HINT, headerValue))
-        // addTokenForHeader(headerName.get(), FORGED_RECEIVED_HEADER_HINT);
-        // for now 
+        //   addTokenForHeader(headerName.get(), FORGED_RECEIVED_HEADER_HINT);
       }
       
       // leave out reply-to
@@ -393,7 +392,7 @@ void Tokenizer::tokenizeHeaders(nsIUTF8StringEnumerator * aHeaderNames, nsIUTF8S
           addTokenForHeader(headerName.get(), headerValue, PR_TRUE);
         }
 
-        // important: leave out sender field. To strong of an indicator
+        // important: leave out sender field. Too strong of an indicator
         break;
     case 'x': // (2) X-Mailer / user-agent works best if it is untokenized, just fold the case and any leading/trailing white space
     case 'u': 
@@ -443,16 +442,112 @@ void Tokenizer::tokenize_ascii_word(char * aWord)
   } 
 }
 
+// one substract and one conditional jump should be faster than two conditional jump on most recent system.
+#define IN_RANGE(x, low, high)  ((PRUint16)((x)-(low)) <= (high)-(low))
+
+#define IS_JA_HIRAGANA(x)   IN_RANGE(x, 0x3040, 0x309F)
+// swapping the range using xor operation to reduce conditional jump.
+#define IS_JA_KATAKANA(x)	(IN_RANGE(x^0x0004, 0x30A0, 0x30FE)||(IN_RANGE(x, 0xFF66, 0xFF9F)))
+#define IS_JA_KANJI(x)      (IN_RANGE(x, 0x2E80, 0x2FDF)||IN_RANGE(x, 0x4E00, 0x9FAF))
+#define IS_JA_KUTEN(x)      (((x)==0x3001)||((x)==0xFF64)||((x)==0xFF0E))
+#define IS_JA_TOUTEN(x)     (((x)==0x3002)||((x)==0xFF61)||((x)==0xFF0C))
+#define IS_JA_SPACE(x)      ((x)==0x3000)
+#define IS_JA_FWLATAIN(x)   IN_RANGE(x, 0xFF01, 0xFF5E)
+#define IS_JA_FWNUMERAL(x)  IN_RANGE(x, 0xFF10, 0xFF19)
+
+#define IS_JAPANESE_SPECIFIC(x) (IN_RANGE(x, 0x3040, 0x30FF)||IN_RANGE(x, 0xFF01, 0xFF9F))
+
+enum char_class{
+    others = 0,
+    space,
+    hiragana,
+    katakana,
+    kanji,
+    kuten,
+    touten,
+    kigou,
+    fwlatain,
+    ascii
+};
+
+char_class getCharClass(PRUnichar c)
+{
+  char_class charClass = others;
+
+  if(IS_JA_HIRAGANA(c))
+    charClass = hiragana;
+  else if(IS_JA_KATAKANA(c))
+    charClass = katakana;
+  else if(IS_JA_KANJI(c))
+    charClass = kanji;
+  else if(IS_JA_KUTEN(c))
+    charClass = kuten;
+  else if(IS_JA_TOUTEN(c))
+    charClass = touten;
+  else if(IS_JA_FWLATAIN(c))
+    charClass = fwlatain;
+
+  return charClass;
+}
+
+static PRBool isJapanese(const char* word)
+{
+  nsString text = NS_ConvertUTF8toUCS2(word);
+  PRUnichar* p = (PRUnichar*)text.get();
+  PRUnichar c;
+    
+  // it is japanese chunk if it contains any hiragana or katakana.
+  while((c = *p++))
+    if( IS_JAPANESE_SPECIFIC(c)) 
+      return PR_TRUE;
+
+  return PR_FALSE;
+}
+
+PRBool isFWNumeral(const PRUnichar* p1, const PRUnichar* p2)
+{
+  for(;p1<p2;p1++)
+    if(!IS_JA_FWNUMERAL(*p1)) 
+      return PR_FALSE;
+
+  return PR_TRUE;
+}
+
+// The japanese tokenizer was added as part of Bug #277354
+void Tokenizer::tokenize_japanese_word(char* chunk)
+{
+  PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("entering tokenize_japanese_word(%s)", chunk));
+    
+  nsString srcStr = NS_ConvertUTF8toUCS2(chunk);
+  const PRUnichar* p1 = srcStr.get();
+  const PRUnichar* p2 = p1;
+  if(!*p2) return;
+  
+  char_class cc = getCharClass(*p2);
+  while(*(++p2))
+  {
+    if(cc == getCharClass(*p2)) 
+      continue;
+   
+    nsCString token = NS_ConvertUCS2toUTF8(p1, p2-p1);
+    if( (!isDecimalNumber(token.get())) && (!isFWNumeral(p1, p2)))      
+      add(PromiseFlatCString(NS_LITERAL_CSTRING("JA:") + token).get());
+        
+    cc = getCharClass(*p2);
+    p1 = p2;
+  }
+}
+
 nsresult Tokenizer::stripHTML(const nsAString& inString, nsAString& outString)
 {
   nsresult rv = NS_OK;
   // Create a parser
-  nsCOMPtr<nsIParser> parser = do_CreateInstance(kParserCID);
-  NS_ENSURE_TRUE(parser, NS_ERROR_FAILURE);
+  nsCOMPtr<nsIParser> parser = do_CreateInstance(kParserCID, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // Create the appropriate output sink
-  nsCOMPtr<nsIContentSink> sink = do_CreateInstance(NS_PLAINTEXTSINK_CONTRACTID);
-  NS_ENSURE_TRUE(sink, NS_ERROR_FAILURE);
+  nsCOMPtr<nsIContentSink> sink = do_CreateInstance(NS_PLAINTEXTSINK_CONTRACTID,&rv);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIHTMLToTextSink> textSink(do_QueryInterface(sink));
   NS_ENSURE_TRUE(textSink, NS_ERROR_FAILURE);
@@ -464,13 +559,12 @@ nsresult Tokenizer::stripHTML(const nsAString& inString, nsAString& outString)
   textSink->Initialize(&outString, flags, 80);
 
   parser->SetContentSink(sink);
-  nsCOMPtr<nsIDTD> dtd = do_CreateInstance(kNavDTDCID);
-  NS_ENSURE_TRUE(dtd, NS_ERROR_FAILURE);
+  nsCOMPtr<nsIDTD> dtd = do_CreateInstance(kNavDTDCID,&rv);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   parser->RegisterDTD(dtd);
 
-  rv = parser->Parse(inString, 0, NS_LITERAL_CSTRING("text/html"), PR_FALSE, PR_TRUE);
-  return rv;
+  return parser->Parse(inString, 0, NS_LITERAL_CSTRING("text/html"), PR_FALSE, PR_TRUE);
 }
 
 void Tokenizer::tokenize(char* aText)
@@ -484,7 +578,17 @@ void Tokenizer::tokenize(char* aText)
     nsString text = NS_ConvertUTF8toUCS2(aText);
     nsString strippedUCS2;
     stripHTML(text, strippedUCS2);
-
+    
+    // convert 0x3000(full width space) into 0x0020
+    nsString::iterator substr_start, substr_end;
+    strippedUCS2.BeginWriting(substr_start);
+    strippedUCS2.EndWriting(substr_end);
+    while (substr_start != substr_end) {
+        if (*substr_start == 0x3000)
+            *substr_start = 0x0020;
+        ++substr_start;
+    }
+    
     nsCString strippedStr = NS_ConvertUCS2toUTF8(strippedUCS2);
     char * strippedText = (char *) strippedStr.get(); // bleh
     PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("tokenize stripped html: %s", strippedText));
@@ -492,10 +596,12 @@ void Tokenizer::tokenize(char* aText)
     char* word;
     char* next = strippedText;
     while ((word = nsCRT::strtok(next, kBayesianFilterTokenDelimiters, &next)) != NULL) {
-        if (word[0] == '\0') continue;
+        if (!*word) continue;
         if (isDecimalNumber(word)) continue;
         if (isASCII(word))
             tokenize_ascii_word(word);
+        else if (isJapanese(word))
+            tokenize_japanese_word(word);
         else {
             nsresult rv;
             // use I18N  scanner to break this word into meaningful semantic units.
@@ -639,26 +745,8 @@ NS_IMETHODIMP TokenStreamListener::ProcessHeaders(nsIUTF8StringEnumerator *aHead
     return NS_OK;
 }
 
-NS_IMETHODIMP TokenStreamListener::HandleAttachment(const char *contentType, const char *url, const PRUnichar *displayName, const char *uri, PRBool aNotDownloaded)
+NS_IMETHODIMP TokenStreamListener::HandleAttachment(const char *contentType, const char *url, const PRUnichar *displayName, const char *uri, PRBool aIsExternalAttachment)
 {
-    // UE Improvement, if we are downloading the message for the junk filter, and the junk filter is told the msg has attachments
-    // then go ahead and mark the message as having attachments instead of waiting for the user to display the message
-    // before making such a notation. 
-    if (!mSetAttachmentFlag)
-    {
-      nsCOMPtr <nsIMsgMessageService> messageService;
-      nsresult rv = GetMessageServiceFromURI(uri, getter_AddRefs(messageService));
-      if (messageService)
-      {
-        nsCOMPtr <nsIMsgDBHdr> msgHdr;
-        rv = messageService->MessageURIToMsgHdr(uri, getter_AddRefs(msgHdr));
-//        if (msgHdr) 
-//          msgHdr->MarkHasAttachments(PR_TRUE);
-      }
-
-      mSetAttachmentFlag = PR_TRUE;
-    }
-
     mTokenizer.tokenizeAttachment(contentType, NS_ConvertUCS2toUTF8(displayName).get());
     return NS_OK;
 }
@@ -692,6 +780,11 @@ NS_IMETHODIMP TokenStreamListener::GetSecurityInfo(nsISupports * *aSecurityInfo)
 NS_IMETHODIMP TokenStreamListener::SetSecurityInfo(nsISupports * aSecurityInfo)
 {
     return NS_OK;
+}
+
+NS_IMETHODIMP TokenStreamListener::GetDummyMsgHeader(nsIMsgDBHdr **aMsgDBHdr)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 /* void onStartRequest (in nsIRequest aRequest, in nsISupports aContext); */
@@ -810,11 +903,11 @@ NS_IMPL_ISUPPORTS2(nsBayesianFilter, nsIMsgFilterPlugin, nsIJunkMailPlugin)
 
 nsBayesianFilter::nsBayesianFilter()
     :   mGoodCount(0), mBadCount(0),
-        mBatchLevel(0), mTrainingDataDirty(PR_FALSE)
+        mNumDirtyingMessages(0)
 {
     if (!BayesianFilterLogModule)
       BayesianFilterLogModule = PR_NewLogModule("BayesianFilter");
-
+    
     PRInt32 junkThreshold = 0;
     nsresult rv;
     nsCOMPtr<nsIPrefBranch> pPrefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
@@ -827,6 +920,8 @@ nsBayesianFilter::nsBayesianFilter()
 
     PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("junk probabilty threshold: %f", mJunkProbabilityThreshold));
 
+    getTrainingFile(getter_AddRefs(mTrainingFile));
+
     PRBool ok = (mGoodTokens && mBadTokens);
     NS_ASSERTION(ok, "error allocating tokenizers");
     if (ok)
@@ -834,13 +929,56 @@ nsBayesianFilter::nsBayesianFilter()
     else {
       PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("error allocating tokenizers"));
     }
+    
+    // get parameters for training data flushing, from the prefs
+
+    nsCOMPtr<nsIPrefBranch> prefBranch;
+    
+    nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+    NS_ASSERTION(NS_SUCCEEDED(rv),"failed accessing preferences service");
+    rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
+    NS_ASSERTION(NS_SUCCEEDED(rv),"failed getting preferences branch");
+
+    rv = prefBranch->GetIntPref("mailnews.bayesian_spam_filter.flush.diryting_messages_threshold",&mDirtyingMessageWriteThreshold);
+    if (NS_FAILED(rv) || (mDirtyingMessageWriteThreshold <= 0) )
+        mDirtyingMessageWriteThreshold = DEFAULT_WRITE_TRAINING_DATA_MESSAGES_THRESHOLD;
+    rv = prefBranch->GetIntPref("mailnews.bayesian_spam_filter.flush.minimum_interval",&mMinFlushInterval);
+    // it is not a good idea to allow a minimum interval of under 1 second
+    if (NS_FAILED(rv) || (mMinFlushInterval <= 1000) )
+        mMinFlushInterval = DEFAULT_MIN_INTERVAL_BETWEEN_WRITES;
+
+    mTimer = do_CreateInstance(NS_TIMER_CONTRACTID, &rv);
+    NS_ASSERTION(NS_SUCCEEDED(rv), "unable to create a timer; training data will only be written on exit");
+    
+    // the timer is not used on object construction, since for
+    // the time being there are no dirying messages
+    
 }
 
-nsBayesianFilter::~nsBayesianFilter() 
+void
+nsBayesianFilter::TimerCallback(nsITimer* aTimer, void* aClosure)
 {
-  // call shutdown when we are going away in case we need
-  // to flush the training set to disk
-  Shutdown();
+    // we will flush the training data to disk if it is dirty with
+    // enough messages, and if enough time has passed since the first
+    // time a message has been classified after the last flush
+
+    nsBayesianFilter *filter = NS_STATIC_CAST(nsBayesianFilter *, aClosure);
+    if (filter->mNumDirtyingMessages > filter->mDirtyingMessageWriteThreshold)
+        filter->writeTrainingData();
+    else 
+        filter->mTimer->InitWithFuncCallback(nsBayesianFilter::TimerCallback, filter, filter->mMinFlushInterval, nsITimer::TYPE_ONE_SHOT);
+}
+
+nsBayesianFilter::~nsBayesianFilter()
+{
+    if (mTimer)
+    {
+        mTimer->Cancel();
+        mTimer = nsnull;
+    }
+    // call shutdown when we are going away in case we need
+    // to flush the training set to disk
+    Shutdown();
 }
 
 // this object is used for one call to classifyMessage or classifyMessages(). 
@@ -912,8 +1050,6 @@ nsresult nsBayesianFilter::tokenizeMessage(const char* aMessageURI, nsIMsgWindow
                                                 "filter", nsnull);
 }
 
-inline double moz_abs(double x) { return (x >= 0 ? x : -x); }
-
 PR_STATIC_CALLBACK(int) compareTokens(const void* p1, const void* p2, void* /* data */)
 {
     Token *t1 = (Token*) p1, *t2 = (Token*) p2;
@@ -940,10 +1076,10 @@ static inline double chi2P (double chi2, double nu, PRInt32 *error)
 {
     // domain checks; set error and return a dummy value
     if (chi2 < 0.0 || nu <= 0.0)
-  {
+    {
         *error = -1;
         return 0.0;
-  }
+    }
     // reversing the arguments is intentional
     return nsIncompleteGammaP (nu/2.0, chi2/2.0, error);
 }
@@ -981,12 +1117,12 @@ void nsBayesianFilter::classifyMessage(Tokenizer& tokenizer, const char* message
 
     for (i = 0; i < count; ++i) 
     {
-      Token& token = tokens[i];
-      const char* word = token.mWord;
-      Token* t = mGoodTokens.get(word);
+        Token& token = tokens[i];
+        const char* word = token.mWord;
+        Token* t = mGoodTokens.get(word);
       double hamcount = ((t != NULL) ? t->mCount : 0);
-      t = mBadTokens.get(word);
-      double spamcount = ((t != NULL) ? t->mCount : 0);
+        t = mBadTokens.get(word);
+       double spamcount = ((t != NULL) ? t->mCount : 0);
 
       // if hamcount and spam count are both 0, we could end up with a divide by 0 error, 
       // tread carefully here. (Bug #240819)
@@ -995,27 +1131,24 @@ void nsBayesianFilter::classifyMessage(Tokenizer& tokenizer, const char* message
         probDenom = nbad + ngood; // error case use a value of 1 for hamcount and spamcount if they are both zero.
 
       prob = (spamcount * ngood)/probDenom;
-      double n = hamcount + spamcount;
-      prob =  (0.225 + n * prob) / (.45 + n);
-      double distance = moz_abs(prob - 0.5);
-      if (distance >= .1) 
-      {
-        goodclues++;
-        token.mDistance = distance;
-        token.mProbability = prob;
-        PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("token.mProbability (%s) is %f", word, token.mProbability));
-      }
+       double n = hamcount + spamcount;
+       prob =  (0.225 + n * prob) / (.45 + n);
+       double distance = PR_ABS(prob - 0.5);
+       if (distance >= .1) 
+       {
+         goodclues++;
+         token.mDistance = distance;
+         token.mProbability = prob;
+            PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("token.mProbability (%s) is %f", word, token.mProbability));
+        }
       else 
         token.mDistance = -1; //ignore clue
     }
     
     // sort the array by the token distances
-    NS_QuickSort(tokens, count, sizeof(Token), compareTokens, NULL);
+        NS_QuickSort(tokens, count, sizeof(Token), compareTokens, NULL);
     PRUint32 first, last = count;
-    if (goodclues > 150)
-       first = count - 150;
-    else 
-        first = 0;
+    first = (goodclues > 150) ? count - 150 : 0;
 
     double H = 1.0, S = 1.0;
     PRInt32 Hexp = 0, Sexp = 0;
@@ -1054,12 +1187,12 @@ void nsBayesianFilter::classifyMessage(Tokenizer& tokenizer, const char* message
             H = chi2P(-2.0 * H, 2.0 * goodclues, &chi_error);
         // if any error toss the entire calculation
         if (!chi_error)
-      prob = (S-H +1.0) / 2.0;
+            prob = (S-H +1.0) / 2.0;
         else
             prob = 0.5;
     } 
     else 
-      prob = 0.5;
+        prob = 0.5;
 
     PRBool isJunk = (prob >= mJunkProbabilityThreshold);
     PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("%s is junk probability = (%f)  HAM SCORE:%f SPAM SCORE:%f", messageURI, prob,H,S));
@@ -1073,7 +1206,7 @@ void nsBayesianFilter::classifyMessage(Tokenizer& tokenizer, const char* message
 /* void shutdown (); */
 NS_IMETHODIMP nsBayesianFilter::Shutdown()
 {
-    if (mTrainingDataDirty)
+    if (mNumDirtyingMessages > 0)
         writeTrainingData();
     return NS_OK;
 }
@@ -1083,26 +1216,6 @@ NS_IMETHODIMP nsBayesianFilter::GetShouldDownloadAllHeaders(PRBool *aShouldDownl
 {
     // bayesian filters work on the whole msg body currently.
     *aShouldDownloadAllHeaders = PR_FALSE;
-    return NS_OK;
-}
-
-NS_IMETHODIMP nsBayesianFilter::StartBatch(void)
-{
-  PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("StartBatch() entered with mBatchLevel=%d", mBatchLevel));
-  ++mBatchLevel;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsBayesianFilter::EndBatch(void)
-{
-    PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("EndBatch() entered with mBatchLevel=%d", mBatchLevel));
-    NS_ASSERTION(mBatchLevel > 0, "nsBayesianFilter::EndBatch() called with"
-                 " mBatchLevel <= 0");
-    --mBatchLevel;
-    
-    if (!mBatchLevel && mTrainingDataDirty)
-        writeTrainingData();
-    
     return NS_OK;
 }
 
@@ -1179,6 +1292,7 @@ void nsBayesianFilter::observeMessage(Tokenizer& tokenizer, const char* messageU
                                       nsMsgJunkStatus oldClassification, nsMsgJunkStatus newClassification,
                                       nsIJunkMailClassificationListener* listener)
 {
+    PRUint32 oldNumDirtyingMessages = mNumDirtyingMessages;
     PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("observeMessage(%s) old=%d new=%d", messageURL, oldClassification, newClassification));
     TokenEnumeration tokens = tokenizer.getTokens();
 
@@ -1197,7 +1311,7 @@ void nsBayesianFilter::observeMessage(Tokenizer& tokenizer, const char* messageU
         if (mBadCount > 0) {
             --mBadCount;
             forgetTokens(mBadTokens, tokens);
-            mTrainingDataDirty = PR_TRUE;
+            mNumDirtyingMessages++;
         }
         break;
     case nsIJunkMailPlugin::GOOD:
@@ -1205,7 +1319,7 @@ void nsBayesianFilter::observeMessage(Tokenizer& tokenizer, const char* messageU
         if (mGoodCount > 0) {
             --mGoodCount;
             forgetTokens(mGoodTokens, tokens);
-            mTrainingDataDirty = PR_TRUE;
+            mNumDirtyingMessages++;
         }
         break;
     }
@@ -1217,35 +1331,25 @@ void nsBayesianFilter::observeMessage(Tokenizer& tokenizer, const char* messageU
         // put tokens into junk corpus.
         ++mBadCount;
         rememberTokens(mBadTokens, tokens);
-        mTrainingDataDirty = PR_TRUE;
+        mNumDirtyingMessages++;
         break;
     case nsIJunkMailPlugin::GOOD:
         // put tokens into good corpus.
         ++mGoodCount;
         rememberTokens(mGoodTokens, tokens);
-        mTrainingDataDirty = PR_TRUE;
+        mNumDirtyingMessages++;
         break;
     }
     
     if (listener)
         listener->OnMessageClassified(messageURL, newClassification);
-
-    if (mTrainingDataDirty && !mBatchLevel)
-        writeTrainingData();
-}
-
-static nsresult getTrainingFile(nsCOMPtr<nsILocalFile>& file)
-{
-    // should we cache the profile manager's directory?
-    nsCOMPtr<nsIFile> profileDir;
-
-    nsresult rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(profileDir));
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = profileDir->Append(NS_LITERAL_STRING("training.dat"));
-    if (NS_FAILED(rv)) return rv;
     
-    file = do_QueryInterface(profileDir, &rv);
-    return rv;
+    if ( (mNumDirtyingMessages > 0) && (oldNumDirtyingMessages == 0) && ( mTimer != nsnull ) )
+    {
+    	// schedule check for need to flush training data in
+    	// mMinFlushInterval msec from now
+        mTimer->InitWithFuncCallback(nsBayesianFilter::TimerCallback, this, mMinFlushInterval, nsITimer::TYPE_ONE_SHOT);
+    }
 }
 
 /*
@@ -1335,63 +1439,80 @@ static PRBool readTokens(FILE* stream, Tokenizer& tokenizer)
     return PR_TRUE;
 }
 
+
+nsresult nsBayesianFilter::getTrainingFile(nsILocalFile ** aTrainingFile)
+{
+  // should we cache the profile manager's directory?
+  nsCOMPtr<nsIFile> profileDir;
+
+  nsresult rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(profileDir));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = profileDir->Append(NS_LITERAL_STRING("training.dat"));
+  NS_ENSURE_SUCCESS(rv, rv);
+  
+  return profileDir->QueryInterface(NS_GET_IID(nsILocalFile), (void **) aTrainingFile);
+}
+
 static const char kMagicCookie[] = { '\xFE', '\xED', '\xFA', '\xCE' };
 
 void nsBayesianFilter::writeTrainingData()
 {
-    PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("writeTrainingData() entered"));
-    nsCOMPtr<nsILocalFile> file;
-    nsresult rv = getTrainingFile(file);
-    if (NS_FAILED(rv)) return;
- 
-    // open the file, and write out training data using fprintf for now.
-    FILE* stream;
-    rv = file->OpenANSIFileDesc("wb", &stream);
-    if (NS_FAILED(rv)) return;
+  PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("writeTrainingData() entered"));
+  if (!mTrainingFile) 
+    return;
 
-    if (!((fwrite(kMagicCookie, sizeof(kMagicCookie), 1, stream) == 1) &&
-          (writeUInt32(stream, mGoodCount) == 1) &&
-          (writeUInt32(stream, mBadCount) == 1) &&
-           writeTokens(stream, mGoodTokens) &&
-           writeTokens(stream, mBadTokens))) {
-        NS_WARNING("failed to write training data.");
-        fclose(stream);
-        // delete the training data file, since it is potentially corrupt.
-        file->Remove(PR_FALSE);
-    } else {
-        fclose(stream);
-        mTrainingDataDirty = PR_FALSE;
-    }
+  // open the file, and write out training data
+  FILE* stream;
+  nsresult rv = mTrainingFile->OpenANSIFileDesc("wb", &stream);
+  if (NS_FAILED(rv)) 
+    return;
+
+  if (!((fwrite(kMagicCookie, sizeof(kMagicCookie), 1, stream) == 1) &&
+        (writeUInt32(stream, mGoodCount) == 1) &&
+        (writeUInt32(stream, mBadCount) == 1) &&
+         writeTokens(stream, mGoodTokens) &&
+         writeTokens(stream, mBadTokens))) 
+  {
+    NS_WARNING("failed to write training data.");
+    fclose(stream);
+    // delete the training data file, since it is potentially corrupt.
+    mTrainingFile->Remove(PR_FALSE);
+  } 
+  else 
+  {
+    fclose(stream);
+    mNumDirtyingMessages = 0;
+  }
 }
 
 void nsBayesianFilter::readTrainingData()
 {
-    nsCOMPtr<nsILocalFile> file;
-    nsresult rv = getTrainingFile(file);
-    if (NS_FAILED(rv)) return;
-    
-    PRBool exists;
-    rv = file->Exists(&exists);
-    if (NS_FAILED(rv) || !exists) return;
+  if (!mTrainingFile) 
+    return;
+  
+  PRBool exists;
+  nsresult rv = mTrainingFile->Exists(&exists);
+  if (NS_FAILED(rv) || !exists) 
+    return;
 
-    // open the file, and write out training data using fprintf for now.
-    FILE* stream;
-    rv = file->OpenANSIFileDesc("rb", &stream);
-    if (NS_FAILED(rv)) return;
+  FILE* stream;
+  rv = mTrainingFile->OpenANSIFileDesc("rb", &stream);
+  if (NS_FAILED(rv)) 
+    return;
 
-    // FIXME:  should make sure that the tokenizers are empty.
-    char cookie[4];
-    if (!((fread(cookie, sizeof(cookie), 1, stream) == 1) &&
-          (memcmp(cookie, kMagicCookie, sizeof(cookie)) == 0) &&
-          (readUInt32(stream, &mGoodCount) == 1) &&
-          (readUInt32(stream, &mBadCount) == 1) &&
-           readTokens(stream, mGoodTokens) &&
-           readTokens(stream, mBadTokens))) {
-        NS_WARNING("failed to read training data.");
-        PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("failed to read training data."));
-    }
-    
-    fclose(stream);
+  // FIXME:  should make sure that the tokenizers are empty.
+  char cookie[4];
+  if (!((fread(cookie, sizeof(cookie), 1, stream) == 1) &&
+        (memcmp(cookie, kMagicCookie, sizeof(cookie)) == 0) &&
+        (readUInt32(stream, &mGoodCount) == 1) &&
+        (readUInt32(stream, &mBadCount) == 1) &&
+         readTokens(stream, mGoodTokens) &&
+         readTokens(stream, mBadTokens))) {
+      NS_WARNING("failed to read training data.");
+      PR_LOG(BayesianFilterLogModule, PR_LOG_ALWAYS, ("failed to read training data."));
+  }
+  
+  fclose(stream);
 }
 
 NS_IMETHODIMP nsBayesianFilter::GetUserHasClassified(PRBool *aResult)
@@ -1431,10 +1552,9 @@ NS_IMETHODIMP nsBayesianFilter::ResetTrainingData()
   }
 
   // now remove training.dat
-  nsCOMPtr<nsILocalFile> file;
-  nsresult rv = getTrainingFile(file);
-  if (file)
-    file->Remove(PR_FALSE);
+  if (mTrainingFile)
+    mTrainingFile->Remove(PR_FALSE);
 
   return NS_OK;
 }
+

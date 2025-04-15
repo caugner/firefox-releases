@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -46,7 +45,6 @@
  */
 nsBlender :: nsBlender()
 {
-  mContext = nsnull;
 }
 
 /** ---------------------------------------------------
@@ -99,8 +97,6 @@ NS_IMPL_ISUPPORTS1(nsBlender, nsIBlender)
 NS_IMETHODIMP
 nsBlender::Init(nsIDeviceContext *aContext)
 {
-  mContext = aContext;
-  
   return NS_OK;
 }
 
@@ -135,9 +131,9 @@ static void rangeCheck(nsIDrawingSurface* surface, PRInt32& aX, PRInt32& aY, PRI
  *	@update 2/25/00 dwc
  */
 NS_IMETHODIMP
-nsBlender::Blend(PRInt32 aSX, PRInt32 aSY, PRInt32 aWidth, PRInt32 aHeight, nsDrawingSurface aSrc,
-                 nsDrawingSurface aDst, PRInt32 aDX, PRInt32 aDY, float aSrcOpacity,
-                 nsDrawingSurface aSecondSrc, nscolor aSrcBackColor,
+nsBlender::Blend(PRInt32 aSX, PRInt32 aSY, PRInt32 aWidth, PRInt32 aHeight, nsIDrawingSurface* aSrc,
+                 nsIDrawingSurface* aDst, PRInt32 aDX, PRInt32 aDY, float aSrcOpacity,
+                 nsIDrawingSurface* aSecondSrc, nscolor aSrcBackColor,
                  nscolor aSecondSrcBackColor)
 {
   NS_ASSERTION(aSrc, "nsBlender::Blend() called with nsnull aSrc");
@@ -161,13 +157,12 @@ nsBlender::Blend(PRInt32 aSX, PRInt32 aSY, PRInt32 aWidth, PRInt32 aHeight, nsDr
  
   nsresult result = NS_ERROR_FAILURE;
 
-  nsIDrawingSurface* srcSurface = (nsIDrawingSurface *)aSrc;
-  nsIDrawingSurface* destSurface = (nsIDrawingSurface *)aDst;
-  nsIDrawingSurface* secondSrcSurface = (nsIDrawingSurface *)aSecondSrc;
-
   // range check the coordinates in both the source and destination buffers.
-  rangeCheck(srcSurface, aSX, aSY, aWidth, aHeight);
-  rangeCheck(destSurface, aDX, aDY, aWidth, aHeight);
+  rangeCheck(aSrc, aSX, aSY, aWidth, aHeight);
+  rangeCheck(aDst, aDX, aDY, aWidth, aHeight);
+
+  if (aWidth <= 0 || aHeight <= 0)
+    return NS_OK;
 
   PRUint8* srcBytes = nsnull;
   PRUint8* secondSrcBytes = nsnull;
@@ -175,40 +170,46 @@ nsBlender::Blend(PRInt32 aSX, PRInt32 aSY, PRInt32 aWidth, PRInt32 aHeight, nsDr
   PRInt32 srcSpan, destSpan, secondSrcSpan;
   PRInt32 srcRowBytes, destRowBytes, secondSrcRowBytes;
 
-  result = srcSurface->Lock(aSX, aSY, aWidth, aHeight, (void**)&srcBytes, &srcRowBytes, &srcSpan, NS_LOCK_SURFACE_READ_ONLY);
+  result = aSrc->Lock(aSX, aSY, aWidth, aHeight, (void**)&srcBytes, &srcSpan, &srcRowBytes, NS_LOCK_SURFACE_READ_ONLY);
   if (NS_SUCCEEDED(result)) {
-    result = destSurface->Lock(aDX, aDY, aWidth, aHeight, (void**)&destBytes, &destRowBytes, &destSpan, 0);
+
+    // Compute depth like this to make sure it's consistent with the memory layout.
+    // For example on Win32 at least 24-bit bitmaps are used regardless of the device context depth. 
+    // See bug 228399 for more information.
+    PRUint32 depth = (srcRowBytes / aWidth) * 8;
+
+    result = aDst->Lock(aDX, aDY, aWidth, aHeight, (void**)&destBytes, &destSpan, &destRowBytes, 0);
     if (NS_SUCCEEDED(result)) {
-      NS_ASSERTION(srcSpan == destSpan, "Mismatched bitmap formats (src/dest) in Blender");
-      if (srcSpan == destSpan) {
-        if (secondSrcSurface) {
-          result = secondSrcSurface->Lock(aSX, aSY, aWidth, aHeight, (void**)&secondSrcBytes, &secondSrcRowBytes, &secondSrcSpan, NS_LOCK_SURFACE_READ_ONLY);
+      NS_ASSERTION(srcRowBytes == destRowBytes, "Mismatched lock-bitmap sizes (src/dest) in Blender");
+      if (srcRowBytes == destRowBytes) {
+        if (aSecondSrc) {
+          result = aSecondSrc->Lock(aSX, aSY, aWidth, aHeight, (void**)&secondSrcBytes, &secondSrcSpan, &secondSrcRowBytes, NS_LOCK_SURFACE_READ_ONLY);
           if (NS_SUCCEEDED(result)) {
             NS_ASSERTION(srcSpan == secondSrcSpan && srcRowBytes == secondSrcRowBytes,
                          "Mismatched bitmap formats (src/secondSrc) in Blender");                         
             if (srcSpan == secondSrcSpan && srcRowBytes == secondSrcRowBytes) {
-              result = Blend(srcBytes, srcRowBytes,
-                             destBytes, destRowBytes,
+              result = Blend(srcBytes, srcSpan,
+                             destBytes, destSpan,
                              secondSrcBytes,
-                             srcSpan, aHeight, aSrcOpacity);
+                             srcRowBytes, aHeight, aSrcOpacity, depth);
             }
             
-            secondSrcSurface->Unlock();
+            aSecondSrc->Unlock();
           }
         }
         else
         {
-          result = Blend(srcBytes, srcRowBytes,
-                         destBytes, destRowBytes,
+          result = Blend(srcBytes, srcSpan,
+                         destBytes, destSpan,
                          secondSrcBytes,
-                         srcSpan, aHeight, aSrcOpacity);
+                         srcRowBytes, aHeight, aSrcOpacity, depth);
         }
       }
 
-      destSurface->Unlock();
+      aDst->Unlock();
     }
 
-    srcSurface->Unlock();
+    aSrc->Unlock();
   }
 
   return result;
@@ -224,7 +225,7 @@ NS_IMETHODIMP nsBlender::Blend(PRInt32 aSX, PRInt32 aSY, PRInt32 aWidth, PRInt32
                                nscolor aSecondSrcBackColor)
 {
   // just hand off to the drawing surface blender, to make code easier to maintain.
-  nsDrawingSurface srcSurface, destSurface, secondSrcSurface = nsnull;
+  nsIDrawingSurface* srcSurface, *destSurface, *secondSrcSurface = nsnull;
   aSrc->GetDrawingSurface(&srcSurface);
   aDest->GetDrawingSurface(&destSurface);
   if (aSecondSrc != nsnull)
@@ -235,8 +236,8 @@ NS_IMETHODIMP nsBlender::Blend(PRInt32 aSX, PRInt32 aSY, PRInt32 aWidth, PRInt32
 }
 
 #ifndef MOZ_XUL
-NS_IMETHODIMP nsBlender::GetAlphas(const nsRect& aRect, nsDrawingSurface aBlack,
-                                   nsDrawingSurface aWhite, PRUint8** aAlphas) {
+NS_IMETHODIMP nsBlender::GetAlphas(const nsRect& aRect, nsIDrawingSurface* aBlack,
+                                   nsIDrawingSurface* aWhite, PRUint8** aAlphas) {
   NS_ERROR("GetAlphas not implemented because XUL support not built");
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -351,8 +352,8 @@ static void ComputeAlphas(PRInt32 aNumLines, PRInt32 aBytesPerLine,
   }
 }
 
-NS_IMETHODIMP nsBlender::GetAlphas(const nsRect& aRect, nsDrawingSurface aBlack,
-                                   nsDrawingSurface aWhite, PRUint8** aAlphas) {
+NS_IMETHODIMP nsBlender::GetAlphas(const nsRect& aRect, nsIDrawingSurface* aBlack,
+                                   nsIDrawingSurface* aWhite, PRUint8** aAlphas) {
   nsresult result;
 
   nsIDrawingSurface* blackSurface = (nsIDrawingSurface *)aBlack;
@@ -392,6 +393,8 @@ NS_IMETHODIMP nsBlender::GetAlphas(const nsRect& aRect, nsDrawingSurface aBlack,
         } else {
           result = NS_ERROR_FAILURE;
         }
+      } else {
+        result = NS_ERROR_FAILURE;
       }
 
       whiteSurface->Unlock();
@@ -404,6 +407,40 @@ NS_IMETHODIMP nsBlender::GetAlphas(const nsRect& aRect, nsDrawingSurface aBlack,
 }
 #endif // MOZ_XUL
 
+/**
+  This is a simple case for 8-bit blending. We treat the opacity as binary.
+*/
+static void Do8Blend(float aOpacity, PRInt32 aNumLines, PRInt32 aNumBytes,
+                     PRUint8 *aSImage, PRUint8 *aS2Image, PRUint8 *aDImage,
+                     PRInt32 aSLSpan, PRInt32 aDLSpan)
+{
+  if (aOpacity <= 0.0) {
+    return;
+  }
+
+  // OK, just do an opaque blend. Assume the rendered image had just
+  // 1-bit alpha.
+  PRIntn y;
+  if (!aS2Image) {
+    for (y = 0; y < aNumLines; y++) {
+      memcpy(aDImage, aSImage, aNumBytes);
+      aSImage += aSLSpan;
+      aDImage += aDLSpan;
+    }
+  } else {
+    for (y = 0; y < aNumLines; y++) {
+      for (int i = 0; i < aNumBytes; i++) {
+        if (aSImage[i] == aS2Image[i]) {
+          aDImage[i] = aSImage[i];
+        }
+      }
+      aSImage += aSLSpan;
+      aS2Image += aSLSpan;
+      aDImage += aDLSpan;
+    }
+  }
+}
+
 /** ---------------------------------------------------
  *  See documentation in nsBlender.h
  *	@update 2/25/00 dwc
@@ -411,13 +448,11 @@ NS_IMETHODIMP nsBlender::GetAlphas(const nsRect& aRect, nsDrawingSurface aBlack,
 nsresult nsBlender::Blend(PRUint8 *aSrcBits, PRInt32 aSrcStride,
                           PRUint8 *aDestBits, PRInt32 aDestStride,
                           PRUint8 *aSecondSrcBits,
-                          PRInt32 aSrcBytes, PRInt32 aLines, float aOpacity)
+                          PRInt32 aSrcBytes, PRInt32 aLines, float aOpacity,
+                          PRUint8 aDepth)
 {
   nsresult result = NS_OK;
-  PRUint32 depth;
-  mContext->GetDepth(depth);
-  // now do the blend
-  switch (depth){
+  switch (aDepth) {
     case 32:
         Do32Blend(aOpacity, aLines, aSrcBytes, aSrcBits, aDestBits,
                   aSecondSrcBits, aSrcStride, aDestStride, nsHighQual);
@@ -432,24 +467,14 @@ nsresult nsBlender::Blend(PRUint8 *aSrcBits, PRInt32 aSrcStride,
         Do16Blend(aOpacity, aLines, aSrcBytes, aSrcBits, aDestBits,
                   aSecondSrcBits, aSrcStride, aDestStride, nsHighQual);
         break;
+
+    default:
+        Do8Blend(aOpacity, aLines, aSrcBytes, aSrcBits, aSecondSrcBits,
+               aDestBits, aSrcStride, aDestStride);
+        break;
   }
 
   return result;
-}
-
-/**
-  This is the simple case where the opacity == 1.0. We just copy the pixels.
-*/
-static void DoOpaqueBlend(PRInt32 aNumLines, PRInt32 aNumBytes,
-                          PRUint8 *aSImage, PRUint8 *aDImage,
-                          PRInt32 aSLSpan, PRInt32 aDLSpan)
-{
-  PRIntn y;
-  for (y = 0; y < aNumLines; y++) {
-    memcpy(aDImage, aSImage, aNumBytes);
-    aSImage += aSLSpan;
-    aDImage += aDLSpan;
-  }
 }
 
 /**
@@ -550,10 +575,8 @@ nsBlender::Do32Blend(float aOpacity, PRInt32 aNumLines, PRInt32 aNumBytes,
   // Handle simpler cases
   if (opacity256 <= 0) {
     return;
-  } else if (opacity256 >= 256) {
-    DoOpaqueBlend(aNumLines, aNumBytes, aSImage, aDImage, aSLSpan, aDLSpan);
-    return;
-  } else if (nsnull == aSecondSImage) {
+  }
+  if (nsnull == aSecondSImage) {
     DoSingleImageBlend(opacity256, aNumLines, aNumBytes, aSImage, aDImage, aSLSpan, aDLSpan);
     return;
   }
@@ -632,10 +655,8 @@ nsBlender::Do24Blend(float aOpacity, PRInt32 aNumLines, PRInt32 aNumBytes,
   // Handle simpler cases
   if (opacity256 <= 0) {
     return;
-  } else if (opacity256 >= 256) {
-    DoOpaqueBlend(aNumLines, aNumBytes, aSImage, aDImage, aSLSpan, aDLSpan);
-    return;
-  } else if (nsnull == aSecondSImage) {
+  }
+  if (nsnull == aSecondSImage) {
     DoSingleImageBlend(opacity256, aNumLines, aNumBytes, aSImage, aDImage, aSLSpan, aDLSpan);
     return;
   }
@@ -720,9 +741,6 @@ nsBlender::Do16Blend(float aOpacity, PRInt32 aNumLines, PRInt32 aNumBytes,
 
   // Handle simpler cases
   if (opacity256 <= 0) {
-    return;
-  } else if (opacity256 >= 256) {
-    DoOpaqueBlend(aNumLines, aNumBytes, aSImage, aDImage, aSLSpan, aDLSpan);
     return;
   }
 

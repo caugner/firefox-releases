@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -23,16 +23,16 @@
  *   Brendan Eich <brendan@mozilla.org> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -55,6 +55,7 @@
 
 #include "nsBinaryStream.h"
 #include "nsFastLoadFile.h"
+#include "nsInt64.h"
 
 #ifdef DEBUG_brendan
 # define METERING
@@ -322,7 +323,7 @@ struct nsDocumentMapReadEntry : public nsDocumentMapEntry {
                                         // Read, in case there is no Read before
                                         // another entry is Selected (to improve
                                         // input stream buffer utilization)
-    PRUint32    mSaveOffset;            // in case demux schedule differs from
+    PRInt64     mSaveOffset;            // in case demux schedule differs from
                                         // mux schedule
 };
 
@@ -491,10 +492,10 @@ nsFastLoadFileReader::SelectMuxedDocument(nsISupports* aURI,
 
     mCurrentDocumentMapEntry = docMapEntry;
 #ifdef DEBUG_MUX
-    PRUint32 currentSegmentOffset;
+    PRInt64 currentSegmentOffset;
     Tell(&currentSegmentOffset);
-    trace_mux('r', "select %p (%p) offset %lu\n",
-              aURI, key.get(), currentSegmentOffset);
+    trace_mux('r', "select %p (%p) offset %ld\n",
+              aURI, key.get(), (long) currentSegmentOffset);
 #endif
     return NS_OK;
 }
@@ -633,7 +634,7 @@ nsFastLoadFileReader::ComputeChecksum(PRUint32 *aResult)
     nsCOMPtr<nsIInputStream> stream = mInputStream;
 
     nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(stream));
-    PRUint32 saveOffset;
+    PRInt64 saveOffset;
     nsresult rv = seekable->Tell(&saveOffset);
     if (NS_FAILED(rv))
         return rv;
@@ -959,12 +960,15 @@ nsFastLoadFileReader::Open()
     if (NS_FAILED(rv))
         return rv;
 
-    PRUint32 fileSize;
+    PRInt64 fileSize;
     rv = seekable->Tell(&fileSize);
     if (NS_FAILED(rv))
         return rv;
 
-    if (fileSize != mHeader.mFileSize)
+    nsInt64 fileSize64 = fileSize;
+    const nsInt64 maxUint32 = PR_UINT32_MAX;
+    NS_ASSERTION(fileSize64 <= maxUint32, "fileSize must fit in 32 bits");
+    if ((PRUint32) fileSize64 != mHeader.mFileSize)
         return NS_ERROR_UNEXPECTED;
 
     rv = seekable->Seek(nsISeekableStream::NS_SEEK_SET,
@@ -1060,21 +1064,22 @@ nsFastLoadFileReader::ReadObject(PRBool aIsStrongRef, nsISupports* *aObject)
         object = entry->mReadObject;
         if (!object) {
             nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(mInputStream));
-            PRUint32 saveOffset;
+            PRInt64 saveOffset;
             nsDocumentMapReadEntry* saveDocMapEntry = nsnull;
 
             rv = seekable->Tell(&saveOffset);
             if (NS_FAILED(rv))
                 return rv;
 
-            if (entry->mCIDOffset != saveOffset) {
+            PRUint32 saveOffset32 = saveOffset;
+            if (entry->mCIDOffset != saveOffset32) {
                 // We skipped deserialization of this object from its position
                 // earlier in the input stream, presumably due to the reference
                 // there being an nsFastLoadPtr, or (more likely) because the
                 // object was muxed in another document, and deserialization
                 // order does not match serialization order.  So we must seek
                 // back and read it now.
-                NS_ASSERTION(entry->mCIDOffset < saveOffset,
+                NS_ASSERTION(entry->mCIDOffset < saveOffset32,
                              "out of order object?!");
 
                 // Ape our Seek wrapper by clearing mCurrentDocumentMapEntry.
@@ -1092,7 +1097,7 @@ nsFastLoadFileReader::ReadObject(PRBool aIsStrongRef, nsISupports* *aObject)
             if (NS_FAILED(rv))
                 return rv;
 
-            if (entry->mCIDOffset != saveOffset) {
+            if (entry->mCIDOffset != saveOffset32) {
                 // Save the "skip offset" in case we need to skip this object
                 // definition when reading forward, later on.
                 rv = seekable->Tell(&entry->mSkipOffset);
@@ -1173,7 +1178,7 @@ nsFastLoadFileReader::ReadID(nsID *aResult)
 }
 
 NS_IMETHODIMP
-nsFastLoadFileReader::Seek(PRInt32 aWhence, PRInt32 aOffset)
+nsFastLoadFileReader::Seek(PRInt32 aWhence, PRInt64 aOffset)
 {
     mCurrentDocumentMapEntry = nsnull;
     nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(mInputStream));
@@ -1181,7 +1186,7 @@ nsFastLoadFileReader::Seek(PRInt32 aWhence, PRInt32 aOffset)
 }
 
 NS_IMETHODIMP
-nsFastLoadFileReader::Tell(PRUint32 *aResult)
+nsFastLoadFileReader::Tell(PRInt64 *aResult)
 {
     nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(mInputStream));
     return seekable->Tell(aResult);
@@ -1436,11 +1441,12 @@ nsFastLoadFileWriter::SelectMuxedDocument(nsISupports* aURI,
 
     // Capture the current file offset (XXXbe maintain our own via Write?)
     nsresult rv;
-    PRUint32 currentSegmentOffset;
+    PRInt64 currentSegmentOffset;
     rv = seekable->Tell(&currentSegmentOffset);
     if (NS_FAILED(rv))
         return rv;
 
+    PRUint32 currentSegmentOffset32 = currentSegmentOffset;
     // Look for an existing entry keyed by aURI, added by StartMuxedDocument.
     nsCOMPtr<nsISupports> key(do_QueryInterface(aURI));
     nsURIMapWriteEntry* uriMapEntry =
@@ -1492,7 +1498,7 @@ nsFastLoadFileWriter::SelectMuxedDocument(nsISupports* aURI,
 
         // The length counts all bytes in the segment, including the header
         // that contains [nextSegmentOffset, length].
-        rv = Write32(currentSegmentOffset - prevSegmentOffset);
+        rv = Write32(currentSegmentOffset32 - prevSegmentOffset);
         if (NS_FAILED(rv))
             return rv;
 
@@ -1511,14 +1517,14 @@ nsFastLoadFileWriter::SelectMuxedDocument(nsISupports* aURI,
     // Otherwise, seek back to write the next segment offset of the previous
     // segment for this document in the multiplex.
     if (!docMapEntry->mInitialSegmentOffset) {
-        docMapEntry->mInitialSegmentOffset = currentSegmentOffset;
+        docMapEntry->mInitialSegmentOffset = currentSegmentOffset32;
     } else {
         rv = seekable->Seek(nsISeekableStream::NS_SEEK_SET,
                             docMapEntry->mCurrentSegmentOffset);
         if (NS_FAILED(rv))
             return rv;
 
-        rv = Write32(currentSegmentOffset);
+        rv = Write32(currentSegmentOffset32);
         if (NS_FAILED(rv))
             return rv;
 
@@ -1531,7 +1537,7 @@ nsFastLoadFileWriter::SelectMuxedDocument(nsISupports* aURI,
     // Update this document's current segment offset so we can later fix its
     // next segment offset (unless it is last, in which case we leave the zero
     // placeholder as a terminator).
-    docMapEntry->mCurrentSegmentOffset = currentSegmentOffset;
+    docMapEntry->mCurrentSegmentOffset = currentSegmentOffset32;
 
     rv = Write32(0);    // nextSegmentOffset placeholder
     if (NS_FAILED(rv))
@@ -1937,7 +1943,10 @@ nsFastLoadFileWriter::Close()
 
     nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(mOutputStream));
 
-    rv = seekable->Tell(&mHeader.mFooterOffset);
+    PRInt64 footerOffset;
+    rv = seekable->Tell(&footerOffset);
+
+    LL_L2UI(mHeader.mFooterOffset, footerOffset);
     if (NS_FAILED(rv))
         return rv;
 
@@ -1967,8 +1976,9 @@ nsFastLoadFileWriter::Close()
     rv = WriteFooter();
     if (NS_FAILED(rv))
         return rv;
-
-    rv = seekable->Tell(&mHeader.mFileSize);
+    PRInt64 fileSize;
+    rv = seekable->Tell(&fileSize);
+    LL_L2UI(mHeader.mFileSize, fileSize);
     if (NS_FAILED(rv))
         return rv;
 
@@ -2063,7 +2073,7 @@ nsFastLoadFileWriter::Close()
     return mOutputStream->Close();
 }
 
-// Psuedo-tag used as flag between WriteSingleRefObject and WriteObjectCommon.
+// Pseudo-tag used as flag between WriteSingleRefObject and WriteObjectCommon.
 #define MFL_SINGLE_REF_PSEUDO_TAG       PR_BIT(MFL_OBJECT_TAG_BITS)
 
 nsresult
@@ -2106,7 +2116,7 @@ nsFastLoadFileWriter::WriteObjectCommon(nsISupports* aObject,
         if (!entry->mObject) {
             // First time we've seen this object address: add it to mObjectMap
             // and serialize the object at the current stream offset.
-            PRUint32 thisOffset;
+            PRInt64 thisOffset;
             rv = Tell(&thisOffset);
             if (NS_FAILED(rv)) {
                 aObject->Release();
@@ -2130,8 +2140,10 @@ nsFastLoadFileWriter::WriteObjectCommon(nsISupports* aObject,
             // updating after reading.
             oid |= MFL_OBJECT_DEF_TAG;
             classInfo = do_QueryInterface(aObject);
-            if (!classInfo)
+            if (!classInfo) {
+                NS_NOTREACHED("aObject must implement nsIClassInfo");
                 return NS_ERROR_FAILURE;
+            }
 
             PRUint32 flags;
             if (NS_SUCCEEDED(classInfo->GetFlags(&flags)) &&
@@ -2165,8 +2177,10 @@ nsFastLoadFileWriter::WriteObjectCommon(nsISupports* aObject,
 
     if (oid & MFL_OBJECT_DEF_TAG) {
         nsCOMPtr<nsISerializable> serializable(do_QueryInterface(aObject));
-        if (!serializable)
+        if (!serializable) {
+            NS_NOTREACHED("aObject must implement nsISerializable");
             return NS_ERROR_FAILURE;
+        }
 
         nsCID slowCID;
         rv = classInfo->GetClassIDNoAlloc(&slowCID);
@@ -2223,13 +2237,15 @@ nsFastLoadFileWriter::WriteCompoundObject(nsISupports* aObject,
 {
     nsresult rv;
     nsCOMPtr<nsISupports> rootObject(do_QueryInterface(aObject));
+    
+    // We could assert that |rootObject != aObject|, but that would prevent
+    // callers who don't know whether they're dealing with the primary
+    // nsISupports pointer (e.g., they don't know which implementation of
+    // nsIURI they have) from using this function.
 
 #ifdef NS_DEBUG
     nsCOMPtr<nsISupports> roundtrip;
     rootObject->QueryInterface(aIID, getter_AddRefs(roundtrip));
-
-    NS_ASSERTION(rootObject.get() != aObject,
-                 "wasteful call to WriteCompoundObject -- call WriteObject!");
     NS_ASSERTION(roundtrip.get() == aObject,
                  "bad aggregation or multiple inheritance detected by call to "
                  "WriteCompoundObject!");
@@ -2261,7 +2277,7 @@ nsFastLoadFileWriter::WriteID(const nsID& aID)
 }
 
 NS_IMETHODIMP
-nsFastLoadFileWriter::Seek(PRInt32 aWhence, PRInt32 aOffset)
+nsFastLoadFileWriter::Seek(PRInt32 aWhence, PRInt64 aOffset)
 {
     mCurrentDocumentMapEntry = nsnull;
     nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(mOutputStream));
@@ -2269,7 +2285,7 @@ nsFastLoadFileWriter::Seek(PRInt32 aWhence, PRInt32 aOffset)
 }
 
 NS_IMETHODIMP
-nsFastLoadFileWriter::Tell(PRUint32 *aResult)
+nsFastLoadFileWriter::Tell(PRInt64 *aResult)
 {
     nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(mOutputStream));
     return seekable->Tell(aResult);
@@ -2391,7 +2407,7 @@ nsFastLoadFileUpdater::Open(nsFastLoadFileReader* aReader)
     // singleton object that might otherwise get written by this updater.
     nsDocumentMapReadEntry* saveDocMapEntry = nsnull;
     nsCOMPtr<nsISeekableStream> inputSeekable;
-    PRUint32 saveOffset = 0;
+    PRInt64 saveOffset = 0;
 
     for (i = 0, n = aReader->mFooter.mNumSharpObjects; i < n; i++) {
         nsFastLoadFileReader::nsObjectMapEntry* readEntry = &readObjectMap[i];

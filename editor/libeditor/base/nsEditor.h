@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Daniel Glazman <glazman@netscape.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -46,6 +45,7 @@
 #include "nsIEditor.h"
 #include "nsIEditorIMESupport.h"
 #include "nsIPhonetic.h"
+#include "nsIKBStateControl.h"
 
 #include "nsIAtom.h"
 #include "nsIDOMDocument.h"
@@ -59,6 +59,8 @@
 #include "nsIDTD.h"
 #include "nsIDOMElement.h"
 #include "nsSelectionState.h"
+#include "nsIEditorSpellCheck.h"
+#include "nsIInlineSpellChecker.h"
 
 class nsIEditActionListener;
 class nsIDocumentStateListener;
@@ -83,6 +85,7 @@ class AddStyleSheetTxn;
 class RemoveStyleSheetTxn;
 class nsIFile;
 class nsISelectionController;
+class nsIDOMEventReceiver;
 
 #define kMOZEditorBogusNodeAttr NS_LITERAL_STRING("_moz_editor_bogus_node")
 #define kMOZEditorBogusNodeValue NS_LITERAL_STRING("TRUE")
@@ -132,7 +135,7 @@ public:
    *  for someone to derive from the nsEditor later? I dont believe so.
    */
   virtual ~nsEditor();
-  
+
 //Interfaces for addref and release and queryinterface
 //NOTE: Use   NS_DECL_ISUPPORTS_INHERITED in any class inherited from nsEditor
   NS_DECL_ISUPPORTS
@@ -144,13 +147,7 @@ public:
   /* ------------ nsIEditor methods -------------- */
   NS_DECL_NSIEDITOR
   /* ------------ nsIEditorIMESupport methods -------------- */
-  
-  NS_IMETHOD BeginComposition(nsTextEventReply* aReply);
-  NS_IMETHOD QueryComposition(nsTextEventReply* aReply);
-  NS_IMETHOD SetCompositionString(const nsAString& aCompositionString, nsIPrivateTextRangeList* aTextRangeList,nsTextEventReply* aReply);
-  NS_IMETHOD EndComposition(void);
-  NS_IMETHOD ForceCompositionEnd(void);
-  NS_IMETHOD GetReconversionString(nsReconversionEventReply *aReply);
+  NS_DECL_NSIEDITORIMESUPPORT
   
   // nsIPhonetic
   NS_DECL_NSIPHONETIC
@@ -332,6 +329,18 @@ protected:
                            PRBool       aEditableNode,
                            nsCOMPtr<nsIDOMNode> *aResultNode,
                            PRBool       bNoBlockCrossing = PR_FALSE);
+
+  // Get nsIKBStateControl interface
+  nsresult GetKBStateControl(nsIKBStateControl **aKBSC);
+
+
+  // install the event listeners for the editor 
+  nsresult InstallEventListeners();
+
+  virtual nsresult CreateEventListeners() = 0;
+
+  // unregister and release our event listeners
+  virtual void RemoveEventListeners();
 
 public:
 
@@ -551,6 +560,20 @@ public:
 
   PRBool GetShouldTxnSetSelection();
 
+  nsresult HandleInlineSpellCheck(PRInt32 action,
+                                    nsISelection *aSelection,
+                                    nsIDOMNode *previousSelectedNode,
+                                    PRInt32 previousSelectedOffset,
+                                    nsIDOMNode *aStartNode,
+                                    PRInt32 aStartOffset,
+                                    nsIDOMNode *aEndNode,
+                                    PRInt32 aEndOffset);
+
+  already_AddRefed<nsIDOMEventReceiver> GetDOMEventReceiver();
+
+  // Fast non-refcounting editor root element accessor
+  nsIDOMElement *GetRoot();
+
 public:
   // Argh!  These transaction names are used by PlaceholderTxn and
   // nsPlaintextEditor.  They should be localized to those classes.
@@ -567,6 +590,7 @@ protected:
   nsWeakPtr       mSelConWeak;   // weak reference to the nsISelectionController
   nsIViewManager *mViewManager;
   PRInt32         mUpdateCount;
+  nsCOMPtr<nsIInlineSpellChecker> mInlineSpellChecker;  // used for real-time spellchecking
   nsCOMPtr<nsITransactionManager> mTxnMgr;
   nsWeakPtr         mPlaceHolderTxn;     // weak reference to placeholder for begin/end batch purposes
   nsIAtom          *mPlaceHolderName;    // name of placeholder transaction
@@ -574,32 +598,44 @@ protected:
   nsSelectionState *mSelState;           // saved selection state for placeholder txn batching
   nsSelectionState  mSavedSel;           // cached selection for nsAutoSelectionReset
   nsRangeUpdater    mRangeUpdater;       // utility class object for maintaining preserved ranges
-  PRBool            mShouldTxnSetSelection;  // turn off for conservative selection adjustment by txns
-  nsCOMPtr<nsIDOMElement> mBodyElement;    // cached body node
+  nsCOMPtr<nsIDOMElement> mRootElement;    // cached root node
   PRInt32           mAction;             // the current editor action
   EDirection        mDirection;          // the current direction of editor action
   
   // data necessary to build IME transactions
-  PRBool                        mInIMEMode;        // are we inside an IME composition?
   nsIPrivateTextRangeList*      mIMETextRangeList; // IME special selection ranges
   nsCOMPtr<nsIDOMCharacterData> mIMETextNode;      // current IME text node
   PRUint32                      mIMETextOffset;    // offset in text node where IME comp string begins
   PRUint32                      mIMEBufferLength;  // current length of IME comp string
-  PRBool                        mIsIMEComposing;   // is IME in composition state?
+  PRPackedBool                  mInIMEMode;        // are we inside an IME composition?
+  PRPackedBool                  mIsIMEComposing;   // is IME in composition state?
                                                    // This is different from mInIMEMode. see Bug 98434.
+  PRPackedBool                  mNeedRecoverIMEOpenState;   // Need IME open state change on blur.
 
+  PRPackedBool                  mShouldTxnSetSelection;  // turn off for conservative selection adjustment by txns
   // various listeners
   nsVoidArray*                  mActionListeners;  // listens to all low level actions on the doc
   nsVoidArray*                  mEditorObservers;   // just notify once per high level change
   nsCOMPtr<nsISupportsArray>    mDocStateListeners;// listen to overall doc state (dirty or not, just created, etc)
 
   PRInt8                        mDocDirtyState;		// -1 = not initialized
+  PRPackedBool                  mGotDOMEventReceiver;  // True if we've gotten our DOMEventReceiver once
   nsWeakPtr        mDocWeak;  // weak reference to the nsIDOMDocument
+  // When mGotDOMEventReceiver is set, a null mDOMEventReceiver means we didn't
+  // find one (and hence should be using the document).  We cache the event
+  // receiver when we get it off anonymous content because during document
+  // teardown the anonymous content can get unhooked before we get unhooked.
+  nsCOMPtr<nsIDOMEventReceiver> mDOMEventReceiver;
   nsCOMPtr<nsIDTD> mDTD;
 
   nsString* mPhonetic;
 
-  static PRInt32 gInstanceCount;
+  nsCOMPtr<nsIDOMEventListener> mKeyListenerP;
+  nsCOMPtr<nsIDOMEventListener> mMouseListenerP;
+  nsCOMPtr<nsIDOMEventListener> mTextListenerP;
+  nsCOMPtr<nsIDOMEventListener> mCompositionListenerP;
+  nsCOMPtr<nsIDOMEventListener> mDragListenerP;
+  nsCOMPtr<nsIDOMEventListener> mFocusListenerP;
 
   friend PRBool NSCanUnload(nsISupports* serviceMgr);
   friend class nsAutoTxnsConserveSelection;

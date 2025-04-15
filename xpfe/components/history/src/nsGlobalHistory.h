@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Blake Ross <blaker@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -57,6 +57,7 @@
 #include "nsString.h"
 #include "nsITimer.h"
 #include "nsIAutoCompleteSession.h"
+#include "nsHashSets.h"
 
 //----------------------------------------------------------------------
 //
@@ -147,13 +148,13 @@ public:
   virtual ~nsGlobalHistory();
 
   // these must be public so that the callbacks can call them
-  PRBool MatchExpiration(nsIMdbRow *row, PRInt64* expirationDate);
+  PRBool MatchExpiration(nsIMdbRow *row, PRTime* expirationDate);
   PRBool MatchHost(nsIMdbRow *row, matchHost_t *hostInfo);
   PRBool RowMatches(nsIMdbRow* aRow, searchQuery *aQuery);
 
-  PRInt64 GetNow();
-  PRTime  NormalizeTime(PRInt64 aTime);
-  PRInt32 GetAgeInDays(PRInt64 aDate);
+  PRTime  GetNow();
+  PRTime  NormalizeTime(PRTime aTime);
+  PRInt32 GetAgeInDays(PRTime aDate);
 
 protected:
 
@@ -232,12 +233,12 @@ protected:
   {
     nsGlobalHistory* history;
     size_t prefixCount;
-    nsAFlatString* prefixes[AUTOCOMPLETE_PREFIX_LIST_COUNT];
+    const nsAFlatString* prefixes[AUTOCOMPLETE_PREFIX_LIST_COUNT];
   };
 
   // caching of PR_Now() so we don't call it every time we do
   // a history query
-  PRInt64   mLastNow;           // cache the last PR_Now()
+  PRTime    mLastNow;           // cache the last PR_Now()
   PRInt64   mCachedGMTOffset;   // cached offset from GMT
 
   PRInt32   mBatchesInProgress;
@@ -299,16 +300,20 @@ protected:
   // meta-data tokens
   mdb_column kToken_LastPageVisited;
   mdb_column kToken_ByteOrder;
+  
+  nsCStringHashSet mTypedHiddenURIs;
 
   //
   // AddPage-oriented stuff
   //
   nsresult AddExistingPageToDatabase(nsIMdbRow *row,
-                                     PRInt64 aDate,
-                                     PRInt64 *aOldDate,
+                                     PRTime aDate,
+                                     const char *aReferrer,
+                                     PRTime *aOldDate,
                                      PRInt32 *aOldCount);
   nsresult AddNewPageToDatabase(const char *aURL,
-                                PRInt64 aDate,
+                                PRTime aDate,
+                                const char *aReferrer,
                                 nsIMdbRow **aResult);
 
   nsresult RemovePageInternal(const char *aSpec);
@@ -316,16 +321,18 @@ protected:
   //
   // generic routines for setting/retrieving various datatypes
   //
-  nsresult SetRowValue(nsIMdbRow *aRow, mdb_column aCol, const PRInt64& aValue);
+  nsresult SetRowValue(nsIMdbRow *aRow, mdb_column aCol, const PRTime& aValue);
   nsresult SetRowValue(nsIMdbRow *aRow, mdb_column aCol, const PRInt32 aValue);
   nsresult SetRowValue(nsIMdbRow *aRow, mdb_column aCol, const char *aValue);
   nsresult SetRowValue(nsIMdbRow *aRow, mdb_column aCol, const PRUnichar *aValue);
 
   nsresult GetRowValue(nsIMdbRow *aRow, mdb_column aCol, nsAString& aResult);
   nsresult GetRowValue(nsIMdbRow *aRow, mdb_column aCol, nsACString& aResult);
-  nsresult GetRowValue(nsIMdbRow *aRow, mdb_column aCol, PRInt64* aResult);
+  nsresult GetRowValue(nsIMdbRow *aRow, mdb_column aCol, PRTime* aResult);
   nsresult GetRowValue(nsIMdbRow *aRow, mdb_column aCol, PRInt32* aResult);
 
+  // Look up a row in mStore and returns success if it is found or failure
+  // if it is not.  |aResult| may be null if only testing for row existance.
   nsresult FindRow(mdb_column aCol, const char *aURL, nsIMdbRow **aResult);
 
   //

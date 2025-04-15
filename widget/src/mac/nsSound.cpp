@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -353,7 +353,7 @@ nsSound::GetSoundFromCache(nsIURI* inURI, nsISupports** outSound)
   if (NS_FAILED(rv)) return rv;
   
   nsCOMPtr<nsICacheEntryDescriptor> entry;
-  rv = cacheSession->OpenCacheEntry(uriSpec.get(), nsICache::ACCESS_READ, nsICache::BLOCKING, getter_AddRefs(entry));
+  rv = cacheSession->OpenCacheEntry(uriSpec, nsICache::ACCESS_READ, nsICache::BLOCKING, getter_AddRefs(entry));
 
 #ifdef SOUND_DEBUG
   printf("Got sound from cache with rv %ld\n", rv);
@@ -385,7 +385,7 @@ nsSound::PutSoundInCache(nsIChannel* inChannel, PRUint32 inDataSize, nsISupports
   if (NS_FAILED(rv)) return rv;
 
   nsCOMPtr<nsICacheEntryDescriptor> entry;
-  rv = cacheSession->OpenCacheEntry(uriSpec.get(), nsICache::ACCESS_WRITE, nsICache::BLOCKING, getter_AddRefs(entry));
+  rv = cacheSession->OpenCacheEntry(uriSpec, nsICache::ACCESS_WRITE, nsICache::BLOCKING, getter_AddRefs(entry));
 #ifdef SOUND_DEBUG
   printf("Put sound in cache with rv %ld\n", rv);
 #endif
@@ -740,8 +740,8 @@ NS_IMETHODIMP
 nsMovieSoundRequest::OnStreamComplete(nsIStreamLoader *aLoader,
                                         nsISupports *context,
                                         nsresult aStatus,
-                                        PRUint32 stringLen,
-                                        const char *stringData)
+                                        PRUint32 dataLen,
+                                        const PRUint8 *data)
 {
   NS_ENSURE_ARG(aLoader);
   
@@ -759,14 +759,14 @@ nsMovieSoundRequest::OnStreamComplete(nsIStreamLoader *aLoader,
   // we could use a Pointer data handler type, and avoid this
   // allocation/copy, in QuickTime 5 and above.
   OSErr     err;
-  mDataHandle = ::TempNewHandle(stringLen, &err);
+  mDataHandle = ::TempNewHandle(dataLen, &err);
   if (!mDataHandle) return NS_ERROR_OUT_OF_MEMORY;
 
-  ::BlockMoveData(stringData, *mDataHandle, stringLen);
+  ::BlockMoveData(data, *mDataHandle, dataLen);
 
   NS_ASSERTION(mMovie == nsnull, "nsMovieSoundRequest has a movie already");
   
-  err = ImportMovie(mDataHandle, stringLen, contentType);
+  err = ImportMovie(mDataHandle, dataLen, contentType);
   if (err != noErr) {
     Cleanup();
     return NS_ERROR_FAILURE;
@@ -778,7 +778,7 @@ nsMovieSoundRequest::OnStreamComplete(nsIStreamLoader *aLoader,
   // put it in the cache. Not vital that this succeeds.
   // for the data size we just use the string data, since the movie simply wraps this
   // (we have to keep the handle around until the movies are done playing)
-  nsresult rv = macSound->PutSoundInCache(channel, stringLen, NS_STATIC_CAST(nsITimerCallback*, this));
+  nsresult rv = macSound->PutSoundInCache(channel, dataLen, NS_STATIC_CAST(nsITimerCallback*, this));
   NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to put sound in cache");
   
   return PlaySound();

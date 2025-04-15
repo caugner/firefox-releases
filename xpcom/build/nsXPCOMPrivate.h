@@ -1,12 +1,12 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* vim:set ts=4 sw=4 et cindent: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -15,7 +15,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,27 +23,35 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #ifndef nsXPComPrivate_h__
 #define nsXPComPrivate_h__
 
+// Map frozen functions to private symbol names if not using strict API.
+#ifdef MOZILLA_INTERNAL_API
+# define NS_RegisterXPCOMExitRoutine        NS_RegisterXPCOMExitRoutine_P
+# define NS_UnregisterXPCOMExitRoutine      NS_UnregisterXPCOMExitRoutine_P
+#endif
+
 #include "nscore.h"
 #include "nsXPCOM.h"
+#include "nsStringAPI.h"
 
 class nsStringContainer;
 class nsCStringContainer;
+class nsIComponentLoader;
 
 /**
  * Private Method to register an exit routine.  This method
@@ -77,6 +85,7 @@ NS_UnregisterXPCOMExitRoutine(XPCOMExitRoutine exitRoutine);
 
 // PUBLIC
 typedef nsresult   (* InitFunc)(nsIServiceManager* *result, nsIFile* binDirectory, nsIDirectoryServiceProvider* appFileLocationProvider);
+typedef nsresult   (* Init3Func)(nsIServiceManager* *result, nsIFile* binDirectory, nsIDirectoryServiceProvider* appFileLocationProvider, nsStaticModuleInfo const *staticComponents, PRUint32 componentCount);
 typedef nsresult   (* ShutdownFunc)(nsIServiceManager* servMgr);
 typedef nsresult   (* GetServiceManagerFunc)(nsIServiceManager* *result);
 typedef nsresult   (* GetComponentManagerFunc)(nsIComponentManager* *result);
@@ -89,23 +98,31 @@ typedef nsresult   (* GetDebugFunc)(nsIDebug* *result);
 typedef nsresult   (* GetTraceRefcntFunc)(nsITraceRefcnt* *result);
 
 typedef nsresult   (* StringContainerInitFunc)(nsStringContainer&);
+typedef nsresult   (* StringContainerInit2Func)(nsStringContainer&, const PRUnichar *, PRUint32, PRUint32);
 typedef void       (* StringContainerFinishFunc)(nsStringContainer&);
 typedef PRUint32   (* StringGetDataFunc)(const nsAString&, const PRUnichar**, PRBool*);
+typedef PRUint32   (* StringGetMutableDataFunc)(nsAString&, PRUint32, PRUnichar**);
 typedef PRUnichar* (* StringCloneDataFunc)(const nsAString&);
 typedef nsresult   (* StringSetDataFunc)(nsAString&, const PRUnichar*, PRUint32);
 typedef nsresult   (* StringSetDataRangeFunc)(nsAString&, PRUint32, PRUint32, const PRUnichar*, PRUint32);
 typedef nsresult   (* StringCopyFunc)(nsAString &, const nsAString &);
 
 typedef nsresult   (* CStringContainerInitFunc)(nsCStringContainer&);
+typedef nsresult   (* CStringContainerInit2Func)(nsCStringContainer&, const char *, PRUint32, PRUint32);
 typedef void       (* CStringContainerFinishFunc)(nsCStringContainer&);
 typedef PRUint32   (* CStringGetDataFunc)(const nsACString&, const char**, PRBool*);
+typedef PRUint32   (* CStringGetMutableDataFunc)(nsACString&, PRUint32, char**);
 typedef char*      (* CStringCloneDataFunc)(const nsACString&);
 typedef nsresult   (* CStringSetDataFunc)(nsACString&, const char*, PRUint32);
 typedef nsresult   (* CStringSetDataRangeFunc)(nsACString&, PRUint32, PRUint32, const char*, PRUint32);
 typedef nsresult   (* CStringCopyFunc)(nsACString &, const nsACString &);
 
-typedef nsresult   (* CStringToUTF16)(const nsACString &, PRUint32, const nsAString &);
-typedef nsresult   (* UTF16ToCString)(const nsAString &, PRUint32, const nsACString &);
+typedef nsresult   (* CStringToUTF16)(const nsACString &, nsCStringEncoding, nsAString &);
+typedef nsresult   (* UTF16ToCString)(const nsAString &, nsCStringEncoding, nsACString &);
+
+typedef void*      (* AllocFunc)(PRSize size);
+typedef void*      (* ReallocFunc)(void* ptr, PRSize size);
+typedef void       (* FreeFunc)(void* ptr);
 
 // PRIVATE
 typedef nsresult   (* RegisterXPCOMExitRoutineFunc)(XPCOMExitRoutine exitRoutine, PRUint32 priority);
@@ -148,7 +165,16 @@ typedef struct XPCOMFunctions{
     UTF16ToCString utf16ToCString;
     StringCloneDataFunc stringCloneData;
     CStringCloneDataFunc cstringCloneData;
-   
+
+    // Added for Mozilla 1.8
+    AllocFunc allocFunc;
+    ReallocFunc reallocFunc;
+    FreeFunc freeFunc;
+    StringContainerInit2Func stringContainerInit2;
+    CStringContainerInit2Func cstringContainerInit2;
+    StringGetMutableDataFunc stringGetMutableData;
+    CStringGetMutableDataFunc cstringGetMutableData;
+    Init3Func init3;
 } XPCOMFunctions;
 
 typedef nsresult (PR_CALLBACK *GetFrozenFunctionsFunc)(XPCOMFunctions *entryPoints, const char* libraryPath);
@@ -167,11 +193,11 @@ NS_GetFrozenFunctions(XPCOMFunctions *entryPoints, const char* libraryPath);
  * GRE_CONF_NAME          - Name of the GRE Configuration file
  */
 
-#if defined(XP_WIN32) || defined(XP_OS2)
+#if defined(XP_WIN32) || defined(XP_OS2) || defined(WINCE)
 
 #define XPCOM_SEARCH_KEY  "PATH"
 #define GRE_CONF_NAME     "gre.config"
-#define GRE_WIN_REG_LOC   "Software\\mozilla.org\\GRE\\"
+#define GRE_WIN_REG_LOC   "Software\\mozilla.org\\GRE"
 #define XPCOM_DLL         "xpcom.dll"
 
 #elif defined(XP_BEOS)
@@ -188,13 +214,15 @@ NS_GetFrozenFunctions(XPCOMFunctions *entryPoints, const char* libraryPath);
 // you have to love apple..
 #ifdef XP_MACOSX  
 #define XPCOM_SEARCH_KEY  "DYLD_LIBRARY_PATH"
+#define GRE_FRAMEWORK_NAME "XUL.framework"
 #else
 #define XPCOM_SEARCH_KEY  "LD_LIBRARY_PATH"
 #endif
 
 #define GRE_CONF_NAME ".gre.config"
 #define GRE_CONF_PATH "/etc/gre.conf"
-#define GRE_CONF_DIR  "/etc/gre.d/"
+#define GRE_CONF_DIR  "/etc/gre.d"
+#define GRE_USER_CONF_DIR ".gre.d"
 #endif
 
 #if defined(XP_WIN) || defined(XP_OS2)
@@ -207,6 +235,25 @@ NS_GetFrozenFunctions(XPCOMFunctions *entryPoints, const char* libraryPath);
   #error need_to_define_your_file_path_separator_and_illegal_characters
 #endif
 
+#ifdef AIX
+#include <sys/param.h>
 #endif
 
+#ifndef MAXPATHLEN
+#ifdef PATH_MAX
+#define MAXPATHLEN PATH_MAX
+#elif defined(_MAX_PATH)
+#define MAXPATHLEN _MAX_PATH
+#elif defined(CCHMAXPATH)
+#define MAXPATHLEN CCHMAXPATH
+#else
+#define MAXPATHLEN 1024
+#endif
+#endif
 
+nsresult
+NewStaticComponentLoader(nsStaticModuleInfo const *aStaticModules,
+                         PRUint32 aStaticModuleCount,
+                         nsIComponentLoader **retval);
+
+#endif

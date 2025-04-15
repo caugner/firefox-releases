@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -56,11 +56,26 @@ extern PRBool ConvertJSValToBool(PRBool* aProp,
                                 JSContext* aContext,
                                 jsval aValue);
 
-extern PRBool ConvertJSValToObj(nsISupports** aSupports,
-                               REFNSIID aIID,
-                               const nsString& aTypeName,
-                               JSContext* aContext,
-                               jsval aValue);
+
+static void PR_CALLBACK
+WinProfileCleanup(JSContext *cx, JSObject *obj);
+
+/***********************************************************************/
+//
+// class for WinProfile
+//
+JSClass WinProfileClass = {
+  "WinProfile",
+  JSCLASS_HAS_PRIVATE,
+  JS_PropertyStub,
+  JS_PropertyStub,
+  JS_PropertyStub,
+  JS_PropertyStub,
+  JS_EnumerateStub,
+  JS_ResolveStub,
+  JS_ConvertStub,
+  WinProfileCleanup
+};
 
 
 static void PR_CALLBACK WinProfileCleanup(JSContext *cx, JSObject *obj)
@@ -78,18 +93,16 @@ static void PR_CALLBACK WinProfileCleanup(JSContext *cx, JSObject *obj)
 PR_STATIC_CALLBACK(JSBool)
 WinProfileGetString(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
 {
-  nsWinProfile *nativeThis = (nsWinProfile*)JS_GetPrivate(cx, obj);
+  nsWinProfile *nativeThis =
+    (nsWinProfile*)JS_GetInstancePrivate(cx, obj, &WinProfileClass, argv);
+  if (!nativeThis)
+    return JS_FALSE;
+
   nsString     nativeRet;
   nsAutoString b0;
   nsAutoString b1;
 
   *rval = JSVAL_NULL;
-
-  // If there's no private data, this must be the prototype, so ignore
-  if(nsnull == nativeThis)
-  {
-    return JS_TRUE;
-  }
 
   if(argc >= 2)                             
   {
@@ -111,25 +124,24 @@ WinProfileGetString(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval
   return JS_TRUE;
 }
 
+
 //
 // Native method WriteString
 //
 PR_STATIC_CALLBACK(JSBool)
 WinProfileWriteString(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
 {
-  nsWinProfile *nativeThis = (nsWinProfile*)JS_GetPrivate(cx, obj);
+  nsWinProfile *nativeThis =
+    (nsWinProfile*)JS_GetInstancePrivate(cx, obj, &WinProfileClass, argv);
+  if (!nativeThis)
+    return JS_FALSE;
+
   PRInt32 nativeRet;
   nsAutoString b0;
   nsAutoString b1;
   nsAutoString b2;
 
   *rval = JSVAL_ZERO;
-
-  // If there's no private data, this must be the prototype, so ignore
-  if(nsnull == nativeThis)
-  {
-    return JS_TRUE;
-  }
 
   if(argc >= 3)
   {
@@ -162,24 +174,6 @@ WinProfile(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
 {
   return JS_FALSE;
 }
-
-/***********************************************************************/
-//
-// class for WinProfile
-//
-JSClass WinProfileClass = {
-  "WinProfile",
-  JSCLASS_HAS_PRIVATE,
-  JS_PropertyStub,
-  JS_PropertyStub,
-  JS_PropertyStub,
-  JS_PropertyStub,
-  JS_EnumerateStub,
-  JS_ResolveStub,
-  JS_ConvertStub,
-  WinProfileCleanup
-};
-
 
 static JSConstDoubleSpec winprofile_constants[] = 
 {

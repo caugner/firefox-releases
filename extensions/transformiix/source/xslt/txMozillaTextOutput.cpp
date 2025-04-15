@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is the TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
@@ -20,7 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Peter Van der Beken <peterv@netscape.com>
+ *   Peter Van der Beken <peterv@propagandism.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -49,6 +49,7 @@
 #include "nsNetUtil.h"
 #include "nsIDOMNSDocument.h"
 #include "nsIParser.h"
+#include "nsICharsetAlias.h"
 
 static NS_DEFINE_CID(kXMLDocumentCID, NS_XMLDOCUMENT_CID);
 
@@ -66,7 +67,7 @@ txMozillaTextOutput::txMozillaTextOutput(nsIDOMDocumentFragment* aDest)
     aDest->GetOwnerDocument(getter_AddRefs(doc));
     NS_ASSERTION(doc, "unable to get ownerdocument");
     nsCOMPtr<nsIDOMText> textNode;
-    nsresult rv = doc->CreateTextNode(nsString(),
+    nsresult rv = doc->CreateTextNode(EmptyString(),
                                       getter_AddRefs(textNode));
     if (NS_FAILED(rv)) {
         return;
@@ -101,11 +102,13 @@ void txMozillaTextOutput::comment(const nsAString& aData)
 {
 }
 
-void txMozillaTextOutput::endDocument()
+void txMozillaTextOutput::endDocument(nsresult aResult)
 {
-    nsCOMPtr<nsITransformObserver> observer = do_QueryReferent(mObserver);
-    if (observer) {
-        observer->OnTransformDone(NS_OK, mDocument);
+    if (NS_SUCCEEDED(aResult)) {
+        nsCOMPtr<nsITransformObserver> observer = do_QueryReferent(mObserver);
+        if (observer) {
+            observer->OnTransformDone(aResult, mDocument);
+        }
     }
 }
 
@@ -165,7 +168,7 @@ void txMozillaTextOutput::createResultDocument(nsIDOMDocument* aSourceDocument,
 
     nsCOMPtr<nsIDOMNSDocument> nsDoc = do_QueryInterface(mDocument);
     if (nsDoc) {
-        nsDoc->SetTitle(nsString());
+        nsDoc->SetTitle(EmptyString());
     }
 
     // Reset and set up document
@@ -185,9 +188,16 @@ void txMozillaTextOutput::createResultDocument(nsIDOMDocument* aSourceDocument,
 
     // Set the charset
     if (!mOutputFormat.mEncoding.IsEmpty()) {
-        doc->SetDocumentCharacterSet(
-            NS_LossyConvertUTF16toASCII(mOutputFormat.mEncoding));
-        doc->SetDocumentCharacterSetSource(kCharsetFromOtherComponent);
+        NS_LossyConvertUTF16toASCII charset(mOutputFormat.mEncoding);
+        nsCAutoString canonicalCharset;
+        nsCOMPtr<nsICharsetAlias> calias =
+            do_GetService("@mozilla.org/intl/charsetalias;1");
+
+        if (calias &&
+            NS_SUCCEEDED(calias->GetPreferred(charset, canonicalCharset))) {
+            doc->SetDocumentCharacterSet(canonicalCharset);
+            doc->SetDocumentCharacterSetSource(kCharsetFromOtherComponent);
+        }
     }
     else {
         doc->SetDocumentCharacterSet(sourceDoc->GetDocumentCharacterSet());
@@ -239,9 +249,13 @@ void txMozillaTextOutput::createResultDocument(nsIDOMDocument* aSourceDocument,
             return;
         }
 
-        rootContent->SetDocument(doc, PR_FALSE, PR_TRUE);
-
-        doc->SetRootContent(rootContent);
+        // XXXbz what to do on failure here?
+        rv = doc->SetRootContent(rootContent);
+        if (NS_FAILED(rv)) {
+            NS_ERROR("Failed to set root content");
+            return;
+        }
+            
 
         mDocument->CreateElementNS(XHTML_NSURI,
                                    NS_LITERAL_STRING("head"),
@@ -293,7 +307,7 @@ void txMozillaTextOutput::createResultDocument(nsIDOMDocument* aSourceDocument,
     }
 
     nsCOMPtr<nsIDOMText> textNode;
-    mDocument->CreateTextNode(nsString(),
+    mDocument->CreateTextNode(EmptyString(),
                               getter_AddRefs(textNode));
     NS_ASSERTION(textNode, "Failed to create the text node");
     if (!textNode) {

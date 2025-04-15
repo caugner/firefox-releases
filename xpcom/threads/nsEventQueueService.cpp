@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -20,33 +20,33 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *                 Rick Potts <rpotts@netscape.com>
- *                 Ramiro Estrugo <ramiro@netscape.com>
- *                 Warren Harris <warren@netscape.com>
- *                 Leaf Nunes <leaf@mozilla.org>
- *                 David Matiskella <davidm@netscape.com>
- *                 David Hyatt <hyatt@netscape.com>
- *                 Seth Spitzer <sspitzer@netscape.com>
- *                 Suresh Duddi <dp@netscape.com>
- *                 Bruce Mitchener <bruce@cybersight.com>
- *                 Scott Collins <scc@netscape.com>
- *                 Daniel Matejka <danm@netscape.com>
- *                 Doug Turner <dougt@netscape.com>
- *                 Stuart Parmenter <pavlov@netscape.com>
- *                 Mike Kaply <mkaply@us.ibm.com>
- *                 Dan Mosedale <dmose@mozilla.org>
+ *   Rick Potts <rpotts@netscape.com>
+ *   Ramiro Estrugo <ramiro@netscape.com>
+ *   Warren Harris <warren@netscape.com>
+ *   Leaf Nunes <leaf@mozilla.org>
+ *   David Matiskella <davidm@netscape.com>
+ *   David Hyatt <hyatt@netscape.com>
+ *   Seth Spitzer <sspitzer@netscape.com>
+ *   Suresh Duddi <dp@netscape.com>
+ *   Bruce Mitchener <bruce@cybersight.com>
+ *   Scott Collins <scc@netscape.com>
+ *   Daniel Matejka <danm@netscape.com>
+ *   Doug Turner <dougt@netscape.com>
+ *   Stuart Parmenter <pavlov@netscape.com>
+ *   Mike Kaply <mkaply@us.ibm.com>
+ *   Dan Mosedale <dmose@mozilla.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -113,7 +113,7 @@ nsEventQueueServiceImpl::Init()
   if (!mEventQTable.Init()) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
-  
+
   // ensure that a main thread event queue exists!
   nsresult rv;
   nsCOMPtr<nsIThread> mainThread;
@@ -171,7 +171,9 @@ nsEventQueueServiceImpl::MakeNewQueue(PRThread* thread,
 
   if (NS_SUCCEEDED(rv)) {
     rv = queue->InitFromPRThread(thread, aNative);
-  }	
+    if (NS_FAILED(rv))
+      queue = nsnull;
+  }
   *aQueue = queue;
   NS_IF_ADDREF(*aQueue);
   return rv;
@@ -189,9 +191,10 @@ nsEventQueueServiceImpl::CreateEventQueue(PRThread *aThread, PRBool aNative)
   if (!mEventQTable.GetWeak(aThread)) {
     nsCOMPtr<nsIEventQueue> queue;
 
-    // we don't have one in the table
-    rv = MakeNewQueue(aThread, aNative, getter_AddRefs(queue)); // create new queue
-    mEventQTable.Put(aThread, queue); // add to the table (initial addref)
+    // we don't have one in the table, create new queue
+    rv = MakeNewQueue(aThread, aNative, getter_AddRefs(queue));
+    if (NS_SUCCEEDED(rv))
+      mEventQTable.Put(aThread, queue); // add to the table (initial addref)
   }
 
   // Release the EventQ lock...
@@ -224,17 +227,17 @@ nsEventQueueServiceImpl::DestroyThreadEventQueue(void)
 NS_IMETHODIMP
 nsEventQueueServiceImpl::CreateFromPLEventQueue(PLEventQueue* aPLEventQueue, nsIEventQueue** aResult)
 {
-	// Create our thread queue using the component manager
-	nsresult rv;
-	nsCOMPtr<nsIEventQueue> queue = do_CreateInstance(kEventQueueCID, &rv);
-	if (NS_FAILED(rv)) return rv;
+  // Create our thread queue using the component manager
+  nsresult rv;
+  nsCOMPtr<nsIEventQueue> queue = do_CreateInstance(kEventQueueCID, &rv);
+  if (NS_FAILED(rv)) return rv;
 
   rv = queue->InitFromPLQueue(aPLEventQueue);
-	if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) return rv;
 
-	*aResult = queue;
+  *aResult = queue;
   NS_IF_ADDREF(*aResult);
-	return NS_OK;
+  return NS_OK;
 }
 
 
@@ -274,7 +277,7 @@ nsEventQueueServiceImpl::PushThreadEventQueue(nsIEventQueue **aNewQueue)
   PR_EnterMonitor(mEventQMonitor);
 
   nsIEventQueue* queue = mEventQTable.GetWeak(currentThread);
-  
+
   NS_ASSERTION(queue, "pushed event queue on top of nothing");
 
   if (queue) { // find out what kind of queue our relatives are
@@ -286,27 +289,28 @@ nsEventQueueServiceImpl::PushThreadEventQueue(nsIEventQueue **aNewQueue)
   }
 
   nsIEventQueue* newQueue = nsnull;
-  MakeNewQueue(currentThread, native, &newQueue); // create new queue; addrefs
+  rv = MakeNewQueue(currentThread, native, &newQueue);  // AddRefs on success
+  if (NS_SUCCEEDED(rv)) {
+    if (!queue) {
+      // shouldn't happen. as a fallback, we guess you wanted a native queue
+      mEventQTable.Put(currentThread, newQueue);
+    }
 
-  if (!queue) {
-    // shouldn't happen. as a fallback, we guess you wanted a native queue
-    mEventQTable.Put(currentThread, newQueue);
-  }
+      // append to the event queue chain -- QI the queue in the hash table
+      nsCOMPtr<nsPIEventQueueChain> ourChain(do_QueryInterface(queue));
+    if (ourChain)
+      ourChain->AppendQueue(newQueue); // append new queue to it
 
-  // append to the event queue chain
-  nsCOMPtr<nsPIEventQueueChain> ourChain(do_QueryInterface(queue)); // QI the queue in the hash table
-  if (ourChain)
-    ourChain->AppendQueue(newQueue); // append new queue to it
-
-  *aNewQueue = newQueue;
+    *aNewQueue = newQueue;
 
 #if defined(PR_LOGGING) && defined(DEBUG_danm)
-  PLEventQueue *equeue;
-  (*aNewQueue)->GetPLEventQueue(&equeue);
-  PR_LOG(gEventQueueLog, PR_LOG_DEBUG,
-         ("EventQueue: Service push queue [queue=%lx]",(long)equeue));
-  ++gEventQueueLogCount;
+    PLEventQueue *equeue;
+    (*aNewQueue)->GetPLEventQueue(&equeue);
+    PR_LOG(gEventQueueLog, PR_LOG_DEBUG,
+           ("EventQueue: Service push queue [queue=%lx]",(long)equeue));
+    ++gEventQueueLogCount;
 #endif
+  }
 
   // Release the EventQ lock...
   PR_ExitMonitor(mEventQMonitor);

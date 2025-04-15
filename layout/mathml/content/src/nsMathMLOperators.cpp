@@ -1,23 +1,39 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla MathML Project.
  *
- * The Initial Developer of the Original Code is The University Of
- * Queensland.  Portions created by The University Of Queensland are
- * Copyright (C) 1999 The University Of Queensland.  All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * The University Of Queensland.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Roger B. Sidje <rbs@maths.uq.edu.au>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsCOMPtr.h"
 #include "nsString.h"
@@ -101,29 +117,29 @@ SetProperty(OperatorData* aOperatorData,
   // maxsize (default: infinity)
   // minsize (default: 1)
 
-  if (aValue.Equals(NS_LITERAL_STRING("true"))) {
+  if (aValue.EqualsLiteral("true")) {
     // see if we should enable flags with default value=false
-    if (aName.Equals(NS_LITERAL_STRING("fence")))
+    if (aName.EqualsLiteral("fence"))
       aOperatorData->mFlags |= NS_MATHML_OPERATOR_FENCE;
-    else if (aName.Equals(NS_LITERAL_STRING("accent")))
+    else if (aName.EqualsLiteral("accent"))
       aOperatorData->mFlags |= NS_MATHML_OPERATOR_ACCENT;
-    else if (aName.Equals(NS_LITERAL_STRING("largeop")))
+    else if (aName.EqualsLiteral("largeop"))
       aOperatorData->mFlags |= NS_MATHML_OPERATOR_LARGEOP;
-    else if (aName.Equals(NS_LITERAL_STRING("separator")))
+    else if (aName.EqualsLiteral("separator"))
       aOperatorData->mFlags |=  NS_MATHML_OPERATOR_SEPARATOR;
-    else if (aName.Equals(NS_LITERAL_STRING("movablelimits")))
+    else if (aName.EqualsLiteral("movablelimits"))
       aOperatorData->mFlags |= NS_MATHML_OPERATOR_MOVABLELIMITS;
   }
-  else if (aValue.Equals(NS_LITERAL_STRING("false"))) {
+  else if (aValue.EqualsLiteral("false")) {
     // see if we should disable flags with default value=true
-    if (aName.Equals(NS_LITERAL_STRING("symmetric")))
+    if (aName.EqualsLiteral("symmetric"))
       aOperatorData->mFlags &= ~NS_MATHML_OPERATOR_SYMMETRIC;
   }
-  else if (aName.Equals(NS_LITERAL_STRING("stretchy")) &&
+  else if (aName.EqualsLiteral("stretchy") &&
           (1 == aOperatorData->mStr.Length())) {
-    if (aValue.Equals(NS_LITERAL_STRING("vertical")))
+    if (aValue.EqualsLiteral("vertical"))
       aOperatorData->mFlags |= NS_MATHML_OPERATOR_STRETCHY_VERT;
-    else if (aValue.Equals(NS_LITERAL_STRING("horizontal")))
+    else if (aValue.EqualsLiteral("horizontal"))
       aOperatorData->mFlags |= NS_MATHML_OPERATOR_STRETCHY_HORIZ;
     else return; // invalid value
     if (kNotFound == nsMathMLOperators::FindStretchyOperator(aOperatorData->mStr[0])) {
@@ -134,9 +150,9 @@ SetProperty(OperatorData* aOperatorData,
     PRInt32 i = 0;
     float space = 0.0f;
     PRBool isLeftSpace;
-    if (aName.Equals(NS_LITERAL_STRING("lspace")))
+    if (aName.EqualsLiteral("lspace"))
       isLeftSpace = PR_TRUE;
-    else if (aName.Equals(NS_LITERAL_STRING("rspace")))
+    else if (aName.EqualsLiteral("rspace"))
       isLeftSpace = PR_FALSE;
     else return;  // input is not applicable
 
@@ -147,13 +163,13 @@ SetProperty(OperatorData* aOperatorData,
       if (error) return;
     }
     // See if it is one of the 'namedspace' (ranging 1/18em...7/18em)
-    else if (aValue.Equals(NS_LITERAL_STRING("veryverythinmathspace")))  i = 1;
-    else if (aValue.Equals(NS_LITERAL_STRING("verythinmathspace")))      i = 2;
-    else if (aValue.Equals(NS_LITERAL_STRING("thinmathspace")))          i = 3;
-    else if (aValue.Equals(NS_LITERAL_STRING("mediummathspace")))        i = 4;
-    else if (aValue.Equals(NS_LITERAL_STRING("thickmathspace")))         i = 5;
-    else if (aValue.Equals(NS_LITERAL_STRING("verythickmathspace")))     i = 6;
-    else if (aValue.Equals(NS_LITERAL_STRING("veryverythickmathspace"))) i = 7;
+    else if (aValue.EqualsLiteral("veryverythinmathspace"))  i = 1;
+    else if (aValue.EqualsLiteral("verythinmathspace"))      i = 2;
+    else if (aValue.EqualsLiteral("thinmathspace"))          i = 3;
+    else if (aValue.EqualsLiteral("mediummathspace"))        i = 4;
+    else if (aValue.EqualsLiteral("thickmathspace"))         i = 5;
+    else if (aValue.EqualsLiteral("verythickmathspace"))     i = 6;
+    else if (aValue.EqualsLiteral("veryverythickmathspace")) i = 7;
 
     if (0 != i) // it was a namedspace value
       space = float(i)/float(18);
@@ -434,8 +450,8 @@ nsMathMLOperators::LookupOperator(const nsString&       aOperator,
 
     nsAutoString key(aOperator);
     key.AppendInt(form, 10);
-    nsStringKey hashkey(key);
-    gOperatorFound[form] = found = (OperatorData*)gOperatorTable->Get(&hashkey);
+    nsStringKey hkey(key);
+    gOperatorFound[form] = found = (OperatorData*)gOperatorTable->Get(&hkey);
 
     // If not found, check if the operator exists perhaps in a different form,
     // in the order of preference: infix, postfix, prefix

@@ -1,14 +1,14 @@
-/PageNotFound.xul/1.4/Mon Sep  2 03:36:24 2002//TFIREFOX_1_0_RELEASE
-/customize-panel.js/1.6/Fri Jan 12 04:46:58 2001//TFIREFOX_1_0_RELEASE
-/customize-panel.xul/1.9/Sat Nov  3 04:14:46 2001//TFIREFOX_1_0_RELEASE
-/customize.js/1.50/Thu Feb 19 11:23:16 2004//TFIREFOX_1_0_RELEASE
-/customize.xul/1.50.6.1/Sun Jun 20 22:53:21 2004//TFIREFOX_1_0_RELEASE
-/local-panels.rdf/1.20/Sun Aug 12 01:49:08 2001//TFIREFOX_1_0_RELEASE
-/make-panels.pl/1.6/Wed Jun  7 00:39:29 2000//TFIREFOX_1_0_RELEASE
-/preview.js/1.6/Thu Mar 22 00:59:16 2001//TFIREFOX_1_0_RELEASE
-/preview.xul/1.22/Thu Nov 15 02:20:57 2001//TFIREFOX_1_0_RELEASE
-/sidebarBindings.xml/1.11/Sat Apr 13 14:25:28 2002//TFIREFOX_1_0_RELEASE
-/sidebarOverlay.css/1.44/Tue Jan 21 08:49:32 2003//TFIREFOX_1_0_RELEASE
-/sidebarOverlay.js/1.120/Mon Nov 10 23:15:52 2003//TFIREFOX_1_0_RELEASE
-/sidebarOverlay.xul/1.94.20.1/Sun Jun 20 22:54:07 2004//TFIREFOX_1_0_RELEASE
+/PageNotFound.xul/1.4/Mon Sep  2 03:36:24 2002//TFIREFOX_1_5_RELEASE
+/customize-panel.js/1.7/Sat Apr 17 16:51:33 2004//TFIREFOX_1_5_RELEASE
+/customize-panel.xul/1.10/Sat Apr 17 16:51:33 2004//TFIREFOX_1_5_RELEASE
+/customize.js/1.52/Thu Jun 16 12:58:13 2005//TFIREFOX_1_5_RELEASE
+/customize.xul/1.56/Thu Mar 10 18:44:10 2005//TFIREFOX_1_5_RELEASE
+/local-panels.rdf/1.21/Sat Apr 17 16:51:33 2004//TFIREFOX_1_5_RELEASE
+/make-panels.pl/1.7/Sat Apr 17 16:51:33 2004//TFIREFOX_1_5_RELEASE
+/preview.js/1.7/Sat Apr 17 16:51:33 2004//TFIREFOX_1_5_RELEASE
+/preview.xul/1.23/Sat Apr 17 16:51:33 2004//TFIREFOX_1_5_RELEASE
+/sidebarBindings.xml/1.11/Sat Apr 13 14:25:28 2002//TFIREFOX_1_5_RELEASE
+/sidebarOverlay.css/1.45/Sat Apr 17 16:51:33 2004//TFIREFOX_1_5_RELEASE
+/sidebarOverlay.js/1.125/Thu Jun 16 12:58:13 2005//TFIREFOX_1_5_RELEASE
+/sidebarOverlay.xul/1.96/Sun May  1 09:48:35 2005//TFIREFOX_1_5_RELEASE
 D/locale////

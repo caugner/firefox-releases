@@ -1,26 +1,42 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributors(s):
- *   Jan Varga <varga@nixcorp.com>
+ * Contributor(s):
+ *   Jan Varga <varga@ku.sk>
  *   Håkan Waara (hwaara@chello.se)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 
 /*
@@ -33,8 +49,15 @@
 var gFolderJustSwitched = false;
 var gBeforeFolderLoadTime;
 var gRDFNamespace = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+var gVirtualFolderTerms;
+var gXFVirtualFolderTerms;
+var gCurrentVirtualFolderUri;
+var gPrevFolderFlags;
+var gPrevSelectedFolder;
+var gMsgFolderSelected;
 
 /* keep in sync with nsMsgFolderFlags.h */
+var MSG_FOLDER_FLAG_VIRTUAL = 0x0020;
 const MSG_FOLDER_FLAG_TRASH = 0x0100;
 const MSG_FOLDER_FLAG_SENTMAIL = 0x0200;
 const MSG_FOLDER_FLAG_DRAFTS = 0x0400;
@@ -134,7 +157,7 @@ function setTitleFromFolder(msgfolder, subject)
       }
     }
     title += " - " + gBrandBundle.getString("brandShortName");
-    window.title = title;
+    document.title = title;
 }
 
 function UpdateMailToolbar(caller)
@@ -228,7 +251,7 @@ function ChangeFolderByURI(uri, viewType, viewFlags, sortType, sortOrder)
     showMessagesAfterLoading = false;
   }
 
-  if (msgfolder.manyHeadersToDownload || showMessagesAfterLoading)
+  if (viewType != nsMsgViewType.eShowVirtualFolderResults && (msgfolder.manyHeadersToDownload || showMessagesAfterLoading))
   {
     gRerootOnFolderLoad = true;
     try
@@ -246,14 +269,16 @@ function ChangeFolderByURI(uri, viewType, viewFlags, sortType, sortOrder)
   }
   else
   {
-    SetBusyCursor(window, true);
+    if (viewType != nsMsgViewType.eShowVirtualFolderResults)
+      SetBusyCursor(window, true);
     RerootFolder(uri, msgfolder, viewType, viewFlags, sortType, sortOrder);
     gRerootOnFolderLoad = false;
     msgfolder.startFolderLoading();
 
     //Need to do this after rerooting folder.  Otherwise possibility of receiving folder loaded
     //notification before folder has actually changed.
-    msgfolder.updateFolder(msgWindow);
+    if (viewType != nsMsgViewType.eShowVirtualFolderResults)
+      msgfolder.updateFolder(msgWindow);
   }
 }
 
@@ -264,17 +289,35 @@ function isNewsURI(uri)
 
 function RerootFolder(uri, newFolder, viewType, viewFlags, sortType, sortOrder)
 {
+  viewDebug("In reroot folder, sortType = " +  sortType + "viewType = " + viewType + "\n");
+  if (sortType == 0)
+  {
+    try
+    {
+      var msgdb = newFolder.getMsgDatabase(msgWindow);
+      var dbFolderInfo = msgdb.dBFolderInfo;
+      sortType = dbFolderInfo.sortType;
+      sortOrder = dbFolderInfo.sortOrder;
+      viewFlags = dbFolderInfo.viewFlags;
+      viewType = dbFolderInfo.viewType;
+      dbFolderInfo = null;
+    }
+    catch(ex)
+    {
+      dump("invalid db in RerootFolder: " + ex + "\n");
+    }
+  }
+
   // workaround for #39655
   gFolderJustSwitched = true;
 
   ClearThreadPaneSelection();
 
   //Clear the new messages of the old folder
-  var oldFolder = msgWindow.openFolder;
+  var oldFolder = gPrevSelectedFolder;
   if (oldFolder) {
-    if (oldFolder.hasNewMessages) {
       oldFolder.clearNewMessages();
-    }
+    oldFolder.hasNewMessages = false;
   }
 
   //Set the window's new open folder.
@@ -302,6 +345,7 @@ function RerootFolder(uri, newFolder, viewType, viewFlags, sortType, sortOrder)
   // if this is the drafts, sent, or send later folder,
   // we show "Recipient" instead of "Author"
   SetSentFolderColumns(IsSpecialFolder(newFolder, MSG_FOLDER_FLAG_SENTMAIL | MSG_FOLDER_FLAG_DRAFTS | MSG_FOLDER_FLAG_QUEUE, true));
+  ShowLocationColumn(viewType == nsMsgViewType.eShowVirtualFolderResults);
 
   // now create the db view, which will sort it.
   CreateDBView(newFolder, viewType, viewFlags, sortType, sortOrder);
@@ -324,6 +368,16 @@ function RerootFolder(uri, newFolder, viewType, viewFlags, sortType, sortOrder)
   UpdateStatusMessageCounts(newFolder);
   
   UpdateMailToolbar("reroot folder in 3 pane");
+  // hook for extra toolbar items
+  var observerService = Components.classes["@mozilla.org/observer-service;1"].getService(Components.interfaces.nsIObserverService);
+  observerService.notifyObservers(window, "mail:updateToolbarItems", null);
+  // this is to kick off cross-folder searches for virtual folders.
+  if (gSearchSession && !gVirtualFolderTerms) // another var might be better...
+  {
+    viewDebug("doing a xf folder search in rerootFolder\n");
+    gDBView.searchSession = gSearchSession;
+    gSearchSession.search(msgWindow);
+  }
 }
 
 function SwitchView(command)
@@ -380,6 +434,13 @@ function SwitchView(command)
   }
 
   RerootThreadPane();
+
+  // this is to kick off cross-folder searches for virtual folders.
+  if (gSearchSession && !gVirtualFolderTerms) // another var might be better...
+  {
+    gDBView.searchSession = gSearchSession;
+    gSearchSession.search(msgWindow);
+  }
 }
 
 function SetSentFolderColumns(isSentFolder)
@@ -414,6 +475,21 @@ function SetSentFolderColumns(isSentFolder)
   }
 }
 
+function ShowLocationColumn(show)
+{
+  var col = document.getElementById("locationCol");
+  if (col) {
+    if (show) {
+      col.removeAttribute("hidden");
+      col.removeAttribute("ignoreincolumnpicker");
+    }
+    else {
+      col.setAttribute("hidden","true");
+      col.setAttribute("ignoreincolumnpicker","true");
+    }
+  }
+}
+
 function SetNewsFolderColumns()
 {
   var sizeColumn = document.getElementById("sizeCol");
@@ -434,7 +510,11 @@ function UpdateStatusMessageCounts(folder)
   var totalElement = GetTotalCountElement();
   if(folder && unreadElement && totalElement)
   {
-    var numUnread =
+    var numSelected = GetNumSelectedMessages();
+
+    var numUnread = (numSelected > 1) ?
+            gMessengerBundle.getFormattedString("selectedMsgStatus",
+                                                [numSelected]) :
             gMessengerBundle.getFormattedString("unreadMsgStatus",
                                                 [ folder.getNumUnread(false)]);
     var numTotal =
@@ -500,6 +580,9 @@ function ConvertColumnIDToSortType(columnID)
     case "idCol":
       sortKey = nsMsgViewSortType.byId;
       break;
+    case "attachmentCol":
+      sortKey = nsMsgViewSortType.byAttachments;
+      break;
     default:
       dump("unsupported sort column: " + columnID + "\n");
       sortKey = 0;
@@ -562,6 +645,9 @@ function ConvertSortTypeToColumnID(sortKey)
     case nsMsgViewSortType.byJunkStatus:
       columnID = "junkStatusCol";
       break;
+    case nsMsgViewSortType.byAttachments:
+      columnID = "attachmentCol";
+      break;
     default:
       dump("unsupported sort key: " + sortKey + "\n");
       columnID = null;
@@ -601,12 +687,19 @@ function CreateBareDBView(originalView, msgFolder, viewType, viewFlags, sortType
       case nsMsgViewType.eShowWatchedThreadsWithUnread:
           dbviewContractId += "watchedthreadswithunread";
           break;
+      case nsMsgViewType.eShowVirtualFolderResults:
+          dbviewContractId += "xfvf";
+          break;
       case nsMsgViewType.eShowAllThreads:
       default:
-          dbviewContractId += "threaded";
+          if (viewFlags & nsMsgViewFlagsType.kGroupBySort)
+            dbviewContractId += "group";
+          else
+            dbviewContractId += "threaded";
           break;
   }
 
+//  dump ("contract id = " + dbviewContractId + "original view = " + originalView + "\n");
   if (!originalView)
     gDBView = Components.classes[dbviewContractId].createInstance(Components.interfaces.nsIMsgDBView);
 
@@ -620,6 +713,12 @@ function CreateBareDBView(originalView, msgFolder, viewType, viewFlags, sortType
   if (!originalView) {
     gDBView.init(messenger, msgWindow, gThreadPaneCommandUpdater);
     gDBView.open(msgFolder, gCurSortType, sortOrder, viewFlags, count);
+    if (viewType == nsMsgViewType.eShowVirtualFolderResults)
+    {
+      // the view is a listener on the search results
+      gViewSearchListener = gDBView.QueryInterface(Components.interfaces.nsIMsgSearchNotify);
+      gSearchSession.registerListener(gViewSearchListener);
+    }
   } 
   else {
     gDBView = originalView.cloneDBView(messenger, msgWindow, gThreadPaneCommandUpdater);
@@ -635,7 +734,7 @@ function CreateDBView(msgFolder, viewType, viewFlags, sortType, sortOrder)
 
   // based on the collapsed state of the thread pane/message pane splitter,
   // suppress message display if appropriate.
-  gDBView.suppressMsgDisplay = IsThreadAndMessagePaneSplitterCollapsed();
+  gDBView.suppressMsgDisplay = IsMessagePaneCollapsed();
 
   UpdateSortIndicators(gCurSortType, sortOrder);
 }
@@ -662,12 +761,22 @@ function GetSelectedFolderResource()
     var folderTree = GetFolderTree();
     var startIndex = {};
     var endIndex = {};
-    folderTree.treeBoxObject.selection.getRangeAt(0, startIndex, endIndex);
+    folderTree.view.selection.getRangeAt(0, startIndex, endIndex);
     return GetFolderResource(folderTree, startIndex.value);
 }
 
-function NotifyChangedMessagePaneVisibility(now_hidden)
+function ChangeMessagePaneVisibility(now_hidden)
 {
+  // we also have to hide the File/Attachments menuitem
+  var node = document.getElementById("fileAttachmentMenu");
+  if (node)
+    node.hidden = now_hidden;
+
+  if (gDBView) {
+    // the collapsed state is the state after we released the mouse 
+    // so we take it as it is
+    gDBView.suppressMsgDisplay = now_hidden;
+  }
   var event = document.createEvent('Events');
   if (now_hidden) {
     event.initEvent('messagepane-hide', false, true);
@@ -682,28 +791,20 @@ function OnMouseUpThreadAndMessagePaneSplitter()
 {
   // the collapsed state is the state after we released the mouse 
   // so we take it as it is
-  var now_hidden = IsThreadAndMessagePaneSplitterCollapsed();
-  if (gDBView) {
-    gDBView.suppressMsgDisplay = now_hidden;
-  }
-  NotifyChangedMessagePaneVisibility(now_hidden);
+  ChangeMessagePaneVisibility(IsMessagePaneCollapsed());
 }
 
 function OnClickThreadAndMessagePaneSplitterGrippy()
 {
   // the collapsed state is the state when we clicked on the grippy
   // not when afterwards, so we need to reverse this value
-  var now_hidden = !IsThreadAndMessagePaneSplitterCollapsed();
-  if (gDBView) {
-    gDBView.suppressMsgDisplay = now_hidden;
-  }
-  NotifyChangedMessagePaneVisibility(now_hidden);
+  ChangeMessagePaneVisibility(!IsMessagePaneCollapsed());
 }
 
 function FolderPaneSelectionChange()
 {
     var folderTree = GetFolderTree();
-    var folderSelection = folderTree.treeBoxObject.selection;
+    var folderSelection = folderTree.view.selection;
 
     // This prevents a folder from being loaded in the case that the user
     // has right-clicked on a folder different from the one that was
@@ -719,22 +820,44 @@ function FolderPaneSelectionChange()
       gTimelineService.enter("FolderLoading has Started");
     }
 
+    gVirtualFolderTerms = null;
+    gXFVirtualFolderTerms = null;
+
     if (folderSelection.count == 1)
     {
         var startIndex = {};
         var endIndex = {};
+
+
         folderSelection.getRangeAt(0, startIndex, endIndex);
         var folderResource = GetFolderResource(folderTree, startIndex.value);
+        var uriToLoad = folderResource.Value;
         var msgFolder = folderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
-        if (msgFolder == msgWindow.openFolder)
+        if (msgFolder == gMsgFolderSelected)
+           return;
+        gPrevSelectedFolder = gMsgFolderSelected;
+        gMsgFolderSelected = msgFolder;
+        var folderFlags = msgFolder.flags;
+        // if this is same folder, and we're not showing a virtual folder
+        // then do nothing.
+        if (msgFolder == msgWindow.openFolder && 
+          !(folderFlags & MSG_FOLDER_FLAG_VIRTUAL) && ! (gPrevFolderFlags & MSG_FOLDER_FLAG_VIRTUAL))
+        {
+            dump("msgFolder already open" + folderResource.URI + "\n");
             return;
+        }
         else
         {
+            OnLeavingFolder(gPrevSelectedFolder);  // mark all read in last folder
             var sortType = 0;
             var sortOrder = 0;
             var viewFlags = 0;
             var viewType = 0;
-
+            gVirtualFolderTerms = null;
+            gXFVirtualFolderTerms = null;
+            gPrevFolderFlags = folderFlags;
+//            gSearchInput.showingSearchCriteria = false;
+            gCurrentVirtualFolderUri = null;
             // don't get the db if this folder is a server
             // we're going to be display account central
             if (!(msgFolder.isServer)) 
@@ -747,8 +870,49 @@ function FolderPaneSelectionChange()
                   var dbFolderInfo = msgDatabase.dBFolderInfo;
                   sortType = dbFolderInfo.sortType;
                   sortOrder = dbFolderInfo.sortOrder;
-                  viewFlags = dbFolderInfo.viewFlags;
-                  viewType = dbFolderInfo.viewType;
+                  if (folderFlags & MSG_FOLDER_FLAG_VIRTUAL)
+                  {
+                    viewType = nsMsgViewType.eShowQuickSearchResults;
+                    var searchTermString = dbFolderInfo.getCharPtrProperty("searchStr");
+                    // trick the view code into updating the real folder...
+                    gCurrentVirtualFolderUri = uriToLoad;
+                    var srchFolderUri = dbFolderInfo.getCharPtrProperty("searchFolderUri");
+                    var srchFolderUriArray = srchFolderUri.split('|');
+                    var searchOnline = dbFolderInfo.getBooleanProperty("searchOnline", false);
+                    // cross folder search
+                    var filterService = Components.classes["@mozilla.org/messenger/services/filters;1"].getService(Components.interfaces.nsIMsgFilterService);
+                    var filterList = filterService.getTempFilterList(msgFolder);
+                    var tempFilter = filterList.createFilter("temp");
+                    filterList.parseCondition(tempFilter, searchTermString);
+                    if (srchFolderUriArray.length > 1)
+                    {
+                      viewType = nsMsgViewType.eShowVirtualFolderResults;
+                      gXFVirtualFolderTerms = CreateGroupedSearchTerms(tempFilter.searchTerms);
+                      setupXFVirtualFolderSearch(srchFolderUriArray, gXFVirtualFolderTerms, searchOnline);
+                      gSearchInput.showingSearchCriteria = false;
+                      // need to set things up so that reroot folder issues the search
+                    }
+                    else
+                    {
+                      gSearchSession = null;
+                      uriToLoad = srchFolderUri;
+                      // we need to load the db for the actual folder so that many hdrs to download
+                      // will return false...
+                      var realFolderRes = GetResourceFromUri(uriToLoad);
+                      var realFolder = realFolderRes.QueryInterface(Components.interfaces.nsIMsgFolder);
+                      msgDatabase = realFolder.getMsgDatabase(msgWindow);
+//                      dump("search term string = " + searchTermString + "\n");
+                    
+                      gVirtualFolderTerms = CreateGroupedSearchTerms(tempFilter.searchTerms);
+//                      gSearchInput.showingSearchCriteria = false;
+                    }
+                  }
+                  else
+                  {
+                    gSearchSession = null;
+                    viewFlags = dbFolderInfo.viewFlags;
+                    viewType = dbFolderInfo.viewType;
+                  }
                   msgDatabase = null;
                   dbFolderInfo = null;
                 }
@@ -771,12 +935,16 @@ function FolderPaneSelectionChange()
             }
             ClearMessagePane();
 
-            if (gSearchEmailAddress || gDefaultSearchViewTerms)
+            if (gXFVirtualFolderTerms)
+              viewType = nsMsgViewType.eShowVirtualFolderResults;
+            else if (gSearchEmailAddress || gDefaultSearchViewTerms || gVirtualFolderTerms) 
               viewType = nsMsgViewType.eShowQuickSearchResults;
             else if (viewType == nsMsgViewType.eShowQuickSearchResults)
               viewType = nsMsgViewType.eShowAllThreads;  //override viewType - we don't want to start w/ quick search
-            ChangeFolderByURI(folderResource.Value, viewType, viewFlags, sortType, sortOrder);
-        }
+            ChangeFolderByURI(uriToLoad, viewType, viewFlags, sortType, sortOrder);
+           if (gVirtualFolderTerms)
+             gDBView.viewFolder = msgFolder;        
+         }
     }
     else
     {
@@ -851,15 +1019,6 @@ function GetSelectTrashUri(folder)
     return null;
 }
 
-function Undo()
-{
-    messenger.Undo(msgWindow);
-}
-
-function Redo()
-{
-    messenger.Redo(msgWindow);
-}
 var mailOfflineObserver = {
   observe: function(subject, topic, state) {
     // sanity checks
@@ -878,5 +1037,164 @@ function RemoveMailOfflineObserver()
 {
   var observerService = Components.classes["@mozilla.org/observer-service;1"].getService(Components.interfaces.nsIObserverService); 
   observerService.removeObserver(mailOfflineObserver,"network:offline-status-changed");
+}
+
+function getSearchTermString(searchTerms)
+{
+  var searchIndex;
+  var condition = "";
+  var count = searchTerms.Count();
+  for (searchIndex = 0; searchIndex < count; )
+  {
+    var term = searchTerms.QueryElementAt(searchIndex++, Components.interfaces.nsIMsgSearchTerm);
+    
+    if (condition.length > 1)
+      condition += ' ';
+    
+    condition += (term.booleanAnd) ? "AND (" : "OR (";
+    condition += term.termAsString + ')';
+  }
+  return condition;
+}
+
+function  CreateVirtualFolder(newName, parentFolder, searchFolderURIs, searchTerms, searchOnline)
+{
+  // ### need to make sure view/folder doesn't exist.
+  if (searchFolderURIs && (searchFolderURIs != "") && newName && (newName != "")) 
+  {
+    try
+    {
+      var newFolder = parentFolder.addSubfolder(newName);
+      newFolder.setFlag(MSG_FOLDER_FLAG_VIRTUAL);
+      var vfdb = newFolder.getMsgDatabase(msgWindow);
+      var searchTermString = getSearchTermString(searchTerms);
+      var dbFolderInfo = vfdb.dBFolderInfo;
+      // set the view string as a property of the db folder info
+      // set the original folder name as well.
+      dbFolderInfo.setCharPtrProperty("searchStr", searchTermString);
+      dbFolderInfo.setCharPtrProperty("searchFolderUri", searchFolderURIs);
+      dbFolderInfo.setBooleanProperty("searchOnline", searchOnline);
+      vfdb.summaryValid = true;
+      vfdb.Close(true);
+      parentFolder.NotifyItemAdded(newFolder);
+      var accountManager = Components.classes["@mozilla.org/messenger/account-manager;1"].getService(Components.interfaces.nsIMsgAccountManager);
+      accountManager.saveVirtualFolders();
+    }
+    catch(e)
+    {
+      throw(e); // so that the dialog does not automatically close
+      dump ("Exception : creating virtual folder \n");
+    }
+  }
+  else 
+  {
+    dump("no name or nothing selected\n");
+  }   
+}
+
+var searchSessionContractID = "@mozilla.org/messenger/searchSession;1";
+var gSearchView;
+var gSearchSession;
+
+var nsIMsgFolder = Components.interfaces.nsIMsgFolder;
+var nsIMsgWindow = Components.interfaces.nsIMsgWindow;
+var nsIMsgRDFDataSource = Components.interfaces.nsIMsgRDFDataSource;
+var nsMsgSearchScope = Components.interfaces.nsMsgSearchScope;
+
+var gFolderDatasource;
+var gFolderPicker;
+var gStatusBar = null;
+var gTimelineEnabled = false;
+var gMessengerBundle = null;
+
+// Datasource search listener -- made global as it has to be registered
+// and unregistered in different functions.
+var gDataSourceSearchListener;
+var gViewSearchListener;
+
+var gMailSession;
+
+function GetScopeForFolder(folder) 
+{
+  return folder.server.searchScope;
+}
+
+function setupXFVirtualFolderSearch(folderUrisToSearch, searchTerms, searchOnline)
+{
+    var count = new Object;
+  var i;
+
+    gSearchSession = Components.classes[searchSessionContractID].createInstance(Components.interfaces.nsIMsgSearchSession);
+
+    gMailSession = Components.classes[mailSessionContractID].getService(Components.interfaces.nsIMsgMailSession);
+
+  for (i in folderUrisToSearch)
+    {
+      var realFolderRes = GetResourceFromUri(folderUrisToSearch[i]);
+      var realFolder = realFolderRes.QueryInterface(Components.interfaces.nsIMsgFolder);
+      if (!realFolder.isServer)
+        gSearchSession.addScopeTerm(!searchOnline ? nsMsgSearchScope.offlineMail : GetScopeForFolder(realFolder), realFolder);
+    }
+
+    var termsArray = searchTerms.QueryInterface(Components.interfaces.nsISupportsArray);
+  for (i = 0; i < termsArray.Count(); ++i)
+      gSearchSession.appendTerm(termsArray.GetElementAt(i).QueryInterface(Components.interfaces.nsIMsgSearchTerm));
+}
+
+function CreateGroupedSearchTerms(searchTermsArray)
+{
+
+  var searchSession = gSearchSession || 
+    Components.classes[searchSessionContractID].createInstance(Components.interfaces.nsIMsgSearchSession);
+
+  // create a temporary isupports array to store our search terms
+  // since we will be modifying the terms so they work with quick search
+  var searchTermsArrayForQS = Components.classes["@mozilla.org/supports-array;1"].createInstance(Components.interfaces.nsISupportsArray);
+  
+  var numEntries = searchTermsArray.Count();
+  for (var i = 0; i < numEntries; i++) {
+    var searchTerm = searchTermsArray.GetElementAt(i).QueryInterface(Components.interfaces.nsIMsgSearchTerm); 
+
+    // clone the term, since we might be modifying it
+    var searchTermForQS = searchSession.createTerm();
+    searchTermForQS.value = searchTerm.value;
+    searchTermForQS.attrib = searchTerm.attrib;
+    searchTermForQS.op = searchTerm.op;
+
+    // mark the first node as a group
+    if (i == 0)
+      searchTermForQS.beginsGrouping = true;
+    else if (i == numEntries - 1)
+      searchTermForQS.endsGrouping = true;
+
+    // turn the first term to true to work with quick search...
+    searchTermForQS.booleanAnd = i ? searchTerm.booleanAnd : true; 
+    
+    searchTermsArrayForQS.AppendElement(searchTermForQS);
+  }
+  return searchTermsArrayForQS;
+}
+
+function OnLeavingFolder(aFolder)
+{
+  try
+  {
+    // Mark all messages of aFolder as read:
+    // We can't use the command controller, because it is already tuned in to the
+    // new folder, so we just mimic its behaviour wrt goDoCommand('cmd_markAllRead').
+    if (gDBView && gPrefBranch.getBoolPref("mailnews.mark_message_read." + aFolder.server.type))
+    {
+      gDBView.doCommand(nsMsgViewCommandType.markAllRead);
+    }
+  }
+  catch(e){/* ignore */}
+}
+
+var gViewDebug = false;
+
+function viewDebug(str)
+{
+  if (gViewDebug)
+    dump(str);
 }
 

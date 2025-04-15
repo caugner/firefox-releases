@@ -1,24 +1,40 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Christopher Blizzard.
- * Portions created by Christopher Blizzard are Copyright (C)
- * Christopher Blizzard.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Christopher Blizzard. Portions created by Christopher Blizzard are Copyright (C) Christopher Blizzard.  All Rights Reserved.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Christopher Blizzard <blizzard@mozilla.org>
  *   Ramiro Estrugo <ramiro@eazel.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef gtkmozembed_h
 #define gtkmozembed_h
@@ -29,6 +45,16 @@ extern "C" {
 
 #include <stddef.h>
 #include <gtk/gtk.h>
+#ifdef MOZILLA_CLIENT
+#include "nscore.h"
+#ifdef _IMPL_GTKMOZEMBED
+#define GTKMOZEMBED_API(type) NS_EXPORT_(type)
+#else
+#define GTKMOZEMBED_API(type) NS_IMPORT_(type)
+#endif
+#else
+#define GTKMOZEMBED_API(type) type
+#endif
 
 #define GTK_TYPE_MOZ_EMBED             (gtk_moz_embed_get_type())
 #define GTK_MOZ_EMBED(obj)             GTK_CHECK_CAST((obj), GTK_TYPE_MOZ_EMBED, GtkMozEmbed)
@@ -81,40 +107,46 @@ struct _GtkMozEmbedClass
 				guint state);
   void (* status_change)       (GtkMozEmbed *embed, gpointer request,
 				gint status, gpointer message);
+  gint (* dom_activate)        (GtkMozEmbed *embed, gpointer dom_event);
+  gint (* dom_focus_in)        (GtkMozEmbed *embed, gpointer dom_event);
+  gint (* dom_focus_out)       (GtkMozEmbed *embed, gpointer dom_event);
 };
 
-GtkType      gtk_moz_embed_get_type         (void);
-GtkWidget   *gtk_moz_embed_new              (void);
-void         gtk_moz_embed_push_startup     (void);
-void         gtk_moz_embed_pop_startup      (void);
-void         gtk_moz_embed_set_comp_path    (char *aPath);
-void         gtk_moz_embed_set_profile_path (char *aDir, char *aName);
-void         gtk_moz_embed_load_url         (GtkMozEmbed *embed, 
-					     const char *url);
-void         gtk_moz_embed_stop_load        (GtkMozEmbed *embed);
-gboolean     gtk_moz_embed_can_go_back      (GtkMozEmbed *embed);
-gboolean     gtk_moz_embed_can_go_forward   (GtkMozEmbed *embed);
-void         gtk_moz_embed_go_back          (GtkMozEmbed *embed);
-void         gtk_moz_embed_go_forward       (GtkMozEmbed *embed);
-void         gtk_moz_embed_render_data      (GtkMozEmbed *embed, 
-					     const char *data,
-					     guint32 len,
-					     const char *base_uri, 
-					     const char *mime_type);
-void         gtk_moz_embed_open_stream      (GtkMozEmbed *embed,
-					     const char *base_uri,
-					     const char *mime_type);
-void         gtk_moz_embed_append_data      (GtkMozEmbed *embed,
-					     const char *data, guint32 len);
-void         gtk_moz_embed_close_stream     (GtkMozEmbed *embed);
-char        *gtk_moz_embed_get_link_message (GtkMozEmbed *embed);
-char        *gtk_moz_embed_get_js_status    (GtkMozEmbed *embed);
-char        *gtk_moz_embed_get_title        (GtkMozEmbed *embed);
-char        *gtk_moz_embed_get_location     (GtkMozEmbed *embed);
-void         gtk_moz_embed_reload           (GtkMozEmbed *embed, gint32 flags);
-void         gtk_moz_embed_set_chrome_mask  (GtkMozEmbed *embed, 
-					     guint32 flags);
-guint32      gtk_moz_embed_get_chrome_mask  (GtkMozEmbed *embed);
+GTKMOZEMBED_API(GtkType)    gtk_moz_embed_get_type         (void);
+GTKMOZEMBED_API(GtkWidget*) gtk_moz_embed_new              (void);
+GTKMOZEMBED_API(void)       gtk_moz_embed_push_startup     (void);
+GTKMOZEMBED_API(void)       gtk_moz_embed_pop_startup      (void);
+GTKMOZEMBED_API(void)       gtk_moz_embed_set_comp_path    (const char *aPath);
+GTKMOZEMBED_API(void)       gtk_moz_embed_set_profile_path (const char *aDir,
+							    const char *aName);
+GTKMOZEMBED_API(void)       gtk_moz_embed_load_url         (GtkMozEmbed *embed,
+							    const char *url);
+GTKMOZEMBED_API(void)      gtk_moz_embed_stop_load        (GtkMozEmbed *embed);
+GTKMOZEMBED_API(gboolean)  gtk_moz_embed_can_go_back      (GtkMozEmbed *embed);
+GTKMOZEMBED_API(gboolean)  gtk_moz_embed_can_go_forward   (GtkMozEmbed *embed);
+GTKMOZEMBED_API(void)      gtk_moz_embed_go_back          (GtkMozEmbed *embed);
+GTKMOZEMBED_API(void)      gtk_moz_embed_go_forward       (GtkMozEmbed *embed);
+GTKMOZEMBED_API(void)   gtk_moz_embed_render_data      (GtkMozEmbed *embed, 
+							const char *data,
+							guint32 len,
+							const char *base_uri, 
+							const char *mime_type);
+GTKMOZEMBED_API(void)   gtk_moz_embed_open_stream      (GtkMozEmbed *embed,
+							const char *base_uri,
+							const char *mime_type);
+GTKMOZEMBED_API(void)   gtk_moz_embed_append_data      (GtkMozEmbed *embed,
+							const char *data,
+							guint32 len);
+GTKMOZEMBED_API(void)   gtk_moz_embed_close_stream     (GtkMozEmbed *embed);
+GTKMOZEMBED_API(char*)  gtk_moz_embed_get_link_message (GtkMozEmbed *embed);
+GTKMOZEMBED_API(char*)  gtk_moz_embed_get_js_status    (GtkMozEmbed *embed);
+GTKMOZEMBED_API(char*)  gtk_moz_embed_get_title        (GtkMozEmbed *embed);
+GTKMOZEMBED_API(char*)  gtk_moz_embed_get_location     (GtkMozEmbed *embed);
+GTKMOZEMBED_API(void)   gtk_moz_embed_reload           (GtkMozEmbed *embed,
+							gint32 flags);
+GTKMOZEMBED_API(void)   gtk_moz_embed_set_chrome_mask  (GtkMozEmbed *embed, 
+							guint32 flags);
+GTKMOZEMBED_API(guint32) gtk_moz_embed_get_chrome_mask (GtkMozEmbed *embed);
 
 /* enum types */
 #define GTK_TYPE_MOZ_EMBED_PROGRESS_FLAGS \
@@ -126,10 +158,10 @@ guint32      gtk_moz_embed_get_chrome_mask  (GtkMozEmbed *embed);
 #define GTK_TYPE_MOZ_EMBED_CHROME_FLAGS \
              (gtk_moz_embed_chrome_flags_get_type())
 
-GtkType      gtk_moz_embed_progress_flags_get_type (void);
-GtkType      gtk_moz_embed_status_enums_get_type (void);
-GtkType      gtk_moz_embed_reload_flags_get_type (void);
-GtkType      gtk_moz_embed_chrome_flags_get_type (void);
+GTKMOZEMBED_API(GtkType)      gtk_moz_embed_progress_flags_get_type (void);
+GTKMOZEMBED_API(GtkType)      gtk_moz_embed_status_enums_get_type (void);
+GTKMOZEMBED_API(GtkType)      gtk_moz_embed_reload_flags_get_type (void);
+GTKMOZEMBED_API(GtkType)      gtk_moz_embed_chrome_flags_get_type (void);
 
 /* These are straight out of nsIWebProgressListener.h */
 
@@ -144,7 +176,9 @@ typedef enum
   GTK_MOZ_EMBED_FLAG_IS_REQUEST = 65536,
   GTK_MOZ_EMBED_FLAG_IS_DOCUMENT = 131072,
   GTK_MOZ_EMBED_FLAG_IS_NETWORK = 262144,
-  GTK_MOZ_EMBED_FLAG_IS_WINDOW = 524288 
+  GTK_MOZ_EMBED_FLAG_IS_WINDOW = 524288,
+
+  GTK_MOZ_EMBED_FLAG_RESTORING = 16777216
 } GtkMozEmbedProgressFlags;
 
 /* These are from various networking headers */
@@ -203,6 +237,12 @@ typedef enum
 /* this is a singleton object that you can hook up to to get signals
    that are not handed out on a per widget basis. */
 
+#define GTK_TYPE_MOZ_EMBED_SINGLE            (gtk_moz_embed_single_get_type())
+#define GTK_MOZ_EMBED_SINGLE(obj)            GTK_CHECK_CAST((obj), GTK_TYPE_MOZ_EMBED_SINGLE, GtkMozEmbedSingle)
+#define GTK_MOZ_EMBED_SINGLE_CLASS(klass)    GTK_CHEK_CLASS_CAST((klass), GTK_TYPE_MOZ_EMBED_SINGLE, GtkMozEmbedSingleClass)
+#define GTK_IS_MOZ_EMBED_SINGLE(obj)         GTK_CHECK_TYPE((obj), GTK_TYPE_MOZ_EMBED_SINGLE)
+#define GTK_IS_MOZ_EMBED_SINGLE_CLASS(klass) GTK_CHECK_CLASS_TYPE((klass), GTK_TYPE_MOZ_EMBED)
+
 typedef struct _GtkMozEmbedSingle      GtkMozEmbedSingle;
 typedef struct _GtkMozEmbedSingleClass GtkMozEmbedSingleClass;
 
@@ -221,8 +261,8 @@ struct _GtkMozEmbedSingleClass
 				guint chromemask);
 };
 
-GtkMozEmbedSingle *
-gtk_moz_embed_single_get(void);
+GTKMOZEMBED_API(GtkType)             gtk_moz_embed_single_get_type  (void);
+GTKMOZEMBED_API(GtkMozEmbedSingle *) gtk_moz_embed_single_get       (void);
 
 #ifdef __cplusplus
 }

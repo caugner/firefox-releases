@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -21,18 +21,17 @@
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -217,7 +216,7 @@ NS_IMETHODIMP nsRenderingContextPh :: PushState( void )
 	return NS_OK;
 }
 
-NS_IMETHODIMP nsRenderingContextPh :: PopState( PRBool &aClipEmpty ) 
+NS_IMETHODIMP nsRenderingContextPh :: PopState(void) 
 {
 	PRUint32 cnt = mStateCache->Count();
 	nsGraphicsState * state;
@@ -251,10 +250,6 @@ NS_IMETHODIMP nsRenderingContextPh :: PopState( PRBool &aClipEmpty )
 #endif
 	}
 	
-	if( mClipRegion ) 
-		aClipEmpty = mClipRegion->IsEmpty();
-	else
-		aClipEmpty = PR_TRUE;
 	return NS_OK;
 }
 
@@ -278,7 +273,7 @@ NS_IMETHODIMP nsRenderingContextPh :: GetClipRect( nsRect &aRect, PRBool &aClipV
 	return NS_OK;
 }
 
-NS_IMETHODIMP nsRenderingContextPh :: SetClipRect( const nsRect& aRect, nsClipCombine aCombine, PRBool &aClipEmpty ) 
+NS_IMETHODIMP nsRenderingContextPh :: SetClipRect( const nsRect& aRect, nsClipCombine aCombine ) 
 {
 	nsresult   res = NS_ERROR_FAILURE;
 	nsRect     trect = aRect;
@@ -330,14 +325,13 @@ NS_IMETHODIMP nsRenderingContextPh :: SetClipRect( const nsRect& aRect, nsClipCo
 				break;
 		}
 		
-		aClipEmpty = mClipRegion->IsEmpty();
 		res = NS_OK;
 	}
 	
 	return res;
 }
 
-NS_IMETHODIMP nsRenderingContextPh :: SetClipRegion( const nsIRegion& aRegion, nsClipCombine aCombine, PRBool &aClipEmpty ) 
+NS_IMETHODIMP nsRenderingContextPh :: SetClipRegion( const nsIRegion& aRegion, nsClipCombine aCombine ) 
 {
 	PRUint32 cnt = mStateCache->Count();
 	nsGraphicsState *state = nsnull;
@@ -383,7 +377,6 @@ NS_IMETHODIMP nsRenderingContextPh :: SetClipRegion( const nsIRegion& aRegion, n
 			break;
 	}
 	
-	aClipEmpty = mClipRegion->IsEmpty();
 	return NS_OK;
 }
 
@@ -436,7 +429,7 @@ NS_IMETHODIMP nsRenderingContextPh :: SetFont( nsIFontMetrics *aFontMetrics )
 	return NS_OK;
 }
 
-NS_IMETHODIMP nsRenderingContextPh :: CreateDrawingSurface( const nsRect &aBounds, PRUint32 aSurfFlags, nsDrawingSurface &aSurface ) 
+NS_IMETHODIMP nsRenderingContextPh :: CreateDrawingSurface( const nsRect &aBounds, PRUint32 aSurfFlags, nsIDrawingSurface* &aSurface ) 
 {
 	if( mSurface ) {
 		nsDrawingSurfacePh *surf = new nsDrawingSurfacePh();
@@ -444,7 +437,7 @@ NS_IMETHODIMP nsRenderingContextPh :: CreateDrawingSurface( const nsRect &aBound
 			NS_ADDREF(surf);
 			/* we pass NULL as aGC here / it means use the default photon gc */
 			if( surf->Init( aBounds.width, aBounds.height, aSurfFlags ) == NS_OK ) {
-				aSurface = (nsDrawingSurface) surf;
+				aSurface = surf;
 				return NS_OK;
 				}
 			}
@@ -459,24 +452,6 @@ NS_IMETHODIMP nsRenderingContextPh :: DrawLine( nscoord aX0, nscoord aY0, nscoor
 
 	mTranMatrix->TransformCoord( &aX0, &aY0 );
 	mTranMatrix->TransformCoord( &aX1, &aY1 );
-
-	diffX = aX1 - aX0;
-	diffY = aY1 - aY0;
-
-	if( diffX != 0 ) diffX = ( diffX > 0 ? 1 : -1 );
-	if( diffY != 0 ) diffY = ( diffY > 0 ? 1 : -1 );
-	
-	UpdateGC();
-	PgSetStrokeColorCx( mGC, mCurrentColor );
-	PgSetStrokeDashCx( mGC, sLineStyle[mCurrentLineStyle], sLineStyleLen[mCurrentLineStyle], 0x10000 );
-	
-	PgDrawILineCx( mSurfaceDC, aX0, aY0, aX1-diffX, aY1-diffY );
-	return NS_OK;
-}
-
-NS_IMETHODIMP nsRenderingContextPh :: DrawStdLine( nscoord aX0, nscoord aY0, nscoord aX1, nscoord aY1 ) 
-{
-	nscoord diffX, diffY;
 
 	diffX = aX1 - aX0;
 	diffY = aY1 - aY0;
@@ -880,7 +855,7 @@ NS_IMETHODIMP nsRenderingContextPh::DrawImage( nsIImage *aImage, const nsRect& a
  *  See documentation in nsIRenderingContext.h
  *	@update 3/16/00 dwc
  */
-NS_IMETHODIMP nsRenderingContextPh :: CopyOffScreenBits( nsDrawingSurface aSrcSurf, PRInt32 aSrcX, PRInt32 aSrcY, const nsRect &aDestBounds, PRUint32 aCopyFlags ) 
+NS_IMETHODIMP nsRenderingContextPh :: CopyOffScreenBits( nsIDrawingSurface* aSrcSurf, PRInt32 aSrcX, PRInt32 aSrcY, const nsRect &aDestBounds, PRUint32 aCopyFlags ) 
 {
 	PhArea_t              darea, sarea;
 	PRInt32               srcX = aSrcX;

@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,27 +14,27 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Crocodile Clips Ltd..
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsSVGPointList.h"
 #include "nsSVGPoint.h"
@@ -44,6 +44,7 @@
 #include "nsTextFormatter.h"
 #include "nsCRT.h"
 #include "nsCOMArray.h"
+#include "nsContentUtils.h"
 
 nsresult
 nsSVGPointList::Create(const nsAString& aValue,
@@ -186,7 +187,7 @@ nsSVGPointList::SetValueString(const nsAString& aValue)
     }
     
     nsCOMPtr<nsIDOMSVGPoint> point;
-    nsSVGPoint::Create((float)x, (float)y, getter_AddRefs(point));
+    NS_NewSVGPoint(getter_AddRefs(point), (float)x, (float)y);
     if (!point) {
       rv = NS_ERROR_OUT_OF_MEMORY;
       break;
@@ -195,7 +196,7 @@ nsSVGPointList::SetValueString(const nsAString& aValue)
   }
 
   if (token1 || NS_FAILED(rv)) {
-    // there was a parse error. 
+    // there was a parse error or we ran out of memory
     rv = NS_ERROR_FAILURE;
   }
   else {
@@ -236,7 +237,7 @@ nsSVGPointList::GetValueString(nsAString& aValue)
 
     if (++i >= count) break;
 
-    aValue.Append(NS_LITERAL_STRING(" "));
+    aValue.AppendLiteral(" ");
   }
   
   return NS_OK;
@@ -262,8 +263,13 @@ NS_IMETHODIMP nsSVGPointList::Clear()
 }
 
 /* nsIDOMSVGPoint initialize (in nsIDOMSVGPoint newItem); */
-NS_IMETHODIMP nsSVGPointList::Initialize(nsIDOMSVGPoint *newItem, nsIDOMSVGPoint **_retval)
+NS_IMETHODIMP nsSVGPointList::Initialize(nsIDOMSVGPoint *newItem,
+                                         nsIDOMSVGPoint **_retval)
 {
+  if (!newItem) {
+    *_retval = nsnull;
+    return NS_ERROR_DOM_SVG_WRONG_TYPE_ERR;
+  }
   Clear();
   return AppendItem(newItem, _retval);
 }
@@ -282,15 +288,27 @@ NS_IMETHODIMP nsSVGPointList::GetItem(PRUint32 index, nsIDOMSVGPoint **_retval)
 }
 
 /* nsIDOMSVGPoint insertItemBefore (in nsIDOMSVGPoint newItem, in unsigned long index); */
-NS_IMETHODIMP nsSVGPointList::InsertItemBefore(nsIDOMSVGPoint *newItem, PRUint32 index, nsIDOMSVGPoint **_retval)
+NS_IMETHODIMP nsSVGPointList::InsertItemBefore(nsIDOMSVGPoint *newItem,
+                                               PRUint32 index,
+                                               nsIDOMSVGPoint **_retval)
 {
+  // null check when implementing - this method can be used by scripts!
+  // if (!newItem)
+  //   return NS_ERROR_DOM_SVG_WRONG_TYPE_ERR;
+
   NS_NOTYETIMPLEMENTED("write me");
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 /* nsIDOMSVGPoint replaceItem (in nsIDOMSVGPoint newItem, in unsigned long index); */
-NS_IMETHODIMP nsSVGPointList::ReplaceItem(nsIDOMSVGPoint *newItem, PRUint32 index, nsIDOMSVGPoint **_retval)
+NS_IMETHODIMP nsSVGPointList::ReplaceItem(nsIDOMSVGPoint *newItem,
+                                          PRUint32 index,
+                                          nsIDOMSVGPoint **_retval)
 {
+  // null check when implementing - this method can be used by scripts!
+  // if (!newItem)
+  //   return NS_ERROR_DOM_SVG_WRONG_TYPE_ERR;
+
   NS_NOTYETIMPLEMENTED("write me");
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -312,15 +330,18 @@ NS_IMETHODIMP nsSVGPointList::RemoveItem(PRUint32 index, nsIDOMSVGPoint **_retva
 }
 
 /* nsIDOMSVGPoint appendItem (in nsIDOMSVGPoint newItem); */
-NS_IMETHODIMP nsSVGPointList::AppendItem(nsIDOMSVGPoint *newItem, nsIDOMSVGPoint **_retval)
+NS_IMETHODIMP nsSVGPointList::AppendItem(nsIDOMSVGPoint *newItem,
+                                         nsIDOMSVGPoint **_retval)
 {
   // XXX The SVG specs state that 'if newItem is already in a list, it
   // is removed from its previous list before it is inserted into this
   // list'. We don't do that. Should we?
   
   *_retval = newItem;
-  NS_ADDREF(*_retval);
+  if (!newItem)
+    return NS_ERROR_DOM_SVG_WRONG_TYPE_ERR;
   AppendElement(newItem);
+  NS_ADDREF(*_retval);
   return NS_OK;
 }
 
@@ -328,15 +349,17 @@ NS_IMETHODIMP nsSVGPointList::AppendItem(nsIDOMSVGPoint *newItem, nsIDOMSVGPoint
 // nsISVGValueObserver methods
 
 NS_IMETHODIMP
-nsSVGPointList::WillModifySVGObservable(nsISVGValue* observable)
+nsSVGPointList::WillModifySVGObservable(nsISVGValue* observable,
+                                        modificationType aModType)
 {
-  WillModify();
+  WillModify(aModType);
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsSVGPointList::DidModifySVGObservable (nsISVGValue* observable)
+nsSVGPointList::DidModifySVGObservable (nsISVGValue* observable,
+                                        modificationType aModType)
 {
-  DidModify();
+  DidModify(aModType);
   return NS_OK;
 }

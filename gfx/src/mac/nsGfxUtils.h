@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
  
@@ -55,14 +54,7 @@
  */
 inline PRBool CurrentPortIsWMPort()
 {
-#if TARGET_CARBON
   return PR_FALSE;
-#else
-  GrafPtr curPort;
-  ::GetPort(&curPort);
-  
-  return (curPort == ::LMGetWMgrPort());
-#endif
 }
 
 
@@ -83,20 +75,6 @@ inline PRBool ValidateDrawingState()
   if (CurrentPortIsWMPort() && (FrontWindow() != nil))
     return false;
 
-#if TARGET_CARBON
-  //if (! IsValidPort(curPort))   // rather slow
-  //  return false;
-#else
-  // all our ports should be onscreen or offscreen color graphics ports
-  // Onscreen ports have portVersion 0xC000, GWorlds have 0xC001.
-#if DEBUG
-  if ((((UInt16)curPort->portVersion & 0xC000) != 0xC000) && !IsSIOUXWindow((GrafPtr)curPort))
-    return false;
-#else
-  if ((((UInt16)curPort->portVersion & 0xC000) != 0xC000))
-    return false;
-#endif
-#endif
 
   // see if the device is in the device list. If not, it probably means that
   // it's the device for an offscreen GWorld. In that case, the current port
@@ -197,7 +175,7 @@ protected:
 	  NS_ASSERTION(ValidateDrawingState(), "Bad drawing state");
 	  // we assume that if the port has been set, then the port/GDevice are
 	  // valid, and do nothing (for speed)
-	  mPortChanged = (newPort != CGrafPtr(GetQDGlobalsThePort));
+	  mPortChanged = (newPort != CGrafPtr(GetQDGlobalsThePort()));
 	  if (mPortChanged)
 	  {
   		::GetGWorld(&mOldPort, &mOldDevice);
@@ -429,5 +407,30 @@ protected:
     SInt8           mOldHandleState;
 };
 
+
+/**
+ * Stack based utility class for releasing a Quartz color space.
+ * Use as follows:
+ *    CGColorSpaceRef rgbSpace = ::CGColorSpaceCreateDeviceRGB();
+ *    StColorSpaceReleaser csReleaser(rgbSpace);
+ */
+class StColorSpaceReleaser
+{
+public:
+  StColorSpaceReleaser(CGColorSpaceRef inColorSpace)
+  : mColorSpace(inColorSpace)
+  {
+  }
+
+  ~StColorSpaceReleaser()
+  {
+    // No need to check for NULL, since CGColorSpaceCreateDeviceRGB(NULL)
+    // is a noop.
+    ::CGColorSpaceRelease(mColorSpace);
+  }
+
+private:
+  CGColorSpaceRef mColorSpace;
+};
 
 #endif // nsGfxUtils_h_

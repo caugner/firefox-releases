@@ -1,42 +1,46 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the mozilla.org LDAP XPCOM SDK.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s): Dan Mosedale <dmose@mozilla.org> (original author)
- *                 Leif Hedstrom <leif@netscape.com>
- *                 Kipp Hickman <kipp@netscape.com>
- *                 Warren Harris <warren@netscape.com>
- *                 Dan Matejka <danm@netscape.com>
- *                 David Bienvenu <bienvenu@mozilla.org>
- *  
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Dan Mosedale <dmose@mozilla.org> (original author)
+ *   Leif Hedstrom <leif@netscape.com>
+ *   Kipp Hickman <kipp@netscape.com>
+ *   Warren Harris <warren@netscape.com>
+ *   Dan Matejka <danm@netscape.com>
+ *   David Bienvenu <bienvenu@mozilla.org>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsLDAPInternal.h"
 #include "nsIServiceManager.h"
@@ -48,6 +52,7 @@
 #include "nsIEventQueueService.h"
 #include "nsIConsoleService.h"
 #include "nsIDNSService.h"
+#include "nsIDNSRecord.h"
 #include "nsIRequestObserver.h"
 #include "nsIProxyObjectManager.h"
 #include "nsEventQueueUtils.h"
@@ -86,10 +91,15 @@ nsLDAPConnection::~nsLDAPConnection()
 // since converting to the strong reference isn't MT safe.
 //
 NS_IMPL_THREADSAFE_ADDREF(nsLDAPConnection)
-NS_IMPL_THREADSAFE_QUERY_INTERFACE3(nsLDAPConnection,
-                                    nsILDAPConnection,
-                                    nsISupportsWeakReference,
-                                    nsIDNSListener)
+NS_INTERFACE_MAP_BEGIN(nsLDAPConnection)
+  NS_INTERFACE_MAP_ENTRY(nsILDAPConnection)
+  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
+  NS_INTERFACE_MAP_ENTRY(nsIDNSListener)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsILDAPConnection)
+  NS_IMPL_QUERY_CLASSINFO(nsLDAPConnection)
+NS_INTERFACE_MAP_END_THREADSAFE
+NS_IMPL_CI_INTERFACE_GETTER3(nsLDAPConnection, nsILDAPConnection, 
+                             nsISupportsWeakReference, nsIDNSListener)
 
 nsrefcnt
 nsLDAPConnection::Release(void)
@@ -273,7 +283,7 @@ nsLDAPConnection::Close()
   // Init listener (if still there).
   //
   if (mDNSRequest) {
-      mDNSRequest->Cancel();
+      mDNSRequest->Cancel(NS_ERROR_ABORT);
       mDNSRequest = 0;
   }
   mInitListener = 0;
@@ -617,17 +627,11 @@ CheckLDAPOperationResult(nsHashKey *aKey, void *aData, void* aClosure)
         case 0: // timeout
 
             // the connection may not exist yet.  sleep for a while
-            // and try again
-
-            // We now poll for 0, so we get a lot of this spew when debugging ldap.
-            //PR_LOG(gLDAPLogModule, PR_LOG_WARNING, ("ldap_result() timed out.\n"));
-
-            // The sleep here is to avoid a problem where the LDAP
-            // Connection/thread isn't ready quite yet, and we want to
-            // avoid a very busy loop.
+            // to avoid a problem where the LDAP connection/thread isn't 
+            // ready quite yet, and we want to avoid a very busy loop.
             //
             PR_Sleep(sleepTime);
-        return PR_TRUE;
+            return PR_TRUE;
 
         case -1: // something went wrong 
 
@@ -711,34 +715,37 @@ CheckLDAPOperationResult(nsHashKey *aKey, void *aData, void* aClosure)
             // initialize the message, using a protected method not available
             // through nsILDAPMessage (which is why we need the raw pointer)
             //
-        rv = rawMsg->Init(loop->mRawConn, msgHandle);
+            rv = rawMsg->Init(loop->mRawConn, msgHandle);
 
             switch (rv) {
 
-            case NS_OK: 
-              {
+            case NS_OK: {
                 PRInt32 errorCode;
                 rawMsg->GetErrorCode(&errorCode);
-                if (errorCode == LDAP_PROTOCOL_ERROR)
-                {
-                  // maybe a version error, e.g., using v3 on a v2 server.
-                  // if we're using v3, try v2.
-                  if (loop->mRawConn->mVersion == nsILDAPConnection::VERSION3)
-                  {
+                // maybe a version error, e.g., using v3 on a v2 server.
+                // if we're using v3, try v2.
+                //
+                if (errorCode == LDAP_PROTOCOL_ERROR && 
+                   loop->mRawConn->mVersion == nsILDAPConnection::VERSION3) {
                     nsCAutoString password;
                     loop->mRawConn->mVersion = nsILDAPConnection::VERSION2;
-                    ldap_set_option(loop->mRawConn->mConnectionHandle, LDAP_OPT_PROTOCOL_VERSION, &loop->mRawConn->mVersion);
-                    nsCOMPtr <nsILDAPOperation> operation = NS_STATIC_CAST(nsILDAPOperation *, NS_STATIC_CAST(nsISupports *, aData));
-                    // we pass in an empty password to tell the operation that it
-                    // should use the cached password.
-                    operation->SimpleBind(password);
-                    operationFinished = PR_FALSE;
-                    // we don't want to notify callers that we're done...
-                    return PR_TRUE;
-                  }
+                    ldap_set_option(loop->mRawConn->mConnectionHandle,
+                          LDAP_OPT_PROTOCOL_VERSION, &loop->mRawConn->mVersion);
+                    nsCOMPtr <nsILDAPOperation> operation = 
+                      NS_STATIC_CAST(nsILDAPOperation *, 
+                          NS_STATIC_CAST(nsISupports *, aData));
+                    // we pass in an empty password to tell the operation that 
+                    // it should use the cached password.
+                    //
+                    rv = operation->SimpleBind(password);
+                    if (NS_SUCCEEDED(rv)) {
+                        operationFinished = PR_FALSE;
+                        // we don't want to notify callers that we're done...
+                        return PR_TRUE;
+                    }
                 }
-              }
-                break;
+            }
+            break;
 
             case NS_ERROR_LDAP_DECODING_ERROR:
                 consoleSvc->LogStringMessage(
@@ -860,7 +867,7 @@ nsLDAPConnectionLoop::Run(void)
 }
 
 NS_IMETHODIMP
-nsLDAPConnection::OnLookupComplete(nsIDNSRequest *aRequest,
+nsLDAPConnection::OnLookupComplete(nsICancelable *aRequest,
                                    nsIDNSRecord  *aRecord,
                                    nsresult       aStatus)
 {    

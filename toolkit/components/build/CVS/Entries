@@ -1,5 +1,5 @@
-/.cvsignore/1.1/Sat Sep 28 00:38:09 2002//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.12.6.1/Wed Jul  7 08:31:12 2004//TFIREFOX_1_0_RELEASE
-/nsModule.cpp/1.8.6.1/Wed Jul  7 08:31:12 2004//TFIREFOX_1_0_RELEASE
-/nsToolkitCompsCID.h/1.8.6.1/Wed Jul  7 08:31:12 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Sat Sep 28 00:38:09 2002//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.24.2.1/Fri Sep 16 19:51:37 2005//TFIREFOX_1_5_RELEASE
+/nsToolkitCompsCID.h/1.10/Tue Feb  1 17:07:00 2005//TFIREFOX_1_5_RELEASE
+/nsToolkitCompsModule.cpp/1.19.2.1/Fri Sep 16 19:51:37 2005//TFIREFOX_1_5_RELEASE
 D

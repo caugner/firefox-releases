@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,11 +27,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -86,7 +85,7 @@ NS_IMETHODIMP nsSOAPMessage::GetEnvelope(nsIDOMElement * *aEnvelope)
   NS_ENSURE_ARG_POINTER(aEnvelope);
 
   if (mMessage) {
-    nsCOMPtr < nsIDOMElement > root;
+    nsCOMPtr<nsIDOMElement> root;
     mMessage->GetDocumentElement(getter_AddRefs(root));
     if (root) {
       nsAutoString namespaceURI;
@@ -117,7 +116,7 @@ NS_IMETHODIMP nsSOAPMessage::GetVersion(PRUint16 * aVersion)
 {
   NS_ENSURE_ARG_POINTER(aVersion);
   if (mMessage) {
-    nsCOMPtr < nsIDOMElement > root;
+    nsCOMPtr<nsIDOMElement> root;
     mMessage->GetDocumentElement(getter_AddRefs(root));
     if (root) {
       nsAutoString namespaceURI;
@@ -149,7 +148,7 @@ NS_IMETHODIMP nsSOAPMessage::GetVersion(PRUint16 * aVersion)
 PRUint16 nsSOAPMessage::GetEnvelopeWithVersion(nsIDOMElement * *aEnvelope)
 {
   if (mMessage) {
-    nsCOMPtr < nsIDOMElement > root;
+    nsCOMPtr<nsIDOMElement> root;
     mMessage->GetDocumentElement(getter_AddRefs(root));
     if (root) {
       nsAutoString namespaceURI;
@@ -179,7 +178,7 @@ PRUint16 nsSOAPMessage::GetEnvelopeWithVersion(nsIDOMElement * *aEnvelope)
 NS_IMETHODIMP nsSOAPMessage::GetHeader(nsIDOMElement * *aHeader)
 {
   NS_ENSURE_ARG_POINTER(aHeader);
-  nsCOMPtr < nsIDOMElement > env;
+  nsCOMPtr<nsIDOMElement> env;
   PRUint16 version = GetEnvelopeWithVersion(getter_AddRefs(env));
   if (env) {
     nsSOAPUtils::GetSpecificChildElement(nsnull, env,
@@ -196,7 +195,7 @@ NS_IMETHODIMP nsSOAPMessage::GetHeader(nsIDOMElement * *aHeader)
 NS_IMETHODIMP nsSOAPMessage::GetBody(nsIDOMElement * *aBody)
 {
   NS_ENSURE_ARG_POINTER(aBody);
-  nsCOMPtr < nsIDOMElement > env;
+  nsCOMPtr<nsIDOMElement> env;
   PRUint16 version = GetEnvelopeWithVersion(getter_AddRefs(env));
   if (env) {
     nsSOAPUtils::GetSpecificChildElement(nsnull, env,
@@ -211,14 +210,12 @@ NS_IMETHODIMP nsSOAPMessage::GetBody(nsIDOMElement * *aBody)
 /* attribute DOMString actionURI; */
 NS_IMETHODIMP nsSOAPMessage::GetActionURI(nsAString & aActionURI)
 {
-  NS_ENSURE_ARG_POINTER(&aActionURI);
   aActionURI.Assign(mActionURI);
   return NS_OK;
 }
 
 NS_IMETHODIMP nsSOAPMessage::SetActionURI(const nsAString & aActionURI)
 {
-  NS_ENSURE_ARG_POINTER(&aActionURI);
   mActionURI.Assign(aActionURI);
   return NS_OK;
 }
@@ -226,11 +223,10 @@ NS_IMETHODIMP nsSOAPMessage::SetActionURI(const nsAString & aActionURI)
 /* readonly attribute AString methodName; */
 NS_IMETHODIMP nsSOAPMessage::GetMethodName(nsAString & aMethodName)
 {
-  NS_ENSURE_ARG_POINTER(&aMethodName);
-  nsCOMPtr < nsIDOMElement > body;
+  nsCOMPtr<nsIDOMElement> body;
   GetBody(getter_AddRefs(body));
   if (body) {
-    nsCOMPtr < nsIDOMElement > method;
+    nsCOMPtr<nsIDOMElement> method;
     nsSOAPUtils::GetFirstChildElement(body, getter_AddRefs(method));
     if (method) {
       body->GetLocalName(aMethodName);
@@ -245,11 +241,10 @@ NS_IMETHODIMP nsSOAPMessage::GetMethodName(nsAString & aMethodName)
 NS_IMETHODIMP nsSOAPMessage::
 GetTargetObjectURI(nsAString & aTargetObjectURI)
 {
-  NS_ENSURE_ARG_POINTER(&aTargetObjectURI);
-  nsCOMPtr < nsIDOMElement > body;
+  nsCOMPtr<nsIDOMElement> body;
   GetBody(getter_AddRefs(body));
   if (body) {
-    nsCOMPtr < nsIDOMElement > method;
+    nsCOMPtr<nsIDOMElement> method;
     nsSOAPUtils::GetFirstChildElement(body, getter_AddRefs(method));
     if (method) {
       nsCOMPtr<nsISOAPEncoding> encoding;
@@ -276,16 +271,14 @@ NS_IMETHODIMP
                           PRUint32 aParameterCount,
                           nsISOAPParameter ** aParameters)
 {
-  static const NS_NAMED_LITERAL_STRING(realEmptySOAPDocStr1,
+  static NS_NAMED_LITERAL_STRING(realEmptySOAPDocStr1,
                         "<env:Envelope xmlns:env=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:enc=\"http://schemas.xmlsoap.org/soap/encoding/\"><env:Header/><env:Body/></env:Envelope>");
-  static const NS_NAMED_LITERAL_STRING(realEmptySOAPDocStr2,
+  static NS_NAMED_LITERAL_STRING(realEmptySOAPDocStr2,
                         "<env:Envelope xmlns:env=\"http://www.w3.org/2001/09/soap-envelope\" xmlns:enc=\"http://www.w3.org/2001/09/soap-encoding\"><env:Header/><env:Body/></env:Envelope>");
   static const nsAString *kEmptySOAPDocStr[] = {
     &realEmptySOAPDocStr1, &realEmptySOAPDocStr2
   };
 
-  NS_ENSURE_ARG_POINTER(&aMethodName);
-  NS_ENSURE_ARG_POINTER(&aTargetObjectURI);
   if (aVersion != nsISOAPMessage::VERSION_1_1
       && aVersion != nsISOAPMessage::VERSION_1_2)
     return SOAP_EXCEPTION(NS_ERROR_ILLEGAL_VALUE,"SOAP_BAD_VALUE","Cannot encode message blocks without a valid SOAP version specified.");
@@ -293,23 +286,23 @@ NS_IMETHODIMP
 //  Construct the message skeleton
 
   nsresult rv;
-  nsCOMPtr < nsIDOMNode > ignored;
-  nsCOMPtr < nsIDOMParser > parser = do_CreateInstance(kDOMParserCID, &rv);
+  nsCOMPtr<nsIDOMNode> ignored;
+  nsCOMPtr<nsIDOMParser> parser = do_CreateInstance(kDOMParserCID, &rv);
   if (NS_FAILED(rv))
     return rv;
 
   rv = parser->ParseFromString(nsPromiseFlatString(*kEmptySOAPDocStr[aVersion]).get(),
-                               "text/xml", getter_AddRefs(mMessage));
+                               "application/xml", getter_AddRefs(mMessage));
   if (NS_FAILED(rv))
     return rv;
 
 //  Declare the default encoding.  This should always be non-null, but may be empty string.
 
-  nsCOMPtr < nsISOAPEncoding > encoding;
+  nsCOMPtr<nsISOAPEncoding> encoding;
   rv = GetEncoding(getter_AddRefs(encoding));
   if (NS_FAILED(rv))
     return rv;
-  nsCOMPtr < nsIDOMElement > envelope;
+  nsCOMPtr<nsIDOMElement> envelope;
   rv = GetEnvelope(getter_AddRefs(envelope));
   if (NS_FAILED(rv))
     return rv;
@@ -349,12 +342,12 @@ NS_IMETHODIMP
 //  Encode and add headers, if any were specified 
 
   if (aHeaderBlockCount) {
-    nsCOMPtr < nsIDOMElement > parent;
+    nsCOMPtr<nsIDOMElement> parent;
     rv = GetHeader(getter_AddRefs(parent));
     if (NS_FAILED(rv))
       return rv;
-    nsCOMPtr < nsISOAPHeaderBlock > header;
-    nsCOMPtr < nsIDOMElement > element;
+    nsCOMPtr<nsISOAPHeaderBlock> header;
+    nsCOMPtr<nsIDOMElement> element;
     nsAutoString name;
     nsAutoString namespaceURI;
     PRUint32 i;
@@ -364,9 +357,9 @@ NS_IMETHODIMP
         return SOAP_EXCEPTION(NS_ERROR_ILLEGAL_VALUE,"SOAP_NULL_HEADER","Cannot encode null in header array.");
       rv = header->GetElement(getter_AddRefs(element));
       if (element) {
-        nsCOMPtr < nsIDOMNode > node1;
+        nsCOMPtr<nsIDOMNode> node1;
         node1 = element;
-        nsCOMPtr < nsIDOMNode > node2;
+        nsCOMPtr<nsIDOMNode> node2;
         rv = mMessage->ImportNode(node1, PR_TRUE, getter_AddRefs(node1));
         if (NS_FAILED(rv))
           return rv;
@@ -397,11 +390,11 @@ NS_IMETHODIMP
           if (NS_FAILED(rv))
             return rv;
         }
-        nsCOMPtr < nsISchemaType > schemaType;
+        nsCOMPtr<nsISchemaType> schemaType;
         rv = header->GetSchemaType(getter_AddRefs(schemaType));
         if (NS_FAILED(rv))
           return rv;
-        nsCOMPtr < nsIVariant > value;
+        nsCOMPtr<nsIVariant> value;
         rv = header->GetValue(getter_AddRefs(value));
         if (NS_FAILED(rv))
           return rv;
@@ -433,7 +426,7 @@ NS_IMETHODIMP
       }
     }
   }
-  nsCOMPtr < nsIDOMElement > body;
+  nsCOMPtr<nsIDOMElement> body;
   rv = GetBody(getter_AddRefs(body));
   if (NS_FAILED(rv))
     return rv;
@@ -443,12 +436,12 @@ NS_IMETHODIMP
   if (!aMethodName.IsEmpty()) {
     nsAutoString temp;
     rv = encoding->GetExternalSchemaURI(aTargetObjectURI, temp);
-    nsCOMPtr < nsIDOMElement > call;
+    nsCOMPtr<nsIDOMElement> call;
     rv = mMessage->CreateElementNS(temp, aMethodName,
                                    getter_AddRefs(call));
     if (NS_FAILED(rv))
       return rv;
-    nsCOMPtr < nsIDOMNode > ignored;
+    nsCOMPtr<nsIDOMNode> ignored;
     rv = body->AppendChild(call, getter_AddRefs(ignored));
     if (NS_FAILED(rv))
       return rv;
@@ -456,9 +449,9 @@ NS_IMETHODIMP
   }
 //  Encode and add all of the parameters into the body
 
-  nsCOMPtr < nsISOAPParameter > param;
-  nsCOMPtr < nsIDOMElement > element;
-  nsCOMPtr < nsISOAPEncoding > newencoding;
+  nsCOMPtr<nsISOAPParameter> param;
+  nsCOMPtr<nsIDOMElement> element;
+  nsCOMPtr<nsISOAPEncoding> newencoding;
   nsAutoString name;
   nsAutoString namespaceURI;
   PRUint32 i;
@@ -468,9 +461,9 @@ NS_IMETHODIMP
       return SOAP_EXCEPTION(NS_ERROR_ILLEGAL_VALUE,"SOAP_NULL_PARAMETER","Cannot encode null in parameter array.");
     rv = param->GetElement(getter_AddRefs(element));
     if (element) {
-      nsCOMPtr < nsIDOMNode > node1;
+      nsCOMPtr<nsIDOMNode> node1;
       node1 = element;
-      nsCOMPtr < nsIDOMNode > node2;
+      nsCOMPtr<nsIDOMNode> node2;
       rv = mMessage->ImportNode(node1, PR_TRUE, getter_AddRefs(node1));
       if (NS_FAILED(rv))
         return rv;
@@ -491,11 +484,11 @@ NS_IMETHODIMP
       if (!newencoding) {
         newencoding = encoding;
       }
-      nsCOMPtr < nsISchemaType > schemaType;
+      nsCOMPtr<nsISchemaType> schemaType;
       rv = param->GetSchemaType(getter_AddRefs(schemaType));
       if (NS_FAILED(rv))
         return rv;
-      nsCOMPtr < nsIVariant > value;
+      nsCOMPtr<nsIVariant> value;
       rv = param->GetValue(getter_AddRefs(value));
       if (NS_FAILED(rv))
         return rv;
@@ -526,20 +519,21 @@ nsresult
                                           PRUint16 * aVersion,
                                           nsISOAPEncoding ** aEncoding)
 {
-  nsCOMPtr < nsISOAPEncoding > encoding;
+  nsCOMPtr<nsISOAPEncoding> encoding;
   nsresult rv = GetEncoding(getter_AddRefs(encoding));
   if (NS_FAILED(rv))
     return rv;
   rv = GetVersion(aVersion);
   if (NS_FAILED(rv))
     return rv;
-  nsCOMPtr < nsIDOMElement > element = aFirst;
+  nsCOMPtr<nsIDOMElement> element = aFirst;
 
-//  Check for stray encodingStyle attributes.  If none found, then use empty string encoding style.
+  // Check for stray encodingStyle attributes.  If none found, then
+  // use empty string encoding style.
 
   nsAutoString style;
   for (;;) {
-    nsCOMPtr < nsIDOMAttr > enc;
+    nsCOMPtr<nsIDOMAttr> enc;
     rv = element->GetAttributeNodeNS(*gSOAPStrings->kSOAPEnvURI[*aVersion],
                                      gSOAPStrings->kEncodingStyleAttribute,
                                      getter_AddRefs(enc));
@@ -551,7 +545,7 @@ nsresult
         return rv;
       break;
     } else {
-      nsCOMPtr < nsIDOMNode > next;
+      nsCOMPtr<nsIDOMNode> next;
       rv = element->GetParentNode(getter_AddRefs(next));
       if (NS_FAILED(rv))
         return rv;
@@ -586,18 +580,18 @@ NS_IMETHODIMP
   int count = 0;
   int length = 0;
 
-  nsCOMPtr < nsIDOMElement > element;
+  nsCOMPtr<nsIDOMElement> element;
   nsresult rv = GetHeader(getter_AddRefs(element));
   if (NS_FAILED(rv) || !element)
     return rv;
-  nsCOMPtr < nsISOAPEncoding > encoding;
+  nsCOMPtr<nsISOAPEncoding> encoding;
   PRUint16 version;
   rv = GetEncodingWithVersion(element, &version, getter_AddRefs(encoding));
   if (NS_FAILED(rv))
     return rv;
-  nsCOMPtr < nsIDOMElement > next;
+  nsCOMPtr<nsIDOMElement> next;
 
-  nsCOMPtr < nsISOAPHeaderBlock > header;
+  nsCOMPtr<nsISOAPHeaderBlock> header;
   nsSOAPUtils::GetFirstChildElement(element, getter_AddRefs(next));
   while (next) {
     if (length == count) {
@@ -627,7 +621,7 @@ NS_IMETHODIMP
       break;
     nsSOAPUtils::GetNextSiblingElement(element, getter_AddRefs(next));
   }
-  if (!NS_FAILED(rv)) {
+  if (NS_SUCCEEDED(rv)) {
     if (count) {
       headerBlocks =
           (nsISOAPHeaderBlock * *)nsMemory::Realloc(headerBlocks,
@@ -659,12 +653,12 @@ NS_IMETHODIMP
   *aParameters = nsnull;
   int count = 0;
   int length = 0;
-  nsCOMPtr < nsIDOMElement > element;
+  nsCOMPtr<nsIDOMElement> element;
   nsresult rv = GetBody(getter_AddRefs(element));
   if (NS_FAILED(rv) || !element)
     return rv;
-  nsCOMPtr < nsIDOMElement > next;
-  nsCOMPtr < nsISOAPParameter > param;
+  nsCOMPtr<nsIDOMElement> next;
+  nsCOMPtr<nsISOAPParameter> param;
   nsSOAPUtils::GetFirstChildElement(element, getter_AddRefs(next));
   if (!aDocumentStyle) {
     element = next;
@@ -672,7 +666,7 @@ NS_IMETHODIMP
       return SOAP_EXCEPTION(NS_ERROR_ILLEGAL_VALUE,"SOAP_MISSING_METHOD","Cannot decode rpc-style message due to missing method element.");
     nsSOAPUtils::GetFirstChildElement(element, getter_AddRefs(next));
   }
-  nsCOMPtr < nsISOAPEncoding > encoding;
+  nsCOMPtr<nsISOAPEncoding> encoding;
   PRUint16 version;
   rv = GetEncodingWithVersion(element, &version, getter_AddRefs(encoding));
   if (NS_FAILED(rv))
@@ -734,7 +728,7 @@ NS_IMETHODIMP nsSOAPMessage::GetEncoding(nsISOAPEncoding * *aEncoding)
     if (NS_FAILED(rc))
       return rc;
     if (version != nsISOAPMessage::VERSION_UNKNOWN) {
-      nsCOMPtr < nsISOAPEncoding > encoding =
+      nsCOMPtr<nsISOAPEncoding> encoding =
           do_CreateInstance(NS_SOAPENCODING_CONTRACTID);
       if (!encoding)
         return NS_ERROR_OUT_OF_MEMORY;

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Jean-Francois Ducarroz <ducarroz@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,6 +44,7 @@
 #include "nsISupportsPrimitives.h"
 #include "nsIComponentManager.h"
 #include "nsNetError.h"
+#include "nsInt64.h"
 
 NS_IMPL_THREADSAFE_ADDREF(nsMsgProgress)
 NS_IMPL_THREADSAFE_RELEASE(nsMsgProgress)
@@ -78,10 +79,13 @@ NS_IMETHODIMP nsMsgProgress::OpenProgressDialog(nsIDOMWindowInternal *parent, ns
                                                 nsISupports *parameters)
 {
   nsresult rv = NS_ERROR_FAILURE;
-  
-  m_msgWindow = aMsgWindow;
-  if (m_msgWindow)
-    m_msgWindow->SetStatusFeedback(this);
+
+  if (aMsgWindow)
+  {
+    SetMsgWindow(aMsgWindow);
+    aMsgWindow->SetStatusFeedback(this);
+  }
+
   if (m_dialog)
     return NS_ERROR_ALREADY_INITIALIZED;
   
@@ -157,6 +161,9 @@ NS_IMETHODIMP nsMsgProgress::RegisterListener(nsIWebProgressListener * listener)
   
   if (!listener) //Nothing to do with a null listener!
     return NS_OK;
+
+  if (this == listener) //Check for self-reference (see bug 271700)
+    return NS_ERROR_INVALID_ARG;
   
   if (!m_listenerList)
     rv = NS_NewISupportsArray(getter_AddRefs(m_listenerList));
@@ -194,6 +201,13 @@ NS_IMETHODIMP nsMsgProgress::OnStateChange(nsIWebProgress *aWebProgress, nsIRequ
   m_pendingStateFlags = aStateFlags;
   m_pendingStateValue = aStatus;
   
+  nsCOMPtr<nsIMsgWindow> msgWindow (do_QueryReferent(m_msgWindow));
+  if (aStateFlags == nsIWebProgressListener::STATE_STOP && msgWindow && NS_FAILED(aStatus))
+  {
+    msgWindow->StopUrls();
+    msgWindow->SetStatusFeedback(nsnull);
+  }
+
   if (m_listenerList)
   {
     PRUint32 count = 0;
@@ -213,9 +227,6 @@ NS_IMETHODIMP nsMsgProgress::OnStateChange(nsIWebProgress *aWebProgress, nsIRequ
     }
   }
   
-  if (aStateFlags == nsIWebProgressListener::STATE_STOP && m_msgWindow && NS_FAILED(aStatus))
-    m_msgWindow->StopUrls();
-
   return NS_OK;
 }
 
@@ -311,6 +322,11 @@ NS_IMETHODIMP nsMsgProgress::ShowStatusString(const PRUnichar *status)
   return OnStatusChange(nsnull, nsnull, NS_OK, status);
 }
 
+NS_IMETHODIMP nsMsgProgress::SetStatusString(const PRUnichar *status)
+{
+  return OnStatusChange(nsnull, nsnull, NS_OK, status);
+}
+
 /* void startMeteors (); */
 NS_IMETHODIMP nsMsgProgress::StartMeteors()
 {
@@ -343,24 +359,29 @@ NS_IMETHODIMP nsMsgProgress::CloseWindow()
 
 NS_IMETHODIMP nsMsgProgress::SetMsgWindow(nsIMsgWindow *aMsgWindow)
 {
-  m_msgWindow = aMsgWindow;
+  m_msgWindow = do_GetWeakReference(aMsgWindow);
   return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgProgress::GetMsgWindow(nsIMsgWindow **aMsgWindow)
 {
   NS_ENSURE_ARG_POINTER(aMsgWindow);
-  NS_IF_ADDREF(*aMsgWindow = m_msgWindow);
+  
+  if (m_msgWindow) 
+    CallQueryReferent(m_msgWindow.get(), aMsgWindow);
+  else 
+    *aMsgWindow = nsnull;
+
   return NS_OK;
 }
 
-
 NS_IMETHODIMP nsMsgProgress::OnProgress(nsIRequest *request, nsISupports* ctxt, 
-                                          PRUint32 aProgress, PRUint32 aProgressMax)
+                                          PRUint64 aProgress, PRUint64 aProgressMax)
 {
   // XXX: What should the nsIWebProgress be?
-  return OnProgressChange(nsnull, request, aProgress, aProgressMax, 
-                          aProgress /* current total progress */, aProgressMax /* max total progress */);
+  // XXX: This truncates 64-bit to 32-bit
+  return OnProgressChange(nsnull, request, nsUint64(aProgress), nsUint64(aProgressMax), 
+                          nsUint64(aProgress) /* current total progress */, nsUint64(aProgressMax) /* max total progress */);
 }
 
 NS_IMETHODIMP nsMsgProgress::OnStatus(nsIRequest *request, nsISupports* ctxt, 

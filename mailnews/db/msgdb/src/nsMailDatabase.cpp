@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -52,6 +52,9 @@
 #include "nsIPrompt.h"
 #include "nsIWindowWatcher.h"
 #endif
+
+extern PRLogModuleInfo *IMAPOffline;
+
 const char *kOfflineOpsScope = "ns:msg:db:row:scope:ops:all";	// scope for all offine ops table
 const char *kOfflineOpsTableKind = "ns:msg:db:table:kind:ops";
 struct mdbOid gAllOfflineOpsTableOID;
@@ -77,14 +80,13 @@ NS_IMETHODIMP nsMailDatabase::SetFolderStream(nsIOFileStream *aFileStream)
 }
 
 static PRBool gGotGlobalPrefs = PR_FALSE;
-static PRBool gThreadWithoutRe = PR_TRUE;
 static PRInt32 gTimeStampLeeway;
 
 void nsMailDatabase::GetGlobalPrefs()
 {
   if (!gGotGlobalPrefs)
   {
-    GetBoolPref("mail.thread_without_re", &gThreadWithoutRe);
+    nsMsgDatabase::GetGlobalPrefs();
     GetIntPref("mail.db_timestamp_leeway", &gTimeStampLeeway);
     gGotGlobalPrefs = PR_TRUE;
   }
@@ -121,7 +123,7 @@ nsresult nsMailDatabase::GetAllOfflineOpsTable()
 // cache m_folderStream to make updating mozilla status flags fast
 NS_IMETHODIMP nsMailDatabase::StartBatch()
 {
-  if (!m_folderStream)  //only if we create a stream, set m_ownFolderStream to true.
+  if (!m_folderStream && m_folder)  //only if we create a stream, set m_ownFolderStream to true.
   {
     PRBool isLocked;
     m_folder->GetLocked(&isLocked);
@@ -278,7 +280,7 @@ void nsMailDatabase::UpdateFolderFlag(nsIMsgDBHdr *mailHdr, PRBool bSet,
       (void)mailHdr->GetMessageOffset(&msgOffset);
       PRUint32 statusPos = offset + msgOffset;
       PR_ASSERT(offset < 10000);
-      fileStream->seek(statusPos);
+      fileStream->seek(PR_SEEK_SET, statusPos);
       buf[0] = '\0';
       if (fileStream->readline(buf, sizeof(buf))) 
       {
@@ -312,7 +314,7 @@ void nsMailDatabase::UpdateFolderFlag(nsIMsgDBHdr *mailHdr, PRBool bSet,
           PR_snprintf(buf, sizeof(buf), X_MOZILLA_STATUS_FORMAT,
             flags & 0x0000FFFF);
           PRInt32 lineLen = PL_strlen(buf);
-          PRInt32 status2Pos = statusPos + lineLen + MSG_LINEBREAK_LEN;
+          PRUint32 status2Pos = statusPos + lineLen + MSG_LINEBREAK_LEN;
           fileStream->write(buf, lineLen);
           
           // time to upate x-mozilla-status2
@@ -438,22 +440,22 @@ NS_IMETHODIMP nsMailDatabase::GetSummaryValid(PRBool *aResult)
 #else
       if (!*aResult)
       {
-        errorMsg.AppendWithConversion("time stamp didn't match delta = ");
+        errorMsg.AppendLiteral("time stamp didn't match delta = ");
         errorMsg.AppendInt(actualFolderTimeStamp - folderDate);
-        errorMsg.AppendWithConversion(" leeway = ");
+        errorMsg.AppendLiteral(" leeway = ");
         errorMsg.AppendInt(gTimeStampLeeway);
       }
     }
     else if (folderSize != m_folderSpec->GetFileSize())
     {
-      errorMsg.AppendWithConversion("folder size didn't match db size = ");
+      errorMsg.AppendLiteral("folder size didn't match db size = ");
       errorMsg.AppendInt(folderSize);
-      errorMsg.AppendWithConversion(" actual size = ");
+      errorMsg.AppendLiteral(" actual size = ");
       errorMsg.AppendInt(m_folderSpec->GetFileSize());
     }
     else if (numUnreadMessages < 0)
     {
-      errorMsg.AppendWithConversion("numUnreadMessages < 0");
+      errorMsg.AppendLiteral("numUnreadMessages < 0");
     }
   }
   if (errorMsg.Length())
@@ -522,6 +524,8 @@ NS_IMETHODIMP nsMailDatabase::GetOfflineOpForKey(nsMsgKey msgKey, PRBool create,
   mdbOid		rowObjectId;
   mdb_err   err;
   
+  if (!IMAPOffline)
+    IMAPOffline = PR_NewLogModule("IMAPOFFLINE");
   nsresult rv = GetAllOfflineOpsTable();
   NS_ENSURE_SUCCESS(rv, rv);
   
@@ -535,14 +539,14 @@ NS_IMETHODIMP nsMailDatabase::GetOfflineOpForKey(nsMsgKey msgKey, PRBool create,
   err = m_mdbAllOfflineOpsTable->HasOid(GetEnv(), &rowObjectId, &hasOid);
   if (err == NS_OK && m_mdbStore && (hasOid  || create))
   {
-    nsIMdbRow *offlineOpRow;
-    err = m_mdbStore->GetRow(GetEnv(), &rowObjectId, &offlineOpRow);
+    nsCOMPtr <nsIMdbRow> offlineOpRow;
+    err = m_mdbStore->GetRow(GetEnv(), &rowObjectId, getter_AddRefs(offlineOpRow));
     
     if (create)
     {
       if (!offlineOpRow)
       {
-        err  = m_mdbStore->NewRowWithOid(GetEnv(), &rowObjectId, &offlineOpRow);
+        err  = m_mdbStore->NewRowWithOid(GetEnv(), &rowObjectId, getter_AddRefs(offlineOpRow));
         NS_ENSURE_SUCCESS(err, err);
       }
       if (offlineOpRow && !hasOid)
@@ -554,33 +558,6 @@ NS_IMETHODIMP nsMailDatabase::GetOfflineOpForKey(nsMsgKey msgKey, PRBool create,
       *offlineOp = new nsMsgOfflineImapOperation(this, offlineOpRow);
       if (*offlineOp)
         (*offlineOp)->SetMessageKey(msgKey);
-      nsCOMPtr <nsIMsgDBHdr> msgHdr;
-
-      // GetMsgHdrForKey will return an empty header if no header exists,
-      // so we only want to get the hdr if the db contains a hdr for
-      // that key - otherwise, we'll crunch the new flags.
-      PRBool containsKey;
-      rv = ContainsKey(msgKey , &containsKey);
-
-      if (NS_SUCCEEDED(rv) && containsKey)
-        GetMsgHdrForKey(msgKey, getter_AddRefs(msgHdr));
-      if (msgHdr)
-      {
-        imapMessageFlagsType imapFlags = kNoImapMsgFlag;
-        PRUint32 msgHdrFlags;
-        msgHdr->GetFlags(&msgHdrFlags);
-        if (msgHdrFlags & MSG_FLAG_READ)
-          imapFlags |= kImapMsgSeenFlag;
-        if (msgHdrFlags & MSG_FLAG_REPLIED)
-          imapFlags |= kImapMsgAnsweredFlag;
-        if (msgHdrFlags & MSG_FLAG_MARKED)
-          imapFlags |= kImapMsgFlaggedFlag;
-        if (msgHdrFlags & MSG_FLAG_FORWARDED)
-          imapFlags |= kImapMsgForwardedFlag;
-        if (msgHdrFlags & MSG_FLAG_IMAP_DELETED)
-          imapFlags |= kImapMsgDeletedFlag;
-        (*offlineOp)->SetNewFlags(imapFlags);
-      }
       NS_IF_ADDREF(*offlineOp);
     }
     if (!hasOid && m_dbFolderInfo)
@@ -607,6 +584,9 @@ NS_IMETHODIMP nsMailDatabase::ListAllOfflineOpIds(nsMsgKeyArray *offlineOpIds)
   nsresult rv = GetAllOfflineOpsTable();
   NS_ENSURE_SUCCESS(rv, rv);
   nsIMdbTableRowCursor *rowCursor;
+  if (!IMAPOffline)
+    IMAPOffline = PR_NewLogModule("IMAPOFFLINE");
+
   if (m_mdbAllOfflineOpsTable)
   {
     nsresult err = m_mdbAllOfflineOpsTable->GetTableRowCursor(GetEnv(), -1, &rowCursor);
@@ -620,7 +600,22 @@ NS_IMETHODIMP nsMailDatabase::ListAllOfflineOpIds(nsMsgKeyArray *offlineOpIds)
       if (outPos < 0 || outOid.mOid_Id == (mdb_id) -1)	
         break;
       if (err == NS_OK)
+      {
         offlineOpIds->Add(outOid.mOid_Id);
+        if (PR_LOG_TEST(IMAPOffline, PR_LOG_ALWAYS))
+        {
+          nsCOMPtr <nsIMsgOfflineImapOperation> offlineOp;
+          GetOfflineOpForKey(outOid.mOid_Id, PR_FALSE, getter_AddRefs(offlineOp));
+          if (offlineOp)
+          {
+            nsMsgOfflineImapOperation *logOp = NS_STATIC_CAST(nsMsgOfflineImapOperation *, 
+              NS_STATIC_CAST(nsIMsgOfflineImapOperation *, offlineOp.get()));
+            if (logOp)
+              logOp->Log(IMAPOffline);
+
+          }
+        }
+      }
     }
     rv = (err == NS_OK) ? NS_OK : NS_ERROR_FAILURE;
     rowCursor->Release();
@@ -724,7 +719,6 @@ nsresult nsMailDatabase::SetFolderInfoValid(nsFileSpec *folderName, int num, int
   }
   
   {
- 
     pMessageDB->m_folderSpec = folderName;
     nsFileSpec::TimeStamp actualFolderTimeStamp = pMessageDB->GetMailboxModDate();
     pMessageDB->m_dbFolderInfo->SetFolderSize(folderName->GetFileSize());
@@ -754,14 +748,6 @@ void nsMailDatabase::SetReparse(PRBool reparse)
   m_reparse = reparse;
 }
 
-
-// should we thread messages with common subjects that don't start with Re: together?
-// I imagine we might have separate preferences for mail and news, so this is a virtual method.
-PRBool	nsMailDatabase::ThreadBySubjectWithoutRe()
-{
-  GetGlobalPrefs();
-  return gThreadWithoutRe;
-}
 
 class nsMsgOfflineOpEnumerator : public nsISimpleEnumerator {
 public:

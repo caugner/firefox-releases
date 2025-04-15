@@ -35,6 +35,10 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#ifdef MOZILLA_INTERNAL_API
+#undef MOZILLA_INTERNAL_API
+#endif
+
 #include <stdio.h>
 #include "nsStringAPI.h"
 #include "nsCRT.h"
@@ -202,6 +206,264 @@ static PRBool test_append()
     return PR_TRUE;
   }
 
+// Replace all occurances of |matchVal| with |newVal|
+static void ReplaceSubstring( nsACString& str,
+                              const nsACString& matchVal,
+                              const nsACString& newVal )
+  {
+    const char* sp, *mp, *np;
+    PRUint32 sl, ml, nl;
+
+    sl = NS_CStringGetData(str, &sp);
+    ml = NS_CStringGetData(matchVal, &mp);
+    nl = NS_CStringGetData(newVal, &np);
+
+    for (const char* iter = sp; iter <= sp + sl - ml; ++iter)
+      {
+        if (memcmp(iter, mp, ml) == 0)
+          {
+            PRUint32 offset = iter - sp;
+
+            NS_CStringSetDataRange(str, offset, ml, np, nl);
+
+            sl = NS_CStringGetData(str, &sp);
+
+            iter = sp + offset + nl - 1;
+          }
+      }
+  }
+
+static PRBool test_replace_driver(const char *strVal,
+                                  const char *matchVal,
+                                  const char *newVal,
+                                  const char *finalVal)
+  {
+    nsCStringContainer a;
+    NS_CStringContainerInit(a);
+    NS_CStringSetData(a, strVal);
+
+    nsCStringContainer b;
+    NS_CStringContainerInit(b);
+    NS_CStringSetData(b, matchVal);
+
+    nsCStringContainer c;
+    NS_CStringContainerInit(c);
+    NS_CStringSetData(c, newVal);
+
+    ReplaceSubstring(a, b, c);
+
+    const char *data;
+    NS_CStringGetData(a, &data);
+    if (strcmp(data, finalVal) != 0)
+      return PR_FALSE;
+
+    NS_CStringContainerFinish(c);
+    NS_CStringContainerFinish(b);
+    NS_CStringContainerFinish(a);
+    return PR_TRUE;
+  }
+
+static PRBool test_replace()
+  {
+    PRBool rv;
+
+    rv = test_replace_driver("hello world, hello again!",
+                             "hello",
+                             "goodbye",
+                             "goodbye world, goodbye again!");
+    if (!rv)
+      return rv;
+
+    rv = test_replace_driver("foofoofoofoo!",
+                             "foo",
+                             "bar",
+                             "barbarbarbar!");
+    if (!rv)
+      return rv;
+
+    rv = test_replace_driver("foo bar systems",
+                             "xyz",
+                             "crazy",
+                             "foo bar systems");
+    if (!rv)
+      return rv;
+
+    rv = test_replace_driver("oh",
+                             "xyz",
+                             "crazy",
+                             "oh");
+    if (!rv)
+      return rv;
+
+    return PR_TRUE;
+  }
+
+static const char* kWhitespace="\b\t\r\n ";
+
+static void
+CompressWhitespace(nsACString &str)
+  {
+    const char *p;
+    PRInt32 i, len = (PRInt32) NS_CStringGetData(str, &p);
+
+    // trim leading whitespace
+
+    for (i=0; i<len; ++i)
+      {
+        if (!strchr(kWhitespace, (char) p[i]))
+          break;
+      }
+
+    if (i>0)
+      {
+        NS_CStringCutData(str, 0, i);
+        len = (PRInt32) NS_CStringGetData(str, &p);
+      }
+
+    // trim trailing whitespace
+
+    for (i=len-1; i>=0; --i)
+      {
+        if (!strchr(kWhitespace, (char) p[i]))
+          break;
+      }
+
+    if (++i < len)
+      NS_CStringCutData(str, i, len - i);
+  }
+
+static PRBool test_compress_ws()
+  {
+    nsCStringContainer s;
+    NS_CStringContainerInit(s);
+    NS_CStringSetData(s, " \thello world\r  \n");
+    CompressWhitespace(s);
+    const char *d;
+    NS_CStringGetData(s, &d);
+    PRBool rv = !strcmp(d, "hello world");
+    if (!rv)
+      printf("=> \"%s\"\n", d);
+    NS_CStringContainerFinish(s);
+    return rv;
+  }
+
+static PRBool test_depend()
+  {
+    static const char kData[] = "hello world";
+
+    nsCStringContainer s;
+    NS_ENSURE_SUCCESS(
+        NS_CStringContainerInit2(s, kData, sizeof(kData)-1,
+                                 NS_CSTRING_CONTAINER_INIT_DEPEND),
+        PR_FALSE);
+
+    const char *sd;
+    NS_CStringGetData(s, &sd);
+
+    PRBool rv = (sd == kData);
+    NS_CStringContainerFinish(s);
+    return rv;
+  }
+
+static PRBool test_depend_sub()
+  {
+    static const char kData[] = "hello world";
+
+    nsCStringContainer s;
+    NS_ENSURE_SUCCESS(
+        NS_CStringContainerInit2(s, kData, sizeof(kData)-1,
+                                 NS_CSTRING_CONTAINER_INIT_DEPEND |
+                                 NS_CSTRING_CONTAINER_INIT_SUBSTRING),
+        PR_FALSE);
+
+    PRBool terminated;
+    const char *sd;
+    PRUint32 len = NS_CStringGetData(s, &sd, &terminated);
+
+    PRBool rv = (sd == kData && len == sizeof(kData)-1 && !terminated);
+    NS_CStringContainerFinish(s);
+    return rv;
+  }
+
+static PRBool test_adopt()
+  {
+    static const char kData[] = "hello world";
+
+    char *data = (char *) nsMemory::Clone(kData, sizeof(kData));
+    if (!data)
+      return PR_FALSE;
+
+    nsCStringContainer s;
+    NS_ENSURE_SUCCESS(
+        NS_CStringContainerInit2(s, data, PR_UINT32_MAX,
+                                 NS_CSTRING_CONTAINER_INIT_ADOPT),
+        PR_FALSE); // leaks data on failure *shrug*
+
+    const char *sd;
+    NS_CStringGetData(s, &sd);
+
+    PRBool rv = (sd == data);
+    NS_CStringContainerFinish(s);
+    return rv;
+  }
+
+static PRBool test_adopt_sub()
+  {
+    static const char kData[] = "hello world";
+
+    char *data = (char *) nsMemory::Clone(kData, sizeof(kData)-1);
+    if (!data)
+      return PR_FALSE;
+
+    nsCStringContainer s;
+    NS_ENSURE_SUCCESS(
+        NS_CStringContainerInit2(s, data, sizeof(kData)-1,
+                                 NS_CSTRING_CONTAINER_INIT_ADOPT |
+                                 NS_CSTRING_CONTAINER_INIT_SUBSTRING),
+        PR_FALSE); // leaks data on failure *shrug*
+
+    PRBool terminated;
+    const char *sd;
+    PRUint32 len = NS_CStringGetData(s, &sd, &terminated);
+
+    PRBool rv = (sd == data && len == sizeof(kData)-1 && !terminated);
+    NS_CStringContainerFinish(s);
+    return rv;
+  }
+
+static PRBool test_mutation()
+  {
+    nsCStringContainer s;
+    NS_CStringContainerInit(s);
+
+    const char kText[] = "Every good boy does fine.";
+
+    char *buf;
+    PRUint32 len = NS_CStringGetMutableData(s, sizeof(kText) - 1, &buf);
+    if (!buf || len != sizeof(kText) - 1)
+      return PR_FALSE;
+    memcpy(buf, kText, sizeof(kText));
+
+    const char *data;
+    NS_CStringGetData(s, &data);
+    if (strcmp(data, kText) != 0)
+      return PR_FALSE;
+
+    PRUint32 newLen = len + 1;
+    len = NS_CStringGetMutableData(s, newLen, &buf);
+    if (!buf || len != newLen)
+      return PR_FALSE;
+
+    buf[len - 1] = '.';
+
+    NS_CStringGetData(s, &data);
+    if (strncmp(data, kText, len - 1) != 0 || data[len - 1] != '.')
+      return PR_FALSE;
+
+    NS_CStringContainerFinish(s);
+    return PR_TRUE;
+  }
+
 //----
 
 typedef PRBool (*TestFunc)();
@@ -217,6 +479,13 @@ tests[] =
     { "test_basic_2", test_basic_2 },
     { "test_convert", test_convert },
     { "test_append", test_append },
+    { "test_replace", test_replace },
+    { "test_compress_ws", test_compress_ws },
+    { "test_depend", test_depend },
+    { "test_depend_sub", test_depend_sub },
+    { "test_adopt", test_adopt },
+    { "test_adopt_sub", test_adopt_sub },
+    { "test_mutation", test_mutation },
     { nsnull, nsnull }
   };
 

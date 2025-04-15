@@ -61,7 +61,7 @@
  *       in this section somewhat inconsistent, don't blame me! ;-)
  */
 
-// XXXdarin what is wrong with STDC's tolower?
+// avoid STDC's tolower since it may do weird things with non-ASCII bytes
 inline char
 ascii_tolower(char aChar)
 {
@@ -274,7 +274,7 @@ RFindChar2(const PRUnichar* aDest,PRUint32 aDestLength,PRInt32 anOffset,const PR
  * @param   aStr1 is the first buffer to be compared
  * @param   aStr2 is the 2nd buffer to be compared
  * @param   aCount is the number of chars to compare
- * @param   aIgnorecase tells us whether to use a case-sensitive comparison
+ * @param   aIgnoreCase tells us whether to use a case-sensitive comparison
  * @return  -1,0,1 depending on <,==,>
  */
 static
@@ -304,7 +304,7 @@ Compare1To1(const char* aStr1,const char* aStr2,PRUint32 aCount,PRBool aIgnoreCa
  * @param   aStr1 is the first buffer to be compared
  * @param   aStr2 is the 2nd buffer to be compared
  * @param   aCount is the number of chars to compare
- * @param   aIgnorecase tells us whether to use a case-sensitive comparison
+ * @param   aIgnoreCase tells us whether to use a case-sensitive comparison
  * @return  -1,0,1 depending on <,==,>
  */
 static 
@@ -344,7 +344,7 @@ Compare2To2(const PRUnichar* aStr1,const PRUnichar* aStr2,PRUint32 aCount){
  * @param   aStr1 is the first buffer to be compared
  * @param   aStr2 is the 2nd buffer to be compared
  * @param   aCount is the number of chars to compare
- * @param   aIgnorecase tells us whether to use a case-sensitive comparison
+ * @param   aIgnoreCase tells us whether to use a case-sensitive comparison
  * @return  -1,0,1 depending on <,==,>
  */
 static
@@ -398,7 +398,7 @@ Compare2To1(const PRUnichar* aStr1,const char* aStr2,PRUint32 aCount,PRBool aIgn
  * @param   aStr1 is the first buffer to be compared
  * @param   aStr2 is the 2nd buffer to be compared
  * @param   aCount is the number of chars to compare
- * @param   aIgnorecase tells us whether to use a case-sensitive comparison
+ * @param   aIgnoreCase tells us whether to use a case-sensitive comparison
  * @return  -1,0,1 depending on <,==,>
  */
 inline PRInt32
@@ -515,7 +515,7 @@ CompressChars2(PRUnichar* aString,PRUint32 aLength,const char* aSet){
 static PRInt32
 StripChars1(char* aString,PRUint32 aLength,const char* aSet){ 
 
-  // XXXdarin this code should defer writing until necessary.
+  // XXX(darin): this code should defer writing until necessary.
 
   char*  to   = aString;
   char*  from = aString-1;
@@ -549,7 +549,7 @@ StripChars1(char* aString,PRUint32 aLength,const char* aSet){
 static PRInt32
 StripChars2(PRUnichar* aString,PRUint32 aLength,const char* aSet){ 
 
-  // XXXdarin this code should defer writing until necessary.
+  // XXX(darin): this code should defer writing until necessary.
 
   PRUnichar*  to   = aString;
   PRUnichar*  from = aString-1;
@@ -804,7 +804,7 @@ RFindCharInSet( const CharT* data, PRUint32 dataLen, const SetCharT* set )
  * This is a copy of |PR_cnvtf| with a bug fixed.  (The second argument
  * of PR_dtoa is 2 rather than 1.)
  *
- * XXXdarin if this is the right thing, then why wasn't it fixed in NSPR?!?
+ * XXX(darin): if this is the right thing, then why wasn't it fixed in NSPR?!?
  */
 void 
 Modified_cnvtf(char *buf, int bufsz, int prcsn, double fval)
@@ -1075,8 +1075,8 @@ nsCString::Compare( const char* aString, PRBool aIgnoreCase, PRInt32 aCount ) co
     return result;
   }
 
-PRInt32
-nsString::CompareWithConversion( const char* aString, PRBool aIgnoreCase, PRInt32 aCount ) const
+PRBool
+nsString::EqualsIgnoreCase( const char* aString, PRInt32 aCount ) const
   {
     PRUint32 strLen = nsCharTraits<char>::length(aString);
 
@@ -1089,7 +1089,7 @@ nsString::CompareWithConversion( const char* aString, PRBool aIgnoreCase, PRInt3
       compareCount = aCount;
 
     PRInt32 result =
-        nsBufferRoutines<PRUnichar>::compare(mData, aString, compareCount, aIgnoreCase);
+        nsBufferRoutines<PRUnichar>::compare(mData, aString, compareCount, PR_TRUE);
 
     if (result == 0 &&
           (aCount < 0 || strLen < PRUint32(aCount) || mLength < PRUint32(aCount)))
@@ -1099,42 +1099,11 @@ nsString::CompareWithConversion( const char* aString, PRBool aIgnoreCase, PRInt3
         // that the longer string is greater.
 
         if (mLength != strLen)
-          result = (mLength < strLen) ? -1 : 1;
+          result = 1; // Arbitrarily using any number != 0
       }
-    return result;
+    return result == 0;
   }
 
-PRBool
-nsCString::EqualsWithConversion( const char* aString, PRBool aIgnoreCase, PRInt32 aCount ) const
-  {
-    return Compare(aString, aIgnoreCase, aCount) == 0;
-  }
-
-PRBool
-nsString::EqualsWithConversion( const char* aString, PRBool aIgnoreCase, PRInt32 aCount ) const
-  {
-    return CompareWithConversion(aString, aIgnoreCase, aCount) == 0;
-  }
-
-PRBool
-nsString::IsASCII( const PRUnichar* aBuffer )
-  {
-    // XXX nsDependentString will compute the length of aBuffer and that is
-    // something we could potentially optimize away, but there probably isn't
-    // much point to doing so since this function is obsolete.
-
-    return ::IsASCII(aBuffer ?
-        NS_STATIC_CAST(const self_type&, nsDependentString(aBuffer)) : *this);
-  }
-
-PRBool
-nsString::IsSpace( PRUnichar c )
-  {
-    // XXX i18n
-    return (c == ' ') || (c == '\r') || (c == '\n') || (c == '\t');
-  }
-
-  
   /**
    * ToCString, ToFloat, ToInteger
    */
@@ -1233,20 +1202,6 @@ void
 nsString::AppendWithConversion( const nsACString& aData )
   {
     AppendASCIItoUTF16(aData, *this);
-  }
-
-
-  /**
-   * nsTString::InsertWithConversion
-   */
-
-void
-nsString::InsertWithConversion( const char* aData, PRUint32 aOffset, PRInt32 aCount )
-  {
-    if (aCount < 0)
-      aCount = nsCharTraits<char>::length(aData);
-
-    Insert(NS_ConvertASCIItoUTF16(aData), aOffset);
   }
 
 

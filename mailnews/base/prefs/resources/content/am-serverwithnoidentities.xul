@@ -7,7 +7,6 @@
 <page xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
       onload="parent.onPanelLoaded('am-serverwithnoidentities.xul');">
 
-  <script type="application/x-javascript" src="chrome://messenger/content/am-serverwithnoidentities.js"/>
   <script type="application/x-javascript" src="chrome://messenger/content/amUtils.js"/>
 
   <dialogheader title="&accountTitle.label;"/>
@@ -35,13 +34,13 @@
 
     <separator class="thin"/>
 
-  <label value="&localPath.label;" control="server.localPath"
-         accesskey="&localPath.accesskey;"/>
-  <hbox align="center">
-    <textbox readonly="true" wsm_persist="true" flex="1" id="server.localPath" datatype="nsIFileSpec"
-             prefstring="mail.server.%serverkey%.directory" class="uri-element"/>
-    <button id="browseForLocalFolder" label="&browseFolder.label;" filepickertitle="&localFolderPicker.label;"
-            accesskey="&browseFolder.accesskey;" oncommand="BrowseForLocalFolders()"/>
-  </hbox>
+    <label value="&localPath.label;" control="server.localPath"
+           accesskey="&localPath.accesskey;"/>
+    <hbox align="center">
+      <textbox readonly="true" wsm_persist="true" flex="1" id="server.localPath" datatype="nsIFileSpec"
+               prefstring="mail.server.%serverkey%.directory" class="uri-element"/>
+      <button id="browseForLocalFolder" label="&browseFolder.label;" filepickertitle="&localFolderPicker.label;"
+              accesskey="&browseFolder.accesskey;" oncommand="BrowseForLocalFolders()"/>
+    </hbox>
   </groupbox>
 </page>

@@ -215,9 +215,8 @@ nsresult CHeaderSniffer::PerformSave(nsIURI* inOriginalURI, const ESaveFormat in
         if (index >= 0) {
             // Take the substring following the prefix.
             index += 9;
-            nsCAutoString filename;
-            mContentDisposition.Right(filename, mContentDisposition.Length() - index);
-            defaultFileName = NS_ConvertUTF8toUCS2(filename);
+            AppendUTF8toUTF16(Substring(mContentDisposition, index),
+                              defaultFileName);
         }
     }
     
@@ -226,7 +225,7 @@ nsresult CHeaderSniffer::PerformSave(nsIURI* inOriginalURI, const ESaveFormat in
         if (url) {
             nsCAutoString fileNameCString;
             url->GetFileName(fileNameCString); // (2) For file URLs, use the file name.
-            defaultFileName = NS_ConvertUTF8toUCS2(fileNameCString);
+            AppendUTF8toUTF16(fileNameCString, defaultFileName);
         }
     }
     
@@ -245,12 +244,12 @@ nsresult CHeaderSniffer::PerformSave(nsIURI* inOriginalURI, const ESaveFormat in
         // (5) Use the host.
         nsCAutoString hostName;
         mURL->GetHost(hostName);
-        defaultFileName = NS_ConvertUTF8toUCS2(hostName);
+        AppendUTF8toUTF16(hostName, defaultFileName);
     }
     
     // One last case to handle about:blank and other fruity untitled pages.
     if (defaultFileName.IsEmpty())
-        defaultFileName.AssignWithConversion("untitled");
+        defaultFileName.AssignLiteral("untitled");
         
     // Validate the file name to ensure legality.
     for (PRUint32 i = 0; i < defaultFileName.Length(); i++)
@@ -271,7 +270,7 @@ nsresult CHeaderSniffer::PerformSave(nsIURI* inOriginalURI, const ESaveFormat in
     PRBool setExtension = PR_FALSE;
     if (mContentType.Equals("text/html")) {
         if (fileExtension.IsEmpty() || (!fileExtension.Equals("htm") && !fileExtension.Equals("html"))) {
-            defaultFileName.AppendWithConversion(".html");
+            defaultFileName.AppendLiteral(".html");
             setExtension = PR_TRUE;
         }
     }
@@ -281,7 +280,7 @@ nsresult CHeaderSniffer::PerformSave(nsIURI* inOriginalURI, const ESaveFormat in
         if (!mimeService)
             return rv;
         nsCOMPtr<nsIMIMEInfo> mimeInfo;
-        rv = mimeService->GetFromTypeAndExtension(mContentType.get(), nsnull, getter_AddRefs(mimeInfo));
+        rv = mimeService->GetFromTypeAndExtension(mContentType, EmptyCString(), getter_AddRefs(mimeInfo));
         if (!mimeInfo)
           return rv;
 
@@ -294,7 +293,7 @@ nsresult CHeaderSniffer::PerformSave(nsIURI* inOriginalURI, const ESaveFormat in
             nsCAutoString ext;
             extensions->GetNext(ext);
             defaultFileName.Append(PRUnichar('.'));
-            defaultFileName.Append(NS_ConvertUTF8toUCS2(ext));
+            AppendUTF8toUTF16(ext, defaultFileName);
         }
     }
 
@@ -394,7 +393,7 @@ nsresult CHeaderSniffer::InitiateDownload(nsISupports* inSourceData, nsILocalFil
   nsAutoString fileDisplayName;
   inDestFile->GetLeafName(fileDisplayName);
   
-  nsCOMPtr<nsIDownload> downloader = do_CreateInstance(NS_DOWNLOAD_CONTRACTID);
+  nsCOMPtr<nsIDownload> downloader = do_CreateInstance(NS_TRANSFER_CONTRACTID);
   // dlListener attaches to its progress dialog here, which gains ownership
   rv = downloader->Init(inOriginalURI, inDestFile, fileDisplayName.get(), nsnull, timeNow, webPersist);
   if (NS_FAILED(rv)) return rv;
@@ -434,7 +433,7 @@ nsresult CHeaderSniffer::InitiateDownload(nsISupports* inSourceData, nsILocalFil
       PRInt32 index = nameMinusExt.RFind(".");
       if (index >= 0)
           nameMinusExt.Left(nameMinusExt, index);
-      nameMinusExt += NS_LITERAL_STRING(" Files"); // XXXdwh needs to be localizable!
+      nameMinusExt.AppendLiteral(" Files"); // XXXdwh needs to be localizable!
       filesFolder->SetLeafName(nameMinusExt);
       PRBool exists = PR_FALSE;
       filesFolder->Exists(&exists);

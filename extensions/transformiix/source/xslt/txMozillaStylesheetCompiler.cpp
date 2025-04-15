@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is mozilla.org code.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
@@ -20,8 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Peter Van der Beken <peterv@netscape.com> (original author)
- *
+ *   Peter Van der Beken <peterv@propagandism.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -44,24 +43,26 @@
 #include "nsIDOMDocument.h"
 #include "nsIDocument.h"
 #include "nsIExpatSink.h"
-#include "nsIHttpEventSink.h"
+#include "nsIChannelEventSink.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsILoadGroup.h"
-#include "nsINameSpace.h"
 #include "nsINameSpaceManager.h"
 #include "nsINodeInfo.h"
 #include "nsIParser.h"
 #include "nsIRequestObserver.h"
 #include "nsIScriptSecurityManager.h"
+#include "nsContentPolicyUtils.h"
 #include "nsIStreamConverterService.h"
 #include "nsISyncLoadDOMService.h"
 #include "nsIURI.h"
+#include "nsIPrincipal.h"
 #include "nsIWindowWatcher.h"
 #include "nsIXMLContentSink.h"
 #include "nsMimeTypes.h"
 #include "nsNetUtil.h"
 #include "nsParserCIID.h"
 #include "txAtoms.h"
+#include "TxLog.h"
 #include "txMozillaXSLTProcessor.h"
 #include "txStylesheetCompiler.h"
 #include "XMLUtils.h"
@@ -90,7 +91,7 @@ getSpec(nsIChannel* aChannel, nsAString& aSpec)
 class txStylesheetSink : public nsIXMLContentSink,
                          public nsIExpatSink,
                          public nsIStreamListener,
-                         public nsIHttpEventSink,
+                         public nsIChannelEventSink,
                          public nsIInterfaceRequestor
 {
 public:
@@ -101,7 +102,7 @@ public:
     NS_DECL_NSIEXPATSINK
     NS_DECL_NSISTREAMLISTENER
     NS_DECL_NSIREQUESTOBSERVER
-    NS_DECL_NSIHTTPEVENTSINK
+    NS_DECL_NSICHANNELEVENTSINK
     NS_DECL_NSIINTERFACEREQUESTOR
 
     // nsIContentSink
@@ -110,7 +111,7 @@ public:
     NS_IMETHOD WillInterrupt(void) { return NS_OK; }
     NS_IMETHOD WillResume(void) { return NS_OK; }
     NS_IMETHOD SetParser(nsIParser* aParser) { return NS_OK; }
-    NS_IMETHOD FlushPendingNotifications() { return NS_OK; }
+    virtual void FlushPendingNotifications(mozFlushType aType) { }
     NS_IMETHOD SetDocumentCharset(nsACString& aCharset) { return NS_OK; }
     virtual nsISupports *GetTarget() { return nsnull; }
 
@@ -142,7 +143,7 @@ NS_IMPL_ISUPPORTS7(txStylesheetSink,
                    nsIExpatSink,
                    nsIStreamListener,
                    nsIRequestObserver,
-                   nsIHttpEventSink,
+                   nsIChannelEventSink,
                    nsIInterfaceRequestor)
 
 NS_IMETHODIMP
@@ -222,8 +223,9 @@ txStylesheetSink::HandleProcessingInstruction(const PRUnichar *aTarget,
 }
 
 NS_IMETHODIMP
-txStylesheetSink::HandleXMLDeclaration(const PRUnichar *aData,
-                                       PRUint32 aLength)
+txStylesheetSink::HandleXMLDeclaration(const PRUnichar *aVersion,
+                                       const PRUnichar *aEncoding,
+                                       PRInt32 aStandalone)
 {
     return NS_OK;
 }
@@ -312,10 +314,9 @@ txStylesheetSink::OnStartRequest(nsIRequest *aRequest, nsISupports *aContext)
         nsCOMPtr<nsIStreamConverterService> serv =
             do_GetService("@mozilla.org/streamConverters;1", &rv);
         if (NS_SUCCEEDED(rv)) {
-            NS_ConvertASCIItoUCS2 from(UNKNOWN_CONTENT_TYPE);
             nsCOMPtr<nsIStreamListener> converter;
-            rv = serv->AsyncConvertData(from.get(),
-                                        NS_LITERAL_STRING("*/*").get(),
+            rv = serv->AsyncConvertData(UNKNOWN_CONTENT_TYPE,
+                                        "*/*",
                                         mListener,
                                         aContext,
                                         getter_AddRefs(converter));
@@ -368,10 +369,11 @@ txStylesheetSink::OnStopRequest(nsIRequest *aRequest, nsISupports *aContext,
 }
 
 NS_IMETHODIMP
-txStylesheetSink::OnRedirect(nsIHttpChannel *aHttpChannel,
-                             nsIChannel *aNewChannel)
+txStylesheetSink::OnChannelRedirect(nsIChannel *aOldChannel,
+                                    nsIChannel *aNewChannel,
+                                    PRUint32    aFlags)
 {
-    NS_ENSURE_ARG_POINTER(aNewChannel);
+    NS_PRECONDITION(aNewChannel, "Redirect without a channel?");
 
     nsresult rv;
     nsCOMPtr<nsIScriptSecurityManager> secMan =
@@ -379,7 +381,7 @@ txStylesheetSink::OnRedirect(nsIHttpChannel *aHttpChannel,
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIURI> oldURI;
-    rv = aHttpChannel->GetURI(getter_AddRefs(oldURI)); // The original URI
+    rv = aOldChannel->GetURI(getter_AddRefs(oldURI)); // The original URI
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIURI> newURI;
@@ -415,6 +417,41 @@ txStylesheetSink::GetInterface(const nsIID& aIID, void** aResult)
     return QueryInterface(aIID, aResult);
 }
 
+static nsresult
+CheckLoadURI(nsIURI *aUri, nsIURI *aReferrerUri,
+             nsIPrincipal *aReferrerPrincipal, nsISupports *aContext)
+{
+    // First do a security check.
+    nsresult rv;
+    nsCOMPtr<nsIScriptSecurityManager> securityManager = 
+        do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (aReferrerPrincipal) {
+        rv = securityManager->
+            CheckLoadURIWithPrincipal(aReferrerPrincipal, aUri,
+                                      nsIScriptSecurityManager::STANDARD);
+    }
+    else {
+        rv = securityManager->CheckLoadURI(aReferrerUri, aUri,
+                                           nsIScriptSecurityManager::STANDARD);
+    }
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_XSLT_LOAD_BLOCKED_ERROR);
+
+    rv = securityManager->CheckSameOriginURI(aReferrerUri, aUri);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_XSLT_LOAD_BLOCKED_ERROR);
+
+    // Then do a content policy check.
+    PRInt16 decision = nsIContentPolicy::ACCEPT;
+    rv = NS_CheckContentLoadPolicy(nsIContentPolicy::TYPE_STYLESHEET,
+                                   aUri, aReferrerUri, aContext,
+                                   NS_LITERAL_CSTRING("application/xml"), nsnull,
+                                   &decision);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return NS_CP_REJECTED(decision) ? NS_ERROR_XSLT_LOAD_BLOCKED_ERROR : NS_OK;
+}
+
 class txCompileObserver : public txACompileObserver
 {
 public:
@@ -425,7 +462,7 @@ public:
     TX_DECL_ACOMPILEOBSERVER;
 
     nsresult startLoad(nsIURI* aUri, txStylesheetCompiler* aCompiler,
-                       nsIURI* aReferrerUri);
+                       nsIURI* aReferrerURI);
 
 protected:
     nsAutoRefCnt mRefCnt;
@@ -469,13 +506,22 @@ txCompileObserver::Release()
 
 nsresult
 txCompileObserver::loadURI(const nsAString& aUri,
+                           const nsAString& aReferrerUri,
                            txStylesheetCompiler* aCompiler)
 {
     nsCOMPtr<nsIURI> uri;
     nsresult rv = NS_NewURI(getter_AddRefs(uri), aUri);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    return startLoad(uri, aCompiler, nsnull);
+    nsCOMPtr<nsIURI> referrerUri;
+    rv = NS_NewURI(getter_AddRefs(referrerUri), aReferrerUri);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Do security check.
+    rv = CheckLoadURI(uri, referrerUri, nsnull, nsnull);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return startLoad(uri, aCompiler, referrerUri);
 }
 
 void
@@ -494,27 +540,15 @@ txCompileObserver::onDoneCompiling(txStylesheetCompiler* aCompiler,
 
 nsresult
 txCompileObserver::startLoad(nsIURI* aUri, txStylesheetCompiler* aCompiler,
-                             nsIURI* aReferrerUri)
+                             nsIURI* aReferrerURI)
 {
-    nsresult rv;
-    if (aReferrerUri) {
-        nsCOMPtr<nsIScriptSecurityManager> securityManager = 
-            do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        rv = securityManager->CheckLoadURI(aReferrerUri, aUri,
-                                           nsIScriptSecurityManager::STANDARD);
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        rv = securityManager->CheckSameOriginURI(aReferrerUri, aUri);
-        NS_ENSURE_SUCCESS(rv, rv);
-    }
-
     nsCOMPtr<nsIChannel> channel;
-    rv = NS_NewChannel(getter_AddRefs(channel), aUri);
+    nsresult rv = NS_NewChannel(getter_AddRefs(channel), aUri);
     NS_ENSURE_SUCCESS(rv, rv);
 
     channel->SetLoadGroup(mLoadGroup);
+
+    channel->SetContentType(NS_LITERAL_CSTRING("text/xml"));
 
     nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
     if (httpChannel) {
@@ -522,8 +556,8 @@ txCompileObserver::startLoad(nsIURI* aUri, txStylesheetCompiler* aCompiler,
                                       NS_LITERAL_CSTRING("text/xml,application/xml,application/xhtml+xml,*/*;q=0.1"),
                                       PR_FALSE);
 
-        if (aReferrerUri) {
-            httpChannel->SetReferrer(aReferrerUri);
+        if (aReferrerURI) {
+            httpChannel->SetReferrer(aReferrerURI);
         }
     }
 
@@ -544,21 +578,30 @@ txCompileObserver::startLoad(nsIURI* aUri, txStylesheetCompiler* aCompiler,
 
 nsresult
 TX_LoadSheet(nsIURI* aUri, txMozillaXSLTProcessor* aProcessor,
-             nsILoadGroup* aLoadGroup, nsIURI* aReferrerUri)
+             nsILoadGroup* aLoadGroup, nsIPrincipal* aCallerPrincipal)
 {
-    nsCAutoString uri;
-    aUri->GetSpec(uri);
-    PR_LOG(txLog::xslt, PR_LOG_ALWAYS, ("TX_LoadSheet: %s\n", uri.get()));
+    nsCAutoString spec;
+    aUri->GetSpec(spec);
+    PR_LOG(txLog::xslt, PR_LOG_ALWAYS, ("TX_LoadSheet: %s\n", spec.get()));
+
+    nsCOMPtr<nsIURI> referrerURI;
+    aCallerPrincipal->GetURI(getter_AddRefs(referrerURI));
+    NS_ASSERTION(referrerURI, "Caller principal must have a URI!");
+
+    // Pass source document as the context
+    nsresult rv = CheckLoadURI(aUri, referrerURI, aCallerPrincipal,
+                               aProcessor->GetSourceContentModel());
+    NS_ENSURE_SUCCESS(rv, rv);
 
     nsRefPtr<txCompileObserver> observer =
         new txCompileObserver(aProcessor, aLoadGroup);
     NS_ENSURE_TRUE(observer, NS_ERROR_OUT_OF_MEMORY);
 
     nsRefPtr<txStylesheetCompiler> compiler =
-        new txStylesheetCompiler(NS_ConvertUTF8toUCS2(uri), observer);
+        new txStylesheetCompiler(NS_ConvertUTF8toUTF16(spec), observer);
     NS_ENSURE_TRUE(compiler, NS_ERROR_OUT_OF_MEMORY);
 
-    return observer->startLoad(aUri, compiler, aReferrerUri);
+    return observer->startLoad(aUri, compiler, referrerURI);
 }
 
 /**
@@ -649,7 +692,7 @@ handleNode(nsIDOMNode* aNode, txStylesheetCompiler* aCompiler)
 class txSyncCompileObserver : public txACompileObserver
 {
 public:
-    txSyncCompileObserver(nsIURI* aReferrerURI);
+    txSyncCompileObserver();
     virtual ~txSyncCompileObserver();
 
     TX_DECL_ACOMPILEOBSERVER;
@@ -659,15 +702,9 @@ protected:
 
 private:
     nsCOMPtr<nsISyncLoadDOMService> mLoadService;
-    nsCOMPtr<nsIURI> mReferrer;
-
-protected:
-    // This exists soly to supress a warning from nsDerivedSafe
-    txSyncCompileObserver();
 };
 
-txSyncCompileObserver::txSyncCompileObserver(nsIURI* aReferrer)
-    : mReferrer(aReferrer)
+txSyncCompileObserver::txSyncCompileObserver()
 {
 }
 
@@ -694,17 +731,25 @@ txSyncCompileObserver::Release()
 
 nsresult
 txSyncCompileObserver::loadURI(const nsAString& aUri,
+                               const nsAString& aReferrerUri,
                                txStylesheetCompiler* aCompiler)
 {
+    nsCOMPtr<nsIURI> uri;
+    nsresult rv = NS_NewURI(getter_AddRefs(uri), aUri);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIURI> referrerUri;
+    rv = NS_NewURI(getter_AddRefs(referrerUri), aReferrerUri);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = CheckLoadURI(uri, referrerUri, nsnull, nsnull);
+    NS_ENSURE_SUCCESS(rv, rv);
+
     if (!mLoadService) {
         mLoadService =
             do_GetService("@mozilla.org/content/syncload-dom-service;1");
         NS_ENSURE_TRUE(mLoadService, NS_ERROR_OUT_OF_MEMORY);
     }
-
-    nsCOMPtr<nsIURI> uri;
-    nsresult rv = NS_NewURI(getter_AddRefs(uri), aUri);
-    NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIChannel> channel;
     rv = NS_NewChannel(getter_AddRefs(channel), uri);
@@ -713,26 +758,26 @@ txSyncCompileObserver::loadURI(const nsAString& aUri,
     // This is probably called by js, a loadGroup for the channel doesn't
     // make sense.
 
+    channel->SetContentType(NS_LITERAL_CSTRING("text/xml"));
+
     nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
     if (httpChannel) {
         httpChannel->SetRequestHeader(NS_LITERAL_CSTRING("Accept"),
                                       NS_LITERAL_CSTRING("text/xml,application/xml,application/xhtml+xml,*/*;q=0.1"),
                                       PR_FALSE);
 
-        if (mReferrer) {
-            httpChannel->SetReferrer(mReferrer);
-        }
+        httpChannel->SetReferrer(referrerUri);
     }
 
     nsCOMPtr<nsIDOMDocument> document;
-    rv = mLoadService->LoadDocument(channel, mReferrer,
+    rv = mLoadService->LoadDocument(channel, referrerUri,
                                     getter_AddRefs(document));
     NS_ENSURE_SUCCESS(rv, rv);
     rv = handleNode(document, aCompiler);
     if (NS_FAILED(rv)) {
         nsCAutoString spec;
         uri->GetSpec(spec);
-        aCompiler->cancel(rv, nsnull, NS_ConvertUTF8toUCS2(spec).get());
+        aCompiler->cancel(rv, nsnull, NS_ConvertUTF8toUTF16(spec).get());
         return rv;
     }
 
@@ -761,9 +806,9 @@ TX_CompileStylesheet(nsIDOMNode* aNode, txStylesheet** aStylesheet)
     nsCAutoString baseURI;
     uri->GetSpec(baseURI);
 
-    nsRefPtr<txSyncCompileObserver> obs = new txSyncCompileObserver(uri);
+    nsRefPtr<txSyncCompileObserver> obs = new txSyncCompileObserver();
     NS_ENSURE_TRUE(obs, NS_ERROR_OUT_OF_MEMORY);
-    NS_ConvertUTF8toUCS2 base(baseURI);
+    NS_ConvertUTF8toUTF16 base(baseURI);
     nsRefPtr<txStylesheetCompiler> compiler =
         new txStylesheetCompiler(base, obs);
     NS_ENSURE_TRUE(compiler, NS_ERROR_OUT_OF_MEMORY);

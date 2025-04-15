@@ -62,7 +62,18 @@ class nsTSubstring_CharT : public nsTAString_CharT
       typedef char_type*            char_iterator;
       typedef const char_type*      const_char_iterator;
 
+#ifdef MOZ_V1_STRING_ABI
+      typedef nsTAString_CharT      base_string_type;
+#else
+      typedef nsTSubstring_CharT    base_string_type;
+#endif
+
     public:
+
+#ifndef MOZ_V1_STRING_ABI
+        // this acts like a virtual destructor
+      NS_COM NS_FASTCALL ~nsTSubstring_CharT();
+#endif
 
         /**
          * reading iterators
@@ -198,41 +209,132 @@ class nsTSubstring_CharT : public nsTAString_CharT
           return mData[mLength - 1];
         }
 
-      NS_COM size_type CountChar( char_type ) const;
-      NS_COM PRInt32 FindChar( char_type, index_type offset = 0 ) const;
+      NS_COM size_type NS_FASTCALL CountChar( char_type ) const;
+      NS_COM PRInt32 NS_FASTCALL FindChar( char_type, index_type offset = 0 ) const;
 
 
         /**
          * equality
          */
 
-      NS_COM PRBool Equals( const self_type& ) const;
-      NS_COM PRBool Equals( const self_type&, const comparator_type& ) const;
+      NS_COM PRBool NS_FASTCALL Equals( const self_type& ) const;
+      NS_COM PRBool NS_FASTCALL Equals( const self_type&, const comparator_type& ) const;
 
-      NS_COM PRBool Equals( const abstract_string_type& readable ) const;
-      NS_COM PRBool Equals( const abstract_string_type& readable, const comparator_type& comp ) const;
+#ifdef MOZ_V1_STRING_ABI
+      NS_COM PRBool NS_FASTCALL Equals( const abstract_string_type& readable ) const;
+      NS_COM PRBool NS_FASTCALL Equals( const abstract_string_type& readable, const comparator_type& comp ) const;
+#endif
 
-      NS_COM PRBool Equals( const char_type* data ) const;
-      NS_COM PRBool Equals( const char_type* data, const comparator_type& comp ) const;
+      NS_COM PRBool NS_FASTCALL Equals( const char_type* data ) const;
+      NS_COM PRBool NS_FASTCALL Equals( const char_type* data, const comparator_type& comp ) const;
 
+        /**
+         * An efficient comparison with ASCII that can be used even
+         * for wide strings. Call this version when you know the
+         * length of 'data'.
+         */
+      NS_COM PRBool NS_FASTCALL EqualsASCII( const char* data, size_type len ) const;
+        /**
+         * An efficient comparison with ASCII that can be used even
+         * for wide strings. Call this version when 'data' is
+         * null-terminated.
+         */
+      NS_COM PRBool NS_FASTCALL EqualsASCII( const char* data ) const;
+
+    // EqualsLiteral must ONLY be applied to an actual literal string.
+    // Do not attempt to use it with a regular char* pointer, or with a char
+    // array variable.
+    // The template trick to acquire the array length at compile time without
+    // using a macro is due to Corey Kosak, with much thanks.
+#ifdef NS_DISABLE_LITERAL_TEMPLATE
+      inline PRBool EqualsLiteral( const char* str ) const
+        {
+          return EqualsASCII(str);
+        }
+#else
+      template<int N>
+      inline PRBool EqualsLiteral( const char (&str)[N] ) const
+        {
+          return EqualsASCII(str, N-1);
+        }
+      template<int N>
+      inline PRBool EqualsLiteral( char (&str)[N] ) const
+        {
+          const char* s = str;
+          return EqualsASCII(s, N-1);
+        }
+#endif
+
+    // The LowerCaseEquals methods compare the lower case version of
+    // this string to some ASCII/Literal string. The ASCII string is
+    // *not* lowercased for you. If you compare to an ASCII or literal
+    // string that contains an uppercase character, it is guaranteed to
+    // return false. We will throw assertions too.
+      NS_COM PRBool NS_FASTCALL LowerCaseEqualsASCII( const char* data, size_type len ) const;
+      NS_COM PRBool NS_FASTCALL LowerCaseEqualsASCII( const char* data ) const;
+
+    // LowerCaseEqualsLiteral must ONLY be applied to an actual
+    // literal string.  Do not attempt to use it with a regular char*
+    // pointer, or with a char array variable. Use
+    // LowerCaseEqualsASCII for them.
+#ifdef NS_DISABLE_LITERAL_TEMPLATE
+      inline PRBool LowerCaseEqualsLiteral( const char* str ) const
+        {
+          return LowerCaseEqualsASCII(str);
+        }
+#else
+      template<int N>
+      inline PRBool LowerCaseEqualsLiteral( const char (&str)[N] ) const
+        {
+          return LowerCaseEqualsASCII(str, N-1);
+        }
+      template<int N>
+      inline PRBool LowerCaseEqualsLiteral( char (&str)[N] ) const
+        {
+          const char* s = str;
+          return LowerCaseEqualsASCII(s, N-1);
+        }
+#endif
 
         /**
          * assignment
          */
 
       void Assign( char_type c )                                                                { Assign(&c, 1); }
-      NS_COM void Assign( const char_type* data, size_type length = size_type(-1) );
-      NS_COM void Assign( const self_type& );
-      NS_COM void Assign( const substring_tuple_type& );
-      NS_COM void Assign( const abstract_string_type& );
+      NS_COM void NS_FASTCALL Assign( const char_type* data, size_type length = size_type(-1) );
+      NS_COM void NS_FASTCALL Assign( const self_type& );
+      NS_COM void NS_FASTCALL Assign( const substring_tuple_type& );
+#ifdef MOZ_V1_STRING_ABI
+      NS_COM void NS_FASTCALL Assign( const abstract_string_type& );
+#endif
+
+      NS_COM void NS_FASTCALL AssignASCII( const char* data, size_type length );
+      NS_COM void NS_FASTCALL AssignASCII( const char* data );
+
+    // AssignLiteral must ONLY be applied to an actual literal string.
+    // Do not attempt to use it with a regular char* pointer, or with a char
+    // array variable. Use AssignASCII for those.
+#ifdef NS_DISABLE_LITERAL_TEMPLATE
+      void AssignLiteral( const char* str )
+                  { AssignASCII(str); }
+#else
+      template<int N>
+      void AssignLiteral( const char (&str)[N] )
+                  { AssignASCII(str, N-1); }
+      template<int N>
+      void AssignLiteral( char (&str)[N] )
+                  { AssignASCII(str, N-1); }
+#endif
 
       self_type& operator=( char_type c )                                                       { Assign(c);        return *this; }
       self_type& operator=( const char_type* data )                                             { Assign(data);     return *this; }
       self_type& operator=( const self_type& str )                                              { Assign(str);      return *this; }
       self_type& operator=( const substring_tuple_type& tuple )                                 { Assign(tuple);    return *this; }
+#ifdef MOZ_V1_STRING_ABI
       self_type& operator=( const abstract_string_type& readable )                              { Assign(readable); return *this; }
+#endif
 
-      NS_COM void Adopt( char_type* data, size_type length = size_type(-1) );
+      NS_COM void NS_FASTCALL Adopt( char_type* data, size_type length = size_type(-1) );
 
 
         /**
@@ -240,28 +342,55 @@ class nsTSubstring_CharT : public nsTAString_CharT
          */
 
              void Replace( index_type cutStart, size_type cutLength, char_type c )               { Replace(cutStart, cutLength, &c, 1); }
-      NS_COM void Replace( index_type cutStart, size_type cutLength, const char_type* data, size_type length = size_type(-1) );
+      NS_COM void NS_FASTCALL Replace( index_type cutStart, size_type cutLength, const char_type* data, size_type length = size_type(-1) );
              void Replace( index_type cutStart, size_type cutLength, const self_type& str )      { Replace(cutStart, cutLength, str.Data(), str.Length()); }
-      NS_COM void Replace( index_type cutStart, size_type cutLength, const substring_tuple_type& tuple );
-      NS_COM void Replace( index_type cutStart, size_type cutLength, const abstract_string_type& readable );
+      NS_COM void NS_FASTCALL Replace( index_type cutStart, size_type cutLength, const substring_tuple_type& tuple );
+#ifdef MOZ_V1_STRING_ABI
+      NS_COM void NS_FASTCALL Replace( index_type cutStart, size_type cutLength, const abstract_string_type& readable );
+#endif
+
+      NS_COM void NS_FASTCALL ReplaceASCII( index_type cutStart, size_type cutLength, const char* data, size_type length = size_type(-1) );
 
       void Append( char_type c )                                                                 { Replace(mLength, 0, c); }
       void Append( const char_type* data, size_type length = size_type(-1) )                     { Replace(mLength, 0, data, length); }
       void Append( const self_type& str )                                                        { Replace(mLength, 0, str); }
       void Append( const substring_tuple_type& tuple )                                           { Replace(mLength, 0, tuple); }
+#ifdef MOZ_V1_STRING_ABI
       void Append( const abstract_string_type& readable )                                        { Replace(mLength, 0, readable); }
+#endif
+
+      void AppendASCII( const char* data, size_type length = size_type(-1) )                     { ReplaceASCII(mLength, 0, data, length); }
+
+    // AppendLiteral must ONLY be applied to an actual literal string.
+    // Do not attempt to use it with a regular char* pointer, or with a char
+    // array variable. Use AppendASCII for those.
+#ifdef NS_DISABLE_LITERAL_TEMPLATE
+      void AppendLiteral( const char* str )
+                  { AppendASCII(str); }
+#else
+      template<int N>
+      void AppendLiteral( const char (&str)[N] )
+                  { AppendASCII(str, N-1); }
+      template<int N>
+      void AppendLiteral( char (&str)[N] )
+                  { AppendASCII(str, N-1); }
+#endif
 
       self_type& operator+=( char_type c )                                                       { Append(c);        return *this; }
       self_type& operator+=( const char_type* data )                                             { Append(data);     return *this; }
       self_type& operator+=( const self_type& str )                                              { Append(str);      return *this; }
       self_type& operator+=( const substring_tuple_type& tuple )                                 { Append(tuple);    return *this; }
+#ifdef MOZ_V1_STRING_ABI
       self_type& operator+=( const abstract_string_type& readable )                              { Append(readable); return *this; }
+#endif
 
       void Insert( char_type c, index_type pos )                                                 { Replace(pos, 0, c); }
       void Insert( const char_type* data, index_type pos, size_type length = size_type(-1) )     { Replace(pos, 0, data, length); }
       void Insert( const self_type& str, index_type pos )                                        { Replace(pos, 0, str); }
       void Insert( const substring_tuple_type& tuple, index_type pos )                           { Replace(pos, 0, tuple); }
+#ifdef MOZ_V1_STRING_ABI
       void Insert( const abstract_string_type& readable, index_type pos )                        { Replace(pos, 0, readable); }
+#endif
 
       void Cut( index_type cutStart, size_type cutLength )                                       { Replace(cutStart, cutLength, char_traits::sEmptyBuffer, 0); }
 
@@ -270,9 +399,9 @@ class nsTSubstring_CharT : public nsTAString_CharT
          * buffer sizing
          */
 
-      NS_COM void SetCapacity( size_type capacity );
+      NS_COM void NS_FASTCALL SetCapacity( size_type capacity );
 
-      NS_COM void SetLength( size_type );
+      NS_COM void NS_FASTCALL SetLength( size_type );
 
       void Truncate( size_type newLength = 0 )
         {
@@ -286,7 +415,17 @@ class nsTSubstring_CharT : public nsTAString_CharT
          * string will be truncated.  @see nsTSubstring::IsVoid
          */
 
-      NS_COM void SetIsVoid( PRBool );
+      NS_COM void NS_FASTCALL SetIsVoid( PRBool );
+
+        /**
+         *  This method is used to remove all occurances of aChar from this
+         * string.
+         *  
+         *  @param  aChar -- char to be stripped
+         *  @param  aOffset -- where in this string to start stripping chars
+         */
+         
+      NS_COM void StripChar( char_type aChar, PRInt32 aOffset=0 );
 
 
     public:
@@ -296,10 +435,32 @@ class nsTSubstring_CharT : public nsTAString_CharT
          * base type, which helps avoid converting to nsTAString.
          */
       nsTSubstring_CharT(const substring_tuple_type& tuple)
+#ifdef MOZ_V1_STRING_ABI
         : abstract_string_type(nsnull, 0, F_NONE)
+#else
+        : mData(nsnull),
+          mLength(0),
+          mFlags(F_NONE)
+#endif
         {
           Assign(tuple);
         }
+
+        /**
+         * allows for direct initialization of a nsTSubstring object. 
+         *
+         * NOTE: this constructor is declared public _only_ for convenience
+         * inside the string implementation.
+         */
+      nsTSubstring_CharT( char_type *data, size_type length, PRUint32 flags )
+#ifdef MOZ_V1_STRING_ABI
+        : abstract_string_type(data, length, flags) {}
+#else
+        : mData(data),
+          mLength(length),
+          mFlags(flags) {}
+#endif
+
 
     protected:
 
@@ -310,32 +471,49 @@ class nsTSubstring_CharT : public nsTAString_CharT
       // XXX GCC 3.4 needs this :-(
       friend class nsTPromiseFlatString_CharT;
 
+#ifndef MOZ_V1_STRING_ABI
+      char_type*  mData;
+      size_type   mLength;
+      PRUint32    mFlags;
+#endif
+
         // default initialization 
       nsTSubstring_CharT()
+#ifdef MOZ_V1_STRING_ABI
         : abstract_string_type(
               NS_CONST_CAST(char_type*, char_traits::sEmptyBuffer), 0, F_TERMINATED) {}
-
-        // allow subclasses to initialize fields directly
-      nsTSubstring_CharT( char_type *data, size_type length, PRUint32 flags )
-        : abstract_string_type(data, length, flags) {}
+#else
+        : mData(NS_CONST_CAST(char_type*, char_traits::sEmptyBuffer)),
+          mLength(0),
+          mFlags(F_TERMINATED) {}
+#endif
 
         // version of constructor that leaves mData and mLength uninitialized
       explicit
       nsTSubstring_CharT( PRUint32 flags )
+#ifdef MOZ_V1_STRING_ABI
         : abstract_string_type(flags) {}
+#else
+        : mFlags(flags) {}
+#endif
 
         // copy-constructor, constructs as dependent on given object
         // (NOTE: this is for internal use only)
       nsTSubstring_CharT( const self_type& str )
-        : abstract_string_type(
-              str.mData, str.mLength, str.mFlags & (F_TERMINATED | F_VOIDED)) {}
+#ifdef MOZ_V1_STRING_ABI
+        : abstract_string_type(str.mData, str.mLength, str.mFlags & (F_TERMINATED | F_VOIDED)) {}
+#else
+        : mData(str.mData),
+          mLength(str.mLength),
+          mFlags(str.mFlags & (F_TERMINATED | F_VOIDED)) {}
+#endif
 
         /**
          * this function releases mData and does not change the value of
          * any of its member variables.  inotherwords, this function acts
          * like a destructor.
          */
-      void Finalize();
+      void NS_FASTCALL Finalize();
 
         /**
          * this function prepares mData to be mutated.
@@ -350,9 +528,12 @@ class nsTSubstring_CharT : public nsTAString_CharT
          * new buffer, then it will return the old buffer and the corresponding
          * flags.  this allows the caller to decide when to free the old data.
          *
+         * this function returns false if is unable to allocate sufficient
+         * memory.
+         *
          * XXX we should expose a way for subclasses to free old_data.
          */
-      PRBool MutatePrep( size_type capacity, char_type** old_data, PRUint32* old_flags );
+      PRBool NS_FASTCALL MutatePrep( size_type capacity, char_type** old_data, PRUint32* old_flags );
 
         /**
          * this function prepares a section of mData to be modified.  if
@@ -370,8 +551,11 @@ class nsTSubstring_CharT : public nsTAString_CharT
          * would cause mData to look like "ab____f" where the characters
          * indicated by '_' have an unspecified value and can be freely
          * modified.  this function will null-terminate mData upon return.
+         * 
+         * this function returns false if is unable to allocate sufficient
+         * memory.
          */
-      void ReplacePrep( index_type cutStart, size_type cutLength, size_type newLength );
+      PRBool NS_FASTCALL ReplacePrep( index_type cutStart, size_type cutLength, size_type newLength );
 
         /**
          * returns the number of writable storage units starting at mData.
@@ -379,13 +563,13 @@ class nsTSubstring_CharT : public nsTAString_CharT
          *
          * NOTE: this function returns size_type(-1) if mData is immutable.
          */
-      size_type Capacity() const;
+      size_type NS_FASTCALL Capacity() const;
 
         /**
          * this helper function can be called prior to directly manipulating
          * the contents of mData.  see, for example, BeginWriting.
          */
-      NS_COM void EnsureMutable();
+      NS_COM void NS_FASTCALL EnsureMutable();
 
         /**
          * returns true if this string overlaps with the given string fragment.
@@ -469,3 +653,43 @@ class nsTSubstring_CharT : public nsTAString_CharT
       //   mutually exclusive with F_SHARED, F_OWNED, and F_FIXED.
       //
   };
+
+NS_COM
+int NS_FASTCALL Compare( const nsTSubstring_CharT::base_string_type& lhs, const nsTSubstring_CharT::base_string_type& rhs, const nsTStringComparator_CharT& = nsTDefaultStringComparator_CharT() );
+
+
+inline
+PRBool operator!=( const nsTSubstring_CharT::base_string_type& lhs, const nsTSubstring_CharT::base_string_type& rhs )
+  {
+    return !lhs.Equals(rhs);
+  }
+
+inline
+PRBool operator< ( const nsTSubstring_CharT::base_string_type& lhs, const nsTSubstring_CharT::base_string_type& rhs )
+  {
+    return Compare(lhs, rhs)< 0;
+  }
+
+inline
+PRBool operator<=( const nsTSubstring_CharT::base_string_type& lhs, const nsTSubstring_CharT::base_string_type& rhs )
+  {
+    return Compare(lhs, rhs)<=0;
+  }
+
+inline
+PRBool operator==( const nsTSubstring_CharT::base_string_type& lhs, const nsTSubstring_CharT::base_string_type& rhs )
+  {
+    return lhs.Equals(rhs);
+  }
+
+inline
+PRBool operator>=( const nsTSubstring_CharT::base_string_type& lhs, const nsTSubstring_CharT::base_string_type& rhs )
+  {
+    return Compare(lhs, rhs)>=0;
+  }
+
+inline
+PRBool operator> ( const nsTSubstring_CharT::base_string_type& lhs, const nsTSubstring_CharT::base_string_type& rhs )
+  {
+    return Compare(lhs, rhs)> 0;
+  }

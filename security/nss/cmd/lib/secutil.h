@@ -1,35 +1,38 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 #ifndef _SEC_UTIL_H_
 #define _SEC_UTIL_H_
 
@@ -55,6 +58,9 @@
 
 #define NS_CERT_HEADER "-----BEGIN CERTIFICATE-----"
 #define NS_CERT_TRAILER "-----END CERTIFICATE-----"
+
+#define NS_CRL_HEADER  "-----BEGIN CRL-----"
+#define NS_CRL_TRAILER "-----END CRL-----"
 
 /* From libsec/pcertdb.c --- it's not declared in sec.h */
 extern SECStatus SEC_AddPermCertificate(CERTCertDBHandle *handle,
@@ -183,7 +189,7 @@ extern void SECU_Indent(FILE *out, int level);
 extern void SECU_PrintInteger(FILE *out, SECItem *i, char *m, int level);
 
 /* Print ObjectIdentifier symbolically */
-extern void SECU_PrintObjectID(FILE *out, SECItem *oid, char *m, int level);
+extern SECOidTag SECU_PrintObjectID(FILE *out, SECItem *oid, char *m, int level);
 
 /* Print AlgorithmIdentifier symbolically */
 extern void SECU_PrintAlgorithmID(FILE *out, SECAlgorithmID *a, char *m,
@@ -266,6 +272,13 @@ extern int SECU_PrintCrl(FILE *out, SECItem *der, char *m, int level);
 extern void
 SECU_PrintCRLInfo(FILE *out, CERTCrl *crl, char *m, int level);
 
+extern void SECU_PrintString(FILE *out, SECItem *si, char *m, int level);
+extern void SECU_PrintAny(FILE *out, SECItem *i, char *m, int level);
+
+extern void SECU_PrintPolicy(FILE *out, SECItem *value, char *msg, int level);
+extern void SECU_PrintPrivKeyUsagePeriodExtension(FILE *out, SECItem *value,
+                                 char *msg, int level);
+
 extern void SECU_PrintExtensions(FILE *out, CERTCertExtension **extensions,
 				 char *msg, int level);
 
@@ -286,6 +299,76 @@ extern void SEC_Init(void);
 extern char *SECU_SECModDBName(void);
 
 extern void SECU_PrintPRandOSError(char *progName);
+
+extern SECStatus SECU_RegisterDynamicOids(void);
+
+/* Identifies hash algorithm tag by its string representation. */
+extern SECOidTag SECU_StringToSignatureAlgTag(const char *alg);
+
+/* Store CRL in output file or pk11 db. Also
+ * encodes with base64 and exports to file if ascii flag is set
+ * and file is not NULL. */
+extern SECStatus SECU_StoreCRL(PK11SlotInfo *slot, SECItem *derCrl,
+                               PRFileDesc *outFile, int ascii, char *url);
+
+
+/*
+** DER sign a single block of data using private key encryption and the
+** MD5 hashing algorithm. This routine first computes a digital signature
+** using SEC_SignData, then wraps it with an CERTSignedData and then der
+** encodes the result.
+**	"arena" is the memory arena to use to allocate data from
+**      "sd" returned CERTSignedData 
+** 	"result" the final der encoded data (memory is allocated)
+** 	"buf" the input data to sign
+** 	"len" the amount of data to sign
+** 	"pk" the private key to encrypt with
+*/
+extern SECStatus SECU_DerSignDataCRL(PRArenaPool *arena, CERTSignedData *sd,
+                                     unsigned char *buf, int len,
+                                     SECKEYPrivateKey *pk, SECOidTag algID);
+
+typedef enum  {
+    noKeyFound = 1,
+    noSignatureMatch = 2,
+    failToEncode = 3,
+    failToSign = 4,
+    noMem = 5
+} SignAndEncodeFuncExitStat;
+
+extern SECStatus
+SECU_SignAndEncodeCRL(CERTCertificate *issuer, CERTSignedCrl *signCrl,
+                      SECOidTag hashAlgTag, SignAndEncodeFuncExitStat *resCode);
+
+extern SECStatus
+SECU_CopyCRL(PRArenaPool *destArena, CERTCrl *destCrl, CERTCrl *srcCrl);
+
+/*
+** Finds the crl Authority Key Id extension. Returns NULL if no such extension
+** was found.
+*/
+CERTAuthKeyID *
+SECU_FindCRLAuthKeyIDExten (PRArenaPool *arena, CERTSignedCrl *crl);
+
+/*
+ * Find the issuer of a crl. Cert usage should be checked before signing a crl.
+ */
+CERTCertificate *
+SECU_FindCrlIssuer(CERTCertDBHandle *dbHandle, SECItem* subject,
+                   CERTAuthKeyID* id, PRTime validTime);
+
+
+/* call back function used in encoding of an extension. Called from
+ * SECU_EncodeAndAddExtensionValue */
+typedef SECStatus (* EXTEN_EXT_VALUE_ENCODER) (PRArenaPool *extHandleArena,
+                                               void *value, SECItem *encodedValue);
+
+/* Encodes and adds extensions to the CRL or CRL entries. */
+SECStatus 
+SECU_EncodeAndAddExtensionValue(PRArenaPool *arena, void *extHandle, 
+                                void *value, PRBool criticality, int extenType, 
+                                EXTEN_EXT_VALUE_ENCODER EncodeValueFn);
+
 
 /*
  *

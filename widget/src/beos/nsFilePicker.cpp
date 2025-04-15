@@ -1,27 +1,43 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla browser.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 2001 Netscape Communications Corporation. All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Makoto Hamanaka <VYA04230@nifty.com>
  *   Paul Ashford <arougthopher@lizardland.net>
  *   Sergei Dolgov <sergei_d@fi.tartu.ee>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsCOMPtr.h"
 #include "nsNetUtil.h"
@@ -38,6 +54,7 @@
 #include "nsString.h"
 #include <Window.h>
 #include <View.h>
+#include <Button.h>
 
 static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
 
@@ -57,7 +74,6 @@ nsFilePicker::nsFilePicker()
 		, mUnicodeEncoder(nsnull)
 		, mUnicodeDecoder(nsnull)
 {
-	mDisplayDirectory = do_CreateInstance("@mozilla.org/file/local;1");
 }
 
 //-------------------------------------------------------------------------
@@ -131,7 +147,8 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
 
 	// set initial directory
 	nsCAutoString initialDir;
-	mDisplayDirectory->GetNativePath(initialDir);
+	if (mDisplayDirectory)
+		mDisplayDirectory->GetNativePath(initialDir);
 	if(initialDir.IsEmpty()) {
 #ifdef FILEPICKER_SAVE_LAST_DIR		
 		if (strlen(mLastUsedDirectory) < 2)
@@ -161,7 +178,7 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
 		result = PR_FALSE;
 	}
 
-	if ((mMode == modeOpen || mMode == modeOpenMultiple) && ppanel->IsOpenSelected()) {
+	if ((mMode == modeOpen || mMode == modeOpenMultiple || mMode == modeGetFolder) && ppanel->IsOpenSelected()) {
 		BList *list = ppanel->OpenRefs();
 		uint32 numfiles = list->CountItems();
 		if ((list) && numfiles >= 1) {
@@ -210,7 +227,10 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
 	BEntry dir_entry(&dir_ref);
 	BPath dir_path;
 	dir_entry.GetPath(&dir_path);
-	mDisplayDirectory->InitWithNativePath(nsDependentCString(dir_path.Path()));
+	if (!mDisplayDirectory)
+		mDisplayDirectory = do_CreateInstance("@mozilla.org/file/local;1");
+	if (mDisplayDirectory)
+		mDisplayDirectory->InitWithNativePath(nsDependentCString(dir_path.Path()));
 
 	if (ppanel->Lock()) {
 		ppanel->Quit();
@@ -221,7 +241,8 @@ NS_IMETHODIMP nsFilePicker::Show(PRInt16 *retval)
 
 #ifdef FILEPICKER_SAVE_LAST_DIR
 		strncpy(mLastUsedDirectory, dir_path.Path(), B_PATH_NAME_LENGTH+1);
-		mDisplayDirectory->InitWithNativePath( nsDependentCString(mLastUsedDirectory) );
+		if (mDisplayDirectory)
+			mDisplayDirectory->InitWithNativePath( nsDependentCString(mLastUsedDirectory) );
 #endif
 
 		if (mMode == modeSave) {
@@ -322,29 +343,6 @@ NS_IMETHODIMP nsFilePicker::SetDefaultExtension(const nsAString& aExtension)
 }
 
 //-------------------------------------------------------------------------
-//
-// Set the display directory
-//
-//-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::SetDisplayDirectory(nsILocalFile *aDirectory)
-{
-	mDisplayDirectory = aDirectory;
-	return NS_OK;
-}
-
-//-------------------------------------------------------------------------
-//
-// Get the display directory
-//
-//-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::GetDisplayDirectory(nsILocalFile **aDirectory)
-{
-	*aDirectory = mDisplayDirectory;
-	NS_IF_ADDREF(*aDirectory);
-	return NS_OK;
-}
-
-//-------------------------------------------------------------------------
 void nsFilePicker::InitNative(nsIWidget *aParent,
                               const nsAString& aTitle,
                               PRInt16 aMode)
@@ -378,6 +376,9 @@ nsFilePicker::AppendFilter(const nsAString& aTitle, const nsAString& aFilter)
 //
 //-------------------------------------------------------------------------
 
+// Internal message for when the 'Select <dir>' button is used
+const uint32 MSG_DIRECTORY = 'mDIR';
+
 nsFilePanelBeOS::nsFilePanelBeOS(file_panel_mode mode,
                                  uint32 node_flavors,
                                  bool allow_multiple_selection,
@@ -402,6 +403,35 @@ nsFilePanelBeOS::nsFilePanelBeOS(file_panel_mode mode,
 	if (wait_sem > 0) acquire_sem(wait_sem);
 
 	SetTarget(BMessenger(this));
+	
+	if ( mode == B_OPEN_PANEL && node_flavors == B_DIRECTORY_NODE ) 
+	{
+		// Add a 'Select <dirname>' button to the open dialog
+		Window()->Lock();
+		
+		BView *background = Window()->ChildAt(0); 
+		entry_ref ref;
+		char label[10+B_FILE_NAME_LENGTH];
+		GetPanelDirectory(&ref);
+		sprintf(label, "Select '%s'", ref.name);
+		mDirectoryButton = new BButton(
+			BRect(113, background->Bounds().bottom-35, 269, background->Bounds().bottom-10),
+			"directoryButton", label, new BMessage(MSG_DIRECTORY), B_FOLLOW_LEFT | B_FOLLOW_BOTTOM);
+		
+		if(mDirectoryButton)
+		{
+			background->AddChild(mDirectoryButton);
+			mDirectoryButton->SetTarget(Messenger());
+		}
+		else
+			NS_ASSERTION(false, "Out of memory: failed to create mDirectoryButton");
+		
+		SetButtonLabel(B_DEFAULT_BUTTON, "Select");
+		
+		Window()->Unlock();
+	}
+	else 
+		mDirectoryButton = nsnull;
 
 	this->Run();
 }
@@ -412,6 +442,7 @@ nsFilePanelBeOS::~nsFilePanelBeOS()
 	for (int i=0 ; i<count ; i++) {
 		delete mOpenRefs.ItemAt(i);
 	}
+	
 	if (wait_sem > 0) {
 		delete_sem(wait_sem);
 	}
@@ -441,6 +472,18 @@ void nsFilePanelBeOS::MessageReceived(BMessage *msg)
 		mIsSelected = true;
 		release_sem(wait_sem);
 		break;
+	
+	case MSG_DIRECTORY: // Directory selected
+	{
+		entry_ref ref;
+		GetPanelDirectory(&ref);
+		BPath *path = new BPath(&ref);
+		mOpenRefs.AddItem((void *) path);
+		mSelectedActivity = OPEN_SELECTED;
+		mIsSelected = true;
+		release_sem(wait_sem);
+		break;
+	}
 
 	case B_SAVE_REQUESTED: // save
 		msg->FindString("name", &mSaveFileName);
@@ -476,3 +519,20 @@ uint32 nsFilePanelBeOS::SelectedActivity()
 
 	return result;
 }
+
+void nsFilePanelBeOS::SelectionChanged(void)
+{
+	if(mDirectoryButton)
+	{
+		//Update the 'Select <dir>' button
+		entry_ref ref;
+		char label[50];
+		GetPanelDirectory(&ref);
+		Window()->Lock();
+		sprintf(label, "Select '%s'", ref.name);
+		mDirectoryButton->SetLabel(label);
+		Window()->Unlock();
+	}
+	BFilePanel::SelectionChanged();
+}
+

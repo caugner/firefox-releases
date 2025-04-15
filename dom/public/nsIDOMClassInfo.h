@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2000
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Johnny Stenback <jst@netscape.com> (original author)
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -80,6 +79,10 @@ enum nsDOMClassInfoID {
   // Event classes
   eDOMClassInfo_Event_id,
   eDOMClassInfo_MutationEvent_id,
+  eDOMClassInfo_UIEvent_id,
+  eDOMClassInfo_MouseEvent_id,
+  eDOMClassInfo_KeyboardEvent_id,
+  eDOMClassInfo_PopupBlockedEvent_id,
 
   // HTML classes
   eDOMClassInfo_HTMLDocument_id,
@@ -195,7 +198,7 @@ enum nsDOMClassInfoID {
 
   // We are now trying to preserve binary compat in classinfo.  No
   // more putting things in those categories up there.  New entries
-  // are to be added right before eDOMClassInfoIDCount
+  // are to be added right before eDOMClassInfoIDCount.
 
   // Rect object used by getComputedStyle
   eDOMClassInfo_CSSRect_id,
@@ -221,6 +224,7 @@ enum nsDOMClassInfoID {
   eDOMClassInfo_ImageDocument_id,
 
 #ifdef MOZ_XUL
+  eDOMClassInfo_XULTemplateBuilder_id,
   eDOMClassInfo_XULTreeBuilder_id,
 #endif
 
@@ -230,63 +234,116 @@ enum nsDOMClassInfoID {
   // NameList object used by the DOM
   eDOMClassInfo_NameList_id,
 
+#ifdef MOZ_XUL
+  eDOMClassInfo_TreeColumn_id,
+  eDOMClassInfo_TreeColumns_id,
+#endif
+
+  eDOMClassInfo_CSSMozDocumentRule_id,
+
+  eDOMClassInfo_BeforeUnloadEvent_id,
+
 #ifdef MOZ_SVG
   // The SVG document
   eDOMClassInfo_SVGDocument_id,
 
   // SVG element classes
-  eDOMClassInfo_SVGSVGElement_id,
+  eDOMClassInfo_SVGCircleElement_id,
+  eDOMClassInfo_SVGClipPathElement_id,
+  eDOMClassInfo_SVGDefsElement_id,
+  eDOMClassInfo_SVGDescElement_id,
+  eDOMClassInfo_SVGEllipseElement_id,
+  eDOMClassInfo_SVGGElement_id,
+  eDOMClassInfo_SVGGradientElement_id,
+  eDOMClassInfo_SVGImageElement_id,
+  eDOMClassInfo_SVGLinearGradientElement_id,
+  eDOMClassInfo_SVGLineElement_id,
+  eDOMClassInfo_SVGMarkerElement_id,
+  eDOMClassInfo_SVGMetadataElement_id,
+  eDOMClassInfo_SVGPathElement_id,
   eDOMClassInfo_SVGPolygonElement_id,
   eDOMClassInfo_SVGPolylineElement_id,
-  eDOMClassInfo_SVGCircleElement_id,
-  eDOMClassInfo_SVGEllipseElement_id,
-  eDOMClassInfo_SVGLineElement_id,
+  eDOMClassInfo_SVGRadialGradientElement_id,
   eDOMClassInfo_SVGRectElement_id,
-  eDOMClassInfo_SVGGElement_id,
-  eDOMClassInfo_SVGForeignObjectElement_id,
-  eDOMClassInfo_SVGPathElement_id,
-  
+  eDOMClassInfo_SVGScriptElement_id,
+  eDOMClassInfo_SVGStopElement_id,
+  eDOMClassInfo_SVGStyleElement_id,
+  eDOMClassInfo_SVGSVGElement_id,
+  eDOMClassInfo_SVGSymbolElement_id,
+  eDOMClassInfo_SVGTextElement_id,
+  eDOMClassInfo_SVGTitleElement_id,
+  eDOMClassInfo_SVGTSpanElement_id,
+  eDOMClassInfo_SVGUseElement_id,
+
   // other SVG classes
+  eDOMClassInfo_SVGAngle_id,
+  eDOMClassInfo_SVGAnimatedAngle_id,
+  eDOMClassInfo_SVGAnimatedEnumeration_id,
   eDOMClassInfo_SVGAnimatedLength_id,
-  eDOMClassInfo_SVGLength_id,
+  eDOMClassInfo_SVGAnimatedLengthList_id,
+  eDOMClassInfo_SVGAnimatedNumber_id,
+  eDOMClassInfo_SVGAnimatedNumberList_id,
   eDOMClassInfo_SVGAnimatedPoints_id,
-  eDOMClassInfo_SVGPointList_id,
-  eDOMClassInfo_SVGPoint_id,
+  eDOMClassInfo_SVGAnimatedPreserveAspectRatio_id,
+  eDOMClassInfo_SVGAnimatedRect_id,
+  eDOMClassInfo_SVGAnimatedString_id,
   eDOMClassInfo_SVGAnimatedTransformList_id,
-  eDOMClassInfo_SVGTransformList_id,
-  eDOMClassInfo_SVGTransform_id,
+  eDOMClassInfo_SVGEvent_id,
+  eDOMClassInfo_SVGException_id,
+  eDOMClassInfo_SVGLength_id,
+  eDOMClassInfo_SVGLengthList_id,
   eDOMClassInfo_SVGMatrix_id,
-  eDOMClassInfo_SVGPathSegList_id,
-  eDOMClassInfo_SVGPathSegClosePath_id,
-  eDOMClassInfo_SVGPathSegMovetoAbs_id,
-  eDOMClassInfo_SVGPathSegMovetoRel_id,
-  eDOMClassInfo_SVGPathSegLinetoAbs_id,
-  eDOMClassInfo_SVGPathSegLinetoRel_id,
-  eDOMClassInfo_SVGPathSegCurvetoCubicAbs_id,
-  eDOMClassInfo_SVGPathSegCurvetoCubicRel_id,
-  eDOMClassInfo_SVGPathSegCurvetoQuadraticAbs_id,
-  eDOMClassInfo_SVGPathSegCurvetoQuadraticRel_id,
+  eDOMClassInfo_SVGNumber_id,
+  eDOMClassInfo_SVGNumberList_id,
   eDOMClassInfo_SVGPathSegArcAbs_id,
   eDOMClassInfo_SVGPathSegArcRel_id,
-  eDOMClassInfo_SVGPathSegLinetoHorizontalAbs_id,
-  eDOMClassInfo_SVGPathSegLinetoHorizontalRel_id,
-  eDOMClassInfo_SVGPathSegLinetoVerticalAbs_id,
-  eDOMClassInfo_SVGPathSegLinetoVerticalRel_id,
+  eDOMClassInfo_SVGPathSegClosePath_id,
+  eDOMClassInfo_SVGPathSegCurvetoCubicAbs_id,
+  eDOMClassInfo_SVGPathSegCurvetoCubicRel_id,
   eDOMClassInfo_SVGPathSegCurvetoCubicSmoothAbs_id,
   eDOMClassInfo_SVGPathSegCurvetoCubicSmoothRel_id,
+  eDOMClassInfo_SVGPathSegCurvetoQuadraticAbs_id,
+  eDOMClassInfo_SVGPathSegCurvetoQuadraticRel_id,
   eDOMClassInfo_SVGPathSegCurvetoQuadraticSmoothAbs_id,
   eDOMClassInfo_SVGPathSegCurvetoQuadraticSmoothRel_id,
+  eDOMClassInfo_SVGPathSegLinetoAbs_id,
+  eDOMClassInfo_SVGPathSegLinetoHorizontalAbs_id,
+  eDOMClassInfo_SVGPathSegLinetoHorizontalRel_id,
+  eDOMClassInfo_SVGPathSegLinetoRel_id,
+  eDOMClassInfo_SVGPathSegLinetoVerticalAbs_id,
+  eDOMClassInfo_SVGPathSegLinetoVerticalRel_id,
+  eDOMClassInfo_SVGPathSegList_id,
+  eDOMClassInfo_SVGPathSegMovetoAbs_id,
+  eDOMClassInfo_SVGPathSegMovetoRel_id,
+  eDOMClassInfo_SVGPoint_id,
+  eDOMClassInfo_SVGPointList_id,
+  eDOMClassInfo_SVGPreserveAspectRatio_id,
   eDOMClassInfo_SVGRect_id,
-  eDOMClassInfo_SVGAnimatedRect_id,
-  eDOMClassInfo_SVGAnimatedLengthList_id,
-  eDOMClassInfo_SVGLengthList_id,
-  eDOMClassInfo_SVGNumber_id,
-  eDOMClassInfo_SVGTextElement_id,
-  eDOMClassInfo_SVGTSpanElement_id,
-  eDOMClassInfo_SVGAnimatedString_id,
-  eDOMClassInfo_SVGImageElement_id,
-#endif //MOZ_SVG
+  eDOMClassInfo_SVGTransform_id,
+  eDOMClassInfo_SVGTransformList_id,
+  eDOMClassInfo_SVGZoomEvent_id,
+#endif // MOZ_SVG
+
+  // Canvas
+  eDOMClassInfo_HTMLCanvasElement_id,
+#ifdef MOZ_ENABLE_CANVAS
+  eDOMClassInfo_CanvasRenderingContext2D_id,
+  eDOMClassInfo_CanvasGradient_id,
+  eDOMClassInfo_CanvasPattern_id,
+#endif
   
+  // SmartCard Events
+  eDOMClassInfo_SmartCardEvent_id,
+  
+  // PageTransition Events
+  eDOMClassInfo_PageTransitionEvent_id,
+
+  // Define this near the end so that enabling/disabling foreignobject doesn't
+  // break binary compatibility
+#if defined(MOZ_SVG) && defined(MOZ_SVG_FOREIGNOBJECT)
+  eDOMClassInfo_SVGForeignObjectElement_id,
+#endif
+
   // This one better be the last one in this list
   eDOMClassInfoIDCount
 };
@@ -303,6 +360,7 @@ enum nsDOMClassInfoID {
    nsIXPCScriptable::DONT_REFLECT_INTERFACE_NAMES |                        \
    nsIXPCScriptable::WANT_NEWRESOLVE |                                     \
    nsIXPCScriptable::WANT_CHECKACCESS |                                    \
+   nsIXPCScriptable::WANT_PRECREATE |                                      \
    nsIXPCScriptable::WANT_POSTCREATE)
 
 #define DOM_DEFAULT_SCRIPTABLE_FLAGS                                       \

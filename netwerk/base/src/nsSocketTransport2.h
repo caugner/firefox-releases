@@ -38,15 +38,22 @@
 #ifndef nsSocketTransport2_h__
 #define nsSocketTransport2_h__
 
+#ifdef DEBUG_darinf
+#define ENABLE_SOCKET_TRACING
+#endif
+
 #include "nsSocketTransportService2.h"
 #include "nsString.h"
 #include "nsCOMPtr.h"
+#include "nsInt64.h"
 
 #include "nsISocketTransport.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIAsyncInputStream.h"
 #include "nsIAsyncOutputStream.h"
-#include "nsIDNSService.h"
+#include "nsIDNSListener.h"
+#include "nsIDNSRecord.h"
+#include "nsICancelable.h"
 
 class nsSocketTransport;
 
@@ -69,7 +76,7 @@ public:
 
     PRBool   IsReferenced() { return mReaderRefCnt > 0; }
     nsresult Condition()    { return mCondition; }
-    PRUint32 ByteCount()    { return mByteCount; }
+    PRUint64 ByteCount()    { return mByteCount; }
 
     // called by the socket transport on the socket thread...
     void OnSocketReady(nsresult condition);
@@ -82,7 +89,7 @@ private:
     nsresult                         mCondition;
     nsCOMPtr<nsIInputStreamCallback> mCallback;
     PRUint32                         mCallbackFlags;
-    PRUint32                         mByteCount;
+    nsUint64                         mByteCount;
 };
 
 //-----------------------------------------------------------------------------
@@ -99,7 +106,7 @@ public:
 
     PRBool   IsReferenced() { return mWriterRefCnt > 0; }
     nsresult Condition()    { return mCondition; }
-    PRUint32 ByteCount()    { return mByteCount; }
+    PRUint64 ByteCount()    { return mByteCount; }
 
     // called by the socket transport on the socket thread...
     void OnSocketReady(nsresult condition); 
@@ -116,7 +123,7 @@ private:
     nsresult                          mCondition;
     nsCOMPtr<nsIOutputStreamCallback> mCallback;
     PRUint32                          mCallbackFlags;
-    PRUint32                          mByteCount;
+    nsUint64                          mByteCount;
 };
 
 //-----------------------------------------------------------------------------
@@ -162,6 +169,7 @@ private:
         MSG_ENSURE_CONNECT,
         MSG_DNS_LOOKUP_COMPLETE,
         MSG_RETRY_INIT_SOCKET,
+        MSG_TIMEOUT_CHANGED,
         MSG_INPUT_CLOSED,
         MSG_INPUT_PENDING,
         MSG_OUTPUT_CLOSED,
@@ -183,13 +191,14 @@ private:
     //-------------------------------------------------------------------------
 
     // socket type info:
-    char      **mTypes;
-    PRUint32    mTypeCount;
-    nsCString   mHost;
-    nsCString   mProxyHost;
-    PRUint16    mPort;
-    PRUint16    mProxyPort;
-    PRBool      mProxyTransparent;
+    char       **mTypes;
+    PRUint32     mTypeCount;
+    nsCString    mHost;
+    nsCString    mProxyHost;
+    PRUint16     mPort;
+    PRUint16     mProxyPort;
+    PRPackedBool mProxyTransparent;
+    PRPackedBool mProxyTransparentResolvesHost;
 
     PRUint16         SocketPort() { return (!mProxyHost.IsEmpty() && !mProxyTransparent) ? mProxyPort : mPort; }
     const nsCString &SocketHost() { return (!mProxyHost.IsEmpty() && !mProxyTransparent) ? mProxyHost : mHost; }
@@ -209,7 +218,7 @@ private:
     // recursively or not.  this flag is not protected by any lock.
     PRPackedBool mResolving;
 
-    nsCOMPtr<nsIDNSRequest> mDNSRequest;
+    nsCOMPtr<nsICancelable> mDNSRequest;
     nsCOMPtr<nsIDNSRecord>  mDNSRecord;
     PRNetAddr               mNetAddr;
 
@@ -256,6 +265,9 @@ private:
     friend class nsSocketInputStream;
     friend class nsSocketOutputStream;
 
+    // socket timeouts are not protected by any lock.
+    PRUint16 mTimeouts[2];
+
     //
     // mFD access methods: called with mLock held.
     //
@@ -297,6 +309,11 @@ private:
         else
             PostEvent(MSG_OUTPUT_PENDING);
     }
+
+#ifdef ENABLE_SOCKET_TRACING
+    void TraceInBuf(const char *buf, PRInt32 n);
+    void TraceOutBuf(const char *buf, PRInt32 n);
+#endif
 };
 
 #endif // !nsSocketTransport_h__

@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,49 +14,56 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Crocodile Clips Ltd..
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsSVGTransform.h"
 #include "prdtoa.h"
 #include "nsSVGMatrix.h"
 #include "nsSVGAtoms.h"
 #include "nsSVGValue.h"
-#include "nsIWeakReference.h"
+#include "nsISVGValueUtils.h"
+#include "nsISVGValueObserver.h"
+#include "nsWeakReference.h"
 #include "nsSVGMatrix.h"
 #include "nsTextFormatter.h"
+#include "nsContentUtils.h"
+#include "nsDOMError.h"
 
 
 ////////////////////////////////////////////////////////////////////////
-// nsSVGTransform 'letter' class
+// nsSVGTransform
 
 class nsSVGTransform : public nsIDOMSVGTransform,
-                             public nsSVGValue
+                       public nsSVGValue,
+                       public nsISVGValueObserver,
+                       public nsSupportsWeakReference
 {
 public:
   static nsresult Create(nsIDOMSVGTransform** aResult);
   
 protected:
   nsSVGTransform();
+  ~nsSVGTransform();
   nsresult Init();
 public:
   // nsISupports interface:
@@ -68,8 +75,13 @@ public:
   // nsISVGValue interface:
   NS_IMETHOD SetValueString(const nsAString& aValue);
   NS_IMETHOD GetValueString(nsAString& aValue);
-  
-  
+
+  // nsISVGValueObserver
+  NS_IMETHOD WillModifySVGObservable(nsISVGValue* observable,
+                                     modificationType aModType);
+  NS_IMETHOD DidModifySVGObservable (nsISVGValue* observable,
+                                     modificationType aModType);
+
 protected:
   nsCOMPtr<nsIDOMSVGMatrix> mMatrix;
   float mAngle, mOriginX, mOriginY;
@@ -88,6 +100,7 @@ nsSVGTransform::Create(nsIDOMSVGTransform** aResult)
   NS_ADDREF(pl);
   if (NS_FAILED(pl->Init())) {
     NS_RELEASE(pl);
+    *aResult = nsnull;
     return NS_ERROR_FAILURE;
   }
   *aResult = pl;
@@ -103,10 +116,16 @@ nsSVGTransform::nsSVGTransform()
 {
 }
 
+nsSVGTransform::~nsSVGTransform()
+{
+  NS_REMOVE_SVGVALUE_OBSERVER(mMatrix);
+}
+
 nsresult nsSVGTransform::Init()
 {
-  return nsSVGMatrix::Create(getter_AddRefs(mMatrix));
-  // XXX register as matrix observer 
+  nsresult rv = NS_NewSVGMatrix(getter_AddRefs(mMatrix));
+  NS_ADD_SVGVALUE_OBSERVER(mMatrix);
+  return rv;
 }
 
 //----------------------------------------------------------------------
@@ -118,8 +137,8 @@ NS_IMPL_RELEASE(nsSVGTransform)
 NS_INTERFACE_MAP_BEGIN(nsSVGTransform)
   NS_INTERFACE_MAP_ENTRY(nsISVGValue)
   NS_INTERFACE_MAP_ENTRY(nsIDOMSVGTransform)
-//  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
-//  NS_INTERFACE_MAP_ENTRY(nsISVGValueObserver)
+  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
+  NS_INTERFACE_MAP_ENTRY(nsISVGValueObserver)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(SVGTransform)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsISVGValue)
 NS_INTERFACE_MAP_END
@@ -127,11 +146,12 @@ NS_INTERFACE_MAP_END
 
 //----------------------------------------------------------------------
 // nsISVGValue methods:
+
 NS_IMETHODIMP
 nsSVGTransform::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGTransform::SetValueString");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -200,7 +220,8 @@ nsSVGTransform::GetValueString(nsAString& aValue)
         nsTextFormatter::snprintf(buf, sizeof(buf)/sizeof(PRUnichar),
                                   NS_LITERAL_STRING("matrix(%g, %g, %g, %g, %g, %g)").get(),
                                   a, b, c, d, e, f);
-      } 
+      }
+      break;
     default:
       buf[0] = '\0';
       NS_ERROR("unknown transformation type");
@@ -211,6 +232,25 @@ nsSVGTransform::GetValueString(nsAString& aValue)
   
   return NS_OK;
 }
+
+
+//----------------------------------------------------------------------
+// nsISVGValueObserver methods:
+
+NS_IMETHODIMP nsSVGTransform::WillModifySVGObservable(nsISVGValue* observable,
+                                                      modificationType aModType)
+{
+  WillModify();
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsSVGTransform::DidModifySVGObservable (nsISVGValue* observable,
+                                                      modificationType aModType)
+{
+  DidModify();
+  return NS_OK;
+}
+
 
 //----------------------------------------------------------------------
 // nsIDOMSVGTransform methods:
@@ -242,6 +282,9 @@ NS_IMETHODIMP nsSVGTransform::GetAngle(float *aAngle)
 /* void setMatrix (in nsIDOMSVGMatrix matrix); */
 NS_IMETHODIMP nsSVGTransform::SetMatrix(nsIDOMSVGMatrix *matrix)
 {
+  if (!matrix)
+    return NS_ERROR_DOM_SVG_WRONG_TYPE_ERR;
+
   WillModify();
 
   mType = SVG_TRANSFORM_MATRIX;
@@ -250,7 +293,9 @@ NS_IMETHODIMP nsSVGTransform::SetMatrix(nsIDOMSVGMatrix *matrix)
   mOriginY = 0.0f;
   
   // XXX should we copy the matrix instead of replacing?
+  NS_REMOVE_SVGVALUE_OBSERVER(mMatrix);
   mMatrix = matrix;
+  NS_ADD_SVGVALUE_OBSERVER(mMatrix);
 
   DidModify();
   return NS_OK;
@@ -306,7 +351,8 @@ NS_IMETHODIMP nsSVGTransform::SetRotate(float angle, float cx, float cy)
   mOriginX = cx;
   mOriginY = cy;
 
-  nsSVGMatrix::Create(getter_AddRefs(mMatrix));
+  NS_REMOVE_SVGVALUE_OBSERVER(mMatrix);
+  NS_NewSVGMatrix(getter_AddRefs(mMatrix));
   nsCOMPtr<nsIDOMSVGMatrix> temp;
   mMatrix->Translate(cx, cy, getter_AddRefs(temp));
   mMatrix = temp;
@@ -314,6 +360,7 @@ NS_IMETHODIMP nsSVGTransform::SetRotate(float angle, float cx, float cy)
   mMatrix = temp;
   mMatrix->Translate(-cx,-cy, getter_AddRefs(temp));
   mMatrix = temp;
+  NS_ADD_SVGVALUE_OBSERVER(mMatrix);
 
   DidModify();
   return NS_OK;
@@ -327,10 +374,12 @@ NS_IMETHODIMP nsSVGTransform::SetSkewX(float angle)
   mType = SVG_TRANSFORM_SKEWX;
   mAngle = angle;
 
-  nsSVGMatrix::Create(getter_AddRefs(mMatrix));
+  NS_REMOVE_SVGVALUE_OBSERVER(mMatrix);
+  NS_NewSVGMatrix(getter_AddRefs(mMatrix));
   nsCOMPtr<nsIDOMSVGMatrix> temp;
   mMatrix->SkewX(angle, getter_AddRefs(temp));
   mMatrix = temp;
+  NS_ADD_SVGVALUE_OBSERVER(mMatrix);
 
   DidModify();
   return NS_OK;
@@ -344,10 +393,12 @@ NS_IMETHODIMP nsSVGTransform::SetSkewY(float angle)
   mType = SVG_TRANSFORM_SKEWY;
   mAngle = angle;
 
-  nsSVGMatrix::Create(getter_AddRefs(mMatrix));
+  NS_REMOVE_SVGVALUE_OBSERVER(mMatrix);
+  NS_NewSVGMatrix(getter_AddRefs(mMatrix));
   nsCOMPtr<nsIDOMSVGMatrix> temp;
   mMatrix->SkewY(angle, getter_AddRefs(temp));
   mMatrix = temp;
+  NS_ADD_SVGVALUE_OBSERVER(mMatrix);
 
   DidModify();
   return NS_OK;

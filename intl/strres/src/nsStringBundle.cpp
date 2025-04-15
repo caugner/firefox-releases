@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -107,8 +106,8 @@ nsStringBundle::LoadProperties()
   if (mAttemptedLoad) {
     if (mLoaded)
       return NS_OK;
-    else
-      return NS_ERROR_UNEXPECTED;
+      
+    return NS_ERROR_UNEXPECTED;
   }
   
   mAttemptedLoad = PR_TRUE;
@@ -172,7 +171,7 @@ nsStringBundle::GetStringFromID(PRInt32 aID, nsAString& aResult)
   char *s = ToNewCString(aResult);
   printf("\n** GetStringFromID: aResult=%s, len=%d\n", s?s:"null", 
          aResult.Length());
-  delete s;
+  if (s) nsMemory::Free(s);
 #endif /* DEBUG_tao_ */
 
   return rv;
@@ -198,7 +197,8 @@ nsStringBundle::GetStringFromName(const nsAString& aName,
        *ss = ToNewCString(aName);
   printf("\n** GetStringFromName: aName=%s, aResult=%s, len=%d\n", 
          ss?ss:"null", s?s:"null", aResult.Length());
-  delete s;
+  if (s)  nsMemory::Free(s);
+  if (ss) nsMemory::Free(ss);
 #endif /* DEBUG_tao_ */
   return rv;
 }
@@ -222,6 +222,10 @@ nsStringBundle::FormatStringFromName(const PRUnichar *aName,
                                      PRUint32 aLength,
                                      PRUnichar **aResult)
 {
+  NS_ENSURE_ARG_POINTER(aName);
+  NS_ASSERTION(aParams && aLength, "FormatStringFromName() without format parameters: use GetStringFromName() instead");
+  NS_ENSURE_ARG_POINTER(aResult);
+
   nsresult rv;
   rv = LoadProperties();
   if (NS_FAILED(rv)) return rv;
@@ -243,33 +247,50 @@ nsStringBundle::GetStringFromID(PRInt32 aID, PRUnichar **aResult)
 {
   nsresult rv;
   rv = LoadProperties();
-  if (NS_FAILED(rv)) return rv;
+  NS_ENSURE_SUCCESS(rv, rv);
   
   *aResult = nsnull;
   nsAutoString tmpstr;
 
-  nsresult ret = GetStringFromID(aID, tmpstr);
-  if (NS_SUCCEEDED(ret))
-    *aResult = ToNewUnicode(tmpstr);
-  return ret;
+  rv = GetStringFromID(aID, tmpstr);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *aResult = ToNewUnicode(tmpstr);
+  NS_ENSURE_TRUE(*aResult, NS_ERROR_OUT_OF_MEMORY);
+
+  return NS_OK;
 }
 
 /* void GetStringFromName (in wstring aName, out wstring aResult); */
 NS_IMETHODIMP 
 nsStringBundle::GetStringFromName(const PRUnichar *aName, PRUnichar **aResult)
 {
+  NS_ENSURE_ARG_POINTER(aName);
+  NS_ENSURE_ARG_POINTER(aResult);
+
   nsresult rv;
   rv = LoadProperties();
-  if (NS_FAILED(rv)) return rv;
+  NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCMonitor(this);
   *aResult = nsnull;
   nsAutoString tmpstr;
   rv = GetStringFromName(nsDependentString(aName), tmpstr);
-  if (NS_SUCCEEDED(rv))
-    *aResult = ToNewUnicode(tmpstr);
-  
-  return rv;
+  if (NS_FAILED(rv))
+  {
+#if 0
+    // it is not uncommon for apps to request a string name which may not exist
+    // so be quiet about it. 
+    NS_WARNING("String missing from string bundle");
+    printf("  '%s' missing from bundle %s\n", NS_ConvertUCS2toUTF8(aName).get(), mPropertiesURL.get());
+#endif
+    return rv;
+  }
+
+  *aResult = ToNewUnicode(tmpstr);
+  NS_ENSURE_TRUE(*aResult, NS_ERROR_OUT_OF_MEMORY);
+
+  return NS_OK;
 }
 
 nsresult
@@ -282,7 +303,8 @@ nsStringBundle::GetCombinedEnumeration(nsIStringBundleOverride* aOverrideStrings
   nsresult rv;
 
   nsCOMPtr<nsIMutableArray> resultArray;
-  NS_NewArray(getter_AddRefs(resultArray));
+  rv = NS_NewArray(getter_AddRefs(resultArray));
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // first, append the override elements
   nsCOMPtr<nsISimpleEnumerator> overrideEnumerator;
@@ -290,14 +312,16 @@ nsStringBundle::GetCombinedEnumeration(nsIStringBundleOverride* aOverrideStrings
                                                getter_AddRefs(overrideEnumerator));
   
   PRBool hasMore;
-  overrideEnumerator->HasMoreElements(&hasMore);
+  rv = overrideEnumerator->HasMoreElements(&hasMore);
+  NS_ENSURE_SUCCESS(rv, rv);
   while (hasMore) {
 
     rv = overrideEnumerator->GetNext(getter_AddRefs(supports));
     if (NS_SUCCEEDED(rv))
       resultArray->AppendElement(supports, PR_FALSE);
 
-    overrideEnumerator->HasMoreElements(&hasMore);
+    rv = overrideEnumerator->HasMoreElements(&hasMore);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   // ok, now we have the override elements in resultArray
@@ -326,7 +350,8 @@ nsStringBundle::GetCombinedEnumeration(nsIStringBundleOverride* aOverrideStrings
         resultArray->AppendElement(propElement, PR_FALSE);
     }
 
-    propEnumerator->HasMoreElements(&hasMore);
+    rv = propEnumerator->HasMoreElements(&hasMore);
+    NS_ENSURE_SUCCESS(rv, rv);
   } while (hasMore);
 
   return resultArray->Enumerate(aResult);
@@ -697,11 +722,7 @@ nsStringBundleService::CreateBundle(const char* aURLSpec,
 {
 #ifdef DEBUG_tao_
   printf("\n++ nsStringBundleService::CreateBundle ++\n");
-  {
-    printf("\n** nsStringBundleService::CreateBundle: %s\n",
-           aURLSpec ? aURLSpec : "null");
-    delete s;
-  }
+  printf("\n** nsStringBundleService::CreateBundle: %s\n", aURLSpec ? aURLSpec : "null");
 #endif
 
   return getStringBundle(aURLSpec,aResult);
@@ -782,6 +803,7 @@ nsStringBundleService::FormatStatusMessage(nsresult aStatus,
   // XXX hack for mailnews who has already formatted their messages:
   if (aStatus == NS_OK && aStatusArg) {
     *result = nsCRT::strdup(aStatusArg);
+    NS_ENSURE_TRUE(*result, NS_ERROR_OUT_OF_MEMORY);
     return NS_OK;
   }
 

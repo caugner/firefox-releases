@@ -1,26 +1,26 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is Mozilla Communicator client code.
+ * The Original Code is Mozilla Universal charset detector code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
+ * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
+ *          Shy Shalom <shooshX@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,26 +28,17 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nscore.h"
-#include <stdio.h>
 
 #include "nsUniversalDetector.h"
-
-#include "nsUniversalCharDetDll.h"
-//---- for XPCOM
-#include "nsIFactory.h"
-#include "nsISupports.h"
-#include "pratom.h"
-#include "prmem.h"
-#include "nsCOMPtr.h"
 
 #include "nsMBCSGroupProber.h"
 #include "nsSBCSGroupProber.h"
@@ -107,10 +98,10 @@ nsUniversalDetector::Reset()
 #define SHORTCUT_THRESHOLD      (float)0.95
 #define MINIMUM_THRESHOLD      (float)0.20
 
-void nsUniversalDetector::HandleData(const char* aBuf, PRUint32 aLen)
+nsresult nsUniversalDetector::HandleData(const char* aBuf, PRUint32 aLen)
 {
   if(mDone) 
-    return;
+    return NS_OK;
 
   if (aLen > 0)
     mGotData = PR_TRUE;
@@ -156,7 +147,7 @@ void nsUniversalDetector::HandleData(const char* aBuf, PRUint32 aLen)
       if (mDetectedCharset)
       {
         mDone = PR_TRUE;
-        return;
+        return NS_OK;
       }
   }
   
@@ -185,6 +176,11 @@ void nsUniversalDetector::HandleData(const char* aBuf, PRUint32 aLen)
           mCharSetProbers[1] = new nsSBCSGroupProber;
         if (nsnull == mCharSetProbers[2])
           mCharSetProbers[2] = new nsLatin1Prober; 
+
+        if ((nsnull == mCharSetProbers[0]) ||
+            (nsnull == mCharSetProbers[1]) ||
+            (nsnull == mCharSetProbers[2]))
+            return NS_ERROR_OUT_OF_MEMORY;
       }
     }
     else
@@ -204,8 +200,11 @@ void nsUniversalDetector::HandleData(const char* aBuf, PRUint32 aLen)
   switch (mInputState)
   {
   case eEscAscii:
-    if (nsnull == mEscCharSetProber)
+    if (nsnull == mEscCharSetProber) {
       mEscCharSetProber = new nsEscCharSetProber;
+      if (nsnull == mEscCharSetProber)
+        return NS_ERROR_OUT_OF_MEMORY;
+    }
     st = mEscCharSetProber->HandleData(aBuf, aLen);
     if (st == eFoundIt)
     {
@@ -221,7 +220,7 @@ void nsUniversalDetector::HandleData(const char* aBuf, PRUint32 aLen)
       {
         mDone = PR_TRUE;
         mDetectedCharset = mCharSetProbers[i]->GetCharSetName();
-        return;
+        return NS_OK;
       } 
     }
     break;
@@ -229,7 +228,7 @@ void nsUniversalDetector::HandleData(const char* aBuf, PRUint32 aLen)
   default:  //pure ascii
     ;//do nothing here
   }
-  return ;  
+  return NS_OK;
 }
 
 
@@ -261,10 +260,6 @@ void nsUniversalDetector::DataEnd()
       for (PRInt32 i = 0; i < NUM_OF_CHARSET_PROBERS; i++)
       {
         proberConfidence = mCharSetProbers[i]->GetConfidence();
-#ifdef DEBUG_chardet
-        mCharSetProbers[i]->DumpStatus();
-#endif
-
         if (proberConfidence > maxProberConfidence)
         {
           maxProberConfidence = proberConfidence;
@@ -283,111 +278,3 @@ void nsUniversalDetector::DataEnd()
   }
   return;
 }
-
-//---------------------------------------------------------------------
-nsUniversalXPCOMDetector:: nsUniversalXPCOMDetector()
-	     : nsUniversalDetector()
-{
-    mObserver = nsnull;
-}
-//---------------------------------------------------------------------
-nsUniversalXPCOMDetector::~nsUniversalXPCOMDetector() 
-{
-    NS_IF_RELEASE(mObserver);
-}
-//---------------------------------------------------------------------
-
-NS_IMPL_ISUPPORTS1(nsUniversalXPCOMDetector, nsICharsetDetector)
-
-//---------------------------------------------------------------------
-NS_IMETHODIMP nsUniversalXPCOMDetector::Init(
-  nsICharsetDetectionObserver* aObserver)
-{
-  NS_ASSERTION(mObserver == nsnull , "Init twice");
-  if(nsnull == aObserver)
-     return NS_ERROR_ILLEGAL_VALUE;
-
-  NS_IF_ADDREF(aObserver);
-  mObserver = aObserver;
-  return NS_OK;
-}
-//----------------------------------------------------------
-NS_IMETHODIMP nsUniversalXPCOMDetector::DoIt(
-  const char* aBuf, PRUint32 aLen, PRBool* oDontFeedMe)
-{
-  NS_ASSERTION(mObserver != nsnull , "have not init yet");
-
-  if((nsnull == aBuf) || (nsnull == oDontFeedMe))
-     return NS_ERROR_ILLEGAL_VALUE;
-
-  this->HandleData(aBuf, aLen);
-	
-  if (mDone)
-  {
-
-    if (mDetectedCharset)
-    {
-	    Report(mDetectedCharset);
-    }
-
-	 *oDontFeedMe = PR_TRUE;
-  }
-  *oDontFeedMe = PR_FALSE;
-  return NS_OK;
-}
-//----------------------------------------------------------
-NS_IMETHODIMP nsUniversalXPCOMDetector::Done()
-{
-  NS_ASSERTION(mObserver != nsnull , "have not init yet");
-  this->DataEnd();
-  return NS_OK;
-}
-//----------------------------------------------------------
-void nsUniversalXPCOMDetector::Report(const char* aCharset)
-{
-  NS_ASSERTION(mObserver != nsnull , "have not init yet");
-#ifdef DEBUG_chardet
-  printf("Universal Charset Detector report charset %s . \r\n", aCharset);
-  for (PRInt32 i = 0; i < NUM_OF_CHARSET_PROBERS; i++)
-    mCharSetProbers[i]->DumpStatus();
-#endif
-  mObserver->Notify(aCharset, eBestAnswer);
-}
-
-
-//---------------------------------------------------------------------
-nsUniversalXPCOMStringDetector:: nsUniversalXPCOMStringDetector()
-	     : nsUniversalDetector()
-{
-}
-//---------------------------------------------------------------------
-nsUniversalXPCOMStringDetector::~nsUniversalXPCOMStringDetector() 
-{
-}
-//---------------------------------------------------------------------
-NS_IMPL_ISUPPORTS1(nsUniversalXPCOMStringDetector, nsIStringCharsetDetector)
-//---------------------------------------------------------------------
-void nsUniversalXPCOMStringDetector::Report(const char *aCharset) 
-{
-   mResult = aCharset;
-#ifdef DEBUG_chardet
-       printf("New Charset Prober report charset %s . \r\n", aCharset);
-#endif
-}
-//---------------------------------------------------------------------
-NS_IMETHODIMP nsUniversalXPCOMStringDetector::DoIt(const char* aBuf, PRUint32 aLen, 
-                     const char** oCharset, nsDetectionConfident &oConf)
-{
-   mResult = nsnull;
-   this->Reset();
-   this->HandleData(aBuf, aLen); 
-   this->DataEnd();
-   if (mResult)
-   {
-       *oCharset=mResult;
-       oConf = eBestAnswer;
-   }
-   return NS_OK;
-}
-       
-

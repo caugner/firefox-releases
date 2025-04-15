@@ -1,11 +1,11 @@
 /* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,31 +14,31 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Robert John Churchill   <rjc@netscape.com> (Original Author)
- *    Peter Annema            <disttsc@bart.nl>
- *    Blake Ross              <blakeross@telocity.com>
- *    Ben Goodger             <ben@netscape.com>
- *    Rob Ginda               <rginda@netscape.com>
- *    Steve Lamm              <slamm@netscape.com>
- *    Samir Gehani            <sgehani@netscape.com>
+ *   Robert John Churchill   <rjc@netscape.com> (Original Author)
+ *   Peter Annema            <disttsc@bart.nl>
+ *   Blake Ross              <blakeross@telocity.com>
+ *   Ben Goodger             <ben@netscape.com>
+ *   Rob Ginda               <rginda@netscape.com>
+ *   Steve Lamm              <slamm@netscape.com>
+ *   Samir Gehani            <sgehani@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -139,7 +139,7 @@ function rememberSearchText(target)
         }
       }
 
-      textNode.value = decodeURI(target);
+      textNode.value = decodeURIComponent(target);
       doEnabling();
     }
   }
@@ -342,8 +342,12 @@ function AskChangeDefaultEngine(aSelectedEngine)
                           "changeEngineMsg", [engineName], 1); 
 
     var checkbox = {value:0};
-    change = promptSvc.confirmCheck(window, title, changeEngineMsg, 
-               dontAskAgainMsg, checkbox);
+    var choice = promptSvc.confirmEx(window, title, changeEngineMsg, 
+                   (promptSvc.BUTTON_TITLE_YES * promptSvc.BUTTON_POS_0) + 
+                   (promptSvc.BUTTON_TITLE_NO * promptSvc.BUTTON_POS_1),
+                   null, null, null, dontAskAgainMsg, checkbox);
+    if (choice == 0)
+      change = true;
 
     // store "don't ask again" pref from checkbox value (if changed)
     debug("dontAskAgain: " + dontAskAgain);
@@ -581,7 +585,7 @@ function doStop()
 
   // show appropriate column(s)
   var navWindow = getNavigatorWindow(false);
-  var resultsList = navWindow ? navWindow._content.document.getElementById("resultsList") : null;
+  var resultsList = navWindow ? navWindow.content.document.getElementById("resultsList") : null;
   if (!resultsList)
     return;
 
@@ -608,43 +612,43 @@ function doStop()
   var sortSetFlag = false;
 
   if (hasPriceFlag) {
-    colNode = navWindow._content.document.getElementById("PriceColumn");
+    colNode = navWindow.content.document.getElementById("PriceColumn");
     if (colNode) {
       colNode.removeAttribute("hidden");
       if (!sortSetFlag) {
-        top._content.setInitialSort(colNode, "ascending");
+        top.content.setInitialSort(colNode, "ascending");
         sortSetFlag = true;
       }
     }
   }
 
   if (hasAvailabilityFlag) {
-    colNode = navWindow._content.document.getElementById("AvailabilityColumn");
+    colNode = navWindow.content.document.getElementById("AvailabilityColumn");
     if (colNode)
       colNode.removeAttribute("hidden");
   }
 
   if (hasDateFlag) {
-    colNode = navWindow._content.document.getElementById("DateColumn");
+    colNode = navWindow.content.document.getElementById("DateColumn");
     if (colNode)
       colNode.removeAttribute("hidden");
   }
 
   if (hasRelevanceFlag) {
-    colNode = navWindow._content.document.getElementById("RelevanceColumn");
+    colNode = navWindow.content.document.getElementById("RelevanceColumn");
     if (colNode) {
       colNode.removeAttribute("hidden");
       if (!sortSetFlag) {
-        navWindow._content.setInitialSort(colNode, "descending");
+        navWindow.content.setInitialSort(colNode, "descending");
         sortSetFlag = true;
       }
     }
   }
 
   if (!sortSetFlag) {
-    colNode = navWindow._content.document.getElementById("PageRankColumn");
+    colNode = navWindow.content.document.getElementById("PageRankColumn");
     if (colNode)
-      navWindow._content.setInitialSort(colNode, "ascending");
+      navWindow.content.setInitialSort(colNode, "ascending");
   }
 
   switchTab(0);
@@ -653,7 +657,7 @@ function doStop()
 function doSearch()
 {
   var navWindow = getNavigatorWindow(true);
-  if (navWindow._content)
+  if (navWindow.content)
     onNavWindowLoad();
   else
     navWindow.addEventListener("load", onNavWindowLoad, false);
@@ -663,16 +667,16 @@ function onNavWindowLoad() {
   var navWindow = getNavigatorWindow(true);
 
   // hide various columns
-  if (navWindow && "_content" in navWindow && "isMozillaSearchWindow" in navWindow._content) {
-    colNode = navWindow._content.document.getElementById("RelevanceColumn");
+  if (navWindow && "content" in navWindow && "isMozillaSearchWindow" in navWindow.content) {
+    colNode = navWindow.content.document.getElementById("RelevanceColumn");
     if (colNode)
       colNode.setAttribute("hidden", "true");
 
-    colNode = navWindow._content.document.getElementById("PriceColumn");
+    colNode = navWindow.content.document.getElementById("PriceColumn");
     if (colNode)
       colNode.setAttribute("hidden", "true");
 
-    colNode = navWindow._content.document.getElementById("AvailabilityColumn");
+    colNode = navWindow.content.document.getElementById("AvailabilityColumn");
     if (colNode)
       colNode.setAttribute("hidden", "true");
   }
@@ -760,7 +764,7 @@ function checkSearchProgress()
   var navWindow = getNavigatorWindow(false);
 
   if (navWindow) {
-    var resultsList = navWindow._content.document.getElementById("resultsList");
+    var resultsList = navWindow.content.document.getElementById("resultsList");
     if (resultsList) {
       var treeref = resultsList.getAttribute("ref");
       var ds = resultsList.database;
@@ -821,6 +825,8 @@ function sidebarOpenURL(listitem)
 
 function OpenSearch(aSearchStr, engineURIs)
 {
+  gPageNumber = 0;
+
   var searchEngineURI = nsPreferences.copyUnicharPref("browser.search.defaultengine", null);
   var defaultSearchURL = nsPreferences.getLocalizedUnicharPref("browser.search.defaulturl", null);
 
@@ -915,7 +921,7 @@ function saveSearch()
     if (target) {
       // convert plusses (+) back to spaces
       target = target.replace(/\+/g, " ");
-      lastSearchText = decodeURI(target);
+      lastSearchText = decodeURIComponent(target);
     }
   }
 

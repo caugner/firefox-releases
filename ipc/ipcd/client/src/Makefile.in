@@ -47,7 +47,8 @@ MODULE			= ipcd
 LIBRARY_NAME	= ipcdc
 EXPORT_LIBRARY	= 1
 IS_COMPONENT	= 1
-MODULE_NAME		= ipcd
+MODULE_NAME		= ipcdclient
+LIBXUL_LIBRARY = 1
 
 REQUIRES	= \
             xpcom \
@@ -55,8 +56,8 @@ REQUIRES	= \
             $(NULL)
 
 CPPSRCS		= \
+            ipcdclient.cpp \
             ipcService.cpp \
-            ipcTransport.cpp \
             ipcModuleFactory.cpp \
             $(NULL)
 
@@ -83,6 +84,14 @@ SHARED_LIBRARY_LIBS = \
 			$(DIST)/lib/$(LIB_PREFIX)transmgr_s.$(LIB_SUFFIX) \
 			$(DIST)/lib/$(LIB_PREFIX)transmgrcom_s.$(LIB_SUFFIX) \
 			$(NULL)
+
+ifneq ($(BUILD_DCONNECT),)
+DEFINES				+= -DBUILD_DCONNECT
+LOCAL_INCLUDES		+= -I$(srcdir)/../../extensions/dconnect/src
+SHARED_LIBRARY_LIBS	+= $(DIST)/lib/$(LIB_PREFIX)ipcddconnect_s.$(LIB_SUFFIX) \
+					   $(DIST)/lib/$(LIB_PREFIX)ipcdutil_s.$(LIB_SUFFIX) \
+					   $(NULL)
+endif
 
 EXTRA_DSO_LDOPTS = \
 			$(LIBS_DIR) \

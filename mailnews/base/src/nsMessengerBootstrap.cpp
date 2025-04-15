@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -26,16 +26,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -55,10 +55,19 @@
 #include "nsString.h"
 #include "nsIURI.h"
 #include "nsIDialogParamBlock.h"
+#ifdef MOZ_XUL_APP
+#include "nsICommandLine.h"
+#include "nsILocalFile.h"
+#include "nsNetUtil.h"
+#include "nsIFileURL.h"
+#endif
 
 NS_IMPL_THREADSAFE_ADDREF(nsMessengerBootstrap)
 NS_IMPL_THREADSAFE_RELEASE(nsMessengerBootstrap)
-NS_IMPL_QUERY_INTERFACE2(nsMessengerBootstrap, nsICmdLineHandler, nsIMessengerWindowService)
+
+NS_IMPL_QUERY_INTERFACE2(nsMessengerBootstrap,
+                         ICOMMANDLINEHANDLER,
+                         nsIMessengerWindowService)
 
 nsMessengerBootstrap::nsMessengerBootstrap()
 {
@@ -68,11 +77,98 @@ nsMessengerBootstrap::~nsMessengerBootstrap()
 {
 }
 
+#ifdef MOZ_XUL_APP
+NS_IMETHODIMP
+nsMessengerBootstrap::Handle(nsICommandLine* aCmdLine)
+{
+  nsresult rv;
+  PRBool found;
+
+  nsCOMPtr<nsIWindowWatcher> wwatch (do_GetService(NS_WINDOWWATCHER_CONTRACTID));
+  NS_ENSURE_TRUE(wwatch, NS_ERROR_FAILURE);
+
+  nsCOMPtr<nsIDOMWindow> opened;
+
+  rv = aCmdLine->HandleFlag(NS_LITERAL_STRING("options"), PR_FALSE, &found);
+  if (NS_SUCCEEDED(rv) && found) {
+    wwatch->OpenWindow(nsnull, "chrome://messenger/content/preferences/preferences.xul", "_blank",
+                      "chrome,dialog=no,all", nsnull, getter_AddRefs(opened));
+    aCmdLine->SetPreventDefault(PR_TRUE);
+  }
+  
+  nsAutoString mailUrl; // -mail or -mail <some url> 
+  rv = aCmdLine->HandleFlagWithParam(NS_LITERAL_STRING("mail"), PR_FALSE, mailUrl);
+  if (NS_SUCCEEDED(rv) && !mailUrl.IsEmpty()) 
+  {
+    nsCOMPtr<nsISupportsArray> argsArray = do_CreateInstance(NS_SUPPORTSARRAY_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // create scriptable versions of our strings that we can store in our nsISupportsArray....
+    if (!mailUrl.IsEmpty())
+    {
+      nsCOMPtr<nsISupportsString> scriptableURL (do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID));
+      NS_ENSURE_TRUE(scriptableURL, NS_ERROR_FAILURE);
+  
+      scriptableURL->SetData((mailUrl));
+      argsArray->AppendElement(scriptableURL);
+    }
+
+    wwatch->OpenWindow(nsnull, "chrome://messenger/content/", "_blank",
+                       "chrome,extrachrome,menubar,resizable,scrollbars,status,toolbar,dialog=no", argsArray, getter_AddRefs(opened));
+    aCmdLine->SetPreventDefault(PR_TRUE);
+    return NS_OK;
+  } 
+
+  PRInt32 numArgs;
+  aCmdLine->GetLength(&numArgs);
+  if (numArgs > 0)
+  {
+    nsAutoString arg;
+    aCmdLine->GetArgument(0, arg);
+    if (StringEndsWith(arg, NS_LITERAL_STRING(".eml")))
+    {
+      nsCOMPtr<nsILocalFile> file(do_CreateInstance("@mozilla.org/file/local;1"));
+      NS_ENSURE_TRUE(file, NS_ERROR_FAILURE);
+      rv = file->InitWithPath(arg);
+      NS_ENSURE_SUCCESS(rv, rv);
+      // should we check that the file exists, or looks like a mail message?
+
+      nsCOMPtr<nsIURI> uri;
+      NS_NewFileURI(getter_AddRefs(uri), file);
+      nsCOMPtr<nsIFileURL> fileURL(do_QueryInterface(uri));
+      NS_ENSURE_TRUE(fileURL, NS_ERROR_FAILURE);
+
+      // create scriptable versions of our strings that we can store in our nsISupportsArray....
+      nsCOMPtr<nsISupportsString> scriptableURL (do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID));
+      NS_ENSURE_TRUE(scriptableURL, NS_ERROR_FAILURE);
+
+      fileURL->SetQuery(NS_LITERAL_CSTRING("?type=application/x-message-display"));
+
+      wwatch->OpenWindow(nsnull, "chrome://messenger/content/messageWindow.xul", "_blank",
+                         "chrome,extrachrome,menubar,resizable,scrollbars,status,toolbar,dialog=no", fileURL, getter_AddRefs(opened));
+      aCmdLine->SetPreventDefault(PR_TRUE);
+    }
+    return NS_OK;
+
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMessengerBootstrap::GetHelpInfo(nsACString& aResult)
+{
+  aResult.Assign(NS_LITERAL_CSTRING(
+    "  -mail                Open the mail folder view.\n"
+    "  -options             Open the options dialog.\n"));
+
+  return NS_OK;
+}
+
+#else
 CMDLINEHANDLER3_IMPL(nsMessengerBootstrap,"-mail","general.startup.mail","Start with mail.",NS_MAILSTARTUPHANDLER_CONTRACTID,"Mail Cmd Line Handler",PR_TRUE,"", PR_TRUE)
 
 NS_IMETHODIMP nsMessengerBootstrap::GetChromeUrlForTask(char **aChromeUrlForTask) 
 { 
-#ifndef MOZ_THUNDERBIRD
   if (!aChromeUrlForTask) return NS_ERROR_FAILURE; 
   nsCOMPtr<nsIPrefBranch> pPrefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID));
   if (pPrefBranch)
@@ -92,19 +188,22 @@ NS_IMETHODIMP nsMessengerBootstrap::GetChromeUrlForTask(char **aChromeUrlForTask
     }	
   }
   *aChromeUrlForTask = PL_strdup("chrome://messenger/content/messenger.xul"); 
-#else
-  NS_ENSURE_ARG_POINTER(aChromeUrlForTask);
-  *aChromeUrlForTask = PL_strdup("chrome://messenger/content/"); 
-#endif
 
   return NS_OK; 
 }
+#endif
 
 NS_IMETHODIMP nsMessengerBootstrap::OpenMessengerWindowWithUri(const char *windowType, const char * aFolderURI, nsMsgKey aMessageKey)
 {
-	nsXPIDLCString chromeurl;
-	nsresult rv = GetChromeUrlForTask(getter_Copies(chromeurl));
-	if (NS_FAILED(rv)) return rv;
+  nsresult rv;
+
+#ifdef MOZ_XUL_APP
+  NS_NAMED_LITERAL_CSTRING(chromeurl, "chrome://messenger/content/");
+#else
+  nsXPIDLCString chromeurl;
+  rv = GetChromeUrlForTask(getter_Copies(chromeurl));
+  if (NS_FAILED(rv)) return rv;
+#endif
 
   nsCOMPtr<nsISupportsArray> argsArray;
   rv = NS_NewISupportsArray(getter_AddRefs(argsArray));
@@ -138,19 +237,3 @@ NS_IMETHODIMP nsMessengerBootstrap::OpenMessengerWindowWithUri(const char *windo
 
   return NS_OK;
 }
-
-#ifdef MOZ_THUNDERBIRD
-nsMsgOptionsCmdLineHandler::nsMsgOptionsCmdLineHandler()
-{
-}
-
-nsMsgOptionsCmdLineHandler::~nsMsgOptionsCmdLineHandler()
-{
-}
-
-NS_IMPL_ISUPPORTS1(nsMsgOptionsCmdLineHandler, nsICmdLineHandler) 
-
-CMDLINEHANDLER_IMPL(nsMsgOptionsCmdLineHandler,"-options","", "chrome://communicator/content/pref/pref.xul",
-                   "Open Options Dialog.", NS_MAILOPTIONSTARTUPHANDLER_CONTRACTID,"Mail Options Startup Handler", PR_TRUE,"", PR_TRUE)
-
-#endif

@@ -1,10 +1,10 @@
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -13,26 +13,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Joe Hewitt <hewitt@netscape.com>
- *  Scott MacGregor (mscott@netscape.com)
+ *   Joe Hewitt <hewitt@netscape.com>
+ *   Scott MacGregor (mscott@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
  
@@ -50,6 +50,10 @@ treechildren::-moz-tree-cell-text(read) {
 
 treechildren::-moz-tree-cell-text(unread) {
   font-weight: bold;
+}
+
+treechildren::-moz-tree-cell-text(imapdeleted) {
+  text-decoration: line-through;
 }
 
 /* on a collapsed thread, if the top level message is read, but the thread has
@@ -95,15 +99,15 @@ treechildren::-moz-tree-cell-text(priorityCol, selected, focus) {
 
 /* ..... thread column ..... */
 
-treecol.threadColumnHeader {
+.threadColumnHeader {
   list-style-image: url("chrome://messenger/skin/icons/threadcol-unthreaded.gif");
 }
 
-treecol.threadColumnHeader[sortDirection="ascending"]  {
+.threadColumnHeader[sortDirection="ascending"]  {
   list-style-image: url("chrome://messenger/skin/icons/threadcol-threaded.gif");
 }
 
-treecol.threadColumnHeader[sortDirection="descending"] {
+.threadColumnHeader[sortDirection="descending"] {
   list-style-image: url("chrome://messenger/skin/icons/threadcol-threaded.gif");
 }
 
@@ -151,7 +155,7 @@ treechildren::-moz-tree-image(news, threadCol, container, hasUnread, ignore, off
 
 /* ..... read column ..... */
 
-treecol.readColumnHeader {
+.readColumnHeader {
   list-style-image: url("chrome://messenger/skin/icons/readcol-unread.gif");
 }
 
@@ -165,9 +169,23 @@ treechildren::-moz-tree-image(unreadButtonColHeader, unread) {
   list-style-image: url("chrome://messenger/skin/icons/readcol-unread.gif");
 }
 
+/* ..... attachment column ..... */
+
+.attachmentColumnHeader {
+  list-style-image: url("chrome://messenger/skin/icons/attachment-col.gif");
+}
+
+treechildren::-moz-tree-image(attachmentCol, attach) {
+  list-style-image: url("chrome://messenger/skin/icons/attachment.gif");
+}
+
+treechildren::-moz-tree-image(attachmentCol, attach, focus, selected) {
+  list-style-image: url("chrome://messenger/skin/icons/attachment-selected.gif");
+}
+
 /* ..... flag column ..... */
 
-treecol.flagColumnHeader {
+.flagColumnHeader {
   list-style-image: url("chrome://messenger/skin/icons/flagcol-flagged.gif");
 }
 
@@ -183,7 +201,7 @@ treechildren::-moz-tree-image(flaggedCol, flagged) {
 
 /* ..... junkStatus column ..... */
 
-treecol.junkStatusHeader {
+.junkStatusHeader {
   list-style-image: url("chrome://messenger/skin/icons/message-junk-other.gif");
 }
 
@@ -215,7 +233,7 @@ treechildren::-moz-tree-image(subjectCol, new) {
   list-style-image: url("chrome://messenger/skin/icons/message-mail-new.gif");
 }
 
-treechildren::-moz-tree-image(subjectCol, attach) {
+tree[noattachcol="true"] > treechildren::-moz-tree-image(subjectCol, attach) {
   list-style-image: url("chrome://messenger/skin/icons/message-mail-attach.gif");
 }
 
@@ -231,7 +249,7 @@ treechildren::-moz-tree-image(subjectCol, new, offline) {
   list-style-image: url("chrome://messenger/skin/icons/message-mail-new-offl.gif");
 }
 
-treechildren::-moz-tree-image(subjectCol, attach, offline) {
+tree[noattachcol="true"] > treechildren::-moz-tree-image(subjectCol, attach, offline) {
   list-style-image: url("chrome://messenger/skin/icons/message-mail-attach-offl.gif");
 }
 
@@ -243,11 +261,11 @@ treechildren::-moz-tree-image(subjectCol, news) {
   list-style-image: url("chrome://messenger/skin/icons/message-news.gif");
 }
 
-treechildren::-moz-tree-image(subjectCol, news, attach) {
+tree[noattachcol="true"] > treechildren::-moz-tree-image(subjectCol, news, attach) {
   list-style-image: url("chrome://messenger/skin/icons/message-news-attach.gif");
 }
 
-treechildren::-moz-tree-image(subjectCol, news, attach, offline) {
+tree[noattachcol="true"] > treechildren::-moz-tree-image(subjectCol, news, attach, offline) {
   list-style-image: url("chrome://messenger/skin/icons/message-news-attach-offl.gif");
 }
 
@@ -255,11 +273,11 @@ treechildren::-moz-tree-image(subjectCol, news, new) {
   list-style-image: url("chrome://messenger/skin/icons/message-news-new.gif");
 }
 
-treechildren::-moz-tree-image(subjectCol, news, new, attach) {
+tree[noattachcol="true"] > treechildren::-moz-tree-image(subjectCol, news, new, attach) {
   list-style-image: url("chrome://messenger/skin/icons/message-news-new-attach.gif");
 }
 
-treechildren::-moz-tree-image(subjectCol, news, offline) {
+tree[noattachcol="true"] > treechildren::-moz-tree-image(subjectCol, news, new, attach, offline) {
   list-style-image: url("chrome://messenger/skin/icons/message-news-new-attach-off.gif");
 }
 

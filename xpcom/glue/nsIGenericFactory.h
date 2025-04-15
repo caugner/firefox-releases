@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,24 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Benjamin Smedberg <benjamin@smedbergs.us>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -41,9 +42,9 @@
 #include "nsIFactory.h"
 #include "nsIModule.h"
 #include "nsIClassInfo.h"
-#ifdef HAVE_DEPENDENT_LIBS
-#include "dependentLibs.h"
-#endif
+
+class nsIFile;
+class nsIComponentManager;
 
 // {3bc97f01-ccdf-11d2-bab8-b548654461fc}
 #define NS_GENERICFACTORY_CID                                                 \
@@ -72,7 +73,7 @@ public:
     NS_IMETHOD GetComponentInfo(const nsModuleComponentInfo **infop) = 0;
 };
 
-NS_COM nsresult
+NS_COM_GLUE nsresult
 NS_NewGenericFactory(nsIGenericFactory **result,
                      const nsModuleComponentInfo *info);
 
@@ -280,19 +281,16 @@ typedef void (PR_CALLBACK *nsModuleDestructorProc) (nsIModule *self);
  * @param mCount       : Count of mComponents
  * @param mCtor        : Module user defined constructor
  * @param mDtor        : Module user defined destructor
- * @param mLibraryDependencies : array of library which this module is 
- *                               dependent on. 
  *
  **/
 
 struct nsModuleInfo {
     PRUint32                mVersion;
     const char*             mModuleName;
-    const nsModuleComponentInfo*  mComponents;
+    const nsModuleComponentInfo *mComponents;
     PRUint32                mCount;
     nsModuleConstructorProc mCtor;
     nsModuleDestructorProc  mDtor;
-    const char**            mLibraryDependencies;
 };
 
 /**
@@ -306,13 +304,13 @@ struct nsModuleInfo {
  * Create a new generic module. Use the NS_IMPL_NSGETMODULE macro, or
  * one of its relatives, rather than using this directly.
  */
-NS_COM nsresult
-NS_NewGenericModule2(nsModuleInfo *info, nsIModule* *result);
+NS_COM_GLUE nsresult
+NS_NewGenericModule2(nsModuleInfo const *info, nsIModule* *result);
 
 /**
  * Obsolete. Use NS_NewGenericModule2() instead.
  */
-NS_COM nsresult
+NS_COM_GLUE nsresult
 NS_NewGenericModule(const char* moduleName,
                     PRUint32 componentCount,
                     nsModuleComponentInfo* components,
@@ -320,24 +318,9 @@ NS_NewGenericModule(const char* moduleName,
                     nsIModule* *result);
 
 #if defined(XPCOM_TRANSLATE_NSGM_ENTRY_POINT)
-#  define NS_MODULEINFO                   nsModuleInfo
-#  define NSMODULEINFO(_name)             _name##_gModuleInfo
-#  define NSGETMODULE_ENTRY_POINT(_info)
-#  define NSDEPENDENT_LIBS(_name)         const char* _name##_gDependlibs[]={DEPENDENT_LIBS "\0"};
-#  define NSDEPENDENT_LIBS_NAME(_name)    _name##_gDependlibs
+#  define NSGETMODULE_ENTRY_POINT(_name)  NS_VISIBILITY_HIDDEN nsresult _name##_NSGetModule
 #else
-#  define NS_MODULEINFO                   static nsModuleInfo
-#  define NSMODULEINFO(_name)             gModuleInfo
-#  define NSDEPENDENT_LIBS(_name)         static const char* gDependlibs[]={DEPENDENT_LIBS "\0"};
-#  define NSDEPENDENT_LIBS_NAME(_name)    gDependlibs
-#  define NSGETMODULE_ENTRY_POINT(_info)                                      \
-extern "C" NS_EXPORT nsresult                                                 \
-NSGetModule(nsIComponentManager *servMgr,                                     \
-            nsIFile* location,                                                \
-            nsIModule** result)                                               \
-{                                                                             \
-    return NS_NewGenericModule2(&(_info), result);                            \
-}
+#  define NSGETMODULE_ENTRY_POINT(_name)  extern "C" NS_EXPORT nsresult NSGetModule
 #endif
 
 /** 
@@ -355,36 +338,22 @@ NSGetModule(nsIComponentManager *servMgr,                                     \
 #define NS_IMPL_NSGETMODULE_WITH_DTOR(_name, _components, _dtor)              \
     NS_IMPL_NSGETMODULE_WITH_CTOR_DTOR(_name, _components, nsnull, _dtor)
 
-#ifndef DEPENDENT_LIBS
-
 #define NS_IMPL_NSGETMODULE_WITH_CTOR_DTOR(_name, _components, _ctor, _dtor)  \
-NS_MODULEINFO NSMODULEINFO(_name) = {                                         \
+static nsModuleInfo const kModuleInfo = {                                     \
     NS_MODULEINFO_VERSION,                                                    \
     (#_name),                                                                 \
     (_components),                                                            \
     (sizeof(_components) / sizeof(_components[0])),                           \
     (_ctor),                                                                  \
-    (_dtor),                                                                  \
-    (nsnull)                                                                  \
+    (_dtor)                                                                   \
 };                                                                            \
-NSGETMODULE_ENTRY_POINT(NSMODULEINFO(_name))
-
-#else // DEPENDENT_LIBS
-
-#define NS_IMPL_NSGETMODULE_WITH_CTOR_DTOR(_name, _components, _ctor, _dtor)  \
-NSDEPENDENT_LIBS(_name)                                                       \
-NS_MODULEINFO NSMODULEINFO(_name) = {                                         \
-    NS_MODULEINFO_VERSION,                                                    \
-    (#_name),                                                                 \
-    (_components),                                                            \
-    (sizeof(_components) / sizeof(_components[0])),                           \
-    (_ctor),                                                                  \
-    (_dtor),                                                                  \
-    (NSDEPENDENT_LIBS_NAME(_name))                                            \
-};                                                                            \
-NSGETMODULE_ENTRY_POINT(NSMODULEINFO(_name))
-
-#endif
+NSGETMODULE_ENTRY_POINT(_name)                                                \
+(nsIComponentManager *servMgr,                                                \
+            nsIFile* location,                                                \
+            nsIModule** result)                                               \
+{                                                                             \
+    return NS_NewGenericModule2(&kModuleInfo, result);                        \
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -437,7 +406,7 @@ _InstanceClass##Constructor(nsISupports *aOuter, REFNSIID aIID,               \
         return rv;                                                            \
     }                                                                         \
     NS_ADDREF(inst);                                                          \
-	rv = inst->_InitMethod();                                                 \
+    rv = inst->_InitMethod();                                                 \
     if(NS_SUCCEEDED(rv)) {                                                    \
         rv = inst->QueryInterface(aIID, aResult);                             \
     }                                                                         \

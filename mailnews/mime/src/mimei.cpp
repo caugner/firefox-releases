@@ -1,23 +1,40 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK *****
  * This Original Code has been modified by IBM Corporation. Modifications made by IBM 
  * described herein are Copyright (c) International Business Machines Corporation, 2000.
  * Modifications to Mozilla code or documentation identified per MPL Section 3.3
@@ -57,7 +74,6 @@
 #include "mimetric.h"	/*   |     |     |--- MimeInlineTextRichtext		*/
 #include "mimetenr.h"	/*   |     |     |     |--- MimeInlineTextEnriched	*/
 /* SUPPORTED VIA PLUGIN      |     |     |--- MimeInlineTextVCard           */
-/* SUPPORTED VIA PLUGIN      |     |     |--- MimeInlineTextCalendar        */
 #include "mimeiimg.h"	/*   |     |--- MimeInlineImage						*/
 #include "mimeeobj.h"	/*   |     |--- MimeExternalObject					*/
 #include "mimeebod.h"	/*   |--- MimeExternalBody							*/
@@ -75,11 +91,15 @@
 #include "mimemoz2.h"
 #include "nsIMimeContentTypeHandler.h"
 #include "nsIComponentManager.h"
+#include "nsCategoryManagerUtils.h"
+#include "nsXPCOMCID.h"
+#include "nsISimpleMimeConverter.h"
+#include "nsSimpleMimeConverterStub.h"
 #include "nsVoidArray.h"
 #include "nsMimeStringResources.h"
 #include "nsMimeTypes.h"
 #include "nsMsgUtils.h"
-#include "nsIPref.h"
+#include "nsIPrefBranch.h"
 #include "imgILoader.h"
 
 #ifdef MOZ_THUNDERBIRD
@@ -95,6 +115,7 @@ void getMsgHdrForCurrentURL(MimeDisplayOptions *opts, nsIMsgDBHdr ** aMsgHdr);
 #endif
 
 #define	IMAP_EXTERNAL_CONTENT_HEADER "X-Mozilla-IMAP-Part"
+#define	EXTERNAL_ATTACHMENT_URL_HEADER "X-Mozilla-External-Attachment-URL"
 
 /* ==========================================================================
    Allocation and destruction
@@ -205,19 +226,29 @@ mime_locate_external_content_handler(const char *content_type,
                                      contentTypeHandlerInitStruct  *ctHandlerInfo)
 {
   MimeObjectClass               *newObj = NULL;
-  nsCID                         classID = {0};
   char                          lookupID[256];
   nsCOMPtr<nsIMimeContentTypeHandler>     ctHandler;
-  nsresult rv = NS_OK;
+  nsresult rv;
 
   PR_snprintf(lookupID, sizeof(lookupID), "@mozilla.org/mimecth;1?type=%s", content_type);
-	if (nsComponentManager::ContractIDToClassID(lookupID, &classID) != NS_OK)
-    return NULL;
   
-  rv  = nsComponentManager::CreateInstance(classID, (nsISupports *)nsnull, NS_GET_IID(nsIMimeContentTypeHandler), 
-                                     (void **) getter_AddRefs(ctHandler));
-  if (NS_FAILED(rv) || !ctHandler)
-    return nsnull;
+  ctHandler = do_CreateInstance(lookupID, &rv);
+  if (NS_FAILED(rv) || !ctHandler) {
+    nsCOMPtr<nsICategoryManager> catman =
+      do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv);
+    if (NS_FAILED(rv))
+      return nsnull;
+
+    nsXPIDLCString value;
+    rv = catman->GetCategoryEntry(NS_SIMPLEMIMECONVERTERS_CATEGORY,
+                                  content_type, getter_Copies(value));
+    if (NS_FAILED(rv) || !value)
+      return nsnull;
+    rv = MIME_NewSimpleMimeConverterStub(content_type,
+                                         getter_AddRefs(ctHandler));
+    if (NS_FAILED(rv) || !ctHandler)
+      return nsnull;
+  }
   
   rv = ctHandler->CreateContentTypeHandlerClass(content_type, ctHandlerInfo, &newObj);
   if (NS_FAILED(rv))
@@ -393,6 +424,9 @@ void getMsgHdrForCurrentURL(MimeDisplayOptions *opts, nsIMsgDBHdr ** aMsgHdr)
       msgURI = do_QueryInterface(uri);
       if (msgURI)
       {
+        msgURI->GetMessageHeader(aMsgHdr);
+        if (*aMsgHdr)
+          return;
         nsXPIDLCString rdfURI;
         msgURI->GetUri(getter_Copies(rdfURI));
         if (rdfURI.get())
@@ -418,7 +452,7 @@ mime_find_class (const char *content_type, MimeHeaders *hdrs,
   contentTypeHandlerInitStruct  ctHandlerInfo;
 
   // Read some prefs
-  nsIPref *pref = GetPrefServiceManager(opts); 
+  nsIPrefBranch *prefBranch = GetPrefBranch(opts); 
   PRInt32 html_as = 0;  // def. see below
   PRInt32 types_of_classes_to_disallow = 0;  /* Let only a few libmime classes
        process incoming data. This protects from bugs (e.g. buffer overflows)
@@ -434,12 +468,13 @@ mime_find_class (const char *content_type, MimeHeaders *hdrs,
            attachment types and inline images) and is for paranoid users.
        */
   if (opts && opts->format_out != nsMimeOutput::nsMimeMessageFilterSniffer &&
-               opts->format_out != nsMimeOutput::nsMimeMessageDecrypt)
-    if (pref)
+               opts->format_out != nsMimeOutput::nsMimeMessageDecrypt
+               && opts->format_out != nsMimeOutput::nsMimeMessageAttach)
+    if (prefBranch)
     {
-      pref->GetIntPref("mailnews.display.html_as", &html_as);
-      pref->GetIntPref("mailnews.display.disallow_mime_handlers",
-                       &types_of_classes_to_disallow);
+      prefBranch->GetIntPref("mailnews.display.html_as", &html_as);
+      prefBranch->GetIntPref("mailnews.display.disallow_mime_handlers",
+                            &types_of_classes_to_disallow);
       if (types_of_classes_to_disallow > 0 && html_as == 0)
            // We have non-sensical prefs. Do some fixup.
         html_as = 1;
@@ -453,8 +488,8 @@ mime_find_class (const char *content_type, MimeHeaders *hdrs,
   // it is faster to read the pref first then figure out the msg hdr for the current url only if we have to
   // XXX instead of reading this pref every time, part of mime should be an observer listening to this pref change
   // and updating internal state accordingly. But none of the other prefs in this file seem to be doing that...=(
-  if (pref)
-    pref->GetBoolPref("mailnews.display.sanitizeJunkMail", &sanitizeJunkMail);
+  if (prefBranch)
+    prefBranch->GetBoolPref("mailnews.display.sanitizeJunkMail", &sanitizeJunkMail);
 
   if (sanitizeJunkMail)
   {
@@ -480,8 +515,7 @@ mime_find_class (const char *content_type, MimeHeaders *hdrs,
   if ((tempClass = mime_locate_external_content_handler(content_type, &ctHandlerInfo)) != NULL)
   {
     if (types_of_classes_to_disallow > 0
-        && (!nsCRT::strncasecmp(content_type, "text/x-vcard", 12) ||
-            !nsCRT::strncasecmp(content_type, "text/calendar", 13))
+        && (!nsCRT::strncasecmp(content_type, "text/x-vcard", 12))
        )
       /* Use a little hack to prevent some dangerous plugins, which ship
          with Mozilla, to run.
@@ -543,12 +577,13 @@ mime_find_class (const char *content_type, MimeHeaders *hdrs,
         // Preliminary use the normal plain text
         clazz = (MimeObjectClass *)&mimeInlineTextPlainClass;
         
-        if (opts && opts->format_out != nsMimeOutput::nsMimeMessageFilterSniffer)
+        if (opts && opts->format_out != nsMimeOutput::nsMimeMessageFilterSniffer
+          && opts->format_out != nsMimeOutput::nsMimeMessageAttach)
         {
           PRBool disable_format_flowed = PR_FALSE;
-          if (pref)
-            pref->GetBoolPref("mailnews.display.disable_format_flowed_support",
-                              &disable_format_flowed);
+          if (prefBranch)
+            prefBranch->GetBoolPref("mailnews.display.disable_format_flowed_support",
+                                    &disable_format_flowed);
 
           if(!disable_format_flowed)
           {
@@ -644,7 +679,7 @@ mime_find_class (const char *content_type, MimeHeaders *hdrs,
         /* Treat all unknown multipart subtypes as "multipart/mixed" */
         clazz = (MimeObjectClass *)&mimeMultipartMixedClass;
 
-      /* If we are sniffing a message, let's threat alternative parts as mixed */
+      /* If we are sniffing a message, let's treat alternative parts as mixed */
       if (opts && opts->format_out == nsMimeOutput::nsMimeMessageFilterSniffer)
         if (clazz == (MimeObjectClass *)&mimeMultipartAlternativeClass)
           clazz = (MimeObjectClass *)&mimeMultipartMixedClass;
@@ -761,10 +796,7 @@ mime_create (const char *content_type, MimeHeaders *hdrs,
 	 of application/octet-stream.  So, if we have an octet-stream attachment,
 	 try to guess what type it really is based on the file extension.  I HATE
 	 that we have to do this...
-
-     If the preference "mailnews.autolookup_unknown_mime_types" is set to PR_TRUE,
-     then we try to do this EVERY TIME when we do not have an entry for the given
-	 MIME type in our table, not only when it's application/octet-stream. */
+  */
   if (hdrs && opts && opts->file_type_fn &&
 
 	  /* ### mwelch - don't override AppleSingle */
@@ -1057,14 +1089,23 @@ mime_part_address(MimeObject *obj)
 char *
 mime_imap_part_address(MimeObject *obj)
 {
-	char *imap_part = 0;
-	if (!obj || !obj->headers)
-		return 0;
-	
-	imap_part = MimeHeaders_get(obj->headers,
-		IMAP_EXTERNAL_CONTENT_HEADER, PR_FALSE, PR_FALSE);
+  if (!obj || !obj->headers)
+    return 0;
+  else
+    return MimeHeaders_get(obj->headers, IMAP_EXTERNAL_CONTENT_HEADER, PR_FALSE, PR_FALSE);
+}
 
-	return imap_part;
+/* Returns a full URL if the current mime object has a EXTERNAL_ATTACHMENT_URL_HEADER
+   header. 
+   Return value must be freed by the caller.
+*/
+char * 
+mime_external_attachment_url(MimeObject *obj)
+{
+  if (!obj || !obj->headers)
+    return 0;
+  else
+    return MimeHeaders_get(obj->headers, EXTERNAL_ATTACHMENT_URL_HEADER, PR_FALSE, PR_FALSE);
 }
 
 #ifdef ENABLE_SMIME
@@ -1791,12 +1832,24 @@ MimeObject_write(MimeObject *obj, const char *output, PRInt32 length,
 {
   if (!obj->output_p) return 0;
 
+  // if we're stripping attachments, check if any parent is not being ouput
+  if (obj->options->format_out == nsMimeOutput::nsMimeMessageAttach)
+  {
+    // if true, mime generates a separator in html - we don't want that.
+    user_visible_p = PR_FALSE;
+
+    for (MimeObject *parent = obj->parent; parent; parent = parent->parent)
+    {
+      if (!parent->output_p)
+        return 0;
+    }
+  }
   if (!obj->options->state->first_data_written_p)
-	{
-	  int status = MimeObject_output_init(obj, 0);
-	  if (status < 0) return status;
-	  NS_ASSERTION(obj->options->state->first_data_written_p, "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
-	}
+  {
+    int status = MimeObject_output_init(obj, 0);
+    if (status < 0) return status;
+    NS_ASSERTION(obj->options->state->first_data_written_p, "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
+  }
 
   return MimeOptions_write(obj->options, output, length, user_visible_p);
 }
@@ -1805,7 +1858,7 @@ int
 MimeObject_write_separator(MimeObject *obj)
 {
   if (obj->options && obj->options->state)
-  	obj->options->state->separator_queued_p = PR_TRUE;
+    obj->options->state->separator_queued_p = PR_TRUE;
   return 0;
 }
 

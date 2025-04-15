@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -125,16 +124,16 @@ nsHTMLContentSerializer::Init(PRUint32 aFlags, PRUint32 aWrapColumn,
   // Set the line break character:
   if ((mFlags & nsIDocumentEncoder::OutputCRLineBreak)
       && (mFlags & nsIDocumentEncoder::OutputLFLineBreak)) { // Windows
-    mLineBreak.Assign(NS_LITERAL_STRING("\r\n"));
+    mLineBreak.AssignLiteral("\r\n");
   }
   else if (mFlags & nsIDocumentEncoder::OutputCRLineBreak) { // Mac
-    mLineBreak.Assign(NS_LITERAL_STRING("\r"));
+    mLineBreak.AssignLiteral("\r");
   }
   else if (mFlags & nsIDocumentEncoder::OutputLFLineBreak) { // Unix/DOM
-    mLineBreak.Assign(NS_LITERAL_STRING("\n"));
+    mLineBreak.AssignLiteral("\n");
   }
   else {
-    mLineBreak.AssignWithConversion(NS_LINEBREAK);         // Platform/default
+    mLineBreak.AssignLiteral(NS_LINEBREAK);         // Platform/default
   }
 
   mPreLevel = 0;
@@ -171,7 +170,7 @@ nsHTMLContentSerializer::AppendText(nsIDOMText* aText,
       nsresult rv;
       nsCOMPtr<nsILineBreakerFactory> lf(do_GetService(kLWBrkCID, &rv));
       if (NS_SUCCEEDED(rv)) {
-        rv = lf->GetBreaker(nsString(), getter_AddRefs(mLineBreaker));
+        rv = lf->GetBreaker(EmptyString(), getter_AddRefs(mLineBreaker));
         // Ignore result value.
         // If we are unable to obtain a line breaker,
         // we will use our simple fallback logic.
@@ -190,6 +189,12 @@ nsHTMLContentSerializer::AppendText(nsIDOMText* aText,
   if (mPreLevel > 0) {
     AppendToStringConvertLF(data, aStr);
   }
+  else if (mFlags & nsIDocumentEncoder::OutputRaw) {
+    PRInt32 lastNewlineOffset = data.RFindChar('\n');
+    AppendToString(data, aStr);
+    if (lastNewlineOffset != kNotFound)
+      mColPos = data.Length() - lastNewlineOffset;
+  }
   else if (!mDoFormat) {
     PRInt32 lastNewlineOffset = kNotFound;
     PRBool hasLongLines = HasLongLines(data, lastNewlineOffset);
@@ -202,12 +207,6 @@ nsHTMLContentSerializer::AppendText(nsIDOMText* aText,
     else {
       AppendToStringConvertLF(data, aStr);
     }
-  }
-  else if (mFlags & nsIDocumentEncoder::OutputRaw) {
-    PRInt32 lastNewlineOffset = data.RFindChar('\n');
-    AppendToString(data, aStr);
-    if (lastNewlineOffset != kNotFound)
-      mColPos = data.Length() - lastNewlineOffset;
   }
   else {
     AppendToStringWrapped(data, aStr, PR_FALSE);
@@ -477,6 +476,7 @@ nsHTMLContentSerializer::IsJavaScript(nsIAtom* aAttrNameAtom, const nsAString& a
               || (aAttrNameAtom == nsLayoutAtoms::onfocus)     || (aAttrNameAtom == nsLayoutAtoms::onkeydown)
               || (aAttrNameAtom == nsLayoutAtoms::onkeypress)  || (aAttrNameAtom == nsLayoutAtoms::onkeyup)
               || (aAttrNameAtom == nsLayoutAtoms::onload)      || (aAttrNameAtom == nsLayoutAtoms::onmousedown)
+              || (aAttrNameAtom == nsLayoutAtoms::onpageshow)  || (aAttrNameAtom == nsLayoutAtoms::onpagehide)
               || (aAttrNameAtom == nsLayoutAtoms::onmousemove) || (aAttrNameAtom == nsLayoutAtoms::onmouseout)
               || (aAttrNameAtom == nsLayoutAtoms::onmouseover) || (aAttrNameAtom == nsLayoutAtoms::onmouseup)
               || (aAttrNameAtom == nsLayoutAtoms::onreset)     || (aAttrNameAtom == nsLayoutAtoms::onselect)
@@ -507,11 +507,11 @@ nsHTMLContentSerializer::EscapeURI(const nsAString& aURI, nsAString& aEscapedURI
   // But we eventually want to use UTF-8 instead of a document charset, then the code would be much simpler.
   // See HTML 4.01 spec, "Appendix B.2.1 Non-ASCII characters in URI attribute values"
   nsCOMPtr<nsITextToSubURI> textToSubURI;
-  nsAutoString uri(aURI); // in order to use FindCharInSet(), IsASCII()
+  nsAutoString uri(aURI); // in order to use FindCharInSet()
   nsresult rv = NS_OK;
 
 
-  if (!mCharSet.IsEmpty() && !uri.IsASCII()) {
+  if (!mCharSet.IsEmpty() && !IsASCII(uri)) {
     textToSubURI = do_GetService(NS_ITEXTTOSUBURI_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
   }
@@ -525,7 +525,7 @@ nsHTMLContentSerializer::EscapeURI(const nsAString& aURI, nsAString& aEscapedURI
   // Loop and escape parts by avoiding escaping reserved characters (and '%', '#' ).
   while ((end = uri.FindCharInSet("%#;/?:@&=+$,", start)) != -1) {
     part = Substring(aURI, start, (end-start));
-    if (textToSubURI && !part.IsASCII()) {
+    if (textToSubURI && !IsASCII(part)) {
       rv = textToSubURI->ConvertAndEscape(mCharSet.get(), part.get(), getter_Copies(escapedURI));
       NS_ENSURE_SUCCESS(rv, rv);
     }
@@ -598,14 +598,6 @@ nsHTMLContentSerializer::SerializeAttributes(nsIContent* aContent,
         StringBeginsWith(valueStr, _mozStr)) {
       continue;
     }
-    
-    // XXX: This special cased textarea code should be
-    //      removed when bug #17003 is fixed.  
-    if ((aTagName == nsHTMLAtoms::textarea) &&
-        ((attrName == nsHTMLAtoms::value) || 
-         (attrName == nsHTMLAtoms::defaultvalue))){
-        continue;
-    }
 
     if (mIsCopying && mIsFirstChildOfOL && (aTagName == nsHTMLAtoms::li) && 
         (attrName == nsHTMLAtoms::value)){
@@ -656,7 +648,7 @@ nsHTMLContentSerializer::SerializeAttributes(nsIContent* aContent,
     if (IsShorthandAttr(attrName, aTagName) && valueStr.IsEmpty()) {
       valueStr = nameStr;
     }
-    SerializeAttr(nsAutoString(), nameStr, valueStr, aStr, !isJS);
+    SerializeAttr(EmptyString(), nameStr, valueStr, aStr, !isJS);
   }
 }
 
@@ -673,7 +665,8 @@ nsHTMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
   // The _moz_dirty attribute is emitted by the editor to
   // indicate that this element should be pretty printed
   // even if we're not in pretty printing mode
-  PRBool hasDirtyAttr = HasDirtyAttr(content);
+  PRBool hasDirtyAttr = content->HasAttr(kNameSpaceID_None,
+                                         nsLayoutAtoms::mozdirty);
 
   nsIAtom *name = content->Tag();
 
@@ -764,15 +757,6 @@ nsHTMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
     mColPos = 0;
   }
 
-  // XXX: This special cased textarea code should be
-  //      removed when bug #17003 is fixed.  
-  if (name == nsHTMLAtoms::textarea)
-  {
-    nsAutoString valueStr;
-    content->GetAttr(kNameSpaceID_None, nsHTMLAtoms::value, valueStr);
-    AppendToString(valueStr, aStr);
-  }
-
   if (name == nsHTMLAtoms::script ||
       name == nsHTMLAtoms::style ||
       name == nsHTMLAtoms::noscript ||
@@ -792,7 +776,8 @@ nsHTMLContentSerializer::AppendElementEnd(nsIDOMElement *aElement,
   nsCOMPtr<nsIContent> content = do_QueryInterface(aElement);
   if (!content) return NS_ERROR_FAILURE;
 
-  PRBool hasDirtyAttr = HasDirtyAttr(content);
+  PRBool hasDirtyAttr = content->HasAttr(kNameSpaceID_None,
+                                         nsLayoutAtoms::mozdirty);
 
   nsIAtom *name = content->Tag();
 
@@ -817,10 +802,9 @@ nsHTMLContentSerializer::AppendElementEnd(nsIDOMElement *aElement,
 
   if (parserService && (name != nsHTMLAtoms::style)) {
     PRBool isContainer;
-    PRInt32 id;
 
-    parserService->HTMLAtomTagToId(name, &id);
-    parserService->IsContainer(id, isContainer);
+    parserService->IsContainer(parserService->HTMLAtomTagToId(name),
+                               isContainer);
     if (!isContainer) return NS_OK;
   }
 
@@ -951,6 +935,8 @@ nsHTMLContentSerializer::AppendToString(const nsAString& aStr,
            iter != done_reading; 
            iter.advance(PRInt32(advanceLength))) {
         PRUint32 fragmentLength = iter.size_forward();
+        PRUint32 lengthReplaced = 0; // the number of UTF-16 codepoints
+                                     //  replaced by a particular entity
         const PRUnichar* c = iter.get();
         const PRUnichar* fragmentStart = c;
         const PRUnichar* fragmentEnd = c + fragmentLength;
@@ -983,10 +969,26 @@ nsHTMLContentSerializer::AppendToString(const nsAString& aStr,
           }
           else if (val > 127 && 
                    mFlags & nsIDocumentEncoder::OutputEncodeW3CEntities &&
-                   mEntityConverter &&
-                   NS_SUCCEEDED(mEntityConverter->ConvertToEntity(val,
-                                nsIEntityConverter::entityW3C, &fullEntityText))) {
-            break;
+                   mEntityConverter) {
+            if (IS_HIGH_SURROGATE(val) &&
+                c + 1 < fragmentEnd &&
+                IS_LOW_SURROGATE(*(c + 1))) {
+              PRUint32 valUTF32 = SURROGATE_TO_UCS4(val, *(++c));
+              if (NS_SUCCEEDED(mEntityConverter->ConvertUTF32ToEntity(valUTF32,
+                               nsIEntityConverter::entityW3C, &fullEntityText))) {
+                lengthReplaced = 2;
+                break;
+              }
+              else {
+                advanceLength++;
+              }
+            }
+            else if (NS_SUCCEEDED(mEntityConverter->ConvertToEntity(val,
+                                  nsIEntityConverter::entityW3C, 
+                                  &fullEntityText))) {
+              lengthReplaced = 1;
+              break;
+            }
           }
         }
 
@@ -1001,7 +1003,7 @@ nsHTMLContentSerializer::AppendToString(const nsAString& aStr,
         else if (fullEntityText) {
           AppendASCIItoUTF16(fullEntityText, aOutputStr);
           nsMemory::Free(fullEntityText);
-          advanceLength++;
+          advanceLength += lengthReplaced;
         }
       }
     } else {
@@ -1040,21 +1042,6 @@ nsHTMLContentSerializer::AppendToStringConvertLF(const nsAString& aStr,
 }
 
 PRBool
-nsHTMLContentSerializer::HasDirtyAttr(nsIContent* aContent)
-{
-  nsAutoString val;
-
-  if (NS_CONTENT_ATTR_NOT_THERE != aContent->GetAttr(kNameSpaceID_None,
-                                                     nsLayoutAtoms::mozdirty,
-                                                     val)) {
-    return PR_TRUE;
-  }
-  else {
-    return PR_FALSE;
-  }
-}
-
-PRBool 
 nsHTMLContentSerializer::LineBreakBeforeOpen(nsIAtom* aName, 
                                              PRBool aHasDirtyAttr)
 {
@@ -1079,10 +1066,7 @@ nsHTMLContentSerializer::LineBreakBeforeOpen(nsIAtom* aName,
     
     if (parserService) {
       PRBool res;
-      PRInt32 id;
-
-      parserService->HTMLAtomTagToId(aName, &id);
-      parserService->IsBlock(id, res);
+      parserService->IsBlock(parserService->HTMLAtomTagToId(aName), res);
       return res;
     }
   }
@@ -1180,10 +1164,7 @@ nsHTMLContentSerializer::LineBreakAfterClose(nsIAtom* aName,
     
     if (parserService) {
       PRBool res;
-      PRInt32 id;
-
-      parserService->HTMLAtomTagToId(aName, &id);
-      parserService->IsBlock(id, res);
+      parserService->IsBlock(parserService->HTMLAtomTagToId(aName), res);
       return res;
     }
   }
@@ -1304,7 +1285,7 @@ nsHTMLContentSerializer::SerializeLIValueAttribute(nsIDOMElement* aElement,
     if (currElement) {
       nsAutoString tagName;
       currElement->GetTagName(tagName);
-      if (tagName.EqualsIgnoreCase("LI")) {
+      if (tagName.LowerCaseEqualsLiteral("li")) {
         currElement->GetAttribute(NS_LITERAL_STRING("value"), valueStr);
         if (valueStr.IsEmpty())
           offset++;
@@ -1322,7 +1303,7 @@ nsHTMLContentSerializer::SerializeLIValueAttribute(nsIDOMElement* aElement,
   if (offset == 0 && found) {
     // offset = 0 => LI itself has the value attribute and we did not need to traverse back.
     // Just serialize value attribute like other tags.
-    SerializeAttr(nsAutoString(), NS_LITERAL_STRING("value"), valueStr, aStr, PR_FALSE);
+    SerializeAttr(EmptyString(), NS_LITERAL_STRING("value"), valueStr, aStr, PR_FALSE);
   }
   else if (offset == 1 && !found) {
     /*(offset = 1 && !found) means either LI is the first child node of OL 
@@ -1337,7 +1318,7 @@ nsHTMLContentSerializer::SerializeLIValueAttribute(nsIDOMElement* aElement,
 
     //As serializer needs to use this valueAttr we are creating here, 
     valueStr.AppendInt(startVal + offset);
-    SerializeAttr(nsAutoString(), NS_LITERAL_STRING("value"), valueStr, aStr, PR_FALSE);
+    SerializeAttr(EmptyString(), NS_LITERAL_STRING("value"), valueStr, aStr, PR_FALSE);
   }
 }
 
@@ -1352,7 +1333,7 @@ nsHTMLContentSerializer::IsFirstChildOfOL(nsIDOMElement* aElement){
   else
     return PR_FALSE;
   
-  if (parentName.EqualsIgnoreCase("OL")) {
+  if (parentName.LowerCaseEqualsLiteral("ol")) {
     olState defaultOLState(0, PR_FALSE);
     olState* state = nsnull;
     if (mOLStateStack.Count() > 0) 

@@ -14,6 +14,11 @@
  *
  * The Original Code is mozilla.org code.
  *
+ * The Initial Developer of the Original Code is
+ * David Bienvenu.
+ * Portions created by the Initial Developer are Copyright (C) 2004
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   David Bienvenu <bienvenu@nventure.com>
  *
@@ -37,6 +42,7 @@
 #include "nsMsgKeyArray.h"
 #include "nsIMsgDatabase.h"
 #include "nsIMsgHdr.h"
+#include "nsMsgDBView.h"
 
 class nsMsgGroupView;
 
@@ -54,10 +60,11 @@ public:
 
 protected:
   void      Init();
+  nsresult  AddChildFromGroupView(nsIMsgDBHdr *child, nsMsgDBView *view);
   nsresult  RemoveChild(nsMsgKey msgKey);
   nsresult  RerootThread(nsIMsgDBHdr *newParentOfOldRoot, nsIMsgDBHdr *oldRoot, nsIDBChangeAnnouncer *announcer);
 
-  nsresult AddMsgHdrInDateOrder(nsIMsgDBHdr *child);
+  nsresult AddMsgHdrInDateOrder(nsIMsgDBHdr *child, nsMsgDBView *view);
   nsresult ReparentNonReferenceChildrenOf(nsIMsgDBHdr *topLevelHdr, nsMsgKey newParentKey,
                                                             nsIDBChangeAnnouncer *announcer);
 

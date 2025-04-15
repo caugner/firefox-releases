@@ -1,36 +1,39 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- *  Javier Delgadillo <javi@netscape.com>
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *   Javier Delgadillo <javi@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 #include "nsASN1Tree.h"
 #include "nsIComponentManager.h"
 #include "nsString.h"
@@ -210,21 +213,20 @@ nsNSSASN1Tree::GetRowProperties(PRInt32 index, nsISupportsArray *properties)
   return NS_OK;
 }
 
-/* void getCellProperties (in long row, in wstring colID, 
+/* void getCellProperties (in long row, in nsITreeColumn col,
                            in nsISupportsArray properties); */
 NS_IMETHODIMP 
-nsNSSASN1Tree::GetCellProperties(PRInt32 row, const PRUnichar *colID, 
-                                     nsISupportsArray *properties)
+nsNSSASN1Tree::GetCellProperties(PRInt32 row, nsITreeColumn* col, 
+                                 nsISupportsArray *properties)
 {
   return NS_OK;
 }
 
-/* void getColumnProperties (in wstring colID, in nsIDOMElement colElt, 
+/* void getColumnProperties (in nsITreeColumn col,
                              in nsISupportsArray properties); */
 NS_IMETHODIMP 
-nsNSSASN1Tree::GetColumnProperties(const PRUnichar *colID, 
-                                       nsIDOMElement *colElt, 
-                                       nsISupportsArray *properties)
+nsNSSASN1Tree::GetColumnProperties(nsITreeColumn* col, 
+                                   nsISupportsArray *properties)
 {
   return NS_OK;
 }
@@ -284,48 +286,42 @@ nsNSSASN1Tree::GetLevel(PRInt32 index, PRInt32 *_retval)
   return NS_OK; 
 }
 
-/* Astring getImageSrc (in long row, in wstring colID); */
+/* Astring getImageSrc (in long row, in nsITreeColumn col); */
 NS_IMETHODIMP 
-nsNSSASN1Tree::GetImageSrc(PRInt32 row, const PRUnichar *colID, 
+nsNSSASN1Tree::GetImageSrc(PRInt32 row, nsITreeColumn* col, 
                            nsAString& _retval)
 {
   return NS_OK;
 }
 
-/* long getProgressMode (in long row, in wstring colID); */
+/* long getProgressMode (in long row, in nsITreeColumn col); */
 NS_IMETHODIMP 
-nsNSSASN1Tree::GetProgressMode(PRInt32 row, const PRUnichar *colID, PRInt32* _retval)
+nsNSSASN1Tree::GetProgressMode(PRInt32 row, nsITreeColumn* col, PRInt32* _retval)
 {
   return NS_OK;
 }
 
-/* Astring getCellValue (in long row, in wstring colID); */
+/* Astring getCellValue (in long row, in nsITreeColumn col); */
 NS_IMETHODIMP 
-nsNSSASN1Tree::GetCellValue(PRInt32 row, const PRUnichar *colID, 
+nsNSSASN1Tree::GetCellValue(PRInt32 row, nsITreeColumn* col, 
                             nsAString& _retval)
 {
   return NS_OK;
 }
 
-/* Astring getCellText (in long row, in wstring colID); */
+/* Astring getCellText (in long row, in nsITreeColumn col); */
 NS_IMETHODIMP 
-nsNSSASN1Tree::GetCellText(PRInt32 row, const PRUnichar *colID, 
-                               nsAString& _retval)
+nsNSSASN1Tree::GetCellText(PRInt32 row, nsITreeColumn* col, 
+                           nsAString& _retval)
 {
-  nsCOMPtr<nsIASN1Object> object;
-  _retval.SetCapacity(0);
-  NS_ConvertUCS2toUTF8 aUtf8ColID(colID);
-  const char *col = aUtf8ColID.get();
-  nsresult rv = NS_OK;
-  if (strcmp(col, "certDataCol") == 0) {
-    myNode *n = FindNodeFromIndex(row);
-    if (!n)
-      return NS_ERROR_FAILURE;
+  _retval.Truncate();
 
-    //There's only one column for ASN1 dump.
-    rv = n->obj->GetDisplayName(_retval);
-  }
-  return rv;
+  myNode* n = FindNodeFromIndex(row);
+  if (!n)
+    return NS_ERROR_FAILURE;
+
+  // There's only one column for ASN1 dump.
+  return n->obj->GetDisplayName(_retval);
 }
 
 /* wstring getDisplayData (in unsigned long index); */
@@ -374,9 +370,9 @@ nsNSSASN1Tree::ToggleOpenState(PRInt32 index)
   return NS_OK;
 }
 
-/* void cycleHeader (in wstring colID, in nsIDOMElement elt); */
+/* void cycleHeader (in nsITreeColumn col); */
 NS_IMETHODIMP 
-nsNSSASN1Tree::CycleHeader(const PRUnichar *colID, nsIDOMElement *elt)
+nsNSSASN1Tree::CycleHeader(nsITreeColumn* col)
 {
   return NS_OK;
 }
@@ -388,26 +384,34 @@ nsNSSASN1Tree::SelectionChanged()
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-/* void cycleCell (in long row, in wstring colID); */
+/* void cycleCell (in long row, in nsITreeColumn col); */
 NS_IMETHODIMP 
-nsNSSASN1Tree::CycleCell(PRInt32 row, const PRUnichar *colID)
+nsNSSASN1Tree::CycleCell(PRInt32 row, nsITreeColumn* col)
 {
   return NS_OK;
 }
 
-/* boolean isEditable (in long row, in wstring colID); */
+/* boolean isEditable (in long row, in nsITreeColumn col); */
 NS_IMETHODIMP 
-nsNSSASN1Tree::IsEditable(PRInt32 row, const PRUnichar *colID, 
-                              PRBool *_retval)
+nsNSSASN1Tree::IsEditable(PRInt32 row, nsITreeColumn* col, 
+                          PRBool *_retval)
 {
   *_retval = PR_FALSE;
   return NS_OK;
 }
 
-/* void setCellText (in long row, in wstring colID, in wstring value); */
+/* void setCellValue (in long row, in nsITreeColumn col, in AString value); */
 NS_IMETHODIMP 
-nsNSSASN1Tree::SetCellText(PRInt32 row, const PRUnichar *colID, 
-                               const PRUnichar *value)
+nsNSSASN1Tree::SetCellValue(PRInt32 row, nsITreeColumn* col, 
+                            const nsAString& value)
+{
+  return NS_OK;
+}
+
+/* void setCellText (in long row, in nsITreeColumn col, in AString value); */
+NS_IMETHODIMP 
+nsNSSASN1Tree::SetCellText(PRInt32 row, nsITreeColumn* col, 
+                           const nsAString& value)
 {
   return NS_OK;
 }
@@ -426,33 +430,18 @@ nsNSSASN1Tree::PerformActionOnRow(const PRUnichar *action, PRInt32 row)
   return NS_OK;
 }
 
-/* void performActionOnCell (in wstring action, in long row, in wstring colID); */
+/* void performActionOnCell (in wstring action, in long row, in nsITreeColumn col); */
 NS_IMETHODIMP 
 nsNSSASN1Tree::PerformActionOnCell(const PRUnichar *action, PRInt32 row, 
-                                       const PRUnichar *colID)
+                                   nsITreeColumn* col)
 {
   return NS_OK;
 }
 
 //
-// CanDropOn
+// CanDrop
 //
-// Can't drop on the thread pane.
-//
-NS_IMETHODIMP nsNSSASN1Tree::CanDropOn(PRInt32 index, PRBool *_retval)
-{
-  NS_ENSURE_ARG_POINTER(_retval);
-  *_retval = PR_FALSE;
-  
-  return NS_OK;
-}
-
-//
-// CanDropBeforeAfter
-//
-// Can't drop on the thread pane.
-//
-NS_IMETHODIMP nsNSSASN1Tree::CanDropBeforeAfter(PRInt32 index, PRBool before, PRBool *_retval)
+NS_IMETHODIMP nsNSSASN1Tree::CanDrop(PRInt32 index, PRInt32 orientation, PRBool *_retval)
 {
   NS_ENSURE_ARG_POINTER(_retval);
   *_retval = PR_FALSE;
@@ -463,8 +452,6 @@ NS_IMETHODIMP nsNSSASN1Tree::CanDropBeforeAfter(PRInt32 index, PRBool before, PR
 
 //
 // Drop
-//
-// Can't drop on the thread pane.
 //
 NS_IMETHODIMP nsNSSASN1Tree::Drop(PRInt32 row, PRInt32 orient)
 {

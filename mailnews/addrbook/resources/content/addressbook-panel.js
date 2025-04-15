@@ -34,6 +34,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+var gMsgCompose = false;
+
 function GetAbViewListener()
 {
   // the ab panel doesn't care if the total changes, or if the selection changes
@@ -53,7 +55,7 @@ var gAddressBookPanelAbListener = {
       // if so, select the person addressbook (it can't be removed)
       if (directory == GetAbView().directory) {
           var abPopup = document.getElementById('addressbookList');
-          abPopup.setAttribute("selectedAB", kPersonalAddressbookURI);
+          abPopup.value = kPersonalAddressbookURI;
           LoadPreviouslySelectedAB();
       } 
     }
@@ -81,26 +83,9 @@ var gAddressBookPanelAbListener = {
 function LoadPreviouslySelectedAB()
 {
   var abPopup = document.getElementById('addressbookList');
-  if ( abPopup )
-  {
-    var menupopup = document.getElementById('addressbookList-menupopup');
-    var selectedAB = abPopup.getAttribute("selectedAB");
-    if (!selectedAB) 
-      selectedAB = kPersonalAddressbookURI;
-      
-    if ( selectedAB && menupopup && menupopup.childNodes )
-    {
-      for ( var index = menupopup.childNodes.length - 1; index >= 0; index-- )
-      {
-        if ( menupopup.childNodes[index].getAttribute('value') == selectedAB )
-        {
-          abPopup.label = menupopup.childNodes[index].getAttribute('label');
-          abPopup.value = menupopup.childNodes[index].getAttribute('value');
-          break;
-        }
-      }
-    }
-  }
+  var value = abPopup.value || kPersonalAddressbookURI;
+  abPopup.selectedItem = null;
+  abPopup.value = value;
   ChangeDirectoryByURI(abPopup.selectedItem.id);
 }
 
@@ -117,17 +102,20 @@ function AbPanelLoad()
   // selected directory's name is modified
   var addrbookSession = Components.classes["@mozilla.org/addressbook/services/session;1"].getService().QueryInterface(Components.interfaces.nsIAddrBookSession);
   // this listener only cares when a directory is removed or modified
-  addrbookSession.addAddressBookListener(gAddressBookPanelAbListener,
-                  Components.interfaces.nsIAbListener.directoryRemoved | Components.interfaces.nsIAbListener.changed);
+  addrbookSession.addAddressBookListener(
+    gAddressBookPanelAbListener,
+    Components.interfaces.nsIAddrBookSession.directoryRemoved |
+    Components.interfaces.nsIAddrBookSession.changed);
 
   gSearchInput = document.getElementById("searchInput");
-}
 
-
-function AbPanelOnChange(event)
-{
-  var abPopup = document.getElementById('addressbookList');
-  abPopup.setAttribute("selectedAB", abPopup.value);
+  // for the compose window we want to show To, Cc, Bcc and a separator
+  // for all other windows we want to show Compose Mail To
+  var popup = document.getElementById("composeMail");
+  gMsgCompose = parent.document.documentElement.getAttribute("windowtype") == "msgcompose";
+  for (var i = 0; i < 4; i++)
+    popup.childNodes[i].hidden = !gMsgCompose;
+  popup.childNodes[4].hidden = gMsgCompose;
 }
 
 function AbPanelUnload()
@@ -136,6 +124,23 @@ function AbPanelUnload()
   addrbookSession.removeAddressBookListener(gAddressBookPanelAbListener);
 
   CloseAbView();
+}
+
+function AbPanelAdd(addrtype)
+{
+  var cards = GetSelectedAbCards();
+  var count = cards.length;
+
+  for (var i = 0; i < count; i++) {
+    // turn each card into a properly formatted address
+    var address = GenerateAddressFromCard(cards[i]);
+    if (address)
+      top.awAddRecipient(addrtype, address);
+    else if (gPromptService)
+      gPromptService.alert(window,
+                           gAddressBookBundle.getString("emptyEmailAddCardTitle"),
+                           gAddressBookBundle.getString("emptyEmailAddCard"));
+  }
 }
 
 function AbPanelNewCard() 
@@ -161,7 +166,10 @@ function OnClickedCard()
 function AbResultsPaneDoubleClick(card) 
 {
   // double click for ab panel means "send mail to this person / list"
-  AbNewMessage();
+  if (gMsgCompose)
+    AbPanelAdd('addr_to');
+  else
+    AbNewMessage();
 }
 
 function UpdateCardView() 

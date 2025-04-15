@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is the TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
@@ -20,7 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Peter Van der Beken <peterv@netscape.com>
+ *   Peter Van der Beken <peterv@propagandism.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -49,7 +49,7 @@
 #include "nsIDOMProcessingInstruction.h"
 #include "nsIDOMText.h"
 #include "nsIDOMHTMLTableSectionElem.h"
-#include "nsIDOMHTMLScriptElement.h"
+#include "nsIScriptElement.h"
 #include "nsIDOMNSDocument.h"
 #include "nsIParser.h"
 #include "nsIRefreshURI.h"
@@ -70,6 +70,9 @@
 #include "nsIHTMLDocument.h"
 #include "nsIStyleSheetLinkingElement.h"
 #include "nsIDocumentTransformer.h"
+#include "nsICSSLoader.h"
+#include "nsICharsetAlias.h"
+#include "nsIHTMLContentSink.h"
 
 extern nsINameSpaceManager* gTxNameSpaceManager;
 
@@ -89,7 +92,8 @@ txMozillaXMLOutput::txMozillaXMLOutput(const nsAString& aRootName,
                                        nsIDOMDocument* aSourceDocument,
                                        nsIDOMDocument* aResultDocument,
                                        nsITransformObserver* aObserver)
-    : mBadChildLevel(0),
+    : mTreeDepth(0),
+      mBadChildLevel(0),
       mTableState(NORMAL),
       mDontAddCurrent(PR_FALSE),
       mHaveTitleElement(PR_FALSE),
@@ -155,7 +159,7 @@ void txMozillaXMLOutput::attribute(const nsAString& aName,
         // Outputting HTML as XHTML, lowercase attribute names
         nsAutoString lowerName;
         TX_ToLowerCase(aName, lowerName);
-        element->SetAttributeNS(nsString(), lowerName,
+        element->SetAttributeNS(EmptyString(), lowerName,
                                 aValue);
     }
     else {
@@ -195,14 +199,14 @@ void txMozillaXMLOutput::comment(const nsAString& aData)
     NS_ASSERTION(NS_SUCCEEDED(rv), "Can't append comment");
 }
 
-void txMozillaXMLOutput::endDocument()
+void txMozillaXMLOutput::endDocument(nsresult aResult)
 {
     closePrevious(eCloseElement | eFlushText);
     // This should really be handled by nsIDocument::Reset
     if (mCreatingNewDocument && !mHaveTitleElement) {
         nsCOMPtr<nsIDOMNSDocument> domDoc = do_QueryInterface(mDocument);
         if (domDoc) {
-            domDoc->SetTitle(nsString());
+            domDoc->SetTitle(EmptyString());
         }
     }
 
@@ -220,7 +224,7 @@ void txMozillaXMLOutput::endDocument()
     }
 
     if (mNotifier) {
-        mNotifier->OnTransformEnd();
+        mNotifier->OnTransformEnd(aResult);
     }
 }
 
@@ -235,6 +239,8 @@ void txMozillaXMLOutput::endElement(const nsAString& aName, const PRInt32 aNsID)
         return;
     }
     
+    --mTreeDepth;
+
 #ifdef DEBUG
     if (mTableState != ADDED_TBODY) {
         nsAutoString nodeName;
@@ -264,16 +270,42 @@ void txMozillaXMLOutput::endElement(const nsAString& aName, const PRInt32 aNsID)
         endHTMLElement(element);
     }
 
+    // Handle svg script elements
+    if (aNsID == kNameSpaceID_SVG && txHTMLAtoms::script->Equals(aName)) {
+        // Add this script element to the array of loading script elements.
+        nsCOMPtr<nsIScriptElement> scriptElement =
+            do_QueryInterface(mCurrentNode);
+        NS_ASSERTION(scriptElement, "Need script element");
+        mNotifier->AddScriptElement(scriptElement);
+    }
+
+    if (mCreatingNewDocument) {
+        // Handle all sorts of stylesheets
+        nsCOMPtr<nsIStyleSheetLinkingElement> ssle =
+            do_QueryInterface(mCurrentNode);
+        if (ssle) {
+            ssle->SetEnableUpdates(PR_TRUE);
+            if (ssle->UpdateStyleSheet(nsnull, mNotifier) ==
+                NS_ERROR_HTMLPARSER_BLOCK) {
+                nsCOMPtr<nsIStyleSheet> stylesheet;
+                ssle->GetStyleSheet(*getter_AddRefs(stylesheet));
+                if (mNotifier) {
+                    mNotifier->AddStyleSheet(stylesheet);
+                }
+            }
+        }
+    }
+
     // Add the element to the tree if it wasn't added before and take one step
     // up the tree
     // we can't use GetParentNode to check if mCurrentNode is the
     // "non-added node" since that does strange things when we've called
-    // SetDocument manually
+    // BindToTree manually
     if (mCurrentNode == mNonAddedNode) {
         nsCOMPtr<nsIDocument> document = do_QueryInterface(mNonAddedParent);
         if (document && !mRootContent) {
             mRootContent = do_QueryInterface(mCurrentNode);
-            mRootContent->SetDocument(document, PR_FALSE, PR_TRUE);
+            // XXXbz what to do on failure here?
             document->SetRootContent(mRootContent);
         }
         else {
@@ -366,13 +398,16 @@ void txMozillaXMLOutput::startElement(const nsAString& aName,
 
     closePrevious(eCloseElement | eFlushText);
 
-    if (mBadChildLevel) {
-        // eCloseElement couldn't add the parent, we fail as well
+    if (mBadChildLevel || mTreeDepth == MAX_REFLOW_DEPTH) {
+        // eCloseElement couldn't add the parent so we fail as well or we've
+        // reached the limit of the depth of the tree that we allow.
         ++mBadChildLevel;
         PR_LOG(txLog::xslt, PR_LOG_DEBUG,
                ("startElement, mBadChildLevel = %d\n", mBadChildLevel));
         return;
     }
+
+    ++mTreeDepth;
 
     nsresult rv = mTableStateStack.push(NS_INT32_TO_PTR(mTableState));
     if (NS_FAILED(rv)) {
@@ -411,15 +446,22 @@ void txMozillaXMLOutput::startElement(const nsAString& aName,
             return;
         }
 
-        if (aNsID == kNameSpaceID_XHTML)
+        if (aNsID == kNameSpaceID_XHTML) {
             startHTMLElement(element, PR_TRUE);
+        } else if (aNsID == kNameSpaceID_SVG &&
+                   txHTMLAtoms::script->Equals(aName)) {
+            mDontAddCurrent = PR_TRUE;
+        }
     }
 
     if (mCreatingNewDocument) {
-        nsCOMPtr<nsIContent> cont = do_QueryInterface(element);
-        NS_ASSERTION(cont, "element doesn't implement nsIContent");
-        nsCOMPtr<nsIDocument> doc = do_QueryInterface(mDocument);
-        cont->SetDocument(doc, PR_FALSE, PR_TRUE);
+        // Handle all sorts of stylesheets
+        nsCOMPtr<nsIStyleSheetLinkingElement> ssle =
+            do_QueryInterface(element);
+        if (ssle) {
+            ssle->InitStyleLinkElement(nsnull, PR_FALSE);
+            ssle->SetEnableUpdates(PR_FALSE);
+        }
     }
     mParentNode = mCurrentNode;
     mCurrentNode = do_QueryInterface(element);
@@ -458,7 +500,7 @@ void txMozillaXMLOutput::closePrevious(PRInt8 aAction)
 
             mParentNode = wrapper;
             mRootContent = do_QueryInterface(wrapper);
-            mRootContent->SetDocument(document, PR_FALSE, PR_TRUE);
+            // XXXbz what to do on failure here?
             document->SetRootContent(mRootContent);
         }
 
@@ -469,7 +511,7 @@ void txMozillaXMLOutput::closePrevious(PRInt8 aAction)
         else {
             if (document && currentElement && !mRootContent) {
                 mRootContent = do_QueryInterface(mCurrentNode);
-                mRootContent->SetDocument(document, PR_FALSE, PR_TRUE);
+                // XXXbz what to do on failure here?
                 document->SetRootContent(mRootContent);
             }
             else {
@@ -560,7 +602,7 @@ void txMozillaXMLOutput::startHTMLElement(nsIDOMElement* aElement, PRBool aXHTML
         NS_ASSERTION(NS_SUCCEEDED(rv), "Can't set http-equiv on meta");
         nsAutoString metacontent;
         metacontent.Append(mOutputFormat.mMediaType);
-        metacontent.Append(NS_LITERAL_STRING("; charset="));
+        metacontent.AppendLiteral("; charset=");
         metacontent.Append(mOutputFormat.mEncoding);
         rv = meta->SetAttribute(NS_LITERAL_STRING("content"),
                                 metacontent);
@@ -568,14 +610,6 @@ void txMozillaXMLOutput::startHTMLElement(nsIDOMElement* aElement, PRBool aXHTML
         nsCOMPtr<nsIDOMNode> dummy;
         rv = aElement->AppendChild(meta, getter_AddRefs(dummy));
         NS_ASSERTION(NS_SUCCEEDED(rv), "Can't append meta");
-    }
-    else if (mCreatingNewDocument) {
-        nsCOMPtr<nsIStyleSheetLinkingElement> ssle =
-            do_QueryInterface(aElement);
-        if (ssle) {
-            ssle->InitStyleLinkElement(nsnull, PR_FALSE);
-            ssle->SetEnableUpdates(PR_FALSE);
-        }
     }
 }
 
@@ -602,7 +636,7 @@ void txMozillaXMLOutput::endHTMLElement(nsIDOMElement* aElement)
     // Load scripts
     if (mNotifier && atom == txHTMLAtoms::script) {
         // Add this script element to the array of loading script elements.
-        nsCOMPtr<nsIDOMHTMLScriptElement> scriptElement =
+        nsCOMPtr<nsIScriptElement> scriptElement =
             do_QueryInterface(mCurrentNode);
         NS_ASSERTION(scriptElement, "Need script element");
         mNotifier->AddScriptElement(scriptElement);
@@ -656,23 +690,6 @@ void txMozillaXMLOutput::endHTMLElement(nsIDOMElement* aElement)
         nsCOMPtr<nsIAtom> header = do_GetAtom(httpEquiv);
         processHTTPEquiv(header, value);
     }
-
-    // Handle all sorts of stylesheets
-    if (mCreatingNewDocument) {
-        nsCOMPtr<nsIStyleSheetLinkingElement> ssle =
-            do_QueryInterface(aElement);
-        if (ssle) {
-            ssle->SetEnableUpdates(PR_TRUE);
-            rv = ssle->UpdateStyleSheet(nsnull, mNotifier);
-            if (rv == NS_ERROR_HTMLPARSER_BLOCK) {
-                nsCOMPtr<nsIStyleSheet> stylesheet;
-                ssle->GetStyleSheet(*getter_AddRefs(stylesheet));
-                if (mNotifier) {
-                    mNotifier->AddStyleSheet(stylesheet);
-                }
-            }
-        }
-    }
 }
 
 void txMozillaXMLOutput::processHTTPEquiv(nsIAtom* aHeader, const nsAString& aValue)
@@ -724,9 +741,16 @@ txMozillaXMLOutput::createResultDocument(const nsAString& aName, PRInt32 aNsID,
 
     // Set the charset
     if (!mOutputFormat.mEncoding.IsEmpty()) {
-        doc->SetDocumentCharacterSet(
-            NS_LossyConvertUTF16toASCII(mOutputFormat.mEncoding));
-        doc->SetDocumentCharacterSetSource(kCharsetFromOtherComponent);
+        NS_LossyConvertUTF16toASCII charset(mOutputFormat.mEncoding);
+        nsCAutoString canonicalCharset;
+        nsCOMPtr<nsICharsetAlias> calias =
+            do_GetService("@mozilla.org/intl/charsetalias;1");
+
+        if (calias &&
+            NS_SUCCEEDED(calias->GetPreferred(charset, canonicalCharset))) {
+            doc->SetDocumentCharacterSet(canonicalCharset);
+            doc->SetDocumentCharacterSetSource(kCharsetFromOtherComponent);
+        }
     }
 
     // Set the mime-type
@@ -737,7 +761,7 @@ txMozillaXMLOutput::createResultDocument(const nsAString& aName, PRInt32 aNsID,
         doc->SetContentType(NS_LITERAL_STRING("text/html"));
     }
     else {
-        doc->SetContentType(NS_LITERAL_STRING("text/xml"));
+        doc->SetContentType(NS_LITERAL_STRING("application/xml"));
     }
 
     // Set up script loader of the result document.
@@ -770,7 +794,7 @@ txMozillaXMLOutput::createResultDocument(const nsAString& aName, PRInt32 aNsID,
         NS_ENSURE_SUCCESS(rv, rv);
         nsAutoString qName;
         if (mOutputFormat.mMethod == eHTMLOutput) {
-            qName.Assign(NS_LITERAL_STRING("html"));
+            qName.AssignLiteral("html");
         }
         else {
             qName.Assign(aName);
@@ -816,15 +840,15 @@ NS_IMPL_ISUPPORTS2(txTransformNotifier,
 
 NS_IMETHODIMP
 txTransformNotifier::ScriptAvailable(nsresult aResult, 
-                                     nsIDOMHTMLScriptElement *aElement, 
+                                     nsIScriptElement *aElement, 
                                      PRBool aIsInline,
                                      PRBool aWasPending,
                                      nsIURI *aURI, 
                                      PRInt32 aLineNo,
                                      const nsAString& aScript)
 {
-    if (NS_FAILED(aResult)) {
-        mScriptElements.RemoveObject(aElement);
+    if (NS_FAILED(aResult) &&
+        mScriptElements.RemoveObject(aElement)) {
         SignalTransformEnd();
     }
 
@@ -833,12 +857,14 @@ txTransformNotifier::ScriptAvailable(nsresult aResult,
 
 NS_IMETHODIMP 
 txTransformNotifier::ScriptEvaluated(nsresult aResult, 
-                                     nsIDOMHTMLScriptElement *aElement,
+                                     nsIScriptElement *aElement,
                                      PRBool aIsInline,
                                      PRBool aWasPending)
 {
-    mScriptElements.RemoveObject(aElement);
-    SignalTransformEnd();
+    if (mScriptElements.RemoveObject(aElement)) {
+        SignalTransformEnd();
+    }
+
     return NS_OK;
 }
 
@@ -864,7 +890,7 @@ txTransformNotifier::Init(nsITransformObserver* aObserver)
 }
 
 void
-txTransformNotifier::AddScriptElement(nsIDOMHTMLScriptElement* aElement)
+txTransformNotifier::AddScriptElement(nsIScriptElement* aElement)
 {
     mScriptElements.AppendObject(aElement);
 }
@@ -876,10 +902,10 @@ txTransformNotifier::AddStyleSheet(nsIStyleSheet* aStyleSheet)
 }
 
 void
-txTransformNotifier::OnTransformEnd()
+txTransformNotifier::OnTransformEnd(nsresult aResult)
 {
     mInTransform = PR_FALSE;
-    SignalTransformEnd();
+    SignalTransformEnd(aResult);
 }
 
 void
@@ -898,29 +924,34 @@ txTransformNotifier::SetOutputDocument(nsIDOMDocument* aDocument)
 }
 
 void
-txTransformNotifier::SignalTransformEnd()
+txTransformNotifier::SignalTransformEnd(nsresult aResult)
 {
-    if (mInTransform || mScriptElements.Count() > 0 ||
-        mStylesheets.Count() > 0) {
+    if (mInTransform || (NS_SUCCEEDED(aResult) &&
+        mScriptElements.Count() > 0 || mStylesheets.Count() > 0)) {
         return;
     }
+
+    mStylesheets.Clear();
+    mScriptElements.Clear();
 
     // Make sure that we don't get deleted while this function is executed and
     // we remove ourselfs from the scriptloader
     nsCOMPtr<nsIScriptLoaderObserver> kungFuDeathGrip(this);
 
-    // XXX Need a better way to determine transform success/failure
-    if (mDocument) {
-        nsCOMPtr<nsIDocument> doc = do_QueryInterface(mDocument);
-        nsIScriptLoader *loader = doc->GetScriptLoader();
-        if (loader) {
-            loader->RemoveObserver(this);
+    nsCOMPtr<nsIDocument> doc = do_QueryInterface(mDocument);
+    if (doc) {
+        nsIScriptLoader *scriptLoader = doc->GetScriptLoader();
+        if (scriptLoader) {
+            scriptLoader->RemoveObserver(this);
+            // XXX Maybe we want to cancel script loads if NS_FAILED(rv)?
         }
 
-        mObserver->OnTransformDone(NS_OK, mDocument);
+        if (NS_FAILED(aResult)) {
+            doc->CSSLoader()->Stop();
+        }
     }
-    else {
-        // XXX Need better error message and code.
-        mObserver->OnTransformDone(NS_ERROR_FAILURE, nsnull);
+
+    if (NS_SUCCEEDED(aResult)) {
+        mObserver->OnTransformDone(aResult, mDocument);
     }
 }

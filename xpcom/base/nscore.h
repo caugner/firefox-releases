@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #ifndef nscore_h___
@@ -99,22 +99,62 @@
  * SomeCtor() NS_HIDDEN;
  */
 
-#ifdef HAVE_VISIBILITY_ATTRIBUTE
+#ifdef HAVE_VISIBILITY_HIDDEN_ATTRIBUTE
 #define NS_VISIBILITY_HIDDEN   __attribute__ ((visibility ("hidden")))
-#define NS_VISIBILITY_DEFAULT
-
-#define NS_HIDDEN_(type)   NS_VISIBILITY_HIDDEN type
 #else
 #define NS_VISIBILITY_HIDDEN
-#define NS_VISIBILITY_DEFAULT
-
-#define NS_HIDDEN_(type)   type
 #endif
 
+#if defined(HAVE_VISIBILITY_HIDDEN_ATTRIBUTE) && defined(HAVE_VISIBILITY_PRAGMA)
+#define NS_VISIBILITY_DEFAULT __attribute__ ((visibility ("default")))
+#else
+#define NS_VISIBILITY_DEFAULT
+#endif
+
+#define NS_HIDDEN_(type)   NS_VISIBILITY_HIDDEN type
+#define NS_EXTERNAL_VIS_(type) NS_VISIBILITY_DEFAULT type
+
 #define NS_HIDDEN           NS_VISIBILITY_HIDDEN
+#define NS_EXTERNAL_VIS     NS_VISIBILITY_DEFAULT
 
 #undef  IMETHOD_VISIBILITY
 #define IMETHOD_VISIBILITY  NS_VISIBILITY_HIDDEN
+
+/**
+ * Mark a function as using a potentially non-standard function calling
+ * convention.  This can be used on functions that are called very
+ * frequently, to reduce the overhead of the function call.  It is still worth
+ * using the macro for C++ functions which take no parameters since it allows
+ * passing |this| in a register.
+ *
+ *  - Do not use this on any scriptable interface method since xptcall won't be
+ *    aware of the different calling convention.
+ *  - This must appear on the declaration, not the definition.
+ *  - Adding this to a public function _will_ break binary compatibility.
+ *  - This may be used on virtual functions but you must ensure it is applied
+ *    to all implementations - the compiler will _not_ warn but it will crash.
+ *  - This has no effect for inline functions or functions which take a
+ *    variable number of arguments.
+ *
+ * Examples: int NS_FASTCALL func1(char *foo);
+ *           NS_HIDDEN_(int) NS_FASTCALL func2(char *foo);
+ */
+
+#if defined(__i386__) && defined(__GNUC__) && (__GNUC__ >= 3) && !defined(XP_OS2) && !defined(XP_MACOSX)
+#define NS_FASTCALL __attribute__ ((regparm (3), stdcall))
+#else
+#define NS_FASTCALL
+#endif
+
+/*
+ * NS_DEFCALL undoes the effect of a global regparm/stdcall setting
+ * so that xptcall works correctly.
+ */
+#if defined(__i386__) && defined(__GNUC__) && (__GNUC__ >= 3) && !defined(XP_OS2) && !defined(XP_MACOSX)
+#define NS_DEFCALL __attribute__ ((regparm (0), cdecl))
+#else
+#define NS_DEFCALL
+#endif
 
 #ifdef NS_WIN32
 
@@ -128,29 +168,28 @@
 #define NS_CALLBACK_(_type, _name) _type (__stdcall * _name)
 #define NS_STDCALL __stdcall
 
-#elif defined(XP_MAC)
+/*
+  These are needed to mark static members in exported classes, due to
+  gcc bug XXX insert bug# here.
+ */
 
-#define NS_IMPORT
-#define NS_IMPORT_(type) type
-#define NS_EXPORT __declspec(export)
-#define NS_EXPORT_(type) __declspec(export) type
-#define NS_IMETHOD_(type) virtual type
-#define NS_IMETHODIMP_(type) type
-#define NS_METHOD_(type) type
-#define NS_CALLBACK_(_type, _name) _type (* _name)
-#define NS_STDCALL
+#define NS_EXPORT_STATIC_MEMBER_(type) type
+#define NS_IMPORT_STATIC_MEMBER_(type) type
 
 #else
 
-#define NS_IMPORT
-#define NS_IMPORT_(type) type
-#define NS_EXPORT
-#define NS_EXPORT_(type) type
-#define NS_IMETHOD_(type) virtual IMETHOD_VISIBILITY type
+#define NS_IMPORT NS_EXTERNAL_VIS
+#define NS_IMPORT_(type) NS_EXTERNAL_VIS_(type)
+#define NS_EXPORT NS_EXTERNAL_VIS
+#define NS_EXPORT_(type) NS_EXTERNAL_VIS_(type)
+#define NS_IMETHOD_(type) virtual IMETHOD_VISIBILITY type NS_DEFCALL
 #define NS_IMETHODIMP_(type) type
 #define NS_METHOD_(type) type
 #define NS_CALLBACK_(_type, _name) _type (* _name)
 #define NS_STDCALL
+#define NS_EXPORT_STATIC_MEMBER_(type) NS_EXTERNAL_VIS_(type)
+#define NS_IMPORT_STATIC_MEMBER_(type) NS_EXTERNAL_VIS_(type)
+
 #endif
 
 /**
@@ -201,6 +240,22 @@
 #else
 #define NS_COM NS_IMPORT
 #endif
+
+#ifdef MOZILLA_INTERNAL_API
+#  define NS_COM_GLUE NS_COM
+   /*
+     The frozen string API has different definitions of nsAC?String
+     classes than the internal API. On systems that explicitly declare
+     dllexport symbols this is not a problem, but on ELF systems
+     internal symbols can accidentally "shine through"; we rename the
+     internal classes to avoid symbol conflicts.
+   */
+#  define nsAString nsAString_internal
+#  define nsACString nsACString_internal
+#else
+#  define NS_COM_GLUE
+#endif
+
 
 /**
  * NS_NO_VTABLE is emitted by xpidl in interface declarations whenever
@@ -282,7 +337,7 @@ typedef PRUint32 nsresult;
    * commercial build.  When this is fixed there will be no need for the
    * |NS_REINTERPRET_CAST| in nsLiteralString.h either.
    */
-  #if defined(HAVE_CPP_2BYTE_WCHAR_T) && (defined(NS_WIN32) || defined(XP_MAC))
+  #if defined(HAVE_CPP_2BYTE_WCHAR_T) && defined(NS_WIN32)
     typedef wchar_t PRUnichar;
   #else
     typedef PRUint16 PRUnichar;
@@ -365,8 +420,15 @@ typedef PRUint32 nsresult;
  * Use these macros to do 64bit safe pointer conversions.
  */
 
-#define NS_PTR_TO_INT32(x) ((char *)(x) - (char *)0)
-#define NS_INT32_TO_PTR(x) ((void *)((char *)0 + (x)))
+#define NS_PTR_TO_INT32(x)  ((PRInt32)  (PRWord) (x))
+#define NS_PTR_TO_UINT32(x) ((PRUint32) (PRWord) (x))
+#define NS_INT32_TO_PTR(x)  ((void *)   (PRWord) (x))
+
+/*
+ * Use NS_STRINGIFY to form a string literal from the value of a macro.
+ */
+#define NS_STRINGIFY_HELPER(x_) #x_
+#define NS_STRINGIFY(x_) NS_STRINGIFY_HELPER(x_)
 
 /*
  * These macros allow you to give a hint to the compiler about branch
@@ -391,4 +453,3 @@ typedef PRUint32 nsresult;
 #endif
 
 #endif /* nscore_h___ */
-

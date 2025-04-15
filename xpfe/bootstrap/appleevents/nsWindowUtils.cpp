@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Simon Fraser <sfraser@netscape.com>
+ *   Simon Fraser <sfraser@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -48,14 +48,12 @@
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMWindow.h"
+#include "nsIDOMChromeWindow.h"
 #include "nsIDOMWindowInternal.h"
-#include "nsIDOMWindowUtils.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMNode.h"
-#include "nsIHTMLContent.h"
 #include "nsIServiceManager.h"
 #include "nsIWebNavigation.h"
-#include "nsIWebShellWindow.h"
 #include "nsIWidget.h"
 #include "nsIWindowMediator.h"
 #include "nsIURI.h"
@@ -65,6 +63,7 @@
 #include "nsWindowUtils.h"
 #include "nsMacUtils.h"
 #include "nsXPIDLString.h"
+#include "nsIXULWindow.h"
 #include "nsWindowUtils.h"
 #include "nsReadableUtils.h"
 
@@ -176,22 +175,22 @@ static TWindowKind WindowKindFromTypeString(const nsString& inWindowType)
 	if (inWindowType.IsEmpty())
 		return kAnyWindowKind;
 		
-	if (inWindowType.Equals(NS_LITERAL_STRING("navigator:browser")))
+	if (inWindowType.EqualsLiteral("navigator:browser"))
 		return kBrowserWindowKind;
 
-	if (inWindowType.Equals(NS_LITERAL_STRING("mail:3pane")))
+	if (inWindowType.EqualsLiteral("mail:3pane"))
 		return kMailWindowKind;
 
-	if (inWindowType.Equals(NS_LITERAL_STRING("msgcompose")))
+	if (inWindowType.EqualsLiteral("msgcompose"))
 		return kMailComposeWindowKind;
 
-	if (inWindowType.Equals(NS_LITERAL_STRING("mail:addressbook")))
+	if (inWindowType.EqualsLiteral("mail:addressbook"))
 		return kAddressBookWindowKind;
 
-	if (inWindowType.Equals(NS_LITERAL_STRING("composer:html")))
+	if (inWindowType.EqualsLiteral("composer:html"))
 		return kComposerWindowKind;
 
-	if (inWindowType.Equals(NS_LITERAL_STRING("composer:text")))
+	if (inWindowType.EqualsLiteral("composer:text"))
 		return kComposerWindowKind;
 
 	return kOtherWindowKind;
@@ -301,7 +300,7 @@ WindowPtr nsWindowUtils::GetNamedOrFrontmostWindow(TWindowKind windowKind, const
     		    // ...see if its name is the desired one.
     		  Str255 pascalTitle;
     		  GetWTitle(windowRef, pascalTitle);   					
-    			if (windowNameString.EqualsWithConversion((const char*)&pascalTitle[1], PR_FALSE, pascalTitle[0]))
+    			if (windowNameString.Compare((const char*)&pascalTitle[1], PR_FALSE, pascalTitle[0]) == 0)
     			{
     				windowPtr = (WindowPtr)windowRef;		// WindowRef is the WindowPtr.
     				break;
@@ -518,11 +517,9 @@ void nsWindowUtils::LoadURLInXULWindow(nsIXULWindow* inWindow, const char* urlSt
     nsCOMPtr<nsIDocShellTreeItem> rootItem;
     docItem->GetRootTreeItem(getter_AddRefs(rootItem));
     nsCOMPtr<nsIDOMWindow> rootWin(do_GetInterface(rootItem));
-    if (rootWin) {
-      nsCOMPtr<nsIDOMWindowUtils> utils(do_GetInterface(rootWin));
-      if (utils)
-        utils->GetBrowserDOMWindow(getter_AddRefs(bwin));
-    }
+    nsCOMPtr<nsIDOMChromeWindow> chromeWin(do_QueryInterface(rootWin));
+    if (chromeWin)
+      chromeWin->GetBrowserDOMWindow(getter_AddRefs(bwin));
   }
   if (bwin) {
     nsCOMPtr<nsIURI> uri;

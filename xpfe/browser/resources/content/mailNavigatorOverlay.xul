@@ -103,10 +103,13 @@
       }
     }
 
-    function sendLink(pageUrl, pageTitle)
+    function sendLink(aDocument)
     {
+      if (!aDocument)
+        aDocument = window.content.document;
+
       try {
-        openComposeWindow(pageUrl, pageTitle, 0, null);
+        openComposeWindow(aDocument.URL, aDocument.title, 0, null);
       } catch(ex) { dump("Cannot Send Link: " + ex + "\n"); }
     }
 
@@ -121,14 +124,11 @@
     function sendPage(aDocument)
     {
       if (!aDocument)
-        aDocument = window._content.document;
+        aDocument = window.content.document;
         
-      var charset =  getCharsetforSave(aDocument);
-      var pageUrl = aDocument.URL;
-      var pageTitle = Components.lookupMethod(aDocument, 'title').call(aDocument);
-
       try {
-        openComposeWindow(pageUrl, pageTitle, 1, charset);
+        var charset = getCharsetforSave(aDocument);
+        openComposeWindow(aDocument.URL, aDocument.title, 1, charset);
       } catch(ex) { dump("Cannot Send Page: " + ex + "\n"); }
     }
 
@@ -143,15 +143,11 @@
       gContextMenu.showItem("context-sep-apps", gContextMenu.shouldShowSeparator("context-sep-apps"));
     }
       
-    var gAddedMailContextMenuPopupListener = false;
     function initMailContextMenuPopupListener(aEvent)
     {
-      // This is really lame, but we can't seem to add a bubbling listener to the DOMWindow (!)
-      if (gAddedMailContextMenuPopupListener)
-        return;
       var popup = document.getElementById("contentAreaContextMenu");
-      popup.addEventListener("popupshowing", initMailContextMenuItems, false);
-      gAddedMailContextMenuPopupListener = true;
+      if (popup)
+        popup.addEventListener("popupshowing", initMailContextMenuItems, false);
     }
 
     function hideMenuitems() {
@@ -166,7 +162,7 @@
       hideMenuitems();
     }
 
-    addEventListener("load", initOverlay, true);
+    addEventListener("load", initOverlay, false);
   ]]>
   </script>         
 
@@ -175,9 +171,7 @@
     <command id="cmd_newMessage" oncommand="goOpenNewMessage();"/>
     <command id="cmd_newCard" oncommand="openNewCardDialog()"/>
     <command id="cmd_sendPage" oncommand="sendPage();"/>
-    <command id="Browser:SendLink"
-             oncommand="sendLink(Components.lookupMethod(window._content, 'location').call(window._content).href,
-                                 Components.lookupMethod(window._content.document, 'title').call(window._content.document));"/>
+    <command id="Browser:SendLink" oncommand="sendLink();"/>
   </commandset>
   <keyset id="tasksKeys">
     <key id="key_newMessage" key="&newMessageCmd.key;" command="cmd_newMessage" modifiers="accel"/>

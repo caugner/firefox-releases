@@ -61,6 +61,7 @@ static GtkWidget* gHorizScrollbarWidget;
 static GtkWidget* gVertScrollbarWidget;
 static GtkWidget* gEntryWidget;
 static GtkWidget* gArrowWidget;
+static GtkWidget* gOptionMenuWidget;
 static GtkWidget* gDropdownButtonWidget;
 static GtkWidget* gHandleBoxWidget;
 static GtkWidget* gToolbarWidget;
@@ -72,6 +73,7 @@ static GtkWidget* gMenuBarWidget;
 static GtkWidget* gMenuBarItemWidget;
 static GtkWidget* gMenuPopupWidget;
 static GtkWidget* gMenuItemWidget;
+static GtkWidget* gCheckMenuItemWidget;
 
 static GtkShadowType gMenuBarShadowType;
 static GtkShadowType gToolbarShadowType;
@@ -161,6 +163,16 @@ ensure_entry_widget()
     if (!gEntryWidget) {
         gEntryWidget = gtk_entry_new();
         setup_widget_prototype(gEntryWidget);
+    }
+    return MOZ_GTK_SUCCESS;
+}
+
+static gint
+ensure_option_menu_widget()
+{
+    if (!gOptionMenuWidget) {
+        gOptionMenuWidget = gtk_option_menu_new();
+        setup_widget_prototype(gOptionMenuWidget);        
     }
     return MOZ_GTK_SUCCESS;
 }
@@ -289,6 +301,19 @@ ensure_menu_item_widget()
         gtk_menu_shell_append(GTK_MENU_SHELL(gMenuPopupWidget),
                               gMenuItemWidget);
         gtk_widget_realize(gMenuItemWidget);
+    }
+    return MOZ_GTK_SUCCESS;
+}
+
+static gint
+ensure_check_menu_item_widget()
+{
+    if (!gCheckMenuItemWidget) {
+        ensure_menu_popup_widget();
+        gCheckMenuItemWidget = gtk_check_menu_item_new_with_label("M");
+        gtk_menu_shell_append(GTK_MENU_SHELL(gMenuPopupWidget),
+                              gCheckMenuItemWidget);
+        gtk_widget_realize(gCheckMenuItemWidget);
     }
     return MOZ_GTK_SUCCESS;
 }
@@ -494,6 +519,45 @@ moz_gtk_button_get_focus(gboolean* interior_focus,
 }
 
 static gint
+moz_gtk_option_menu_get_metrics(gboolean* interior_focus,
+                                GtkRequisition* indicator_size,
+                                GtkBorder* indicator_spacing,
+                                gint* focus_width,
+                                gint* focus_pad)
+{
+    static const GtkRequisition default_indicator_size = { 7, 13 };
+    static const GtkBorder default_indicator_spacing = { 7, 5, 2, 2 };
+    /* these default values are not used in gtkoptionmenu.c
+    static const gboolean default_interior_focus = TRUE;
+    static const gint default_focus_width = 1;
+    static const gint default_focus_pad = 0; */
+    GtkRequisition *tmp_indicator_size;
+    GtkBorder *tmp_indicator_spacing;
+
+    gtk_widget_style_get(gOptionMenuWidget,
+                         "interior_focus", interior_focus,
+                         "indicator_size", &tmp_indicator_size,
+                         "indicator_spacing", &tmp_indicator_spacing,
+                         "focus_line_width", focus_width,
+                         "focus_padding", focus_pad,
+                         NULL);
+
+    if (tmp_indicator_size)
+        *indicator_size = *tmp_indicator_size;
+    else
+        *indicator_size = default_indicator_size;
+    if (tmp_indicator_spacing)
+        *indicator_spacing = *tmp_indicator_spacing;
+    else
+        *indicator_spacing = default_indicator_spacing;
+
+    g_free(tmp_indicator_size);
+    g_free(tmp_indicator_spacing);
+ 
+    return MOZ_GTK_SUCCESS;
+}
+
+static gint
 moz_gtk_toggle_paint(GdkDrawable* drawable, GdkRectangle* rect,
                      GdkRectangle* cliprect, GtkWidgetState* state,
                      gboolean selected, gboolean isradio)
@@ -527,6 +591,11 @@ moz_gtk_toggle_paint(GdkDrawable* drawable, GdkRectangle* rect,
         GTK_WIDGET_SET_FLAGS(w, GTK_HAS_FOCUS);
     else
         GTK_WIDGET_UNSET_FLAGS(w, GTK_HAS_FOCUS);
+
+    if (state_type != GTK_STATE_INSENSITIVE)
+         GTK_WIDGET_SET_FLAGS(w, GTK_SENSITIVE);
+    else
+         GTK_WIDGET_UNSET_FLAGS(w, GTK_SENSITIVE);
 
     GTK_TOGGLE_BUTTON(w)->active = selected;
       
@@ -672,6 +741,11 @@ moz_gtk_scrollbar_thumb_paint(GtkThemeWidgetType widget,
        surrounding the scrollbar if the theme thinks that it's butted
        up against the scrollbar arrows.  Note the increases of the
        clip rect below. */
+    /* Changing the cliprect is pretty bogus. This lets themes draw
+       outside the frame, which means we don't invalidate them
+       correctly. See bug 297508. But some themes do seem to need
+       it. So we modify the frame's overflow area to account for what
+       we're doing here; see nsNativeThemeGTK::GetWidgetOverflow. */
     adj = gtk_range_get_adjustment(GTK_RANGE(scrollbar));
 
     if (widget == MOZ_GTK_SCROLLBAR_THUMB_HORIZONTAL) {
@@ -785,6 +859,78 @@ moz_gtk_entry_paint(GdkDrawable* drawable, GdkRectangle* rect,
                         rect->x, rect->y, rect->width, rect->height);
     }
 
+    return MOZ_GTK_SUCCESS;
+}
+
+static gint
+moz_gtk_option_menu_paint(GdkDrawable* drawable, GdkRectangle* rect,
+                          GdkRectangle* cliprect, GtkWidgetState* state)
+{
+    GtkStyle* style;
+    GtkStateType state_type = ConvertGtkState(state);
+    gint x = rect->x, y=rect->y, width=rect->width, height=rect->height;
+    gint tab_x, tab_y;
+    gboolean interior_focus;
+    GtkRequisition indicator_size;
+    GtkBorder indicator_spacing;
+    gint focus_width;
+    gint focus_pad;
+
+    ensure_option_menu_widget();
+    moz_gtk_option_menu_get_metrics(&interior_focus, &indicator_size,
+                                    &indicator_spacing, &focus_width,
+                                    &focus_pad);
+
+    style = gOptionMenuWidget->style;
+
+    if (!interior_focus && state->focused) {
+        x += focus_width + focus_pad;
+        y += focus_width + focus_pad;
+        width -= 2 * (focus_width + focus_pad);
+        height -= 2 * (focus_width + focus_pad);
+    }
+
+    TSOffsetStyleGCs(style, x, y);
+    gtk_paint_box(style, drawable, state_type, GTK_SHADOW_OUT,
+                  cliprect, gOptionMenuWidget, "optionmenu",
+                  x, y, width, height);
+      
+    if (gtk_widget_get_direction(gOptionMenuWidget) == GTK_TEXT_DIR_RTL) {
+        tab_x = x + indicator_spacing.right + XTHICKNESS(style);
+    } else {
+        tab_x = x + width - indicator_size.width - indicator_spacing.right -
+                XTHICKNESS(style);
+    }
+    tab_y = y + (height - indicator_size.height) / 2;
+
+    TSOffsetStyleGCs(style, tab_x, tab_y);
+    gtk_paint_tab(style, drawable, state_type, GTK_SHADOW_OUT, cliprect,
+                  gOptionMenuWidget, "optionmenutab", tab_x, tab_y, 
+                  indicator_size.width, indicator_size.height);
+      
+    if (state->focused) {
+      if (interior_focus) {
+          x += XTHICKNESS(style) + focus_pad;
+          y += YTHICKNESS(style) + focus_pad;
+          width -= 2 * (XTHICKNESS(style) + focus_pad) +
+                   indicator_spacing.left + indicator_spacing.right +
+                   indicator_size.width;
+          height -= 2 * (YTHICKNESS(style) + focus_pad);
+          if (gtk_widget_get_direction(gOptionMenuWidget) == GTK_TEXT_DIR_RTL) 
+              x += indicator_spacing.left + indicator_spacing.right +
+                   indicator_size.width;
+      } else {
+          x -= focus_width + focus_pad;
+          y -= focus_width + focus_pad;
+          width += 2 * (focus_width + focus_pad);
+          height += 2 * (focus_width + focus_pad);
+      }
+        
+      TSOffsetStyleGCs(style, x, y);
+      gtk_paint_focus (style, drawable, state_type, cliprect, gOptionMenuWidget,
+                       "button", x, y,  width, height);
+    }
+    
     return MOZ_GTK_SUCCESS;
 }
 
@@ -1163,6 +1309,55 @@ moz_gtk_menu_item_paint(GdkDrawable* drawable, GdkRectangle* rect,
 }
 
 static gint
+moz_gtk_check_menu_item_paint(GdkDrawable* drawable, GdkRectangle* rect,
+                              GdkRectangle* cliprect, GtkWidgetState* state,
+                              gboolean checked, gboolean isradio)
+{
+    GtkStateType state_type;
+    GtkStyle* style;
+    GtkShadowType shadow_type = (checked)?GTK_SHADOW_IN:GTK_SHADOW_OUT;
+    gint offset;
+    gint indicator_size = 8; /* it's a fixed value in gtk 2.2 */
+    gint x, y;
+    
+    moz_gtk_menu_item_paint(drawable, rect, cliprect, state);
+    
+    ensure_check_menu_item_widget();
+
+    if (checked || GTK_CHECK_MENU_ITEM(gCheckMenuItemWidget)->always_show_toggle) {
+      style = gCheckMenuItemWidget->style;
+      
+      if (state->inHover && !state->disabled) {
+        state_type = GTK_STATE_PRELIGHT;
+      } else {
+        state_type = GTK_STATE_NORMAL;
+      }
+      
+      offset = GTK_CONTAINER(gCheckMenuItemWidget)->border_width + 
+             gCheckMenuItemWidget->style->xthickness + 2;
+      
+      x = rect->x + offset;
+      y = rect->y + (rect->height - indicator_size) / 2;
+                                                                                
+      TSOffsetStyleGCs(style, x, y);
+      gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(gCheckMenuItemWidget),
+                                     checked);
+      
+      if (isradio) {
+        gtk_paint_option(style, drawable, state_type, shadow_type, cliprect,
+                         gCheckMenuItemWidget, "option",
+                         x, y, indicator_size, indicator_size);
+      } else {
+        gtk_paint_check(style, drawable, state_type, shadow_type, cliprect,
+                        gCheckMenuItemWidget, "check",
+                        x, y, indicator_size, indicator_size);
+      }
+    }
+    
+    return MOZ_GTK_SUCCESS;
+}
+
+static gint
 moz_gtk_window_paint(GdkDrawable* drawable, GdkRectangle* rect,
                      GdkRectangle* cliprect)
 {
@@ -1218,6 +1413,10 @@ moz_gtk_get_widget_border(GtkThemeWidgetType widget, gint* xthickness,
     case MOZ_GTK_DROPDOWN_ARROW:
         ensure_arrow_widget();
         w = gDropdownButtonWidget;
+        break;
+    case MOZ_GTK_DROPDOWN:
+        ensure_option_menu_widget();
+        w = gOptionMenuWidget;
         break;
     case MOZ_GTK_TABPANELS:
         ensure_tab_widget();
@@ -1293,6 +1492,11 @@ moz_gtk_get_widget_border(GtkThemeWidgetType widget, gint* xthickness,
     case MOZ_GTK_MENUITEM:
         ensure_menu_item_widget();
         w = gMenuItemWidget;
+        break;
+    case MOZ_GTK_CHECKMENUITEM:
+    case MOZ_GTK_RADIOMENUITEM:
+        ensure_check_menu_item_widget();
+        w = gCheckMenuItemWidget;
         break;
     /* These widgets have no borders, since they are not containers. */
     case MOZ_GTK_CHECKBUTTON:
@@ -1396,6 +1600,9 @@ moz_gtk_widget_paint(GtkThemeWidgetType widget, GdkDrawable* drawable,
     case MOZ_GTK_ENTRY:
         return moz_gtk_entry_paint(drawable, rect, cliprect, state);
         break;
+    case MOZ_GTK_DROPDOWN:
+        return moz_gtk_option_menu_paint(drawable, rect, cliprect, state);
+        break;
     case MOZ_GTK_DROPDOWN_ARROW:
         return moz_gtk_dropdown_arrow_paint(drawable, rect, cliprect, state);
         break;
@@ -1439,6 +1646,12 @@ moz_gtk_widget_paint(GtkThemeWidgetType widget, GdkDrawable* drawable,
     case MOZ_GTK_MENUITEM:
         return moz_gtk_menu_item_paint(drawable, rect, cliprect, state);
         break;
+    case MOZ_GTK_CHECKMENUITEM:
+    case MOZ_GTK_RADIOMENUITEM:
+        return moz_gtk_check_menu_item_paint(drawable, rect, cliprect, state,
+                                             (gboolean) flags,
+                                             (widget == MOZ_GTK_RADIOMENUITEM));
+        break;
     case MOZ_GTK_WINDOW:
         return moz_gtk_window_paint(drawable, rect, cliprect);
         break;
@@ -1457,6 +1670,27 @@ moz_gtk_shutdown()
     /* This will destroy all of our widgets */
     if (gProtoWindow)
         gtk_widget_destroy(gProtoWindow);
+
+    gProtoWindow = NULL;
+    gButtonWidget = NULL;
+    gCheckboxWidget = NULL;
+    gRadiobuttonWidget = NULL;
+    gHorizScrollbarWidget = NULL;
+    gVertScrollbarWidget = NULL;
+    gEntryWidget = NULL;
+    gArrowWidget = NULL;
+    gDropdownButtonWidget = NULL;
+    gHandleBoxWidget = NULL;
+    gToolbarWidget = NULL;
+    gFrameWidget = NULL;
+    gProgressWidget = NULL;
+    gTabWidget = NULL;
+    gTooltipWidget = NULL;
+    gMenuBarWidget = NULL;
+    gMenuBarItemWidget = NULL;
+    gMenuPopupWidget = NULL;
+    gMenuItemWidget = NULL;
+    gCheckMenuItemWidget = NULL;
 
     return MOZ_GTK_SUCCESS;
 }

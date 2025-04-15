@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -48,16 +48,14 @@
 #include "nsHTMLAtoms.h"
 #include "nsXULAtoms.h"
 #include "nsIContent.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 
-nsBoxLayoutState::nsBoxLayoutState(nsIPresContext* aPresContext):mPresContext(aPresContext), 
+nsBoxLayoutState::nsBoxLayoutState(nsPresContext* aPresContext):mPresContext(aPresContext), 
                                                                  mReflowState(nsnull), 
                                                                  mType(Dirty),
                                                                  mMaxElementWidth(nsnull),
-                                                                 mScrolledBlockSizeConstraint(-1,-1),
-                                                                 mIncludeOverFlow(PR_TRUE),
                                                                  mLayoutFlags(0),
-                                                                 mDisablePainting(PR_FALSE)
+                                                                 mPaintingDisabled(PR_FALSE)
 {
   NS_ASSERTION(mPresContext, "PresContext must be non-null");
 }
@@ -68,9 +66,8 @@ nsBoxLayoutState::nsBoxLayoutState(const nsBoxLayoutState& aState)
   mType        = aState.mType;
   mReflowState = aState.mReflowState;
   mMaxElementWidth = aState.mMaxElementWidth;
-  mScrolledBlockSizeConstraint = aState.mScrolledBlockSizeConstraint;
   mLayoutFlags = aState.mLayoutFlags;
-  mDisablePainting = aState.mDisablePainting;
+  mPaintingDisabled = aState.mPaintingDisabled;
 
   NS_ASSERTION(mPresContext, "PresContext must be non-null");
 }
@@ -78,72 +75,28 @@ nsBoxLayoutState::nsBoxLayoutState(const nsBoxLayoutState& aState)
 nsBoxLayoutState::nsBoxLayoutState(nsIPresShell* aShell):mReflowState(nsnull), 
                                                          mType(Dirty),
                                                          mMaxElementWidth(nsnull),
-                                                         mScrolledBlockSizeConstraint(-1,-1),
-                                                         mIncludeOverFlow(PR_TRUE),
                                                          mLayoutFlags(0),
-                                                         mDisablePainting(PR_FALSE)
+                                                         mPaintingDisabled(PR_FALSE)
 {
-   aShell->GetPresContext(getter_AddRefs(mPresContext));
-   NS_ASSERTION(mPresContext, "PresContext must be non-null");
+  mPresContext = aShell->GetPresContext();
+  NS_ASSERTION(mPresContext, "PresContext must be non-null");
 }
 
-nsBoxLayoutState::nsBoxLayoutState(nsIPresContext* aPresContext, 
+nsBoxLayoutState::nsBoxLayoutState(nsPresContext* aPresContext, 
                                    const nsHTMLReflowState& aReflowState, 
                                    nsHTMLReflowMetrics& aDesiredSize):mPresContext(aPresContext),
                                                                       mReflowState(&aReflowState),                                                                    
                                                                       mType(Dirty),
-                                                                      mScrolledBlockSizeConstraint(-1,-1),
-                                                                      mIncludeOverFlow(PR_TRUE),
+                                                                      mMaxElementWidth(nsnull),
                                                                       mLayoutFlags(0),
-                                                                      mDisablePainting(PR_FALSE)
+                                                                      mPaintingDisabled(PR_FALSE)
 
                                                                                         
 
 {
-  mMaxElementWidth = &aDesiredSize.mMaxElementWidth;
+  if (aDesiredSize.mComputeMEW)
+    mMaxElementWidth = &aDesiredSize.mMaxElementWidth;
   NS_ASSERTION(mPresContext, "PresContext must be non-null");
-}
-
-nscoord*
-nsBoxLayoutState::GetMaxElementWidth()
-{
-  return mReflowState ? mMaxElementWidth : nsnull;
-}
-
-void 
-nsBoxLayoutState::GetScrolledBlockSizeConstraint(nsSize& aSize)
-{
-  aSize = mScrolledBlockSizeConstraint;
-}
-
-void 
-nsBoxLayoutState::SetScrolledBlockSizeConstraint(const nsSize& aSize)
-{
-  mScrolledBlockSizeConstraint = aSize;
-}
-
-void 
-nsBoxLayoutState::GetIncludeOverFlow(PRBool& aOverflow)
-{
-  aOverflow = mIncludeOverFlow;
-}
-
-void 
-nsBoxLayoutState::SetLayoutFlags(const PRUint32& aFlags)
-{
-  mLayoutFlags = aFlags;
-}
-
-void 
-nsBoxLayoutState::GetLayoutFlags(PRUint32& aFlags)
-{
-  aFlags = mLayoutFlags;
-}
-
-void 
-nsBoxLayoutState::SetIncludeOverFlow(const PRBool& aOverflow)
-{
-  mIncludeOverFlow = aOverflow;
 }
 
 void
@@ -220,10 +173,7 @@ nsBoxLayoutState::Unwind(nsReflowPath* aReflowPath, nsIBox* aRootBox)
       // It's nested HTML. Mark the root box's frame with
       // NS_FRAME_HAS_DIRTY_CHILDREN so MarkDirty won't walk off the
       // top of the box hierarchy and schedule another reflow command.
-      nsIFrame* frame;
-      aRootBox->GetFrame(&frame);
-
-      frame->AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
+      aRootBox->AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
 
       // Clear the frame's dirty bit so that MarkDirty doesn't
       // optimize the layout away.
@@ -244,10 +194,7 @@ nsBoxLayoutState::Unwind(nsReflowPath* aReflowPath, nsIBox* aRootBox)
       // Mark the root box's frame with NS_FRAME_HAS_DIRTY_CHILDREN so
       // that MarkDirty won't walk off the top of the box hierarchy
       // and schedule another reflow command.
-      nsIFrame* frame;
-      aRootBox->GetFrame(&frame);
-
-      frame->AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
+      aRootBox->AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
 
       // The target is a box. Mark it dirty, generating a new reflow
       // command targeted at us and coelesce out this one.
@@ -268,9 +215,7 @@ nsBoxLayoutState::Unwind(nsReflowPath* aReflowPath, nsIBox* aRootBox)
         nsIBox* parent;
         ibox->GetParentBox(&parent);
         if (parent) {
-          nsIFrame* parentFrame;
-          parent->GetFrame(&parentFrame);
-          parentFrame->AddStateBits(NS_FRAME_IS_DIRTY);
+          parent->AddStateBits(NS_FRAME_IS_DIRTY);
         }
 
       }
@@ -286,37 +231,10 @@ nsBoxLayoutState::Unwind(nsReflowPath* aReflowPath, nsIBox* aRootBox)
 nsIBox*
 nsBoxLayoutState::GetBoxForFrame(nsIFrame* aFrame, PRBool& aIsAdaptor)
 {
-  if (aFrame == nsnull)
-    return nsnull;
-
-  nsIBox* ibox = nsnull;
-  if (NS_FAILED(aFrame->QueryInterface(NS_GET_IID(nsIBox), (void**)&ibox))) {
+  if (aFrame && !aFrame->IsBoxFrame())
     aIsAdaptor = PR_TRUE;
 
-    // if we hit a non box. Find the box in out last container
-    // and clear its cache.
-    nsIFrame* parent = aFrame->GetParent();
-    nsIBox* parentBox = nsnull;
-    if (NS_FAILED(parent->QueryInterface(NS_GET_IID(nsIBox), (void**)&parentBox))) 
-       return nsnull;
-
-    if (parentBox) {
-      nsIBox* start = nsnull;
-      parentBox->GetChildBox(&start);
-      while (start) {
-        nsIFrame* frame = nsnull;
-        start->GetFrame(&frame);
-        if (frame == aFrame) {
-          ibox = start;
-          break;
-        }
-
-        start->GetNextBox(&start);
-      }
-    }
-  } 
-
-  return ibox;
+  return aFrame;
 }
 
 /*
@@ -342,8 +260,7 @@ void*
 nsBoxLayoutState::Allocate(size_t sz, nsIPresShell* aPresShell)
 {
   // Check the recycle list first.
-  void* result = nsnull;
-  aPresShell->AllocateFrame(sz, &result);
+  void* result = aPresShell->AllocateFrame(sz);
   
   if (result) {
     memset(result, 0, sz);
@@ -373,29 +290,3 @@ nsBoxLayoutState::RecycleFreedMemory(nsIPresShell* aShell, void* aMem)
   size_t* sz = (size_t*)aMem;
   aShell->FreeFrame(*sz, aMem);
 }
-
-nsresult
-nsBoxLayoutState::GetPresShell(nsIPresShell** aShell)
-{
-  NS_IF_ADDREF(*aShell = mPresContext->GetPresShell());
-  return NS_OK;
-}
-
-nsresult
-nsBoxLayoutState::PushStackMemory()
-{
-  return mPresContext->PresShell()->PushStackMemory();
-}
-
-nsresult
-nsBoxLayoutState::PopStackMemory()
-{
-  return mPresContext->PresShell()->PopStackMemory();
-}
-
-nsresult
-nsBoxLayoutState::AllocateStackMemory(size_t aSize, void** aResult)
-{
-  return mPresContext->PresShell()->AllocateStackMemory(aSize, aResult);
-}
-

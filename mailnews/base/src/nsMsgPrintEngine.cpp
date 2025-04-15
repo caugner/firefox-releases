@@ -1,15 +1,38 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "MPL"); you may not use this file
- * except in compliance with the MPL. You may obtain a copy of
- * the MPL at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the MPL is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the MPL for the specific language governing
- * rights and limitations under the MPL.
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- */
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is mozilla.org Code.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 // nsMsgPrintEngine.cpp: provides a DocShell container for use 
 // in printing
@@ -25,12 +48,11 @@
 #include "nsEscape.h"
 #include "nsXPIDLString.h"
 #include "nsReadableUtils.h"
-#include "nsIWebShell.h"
 #include "nsIDocShell.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsIDocumentViewer.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsIDocument.h"
 #include "nsIMsgMessageService.h"
@@ -43,10 +65,10 @@
 #include "nsMsgPrintEngine.h"
 #include "nsMsgBaseCID.h"
 #include "nsIDocumentLoader.h"
-#include "nsIWebShellWindow.h"
 #include "nsIWidget.h"
-#include "nsIWebShellWindow.h"
-#include "nsIPref.h"
+#include "nsIXULWindow.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 
 // For PLEvents
 #include "plevent.h"
@@ -260,8 +282,9 @@ nsMsgPrintEngine::SetWindow(nsIDOMWindowInternal *aWin)
   NS_ENSURE_TRUE(rootAsNode, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsIDocShellTreeItem> childItem;
-  rootAsNode->FindChildWithName(NS_LITERAL_STRING("content").get(), PR_TRUE, PR_FALSE, nsnull,
-    getter_AddRefs(childItem));
+  rootAsNode->FindChildWithName(NS_LITERAL_STRING("content").get(), PR_TRUE,
+				PR_FALSE, nsnull, nsnull,
+				getter_AddRefs(childItem));
 
   mDocShell = do_QueryInterface(childItem);
 
@@ -290,25 +313,15 @@ nsMsgPrintEngine::ShowWindow(PRBool aShow)
 
   NS_ENSURE_SUCCESS(rv,rv);
 
-  nsCOMPtr <nsIWebShell> webShell =
+  nsCOMPtr <nsIDocShellTreeItem> treeItem =
     do_QueryInterface(globalScript->GetDocShell(), &rv);
   NS_ENSURE_SUCCESS(rv,rv);
 
-  nsCOMPtr <nsIWebShellContainer> webShellContainer;
-  rv = webShell->GetContainer(*getter_AddRefs(webShellContainer));
+  nsCOMPtr <nsIDocShellTreeOwner> treeOwner;
+  rv = treeItem->GetTreeOwner(getter_AddRefs(treeOwner));
   NS_ENSURE_SUCCESS(rv,rv);
   
-  if (webShellContainer) {
-    nsCOMPtr <nsIWebShellWindow> webShellWindow = do_QueryInterface(webShellContainer, &rv);
-    NS_ENSURE_SUCCESS(rv,rv);
-
-    nsCOMPtr<nsIDocShellTreeItem>  treeItem(do_QueryInterface(webShell, &rv));
-    NS_ENSURE_SUCCESS(rv,rv);
-
-    nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
-    rv = treeItem->GetTreeOwner(getter_AddRefs(treeOwner));
-    NS_ENSURE_SUCCESS(rv,rv);
-
+  if (treeOwner) {
     // disable (enable) the window
     nsCOMPtr<nsIBaseWindow> baseWindow;
     baseWindow = do_QueryInterface(treeOwner, &rv);
@@ -318,7 +331,7 @@ nsMsgPrintEngine::ShowWindow(PRBool aShow)
     NS_ENSURE_SUCCESS(rv,rv);
 
     // hide or show the window
-    rv = webShellWindow->Show(aShow);
+    baseWindow->SetVisibility(aShow);
   }
   return rv;
 }
@@ -354,7 +367,7 @@ nsMsgPrintEngine::StartPrintOperation(nsIPrintSettings* aPS)
 nsresult
 nsMsgPrintEngine::ShowProgressDialog(PRBool aIsForPrinting, PRBool& aDoNotify)
 {
-  nsresult rv = NS_ERROR_FAILURE;
+  nsresult rv;
 
   // default to not notifying, that if something here goes wrong
   // or we aren't going to show the progress dialog we can straight into 
@@ -366,15 +379,10 @@ nsMsgPrintEngine::ShowProgressDialog(PRBool aIsForPrinting, PRBool& aDoNotify)
 
   // if it is already being shown then don't bother to find out if it should be
   // so skip this and leave mShowProgressDialog set to FALSE
-  nsCOMPtr<nsIPrefBranch> prefBranch;
-  nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+  nsCOMPtr<nsIPrefBranch> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
   if (NS_SUCCEEDED(rv)) 
   {
-    rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
-    if (NS_SUCCEEDED(rv)) 
-    {
-      prefBranch->GetBoolPref("print.show_print_progress", &showProgressDialog);
-    }
+    prefBranch->GetBoolPref("print.show_print_progress", &showProgressDialog);
   }
 
   // Turning off the showing of Print Progress in Prefs overrides
@@ -542,8 +550,7 @@ nsMsgPrintEngine::FireThatLoadOperation(nsString *uri)
 
   if (NS_SUCCEEDED(rv) && messageService)
   {
-    nsCOMPtr<nsIWebShell> webShell(do_QueryInterface(mDocShell));
-    rv = messageService->DisplayMessageForPrinting(tString, webShell, nsnull, nsnull, nsnull);
+    rv = messageService->DisplayMessageForPrinting(tString, mDocShell, nsnull, nsnull, nsnull);
   }
   //If it's not something we know about, then just load try loading it directly.
   else
@@ -677,6 +684,7 @@ nsMsgPrintEngine::PrintMsgWindow()
       } 
       else 
       {
+        mPrintSettings->SetPrintSilent(mCurrentlyPrintingURI != 0);
         nsCOMPtr<nsIContentViewerFile> contentViewerFile(do_QueryInterface(mWebBrowserPrint));
         if (contentViewerFile && mParentWindow) 
         {

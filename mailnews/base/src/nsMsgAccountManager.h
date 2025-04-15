@@ -1,23 +1,40 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK *****
  * This Original Code has been modified by IBM Corporation. Modifications made by IBM 
  * described herein are Copyright (c) International Business Machines Corporation, 2000.
  * Modifications to Mozilla code or documentation identified per MPL Section 3.3
@@ -31,7 +48,7 @@
 #include "nsCOMPtr.h"
 #include "nsHashtable.h"
 #include "nsISmtpServer.h"
-#include "nsIPref.h"
+#include "nsIPrefBranch.h"
 #include "nsIMsgFolderCache.h"
 #include "nsIMsgFolder.h"
 #include "nsIObserver.h"
@@ -65,7 +82,7 @@ public:
 private:
 
   PRBool m_accountsLoaded;
-  
+  PRBool m_folderCacheNeedsClearing;  
   nsCOMPtr <nsIMsgFolderCache>	m_msgFolderCache;
   nsCOMPtr<nsIAtom> kDefaultServerAtom;
   nsCOMPtr<nsISupportsArray> m_accounts;
@@ -84,14 +101,17 @@ private:
   PRBool m_haveShutdown;
   PRBool m_shutdownInProgress;
   PRBool m_userAuthenticated;
+  PRBool m_loadingVirtualFolders;
+  PRBool m_virtualFoldersLoaded;
 
   /* we call FindServer() a lot.  so cache the last server found */
   nsCOMPtr <nsIMsgIncomingServer> m_lastFindServerResult;
   nsCString m_lastFindServerHostName;
   nsCString m_lastFindServerUserName;
+  PRInt32 m_lastFindServerPort;
   nsCString m_lastFindServerType;
 
-  nsresult SetLastServerFound(nsIMsgIncomingServer *server, const char *hostname, const char *username, const char *type);
+  nsresult SetLastServerFound(nsIMsgIncomingServer *server, const char *hostname, const char *username, const PRInt32 port, const char *type);
 
   /* internal creation routines - updates m_identities and m_incomingServers */
   nsresult createKeyedAccount(const char* key,
@@ -175,6 +195,9 @@ private:
   // find the server given by {username, hostname, type}
   static PRBool findServer(nsISupports *aElement, void *data);
 
+  // find the server given by {username, hostname, port, type}
+  static PRBool findServerUrl(nsISupports *aElement, void *data);
+
   // write out the server's cache through the given folder cache
   static PRBool PR_CALLBACK writeFolderCache(nsHashKey *aKey, void *aData, void *closure);
   static PRBool PR_CALLBACK shutdown(nsHashKey *aKey, void *aData, void *closure);
@@ -182,7 +205,6 @@ private:
 
   // handle virtual folders
   nsresult GetVirtualFoldersFile(nsCOMPtr<nsILocalFile>& file);
-  nsresult LoadVirtualFolders();
   nsresult WriteLineToOutputStream(const char *prefix, const char * line, nsIOutputStream *outputStream);
 
   static void getUniqueKey(const char* prefix,
@@ -196,7 +218,7 @@ private:
   nsresult SetSendLaterUriPref(nsIMsgIncomingServer *server);
  
   nsresult getPrefService();
-  nsIPref *m_prefs;
+  nsCOMPtr<nsIPrefBranch> m_prefs;
 
   nsresult InternalFindServer(const char* username, const char* hostname, const char* type, PRBool useRealSetting, nsIMsgIncomingServer** aResult);
 

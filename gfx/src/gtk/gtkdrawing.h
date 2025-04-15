@@ -116,6 +116,8 @@ typedef enum {
   MOZ_GTK_GRIPPER,
   /* Paints a GtkEntry. */
   MOZ_GTK_ENTRY,
+  /* Paints a GtkOptionMenu. */
+  MOZ_GTK_DROPDOWN,
   /* Paints a dropdown arrow (a GtkButton containing a down GtkArrow). */
   MOZ_GTK_DROPDOWN_ARROW,
   /* Paints the container part of a GtkCheckButton. */
@@ -146,6 +148,8 @@ typedef enum {
   MOZ_GTK_MENUPOPUP,
   /* Paints items of menubar and popups. */
   MOZ_GTK_MENUITEM,
+  MOZ_GTK_CHECKMENUITEM,
+  MOZ_GTK_RADIOMENUITEM,
   /* Paints the background of a window, dialog or page. */
   MOZ_GTK_WINDOW
 } GtkThemeWidgetType;

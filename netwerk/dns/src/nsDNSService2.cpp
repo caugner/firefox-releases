@@ -36,10 +36,13 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsDNSService2.h"
+#include "nsIDNSRecord.h"
+#include "nsIDNSListener.h"
+#include "nsICancelable.h"
 #include "nsIProxyObjectManager.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "nsIServiceManager.h"
 #include "nsReadableUtils.h"
 #include "nsString.h"
@@ -115,8 +118,10 @@ nsDNSRecord::GetNextAddr(PRUint16 port, PRNetAddr *addr)
             return NS_ERROR_NOT_AVAILABLE;
     }
     else {
+        // This should never be null (but see bug 290190) :-(
+        NS_ENSURE_STATE(mHostRecord->addr);
+
         mIter = nsnull; // no iterations
-        NS_ASSERTION(mHostRecord->addr, "no addr");
         memcpy(addr, mHostRecord->addr, sizeof(PRNetAddr));
         // set given port
         port = PR_htons(port);
@@ -174,11 +179,11 @@ nsDNSRecord::Rewind()
 //-----------------------------------------------------------------------------
 
 class nsDNSAsyncRequest : public nsResolveHostCallback
-                        , public nsIDNSRequest
+                        , public nsICancelable
 {
 public:
     NS_DECL_ISUPPORTS
-    NS_DECL_NSIDNSREQUEST
+    NS_DECL_NSICANCELABLE
 
     nsDNSAsyncRequest(nsHostResolver   *res,
                       const nsACString &host,
@@ -225,12 +230,13 @@ nsDNSAsyncRequest::OnLookupComplete(nsHostResolver *resolver,
     NS_RELEASE_THIS();
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsDNSAsyncRequest, nsIDNSRequest)
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsDNSAsyncRequest, nsICancelable)
 
 NS_IMETHODIMP
-nsDNSAsyncRequest::Cancel()
+nsDNSAsyncRequest::Cancel(nsresult reason)
 {
-    mResolver->DetachCallback(mHost.get(), mFlags, mAF, this);
+    NS_ENSURE_ARG(NS_FAILED(reason));
+    mResolver->DetachCallback(mHost.get(), mFlags, mAF, this, reason);
     return NS_OK;
 }
 
@@ -282,7 +288,8 @@ nsDNSService::~nsDNSService()
         PR_DestroyLock(mLock);
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS2(nsDNSService, nsIDNSService, nsIObserver)
+NS_IMPL_THREADSAFE_ISUPPORTS3(nsDNSService, nsIDNSService, nsPIDNSService,
+                              nsIObserver)
 
 NS_IMETHODIMP
 nsDNSService::Init()
@@ -299,7 +306,7 @@ nsDNSService::Init()
     nsAdoptingCString ipv4OnlyDomains;
 
     // read prefs
-    nsCOMPtr<nsIPrefBranchInternal> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
+    nsCOMPtr<nsIPrefBranch2> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
     if (prefs) {
         PRInt32 val;
         if (NS_SUCCEEDED(prefs->GetIntPref(kPrefDnsCacheEntries, &val)))
@@ -366,8 +373,8 @@ NS_IMETHODIMP
 nsDNSService::AsyncResolve(const nsACString &hostname,
                            PRUint32          flags,
                            nsIDNSListener   *listener,
-                           nsIEventQueue    *eventQ,
-                           nsIDNSRequest   **result)
+                           nsIEventTarget   *eventTarget,
+                           nsICancelable   **result)
 {
     // grab reference to global host resolver and IDN service.  beware
     // simultaneous shutdown!!
@@ -390,6 +397,8 @@ nsDNSService::AsyncResolve(const nsACString &hostname,
     }
 
     nsCOMPtr<nsIDNSListener> listenerProxy;
+    nsCOMPtr<nsIEventQueue> eventQ = do_QueryInterface(eventTarget);
+    // TODO(darin): make XPCOM proxies support any nsIEventTarget impl
     if (eventQ) {
         rv = NS_GetProxyForObject(eventQ,
                                   NS_GET_IID(nsIDNSListener),

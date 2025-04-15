@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Dean Tessman <dean_tessman@hotmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,8 +44,9 @@
 #include "nsGfxCIID.h"
 #include "nsWidgetsCID.h"
 #include "nsIFullScreen.h"
-#include "nsIServiceManagerUtils.h"
+#include "nsServiceManagerUtils.h"
 #include "nsIScreenManager.h"
+#include "nsAppDirectoryServiceDefs.h"
 
 #ifdef DEBUG
 #include "nsIServiceManager.h"
@@ -61,9 +62,6 @@ static PRInt32 gNumWidgets;
 
 // nsBaseWidget
 NS_IMPL_ISUPPORTS1(nsBaseWidget, nsIWidget)
-
-// nsBaseWidget::Enumerator
-NS_IMPL_ISUPPORTS2(nsBaseWidget::Enumerator, nsIBidirectionalEnumerator, nsIEnumerator)
 
 
 //-------------------------------------------------------------------------
@@ -153,8 +151,7 @@ void nsBaseWidget::BaseCreate(nsIWidget *aParent,
         static NS_DEFINE_CID(kToolkitCID, NS_TOOLKIT_CID);
         
         nsresult res;
-        res = nsComponentManager::CreateInstance(kToolkitCID, nsnull,
-                                                 NS_GET_IID(nsIToolkit), (void **)&mToolkit);
+        res = CallCreateInstance(kToolkitCID, &mToolkit);
         NS_ASSERTION(NS_SUCCEEDED(res), "Can not create a toolkit in nsBaseWidget::Create");
         if (mToolkit)
           mToolkit->Init(PR_GetCurrentThread());
@@ -185,8 +182,7 @@ void nsBaseWidget::BaseCreate(nsIWidget *aParent,
     
     static NS_DEFINE_CID(kDeviceContextCID, NS_DEVICE_CONTEXT_CID);
     
-    res = nsComponentManager::CreateInstance(kDeviceContextCID, nsnull,
-                                             NS_GET_IID(nsIDeviceContext), (void **)&mContext);
+    res = CallCreateInstance(kDeviceContextCID, &mContext);
 
     if (NS_SUCCEEDED(res))
       mContext->Init(nsnull);
@@ -241,6 +237,9 @@ NS_IMETHODIMP nsBaseWidget::SetClientData(void* aClientData)
 //-------------------------------------------------------------------------
 NS_METHOD nsBaseWidget::Destroy()
 {
+  // Just in case our parent is the only ref to us
+  nsCOMPtr<nsIWidget> kungFuDeathGrip(this);
+  
   // disconnect from the parent
   nsIWidget *parent = GetParent();
   if (parent) {
@@ -279,29 +278,24 @@ nsIWidget* nsBaseWidget::GetParent(void)
 
 //-------------------------------------------------------------------------
 //
-// Get this nsBaseWidget's list of children
-//
-//-------------------------------------------------------------------------
-nsIEnumerator* nsBaseWidget::GetChildren()
-{
-  nsIEnumerator* children = nsnull;
-
-  if (mChildren.Count()) {
-    children = new Enumerator(*this);
-    NS_IF_ADDREF(children);
-  }
-  return children;
-}
-
-
-//-------------------------------------------------------------------------
-//
 // Add a child to the list of children
 //
 //-------------------------------------------------------------------------
 void nsBaseWidget::AddChild(nsIWidget* aChild)
 {
-  mChildren.AppendObject(aChild);
+  NS_PRECONDITION(!aChild->GetNextSibling() && !aChild->GetPrevSibling(),
+                  "aChild not properly removed from its old child list");
+  
+  if (!mFirstChild) {
+    mFirstChild = mLastChild = aChild;
+  } else {
+    // append to the list
+    NS_ASSERTION(mLastChild, "Bogus state");
+    NS_ASSERTION(!mLastChild->GetNextSibling(), "Bogus state");
+    mLastChild->SetNextSibling(aChild);
+    aChild->SetPrevSibling(mLastChild);
+    mLastChild = aChild;
+  }
 }
 
 
@@ -312,7 +306,30 @@ void nsBaseWidget::AddChild(nsIWidget* aChild)
 //-------------------------------------------------------------------------
 void nsBaseWidget::RemoveChild(nsIWidget* aChild)
 {
-  mChildren.RemoveObject(aChild);
+  NS_ASSERTION(nsCOMPtr<nsIWidget>(dont_AddRef(aChild->GetParent())) ==
+                 NS_STATIC_CAST(nsIWidget*, this),
+               "Not one of our kids!");
+  
+  if (mLastChild == aChild) {
+    mLastChild = mLastChild->GetPrevSibling();
+  }
+  if (mFirstChild == aChild) {
+    mFirstChild = mFirstChild->GetNextSibling();
+  }
+
+  // Now remove from the list.  Make sure that we pass ownership of the tail
+  // of the list correctly before we have aChild let go of it.
+  nsIWidget* prev = aChild->GetPrevSibling();
+  nsIWidget* next = aChild->GetNextSibling();
+  if (prev) {
+    prev->SetNextSibling(next);
+  }
+  if (next) {
+    next->SetPrevSibling(prev);
+  }
+  
+  aChild->SetNextSibling(nsnull);
+  aChild->SetPrevSibling(nsnull);
 }
 
 
@@ -328,26 +345,36 @@ NS_IMETHODIMP nsBaseWidget::SetZIndex(PRInt32 aZIndex)
   // reorder this child in its parent's list.
   nsBaseWidget* parent = NS_STATIC_CAST(nsBaseWidget*, GetParent());
   if (parent) {
-    parent->mChildren.RemoveObject(this);
-    PRInt32 childCount = parent->mChildren.Count();
-    PRInt32 index;
-    // XXXbz would a binary search for the right insertion point be
-    // better?  How long does this list get?
-    for (index = 0; index < childCount; index++) {
-      nsIWidget* childWidget = parent->mChildren[index];
+    parent->RemoveChild(this);
+    // Scope sib outside the for loop so we can check it afterward
+    nsIWidget* sib = parent->GetFirstChild();
+    for ( ; sib; sib = sib->GetNextSibling()) {
       PRInt32 childZIndex;
-      if (NS_SUCCEEDED(childWidget->GetZIndex(&childZIndex))) {
+      if (NS_SUCCEEDED(sib->GetZIndex(&childZIndex))) {
         if (aZIndex < childZIndex) {
-          parent->mChildren.InsertObjectAt(this, index);
-          PlaceBehind(eZPlacementBelow, childWidget, PR_FALSE);
+          // Insert ourselves before sib
+          nsIWidget* prev = sib->GetPrevSibling();
+          mNextSibling = sib;
+          mPrevSibling = prev;
+          sib->SetPrevSibling(this);
+          if (prev) {
+            prev->SetNextSibling(this);
+          } else {
+            NS_ASSERTION(sib == parent->mFirstChild, "Broken child list");
+            // We've taken ownership of sib, so it's safe to have parent let
+            // go of it
+            parent->mFirstChild = this;
+          }
+          PlaceBehind(eZPlacementBelow, sib, PR_FALSE);
           break;
         }
       }
     }
     // were we added to the list?
-    if (index == childCount) {
-      parent->mChildren.AppendObject(this);
+    if (!sib) {
+      parent->AddChild(this);
     }
+    
     NS_RELEASE(parent);
   }
   return NS_OK;
@@ -462,6 +489,12 @@ NS_METHOD nsBaseWidget::SetCursor(nsCursor aCursor)
   mCursor = aCursor; 
   return NS_OK;
 }
+
+NS_IMETHODIMP nsBaseWidget::SetCursor(imgIContainer* aCursor,
+                                      PRUint32 aHotspotX, PRUint32 aHotspotY)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
     
 //-------------------------------------------------------------------------
 //
@@ -518,6 +551,11 @@ NS_IMETHODIMP nsBaseWidget::HideWindowChrome(PRBool aShouldHide)
 NS_IMETHODIMP nsBaseWidget::MakeFullScreen(PRBool aFullScreen)
 {
   HideWindowChrome(aFullScreen);
+  return MakeFullScreenInternal(aFullScreen);
+}
+
+nsresult nsBaseWidget::MakeFullScreenInternal(PRBool aFullScreen)
+{
   nsCOMPtr<nsIFullScreen> fullScreen = do_GetService("@mozilla.org/browser/fullscreen;1");
 
   if (aFullScreen) {
@@ -568,6 +606,9 @@ nsIRenderingContext* nsBaseWidget::GetRenderingContext()
 {
   nsresult                      rv;
   nsCOMPtr<nsIRenderingContext> renderingCtx;
+
+  if (mOnDestroyCalled)
+    return nsnull;
 
   rv = mContext->CreateRenderingContextInstance(*getter_AddRefs(renderingCtx));
   if (NS_SUCCEEDED(rv)) {
@@ -905,6 +946,73 @@ nsBaseWidget::SetIcon(const nsAString&)
   return NS_OK;
 }
 
+/**
+ * Modifies aFile to point at an icon file with the given name and suffix.  The
+ * suffix may correspond to a file extension with leading '.' if appropriate.
+ * Returns true if the icon file exists and can be read.
+ */
+static PRBool
+ResolveIconNameHelper(nsILocalFile *aFile,
+                      const nsAString &aIconName,
+                      const nsAString &aIconSuffix)
+{
+  aFile->Append(NS_LITERAL_STRING("icons"));
+  aFile->Append(NS_LITERAL_STRING("default"));
+  aFile->Append(aIconName + aIconSuffix);
+
+  PRBool readable;
+  return NS_SUCCEEDED(aFile->IsReadable(&readable)) && readable;
+}
+
+/**
+ * Resolve the given icon name into a local file object.  This method is
+ * intended to be called by subclasses of nsBaseWidget.  aIconSuffix is a
+ * platform specific icon file suffix (e.g., ".ico" under Win32).
+ *
+ * If no file is found matching the given parameters, then null is returned.
+ */
+void
+nsBaseWidget::ResolveIconName(const nsAString &aIconName,
+                              const nsAString &aIconSuffix,
+                              nsILocalFile **aResult)
+{ 
+  *aResult = nsnull;
+
+  nsCOMPtr<nsIProperties> dirSvc = do_GetService(NS_DIRECTORY_SERVICE_CONTRACTID);
+  if (!dirSvc)
+    return;
+
+  // first check auxilary chrome directories
+
+  nsCOMPtr<nsISimpleEnumerator> dirs;
+  dirSvc->Get(NS_APP_CHROME_DIR_LIST, NS_GET_IID(nsISimpleEnumerator),
+              getter_AddRefs(dirs));
+  if (dirs) {
+    PRBool hasMore;
+    while (NS_SUCCEEDED(dirs->HasMoreElements(&hasMore)) && hasMore) {
+      nsCOMPtr<nsISupports> element;
+      dirs->GetNext(getter_AddRefs(element));
+      if (!element)
+        continue;
+      nsCOMPtr<nsILocalFile> file = do_QueryInterface(element);
+      if (!file)
+        continue;
+      if (ResolveIconNameHelper(file, aIconName, aIconSuffix)) {
+        NS_ADDREF(*aResult = file);
+        return;
+      }
+    }
+  }
+
+  // then check the main app chrome directory
+
+  nsCOMPtr<nsILocalFile> file;
+  dirSvc->Get(NS_APP_CHROME_DIR, NS_GET_IID(nsILocalFile),
+              getter_AddRefs(file));
+  if (file && ResolveIconNameHelper(file, aIconName, aIconSuffix))
+    NS_ADDREF(*aResult = file);
+}
+
 #ifdef DEBUG
 //////////////////////////////////////////////////////////////
 //
@@ -1002,7 +1110,7 @@ case _value: eventName.AssignWithConversion(_name) ; break
 //////////////////////////////////////////////////////////////
 struct PrefPair
 {
-  char * name;
+  const char * name;
   PRBool value;
 };
 
@@ -1043,7 +1151,7 @@ nsBaseWidget::debug_GetCachedBoolPref(const char * aPrefName)
 
   for (PRUint32 i = 0; i < debug_NumPrefValues; i++)
   {
-    if (NS_ConvertASCIItoUCS2(debug_PrefValues[i].name).EqualsWithConversion(aPrefName))
+    if (strcmp(debug_PrefValues[i].name, aPrefName) == 0)
     {
       return debug_PrefValues[i].value;
     }
@@ -1058,7 +1166,7 @@ static void debug_SetCachedBoolPref(const char * aPrefName,PRBool aValue)
 
   for (PRUint32 i = 0; i < debug_NumPrefValues; i++)
   {
-    if (NS_ConvertASCIItoUCS2(debug_PrefValues[i].name).EqualsWithConversion(aPrefName))
+    if (strcmp(debug_PrefValues[i].name, aPrefName) == 0)
     {
       debug_PrefValues[i].value = aValue;
 
@@ -1078,9 +1186,7 @@ debug_PrefChangedCallback(const char * name,void * closure)
 
   nsIPref * prefs = nsnull;
   
-  nsresult rv = nsServiceManager::GetService(kPrefCID, 
-                         NS_GET_IID(nsIPref),
-                         (nsISupports**) &prefs);
+  nsresult rv = CallGetService(kPrefCID, &prefs);
   
   NS_ASSERTION(NS_SUCCEEDED(rv),"Could not get prefs service.");
   NS_ASSERTION(nsnull != prefs,"Prefs services is null.");
@@ -1110,9 +1216,7 @@ debug_RegisterPrefCallbacks()
 
     nsIPref * prefs = nsnull;
 
-    nsresult rv = nsServiceManager::GetService(kPrefCID, 
-                           NS_GET_IID(nsIPref),
-                           (nsISupports**) &prefs);
+    nsresult rv = CallGetService(kPrefCID, &prefs);
     
     NS_ASSERTION(NS_SUCCEEDED(rv),"Could not get prefs service.");
     NS_ASSERTION(nsnull != prefs,"Prefs services is null.");
@@ -1275,131 +1379,3 @@ nsBaseWidget::debug_DumpInvalidate(FILE *                aFileOut,
 
 #endif // DEBUG
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-//-------------------------------------------------------------------------
-//
-// Constructor
-//
-//-------------------------------------------------------------------------
-
-nsBaseWidget::Enumerator::Enumerator(nsBaseWidget & inParent)
-  : mCurrentPosition(0), mParent(inParent)
-{
-}
-
-
-//-------------------------------------------------------------------------
-//
-// Destructor
-//
-//-------------------------------------------------------------------------
-nsBaseWidget::Enumerator::~Enumerator()
-{   
-}
-
-
-//enumerator interfaces
-NS_IMETHODIMP
-nsBaseWidget::Enumerator::Next()
-{
-  if (mCurrentPosition < mParent.mChildren.Count() - 1 )
-    mCurrentPosition ++;
-  else
-    return NS_ERROR_FAILURE;
-  return NS_OK;
-}
-
-
- 
-NS_IMETHODIMP
-nsBaseWidget::Enumerator::Prev()
-{
-  if (mCurrentPosition > 0 )
-    mCurrentPosition --;
-  else
-    return NS_ERROR_FAILURE;
-  return NS_OK;
-}
-
-
-
-NS_IMETHODIMP
-nsBaseWidget::Enumerator::CurrentItem(nsISupports **aItem)
-{
-  if (!aItem)
-    return NS_ERROR_NULL_POINTER;
-
-  if ( mCurrentPosition < mParent.mChildren.Count() )
-    NS_IF_ADDREF(*aItem = mParent.mChildren[mCurrentPosition]);
-  else
-    return NS_ERROR_FAILURE;
-
-  return NS_OK;
-}
-
-
-
-NS_IMETHODIMP
-nsBaseWidget::Enumerator::First()
-{
-  if ( mParent.mChildren.Count() ) {
-    mCurrentPosition = 0;
-    return NS_OK;
-  }
-  else
-    return NS_ERROR_FAILURE;
-
-  return NS_OK;
-}
-
-
-
-NS_IMETHODIMP
-nsBaseWidget::Enumerator::Last()
-{
-  PRInt32 itemCount = mParent.mChildren.Count();
-  if ( itemCount ) {
-    mCurrentPosition = itemCount - 1;
-    return NS_OK;
-  }
-  else
-    return NS_ERROR_FAILURE;
-
-  return NS_OK;
-}
-
-
-
-NS_IMETHODIMP
-nsBaseWidget::Enumerator::IsDone()
-{
-  PRInt32 itemCount = mParent.mChildren.Count();
-
-  if ((mCurrentPosition == itemCount-1) || (itemCount == 0) ){ //empty lists always return done
-    return NS_OK;
-  }
-  else {
-    return NS_ENUMERATOR_FALSE;
-  }
-  return NS_OK;
-}

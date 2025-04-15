@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -159,6 +158,9 @@ typedef void * nsNativeDeviceContext;
 /* Cannot load the matching print module */
 #define NS_ERROR_GFX_COULD_NOT_LOAD_PRINT_MODULE \
   NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_GFX,NS_ERROR_GFX_PRINTER_BASE+34)   
+/* requested resolution/quality mode not supported by printer */
+#define NS_ERROR_GFX_PRINTER_RESOLUTION_NOT_SUPPORTED \
+  NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_GFX,NS_ERROR_GFX_PRINTER_BASE+35)
       
 /**
  * Conts need for Print Preview
@@ -172,8 +174,8 @@ const PRUint8 kUseAltDCFor_SURFACE_DIM     = 0x08; // Use it for getting the Sur
 #endif
 
 #define NS_IDEVICE_CONTEXT_IID   \
-{ 0x5931c580, 0xb917, 0x11d1,    \
-{ 0xa8, 0x24, 0x00, 0x40, 0x95, 0x9a, 0x28, 0xc9 } }
+{ 0xb31ad9ce, 0x40cb, 0x43c4, \
+  { 0x90, 0xf8, 0x0f, 0x30, 0x53, 0xf6, 0xb8, 0xea } }
 
 //a cross platform way of specifying a native palette handle
 typedef void * nsPalette;
@@ -230,12 +232,12 @@ public:
   NS_IMETHOD  CreateRenderingContext(nsIView *aView, nsIRenderingContext *&aContext) = 0;
 
   /**
-   * Create a rendering context and initialize it from an nsDrawingSurface
-   * @param nsDrawingSurface widget to initialize context from
+   * Create a rendering context and initialize it from an nsIDrawingSurface*
+   * @param nsIDrawingSurface* widget to initialize context from
    * @param aContext out parameter for new rendering context
    * @return error status
    */
-  NS_IMETHOD  CreateRenderingContext(nsDrawingSurface aSurface, nsIRenderingContext *&aContext) = 0;
+  NS_IMETHOD  CreateRenderingContext(nsIDrawingSurface* aSurface, nsIRenderingContext *&aContext) = 0;
 
   /**
    * Create a rendering context and initialize it from an nsIWidget
@@ -393,12 +395,6 @@ public:
   //scaling. default is 1.0 (no zoom)
   NS_IMETHOD  SetZoom(float aZoom) = 0;
   NS_IMETHOD  GetZoom(float &aZoom) const = 0;
-
-  //get and set the text zoom value used for display-time scaling.
-  //default is 1.0 (no zoom).  The device context doesn't do anything
-  //with this value.  It's merely a convenient place to store it.
-  NS_IMETHOD  SetTextZoom(float aTextZoom) = 0;
-  NS_IMETHOD  GetTextZoom(float &aTextZoom) const = 0;
 
   /**
    * Check to see if a particular named font exists.

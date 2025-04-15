@@ -44,9 +44,18 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
+MOZILLA_INTERNAL_API = 1
+
 DIRS		= profile/extensions
 
-PREF_JS_EXPORTS = $(srcdir)/profile/firefox.js
+PREF_JS_EXPORTS = $(srcdir)/profile/firefox.js \
+		  $(srcdir)/profile/channel-prefs.js \
+		  $(NULL)
+
+# hardcode en-US for the moment
+AB_CD = en-US
+
+DEFINES += -DAB_CD=$(AB_CD)
 
 ifeq ($(USE_SHORT_LIBNAME), 1)
 PROGRAM = firefox$(BIN_SUFFIX)
@@ -55,13 +64,12 @@ PROGRAM = firefox-bin$(BIN_SUFFIX)
 endif
 
 REQUIRES = \
-	appshell \
-	string \
 	xpcom \
-	xulapp \
 	$(NULL)
 
 CPPSRCS = nsBrowserApp.cpp
+
+LOCAL_INCLUDES += -I$(topsrcdir)/toolkit/xre
 
 ifdef BUILD_STATIC_LIBS
 STATIC_COMPONENTS_LINKER_PATH = -L$(DIST)/lib/components
@@ -136,18 +144,21 @@ RCFLAGS += -DDEBUG
 endif
 endif
 
+ifeq ($(OS_ARCH),BeOS)
+OS_LIBS += -ltracker
+endif
+
 ifeq ($(OS_ARCH),OS2)
 RESFILE=splashos2.res
 RCFLAGS += -DMOZ_PHOENIX
 ifdef BUILD_STATIC_LIBS
-OS_LIBS += -lpmwinx
 EXE_DEF_FILE = browser.def
 RCFLAGS += -DMOZ_STATIC_BUILD -i $(DIST)/include/widget
 endif
 ifdef DEBUG
 RCFLAGS += -DDEBUG
 endif
-RCFLAGS += -DFIREFOX_ICO="$(DIST)/branding/firefox.ico" -DDOCUMENT_ICO="$(DIST)/branding/document.ico"
+RCFLAGS += -DFIREFOX_ICO=\"$(DIST)/branding/firefox.ico\" -DDOCUMENT_ICO=\"$(DIST)/branding/document.ico\"
 endif
 
 include $(topsrcdir)/config/rules.mk
@@ -159,10 +170,7 @@ include $(topsrcdir)/config/static-rules.mk
 endif
 
 APP_VERSION = $(shell cat $(srcdir)/../config/version.txt)
-DEFINES += -DAPP_VERSION=\"$(APP_VERSION)\"
-
-BUILD_ID = $(shell cat $(DEPTH)/config/build_number)
-DEFINES += -DBUILD_ID=\"$(BUILD_ID)\"
+DEFINES += -DAPP_VERSION="$(APP_VERSION)"
 
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 ifdef BUILD_STATIC_LIBS
@@ -231,6 +239,7 @@ endif
 ifneq (,$(filter gtk gtk2,$(MOZ_WIDGET_TOOLKIT)))
 
 ICON_FILES	= \
+		$(DIST)/branding/mozicon128.png \
 		$(DIST)/branding/mozicon50.xpm \
 		$(DIST)/branding/mozicon16.xpm \
 		$(DIST)/branding/document.png \
@@ -252,7 +261,7 @@ install::
 endif
 
 export::
-ifndef MOZ_USE_OFFICIAL_BRANDING
+ifndef MOZ_BRANDING_DIRECTORY
 	$(NSINSTALL) -D $(DIST)/branding
 ifeq ($(OS_ARCH),WINNT)
 	cp $(srcdir)/firefox.ico   $(DIST)/branding/firefox.ico
@@ -262,8 +271,13 @@ endif
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 	cp $(srcdir)/macbuild/firefox.icns  $(DIST)/branding/firefox.icns
 	cp $(srcdir)/macbuild/document.icns  $(DIST)/branding/document.icns
+	cp $(srcdir)/macbuild/dsstore $(DIST)/branding/dsstore
+	cp $(srcdir)/macbuild/background.png $(DIST)/branding/background.png
+	cp $(srcdir)/macbuild/disk.icns $(DIST)/branding/disk.icns
+	cp $(srcdir)/macbuild/license.r $(DIST)/branding/license.r
 endif
 ifneq (,$(filter gtk gtk2,$(MOZ_WIDGET_TOOLKIT)))
+	cp $(srcdir)/mozicon128.png $(DIST)/branding/mozicon128.png
 	cp $(srcdir)/mozicon16.xpm $(DIST)/branding/mozicon16.xpm
 	cp $(srcdir)/mozicon50.xpm $(DIST)/branding/mozicon50.xpm
 	cp $(srcdir)/document.png $(DIST)/branding/document.png
@@ -283,7 +297,11 @@ libs::
 
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 
-APP_NAME = Firefox
+APP_NAME = $(MOZ_APP_DISPLAYNAME)
+
+ifdef MOZ_DEBUG
+APP_NAME := $(APP_NAME)Debug
+endif
 
 AB_CD = $(MOZ_UI_LOCALE)
 
@@ -297,12 +315,15 @@ libs repackage:: $(PROGRAM)
 	rsync -a --exclude CVS --exclude "*.in" $(srcdir)/macbuild/Contents $(DIST)/$(APP_NAME).app --exclude English.lproj
 	mkdir -p $(DIST)/$(APP_NAME).app/Contents/Resources/$(AB).lproj
 	rsync -a --exclude CVS $(srcdir)/macbuild/Contents/Resources/English.lproj/ $(DIST)/$(APP_NAME).app/Contents/Resources/$(AB).lproj
-	sed -e "s/APP_VERSION/$(APP_VERSION)/" $(srcdir)/macbuild/Contents/Info.plist.in > $(DIST)/$(APP_NAME).app/Contents/Info.plist
+	sed -e "s/APP_VERSION/$(APP_VERSION)/" -e "s/APP_NAME/$(APP_NAME)/" $(srcdir)/macbuild/Contents/Info.plist.in > $(DIST)/$(APP_NAME).app/Contents/Info.plist
 	rsync -a $(DIST)/bin/ $(DIST)/$(APP_NAME).app/Contents/MacOS
 	rm -f $(DIST)/$(APP_NAME).app/Contents/MacOS/$(PROGRAM) $(DIST)/$(APP_NAME).app/Contents/MacOS/mangle $(DIST)/$(APP_NAME).app/Contents/MacOS/shlibsign
 	rsync -aL $(PROGRAM) $(DIST)/$(APP_NAME).app/Contents/MacOS
 	mkdir -p $(DIST)/$(APP_NAME).app/Contents/Plug-Ins
-	cp -R $(DIST)/package/PrintPDE.plugin $(DIST)/$(APP_NAME).app/Contents/Plug-Ins/
+# Bug 297227: the next line only exists to repair broken depend builds, it can
+# go away once that bug has been closed for a while.
+	rm -rf $(DIST)/$(APP_NAME).app/Contents/Plug-Ins/PrintPDE.plugin
+	rsync -a --copy-unsafe-links $(DIST)/package/PrintPDE.plugin $(DIST)/$(APP_NAME).app/Contents/Plug-Ins
 	-cp -L $(DIST)/bin/mangle $(DIST)/bin/shlibsign $(DIST)/$(APP_NAME).app/Contents/MacOS
 	cp -RL $(DIST)/branding/firefox.icns $(DIST)/$(APP_NAME).app/Contents/Resources/firefox.icns
 	cp -RL $(DIST)/branding/document.icns $(DIST)/$(APP_NAME).app/Contents/Resources/document.icns
@@ -320,4 +341,4 @@ libs:: $(srcdir)/profile/prefs.js
 	$(INSTALL) $^ $(DIST)/bin/defaults/profile
 
 install:: $(srcdir)/profile/prefs.js
-	$(SYSINSTALL) $(IFLAGS1) $^ $(destdir)$(bindir)/defaults/profile
+	$(SYSINSTALL) $(IFLAGS1) $^ $(DESTDIR)$(mozappdir)/defaults/profile

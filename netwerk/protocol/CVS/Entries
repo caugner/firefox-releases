@@ -1,12 +1,11 @@
-/.cvsignore/1.1/Fri May 28 09:09:03 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.19/Sat Jan 18 02:14:42 2003//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Fri May 28 09:09:03 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.22/Tue Apr  5 17:40:23 2005//TFIREFOX_1_5_RELEASE
 D/about////
 D/data////
 D/file////
 D/ftp////
 D/gopher////
 D/http////
-D/jar////
 D/keyword////
 D/res////
 D/viewsource////

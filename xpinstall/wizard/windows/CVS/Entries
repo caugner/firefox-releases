@@ -1,5 +1,5 @@
-/.cvsignore/1.1/Tue Dec 18 09:14:19 2001//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.4/Fri Nov  7 09:20:16 2003//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Tue Dec 18 09:14:19 2001//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.5/Sat Apr 17 14:37:33 2004//TFIREFOX_1_5_RELEASE
 D/GetShortPathName////
 D/builder////
 D/ds32////

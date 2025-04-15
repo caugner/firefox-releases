@@ -1,26 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code, 
- * released March 31, 1998. 
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications 
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
- * Contributor(s): 
- *     Samir Gehani <sgehani@netscape.com>
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Samir Gehani <sgehani@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nscore.h"
 #include "nsSetupTypeDlg.h"
@@ -45,6 +60,8 @@
 #define STATFS statfs
 #endif
 
+#include <sys/wait.h>
+
 
 static GtkWidget        *sBrowseBtn;
 static gint             sBrowseBtnID;
@@ -52,9 +69,6 @@ static GtkWidget        *sFolder;
 static GSList           *sGroup;
 static GtkWidget        *sCreateDestDlg;
 static GtkWidget        *sDelInstDlg;
-static int              sFilePickerUp = FALSE;
-static int              sConfirmCreateUp = FALSE;
-static int              sDelInstUp = FALSE;
 static nsLegacyCheck    *sLegacyChecks = NULL;
 static nsObjectIgnore   *sObjectsToIgnore = NULL;
 
@@ -72,44 +86,18 @@ nsSetupTypeDlg::~nsSetupTypeDlg()
     XI_IF_FREE(mMsg0)
 }
 
-void
-nsSetupTypeDlg::Back(GtkWidget *aWidget, gpointer aData)
-{
-    DUMP("Back");
-    if (aData != gCtx->sdlg) return;
-    if (gCtx->bMoving)
-    {
-        gCtx->bMoving = FALSE;
-        return;
-    }
-
-    // hide this notebook page
-    gCtx->sdlg->Hide(nsXInstallerDlg::BACKWARD_MOVE);
-
-    // disconnect this dlg's nav btn signal handlers
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
-    gtk_signal_disconnect(GTK_OBJECT(sBrowseBtn), sBrowseBtnID);
-
-    // show the next dlg
-    gCtx->ldlg->Show(nsXInstallerDlg::BACKWARD_MOVE);
-    gCtx->bMoving = TRUE;
-}
-
 void 
 nsSetupTypeDlg::Next(GtkWidget *aWidget, gpointer aData)
 {
     DUMP("Next");
-    if (aData != gCtx->sdlg) return;
+    if (aData && aData != gCtx->sdlg) return;
+#ifdef MOZ_WIDGET_GTK
     if (gCtx->bMoving)
     {
         gCtx->bMoving = FALSE;
         return;
     }
-
-    // creation confirmation dlg still up
-    if (sConfirmCreateUp || sDelInstUp)
-        return;
+#endif
 
     // verify selected destination directory exists
     if (OK != nsSetupTypeDlg::VerifyDestination())
@@ -130,20 +118,37 @@ nsSetupTypeDlg::Next(GtkWidget *aWidget, gpointer aData)
             return;
     }
 
-    // hide this notebook page
-    gCtx->sdlg->Hide(nsXInstallerDlg::FORWARD_MOVE);
-
-    // disconnect this dlg's nav btn signal handlers
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
-    gtk_signal_disconnect(GTK_OBJECT(sBrowseBtn), sBrowseBtnID);
+    if (gCtx->opt->mMode == nsXIOptions::MODE_DEFAULT)
+    {
+        // hide this notebook page
+        gCtx->sdlg->Hide();
+    }
 
     // show the last dlg
     if (gCtx->opt->mSetupType == (gCtx->sdlg->GetNumSetupTypes() - 1))
-        gCtx->cdlg->Show(nsXInstallerDlg::FORWARD_MOVE);
+    {
+        gCtx->cdlg->Show();
+    }
     else
-        gCtx->idlg->Show(nsXInstallerDlg::FORWARD_MOVE);
-    gCtx->bMoving = TRUE;
+    {
+        if (gCtx->opt->mMode != nsXIOptions::MODE_SILENT)
+        {
+            gCtx->idlg->Show();
+        }
+        if (gCtx->opt->mMode != nsXIOptions::MODE_DEFAULT)
+        {
+            gCtx->idlg->Next((GtkWidget *)NULL, (gpointer) gCtx->idlg);
+        }
+    }
+
+#ifdef MOZ_WIDGET_GTK
+    // When Next() is not invoked from a signal handler, the caller passes
+    // aData as NULL so we know not to do the bMoving hack. 
+    if (aData)
+    {
+        gCtx->bMoving = TRUE;
+    }
+#endif
 }
 
 int
@@ -153,6 +158,7 @@ nsSetupTypeDlg::Parse(nsINIParser *aParser)
     int bufsize = 0;
     char *showDlg = NULL;
     int i, j;
+    char *defSec = NULL; // default Setup Type
     char *currSec = (char *) malloc(strlen(SETUP_TYPEd) + 1); // e.g. SetupType12
     if (!currSec) return E_MEM;
     char *currKey = (char *) malloc(1 + 3); // e.g. C0, C1, C12
@@ -162,10 +168,10 @@ nsSetupTypeDlg::Parse(nsINIParser *aParser)
     char *currLCSec = (char *) malloc(strlen(LEGACY_CHECKd) + 1);
     if (!currLCSec) return E_MEM;
     char *currVal = NULL;
-    nsLegacyCheck *currLC = NULL, *lastLC = NULL, *nextLC = NULL;
-    nsObjectIgnore *currOI = NULL, *lastOI = NULL, *nextOI = NULL;
+    nsObjectIgnore *currOI = NULL, *nextOI = NULL;
+    char *currFile = NULL, *currMsg = NULL;
+    nsLegacyCheck *currLC = NULL, *nextLC = NULL;
     nsComponent *currComp = NULL;
-    nsComponent *currCompDup = NULL;
     int currIndex;
     int currNumComps = 0;
 
@@ -181,19 +187,12 @@ nsSetupTypeDlg::Parse(nsINIParser *aParser)
     XI_VERIFY(gCtx);
 
     /* optional keys */
-    err = aParser->GetStringAlloc(DLG_SETUP_TYPE, MSG0, &mMsg0, &bufsize);
+    err = aParser->GetStringAlloc(GENERAL, DEFAULT_SETUP_TYPE, &defSec, &bufsize);
     if (err != OK && err != nsINIParser::E_NO_KEY) goto BAIL; else err = OK;
 
-    bufsize = 5;
-    err = aParser->GetStringAlloc(DLG_SETUP_TYPE, SHOW_DLG, &showDlg, &bufsize);
+    bufsize = 0;
+    err = aParser->GetStringAlloc(DLG_SETUP_TYPE, MSG0, &mMsg0, &bufsize);
     if (err != OK && err != nsINIParser::E_NO_KEY) goto BAIL; else err = OK;
-    if (bufsize != 0 && showDlg)
-    {
-        if (0 == strncmp(showDlg, "TRUE", 4))
-            mShowDlg = nsXInstallerDlg::SHOW_DIALOG;
-        else if (0 == strncmp(showDlg, "FALSE", 5))
-            mShowDlg = nsXInstallerDlg::SKIP_DIALOG;
-    }
 
     bufsize = 0;
     err = aParser->GetStringAlloc(DLG_SETUP_TYPE, TITLE, &mTitle, &bufsize);
@@ -202,8 +201,6 @@ nsSetupTypeDlg::Parse(nsINIParser *aParser)
             XI_IF_FREE(mTitle); 
 
     /* Objects to Ignore */
-    sObjectsToIgnore = new nsObjectIgnore();
-    currOI = sObjectsToIgnore;
     for (i = 0; i < MAX_LEGACY_CHECKS; i++)
     {
         // construct key name based on index
@@ -212,7 +209,7 @@ nsSetupTypeDlg::Parse(nsINIParser *aParser)
 
         // get ObjectToIgnore key
         bufsize = 0;
-        err = aParser->GetStringAlloc(CLEAN_UPGRADE, currOIKey, &currVal, &bufsize);
+        err = aParser->GetStringAlloc(CLEAN_UPGRADE, currOIKey, &currFile, &bufsize);
         if (err != OK) 
         { 
             if (err != nsINIParser::E_NO_SEC &&
@@ -220,25 +217,24 @@ nsSetupTypeDlg::Parse(nsINIParser *aParser)
             else 
             {
                 err = OK; 
-                XI_IF_DELETE(currOI);
-                if (lastOI)
-                    lastOI->InitNext();
                 break; 
             } 
         }
-        currOI->SetFilename(currVal);
+        nextOI = new nsObjectIgnore(currFile);
 
-        nextOI = new nsObjectIgnore();
-        currOI->SetNext(nextOI);
-        lastOI = currOI;
+        if (currOI)
+        {
+           currOI->SetNext(nextOI);
+        }
+        else if (!sObjectsToIgnore)
+        {
+           sObjectsToIgnore = nextOI;
+        }
+
         currOI = nextOI;
     }
-    if (i == 0) // none found
-        sObjectsToIgnore = NULL;
 
     /* legacy check */
-    sLegacyChecks = new nsLegacyCheck();
-    currLC = sLegacyChecks;
     for (i = 0; i < MAX_LEGACY_CHECKS; i++)
     {
         // construct section name based on index
@@ -247,7 +243,7 @@ nsSetupTypeDlg::Parse(nsINIParser *aParser)
 
         // get "Filename" and "Message" keys
         bufsize = 0;
-        err = aParser->GetStringAlloc(currLCSec, FILENAME, &currVal, &bufsize);
+        err = aParser->GetStringAlloc(currLCSec, FILENAME, &currFile, &bufsize);
         if (err != OK) 
         { 
             if (err != nsINIParser::E_NO_SEC &&
@@ -255,16 +251,12 @@ nsSetupTypeDlg::Parse(nsINIParser *aParser)
             else 
             {
                 err = OK; 
-                XI_IF_DELETE(currLC);
-                if (lastLC)
-                    lastLC->InitNext();
                 break; 
             } 
         }
-        currLC->SetFilename(currVal);
 
         bufsize = 0;
-        err = aParser->GetStringAlloc(currLCSec, MSG, &currVal, &bufsize);
+        err = aParser->GetStringAlloc(currLCSec, MSG, &currMsg, &bufsize);
         if (err != OK)
         {
             if (err != nsINIParser::E_NO_SEC &&
@@ -272,23 +264,25 @@ nsSetupTypeDlg::Parse(nsINIParser *aParser)
             else 
             {
                 err = OK; 
-                XI_IF_DELETE(currLC);
-                if (lastLC)
-                    lastLC->InitNext();
                 break; 
             } 
         }
-        currLC->SetMessage(currVal);
+        nextLC = new nsLegacyCheck(currFile, currMsg);
 
-        nextLC = new nsLegacyCheck();
-        currLC->SetNext(nextLC);
-        lastLC = currLC;
+        if (currLC)
+        {
+           currLC->SetNext(nextLC);
+        }
+        else if (!sLegacyChecks)
+        {
+           sLegacyChecks = nextLC;
+        }
+
         currLC = nextLC;
     }
-    if (i == 0) // none found
-        sLegacyChecks = NULL;
 
     /* setup types */
+    gCtx->opt->mSetupType = 0;
     for (i=0; i<MAX_SETUP_TYPES; i++)
     {
         sprintf(currSec, SETUP_TYPEd, i);
@@ -302,6 +296,9 @@ nsSetupTypeDlg::Parse(nsINIParser *aParser)
             err = OK;
             break;
         }
+
+        if (defSec && strcasecmp(currDescShort, defSec) == 0)
+            gCtx->opt->mSetupType = i;
 
         bufsize = 0;
         err = aParser->GetStringAlloc(currSec, DESC_LONG, &currDescLong,
@@ -329,16 +326,16 @@ nsSetupTypeDlg::Parse(nsINIParser *aParser)
                 break;
             }
         
-            currComp = NULL;
             currIndex = atoi(currVal + strlen(COMPONENT));
             currComp = compList->GetCompByIndex(currIndex);
-            if (currComp)
+            if (!currComp)
             {
-                // preserve next ptr
-                currCompDup = currComp->Duplicate(); 
-                currST->SetComponent(currCompDup);
-                currNumComps++;
+                err = E_OUT_OF_BOUNDS;
+                goto BAIL;
             }
+
+            currST->SetComponent(currComp);
+            currNumComps++;
         }
         if (currNumComps > 0)
         {
@@ -362,7 +359,7 @@ BAIL:
 }
 
 int
-nsSetupTypeDlg::Show(int aDirection)
+nsSetupTypeDlg::Show()
 {
     int err = OK;
     int numSetupTypes = 0;
@@ -409,34 +406,11 @@ nsSetupTypeDlg::Show(int aDirection)
         currST = GetSetupTypeList();
         if (!currST) return E_NO_SETUPTYPES;
 
-        // first radio button
-        gCtx->opt->mSetupType = 0;
-        radbtns[0] = gtk_radio_button_new_with_label(NULL,
-                        currST->GetDescShort());
-        sGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(radbtns[0]));
-        gtk_table_attach(GTK_TABLE(stTable), radbtns[0], 0, 1, 0, 1,
-            static_cast<GtkAttachOptions>(GTK_FILL | GTK_EXPAND),
-            static_cast<GtkAttachOptions>(GTK_FILL | GTK_EXPAND),
-            0, 0);
-        gtk_signal_connect(GTK_OBJECT(radbtns[0]), "toggled",
-                           GTK_SIGNAL_FUNC(RadBtnToggled), 0);
-        gtk_widget_show(radbtns[0]);
+        sGroup=NULL;
 
-        desc[0] = gtk_label_new(currST->GetDescLong());
-        gtk_label_set_justify(GTK_LABEL(desc[0]), GTK_JUSTIFY_LEFT);
-        gtk_label_set_line_wrap(GTK_LABEL(desc[0]), TRUE);
-        hbox = gtk_hbox_new(FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(hbox), desc[0], FALSE, FALSE, 0);
-        gtk_widget_show(hbox);
-        gtk_table_attach_defaults(GTK_TABLE(stTable), hbox, 1, 2, 0, 1);
-        gtk_widget_show(desc[0]);
-
-        // remaining radio buttons
-        for (i = 1; i < numSetupTypes; i++)
+        // radio buttons
+        for (i = 0; i < numSetupTypes; i++)
         {
-            currST = currST->GetNext();
-            if (!currST) break;
-
             radbtns[i] = gtk_radio_button_new_with_label(sGroup,
                             currST->GetDescShort());
             sGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(radbtns[i]));
@@ -456,7 +430,12 @@ nsSetupTypeDlg::Show(int aDirection)
             gtk_widget_show(hbox);
             gtk_table_attach_defaults(GTK_TABLE(stTable), hbox, 1, 2, i, i+1);
             gtk_widget_show(desc[i]);
+
+            currST = currST->GetNext();
         }
+
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(
+                                        radbtns[gCtx->opt->mSetupType]), TRUE);
 
         // insert a [1 x 2] heterogeneous table in the third row
         destTable = gtk_table_new(1, 2, FALSE);
@@ -496,49 +475,34 @@ nsSetupTypeDlg::Show(int aDirection)
 
     // signal connect the buttons
     // NOTE: back button disfunctional in this dlg since user accepted license
-    gCtx->backID = gtk_signal_connect(GTK_OBJECT(gCtx->back), "clicked",
-                   GTK_SIGNAL_FUNC(nsSetupTypeDlg::Back), gCtx->sdlg);
     gCtx->nextID = gtk_signal_connect(GTK_OBJECT(gCtx->next), "clicked",
                    GTK_SIGNAL_FUNC(nsSetupTypeDlg::Next), gCtx->sdlg);
     sBrowseBtnID = gtk_signal_connect(GTK_OBJECT(sBrowseBtn), "clicked",
                    GTK_SIGNAL_FUNC(nsSetupTypeDlg::SelectFolder), NULL);  
 
-    if (aDirection == nsXInstallerDlg::FORWARD_MOVE)
-    {
-        // change the button titles back to Back/Next
-        gtk_container_remove(GTK_CONTAINER(gCtx->next), gCtx->acceptLabel);
-        gtk_container_remove(GTK_CONTAINER(gCtx->back), gCtx->declineLabel);
-        gCtx->nextLabel = gtk_label_new(gCtx->Res("NEXT"));
-        gCtx->backLabel = gtk_label_new(gCtx->Res("BACK"));
-        gtk_widget_show(gCtx->nextLabel);
-        gtk_widget_show(gCtx->backLabel);
-        gtk_container_add(GTK_CONTAINER(gCtx->next), gCtx->nextLabel);
-        gtk_container_add(GTK_CONTAINER(gCtx->back), gCtx->backLabel);
-        gtk_widget_show(gCtx->next);
-        gtk_widget_show(gCtx->back);
-    }
-        // from install dlg
-    if (aDirection == nsXInstallerDlg::BACKWARD_MOVE && 
-        // not custom setup type
-        gCtx->opt->mSetupType != (gCtx->sdlg->GetNumSetupTypes() - 1))
-    {
-        DUMP("Back from Install to Setup Type");
-        gtk_container_remove(GTK_CONTAINER(gCtx->next), gCtx->installLabel);
-        gCtx->nextLabel = gtk_label_new(gCtx->Res("NEXT"));
-        gtk_container_add(GTK_CONTAINER(gCtx->next), gCtx->nextLabel);
-        gtk_widget_show(gCtx->nextLabel);
-        gtk_widget_show(gCtx->next);
-    }     
+    GTK_WIDGET_SET_FLAGS(gCtx->next, GTK_CAN_DEFAULT);
+    gtk_widget_grab_default(gCtx->next);
+    gtk_widget_grab_focus(gCtx->next);
 
-    gtk_widget_hide(gCtx->back);
+    // set up the next button.
+    gCtx->nextLabel = gtk_label_new(gCtx->Res("NEXT"));
+    gtk_widget_show(gCtx->nextLabel);
+    gtk_container_add(GTK_CONTAINER(gCtx->next), gCtx->nextLabel);
+    gtk_widget_show(gCtx->next);
 
     return err;
 }
 
 int
-nsSetupTypeDlg::Hide(int aDirection)
+nsSetupTypeDlg::Hide()
 {
     gtk_widget_hide(mTable);
+
+    // disconnect and remove this dlg's nav btn
+    gtk_signal_disconnect(GTK_OBJECT(sBrowseBtn), sBrowseBtnID);
+    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
+    gtk_container_remove(GTK_CONTAINER(gCtx->next), gCtx->nextLabel); 
+    gtk_widget_hide(gCtx->next);
 
     return OK;
 }
@@ -681,13 +645,11 @@ nsSetupTypeDlg::SelectFolder(GtkWidget *aWidget, gpointer aData)
 {
     DUMP("SelectFolder");
 
-    if (sFilePickerUp)
-        return;
-
     GtkWidget *fileSel = NULL;
     char *selDir = gCtx->opt->mDestination;
 
     fileSel = gtk_file_selection_new(gCtx->Res("SELECT_DIR"));
+    gtk_window_set_modal(GTK_WINDOW(fileSel), TRUE);
     gtk_file_selection_set_filename(GTK_FILE_SELECTION(fileSel), selDir);
     gtk_signal_connect(GTK_OBJECT(GTK_FILE_SELECTION(fileSel)->ok_button),
                        "clicked", (GtkSignalFunc) SelectFolderOK, fileSel);
@@ -696,7 +658,6 @@ nsSetupTypeDlg::SelectFolder(GtkWidget *aWidget, gpointer aData)
                                 "clicked", (GtkSignalFunc) SelectFolderCancel,
                                 GTK_OBJECT(fileSel));
     gtk_widget_show(fileSel); 
-    sFilePickerUp = TRUE;
 }
 
 void
@@ -705,7 +666,7 @@ nsSetupTypeDlg::SelectFolderOK(GtkWidget *aWidget, GtkFileSelection *aFileSel)
     DUMP("SelectFolderOK");
 
     struct stat destStat;
-    char *selDir = gtk_file_selection_get_filename(
+    const char *selDir = gtk_file_selection_get_filename(
                     GTK_FILE_SELECTION(aFileSel));
 
     // put the candidate file name in the global variable, then verify it
@@ -722,7 +683,6 @@ nsSetupTypeDlg::SelectFolderOK(GtkWidget *aWidget, GtkFileSelection *aFileSel)
 
     // tear down file sel dlg
     gtk_object_destroy(GTK_OBJECT(aFileSel)); 
-    sFilePickerUp = FALSE;
 }
 
 void
@@ -732,7 +692,6 @@ nsSetupTypeDlg::SelectFolderCancel(GtkWidget *aWidget,
     // tear down file sel dlg
     gtk_object_destroy(GTK_OBJECT(aWidget)); 
     gtk_object_destroy(GTK_OBJECT(aFileSel)); 
-    sFilePickerUp = FALSE;
 }
 
 void
@@ -746,7 +705,6 @@ nsSetupTypeDlg::RadBtnToggled(GtkWidget *aWidget, gpointer aData)
 int
 nsSetupTypeDlg::VerifyDestination()
 {
-    int err = E_NO_DEST;
     int stat_err = 0;
     struct stat stbuf; 
     GtkWidget *yesButton, *noButton, *label;
@@ -758,9 +716,14 @@ nsSetupTypeDlg::VerifyDestination()
     {
       if (access(gCtx->opt->mDestination, R_OK | W_OK | X_OK ) != 0)
       {
+        if (gCtx->opt->mMode != nsXIOptions::MODE_DEFAULT) {
+          ErrorHandler(E_NO_PERMS);
+          return E_NO_PERMS;
+        }
         sprintf(message, gCtx->Res("NO_PERMS"), gCtx->opt->mDestination);
 
         noPermsDlg = gtk_dialog_new();
+        gtk_window_set_modal(GTK_WINDOW(noPermsDlg), TRUE);
         label = gtk_label_new(message);
         okButton = gtk_button_new_with_label(gCtx->Res("OK_LABEL"));
 
@@ -777,6 +740,9 @@ nsSetupTypeDlg::VerifyDestination()
           gtk_box_pack_start(GTK_BOX(
             GTK_DIALOG(noPermsDlg)->vbox), label, FALSE, FALSE, 10);
 
+          GTK_WIDGET_SET_FLAGS(okButton, GTK_CAN_DEFAULT);
+          gtk_widget_grab_default(okButton);
+
           gtk_widget_show_all(noPermsDlg);
         }
 
@@ -789,10 +755,16 @@ nsSetupTypeDlg::VerifyDestination()
       }
     }
 
+    if (gCtx->opt->mMode != nsXIOptions::MODE_DEFAULT)
+    {
+      CreateDestYes((GtkWidget *)NULL, (gpointer) gCtx->sdlg);
+      return E_NO_DEST;
+    }
     // destination doesn't exist so ask user if we should create it
     sprintf(message, gCtx->Res("DOESNT_EXIST"), gCtx->opt->mDestination);
 
     sCreateDestDlg = gtk_dialog_new();
+    gtk_window_set_modal(GTK_WINDOW(sCreateDestDlg), TRUE);
     label = gtk_label_new(message);
     yesButton = gtk_button_new_with_label(gCtx->Res("YES_LABEL"));
     noButton = gtk_button_new_with_label(gCtx->Res("NO_LABEL"));
@@ -808,12 +780,14 @@ nsSetupTypeDlg::VerifyDestination()
     gtk_signal_connect(GTK_OBJECT(noButton), "clicked",
                        GTK_SIGNAL_FUNC(CreateDestNo), sCreateDestDlg);
 
+    GTK_WIDGET_SET_FLAGS(yesButton, GTK_CAN_DEFAULT);
+    gtk_widget_grab_default(yesButton);
+
     gtk_container_add(GTK_CONTAINER(GTK_DIALOG(sCreateDestDlg)->vbox), label);
     
     gtk_widget_show_all(sCreateDestDlg);
-    sConfirmCreateUp = TRUE;
 
-    return err;
+    return E_NO_DEST;
 }
 
 void
@@ -841,7 +815,6 @@ nsSetupTypeDlg::CreateDestYes(GtkWidget *aWidget, gpointer aData)
     path[pathLen] = '/';  // for uniform handling
 
     struct stat buf;
-    mode_t oldPerms = umask(022);
 
     for (int i = 1; !err && i <= pathLen; i++) 
     {
@@ -850,36 +823,26 @@ nsSetupTypeDlg::CreateDestYes(GtkWidget *aWidget, gpointer aData)
             path[i] = '\0';
             if (stat(path, &buf) != 0) 
             {
-                err = mkdir(path, (0777 & ~oldPerms));
+                err = mkdir(path, 0755);
             }
             path[i] = '/';
         }
     }
 
-    umask(oldPerms); // restore original umask
-
-    gtk_widget_destroy(sCreateDestDlg);
-    sConfirmCreateUp = FALSE;
+    if (gCtx->opt->mMode == nsXIOptions::MODE_DEFAULT)
+    {
+        gtk_widget_destroy(sCreateDestDlg);
+    }
 
     if (err != 0)
     {
         ErrorHandler(E_MKDIR_FAIL);
-        return;
     }
-
-    // hide this notebook page
-    gCtx->sdlg->Hide(nsXInstallerDlg::FORWARD_MOVE);
-
-    // disconnect this dlg's nav btn signal handlers
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
-    gtk_signal_disconnect(GTK_OBJECT(sBrowseBtn), sBrowseBtnID);
-
-    // show the final dlg
-    if (gCtx->opt->mSetupType == (gCtx->sdlg->GetNumSetupTypes() - 1))
-        gCtx->cdlg->Show(nsXInstallerDlg::FORWARD_MOVE);
     else
-        gCtx->idlg->Show(nsXInstallerDlg::FORWARD_MOVE);
+    {
+        // try to move forward to installer dialog again
+        nsSetupTypeDlg::Next((GtkWidget *)NULL, NULL);
+    }
 }
 
 void
@@ -888,7 +851,6 @@ nsSetupTypeDlg::CreateDestNo(GtkWidget *aWidget, gpointer aData)
     DUMP("CreateDestNo");
 
     gtk_widget_destroy(sCreateDestDlg);
-    sConfirmCreateUp = FALSE;
 }
 
 int
@@ -919,8 +881,15 @@ nsSetupTypeDlg::DeleteOldInst()
       // check if old installation exists
       if (0 == stat(path, &dummy))
       {
+          if (gCtx->opt->mMode != nsXIOptions::MODE_DEFAULT)
+          {
+              DeleteInstDelete((GtkWidget *)NULL, (gpointer) gCtx->sdlg);
+              return OK;
+          }
+
           // throw up delete dialog 
           sDelInstDlg = gtk_dialog_new();
+          gtk_window_set_modal(GTK_WINDOW(sDelInstDlg), TRUE);
           gtk_window_set_title(GTK_WINDOW(sDelInstDlg), gCtx->opt->mTitle);
           gtk_window_set_position(GTK_WINDOW(sDelInstDlg), GTK_WIN_POS_CENTER);
 
@@ -935,6 +904,9 @@ nsSetupTypeDlg::DeleteOldInst()
                          GTK_SIGNAL_FUNC(DeleteInstDelete), sDelInstDlg);
           gtk_signal_connect(GTK_OBJECT(cancelBtn), "clicked",
                          GTK_SIGNAL_FUNC(DeleteInstCancel), sDelInstDlg);
+
+          GTK_WIDGET_SET_FLAGS(cancelBtn, GTK_CAN_DEFAULT);
+          gtk_widget_grab_default(cancelBtn);
 
           snprintf(msg, sizeof(msg), currLC->GetMessage(), gCtx->opt->mDestination);
           msgPtr = msg;
@@ -963,7 +935,6 @@ nsSetupTypeDlg::DeleteOldInst()
                   FALSE, FALSE, 0);
           }
           gtk_widget_show_all(sDelInstDlg);
-          sDelInstUp = TRUE;
       
           err = E_OLD_INST;
           break;
@@ -979,30 +950,28 @@ nsSetupTypeDlg::DeleteInstDelete(GtkWidget *aWidget, gpointer aData)
 {
     DUMP("DeleteInstDelete");
 
-    char cwd[MAXPATHLEN];
+    if (!fork())
+    {
+        execlp("rm", "rm", "-rf", gCtx->opt->mDestination, NULL);
+        /* execlp shouldn't return, we need to exit in case it does */
+        _exit(0);
+    }
+    wait(NULL);
 
-    sDelInstUp = FALSE;
+    if (gCtx->opt->mMode == nsXIOptions::MODE_DEFAULT)
+    {
+       gtk_widget_destroy(sDelInstDlg);
+    }
 
-    getcwd(cwd, MAXPATHLEN);
-    chdir(gCtx->opt->mDestination);
-    system("rm -rf *");
-    chdir(cwd);
+    // We just deleted the directory, so the parent exists
+    // and we have appropriate perms.
+    mkdir(gCtx->opt->mDestination, 0755);
 
-    // hide this notebook page
-    gCtx->sdlg->Hide(nsXInstallerDlg::FORWARD_MOVE);
-
-    // disconnect this dlg's nav btn signal handlers
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
-    gtk_signal_disconnect(GTK_OBJECT(sBrowseBtn), sBrowseBtnID);
-
-    // show the final dlg
-    if (gCtx->opt->mSetupType == (gCtx->sdlg->GetNumSetupTypes() - 1))
-        gCtx->cdlg->Show(nsXInstallerDlg::FORWARD_MOVE);
-    else
-        gCtx->idlg->Show(nsXInstallerDlg::FORWARD_MOVE);
-
-    gtk_widget_destroy(sDelInstDlg);
+    if (gCtx->opt->mMode == nsXIOptions::MODE_DEFAULT)
+    {
+        // Try to move forward to installer dialog again.
+        nsSetupTypeDlg::Next((GtkWidget *)NULL, NULL);
+    }
 }
 
 void         
@@ -1010,7 +979,6 @@ nsSetupTypeDlg::DeleteInstCancel(GtkWidget *aWidget, gpointer aData)
 {
     DUMP("DeleteInstCancel");
 
-    sDelInstUp = FALSE;
     gtk_widget_destroy(sDelInstDlg);
 }
 
@@ -1041,7 +1009,7 @@ nsSetupTypeDlg::ConstructPath(char *aDest, char *aTrunk, char *aLeaf)
 int
 nsSetupTypeDlg::CheckDestEmpty()
 {
-    DUMP("DeleteOldInst");
+    DUMP("CheckDestEmpty");
 
     DIR *destDirD;
     struct dirent *de;
@@ -1082,7 +1050,7 @@ nsSetupTypeDlg::VerifyDiskSpace(void)
     int dsAvail, dsReqd;
     char dsAvailStr[128], dsReqdStr[128];
     char message[512];
-    GtkWidget *noDSDlg, *label, *okButton, *packer;
+    GtkWidget *noDSDlg, *label, *okButton;
 
     // find disk space available at destination
     dsAvail = DSAvailable();
@@ -1095,35 +1063,40 @@ nsSetupTypeDlg::VerifyDiskSpace(void)
 
     if (dsReqd > dsAvail)
     {
-        // throw up not enough ds dlg
-        sprintf(dsAvailStr, gCtx->Res("DS_AVAIL"), dsAvail);
-        sprintf(dsReqdStr, gCtx->Res("DS_REQD"), dsReqd);
-        sprintf(message, "%s\n%s\n\n%s", dsAvailStr, dsReqdStr, 
-                gCtx->Res("NO_DISK_SPACE"));
-
-        noDSDlg = gtk_dialog_new();
-        label = gtk_label_new(message);
-        okButton = gtk_button_new_with_label(gCtx->Res("OK_LABEL"));
-        packer = gtk_packer_new(); 
-
-        if (noDSDlg && label && okButton && packer)
+        if (gCtx->opt->mMode == nsXIOptions::MODE_DEFAULT)
         {
-            gtk_window_set_title(GTK_WINDOW(noDSDlg), gCtx->opt->mTitle);
-            gtk_window_set_position(GTK_WINDOW(noDSDlg), 
-                                    GTK_WIN_POS_CENTER);
-            gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
-            gtk_packer_set_default_border_width(GTK_PACKER(packer), 20);
-            gtk_packer_add_defaults(GTK_PACKER(packer), label, GTK_SIDE_BOTTOM,
-                                    GTK_ANCHOR_CENTER, GTK_FILL_X);
-            gtk_box_pack_start(GTK_BOX(
-                GTK_DIALOG(noDSDlg)->action_area), okButton,
-                FALSE, FALSE, 10);
-            gtk_signal_connect(GTK_OBJECT(okButton), "clicked", 
-                GTK_SIGNAL_FUNC(NoDiskSpaceOK), noDSDlg);
-            gtk_box_pack_start(GTK_BOX(
-                GTK_DIALOG(noDSDlg)->vbox), packer, FALSE, FALSE, 10);
+            // throw up not enough ds dlg
+            sprintf(dsAvailStr, gCtx->Res("DS_AVAIL"), dsAvail);
+            sprintf(dsReqdStr, gCtx->Res("DS_REQD"), dsReqd);
+            sprintf(message, "%s\n%s\n\n%s", dsAvailStr, dsReqdStr, 
+                    gCtx->Res("NO_DISK_SPACE"));
 
-            gtk_widget_show_all(noDSDlg);
+            noDSDlg = gtk_dialog_new();
+            gtk_window_set_modal(GTK_WINDOW(noDSDlg), TRUE);
+            label = gtk_label_new(message);
+            okButton = gtk_button_new_with_label(gCtx->Res("OK_LABEL"));
+
+            if (noDSDlg && label && okButton)
+            {
+                gtk_window_set_title(GTK_WINDOW(noDSDlg), gCtx->opt->mTitle);
+                gtk_window_set_position(GTK_WINDOW(noDSDlg), 
+                        GTK_WIN_POS_CENTER);
+                gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+                gtk_misc_set_padding(GTK_MISC(label), 20, 20);
+                gtk_misc_set_alignment(GTK_MISC(label), 0.5, 1);
+                gtk_box_pack_start(GTK_BOX(
+                        GTK_DIALOG(noDSDlg)->action_area), okButton,
+                        FALSE, FALSE, 10);
+                gtk_signal_connect(GTK_OBJECT(okButton), "clicked", 
+                        GTK_SIGNAL_FUNC(NoDiskSpaceOK), noDSDlg);
+                gtk_box_pack_start(GTK_BOX(
+                        GTK_DIALOG(noDSDlg)->vbox), label, FALSE, FALSE, 10);
+
+                GTK_WIDGET_SET_FLAGS(okButton, GTK_CAN_DEFAULT);
+                gtk_widget_grab_default(okButton);
+
+                gtk_widget_show_all(noDSDlg);
+            }
         }
 
         err = E_NO_DISK_SPACE;
@@ -1198,7 +1171,7 @@ nsSetupTypeDlg::DSRequired(void)
             dsReqd += currComp->GetArchiveSize();
         }
 
-        currComp = currComp->GetNext();
+        currComp = comps->GetNext();
     }
 
     return dsReqd;

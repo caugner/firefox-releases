@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -39,16 +39,15 @@
 #define __nsILookAndFeel
 #include "nsISupports.h"
 #include "nsColor.h"
-#include "nsFont.h"
 
   // for |#ifdef NS_DEBUG|
 struct nsSize;
 
 
-// {21B51DE1-21A3-11d2-B6E0-00805F8A2676}
+// {ED0B4802-9F50-4f69-9509-6949C69999E4}
 #define NS_ILOOKANDFEEL_IID \
-{ 0x21b51de1, 0x21a3, 0x11d2, \
-    { 0xb6, 0xe0, 0x0, 0x80, 0x5f, 0x8a, 0x26, 0x76 } }
+{ 0xed0b4802, 0x9f50, 0x4f69, \
+    { 0x95, 0x9, 0x69, 0x49, 0xc6, 0x99, 0x99, 0xe4 } }
 
 class nsILookAndFeel: public nsISupports {
 public:
@@ -114,15 +113,19 @@ public:
     eColor__moz_dialogtext,
     eColor__moz_dragtargetzone,				//used to highlight valid regions to drop something onto
 
+    eColor__moz_cellhighlight,                               //used to cell text background, selected but not focus
+    eColor__moz_cellhighlighttext,                           //used to cell text, selected but not focus
+    eColor__moz_buttonhoverface,                             //used to button text background, when mouse is over
+    eColor__moz_buttonhovertext,                             //used to button text, when mouse is over
+    eColor__moz_menuhover,                                   //used to menu item background, when mouse is over
+    eColor__moz_menuhovertext,                               //used to menu item text, when mouse is over
+
     //colours needed by Mac Classic skin
     eColor__moz_mac_focusring,				//ring around text fields and lists
     eColor__moz_mac_menuselect,				//colour used when mouse is over a menu item
     eColor__moz_mac_menushadow,				//colour used to do shadows on menu items
     eColor__moz_mac_menutextselect,			//colour used to display text while mouse is over a menu item
 
-    //colour needed by GTK2 Classic skin
-    eColor__moz_gtk2_hovertext,
-    
   	//all of the accent colours
   	eColor__moz_mac_accentlightesthighlight,
     eColor__moz_mac_accentregularhighlight,
@@ -161,8 +164,7 @@ public:
     eMetric_ListVerticalInsidePadding,                    // needed only because of GTK
 
     eMetric_CaretBlinkTime,                               // default, may be overriden by OS
-    eMetric_SingleLineCaretWidth,                         // pixel width of caret in a single line field
-    eMetric_MultiLineCaretWidth,                          // pixel width of caret in a multi-line field
+    eMetric_CaretWidth,                                   // pixel width of caret
     eMetric_ShowCaretDuringSelection,                       // show the caret when text is selected?
     eMetric_SelectTextfieldsOnKeyFocus,                   // select textfields when focused via tab/accesskey?
     eMetric_SubmenuDelay,                                 // delay before submenus open
@@ -170,6 +172,8 @@ public:
     eMetric_DragFullWindow,                               // show window contents while dragging?
     eMetric_DragThresholdX,                               // begin a drag if the mouse is moved further than the threshold while the button is down
     eMetric_DragThresholdY,
+    eMetric_UseAccessibilityTheme,                        // Accessibility theme being used?
+    eMetric_IsScreenReaderActive,                         // Screen reader being used?
 
     eMetric_ScrollArrowStyle,                             // position of scroll arrows in a scrollbar
     eMetric_ScrollSliderStyle,                            // is scroll thumb proportional or fixed?
@@ -178,7 +182,8 @@ public:
     eMetric_TreeCloseDelay,                               // delay for closing spring loaded folders
     eMetric_TreeLazyScrollDelay,                          // delay for triggering the tree scrolling
     eMetric_TreeScrollDelay,                              // delay for scrolling the tree
-    eMetric_TreeScrollLinesMax                            // the maximum number of lines to be scrolled at ones
+    eMetric_TreeScrollLinesMax,                           // the maximum number of lines to be scrolled at ones
+    eMetric_TabFocusModel                                 // What type of tab-order to use
   } nsMetricID;
 
   enum {

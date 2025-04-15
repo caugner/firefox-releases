@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -45,7 +45,6 @@
 #include "prtime.h"
 #include "prinrval.h"
 #include "nsVoidArray.h"
-#include "nsHashtable.h"
 #include "nsIScrollableView.h"
 #include "nsIRegion.h"
 #include "nsIBlender.h"
@@ -55,11 +54,12 @@
 
 class nsIRegion;
 class nsIEvent;
-class nsIPresContext;
 class nsISupportsArray;
 struct DisplayListElement2;
 struct DisplayZTreeNode;
 class BlendingBuffers;
+struct PLArenaPool;
+class nsHashtable;
 
 //Uncomment the following line to enable generation of viewmanager performance data.
 #ifdef MOZ_PERF_METRICS
@@ -92,10 +92,41 @@ class BlendingBuffers;
    fixed-position frames.
  */
 
+/**
+   Invalidation model:
+
+   1) Callers call into the view manager and ask it to update a view.
+   
+   2) The view manager finds the "right" widget for the view, henceforth called
+      the root widget.
+
+   3) The view manager traverses descendants of the root widget and for each
+      one that needs invalidation either
+
+      a)  Calls Invalidate() on the widget (no batching)
+    or
+      b)  Stores the rect to invalidate on the widget's view (batching)
+
+   // XXXbz we want to change this a bit.  See bug 243726
+
+   4) When batching, the call to end the batch either processes the pending
+      Invalidate() calls on the widgets or posts an event to do so.
+
+   It's important to note that widgets associated to views outside this view
+   manager can end up being invalidated during step 3.  Therefore, the end of a
+   view update batch really needs to traverse the entire view tree, to ensure
+   that those invalidates happen.
+
+   To cope with this, invalidate event processing and view update batch
+   handling should only happen on the root viewmanager.  This means the root
+   view manager is the only thing keeping track of mUpdateCnt.  As a result,
+   Composite() calls should also be forwarded to the root view manager.
+*/
+
 class nsZPlaceholderView : public nsView
 {
 public:
-  nsZPlaceholderView() : nsView() {}
+  nsZPlaceholderView(nsViewManager* aViewManager) : nsView(aViewManager) {}
 
   void RemoveReparentedView() { mReparentedView = nsnull; }
   void SetReparentedView(nsView* aView) { mReparentedView = aView; }
@@ -124,16 +155,18 @@ public:
 
   NS_IMETHOD  Init(nsIDeviceContext* aContext);
 
-  NS_IMETHOD  GetRootView(nsIView *&aView);
-  NS_IMETHOD  SetRootView(nsIView *aView, nsIWidget* aWidget=nsnull);
+  NS_IMETHOD_(nsIView*) CreateView(const nsRect& aBounds,
+                                   const nsIView* aParent,
+                                   nsViewVisibility aVisibilityFlag = nsViewVisibility_kShow);
 
-  NS_IMETHOD  GetWindowOffset(nscoord *aX, nscoord *aY);
-  NS_IMETHOD  SetWindowOffset(nscoord aX, nscoord aY);
+  NS_IMETHOD_(nsIScrollableView*) CreateScrollableView(const nsRect& aBounds,
+                                                       const nsIView* aParent);
+
+  NS_IMETHOD  GetRootView(nsIView *&aView);
+  NS_IMETHOD  SetRootView(nsIView *aView);
 
   NS_IMETHOD  GetWindowDimensions(nscoord *width, nscoord *height);
   NS_IMETHOD  SetWindowDimensions(nscoord width, nscoord height);
-
-  NS_IMETHOD  ResetScrolling(void);
 
   NS_IMETHOD  Composite(void);
 
@@ -196,19 +229,20 @@ public:
 
   NS_IMETHOD Display(nsIView *aView, nscoord aX, nscoord aY, const nsRect& aClipRect);
 
+  NS_IMETHOD RenderOffscreen(nsIView* aView, nsRect aRect, PRBool aUntrusted,
+                             PRBool aIgnoreViewportScrolling,
+                             nscolor aBackgroundColor,
+                             nsIRenderingContext** aRenderedContext);
+
   NS_IMETHOD AddCompositeListener(nsICompositeListener *aListener);
   NS_IMETHOD RemoveCompositeListener(nsICompositeListener *aListener);
 
-  NS_IMETHOD GetWidgetForView(nsIView *aView, nsIWidget **aWidget);
   NS_IMETHOD GetWidget(nsIWidget **aWidget);
-  nsIWidget* GetWidget() { return mRootWindow; }
+  nsIWidget* GetWidget() { return mRootView ? mRootView->GetWidget() : nsnull; }
   NS_IMETHOD ForceUpdate();
  
-  NS_IMETHOD IsCachingWidgetChanges(PRBool* aCaching);
-  NS_IMETHOD CacheWidgetChanges(PRBool aCache);
   NS_IMETHOD AllowDoubleBuffering(PRBool aDoubleBuffer);
   NS_IMETHOD IsPainting(PRBool& aIsPainting);
-  NS_IMETHOD FlushPendingInvalidates();
   NS_IMETHOD SetDefaultBackgroundColor(nscolor aColor);
   NS_IMETHOD GetDefaultBackgroundColor(nscolor* aColor);
   NS_IMETHOD GetLastUserEventTime(PRUint32& aTime);
@@ -231,27 +265,38 @@ public:
                                PRUint16 aMinTwips, 
                                nsRectVisibility *aRectVisibility);
 
+  NS_IMETHOD SynthesizeMouseMove(PRBool aFromScroll);
+  void ProcessSynthMouseMoveEvent(PRBool aFromScroll);
+
+  /* Update the cached RootViewManager pointer on this view manager. */
+  void InvalidateHierarchy();
+
 protected:
   virtual ~nsViewManager();
-  void ProcessPendingUpdates(nsView *aView);
 
 private:
+  void FlushPendingInvalidates();
+  void ProcessPendingUpdates(nsView *aView, PRBool aDoInvalidate);
   void ReparentChildWidgets(nsIView* aView, nsIWidget *aNewWidget);
   void ReparentWidgets(nsIView* aView, nsIView *aParent);
-  nsIRenderingContext *CreateRenderingContext(nsView &aView);
-  void AddRectToDirtyRegion(nsView* aView, const nsRect &aRect) const;
-
-  PRBool UpdateWidgetArea(nsView *aWidgetView, const nsRect &aDamagedRect, nsView* aIgnoreWidgetView);
+  already_AddRefed<nsIRenderingContext> CreateRenderingContext(nsView &aView);
+  void UpdateWidgetArea(nsView *aWidgetView, const nsRegion &aDamagedRegion,
+                        nsView* aIgnoreWidgetView);
 
   void UpdateViews(nsView *aView, PRUint32 aUpdateFlags);
 
   void Refresh(nsView *aView, nsIRenderingContext *aContext,
                nsIRegion *region, PRUint32 aUpdateFlags);
+  /**
+   * Refresh aView (which must be non-null) with our default background color
+   */
   void DefaultRefresh(nsView* aView, const nsRect* aRect);
   PRBool BuildRenderingDisplayList(nsIView* aRootView,
-    const nsRegion& aRegion, nsVoidArray* aDisplayList);
+    const nsRegion& aRegion, nsVoidArray* aDisplayList, PLArenaPool &aPool,
+    PRBool aIgnoreCoveringWidgets, PRBool aIgnoreOutsideClipping,
+    nsIView* aSuppressScrolling);
   void RenderViews(nsView *aRootView, nsIRenderingContext& aRC,
-                   const nsRegion& aRegion, nsDrawingSurface aRCSurface,
+                   const nsRegion& aRegion, nsIDrawingSurface* aRCSurface,
                    const nsVoidArray& aDisplayList);
 
   void RenderDisplayListElement(DisplayListElement2* element,
@@ -265,24 +310,29 @@ private:
                                           PRUint32 aUpdateFlags, nscoord aY1, nscoord aY2, PRBool aInCutOut);
 
   BlendingBuffers* CreateBlendingBuffers(nsIRenderingContext *aRC, PRBool aBorrowContext,
-                                         nsDrawingSurface aBorrowSurface, PRBool aNeedAlpha,
+                                         nsIDrawingSurface* aBorrowSurface, PRBool aNeedAlpha,
                                          const nsRect& aArea);
 
-  void ReparentViews(DisplayZTreeNode* aNode);
+  void ReparentViews(DisplayZTreeNode* aNode, nsHashtable &);
   void BuildDisplayList(nsView* aView, const nsRect& aRect, PRBool aEventProcessing,
-                        PRBool aCaptured, nsVoidArray* aDisplayList);
-  void BuildEventTargetList(nsVoidArray &aTargets, nsView* aView, nsGUIEvent* aEvent, PRBool aCaptured);
+                        PRBool aCaptured, nsIView* aSuppressScrolling,
+                        nsVoidArray* aDisplayList, PLArenaPool &aPool);
+  void BuildEventTargetList(nsVoidArray &aTargets, nsView* aView,
+                            nsGUIEvent* aEvent, PRBool aCaptured, PLArenaPool &aPool);
 
   PRBool CreateDisplayList(nsView *aView,
-                           PRBool aReparentedViewsPresent, DisplayZTreeNode* &aResult,
+                           DisplayZTreeNode* &aResult,
                            nscoord aOriginX, nscoord aOriginY,
                            nsView *aRealView, const nsRect *aDamageRect,
                            nsView *aTopView, nscoord aX, nscoord aY,
-                           PRBool aPaintFloats, PRBool aEventProcessing);
+                           PRBool aPaintFloats, PRBool aEventProcessing,
+                           nsIView* aSuppressClip,
+                           nsHashtable&, PLArenaPool &aPool);
   PRBool AddToDisplayList(nsView *aView,
                           DisplayZTreeNode* &aParent, nsRect &aClipRect,
                           nsRect& aDirtyRect, PRUint32 aFlags, nscoord aAbsX, nscoord aAbsY,
-                          PRBool aAssumeIntersection);
+                          PRBool aAssumeIntersection, PLArenaPool &aPool,
+                          nsIView* aStopClippingAtView);
   void OptimizeDisplayList(const nsVoidArray* aDisplayList, const nsRegion& aDirtyRegion,
                            nsRect& aFinalTransparentRect, nsRegion& aOpaqueRgn,
                            PRBool aTreatUniformAsOpaque);
@@ -306,6 +356,12 @@ private:
   // Utilities
 
   PRBool IsViewInserted(nsView *aView);
+
+  /**
+   * Function to recursively call Update() on all widgets belonging to
+   * a view or its kids.
+   */
+  void UpdateWidgetsForView(nsView* aView);
 
   /**
    * Returns the nearest parent view with an attached widget. Can be the
@@ -339,8 +395,6 @@ private:
 
   nsresult GetVisibleRect(nsRect& aVisibleRect);
 
-  nsresult ProcessWidgetChanges(nsView* aView);
-
   // Utilities used to size the offscreen drawing surface
 
   /**
@@ -358,27 +412,72 @@ private:
     nsRect newDim(0, 0, aWidth, aHeight);
     mRootView->GetDimensions(oldDim);
     if (oldDim != newDim) {
-      mRootView->SetDimensions(newDim);
+      // Don't resize the widget. It is already being set elsewhere.
+      mRootView->SetDimensions(newDim, PR_TRUE, PR_FALSE);
       if (mObserver)
         mObserver->ResizeReflow(mRootView, aWidth, aHeight);
     }
   }
 
+  // Safety helpers
+  void IncrementUpdateCount() {
+    NS_ASSERTION(IsRootVM(),
+                 "IncrementUpdateCount called on non-root viewmanager");
+    ++mUpdateCnt;
+  }
+
+  void DecrementUpdateCount() {
+    NS_ASSERTION(IsRootVM(),
+                 "DecrementUpdateCount called on non-root viewmanager");
+    --mUpdateCnt;
+  }
+
+  PRInt32 UpdateCount() const {
+    NS_ASSERTION(IsRootVM(),
+                 "DecrementUpdateCount called on non-root viewmanager");
+    return mUpdateCnt;
+  }
+
+  void ClearUpdateCount() {
+    NS_ASSERTION(IsRootVM(),
+                 "DecrementUpdateCount called on non-root viewmanager");
+    mUpdateCnt = 0;
+  }
+
+  PRBool IsPainting() const {
+    return RootViewManager()->mPainting;
+  }
+
+  void SetPainting(PRBool aPainting) {
+    RootViewManager()->mPainting = aPainting;
+  }
+
 public: // NOT in nsIViewManager, so private to the view module
   nsView* GetRootView() const { return mRootView; }
-  nsView* GetMouseEventGrabber() const { return mMouseGrabber; }
-	nsView* GetKeyEventGrabber() const { return mKeyGrabber; }
+  nsView* GetMouseEventGrabber() const {
+    return RootViewManager()->mMouseGrabber;
+  }
+  nsView* GetKeyEventGrabber() const { return mKeyGrabber; }
+  nsViewManager* RootViewManager() const { return mRootViewManager; }
+  PRBool IsRootVM() const { return this == RootViewManager(); }
 
   nsEventStatus HandleEvent(nsView* aView, nsGUIEvent* aEvent, PRBool aCaptured);
 
   /**
+   * Called to inform the view manager that a view is about to bit-blit.
+   * @param aView the view that will bit-blit
+   * @param aScrollAmount how much aView will scroll by
+   */
+  void WillBitBlit(nsView* aView, nsPoint aScrollAmount);
+  
+  /**
    * Called to inform the view manager that a view has scrolled.
    * The view manager will invalidate any widgets which may need
    * to be rerendered.
-   * @param aView view to paint. should be root view
-   * @param aUpdateFlags see bottom of nsIViewManager.h for description
+   * @param aView view to paint. should be the nsScrollPortView that
+   * got scrolled.
    */
-  void UpdateViewAfterScroll(nsIView *aView, PRInt32 aDX, PRInt32 aDY);
+  void UpdateViewAfterScroll(nsView *aView);
 
   PRBool CanScrollWithBitBlt(nsView* aView);
 
@@ -389,28 +488,58 @@ public: // NOT in nsIViewManager, so private to the view module
   // not be in this view manager).
   static nsPoint ComputeViewOffset(const nsView *aView);
 
+  PRBool IsRefreshEnabled() { return RootViewManager()->mRefreshEnabled; }
+
+  nsIViewObserver* GetViewObserver() { return mObserver; }
+
+  // Call this when you need to let the viewmanager know that it now has
+  // pending updates.
+  void PostPendingUpdate() { RootViewManager()->mHasPendingUpdates = PR_TRUE; }
 private:
   nsIDeviceContext  *mContext;
   float             mTwipsToPixels;
   float             mPixelsToTwips;
   nsIViewObserver   *mObserver;
-  nsIWidget         *mRootWindow;
-  PRBool            mRefreshEnabled;
-  PRBool            mPainting;
-  PRBool            mRecursiveRefreshPending;
-  nsView            *mMouseGrabber;
   nsView            *mKeyGrabber;
-  PRInt32           mUpdateCnt;
-  PRInt32           mUpdateBatchCnt;
   nsIScrollableView *mRootScrollable;
-  PRInt32           mCachingWidgetChanges;
   nscolor           mDefaultBackgroundColor;
+  nsPoint           mMouseLocation; // device units, relative to mRootView
 
   // The size for a resize that we delayed until the root view becomes
   // visible again.
   nsSize            mDelayedResize;
 
-  nsHashtable       mMapPlaceholderViewToZTreeNode;
+  nsCOMPtr<nsIBlender> mBlender;
+  nsISupportsArray  *mCompositeListeners;
+  nsCOMPtr<nsIFactory> mRegionFactory;
+  nsView            *mRootView;
+  // mRootViewManager is a strong ref unless it equals |this|.  It's
+  // never null (if we have no ancestors, it will be |this|).
+  nsViewManager     *mRootViewManager;
+  nsCOMPtr<nsIEventQueueService>  mEventQueueService;
+  nsCOMPtr<nsIEventQueue>         mSynthMouseMoveEventQueue;
+  PRPackedBool      mAllowDoubleBuffering;
+
+  // The following members should not be accessed directly except by
+  // the root view manager.  Some have accessor functions to enforce
+  // this, as noted.
+  
+  // Use GrabMouseEvents() and GetMouseEventGrabber() to access mMouseGrabber.
+  nsView            *mMouseGrabber;
+  // Use IncrementUpdateCount(), DecrementUpdateCount(), UpdateCount(),
+  // ClearUpdateCount() on the root viewmanager to access mUpdateCnt.
+  PRInt32           mUpdateCnt;
+  PRInt32           mUpdateBatchCnt;
+  PRUint32          mUpdateBatchFlags;
+  PRInt32           mScrollCnt;
+  nsCOMPtr<nsIEventQueue>         mInvalidateEventQueue;
+  // Use IsRefreshEnabled() to check the value of mRefreshEnabled.
+  PRPackedBool      mRefreshEnabled;
+  // Use IsPainting() and SetPainting() to access mPainting.
+  PRPackedBool      mPainting;
+  PRPackedBool      mRecursiveRefreshPending;
+  PRPackedBool      mHasPendingUpdates;
+  PRPackedBool      mInScroll;
 
   //from here to public should be static and locked... MMP
   static PRInt32           mVMCount;        //number of viewmanagers
@@ -421,20 +550,6 @@ private:
   //list of view managers
   static nsVoidArray       *gViewManagers;
 
-  nsCOMPtr<nsIBlender> mBlender;
-
-  nsISupportsArray  *mCompositeListeners;
-  void DestroyZTreeNode(DisplayZTreeNode* aNode);
-
-  nsCOMPtr<nsIFactory> mRegionFactory;
-protected:
-  nsView            *mRootView;
-  nscoord           mX;
-  nscoord           mY;
-  PRBool            mAllowDoubleBuffering;
-  PRBool            mHasPendingInvalidates;
-  nsCOMPtr<nsIEventQueueService>  mEventQueueService;
-  nsCOMPtr<nsIEventQueue>         mInvalidateEventQueue;
   void PostInvalidateEvent();
 
 #ifdef NS_VM_PERF_METRICS

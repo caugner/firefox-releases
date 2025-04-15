@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -25,16 +25,16 @@
  *   Boris Zbarsky <bzbarsky@mit.edu>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -46,6 +46,7 @@
 #include "nsColor.h"
 #include "nsCoord.h"
 #include "nsIDrawingSurface.h"
+#include <stdio.h>
 
 class nsIWidget;
 class nsIFontMetrics;
@@ -57,13 +58,11 @@ class nsIAtom;
 
 struct nsFont;
 struct nsPoint;
-struct nsPathPoint;
 struct nsRect;
 struct nsTextDimensions;
 #ifdef MOZ_MATHML
 struct nsBoundingMetrics;
 #endif
-
 
 /* gfx2 */
 class imgIContainer;
@@ -96,12 +95,9 @@ typedef enum
 
 // IID for the nsIRenderingContext interface
 #define NS_IRENDERING_CONTEXT_IID \
- { 0xa6cf9068, 0x15b3, 0x11d2,{0x93, 0x2e, 0x00, 0x80, 0x5f, 0x8a, 0xdd, 0x32}}
+ { 0xd91f728b, 0xd7f4, 0x4e19,{0x8b, 0xdd, 0x98, 0x99, 0x3f, 0xdf, 0xec, 0xc6}}
 
 //----------------------------------------------------------------------
-
-//a cross platform way of specifying a native rendering context
-typedef void * nsDrawingSurface;
 
 // RenderingContext interface
 class nsIRenderingContext : public nsISupports
@@ -126,7 +122,7 @@ public:
    * @param aSurface the surface to draw into
    * @result The result of the initialization, NS_Ok if no errors
    */
-  NS_IMETHOD Init(nsIDeviceContext* aContext, nsDrawingSurface aSurface) = 0;
+  NS_IMETHOD Init(nsIDeviceContext* aContext, nsIDrawingSurface* aSurface) = 0;
 
   /**
    * Reset the rendering context
@@ -166,13 +162,13 @@ public:
    *        if nsnull, the original drawing surface obtained at initialization
    *        should be selected.
    */
-  NS_IMETHOD SelectOffScreenDrawingSurface(nsDrawingSurface aSurface) = 0;
+  NS_IMETHOD SelectOffScreenDrawingSurface(nsIDrawingSurface* aSurface) = 0;
 
   /**
    * Get the currently selected drawing surface
    * @param aSurface out parameter for the current drawing surface
    */
-  NS_IMETHOD GetDrawingSurface(nsDrawingSurface *aSurface) = 0;
+  NS_IMETHOD GetDrawingSurface(nsIDrawingSurface* *aSurface) = 0;
 
   /**
    * Returns in aResult any rendering hints that the context has.
@@ -187,10 +183,8 @@ public:
 
   /**
    * Get and and set RenderingContext to this graphical state
-   * @return if PR_TRUE, indicates that the clipping region after
-   *         popping state is empty, else PR_FALSE
    */
-  NS_IMETHOD PopState(PRBool &aClipEmpty) = 0;
+  NS_IMETHOD PopState(void) = 0;
 
   /**
    * Tells if a given rectangle is visible within the rendering context
@@ -205,9 +199,8 @@ public:
    * @param aRect The rectangle to set the clipping rectangle to
    * @param aCombine how to combine this rect with the current clip region.
    *        see the bottom of nsIRenderingContext.h
-   * @return PR_TRUE if the clip region is now empty, else PR_FALSE
    */
-  NS_IMETHOD SetClipRect(const nsRect& aRect, nsClipCombine aCombine, PRBool &aClipEmpty) = 0;
+  NS_IMETHOD SetClipRect(const nsRect& aRect, nsClipCombine aCombine) = 0;
 
   /**
    * Gets the bounds of the clip region of the RenderingContext. The bounds are returned
@@ -254,9 +247,8 @@ public:
    * @param aRegion The region to set the clipping area to, IN DEVICE COORDINATES
    * @param aCombine how to combine this region with the current clip region.
    *        see the bottom of nsIRenderingContext.h
-   * @return PR_TRUE if the clip region is now empty, else PR_FALSE
    */
-  NS_IMETHOD SetClipRegion(const nsIRegion& aRegion, nsClipCombine aCombine, PRBool &aClipEmpty) = 0;
+  NS_IMETHOD SetClipRegion(const nsIRegion& aRegion, nsClipCombine aCombine) = 0;
 
   /**
    * Gets a copy of the current clipping region for the RenderingContext
@@ -321,6 +313,28 @@ public:
    */
   NS_IMETHOD Scale(float aSx, float aSy) = 0;
 
+  struct PushedTranslation {
+    float mSavedX, mSavedY;
+  };
+
+  class AutoPushTranslation {
+    nsIRenderingContext* mCtx;
+    PushedTranslation mPushed;
+  public:
+    AutoPushTranslation(nsIRenderingContext* aCtx, nscoord aX, nscoord aY)
+      : mCtx(aCtx) {
+      mCtx->PushTranslation(&mPushed);
+      mCtx->Translate(aX, aY);
+    }
+    ~AutoPushTranslation() {
+      mCtx->PopTranslation(&mPushed);
+    }
+  };
+
+  NS_IMETHOD PushTranslation(PushedTranslation* aState) = 0;
+
+  NS_IMETHOD PopTranslation(PushedTranslation* aState) = 0;
+
   /** 
    * Get the current transformation matrix for the RenderingContext
    * @return The transformation matrix for the RenderingContext
@@ -335,15 +349,15 @@ public:
    *                if nsnull then a bitmap will not be created and associated
    *                with the new drawing surface
    * @param aSurfFlags see bottom of nsIRenderingContext.h
-   * @return A nsDrawingSurface
+   * @return A nsIDrawingSurface*
    */
-  NS_IMETHOD CreateDrawingSurface(const nsRect& aBounds, PRUint32 aSurfFlags, nsDrawingSurface &aSurface) = 0;
+  NS_IMETHOD CreateDrawingSurface(const nsRect& aBounds, PRUint32 aSurfFlags, nsIDrawingSurface* &aSurface) = 0;
 
   /**
    * Destroy a drawing surface created by CreateDrawingSurface()
    * @param aDS A drawing surface to destroy
    */
-  NS_IMETHOD DestroyDrawingSurface(nsDrawingSurface aDS) = 0;
+  NS_IMETHOD DestroyDrawingSurface(nsIDrawingSurface* aDS) = 0;
 
   /**
    * Draw a line
@@ -353,16 +367,6 @@ public:
    * @param aY1 end vertical coord in twips
    */
   NS_IMETHOD DrawLine(nscoord aX0, nscoord aY0, nscoord aX1, nscoord aY1) = 0;
-
-
-  /**
-   * Draw a line without being transformed
-   * @param aXO starting horiztonal coord in twips
-   * @param aY0 starting vertical coord in twips
-   * @param aX1 end horiztonal coord in twips
-   * @param aY1 end vertical coord in twips
-   */
-  NS_IMETHOD DrawStdLine(nscoord aX0, nscoord aY0, nscoord aX1, nscoord aY1) = 0;
 
   /**
    * Draw a polyline
@@ -442,20 +446,6 @@ public:
   NS_IMETHOD FillPolygon(const nsPoint aPoints[], PRInt32 aNumPoints) = 0;
 
   /**
-   * Rasterize a polygon with the current fill color.
-   * @param aPoints points to use for the drawing, last must equal first
-   * @param aNumPonts number of points in the polygon
-   */
-  NS_IMETHOD RasterPolygon(const nsPoint aPoints[], PRInt32 aNumPoints)=0;
-
-  /**
-   * Fill a poly in the current foreground color, without transformation taking place
-   * @param aPoints points to use for the drawing, last must equal first
-   * @param aNumPonts number of points in the polygon
-   */
-  NS_IMETHOD FillStdPolygon(const nsPoint aPoints[], PRInt32 aNumPoints) = 0;
-
-  /**
    * Draw an ellipse in the current foreground color
    * @param aRect The rectangle define bounds of ellipse to draw
    */
@@ -488,8 +478,8 @@ public:
   /**
    * Draw an arc in the current forground color
    * @param aRect The rectangle define bounds of ellipse to use
-   * @param aStartAngle the starting angle of the arc, in the ellipse
-   * @param aEndAngle The ending angle of the arc, in the ellipse
+   * @param aStartAngle the starting angle of the arc, in degrees
+   * @param aEndAngle The ending angle of the arc, in degrees
    */
   NS_IMETHOD DrawArc(const nsRect& aRect,
                      float aStartAngle, float aEndAngle) = 0;
@@ -500,8 +490,8 @@ public:
    * @param aY Vertical top Coordinate in twips
    * @param aWidth Width of horizontal axis in twips
    * @param aHeight Height of vertical axis in twips
-   * @param aStartAngle the starting angle of the arc, in the ellipse
-   * @param aEndAngle The ending angle of the arc, in the ellipse
+   * @param aStartAngle the starting angle of the arc, in degrees
+   * @param aEndAngle The ending angle of the arc, in degrees
    */
   NS_IMETHOD DrawArc(nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight,
                      float aStartAngle, float aEndAngle) = 0;
@@ -509,8 +499,8 @@ public:
   /**
    * Fill an arc in the current forground color
    * @param aRect The rectangle define bounds of ellipse to use
-   * @param aStartAngle the starting angle of the arc, in the ellipse
-   * @param aEndAngle The ending angle of the arc, in the ellipse
+   * @param aStartAngle the starting angle of the arc, in degrees
+   * @param aEndAngle The ending angle of the arc, in degrees
    */
   NS_IMETHOD FillArc(const nsRect& aRect,
                      float aStartAngle, float aEndAngle) = 0;
@@ -521,8 +511,8 @@ public:
    * @param aY Vertical top Coordinate in twips
    * @param aWidth Width of horizontal axis in twips
    * @param aHeight Height of vertical axis in twips
-   * @param aStartAngle the starting angle of the arc, in the ellipse
-   * @param aEndAngle The ending angle of the arc, in the ellipse
+   * @param aStartAngle the starting angle of the arc, in degrees
+   * @param aEndAngle The ending angle of the arc, in degrees
    */
   NS_IMETHOD FillArc(nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight,
                      float aStartAngle, float aEndAngle) = 0;
@@ -700,28 +690,6 @@ public:
   NS_IMETHOD DrawString(const nsString& aString, nscoord aX, nscoord aY,
                         PRInt32 aFontID = -1,
                         const nscoord* aSpacing = nsnull) = 0;
-  /**
-   * Draw a path.. given a point array.  The Path currently supported is a Quadratic
-   * Bezier curve
-   * @param aPointArray an array of points on the path
-   * @param aNumPoints number of points in the array
-   * @param aY0 starting y
-   * @param aX1 ending x
-   * @param aY1 ending y
-   * @param aWidth tile width
-   * @param aHeight tile height
-   */
-  NS_IMETHOD DrawPath(nsPathPoint aPointArray[],PRInt32 aNumPts) = 0;
-
-
-  /**
-   * fill a path.. given a point array.  The Path currently supported is a Quadratic
-   * Bezier curve
-   * @param aPointArray an array of points on the path
-   * @param aNumPts number of points in the array
-   */
-  NS_IMETHOD FillPath(nsPathPoint aPointArray[],PRInt32 aNumPts) = 0;
-
 
   /**
    * Copy offscreen pixelmap to this RenderingContext.
@@ -731,7 +699,7 @@ public:
    * @param aDestBounds Destination rectangle to copy to
    * @param aCopyFlags see below
    */
-  NS_IMETHOD CopyOffScreenBits(nsDrawingSurface aSrcSurf, PRInt32 aSrcX, PRInt32 aSrcY,
+  NS_IMETHOD CopyOffScreenBits(nsIDrawingSurface* aSrcSurf, PRInt32 aSrcX, PRInt32 aSrcY,
                                const nsRect &aDestBounds, PRUint32 aCopyFlags) = 0;
   //~~~
   NS_IMETHOD RetrieveCurrentNativeGraphicData(PRUint32 * ngd) = 0;
@@ -747,9 +715,10 @@ public:
    *
    * @param aRequestedSize size of the backbuffer area requested
    * @param aMaxSize maximum size that may be requested for the backbuffer
+   * @param aForBlending parameter telling if the buffer will be used for blending
    * @param aBackbuffer drawing surface used as the backbuffer
    */
-  NS_IMETHOD GetBackbuffer(const nsRect &aRequestedSize, const nsRect &aMaxSize, nsDrawingSurface &aBackbuffer) = 0;
+  NS_IMETHOD GetBackbuffer(const nsRect &aRequestedSize, const nsRect &aMaxSize, PRBool aForBlending, nsIDrawingSurface* &aBackbuffer) = 0;
 
   /**
    * Release a drawing surface used as the backbuffer
@@ -808,11 +777,16 @@ public:
    */
   NS_IMETHOD SetRightToLeftText(PRBool aIsRTL) = 0;
 
-  /* [noscript] void drawImage (in imgIContainer aImage, [const] in nsRect aSrcRect, [const] in nsPoint aDestPoint); */
-  NS_IMETHOD DrawImage(imgIContainer *aImage, const nsRect * aSrcRect, const nsPoint * aDestPoint) = 0;
-
-  /* [noscript] void drawScaledImage (in imgIContainer aImage, [const] in nsRect aSrcRect, [const] in nsRect aDestRect); */
-  NS_IMETHOD DrawScaledImage(imgIContainer *aImage, const nsRect * aSrcRect, const nsRect * aDestRect) = 0;
+  /**
+   *  Draw a portion of an image, scaling it to fit within a specified rect.
+   *  @param aImage     The image to draw
+   *  @param aSrcRect   The rect (in twips) of the image to draw.
+   *                    [x,y] denotes the top left corner of the region.
+   *  @param aDestRect  The device context rect (in twips) that the image
+   *                    portion should occupy. [x,y] denotes the top left corner.
+   *                    [height,width] denotes the desired image size.
+   */
+  NS_IMETHOD DrawImage(imgIContainer *aImage, const nsRect & aSrcRect, const nsRect & aDestRect) = 0;
 
   /*
    * Tiles an image over an area
@@ -824,6 +798,101 @@ public:
   NS_IMETHOD DrawTile(imgIContainer *aImage,
                       nscoord aXImageStart, nscoord aYImageStart,
                       const nsRect * aTargetRect) = 0;
+
+
+  /**
+   * Get cluster details for a chunk of text.
+   *
+   * This will fill in the aClusterStarts array with information about
+   * what characters are the start of clusters for display.  The
+   * information is just a bitfield that is set to 1 if the character
+   * is the start of a cluster.  aClusterStarts must already be
+   * allocated to at least aLength items in length.  Array index zero
+   * being set to one indicates that the first character is the
+   * beginning of a cluster.
+   *
+   * @param aText Text on which to get details.
+   * @param aLength Length of the text.
+   * @param aClusterStarts Array of ints that will be populated
+   *        with information about which characters are the starts
+   *        of clusters.
+   *
+   */
+  NS_IMETHOD GetClusterInfo(const PRUnichar *aText,
+                            PRUint32 aLength,
+                            PRUint8 *aClusterStarts) = 0;
+
+  /**
+   * Find the closest cursor position for a given x coordinate.
+   *
+   * This will find the closest byte index for a given x coordinate.
+   * This takes into account grapheme clusters and bidi text.
+   *
+   * @param aText Text on which to operate.
+   * @param aLength Length of the text.
+   * @param aPt the x/y position in the string to check.
+   *
+   * @return Index where the cursor falls.  If the return is zero,
+   *   it's before the first character, if it falls off the end of
+   *   the string it's the length of the string + 1.
+   *
+   */
+  virtual PRInt32 GetPosition(const PRUnichar *aText,
+                              PRUint32 aLength,
+                              nsPoint aPt) = 0;
+
+  /**
+   * Get the width for the specific range of a given string.
+   *
+   * This function is similar to other GetWidth functions, except that
+   * it gets the width for a part of the string instead of the entire
+   * string.  This is useful when you're interested in finding out the
+   * length of a chunk in the middle of the string.  Lots of languages
+   * require you to include surrounding information to accurately
+   * determine the length of a substring.
+   *
+   * @param aText Text on which to operate
+   * @param aLength Length of the text
+   * @param aStart Start index into the string
+   * @param aEnd End index into the string (inclusive)
+   * @param aWidth Returned with in app coordinates
+   *
+   */
+  NS_IMETHOD GetRangeWidth(const PRUnichar *aText,
+                           PRUint32 aLength,
+                           PRUint32 aStart,
+                           PRUint32 aEnd,
+                           PRUint32 &aWidth) = 0;
+
+  /**
+   * Get the width for the specific range of a given string.
+   *
+   * Same as GetRangeWidth for PRUnichar, but takes a char * as the
+   * text argument.
+   *
+   */
+  NS_IMETHOD GetRangeWidth(const char *aText,
+                           PRUint32 aLength,
+                           PRUint32 aStart,
+                           PRUint32 aEnd,
+                           PRUint32 &aWidth) = 0;
+
+  /**
+   * Render an encapsulated postscript object onto the current rendering
+   * surface.
+   *
+   * The EPS object must conform to the EPSF standard. See Adobe
+   * specification #5002, "Encapsulated PostScript File Format Specification"
+   * at <http://partners.adobe.com/asn/developer/pdfs/tn/5002.EPSF_Spec.pdf>.
+   * In particular, the EPS object must contain a BoundingBox comment.
+   *
+   * @param aRect  Rectangle in which to render the EPSF.
+   * @param aDataFile - plugin data stored in a file
+   * @return NS_OK for success, or a suitable error value.
+   *         NS_ERROR_NOT_IMPLEMENTED is returned if the rendering context
+   *         doesn't support rendering EPSF, 
+   */
+  NS_IMETHOD RenderEPS(const nsRect& aRect, FILE *aDataFile) = 0;
 };
 
 //modifiers for text rendering
@@ -865,6 +934,20 @@ public:
  * This bit, when set, indicates that gfx supports GetTextDimensions()
  */
 #define NS_RENDERING_HINT_FAST_MEASURE 0x10
+
+/**
+ * This bit, when set, indicates that the gfx supports describing
+ * cluster information in a string
+ */
+#define NS_RENDERING_HINT_TEXT_CLUSTERS 0x20
+
+/**
+ * This bit, when set, indicates that gfx performs glyph reordering of complex
+ * text after applying character or word spacing, and so expects to be passed
+ * text in logical order. When this bit is not set, gfx must be passed text in
+ * visual order if characters and word spacing are to be applied.
+ */
+#define NS_RENDERING_HINT_REORDER_SPACED_TEXT 0x40
 
 //flags for copy CopyOffScreenBits
 

@@ -1,11 +1,11 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Ben Goodger <ben@netscape.com> (Original Author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -64,9 +64,6 @@
  *                        URL. (Usually the charset of the current 
  *                        document when launching this window). 
  *   window.arguments[4]: The mode of operation. See notes for details.
- *   window.arguments[5]: If the mode is "addGroup", this is an array
- *                        of objects with name, URL and charset
- *                        properties, one for each group member.
  *   window.arguments[6]: If the bookmark should become a web panel.
  *
  * Mode of Operation Notes:
@@ -86,19 +83,11 @@
  *      Opens the dialog as in (1) above except the Name/Location section
  *      is hidden, and the dialog takes on the utility of a Folder chooser.
  *      Used when the user must select a Folder for some purpose. 
- * 4) "addGroup" (fifth open parameter = String("addGroup"))
- *      Opens the dialog like <default>, with a checkbox to select between
- *      filing a single bookmark or a group. For the single bookmark the
- *      values are taken from the name, URL and charset arguments.
- *      For the group, the values are taken from the sixth argument.
- *      This parameter can also be String("addGroup,group") where "group"
- *      specifies that the dialog starts in filing as a group.
  */
 
 var gFld_Name   = null;
 var gFld_URL    = null; 
 var gFolderTree = null;
-var gCB_AddGroup = null;
 
 var gBookmarkCharset = null;
 
@@ -112,11 +101,9 @@ function Startup()
   initBMService();
   gFld_Name = document.getElementById("name");
   gFld_URL = document.getElementById("url");
-  gCB_AddGroup = document.getElementById("addgroup");
   var bookmarkView = document.getElementById("bookmarks-view");
 
   var shouldSetOKButton = true;
-  var dialogElement = document.documentElement;
   if ("arguments" in window) {
     var ind;
     var folderItem = null;
@@ -131,14 +118,14 @@ function Startup()
       document.getElementById("bookmarknamegrid").setAttribute("hidden", "true");
       document.getElementById("createinseparator").setAttribute("hidden", "true");
       document.getElementById("nameseparator").setAttribute("hidden", "true");
-      sizeToContent();
-      dialogElement.setAttribute("title", dialogElement.getAttribute("title-selectFolder"));
+      sizeToFit();
+      document.title = document.documentElement.getAttribute("title-selectFolder");
       shouldSetOKButton = false;
       if (window.arguments[2])
         folderItem = RDF.GetResource(window.arguments[2]);
       if (folderItem) {
         ind = bookmarkView.treeBuilder.getIndexOfResource(folderItem);
-        bookmarkView.treeBoxObject.selection.select(ind);
+        bookmarkView.treeBoxObject.view.selection.select(ind);
       }
       break;
     case "newBookmark":
@@ -146,18 +133,6 @@ function Startup()
       if (window.arguments[2])
         gCreateInFolder = window.arguments[2];
       document.getElementById("folderbox").setAttribute("hidden", "true");
-      sizeToFit();
-      break;
-    case "addGroup":
-      document.getElementById("showaddgroup").setAttribute("hidden", "false");
-      setupFields();
-      sizeToFit();
-      break;
-    case "addGroup,group":
-      document.getElementById("showaddgroup").setAttribute("hidden", "false");
-      gCB_AddGroup.setAttribute("checked", "true");
-      setupFields();
-      toggleGroup();
       sizeToFit();
       break;
     default:
@@ -168,7 +143,7 @@ function Startup()
         folderItem = bookmarkView.rdf.GetResource(gCreateInFolder);
         if (folderItem) {
           ind = bookmarkView.treeBuilder.getIndexOfResource(folderItem);
-          bookmarkView.treeBoxObject.selection.select(ind);
+          bookmarkView.treeBoxObject.view.selection.select(ind);
         }
       }
     }
@@ -179,7 +154,7 @@ function Startup()
   if (document.getElementById("bookmarknamegrid").hasAttribute("hidden")) {
     bookmarkView.tree.focus();
     if (bookmarkView.currentIndex == -1)
-      bookmarkView.treeBoxObject.selection.select(0);
+      bookmarkView.treeBoxObject.view.selection.select(0);
   }
   else {
     gFld_Name.select();
@@ -211,7 +186,7 @@ function setupFields()
 function onFieldInput()
 {
   const ok = document.documentElement.getButton("accept");
-  ok.disabled = gFld_URL.value == "" && !addingGroup() ||
+  ok.disabled = gFld_URL.value == "" ||
                 gFld_Name.value == "";
 }    
 
@@ -239,26 +214,17 @@ function onOK()
       RDFC.Init(BMDS, rFolder);
     }
 
-    // if no URL was provided and we're not filing as a group, do nothing
-    if (!gFld_URL.value && !addingGroup())
+    // if no URL was provided, do nothing
+    if (!gFld_URL.value)
       return;
 
     var url, rSource;
-    if (addingGroup()) {
-      rSource = BMDS.createFolder(gFld_Name.value);
-      const groups  = window.arguments[5];
-      for (var i = 0; i < groups.length; ++i) {
-        url = getNormalizedURL(groups[i].url);
-        BMDS.createBookmarkInContainer(groups[i].name, url, null, null,
-                                       groups[i].charset, null, rSource, -1);
-      }
-    } else {
-      url = getNormalizedURL(gFld_URL.value);
-      rSource = BMDS.createBookmark(gFld_Name.value, url, null, null, gBookmarkCharset, false, "");
-      if (window.arguments.length > 4 && window.arguments[4] == "newBookmark") {
-        window.arguments[5].newBookmark = rSource;
-      }
-    }
+   
+    url = getNormalizedURL(gFld_URL.value);
+    rSource = BMDS.createBookmark(gFld_Name.value, url, null, null, gBookmarkCharset, false, "");
+    if (window.arguments.length > 4 && window.arguments[4] == "newBookmark") {
+      window.arguments[5].newBookmark = rSource;
+    }    
     var selection = BookmarksUtils.getSelectionFromResource(rSource);
     var target    = BookmarksUtils.getTargetFromFolder(rFolder);
     BookmarksUtils.insertAndCheckSelection("newbookmark", selection, target);
@@ -296,43 +262,3 @@ function createNewFolder ()
   BookmarksCommand.createNewFolder(target);
 }
 
-function useDefaultFolder ()
-{
-  var bookmarkView = document.getElementById("bookmarks-view");
-  var folder = BookmarksUtils.getNewBookmarkFolder();
-  var ind = bookmarkView.treeBuilder.getIndexOfResource(folder);
-  if (ind != -1) {
-    bookmarkView.tree.focus();
-    bookmarkView.treeBoxObject.selection.select(ind);
-  } else {
-    bookmarkView.treeBoxObject.selection.clearSelection();
-  }
-  gCreateInFolder = folder.Value;
-}
-
-var gOldNameValue = "";
-var gOldURLValue = "";
-
-function toggleGroup()
-{
-  // swap between single bookmark and group name
-  var temp = gOldNameValue;
-  gOldNameValue = gFld_Name.value;
-  gFld_Name.value = temp;
-
-  // swap between single bookmark and group url
-  temp = gOldURLValue;
-  gOldURLValue = gFld_URL.value;
-  gFld_URL.value = temp;
-  gFld_URL.disabled = gCB_AddGroup.getAttribute("checked") == "true";
-
-  gFld_Name.select();
-  gFld_Name.focus();
-  onFieldInput();
-}
-
-function addingGroup()
-{
-  const showAddGroup = document.getElementById("showaddgroup");
-  return showAddGroup.getAttribute("hidden") != "true" && gCB_AddGroup.getAttribute("checked") == "true";
-}

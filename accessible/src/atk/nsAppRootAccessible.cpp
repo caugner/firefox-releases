@@ -568,13 +568,13 @@ NS_IMETHODIMP nsAppRootAccessible::Shutdown()
 
 NS_IMETHODIMP nsAppRootAccessible::GetName(nsAString& _retval)
 {
-    _retval = NS_LITERAL_STRING("Mozilla");
+    _retval.AssignLiteral("Mozilla");
     return NS_OK;
 }
 
 NS_IMETHODIMP nsAppRootAccessible::GetDescription(nsAString& aDescription)
 {
-    aDescription = NS_LITERAL_STRING("Mozilla Root Accessible");
+    aDescription.AssignLiteral("Mozilla Root Accessible");
     return NS_OK;
 }
 
@@ -771,7 +771,8 @@ LoadGtkModule(GnomeAccessibilityModule& aModule)
         //try to load the module with "gtk-2.0/modules" appended
         char *curLibPath = PR_GetLibraryPath();
         nsCAutoString libPath(curLibPath);
-        MAI_LOG_DEBUG(("Current Lib path=%s\n", curLibPath));
+        libPath.Append(":/usr/lib");
+        MAI_LOG_DEBUG(("Current Lib path=%s\n", libPath.get()));
         PR_FreeLibraryName(curLibPath);
 
         PRInt16 loc1 = 0, loc2 = 0;

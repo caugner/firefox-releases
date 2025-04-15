@@ -1,11 +1,11 @@
 /* -*- Mode: c++; tab-width: 2; indent-tabs-mode: nil; -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -27,16 +27,16 @@
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -58,7 +58,6 @@
 #include "nsIWidget.h"
 #include "nsIEventQueueService.h"
 #include "nsIServiceManager.h"
-#include "nsICmdLineService.h"
 #include "nsIDragService.h"
 #include "nsIDragSessionXlib.h"
 #include "nsITimer.h"
@@ -68,7 +67,6 @@
 #define CHAR_BUF_SIZE 80
 
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
-static NS_DEFINE_CID(kCmdLineServiceCID, NS_COMMANDLINE_SERVICE_CID);
 static NS_DEFINE_IID(kCDragServiceCID,  NS_DRAGSERVICE_CID);
 
 /* nsAppShell static members */
@@ -177,17 +175,6 @@ NS_METHOD nsAppShell::Create(int* bac, char ** bav)
     int      argc = bac ? *bac : 0;
     char   **argv = bav;
     nsresult rv;
-
-    nsCOMPtr<nsICmdLineService> cmdLineArgs = do_GetService(kCmdLineServiceCID);
-    if (cmdLineArgs) {
-      rv = cmdLineArgs->GetArgc(&argc);
-      if(NS_FAILED(rv))
-        argc = bac ? *bac : 0;
-
-      rv = cmdLineArgs->GetArgv(&argv);
-      if(NS_FAILED(rv))
-        argv = bav;
-    }
 
     char        *displayName    = nsnull;
     Bool         synchronize    = False;
@@ -605,7 +592,7 @@ nsAppShell::HandleMotionNotifyEvent(XEvent *event, nsWidget *aWidget)
     HandleDragMotionEvent(event, aWidget);
   }
 
-  nsMouseEvent mevent(NS_MOUSE_MOVE, aWidget);
+  nsMouseEvent mevent(PR_TRUE, NS_MOUSE_MOVE, aWidget, nsMouseEvent::eReal);
   XEvent aEvent;
 
   mevent.point.x = event->xmotion.x;
@@ -636,7 +623,7 @@ nsAppShell::HandleButtonEvent(XEvent *event, nsWidget *aWidget)
 {
   PRUint32 eventType = 0;
   PRBool currentlyDragging = mDragging;
-  nsMouseScrollEvent scrollEvent(NS_MOUSE_SCROLL, aWidget);
+  nsMouseScrollEvent scrollEvent(PR_TRUE, NS_MOUSE_SCROLL, aWidget);
 
   PR_LOG(XlibWidgetsLM, PR_LOG_DEBUG, ("Button event for window 0x%lx button %d type %s\n",
                                        event->xany.window,
@@ -695,7 +682,7 @@ nsAppShell::HandleButtonEvent(XEvent *event, nsWidget *aWidget)
     break;
   }
 
-  nsMouseEvent mevent(eventType, aWidget);
+  nsMouseEvent mevent(PR_TRUE, eventType, aWidget, nsMouseEvent::eReal);
   mevent.isShift = mShiftDown;
   mevent.isControl = mCtrlDown;
   mevent.isAlt = mAltDown;
@@ -788,7 +775,7 @@ nsAppShell::HandleConfigureNotifyEvent(XEvent *event, nsWidget *aWidget)
     }
   }
 
-  nsSizeEvent sevent(NS_SIZE, aWidget);
+  nsSizeEvent sevent(PR_TRUE, NS_SIZE, aWidget);
   sevent.windowSize = new nsRect (event->xconfigure.x, event->xconfigure.y,
                                   event->xconfigure.width, event->xconfigure.height);
   sevent.point.x = event->xconfigure.x;
@@ -888,7 +875,7 @@ nsAppShell::HandleKeyPressEvent(XEvent *event, nsWidget *aWidget)
     return;
   }
 
-  nsKeyEvent keyEvent(NS_KEY_DOWN, focusWidget);
+  nsKeyEvent keyEvent(PR_TRUE, NS_KEY_DOWN, focusWidget);
 
   XComposeStatus compose;
 
@@ -908,9 +895,9 @@ nsAppShell::HandleKeyPressEvent(XEvent *event, nsWidget *aWidget)
   //         event->xkey.keycode,
   //         keyEvent.keyCode);
 
-  focusWidget->DispatchKeyEvent(keyEvent);
+  PRBool noDefault = focusWidget->DispatchKeyEvent(keyEvent);
 
-  nsKeyEvent pressEvent(NS_KEY_PRESS, focusWidget);
+  nsKeyEvent pressEvent(PR_TRUE, NS_KEY_PRESS, focusWidget);
   pressEvent.keyCode = nsKeyCode::ConvertKeySymToVirtualKey(keysym);
   pressEvent.charCode = nsConvertCharCodeToUnicode(&event->xkey);
   pressEvent.time = event->xkey.time;
@@ -918,9 +905,11 @@ nsAppShell::HandleKeyPressEvent(XEvent *event, nsWidget *aWidget)
   pressEvent.isControl = (event->xkey.state & ControlMask) ? 1 : 0;
   pressEvent.isAlt = (event->xkey.state & Mod1Mask) ? 1 : 0;
   pressEvent.isMeta = (event->xkey.state & Mod1Mask) ? 1 : 0;
+  if (noDefault) {   // If default prevented on keydown, do same for keypress
+    pressEvent.flags |= NS_EVENT_FLAG_NO_DEFAULT;
+  }
 
   focusWidget->DispatchKeyEvent(pressEvent);
-
 }
 
 void
@@ -959,7 +948,7 @@ nsAppShell::HandleKeyReleaseEvent(XEvent *event, nsWidget *aWidget)
     return;
   }
 
-  nsKeyEvent keyEvent(NS_KEY_UP, aWidget);
+  nsKeyEvent keyEvent(PR_TRUE, NS_KEY_UP, aWidget);
 
   keyEvent.keyCode = nsKeyCode::ConvertKeySymToVirtualKey(keysym);
   keyEvent.time = event->xkey.time;
@@ -982,7 +971,7 @@ nsAppShell::HandleFocusInEvent(XEvent *event, nsWidget *aWidget)
 {
   PR_LOG(XlibWidgetsLM, PR_LOG_DEBUG, ("FocusIn event for window 0x%lx\n",
                                        event->xfocus.window));
-  nsFocusEvent focusEvent(NS_GOTFOCUS, aWidget);
+  nsFocusEvent focusEvent(PR_TRUE, NS_GOTFOCUS, aWidget);
   
   NS_ADDREF(aWidget);
   aWidget->DispatchWindowEvent(focusEvent);
@@ -994,7 +983,7 @@ nsAppShell::HandleFocusOutEvent(XEvent *event, nsWidget *aWidget)
 {
   PR_LOG(XlibWidgetsLM, PR_LOG_DEBUG, ("FocusOut event for window 0x%lx\n",
                                        event->xfocus.window));
-  nsFocusEvent focusEvent(NS_LOSTFOCUS, aWidget);
+  nsFocusEvent focusEvent(PR_TRUE, NS_LOSTFOCUS, aWidget);
 
   NS_ADDREF(aWidget);
   aWidget->DispatchWindowEvent(focusEvent);
@@ -1024,6 +1013,9 @@ nsAppShell::HandleEnterEvent(XEvent *event, nsWidget *aWidget)
   PR_LOG(XlibWidgetsLM, PR_LOG_DEBUG, ("Enter event for window 0x%lx\n",
                                        event->xcrossing.window));
 
+  if (event->xcrossing.subwindow != None)
+    return;
+
   if(is_wm_ungrab_enter(&event->xcrossing))
     return;
 
@@ -1031,7 +1023,8 @@ nsAppShell::HandleEnterEvent(XEvent *event, nsWidget *aWidget)
     HandleDragEnterEvent(event, aWidget);
   }
 
-  nsMouseEvent enterEvent(NS_MOUSE_ENTER, aWidget);
+  nsMouseEvent enterEvent(PR_TRUE, NS_MOUSE_ENTER, aWidget,
+                          nsMouseEvent::eReal);
 
   enterEvent.time = event->xcrossing.time;
   enterEvent.point.x = nscoord(event->xcrossing.x);
@@ -1052,6 +1045,9 @@ nsAppShell::HandleLeaveEvent(XEvent *event, nsWidget *aWidget)
   PR_LOG(XlibWidgetsLM, PR_LOG_DEBUG, ("Leave event for window 0x%lx\n",
                                        event->xcrossing.window));
 
+  if (event->xcrossing.subwindow != None)
+    return;
+
   if(is_wm_grab_leave(&event->xcrossing))
     return;
 
@@ -1059,7 +1055,8 @@ nsAppShell::HandleLeaveEvent(XEvent *event, nsWidget *aWidget)
     HandleDragLeaveEvent(event, aWidget);
   }
 
-  nsMouseEvent leaveEvent(NS_MOUSE_EXIT, aWidget);
+  nsMouseEvent leaveEvent(PR_TRUE, NS_MOUSE_EXIT, aWidget,
+                          nsMouseEvent::eReal);
 
   leaveEvent.time = event->xcrossing.time;
   leaveEvent.point.x = nscoord(event->xcrossing.x);
@@ -1123,7 +1120,7 @@ void nsAppShell::HandleClientMessageEvent(XEvent *event, nsWidget *aWidget)
 
 void nsAppShell::HandleSelectionRequestEvent(XEvent *event, nsWidget *aWidget)
 {
-  nsGUIEvent ev(0, aWidget);
+  nsGUIEvent ev(PR_TRUE, 0, aWidget);
 
   ev.nativeMsg = (void *)event;
 
@@ -1146,7 +1143,8 @@ void nsAppShell::HandleDragMotionEvent(XEvent *event, nsWidget *aWidget) {
   if (currentlyDragging) {
     dragServiceXlib->UpdatePosition(event->xmotion.x, event->xmotion.y);
 
-    nsMouseEvent mevent(NS_DRAGDROP_OVER, aWidget);
+    nsMouseEvent mevent(PR_TRUE, NS_DRAGDROP_OVER, aWidget,
+                        nsMouseEvent::eReal);
     mevent.point.x = event->xmotion.x;
     mevent.point.y = event->xmotion.y;
 
@@ -1170,7 +1168,8 @@ void nsAppShell::HandleDragEnterEvent(XEvent *event, nsWidget *aWidget) {
   }
 
   if (currentlyDragging) {
-    nsMouseEvent enterEvent(NS_DRAGDROP_ENTER, aWidget);
+    nsMouseEvent enterEvent(PR_TRUE, NS_DRAGDROP_ENTER, aWidget,
+                            nsMouseEvent::eReal);
   
     enterEvent.point.x = event->xcrossing.x;
     enterEvent.point.y = event->xcrossing.y;
@@ -1197,7 +1196,8 @@ void nsAppShell::HandleDragLeaveEvent(XEvent *event, nsWidget *aWidget) {
   }
 
   if (currentlyDragging) {
-    nsMouseEvent leaveEvent(NS_DRAGDROP_EXIT, aWidget);
+    nsMouseEvent leaveEvent(PR_TRUE, NS_DRAGDROP_EXIT, aWidget,
+                            nsMouseEvent::eReal);
   
     leaveEvent.point.x = event->xcrossing.x;
     leaveEvent.point.y = event->xcrossing.y;
@@ -1224,7 +1224,8 @@ void nsAppShell::HandleDragDropEvent(XEvent *event, nsWidget *aWidget) {
   }
 
   if (currentlyDragging) {
-    nsMouseEvent mevent(NS_DRAGDROP_DROP, aWidget);
+    nsMouseEvent mevent(PR_TRUE, NS_DRAGDROP_DROP, aWidget,
+                        nsMouseEvent::eReal);
     mevent.point.x = event->xbutton.x;
     mevent.point.y = event->xbutton.y;
   
@@ -1238,7 +1239,7 @@ void nsAppShell::HandleDragDropEvent(XEvent *event, nsWidget *aWidget) {
 
 void nsAppShell::ForwardEvent(XEvent *event, nsWidget *aWidget)
 {
-  nsGUIEvent ev(0, aWidget);
+  nsGUIEvent ev(PR_TRUE, 0, aWidget);
   ev.nativeMsg = (void *)event;
 
   aWidget->DispatchWindowEvent(ev);

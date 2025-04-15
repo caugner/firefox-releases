@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   David Hyatt <hyatt@netscape.com> (Original Author)
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -57,9 +56,12 @@
 #include "nsXBLProtoImplMethod.h"
 #include "nsXBLProtoImplField.h"
 #include "nsXBLPrototypeBinding.h"
+#include "nsContentUtils.h"
 #include "nsIConsoleService.h"
 #include "nsIScriptError.h"
-#include "nsIStringBundle.h"
+#include "nsNodeInfoManager.h"
+#include "nsINodeInfo.h"
+#include "nsIPrincipal.h"
 
 nsresult
 NS_NewXBLContentSink(nsIXMLContentSink** aResult,
@@ -122,6 +124,7 @@ nsXBLContentSink::FlushText(PRBool aCreateTextNode,
 
   const nsASingleFragmentString& text = Substring(mText, mText+mTextLength);
   if (mState == eXBL_InHandlers) {
+    NS_ASSERTION(mBinding, "Must have binding here");
     // Get the text and add it to the event handler.
     if (mSecondaryState == eXBL_InHandler)
       mHandler->AppendHandlerText(text);
@@ -131,25 +134,22 @@ nsXBLContentSink::FlushText(PRBool aCreateTextNode,
     return NS_OK;
   }
   else if (mState == eXBL_InImplementation) {
+    NS_ASSERTION(mBinding, "Must have binding here");
     if (mSecondaryState == eXBL_InConstructor ||
         mSecondaryState == eXBL_InDestructor) {
-      // Construct a handler for the constructor/destructor.
-      // XXXdwh This is just awful.  These used to be handlers called
-      // BindingAttached and BindingDetached, and they're still implemented
-      // using handlers.  At some point, we need to change these to just
-      // be special functions on the class instead.
-      nsXBLPrototypeHandler* handler;
+      // Construct a method for the constructor/destructor.
+      nsXBLProtoImplMethod* method;
       if (mSecondaryState == eXBL_InConstructor)
-        handler = mBinding->GetConstructor();
+        method = mBinding->GetConstructor();
       else
-        handler = mBinding->GetDestructor();
+        method = mBinding->GetDestructor();
 
       // Get the text and add it to the constructor/destructor.
-      handler->AppendHandlerText(text);
+      method->AppendBodyText(text);
     }
     else if (mSecondaryState == eXBL_InGetter ||
              mSecondaryState == eXBL_InSetter) {
-      // Get the text and add it to the constructor/destructor.
+      // Get the text and add it to the getter/setter
       if (mSecondaryState == eXBL_InGetter)
         mProperty->AppendGetterText(text);
       else
@@ -245,44 +245,28 @@ nsXBLContentSink::ReportUnexpectedElement(nsIAtom* aElementName,
   nsAutoString elementName;
   aElementName->ToString(elementName);
 
-  nsresult rv;
-  nsCOMPtr<nsIConsoleService> consoleService =
-    do_GetService(NS_CONSOLESERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIScriptError> errorObject =
-    do_CreateInstance(NS_SCRIPTERROR_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIStringBundleService> stringBundleService =
-    do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIStringBundle> bundle;
-  rv = stringBundleService->CreateBundle(
-           "chrome://global/locale/xbl.properties", getter_AddRefs(bundle));
-  NS_ENSURE_SUCCESS(rv, rv);
-
   const PRUnichar* params[] = { elementName.get() };
-  
-  nsXPIDLString errorText;
-  rv = bundle->FormatStringFromName(NS_LITERAL_STRING("UnexpectedElement").get(),
-                                    params, NS_ARRAY_LENGTH(params),
-                                    getter_Copies(errorText));
-  NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCAutoString documentURI;
-  mDocumentURI->GetSpec(documentURI);
-  
-  rv = errorObject->Init(errorText.get(),
-                         NS_ConvertUTF8toUCS2(documentURI).get(),
-                         EmptyString().get(), /* source line */
-                         aLineNumber,
-                         0,  /* column number */
-                         nsIScriptError::errorFlag,
-                         "XBL Content Sink");
+  return nsContentUtils::ReportToConsole(nsContentUtils::eXBL_PROPERTIES,
+                                         "UnexpectedElement",
+                                         params, NS_ARRAY_LENGTH(params),
+                                         mDocumentURI,
+                                         EmptyString() /* source line */,
+                                         aLineNumber, 0 /* column number */,
+                                         nsIScriptError::errorFlag,
+                                         "XBL Content Sink");
+}
 
-  NS_ENSURE_SUCCESS(rv, rv);
-  
-  return consoleService->LogMessage(errorObject);
+void
+nsXBLContentSink::AddMember(nsXBLProtoImplMember* aMember)
+{
+  // Add this member to our chain.
+  if (mImplMember)
+    mImplMember->SetNext(aMember); // Already have a chain. Just append to the end.
+  else
+    mImplementation->SetMemberList(aMember); // We're the first member in the chain.
+
+  mImplMember = aMember; // Adjust our pointer to point to the new last member in the chain.
 }
 
 NS_IMETHODIMP 
@@ -297,12 +281,12 @@ nsXBLContentSink::HandleStartElement(const PRUnichar *aName,
     return rv;
 
   if (mState == eXBL_InBinding && !mBinding) {
-    // XXX need to return nsresult here.  Need error-handling in this
-    // file in general.
-    ConstructBinding();
-    if (!mBinding) {
-      return NS_ERROR_UNEXPECTED;
-    }
+    rv = ConstructBinding();
+    if (NS_FAILED(rv))
+      return rv;
+    
+    // mBinding may still be null, if the binding had no id.  If so,
+    // we'll deal with that later in the sink.
   }
 
   return rv;
@@ -314,54 +298,64 @@ nsXBLContentSink::HandleEndElement(const PRUnichar *aName)
   FlushText();
 
   if (mState != eXBL_InDocument) {
-    nsCOMPtr<nsIAtom> nameSpacePrefix, tagAtom;
+    PRInt32 nameSpaceID;
+    nsCOMPtr<nsIAtom> prefix, localName;
+    nsContentUtils::SplitExpatName(aName, getter_AddRefs(prefix),
+                                   getter_AddRefs(localName), &nameSpaceID);
 
-    SplitXMLName(nsDependentString(aName), getter_AddRefs(nameSpacePrefix),
-                 getter_AddRefs(tagAtom));
-
-    PRInt32 nameSpaceID = GetNameSpaceId(nameSpacePrefix);
     if (nameSpaceID == kNameSpaceID_XBL) {
-      if (mState == eXBL_InHandlers) {
-        if (tagAtom == nsXBLAtoms::handlers) {
+      if (mState == eXBL_Error) {
+        // Check whether we've opened this tag before; we may not have if
+        // it was a real XBL tag before the error occured.
+        if (!GetCurrentContent()->GetNodeInfo()->Equals(localName,
+                                                        nameSpaceID)) {
+          // OK, this tag was never opened as far as the XML sink is
+          // concerned.  Just drop the HandleEndElement
+          return NS_OK;
+        }
+      }
+      else if (mState == eXBL_InHandlers) {
+        if (localName == nsXBLAtoms::handlers) {
           mState = eXBL_InBinding;
           mHandler = nsnull;
         }
-        else if (tagAtom == nsXBLAtoms::handler)
+        else if (localName == nsXBLAtoms::handler)
           mSecondaryState = eXBL_None;
         return NS_OK;
       }
       else if (mState == eXBL_InResources) {
-        if (tagAtom == nsXBLAtoms::resources)
+        if (localName == nsXBLAtoms::resources)
           mState = eXBL_InBinding;
         return NS_OK;
       }
       else if (mState == eXBL_InImplementation) {
-        if (tagAtom == nsXBLAtoms::implementation)
+        if (localName == nsXBLAtoms::implementation)
           mState = eXBL_InBinding;
-        else if (tagAtom == nsXBLAtoms::property) {
+        else if (localName == nsXBLAtoms::property) {
           mSecondaryState = eXBL_None;
           mProperty = nsnull;
         }
-        else if (tagAtom == nsXBLAtoms::method) {
+        else if (localName == nsXBLAtoms::method) {
           mSecondaryState = eXBL_None;
           mMethod = nsnull;
         }
-        else if (tagAtom == nsXBLAtoms::field) {
+        else if (localName == nsXBLAtoms::field) {
           mSecondaryState = eXBL_None;
           mField = nsnull;
         }
-        else if (tagAtom == nsXBLAtoms::constructor ||
-                 tagAtom == nsXBLAtoms::destructor)
+        else if (localName == nsXBLAtoms::constructor ||
+                 localName == nsXBLAtoms::destructor)
           mSecondaryState = eXBL_None;
-        else if (tagAtom == nsXBLAtoms::getter ||
-                 tagAtom == nsXBLAtoms::setter)
+        else if (localName == nsXBLAtoms::getter ||
+                 localName == nsXBLAtoms::setter)
           mSecondaryState = eXBL_InProperty;
-        else if (tagAtom == nsXBLAtoms::parameter ||
-                 tagAtom == nsXBLAtoms::body)
+        else if (localName == nsXBLAtoms::parameter ||
+                 localName == nsXBLAtoms::body)
           mSecondaryState = eXBL_InMethod;
         return NS_OK;
       }
-      else if (mState == eXBL_InBindings && tagAtom == nsXBLAtoms::bindings) {
+      else if (mState == eXBL_InBindings &&
+               localName == nsXBLAtoms::bindings) {
         mState = eXBL_InDocument;
       }
       
@@ -369,10 +363,12 @@ nsXBLContentSink::HandleEndElement(const PRUnichar *aName)
       if (NS_FAILED(rv))
         return rv;
 
-      if (mState == eXBL_InBinding && tagAtom == nsXBLAtoms::binding) {
+      if (mState == eXBL_InBinding && localName == nsXBLAtoms::binding) {
         mState = eXBL_InBindings;
-        mBinding->Initialize();
-        mBinding = nsnull; // Clear our current binding ref.
+        if (mBinding) {  // See comment in HandleStartElement()
+          mBinding->Initialize();
+          mBinding = nsnull; // Clear our current binding ref.
+        }
       }
 
       return NS_OK;
@@ -391,6 +387,11 @@ nsXBLContentSink::HandleCDataSection(const PRUnichar *aData,
   return nsXMLContentSink::HandleCDataSection(aData, aLength);
 }
 
+#define ENSURE_XBL_STATE(_cond)                                                       \
+  PR_BEGIN_MACRO                                                                      \
+    if (!(_cond)) { ReportUnexpectedElement(aTagName, aLineNumber); return PR_TRUE; } \
+  PR_END_MACRO
+
 PRBool 
 nsXBLContentSink::OnOpenContainer(const PRUnichar **aAtts, 
                                   PRUint32 aAttsCount, 
@@ -402,171 +403,198 @@ nsXBLContentSink::OnOpenContainer(const PRUnichar **aAtts,
     return PR_TRUE;
   }
   
-  PRBool ret = PR_TRUE;
-  if (aNameSpaceID == kNameSpaceID_XBL) {
-    if (aTagName == nsXBLAtoms::bindings) {
-      if (mState != eXBL_InDocument) {
-        ReportUnexpectedElement(aTagName, aLineNumber);
-        return PR_TRUE;
-      }
-      
-      NS_NewXBLDocumentInfo(mDocument, &mDocInfo);
-      if (!mDocInfo) {
-        mState = eXBL_Error;
-        return PR_TRUE;
-      }
-
-      mDocument->GetBindingManager()->PutXBLDocumentInfo(mDocInfo);
-
-      nsIURI *uri = mDocument->GetDocumentURI();
-      
-      PRBool isChrome = PR_FALSE;
-      PRBool isRes = PR_FALSE;
-
-      uri->SchemeIs("chrome", &isChrome);
-      uri->SchemeIs("resource", &isRes);
-      mIsChromeOrResource = isChrome || isRes;
-      
-      nsIXBLDocumentInfo* info = mDocInfo;
-      NS_RELEASE(info); // We keep a weak ref. We've created a cycle between doc/binding manager/doc info.
-      mState = eXBL_InBindings; 
-    }
-    else if (aTagName == nsXBLAtoms::binding) {
-      if (mState != eXBL_InBindings) {
-        ReportUnexpectedElement(aTagName, aLineNumber);
-        return PR_TRUE;
-      }
-      mState = eXBL_InBinding;
-    }
-    else if (aTagName == nsXBLAtoms::handlers) {
-      if (mState != eXBL_InBinding) {
-        ReportUnexpectedElement(aTagName, aLineNumber);
-        return PR_TRUE;
-      }
-      mState = eXBL_InHandlers;
-      ret = PR_FALSE; // The XML content sink should not do anything with <handlers>.
-    }
-    else if (aTagName == nsXBLAtoms::handler) {
-      if (mState != eXBL_InHandlers) {
-        ReportUnexpectedElement(aTagName, aLineNumber);
-        return PR_TRUE;
-      }
-      mSecondaryState = eXBL_InHandler;
-      ConstructHandler(aAtts, aLineNumber);
-      ret = PR_FALSE;
-    }
-    else if (aTagName == nsXBLAtoms::resources) {
-      if (mState != eXBL_InBinding) {
-        ReportUnexpectedElement(aTagName, aLineNumber);
-        return PR_TRUE;
-      }
-      mState = eXBL_InResources;
-      ret = PR_FALSE; // The XML content sink should ignore all <resources>.
-    }
-    else if (mState == eXBL_InResources) {
-      if (aTagName == nsXBLAtoms::stylesheet || aTagName == nsXBLAtoms::image)
-        ConstructResource(aAtts, aTagName);
-      ret = PR_FALSE; // The XML content sink should ignore everything within a <resources> block.
-    }
-    else if (aTagName == nsXBLAtoms::implementation) {
-      if (mState != eXBL_InBinding) {
-        ReportUnexpectedElement(aTagName, aLineNumber);
-        return PR_TRUE;
-      }
-      mState = eXBL_InImplementation;
-      ConstructImplementation(aAtts);
-      ret = PR_FALSE; // The XML content sink should ignore the <implementation>.
-    }
-    else if (mState == eXBL_InImplementation) {
-      if (aTagName == nsXBLAtoms::constructor) {
-        mSecondaryState = eXBL_InConstructor;
-        nsXBLPrototypeHandler* newHandler;
-        newHandler = new nsXBLPrototypeHandler(nsnull, nsnull, nsnull, nsnull,
-                                               nsnull, nsnull, nsnull, nsnull,
-                                               nsnull, nsnull, mBinding);
-        newHandler->SetEventName(nsXBLAtoms::constructor);
-        newHandler->SetLineNumber(aLineNumber);
-        mBinding->SetConstructor(newHandler);
-      }
-      else if (aTagName == nsXBLAtoms::destructor) {
-        mSecondaryState = eXBL_InDestructor;
-        nsXBLPrototypeHandler* newHandler;
-        newHandler = new nsXBLPrototypeHandler(nsnull, nsnull, nsnull, nsnull,
-                                               nsnull, nsnull, nsnull, nsnull,
-                                               nsnull, nsnull, mBinding);
-        newHandler->SetEventName(nsXBLAtoms::destructor);
-        newHandler->SetLineNumber(aLineNumber);
-        mBinding->SetDestructor(newHandler);
-      }
-      else if (aTagName == nsXBLAtoms::field) {
-        mSecondaryState = eXBL_InField;
-        ConstructField(aAtts, aLineNumber);
-      }
-      else if (aTagName == nsXBLAtoms::property) {
-        mSecondaryState = eXBL_InProperty;
-        ConstructProperty(aAtts);
-      }
-      else if (aTagName == nsXBLAtoms::getter) {
-        if (mSecondaryState == eXBL_InProperty && mProperty) {
-          mProperty->SetGetterLineNumber(aLineNumber);
-        }        
-        mSecondaryState = eXBL_InGetter;
-      }
-      else if (aTagName == nsXBLAtoms::setter) {
-        if (mSecondaryState == eXBL_InProperty && mProperty) {
-          mProperty->SetSetterLineNumber(aLineNumber);
-        }
-        mSecondaryState = eXBL_InSetter;
-      }
-      else if (aTagName == nsXBLAtoms::method) {
-        mSecondaryState = eXBL_InMethod;
-        ConstructMethod(aAtts);
-      }
-      else if (aTagName == nsXBLAtoms::parameter)
-        ConstructParameter(aAtts);
-      else if (aTagName == nsXBLAtoms::body) {
-        if (mSecondaryState == eXBL_InMethod && mMethod) {
-          // stash away the line number
-          mMethod->SetLineNumber(aLineNumber);
-        }
-        mSecondaryState = eXBL_InBody;
-      }
-
-      ret = PR_FALSE; // Ignore everything we encounter inside an <implementation> block.
-    }
+  if (aNameSpaceID != kNameSpaceID_XBL) {
+    // Construct non-XBL nodes
+    return PR_TRUE;
   }
 
-  return ret;
+  PRBool ret = PR_TRUE;
+  if (aTagName == nsXBLAtoms::bindings) {
+    ENSURE_XBL_STATE(mState == eXBL_InDocument);
+      
+    NS_NewXBLDocumentInfo(mDocument, &mDocInfo);
+    if (!mDocInfo) {
+      mState = eXBL_Error;
+      return PR_TRUE;
+    }
+
+    mDocument->BindingManager()->PutXBLDocumentInfo(mDocInfo);
+
+    nsIURI *uri = mDocument->GetDocumentURI();
+      
+    PRBool isChrome = PR_FALSE;
+    PRBool isRes = PR_FALSE;
+
+    uri->SchemeIs("chrome", &isChrome);
+    uri->SchemeIs("resource", &isRes);
+    mIsChromeOrResource = isChrome || isRes;
+      
+    nsIXBLDocumentInfo* info = mDocInfo;
+    NS_RELEASE(info); // We keep a weak ref. We've created a cycle between doc/binding manager/doc info.
+    mState = eXBL_InBindings;
+  }
+  else if (aTagName == nsXBLAtoms::binding) {
+    ENSURE_XBL_STATE(mState == eXBL_InBindings);
+    mState = eXBL_InBinding;
+  }
+  else if (aTagName == nsXBLAtoms::handlers) {
+    ENSURE_XBL_STATE(mState == eXBL_InBinding && mBinding);
+    mState = eXBL_InHandlers;
+    ret = PR_FALSE;
+  }
+  else if (aTagName == nsXBLAtoms::handler) {
+    ENSURE_XBL_STATE(mState == eXBL_InHandlers);
+    mSecondaryState = eXBL_InHandler;
+    ConstructHandler(aAtts, aLineNumber);
+    ret = PR_FALSE;
+  }
+  else if (aTagName == nsXBLAtoms::resources) {
+    ENSURE_XBL_STATE(mState == eXBL_InBinding && mBinding);
+    mState = eXBL_InResources;
+    // Note that this mState will cause us to return false, so no need
+    // to set ret to false.
+  }
+  else if (aTagName == nsXBLAtoms::stylesheet || aTagName == nsXBLAtoms::image) {
+    ENSURE_XBL_STATE(mState == eXBL_InResources);
+    NS_ASSERTION(mBinding, "Must have binding here");
+    ConstructResource(aAtts, aTagName);
+  }
+  else if (aTagName == nsXBLAtoms::implementation) {
+    ENSURE_XBL_STATE(mState == eXBL_InBinding && mBinding);
+    mState = eXBL_InImplementation;
+    ConstructImplementation(aAtts);
+    // Note that this mState will cause us to return false, so no need
+    // to set ret to false.
+  }
+  else if (aTagName == nsXBLAtoms::constructor) {
+    ENSURE_XBL_STATE(mState == eXBL_InImplementation &&
+                     mSecondaryState == eXBL_None);
+    NS_ASSERTION(mBinding, "Must have binding here");
+      
+    mSecondaryState = eXBL_InConstructor;
+    nsXBLProtoImplAnonymousMethod* newMethod =
+      new nsXBLProtoImplAnonymousMethod();
+    if (newMethod) {
+      newMethod->SetLineNumber(aLineNumber);
+      mBinding->SetConstructor(newMethod);
+      AddMember(newMethod);
+    }
+  }
+  else if (aTagName == nsXBLAtoms::destructor) {
+    ENSURE_XBL_STATE(mState == eXBL_InImplementation &&
+                     mSecondaryState == eXBL_None);
+    NS_ASSERTION(mBinding, "Must have binding here");
+    mSecondaryState = eXBL_InDestructor;
+    nsXBLProtoImplAnonymousMethod* newMethod =
+      new nsXBLProtoImplAnonymousMethod();
+    if (newMethod) {
+      newMethod->SetLineNumber(aLineNumber);
+      mBinding->SetDestructor(newMethod);
+      AddMember(newMethod);
+    }
+  }
+  else if (aTagName == nsXBLAtoms::field) {
+    ENSURE_XBL_STATE(mState == eXBL_InImplementation &&
+                     mSecondaryState == eXBL_None);
+    NS_ASSERTION(mBinding, "Must have binding here");
+    mSecondaryState = eXBL_InField;
+    ConstructField(aAtts, aLineNumber);
+  }
+  else if (aTagName == nsXBLAtoms::property) {
+    ENSURE_XBL_STATE(mState == eXBL_InImplementation &&
+                     mSecondaryState == eXBL_None);
+    NS_ASSERTION(mBinding, "Must have binding here");
+    mSecondaryState = eXBL_InProperty;
+    ConstructProperty(aAtts);
+  }
+  else if (aTagName == nsXBLAtoms::getter) {
+    ENSURE_XBL_STATE(mSecondaryState == eXBL_InProperty && mProperty);
+    NS_ASSERTION(mState == eXBL_InImplementation, "Unexpected state");
+    mProperty->SetGetterLineNumber(aLineNumber);
+    mSecondaryState = eXBL_InGetter;
+  }
+  else if (aTagName == nsXBLAtoms::setter) {
+    ENSURE_XBL_STATE(mSecondaryState == eXBL_InProperty && mProperty);
+    NS_ASSERTION(mState == eXBL_InImplementation, "Unexpected state");
+    mProperty->SetSetterLineNumber(aLineNumber);
+    mSecondaryState = eXBL_InSetter;
+  }
+  else if (aTagName == nsXBLAtoms::method) {
+    ENSURE_XBL_STATE(mState == eXBL_InImplementation &&
+                     mSecondaryState == eXBL_None);
+    NS_ASSERTION(mBinding, "Must have binding here");
+    mSecondaryState = eXBL_InMethod;
+    ConstructMethod(aAtts);
+  }
+  else if (aTagName == nsXBLAtoms::parameter) {
+    ENSURE_XBL_STATE(mSecondaryState == eXBL_InMethod && mMethod);
+    NS_ASSERTION(mState == eXBL_InImplementation, "Unexpected state");
+    ConstructParameter(aAtts);
+  }
+  else if (aTagName == nsXBLAtoms::body) {
+    ENSURE_XBL_STATE(mSecondaryState == eXBL_InMethod && mMethod);
+    NS_ASSERTION(mState == eXBL_InImplementation, "Unexpected state");
+    // stash away the line number
+    mMethod->SetLineNumber(aLineNumber);
+    mSecondaryState = eXBL_InBody;
+  }
+
+  return ret && mState != eXBL_InResources && mState != eXBL_InImplementation;
 }
 
-void 
+#undef ENSURE_XBL_STATE
+
+nsresult
 nsXBLContentSink::ConstructBinding()
 {
   nsCOMPtr<nsIContent> binding = GetCurrentContent();
   nsAutoString id;
   binding->GetAttr(kNameSpaceID_None, nsHTMLAtoms::id, id);
-  nsCAutoString cid; cid.AssignWithConversion(id);
+  NS_ConvertUTF16toUTF8 cid(id);
 
+  nsresult rv = NS_OK;
+  
   if (!cid.IsEmpty()) {
     mBinding = new nsXBLPrototypeBinding();
-    if (mBinding) {
-      if (NS_SUCCEEDED(mBinding->Init(cid, mDocInfo, binding))) {
-        mDocInfo->SetPrototypeBinding(cid, mBinding);
-        binding->UnsetAttr(kNameSpaceID_None, nsHTMLAtoms::id, PR_FALSE);
-      } else {
-        delete mBinding;
-        mBinding = nsnull;
-      }
+    if (!mBinding)
+      return NS_ERROR_OUT_OF_MEMORY;
+      
+    rv = mBinding->Init(cid, mDocInfo, binding);
+    if (NS_SUCCEEDED(rv)) {
+      mDocInfo->SetPrototypeBinding(cid, mBinding);
+      binding->UnsetAttr(kNameSpaceID_None, nsHTMLAtoms::id, PR_FALSE);
+    } else {
+      delete mBinding;
+      mBinding = nsnull;
     }
   }
+
+  return rv;
 }
 
+static PRBool
+FindValue(const PRUnichar **aAtts, nsIAtom *aAtom, const PRUnichar **aResult)
+{
+  nsCOMPtr<nsIAtom> prefix, localName;
+  for (; *aAtts; aAtts += 2) {
+    PRInt32 nameSpaceID;
+    nsContentUtils::SplitExpatName(aAtts[0], getter_AddRefs(prefix),
+                                   getter_AddRefs(localName), &nameSpaceID);
+
+    // Is this attribute one of the ones we care about?
+    if (nameSpaceID == kNameSpaceID_None && localName == aAtom) {
+      *aResult = aAtts[1];
+
+      return PR_TRUE;
+    }
+  }
+
+  return PR_FALSE;
+}
 
 void
 nsXBLContentSink::ConstructHandler(const PRUnichar **aAtts, PRUint32 aLineNumber)
 {
-  nsCOMPtr<nsIAtom> nameSpacePrefix, nameAtom;
-
   const PRUnichar* event          = nsnull;
   const PRUnichar* modifiers      = nsnull;
   const PRUnichar* button         = nsnull;
@@ -576,42 +604,45 @@ nsXBLContentSink::ConstructHandler(const PRUnichar **aAtts, PRUint32 aLineNumber
   const PRUnichar* phase          = nsnull;
   const PRUnichar* command        = nsnull;
   const PRUnichar* action         = nsnull;
+  const PRUnichar* group          = nsnull;
   const PRUnichar* preventdefault = nsnull;
+  const PRUnichar* allowuntrusted = nsnull;
 
+  nsCOMPtr<nsIAtom> prefix, localName;
   for (; *aAtts; aAtts += 2) {
-    // Get upper-cased key
+    PRInt32 nameSpaceID;
+    nsContentUtils::SplitExpatName(aAtts[0], getter_AddRefs(prefix),
+                                   getter_AddRefs(localName), &nameSpaceID);
 
-    SplitXMLName(nsDependentString(aAtts[0]), getter_AddRefs(nameSpacePrefix),
-                 getter_AddRefs(nameAtom));
-
-    if (nameSpacePrefix || nameAtom == nsLayoutAtoms::xmlnsNameSpace) {
+    if (nameSpaceID != kNameSpaceID_None) {
       continue;
     }
 
     // Is this attribute one of the ones we care about?
-    if (nameAtom == nsXBLAtoms::event)
+    if (localName == nsXBLAtoms::event)
       event = aAtts[1];
-    else if (nameAtom == nsXBLAtoms::modifiers)
+    else if (localName == nsXBLAtoms::modifiers)
       modifiers = aAtts[1];
-    else if (nameAtom == nsXBLAtoms::button)
+    else if (localName == nsXBLAtoms::button)
       button = aAtts[1];
-    else if (nameAtom == nsXBLAtoms::clickcount)
+    else if (localName == nsXBLAtoms::clickcount)
       clickcount = aAtts[1];
-    else if (nameAtom == nsXBLAtoms::keycode)
+    else if (localName == nsXBLAtoms::keycode)
       keycode = aAtts[1];
-    else if (nameAtom == nsXBLAtoms::key || nameAtom == nsXBLAtoms::charcode)
+    else if (localName == nsXBLAtoms::key || localName == nsXBLAtoms::charcode)
       charcode = aAtts[1];
-    else if (nameAtom == nsXBLAtoms::phase)
+    else if (localName == nsXBLAtoms::phase)
       phase = aAtts[1];
-    else if (nameAtom == nsXBLAtoms::command)
+    else if (localName == nsXBLAtoms::command)
       command = aAtts[1];
-    else if (nameAtom == nsXBLAtoms::action)
+    else if (localName == nsXBLAtoms::action)
       action = aAtts[1];
-    else if (nameAtom == nsXBLAtoms::preventdefault)
+    else if (localName == nsXBLAtoms::group)
+      group = aAtts[1];
+    else if (localName == nsXBLAtoms::preventdefault)
       preventdefault = aAtts[1];
-    else {
-       // Nope, it's some irrelevant attribute. Ignore it and move on.
-     }
+    else if (localName == nsXBLAtoms::allowuntrusted)
+      allowuntrusted = aAtts[1];
   }
 
   if (command && !mIsChromeOrResource)
@@ -619,23 +650,29 @@ nsXBLContentSink::ConstructHandler(const PRUnichar **aAtts, PRUint32 aLineNumber
     // shorthand syntax.
     return; // Don't even make this handler.
 
-  // All of our pointers are now filled in.  Construct our handler with all of these
-  // parameters.
+  // All of our pointers are now filled in. Construct our handler with all of
+  // these parameters.
   nsXBLPrototypeHandler* newHandler;
   newHandler = new nsXBLPrototypeHandler(event, phase, action, command,
                                          keycode, charcode, modifiers, button,
-                                         clickcount, preventdefault, mBinding);
+                                         clickcount, group, preventdefault,
+                                         allowuntrusted, mBinding);
 
   if (newHandler) {
     newHandler->SetLineNumber(aLineNumber);
     
     // Add this handler to our chain of handlers.
-    if (mHandler)
-      mHandler->SetNextHandler(newHandler); // Already have a chain. Just append to the end.
-    else
-      mBinding->SetPrototypeHandlers(newHandler); // We're the first handler in the chain.
-
-    mHandler = newHandler; // Adjust our mHandler pointer to point to the new last handler in the chain.
+    if (mHandler) {
+      // Already have a chain. Just append to the end.
+      mHandler->SetNextHandler(newHandler);
+    }
+    else {
+      // We're the first handler in the chain.
+      mBinding->SetPrototypeHandlers(newHandler);
+    }
+    // Adjust our mHandler pointer to point to the new last handler in the
+    // chain.
+    mHandler = newHandler;
   }
 }
 
@@ -646,23 +683,9 @@ nsXBLContentSink::ConstructResource(const PRUnichar **aAtts,
   if (!mBinding)
     return;
 
-  nsCOMPtr<nsIAtom> nameSpacePrefix, nameAtom;
-  for (; *aAtts; aAtts += 2) {
-    // Get upper-cased key
-    const nsDependentString key(aAtts[0]);
-
-    SplitXMLName(key, getter_AddRefs(nameSpacePrefix),
-                 getter_AddRefs(nameAtom));
-
-    if (nameSpacePrefix || nameAtom == nsLayoutAtoms::xmlnsNameSpace) {
-      continue;
-    }
-
-    // Is this attribute one of the ones we care about?
-    if (key.Equals(NS_LITERAL_STRING("src"))) {
-      mBinding->AddResource(aResourceType, nsDependentString(aAtts[1]));
-      break;
-    }
+  const PRUnichar* src = nsnull;
+  if (FindValue(aAtts, nsHTMLAtoms::src, &src)) {
+    mBinding->AddResource(aResourceType, nsDependentString(src));
   }
 }
 
@@ -676,24 +699,41 @@ nsXBLContentSink::ConstructImplementation(const PRUnichar **aAtts)
     return;
 
   const PRUnichar* name = nsnull;
-  
-  nsCOMPtr<nsIAtom> nameSpacePrefix, nameAtom;
-  for (; *aAtts; aAtts +=2) {
-    // Get upper-cased key
 
-    SplitXMLName(nsDependentString(aAtts[0]), getter_AddRefs(nameSpacePrefix),
-                 getter_AddRefs(nameAtom));
+  nsCOMPtr<nsIAtom> prefix, localName;
+  for (; *aAtts; aAtts += 2) {
+    PRInt32 nameSpaceID;
+    nsContentUtils::SplitExpatName(aAtts[0], getter_AddRefs(prefix),
+                                   getter_AddRefs(localName), &nameSpaceID);
 
-    if (nameSpacePrefix || nameAtom == nsLayoutAtoms::xmlnsNameSpace) {
+    if (nameSpaceID != kNameSpaceID_None) {
       continue;
     }
 
     // Is this attribute one of the ones we care about?
-    if (nameAtom == nsXBLAtoms::name) {
+    if (localName == nsXBLAtoms::name) {
       name = aAtts[1];
     }
-    else if (nameAtom == nsXBLAtoms::implements) {
-      mBinding->ConstructInterfaceTable(nsDependentString(aAtts[1]));
+    else if (localName == nsXBLAtoms::implements) {
+      // Only allow implementation of interfaces via XBL if the principal of
+      // our XBL document has UniversalXPConnect privileges.  No principal
+      // means no privs!
+      
+      nsIPrincipal* principal = mDocument->GetPrincipal();
+      if (principal) {
+        // XXX this api is so badly tied to JS it's not even funny.  We don't
+        // have a concept of enabling capabilities on a per-principal basis,
+        // but only on a per-principal-and-JS-stackframe basis!  So for now
+        // this is basically equivalent to testing that we have the system
+        // principal, since there is no JS stackframe in sight here...
+        PRBool hasUniversalXPConnect;
+        nsresult rv = principal->IsCapabilityEnabled("UniversalXPConnect",
+                                                     nsnull,
+                                                     &hasUniversalXPConnect);
+        if (NS_SUCCEEDED(rv) && hasUniversalXPConnect) {
+          mBinding->ConstructInterfaceTable(nsDependentString(aAtts[1]));
+        }
+      }
     }
   }
 
@@ -703,89 +743,77 @@ nsXBLContentSink::ConstructImplementation(const PRUnichar **aAtts)
 void
 nsXBLContentSink::ConstructField(const PRUnichar **aAtts, PRUint32 aLineNumber)
 {
-  nsCOMPtr<nsIAtom> nameSpacePrefix, nameAtom;
-
   const PRUnichar* name     = nsnull;
   const PRUnichar* readonly = nsnull;
-  
-  for (; *aAtts; aAtts += 2) {
-    // Get upper-cased key
-    SplitXMLName(nsDependentString(aAtts[0]), getter_AddRefs(nameSpacePrefix),
-                 getter_AddRefs(nameAtom));
 
-    if (nameSpacePrefix || nameAtom == nsLayoutAtoms::xmlnsNameSpace)
+  nsCOMPtr<nsIAtom> prefix, localName;
+  for (; *aAtts; aAtts += 2) {
+    PRInt32 nameSpaceID;
+    nsContentUtils::SplitExpatName(aAtts[0], getter_AddRefs(prefix),
+                                   getter_AddRefs(localName), &nameSpaceID);
+
+    if (nameSpaceID != kNameSpaceID_None) {
       continue;
+    }
 
     // Is this attribute one of the ones we care about?
-    if (nameAtom == nsXBLAtoms::name) {
+    if (localName == nsXBLAtoms::name) {
       name = aAtts[1];
     }
-    else if (nameAtom == nsXBLAtoms::readonly) {
+    else if (localName == nsXBLAtoms::readonly) {
       readonly = aAtts[1];
     }
   }
 
-  // All of our pointers are now filled in.  Construct our field with all of these
-  // parameters.
+  // All of our pointers are now filled in. Construct our field with all of
+  // these parameters.
   mField = new nsXBLProtoImplField(name, readonly);
   if (mField) {
     mField->SetLineNumber(aLineNumber);
-    
-    // Add this member to our chain.
-    if (mImplMember)
-      mImplMember->SetNext(mField); // Already have a chain. Just append to the end.
-    else
-      mImplementation->SetMemberList(mField); // We're the first member in the chain.
-
-    mImplMember = mField; // Adjust our pointer to point to the new last member in the chain.
+    AddMember(mField);
   }
 }
 
 void
 nsXBLContentSink::ConstructProperty(const PRUnichar **aAtts)
 {
-  nsCOMPtr<nsIAtom> nameSpacePrefix, nameAtom;
-
   const PRUnichar* name     = nsnull;
   const PRUnichar* readonly = nsnull;
   const PRUnichar* onget    = nsnull;
   const PRUnichar* onset    = nsnull;
-  
-  for (; *aAtts; aAtts += 2) {
-    // Get upper-cased key
-    SplitXMLName(nsDependentString(aAtts[0]), getter_AddRefs(nameSpacePrefix),
-                 getter_AddRefs(nameAtom));
 
-    if (nameSpacePrefix || nameAtom == nsLayoutAtoms::xmlnsNameSpace) {
+  nsCOMPtr<nsIAtom> prefix, localName;
+  for (; *aAtts; aAtts += 2) {
+    PRInt32 nameSpaceID;
+    nsContentUtils::SplitExpatName(aAtts[0], getter_AddRefs(prefix),
+                                   getter_AddRefs(localName), &nameSpaceID);
+
+    if (nameSpaceID != kNameSpaceID_None) {
       continue;
     }
 
     // Is this attribute one of the ones we care about?
-    if (nameAtom == nsXBLAtoms::name) {
+    if (localName == nsXBLAtoms::name) {
       name = aAtts[1];
     }
-    else if (nameAtom == nsXBLAtoms::readonly) {
+    else if (localName == nsXBLAtoms::readonly) {
       readonly = aAtts[1];
     }
-    else if (nameAtom == nsXBLAtoms::onget) {
+    else if (localName == nsXBLAtoms::onget) {
       onget = aAtts[1];
     }
-    else if (nameAtom == nsXBLAtoms::onset) {
+    else if (localName == nsXBLAtoms::onset) {
       onset = aAtts[1];
     }
   }
 
-  // All of our pointers are now filled in.  Construct our property with all of these
-  // parameters.
-  mProperty = new nsXBLProtoImplProperty(name, onget, onset, readonly);
-  if (mProperty) {
-    // Add this member to our chain.
-    if (mImplMember)
-      mImplMember->SetNext(mProperty); // Already have a chain. Just append to the end.
-    else
-      mImplementation->SetMemberList(mProperty); // We're the first member in the chain.
-
-    mImplMember = mProperty; // Adjust our pointer to point to the new last member in the chain.
+  if (name) {
+    // All of our pointers are now filled in. Construct our property with all of
+    // these parameters.
+    mProperty = new nsXBLProtoImplProperty(name, onget, onset, readonly);
+    if (mProperty) {
+      AddMember(mProperty);
+    }
   }
 }
 
@@ -794,32 +822,13 @@ nsXBLContentSink::ConstructMethod(const PRUnichar **aAtts)
 {
   mMethod = nsnull;
 
-  nsCOMPtr<nsIAtom> nameSpacePrefix, nameAtom;
-
-  for(; *aAtts; aAtts += 2) {
-    // Get upper-cased key
-    SplitXMLName(nsDependentString(aAtts[0]), getter_AddRefs(nameSpacePrefix),
-                 getter_AddRefs(nameAtom));
-
-    if (nameSpacePrefix || nameAtom == nsLayoutAtoms::xmlnsNameSpace) {
-      continue;
-    }
-
-    // Is this attribute one of the ones we care about?
-    if (nameAtom == nsXBLAtoms::name) {
-      mMethod = new nsXBLProtoImplMethod(aAtts[1]);
-      break;
-    }
+  const PRUnichar* name = nsnull;
+  if (FindValue(aAtts, nsXBLAtoms::name, &name)) {
+    mMethod = new nsXBLProtoImplMethod(name);
   }
 
   if (mMethod) {
-    // Add this member to our chain.
-    if (mImplMember)
-      mImplMember->SetNext(mMethod); // Already have a chain. Just append to the end.
-    else
-      mImplementation->SetMemberList(mMethod); // We're the first member in the chain.
-
-    mImplMember = mMethod; // Adjust our pointer to point to the new last member in the chain.
+    AddMember(mMethod);
   }
 }
 
@@ -829,22 +838,9 @@ nsXBLContentSink::ConstructParameter(const PRUnichar **aAtts)
   if (!mMethod)
     return;
 
-  nsCOMPtr<nsIAtom> nameSpacePrefix, nameAtom;
-
-  for (; *aAtts; aAtts += 2) {
-    // Get upper-cased key
-    SplitXMLName(nsDependentString(aAtts[0]), getter_AddRefs(nameSpacePrefix),
-                 getter_AddRefs(nameAtom));
-
-    if (nameSpacePrefix || nameAtom == nsLayoutAtoms::xmlnsNameSpace) {
-      continue;
-    }
-
-    // Is this attribute one of the ones we care about?
-    if (nameAtom == nsXBLAtoms::name) {
-      mMethod->AddParameter(nsDependentString(aAtts[1]));
-      break;
-    }
+  const PRUnichar* name = nsnull;
+  if (FindValue(aAtts, nsXBLAtoms::name, &name)) {
+    mMethod->AddParameter(nsDependentString(name));
   }
 }
 
@@ -914,38 +910,20 @@ nsXBLContentSink::AddAttributesToXULPrototype(const PRUnichar **aAtts,
   aElement->mNumAttributes = aAttsCount;
 
   // Copy the attributes into the prototype
-  nsCOMPtr<nsIAtom> nameSpacePrefix, nameAtom;
+  nsCOMPtr<nsIAtom> prefix, localName;
 
   PRUint32 i;  
   for (i = 0; i < aAttsCount; ++i) {
-    const nsDependentString key(aAtts[i * 2]);
-
-    SplitXMLName(key, getter_AddRefs(nameSpacePrefix),
-                 getter_AddRefs(nameAtom));
-
     PRInt32 nameSpaceID;
-
-    if (nameSpacePrefix)
-        nameSpaceID = GetNameSpaceId(nameSpacePrefix);
-    else {
-      if (nameAtom == nsLayoutAtoms::xmlnsNameSpace)
-        nameSpaceID = kNameSpaceID_XMLNS;
-      else
-        nameSpaceID = kNameSpaceID_None;
-    }
-
-    if (kNameSpaceID_Unknown == nameSpaceID) {
-      nameSpaceID = kNameSpaceID_None;
-      nameAtom = do_GetAtom(key);
-      nameSpacePrefix = nsnull;
-    } 
+    nsContentUtils::SplitExpatName(aAtts[i * 2], getter_AddRefs(prefix),
+                                   getter_AddRefs(localName), &nameSpaceID);
 
     if (nameSpaceID == kNameSpaceID_None) {
-      attrs[i].mName.SetTo(nameAtom);
+      attrs[i].mName.SetTo(localName);
     }
     else {
       nsCOMPtr<nsINodeInfo> ni;
-      mNodeInfoManager->GetNodeInfo(nameAtom, nameSpacePrefix, nameSpaceID,
+      mNodeInfoManager->GetNodeInfo(localName, prefix, nameSpaceID,
                                     getter_AddRefs(ni));
       attrs[i].mName.SetTo(ni);
     }

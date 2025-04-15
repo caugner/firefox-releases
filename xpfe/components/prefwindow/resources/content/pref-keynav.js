@@ -20,6 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s): Aaron Leventhal
+ *                 Asaf Romano
+ *                 Ian Neal
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -37,29 +39,29 @@
 
 const kTabToLinks = 4
 const kTabToForms = 2;
-parent.hPrefWindow.registerOKCallbackFunc(saveKeyNavPrefs);
 var gData;
 
-function initPrefs()
+function Startup()
 {
   gData = parent.hPrefWindow.wsm.dataManager.pageData["chrome://communicator/content/pref/pref-keynav.xul"];
 
-  if (!("tabNavPref" in gData)) {
-    // Textboxes are always part of the tab order
-    gData.tabNavPref = parent.hPrefWindow.getPref('int', 'accessibility.tabfocus') | 1;
-    gData.linksOnlyPref = parent.hPrefWindow.getPref('bool', 'accessibility.typeaheadfind.linksonly')? 1: 0;
+  if (!/Mac/.test(navigator.platform)) {
+    parent.hPrefWindow.registerOKCallbackFunc(saveKeyNavPrefs);
+    if (!("tabNavPref" in gData)) {
+      // Textboxes are always part of the tab order
+      gData.tabNavPref = parent.hPrefWindow.getPref('int', 'accessibility.tabfocus') | 1;
+      gData.tabNavLocked = parent.hPrefWindow.getPrefIsLocked('accessibility.tabfocus');
+    }
+    var tabNavigationLinks = document.getElementById('tabNavigationLinks');
+    tabNavigationLinks.checked = ((gData.tabNavPref & kTabToLinks) != 0);
+    tabNavigationLinks.disabled = gData.tabNavLocked;
+    var tabNavigationForms = document.getElementById('tabNavigationForms');
+    tabNavigationForms.checked = ((gData.tabNavPref & kTabToForms) != 0);
+    tabNavigationForms.disabled = gData.tabNavLocked;
   }
+  else
+    document.getElementById('tabNavigationPrefs').setAttribute("hidden", true);
 
-  document.getElementById('tabNavigationLinks').setChecked((gData.tabNavPref & kTabToLinks) != 0);
-  document.getElementById('tabNavigationForms').setChecked((gData.tabNavPref & kTabToForms) != 0);
-
-  // XXX todo: On the mac, only the links checkbox should be exposed.
-  //           Whether the other form controls are tabbable is a system setting
-  //           that we should adhere to.
-
-
-  var radioGroup = document.getElementById('findAsYouTypeAutoWhat');
-  radioGroup.selectedIndex = gData.linksOnlyPref;
   setLinksOnlyDisabled();
 }
 
@@ -67,14 +69,15 @@ function setLinksOnlyDisabled()
 {
   try {
     document.getElementById('findAsYouTypeAutoWhat').disabled = 
-     (document.getElementById('findAsYouTypeEnableAuto').checked == false);
+      (!document.getElementById('findAsYouTypeEnableAuto').checked ||
+       parent.hPrefWindow.getPrefIsLocked('accessibility.typeaheadfind.linksonly'));
   }
   catch(e) {}
 }
 
 function saveKeyNavPrefs()
 {
-  var data = parent.hPrefWindow.wsm.dataManager.pageData["chrome://communicator/content/pref/pref-keynav.xul"];
+  var data = parent.hPrefWindow.wsm.dataManager
+                   .pageData["chrome://communicator/content/pref/pref-keynav.xul"];
   parent.hPrefWindow.setPref("int", "accessibility.tabfocus", data.tabNavPref);
-  parent.hPrefWindow.setPref("bool", "accessibility.typeaheadfind.linksonly", data.linksOnlyPref == 1);
 }

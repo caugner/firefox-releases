@@ -1,6 +1,6 @@
-/.cvsignore/1.1/Wed Jan 27 05:09:44 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.18.26.1/Thu Oct  7 20:26:45 2004//TFIREFOX_1_0_RELEASE
-/jar.mn/1.33.6.3/Tue Oct  5 19:08:41 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Wed Jan 27 05:09:44 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.22/Mon Mar 28 18:48:55 2005//TFIREFOX_1_5_RELEASE
+/jar.mn/1.36.8.1/Tue Oct 11 09:44:36 2005//TFIREFOX_1_5_RELEASE
 D/public////
 D/resources////
 D/samples////

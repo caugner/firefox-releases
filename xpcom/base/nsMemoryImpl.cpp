@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,249 +22,44 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include "nsXPCOM.h"
 #include "nsMemoryImpl.h"
-#include "prmem.h"
-#include "nsAlgorithm.h"
-#include "nsIServiceManager.h"
-#include "nsIObserverService.h"
-#include "nsAutoLock.h"
-#include "nsIThread.h"
+
 #include "nsIEventQueueService.h"
+#include "nsIObserverService.h"
+#include "nsIRunnable.h"
+#include "nsIServiceManager.h"
+#include "nsISupportsArray.h"
+#include "nsIThread.h"
+
+#include "prmem.h"
+#include "plevent.h"
+
+#include "nsAlgorithm.h"
+#include "nsAutoLock.h"
+#include "nsCOMPtr.h"
 #include "nsString.h"
 
 #if defined(XP_WIN)
 #include <windows.h>
 #define NS_MEMORY_FLUSHER_THREAD
-#elif defined(XP_MAC)
-#include <MacMemory.h>
-#define NS_MEMORY_FLUSHER_THREAD
 #else
 // Need to implement the nsIMemory::IsLowMemory() predicate
 #undef NS_MEMORY_FLUSHER_THREAD
 #endif
-
-//----------------------------------------------------------------------
-
-#if defined(XDEBUG_waterson)
-#define NS_TEST_MEMORY_FLUSHER
-#endif
-
-/**
- * A runnable that is used to periodically check the status
- * of the system, determine if too much memory is in use,
- * and if so, trigger a "memory flush".
- */
-class MemoryFlusher : public nsIRunnable
-{
-protected:
-    nsMemoryImpl*  mMemoryImpl; // WEAK, it owns us.
-    PRBool         mRunning;
-    PRIntervalTime mTimeout;
-    PRLock*        mLock;
-    PRCondVar*     mCVar;
-    
-    MemoryFlusher(nsMemoryImpl* aMemoryImpl);
-
-    enum {
-        kInitialTimeout = 60 /*seconds*/
-    };
-
-private:
-    ~MemoryFlusher();
-
-public:
-    /**
-     * Create a memory flusher.
-     * @param aResult the memory flusher
-     * @param aMemoryImpl the owning nsMemoryImpl object
-     * @return NS_OK if the memory flusher was created successfully
-     */
-    static nsresult
-    Create(MemoryFlusher** aResult, nsMemoryImpl* aMemoryImpl);
-
-    NS_DECL_ISUPPORTS
-    NS_DECL_NSIRUNNABLE
-
-    /**
-     * Stop the memory flusher.
-     */
-    nsresult Stop();
-};
-
-
-MemoryFlusher::MemoryFlusher(nsMemoryImpl* aMemoryImpl)
-    : mMemoryImpl(aMemoryImpl),
-      mRunning(PR_FALSE),
-      mTimeout(PR_SecondsToInterval(kInitialTimeout)),
-      mLock(nsnull),
-      mCVar(nsnull)
-{
-}
-
-MemoryFlusher::~MemoryFlusher()
-{
-    if (mLock)
-        PR_DestroyLock(mLock);
-
-    if (mCVar)
-        PR_DestroyCondVar(mCVar);
-}
-
-
-nsresult
-MemoryFlusher::Create(MemoryFlusher** aResult, nsMemoryImpl* aMemoryImpl)
-{
-    MemoryFlusher* result = new MemoryFlusher(aMemoryImpl);
-    if (! result)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    do {
-        if ((result->mLock = PR_NewLock()) == nsnull)
-            break;
-        
-        if ((result->mCVar = PR_NewCondVar(result->mLock)) == nsnull)
-            break;
-
-        NS_ADDREF(*aResult = result);
-        return NS_OK;
-    } while (0);
-
-    // Something bad happened if we get here...
-    delete result;
-    return NS_ERROR_OUT_OF_MEMORY;
-}
-
-NS_IMPL_THREADSAFE_ISUPPORTS1(MemoryFlusher, nsIRunnable)
-
-NS_IMETHODIMP
-MemoryFlusher::Run()
-{
-    nsresult rv;
-
-    mRunning = PR_TRUE;
-
-    while (1) {
-        PRStatus status;
-
-        {
-            nsAutoLock l(mLock);
-            if (! mRunning) {
-                rv = NS_OK;
-                break;
-            }
-
-            status = PR_WaitCondVar(mCVar, mTimeout);
-        }
-
-        if (status != PR_SUCCESS) {
-            rv = NS_ERROR_FAILURE;
-            break;
-        }
-
-        if (! mRunning) {
-            rv = NS_OK;
-            break;
-        }
-
-        PRBool isLowMemory;
-        rv = mMemoryImpl->IsLowMemory(&isLowMemory);
-        if (NS_FAILED(rv))
-            break;
-
-#ifdef NS_TEST_MEMORY_FLUSHER
-        // Fire the flusher *every* time
-        isLowMemory = PR_TRUE;
-#endif
-
-        if (isLowMemory) {
-            mMemoryImpl->FlushMemory(NS_LITERAL_STRING("low-memory").get(), PR_FALSE);
-        }
-    }
-
-    mRunning = PR_FALSE;
-
-    return rv;
-}
-
-
-nsresult
-MemoryFlusher::Stop()
-{
-    if (mRunning) {
-        nsAutoLock l(mLock);
-        mRunning = PR_FALSE;
-        PR_NotifyCondVar(mCVar);
-    }
-
-    return NS_OK;
-}
-
-//----------------------------------------------------------------------
-
-nsMemoryImpl* gMemory = nsnull;
-
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsMemoryImpl, nsIMemory)
-
-NS_METHOD
-nsMemoryImpl::Create(nsISupports* outer, const nsIID& aIID, void* *aInstancePtr)
-{
-    NS_ENSURE_ARG_POINTER(aInstancePtr);
-    NS_ENSURE_PROPER_AGGREGATION(outer, aIID);
-    if (gMemory && NS_SUCCEEDED(gMemory->QueryInterface(aIID, aInstancePtr)))
-        return NS_OK;
-
-    nsMemoryImpl* mm = new nsMemoryImpl();
-    if (mm == NULL)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    nsresult rv;
-
-    do {
-        rv = mm->QueryInterface(aIID, aInstancePtr);
-        if (NS_FAILED(rv))
-            break;
-
-        rv = NS_ERROR_OUT_OF_MEMORY;
-
-        mm->mFlushLock = PR_NewLock();
-        if (! mm->mFlushLock)
-            break;
-
-        rv = NS_OK;
-    } while (0);
-
-    if (NS_FAILED(rv))
-        delete mm;
-
-    return rv;
-}
-
-
-nsMemoryImpl::nsMemoryImpl()
-    : mFlusher(nsnull),
-      mFlushLock(nsnull),
-      mIsFlushing(PR_FALSE)
-{
-}
-
-nsMemoryImpl::~nsMemoryImpl()
-{
-    if (mFlushLock)
-        PR_DestroyLock(mFlushLock);
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Define NS_OUT_OF_MEMORY_TESTER if you want to force memory failures
@@ -316,35 +111,66 @@ reallocator(void* ptr, PRSize size, PRUint32& counter, PRUint32 max)
 
 #endif // NS_OUT_OF_MEMORY_TESTER
 
-////////////////////////////////////////////////////////////////////////////////
+#if defined(XDEBUG_waterson)
+#define NS_TEST_MEMORY_FLUSHER
+#endif
 
-NS_IMETHODIMP_(void *) 
+#ifdef NS_MEMORY_FLUSHER_THREAD
+/**
+ * A runnable that is used to periodically check the status
+ * of the system, determine if too much memory is in use,
+ * and if so, trigger a "memory flush".
+ */
+
+class MemoryFlusher : public nsIRunnable
+{
+public:
+    // We don't use the generic macros because we are a special static object
+    NS_IMETHOD QueryInterface(REFNSIID aIID, void** aResult);
+    NS_IMETHOD_(nsrefcnt) AddRef(void) { return 1; }
+    NS_IMETHOD_(nsrefcnt) Release(void) { return 1; }
+
+    NS_DECL_NSIRUNNABLE
+
+    nsresult Init();
+    void StopAndJoin();
+
+private:
+    static PRBool         sRunning;
+    static PRIntervalTime sTimeout;
+    static PRLock*        sLock;
+    static PRCondVar*     sCVar;
+    static nsIThread*     sThread;
+    
+    enum {
+        kInitialTimeout = 60 /*seconds*/
+    };
+};
+
+static MemoryFlusher sGlobalMemoryFlusher;
+
+#endif // NS_MEMORY_FLUSHER_THREAD
+
+static nsMemoryImpl sGlobalMemory;
+
+NS_IMPL_QUERY_INTERFACE1(nsMemoryImpl, nsIMemory)
+
+NS_IMETHODIMP_(void*)
 nsMemoryImpl::Alloc(PRSize size)
 {
-    NS_ASSERTION(size, "nsMemoryImpl::Alloc of 0");
-    void* result = MALLOC1(size);
-    if (! result) {
-        // Request an asynchronous flush
-        FlushMemory(NS_LITERAL_STRING("alloc-failure").get(), PR_FALSE);
-    }
-    return result;
+    return NS_Alloc(size);
 }
 
-NS_IMETHODIMP_(void *)
-nsMemoryImpl::Realloc(void * ptr, PRSize size)
+NS_IMETHODIMP_(void*)
+nsMemoryImpl::Realloc(void* ptr, PRSize size)
 {
-    void* result = REALLOC1(ptr, size);
-    if (! result) {
-        // Request an asynchronous flush
-        FlushMemory(NS_LITERAL_STRING("alloc-failure").get(), PR_FALSE);
-    }
-    return result;
+    return NS_Realloc(ptr, size);
 }
 
 NS_IMETHODIMP_(void)
-nsMemoryImpl::Free(void * ptr)
+nsMemoryImpl::Free(void* ptr)
 {
-    PR_Free(ptr);
+    NS_Free(ptr);
 }
 
 NS_IMETHODIMP
@@ -356,45 +182,50 @@ nsMemoryImpl::HeapMinimize(PRBool aImmediate)
 NS_IMETHODIMP
 nsMemoryImpl::IsLowMemory(PRBool *result)
 {
-#if defined(XP_WIN)
+#if defined(WINCE)
+    MEMORYSTATUS stat;
+    GlobalMemoryStatus(&stat);
+    *result = ((float)stat.dwAvailPhys / stat.dwTotalPhys) < 0.1;
+#elif defined(XP_WIN)
     MEMORYSTATUS stat;
     GlobalMemoryStatus(&stat);
     *result = ((float)stat.dwAvailPageFile / stat.dwTotalPageFile) < 0.1;
-#elif defined(XP_MAC)
-
-  const long kReserveHeapFreeSpace = (256 * 1024);
-  const long kReserveHeapContigSpace = (128 * 1024);
-
-  long totalSpace, contiguousSpace;
-  // this call measures how much memory would be available if the OS
-  // purged. Despite the name, it does not purge (that happens
-  // automatically when heap space is low).
-  ::PurgeSpace(&totalSpace, &contiguousSpace);
-  if (totalSpace < kReserveHeapFreeSpace || contiguousSpace < kReserveHeapContigSpace)
-  {
-    NS_WARNING("Found that heap mem is low");
-    *result = PR_TRUE;
-    return NS_OK;
-  }
-
-  // see how much temp mem is available (since our allocators allocate 1Mb chunks
-  // in temp mem. We don't use TempMaxMem() (to get contig space) here, because it
-  // compacts the application heap, so can be slow.
-  const long kReserveTempFreeSpace = (2 * 1024 * 1024);     // 2Mb  
-  long  totalTempSpace = ::TempFreeMem();  
-  if (totalTempSpace < kReserveTempFreeSpace)
-  {
-    NS_WARNING("Found that temp mem is low");
-    *result = PR_TRUE;
-    return NS_OK;
-  }  
-
-  *result = PR_FALSE;
-  
 #else
     *result = PR_FALSE;
 #endif
     return NS_OK;
+}
+
+
+nsresult 
+nsMemoryImpl::Startup()
+{
+    sFlushLock = PR_NewLock();
+    if (!sFlushLock) return NS_ERROR_FAILURE;
+
+#ifdef NS_MEMORY_FLUSHER_THREAD
+    return sGlobalMemoryFlusher.Init();
+#else
+    return NS_OK;
+#endif
+}
+
+void
+nsMemoryImpl::Shutdown()
+{
+#ifdef NS_MEMORY_FLUSHER_THREAD
+    sGlobalMemoryFlusher.StopAndJoin();
+#endif
+
+    if (sFlushLock) PR_DestroyLock(sFlushLock);
+    sFlushLock = nsnull;
+}
+
+nsresult
+nsMemoryImpl::Create(nsISupports* outer, const nsIID& aIID, void **aResult)
+{
+    NS_ENSURE_NO_AGGREGATION(outer);
+    return sGlobalMemory.QueryInterface(aIID, aResult);
 }
 
 nsresult
@@ -427,18 +258,18 @@ nsMemoryImpl::FlushMemory(const PRUnichar* aReason, PRBool aImmediate)
 
     {
         // Are we already flushing?
-        nsAutoLock l(mFlushLock);
-        if (mIsFlushing)
+        nsAutoLock l(sFlushLock);
+        if (sIsFlushing)
             return NS_OK;
 
         // Well, we are now!
-        mIsFlushing = PR_TRUE;
+        sIsFlushing = PR_TRUE;
     }
 
     // Run the flushers immediately if we can; otherwise, proxy to the
     // UI thread an run 'em asynchronously.
     if (aImmediate) {
-        rv = RunFlushers(this, aReason);
+        rv = RunFlushers(aReason);
     }
     else {
         nsCOMPtr<nsIEventQueueService> eqs = do_GetService(NS_EVENTQUEUESERVICE_CONTRACTID, &rv);
@@ -446,10 +277,10 @@ nsMemoryImpl::FlushMemory(const PRUnichar* aReason, PRBool aImmediate)
             nsCOMPtr<nsIEventQueue> eq;
             rv = eqs->GetThreadEventQueue(NS_UI_THREAD, getter_AddRefs(eq));
             if (NS_SUCCEEDED(rv)) {
-                PL_InitEvent(&mFlushEvent.mEvent, this, HandleFlushEvent, DestroyFlushEvent);
-                mFlushEvent.mReason = aReason;
+                PL_InitEvent(&sFlushEvent.mEvent, this, HandleFlushEvent, DestroyFlushEvent);
+                sFlushEvent.mReason = aReason;
 
-                rv = eq->PostEvent(NS_REINTERPRET_CAST(PLEvent*, &mFlushEvent));
+                rv = eq->PostEvent(NS_REINTERPRET_CAST(PLEvent*, &sFlushEvent));
             }
         }
     }
@@ -458,17 +289,17 @@ nsMemoryImpl::FlushMemory(const PRUnichar* aReason, PRBool aImmediate)
 }
 
 nsresult
-nsMemoryImpl::RunFlushers(nsMemoryImpl* aSelf, const PRUnichar* aReason)
+nsMemoryImpl::RunFlushers(const PRUnichar* aReason)
 {
     nsCOMPtr<nsIObserverService> os = do_GetService("@mozilla.org/observer-service;1");
     if (os) {
-        os->NotifyObservers(aSelf, "memory-pressure", aReason);
+        os->NotifyObservers(this, "memory-pressure", aReason);
     }
 
     {
         // Done flushing
-        nsAutoLock l(aSelf->mFlushLock);
-        aSelf->mIsFlushing = PR_FALSE;
+        nsAutoLock l(sFlushLock);
+        sIsFlushing = PR_FALSE;
     }
 
     return NS_OK;
@@ -477,10 +308,9 @@ nsMemoryImpl::RunFlushers(nsMemoryImpl* aSelf, const PRUnichar* aReason)
 void*
 nsMemoryImpl::HandleFlushEvent(PLEvent* aEvent)
 {
-    nsMemoryImpl* self = NS_STATIC_CAST(nsMemoryImpl*, PL_GetEventOwner(aEvent));
     FlushEvent* event = NS_REINTERPRET_CAST(FlushEvent*, aEvent);
 
-    RunFlushers(self, event->mReason);
+    sGlobalMemory.RunFlushers(event->mReason);
     return 0;
 }
 
@@ -490,59 +320,159 @@ nsMemoryImpl::DestroyFlushEvent(PLEvent* aEvent)
     // no-op, since mEvent is a member of nsMemoryImpl
 }
 
-static void
-EnsureGlobalMemoryService()
+PRLock*
+nsMemoryImpl::sFlushLock;
+
+PRBool
+nsMemoryImpl::sIsFlushing = PR_FALSE;
+
+nsMemoryImpl::FlushEvent
+nsMemoryImpl::sFlushEvent;
+
+extern "C" NS_EXPORT void*
+NS_Alloc(PRSize size)
 {
-    if (gMemory) return;
-    nsresult rv = nsMemoryImpl::Create(nsnull, NS_GET_IID(nsIMemory), (void**)&gMemory);
-    NS_ASSERTION(NS_SUCCEEDED(rv), "nsMemoryImpl::Create failed");
-    NS_ASSERTION(gMemory, "improper xpcom initialization");
+    NS_ASSERTION(size, "NS_Alloc of size 0");
+
+    void* result = MALLOC1(size);
+    if (! result) {
+        // Request an asynchronous flush
+        sGlobalMemory.FlushMemory(NS_LITERAL_STRING("alloc-failure").get(), PR_FALSE);
+    }
+    return result;
 }
 
-nsresult 
-nsMemoryImpl::Startup()
+extern "C" NS_EXPORT void*
+NS_Realloc(void* ptr, PRSize size)
 {
-    EnsureGlobalMemoryService();
-    if (! gMemory)
-        return NS_ERROR_FAILURE;
+    NS_ASSERTION(size, "NS_Realloc of size 0");
+    void* result = REALLOC1(ptr, size);
+    if (! result) {
+        // Request an asynchronous flush
+        sGlobalMemory.FlushMemory(NS_LITERAL_STRING("alloc-failure").get(), PR_FALSE);
+    }
+    return result;
+}
+
+extern "C" NS_EXPORT void
+NS_Free(void* ptr)
+{
+    PR_Free(ptr);
+}
 
 #ifdef NS_MEMORY_FLUSHER_THREAD
+
+NS_IMPL_QUERY_INTERFACE1(MemoryFlusher, nsIRunnable)
+
+NS_IMETHODIMP
+MemoryFlusher::Run()
+{
     nsresult rv;
 
-    // Create and start a memory flusher thread
-    rv = MemoryFlusher::Create(&gMemory->mFlusher, gMemory);
-    if (NS_FAILED(rv)) return rv;
+    sRunning = PR_TRUE;
 
-    rv = NS_NewThread(getter_AddRefs(gMemory->mFlusherThread),
-                      gMemory->mFlusher,
-                      0, /* XXX use default stack size? */
-                      PR_JOINABLE_THREAD);
+    while (1) {
+        PRStatus status;
 
-    if (NS_FAILED(rv)) return rv;
-#endif
+        {
+            nsAutoLock l(sLock);
+            if (! sRunning) {
+                rv = NS_OK;
+                break;
+            }
 
-    return NS_OK;
-}
-
-nsresult 
-nsMemoryImpl::Shutdown()
-{
-    if (gMemory) {
-#ifdef NS_MEMORY_FLUSHER_THREAD
-        if (gMemory->mFlusher) {
-            // Stop the runnable...
-            gMemory->mFlusher->Stop();
-            NS_RELEASE(gMemory->mFlusher);
-
-            // ...and wait for the thread to exit
-            if (gMemory->mFlusherThread)
-                gMemory->mFlusherThread->Join();
+            status = PR_WaitCondVar(sCVar, sTimeout);
         }
+
+        if (status != PR_SUCCESS) {
+            rv = NS_ERROR_FAILURE;
+            break;
+        }
+
+        if (! sRunning) {
+            rv = NS_OK;
+            break;
+        }
+
+        PRBool isLowMemory;
+        rv = sGlobalMemory.IsLowMemory(&isLowMemory);
+        if (NS_FAILED(rv))
+            break;
+
+#ifdef NS_TEST_MEMORY_FLUSHER
+        // Fire the flusher *every* time
+        isLowMemory = PR_TRUE;
 #endif
 
-        NS_RELEASE(gMemory);
-        gMemory = nsnull;
+        if (isLowMemory) {
+            sGlobalMemory.FlushMemory(NS_LITERAL_STRING("low-memory").get(), PR_FALSE);
+        }
     }
 
-    return NS_OK;
+    sRunning = PR_FALSE;
+
+    return rv;
+}
+
+nsresult
+MemoryFlusher::Init()
+{
+    sTimeout = PR_SecondsToInterval(kInitialTimeout);
+    sLock = PR_NewLock();
+    if (!sLock) return NS_ERROR_FAILURE;
+
+    sCVar = PR_NewCondVar(sLock);
+    if (!sCVar) return NS_ERROR_FAILURE;
+
+    return NS_NewThread(&sThread,
+                        this,
+                        0, /* XXX use default stack size? */
+                        PR_JOINABLE_THREAD);
+}
+
+void
+MemoryFlusher::StopAndJoin()
+{
+    if (sRunning) {
+        {
+            nsAutoLock l(sLock);
+            sRunning = PR_FALSE;
+            PR_NotifyCondVar(sCVar);
+        }
+
+        if (sThread)
+            sThread->Join();
+    }
+
+    NS_IF_RELEASE(sThread);
+
+    if (sLock)
+        PR_DestroyLock(sLock);
+
+    if (sCVar)
+        PR_DestroyCondVar(sCVar);
+}
+
+
+PRBool
+MemoryFlusher::sRunning;
+
+PRIntervalTime
+MemoryFlusher::sTimeout;
+
+PRLock*
+MemoryFlusher::sLock;
+
+PRCondVar*
+MemoryFlusher::sCVar;
+
+nsIThread*
+MemoryFlusher::sThread;
+
+#endif // NS_MEMORY_FLUSHER_THREAD
+
+nsresult
+NS_GetMemoryManager(nsIMemory* *result)
+{
+    return sGlobalMemory.QueryInterface(NS_GET_IID(nsIMemory), (void**) result);
 }

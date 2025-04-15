@@ -1,25 +1,41 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 2001 Netscape Communications Corporation.
- * All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Stuart Parmenter <pavlov@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "imgRequest.h"
 
@@ -45,6 +61,7 @@
 #include "nsIComponentManager.h"
 #include "nsIProxyObjectManager.h"
 #include "nsIServiceManager.h"
+#include "nsISupportsPrimitives.h"
 
 #include "nsAutoLock.h"
 #include "nsString.h"
@@ -83,6 +100,10 @@ nsresult imgRequest::Init(nsIChannel *aChannel,
 
   NS_ASSERTION(!mImage, "imgRequest::Init -- Multiple calls to init");
   NS_ASSERTION(aChannel, "imgRequest::Init -- No channel");
+
+  mProperties = do_CreateInstance("@mozilla.org/properties;1");
+  if (!mProperties)
+    return NS_ERROR_OUT_OF_MEMORY;
 
   mChannel = aChannel;
 
@@ -139,13 +160,13 @@ nsresult imgRequest::RemoveProxy(imgRequestProxy *proxy, nsresult aStatus, PRBoo
     proxy->OnStopRequest(nsnull, nsnull, NS_BINDING_ABORTED);
   }
 
+  if (mImage && !HaveProxyWithObserver(nsnull)) {
+    LOG_MSG(gImgLog, "imgRequest::RemoveProxy", "stopping animation");
+
+    mImage->StopAnimation();
+  }
+
   if (mObservers.Count() == 0) {
-    if (mImage) {
-      LOG_MSG(gImgLog, "imgRequest::RemoveProxy", "stopping animation");
-
-      mImage->StopAnimation();
-    }
-
     /* If |aStatus| is a failure code, then cancel the load if it is still in progress.
        Otherwise, let the load continue, keeping 'this' in the cache with no observers.
        This way, if a proxy is destroyed without calling cancel on it, it won't leak
@@ -166,7 +187,7 @@ nsresult imgRequest::RemoveProxy(imgRequestProxy *proxy, nsresult aStatus, PRBoo
   // If a proxy is removed for a reason other than its owner being
   // changed, remove the proxy from the loadgroup.
   if (aStatus != NS_IMAGELIB_CHANGING_OWNER)
-    proxy->RemoveFromLoadGroup();
+    proxy->RemoveFromLoadGroup(PR_TRUE);
 
   return NS_OK;
 }
@@ -200,12 +221,12 @@ nsresult imgRequest::NotifyProxyListener(imgRequestProxy *proxy)
 
     if (!(mState & onStopContainer)) {
       // OnDataAvailable
-      nsRect r;
+      nsIntRect r;
       frame->GetRect(r);  // XXX we should only send the currently decoded rectangle here.
       proxy->OnDataAvailable(frame, &r);
     } else {
       // OnDataAvailable
-      nsRect r;
+      nsIntRect r;
       frame->GetRect(r);  // We're done loading this image, send the the whole rect
       proxy->OnDataAvailable(frame, &r);
 
@@ -222,7 +243,7 @@ nsresult imgRequest::NotifyProxyListener(imgRequestProxy *proxy)
   if (mState & onStopDecode)
     proxy->OnStopDecode(GetResultFromImageStatus(mImageStatus), nsnull);
 
-  if (mImage && (mObservers.Count() == 1)) {
+  if (mImage && !HaveProxyWithObserver(proxy) && proxy->HasObserver()) {
     LOG_MSG(gImgLog, "imgRequest::AddProxy", "resetting animation");
 
     mImage->ResetAnimation();
@@ -294,6 +315,47 @@ void imgRequest::RemoveFromCache()
   }
 }
 
+PRBool imgRequest::HaveProxyWithObserver(imgRequestProxy* aProxyToIgnore) const
+{
+  for (PRInt32 i = 0; i < mObservers.Count(); ++i) {
+    imgRequestProxy *proxy = NS_STATIC_CAST(imgRequestProxy*, mObservers[i]);
+    if (proxy == aProxyToIgnore) {
+      continue;
+    }
+    
+    if (proxy->HasObserver()) {
+      return PR_TRUE;
+    }
+  }
+  
+  return PR_FALSE;
+}
+
+PRInt32 imgRequest::Priority() const
+{
+  PRInt32 priority = nsISupportsPriority::PRIORITY_NORMAL;
+  nsCOMPtr<nsISupportsPriority> p = do_QueryInterface(mChannel);
+  if (p)
+    p->GetPriority(&priority);
+  return priority;
+}
+
+void imgRequest::AdjustPriority(imgRequestProxy *proxy, PRInt32 delta)
+{
+  // only the first proxy is allowed to modify the priority of this image load.
+  //
+  // XXX(darin): this is probably not the most optimal algorithm as we may want
+  // to increase the priority of requests that have a lot of proxies.  the key
+  // concern though is that image loads remain lower priority than other pieces
+  // of content such as link clicks, CSS, and JS.
+  //
+  if (mObservers[0] != proxy)
+    return;
+
+  nsCOMPtr<nsISupportsPriority> p = do_QueryInterface(mChannel);
+  if (p)
+    p->AdjustPriority(delta);
+}
 
 /** imgILoad methods **/
 
@@ -326,10 +388,10 @@ NS_IMETHODIMP imgRequest::GetIsMultiPartChannel(PRBool *aIsMultiPartChannel)
 
 /** imgIContainerObserver methods **/
 
-/* [noscript] void frameChanged (in imgIContainer container, in gfxIImageFrame newframe, in nsRect dirtyRect); */
+/* [noscript] void frameChanged (in imgIContainer container, in gfxIImageFrame newframe, in nsIntRect dirtyRect); */
 NS_IMETHODIMP imgRequest::FrameChanged(imgIContainer *container,
                                        gfxIImageFrame *newframe,
-                                       nsRect * dirtyRect)
+                                       nsIntRect * dirtyRect)
 {
   LOG_SCOPE(gImgLog, "imgRequest::FrameChanged");
 
@@ -425,10 +487,10 @@ NS_IMETHODIMP imgRequest::OnStartFrame(imgIRequest *request,
   return NS_OK;
 }
 
-/* [noscript] void onDataAvailable (in imgIRequest request, in gfxIImageFrame frame, [const] in nsRect rect); */
+/* [noscript] void onDataAvailable (in imgIRequest request, in gfxIImageFrame frame, [const] in nsIntRect rect); */
 NS_IMETHODIMP imgRequest::OnDataAvailable(imgIRequest *request,
                                           gfxIImageFrame *frame,
-                                          const nsRect * rect)
+                                          const nsIntRect * rect)
 {
   LOG_SCOPE(gImgLog, "imgRequest::OnDataAvailable");
 
@@ -597,7 +659,7 @@ NS_IMETHODIMP imgRequest::OnStartRequest(nsIRequest *aRequest, nsISupports *ctxt
       nsCOMPtr<nsISupports> cacheToken;
       cacheChannel->GetCacheToken(getter_AddRefs(cacheToken));
       if (cacheToken) {
-        nsCOMPtr<nsICacheEntryDescriptor> entryDesc(do_QueryInterface(cacheToken));
+        nsCOMPtr<nsICacheEntryInfo> entryDesc(do_QueryInterface(cacheToken));
         if (entryDesc) {
           PRUint32 expiration;
           /* get the expiration time from the caching channel's token */
@@ -754,6 +816,32 @@ NS_IMETHODIMP imgRequest::OnDataAvailable(nsIRequest *aRequest, nsISupports *ctx
       }
 
       LOG_MSG(gImgLog, "imgRequest::OnDataAvailable", "Got content type from the channel");
+    }
+
+    /* set our mimetype as a property */
+    nsCOMPtr<nsISupportsCString> contentType(do_CreateInstance("@mozilla.org/supports-cstring;1"));
+    if (contentType) {
+      contentType->SetData(mContentType);
+      mProperties->Set("type", contentType);
+    }
+
+    /* set our content disposition as a property */
+    nsCAutoString disposition;
+    nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(aRequest));
+    if (httpChannel) {
+      httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("content-disposition"), disposition);
+    } else {
+      nsCOMPtr<nsIMultiPartChannel> multiPartChannel(do_QueryInterface(aRequest));
+      if (multiPartChannel) {
+        multiPartChannel->GetContentDisposition(disposition);
+      }
+    }
+    if (!disposition.IsEmpty()) {
+      nsCOMPtr<nsISupportsCString> contentDisposition(do_CreateInstance("@mozilla.org/supports-cstring;1"));
+      if (contentDisposition) {
+        contentDisposition->SetData(disposition);
+        mProperties->Set("content-disposition", contentDisposition);
+      }
     }
 
     LOG_MSG_WITH_PARAM(gImgLog, "imgRequest::OnDataAvailable", "content type", mContentType.get());

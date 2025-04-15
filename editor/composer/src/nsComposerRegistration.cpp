@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,18 +23,17 @@
  *   Michael Judge  <mjudge@netscape.com>
  *   Charles Manske <cmanske@netscape.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -43,17 +42,18 @@
 #include "nsEditingSession.h"       // for the CID
 #include "nsComposerController.h"   // for the CID
 #include "nsEditorSpellCheck.h"     // for the CID
-#include "nsEditorService.h"
 #include "nsComposeTxtSrvFilter.h"
 #include "nsIController.h"
 #include "nsIControllerContext.h"
 #include "nsIControllerCommandTable.h"
 
+#include "nsServiceManagerUtils.h"
+
 #define NS_HTMLEDITOR_COMMANDTABLE_CID \
-{ 0x7a727843, 0x6ae1, 0x11d7, { 0xa5eb, 0x00, 0x03, 0x93, 0x63, 0x65, 0x92 } }
+{ 0x13e50d8d, 0x9cee, 0x4ad1, { 0xa3, 0xa2, 0x4a, 0x44, 0x2f, 0xdf, 0x7d, 0xfa } }
 
 #define NS_HTMLEDITOR_DOCSTATE_COMMANDTABLE_CID \
-{ 0x800e07bc, 0x6ae1, 0x11d7, { 0x959b, 0x00, 0x03, 0x93, 0x63, 0x65, 0x92 } }
+{ 0xa33982d3, 0x1adf, 0x4162, { 0x99, 0x41, 0xf7, 0x34, 0xbc, 0x45, 0xe4, 0xed } }
 
 
 static NS_DEFINE_CID(kHTMLEditorCommandTableCID, NS_HTMLEDITOR_COMMANDTABLE_CID);
@@ -67,7 +67,6 @@ static NS_DEFINE_CID(kHTMLEditorDocStateCommandTableCID, NS_HTMLEDITOR_DOCSTATE_
 //
 
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsEditingSession)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsEditorService)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsEditorSpellCheck)
 
 // There are no macros that enable us to have 2 constructors 
@@ -237,22 +236,9 @@ static const nsModuleComponentInfo components[] = {
     { "Editing Session", NS_EDITINGSESSION_CID,
       "@mozilla.org/editor/editingsession;1", nsEditingSessionConstructor, },
 
-    { "Editor Service", NS_EDITORSERVICE_CID,
-      "@mozilla.org/editor/editorservice;1", nsEditorServiceConstructor,},
-
     { "Editor Spell Checker", NS_EDITORSPELLCHECK_CID,
       "@mozilla.org/editor/editorspellchecker;1",
       nsEditorSpellCheckConstructor,},
-
-    { "Editor Startup Handler", NS_EDITORSERVICE_CID,
-      "@mozilla.org/commandlinehandler/general-startup;1?type=editor",
-      nsEditorServiceConstructor,
-      nsEditorService::RegisterProc,
-      nsEditorService::UnregisterProc, },
-
-    { "Edit Startup Handler", NS_EDITORSERVICE_CID,
-      "@mozilla.org/commandlinehandler/general-startup;1?type=edit",
-      nsEditorServiceConstructor, },
 
     { "TxtSrv Filter", NS_COMPOSERTXTSRVFILTER_CID,
       COMPOSER_TXTSRVFILTER_CONTRACTID,

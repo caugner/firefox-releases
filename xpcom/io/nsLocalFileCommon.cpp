@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,24 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Doug Turner <dougt@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsIServiceManager.h"
@@ -76,38 +77,39 @@ nsLocalFile::InitWithFile(nsILocalFile *aFile)
 
 #if defined(XP_MAC)
 #define kMaxFilenameLength 31
+#define kMaxExtensionLength 10
 #else
 #define kMaxFilenameLength 255
+#define kMaxExtensionLength 100
 #endif  
+// requirement: kMaxExtensionLength < kMaxFilenameLength - 4
 
 NS_IMETHODIMP
 nsLocalFile::CreateUnique(PRUint32 type, PRUint32 attributes)
 {
     nsresult rv = Create(type, attributes);
-    
-    if (NS_SUCCEEDED(rv)) return NS_OK;
-    if (rv != NS_ERROR_FILE_ALREADY_EXISTS) return rv;
+    if (rv != NS_ERROR_FILE_ALREADY_EXISTS)
+        return rv;
 
     nsCAutoString leafName; 
     rv = GetNativeLeafName(leafName);
-
-    if (NS_FAILED(rv)) return rv;
+    if (NS_FAILED(rv))
+        return rv;
 
     const char* lastDot = strrchr(leafName.get(), '.');
-    char suffix[kMaxFilenameLength + 1] = "";
+    char suffix[kMaxExtensionLength] = "";
     if (lastDot)
     {
-        strncpy(suffix, lastDot, kMaxFilenameLength); // include '.'
-        suffix[kMaxFilenameLength] = 0; // make sure it's null terminated
+        PL_strncpyz(suffix, lastDot, sizeof(suffix)); // include '.'
         leafName.SetLength(lastDot - leafName.get()); // strip suffix and dot.
     }
 
-    const int maxRootLength = (kMaxFilenameLength - 4) - strlen(suffix) - 1;
+    PRUint32 maxRootLength = (kMaxFilenameLength - 4) - strlen(suffix) - 1;
 
-    if ((int)leafName.Length() > (int)maxRootLength)
+    if (leafName.Length() > maxRootLength)
         leafName.SetLength(maxRootLength);
 
-    for (short indx = 1; indx < 10000; indx++)
+    for (int indx = 1; indx < 10000; indx++)
     {
         // start with "Picture-1.jpg" after "Picture.jpg" exists
         SetNativeLeafName(leafName +
@@ -115,11 +117,8 @@ nsLocalFile::CreateUnique(PRUint32 type, PRUint32 attributes)
                           nsDependentCString(suffix));
 
         rv = Create(type, attributes);
-    
         if (NS_SUCCEEDED(rv) || rv != NS_ERROR_FILE_ALREADY_EXISTS) 
-        {
             return rv;
-        }
     }
  
     // The disk is full, sort of
@@ -154,11 +153,11 @@ static PRInt32 SplitPath(PRUnichar *path, PRUnichar **nodeArray, PRInt32 arrayLe
     for (PRUnichar *cp = path; *cp != 0; cp++) {
       if (*cp == kPathSeparatorChar) {
         *cp++ = 0;
-        if (*cp != 0) {
-          if (nodePtr - nodeArray >= arrayLen)
-            return -1;
-          *nodePtr++ = cp;
-        }
+        if (*cp == 0)
+          break;
+        if (nodePtr - nodeArray >= arrayLen)
+          return -1;
+        *nodePtr++ = cp;
       }
     }
     return nodePtr - nodeArray;
@@ -168,6 +167,7 @@ static PRInt32 SplitPath(PRUnichar *path, PRUnichar **nodeArray, PRInt32 arrayLe
 NS_IMETHODIMP
 nsLocalFile::GetRelativeDescriptor(nsILocalFile *fromFile, nsACString& _retval)
 {
+    NS_ENSURE_ARG_POINTER(fromFile);
     const PRInt32 kMaxNodesInPath = 32;
 
     //
@@ -209,7 +209,7 @@ nsLocalFile::GetRelativeDescriptor(nsILocalFile *fromFile, nsACString& _retval)
     
     PRInt32 branchIndex = nodeIndex;
     for (nodeIndex = branchIndex; nodeIndex < fromNodeCnt; nodeIndex++) 
-      _retval.Append(NS_LITERAL_CSTRING("../"));
+      _retval.AppendLiteral("../");
     for (nodeIndex = branchIndex; nodeIndex < thisNodeCnt; nodeIndex++) {
       NS_ConvertUCS2toUTF8 nodeStr(thisNodes[nodeIndex]);
 #ifdef XP_MAC
@@ -249,6 +249,8 @@ nsLocalFile::SetRelativeDescriptor(nsILocalFile *fromFile, const nsACString& rel
         rv = targetFile->GetParent(getter_AddRefs(parentDir));
         if (NS_FAILED(rv))
             return rv;
+        if (!parentDir)
+            return NS_ERROR_FILE_UNRECOGNIZED_PATH;
         targetFile = parentDir;
 
         nodeBegin = nodeEnd;

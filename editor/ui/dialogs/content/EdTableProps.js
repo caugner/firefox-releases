@@ -1,27 +1,42 @@
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Ben Goodger
- *    Charles Manske (cmanske@netscape.com)
- *    Neil Rashbrook (neil@parkwaycc.co.uk)
- */
+ *   Ben Goodger
+ *   Charles Manske (cmanske@netscape.com)
+ *   Neil Rashbrook (neil@parkwaycc.co.uk)
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 //Cancel() is in EdDialogCommon.js
 var gTableElement;
@@ -277,14 +292,6 @@ function Startup()
 
 function InitDialog()
 {
-// turn on extra1 to be "apply"
-  var applyButton = document.documentElement.getButton("extra1");
-  if (applyButton)
-  {
-    applyButton.label = GetString("Apply");
-    applyButton.setAttribute("accesskey", GetString("ApplyAccessKey"));
-  }
-  
   // Get Table attributes
   gDialog.TableRowsInput.value = gRowCount;
   gDialog.TableColumnsInput.value = gColCount;
@@ -487,7 +494,10 @@ function SetColor(ColorWellID, color)
   {
     if (color)
     {
-      globalCellElement.setAttribute(bgcolor, color);
+      try {
+        gActiveEditor.setAttributeOrEquivalent(globalCellElement, bgcolor,
+                                               color, true);
+      } catch(e) {}
       gDialog.CellInheritColor.collapsed = true;
     }
     else
@@ -503,7 +513,10 @@ function SetColor(ColorWellID, color)
   {
     if (color)
     {
-      globalTableElement.setAttribute(bgcolor, color);
+      try {
+        gActiveEditor.setAttributeOrEquivalent(globalTableElement, bgcolor,
+                                               color, true);
+      } catch(e) {}
       gDialog.TableInheritColor.collapsed = true;
     }
     else
@@ -786,10 +799,14 @@ function SetAlign(listID, defaultValue, element, attName)
   {
     try {
       gActiveEditor.removeAttributeOrEquivalent(element, attName, true);
-      } catch(e) {}
+    } catch(e) {}
   }
   else
-    element.setAttribute(attName, value);
+  {
+    try {
+      gActiveEditor.setAttributeOrEquivalent(element, attName, value, true);
+    } catch(e) {}
+  }
 }
 
 function ValidateTableData()
@@ -893,7 +910,10 @@ function ValidateCellData()
   if (gDialog.TextWrapCheckbox.checked)
   {
     if (gDialog.TextWrapList.value == "nowrap")
-      globalCellElement.setAttribute("nowrap","nowrap");
+      try {
+        gActiveEditor.setAttributeOrEquivalent(globalCellElement, "nowrap",
+                                               "nowrap", true);
+      } catch(e) {}
     else
       try {
         gActiveEditor.removeAttributeOrEquivalent(globalCellElement, "nowrap", true);
@@ -1257,7 +1277,8 @@ function SetCloseButton()
   // Change text on "Cancel" button after Apply is used
   if (!gApplyUsed)
   {
-    document.documentElement.getButton("cancel").setAttribute("label",GetString("Close"));
+    document.documentElement.setAttribute("buttonlabelcancel",
+      document.documentElement.getAttribute("buttonlabelclose"));
     gApplyUsed = true;
   }
 }

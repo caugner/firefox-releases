@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Seth Spitzer <sspitzer@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -73,6 +73,7 @@ nsMsgFilterList::nsMsgFilterList() :
 
   m_loggingEnabled = PR_FALSE;
   m_startWritingToBuffer = PR_FALSE; 
+  m_temporaryList = PR_FALSE;
   m_curFilter = nsnull;
   m_arbitraryHeaders.SetLength(0);
 }
@@ -517,7 +518,7 @@ nsresult nsMsgFilterList::LoadValue(nsCString &value, nsIOFileStream *aStream)
 
 nsresult nsMsgFilterList::LoadTextFilters(nsIOFileStream *aStream)
 {
-	nsresult	err = NS_OK;
+  nsresult	err = NS_OK;
   nsMsgFilterFileAttribValue attrib;
   nsCOMPtr<nsIImportService> impSvc;
   nsCOMPtr<nsIMsgRuleAction> currentFilterAction;
@@ -527,8 +528,8 @@ nsresult nsMsgFilterList::LoadTextFilters(nsIOFileStream *aStream)
   {
     nsCAutoString	value;
     PRInt32 intToStringResult;
-
-		char curChar;
+    
+    char curChar;
     curChar = LoadAttrib(attrib, aStream);
     if (curChar == (char) -1)  //reached eof
       break;
@@ -537,28 +538,28 @@ nsresult nsMsgFilterList::LoadTextFilters(nsIOFileStream *aStream)
       break;
     switch(attrib)
     {
-      case nsIMsgFilterList::attribNone:
-        m_curFilter->SetUnparseable(PR_TRUE);
-        break;
-      case nsIMsgFilterList::attribVersion:
-        m_fileVersion = value.ToInteger(&intToStringResult, 10);
-			  if (intToStringResult != 0)
-        {
-          attrib = nsIMsgFilterList::attribNone;
-          NS_ASSERTION(PR_FALSE, "error parsing filter file version");
-        }
-        if (m_fileVersion == k45Version)
-        {
-          impSvc = do_GetService(NS_IMPORTSERVICE_CONTRACTID);
-          NS_ASSERTION(impSvc, "cannot get importService");
-        }
-        break;
-      case nsIMsgFilterList::attribLogging:
-        m_loggingEnabled = StrToBool(value);
-        m_unparsedFilterBuffer.Truncate(); //we are going to buffer each filter as we read them, make sure no garbage is there
-        m_startWritingToBuffer = PR_TRUE; //filters begin now
-        break;
-		  case nsIMsgFilterList::attribName:  //every filter starts w/ a name
+    case nsIMsgFilterList::attribNone:
+      m_curFilter->SetUnparseable(PR_TRUE);
+      break;
+    case nsIMsgFilterList::attribVersion:
+      m_fileVersion = value.ToInteger(&intToStringResult, 10);
+      if (intToStringResult != 0)
+      {
+        attrib = nsIMsgFilterList::attribNone;
+        NS_ASSERTION(PR_FALSE, "error parsing filter file version");
+      }
+      if (m_fileVersion == k45Version)
+      {
+        impSvc = do_GetService(NS_IMPORTSERVICE_CONTRACTID);
+        NS_ASSERTION(impSvc, "cannot get importService");
+      }
+      break;
+    case nsIMsgFilterList::attribLogging:
+      m_loggingEnabled = StrToBool(value);
+      m_unparsedFilterBuffer.Truncate(); //we are going to buffer each filter as we read them, make sure no garbage is there
+      m_startWritingToBuffer = PR_TRUE; //filters begin now
+      break;
+    case nsIMsgFilterList::attribName:  //every filter starts w/ a name
       {
         if (m_curFilter)
         {
@@ -566,7 +567,7 @@ nsresult nsMsgFilterList::LoadTextFilters(nsIOFileStream *aStream)
           nsCAutoString nextFilterPart;
           nextFilterPart = Substring(m_unparsedFilterBuffer, nextFilterStartPos, m_unparsedFilterBuffer.Length());
           m_unparsedFilterBuffer.Truncate(nextFilterStartPos);
-        
+          
           PRBool unparseableFilter;
           m_curFilter->GetUnparseable(&unparseableFilter);
           if (unparseableFilter)
@@ -576,13 +577,13 @@ nsresult nsMsgFilterList::LoadTextFilters(nsIOFileStream *aStream)
           }
           m_unparsedFilterBuffer = nextFilterPart;
         }
-			  nsMsgFilter *filter = new nsMsgFilter;
-			  if (filter == nsnull)
+        nsMsgFilter *filter = new nsMsgFilter;
+        if (filter == nsnull)
         {
-				  err = NS_ERROR_OUT_OF_MEMORY;
-				  break;
+          err = NS_ERROR_OUT_OF_MEMORY;
+          break;
         }
-			  filter->SetFilterList(NS_STATIC_CAST(nsIMsgFilterList*,this));
+        filter->SetFilterList(NS_STATIC_CAST(nsIMsgFilterList*,this));
         if (m_fileVersion == k45Version && impSvc)
         {
           nsAutoString unicodeStr;
@@ -592,97 +593,102 @@ nsresult nsMsgFilterList::LoadTextFilters(nsIOFileStream *aStream)
         else
         {  
           PRUnichar *unicodeString =
-          nsTextFormatter::smprintf(unicodeFormatter, value.get());
-			    filter->SetFilterName(unicodeString);
+            nsTextFormatter::smprintf(unicodeFormatter, value.get());
+          filter->SetFilterName(unicodeString);
           nsTextFormatter::smprintf_free(unicodeString);
         }
-			  m_curFilter = filter;
-			  m_filters->AppendElement(NS_STATIC_CAST(nsISupports*,filter));
+        m_curFilter = filter;
+        m_filters->AppendElement(NS_STATIC_CAST(nsISupports*,filter));
       }
-			break;
-		  case nsIMsgFilterList::attribEnabled:
-			  if (m_curFilter)
-				  m_curFilter->SetEnabled(StrToBool(value));
-			break;
-		  case nsIMsgFilterList::attribDescription:
-			  if (m_curFilter)
-			   	m_curFilter->SetFilterDesc(value.get());
-			break;
-		  case nsIMsgFilterList::attribType:
-			  if (m_curFilter)
-				   m_curFilter->SetType((nsMsgFilterTypeType) value.ToInteger(&intToStringResult, 10));
-			break;
-		  case nsIMsgFilterList::attribScriptFile:
-			  if (m_curFilter)
-				  m_curFilter->SetFilterScript(&value);
-			break;
-		  case nsIMsgFilterList::attribAction:
-        if (m_curFilter)
-        {
-          nsMsgRuleActionType actionType = nsMsgFilter::GetActionForFilingStr(value);
-          if (actionType == nsMsgFilterAction::None)
-            m_curFilter->SetUnparseable(PR_TRUE);
-          else
-          {
-            err = m_curFilter->CreateAction(getter_AddRefs(currentFilterAction));
-            NS_ENSURE_SUCCESS(err, err);
-            currentFilterAction->SetType(actionType);
-            m_curFilter->AppendAction(currentFilterAction);
-          }
-        }
       break;
-      case nsIMsgFilterList::attribActionValue:
-        if (m_curFilter && currentFilterAction)
+    case nsIMsgFilterList::attribEnabled:
+      if (m_curFilter)
+        m_curFilter->SetEnabled(StrToBool(value));
+      break;
+    case nsIMsgFilterList::attribDescription:
+      if (m_curFilter)
+        m_curFilter->SetFilterDesc(value.get());
+      break;
+    case nsIMsgFilterList::attribType:
+      if (m_curFilter)
+        m_curFilter->SetType((nsMsgFilterTypeType) value.ToInteger(&intToStringResult, 10));
+      break;
+    case nsIMsgFilterList::attribScriptFile:
+      if (m_curFilter)
+        m_curFilter->SetFilterScript(&value);
+      break;
+    case nsIMsgFilterList::attribAction:
+      if (m_curFilter)
+      {
+        nsMsgRuleActionType actionType = nsMsgFilter::GetActionForFilingStr(value);
+        if (actionType == nsMsgFilterAction::None)
+          m_curFilter->SetUnparseable(PR_TRUE);
+        else
         {
-          nsMsgRuleActionType type;
-          currentFilterAction->GetType(&type);
-          if (type == nsMsgFilterAction::MoveToFolder)
-            err = m_curFilter->ConvertMoveToFolderValue(currentFilterAction, value);
-          else if (type == nsMsgFilterAction::ChangePriority)
-          {
-            nsMsgPriorityValue outPriority;
-            nsresult res = NS_MsgGetPriorityFromString(value.get(), &outPriority);
-            if (NS_SUCCEEDED(res))
-              currentFilterAction->SetPriority(outPriority);
-            else
-              NS_ASSERTION(PR_FALSE, "invalid priority in filter file");
-          }
-          else if (type == nsMsgFilterAction::Label)
-          {
-            PRInt32 res;
-            PRInt32 labelInt = value.ToInteger(&res, 10);
-            if (res == 0)
-              currentFilterAction->SetLabel((nsMsgLabelValue) labelInt);
-          }
-          else if (type == nsMsgFilterAction::JunkScore)
-          {
-            PRInt32 res;
-            PRInt32 junkScore = value.ToInteger(&res, 10);
-            if (!res)
-              currentFilterAction->SetJunkScore(junkScore);
-          }
+          err = m_curFilter->CreateAction(getter_AddRefs(currentFilterAction));
+          NS_ENSURE_SUCCESS(err, err);
+          currentFilterAction->SetType(actionType);
+          m_curFilter->AppendAction(currentFilterAction);
         }
-        break;
-		case nsIMsgFilterList::attribCondition:
-            if (m_curFilter)
-            {
-              if ( m_fileVersion == k45Version && impSvc)
-              {
-                nsAutoString unicodeStr;
-                impSvc->SystemStringToUnicode(value.get(), unicodeStr);
-                char *utf8 = ToNewUTF8String(unicodeStr);
-                value.Assign(utf8);
-                nsMemory::Free(utf8);
-              }
-              err = ParseCondition(m_curFilter, value.get());
-              if (err == NS_ERROR_INVALID_ARG)
-                err = m_curFilter->SetUnparseable(PR_TRUE);
-              NS_ENSURE_SUCCESS(err, err);
-            }
-            break;
-		}
-	} while (!aStream->eof());
-
+      }
+      break;
+    case nsIMsgFilterList::attribActionValue:
+      if (m_curFilter && currentFilterAction)
+      {
+        nsMsgRuleActionType type;
+        currentFilterAction->GetType(&type);
+        if (type == nsMsgFilterAction::MoveToFolder ||
+              type == nsMsgFilterAction::CopyToFolder)
+          err = m_curFilter->ConvertMoveOrCopyToFolderValue(currentFilterAction, value);
+        else if (type == nsMsgFilterAction::ChangePriority)
+        {
+          nsMsgPriorityValue outPriority;
+          nsresult res = NS_MsgGetPriorityFromString(value.get(), &outPriority);
+          if (NS_SUCCEEDED(res))
+            currentFilterAction->SetPriority(outPriority);
+          else
+            NS_ASSERTION(PR_FALSE, "invalid priority in filter file");
+        }
+        else if (type == nsMsgFilterAction::Label)
+        {
+          PRInt32 res;
+          PRInt32 labelInt = value.ToInteger(&res, 10);
+          if (res == 0)
+            currentFilterAction->SetLabel((nsMsgLabelValue) labelInt);
+        }
+        else if (type == nsMsgFilterAction::JunkScore)
+        {
+          PRInt32 res;
+          PRInt32 junkScore = value.ToInteger(&res, 10);
+          if (!res)
+            currentFilterAction->SetJunkScore(junkScore);
+        }
+        else if (type == nsMsgFilterAction::Forward || type == nsMsgFilterAction::Reply)
+        {
+          currentFilterAction->SetStrValue(value.get());
+        }
+      }
+      break;
+    case nsIMsgFilterList::attribCondition:
+      if (m_curFilter)
+      {
+        if ( m_fileVersion == k45Version && impSvc)
+        {
+          nsAutoString unicodeStr;
+          impSvc->SystemStringToUnicode(value.get(), unicodeStr);
+          char *utf8 = ToNewUTF8String(unicodeStr);
+          value.Assign(utf8);
+          nsMemory::Free(utf8);
+        }
+        err = ParseCondition(m_curFilter, value.get());
+        if (err == NS_ERROR_INVALID_ARG)
+          err = m_curFilter->SetUnparseable(PR_TRUE);
+        NS_ENSURE_SUCCESS(err, err);
+      }
+      break;
+    }
+  } while (!aStream->eof());
+  
   if (m_curFilter)
   {
     PRBool unparseableFilter;
@@ -693,8 +699,8 @@ nsresult nsMsgFilterList::LoadTextFilters(nsIOFileStream *aStream)
       m_curFilter->SetEnabled(PR_FALSE);  //disable the filter because we don't know how to apply it
     }
   }
-
-	return err;
+  
+  return err;
 }
 
 // parse condition like "(subject, contains, fred) AND (body, isn't, "foo)")"
@@ -704,72 +710,72 @@ nsresult nsMsgFilterList::LoadTextFilters(nsIOFileStream *aStream)
 // which will get written out as (\"foo\\")\") and read in as ("foo\")"
 NS_IMETHODIMP nsMsgFilterList::ParseCondition(nsIMsgFilter *aFilter, const char *aCondition)
 {
-	PRBool	done = PR_FALSE;
-	nsresult	err = NS_OK;
+  PRBool	done = PR_FALSE;
+  nsresult	err = NS_OK;
   const char *curPtr = aCondition;
-	while (!done)
-	{
-		// insert code to save the boolean operator if there is one for this search term....
-		const char *openParen = PL_strchr(curPtr, '(');
-		const char *orTermPos = PL_strchr(curPtr, 'O');		// determine if an "OR" appears b4 the openParen...
-		PRBool ANDTerm = PR_TRUE;
-		if (orTermPos && orTermPos < openParen) // make sure OR term falls before the '('
-			ANDTerm = PR_FALSE;
-
-		char *termDup = nsnull;
-		if (openParen)
-		{
-			PRBool foundEndTerm = PR_FALSE;
-			PRBool inQuote = PR_FALSE;
-			for (curPtr = openParen +1; *curPtr; curPtr++)
-			{
-				if (*curPtr == '\\' && *(curPtr + 1) == '"')
-					curPtr++;
-				else if (*curPtr == ')' && !inQuote)
-				{
-					foundEndTerm = PR_TRUE;
-					break;
-				}
-				else if (*curPtr == '"')
-					inQuote = !inQuote;
-			}
-			if (foundEndTerm)
-			{
-				int termLen = curPtr - openParen - 1;
-				termDup = (char *) PR_Malloc(termLen + 1);
-				if (termDup)
-				{
-					PL_strncpy(termDup, openParen + 1, termLen + 1);
-					termDup[termLen] = '\0';
-				}
-				else
-				{
-					err = NS_ERROR_OUT_OF_MEMORY;
-					break;
-				}
-			}
-		}
-		else
-			break;
-		if (termDup)
-		{
-			nsMsgSearchTerm	*newTerm = new nsMsgSearchTerm;
-            
+  while (!done)
+  {
+    // insert code to save the boolean operator if there is one for this search term....
+    const char *openParen = PL_strchr(curPtr, '(');
+    const char *orTermPos = PL_strchr(curPtr, 'O');		// determine if an "OR" appears b4 the openParen...
+    PRBool ANDTerm = PR_TRUE;
+    if (orTermPos && orTermPos < openParen) // make sure OR term falls before the '('
+      ANDTerm = PR_FALSE;
+    
+    char *termDup = nsnull;
+    if (openParen)
+    {
+      PRBool foundEndTerm = PR_FALSE;
+      PRBool inQuote = PR_FALSE;
+      for (curPtr = openParen +1; *curPtr; curPtr++)
+      {
+        if (*curPtr == '\\' && *(curPtr + 1) == '"')
+          curPtr++;
+        else if (*curPtr == ')' && !inQuote)
+        {
+          foundEndTerm = PR_TRUE;
+          break;
+        }
+        else if (*curPtr == '"')
+          inQuote = !inQuote;
+      }
+      if (foundEndTerm)
+      {
+        int termLen = curPtr - openParen - 1;
+        termDup = (char *) PR_Malloc(termLen + 1);
+        if (termDup)
+        {
+          PL_strncpy(termDup, openParen + 1, termLen + 1);
+          termDup[termLen] = '\0';
+        }
+        else
+        {
+          err = NS_ERROR_OUT_OF_MEMORY;
+          break;
+        }
+      }
+    }
+    else
+      break;
+    if (termDup)
+    {
+      nsMsgSearchTerm	*newTerm = new nsMsgSearchTerm;
+      
       if (newTerm) 
       {
         newTerm->m_booleanOp = (ANDTerm) ? nsMsgSearchBooleanOp::BooleanAND
                                          : nsMsgSearchBooleanOp::BooleanOR;
 
-                err = newTerm->DeStreamNew(termDup, PL_strlen(termDup));
-                NS_ENSURE_SUCCESS(err, err);
+        err = newTerm->DeStreamNew(termDup, PL_strlen(termDup));
+        NS_ENSURE_SUCCESS(err, err);
         aFilter->AppendTerm(newTerm);
-            }
-			PR_FREEIF(termDup);
-		}
-		else
-			break;
-	}
-	return err;
+      }
+      PR_FREEIF(termDup);
+    }
+    else
+      break;
+  }
+  return err;
 }
 
 nsresult nsMsgFilterList::WriteIntAttr(nsMsgFilterFileAttribValue attrib, int value, nsIOFileStream *aStream)
@@ -955,10 +961,13 @@ nsMsgFilterList::RemoveFilter(nsIMsgFilter *aFilter)
     return m_filters->RemoveElement(NS_STATIC_CAST(nsISupports*, aFilter));
 }
 
-nsresult nsMsgFilterList::InsertFilterAt(PRUint32 filterIndex, nsIMsgFilter *filter)
+nsresult nsMsgFilterList::InsertFilterAt(PRUint32 filterIndex, nsIMsgFilter *aFilter)
 {
-	m_filters->InsertElementAt(filter, filterIndex);
-	return NS_OK;
+  nsMsgFilter *filter = NS_STATIC_CAST(nsMsgFilter *, aFilter);
+  if (!m_temporaryList)
+    filter->SetFilterList(this);
+  m_filters->InsertElementAt(aFilter, filterIndex);
+  return NS_OK;
 }
 
 // Attempt to move the filter at index filterIndex in the specified direction.
@@ -1046,7 +1055,8 @@ NS_IMETHODIMP nsMsgFilterList::MatchOrChangeFilterTarget(const char *oldFolderUr
       else
         continue;
 
-      if (actionType == nsMsgFilterAction::MoveToFolder)
+      if (actionType == nsMsgFilterAction::MoveToFolder ||
+          actionType == nsMsgFilterAction::CopyToFolder)
       {
         rv = filterAction->GetTargetFolderUri(getter_Copies(folderUri));
         if (NS_SUCCEEDED(rv) && folderUri)

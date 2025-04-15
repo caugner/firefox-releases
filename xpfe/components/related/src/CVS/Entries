@@ -1,5 +1,5 @@
-/.cvsignore/1.1/Mon Jun  7 19:22:17 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.16/Sun Dec 16 11:42:05 2001//TFIREFOX_1_0_RELEASE
-/nsRelatedLinksHandler.cpp/1.70/Sat Jun 21 00:15:39 2003//TFIREFOX_1_0_RELEASE
-/nsRelatedLinksHandlerImpl.h/1.4/Fri Sep 28 20:13:49 2001//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Mon Jun  7 19:22:17 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.18/Tue Apr  5 14:50:15 2005//TFIREFOX_1_5_RELEASE
+/nsRelatedLinksHandler.cpp/1.74/Sun Nov  7 23:59:35 2004//TFIREFOX_1_5_RELEASE
+/nsRelatedLinksHandlerImpl.h/1.5/Sat Apr 17 16:51:30 2004//TFIREFOX_1_5_RELEASE
 D

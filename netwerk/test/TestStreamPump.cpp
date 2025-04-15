@@ -35,6 +35,7 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include "TestCommon.h"
 #include "nsIComponentRegistrar.h"
 #include "nsIStreamTransportService.h"
 #include "nsIAsyncInputStream.h"
@@ -57,6 +58,7 @@
 #include "nsNetUtil.h"
 #include "nsAutoLock.h"
 #include "prlog.h"
+#include "prprf.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -168,7 +170,7 @@ NS_IMPL_ISUPPORTS2(MyListener,
  * asynchronously copy file.
  */
 static nsresult
-RunTest(nsIFile *file, PRInt32 offset, PRInt32 length)
+RunTest(nsIFile *file, PRInt64 offset, PRInt64 length)
 {
     nsresult rv;
 
@@ -202,6 +204,9 @@ RunTest(nsIFile *file, PRInt32 offset, PRInt32 length)
 int
 main(int argc, char* argv[])
 {
+    if (test_common_init(&argc, &argv) != 0)
+        return -1;
+
     nsresult rv;
 
     if (argc < 4) {
@@ -209,8 +214,18 @@ main(int argc, char* argv[])
         return -1;
     }
     char* fileName = argv[1];
-    PRInt32 offset = atoi(argv[2]);
-    PRInt32 length = atoi(argv[3]);
+    PRInt64 offset, length;
+    int err = PR_sscanf(argv[2], "%lld", &offset);
+    if (err == -1) {
+      printf("Start offset must be an integer!\n");
+      return 1;
+    }
+    err = PR_sscanf(argv[3], "%lld", &length);
+    if (err == -1) {
+      printf("Length must be an integer!\n");
+      return 1;
+    }
+
     {
         nsCOMPtr<nsIServiceManager> servMan;
         NS_InitXPCOM2(getter_AddRefs(servMan), nsnull, nsnull);

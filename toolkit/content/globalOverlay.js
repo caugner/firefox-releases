@@ -1,19 +1,22 @@
 function closeWindow(aClose)
 {
   var windowCount = 0;
-  var wm = Components.classes["@mozilla.org/appshell/window-mediator;1"].getService(Components.interfaces.nsIWindowMediator);
+   var wm = Components.classes["@mozilla.org/appshell/window-mediator;1"]
+                      .getService(Components.interfaces.nsIWindowMediator);
   var e = wm.getEnumerator(null);
   
   while (e.hasMoreElements()) {
     var w = e.getNext();
-    ++windowCount;
-    if (windowCount == 2) 
+    if (++windowCount == 2) 
       break;
   }
 
+# Closing the last window doesn't quit the application on OS X.
+#ifndef XP_MACOSX
   // If we're down to the last window and someone tries to shut down, check to make sure we can!
-  if (windowCount == 1 && !canQuitApplication()) 
+  if (windowCount == 1 && !canQuitApplication())
     return false;
+#endif
 
   if (aClose)    
     window.close();
@@ -23,48 +26,43 @@ function closeWindow(aClose)
 
 function canQuitApplication()
 {
-  var os = Components.classes["@mozilla.org/observer-service;1"].getService(Components.interfaces.nsIObserverService);
-  if (os) {
-    try {
-      var cancelQuit = Components.classes["@mozilla.org/supports-PRBool;1"].createInstance(Components.interfaces.nsISupportsPRBool);
-      os.notifyObservers(cancelQuit, "quit-application-requested", null);
-      
-      // Something aborted the quit process. 
-      if (cancelQuit.data)
-        return false;
-    }
-    catch (ex) {
-    }
+  var os = Components.classes["@mozilla.org/observer-service;1"]
+                     .getService(Components.interfaces.nsIObserverService);
+  if (!os) return true;
+  
+  try {
+    var cancelQuit = Components.classes["@mozilla.org/supports-PRBool;1"]
+                              .createInstance(Components.interfaces.nsISupportsPRBool);
+    os.notifyObservers(cancelQuit, "quit-application-requested", null);
+    
+    // Something aborted the quit process. 
+    if (cancelQuit.data)
+      return false;
   }
+  catch (ex) { }
+  os.notifyObservers(null, "quit-application-granted", null);
   return true;
 }
 
 function goQuitApplication()
 {
   if (!canQuitApplication())
-    return;
-    
+    return false;
+
   var windowManager = Components.classes['@mozilla.org/appshell/window-mediator;1'].getService();
   var windowManagerInterface = windowManager.QueryInterface( Components.interfaces.nsIWindowMediator);
   var enumerator = windowManagerInterface.getEnumerator( null );
-  var appShell = Components.classes['@mozilla.org/appshell/appShellService;1'].getService();
-  appShell = appShell.QueryInterface( Components.interfaces.nsIAppShellService );
-
-  var nativeAppSupport = null;
-  try {
-    nativeAppSupport = appShell.nativeAppSupport;
-  }
-  catch ( ex ) {
-  }
+  var appStartup = Components.classes['@mozilla.org/toolkit/app-startup;1'].
+                     getService(Components.interfaces.nsIAppStartup);
 
   while ( enumerator.hasMoreElements()  )
   {
      var domWindow = enumerator.getNext();
      if (("tryToClose" in domWindow) && !domWindow.tryToClose())
-       return false;          
+       return false;
      domWindow.close();
   };
-  appShell.quit(Components.interfaces.nsIAppShellService.eAttemptQuit);
+  appStartup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
   return true;
 }
 
@@ -96,8 +94,7 @@ function goDoCommand(command)
       controller.doCommand(command);
   }
   catch (e) {
-    dump("An error occurred executing the "+command+" command\n");
-    dump(e+"\n")
+    dump("An error occurred executing the " + command + " command\n" + e + "\n");
   }
 }
 

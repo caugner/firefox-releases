@@ -37,11 +37,11 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsMappedAttributes.h"
-#include "nsIHTMLStyleSheet.h"
+#include "nsHTMLStyleSheet.h"
 #include "nsRuleWalker.h"
 #include "prmem.h"
 
-nsMappedAttributes::nsMappedAttributes(nsIHTMLStyleSheet* aSheet,
+nsMappedAttributes::nsMappedAttributes(nsHTMLStyleSheet* aSheet,
                                        nsMapRuleToAttributesFunc aMapRuleFunc)
   : mAttrCount(0),
     mSheet(aSheet),
@@ -133,25 +133,6 @@ nsMappedAttributes::SetAndTakeAttr(nsIAtom* aAttrName, nsAttrValue& aValue)
   return NS_OK;
 }
 
-nsresult
-nsMappedAttributes::GetAttribute(nsIAtom* aAttrName,
-                                 nsHTMLValue& aValue) const
-{
-  NS_PRECONDITION(aAttrName, "null name");
-
-  const nsAttrValue* val = GetAttr(aAttrName);
-
-  if (!val) {
-    aValue.Reset();
-    return NS_CONTENT_ATTR_NOT_THERE;
-  }
-
-  val->ToHTMLValue(aValue);
-
-  return NS_CONTENT_ATTR_HAS_VALUE;
-
-}
-
 const nsAttrValue*
 nsMappedAttributes::GetAttr(nsIAtom* aAttrName) const
 {
@@ -200,16 +181,8 @@ nsMappedAttributes::HashValue() const
   return value;
 }
 
-NS_IMETHODIMP
-nsMappedAttributes::GetStyleSheet(nsIStyleSheet*& aSheet) const
-{
-  aSheet = mSheet;
-  NS_IF_ADDREF(aSheet);
-  return NS_OK;
-}
-
 void
-nsMappedAttributes::SetStyleSheet(nsIHTMLStyleSheet* aSheet)
+nsMappedAttributes::SetStyleSheet(nsHTMLStyleSheet* aSheet)
 {
   if (mSheet) {
     mSheet->DropMappedAttributes(this);

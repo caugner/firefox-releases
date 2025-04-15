@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,36 +14,37 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com>
+ *   Alex Fritze <alex.fritze@crocodile-clips.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsSVGElement.h"
 #include "nsIDocument.h"
 #include "nsRange.h"
+#include "nsIDOMAttr.h"
 #include "nsIDOMEventReceiver.h"
 #include "nsIDOMMutationEvent.h"
 #include "nsMutationEvent.h"
 #include "nsIBindingManager.h"
-#include "nsIXBLBinding.h"
+#include "nsXBLBinding.h"
 #include "nsStyleConsts.h"
 #include "nsDOMError.h"
 #include "nsIPresShell.h"
@@ -52,15 +53,23 @@
 #include "nsIServiceManager.h"
 #include "nsIXBLService.h"
 #include "nsSVGAtoms.h"
+#include "nsLayoutAtoms.h"
+#include "nsHTMLAtoms.h"
 #include "nsICSSStyleRule.h"
 #include "nsISVGSVGElement.h"
 #include "nsRuleWalker.h"
-#include "nsSVGStyleValue.h"
 #include "nsCSSDeclaration.h"
+#include "nsCSSProps.h"
 #include "nsICSSParser.h"
+#include "nsICSSLoader.h"
+#include "nsGenericHTMLElement.h"
+#include "nsNodeInfoManager.h"
+#include "nsIScriptGlobalObject.h"
 
-nsSVGElement::nsSVGElement()
+nsSVGElement::nsSVGElement(nsINodeInfo *aNodeInfo)
+  : nsGenericElement(aNodeInfo)
 {
+
 }
 
 nsSVGElement::~nsSVGElement()
@@ -91,31 +100,28 @@ NS_INTERFACE_MAP_END_INHERITING(nsGenericElement)
 //----------------------------------------------------------------------
 // Implementation
   
-nsresult
-nsSVGElement::Init(nsINodeInfo* aNodeInfo)
-{
-  nsresult rv = nsGenericElement::Init(aNodeInfo);
-  NS_ENSURE_SUCCESS(rv, rv);
-  
-  // Create mapped properties:
-  
-  // style #IMPLIED
-  rv = NS_NewSVGStyleValue(getter_AddRefs(mStyle));
-  NS_ENSURE_SUCCESS(rv,rv);
-  rv = AddMappedSVGValue(nsSVGAtoms::style, mStyle);
-  NS_ENSURE_SUCCESS(rv,rv);
-  
-  return NS_OK;
-}
-
 //----------------------------------------------------------------------
 // nsIContent methods
 
-void
-nsSVGElement::SetParent(nsIContent* aParent)
+nsresult
+nsSVGElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
+                         nsIContent* aBindingParent,
+                         PRBool aCompileEventHandlers)
 {
-  nsGenericElement::SetParent(aParent);
+  nsresult rv = nsGenericElement::BindToTree(aDocument, aParent,
+                                             aBindingParent,
+                                             aCompileEventHandlers);
+  NS_ENSURE_SUCCESS(rv, rv);
 
+  ParentChainChanged();
+
+  return rv;
+}
+
+void
+nsSVGElement::UnbindFromTree(PRBool aDeep, PRBool aNullParent)
+{
+  nsGenericElement::UnbindFromTree(aDeep, aNullParent);
   ParentChainChanged();
 }
 
@@ -123,6 +129,12 @@ nsIAtom *
 nsSVGElement::GetIDAttributeName() const
 {
   return nsSVGAtoms::id;
+}
+
+nsIAtom *
+nsSVGElement::GetClassAttributeName() const
+{
+  return nsSVGAtoms::_class;
 }
 
 nsresult
@@ -141,7 +153,7 @@ nsSVGElement::SetAttr(PRInt32 aNamespaceID, nsIAtom* aName, nsIAtom* aPrefix,
   
   PRInt32 index = mAttrsAndChildren.IndexOfAttr(aName, aNamespaceID);
   
-  if (mDocument) {
+  if (IsInDoc()) {
     hasListeners = nsGenericElement::HasMutationListeners(this,
       NS_EVENT_BITS_MUTATION_ATTRMODIFIED);
     
@@ -204,9 +216,27 @@ nsSVGElement::SetAttr(PRInt32 aNamespaceID, nsIAtom* aName, nsIAtom* aPrefix,
       attrValue.SetTo(svg_value);
     }
   }
+  else if (aName == nsSVGAtoms::style && aNamespaceID == kNameSpaceID_None) {
+    nsGenericHTMLElement::ParseStyleAttribute(this, PR_TRUE, aValue, attrValue);
+  }
+  // We don't have an nsISVGValue attribute.
+  else if (aName == nsSVGAtoms::id && aNamespaceID == kNameSpaceID_None){
+    attrValue.ParseAtom(aValue);
+  } 
   else {
-    // We don't have an nsISVGValue attribute.
     attrValue.SetTo(aValue);
+  }
+
+  if (aNamespaceID == kNameSpaceID_None && IsEventName(aName)) {
+    nsCOMPtr<nsIEventListenerManager> manager;
+    GetListenerManager(getter_AddRefs(manager));
+    if (manager) {
+      nsIAtom* eventName = GetEventNameForAttr(aName);
+      nsIDocument *ownerDoc = GetOwnerDoc();
+      manager->AddScriptEventListener(NS_STATIC_CAST(nsIContent*, this), eventName,
+                                      aValue, PR_TRUE,
+                                      !nsContentUtils::IsChromeDoc(ownerDoc));
+    }
   }
   
   return SetAttrAndNotify(aNamespaceID, aName, aPrefix, oldValue, attrValue,
@@ -214,33 +244,29 @@ nsSVGElement::SetAttr(PRInt32 aNamespaceID, nsIAtom* aName, nsIAtom* aPrefix,
 }
 
 nsresult
-nsSVGElement::SetBindingParent(nsIContent* aParent)
+nsSVGElement::UnsetAttr(PRInt32 aNamespaceID, nsIAtom* aName,
+                        PRBool aNotify)
 {
-  nsresult rv = nsGenericElement::SetBindingParent(aParent);
+  if (aNamespaceID == kNameSpaceID_None && IsEventName(aName)) {
+    nsCOMPtr<nsIEventListenerManager> manager;
+    GetListenerManager(getter_AddRefs(manager));
+    if (manager) {
+      nsIAtom* eventName = GetEventNameForAttr(aName);
+      manager->RemoveScriptEventListener(eventName);
+    }
+  }
 
-  // XXX Are parent and bindingparent always in sync? (in which case
-  // we don't have to call ParentChainChanged() here)
-  ParentChainChanged();
-  return rv;
+  return nsGenericElement::UnsetAttr(aNamespaceID, aName, aNotify);
+}
+
+PRBool
+nsSVGElement::IsContentOfType(PRUint32 aFlags) const
+{
+  return !(aFlags & ~(eELEMENT | eSVG));
 }
 
 //----------------------------------------------------------------------
 // nsIStyledContent methods
-
-NS_IMETHODIMP
-nsSVGElement::GetID(nsIAtom** aId)const
-{
-  nsAutoString value;
-  
-  nsresult rv = NS_CONST_CAST(nsSVGElement*,this)->
-                    GetAttribute(NS_LITERAL_STRING("id"), value);
-  if (NS_SUCCEEDED(rv))
-    *aId = NS_NewAtom(value);
-  else
-    *aId = nsnull;
-  
-  return rv;
-}
 
 NS_IMETHODIMP
 nsSVGElement::WalkContentStyleRules(nsRuleWalker* aRuleWalker)
@@ -258,9 +284,49 @@ nsSVGElement::WalkContentStyleRules(nsRuleWalker* aRuleWalker)
 }
 
 NS_IMETHODIMP
-nsSVGElement::GetInlineStyleRule(nsICSSStyleRule** aStyleRule)
+nsSVGElement::SetInlineStyleRule(nsICSSStyleRule* aStyleRule, PRBool aNotify)
 {
-  return mStyle->GetStyleRule(this, aStyleRule);
+  PRBool hasListeners = PR_FALSE;
+  PRBool modification = PR_FALSE;
+  nsAutoString oldValueStr;
+
+  if (IsInDoc()) {
+    hasListeners = nsGenericElement::HasMutationListeners(this,
+      NS_EVENT_BITS_MUTATION_ATTRMODIFIED);
+
+    // There's no point in comparing the stylerule pointers since we're always
+    // getting a new stylerule here. And we can't compare the stringvalues of
+    // the old and the new rules since both will point to the same declaration
+    // and thus will be the same.
+    if (hasListeners || aNotify) {
+      // save the old attribute so we can set up the mutation event properly
+      const nsAttrValue* value = mAttrsAndChildren.GetAttr(nsSVGAtoms::style);
+      if (value) {
+        modification = PR_TRUE;
+        if (hasListeners) {
+          value->ToString(oldValueStr);
+        }
+      }
+    }
+  }
+
+  nsAttrValue attrValue(aStyleRule);
+
+  return SetAttrAndNotify(kNameSpaceID_None, nsSVGAtoms::style, nsnull,
+                          oldValueStr, attrValue, modification, hasListeners,
+                          aNotify);
+}
+
+nsICSSStyleRule*
+nsSVGElement::GetInlineStyleRule()
+{
+  const nsAttrValue* attrVal = mAttrsAndChildren.GetAttr(nsSVGAtoms::style);
+
+  if (attrVal && attrVal->Type() == nsAttrValue::eCSSStyleRule) {
+    return attrVal->GetCSSStyleRuleValue();
+  }
+
+  return nsnull;
 }
 
 // PresentationAttributes-FillStroke
@@ -329,13 +395,46 @@ nsSVGElement::sFontSpecificationMap[] = {
   { nsnull }
 };
 
+// PresentationAttributes-GradientStop
+/* static */ const nsGenericElement::MappedAttributeEntry
+nsSVGElement::sGradientStopMap[] = {
+  { &nsSVGAtoms::stop_color },
+  { &nsSVGAtoms::stop_opacity },
+  { nsnull }
+};
+
+// PresentationAttributes-Viewports
+/* static */ const nsGenericElement::MappedAttributeEntry
+nsSVGElement::sViewportsMap[] = {
+  { &nsSVGAtoms::overflow },
+  { &nsSVGAtoms::clip },
+  { nsnull }
+};
+
+// PresentationAttributes-Makers
+/* static */ const nsGenericElement::MappedAttributeEntry
+nsSVGElement::sMarkersMap[] = {
+  { &nsSVGAtoms::marker_end },
+  { &nsSVGAtoms::marker_mid },
+  { &nsSVGAtoms::marker_start },
+  { nsnull }
+};
+
+// PresentationAttributes-Color
+/* static */ const nsGenericElement::MappedAttributeEntry
+nsSVGElement::sColorMap[] = {
+  { &nsSVGAtoms::color },
+  { nsnull }
+};
+
+
 //----------------------------------------------------------------------
 // nsIDOMNode methods
 
 NS_IMETHODIMP
 nsSVGElement::IsSupported(const nsAString& aFeature, const nsAString& aVersion, PRBool* aReturn)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
+  NS_NOTYETIMPLEMENTED("nsSVGElement::IsSupported");
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -366,8 +465,13 @@ nsSVGElement::GetOwnerSVGElement(nsIDOMSVGSVGElement * *aOwnerSVGElement)
   *aOwnerSVGElement = nsnull;
 
   nsIBindingManager *bindingManager = nsnull;
-  if (mDocument) {
-    bindingManager = mDocument->GetBindingManager();
+  // XXXbz I _think_ this is right.  We want to be using the binding manager
+  // that would have attached the binding that gives us our anonymous parent.
+  // That's the binding manager for the document we actually belong to, which
+  // is our owner doc.
+  nsIDocument* ownerDoc = GetOwnerDoc();
+  if (ownerDoc) {
+    bindingManager = ownerDoc->BindingManager();
   }
 
   nsCOMPtr<nsIContent> parent;
@@ -435,15 +539,24 @@ nsSVGElement::GetViewportElement(nsIDOMSVGElement * *aViewportElement)
 // nsISVGValueObserver methods:
 
 NS_IMETHODIMP
-nsSVGElement::WillModifySVGObservable(nsISVGValue* observable)
+nsSVGElement::WillModifySVGObservable(nsISVGValue* observable,
+                                      nsISVGValue::modificationType aModType)
 {
   return NS_OK;
 }
 
 
 NS_IMETHODIMP
-nsSVGElement::DidModifySVGObservable(nsISVGValue* aObservable)
+nsSVGElement::DidModifySVGObservable(nsISVGValue* aObservable,
+                                     nsISVGValue::modificationType aModType)
 {
+  // Return without setting DOM attributes as markup attributes if the
+  // attribute's element is being inserted into an SVG document fragment,
+  // which provides a context which percentage lengths are relative to.
+  // Bug 274886
+  if (aModType == nsISVGValue::mod_context)
+    return NS_OK;
+
   PRUint32 i, count = mMappedAttributes.AttrCount();
   const nsAttrValue* attrValue = nsnull;
   for (i = 0; i < count; ++i) {
@@ -462,7 +575,7 @@ nsSVGElement::DidModifySVGObservable(nsISVGValue* aObservable)
   const nsAttrName* attrName = mMappedAttributes.GetSafeAttrNameAt(i);
   PRBool modification = PR_FALSE;
   PRBool hasListeners = PR_FALSE;
-  if (mDocument) {
+  if (IsInDoc()) {
     modification = !!mAttrsAndChildren.GetAttr(attrName->LocalName(),
                                                attrName->NamespaceID());
     hasListeners = nsGenericElement::HasMutationListeners(this,
@@ -509,6 +622,12 @@ nsSVGElement::ParentChainChanged()
 //----------------------------------------------------------------------
 // Implementation Helpers:
 
+PRBool
+nsSVGElement::IsEventName(nsIAtom* aName)
+{
+  return PR_FALSE;
+}
+
 nsresult
 nsSVGElement::SetAttrAndNotify(PRInt32 aNamespaceID, nsIAtom* aAttribute,
                                nsIAtom* aPrefix, const nsAString& aOldValue,
@@ -520,9 +639,10 @@ nsSVGElement::SetAttrAndNotify(PRInt32 aNamespaceID, nsIAtom* aAttribute,
     NS_STATIC_CAST(PRUint8, nsIDOMMutationEvent::MODIFICATION) :
     NS_STATIC_CAST(PRUint8, nsIDOMMutationEvent::ADDITION);
 
-  mozAutoDocUpdate updateBatch(mDocument, UPDATE_CONTENT_MODEL, aNotify);
-  if (aNotify && mDocument) {
-    mDocument->AttributeWillChange(this, aNamespaceID, aAttribute);
+  nsIDocument* document = GetCurrentDoc();
+  mozAutoDocUpdate updateBatch(document, UPDATE_CONTENT_MODEL, aNotify);
+  if (aNotify && document) {
+    document->AttributeWillChange(this, aNamespaceID, aAttribute);
   }
 
   if (aNamespaceID == kNameSpaceID_None) {
@@ -541,16 +661,15 @@ nsSVGElement::SetAttrAndNotify(PRInt32 aNamespaceID, nsIAtom* aAttribute,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  if (mDocument) {
-    nsCOMPtr<nsIXBLBinding> binding;
-    mDocument->GetBindingManager()->GetBinding(this, getter_AddRefs(binding));
+  if (document) {
+    nsXBLBinding *binding = document->BindingManager()->GetBinding(this);
     if (binding) {
       binding->AttributeChanged(aAttribute, aNamespaceID, PR_FALSE, aNotify);
     }
 
     if (aFireMutation) {
       nsCOMPtr<nsIDOMEventTarget> node = do_QueryInterface(NS_STATIC_CAST(nsIContent *, this));
-      nsMutationEvent mutation(NS_MUTATION_ATTRMODIFIED, node);
+      nsMutationEvent mutation(PR_TRUE, NS_MUTATION_ATTRMODIFIED, node);
 
       nsAutoString attrName;
       aAttribute->ToString(attrName);
@@ -577,77 +696,76 @@ nsSVGElement::SetAttrAndNotify(PRInt32 aNamespaceID, nsIAtom* aAttribute,
     }
 
     if (aNotify) {
-      mDocument->AttributeChanged(this, aNamespaceID, aAttribute, modType);
+      document->AttributeChanged(this, aNamespaceID, aAttribute, modType);
     }
   }
-  
+
+  if (aNamespaceID == kNameSpaceID_XMLEvents && 
+      aAttribute == nsHTMLAtoms::_event && GetOwnerDoc()) {
+    GetOwnerDoc()->AddXMLEventsContent(this);
+  }
+
   return NS_OK;
-}
-
-nsresult
-nsSVGElement::CopyNode(nsSVGElement* aDest, PRBool aDeep)
-{
-  nsresult rv;
-
-  // copy attributes:
-  PRUint32 i, count = mAttrsAndChildren.AttrCount();
-  for (i = 0; i < count; ++i) {
-    const nsAttrName* name = mAttrsAndChildren.GetSafeAttrNameAt(i);
-    const nsAttrValue* value = mAttrsAndChildren.AttrAt(i);
-    nsAutoString valStr;
-    value->ToString(valStr);
-    rv = aDest->SetAttr(name->NamespaceID(), name->LocalName(),
-                        name->GetPrefix(), valStr, PR_FALSE);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-
-  if (aDeep) {
-    // copy children:
-    PRInt32 count = mAttrsAndChildren.ChildCount();
-    for (PRInt32 i = 0; i < count; ++i) {
-      nsIContent* child = mAttrsAndChildren.ChildAt(i);
-      
-      nsCOMPtr<nsIDOMNode> domchild = do_QueryInterface(child);
-      NS_ASSERTION(domchild != nsnull, "child is not a DOM node");
-      if (! domchild)
-        return NS_ERROR_UNEXPECTED;
-      
-      nsCOMPtr<nsIDOMNode> newdomchild;
-      rv = domchild->CloneNode(PR_TRUE, getter_AddRefs(newdomchild));
-      if (NS_FAILED(rv)) return rv;
-      
-      nsCOMPtr<nsIContent> newchild = do_QueryInterface(newdomchild);
-      NS_ASSERTION(newchild != nsnull, "newdomchild is not an nsIContent");
-      if (!newchild)
-        return NS_ERROR_UNEXPECTED;
-      
-      rv = aDest->AppendChildTo(newchild, PR_FALSE, PR_FALSE);
-      if (NS_FAILED(rv)) return rv;
-    }
-  }
-  
-  return rv;
 }
 
 void
 nsSVGElement::UpdateContentStyleRule()
 {
   NS_ASSERTION(!mContentStyleRule, "we already have a content style rule");
+  
+  // Bail early if there are no child attributes.
+  // If this code were moved into the for-loop we could
+  // avoid creating an mDeclaration even when there 
+  // are non-style related attributes. See bug 270251.
+  if (mAttrsAndChildren.AttrCount() == 0)
+    return;
 
-  nsCSSDeclaration* declaration = new nsCSSDeclaration();
-  if (!declaration || !declaration->InitializeEmpty()) {
-    NS_ERROR("could not initialize nsCSSDeclaration");
+  nsIDocument* doc = GetOwnerDoc();
+  if (!doc) {
+    NS_ERROR("SVG element without owner document");
     return;
   }
   
   nsCOMPtr<nsIURI> baseURI = GetBaseURI();
-  nsCOMPtr<nsICSSParser> parser;
-  NS_NewCSSParser(getter_AddRefs(parser));
-  if (!parser)
+  nsIURI *docURI = doc->GetDocumentURI();
+  
+  // Create the nsCSSDeclaration.
+  nsCSSDeclaration* declaration = new nsCSSDeclaration();
+  if (!declaration) {
+    NS_WARNING("Failed to allocate nsCSSDeclaration");
     return;
+  }
+  if(!declaration->InitializeEmpty()) {
+    NS_WARNING("could not initialize nsCSSDeclaration");
+    declaration->RuleAbort();
+    return;
+  }
+
+  // Try to fetch the CSS Parser from the document.
+  nsICSSLoader* cssLoader = doc->CSSLoader();
+  
+  nsCOMPtr<nsICSSParser> parser;
+  nsresult rv = NS_OK; 
+  rv = cssLoader->GetParserFor(nsnull, getter_AddRefs(parser));
+  
+  if (NS_FAILED(rv)) {
+    NS_WARNING("failed to get a css parser");
+    declaration->RuleAbort();
+    return;
+  }
+
+  // SVG and CSS differ slightly in their interpretation of some of
+  // the attributes.  SVG allows attributes of the form: font-size="5" 
+  // (style="font-size: 5" if using a style attribute)
+  // where CSS requires units: font-size="5pt" (style="font-size: 5pt")
+  // Set a flag to pass information to the parser so that we can use
+  // the CSS parser to parse the font-size attribute.  Note that this
+  // does *not* effect the use of CSS stylesheets, which will still
+  // require units
+  parser->SetSVGMode(PR_TRUE);
 
   PRUint32 attrCount = mAttrsAndChildren.AttrCount();
-  for (int i = 0; i< attrCount; ++i) {
+  for (PRUint32 i = 0; i < attrCount; ++i) {
     const nsAttrName* attrName = mAttrsAndChildren.GetSafeAttrNameAt(i);
     if (!attrName->IsAtom() || !IsAttributeMapped(attrName->Atom()))
       continue;
@@ -659,11 +777,20 @@ nsSVGElement::UpdateContentStyleRule()
     mAttrsAndChildren.AttrAt(i)->ToString(value);
 
     PRBool changed;
-    parser->ParseProperty(name, value, baseURI, declaration, &changed);
+    parser->ParseProperty(nsCSSProps::LookupProperty(name), value,
+                          docURI, baseURI,
+                          declaration, &changed);
   }
   
-  NS_NewCSSStyleRule(getter_AddRefs(mContentStyleRule), nsnull, declaration);
-  NS_ASSERTION(mContentStyleRule, "could not create contentstylerule");
+  rv = NS_NewCSSStyleRule(getter_AddRefs(mContentStyleRule), nsnull, declaration);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("could not create contentstylerule");
+    declaration->RuleAbort();
+  }
+  
+  // Recycle the parser
+  parser->SetSVGMode(PR_FALSE);
+  cssLoader->RecycleParser(parser);
 }
 
 nsISVGValue*
@@ -701,4 +828,47 @@ nsSVGElement::AddMappedSVGValue(nsIAtom* aName, nsISupports* aValue,
   }
 
   return NS_OK;
+}
+
+/* static */
+PRBool
+nsSVGElement::IsGraphicElementEventName(nsIAtom* aName)
+{
+  const char* name;
+  aName->GetUTF8String(&name);
+
+  if (name[0] != 'o' || name[1] != 'n') {
+    return PR_FALSE;
+  }
+
+  return (aName == nsSVGAtoms::onabort     ||
+          aName == nsSVGAtoms::onclick     ||
+          aName == nsSVGAtoms::onerror     ||
+          aName == nsSVGAtoms::onload      ||
+          aName == nsSVGAtoms::onmousedown ||
+          aName == nsSVGAtoms::onmouseup   ||
+          aName == nsSVGAtoms::onmouseover ||
+          aName == nsSVGAtoms::onmousemove ||
+          aName == nsSVGAtoms::onmouseout);
+}
+
+/* static */
+nsIAtom* nsSVGElement::GetEventNameForAttr(nsIAtom* aAttr)
+{
+  if (aAttr == nsSVGAtoms::onload)
+    return nsLayoutAtoms::onSVGLoad;
+  if (aAttr == nsSVGAtoms::onunload)
+    return nsLayoutAtoms::onSVGUnload;
+  if (aAttr == nsSVGAtoms::onabort)
+    return nsLayoutAtoms::onSVGAbort;
+  if (aAttr == nsSVGAtoms::onerror)
+    return nsLayoutAtoms::onSVGError;
+  if (aAttr == nsSVGAtoms::onresize)
+    return nsLayoutAtoms::onSVGResize;
+  if (aAttr == nsSVGAtoms::onscroll)
+    return nsLayoutAtoms::onSVGScroll;
+  if (aAttr == nsSVGAtoms::onzoom)
+    return nsLayoutAtoms::onSVGZoom;
+
+  return aAttr;
 }

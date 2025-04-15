@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -224,6 +223,13 @@ NS_IMETHODIMP nsDrawingSurfaceWin :: Lock(PRInt32 aX, PRInt32 aY,
           if ( mLockedBitmap != nsnull ) 
           {
             ::GetObject(mLockedBitmap, sizeof(BITMAP), &mBitmap);
+            // Always use at least 24-bit bitmaps regardless of the device context.
+            // See bug 228399 for more information.
+            if (mBitmap.bmBitsPixel < 24)
+              mBitmap.bmBitsPixel = 24;
+            // Note the width of the DIB-bits rows. DIB rows are DWORD-aligned,
+            // the original bitmap's rows may not have been DWORD-aligned.
+            mBitmap.bmWidthBytes = RASWIDTH(mBitmap.bmWidth, mBitmap.bmBitsPixel);
 
             if (aY < 0 || aY + aHeight > mBitmap.bmHeight) {
               ::DeleteObject(tbits);
@@ -241,9 +247,6 @@ NS_IMETHODIMP nsDrawingSurfaceWin :: Lock(PRInt32 aX, PRInt32 aY,
                 ::GetDIBits(mDC, mLockedBitmap, mLockOffset, mLockHeight, mDIBits, mBitmapInfo, DIB_RGB_COLORS);
 
               mBitmap.bmBits = mDIBits;
-              // Note the width of the DIB-bits rows. DIB rows are DWORD-aligned,
-              // the original bitmap's rows may not have been DWORD-aligned.
-              mBitmap.bmWidthBytes = RASWIDTH(mBitmap.bmWidth, mBitmap.bmBitsPixel);
             } else {
               ::DeleteObject(tbits);
               return NS_ERROR_FAILURE;
@@ -262,6 +265,8 @@ NS_IMETHODIMP nsDrawingSurfaceWin :: Lock(PRInt32 aX, PRInt32 aY,
       }
       else
       {
+        if (!(aFlags & NS_LOCK_SURFACE_WRITE_ONLY))
+          ::GdiFlush();
         mLockedBitmap = mSelectedBitmap;
         mBitmap.bmBits = mDIBits + mBitmap.bmWidthBytes * aY;
       }
@@ -426,35 +431,41 @@ NS_IMETHODIMP nsDrawingSurfaceWin :: Init(HDC aDC, PRUint32 aWidth,
   if (nsnull == mSurface)
 #endif
   {
-    HBITMAP tbits;
+    HBITMAP tbits = nsnull;
 
-    if ((aWidth > 0) && (aHeight > 0))
+    if (aWidth > 0 && aHeight > 0)
     {
-      if (aFlags & NS_CREATEDRAWINGSURFACE_FOR_PIXEL_ACCESS)
+      if ((aFlags & NS_CREATEDRAWINGSURFACE_FOR_PIXEL_ACCESS) == 0)
+        tbits = ::CreateCompatibleBitmap(aDC, aWidth, aHeight);
+
+      // Create a DIB if we need Pixel Access, or if DDB creation failed
+      if (nsnull == tbits)
       {
         void        *bits;
         BITMAPINFO  *binfo;
         int         depth;
 
         depth = ::GetDeviceCaps(aDC, BITSPIXEL);
+        // Always use at least 24-bit bitmaps regardless of the device context.
+        // See bug 228399 for more information.
+        if (depth < 24)
+          depth = 24;
 
         binfo = CreateBitmapInfo(aWidth, aHeight, depth);
 
-        if (nsnull != binfo)
-          mSelectedBitmap = tbits = ::CreateDIBSection(aDC, binfo, DIB_RGB_COLORS, &bits, NULL, 0);
+        if (nsnull == binfo)
+          return NS_ERROR_FAILURE;
+
+        mSelectedBitmap = tbits = ::CreateDIBSection(aDC, binfo, DIB_RGB_COLORS, &bits, NULL, 0);
 
         if (NULL == mSelectedBitmap)
-          tbits = ::CreateCompatibleBitmap(aDC, aWidth, aHeight);
-        else
-        {
-          mBitmapInfo = binfo;
-          mDIBits = (PRUint8 *)bits;
-          mBitmap.bmWidthBytes = RASWIDTH(aWidth, depth);
-          mBitmap.bmBitsPixel = depth;
-        }
+          return NS_ERROR_FAILURE;
+
+        mBitmapInfo = binfo;
+        mDIBits = (PRUint8 *)bits;
+        mBitmap.bmWidthBytes = RASWIDTH(aWidth, depth);
+        mBitmap.bmBitsPixel = depth;
       }
-      else
-        tbits = ::CreateCompatibleBitmap(aDC, aWidth, aHeight);
     }
     else
     {
@@ -536,52 +547,20 @@ NS_IMETHODIMP nsDrawingSurfaceWin :: IsReleaseDCDestructive(PRBool *aDestructive
 BITMAPINFO * nsDrawingSurfaceWin :: CreateBitmapInfo(PRInt32 aWidth, PRInt32 aHeight, PRInt32 aDepth,
                                                      void **aBits)
 {
+  NS_ASSERTION(aDepth == 24 || aDepth == 32, "Unsupported bitmap depth");
+
   PRInt32 palsize, imagesize, spanbytes, allocsize;
   PRUint8 *colortable;
   DWORD   bicomp, masks[3];
   BITMAPINFO  *rv = nsnull;
 
-	switch (aDepth)
+  switch (aDepth)
   {
-		case 8:
-			palsize = 256;
-			allocsize = 256;
-      bicomp = BI_RGB;
-      break;
-
-    case 16:
+    case 24:
       palsize = 0;
-			allocsize = 3;
-      bicomp = BI_BITFIELDS;
-      masks[0] = 0xf800;
-      masks[1] = 0x07e0;
-      masks[2] = 0x001f;
-     
-      mPixFormat.mRedZeroMask = 0x1f;
-      mPixFormat.mGreenZeroMask = 0x3f;
-      mPixFormat.mBlueZeroMask = 0x1f;
-      mPixFormat.mAlphaZeroMask = 0;
-      mPixFormat.mRedMask = masks[0];
-      mPixFormat.mGreenMask = masks[1];
-      mPixFormat.mBlueMask = masks[2];
-      mPixFormat.mAlphaMask = 0;
-      mPixFormat.mRedCount = 5;
-      mPixFormat.mGreenCount = 6;
-      mPixFormat.mBlueCount = 5;
-      mPixFormat.mAlphaCount = 0;
-      mPixFormat.mRedShift = 11;
-      mPixFormat.mGreenShift = 5;
-      mPixFormat.mBlueShift = 0;
-      mPixFormat.mAlphaShift = 0;
-  
-      break;
-
-		case 24:
-      palsize = 0;
-			allocsize = 0;
+      allocsize = 0;
       bicomp = BI_RGB;
 
-     
       mPixFormat.mRedZeroMask = 0xff;
       mPixFormat.mGreenZeroMask = 0xff;
       mPixFormat.mBlueZeroMask = 0xff;
@@ -598,13 +577,12 @@ BITMAPINFO * nsDrawingSurfaceWin :: CreateBitmapInfo(PRInt32 aWidth, PRInt32 aHe
       mPixFormat.mGreenShift = 8;
       mPixFormat.mBlueShift = 16;
       mPixFormat.mAlphaShift = 0;
-     
-
+      
       break;
 
-		case 32:
+    case 32:
       palsize = 0;
-			allocsize = 3;
+      allocsize = 3;
       bicomp = BI_BITFIELDS;
       masks[0] = 0xff0000;
       masks[1] = 0x00ff00;
@@ -626,12 +604,11 @@ BITMAPINFO * nsDrawingSurfaceWin :: CreateBitmapInfo(PRInt32 aWidth, PRInt32 aHe
       mPixFormat.mGreenShift = 8;
       mPixFormat.mBlueShift = 0;
       mPixFormat.mAlphaShift = 24;
-   
 
       break;
 
-		default:
-			palsize = -1;
+    default:
+      palsize = -1;
       break;
   }
 
@@ -645,19 +622,19 @@ BITMAPINFO * nsDrawingSurfaceWin :: CreateBitmapInfo(PRInt32 aWidth, PRInt32 aHe
     if (nsnull != rv)
     {
       rv->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-	    rv->bmiHeader.biWidth = aWidth;
-	    rv->bmiHeader.biHeight = -aHeight;
-	    rv->bmiHeader.biPlanes = 1;
-	    rv->bmiHeader.biBitCount = (unsigned short)aDepth;
-	    rv->bmiHeader.biCompression = bicomp;
-	    rv->bmiHeader.biSizeImage = imagesize;
-	    rv->bmiHeader.biXPelsPerMeter = 0;
-	    rv->bmiHeader.biYPelsPerMeter = 0;
-	    rv->bmiHeader.biClrUsed = palsize;
-	    rv->bmiHeader.biClrImportant = palsize;
+      rv->bmiHeader.biWidth = aWidth;
+      rv->bmiHeader.biHeight = -aHeight;
+      rv->bmiHeader.biPlanes = 1;
+      rv->bmiHeader.biBitCount = (unsigned short)aDepth;
+      rv->bmiHeader.biCompression = bicomp;
+      rv->bmiHeader.biSizeImage = imagesize;
+      rv->bmiHeader.biXPelsPerMeter = 0;
+      rv->bmiHeader.biYPelsPerMeter = 0;
+      rv->bmiHeader.biClrUsed = palsize;
+      rv->bmiHeader.biClrImportant = palsize;
 
       // set the color table in the info header
-	    colortable = (PRUint8 *)rv + sizeof(BITMAPINFOHEADER);
+      colortable = (PRUint8 *)rv + sizeof(BITMAPINFOHEADER);
 
       if ((aDepth == 16) || (aDepth == 32))
         memcpy(colortable, masks, sizeof(DWORD) * allocsize);

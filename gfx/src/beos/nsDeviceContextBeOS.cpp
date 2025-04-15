@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -62,7 +61,7 @@
 static NS_DEFINE_CID(kPrefCID, NS_PREF_CID); 
  
 nscoord nsDeviceContextBeOS::mDpi = 96; 
- 
+
 nsDeviceContextBeOS::nsDeviceContextBeOS()
   : DeviceContextImpl()
 {
@@ -81,10 +80,8 @@ nsDeviceContextBeOS::~nsDeviceContextBeOS()
 {
   nsresult rv; 
   nsCOMPtr<nsIPref> prefs = do_GetService(kPrefCID, &rv); 
-  if (NS_SUCCEEDED(rv)) { 
-    prefs->UnregisterCallback("browser.display.screen_resolution", 
-                              prefChanged, (void *)this); 
-  } 
+  if (NS_SUCCEEDED(rv))
+    prefs->UnregisterCallback("browser.display.screen_resolution", prefChanged, (void *)this); 
 }
 
 NS_IMETHODIMP nsDeviceContextBeOS::Init(nsNativeWidget aNativeWidget)
@@ -93,11 +90,14 @@ NS_IMETHODIMP nsDeviceContextBeOS::Init(nsNativeWidget aNativeWidget)
   // XXXRight now this will only get the primary monitor. 
 
   nsresult ignore; 
+  mWidget = aNativeWidget;
   nsCOMPtr<nsIScreenManager> sm ( do_GetService("@mozilla.org/gfx/screenmanager;1", &ignore) ); 
-  if ( sm ) { 
+  if (sm) 
+  { 
     nsCOMPtr<nsIScreen> screen; 
-    sm->GetPrimaryScreen ( getter_AddRefs(screen) ); 
-    if ( screen ) { 
+    sm->GetPrimaryScreen(getter_AddRefs(screen)); 
+    if (screen)
+    { 
       PRInt32 x, y, width, height, depth; 
       screen->GetAvailRect ( &x, &y, &width, &height ); 
       screen->GetPixelDepth ( &depth ); 
@@ -108,9 +108,10 @@ NS_IMETHODIMP nsDeviceContextBeOS::Init(nsNativeWidget aNativeWidget)
   } 
   
   static int initialized = 0; 
-  if (!initialized) { 
+  if (!initialized) 
+  {
     initialized = 1; 
- 
+
     // Set prefVal the value of the preference "browser.display.screen_resolution" 
     // or -1 if we can't get it. 
     // If it's negative, we pretend it's not set. 
@@ -118,29 +119,35 @@ NS_IMETHODIMP nsDeviceContextBeOS::Init(nsNativeWidget aNativeWidget)
     // If it's positive, we use it as the logical resolution 
     PRInt32 prefVal = -1; 
     nsresult res; 
- 
+
     nsCOMPtr<nsIPref> prefs(do_GetService(kPrefCID, &res)); 
-    if (NS_SUCCEEDED(res) && prefs) { 
+    if (NS_SUCCEEDED(res) && prefs)
+    { 
       res = prefs->GetIntPref("browser.display.screen_resolution", &prefVal); 
-      if (! NS_SUCCEEDED(res)) { 
+      if (! NS_SUCCEEDED(res))
+      { 
         prefVal = -1; 
       } 
-      prefs->RegisterCallback("browser.display.screen_resolution", prefChanged, 
-                              (void *)this); 
+      prefs->RegisterCallback("browser.display.screen_resolution", prefChanged, (void *)this); 
     } 
  
     // Set OSVal to what the operating system thinks the logical resolution is. 
-    PRInt32 OSVal = 72; 
-    
-    if (prefVal > 0) { 
+    // BeOS lacks monitor info, so we use estimation
+    PRInt32 OSVal = int(mWidthFloat*72./800.);
+    if (prefVal > 0)
+    { 
       // If there's a valid pref value for the logical resolution, 
       // use it. 
       mDpi = prefVal; 
-    } else if ((prefVal == 0) || (OSVal > 96)) { 
+    }
+    else if ((prefVal == 0) || (OSVal > 96))
+    { 
       // Either if the pref is 0 (force use of OS value) or the OS 
       // value is bigger than 96, use the OS value. 
       mDpi = OSVal; 
-    } else { 
+    }
+    else
+    { 
       // if we couldn't get the pref or it's negative, and the OS 
       // value is under 96ppi, then use 96. 
       mDpi = 96; 
@@ -155,10 +162,12 @@ NS_IMETHODIMP nsDeviceContextBeOS::Init(nsNativeWidget aNativeWidget)
   menu_info info;
   get_menu_info(&info);
   mMenuFont.SetFamilyAndStyle(info.f_family,info.f_style);
+  mMenuFont.SetSize(info.font_size);
   
 #ifdef DEBUG 
   static PRBool once = PR_TRUE; 
-  if (once) { 
+  if (once)
+  { 
     printf("GFX: dpi=%d t2p=%g p2t=%g depth=%d\n", mDpi, mTwipsToPixels, mPixelsToTwips,mDepth); 
     once = PR_FALSE; 
   } 
@@ -189,25 +198,25 @@ NS_IMETHODIMP nsDeviceContextBeOS::CreateRenderingContext(nsIRenderingContext *&
     surf = new nsDrawingSurfaceBeOS(); 
  
     if (surf && w) 
-      { 
- 
-        // init the nsDrawingSurfaceBeOS 
-        rv = surf->Init(w); 
- 
-        if (NS_OK == rv) 
-          // Init the nsRenderingContextBeOS 
-          rv = pContext->Init(this, surf); 
-      } 
-    else 
-      rv = NS_ERROR_OUT_OF_MEMORY; 
+    {
+      // init the nsDrawingSurfaceBeOS 
+      rv = surf->Init(w);
+      if (NS_OK == rv)
+        // Init the nsRenderingContextBeOS 
+        rv = pContext->Init(this, surf);
+    } 
+    else
+    {
+      rv = NS_ERROR_OUT_OF_MEMORY;
+    }
   }
-  else 
+  else
+  {
     rv = NS_ERROR_OUT_OF_MEMORY;
+  }
 
   if (NS_OK != rv)
-  {
     NS_IF_RELEASE(pContext); 
-  }
 
   aContext = pContext; 
  
@@ -251,7 +260,7 @@ NS_IMETHODIMP nsDeviceContextBeOS::GetSystemFont(nsSystemFontID aID, nsFont *aFo
     case eSystemFont_MessageBox : 
     case eSystemFont_SmallCaption : 
     case eSystemFont_StatusBar : 
-    case eSystemFont_Window:                      // css3 
+    case eSystemFont_Window:              // css3 
     case eSystemFont_Document: 
     case eSystemFont_Workspace: 
     case eSystemFont_Desktop: 
@@ -334,7 +343,7 @@ NS_IMETHODIMP nsDeviceContextBeOS::GetRect(nsRect &aRect)
 NS_IMETHODIMP nsDeviceContextBeOS::GetClientRect(nsRect &aRect) 
 { 
 //XXX do we know if the client rect should ever differ from the screen rect? 
-  return GetRect ( aRect );
+  return GetRect(aRect);
 }
 
 NS_IMETHODIMP nsDeviceContextBeOS::GetDeviceContextFor(nsIDeviceContextSpec *aDevice,
@@ -347,24 +356,19 @@ NS_IMETHODIMP nsDeviceContextBeOS::GetDeviceContextFor(nsIDeviceContextSpec *aDe
   nsresult rv;
   nsIDeviceContextPS *dcps;
   
-  rv = nsComponentManager::CreateInstance(kCDeviceContextPS,
-                                          nsnull,
-                                          NS_GET_IID(nsIDeviceContextPS),
-                                          (void **)&dcps);
+  rv = CallCreateInstance(kCDeviceContextPS, &dcps);
 
   NS_ASSERTION(NS_SUCCEEDED(rv), "Couldn't create PS Device context");
   
   dcps->SetSpec(aDevice);
-  dcps->InitDeviceContextPS((nsIDeviceContext*)aContext,
-                            (nsIDeviceContext*)this);
+  dcps->InitDeviceContextPS((nsIDeviceContext*)aContext, (nsIDeviceContext*)this);
 
-  rv = dcps->QueryInterface(NS_GET_IID(nsIDeviceContext),
-                            (void **)&aContext);
+  rv = dcps->QueryInterface(NS_GET_IID(nsIDeviceContext), (void **)&aContext);
 
   NS_RELEASE(dcps);
   
   return rv;
-  #else
+#else
   return NS_ERROR_NOT_IMPLEMENTED;
 #endif /* USE_POSTSCRIPT */
 }
@@ -401,8 +405,7 @@ nsDeviceContextBeOS::SetDPI(PRInt32 aDpi)
   mDpi = aDpi; 
   
   int pt2t = 72; 
- 
-  // make p2t a nice round number - this prevents rounding problems 
+
   mPixelsToTwips = float(NSToIntRound(float(NSIntPointsToTwips(pt2t)) / float(aDpi))); 
   mTwipsToPixels = 1.0f / mPixelsToTwips; 
  
@@ -415,7 +418,8 @@ int nsDeviceContextBeOS::prefChanged(const char *aPref, void *aClosure)
   nsDeviceContextBeOS *context = (nsDeviceContextBeOS*)aClosure; 
   nsresult rv; 
   
-  if (nsCRT::strcmp(aPref, "browser.display.screen_resolution")==0) { 
+  if (nsCRT::strcmp(aPref, "browser.display.screen_resolution")==0)
+  {
     PRInt32 dpi; 
     nsCOMPtr<nsIPref> prefs(do_GetService(kPrefCID, &rv)); 
     rv = prefs->GetIntPref(aPref, &dpi); 
@@ -437,8 +441,9 @@ nsDeviceContextBeOS::GetSystemFontInfo(const BFont *theFont, nsSystemFontID anID
   
   // do we have the default_font defined by BeOS, if not then 
   // we error out. 
-  if( !theFont )
-  	switch (anID) 
+  if (!theFont)
+  {
+    switch (anID) 
   	{
       case eSystemFont_Menu:
         status = GetSystemFontInfo(&mMenuFont, anID, aFont); 
@@ -453,8 +458,9 @@ nsDeviceContextBeOS::GetSystemFontInfo(const BFont *theFont, nsSystemFontID anID
       default:
         theFont = be_plain_font; // BeOS default font 
     }
-   
-  if( !theFont ) 
+  }
+  
+  if (!theFont) 
   { 
     status = NS_ERROR_FAILURE; 
   } 
@@ -462,19 +468,26 @@ nsDeviceContextBeOS::GetSystemFontInfo(const BFont *theFont, nsSystemFontID anID
   { 
     font_family family; 
     font_style style; 
-    font_height height; 
+    font_height height;
+    uint16 face; 
  
-    theFont->GetFamilyAndStyle(&family, &style);   
-    aFont->name.AssignWithConversion( family ); 
- 
-       // No weight 
-           
-    theFont->GetHeight(&height); 
-    aFont->size = NSIntPixelsToTwips(uint32(height.ascent+height.descent+height.leading), mPixelsToTwips); 
- 
-       // no style 
+    theFont->GetFamilyAndStyle(&family, &style);
+
+    face = theFont->Face();
+    aFont->name.Assign(NS_ConvertUTF8toUCS2(family));
+    aFont->size = NSIntPixelsToTwips(uint32(theFont->Size()), mPixelsToTwips); 
+
+    if(face & B_ITALIC_FACE)
+      aFont->style = NS_FONT_STYLE_ITALIC;
     
-       // no decoration 
+    if(face & B_BOLD_FACE)
+      aFont->weight = NS_FONT_WEIGHT_BOLD;
+
+    if(face & B_UNDERSCORE_FACE)
+      aFont->decorations |= NS_FONT_DECORATION_UNDERLINE;
+
+    if(face & B_STRIKEOUT_FACE)
+      aFont->decorations |= NS_FONT_DECORATION_LINE_THROUGH;
 
     aFont->systemFont = PR_TRUE;
 

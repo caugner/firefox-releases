@@ -42,6 +42,7 @@ function upgradeCleanup()
   deleteThisFile("Components", "xptitemp.dat");
   deleteThisFile("Program",    "defaults/pref/config.js");
   deleteThisFile("Program",    "defaults/pref/initpref.js");
+  deleteThisFile("Program",    "defaults/pref/bug307259.js");
   deleteThisFile("Program",    "defaults/wallet/URLFieldSchema.tbl");
   deleteThisFile("Program",    "libcmt.so");
   deleteThisFile("Program",    "libjpeg.so");
@@ -50,7 +51,7 @@ function upgradeCleanup()
 
 var srDest = $SpaceRequired$;
 
-var err = initInstall("Mozilla Navigator", "Browser", "$Version$"); 
+var err = initInstall("$AppDisplayName$ Navigator", "Browser", "$Version$"); 
 logComment("initInstall: " + err);
 
 var communicatorFolder = getFolder("Program");
@@ -92,6 +93,8 @@ if (verifyDiskSpace(communicatorFolder, srDest))
     registerChrome(CONTENT | DELAYED_CHROME, getFolder(cf,"comm.jar"),"content/wallet/");
     registerChrome(CONTENT | DELAYED_CHROME, getFolder(cf,"content-packs.jar"),"content/content-packs/");
     registerChrome(CONTENT | DELAYED_CHROME, getFolder(cf,"comm.jar"),"content/communicator/");
+    registerChrome(CONTENT | DELAYED_CHROME, getFolder(cf,"comm.jar"),"content/communicator/downloadmanager/");
+    registerChrome(CONTENT | DELAYED_CHROME, getFolder(cf,"comm.jar"),"content/branding/");
     registerChrome(CONTENT | DELAYED_CHROME, getFolder(cf,"comm.jar"),"content/editor/");
     registerChrome(CONTENT | DELAYED_CHROME, getFolder(cf,"comm.jar"),"content/navigator/");
     registerChrome(CONTENT | DELAYED_CHROME, getFolder(cf,"comm.jar"),"content/necko/");

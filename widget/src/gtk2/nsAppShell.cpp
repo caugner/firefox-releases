@@ -14,9 +14,9 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code mozilla.org code.
+ * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code Christopher Blizzard
+ * The Initial Developer of the Original Code is Christopher Blizzard
  * <blizzard@mozilla.org>.  Portions created by the Initial Developer
  * are Copyright (C) 2001 the Initial Developer. All Rights Reserved.
  *
@@ -38,7 +38,7 @@
 
 #include "nsAppShell.h"
 #include "nsIEventQueueService.h"
-#include "nsIServiceManagerUtils.h"
+#include "nsServiceManagerUtils.h"
 #include "plhash.h"
 #include "prenv.h"
 
@@ -118,9 +118,6 @@ nsAppShell::Create(int *argc, char **argv)
         return NS_OK;
 
     sInitialized = PR_TRUE;
-
-    // XXX add all of the command line handling
-
 
     if (PR_GetEnv("MOZ_DEBUG_PAINTS")) {
         gdk_window_set_debug_updates(TRUE);
@@ -220,7 +217,7 @@ nsAppShell::ListenToEventQueue(nsIEventQueue *aQueue, PRBool aListen)
             GIOChannel *ioc;
             guint       tag;
             ioc = g_io_channel_unix_new(key);
-            tag = g_io_add_watch_full (ioc, G_PRIORITY_HIGH_IDLE,
+            tag = g_io_add_watch_full (ioc, G_PRIORITY_DEFAULT_IDLE,
                                        G_IO_IN,
                                        event_processor_callback, aQueue, NULL);
             // it's owned by the mainloop now

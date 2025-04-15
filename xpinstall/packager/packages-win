@@ -59,22 +59,28 @@ bin\defaults\profile\localstore.rdf
 bin\defaults\profile\search.rdf
 bin\defaults\profile\mimeTypes.rdf
 bin\defaults\messenger\mailViews.dat
+bin\defaults\messenger\Habeas.sfd
+bin\defaults\messenger\SpamAssassin.sfd
+bin\defaults\messenger\SpamCatcher.sfd
+bin\defaults\messenger\SpamPal.sfd
 
 [browser]
 ; files listed in xpcom (missing in this section) will be installed as part of the browser
 bin\README.txt,bin\readme.txt
 bin\LICENSE,bin\license.txt
 bin\jpeg3250.dll
-bin\mozilla.exe
+bin\seamonkey.exe
 bin\regxpcom.exe
 bin\xpicleanup.exe
 bin\components\AcctIdl.dll
 bin\components\AcctIdl.xpt
 bin\components\appcomps.dll
+bin\components\srchsvc.dll
 bin\components\autocomplete.xpt
 bin\components\bookmarks.xpt
 bin\components\directory.xpt
 bin\components\downloadmanager.xpt
+bin\components\chrome.xpt
 
 ; These 3 files need to be in browser.xpi as well as xpcom.xpi (listed in xpcom-win.pkg)
 bin\nspr4.dll
@@ -86,7 +92,6 @@ bin\components\winhooks.xpt
 bin\components\alerts.xpt
 bin\components\related.xpt
 bin\components\search.xpt
-bin\components\urlbarhistory.xpt
 bin\components\urlwidgt.xpt
 bin\components\chardetc.dll
 bin\components\cookie.xpt
@@ -96,17 +101,22 @@ bin\components\jsd3250.dll
 bin\components\jsdservice.xpt
 bin\components\evntloop.dll
 bin\components\find.xpt
+bin\components\nsComposerCmdLineHandler.js
+bin\components\content_base.xpt
 bin\components\content_html.xpt
 bin\components\content_htmldoc.xpt
 bin\components\content_xmldoc.xpt
 bin\components\content_xslt.xpt
+bin\components\content_xtf.xpt
 bin\components\xultmpl.xpt
 bin\components\chardet.xpt
+bin\components\jsconsole.xpt
 bin\components\jsconsole-clhandler.js
 bin\components\layout_xul_tree.xpt
 bin\components\mork.dll
 bin\components\mozbrwsr.xpt
 bin\components\mozcomps.xpt
+bin\components\appstartup.xpt
 bin\components\mozfind.dll
 bin\components\mozfind.xpt
 bin\components\mozucth.dll
@@ -116,6 +126,7 @@ bin\components\mimetype.xpt
 bin\components\necko_socket.xpt
 bin\components\nsprefm.dll
 bin\components\nsSidebar.js
+bin\components\perms.dll
 bin\components\prefmigr.xpt
 bin\components\proxyObject.xpt
 bin\components\sidebar.xpt
@@ -125,6 +136,7 @@ bin\components\tridentprofile.xpt
 bin\components\txmgr.dll
 bin\components\txmgr.xpt
 bin\components\exthandler.xpt
+bin\components\prefetch.xpt
 bin\components\util.xpt
 bin\components\walleteditor.xpt
 bin\components\walletpreview.xpt
@@ -151,9 +163,17 @@ bin\components\typeaheadfind.xpt
 bin\components\typeaheadfind.dll
 bin\components\nsAxSecurityPolicy.js
 bin\components\nsCloseAllWindows.js
+bin\components\extensions.xpt
+bin\components\nsExtensionManager.js
+bin\components\nsInterfaceInfoToIDL.js
+bin\components\nsResetPref.js
+bin\components\nsUpdateNotifier.js
+
+bin\components\xulappinfo.js
+bin\components\xulappinfo.xpt
 
 ; NegotiateAuth
-bin/components/negotiateauth.dll
+bin\components\auth.dll
 
 ; webservices
 bin\components\websrvcs.dll
@@ -218,6 +238,7 @@ bin\chrome\icons\default\xul-file.ico
 ; to prevent migration bugs
 bin\defaults\pref\*
 bin\defaults\autoconfig\*
+bin\res\hiddenWindow.html
 bin\res\EditorOverride.css
 bin\res\grabber.gif
 bin\res\table-add-column-after-active.gif
@@ -248,14 +269,16 @@ bin\defaults\wallet\StateSchema.tbl
 bin\res\rdf\folder-closed.gif
 bin\res\rdf\folder-open.gif
 bin\res\rdf\loading.gif
-bin\res\throbber\*
-;debug menus reference samples dir - remove for actual releases:
-bin\res\samples\*
 
 ; download progress
 bin\components\nsProgressDialog.js
 bin\components\nsHelperAppDlg.js
 bin\components\nsDownloadProgressListener.js
+
+; svg
+bin\gksvggdiplus.dll
+bin\res\svg.css
+bin\components\dom_svg.xpt
 
 [mail]
 bin\msgbsutl.dll
@@ -289,6 +312,7 @@ bin\components\impEudra.dll
 bin\components\impText.dll
 bin\components\impComm4xMail.dll
 bin\components\impComm4xMail.xpt
+bin\components\nsAbLDAPAttributeMap.js
 bin\components\nsLDAPPrefsService.js
 bin\chrome\messenger.jar
 bin\chrome\messenger\*
@@ -332,6 +356,7 @@ bin\chrome\venkman.jar
 bin\chrome\icons\default\venkman-window.ico
 
 [talkback]
+bin\README.txt,bin\readme.txt
 bin\components\qfaservices.dll
 bin\components\qfaservices.xpt
 bin\components\BrandRes.dll
@@ -352,8 +377,15 @@ bin\defaults\pref\inspector.js
 bin\res\inspector\viewer-registry.rdf
 bin\res\inspector\search-registry.rdf
 
+[sroaming]
+bin\components\sroaming.dll
+bin\chrome\sroaming.jar
+
 [spellcheck]
 bin\components\myspell.dll
 bin\components\spellchk.dll
 bin\components\spellchecker.xpt
 bin\components\myspell\*
+
+[reporter]
+bin\chrome\reporter.jar

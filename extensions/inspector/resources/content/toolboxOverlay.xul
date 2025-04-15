@@ -28,9 +28,11 @@
       <menupopup id="mppView"/>
     </menu>
 
-    <menu id="tasksMenu"/>
-    <menu id="windowMenu"/>
-    <menu id="menu_Help"/>
+    <menu id="tasksMenu"/> <!-- Seamonkey -->
+    <menu id="windowMenu"/> <!-- Firefox-mac -->
+    <menupopup id="menu_ToolsPopup"/> <!-- Firefox-mac -->
+    <menu id="menu_Help"/> <!-- Seamonkey -->
+    <menu id="helpMenu"/>  <!-- Firefox -->
 
   </menubar>
 

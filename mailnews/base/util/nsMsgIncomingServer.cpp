@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
+ *   David Bienvenu <bienvenu@nventure.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -58,17 +59,15 @@
 #include "nsIMsgWindow.h"
 #include "nsIMsgFilterService.h"
 #include "nsIMsgProtocolInfo.h"
-
+#include "nsIMsgMailSession.h"
 #include "nsIPrefService.h"
 #include "nsIDocShell.h"
-#include "nsIWebShell.h"
-#include "nsIWebShellWindow.h"
 #include "nsIAuthPrompt.h"
 #include "nsIObserverService.h"
 #include "nsNetUtil.h"
 #include "nsIWindowWatcher.h"
 #include "nsIStringBundle.h"
-
+#include "nsIMsgHdr.h"
 #include "nsIRDFService.h"
 #include "nsRDFCID.h"
 #include "nsIInterfaceRequestor.h"
@@ -79,6 +78,7 @@
 #include "nsIMsgMdnGenerator.h"
 #include "nsMsgFolderFlags.h"
 #include "nsMsgUtils.h"
+#include "nsAppDirectoryServiceDefs.h"
 
 #define PORT_NOT_SET -1
 
@@ -91,6 +91,7 @@ nsMsgIncomingServer::nsMsgIncomingServer():
     m_prefBranch(0),
     m_biffState(nsIMsgFolder::nsMsgBiffState_NoMail),
     m_serverBusy(PR_FALSE),
+    m_numMsgsDownloaded(0),
     m_canHaveFilters(PR_TRUE),
     m_displayStartupPage(PR_TRUE),
     mPerformingBiff(PR_FALSE)
@@ -129,8 +130,8 @@ nsMsgIncomingServer::SetKey(const char * serverKey)
 NS_IMETHODIMP
 nsMsgIncomingServer::SetRootFolder(nsIMsgFolder * aRootFolder)
 {
-	m_rootFolder = aRootFolder;
-	return NS_OK;
+  m_rootFolder = aRootFolder;
+  return NS_OK;
 }
 
 // this will return the root folder of this account,
@@ -227,6 +228,7 @@ NS_IMETHODIMP
 nsMsgIncomingServer::Shutdown()
 {
   nsresult rv = CloseCachedConnections();
+  mFilterPlugin = nsnull;
   NS_ENSURE_SUCCESS(rv,rv);
 
   if (mFilterList) 
@@ -384,7 +386,7 @@ nsMsgIncomingServer::CreateLocalFolder(nsIFileSpec *path, const char *folderName
 nsresult
 nsMsgIncomingServer::CreateRootFolder()
 {
-	nsresult rv;
+  nsresult rv;
 			  // get the URI from the incoming server
   nsXPIDLCString serverUri;
   rv = GetServerURI(getter_Copies(serverUri));
@@ -752,7 +754,7 @@ nsMsgIncomingServer::GetConstructedPrettyName(PRUnichar **retval)
   if ((const char*)username &&
       PL_strcmp((const char*)username, "")!=0) {
     prettyName.AssignWithConversion(username);
-    prettyName.Append(NS_LITERAL_STRING(" on "));
+    prettyName.AppendLiteral(" on ");
   }
   
   nsXPIDLCString hostname;
@@ -784,13 +786,6 @@ NS_IMETHODIMP nsMsgIncomingServer::SetPassword(const char * aPassword)
   nsresult rv;
   PRBool rememberPassword = PR_FALSE;
   
-  if (aPassword)
-  {
-    nsCOMPtr<nsIMsgAccountManager> accountManager = do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID);
-    if (accountManager)
-      accountManager->SetUserNeedsToAuthenticate(PR_FALSE);
-  }
-
   rv = GetRememberPassword(&rememberPassword);
   if (NS_FAILED(rv)) return rv;
   
@@ -871,9 +866,7 @@ nsMsgIncomingServer::GetPasswordWithUI(const PRUnichar * aPromptMessage, const
       rv = aMsgWindow->GetRootDocShell(getter_AddRefs(docShell));
       if (NS_FAILED(rv)) return rv;
       
-      nsCOMPtr<nsIWebShell> webShell(do_QueryInterface(docShell, &rv));
-      if (NS_FAILED(rv)) return rv;
-      dialog = do_GetInterface(webShell, &rv);
+      dialog = do_GetInterface(docShell, &rv);
       if (NS_FAILED(rv)) return rv;
     }
     else
@@ -951,6 +944,9 @@ nsMsgIncomingServer::StorePassword()
 
     rv = observerService->NotifyObservers(uri, "login-succeeded", NS_ConvertUTF8toUCS2(pwd).get());
     NS_ENSURE_SUCCESS(rv,rv);
+    nsCOMPtr<nsIMsgAccountManager> accountManager = do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID);
+    if (accountManager)
+      accountManager->SetUserNeedsToAuthenticate(PR_FALSE);
     return rv;
 }
 
@@ -1025,10 +1021,10 @@ nsMsgIncomingServer::GetLocalPath(nsIFileSpec **aLocalPath)
 	// set the leaf name to "dummy", and then call MakeUnique with a suggested leaf name
     rv = path->AppendRelativeUnixPath("dummy");
     if (NS_FAILED(rv)) return rv;
-	nsXPIDLCString hostname;
+    nsXPIDLCString hostname;
     rv = GetHostName(getter_Copies(hostname));
     if (NS_FAILED(rv)) return rv;
-	rv = path->MakeUniqueWithSuggestedName((const char *)hostname);
+    rv = path->MakeUniqueDirWithSuggestedName((const char *)hostname);
     if (NS_FAILED(rv)) return rv;
 
     rv = SetLocalPath(path);
@@ -1090,7 +1086,7 @@ nsMsgIncomingServer::GetLocalStoreType(char **aResult)
 NS_IMETHODIMP
 nsMsgIncomingServer::GetAccountManagerChrome(nsAString& aResult)
 {
-    aResult = NS_LITERAL_STRING("am-main.xul");
+    aResult.AssignLiteral("am-main.xul");
     return NS_OK;
 }
 
@@ -1132,6 +1128,7 @@ nsMsgIncomingServer::ClearAllValues()
 {
     nsCAutoString rootPref("mail.server.");
     rootPref += m_serverKey;
+    rootPref += '.';
 
     PRUint32 childCount;
     char**   childArray;
@@ -1680,7 +1677,7 @@ NS_IMETHODIMP nsMsgIncomingServer::DisplayOfflineMsg(nsIMsgWindow *aMsgWindow)
     bundle->GetStringFromName(NS_LITERAL_STRING("nocachedbodybody").get(), getter_Copies(errorMsgBody));
     bundle->GetStringFromName(NS_LITERAL_STRING("nocachedbodytitle").get(),  getter_Copies(errorMsgTitle));
     if (aMsgWindow)
-      return aMsgWindow->DisplayHTMLInMessagePane(errorMsgTitle, errorMsgBody);
+      return aMsgWindow->DisplayHTMLInMessagePane(errorMsgTitle, errorMsgBody, PR_TRUE);
     else
       return NS_ERROR_FAILURE;
 
@@ -1756,6 +1753,8 @@ NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer,
 
 NS_IMPL_SERVERPREF_INT(nsMsgIncomingServer, MaxMessageSize, "max_size")
 
+NS_IMPL_SERVERPREF_INT(nsMsgIncomingServer, IncomingDuplicateAction, "dup_action")
+
 NS_IMETHODIMP nsMsgIncomingServer::SetUnicharAttribute(const char *aName, const PRUnichar *val)
 {
   return SetUnicharValue(aName, val);
@@ -1796,6 +1795,41 @@ NS_IMETHODIMP nsMsgIncomingServer::GetIntAttribute(const char *aName, PRInt32 *v
   return GetIntValue(aName, val);
 }
 
+
+NS_IMETHODIMP nsMsgIncomingServer::GetSocketType(PRInt32 *aSocketType)
+{
+  nsCAutoString fullPrefName;
+  getPrefName(m_serverKey.get(), "socketType", fullPrefName);
+  nsresult rv = m_prefBranch->GetIntPref(fullPrefName.get(), aSocketType);
+
+  // socketType is set to default value. Look at isSecure setting
+  if (NS_FAILED(rv))
+  {
+    PRBool isSecure;
+    rv = GetBoolValue("isSecure", &isSecure);
+    if (NS_SUCCEEDED(rv) && isSecure)
+    {
+       *aSocketType = nsIMsgIncomingServer::useSSL;
+       SetSocketType(*aSocketType);
+    }
+    else
+    {
+       getDefaultIntPref("socketType", aSocketType);
+    }
+  }
+  return rv;
+  
+}
+
+NS_IMETHODIMP nsMsgIncomingServer::SetSocketType(PRInt32 aSocketType)
+{
+  nsCAutoString fullPrefName;
+  getPrefName(m_serverKey.get(), "socketType", fullPrefName);
+  nsresult rv = m_prefBranch->SetIntPref(fullPrefName.get(), aSocketType);
+
+  return rv;
+}
+
 // Check if the password is available and return a boolean indicating whether 
 // it is being authenticated or not.
 NS_IMETHODIMP 
@@ -1823,7 +1857,7 @@ nsMsgIncomingServer::GetPasswordPromptRequired(PRBool *aPasswordIsRequired)
       nsAutoString passwordFound;
 
       // Get password entry corresponding to the host URI we are passing in.
-      rv = passwordMgrInt->FindPasswordEntry(currServerUri, nsString(), nsString(),
+      rv = passwordMgrInt->FindPasswordEntry(currServerUri, EmptyString(), EmptyString(),
                                              hostFound, userNameFound, passwordFound);
       if (NS_FAILED(rv)) 
       {
@@ -1853,10 +1887,151 @@ nsMsgIncomingServer::GetPasswordPromptRequired(PRBool *aPasswordIsRequired)
   return rv;
 }
 
-NS_IMETHODIMP
+NS_IMETHODIMP nsMsgIncomingServer::ConfigureTemporaryFilters(nsIMsgFilterList *aFilterList)
+{
+  nsresult rv = ConfigureTemporaryReturnReceiptsFilter(aFilterList);
+  NS_ENSURE_SUCCESS(rv, rv);
+  return ConfigureTemporaryServerSpamFilters(aFilterList);
+}
+
+nsresult
+nsMsgIncomingServer::ConfigureTemporaryServerSpamFilters(nsIMsgFilterList *filterList)
+{
+  nsCOMPtr<nsISpamSettings> spamSettings;
+  nsresult rv = GetSpamSettings(getter_AddRefs(spamSettings));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  PRBool useServerFilter;
+  rv = spamSettings->GetUseServerFilter(&useServerFilter);
+  NS_ENSURE_SUCCESS(rv, rv);
+  
+  // if we aren't configured to use server filters, then return early.
+  if (!useServerFilter)
+    return NS_OK;
+  
+  // For performance reasons, we'll handle clearing of filters if the user turns
+  // off the server-side filters from the junk mail controls, in the junk mail controls.
+  nsCAutoString serverFilterName;
+  spamSettings->GetServerFilterName(serverFilterName);
+  if (serverFilterName.IsEmpty())
+    return NS_OK;
+  PRInt32 serverFilterTrustFlags = 0;
+  (void) spamSettings->GetServerFilterTrustFlags(&serverFilterTrustFlags);
+  if (!serverFilterTrustFlags)
+    return NS_OK;
+  // check if filters have been setup already.
+  nsAutoString yesFilterName, noFilterName;
+  yesFilterName.AppendWithConversion(serverFilterName);
+  yesFilterName.AppendLiteral("Yes");
+
+  noFilterName.AppendWithConversion(serverFilterName);
+  noFilterName.AppendLiteral("No");
+
+  nsCOMPtr<nsIMsgFilter> newFilter;
+  (void) filterList->GetFilterNamed(yesFilterName.get(),
+                                  getter_AddRefs(newFilter));
+
+  if (!newFilter)
+    (void) filterList->GetFilterNamed(noFilterName.get(),
+                                  getter_AddRefs(newFilter));
+  if (newFilter)
+    return NS_OK;
+
+  nsCAutoString serverFilterFileName(serverFilterName);
+  serverFilterFileName.Append(".sfd");
+  nsCOMPtr<nsIFile> file;
+  rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(file));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = file->AppendNative(serverFilterFileName);
+
+  // if the file doesn't exist, we should try to get it from the defaults directory and copy it over
+  PRBool exists = PR_FALSE;
+  file->Exists(&exists);
+  if (!exists)
+  {
+      nsCOMPtr<nsIMsgMailSession> mailSession = do_GetService(NS_MSGMAILSESSION_CONTRACTID, &rv);
+      NS_ENSURE_SUCCESS(rv, rv);
+      nsCOMPtr<nsIFile> defaultServerFilterFile;
+      rv = mailSession->GetDataFilesDir("messenger", getter_AddRefs(defaultServerFilterFile));
+      rv = defaultServerFilterFile->AppendNative(serverFilterFileName);
+
+      nsCOMPtr<nsIFileSpec> defaultServerFilterSpec;
+      rv = NS_NewFileSpecFromIFile(defaultServerFilterFile, getter_AddRefs(defaultServerFilterSpec));
+      
+      // get the profile directory
+      rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, getter_AddRefs(defaultServerFilterFile));
+      
+      // convert to spec
+      nsCOMPtr<nsIFileSpec> profileDirSpec;
+      rv = NS_NewFileSpecFromIFile(defaultServerFilterFile, getter_AddRefs(profileDirSpec));
+      // now copy the file over to the profile directory
+      defaultServerFilterSpec->CopyToDir(profileDirSpec);
+  }
+
+  nsCOMPtr<nsIFileSpec> serverFilterSpec;
+  rv = NS_NewFileSpecFromIFile(file, getter_AddRefs(serverFilterSpec));
+  if (NS_FAILED(rv)) return rv;
+
+  nsCOMPtr<nsIMsgFilterService> filterService = do_GetService(NS_MSGFILTERSERVICE_CONTRACTID, &rv);
+  nsCOMPtr<nsIMsgFilterList> serverFilterList;
+    
+  rv = filterService->OpenFilterList(serverFilterSpec, NULL, NULL, getter_AddRefs(serverFilterList));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = serverFilterList->GetFilterNamed(yesFilterName.get(),
+                                  getter_AddRefs(newFilter));
+  if (newFilter && serverFilterTrustFlags & nsISpamSettings::TRUST_POSITIVES)
+  {
+    newFilter->SetTemporary(PR_TRUE);
+    // check if we're supposed to move junk mail to junk folder; if so,
+    // add filter action to do so.
+    PRBool moveOnSpam, markAsReadOnSpam;
+    spamSettings->GetMoveOnSpam(&moveOnSpam);
+    if (moveOnSpam)
+    {
+      nsXPIDLCString spamFolderURI;
+      rv = spamSettings->GetSpamFolderURI(getter_Copies(spamFolderURI));
+      if (NS_SUCCEEDED(rv) && (!spamFolderURI.IsEmpty()))
+      {
+        nsCOMPtr <nsIMsgRuleAction> moveAction;
+        rv = newFilter->CreateAction(getter_AddRefs(moveAction));
+        if (NS_SUCCEEDED(rv))
+        {
+          moveAction->SetType(nsMsgFilterAction::MoveToFolder);
+          moveAction->SetTargetFolderUri(spamFolderURI);
+          newFilter->AppendAction(moveAction);
+        }
+      }
+    }
+    spamSettings->GetMarkAsReadOnSpam(&markAsReadOnSpam);
+    if (markAsReadOnSpam)
+    {
+      nsCOMPtr <nsIMsgRuleAction> markAsReadAction;
+      rv = newFilter->CreateAction(getter_AddRefs(markAsReadAction));
+      if (NS_SUCCEEDED(rv))
+      {
+        markAsReadAction->SetType(nsMsgFilterAction::MarkRead);
+        newFilter->AppendAction(markAsReadAction);
+      }
+    }
+    filterList->InsertFilterAt(0, newFilter);
+  }
+
+  rv = serverFilterList->GetFilterNamed(noFilterName.get(),
+                                  getter_AddRefs(newFilter));
+  if (newFilter && serverFilterTrustFlags & nsISpamSettings::TRUST_NEGATIVES)
+  {
+    newFilter->SetTemporary(PR_TRUE);
+    filterList->InsertFilterAt(0, newFilter);
+  }
+
+  return rv;
+}
+
+nsresult
 nsMsgIncomingServer::ConfigureTemporaryReturnReceiptsFilter(nsIMsgFilterList *filterList)
 {
-  NS_ENSURE_ARG_POINTER(filterList);
   nsresult rv;
 
   nsCOMPtr<nsIMsgAccountManager> accountMgr = do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID, &rv);
@@ -2018,10 +2193,10 @@ nsMsgIncomingServer::SetSpamSettings(nsISpamSettings *aSpamSettings)
       // remove the MSG_FOLDER_FLAG_JUNK on the old junk folder
       // XXX TODO
       // JUNK MAIL RELATED
-      // in SetFlag, we need to make sure that this folder
+      // (in ClearFlag?) we need to make sure that this folder
       // is not a the junk folder for another account
       // the same goes for set flag.  have fun with all that.
-      oldJunkFolder->SetFlag(~MSG_FOLDER_FLAG_JUNK);
+      oldJunkFolder->ClearFlag(MSG_FOLDER_FLAG_JUNK);
     }
   }
 
@@ -2038,6 +2213,10 @@ nsMsgIncomingServer::SetSpamSettings(nsISpamSettings *aSpamSettings)
   PRBool moveOnSpam;
   (void)mSpamSettings->GetMoveOnSpam(&moveOnSpam);
   (void)SetBoolValue("moveOnSpam", moveOnSpam);
+
+  PRBool markAsReadOnSpam;
+  (void)mSpamSettings->GetMarkAsReadOnSpam(&markAsReadOnSpam);
+  (void)SetBoolValue("markAsReadOnSpam", markAsReadOnSpam);
 
   PRInt32 moveTargetMode;
   (void)mSpamSettings->GetMoveTargetMode(&moveTargetMode);
@@ -2103,6 +2282,20 @@ nsMsgIncomingServer::SetSpamSettings(nsISpamSettings *aSpamSettings)
   rv = SetIntValue("purgeSpamInterval", purgeSpamInterval);
   NS_ENSURE_SUCCESS(rv,rv);
 
+  PRBool useServerFilter;
+  rv = mSpamSettings->GetUseServerFilter(&useServerFilter);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = SetBoolValue("useServerFilter", useServerFilter);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCAutoString serverFilterName;
+  mSpamSettings->GetServerFilterName(serverFilterName);
+  SetCharValue("serverFilterName", serverFilterName.get());
+
+  PRInt32 serverFilterTrustFlags;
+  mSpamSettings->GetServerFilterTrustFlags(&serverFilterTrustFlags);
+  SetIntValue("serverFilterTrustFlags", serverFilterTrustFlags);
+
   PRInt32 loggingEnabled;
   rv = mSpamSettings->GetLoggingEnabled(&loggingEnabled);
   NS_ENSURE_SUCCESS(rv,rv);
@@ -2141,6 +2334,12 @@ nsMsgIncomingServer::GetSpamSettings(nsISpamSettings **aSpamSettings)
     rv = GetBoolValue("moveOnSpam", &moveOnSpam);
     NS_ENSURE_SUCCESS(rv,rv);
     rv = mSpamSettings->SetMoveOnSpam(moveOnSpam);
+    NS_ENSURE_SUCCESS(rv,rv);
+
+    PRBool markAsReadOnSpam;
+    rv = GetBoolValue("markAsReadOnSpam", &markAsReadOnSpam);
+    NS_ENSURE_SUCCESS(rv,rv);
+    rv = mSpamSettings->SetMarkAsReadOnSpam(markAsReadOnSpam);
     NS_ENSURE_SUCCESS(rv,rv);
 
     PRInt32 moveTargetMode;
@@ -2192,7 +2391,21 @@ nsMsgIncomingServer::GetSpamSettings(nsISpamSettings **aSpamSettings)
     NS_ENSURE_SUCCESS(rv,rv);
     rv = mSpamSettings->SetPurgeInterval(purgeSpamInterval);
     NS_ENSURE_SUCCESS(rv,rv);
-    
+
+    PRBool useServerFilter;
+    rv = GetBoolValue("useServerFilter", &useServerFilter);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = mSpamSettings->SetUseServerFilter(useServerFilter);
+    NS_ENSURE_SUCCESS(rv,rv);
+
+    nsXPIDLCString serverFilterName;
+    rv = GetCharValue("serverFilterName", getter_Copies(serverFilterName));
+    if (NS_SUCCEEDED(rv))
+      mSpamSettings->SetServerFilterName(serverFilterName);
+    PRInt32 serverFilterTrustFlags = 0;
+    rv = GetIntValue("serverFilterTrustFlags", &serverFilterTrustFlags);
+    mSpamSettings->SetServerFilterTrustFlags(serverFilterTrustFlags);
+
     PRInt32 loggingEnabled;
     rv = GetBoolValue("spamLoggingEnabled", &loggingEnabled);
     NS_ENSURE_SUCCESS(rv,rv);
@@ -2215,9 +2428,8 @@ nsMsgIncomingServer::GetSpamFilterPlugin(nsIMsgFilterPlugin **aFilterPlugin)
     // get the plugin service
     mFilterPlugin = do_GetService("@mozilla.org/messenger/filter-plugin;1?name=bayesianfilter", &rv);
 
-    if (NS_FAILED(rv)) {
+    if (NS_FAILED(rv)) 
         return rv;
-    }
   }
 
   NS_IF_ADDREF(*aFilterPlugin = mFilterPlugin);
@@ -2306,3 +2518,49 @@ NS_IMETHODIMP nsMsgIncomingServer::GetIsDeferredTo(PRBool *aIsDeferredTo)
   *aIsDeferredTo = PR_FALSE;
   return NS_OK;
 }
+
+const long kMaxDownloadTableSize = 500;
+
+// aData is the server, from that we get the cutoff point, below which we evict
+// element is the arrival index of the msg.
+/* static */PRBool nsMsgIncomingServer::evictOldEntries(nsHashKey *aKey, void *element, void *aData)
+{
+  nsMsgIncomingServer *server = (nsMsgIncomingServer *)aData;
+  if (NS_PTR_TO_INT32(element) < server->m_numMsgsDownloaded - kMaxDownloadTableSize/2)
+    return kHashEnumerateRemove;
+  return server->m_downloadedHdrs.Count() > kMaxDownloadTableSize/2;
+}
+
+// hash the concatenation of the message-id and subject as the hash table key, 
+// and store the arrival index as the value. To limit the size of the hash table,
+// we just throw out ones with a lower ordinal value than the cut-off point.
+NS_IMETHODIMP nsMsgIncomingServer::IsNewHdrDuplicate(nsIMsgDBHdr *aNewHdr, PRBool *aResult)
+{
+  NS_ENSURE_ARG_POINTER(aResult);
+  *aResult = PR_FALSE;
+  nsCAutoString strHashKey;
+  nsXPIDLCString messageId, subject;
+  aNewHdr->GetMessageId(getter_Copies(messageId));
+  strHashKey.Append(messageId);
+  aNewHdr->GetSubject(getter_Copies(subject));
+  strHashKey.Append(subject);
+  nsCStringKey hashKey(strHashKey);
+  PRInt32 hashValue = NS_PTR_TO_INT32(m_downloadedHdrs.Get(&hashKey));
+  if (hashValue)
+  {
+    *aResult = PR_TRUE;
+  }
+  else
+  {
+    // we store the current size of the hash table as the hash
+    // value - this allows us to delete older entries.
+    m_downloadedHdrs.Put(&hashKey, NS_INT32_TO_PTR(++m_numMsgsDownloaded));
+    // Check if hash table is larger than some reasonable size
+    // and if is it, iterate over hash table deleting messages
+    // with an arrival index < number of msgs downloaded - half the reasonable size.
+    if (m_downloadedHdrs.Count() >= kMaxDownloadTableSize)
+      m_downloadedHdrs.Enumerate(evictOldEntries, this);
+  }
+  return NS_OK;
+}
+

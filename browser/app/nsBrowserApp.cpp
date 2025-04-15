@@ -44,18 +44,21 @@
 #include "nsBuildID.h"
 
 static const nsXREAppData kAppData = {
+  sizeof(nsXREAppData),
+  nsnull,
   "Mozilla",
   "Firefox",
-  APP_VERSION,
-  BUILD_ID,
-  "Copyright (c) 2004 mozilla.org",
-  PR_FALSE
+  NS_STRINGIFY(APP_VERSION),
+  NS_STRINGIFY(BUILD_ID),
+  "{ec8030f7-c20a-464f-9b0e-13a3a9e97384}",
+  "Copyright (c) 1998 - 2005 mozilla.org",
+  NS_XRE_ENABLE_PROFILE_MIGRATOR |
+  NS_XRE_ENABLE_EXTENSION_MANAGER
 };
-  
 
 int main(int argc, char* argv[])
 {
-  return xre_main(argc, argv, &kAppData);
+  return XRE_main(argc, argv, &kAppData);
 }
 
 #if defined( XP_WIN ) && defined( WIN32 ) && !defined(__GNUC__)

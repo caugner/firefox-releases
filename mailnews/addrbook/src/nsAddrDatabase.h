@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Seth Spitzer <sspitzer@netscape.com>
+ *   Seth Spitzer <sspitzer@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -47,9 +47,6 @@
 #include "nsIAddrDBListener.h"
 #include "nsISupportsArray.h"
 #include "nsCOMPtr.h"
-
-#define  CARD_ATTRIB_PALMID "PalmRecId"
-#define  CARD_ATTRIB_DISPLAY "DisplayName"
 
 typedef enum 
 {
@@ -79,8 +76,7 @@ public:
 
 	NS_IMETHOD GetDbPath(nsFileSpec * *aDbPath);
 	NS_IMETHOD SetDbPath(nsFileSpec * aDbPath);
-	NS_IMETHOD Open(nsFileSpec *aMabFile, PRBool aCreate, nsIAddrDatabase **pCardDB, PRBool upgrading);
-        NS_IMETHOD OpenWithIFile(nsIFile *dbFile, PRBool create, PRBool upgrading, nsIAddrDatabase **_retval);
+	NS_IMETHOD Open(nsIFile *aMabFile, PRBool aCreate, PRBool upgrading, nsIAddrDatabase **pCardDB);
 	NS_IMETHOD Close(PRBool forceCommit);
 	NS_IMETHOD OpenMDB(nsFileSpec *dbName, PRBool create);
 	NS_IMETHOD CloseMDB(PRBool commit);
@@ -143,6 +139,9 @@ public:
 
 	NS_IMETHOD AddPreferMailFormat(nsIMdbRow * row, PRUint32 value)
 	{ return AddIntColumn(row, m_MailFormatColumnToken, value); }
+
+	NS_IMETHOD AddPopularityIndex(nsIMdbRow * row, PRUint32 value)
+	{ return AddIntColumn(row, m_PopularityIndexColumnToken, value); }
 
 	NS_IMETHOD AddWorkPhone(nsIMdbRow * row, const char * value)
 	{ return AddCharStringColumn(row, m_WorkPhoneColumnToken, value); }
@@ -322,9 +321,6 @@ public:
 	PRUint32 GetListAddressTotal(nsIMdbRow* listRow);
 	nsresult GetAddressRowByPos(nsIMdbRow* listRow, PRUint16 pos, nsIMdbRow** cardRow);
 
-  static void PRTime2Seconds(PRTime prTime, PRUint32 *seconds);
-  
-
     NS_IMETHOD AddListCardColumnsToRow(nsIAbCard *aPCard, nsIMdbRow *aPListRow, PRUint32 aPos, nsIAbCard** aPNewCard, PRBool aInMailingList);
     NS_IMETHOD InitCardFromRow(nsIAbCard *aNewCard, nsIMdbRow* aCardRow);
     NS_IMETHOD SetListAddressTotal(nsIMdbRow* aListRow, PRUint32 aTotal);
@@ -363,7 +359,7 @@ protected:
 	nsresult CreateCardFromDeletedCardsTable(nsIMdbRow* cardRow, mdb_id listRowID, nsIAbCard **result);
 	nsresult DeleteCardFromListRow(nsIMdbRow* pListRow, mdb_id cardRowID);
 	void DeleteCardFromAllMailLists(mdb_id cardRowID);
-	nsresult NotifyListEntryChange(PRUint32 abCode, nsIAbDirectory *dir, nsIAddrDBListener *instigator);
+	nsresult NotifyListEntryChange(PRUint32 abCode, nsIAbDirectory *dir);
 
 	nsresult AddLowercaseColumn(nsIMdbRow * row, mdb_token columnToken, const char* utf8String);
   nsresult GetRowFromAttribute(const char *aName, const char *aUTF8Value, PRBool aCaseInsensitive, nsIMdbRow	**aCardRow);
@@ -466,6 +462,7 @@ protected:
 	mdb_token			m_LowerPriEmailColumnToken;
 
 	mdb_token			m_MailFormatColumnToken;
+	mdb_token     m_PopularityIndexColumnToken;
 						
 	mdb_token			m_AddressCharSetColumnToken;
 	mdb_token			m_LastRecordKeyColumnToken;
@@ -484,6 +481,9 @@ private:
   PRBool HasRowButDeletedForCharColumn(const PRUnichar *unicodeStr, mdb_column findColumn, PRBool aIsCard, nsIMdbRow **aFindRow);
   nsresult OpenInternal(nsFileSpec *aMabFile, PRBool aCreate, nsIAddrDatabase **pCardDB);
   nsresult AlertAboutCorruptMabFile(const PRUnichar *aOldFileName, const PRUnichar *aNewFileName);
+  nsresult AlertAboutLockedMabFile(const PRUnichar *aFileName);
+  nsresult DisplayAlert(const PRUnichar *titleName, const PRUnichar *alertStringName, 
+                        const PRUnichar **formatStrings, PRInt32 numFormatStrings);
 };
 
 #endif

@@ -12,12 +12,12 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Jonas Sicking.
  * Portions created by the Initial Developer are Copyright (C) 2002
- * Jonas Sicking. All Rights Reserved.
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Jonas Sicking <jonas@sicking.cc>
@@ -46,10 +46,6 @@
 #include "TxLog.h"
 #include "txURIUtils.h"
 #include "txXMLParser.h"
-
-#ifndef TX_EXE
-#include "nsIDOMDocument.h"
-#endif
 
 const PRInt32 txExecutionState::kMaxRecursionDepth = 20000;
 
@@ -203,10 +199,10 @@ txExecutionState::init(const txXPathNode& aNode,
 }
 
 nsresult
-txExecutionState::end()
+txExecutionState::end(nsresult aResult)
 {
     popTemplateRule();
-    mOutputHandler->endDocument();
+    mOutputHandler->endDocument(aResult);
     
     return NS_OK;
 }

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,27 +14,27 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: David W. Hyatt (hyatt@netscape.com)
- *      Gagan Saksena <gagan@netscape.com>
- *      Benjamin Smedberg <bsmedberg@covad.net>
+ *   Original Author: David W. Hyatt (hyatt@netscape.com)
+ *   Gagan Saksena <gagan@netscape.com>
+ *   Benjamin Smedberg <bsmedberg@covad.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -64,7 +64,6 @@
 #include "nsNetUtil.h"
 #include "nsIFileChannel.h"
 #include "nsIXBLService.h"
-#include "nsPIDOMWindow.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsIDOMWindowCollection.h"
 #include "nsIDOMLocation.h"
@@ -96,6 +95,7 @@
 #include "nsNetCID.h"
 #include "nsIJARURI.h"
 #include "nsIFileURL.h"
+#include "nsIXPConnect.h"
 
 static char kChromePrefix[] = "chrome://";
 nsIAtom* nsChromeRegistry::sCPrefix; // atom for "c"
@@ -130,6 +130,7 @@ DEFINE_RDF_VOCAB(CHROME_URI, CHROME, skinVersion);
 DEFINE_RDF_VOCAB(CHROME_URI, CHROME, localeVersion);
 DEFINE_RDF_VOCAB(CHROME_URI, CHROME, packageVersion);
 DEFINE_RDF_VOCAB(CHROME_URI, CHROME, disabled);
+DEFINE_RDF_VOCAB(CHROME_URI, CHROME, xpcNativeWrappers);
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -139,7 +140,8 @@ nsChromeRegistry::nsChromeRegistry() : mRDFService(nsnull),
                                        mProfileInitialized(PR_FALSE),
                                        mRuntimeProvider(PR_FALSE),
                                        mBatchInstallFlushes(PR_FALSE),
-                                       mSearchedForOverride(PR_FALSE)
+                                       mSearchedForOverride(PR_FALSE),
+                                       mLegacyOverlayinfo(PR_FALSE)
 {
   mDataSourceTable = nsnull;
 }
@@ -177,21 +179,15 @@ nsChromeRegistry::~nsChromeRegistry()
       delete mDataSourceTable;
   }
 
-  if (mRDFService) {
-    nsServiceManager::ReleaseService(kRDFServiceCID, mRDFService);
-    mRDFService = nsnull;
-  }
-
-  if (mRDFContainerUtils) {
-    nsServiceManager::ReleaseService(kRDFContainerUtilsCID, mRDFContainerUtils);
-    mRDFContainerUtils = nsnull;
-  }
+  NS_IF_RELEASE(mRDFService);
+  NS_IF_RELEASE(mRDFContainerUtils);
 
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS5(nsChromeRegistry,
+NS_IMPL_THREADSAFE_ISUPPORTS6(nsChromeRegistry,
                               nsIChromeRegistry,
                               nsIXULChromeRegistry,
+                              nsIChromeRegistrySea,
                               nsIXULOverlayProvider,
                               nsIObserver,
                               nsISupportsWeakReference)
@@ -223,6 +219,7 @@ nsChromeRegistry::Init()
     { "selectedLocale", nsnull },
     { "selectedSkin",  nsnull },
     { "hasOverlays",   nsnull },
+    { "xpcNativeWrappers", nsnull },
     { "previewURL", nsnull },
   };
 
@@ -231,14 +228,10 @@ nsChromeRegistry::Init()
   gChromeRegistry = this;
   
   nsresult rv;
-  rv = nsServiceManager::GetService(kRDFServiceCID,
-                                    NS_GET_IID(nsIRDFService),
-                                    (nsISupports**)&mRDFService);
+  rv = CallGetService(kRDFServiceCID, &mRDFService);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = nsServiceManager::GetService(kRDFContainerUtilsCID,
-                                    NS_GET_IID(nsIRDFContainerUtils),
-                                    (nsISupports**)&mRDFContainerUtils);
+  rv = CallGetService(kRDFContainerUtilsCID, &mRDFContainerUtils);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = mRDFService->GetResource(nsDependentCString(kURICHROME_selectedSkin),
@@ -299,6 +292,10 @@ nsChromeRegistry::Init()
 
   rv = mRDFService->GetResource(nsDependentCString(kURICHROME_disabled),
                                 getter_AddRefs(mDisabled));
+  NS_ASSERTION(NS_SUCCEEDED(rv), "unable to get RDF resource");
+
+  rv = mRDFService->GetResource(nsDependentCString(kURICHROME_xpcNativeWrappers),
+                                getter_AddRefs(mXPCNativeWrappers));
   NS_ASSERTION(NS_SUCCEEDED(rv), "unable to get RDF resource");
 
   nsCOMPtr<nsIObserverService> observerService =
@@ -451,7 +448,7 @@ GetBaseURLFile(const nsACString& aBaseURL, nsIFile** aFile)
   return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP
+nsresult
 nsChromeRegistry::Canonify(nsIURI* aChromeURI)
 {
   // Canonicalize 'chrome:' URLs. We'll take any 'chrome:' URL
@@ -482,12 +479,10 @@ nsChromeRegistry::Canonify(nsIURI* aChromeURI)
 }
 
 NS_IMETHODIMP
-nsChromeRegistry::ConvertChromeURL(nsIURI* aChromeURL, nsACString& aResult)
+nsChromeRegistry::ConvertChromeURL(nsIURI* aChromeURL, nsIURI* *aResult)
 {
   nsresult rv = NS_OK;
-  NS_ASSERTION(aChromeURL, "null url!");
-  if (!aChromeURL)
-      return NS_ERROR_NULL_POINTER;
+  NS_ENSURE_ARG_POINTER(aChromeURL);
 
   // No need to canonify as the SplitURL() that we
   // do is the equivalent of canonification without modifying
@@ -552,9 +547,9 @@ nsChromeRegistry::ConvertChromeURL(nsIURI* aChromeURL, nsACString& aResult)
     }
   }
 
-  aResult = finalURL + remaining;
+  finalURL.Append(remaining);
 
-  return NS_OK;
+  return NS_NewURI(aResult, finalURL);
 }
 
 nsresult
@@ -578,10 +573,10 @@ nsChromeRegistry::GetBaseURL(const nsACString& aPackage,
 
   // Follow the "selectedSkin" or "selectedLocale" arc.
   nsCOMPtr<nsIRDFResource> arc;
-  if (aProvider.Equals(NS_LITERAL_CSTRING("skin"))) {
+  if (aProvider.EqualsLiteral("skin")) {
     arc = mSelectedSkin;
   }
-  else if (aProvider.Equals(NS_LITERAL_CSTRING("locale"))) {
+  else if (aProvider.EqualsLiteral("locale")) {
     arc = mSelectedLocale;
   }
   else
@@ -665,8 +660,8 @@ nsChromeRegistry::GetOverrideURL(const nsACString& aPackage,
   // skins and locales get their name tacked on, like
   // skin/modern/foo.css or
   // locale/en-US/navigator.properties
-  if (aProvider.Equals(NS_LITERAL_CSTRING("skin")) ||
-      aProvider.Equals(NS_LITERAL_CSTRING("locale"))) {
+  if (aProvider.EqualsLiteral("skin") ||
+      aProvider.EqualsLiteral("locale")) {
 
     // little hack here to get the right arc
     nsIRDFResource* providerArc;
@@ -770,19 +765,16 @@ nsChromeRegistry::VerifyCompatibleProvider(nsIRDFResource* aPackageResource,
   else // Locale arc
     versionArc = mLocaleVersion;
 
-  nsCAutoString packageVersion;
-  nsChromeRegistry::FollowArc(mChromeDataSource, packageVersion,
-                              aPackageResource, versionArc);
-  if (!packageVersion.IsEmpty()) {
+  nsCOMPtr<nsIRDFNode> packageVersionNode;
+  mChromeDataSource->GetTarget(aPackageResource, versionArc, PR_TRUE,
+                               getter_AddRefs(packageVersionNode));
+  if (packageVersionNode) {
     // The package only wants providers (skins) that say they can work
     // with it.  Let's find out if our provider (skin) can work with it.
-    nsCAutoString providerVersion;
-    nsChromeRegistry::FollowArc(mChromeDataSource, providerVersion,
-                                aProviderResource, versionArc);
-    if (!providerVersion.Equals(packageVersion)) {
-      *aAcceptable = PR_FALSE;
+    mChromeDataSource->HasAssertion(aProviderResource, versionArc,
+                                    packageVersionNode, PR_TRUE, aAcceptable);
+    if (!*aAcceptable)
       return NS_OK;
-    }
   }
   
   // Ensure that the provider actually exists.
@@ -829,11 +821,8 @@ nsChromeRegistry::FindProvider(const nsACString& aPackage,
   }
 
   // wrap it in a container
-  nsCOMPtr<nsIRDFContainer> container;
-  rv = nsComponentManager::CreateInstance("@mozilla.org/rdf/container;1",
-                                          nsnull,
-                                          NS_GET_IID(nsIRDFContainer),
-                                          getter_AddRefs(container));
+  nsCOMPtr<nsIRDFContainer> container =
+      do_CreateInstance("@mozilla.org/rdf/container;1", &rv);
   if (NS_FAILED(rv)) return rv;
 
   rv = container->Init(mChromeDataSource, resource);
@@ -897,11 +886,8 @@ nsChromeRegistry::SelectPackageInProvider(nsIRDFResource *aPackageList,
   nsresult rv = NS_OK;
 
   // wrap aPackageList in a container
-  nsCOMPtr<nsIRDFContainer> container;
-  rv = nsComponentManager::CreateInstance("@mozilla.org/rdf/container;1",
-                                          nsnull,
-                                          NS_GET_IID(nsIRDFContainer),
-                                          getter_AddRefs(container));
+  nsCOMPtr<nsIRDFContainer> container =
+      do_CreateInstance("@mozilla.org/rdf/container;1", &rv);
   if (NS_SUCCEEDED(rv))
     rv = container->Init(mChromeDataSource, aPackageList);
   if (NS_FAILED(rv))
@@ -1006,21 +992,28 @@ nsChromeRegistry::GetDynamicDataSource(nsIURI *aChromeURL,
     
     // Follow the dynamic data arc to see if we should continue.
     // Only if it claims to have dynamic data do we even bother.
-    nsCAutoString hasDynamicDS;
-    nsChromeRegistry::FollowArc(mainDataSource, hasDynamicDS, 
-                                packageResource, hasDynamicDataArc);
-    if (hasDynamicDS.IsEmpty())
+    nsCOMPtr<nsIRDFNode> hasDynamicDSNode;
+    mainDataSource->GetTarget(packageResource, hasDynamicDataArc, PR_TRUE,
+                              getter_AddRefs(hasDynamicDSNode));
+    if (!hasDynamicDSNode)
       return NS_OK; // No data source exists.
   }
 
   // Retrieve the mInner data source.
-  nsCAutoString overlayFile( "overlayinfo/" );
-  overlayFile += package;
-  overlayFile += "/";
-
+  nsCAutoString overlayFile; 
+  if (aUseProfile && mLegacyOverlayinfo)
+  {
+    overlayFile.AppendLiteral("overlayinfo/");
+    overlayFile += package;
+    if (aIsOverlay)
+      overlayFile.AppendLiteral("/content/");
+    else
+      overlayFile.AppendLiteral("/skin/");
+  }
   if (aIsOverlay)
-    overlayFile += "content/overlays.rdf";
-  else overlayFile += "skin/stylesheets.rdf";
+    overlayFile.AppendLiteral("overlays.rdf");
+  else
+    overlayFile.AppendLiteral("stylesheets.rdf");
 
   return LoadDataSource(overlayFile, aResult, aUseProfile, nsnull);
 }
@@ -1185,10 +1178,7 @@ nsChromeRegistry::LoadDataSource(const nsACString &aFileName,
     }
   }
 
-  nsresult rv = nsComponentManager::CreateInstance(kRDFXMLDataSourceCID,
-                                                     nsnull,
-                                                     NS_GET_IID(nsIRDFDataSource),
-                                                     (void**) aResult);
+  nsresult rv = CallCreateInstance(kRDFXMLDataSourceCID, aResult);
   if (NS_FAILED(rv)) return rv;
 
   // Seed the datasource with the ``chrome'' namespace
@@ -1318,7 +1308,7 @@ static void FlushSkinBindingsForWindow(nsIDOMWindowInternal* aWindow)
     return;
 
   // Annihilate all XBL bindings.
-  document->GetBindingManager()->FlushSkinBindings();
+  document->BindingManager()->FlushSkinBindings();
 }
 
 // XXXbsmedberg: move this to nsIWindowMediator
@@ -1423,7 +1413,7 @@ nsresult nsChromeRegistry::RefreshWindow(nsIDOMWindowInternal* aWindow)
       nsIStyleSheet *sheet = agentSheets[l];
 
       nsCOMPtr<nsIURI> uri;
-      rv = sheet->GetURL(*getter_AddRefs(uri));
+      rv = sheet->GetSheetURI(getter_AddRefs(uri));
       if (NS_FAILED(rv)) return rv;
 
       if (IsChromeURI(uri)) {
@@ -1450,13 +1440,13 @@ nsresult nsChromeRegistry::RefreshWindow(nsIDOMWindowInternal* aWindow)
   nsCOMArray<nsIStyleSheet> oldSheets;
   nsCOMArray<nsIStyleSheet> newSheets;
 
-  PRInt32 count = document->GetNumberOfStyleSheets(PR_FALSE);
+  PRInt32 count = document->GetNumberOfStyleSheets();
 
   // Iterate over the style sheets.
   PRInt32 i;
   for (i = 0; i < count; i++) {
     // Get the style sheet
-    nsIStyleSheet *styleSheet = document->GetStyleSheetAt(i, PR_FALSE);
+    nsIStyleSheet *styleSheet = document->GetStyleSheetAt(i);
     
     if (!oldSheets.AppendObject(styleSheet)) {
       return NS_ERROR_OUT_OF_MEMORY;
@@ -1468,7 +1458,7 @@ nsresult nsChromeRegistry::RefreshWindow(nsIDOMWindowInternal* aWindow)
   for (i = 0; i < count; i++) {
     nsCOMPtr<nsIStyleSheet> sheet = oldSheets[i];
     nsCOMPtr<nsIURI> uri;
-    rv = sheet->GetURL(*getter_AddRefs(uri));
+    rv = sheet->GetSheetURI(getter_AddRefs(uri));
     if (NS_FAILED(rv)) return rv;
 
     if (IsChromeURI(uri)) {
@@ -1566,10 +1556,7 @@ nsChromeRegistry::WriteInfoToDataSource(const char *aDocURI,
   if (NS_FAILED(rv)) return rv;
   if (!container) {
     // Already exists. Create a container instead.
-    rv = nsComponentManager::CreateInstance("@mozilla.org/rdf/container;1",
-                                      nsnull,
-                                      NS_GET_IID(nsIRDFContainer),
-                                      getter_AddRefs(container));
+    container = do_CreateInstance("@mozilla.org/rdf/container;1", &rv);
     if (NS_FAILED(rv)) return rv;
     rv = container->Init(dataSource, resource);
     if (NS_FAILED(rv)) return rv;
@@ -1608,13 +1595,10 @@ nsChromeRegistry::UpdateDynamicDataSource(nsIRDFDataSource *aDataSource,
                                           PRBool aIsOverlay,
                                           PRBool aUseProfile, PRBool aRemove)
 {
-  nsCOMPtr<nsIRDFContainer> container;
   nsresult rv;
 
-  rv = nsComponentManager::CreateInstance("@mozilla.org/rdf/container;1",
-                                          nsnull,
-                                          NS_GET_IID(nsIRDFContainer),
-                                          getter_AddRefs(container));
+  nsCOMPtr<nsIRDFContainer> container =
+      do_CreateInstance("@mozilla.org/rdf/container;1", &rv);
   if (NS_FAILED(rv)) return rv;
 
   rv = container->Init(aDataSource, aResource);
@@ -1884,11 +1868,8 @@ nsChromeRegistry::SetProvider(const nsACString& aProvider,
   if (NS_FAILED(rv)) return rv;
 
   // Build an RDF container to wrap the SEQ
-  nsCOMPtr<nsIRDFContainer> container;
-  rv = nsComponentManager::CreateInstance("@mozilla.org/rdf/container;1",
-                                          nsnull,
-                                          NS_GET_IID(nsIRDFContainer),
-                                          getter_AddRefs(container));
+  nsCOMPtr<nsIRDFContainer> container =
+      do_CreateInstance("@mozilla.org/rdf/container;1", &rv);
   if (NS_FAILED(rv))
     return NS_OK;
 
@@ -1931,6 +1912,9 @@ nsChromeRegistry::SetProvider(const nsACString& aProvider,
     if (NS_FAILED(rv)) return rv;
   }
 
+  // always reset the flag
+  mRuntimeProvider = PR_FALSE;
+
   return NS_OK;
 }
 
@@ -1944,6 +1928,11 @@ nsChromeRegistry::SetProviderForPackage(const nsACString& aProvider,
 {
   nsresult rv;
   
+  if (aUseProfile && !mProfileInitialized) {
+    rv = LoadProfileDataSource();
+    NS_ENSURE_TRUE(rv, rv);
+  }
+
   // Figure out which file we're needing to modify, e.g., is it the install
   // dir or the profile dir, and get the right datasource.
   nsCOMPtr<nsIRDFDataSource> dataSource;
@@ -1960,9 +1949,6 @@ nsChromeRegistry::SetProviderForPackage(const nsACString& aProvider,
   //   assert the data source only when we are not setting runtime-only provider
   if (!mBatchInstallFlushes && !mRuntimeProvider)
     rv = remote->Flush();
-
-  // always reset the flag
-  mRuntimeProvider = PR_FALSE;
 
   return rv;
 }
@@ -2017,14 +2003,14 @@ nsChromeRegistry::SelectProviderForPackage(const nsACString& aProviderType,
                                            PRBool aUseProfile, PRBool aIsAdding)
 {
   nsCAutoString package( "urn:mozilla:package:" );
-  package.AppendWithConversion(aPackageName);
+  AppendUTF16toUTF8(aPackageName, package);
 
   nsCAutoString provider( "urn:mozilla:" );
   provider += aProviderType;
   provider += ":";
   provider += aProviderName;
   provider += ":";
-  provider.AppendWithConversion(aPackageName);
+  AppendUTF16toUTF8(aPackageName, provider);
 
   // Obtain the package resource.
   nsresult rv = NS_OK;
@@ -2055,8 +2041,12 @@ nsChromeRegistry::SelectProviderForPackage(const nsACString& aProviderType,
   if (!acceptable)
     return NS_ERROR_FAILURE;
 
-  return SetProviderForPackage(aProviderType, packageResource, providerResource, aSelectionArc,
-                               aUseProfile, nsnull, aIsAdding);
+  rv = SetProviderForPackage(aProviderType, packageResource, providerResource, aSelectionArc,
+                             aUseProfile, nsnull, aIsAdding);
+  // always reset the flag
+  mRuntimeProvider = PR_FALSE;
+
+  return rv;
 }
 
 NS_IMETHODIMP nsChromeRegistry::IsSkinSelected(const nsACString& aSkin,
@@ -2169,14 +2159,14 @@ nsChromeRegistry::IsProviderSelectedForPackage(const nsACString& aProviderType,
 {
   *aResult = PR_FALSE;
   nsCAutoString package( "urn:mozilla:package:" );
-  package.AppendWithConversion(aPackageName);
+  AppendUTF16toUTF8(aPackageName, package);
 
   nsCAutoString provider( "urn:mozilla:" );
   provider += aProviderType;
   provider += ":";
   provider += aProviderName;
   provider += ":";
-  provider.AppendWithConversion(aPackageName);
+  AppendUTF16toUTF8(aPackageName, provider);
 
   // Obtain the package resource.
   nsresult rv = NS_OK;
@@ -2239,11 +2229,9 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
 #endif
 
   // Load the data source found at the base URL.
-  nsCOMPtr<nsIRDFDataSource> dataSource;
-  nsresult rv = nsComponentManager::CreateInstance(kRDFXMLDataSourceCID,
-                                                   nsnull,
-                                                   NS_GET_IID(nsIRDFDataSource),
-                                                   (void**) getter_AddRefs(dataSource));
+  nsresult rv;
+  nsCOMPtr<nsIRDFDataSource> dataSource =
+      do_CreateInstance(kRDFXMLDataSourceCID, &rv);
   if (NS_FAILED(rv)) return rv;
 
   nsCOMPtr<nsIRDFRemoteDataSource> remote = do_QueryInterface(dataSource, &rv);
@@ -2314,8 +2302,8 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
   // Get the literal for our loc type.
   nsAutoString locstr;
   if (aUseProfile)
-    locstr.Assign(NS_LITERAL_STRING("profile"));
-  else locstr.Assign(NS_LITERAL_STRING("install"));
+    locstr.AssignLiteral("profile");
+  else locstr.AssignLiteral("install");
   nsCOMPtr<nsIRDFLiteral> locLiteral;
   rv = mRDFService->GetLiteral(locstr.get(), getter_AddRefs(locLiteral));
   if (NS_FAILED(rv)) return rv;
@@ -2388,11 +2376,8 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
         if (NS_FAILED(rv)) return rv;
       }
 
-      nsCOMPtr<nsIRDFContainer> container;
-      rv = nsComponentManager::CreateInstance("@mozilla.org/rdf/container;1",
-                                            nsnull,
-                                            NS_GET_IID(nsIRDFContainer),
-                                            getter_AddRefs(container));
+      nsCOMPtr<nsIRDFContainer> container =
+          do_CreateInstance("@mozilla.org/rdf/container;1", &rv);
       if (NS_FAILED(rv)) return rv;
       rv = container->Init(dataSource, resource);
       if (NS_SUCCEEDED(rv)) {
@@ -2404,10 +2389,7 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
         if (NS_FAILED(rv)) return rv;
         if (!installContainer) {
           // Already exists. Create a container instead.
-          rv = nsComponentManager::CreateInstance("@mozilla.org/rdf/container;1",
-                                            nsnull,
-                                            NS_GET_IID(nsIRDFContainer),
-                                            getter_AddRefs(installContainer));
+          installContainer = do_CreateInstance("@mozilla.org/rdf/container;1", &rv);
           if (NS_FAILED(rv)) return rv;
           rv = installContainer->Init(installSource, resource);
           if (NS_FAILED(rv)) return rv;
@@ -2444,7 +2426,7 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
 
         // See if we're a packages seq in a skin/locale.  If so, we need to set up the baseURL, allowScripts
         // and package arcs.
-        if (val.Find(":packages") != -1 && !aProviderType.Equals(NS_LITERAL_CSTRING("package"))) {
+        if (val.Find(":packages") != -1 && !aProviderType.EqualsLiteral("package")) {
           PRBool doAppendPackage = appendPackage;
           PRInt32 perProviderPackageCount;
           container->GetCount(&perProviderPackageCount);
@@ -2501,7 +2483,7 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
 
               rv = nsChromeRegistry::UpdateArc(installSource, entry, mBaseURL, baseLiteral, aRemove);
               if (NS_FAILED(rv)) return rv;
-              if (aProviderType.Equals(NS_LITERAL_CSTRING("skin")) && !aAllowScripts) {
+              if (aProviderType.EqualsLiteral("skin") && !aAllowScripts) {
                 rv = nsChromeRegistry::UpdateArc(installSource, entry, mAllowScripts, scriptLiteral, aRemove);
                 if (NS_FAILED(rv)) return rv;
               }
@@ -2549,30 +2531,60 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
             if (NS_FAILED(rv)) return rv;
           }
 
-          nsCOMPtr<nsIRDFNode> newTarget;
-          rv = dataSource->GetTarget(resource, arc, PR_TRUE, getter_AddRefs(newTarget));
+          nsCOMPtr<nsISimpleEnumerator> targets;
+          rv = installSource->GetTargets(resource, arc, PR_TRUE, getter_AddRefs(targets));
           if (NS_FAILED(rv)) return rv;
 
-          if (arc == mImage) {
-            // We are an image URL.  Check to see if we're a relative URL.
-            nsCOMPtr<nsIRDFLiteral> literal(do_QueryInterface(newTarget));
-            if (literal) {
-              const PRUnichar* valueStr;
-              literal->GetValueConst(&valueStr);
-              nsAutoString imageURL(valueStr);
-              if (imageURL.FindChar(':') == -1) {
-                // We're relative. Prepend the base URL of the
-                // package.
-                NS_ConvertUTF8toUCS2 fullURL(aBaseURL);
-                fullURL += imageURL;
-                mRDFService->GetLiteral(fullURL.get(), getter_AddRefs(literal));
-                newTarget = do_QueryInterface(literal);
-              }
-            }
+          PRBool moreTargets;
+          rv = targets->HasMoreElements(&moreTargets);
+          if (NS_FAILED(rv)) return rv;
+
+          while (moreTargets) {
+            targets->GetNext(getter_AddRefs(supp));
+            nsCOMPtr<nsIRDFNode> node(do_QueryInterface(supp));
+            installSource->Unassert(resource, arc, node);
+
+            rv = targets->HasMoreElements(&moreTargets);
+            if (NS_FAILED(rv)) return rv;
           }
 
-          rv = nsChromeRegistry::UpdateArc(installSource, resource, arc, newTarget, aRemove);
-          if (NS_FAILED(rv)) return rv;
+          if (!aRemove) {
+            rv = dataSource->GetTargets(resource, arc, PR_TRUE, getter_AddRefs(targets));
+            if (NS_FAILED(rv)) return rv;
+
+            rv = targets->HasMoreElements(&moreTargets);
+            if (NS_FAILED(rv)) return rv;
+
+            while (moreTargets) {
+              nsresult rv = targets->GetNext(getter_AddRefs(supp));
+              if (NS_FAILED(rv)) return rv;
+              nsCOMPtr<nsIRDFNode> newTarget(do_QueryInterface(supp));
+
+              if (arc == mImage) {
+                // We are an image URL.  Check to see if we're a relative URL.
+                nsCOMPtr<nsIRDFLiteral> literal(do_QueryInterface(newTarget));
+                if (literal) {
+                  const PRUnichar* valueStr;
+                  literal->GetValueConst(&valueStr);
+                  nsAutoString imageURL(valueStr);
+                  if (imageURL.FindChar(':') == -1) {
+                    // We're relative. Prepend the base URL of the
+                    // package.
+                    NS_ConvertUTF8toUCS2 fullURL(aBaseURL);
+                    fullURL += imageURL;
+                    mRDFService->GetLiteral(fullURL.get(), getter_AddRefs(literal));
+                    newTarget = do_QueryInterface(literal);
+                  }
+                }
+              }
+
+              rv = installSource->Assert(resource, arc, newTarget, PR_TRUE);
+              if (NS_FAILED(rv)) return rv;
+
+              rv = targets->HasMoreElements(&moreTargets);
+              if (NS_FAILED(rv)) return rv;
+            }
+          }
 
           rv = arcs->HasMoreElements(&moreArcs);
           if (NS_FAILED(rv)) return rv;
@@ -2599,7 +2611,7 @@ nsChromeRegistry::InstallProvider(const nsACString& aProviderType,
 NS_IMETHODIMP nsChromeRegistry::SetAllowOverlaysForPackage(const PRUnichar *aPackageName, PRBool allowOverlays)
 {
   nsCAutoString package("urn:mozilla:package:");
-  package.AppendWithConversion(aPackageName);
+  AppendUTF16toUTF8(aPackageName, package);
 
   // Obtain the package resource.
   nsCOMPtr<nsIRDFResource> packageResource;
@@ -2646,9 +2658,10 @@ PRBool nsChromeRegistry::IsOverlayAllowed(nsIURI *aChromeURL)
   }
 
   // See if the disabled arc is set for the package.
-  nsCAutoString disabled;
-  nsChromeRegistry::FollowArc(mChromeDataSource, disabled, packageResource, mDisabled);
-  return disabled.IsEmpty();
+  nsCOMPtr<nsIRDFNode> disabledNode;
+  mChromeDataSource->GetTarget(packageResource, mDisabled, PR_TRUE,
+                               getter_AddRefs(disabledNode));
+  return !disabledNode;
 }
 
 NS_IMETHODIMP nsChromeRegistry::InstallSkin(const char* aBaseURL, PRBool aUseProfile, PRBool aAllowScripts)
@@ -2689,7 +2702,7 @@ NS_IMETHODIMP nsChromeRegistry::UninstallLocale(const nsACString& aLocaleName, P
   return UninstallProvider(NS_LITERAL_CSTRING("locale"), aLocaleName, aUseProfile);
 }
 
-NS_IMETHODIMP nsChromeRegistry::UninstallPackage(const PRUnichar* aPackageName, PRBool aUseProfile)
+NS_IMETHODIMP nsChromeRegistry::UninstallPackage(const nsACString& aPackageName, PRBool aUseProfile)
 {
   NS_ERROR("XXX Write me!\n");
   return NS_ERROR_FAILURE;
@@ -2874,11 +2887,10 @@ nsChromeRegistry::GetArcs(nsIRDFDataSource* aDataSource,
                           const nsACString& aType,
                           nsISimpleEnumerator** aResult)
 {
-  nsCOMPtr<nsIRDFContainer> container;
-  nsresult rv = nsComponentManager::CreateInstance("@mozilla.org/rdf/container;1",
-                                          nsnull,
-                                          NS_GET_IID(nsIRDFContainer),
-                                          getter_AddRefs(container));
+  nsresult rv;
+
+  nsCOMPtr<nsIRDFContainer> container =
+      do_CreateInstance("@mozilla.org/rdf/container;1", &rv);
   if (NS_FAILED(rv))
     return NS_OK;
 
@@ -2909,10 +2921,8 @@ nsChromeRegistry::AddToCompositeDataSource(PRBool aUseProfile)
 {
   nsresult rv = NS_OK;
   if (!mChromeDataSource) {
-    rv = nsComponentManager::CreateInstance("@mozilla.org/rdf/datasource;1?name=composite-datasource",
-                                            nsnull,
-                                            NS_GET_IID(nsIRDFCompositeDataSource),
-                                            getter_AddRefs(mChromeDataSource));
+    mChromeDataSource = do_CreateInstance(
+        "@mozilla.org/rdf/datasource;1?name=composite-datasource", &rv);
     if (NS_FAILED(rv))
       return rv;
 
@@ -2931,7 +2941,42 @@ nsChromeRegistry::AddToCompositeDataSource(PRBool aUseProfile)
   // Always load the install dir datasources
   LoadDataSource(kChromeFileName, getter_AddRefs(mInstallDirChromeDataSource), PR_FALSE, nsnull);
   mChromeDataSource->AddDataSource(mInstallDirChromeDataSource);
-  
+
+  // List all packages that want XPC native wrappers
+  nsCOMPtr<nsIXPConnect> xpc(do_GetService("@mozilla.org/js/xpc/XPConnect;1", &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsISimpleEnumerator> arcs;
+  nsCOMPtr<nsIRDFLiteral> trueLiteral;
+  mRDFService->GetLiteral(NS_LITERAL_STRING("true").get(), getter_AddRefs(trueLiteral));
+  rv = mChromeDataSource->GetSources(mXPCNativeWrappers, trueLiteral, PR_TRUE,
+                                     getter_AddRefs(arcs));
+  if (NS_FAILED(rv)) return rv;
+
+  nsCAutoString uri;
+  PRBool more;
+  rv = arcs->HasMoreElements(&more);
+  if (NS_FAILED(rv)) return rv;
+  while (more) {
+    nsCOMPtr<nsISupports> supp;
+    rv = arcs->GetNext(getter_AddRefs(supp));
+    if (NS_FAILED(rv)) return rv;
+    nsCOMPtr<nsIRDFResource> package(do_QueryInterface(supp));
+    if (package) {
+      const char urn[] = "urn:mozilla:package:";
+      const char* source;
+      package->GetValueConst(&source);
+      if (!memcmp(source, urn, sizeof urn - 1)) {
+        uri.AssignLiteral("chrome://");
+        uri.Append(source + sizeof urn - 1);
+        uri.Append('/');
+        rv = xpc->FlagSystemFilenamePrefix(uri.get());
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+    }
+    rv = arcs->HasMoreElements(&more);
+    if (NS_FAILED(rv)) return rv;
+  }
+
   return NS_OK;
 }
 
@@ -2961,6 +3006,7 @@ nsresult nsChromeRegistry::LoadInstallDataSource()
 
 nsresult nsChromeRegistry::LoadProfileDataSource()
 {
+  mLegacyOverlayinfo = PR_FALSE;
   nsresult rv = GetProfileRoot(mProfileRoot);
   if (NS_SUCCEEDED(rv)) {
     // Load the profile search path for skins, content, and locales
@@ -2986,11 +3032,28 @@ nsresult nsChromeRegistry::LoadProfileDataSource()
 
     // We have to flush the chrome skin cache...
     FlushSkinCaches();
+    
+    // make sure we don't lose any old profile overlayinfo
+    // by checking the existence of the respective overlayinfo/ directory
+    nsCOMPtr<nsIFile> overlayinfoDir;
+    rv = NS_GetSpecialDirectory(NS_APP_USER_CHROME_DIR, getter_AddRefs(overlayinfoDir));
+    if (NS_SUCCEEDED(rv))
+    {
+      rv = overlayinfoDir->AppendNative(NS_LITERAL_CSTRING("overlayinfo"));
+      if (NS_SUCCEEDED(rv))
+      {
+        PRBool isLegacyOverlayinfo;
+        rv = overlayinfoDir->IsDirectory(&isLegacyOverlayinfo);
+        mLegacyOverlayinfo = NS_SUCCEEDED(rv) && isLegacyOverlayinfo;
+      }
+    }
+
   }
   return NS_OK;
 }
 
-NS_IMETHODIMP nsChromeRegistry::AllowScriptsForSkin(nsIURI* aChromeURI, PRBool *aResult)
+NS_IMETHODIMP
+nsChromeRegistry::AllowScriptsForPackage(nsIURI* aChromeURI, PRBool *aResult)
 {
   *aResult = PR_TRUE;
 
@@ -3032,14 +3095,10 @@ NS_IMETHODIMP nsChromeRegistry::AllowScriptsForSkin(nsIURI* aChromeURI, PRBool *
   resource = do_QueryInterface(selectedProvider, &rv);
   if (NS_SUCCEEDED(rv)) {
     // get its script access
-    nsCAutoString scriptAccess;
-    rv = nsChromeRegistry::FollowArc(mChromeDataSource,
-                                     scriptAccess,
-                                     resource,
-                                     mAllowScripts);
-    if (NS_FAILED(rv)) return rv;
-
-    if (!scriptAccess.IsEmpty())
+    nsCOMPtr<nsIRDFNode> scriptAccessNode;
+    mChromeDataSource->GetTarget(resource, mAllowScripts, PR_TRUE,
+                                 getter_AddRefs(scriptAccessNode));
+    if (scriptAccessNode)
       *aResult = PR_FALSE;
   }
   return NS_OK;
@@ -3269,11 +3328,8 @@ nsChromeRegistry::GetProviderCount(const nsACString& aProviderType, nsIRDFDataSo
     return 0;
 
   // wrap it in a container
-  nsCOMPtr<nsIRDFContainer> container;
-  rv = nsComponentManager::CreateInstance("@mozilla.org/rdf/container;1",
-                                          nsnull,
-                                          NS_GET_IID(nsIRDFContainer),
-                                          getter_AddRefs(container));
+  nsCOMPtr<nsIRDFContainer> container =
+      do_CreateInstance("@mozilla.org/rdf/container;1", &rv);
   if (NS_FAILED(rv)) return 0;
 
   rv = container->Init(aDataSource, resource);
@@ -3300,11 +3356,10 @@ NS_IMETHODIMP nsChromeRegistry::Observe(nsISupports *aSubject, const char *aTopi
       if (NS_SUCCEEDED(rv) && userChromeDir)
         rv = userChromeDir->Remove(PR_TRUE);
     }
+    FlushAllCaches();
   }
   else if (!strcmp("profile-after-change", aTopic)) {
-    if (!mProfileInitialized) {
-      rv = LoadProfileDataSource();
-    }
+    rv = LoadProfileDataSource();
   }
 
   return rv;
@@ -3362,11 +3417,8 @@ nsChromeRegistry::CheckProviderVersion (const nsACString& aProviderType,
   if (NS_FAILED(rv)) return rv;
 
   // Build an RDF container to wrap the SEQ
-  nsCOMPtr<nsIRDFContainer> container;
-  rv = nsComponentManager::CreateInstance("@mozilla.org/rdf/container;1",
-                                          nsnull,
-                                          NS_GET_IID(nsIRDFContainer),
-                                          getter_AddRefs(container));
+  nsCOMPtr<nsIRDFContainer> container =
+      do_CreateInstance("@mozilla.org/rdf/container;1", &rv);
   if (NS_FAILED(rv))
     return rv;
 
@@ -3391,10 +3443,6 @@ nsChromeRegistry::CheckProviderVersion (const nsACString& aProviderType,
     if (NS_SUCCEEDED(rv) && packageSkinEntry) {
       nsCOMPtr<nsIRDFResource> entry = do_QueryInterface(packageSkinEntry);
       if (entry) {
-
-        nsCAutoString themePackageVersion;
-        nsChromeRegistry::FollowArc(mChromeDataSource, themePackageVersion, entry, aSelectionArc);
-
         // Obtain the real package resource.
         nsCOMPtr<nsIRDFNode> packageNode;
         rv = mChromeDataSource->GetTarget(entry, mPackage, PR_TRUE, getter_AddRefs(packageNode));
@@ -3405,32 +3453,25 @@ nsChromeRegistry::CheckProviderVersion (const nsACString& aProviderType,
 
         nsCOMPtr<nsIRDFResource> packageResource(do_QueryInterface(packageNode));
         if (packageResource) {
+          nsCOMPtr<nsIRDFNode> packageNameNode;
+          mChromeDataSource->GetTarget(packageResource, mName, PR_TRUE,
+                                       getter_AddRefs(packageNameNode));
 
-          nsCAutoString packageVersion;
-          nsChromeRegistry::FollowArc(mChromeDataSource, packageVersion, packageResource, aSelectionArc);
+          if (packageNameNode) {
+            nsCOMPtr<nsIRDFNode> packageVersionNode;
+            mChromeDataSource->GetTarget(packageResource, aSelectionArc, PR_TRUE,
+                                         getter_AddRefs(packageVersionNode));
 
-          nsCAutoString packageName;
-          nsChromeRegistry::FollowArc(mChromeDataSource, packageName, packageResource, mName);
-
-          if (packageName.IsEmpty())
-            // the package is not represented for current version, so ignore it
-            *aCompatible = PR_TRUE;
-          else {
-            if (packageVersion.IsEmpty() && themePackageVersion.IsEmpty())
-              *aCompatible = PR_TRUE;
-            else {
-              if (!packageVersion.IsEmpty() && !themePackageVersion.IsEmpty())
-                *aCompatible = ( themePackageVersion.Equals(packageVersion));
-              else
-                *aCompatible = PR_FALSE;
+            if (packageVersionNode) {
+              mChromeDataSource->HasAssertion(entry, aSelectionArc,
+                                              packageVersionNode, PR_TRUE,
+                                              aCompatible);
+              // if just one theme package is NOT compatible, the theme will be disabled
+              if (!*aCompatible)
+                return NS_OK;
             }
           }
-
-           // if just one theme package is NOT compatible, the theme will be disabled
-           if (!(*aCompatible))
-             return NS_OK;
-
-         }
+        }
       }
     }
     rv = arcs->HasMoreElements(&more);

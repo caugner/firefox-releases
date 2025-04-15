@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -50,7 +49,6 @@
 #include "nsICharsetAlias.h"
 
 static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
-static NS_DEFINE_IID(kICharsetConverterManagerIID, NS_ICHARSETCONVERTERMANAGER_IID);
 
 #include <stdio.h>
 #include <string.h>
@@ -80,14 +78,12 @@ int main(int argc, const char** argv)
   FILE* infile = 0;
   FILE* outfile = 0;
   nsresult res= NS_OK;
-  nsICharsetConverterManager* ccMain=nsnull;
-  nsICharsetAlias* aliasmgr = nsnull;
 
   NS_InitXPCOM2(nsnull, nsnull, nsnull);
 
   // get ccMain;
-  res = nsServiceManager::GetService(kCharsetConverterManagerCID,
-                                     kICharsetConverterManagerIID, (nsISupports**) &ccMain);
+  nsCOMPtr<nsICharsetConverterManager> ccMain =
+      do_GetService(kCharsetConverterManagerCID, &res);
   if(NS_FAILED(res))
   {
     fprintf(stderr, "Cannot get Character Converter Manager %x\n", res);
@@ -95,12 +91,11 @@ int main(int argc, const char** argv)
   }
 
   // Get the charset alias manager
-  res = nsServiceManager::GetService(NS_CHARSETALIAS_CONTRACTID, NS_GET_IID(nsICharsetAlias),
-                                     (nsISupports**) &aliasmgr);
+  nsCOMPtr<nsICharsetAlias> aliasmgr =
+      do_GetService(NS_CHARSETALIAS_CONTRACTID, &res);
   if (NS_FAILED(res))
   {
     fprintf(stderr, "Cannot get Charset Alias Manager %x\n", res);
-    nsServiceManager::ReleaseService(kCharsetConverterManagerCID, ccMain);
     return -1;
   }
 
@@ -222,8 +217,6 @@ int main(int argc, const char** argv)
     fprintf(stderr, "Done!\n");
     NS_IF_RELEASE(encoder);
     NS_IF_RELEASE(decoder);
-    nsServiceManager::ReleaseService(kCharsetConverterManagerCID, ccMain);
-    nsServiceManager::ReleaseService(NS_CHARSETALIAS_CONTRACTID, aliasmgr);
     return 0;
   }
   usage();
@@ -235,7 +228,5 @@ int main(int argc, const char** argv)
     fclose(outfile);
   NS_IF_RELEASE(encoder);
   NS_IF_RELEASE(decoder);
-  nsServiceManager::ReleaseService(kCharsetConverterManagerCID, ccMain);
-  nsServiceManager::ReleaseService(NS_CHARSETALIAS_CONTRACTID, aliasmgr);
   return -1;
 }

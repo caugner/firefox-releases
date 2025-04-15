@@ -28,10 +28,22 @@
                 onget="return this.getAttribute('group');"
                 onset="this.setAttribute('group', val); return val;"/>
 
-      <property name="open"
-                onget="return this.hasAttribute('open');"
-                onset="if (val) this.setAttribute('open', 'true');
-                       else this.removeAttribute('open'); return val;"/>
+      <property name="open" onget="return this.hasAttribute('open');">
+        <setter><![CDATA[
+          if (this.boxObject instanceof
+              Components.interfaces.nsIMenuBoxObject) {
+            this.boxObject.openMenu(val);
+          } else {
+            // Fall back to just setting the attribute
+            if (val) {
+              this.setAttribute('open', 'true');
+            } else {
+              this.removeAttribute('open');
+            }
+          }
+          return val;
+        ]]></setter>
+      </property>
 
       <property name="checked" onget="return this.hasAttribute('checked');">
         <setter><![CDATA[
@@ -104,6 +116,22 @@
         ]]>
         </body>
       </method>
+
+      <method name="_handleClick">
+        <body>
+        <![CDATA[
+          if (!this.disabled &&
+              (this.autoCheck || !this.hasAttribute("autoCheck"))) {
+
+            if (this.type == "checkbox") {
+              this.checked = !this.checked;
+            } else if (this.type == "radio") {
+              this.checked = true;
+            }
+          }
+        ]]>
+        </body>
+      </method>
     </implementation>
 
     <handlers>
@@ -111,29 +139,8 @@
            because any external oncommand handlers might get called before ours,
            and then they would see the incorrect value of checked. Additionally
            a command attribute would redirect the command events anyway.-->
-      <handler event="click" button="0">
-      <![CDATA[
-        if (this.autoCheck || !this.hasAttribute("autoCheck")) {
-          if (this.type == "checkbox") {
-            this.checked = !this.checked;
-          } else if (this.type == "radio") {
-            this.checked = true;
-          }
-        }
-      ]]>
-      </handler>
-
-      <handler event="keypress" key=" ">
-      <![CDATA[
-        if (this.autoCheck || !this.hasAttribute("autoCheck")) {
-          if (this.type == "checkbox") {
-            this.checked = !this.checked;
-          } else if (this.type == "radio") {
-            this.checked = true;
-          }
-        }
-      ]]>
-      </handler>
+      <handler event="click" button="0" action="this._handleClick();"/>
+      <handler event="keypress" key=" " action="this._handleClick();"/>
 
       <handler event="keypress">
       <![CDATA[
@@ -175,7 +182,6 @@
           this.fireAccessKeyButton(buttonBox, charPressedLower);
       ]]>
       </handler>
-
     </handlers>
   </binding>
 
@@ -210,7 +216,12 @@
         </children>
       </xul:hbox>
     </content>
-  </binding>           
+
+    <handlers>
+      <handler event="keypress" keycode="VK_RETURN" action="this.open = true;"/>
+      <handler event="keypress" key=" " action="this.open = true;"/>
+    </handlers>
+  </binding>
 
   <binding id="menu-button-base"
            extends="chrome://global/content/bindings/button.xml#button-base">

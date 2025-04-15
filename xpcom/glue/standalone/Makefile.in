@@ -1,3 +1,4 @@
+# vim:set ts=8 sw=8 sts=8 noet:
 # ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
@@ -52,10 +53,33 @@ LOCAL_INCLUDES	= \
 		-I$(srcdir)/../../build \
 		$(NULL)
 
+ifeq (Darwin,$(OS_ARCH))
+LINKSRC = nsGlueLinkingOSX.cpp
+endif
+ifeq (WINNT,$(OS_ARCH))
+LINKSRC = nsGlueLinkingWin.cpp
+endif
+ifneq (,$(filter AIX DragonFly FreeBSD Linux NetBSD OpenBSD,$(OS_ARCH)))
+LINKSRC = nsGlueLinkingDlopen.cpp
+endif
+ifeq (OS2,$(OS_ARCH))
+LINKSRC = nsGlueLinkingOS2.cpp
+endif
+
+ifndef LINKSRC
+LINKSRC = nsGlueLinkingNull.cpp
+$(warning TinderboxPrint:<a href="https://bugzilla.mozilla.org/show_bug.cgi?id=298044">Error: XPCOM Glue</a>)
+endif
+
+CSRCS		= \
+		$(XPCOM_GLUE_SRC_LCSRCS) \
+		$(NULL)
+
 CPPSRCS		= \
-		$(XPCOM_GLUE_SRC_LCSRCS)     \
+		$(XPCOM_GLUE_SRC_LCPPSRCS)   \
 		nsXPCOMGlue.cpp              \
 		nsGREDirServiceProvider.cpp  \
+		$(LINKSRC)                   \
 		$(NULL)
 
 SDK_HEADERS     = \
@@ -74,15 +98,11 @@ FORCE_USE_PIC	= 1
 
 GARBAGE         += $(XPCOM_GLUE_SRC_LCSRCS) $(wildcard *.$(OBJ_SUFFIX))
 
-ifeq ($(OS_ARCH),WINNT)
-GARBAGE		+= $(addprefix $(srcdir)/,$(XPCOM_GLUE_SRC_LCSRCS))
-endif
-
 SRCS_IN_OBJDIR	= 1
 
 include $(topsrcdir)/config/rules.mk
 
-export:: $(XPCOM_GLUE_SRC_CSRCS) 
+export:: $(XPCOM_GLUE_SRC_CSRCS) $(XPCOM_GLUE_SRC_CPPSRCS)
 	$(INSTALL) $^ .
 
 DEFINES		+= -DXPCOM_GLUE

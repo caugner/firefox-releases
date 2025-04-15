@@ -1,26 +1,40 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
- * The Original Code is TransforMiiX XSLT processor.
- * 
- * The Initial Developer of the Original Code is The MITRE Corporation.
- * Portions created by MITRE are Copyright (C) 1999 The MITRE Corporation.
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Portions created by Keith Visco as a Non MITRE employee,
- * (C) 1999 Keith Visco. All Rights Reserved.
- * 
- * Contributor(s): 
- * Tom Kneeland, tomk@mitre.org
- *    -- original author.
- */
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is TransforMiiX XSLT processor code.
+ *
+ * The Initial Developer of the Original Code is
+ * The MITRE Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Tom Kneeland <tomk@mitre.org> (Original Author)
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "txXMLParser.h"
 #include "txURIUtils.h"
@@ -32,7 +46,8 @@
 #include "nsISyncLoadDOMService.h"
 #include "nsNetUtil.h"
 #else
-#include "xmlparse.h"
+#include "expat_config.h"
+#include "expat.h"
 #endif
 
 #ifdef TX_EXE
@@ -113,10 +128,18 @@ txParseDocumentFromURI(const nsAString& aHref, const nsAString& aReferrer,
     // the document.
     nsIDOMDocument* theDocument = nsnull;
     rv = loader->LoadDocumentAsXML(channel, loaderUri, &theDocument);
-    if (NS_FAILED(rv) || !theDocument) {
+
+    PRBool succeeded = NS_SUCCEEDED(rv) && theDocument;
+    if (succeeded && http) {
+      PRBool httpSucceeded;
+      rv = http->GetRequestSucceeded(&httpSucceeded);
+      succeeded = NS_SUCCEEDED(rv) && httpSucceeded;
+    }
+
+    if (!succeeded) {
         aErrMsg.Append(NS_LITERAL_STRING("Document load of ") + 
                        aHref + NS_LITERAL_STRING(" failed."));
-        return rv;
+        return NS_FAILED(rv) ? rv : NS_ERROR_FAILURE;
     }
 
     *aResult = txXPathNativeNode::createXPathNode(theDocument);
@@ -206,8 +229,8 @@ externalEntityRefHandler(XML_Parser aParser,
     // aParser is aUserData is the txXMLParser,
     // we set that in txXMLParser::parse
     NS_ENSURE_TRUE(aParser, XML_ERROR_NONE);
-    return TX_XMLPARSER(aParser)->ExternalEntityRef(aContext, aBase,
-                                                    aSystemId, aPublicId);
+    return ((txXMLParser*)aParser)->ExternalEntityRef(aContext, aBase,
+                                                      aSystemId, aPublicId);
 }
 
 
@@ -222,7 +245,7 @@ txXMLParser::parse(istream& aInputStream, const nsAString& aUri,
     mErrorString.Truncate();
     *aResultDoc = nsnull;
     if (!aInputStream) {
-        mErrorString.Append(NS_LITERAL_STRING("unable to parse xml: invalid or unopen stream encountered."));
+        mErrorString.AppendLiteral("unable to parse xml: invalid or unopen stream encountered.");
         return NS_ERROR_FAILURE;
     }
     mExpatParser = XML_ParserCreate(nsnull);
@@ -413,9 +436,9 @@ txXMLParser::createErrorString()
 {
     XML_Error errCode = XML_GetErrorCode(mExpatParser);
     mErrorString.AppendWithConversion(XML_ErrorString(errCode));
-    mErrorString.Append(NS_LITERAL_STRING(" at line "));
+    mErrorString.AppendLiteral(" at line ");
     mErrorString.AppendInt(XML_GetCurrentLineNumber(mExpatParser));
-    mErrorString.Append(NS_LITERAL_STRING(" in "));
+    mErrorString.AppendLiteral(" in ");
     mErrorString.Append((const PRUnichar*)XML_GetBase(mExpatParser));
 }
 #endif

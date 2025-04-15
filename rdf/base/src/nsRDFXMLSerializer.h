@@ -1,23 +1,42 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "MPL"); you may not use this file except in
- * compliance with the MPL.  You may obtain a copy of the MPL at
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
- * Software distributed under the MPL is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the MPL
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * MPL.
+ * License.
  *
- * The Initial Developer of this code under the MPL is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1999 Netscape Communications Corporation.  All Rights
- * Reserved.
+ * The Original Code is mozilla.org Code.
  *
- * Contributor(s): 
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Chris Waterson <waterson@netscape.com>
- */
+ *   Axel Hecht <axel@pike.org>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef nsRDFXMLSerializer_h__
 #define nsRDFXMLSerializer_h__
@@ -27,6 +46,9 @@
 #include "nsIRDFXMLSource.h"
 #include "nsNameSpaceMap.h"
 #include "nsXPIDLString.h"
+
+#include "nsDataHashtable.h"
+#include "rdfITripleVisitor.h"
 
 class nsString;
 class nsIOutputStream;
@@ -53,11 +75,10 @@ protected:
     virtual ~nsRDFXMLSerializer();
 
     // Implementation methods
-    PRBool
-    MakeQName(nsIRDFResource* aResource,
-              nsString& aPproperty,
-              nsString& aNameSpacePrefix,
-              nsString& aNameSpaceURI);
+    nsresult
+    RegisterQName(nsIRDFResource* aResource);
+    nsresult
+    GetQName(nsIRDFResource* aResource, nsCString& aQName);
 
     nsresult
     SerializeInlineAssertion(nsIOutputStream* aStream,
@@ -103,15 +124,18 @@ protected:
     nsresult
     CollectNamespaces();
 
-    nsresult
-    EnsureNameSpaceFor(nsIRDFResource* aResource);
-
     PRBool
     IsA(nsIRDFDataSource* aDataSource, nsIRDFResource* aResource, nsIRDFResource* aType);
 
     nsCOMPtr<nsIRDFDataSource> mDataSource;
     nsNameSpaceMap mNameSpaces;
     nsXPIDLCString mBaseURLSpec;
+
+    // hash mapping resources to utf8-encoded QNames
+    nsDataHashtable<nsISupportsHashKey, nsCString> mQNames;
+    friend class QNameCollector;
+
+    PRUint32 mPrefixID;
 
     static PRInt32 gRefCnt;
     static nsIRDFResource* kRDF_instanceOf;

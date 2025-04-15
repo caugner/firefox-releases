@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,36 +14,36 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsIDOMHTMLOptGroupElement.h"
 #include "nsIDOMEventReceiver.h"
-#include "nsIHTMLContent.h"
 #include "nsGenericHTMLElement.h"
 #include "nsHTMLAtoms.h"
 #include "nsStyleConsts.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIFrame.h"
 #include "nsIFormControlFrame.h"
+#include "nsIEventStateManager.h"
+#include "nsIDocument.h"
 
 #include "nsISelectElement.h"
 #include "nsIDOMHTMLSelectElement.h"
@@ -56,7 +56,7 @@ class nsHTMLOptGroupElement : public nsGenericHTMLElement,
                               public nsIDOMHTMLOptGroupElement
 {
 public:
-  nsHTMLOptGroupElement();
+  nsHTMLOptGroupElement(nsINodeInfo *aNodeInfo);
   virtual ~nsHTMLOptGroupElement();
 
   // nsISupports
@@ -76,17 +76,41 @@ public:
 
   // nsIContent
   virtual nsresult InsertChildAt(nsIContent* aKid, PRUint32 aIndex,
-                                 PRBool aNotify, PRBool aDeepSetDocument);
-  virtual nsresult ReplaceChildAt(nsIContent* aKid, PRUint32 aIndex,
-                                  PRBool aNotify, PRBool aDeepSetDocument);
-  virtual nsresult AppendChildTo(nsIContent* aKid, PRBool aNotify,
-                                 PRBool aDeepSetDocument);
+                                 PRBool aNotify);
+  virtual nsresult AppendChildTo(nsIContent* aKid, PRBool aNotify);
   virtual nsresult RemoveChildAt(PRUint32 aIndex, PRBool aNotify);
 
-  virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext,
+  virtual nsresult HandleDOMEvent(nsPresContext* aPresContext,
                                   nsEvent* aEvent, nsIDOMEvent** aDOMEvent,
                                   PRUint32 aFlags,
                                   nsEventStatus* aEventStatus);
+  virtual PRInt32 IntrinsicState() const;
+
+  nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
+                   const nsAString& aValue, PRBool aNotify)
+  {
+    return SetAttr(aNameSpaceID, aName, nsnull, aValue, aNotify);
+  }
+  virtual nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
+                           nsIAtom* aPrefix, const nsAString& aValue,
+                           PRBool aNotify)
+  {
+    nsresult rv = nsGenericHTMLElement::SetAttr(aNameSpaceID, aName, aPrefix,
+                                                aValue, aNotify);
+
+    AfterSetAttr(aNameSpaceID, aName, &aValue, aNotify);
+    return rv;
+  }
+
+  virtual nsresult UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
+                             PRBool aNotify)
+  {
+    nsresult rv = nsGenericHTMLElement::UnsetAttr(aNameSpaceID, aAttribute,
+                                                  aNotify);
+
+    AfterSetAttr(aNameSpaceID, aAttribute, nsnull, aNotify);
+    return rv;
+  }
 
 protected:
 
@@ -95,36 +119,20 @@ protected:
    * @param aSelectElement the select element [OUT]
    */
   void GetSelect(nsISelectElement **aSelectElement);
+
+  /**
+   * Called when an attribute has just been changed
+   */
+  void AfterSetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
+                    const nsAString* aValue, PRBool aNotify);
 };
 
-nsresult
-NS_NewHTMLOptGroupElement(nsIHTMLContent** aInstancePtrResult,
-                          nsINodeInfo *aNodeInfo, PRBool aFromParser)
-{
-  NS_ENSURE_ARG_POINTER(aInstancePtrResult);
 
-  nsHTMLOptGroupElement* it = new nsHTMLOptGroupElement();
-
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsresult rv = it->Init(aNodeInfo);
-
-  if (NS_FAILED(rv)) {
-    delete it;
-
-    return rv;
-  }
-
-  *aInstancePtrResult = NS_STATIC_CAST(nsIHTMLContent *, it);
-  NS_ADDREF(*aInstancePtrResult);
-
-  return NS_OK;
-}
+NS_IMPL_NS_NEW_HTML_ELEMENT(OptGroup)
 
 
-nsHTMLOptGroupElement::nsHTMLOptGroupElement()
+nsHTMLOptGroupElement::nsHTMLOptGroupElement(nsINodeInfo *aNodeInfo)
+  : nsGenericHTMLElement(aNodeInfo)
 {
 }
 
@@ -145,33 +153,7 @@ NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLOptGroupElement,
 NS_HTML_CONTENT_INTERFACE_MAP_END
 
 
-nsresult
-nsHTMLOptGroupElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
-{
-  NS_ENSURE_ARG_POINTER(aReturn);
-  *aReturn = nsnull;
-
-  nsHTMLOptGroupElement* it = new nsHTMLOptGroupElement();
-
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsCOMPtr<nsIDOMNode> kungFuDeathGrip(it);
-
-  nsresult rv = it->Init(mNodeInfo);
-
-  if (NS_FAILED(rv))
-    return rv;
-
-  CopyInnerTo(it, aDeep);
-
-  *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
-
-  NS_ADDREF(*aReturn);
-
-  return NS_OK;
-}
+NS_IMPL_DOM_CLONENODE(nsHTMLOptGroupElement)
 
 
 NS_IMPL_BOOL_ATTR(nsHTMLOptGroupElement, Disabled, disabled)
@@ -179,7 +161,7 @@ NS_IMPL_STRING_ATTR(nsHTMLOptGroupElement, Label, label)
 
 
 nsresult
-nsHTMLOptGroupElement::HandleDOMEvent(nsIPresContext* aPresContext,
+nsHTMLOptGroupElement::HandleDOMEvent(nsPresContext* aPresContext,
                                       nsEvent* aEvent,
                                       nsIDOMEvent** aDOMEvent,
                                       PRUint32 aFlags,
@@ -192,15 +174,9 @@ nsHTMLOptGroupElement::HandleDOMEvent(nsIPresContext* aPresContext,
     return rv;
   }
 
-  nsIFormControlFrame* formControlFrame = GetFormControlFrame(PR_FALSE);
-
-  nsIFrame* formFrame = nsnull;
-  if (formControlFrame) {
-    CallQueryInterface(formControlFrame, &formFrame);
-  }
-
-  if (formFrame) {
-    const nsStyleUserInterface* uiStyle = formFrame->GetStyleUserInterface();
+  nsIFrame* frame = GetPrimaryFrame(PR_FALSE);
+  if (frame) {
+    const nsStyleUserInterface* uiStyle = frame->GetStyleUserInterface();
     if (uiStyle->mUserInput == NS_STYLE_USER_INPUT_NONE ||
         uiStyle->mUserInput == NS_STYLE_USER_INPUT_DISABLED) {
       return NS_OK;
@@ -209,6 +185,24 @@ nsHTMLOptGroupElement::HandleDOMEvent(nsIPresContext* aPresContext,
 
   return nsGenericHTMLElement::HandleDOMEvent(aPresContext, aEvent, aDOMEvent,
                                               aFlags, aEventStatus);
+}
+
+PRInt32
+nsHTMLOptGroupElement::IntrinsicState() const
+{
+  PRInt32 state = nsGenericHTMLElement::IntrinsicState();
+
+  PRBool disabled;
+  GetBoolAttr(nsHTMLAtoms::disabled, &disabled);
+  if (disabled) {
+    state |= NS_EVENT_STATE_DISABLED;
+    state &= ~NS_EVENT_STATE_ENABLED;
+  } else {
+    state &= ~NS_EVENT_STATE_DISABLED;
+    state |= NS_EVENT_STATE_ENABLED;
+  }
+
+  return state;
 }
 
 void
@@ -223,10 +217,24 @@ nsHTMLOptGroupElement::GetSelect(nsISelectElement **aSelectElement)
   }
 }
 
+void
+nsHTMLOptGroupElement::AfterSetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
+                                    const nsAString* aValue, PRBool aNotify)
+{
+  if (aNotify && aNameSpaceID == kNameSpaceID_None &&
+      aName == nsHTMLAtoms::disabled) {
+    nsIDocument* document = GetCurrentDoc();
+    if (document) {
+      mozAutoDocUpdate(document, UPDATE_CONTENT_STATE, PR_TRUE);
+      document->ContentStatesChanged(this, nsnull, NS_EVENT_STATE_DISABLED |
+                                     NS_EVENT_STATE_ENABLED);
+    }
+  }
+}
+
 // nsIContent
 nsresult
-nsHTMLOptGroupElement::AppendChildTo(nsIContent* aKid, PRBool aNotify,
-                                     PRBool aDeepSetDocument)
+nsHTMLOptGroupElement::AppendChildTo(nsIContent* aKid, PRBool aNotify)
 {
   // Since we're appending, the relevant option index to add after is found
   // *after* this optgroup.
@@ -237,12 +245,12 @@ nsHTMLOptGroupElement::AppendChildTo(nsIContent* aKid, PRBool aNotify,
   }
 
   // Actually perform the append
-  return nsGenericHTMLElement::AppendChildTo(aKid, aNotify, aDeepSetDocument);
+  return nsGenericHTMLElement::AppendChildTo(aKid, aNotify);
 }
 
 nsresult
 nsHTMLOptGroupElement::InsertChildAt(nsIContent* aKid, PRUint32 aIndex,
-                                     PRBool aNotify, PRBool aDeepSetDocument)
+                                     PRBool aNotify)
 {
   nsCOMPtr<nsISelectElement> sel;
   GetSelect(getter_AddRefs(sel));
@@ -250,23 +258,7 @@ nsHTMLOptGroupElement::InsertChildAt(nsIContent* aKid, PRUint32 aIndex,
     sel->WillAddOptions(aKid, this, aIndex);
   }
 
-  return nsGenericHTMLElement::InsertChildAt(aKid, aIndex, aNotify,
-                                             aDeepSetDocument);
-}
-
-nsresult
-nsHTMLOptGroupElement::ReplaceChildAt(nsIContent* aKid, PRUint32 aIndex,
-                                      PRBool aNotify, PRBool aDeepSetDocument)
-{
-  nsCOMPtr<nsISelectElement> sel;
-  GetSelect(getter_AddRefs(sel));
-  if (sel) {
-    sel->WillRemoveOptions(this, aIndex);
-    sel->WillAddOptions(aKid, this, aIndex);
-  }
-
-  return nsGenericHTMLElement::ReplaceChildAt(aKid, aIndex, aNotify,
-                                              aDeepSetDocument);
+  return nsGenericHTMLElement::InsertChildAt(aKid, aIndex, aNotify);
 }
 
 nsresult

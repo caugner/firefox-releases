@@ -231,6 +231,46 @@ nsSeamonkeyProfileMigrator::GetSourceProfiles(nsISupportsArray** aResult)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsSeamonkeyProfileMigrator::GetSourceHomePageURL(nsACString& aResult)
+{
+  // Load the source pref file
+  nsCOMPtr<nsIPrefService> psvc(do_GetService(NS_PREFSERVICE_CONTRACTID));
+  psvc->ResetPrefs();
+
+  nsCOMPtr<nsIFile> sourcePrefsFile;
+  
+  mSourceProfile->Clone(getter_AddRefs(sourcePrefsFile));
+  sourcePrefsFile->Append(FILE_NAME_PREFS);
+
+  psvc->ReadUserPrefs(sourcePrefsFile);
+
+  nsCOMPtr<nsIPrefBranch> branch(do_QueryInterface(psvc));
+
+  PRBool hasUserValue;
+  nsCOMPtr<nsIPrefLocalizedString> prefValue;
+  nsresult rv = branch->PrefHasUserValue("browser.startup.homepage", &hasUserValue);
+  if (NS_SUCCEEDED(rv) && hasUserValue) {
+    rv = branch->GetComplexValue("browser.startup.homepage", 
+                                 NS_GET_IID(nsIPrefLocalizedString),
+                                 getter_AddRefs(prefValue));
+    if (NS_SUCCEEDED(rv) && prefValue) {
+      nsXPIDLString data;
+      prefValue->ToString(getter_Copies(data));
+
+      nsCAutoString val;
+      val = ToNewCString(NS_ConvertUCS2toUTF8(data));
+
+      aResult.Assign(val);
+    }
+  }
+
+  psvc->ResetPrefs();
+  psvc->ReadUserPrefs(nsnull);
+
+  return NS_OK;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // nsSeamonkeyProfileMigrator
 
@@ -295,7 +335,6 @@ nsSeamonkeyProfileMigrator::FillProfileDataFromSeamonkeyRegistry()
 static 
 nsSeamonkeyProfileMigrator::PrefTransform gTransforms[] = {
   MAKESAMETYPEPREFTRANSFORM("signon.SignonFileName",                    String),
-  MAKESAMETYPEPREFTRANSFORM("browser.startup.homepage",                 WString),
   MAKESAMETYPEPREFTRANSFORM("browser.history_expire_days",              Int),
   MAKESAMETYPEPREFTRANSFORM("browser.tabs.autoHide",                    Bool),
   MAKESAMETYPEPREFTRANSFORM("browser.tabs.loadInBackground",            Bool),
@@ -348,6 +387,9 @@ nsSeamonkeyProfileMigrator::PrefTransform gTransforms[] = {
   MAKESAMETYPEPREFTRANSFORM("browser.display.use_document_colors",      Bool),
   MAKESAMETYPEPREFTRANSFORM("browser.display.screen_resolution",        Int),
   MAKESAMETYPEPREFTRANSFORM("browser.display.use_document_fonts",       Bool),
+  MAKESAMETYPEPREFTRANSFORM("intl.charset.default",                     String),
+  MAKESAMETYPEPREFTRANSFORM("intl.accept_languages",                    String),
+  MAKESAMETYPEPREFTRANSFORM("intl.accept_charsets",                     String),
 
   MAKEPREFTRANSFORM("network.image.imageBehavior",      0, Int, Image),
   MAKEPREFTRANSFORM("network.cookie.cookieBehavior",    0, Int, Cookie),

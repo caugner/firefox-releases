@@ -1,0 +1,5 @@
+/.cvsignore/1.1/Tue Apr 19 17:19:43 2005//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.1/Tue Apr 19 17:19:43 2005//TFIREFOX_1_5_RELEASE
+/README/1.14.4.2/Tue Oct  4 04:10:50 2005//TFIREFOX_1_5_RELEASE
+D/cairo////
+D/libpixman////

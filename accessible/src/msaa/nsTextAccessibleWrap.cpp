@@ -43,8 +43,9 @@
 #include "nsContentCID.h"
 #include "nsIAccessibleDocument.h"
 #include "nsIDOMRange.h"
+#include "nsIFontMetrics.h"
 #include "nsIFrame.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsIRenderingContext.h"
 #include "nsISelection.h"
@@ -146,16 +147,11 @@ STDMETHODIMP nsTextAccessibleWrap::get_unclippedSubstringBounds(
   if (!mDOMNode) {
     return E_FAIL; // Node already shut down
   }
-   if (NS_FAILED(GetCharacterExtents(aStartIndex, aEndIndex, 
+
+  if (NS_FAILED(GetCharacterExtents(aStartIndex, aEndIndex, 
                                     aX, aY, aWidth, aHeight))) {
     return NS_ERROR_FAILURE;
   }
-
-  // Add offsets for entire accessible
-  PRInt32 nodeX, nodeY, nodeWidth, nodeHeight;
-  GetBounds(&nodeX, &nodeY, &nodeWidth, &nodeHeight);
-  *aX += nodeX;
-  *aY += nodeY;
 
   return S_OK;
 }
@@ -172,8 +168,7 @@ STDMETHODIMP nsTextAccessibleWrap::scrollToSubstring(
     return E_FAIL;  // This accessible has been shut down
   }
 
-  nsCOMPtr<nsIPresContext> presContext;
-  presShell->GetPresContext(getter_AddRefs(presContext));
+  nsPresContext *presContext = presShell->GetPresContext();
   nsCOMPtr<nsIDOMRange> scrollToRange = do_CreateInstance(kRangeCID);
   nsCOMPtr<nsISelectionController> selCon;
   frame->GetSelectionController(presContext, getter_AddRefs(selCon));
@@ -200,19 +195,21 @@ STDMETHODIMP nsTextAccessibleWrap::scrollToSubstring(
 }
 
 nsIFrame* nsTextAccessibleWrap::GetPointFromOffset(nsIFrame *aContainingFrame, 
-                                                nsIPresContext *aPresContext,
-                                                nsIRenderingContext *aRendContext,
-                                                PRInt32 aOffset, 
-                                                nsPoint& aOutPoint)
+                                                   nsPresContext *aPresContext,
+                                                   nsIRenderingContext *aRendContext,
+                                                   PRInt32 aOffset, 
+                                                   PRBool aPreferNext, 
+                                                   nsPoint& aOutPoint)
 {
   nsIFrame *textFrame = nsnull;
   PRInt32 outOffset;
-  aContainingFrame->GetChildFrameContainingOffset(aOffset, PR_FALSE, &outOffset, &textFrame);
+  aContainingFrame->GetChildFrameContainingOffset(aOffset, aPreferNext, &outOffset, &textFrame);
   if (!textFrame) {
     return nsnull;
   }
 
   textFrame->GetPointFromOffset(aPresContext, aRendContext, aOffset, &aOutPoint);
+
   return textFrame;
 }
 
@@ -226,42 +223,87 @@ nsresult nsTextAccessibleWrap::GetCharacterExtents(PRInt32 aStartOffset, PRInt32
   nsCOMPtr<nsIPresShell> presShell(GetPresShell());
   NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIPresContext> presContext;
-  presShell->GetPresContext(getter_AddRefs(presContext));
+  nsPresContext *presContext = presShell->GetPresContext();
   NS_ENSURE_TRUE(presContext, NS_ERROR_FAILURE);
   float t2p = presContext->TwipsToPixels();
 
-  nsIFrame *frame = nsnull;
-  nsCOMPtr<nsIContent> content(do_QueryInterface(mDOMNode));
-  presShell->GetPrimaryFrameFor(content, &frame);
+  nsIFrame *frame = GetFrame();
   NS_ENSURE_TRUE(frame, NS_ERROR_FAILURE);
 
-  nsIViewManager* viewManager = presShell->GetViewManager();
-  NS_ASSERTION(viewManager, "No view manager for pres shell");
+  nsIWidget *widget = frame->GetWindow();
+  NS_ENSURE_TRUE(widget, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIWidget> widget;
-  viewManager->GetWidget(getter_AddRefs(widget));
-
-  nsIRenderingContext *rendContext;
-  rendContext = widget->GetRenderingContext();
+  nsCOMPtr<nsIRenderingContext>
+    rendContext(getter_AddRefs(widget->GetRenderingContext()));
 
   nsPoint startPoint, endPoint;
   nsIFrame *startFrame = GetPointFromOffset(frame, presContext, rendContext, 
-                                            aStartOffset, startPoint);
+                                            aStartOffset, PR_TRUE, startPoint);
   nsIFrame *endFrame = GetPointFromOffset(frame, presContext, rendContext, 
-                                          aEndOffset, endPoint);
+                                          aEndOffset, PR_FALSE, endPoint);
   if (!startFrame || !endFrame) {
     return E_FAIL;
   }
+  
+  nsRect sum(0, 0, 0, 0);
+  nsIFrame *iter = startFrame;
+  nsIFrame *stopLoopFrame = endFrame->GetNextInFlow();
+  for (; iter != stopLoopFrame; iter = iter->GetNextInFlow()) {
+    nsRect rect = iter->GetScreenRectExternal();
+    nscoord start = (iter == startFrame) ? NSTwipsToIntPixels(startPoint.x, t2p) : 0;
+    nscoord end = (iter == endFrame) ? NSTwipsToIntPixels(endPoint.x, t2p) :
+                                       rect.width;
+    rect.x += start;
+    rect.width = end - start;
+    sum.UnionRect(sum, rect);
+  }
 
-  nsRect startRect = startFrame->GetRect();
-  nsRect endRect = endFrame->GetRect();
-
-  *aX      = NSTwipsToIntPixels(startPoint.x + startRect.x, t2p);
-  *aY      = NSTwipsToIntPixels(startPoint.y, t2p);
-  *aWidth  = NSTwipsToIntPixels(endPoint.x + endRect.x,     t2p) - *aX;
-  *aHeight = NSTwipsToIntPixels(endRect.y + endRect.height -
-                                startPoint.y - startRect.y , t2p);
+  *aX      = sum.x;
+  *aY      = sum.y;
+  *aWidth  = sum.width;
+  *aHeight = sum.height;
 
   return NS_OK;
+}
+
+STDMETHODIMP nsTextAccessibleWrap::get_fontFamily(
+    /* [retval][out] */ BSTR __RPC_FAR *aFontFamily)
+{
+  nsIFrame *frame = GetFrame();
+  nsCOMPtr<nsIPresShell> presShell = GetPresShell();
+  if (!frame || !presShell) {
+    return E_FAIL;
+  }
+
+  nsCOMPtr<nsIRenderingContext> rc;
+  presShell->CreateRenderingContext(frame, getter_AddRefs(rc));
+  if (!rc) {
+    return E_FAIL;
+  }
+
+  const nsStyleFont *font = frame->GetStyleFont();
+
+  const nsStyleVisibility *visibility = frame->GetStyleVisibility();
+
+  if (NS_FAILED(rc->SetFont(font->mFont, visibility->mLangGroup))) {
+    return E_FAIL;
+  }
+
+  nsCOMPtr<nsIDeviceContext> deviceContext;
+  rc->GetDeviceContext(*getter_AddRefs(deviceContext));
+  if (!deviceContext) {
+    return E_FAIL;
+  }
+
+  nsIFontMetrics *fm;
+  rc->GetFontMetrics(fm);
+  if (!fm) {
+    return E_FAIL;
+  }
+
+  nsAutoString fontFamily;
+  deviceContext->FirstExistingFont(fm->Font(), fontFamily);
+  
+  *aFontFamily = ::SysAllocString(fontFamily.get());
+  return S_OK;
 }

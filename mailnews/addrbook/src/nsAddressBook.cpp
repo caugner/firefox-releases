@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -43,6 +43,7 @@
 #include "nsAbBaseCID.h"
 #include "nsDirPrefs.h"
 #include "nsIAddrBookSession.h"
+#include "nsIAbLDIFService.h"
 #include "nsAddrDatabase.h"
 #include "nsIOutputStream.h"
 #include "nsNetUtil.h"
@@ -60,8 +61,6 @@
 #include "nsRDFResource.h"
 #include "nsIRDFService.h"
 #include "nsIServiceManager.h"
-#include "nsAppShellCIDs.h"
-#include "nsIAppShellService.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsIContentViewer.h"
 #include "nsIDocShell.h"
@@ -69,15 +68,14 @@
 #include "nsReadableUtils.h"
 #include "nsICategoryManager.h"
 #include "nsIAbUpgrader.h"
-#include "nsSpecialSystemDirectory.h"
 #include "nsIFilePicker.h"
-#include "nsIPref.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
-#include "nsVoidArray.h"
+#include "nsIPrefLocalizedString.h"
 #include "nsIAbCard.h"
 #include "nsIAbMDBCard.h"
 #include "plbase64.h"
+#include "nsIWindowWatcher.h"
 
 #include "nsEscape.h"
 #include "nsVCard.h"
@@ -85,8 +83,15 @@
 #include "nsISupportsPrimitives.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsNetCID.h"
-#include "nsIIOService.h"
+#include "nsIDocShell.h"
+#include "nsAutoPtr.h"
+#include "nsIMsgVCardService.h"
+
+#include "nsCRT.h"
+
+#ifdef MOZ_XUL_APP
+#include "nsICommandLine.h"
+#endif
 
 // according to RFC 2849
 // SEP = (CR LF / LF)
@@ -105,54 +110,54 @@
 // our schema is not fixed yet, but we still want some sort of objectclass
 // for now, use obsolete in the class name, hinting that this will change
 // see bugs bug #116692 and #118454
-#define MOZ_AB_OBJECTCLASS "mozillaAbPersonObsolete"
+#define MOZ_AB_OBJECTCLASS "mozillaAbPersonAlpha"
 
 const ExportAttributesTableStruct EXPORT_ATTRIBUTES_TABLE[EXPORT_ATTRIBUTES_TABLE_COUNT] = { 
   {kFirstNameColumn, "givenName", PR_TRUE},
   {kLastNameColumn, "sn", PR_TRUE},
   {kDisplayNameColumn, "cn", PR_TRUE},
-  {kNicknameColumn, "xmozillanickname", PR_TRUE},
+  {kNicknameColumn, MOZ_AB_LDIF_PREFIX "Nickname", PR_TRUE},
   {kPriEmailColumn, "mail", PR_TRUE},
   {k2ndEmailColumn, MOZ_AB_LDIF_PREFIX "SecondEmail", PR_TRUE},
   {kDefaultEmailColumn, MOZ_AB_LDIF_PREFIX "DefaultEmail", PR_FALSE},
   {kCardTypeColumn, MOZ_AB_LDIF_PREFIX "CardType", PR_FALSE},
-  {kAimScreenNameColumn, MOZ_AB_LDIF_PREFIX "_AimScreenName", PR_FALSE},
-  {kPreferMailFormatColumn, "xmozillausehtmlmail", PR_FALSE},
+  {kAimScreenNameColumn, "nsAIMid", PR_FALSE},
+  {kPreferMailFormatColumn, MOZ_AB_LDIF_PREFIX "UseHtmlMail", PR_FALSE},
   {kLastModifiedDateColumn, "modifytimestamp", PR_FALSE},
   {kWorkPhoneColumn, "telephoneNumber", PR_TRUE}, 
   {kWorkPhoneTypeColumn, MOZ_AB_LDIF_PREFIX "WorkPhoneType", PR_FALSE},
   {kHomePhoneColumn, "homePhone", PR_TRUE},
   {kHomePhoneTypeColumn, MOZ_AB_LDIF_PREFIX "HomePhoneType", PR_FALSE},
-  {kFaxColumn, "facsimileTelephoneNumber", PR_TRUE},
+  {kFaxColumn, "fax", PR_TRUE},
   {kFaxTypeColumn, MOZ_AB_LDIF_PREFIX "FaxNumberType", PR_FALSE},
   {kPagerColumn, "pager", PR_TRUE},
   {kPagerTypeColumn, MOZ_AB_LDIF_PREFIX "PagerNumberType", PR_FALSE},
   {kCellularColumn, "mobile", PR_TRUE},
   {kCellularTypeColumn, MOZ_AB_LDIF_PREFIX "CellularNumberType", PR_FALSE},
-  {kHomeAddressColumn, "homePostalAddress", PR_TRUE},
-  {kHomeAddress2Column, MOZ_AB_LDIF_PREFIX "HomePostalAddress2", PR_TRUE},
+  {kHomeAddressColumn, "homeStreet", PR_TRUE},
+  {kHomeAddress2Column, MOZ_AB_LDIF_PREFIX "HomeStreet2", PR_TRUE},
   {kHomeCityColumn, MOZ_AB_LDIF_PREFIX "HomeLocalityName", PR_TRUE},
   {kHomeStateColumn, MOZ_AB_LDIF_PREFIX "HomeState", PR_TRUE},
   {kHomeZipCodeColumn, MOZ_AB_LDIF_PREFIX "HomePostalCode", PR_TRUE},
   {kHomeCountryColumn, MOZ_AB_LDIF_PREFIX "HomeCountryName", PR_TRUE},
-  {kWorkAddressColumn, "postalAddress", PR_TRUE},
-  {kWorkAddress2Column, MOZ_AB_LDIF_PREFIX "PostalAddress2", PR_TRUE}, 
+  {kWorkAddressColumn, "street", PR_TRUE},
+  {kWorkAddress2Column, MOZ_AB_LDIF_PREFIX "WorkStreet2", PR_TRUE}, 
   {kWorkCityColumn, "l", PR_TRUE}, 
   {kWorkStateColumn, "st", PR_TRUE}, 
   {kWorkZipCodeColumn, "postalCode", PR_TRUE}, 
   {kWorkCountryColumn, "c", PR_TRUE}, 
   {kJobTitleColumn, "title", PR_TRUE},
-  {kDepartmentColumn, "ou", PR_TRUE},
-  {kCompanyColumn, "o", PR_TRUE},
-  {kWebPage1Column, "workurl", PR_TRUE},
-  {kWebPage2Column, "homeurl", PR_TRUE},
+  {kDepartmentColumn, "department", PR_TRUE},
+  {kCompanyColumn, "company", PR_TRUE},
+  {kWebPage1Column, MOZ_AB_LDIF_PREFIX "WorkUrl", PR_TRUE},
+  {kWebPage2Column, MOZ_AB_LDIF_PREFIX "HomeUrl", PR_TRUE},
   {kBirthYearColumn, nsnull, PR_TRUE}, // unused for now
   {kBirthMonthColumn, nsnull, PR_TRUE}, // unused for now
   {kBirthDayColumn, nsnull, PR_TRUE}, // unused for now
-  {kCustom1Column, "custom1", PR_TRUE},
-  {kCustom2Column, "custom2", PR_TRUE},
-  {kCustom3Column, "custom3", PR_TRUE},
-  {kCustom4Column, "custom4", PR_TRUE},
+  {kCustom1Column, MOZ_AB_LDIF_PREFIX "Custom1", PR_TRUE},
+  {kCustom2Column, MOZ_AB_LDIF_PREFIX "Custom2", PR_TRUE},
+  {kCustom3Column, MOZ_AB_LDIF_PREFIX "Custom3", PR_TRUE},
+  {kCustom4Column, MOZ_AB_LDIF_PREFIX "Custom4", PR_TRUE},
   {kNotesColumn, "description", PR_TRUE},
   {kAnniversaryYearColumn, MOZ_AB_LDIF_PREFIX "AnniversaryYear", PR_FALSE}, 
   {kAnniversaryMonthColumn, MOZ_AB_LDIF_PREFIX "AnniversaryMonth", PR_FALSE}, 
@@ -176,7 +181,11 @@ nsAddressBook::~nsAddressBook()
 
 NS_IMPL_THREADSAFE_ADDREF(nsAddressBook)
 NS_IMPL_THREADSAFE_RELEASE(nsAddressBook)
-NS_IMPL_QUERY_INTERFACE3(nsAddressBook, nsIAddressBook, nsICmdLineHandler, nsIContentHandler)
+NS_IMPL_QUERY_INTERFACE4(nsAddressBook,
+                         nsIAddressBook,
+                         ICOMMANDLINEHANDLER,
+                         nsIContentHandler,
+                         nsIStreamLoaderObserver)
 
 //
 // nsIAddressBook
@@ -272,8 +281,8 @@ NS_IMETHODIMP nsAddressBook::GetAbDatabaseFromURI(const char *aURI, nsIAddrDatab
     do_GetService(NS_ADDRBOOKSESSION_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv,rv);
 
-  nsFileSpec* dbPath;
-  rv = abSession->GetUserProfileDirectory(&dbPath);
+  nsCOMPtr<nsILocalFile> dbPath;
+  rv = abSession->GetUserProfileDirectory(getter_AddRefs(dbPath));
   NS_ENSURE_SUCCESS(rv,rv);
 
  /* directory URIs are of the form
@@ -290,17 +299,18 @@ NS_IMETHODIMP nsAddressBook::GetAbDatabaseFromURI(const char *aURI, nsIAddrDatab
   PRInt32 pos = file.Find("/");
   if (pos != kNotFound)
     file.Truncate(pos);
-  (*dbPath) += file.get();
+  rv = dbPath->AppendNative(file);
+  NS_ENSURE_SUCCESS(rv,rv);
   
   nsCOMPtr<nsIAddrDatabase> addrDBFactory = 
     do_GetService(NS_ADDRDATABASE_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv,rv);
 
-  rv = addrDBFactory->Open(dbPath, PR_TRUE /* create */, aDB, PR_TRUE);
-  delete dbPath;
-  NS_ENSURE_SUCCESS(rv,rv);
+  /* Don't create otherwise we end up re-opening a deleted address book */
+  /* bug 66410 */
+  rv = addrDBFactory->Open(dbPath, PR_FALSE /* no create */, PR_TRUE, aDB);
   
-  return NS_OK;
+  return rv;
 }
 
 nsresult nsAddressBook::GetAbDatabaseFromFile(char* pDbFile, nsIAddrDatabase **db)
@@ -309,22 +319,24 @@ nsresult nsAddressBook::GetAbDatabaseFromFile(char* pDbFile, nsIAddrDatabase **d
     nsCOMPtr<nsIAddrDatabase> database;
     if (pDbFile)
     {
-        nsFileSpec* dbPath = nsnull;
+        nsCOMPtr<nsILocalFile> dbPath;
 
         nsCOMPtr<nsIAddrBookSession> abSession = 
                  do_GetService(NS_ADDRBOOKSESSION_CONTRACTID, &rv); 
         if(NS_SUCCEEDED(rv))
-            abSession->GetUserProfileDirectory(&dbPath);
+        {
+          rv = abSession->GetUserProfileDirectory(getter_AddRefs(dbPath));
+          NS_ENSURE_SUCCESS(rv, rv);
+        }
         
         nsCAutoString file(pDbFile);
-        (*dbPath) += file.get();
+        rv = dbPath->AppendNative(file);
+        NS_ENSURE_SUCCESS(rv,rv);
 
         nsCOMPtr<nsIAddrDatabase> addrDBFactory = 
                  do_GetService(NS_ADDRDATABASE_CONTRACTID, &rv);
         if (NS_SUCCEEDED(rv) && addrDBFactory)
-            rv = addrDBFactory->Open(dbPath, PR_TRUE, getter_AddRefs(database), PR_TRUE);
-
-      delete dbPath;
+            rv = addrDBFactory->Open(dbPath, PR_TRUE, PR_TRUE, getter_AddRefs(database));
 
         if (NS_SUCCEEDED(rv) && database)
         {
@@ -372,900 +384,100 @@ NS_IMETHODIMP nsAddressBook::MailListNameExists(const PRUnichar *name, PRBool *e
   return NS_OK;
 }
 
-class AddressBookParser 
+nsresult nsAddressBook::Migrate4xAb(nsIFileSpec *aFileSpec, PRBool aMigrating, PRBool aStoreLocAsHome)
 {
-protected:
+  NS_ENSURE_ARG_POINTER(aFileSpec);
 
-    nsCAutoString    mLine;
-    nsCOMPtr <nsIFileSpec> mFileSpec;
-    char*            mDbUri;
-    nsCOMPtr<nsIAddrDatabase> mDatabase;  
-    PRBool mMigrating;
-    PRBool mStoreLocAsHome;
-    PRBool mDeleteDB;
-    PRBool mImportingComm4x;
-    PRInt32 mLFCount;
-    PRInt32 mCRCount;
+  nsresult rv = NS_OK;
 
-    nsresult ParseLDIFFile();
-    void AddLdifRowToDatabase(PRBool bIsList);
-    void AddLdifColToDatabase(nsIMdbRow* newRow, char* typeSlot, char* valueSlot, PRBool bIsList);
-    void ClearLdifRecordBuffer();
-
-    nsresult GetLdifStringRecord(char* buf, PRInt32 len, PRInt32& stopPos);
-    nsresult str_parse_line(char *line, char    **type, char **value, int *vlen);
-    char * str_getline( char **next );
-
-public:
-    AddressBookParser(nsIFileSpec *fileSpec, PRBool migrating, nsIAddrDatabase *db, PRBool bStoreLocAsHome, PRBool bImportingComm4x);
-    ~AddressBookParser();
-
-    nsresult ParseFile();
-};
-
-AddressBookParser::AddressBookParser(nsIFileSpec * fileSpec, PRBool migrating, nsIAddrDatabase *db, PRBool bStoreLocAsHome, PRBool bImportingComm4x)
-{
-  mFileSpec = fileSpec;
-  mDbUri = nsnull;
-  mMigrating = migrating;
-  mDatabase = db;
-  if (mDatabase)
-    mDeleteDB = PR_FALSE;
-  else
-    mDeleteDB = PR_TRUE;
-  mStoreLocAsHome = bStoreLocAsHome;
-  mImportingComm4x = bImportingComm4x;
-  mLFCount = 0;                                                              
-  mCRCount = 0;
-}
-
-AddressBookParser::~AddressBookParser(void)
-{
-    if(mDbUri)
-        PR_smprintf_free(mDbUri);
-    if (mDatabase && mDeleteDB)
-    {
-        mDatabase->Close(PR_TRUE);
-        mDatabase = nsnull;
-    }
-}
-
-nsresult AddressBookParser::ParseFile()
-{
-  // Initialize the parser for a run...
-  mLine.Truncate();
-
-  // this is converting 4.x to 6.0
-  if (mImportingComm4x && mDatabase) 
-  {
-    return ParseLDIFFile();
-  }
- 
   // We are migrating 4.x profile
-    /* Get database file name */
-    char *leafName = nsnull;
-    if (mFileSpec) {
-        mFileSpec->GetLeafName(&leafName);
+  /* Get database file name */
+  char *dbUri = nsnull;
+  char *leafName = nsnull;
+  if (aFileSpec) {
+    aFileSpec->GetLeafName(&leafName);
 
-        PRInt32 i = 0;
-        while (leafName[i] != '\0')
-        {
-            if (leafName[i] == '.')
-            {
-                leafName[i] = '\0';
-                break;
-            }
-            else
-                i++;
-        }
-        if (leafName)
-            mDbUri = PR_smprintf("%s%s.mab", kMDBDirectoryRoot, leafName);
-    }
-
-    // to do: we should use only one "return rv;" at the very end, instead of this
-    //  multi return structure
-    nsresult rv = NS_OK;
-    nsFileSpec* dbPath = nsnull;
-    char* fileName = PR_smprintf("%s.mab", leafName);
-
-    nsCOMPtr<nsIAddrBookSession> abSession = 
-             do_GetService(NS_ADDRBOOKSESSION_CONTRACTID, &rv); 
-    if(NS_SUCCEEDED(rv))
-        abSession->GetUserProfileDirectory(&dbPath);
-    
-    /* create address book database  */
-    if (dbPath)
+    PRInt32 i = 0;
+    while (leafName[i] != '\0')
     {
-        (*dbPath) += fileName;
-        nsCOMPtr<nsIAddrDatabase> addrDBFactory = 
-                 do_GetService(NS_ADDRDATABASE_CONTRACTID, &rv);
-        if (NS_SUCCEEDED(rv) && addrDBFactory)
-            rv = addrDBFactory->Open(dbPath, PR_TRUE, getter_AddRefs(mDatabase), PR_TRUE);
-    }
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    delete dbPath;
-
-    nsCOMPtr<nsIRDFService> rdfService = do_GetService (NS_RDF_CONTRACTID "/rdf-service;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    nsCOMPtr<nsIRDFResource> parentResource;
-    rv = rdfService->GetResource(NS_LITERAL_CSTRING(kAllDirectoryRoot),
-                                 getter_AddRefs(parentResource));
-    nsCOMPtr<nsIAbDirectory> parentDir = do_QueryInterface(parentResource);
-    if (!parentDir)
-        return NS_ERROR_NULL_POINTER;
-
-    // Get Pretty name from prefs.
-    nsCOMPtr<nsIPref> pPref(do_GetService(NS_PREF_CONTRACTID, &rv)); 
-    if (NS_FAILED(rv) || !pPref) 
-        return nsnull;
-
-    nsXPIDLString dirName;
-    if (strcmp(fileName, kPersonalAddressbook) == 0)
-        rv = pPref->GetLocalizedUnicharPref("ldap_2.servers.pab.description", getter_Copies(dirName));
-    else
-    {
-      nsCAutoString prefName;
-      prefName = NS_LITERAL_CSTRING("ldap_2.servers.") + nsDependentCString(leafName) + NS_LITERAL_CSTRING(".description");
-      rv = pPref->GetLocalizedUnicharPref(prefName.get(), getter_Copies(dirName));
-    }
-
-    // If a name is found then use it, otherwise use the filename as last resort.
-    if (NS_FAILED(rv) || dirName.IsEmpty())
-      dirName = NS_ConvertASCIItoUCS2(leafName);
-    parentDir->CreateDirectoryByURI(dirName, mDbUri, mMigrating);
-        
-    rv = ParseLDIFFile();
-
-    if (leafName)
-        nsCRT::free(leafName);
-    if (fileName)
-        PR_smprintf_free(fileName);
-
-    return rv;
-}
-
-#define RIGHT2            0x03
-#define RIGHT4            0x0f
-#define CONTINUED_LINE_MARKER    '\001'
-
-static unsigned char b642nib[0x80] = {
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0x3e, 0xff, 0xff, 0xff, 0x3f,
-    0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b,
-    0x3c, 0x3d, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
-    0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
-    0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
-    0x17, 0x18, 0x19, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
-    0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
-    0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30,
-    0x31, 0x32, 0x33, 0xff, 0xff, 0xff, 0xff, 0xff
-};
-
-/*
- * str_parse_line - takes a line of the form "type:[:] value" and splits it
- * into components "type" and "value".  if a double colon separates type from
- * value, then value is encoded in base 64, and parse_line un-decodes it
- * (in place) before returning.
- */
-
-nsresult AddressBookParser::str_parse_line(
-    char    *line,
-    char    **type,
-    char    **value,
-    int        *vlen
-)
-{
-    char    *p, *s, *d, *byte, *stop;
-    char    nib;
-    int    i, b64;
-
-    /* skip any leading space */
-    while ( IS_SPACE( *line ) ) {
-        line++;
-    }
-    *type = line;
-
-    for ( s = line; *s && *s != ':'; s++ )
-        ;    /* NULL */
-    if ( *s == '\0' ) {
-        return NS_ERROR_FAILURE;
-    }
-
-    /* trim any space between type and : */
-    for ( p = s - 1; p > line && nsString::IsSpace( *p ); p-- ) {
-        *p = '\0';
-    }
-    *s++ = '\0';
-
-    /* check for double : - indicates base 64 encoded value */
-    if ( *s == ':' ) {
-        s++;
-        b64 = 1;
-
-    /* single : - normally encoded value */
-    } else {
-        b64 = 0;
-    }
-
-    /* skip space between : and value */
-    while ( IS_SPACE( *s ) ) {
-        s++;
-    }
-
-    /* if no value is present, error out */
-    if ( *s == '\0' ) {
-        return NS_ERROR_FAILURE;
-    }
-
-    /* check for continued line markers that should be deleted */
-    for ( p = s, d = s; *p; p++ ) {
-        if ( *p != CONTINUED_LINE_MARKER )
-            *d++ = *p;
-    }
-    *d = '\0';
-
-    *value = s;
-    if ( b64 ) {
-        stop = PL_strchr( s, '\0' );
-        byte = s;
-        for ( p = s, *vlen = 0; p < stop; p += 4, *vlen += 3 ) {
-            for ( i = 0; i < 3; i++ ) {
-                if ( p[i] != '=' && (p[i] & 0x80 ||
-                    b642nib[ p[i] & 0x7f ] > 0x3f) ) {
-                    return NS_ERROR_FAILURE;
-                }
-            }
-
-            /* first digit */
-            nib = b642nib[ p[0] & 0x7f ];
-            byte[0] = nib << 2;
-            /* second digit */
-            nib = b642nib[ p[1] & 0x7f ];
-            byte[0] |= nib >> 4;
-            byte[1] = (nib & RIGHT4) << 4;
-            /* third digit */
-            if ( p[2] == '=' ) {
-                *vlen += 1;
-                break;
-            }
-            nib = b642nib[ p[2] & 0x7f ];
-            byte[1] |= nib >> 2;
-            byte[2] = (nib & RIGHT2) << 6;
-            /* fourth digit */
-            if ( p[3] == '=' ) {
-                *vlen += 2;
-                break;
-            }
-            nib = b642nib[ p[3] & 0x7f ];
-            byte[2] |= nib;
-
-            byte += 3;
-        }
-        s[ *vlen ] = '\0';
-    } else {
-        *vlen = (int) (d - s);
-    }
-
-    return NS_OK;
-}
-
-/*
- * str_getline - return the next "line" (minus newline) of input from a
- * string buffer of lines separated by newlines, terminated by \n\n
- * or \0.  this routine handles continued lines, bundling them into
- * a single big line before returning.  if a line begins with a white
- * space character, it is a continuation of the previous line. the white
- * space character (nb: only one char), and preceeding newline are changed
- * into CONTINUED_LINE_MARKER chars, to be deleted later by the
- * str_parse_line() routine above.
- *
- * it takes a pointer to a pointer to the buffer on the first call,
- * which it updates and must be supplied on subsequent calls.
- */
-
-char * AddressBookParser::str_getline( char **next )
-{
-    char    *lineStr;
-    char    c;
-
-    if ( *next == NULL || **next == '\n' || **next == '\0' ) {
-        return( NULL );
-    }
-
-    lineStr = *next;
-    while ( (*next = PL_strchr( *next, '\n' )) != NULL ) {
-        c = *(*next + 1);
-        if ( IS_SPACE ( c ) && c != '\n' ) {
-            **next = CONTINUED_LINE_MARKER;
-            *(*next+1) = CONTINUED_LINE_MARKER;
-        } else {
-            *(*next)++ = '\0';
-            break;
-        }
-    }
-
-    return( lineStr );
-}
-
-/*
- * get one ldif record
- * 
- */
-nsresult AddressBookParser::GetLdifStringRecord(char* buf, PRInt32 len, PRInt32& stopPos)
-{
-    for (; stopPos < len; stopPos++) 
-    {
-        char c = buf[stopPos];
-
-        if (c == 0xA)
-        {
-            mLFCount++;
-        }
-        else if (c == 0xD)
-        {
-            mCRCount++;
-        }
-        else if ( c != 0xA && c != 0xD)
-        {
-            if (mLFCount == 0 && mCRCount == 0)
-                 mLine.Append(c);
-            else if (( mLFCount > 1) || ( mCRCount > 2 && mLFCount ) ||
-                ( !mLFCount && mCRCount > 1 ))
-            {
-                return NS_OK;
-            }
-            else if ((mLFCount == 1 || mCRCount == 1))
-            {
-                 mLine.Append('\n');
-                 mLine.Append(c);
-                mLFCount = 0;
-                mCRCount = 0;
-            }
-        }
-    }
-
-    if ((stopPos == len) && (mLFCount > 1) || (mCRCount > 2 && mLFCount) ||
-        (!mLFCount && mCRCount > 1))
-        return NS_OK;
-    else
-        return NS_ERROR_FAILURE;
-}
-
-nsresult AddressBookParser::ParseLDIFFile()
-{
-    char buf[1024];
-    char* pBuf = &buf[0];
-    PRInt32 startPos = 0;
-    PRInt32 len = 0;
-    PRBool bEof = PR_FALSE;
-    nsVoidArray listPosArray;   // where each list/group starts in ldif file
-    nsVoidArray listSizeArray;  // size of the list/group info
-    PRInt32 savedStartPos = 0;
-    PRInt32 filePos = 0;
-
-    while (NS_SUCCEEDED(mFileSpec->Eof(&bEof)) && !bEof)
-    {
-        if (NS_SUCCEEDED(mFileSpec->Read(&pBuf, (PRInt32)sizeof(buf), &len)) && len > 0)
-        {
-            startPos = 0;
-
-            while (NS_SUCCEEDED(GetLdifStringRecord(buf, len, startPos)))
-            {
-                if (mLine.Find("groupOfNames") == kNotFound)
-                    AddLdifRowToDatabase(PR_FALSE);
-                else
-                {
-                    //keep file position for mailing list
-                    listPosArray.AppendElement((void*)savedStartPos);
-                    listSizeArray.AppendElement((void*)(filePos + startPos-savedStartPos));
-                    ClearLdifRecordBuffer();
-                }
-                savedStartPos = filePos + startPos;
-            }
-            filePos += len;
-        }
-    }
-    //last row
-    if (!mLine.IsEmpty() && mLine.Find("groupOfNames") == kNotFound)
-        AddLdifRowToDatabase(PR_FALSE);
-
-    // mail Lists
-    PRInt32 i, pos, size;
-    PRInt32 listTotal = listPosArray.Count();
-    char *listBuf;
-    ClearLdifRecordBuffer();  // make sure the buffer is clean
-    for (i = 0; i < listTotal; i++)
-    {
-        pos  = NS_PTR_TO_INT32(listPosArray.ElementAt(i));
-        size = NS_PTR_TO_INT32(listSizeArray.ElementAt(i));
-        if (NS_SUCCEEDED(mFileSpec->Seek(pos)))
-        {
-
-            // Allocate enough space for the lists/groups as the size varies.
-            listBuf = (char *) PR_Malloc(size);
-            if (!listBuf)
-              continue;
-            if (NS_SUCCEEDED(mFileSpec->Read(&listBuf, size, &len)) && len > 0)
-            {
-                startPos = 0;
-
-                while (NS_SUCCEEDED(GetLdifStringRecord(listBuf, len, startPos)))
-                {
-                    if (mLine.Find("groupOfNames") != kNotFound)
-                    {
-                        AddLdifRowToDatabase(PR_TRUE);
-                        if (NS_SUCCEEDED(mFileSpec->Seek(0)))
-                            break;
-                    }
-                }
-            }
-            PR_FREEIF(listBuf);
-        }
-    }
-    return NS_OK;
-}
-
-void AddressBookParser::AddLdifRowToDatabase(PRBool bIsList)
-{
-    // If no data to process then reset CR/LF counters and return.
-    if (mLine.IsEmpty())
-    {
-      mLFCount = 0;
-      mCRCount = 0;
-      return;
-    }
-
-    nsCOMPtr <nsIMdbRow> newRow;
-    if (mDatabase)
-    {
-        if (bIsList)
-            mDatabase->GetNewListRow(getter_AddRefs(newRow)); 
-        else
-            mDatabase->GetNewRow(getter_AddRefs(newRow)); 
-
-        if (!newRow)
-            return;
-    }
-    else
-        return;
-
-    char* cursor = ToNewCString(mLine); 
-    char* saveCursor = cursor;  /* keep for deleting */ 
-    char* line = 0; 
-    char* typeSlot = 0; 
-    char* valueSlot = 0; 
-    int length = 0;  // the length  of an ldif attribute
-    while ( (line = str_getline(&cursor)) != NULL)
-    {
-        if ( str_parse_line(line, &typeSlot, &valueSlot, &length) == 0 )
-        {
-            AddLdifColToDatabase(newRow, typeSlot, valueSlot, bIsList);
-        }
-        else
-            continue; // parse error: continue with next loop iteration
-    }
-    nsMemory::Free(saveCursor);
-    mDatabase->AddCardRowToDB(newRow);    
-
-    if (bIsList)
-        mDatabase->AddListDirNode(newRow);
-
-    // Clear buffer for next record
-    ClearLdifRecordBuffer();
-}
-
-void AddressBookParser::ClearLdifRecordBuffer()
-{
-  if (!mLine.IsEmpty())
-  {
-      mLine.Truncate();
-      mLFCount = 0;
-      mCRCount = 0;
-  }
-}
-
-
-// We have two copies of this function in the code, one here for import and 
-// the other one in addrbook/src/nsAddressBook.cpp for migrating.  If ths 
-// function need modification, make sure change in both places until we resolve
-// this problem.
-static void SplitCRLFAddressField(nsCString &inputAddress, nsCString &outputLine1, nsCString &outputLine2)
-{
-  PRInt32 crlfPos = inputAddress.Find("\r\n");
-  if (crlfPos != kNotFound)
-  {
-    inputAddress.Left(outputLine1, crlfPos);
-    inputAddress.Right(outputLine2, inputAddress.Length() - (crlfPos + 2));
-  }
-  else
-    outputLine1.Assign(inputAddress);
-}
-
-
-void AddressBookParser::AddLdifColToDatabase(nsIMdbRow* newRow, char* typeSlot, char* valueSlot, PRBool bIsList)
-{
-    nsCAutoString colType(typeSlot);
-    nsCAutoString column(valueSlot);
-
-    mdb_u1 firstByte = (mdb_u1)(colType.get())[0];
-    switch ( firstByte )
-    {
-    case 'b':
-      if ( kNotFound != colType.Find("birthyear") )
-        mDatabase->AddBirthYear(newRow, column.get());
-      break; // 'b'
-
-    case 'c':
-      if ( kNotFound != colType.Find("cn") || kNotFound != colType.Find("commonname") )
+      if (leafName[i] == '.')
       {
-        if (bIsList)
-          mDatabase->AddListName(newRow, column.get());
-        else
-          mDatabase->AddDisplayName(newRow, column.get());
-      }
-      else if ( kNotFound != colType.Find("countryname") )
-       {
-      if (mStoreLocAsHome )
-        mDatabase->AddHomeCountry(newRow, column.get());
-      else
-        mDatabase->AddWorkCountry(newRow, column.get());
-      }
-
-      // else if ( kNotFound != colType.Find("charset") )
-      //   ioRow->AddColumn(ev, this->ColCharset(), yarn);
-
-      else if ( kNotFound != colType.Find("cellphone") )
-        mDatabase->AddCellularNumber(newRow, column.get());
-
-//          else if ( kNotFound != colType.Find("calendar") )
-//            ioRow->AddColumn(ev, this->ColCalendar(), yarn);
-
-//          else if ( kNotFound != colType.Find("car") )
-//            ioRow->AddColumn(ev, this->ColCar(), yarn);
-
-      else if ( kNotFound != colType.Find("carphone") )
-        mDatabase->AddCellularNumber(newRow, column.get());
-//            ioRow->AddColumn(ev, this->ColCarPhone(), yarn);
-
-//          else if ( kNotFound != colType.Find("carlicense") )
-//            ioRow->AddColumn(ev, this->ColCarLicense(), yarn);
-        
-      else if ( kNotFound != colType.Find("custom1") )
-        mDatabase->AddCustom1(newRow, column.get());
-        
-      else if ( kNotFound != colType.Find("custom2") )
-        mDatabase->AddCustom2(newRow, column.get());
-        
-      else if ( kNotFound != colType.Find("custom3") )
-        mDatabase->AddCustom3(newRow, column.get());
-        
-      else if ( kNotFound != colType.Find("custom4") )
-        mDatabase->AddCustom4(newRow, column.get());
-        
-      else if ( kNotFound != colType.Find("company") )
-        mDatabase->AddCompany(newRow, column.get());
-      break; // 'c'
-
-    case 'd':
-      if ( kNotFound != colType.Find("description") )
-      {
-        if (bIsList)
-          mDatabase->AddListDescription(newRow, column.get());
-        else
-          mDatabase->AddNotes(newRow, column.get());
-      }
-//          else if ( kNotFound != colType.Find("dn") ) // distinuished name
-//            ioRow->AddColumn(ev, this->ColDistName(), yarn);
-
-      else if ( kNotFound != colType.Find("department") )
-        mDatabase->AddDepartment(newRow, column.get());
-
-//          else if ( kNotFound != colType.Find("departmentnumber") )
-//            ioRow->AddColumn(ev, this->ColDepartmentNumber(), yarn);
-
-//          else if ( kNotFound != colType.Find("date") )
-//            ioRow->AddColumn(ev, this->ColDate(), yarn);
-      break; // 'd'
-
-    case 'e':
-
-//          if ( kNotFound != colType.Find("employeeid") )
-//            ioRow->AddColumn(ev, this->ColEmployeeId(), yarn);
-
-//          else if ( kNotFound != colType.Find("employeetype") )
-//            ioRow->AddColumn(ev, this->ColEmployeeType(), yarn);
-      break; // 'e'
-
-    case 'f':
-
-      if ( kNotFound != colType.Find("fax") ||
-        kNotFound != colType.Find("facsimiletelephonenumber") )
-        mDatabase->AddFaxNumber(newRow, column.get());
-      break; // 'f'
-
-    case 'g':
-      if ( kNotFound != colType.Find("givenname") )
-        mDatabase->AddFirstName(newRow, column.get());
-
-//          else if ( kNotFound != colType.Find("gif") )
-//            ioRow->AddColumn(ev, this->ColGif(), yarn);
-
-//          else if ( kNotFound != colType.Find("geo") )
-//            ioRow->AddColumn(ev, this->ColGeo(), yarn);
-
-      break; // 'g'
-
-    case 'h':
-      if ( kNotFound != colType.Find("homephone") )
-        mDatabase->AddHomePhone(newRow, column.get());
-
-      else if ( kNotFound != colType.Find("homeurl") )
-        mDatabase->AddWebPage2(newRow, column.get());
-      break; // 'h'
-
-    case 'i':
-//          if ( kNotFound != colType.Find("imapurl") )
-//            ioRow->AddColumn(ev, this->ColImapUrl(), yarn);
-      break; // 'i'
-
-    case 'j':
-//          if ( kNotFound != colType.Find("jpeg") || kNotFound != colType.Find("jpegfile") )
-//            ioRow->AddColumn(ev, this->ColJpegFile(), yarn);
-
-      break; // 'j'
-
-    case 'k':
-//          if ( kNotFound != colType.Find("key") )
-//            ioRow->AddColumn(ev, this->ColKey(), yarn);
-
-//          else if ( kNotFound != colType.Find("keywords") )
-//            ioRow->AddColumn(ev, this->ColKeywords(), yarn);
-
-      break; // 'k'
-
-    case 'l':
-      if ( kNotFound != colType.Find("l") || kNotFound != colType.Find("locality") )
-       {
-      if (mStoreLocAsHome )
-          mDatabase->AddHomeCity(newRow, column.get());
-      else
-          mDatabase->AddWorkCity(newRow, column.get());
-      }
-
-//          else if ( kNotFound != colType.Find("language") )
-//            ioRow->AddColumn(ev, this->ColLanguage(), yarn);
-
-//          else if ( kNotFound != colType.Find("logo") )
-//            ioRow->AddColumn(ev, this->ColLogo(), yarn);
-
-//          else if ( kNotFound != colType.Find("location") )
-//            ioRow->AddColumn(ev, this->ColLocation(), yarn);
-
-      break; // 'l'
-
-    case 'm':
-      if ( kNotFound != colType.Find("mail") )
-        mDatabase->AddPrimaryEmail(newRow, column.get());
-
-      else if ( kNotFound != colType.Find("member") && bIsList )
-        mDatabase->AddLdifListMember(newRow, column.get());
-
-//          else if ( kNotFound != colType.Find("manager") )
-//            ioRow->AddColumn(ev, this->ColManager(), yarn);
-
-//          else if ( kNotFound != colType.Find("modem") )
-//            ioRow->AddColumn(ev, this->ColModem(), yarn);
-
-//          else if ( kNotFound != colType.Find("msgphone") )
-//            ioRow->AddColumn(ev, this->ColMessagePhone(), yarn);
-
-      break; // 'm'
-
-    case 'n':
-//          if ( kNotFound != colType.Find("note") )
-//            ioRow->AddColumn(ev, this->ColNote(), yarn);
-
-      if ( kNotFound != colType.Find("notes") )
-        mDatabase->AddNotes(newRow, column.get());
-
-//          else if ( kNotFound != colType.Find("n") )
-//            ioRow->AddColumn(ev, this->ColN(), yarn);
-
-//          else if ( kNotFound != colType.Find("notifyurl") )
-//            ioRow->AddColumn(ev, this->ColNotifyUrl(), yarn);
-
-      break; // 'n'
-
-    case 'o':
-      if ( kNotFound != colType.Find("objectclass"))
+        leafName[i] = '\0';
         break;
-
-      else if ( kNotFound != colType.Find("ou") || kNotFound != colType.Find("orgunit") )
-        mDatabase->AddDepartment(newRow, column.get());
-
-      else if ( kNotFound != colType.Find("o") ) // organization
-        mDatabase->AddCompany(newRow, column.get());
-
-      break; // 'o'
-
-    case 'p':
-      if ( kNotFound != colType.Find("postalcode") )
-      {
-      if (mStoreLocAsHome )
-          mDatabase->AddHomeZipCode(newRow, column.get());
-      else
-          mDatabase->AddWorkZipCode(newRow, column.get());
       }
-
-      else if ( kNotFound != colType.Find("postOfficeBox") )
-      {
-        nsCAutoString workAddr1, workAddr2;
-        SplitCRLFAddressField(column, workAddr1, workAddr2);
-        mDatabase->AddWorkAddress(newRow, workAddr1.get());
-        mDatabase->AddWorkAddress2(newRow, workAddr2.get());
-      }
-      else if ( kNotFound != colType.Find("pager") ||
-        kNotFound != colType.Find("pagerphone") )
-        mDatabase->AddPagerNumber(newRow, column.get());
-                    
-//          else if ( kNotFound != colType.Find("photo") )
-//            ioRow->AddColumn(ev, this->ColPhoto(), yarn);
-
-//          else if ( kNotFound != colType.Find("parentphone") )
-//            ioRow->AddColumn(ev, this->ColParentPhone(), yarn);
-
-//          else if ( kNotFound != colType.Find("pageremail") )
-//            ioRow->AddColumn(ev, this->ColPagerEmail(), yarn);
-
-//          else if ( kNotFound != colType.Find("prefurl") )
-//            ioRow->AddColumn(ev, this->ColPrefUrl(), yarn);
-
-//          else if ( kNotFound != colType.Find("priority") )
-//            ioRow->AddColumn(ev, this->ColPriority(), yarn);
-
-      break; // 'p'
-
-    case 'r':
-      if ( kNotFound != colType.Find("region") )
-       {
-      if (mStoreLocAsHome )
-        mDatabase->AddWorkState(newRow, column.get());
       else
-        mDatabase->AddWorkState(newRow, column.get());
+       i++;
     }
+    if (leafName)
+      dbUri = PR_smprintf("%s%s.mab", kMDBDirectoryRoot, leafName);
+  }
 
-//          else if ( kNotFound != colType.Find("rfc822mailbox") )
-//            ioRow->AddColumn(ev, this->ColPrimaryEmail(), yarn);
+  nsCOMPtr<nsILocalFile> dbPath;
+  nsCOMPtr<nsIAddrDatabase> newDatabase;
+  nsCAutoString fileName(leafName);
+  fileName.Append(NS_LITERAL_CSTRING(".mab"));
 
-//          else if ( kNotFound != colType.Find("rev") )
-//            ioRow->AddColumn(ev, this->ColRev(), yarn);
+  nsCOMPtr<nsIAddrBookSession> abSession = 
+           do_GetService(NS_ADDRBOOKSESSION_CONTRACTID, &rv); 
+  if(NS_SUCCEEDED(rv))
+    rv = abSession->GetUserProfileDirectory(getter_AddRefs(dbPath));
+    
+  /* create address book database  */
+  if(NS_SUCCEEDED(rv))
+  {
+    dbPath->AppendNative(fileName);
+    NS_ENSURE_SUCCESS(rv, rv);
 
-//          else if ( kNotFound != colType.Find("role") )
-//            ioRow->AddColumn(ev, this->ColRole(), yarn);
-      break; // 'r'
+    nsCOMPtr<nsIAddrDatabase> addrDBFactory = 
+             do_GetService(NS_ADDRDATABASE_CONTRACTID, &rv);
+    if (NS_SUCCEEDED(rv) && addrDBFactory)
+      rv = addrDBFactory->Open(dbPath, PR_TRUE, PR_TRUE, getter_AddRefs(newDatabase));
+  }
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    case 's':
-      if ( kNotFound != colType.Find("sn") || kNotFound != colType.Find("surname") )
-        mDatabase->AddLastName(newRow, column.get());
+  nsCOMPtr<nsIRDFService> rdfService = do_GetService (NS_RDF_CONTRACTID "/rdf-service;1", &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-      else if ( kNotFound != colType.Find("streetaddress") )
-       {
-          nsCAutoString addr1, addr2;
-          SplitCRLFAddressField(column, addr1, addr2);
-      if (mStoreLocAsHome )
-          {
-              mDatabase->AddHomeAddress(newRow, addr1.get());
-              mDatabase->AddHomeAddress2(newRow, addr2.get());
-          }
-      else
-          {
-              mDatabase->AddWorkAddress(newRow, addr1.get());
-              mDatabase->AddWorkAddress2(newRow, addr2.get());
-          }
-      }
-      else if ( kNotFound != colType.Find("st") )
-      {
-      if (mStoreLocAsHome )
-        mDatabase->AddHomeState(newRow, column.get());
-      else
-        mDatabase->AddWorkState(newRow, column.get());
-      }
+  nsCOMPtr<nsIRDFResource> parentResource;
+  rv = rdfService->GetResource(NS_LITERAL_CSTRING(kAllDirectoryRoot),
+                               getter_AddRefs(parentResource));
+  nsCOMPtr<nsIAbDirectory> parentDir = do_QueryInterface(parentResource);
+  if (!parentDir)
+    return NS_ERROR_NULL_POINTER;
 
-//          else if ( kNotFound != colType.Find("secretary") )
-//            ioRow->AddColumn(ev, this->ColSecretary(), yarn);
+  // Get Pretty name from prefs.
+  nsCOMPtr<nsIPrefBranch> pPref(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
+  if (NS_FAILED(rv)) 
+    return nsnull;
 
-//          else if ( kNotFound != colType.Find("sound") )
-//            ioRow->AddColumn(ev, this->ColSound(), yarn);
+  nsXPIDLString dirName;
+  nsCOMPtr<nsIPrefLocalizedString> locString;
+  nsCAutoString prefName;
+  if (strcmp(fileName.get(), kPersonalAddressbook) == 0)
+    prefName.AssignLiteral("ldap_2.servers.pab.description");
+  else
+    prefName = NS_LITERAL_CSTRING("ldap_2.servers.") + nsDependentCString(leafName) + NS_LITERAL_CSTRING(".description");
 
-//          else if ( kNotFound != colType.Find("sortstring") )
-//            ioRow->AddColumn(ev, this->ColSortString(), yarn);
+  rv = pPref->GetComplexValue(prefName.get(), NS_GET_IID(nsIPrefLocalizedString), getter_AddRefs(locString));
+
+  if (NS_SUCCEEDED(rv))
+    rv = locString->ToString(getter_Copies(dirName));
+
+  // If a name is found then use it, otherwise use the filename as last resort.
+  if (NS_FAILED(rv) || dirName.IsEmpty())
+    dirName.AssignASCII(leafName);
+  parentDir->CreateDirectoryByURI(dirName, dbUri, aMigrating);
         
-      break; // 's'
+  nsCOMPtr<nsIAbLDIFService> ldifService = do_GetService(NS_ABLDIFSERVICE_CONTRACTID, &rv);
+  if (NS_SUCCEEDED(rv))
+    rv = ldifService->ImportLDIFFile(newDatabase, aFileSpec, aStoreLocAsHome, nsnull);
 
-    case 't':
-      if ( kNotFound != colType.Find("title") )
-        mDatabase->AddJobTitle(newRow, column.get());
+  if (leafName)
+    nsCRT::free(leafName);
+  if (dbUri)
+    nsCRT::free(dbUri);
 
-      else if ( kNotFound != colType.Find("telephonenumber") )
-      {
-        mDatabase->AddWorkPhone(newRow, column.get());
-      }
-
-//          else if ( kNotFound != colType.Find("tiff") )
-//            ioRow->AddColumn(ev, this->ColTiff(), yarn);
-
-//          else if ( kNotFound != colType.Find("tz") )
-//            ioRow->AddColumn(ev, this->ColTz(), yarn);
-      break; // 't'
-
-    case 'u':
-
-        if ( kNotFound != colType.Find("uniquemember") && bIsList )
-            mDatabase->AddLdifListMember(newRow, column.get());
-
-//          else if ( kNotFound != colType.Find("uid") )
-//            ioRow->AddColumn(ev, this->ColUid(), yarn);
-
-      break; // 'u'
-
-    case 'v':
-//          if ( kNotFound != colType.Find("version") )
-//            ioRow->AddColumn(ev, this->ColVersion(), yarn);
-
-//          else if ( kNotFound != colType.Find("voice") )
-//            ioRow->AddColumn(ev, this->ColVoice(), yarn);
-
-      break; // 'v'
-
-    case 'w':
-      if ( kNotFound != colType.Find("workurl") )
-        mDatabase->AddWebPage1(newRow, column.get());
-
-      break; // 'w'
-
-    case 'x':
-      if ( kNotFound != colType.Find("xmozillanickname") )
-      {
-        if (bIsList)
-          mDatabase->AddListNickName(newRow, column.get());
-        else
-          mDatabase->AddNickName(newRow, column.get());
-      }
-
-      else if ( kNotFound != colType.Find("xmozillausehtmlmail") )
-      {
-        ToLowerCase(column);
-        if (kNotFound != column.Find("true"))
-            mDatabase->AddPreferMailFormat(newRow, nsIAbPreferMailFormat::html);
-        else if (kNotFound != column.Find("false"))
-            mDatabase->AddPreferMailFormat(newRow, nsIAbPreferMailFormat::plaintext);
-        else
-            mDatabase->AddPreferMailFormat(newRow, nsIAbPreferMailFormat::unknown);
-      }
-
-      break; // 'x'
-
-    case 'z':
-      if ( kNotFound != colType.Find("zip") ) // alias for postalcode
-       {
-      if (mStoreLocAsHome )
-        mDatabase->AddHomeZipCode(newRow, column.get());
-      else
-        mDatabase->AddWorkZipCode(newRow, column.get());
-      }
-
-      break; // 'z'
-
-    default:
-      break; // default
-    }
+  return rv;
 }
 
 NS_IMETHODIMP nsAddressBook::ConvertNA2toLDIF(nsIFileSpec *srcFileSpec, nsIFileSpec *dstFileSpec)
@@ -1291,27 +503,6 @@ NS_IMETHODIMP nsAddressBook::ConvertNA2toLDIF(nsIFileSpec *srcFileSpec, nsIFileS
   return rv;  
 }
 
-NS_IMETHODIMP nsAddressBook::ConvertLDIFtoMAB(nsIFileSpec *fileSpec, PRBool migrating, nsIAddrDatabase *db, PRBool bStoreLocAsHome, PRBool bImportingComm4x)
-{
-    nsresult rv;
-    if (!fileSpec) return NS_ERROR_FAILURE;
-
-    rv = fileSpec->OpenStreamForReading();
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    AddressBookParser abParser(fileSpec, migrating, db, bStoreLocAsHome, bImportingComm4x);
-
-    rv = abParser.ParseFile();
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    fileSpec->CloseStream();
-
-    // Commit the changes if 'db' is set.
-    if (db)
-      rv = db->Commit(nsAddrDBCommitType::kLargeCommit);
-    return rv;
-}
-
 #define CSV_DELIM ","
 #define CSV_DELIM_LEN 1
 #define TAB_DELIM "\t"
@@ -1332,11 +523,11 @@ enum ADDRESSBOOK_EXPORT_FILE_TYPE
  TAB_EXPORT_TYPE = 2
 };
 
-NS_IMETHODIMP nsAddressBook::ExportAddressBook(nsIDOMWindowInternal *aParentWin, nsIAbDirectory *aDirectory)
+NS_IMETHODIMP nsAddressBook::ExportAddressBook(nsIDOMWindow *aParentWin, nsIAbDirectory *aDirectory)
 {
   NS_ENSURE_ARG_POINTER(aParentWin);
-  nsresult rv;
 
+  nsresult rv;
   nsCOMPtr<nsIFilePicker> filePicker = do_CreateInstance("@mozilla.org/filepicker;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1345,23 +536,12 @@ NS_IMETHODIMP nsAddressBook::ExportAddressBook(nsIDOMWindowInternal *aParentWin,
   nsCOMPtr<nsIStringBundle> bundle;
   rv = bundleService->CreateBundle("chrome://messenger/locale/addressbook/addressBook.properties", getter_AddRefs(bundle));
   NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIScriptGlobalObject> globalObj = do_QueryInterface(aParentWin, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIDocShell> docShell = globalObj->GetDocShell();
-  if (!docShell)
-    return NS_ERROR_NULL_POINTER;
-
-  nsCOMPtr<nsIDOMWindow> parentWindow = do_GetInterface(docShell);
-  if (!parentWindow)
-    return NS_NOINTERFACE;
-
+ 
   nsXPIDLString title;
   rv = bundle->GetStringFromName(NS_LITERAL_STRING("ExportAddressBookTitle").get(), getter_Copies(title));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = filePicker->Init(parentWindow, title, nsIFilePicker::modeSave);
+  rv = filePicker->Init(aParentWin, title, nsIFilePicker::modeSave);
   NS_ENSURE_SUCCESS(rv, rv);
  
   nsXPIDLString filterString;
@@ -1422,7 +602,7 @@ NS_IMETHODIMP nsAddressBook::ExportAddressBook(nsIDOMWindowInternal *aParentWin,
        (fileName.RFind(LDIF_FILE_EXTENSION2, PR_TRUE, -1, sizeof(LDIF_FILE_EXTENSION2)-1) == kNotFound)) {
 
        // Add the extenstion and build a new localFile.
-       fileName.Append(NS_LITERAL_STRING(LDIF_FILE_EXTENSION2));
+       fileName.AppendLiteral(LDIF_FILE_EXTENSION2);
        localFile->SetLeafName(fileName);
     }
       rv = ExportDirectoryToLDIF(aDirectory, localFile);
@@ -1433,7 +613,7 @@ NS_IMETHODIMP nsAddressBook::ExportAddressBook(nsIDOMWindowInternal *aParentWin,
       if (fileName.RFind(CSV_FILE_EXTENSION, PR_TRUE, -1, sizeof(CSV_FILE_EXTENSION)-1) == kNotFound) {
 
        // Add the extenstion and build a new localFile.
-       fileName.Append(NS_LITERAL_STRING(CSV_FILE_EXTENSION));
+       fileName.AppendLiteral(CSV_FILE_EXTENSION);
        localFile->SetLeafName(fileName);
     }
       rv = ExportDirectoryToDelimitedText(aDirectory, CSV_DELIM, CSV_DELIM_LEN, localFile);
@@ -1445,7 +625,7 @@ NS_IMETHODIMP nsAddressBook::ExportAddressBook(nsIDOMWindowInternal *aParentWin,
           (fileName.RFind(TAB_FILE_EXTENSION, PR_TRUE, -1, sizeof(TAB_FILE_EXTENSION)-1) == kNotFound) ) {
 
        // Add the extenstion and build a new localFile.
-       fileName.Append(NS_LITERAL_STRING(TXT_FILE_EXTENSION));
+       fileName.AppendLiteral(TXT_FILE_EXTENSION);
        localFile->SetLeafName(fileName);
   }
       rv = ExportDirectoryToDelimitedText(aDirectory, TAB_DELIM, TAB_DELIM_LEN, localFile);
@@ -1555,7 +735,7 @@ nsAddressBook::ExportDirectoryToDelimitedText(nsIAbDirectory *aDirectory, const 
               if (needsQuotes)
               {
                 newValue.Insert(NS_LITERAL_STRING("\""), 0);
-                newValue.Append(NS_LITERAL_STRING("\""));
+                newValue.AppendLiteral("\"");
               }
 
               // For notes, make sure CR/LF is converted to spaces 
@@ -1695,9 +875,9 @@ nsAddressBook::ExportDirectoryToLDIF(nsIAbDirectory *aDirectory, nsILocalFile *a
  
               if (!PL_strcmp(EXPORT_ATTRIBUTES_TABLE[i].abColName, kPreferMailFormatColumn)) {
                 if (value.Equals(NS_LITERAL_STRING("html").get()))
-                  value = NS_LITERAL_STRING("true");
+                  value.AssignLiteral("true");
                 else if (value.Equals(NS_LITERAL_STRING("plaintext").get()))
-                  value = NS_LITERAL_STRING("false");
+                  value.AssignLiteral("false");
                 else
                   value.Truncate(); // unknown.
               }
@@ -1767,7 +947,7 @@ nsresult nsAddressBook::AppendLDIFForMailList(nsIAbCard *aCard, nsACString &aRes
   NS_ENSURE_SUCCESS(rv,rv);
 
   if (!attrValue.IsEmpty()) {
-    rv = AppendProperty("xmozillanickname", attrValue.get(), aResult);
+    rv = AppendProperty("mozillaNickname", attrValue.get(), aResult);
     NS_ENSURE_SUCCESS(rv,rv);
     aResult += LDIF_LINEBREAK;
   }
@@ -1834,7 +1014,7 @@ nsresult nsAddressBook::AppendDNForCard(const char *aProperty, nsIAbCard *aCard,
   if (!displayName.IsEmpty()) {
     cnStr += NS_LITERAL_STRING("cn=") + displayName;
     if (!email.IsEmpty()) {
-      cnStr += NS_LITERAL_STRING(",");
+      cnStr.AppendLiteral(",");
     }
   }
 
@@ -1891,7 +1071,8 @@ nsresult nsAddressBook::AppendProperty(const char *aProperty, const PRUnichar *a
  
   // if the string is not safe "as is", base64 encode it
   if (IsSafeLDIFString(aValue)) {
-    aResult += NS_LITERAL_CSTRING(": ") + NS_LossyConvertUCS2toASCII(aValue);
+    aResult.AppendLiteral(": ");
+    LossyAppendUTF16toASCII(aValue, aResult);
   }
   else {
     char *base64Str = PL_Base64Encode(NS_ConvertUCS2toUTF8(aValue).get(), 0, nsnull);
@@ -1939,14 +1120,7 @@ static void convertNameValue(VObject *vObj, nsIAbCard *aCard)
           return;
   }
   else if (PL_strcasecmp(VCEmailAddressProp, vObjectName(vObj)) == 0)
-  {       
-      // only treat it as a match if it is an internet property
-      VObject* iprop = isAPropertyOf(vObj, VCInternetProp);
-      if (iprop)
-          cardColName = kPriEmailColumn;
-      else
-          return;
-  }
+      cardColName = kPriEmailColumn;
   else if (PL_strcasecmp(VCFamilyNameProp, vObjectName(vObj)) == 0) 
       cardColName = kLastNameColumn;
   else if (PL_strcasecmp(VCFullNameProp, vObjectName(vObj)) == 0)
@@ -2005,15 +1179,16 @@ static void convertFromVObject(VObject *vObj, nsIAbCard *aCard)
     return;
 }
 
-NS_IMETHODIMP nsAddressBook::HandleContent(const char * aContentType, const char * aCommand,
-                                           nsISupports * aWindowContext, nsIRequest *request)
+NS_IMETHODIMP nsAddressBook::HandleContent(const char * aContentType,
+                                           nsIInterfaceRequestor * aWindowContext,
+                                           nsIRequest *request)
 {
   NS_ENSURE_ARG_POINTER(request);
   
   nsresult rv = NS_OK;
 
   // First of all, get the content type and make sure it is a content type we know how to handle!
-  if (nsCRT::strcasecmp(aContentType, "x-application-addvcard") == 0) {
+  if (nsCRT::strcasecmp(aContentType, "application/x-addvcard") == 0) {
     nsCOMPtr<nsIURI> uri;
     nsCOMPtr<nsIChannel> aChannel = do_QueryInterface(request);
     if (!aChannel) return NS_ERROR_FAILURE;
@@ -2079,22 +1254,49 @@ NS_IMETHODIMP nsAddressBook::HandleContent(const char * aContentType, const char
     rv = channel->GetURI(getter_AddRefs(uri));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    // create a stream listener to handle the v-card data
-    nsCOMPtr<nsIStreamListener> strListener = do_CreateInstance(NS_MSGVCARDSTREAMLISTENER_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, NS_ERROR_WONT_HANDLE_CONTENT); // no registered v-card handler so just return that we won't handle the content
-
-    // create a new channel and run the url again
-    nsCOMPtr<nsIIOService> netService(do_GetService(NS_IOSERVICE_CONTRACTID, &rv));
+    // create a stream loader to handle the v-card data
+    nsCOMPtr<nsIStreamLoader> streamLoader;
+    rv = NS_NewStreamLoader(getter_AddRefs(streamLoader), uri, this, aWindowContext);
     NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = netService->NewChannelFromURI(uri, getter_AddRefs(channel));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = channel->AsyncOpen(strListener, aWindowContext);
 
   }
-  else // The content-type was not x-application-addvcard...
+  else // The content-type was not application/x-addvcard...
     return NS_ERROR_WONT_HANDLE_CONTENT;
+
+  return rv;
+}
+
+NS_IMETHODIMP nsAddressBook::OnStreamComplete(nsIStreamLoader *aLoader, nsISupports *aContext, nsresult aStatus, PRUint32 datalen, const PRUint8 *data)
+{
+  NS_ENSURE_ARG_POINTER(aContext);
+  NS_ENSURE_SUCCESS(aStatus, aStatus); // don't process the vcard if we got a status error
+  nsresult rv = NS_OK;
+
+  // take our vCard string and open up an address book window based on it
+  nsCOMPtr<nsIMsgVCardService> vCardService = do_GetService(NS_MSGVCARDSERVICE_CONTRACTID);
+  if (vCardService)
+  {
+    nsAutoPtr<VObject> vObj(vCardService->Parse_MIME((const char *)data, datalen));
+    if (vObj)
+    {
+      PRInt32 len = 0;
+      nsAdoptingCString vCard(vCardService->WriteMemoryVObjects(0, &len, vObj, PR_FALSE));
+
+      nsCOMPtr <nsIAbCard> cardFromVCard;
+      rv = EscapedVCardToAbCard(vCard.get(), getter_AddRefs(cardFromVCard));
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      nsCOMPtr<nsIDOMWindowInternal> parentWindow = do_GetInterface(aContext);
+      NS_ENSURE_TRUE(parentWindow, NS_ERROR_FAILURE);
+
+      nsCOMPtr<nsIDOMWindow> dialogWindow;
+      rv = parentWindow->OpenDialog(
+           NS_LITERAL_STRING("chrome://messenger/content/addressbook/abNewCardDialog.xul"),
+           EmptyString(),
+           NS_LITERAL_STRING("chrome,resizable=no,titlebar,modal,centerscreen"),
+           cardFromVCard, getter_AddRefs(dialogWindow));      
+    }
+  }
 
   return rv;
 }
@@ -2230,5 +1432,39 @@ NS_IMETHODIMP nsAddressBook::Convert4xVCardPrefs(const char *prefRoot, char **es
     return rv;
 }
 
+#ifdef MOZ_XUL_APP
+
+NS_IMETHODIMP
+nsAddressBook::Handle(nsICommandLine* aCmdLine)
+{
+  nsresult rv; 
+  PRBool found;
+
+  rv = aCmdLine->HandleFlag(NS_LITERAL_STRING("addressbook"), PR_FALSE, &found);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!found)
+    return NS_OK;
+
+  nsCOMPtr<nsIWindowWatcher> wwatch (do_GetService(NS_WINDOWWATCHER_CONTRACTID));
+  NS_ENSURE_TRUE(wwatch, NS_ERROR_FAILURE);
+
+  nsCOMPtr<nsIDOMWindow> opened;
+  wwatch->OpenWindow(nsnull, "chrome://messenger/content/addressbook/addressbook.xul",
+                     "_blank", "chrome,dialog=no,all", nsnull, getter_AddRefs(opened));
+  aCmdLine->SetPreventDefault(PR_TRUE);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsAddressBook::GetHelpInfo(nsACString& aResult)
+{
+  aResult.Assign(NS_LITERAL_CSTRING("  -addressbook         Open the address book at startup.\n"));
+  return NS_OK;
+}
+
+#else // !MOZ_XUL_APP
+
 CMDLINEHANDLER_IMPL(nsAddressBook,"-addressbook","general.startup.addressbook","chrome://messenger/content/addressbook/addressbook.xul","Start with the addressbook.",NS_ADDRESSBOOKSTARTUPHANDLER_CONTRACTID,"Addressbook Startup Handler",PR_FALSE,"", PR_TRUE)
 
+#endif

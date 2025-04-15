@@ -1,24 +1,39 @@
-/* 
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
- *  
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- *  
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
- * 
- * Contributor(s): 
- */
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* Styles to alter look of things in the Editor content window 
  *  that should NOT be removed when we display in completely WYSIWYG 
@@ -42,7 +57,7 @@ img, img[usemap], area,
 object, object[usemap], 
 applet, hr, button, input, isindex, textarea, select,
 a:link img, a:visited img, a:active img,
-a[name]:empty {
+a[name]:-moz-only-whitespace {
   cursor: default;
 }
 
@@ -163,9 +178,9 @@ span[\_moz_anonclass="mozResizer"][anonlocation="se"] {
 
 span[\_moz_anonclass="mozResizingShadow"],
 img[\_moz_anonclass="mozResizingShadow"] {
-  -moz-outline: thin dashed black;
+  outline: thin dashed black;
   -moz-user-select: none;
-  -moz-opacity: 0.5;
+  opacity: 0.5;
   position: absolute;
   z-index: 2147483647; /* max value for this property */
 }
@@ -182,11 +197,11 @@ span[\_moz_anonclass="mozResizingInfo"] {
 }
 
 img[\_moz_resizing] {
-  -moz-outline: thin solid black;
+  outline: thin solid black;
 }
 
 *[\_moz_abspos] {
-  -moz-outline: silver ridge 2px;
+  outline: silver ridge 2px;
   z-index: 2147483645 !important; /* max value -2 for this property */
 }
 *[\_moz_abspos="white"] {
@@ -197,7 +212,7 @@ img[\_moz_resizing] {
 }
 
 span[\_moz_anonclass="mozGrabber"] {
-  -moz-outline: ridge 2px silver;
+  outline: ridge 2px silver;
   padding: 2px;
   position: absolute;
   width: 12px;

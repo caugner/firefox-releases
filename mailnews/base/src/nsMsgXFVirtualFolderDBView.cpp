@@ -14,6 +14,11 @@
  *
  * The Original Code is mozilla.org code.
  *
+ * The Initial Developer of the Original Code is
+ * David Bienvenu.
+ * Portions created by the Initial Developer are Copyright (C) 2004
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   David Bienvenu <bienvenu@nventure.com>
  *
@@ -42,6 +47,7 @@
 #include "nsIMsgCopyService.h"
 #include "nsICopyMsgStreamListener.h"
 #include "nsMsgUtils.h"
+#include "nsITreeColumns.h"
 #include "nsIMsgSearchSession.h"
 
 nsMsgXFVirtualFolderDBView::nsMsgXFVirtualFolderDBView()
@@ -193,6 +199,11 @@ nsMsgXFVirtualFolderDBView::OnSearchDone(nsresult status)
   dbFolderInfo->SetNumMessages(m_numTotal);
   m_viewFolder->UpdateSummaryTotals(true); // force update from db.
   virtDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
+  if (m_sortType != nsMsgViewSortType::byThread)
+  {
+    m_sortValid = PR_FALSE;       //sort the results 
+    Sort(m_sortType, m_sortOrder);
+  }
   return rv;
 }
 

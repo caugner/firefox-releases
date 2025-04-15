@@ -44,9 +44,10 @@
 #include "nsIRDFService.h"
 #include "nsRDFCID.h"
 #include "nsUnicharUtils.h"
-#include "nsAbMDBCard.h"
+#include "nsIAbMDBCard.h"
 #include "nsAbCardProperty.h"
 #include "prdtoa.h"
+#include "nsMsgUtils.h"
 
 #define  PREVIOUS_EXTENSION ".prev"
 #define  kPABDirectory  2 // defined in nsDirPrefs.h
@@ -128,7 +129,7 @@ nsAbPalmHotSync::nsAbPalmHotSync(PRBool aIsUnicode, PRUnichar * aAbDescUnicode, 
     if(aIsUnicode)
         mAbName.Assign(aAbDescUnicode);
     else
-        mAbName = NS_ConvertASCIItoUCS2(aAbDesc);
+        mAbName.AssignASCII(aAbDesc);
     mAbName.Trim(" ");
 
     mPalmCategoryIndex = aPalmCatIndex;
@@ -234,7 +235,7 @@ nsresult nsAbPalmHotSync::GetABInterface()
         // to match "Personal" category.
         if(description == mAbName || 
             (prefName.Equals("ldap_2.servers.pab", nsCaseInsensitiveCStringComparator())
-             && mAbName.Equals(NS_LITERAL_STRING("Personal"), nsCaseInsensitiveStringComparator())))
+             && mAbName.LowerCaseEqualsLiteral("personal")))
           break;
         directory = nsnull;
       }
@@ -312,7 +313,7 @@ nsresult nsAbPalmHotSync::AddAllRecordsToAB(PRBool existingAB, PRInt32 aCount, l
     if(NS_SUCCEEDED(rv)) {
         mDBOpen = PR_FALSE;
         PRUint32 modTimeInSec;
-        nsAddrDatabase::PRTime2Seconds(PR_Now(), &modTimeInSec);
+        PRTime2Seconds(PR_Now(), &modTimeInSec);
         rv = UpdateABInfo(modTimeInSec, mPalmCategoryIndex);
     }
     else { // get back the previous file
@@ -471,7 +472,7 @@ nsresult nsAbPalmHotSync::DoSyncAndGetUpdatedCards(PRInt32 aPalmCount, lpnsABCOM
         {
             mDBOpen = PR_FALSE;
             PRUint32 modTimeInSec;
-            nsAddrDatabase::PRTime2Seconds(PR_Now(), &modTimeInSec);
+            PRTime2Seconds(PR_Now(), &modTimeInSec);
             rv = UpdateABInfo(modTimeInSec, mPalmCategoryIndex);
         }
         else
@@ -730,31 +731,20 @@ nsresult nsAbPalmHotSync::OpenABDBForHotSync(PRBool aCreate)
     if(NS_FAILED(rv)) 
         return rv;
 
-    nsFileSpec* dbPath;
-    rv = abSession->GetUserProfileDirectory(&dbPath);
+    rv = abSession->GetUserProfileDirectory(getter_AddRefs(mABFile));
     if(NS_FAILED(rv)) 
         return rv;
 
-    (*dbPath) += mFileName.get();
-
-    // get nsIFile for nsFileSpec from abSession, why use a obsolete class if not required!
-    rv = NS_FileSpecToIFile(dbPath, getter_AddRefs(mABFile));
-    if(NS_FAILED(rv))  
-    {
-        delete dbPath;
-        return rv;
-    }
+		mABFile->AppendNative(mFileName);
 
     nsCOMPtr<nsIAddrDatabase> addrDBFactory = 
              do_GetService(NS_ADDRDATABASE_CONTRACTID, &rv);
     if(NS_FAILED(rv)) 
     {
-        delete dbPath;
         return rv;
     }
     
-    rv = addrDBFactory->Open(dbPath, aCreate, getter_AddRefs(mABDB), PR_TRUE);
-    delete dbPath;
+    rv = addrDBFactory->Open(mABFile, aCreate, PR_TRUE, getter_AddRefs(mABDB));
     NS_ENSURE_SUCCESS(rv, rv);
     mDBOpen = PR_TRUE;  // Moz AB DB is now Open
 
@@ -776,14 +766,10 @@ nsresult nsAbPalmHotSync::KeepCurrentStateAsPrevious()
         nsCOMPtr<nsIAddrBookSession> abSession = do_GetService(NS_ADDRBOOKSESSION_CONTRACTID, &rv);
         if(NS_FAILED(rv)) 
             return rv;
-        nsFileSpec* dbPath;
-        rv = abSession->GetUserProfileDirectory(&dbPath); // this still uses nsFileSpec!!!
+        rv = abSession->GetUserProfileDirectory(getter_AddRefs(mPreviousABFile));
         if(NS_SUCCEEDED(rv)) 
         {
-            (*dbPath) += previousLeafName.get();
-            // get nsIFile for nsFileSpec from abSession, why use a obsolete class if not required!
-            rv = NS_FileSpecToIFile(dbPath, getter_AddRefs(mPreviousABFile));
-            delete dbPath;
+            mPreviousABFile->AppendNative(previousLeafName);
             if(NS_FAILED(rv))
                 return rv;
         }
@@ -888,7 +874,7 @@ nsresult nsAbPalmHotSync::UpdateMozABWithPalmRecords()
             || (ipcCard.GetStatus() == ATTR_NONE)) 
         {
             PRUint32 modTimeInSec;
-            nsAddrDatabase::PRTime2Seconds(PR_Now(), &modTimeInSec);
+            PRTime2Seconds(PR_Now(), &modTimeInSec);
             ipcCard.SetLastModifiedDate(modTimeInSec);
             rv = mABDB->CreateNewCardAndAddToDB(newCard, PR_FALSE);
             if(NS_SUCCEEDED(rv)) 
@@ -940,7 +926,7 @@ nsresult nsAbPalmHotSync::Done(PRBool aSuccess, PRInt32 aPalmCatIndex, PRUint32 
             {
                 mDBOpen = PR_FALSE;
                 PRUint32 modTimeInSec;
-                nsAddrDatabase::PRTime2Seconds(PR_Now(), &modTimeInSec);
+                PRTime2Seconds(PR_Now(), &modTimeInSec);
                 rv = UpdateABInfo(modTimeInSec, aPalmCatIndex);
             }
         }
@@ -976,7 +962,7 @@ nsresult nsAbPalmHotSync::UpdateSyncInfo(long aCategoryIndex)
   // aCategoryIndex = -1 means that callers want to reset the mod time as well. 
   mDBOpen = PR_FALSE;
   PRUint32 modTimeInSec;
-  nsAddrDatabase::PRTime2Seconds(PR_Now(), &modTimeInSec);
+  PRTime2Seconds(PR_Now(), &modTimeInSec);
   if (aCategoryIndex >= 0)
     return(UpdateABInfo(modTimeInSec, aCategoryIndex));
   else
@@ -1041,7 +1027,7 @@ nsresult nsAbPalmHotSync::RenameAB(long aCategoryIndex, const char * aABUrl)
   rv = properties->SetCategoryId(aCategoryIndex);
   NS_ENSURE_SUCCESS(rv,rv);
   PRUint32 modTimeInSec;
-  nsAddrDatabase::PRTime2Seconds(PR_Now(), &modTimeInSec);
+  PRTime2Seconds(PR_Now(), &modTimeInSec);
   rv = properties->SetSyncTimeStamp(modTimeInSec);
   NS_ENSURE_SUCCESS(rv,rv);
 

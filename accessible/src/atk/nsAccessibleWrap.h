@@ -76,6 +76,7 @@ public:
 public:
     // return the atk object for this nsAccessibleWrap
     NS_IMETHOD GetNativeInterface(void **aOutAccessible);
+    NS_IMETHOD GetExtState(PRUint32 *aState);
 
     AtkObject * GetAtkObject(void);
     MaiInterface *GetMaiInterface(PRInt16 aIfaceType);
@@ -83,6 +84,7 @@ public:
     PRBool IsValidObject();
 
     static void TranslateStates(PRUint32 aState,
+                                PRUint32 aExtState,
                                 void *aAtkStateSet);
 protected:
     AtkObject *mMaiAtkObject;

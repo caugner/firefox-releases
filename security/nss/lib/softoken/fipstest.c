@@ -1,39 +1,42 @@
 /*
  * PKCS #11 FIPS Power-Up Self Test.
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
- * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * $Id: fipstest.c,v 1.5 2002/12/04 00:28:56 wtc%netscape.com Exp $
- */
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is the Netscape security libraries.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
+/* $Id: fipstest.c,v 1.8 2005/03/29 18:21:18 nelsonb%netscape.com Exp $ */
 
 #include "softoken.h"   /* Required for RC2-ECB, RC2-CBC, RC4, DES-ECB,  */
                         /*              DES-CBC, DES3-ECB, DES3-CBC, RSA */
@@ -104,7 +107,7 @@
 #define FIPS_DSA_BASE_LENGTH                    64  /* 512-bits */
 
 static CK_RV
-pk11_fips_RC2_PowerUpSelfTest( void )
+sftk_fips_RC2_PowerUpSelfTest( void )
 {
     /* RC2 Known Key (40-bits). */
     static const PRUint8 rc2_known_key[] = { "RSARC" };
@@ -235,7 +238,7 @@ pk11_fips_RC2_PowerUpSelfTest( void )
 
 
 static CK_RV
-pk11_fips_RC4_PowerUpSelfTest( void )
+sftk_fips_RC4_PowerUpSelfTest( void )
 {
     /* RC4 Known Key (40-bits). */
     static const PRUint8 rc4_known_key[] = { "RSARC" };
@@ -304,7 +307,7 @@ pk11_fips_RC4_PowerUpSelfTest( void )
 
 
 static CK_RV
-pk11_fips_DES_PowerUpSelfTest( void )
+sftk_fips_DES_PowerUpSelfTest( void )
 {
     /* DES Known Key (56-bits). */
     static const PRUint8 des_known_key[] = { "ANSI DES" };
@@ -431,7 +434,7 @@ pk11_fips_DES_PowerUpSelfTest( void )
 
 
 static CK_RV
-pk11_fips_DES3_PowerUpSelfTest( void )
+sftk_fips_DES3_PowerUpSelfTest( void )
 {
     /* DES3 Known Key (56-bits). */
     static const PRUint8 des3_known_key[] = { "ANSI Triple-DES Key Data" };
@@ -560,7 +563,7 @@ pk11_fips_DES3_PowerUpSelfTest( void )
 
 
 static CK_RV
-pk11_fips_MD2_PowerUpSelfTest( void )
+sftk_fips_MD2_PowerUpSelfTest( void )
 {
     /* MD2 Known Hash Message (512-bits). */
     static const PRUint8 md2_known_hash_message[] = {
@@ -605,7 +608,7 @@ pk11_fips_MD2_PowerUpSelfTest( void )
 
 
 static CK_RV
-pk11_fips_MD5_PowerUpSelfTest( void )
+sftk_fips_MD5_PowerUpSelfTest( void )
 {
     /* MD5 Known Hash Message (512-bits). */
     static const PRUint8 md5_known_hash_message[] = {
@@ -638,7 +641,7 @@ pk11_fips_MD5_PowerUpSelfTest( void )
 
 
 static CK_RV
-pk11_fips_SHA1_PowerUpSelfTest( void )
+sftk_fips_SHA1_PowerUpSelfTest( void )
 {
     /* SHA-1 Known Hash Message (512-bits). */
     static const PRUint8 sha1_known_hash_message[] = {
@@ -672,7 +675,7 @@ pk11_fips_SHA1_PowerUpSelfTest( void )
 
 
 static CK_RV
-pk11_fips_RSA_PowerUpSelfTest( void )
+sftk_fips_RSA_PowerUpSelfTest( void )
 {
     /* RSA Known Modulus used in both Public/Private Key Values (520-bits). */
     static const PRUint8 rsa_modulus[FIPS_RSA_MODULUS_LENGTH] = {
@@ -910,7 +913,7 @@ rsa_loser:
 
 
 static CK_RV
-pk11_fips_DSA_PowerUpSelfTest( void )
+sftk_fips_DSA_PowerUpSelfTest( void )
 {
     /* DSA Known P (512-bits), Q (160-bits), and G (512-bits) Values. */
     static const PRUint8 dsa_P[] = {
@@ -1029,60 +1032,60 @@ pk11_fips_DSA_PowerUpSelfTest( void )
 
 
 CK_RV
-pk11_fipsPowerUpSelfTest( void )
+sftk_fipsPowerUpSelfTest( void )
 {
     CK_RV rv;
 
     /* RC2 Power-Up SelfTest(s). */
-    rv = pk11_fips_RC2_PowerUpSelfTest();
+    rv = sftk_fips_RC2_PowerUpSelfTest();
 
     if( rv != CKR_OK )
         return rv;
 
     /* RC4 Power-Up SelfTest(s). */
-    rv = pk11_fips_RC4_PowerUpSelfTest();
+    rv = sftk_fips_RC4_PowerUpSelfTest();
 
     if( rv != CKR_OK )
         return rv;
 
     /* DES Power-Up SelfTest(s). */
-    rv = pk11_fips_DES_PowerUpSelfTest();
+    rv = sftk_fips_DES_PowerUpSelfTest();
 
     if( rv != CKR_OK )
         return rv;
 
     /* DES3 Power-Up SelfTest(s). */
-    rv = pk11_fips_DES3_PowerUpSelfTest();
+    rv = sftk_fips_DES3_PowerUpSelfTest();
 
     if( rv != CKR_OK )
         return rv;
 
     /* MD2 Power-Up SelfTest(s). */
-    rv = pk11_fips_MD2_PowerUpSelfTest();
+    rv = sftk_fips_MD2_PowerUpSelfTest();
 
     if( rv != CKR_OK )
         return rv;
 
     /* MD5 Power-Up SelfTest(s). */
-    rv = pk11_fips_MD5_PowerUpSelfTest();
+    rv = sftk_fips_MD5_PowerUpSelfTest();
 
     if( rv != CKR_OK )
         return rv;
 
     /* SHA-1 Power-Up SelfTest(s). */
-    rv = pk11_fips_SHA1_PowerUpSelfTest();
+    rv = sftk_fips_SHA1_PowerUpSelfTest();
 
     if( rv != CKR_OK )
         return rv;
 
     /* RSA Power-Up SelfTest(s). */
-    rv = pk11_fips_RSA_PowerUpSelfTest();
+    rv = sftk_fips_RSA_PowerUpSelfTest();
 
     if( rv != CKR_OK )
         return rv;
 
     /* DSA Power-Up SelfTest(s). */
-    rv = pk11_fips_DSA_PowerUpSelfTest();
+    rv = sftk_fips_DSA_PowerUpSelfTest();
 
     if( rv != CKR_OK )
         return rv;

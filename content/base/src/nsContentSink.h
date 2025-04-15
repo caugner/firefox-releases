@@ -46,18 +46,19 @@
 #include "nsCOMPtr.h"
 #include "nsCOMArray.h"
 #include "nsString.h"
+#include "nsAutoPtr.h"
 
 class nsIDocument;
 class nsIURI;
 class nsIChannel;
 class nsIDocShell;
 class nsICSSLoader;
-class nsINodeInfoManager;
 class nsIParser;
 class nsIAtom;
 class nsIChannel;
 class nsIContent;
 class nsIViewManager;
+class nsNodeInfoManager;
 
 class nsContentSink : public nsICSSLoaderObserver,
                       public nsIScriptLoaderObserver,
@@ -81,16 +82,16 @@ protected:
                              nsIContent* aContent = nsnull);
   nsresult ProcessLinkHeader(nsIContent* aElement,
                              const nsAString& aLinkData);
-  nsresult ProcessLink(nsIContent* aElement, const nsAString& aHref,
-                       const nsAString& aRel, const nsAString& aTitle,
-                       const nsAString& aType, const nsAString& aMedia);
+  nsresult ProcessLink(nsIContent* aElement, const nsSubstring& aHref,
+                       const nsSubstring& aRel, const nsSubstring& aTitle,
+                       const nsSubstring& aType, const nsSubstring& aMedia);
 
   virtual nsresult ProcessStyleLink(nsIContent* aElement,
-                                    const nsAString& aHref,
+                                    const nsSubstring& aHref,
                                     PRBool aAlternate,
-                                    const nsAString& aTitle,
-                                    const nsAString& aType,
-                                    const nsAString& aMedia);
+                                    const nsSubstring& aTitle,
+                                    const nsSubstring& aType,
+                                    const nsSubstring& aMedia);
 
   nsresult ProcessMETATag(nsIContent* aContent);
 
@@ -110,9 +111,9 @@ protected:
   nsCOMPtr<nsIURI>              mDocumentBaseURI;
   nsCOMPtr<nsIDocShell>         mDocShell;
   nsCOMPtr<nsICSSLoader>        mCSSLoader;
-  nsCOMPtr<nsINodeInfoManager>  mNodeInfoManager;
+  nsRefPtr<nsNodeInfoManager>   mNodeInfoManager;
 
-  nsCOMArray<nsIDOMHTMLScriptElement> mScriptElements;
+  nsCOMArray<nsIScriptElement> mScriptElements;
 
   nsCString mRef; // ScrollTo #ref
   PRBool mNeedToBlockParser;

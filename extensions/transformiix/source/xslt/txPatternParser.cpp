@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is TransforMiiX XSLT Processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Axel Hecht.
@@ -20,7 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Axel Hecht <axel@pike.org>
+ *   Axel Hecht <axel@pike.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -39,6 +39,7 @@
 #include "txPatternParser.h"
 #include "ExprLexer.h"
 #include "txAtoms.h"
+#include "txError.h"
 #include "txStringUtils.h"
 #include "txXSLTPatterns.h"
 #include "txIXPathContext.h"
@@ -147,7 +148,8 @@ nsresult txPatternParser::createLocPathPattern(txExprLexer& aLexer,
             isAbsolute = MB_TRUE;
             if (aLexer.peek()->mType == Token::END || 
                 aLexer.peek()->mType == Token::UNION_OP) {
-                aPattern = new txRootPattern(MB_TRUE);
+                aPattern = new txRootPattern();
+
                 return aPattern ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
             }
             break;
@@ -189,12 +191,17 @@ nsresult txPatternParser::createLocPathPattern(txExprLexer& aLexer,
     }
 
     if (isAbsolute) {
-        txRootPattern* root = new txRootPattern(MB_FALSE);
+        txRootPattern* root = new txRootPattern();
         if (!root) {
             delete stepPattern;
             delete pathPattern;
             return NS_ERROR_OUT_OF_MEMORY;
         }
+
+#ifdef TX_TO_STRING
+        root->setSerialize(PR_FALSE);
+#endif
+
         rv = pathPattern->addStep(root, isChild);
         if (NS_FAILED(rv)) {
             delete stepPattern;

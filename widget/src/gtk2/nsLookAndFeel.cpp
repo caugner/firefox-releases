@@ -2,12 +2,12 @@
 /* vim:expandtab:shiftwidth=4:tabstop=4:
  */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -16,25 +16,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Brian Ryner <bryner@brianryner.com>
+ *   Brian Ryner <bryner@brianryner.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -47,6 +47,8 @@
 nscolor nsLookAndFeel::sInfoText = 0;
 nscolor nsLookAndFeel::sInfoBackground = 0;
 nscolor nsLookAndFeel::sMenuText = 0;
+nscolor nsLookAndFeel::sMenuHover = 0;
+nscolor nsLookAndFeel::sMenuHoverText = 0;
 nscolor nsLookAndFeel::sMenuBackground = 0;
 nscolor nsLookAndFeel::sButtonBackground = 0;
 nscolor nsLookAndFeel::sButtonText = 0;
@@ -61,11 +63,7 @@ PRBool  nsLookAndFeel::sColorsInitialized = PR_FALSE;
 //-------------------------------------------------------------------------
 nsLookAndFeel::nsLookAndFeel() : nsXPLookAndFeel()
 {
-    mWidget = gtk_invisible_new();
-    gtk_object_ref(GTK_OBJECT(mWidget));
-    gtk_object_sink(GTK_OBJECT(mWidget));
-    gtk_widget_ensure_style(mWidget);
-    mStyle = gtk_widget_get_style(mWidget);
+    InitWidget();
 
     if (!sColorsInitialized)
         InitColors();
@@ -80,17 +78,16 @@ nsLookAndFeel::~nsLookAndFeel()
 nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor& aColor)
 {
     nsresult res = NS_OK;
-    aColor = 0; // default color black
 
     switch (aID) {
         // These colors don't seem to be used for anything anymore in Mozilla
         // (except here at least TextSelectBackground and TextSelectForeground)
         // The CSS2 colors below are used.
     case eColor_WindowBackground:
-        aColor = GDK_COLOR_TO_NS_RGB(mStyle->bg[GTK_STATE_NORMAL]);
+        aColor = GDK_COLOR_TO_NS_RGB(mStyle->base[GTK_STATE_NORMAL]);
         break;
     case eColor_WindowForeground:
-        aColor = GDK_COLOR_TO_NS_RGB(mStyle->fg[GTK_STATE_NORMAL]);
+        aColor = GDK_COLOR_TO_NS_RGB(mStyle->text[GTK_STATE_NORMAL]);
         break;
     case eColor_WidgetBackground:
         aColor = GDK_COLOR_TO_NS_RGB(mStyle->bg[GTK_STATE_NORMAL]);
@@ -154,11 +151,11 @@ nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor& aColor)
         break;
     case eColor_highlight:
         // background of selected item
-        aColor = GDK_COLOR_TO_NS_RGB(mStyle->bg[GTK_STATE_SELECTED]);
+        aColor = GDK_COLOR_TO_NS_RGB(mStyle->base[GTK_STATE_SELECTED]);
         break;
     case eColor_highlighttext:
         // text of selected item
-        aColor = GDK_COLOR_TO_NS_RGB(mStyle->fg[GTK_STATE_SELECTED]);
+        aColor = GDK_COLOR_TO_NS_RGB(mStyle->text[GTK_STATE_SELECTED]);
         break;
     case eColor_inactiveborder:
         // inactive window border
@@ -259,8 +256,23 @@ nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor& aColor)
         // default button border color
         aColor = GDK_COLOR_TO_NS_RGB(mStyle->black);
         break;
-    case eColor__moz_gtk2_hovertext:
+    case eColor__moz_buttonhoverface:
+        aColor = GDK_COLOR_TO_NS_RGB(mStyle->bg[GTK_STATE_PRELIGHT]);
+        break;
+    case eColor__moz_buttonhovertext:
         aColor = GDK_COLOR_TO_NS_RGB(mStyle->fg[GTK_STATE_PRELIGHT]);
+        break;
+    case eColor__moz_cellhighlight:
+        aColor = GDK_COLOR_TO_NS_RGB(mStyle->base[GTK_STATE_ACTIVE]);
+        break;
+    case eColor__moz_cellhighlighttext:
+        aColor = GDK_COLOR_TO_NS_RGB(mStyle->text[GTK_STATE_ACTIVE]);
+        break;
+    case eColor__moz_menuhover:
+        aColor = sMenuHover;
+        break;
+    case eColor__moz_menuhovertext:
+        aColor = sMenuHoverText;
         break;
     default:
         /* default color is BLACK */
@@ -352,17 +364,35 @@ NS_IMETHODIMP nsLookAndFeel::GetMetric(const nsMetricID aID, PRInt32 & aMetric)
     case eMetric_CaretBlinkTime:
         aMetric = 500;
         break;
-    case eMetric_SingleLineCaretWidth:
-    case eMetric_MultiLineCaretWidth:
+    case eMetric_CaretWidth:
         aMetric = 1;
         break;
     case eMetric_ShowCaretDuringSelection:
         aMetric = 0;
         break;
     case eMetric_SelectTextfieldsOnKeyFocus:
-        // Select textfield content when focused by kbd
-        // used by nsEventStateManager::sTextfieldSelectModel
-        aMetric = 1;
+        {
+            GtkWidget *entry;
+            GtkSettings *settings;
+            gboolean select_on_focus;
+
+            entry = gtk_entry_new();
+            gtk_widget_ref(entry);
+            gtk_object_sink(GTK_OBJECT(entry));
+            settings = gtk_widget_get_settings(entry);
+            g_object_get(settings, 
+                         "gtk-entry-select-on-focus",
+                         &select_on_focus,
+                         NULL);
+            
+            if(select_on_focus)
+                aMetric = 1;
+            else
+                aMetric = 0;
+
+            gtk_widget_destroy(entry);
+            gtk_widget_unref(entry);
+        }
         break;
     case eMetric_SubmenuDelay:
         aMetric = 200;
@@ -382,7 +412,7 @@ NS_IMETHODIMP nsLookAndFeel::GetMetric(const nsMetricID aID, PRInt32 & aMetric)
             g_object_get(gtk_widget_get_settings(box),
                          "gtk-dnd-drag-threshold", &threshold,
                          NULL);
-            gtk_widget_destroy(box);
+            gtk_object_sink(GTK_OBJECT(box));
             aMetric = threshold;
         }
         break;
@@ -490,6 +520,10 @@ nsLookAndFeel::InitColors()
 
     style = gtk_widget_get_style(menu);
     sMenuBackground = GDK_COLOR_TO_NS_RGB(style->bg[GTK_STATE_NORMAL]);
+    
+    style = gtk_widget_get_style(menuitem);
+    sMenuHover = GDK_COLOR_TO_NS_RGB(style->bg[GTK_STATE_PRELIGHT]);
+    sMenuHoverText = GDK_COLOR_TO_NS_RGB(style->fg[GTK_STATE_PRELIGHT]);
 
     gtk_widget_unref(menu);
 
@@ -521,4 +555,18 @@ nsLookAndFeel::InitColors()
         GDK_COLOR_TO_NS_RGB(style->dark[GTK_STATE_NORMAL]);
 
     gtk_widget_destroy(window);
+}
+
+NS_IMETHODIMP
+nsLookAndFeel::LookAndFeelChanged()
+{
+    nsXPLookAndFeel::LookAndFeelChanged();
+
+    if (mWidget)
+        gtk_widget_unref(mWidget);
+ 
+    InitWidget();
+    InitColors();
+
+    return NS_OK;
 }

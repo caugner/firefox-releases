@@ -55,16 +55,9 @@ function onLoad()
   gProgressMeter = document.getElementById("replication.progress");
   gReplicationBundle = document.getElementById("bundle_replication");
 
-  window.title = gReplicationBundle.getFormattedString("replicatingTitle", [dirName])
+  document.title = gReplicationBundle.getFormattedString("replicatingTitle", [dirName])
 
   Replicate();
-}
-
-function DoReplicationClose()
-{
-  // XXX todo, confirm the cancel
-  onCancelReplication(false);
-  return true;
 }
 
 var progressListener = {
@@ -126,18 +119,18 @@ function Replicate()
   }
 }
 
-function onCancelReplication(closeWindow)
+function onCancelReplication()
 {
   try {
+    // XXX todo, confirm the cancel
     gReplicationService.cancelReplication(gCurrentDirectoryPrefName);
   }
   catch (ex) {
     // XXX todo
     // perhaps replication hasn't started yet?  This can happen if you hit cancel after attempting to replication when offline 
     dump("unexpected failure while cancelling.  ex=" + ex + "\n");
-    if (closeWindow)
-      window.close();
   }
+  return true;
 }
 
 function SetProgressText(textStr)

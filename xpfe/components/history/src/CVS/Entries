@@ -1,8 +1,7 @@
-/.cvsignore/1.1/Mon May 17 23:19:15 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.24/Wed Feb 11 02:10:00 2004//TFIREFOX_1_0_RELEASE
-/nsGlobalHistory.cpp/1.195.6.3/Thu Aug 26 02:03:23 2004//TFIREFOX_1_0_RELEASE
-/nsGlobalHistory.h/1.50.6.1/Thu Aug 26 02:03:23 2004//TFIREFOX_1_0_RELEASE
-/nsHistoryLoadListener.cpp/1.7/Fri Jan  9 23:54:21 2004//TFIREFOX_1_0_RELEASE
-/nsHistoryLoadListener.h/1.2/Fri Nov 16 02:15:43 2001//TFIREFOX_1_0_RELEASE
-/nsMdbPtr.h/1.8/Fri Sep 28 20:13:45 2001//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Mon May 17 23:19:15 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.26/Tue Apr  5 14:50:15 2005//TFIREFOX_1_5_RELEASE
+/nsGlobalHistory.cpp/1.211.2.1/Wed Oct 26 19:58:33 2005//TFIREFOX_1_5_RELEASE
+/nsGlobalHistory.h/1.57/Wed Aug 10 20:21:44 2005//TFIREFOX_1_5_RELEASE
+/nsHistoryLoadListener.h/1.4/Sun Apr 18 13:54:26 2004//TFIREFOX_1_5_RELEASE
+/nsMdbPtr.h/1.10/Sun Apr 18 13:54:26 2004//TFIREFOX_1_5_RELEASE
 D

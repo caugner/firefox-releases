@@ -45,6 +45,8 @@
 #include "nsIDocument.h"
 #include "nsIJSRuntimeService.h"
 #include "nsIJSContextStack.h"
+#include "nsIXPConnect.h"
+#include "nsIDOMElement.h"
 #include "prmem.h"
 
 // Hash of JSObject wrappers that wraps JSObjects as NPObjects. There
@@ -136,6 +138,35 @@ static JSClass sNPObjectJSWrapperClass =
     nsnull
   };
 
+typedef struct NPObjectMemberPrivate {
+    NPObject* npobj;
+    jsval fieldValue;
+    jsval methodName;
+    NPP   npp;
+} NPObjectMemberPrivate;
+
+JS_STATIC_DLL_CALLBACK(JSBool)
+NPObjectMember_Convert(JSContext *cx, JSObject *obj, JSType type, jsval *vp);
+
+JS_STATIC_DLL_CALLBACK(void)
+NPObjectMember_Finalize(JSContext *cx, JSObject *obj);
+
+JS_STATIC_DLL_CALLBACK(JSBool)
+NPObjectMember_Call(JSContext *cx, JSObject *obj, uintN argc,
+                    jsval *argv, jsval *rval);
+
+JS_STATIC_DLL_CALLBACK(uint32)
+NPObjectMember_Mark(JSContext *cx, JSObject *obj, void *arg);
+
+static JSClass sNPObjectMemberClass =
+  {
+    "NPObject Ambiguous Member class", JSCLASS_HAS_PRIVATE,
+    JS_PropertyStub, JS_PropertyStub,
+    JS_PropertyStub, JS_PropertyStub, JS_EnumerateStub,
+    JS_ResolveStub, NPObjectMember_Convert,
+    NPObjectMember_Finalize, nsnull, nsnull, NPObjectMember_Call,
+    nsnull, nsnull, nsnull, NPObjectMember_Mark, nsnull
+  };
 
 static void
 OnWrapperCreated()
@@ -205,7 +236,8 @@ GetJSContext(NPP npp)
   owner->GetDocument(getter_AddRefs(doc));
   NS_ENSURE_TRUE(doc, nsnull);
 
-  nsIScriptGlobalObject *sgo = doc->GetScriptGlobalObject();
+  nsCOMPtr<nsISupports> documentContainer = doc->GetContainer();
+  nsCOMPtr<nsIScriptGlobalObject> sgo(do_GetInterface(documentContainer));
   NS_ENSURE_TRUE(sgo, nsnull);
 
   nsIScriptContext *scx = sgo->GetContext();
@@ -939,24 +971,32 @@ NPObjWrapper_GetProperty(JSContext *cx, JSObject *obj, jsval id, jsval *vp)
     return JS_FALSE;
   }
 
-  if (npobj->_class->hasProperty(npobj, (NPIdentifier)id)) {
+  PRBool hasProperty = npobj->_class->hasProperty(npobj, (NPIdentifier)id);
+  PRBool hasMethod = npobj->_class->hasMethod(npobj, (NPIdentifier)id);
+  NPP npp = nsnull;
+  if (hasProperty) {
+    // Find out what plugin (NPP) is the owner of the object we're
+    // manipulating, and make it own any JSObject wrappers created
+    // here.
+    npp = LookupNPP(npobj);
+    if (!npp) {
+      ThrowJSException(cx, "No NPP found for NPObject!");
+
+      return JS_FALSE;
+    }
+  }
+
+  // To support ambiguous members, we return NPObject Member class here.
+  if (hasProperty && hasMethod)
+    return CreateNPObjectMember(npp, cx, obj, npobj, id, vp);
+
+  if (hasProperty) {
     NPVariant npv;
     VOID_TO_NPVARIANT(npv);
 
     if (!npobj->_class->getProperty(npobj, (NPIdentifier)id, &npv)) {
       ThrowJSException(cx, "Error setting property on scriptable plugin "
                        "object!");
-
-      return JS_FALSE;
-    }
-
-    // Find out what plugin (NPP) is the owner of the object we're
-    // manipulating, and make it own any JSObject wrappers created
-    // here.
-    NPP npp = LookupNPP(npobj);
-
-    if (!npp) {
-      ThrowJSException(cx, "No NPP found for NPObject!");
 
       return JS_FALSE;
     }
@@ -969,7 +1009,7 @@ NPObjWrapper_GetProperty(JSContext *cx, JSObject *obj, jsval id, jsval *vp)
     return JS_TRUE;
   }
 
-  if (!npobj->_class->hasMethod(npobj, (NPIdentifier)id)) {
+  if (!hasMethod) {
     ThrowJSException(cx, "Trying to get unsupported property on scriptable "
                      "plugin object!");
 
@@ -1308,7 +1348,11 @@ NPObjWrapperPluginDestroyedCallback(PLDHashTable *table, PLDHashEntryHdr *hdr,
 
     JSContext *cx = GetJSContext((NPP)arg);
 
-    ::JS_SetPrivate(cx, entry->mJSObj, nsnull);
+    if (cx) {
+      ::JS_SetPrivate(cx, entry->mJSObj, nsnull);
+    } else {
+      NS_ERROR("dangling entry->mJSObj JSPrivate because we can't find cx");
+    }
 
     return PL_DHASH_REMOVE;
   }
@@ -1328,6 +1372,70 @@ nsJSNPRuntime::OnPluginDestroy(NPP npp)
   if (sNPObjWrappers.ops) {
     PL_DHashTableEnumerate(&sNPObjWrappers,
                            NPObjWrapperPluginDestroyedCallback, npp);
+  }
+
+  // If this plugin was scripted from a webpage, the plugin's
+  // scriptable object will be on the DOM element's prototype
+  // chain. Now that the plugin is being destroyed we need to pull the
+  // plugin's scriptable object out of that prototype chain.
+  JSContext *cx = GetJSContext(npp);
+  if (!cx || !npp) {
+    return;
+  }
+
+  // Find the plugin instance so that we can (eventually) get to the
+  // DOM element
+  ns4xPluginInstance *inst = (ns4xPluginInstance *)npp->ndata;
+  if (!inst) {
+    return;
+  }
+
+  nsCOMPtr<nsIPluginInstancePeer> pip;
+  inst->GetPeer(getter_AddRefs(pip));
+  nsCOMPtr<nsIPluginTagInfo2> pti2(do_QueryInterface(pip));
+  if (!pti2) {
+    return;
+  }
+
+  nsCOMPtr<nsIDOMElement> element;
+  pti2->GetDOMElement(getter_AddRefs(element));
+  if (!element) {
+    return;
+  }
+
+  // Get the DOM element's JS object.
+  nsCOMPtr<nsIXPConnect> xpc(do_GetService(nsIXPConnect::GetCID()));
+  if (!xpc) {
+    return;
+  }
+
+  nsCOMPtr<nsISupports> supp(do_QueryInterface(element));
+  nsCOMPtr<nsIXPConnectWrappedNative> holder;
+  xpc->GetWrappedNativeOfNativeObject(cx, ::JS_GetGlobalObject(cx), supp,
+                                      NS_GET_IID(nsISupports),
+                                      getter_AddRefs(holder));
+  if (!holder) {
+    return;
+  }
+
+  JSObject *obj, *proto;
+  holder->GetJSObject(&obj);
+
+  // Loop over the DOM element's JS object prototype chain and remove
+  // all JS objects of the class sNPObjectJSWrapperClass (there should
+  // be only one, but remove all instances found in case the page put
+  // more than one of the plugin's scriptable objects on the prototype
+  // chain).
+  while (obj && (proto = ::JS_GetPrototype(cx, obj))) {
+    if (JS_GET_CLASS(cx, proto) == &sNPObjectJSWrapperClass) {
+      // We found an NPObject on the proto chain, get its prototype...
+      proto = ::JS_GetPrototype(cx, proto);
+
+      // ... and pull it out of the chain.
+      ::JS_SetPrototype(cx, obj, proto);
+    }
+
+    obj = proto;
   }
 }
 
@@ -1357,4 +1465,184 @@ LookupNPP(NPObject *npobj)
   NS_ASSERTION(entry->mNpp, "Live NPObject entry w/o an NPP!");
 
   return entry->mNpp;
+}
+
+bool
+CreateNPObjectMember(NPP npp, JSContext *cx, JSObject *obj,
+                     NPObject* npobj, jsval id, jsval *vp)
+{
+  NS_ENSURE_TRUE(vp, false);
+
+  if (!npobj || !npobj->_class || !npobj->_class->getProperty ||
+      !npobj->_class->invoke) {
+    ThrowJSException(cx, "Bad NPObject");
+
+    return false;
+  }
+
+  NPObjectMemberPrivate *memberPrivate =
+    (NPObjectMemberPrivate *)PR_Malloc(sizeof(NPObjectMemberPrivate));
+  if (!memberPrivate)
+    return false;
+
+  JSObject *memobj = ::JS_NewObject(cx, &sNPObjectMemberClass, nsnull, nsnull);
+  if (!memobj) {
+    PR_Free(memberPrivate);
+    return false;
+  }
+  
+  *vp = OBJECT_TO_JSVAL(memobj);
+  ::JS_AddRoot(cx, vp);
+
+  ::JS_SetPrivate(cx, memobj, (void *)memberPrivate);
+
+  jsval fieldValue;
+  NPVariant npv;
+  VOID_TO_NPVARIANT(npv);
+  if (!npobj->_class->getProperty(npobj, (NPIdentifier)id, &npv)) {
+    ::JS_RemoveRoot(cx, vp);
+    return false;
+  }
+
+  fieldValue = NPVariantToJSVal(npp, cx, &npv);
+
+  memberPrivate->npobj = npobj;
+  _retainobject(npobj);
+
+  memberPrivate->fieldValue = fieldValue;
+  memberPrivate->methodName = id;
+  memberPrivate->npp = npp;
+  
+  ::JS_RemoveRoot(cx, vp);
+
+  return true;
+}
+
+JS_STATIC_DLL_CALLBACK(JSBool)
+NPObjectMember_Convert(JSContext *cx, JSObject *obj, JSType type, jsval *vp)
+{
+  NPObjectMemberPrivate *memberPrivate =
+    (NPObjectMemberPrivate *)::JS_GetInstancePrivate(cx, obj,
+                                                     &sNPObjectMemberClass,
+                                                     nsnull);
+  NS_ASSERTION(memberPrivate, "no Ambiguous Member Private data!");
+
+  switch (type) {
+  case JSTYPE_VOID:
+  case JSTYPE_STRING:
+  case JSTYPE_NUMBER:
+  case JSTYPE_BOOLEAN:
+  case JSTYPE_OBJECT:
+    *vp = memberPrivate->fieldValue;
+    return JS_TRUE;
+  case JSTYPE_FUNCTION:
+    // Leave this to NPObjectMember_Call.
+    return JS_TRUE;
+  default:
+    NS_ERROR("illegal operation on JSObject prototype object");
+    return JS_FALSE;
+  }
+}
+
+JS_STATIC_DLL_CALLBACK(void)
+NPObjectMember_Finalize(JSContext *cx, JSObject *obj)
+{
+  NPObjectMemberPrivate *memberPrivate;
+
+  memberPrivate = (NPObjectMemberPrivate *)::JS_GetPrivate(cx, obj);
+  if (!memberPrivate)
+    return;
+
+  _releaseobject(memberPrivate->npobj);
+  PR_Free(memberPrivate);
+}
+
+JS_STATIC_DLL_CALLBACK(JSBool)
+NPObjectMember_Call(JSContext *cx, JSObject *obj,
+                    uintN argc, jsval *argv, jsval *rval)
+{
+  JSObject *memobj = JSVAL_TO_OBJECT(argv[-2]);
+  NS_ENSURE_TRUE(memobj, JS_FALSE);
+
+  NPObjectMemberPrivate *memberPrivate =
+    (NPObjectMemberPrivate *)::JS_GetInstancePrivate(cx, memobj,
+                                                     &sNPObjectMemberClass,
+                                                     nsnull);
+  if (!memberPrivate || !memberPrivate->npobj)
+    return JS_FALSE;
+
+  NPVariant npargs_buf[8];
+  NPVariant *npargs = npargs_buf;
+
+  if (argc > (sizeof(npargs_buf) / sizeof(NPVariant))) {
+    // Our stack buffer isn't large enough to hold all arguments,
+    // malloc a buffer.
+    npargs = (NPVariant *)PR_Malloc(argc * sizeof(NPVariant));
+
+    if (!npargs) {
+      ThrowJSException(cx, "Out of memory!");
+
+      return JS_FALSE;
+    }
+  }
+
+  // Convert arguments
+  PRUint32 i;
+  for (i = 0; i < argc; ++i) {
+    if (!JSValToNPVariant(memberPrivate->npp, cx, argv[i], npargs + i)) {
+      ThrowJSException(cx, "Error converting jsvals to NPVariants!");
+
+      if (npargs != npargs_buf) {
+        PR_Free(npargs);
+      }
+
+      return JS_FALSE;
+    }
+  }
+  
+  NPVariant npv;
+  JSBool ok;
+  ok = memberPrivate->npobj->_class->invoke(memberPrivate->npobj,
+                                            (NPIdentifier)memberPrivate->methodName,
+                                            npargs, argc, &npv);
+  
+  // Release arguments.
+  for (i = 0; i < argc; ++i) {
+    _releasevariantvalue(npargs + i);
+  }
+
+  if (npargs != npargs_buf) {
+    PR_Free(npargs);
+  }
+
+  if (!ok) {
+    ThrowJSException(cx, "Error calling method on NPObject!");
+
+    return JS_FALSE;
+  }
+
+  *rval = NPVariantToJSVal(memberPrivate->npp, cx, &npv);
+
+  // *rval now owns the value, release our reference.
+  _releasevariantvalue(&npv);
+
+  return ReportExceptionIfPending(cx);
+}
+
+JS_STATIC_DLL_CALLBACK(uint32)
+NPObjectMember_Mark(JSContext *cx, JSObject *obj, void *arg)
+{
+  NPObjectMemberPrivate *memberPrivate =
+    (NPObjectMemberPrivate *)::JS_GetInstancePrivate(cx, obj,
+                                                     &sNPObjectMemberClass,
+                                                     nsnull);
+  if (!memberPrivate)
+    return 0;
+
+  if (!JSVAL_IS_PRIMITIVE(memberPrivate->fieldValue)) {
+    ::JS_MarkGCThing(cx, JSVAL_TO_OBJECT(memberPrivate->fieldValue),
+                     "NPObject Member => fieldValue", arg);
+  }
+
+  return 0;
 }

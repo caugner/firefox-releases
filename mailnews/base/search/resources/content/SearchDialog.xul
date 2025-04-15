@@ -1,25 +1,42 @@
 <?xml version="1.0"?>
 
 
-<!--
-The contents of this file are subject to the Netscape Public
-License Version 1.1 (the "License"); you may not use this file
-except in compliance with the License. You may obtain a copy of
-the License at http://www.mozilla.org/NPL/
+<!-- ***** BEGIN LICENSE BLOCK *****
+ Version: MPL 1.1/GPL 2.0/LGPL 2.1
 
-Software distributed under the License is distributed on an "AS
-IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-implied. See the License for the specific language governing
-rights and limitations under the License.
+ The contents of this file are subject to the Mozilla Public License Version
+ 1.1 (the "License"); you may not use this file except in compliance with
+ the License. You may obtain a copy of the License at
+ http://www.mozilla.org/MPL/
 
-The Original Code is Mozilla Communicator client code, released
-March 31, 1998.
+ Software distributed under the License is distributed on an "AS IS" basis,
+ WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ for the specific language governing rights and limitations under the
+ License.
 
-The Initial Developer of the Original Code is Netscape
-Communications Corporation. Portions created by Netscape are
- Copyright (C) 1998-1999 Netscape Communications Corporation. All
-Rights Reserved.
--->
+ The Original Code is Mozilla Communicator client code, released
+ March 31, 1998.
+
+ The Initial Developer of the Original Code is
+ Netscape Communications Corporation.
+ Portions created by the Initial Developer are Copyright (C) 1998-1999
+ the Initial Developer. All Rights Reserved.
+
+ Contributor(s):
+
+ Alternatively, the contents of this file may be used under the terms of
+ either of the GNU General Public License Version 2 or later (the "GPL"),
+ or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ in which case the provisions of the GPL or the LGPL are applicable instead
+ of those above. If you wish to allow use of your version of this file only
+ under the terms of either the GPL or the LGPL, and not to allow others to
+ use your version of this file under the terms of the MPL, indicate your
+ decision by deleting the provisions above and replace them with the notice
+ and other provisions required by the GPL or the LGPL. If you do not delete
+ the provisions above, a recipient may use your version of this file under
+ the terms of any one of the MPL, the GPL or the LGPL.
+
+ ***** END LICENSE BLOCK ***** -->
 <?xml-stylesheet href="chrome://messenger/skin/searchDialog.css" type="text/css"?>
 
 <?xul-overlay href="chrome://messenger/content/threadPane.xul"?>
@@ -38,12 +55,12 @@ Rights Reserved.
         onclose="onSearchStop();"
         windowtype="mailnews:search"
         title="&searchDialogTitle.label;"
-        style="width: 52em; height: 36em;"
+        style="width: 52em; height: 34em;"
         persist="screenX screenY width height sizemode">
 
   <stringbundle id="bundle_search" src="chrome://messenger/locale/search.properties"/>
   <stringbundle id="bundle_messenger" src="chrome://messenger/locale/messenger.properties"/>
-  <stringbundle id="bundle_brand" src="chrome://global/locale/brand.properties"/>
+  <stringbundle id="bundle_brand" src="chrome://branding/locale/brand.properties"/>
   <!-- XXX: only mailWidgets.xml requires strres.js (<script> isn't valid in XBL yet - see hyatt)-->
   <script type="application/x-javascript" src="chrome://global/content/strres.js"/>
   <script src="chrome://messenger/content/mailWindow.js"/>
@@ -64,6 +81,7 @@ Rights Reserved.
       <command id="cmd_open" oncommand="goDoCommand('cmd_open')" disabled="true"/>
       <command id="button_delete" oncommand="goDoCommand('button_delete')" disabled="true"/>
       <command id="goto_folder_button" oncommand="goDoCommand('goto_folder_button')" disabled="true"/>
+      <command id="saveas_vf_button" oncommand="goDoCommand('saveas_vf_button')" disabled="false"/>
       <command id="file_message_button"/>
       <command id="cmd_delete"/>
     </commandset>
@@ -85,17 +103,20 @@ Rights Reserved.
          <hbox align="center">
          <label value="&searchHeading.label;" accesskey="&searchHeading.accesskey;"
                 control="searchableFolders"/>
-         <menulist id="searchableFolders" flex="2"/>
+         <menulist id="searchableFolders" flex="2">
+           <menupopup class="searchPopup" oncommand="updateSearchFolderPicker(this.getAttribute('uri'));"/>
+         </menulist>
          <spacer flex="10"/>
-         <button label="&searchButton.label;" id="search-button" oncommand="onSearchButton(event);" default="true" accesskey="&searchButton.accesskey;"/>
+         <button id="search-button" oncommand="onSearchButton(event);" default="true"/>
  
         </hbox>
         <hbox align="center">
+           <checkbox id="checkSearchSubFolders" label="&searchSubfolders.label;" checked="true" accesskey="&searchSubfolders.accesskey;"/>
            <spacer flex="2"/>
            <button label="&resetButton.label;" oncommand="onResetSearch(event);" accesskey="&resetButton.accesskey;"/>
          </hbox>
          <hbox align="center">
-           <checkbox id="checkSearchSubFolders" label="&searchSubfolders.label;" checked="true" accesskey="&searchSubfolders.accesskey;"/>
+           <checkbox id="checkSearchLocalSystem" label="&searchLocalSystem.label;" persist="checked" accesskey="&searchLocalSystem.accesskey;" oncommand="updateSearchLocalSystem();"/>
            <spacer flex="2"/>
            <button label="&helpButton.label;" align="end" oncommand="openHelp('search_messages');" accesskey="&helpButton.accesskey;"/> 
          </hbox>
@@ -190,14 +211,15 @@ Rights Reserved.
 
       <button label="&deleteButton.label;" id="deleteButton" command="button_delete" accesskey="&deleteButton.accesskey;"/>
       <button label="&goToFolderButton.label;" id="goToFolderButton" command="goto_folder_button" accesskey="&goToFolderButton.accesskey;" />
+      <button label="&saveAsVFButton.label;" id="saveAsVFButton" command="saveas_vf_button" accesskey="&saveAsVFButton.accesskey;" />
       <spacer flex="1" />
     </hbox>      
   </vbox>
 
   <statusbar class="chromeclass-status" id="status-bar"> 
     <statusbarpanel class="statusbarpanel-iconic" id="offline-status"/>
-    <statusbarpanel class="statusbarpanel-progress">
-      <progressmeter class="progressmeter-statusbar" id="statusbar-icon" mode="normal" value="0" oncommand="dumpProgress()"/>
+    <statusbarpanel class="statusbarpanel-progress" id="progress-panel" hidden="true">
+      <progressmeter class="progressmeter-statusbar" id="statusbar-icon" mode="normal" value="0"/>
     </statusbarpanel>
     <statusbarpanel id="statusText" crop="right" flex="1"/>
   </statusbar> 

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s):
- *
+ * Contributor(s): Sergei Dolgov
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -47,17 +46,11 @@ static PRTime mLockTime, mUnlockTime;
  
 nsDrawingSurfaceBeOS :: nsDrawingSurfaceBeOS()
 {
-  mView = NULL;
-
+  mView = nsnull;
   mBitmap = nsnull;
   mWidth = 0; 
   mHeight = 0; 
-  
-  mLockWidth = 0; 
-  mLockHeight = 0;
   mLockFlags = 0;
-  mLockX = 0; 
-  mLockY = 0; 
   mLocked = PR_FALSE;
 }
 
@@ -65,8 +58,11 @@ nsDrawingSurfaceBeOS :: ~nsDrawingSurfaceBeOS()
 {
   if(mBitmap)
   {
-    mBitmap->RemoveChild(mView);
-	delete mBitmap;
+    // Deleting mBitmap will also remove and delete any child views
+    mBitmap->Unlock();
+    delete mBitmap;
+    mView = nsnull;
+    mBitmap = nsnull;
   }
 }
 
@@ -92,72 +88,37 @@ NS_IMETHODIMP nsDrawingSurfaceBeOS :: Lock(PRInt32 aX, PRInt32 aY,
                                           void **aBits, PRInt32 *aStride,
                                           PRInt32 *aWidthBytes, PRUint32 aFlags)
 {
-#ifdef CHEAP_PERFORMANCE_MEASUREMENT 
-  mLockTime = PR_Now(); 
-  //  MOZ_TIMER_RESET(mLockTime); 
-  //  MOZ_TIMER_START(mLockTime); 
-#endif 
+  mLockFlags = aFlags;
 
-  if (mLocked)
+  if (mBitmap && !mLocked)
+  {
+
+    if (mLockFlags & NS_LOCK_SURFACE_READ_ONLY)
+      mBitmap->LockBits();
+    *aStride = mBitmap->BytesPerRow();
+    *aBits = (uint8 *)mBitmap->Bits() + aX*4 + *aStride * aY;
+    *aWidthBytes = aWidth*4;
+    mLocked = PR_TRUE; 
+  }
+  else
   {
     NS_ASSERTION(0, "nested lock attempt");
     return NS_ERROR_FAILURE;
   }
-  mLocked = PR_TRUE;
-
-  mLockX = aX; 
-  mLockY = aY; 
-  mLockWidth = aWidth; 
-  mLockHeight = aHeight; 
-  mLockFlags = aFlags;
-
-  // Obtain an ximage from the pixmap.  ( I think this copy the bitmap ) 
-       // FIX ME !!!!  We need to copy the part locked into the mImage 
-  mView->LockLooper(); 
-
-#ifdef CHEAP_PERFORMANCE_MEASUREMENT 
-  //  MOZ_TIMER_STOP(mLockTime); 
-  //  MOZ_TIMER_LOG(("Time taken to lock: ")); 
-  //  MOZ_TIMER_PRINT(mLockTime); 
-  printf("Time taken to lock:   %d\n", PR_Now() - mLockTime);
-#endif
-
   return NS_OK;
 }
 
 NS_IMETHODIMP nsDrawingSurfaceBeOS :: Unlock(void)
 {
-
-#ifdef CHEAP_PERFORMANCE_MEASUREMENT 
-  mUnlockTime = PR_Now(); 
-#endif 
-
-  //  g_print("nsDrawingSurfaceGTK::UnLock() called\n"); 
-  if (!mLocked) 
+  if (mBitmap && mLocked)
   {
-    NS_ASSERTION(0, "attempting to unlock an DS that isn't locked"); 
-    return NS_ERROR_FAILURE;
+    if (mLockFlags & NS_LOCK_SURFACE_READ_ONLY)
+      mBitmap->UnlockBits();
+    mLocked = PR_FALSE; 
   }
-
-  // If the lock was not read only, put the bits back on the pixmap
-        if (!(mLockFlags & NS_LOCK_SURFACE_READ_ONLY))
-        {
-    // FIX ME!!! 
-    // Now draw the image ... 
-        }
-
-  // FIX ME!!! 
-  // Destroy mImage 
-       mView->UnlockLooper();
-
-  mLocked = PR_FALSE; 
- 
- 
-#ifdef CHEAP_PERFORMANCE_MEASUREMENT 
-  printf("Time taken to unlock: %d\n", PR_Now() - mUnlockTime);
-#endif
   return NS_OK;
 }
+
 
 NS_IMETHODIMP nsDrawingSurfaceBeOS :: GetDimensions(PRUint32 *aWidth, PRUint32 *aHeight)
 {
@@ -182,28 +143,24 @@ NS_IMETHODIMP nsDrawingSurfaceBeOS :: IsPixelAddressable(PRBool *aAddressable)
 NS_IMETHODIMP nsDrawingSurfaceBeOS :: GetPixelFormat(nsPixelFormat *aFormat)
 {
   *aFormat = mPixFormat;
-
   return NS_OK;
 }
 
 NS_IMETHODIMP nsDrawingSurfaceBeOS :: Init(BView *aView)
 {
-  if(aView->LockLooper()) 
+  if (aView->LockLooper()) 
   { 
     //remember dimensions 
-    mWidth=nscoord(aView->Bounds().Width()+1); 
-    mHeight=nscoord(aView->Bounds().Height()+1); 
+    BRect r = aView->Bounds();
+    mWidth = nscoord(r.IntegerWidth() + 1);
+    mHeight = nscoord(r.IntegerHeight() + 1);
     
     mView = aView;
-
     aView->UnlockLooper(); 
   } 
  
-  // XXX was i smoking crack when i wrote this comment? 
-  // this is definatly going to be on the screen, as it will be the window of a 
-  // widget or something. 
+  // onscreen View, attached to BWindow, acquired via GetNativeData() call in nsRendering
   mIsOffscreen = PR_FALSE; 
-
   return NS_OK;
 }
 
@@ -217,51 +174,58 @@ NS_IMETHODIMP nsDrawingSurfaceBeOS :: Init(BView *aView, PRUint32 aWidth,
   mHeight=aHeight;
   mFlags = aFlags; 
   
-  // we can draw on this offscreen because it has no parent 
+  //creating offscreen  backbuffer surface
   mIsOffscreen = PR_TRUE; 
-
+  //TODO: Maybe we should reuse BView by resizing it, 
+  //and also reuse BBitmap if new size is = < of current size
   BRect r(0,0, mWidth-1, mHeight-1);
+  //creating auxiliary BView to draw on offscreen BBitmap
   mView = new BView(r, "", 0, 0);
   if (!mView)
     return NS_ERROR_OUT_OF_MEMORY;
 
 //if((aFlags & NS_CREATEDRAWINGSURFACE_FOR_PIXEL_ACCESS) &&
 //  (aWidth > 0) && (aHeight > 0))
-  if(aWidth > 0 && aHeight > 0)
+  if (aWidth > 0 && aHeight > 0)
   {
+    ///creating offscreen BBitmap
     mBitmap = new BBitmap(r, B_RGBA32, true);
     if (!mBitmap)
       return NS_ERROR_OUT_OF_MEMORY;
 
-    if (mBitmap->InitCheck()!=B_OK) {
+    if (mBitmap->InitCheck()!=B_OK)
+    {
       //for some reason, the bitmap isn't valid - delete the
       //bitmap object, then indicate failure
       delete mBitmap;
       mBitmap=NULL;
-      
       return NS_ERROR_FAILURE;
     }
+    
+    //NB! Locking bitmap for lifetime to avoid unneccessary locking at each
+    //drawing primitive call. Locking is quite time-expensive.
+    //To avoid it, we call surface->LockDrawable() instead LockLooper()
+    mBitmap->Lock();
     //Setting ViewColor transparent noticeably decreases AppServer load in DrawBitmp()
     //Applicable here, because Mozilla paints backgrounds explicitly, with images or filling areas.
-	mView->SetViewColor(B_TRANSPARENT_32_BIT);
+    mView->SetViewColor(B_TRANSPARENT_32_BIT);
     mBitmap->AddChild(mView);
   }
+  
   return NS_OK;
 }
 
 NS_IMETHODIMP nsDrawingSurfaceBeOS :: AcquireView(BView **aView) 
 {
   *aView = mView;
-
   return NS_OK;
 }
 
 NS_IMETHODIMP nsDrawingSurfaceBeOS :: AcquireBitmap(BBitmap **aBitmap)
 {
-  if(mBitmap && mBitmap->Lock())
+  if (mBitmap && mView)
   {
     mView->Sync();
-    mBitmap->Unlock();
   }
   *aBitmap = mBitmap;
 
@@ -276,4 +240,25 @@ NS_IMETHODIMP nsDrawingSurfaceBeOS :: ReleaseView(void)
 NS_IMETHODIMP nsDrawingSurfaceBeOS :: ReleaseBitmap(void)
 {
   return NS_OK;
+}
+
+bool nsDrawingSurfaceBeOS :: LockDrawable()
+{
+  //TODO: try to avoid exta locking also for onscreen BView.
+  //Perhaps it needs synchronization with widget through nsToolkit and lock counting.
+  bool rv = true;
+  if (!mBitmap)
+    rv = mView->LockLooper();
+  return rv;
+}
+
+void nsDrawingSurfaceBeOS :: UnlockDrawable()
+{
+  if (!mView)
+    return;
+    
+  if (mBitmap)
+    mView->Sync();
+  else
+    mView->UnlockLooper();
 }

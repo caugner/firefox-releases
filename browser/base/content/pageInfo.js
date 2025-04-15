@@ -1,43 +1,44 @@
-# -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+# -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 # ***** BEGIN LICENSE BLOCK *****
-# Version: NPL 1.1/GPL 2.0/LGPL 2.1
-# 
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
-# 
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
-# 
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
+#
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
+#
 # The Original Code is mozilla.org code.
-# 
-# The Initial Developer of the Original Code is Netscape
-# Communications Corporation.  Portions created by Netscape are
-# Copyright (C) 1998 Netscape Communications Corporation. All
-# Rights Reserved.
-# 
-# Contributor(s): smorrison@gte.com
+#
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1998-2004
+# the Initial Developer. All Rights Reserved.
+#
+# Contributor(s):
+#   smorrison@gte.com
 #   Terry Hayes <thayes@netscape.com>
 #   Daniel Brooks <db48x@yahoo.com>
 #   Florian QUEZE <f.qu@laposte.net>
-# 
+#   Erik Fabert <jerfa@yahoo.com>
+#
 # Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or 
+# either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
 # in which case the provisions of the GPL or the LGPL are applicable instead
 # of those above. If you wish to allow use of your version of this file only
 # under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the NPL, indicate your
+# use your version of this file under the terms of the MPL, indicate your
 # decision by deleting the provisions above and replace them with the notice
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
-# the terms of any one of the NPL, the GPL or the LGPL.
-# 
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
 # ***** END LICENSE BLOCK *****
-# 
 
 //******** define a js object to implement nsITreeView
 function pageInfoTreeView(columnids, copycol)
@@ -68,30 +69,21 @@ pageInfoTreeView.prototype = {
 
   getCellText: function(row, column)
   {
-    var colidx = 0;
-    // loop through the list of column names to find the index to the column 
-    // we should be worrying about. very much a hack, but what can you do?
-    while(colidx < this.colcount && column != this.columnids[colidx])
-      colidx++;
-
     // row can be null, but js arrays are 0-indexed.
     // colidx cannot be null, but can be larger than the number
     // of columns in the array (when column is a string not in 
     // this.columnids.) In this case it's the fault of
     // whoever typoed while calling this function.
-    return this.data[row][colidx] || "";
+    return this.data[row][column.index] || "";
+  },
+
+  setCellValue: function(row, column, value) 
+  {
   },
 
   setCellText: function(row, column, value) 
   {
-    var colidx = 0;
-    // loop through the list of column names to find the index 
-    // to the column the should be worrying about. very much a hack, but
-    // what can you do? 
-    // XXX: I think there's a better way to do this now...
-    while(colidx < this.colcount && column != this.columnids[colidx])
-      colidx++;
-    this.data[row][colidx] = value;
+    this.data[row][column.index] = value;
   },
 
   addRow: function(row)
@@ -138,15 +130,14 @@ pageInfoTreeView.prototype = {
     }
   },
 
-  getRowProperties: function(row, column, prop) { },
-  getCellProperties: function(row, prop) { },
-  getColumnProperties: function(column, elem, prop) { },
+  getRowProperties: function(row, prop) { },
+  getCellProperties: function(row, column, prop) { },
+  getColumnProperties: function(column, prop) { },
   isContainer: function(index) { return false; },
   isContainerOpen: function(index) { return false; },
   isSeparator: function(index) { return false; },
   isSorted: function() { },
-  canDropOn: function(index) { return false; },
-  canDropBeforeAfter: function(index, before) { return false; },
+  canDrop: function(index, orientation) { return false; },
   drop: function(row, orientation) { return false; },
   getParentIndex: function(index) { return 0; },
   hasNextSibling: function(index, after) { return false; },
@@ -155,7 +146,7 @@ pageInfoTreeView.prototype = {
   getProgressMode: function(row, column) { },
   getCellValue: function(row, column) { },
   toggleOpenState: function(index) { },
-  cycleHeader: function(col, elem) { },
+  cycleHeader: function(col) { },
   selectionChanged: function() { },
   cycleCell: function(row, column) { },
   isEditable: function(row, column) { return false; },
@@ -179,9 +170,11 @@ var metaView = new pageInfoTreeView(["meta-name","meta-content"], COPYCOL_META_C
 var formView = new pageInfoTreeView(["form-name","form-method","form-action","form-node"], COPYCOL_FORM_ACTION);
 var fieldView = new pageInfoTreeView(["field-label","field-field","field-type","field-value"], COPYCOL_NONE);
 var linkView = new pageInfoTreeView(["link-name","link-address","link-type","link-accesskey"], COPYCOL_LINK_ADDRESS);
-var imageView = new pageInfoTreeView(["image-address","image-type","image-alt","image-node", "image-bg"], COPYCOL_IMAGE_ADDRESS);
+var imageView = new pageInfoTreeView(["image-address","image-type","image-alt","image-count","image-node","image-bg"], COPYCOL_IMAGE_ADDRESS);
 
-var intervalID = null;
+var imageHash = {};
+
+var kmsPerSec = 1000;
 
 // localized strings (will be filled in when the document is loaded)
 // this isn't all of them, these are just the ones that would otherwise have been loaded inside a loop
@@ -252,9 +245,11 @@ const XHTMLre = RegExp(XHTMLNSre + "|" + XHTML2NSre, "");
 var onLoadRegistry = [ ];
  
 /* Called when PageInfo window is loaded.  Arguments are:
- *  window.arguments[0] - document to use for source (null=Page Info, otherwise Frame Info)
- *  window.arguments[1] - tab name to display first (may be null)
-*/
+ *  window.arguments[0] - (optional) an object consisting of
+ *                         - doc: (optional) document to use for source. if not provided, 
+ *                                the calling window's document will be used
+ *                         - initialTab: (optional) id of the inital tab to display
+ */
 function onLoadPageInfo()
 {
   //dump("===============================================================================\n");
@@ -263,6 +258,7 @@ function onLoadPageInfo()
   gStrings.unknown = theBundle.getString("unknown");
   gStrings.notSet = theBundle.getString("notset");
   gStrings.emptyString = theBundle.getString("emptystring");
+  gStrings.noExpiration = theBundle.getString("generalNoExpiration");
   gStrings.linkAnchor = theBundle.getString("linkAnchor");
   gStrings.linkArea = theBundle.getString("linkArea");
   gStrings.linkSubmit = theBundle.getString("linkSubmit");
@@ -280,10 +276,10 @@ function onLoadPageInfo()
   gStrings.mediaInput = theBundle.getString("mediaInput");
 
   var docTitle = "";
-  if ("arguments" in window && window.arguments.length >= 1 && window.arguments[0])
+  if ("arguments" in window && window.arguments.length >= 1 && window.arguments[0] && window.arguments[0].doc)
   {
     theWindow = null;
-    theDocument = window.arguments[0];
+    theDocument = window.arguments[0].doc;
     docTitle = theBundle.getString("frameInfo.title");
   } 
   else 
@@ -298,6 +294,8 @@ function onLoadPageInfo()
   }
 
   document.title = docTitle;
+  
+  document.getElementById("main-window").setAttribute("relatedUrl", theDocument.location.toString());
 
   // do the easy stuff first
   makeGeneralTab();
@@ -312,24 +310,20 @@ function onLoadPageInfo()
   }
 
   /* Select the requested tab, if the name is specified */
-  if ("arguments" in window && window.arguments.length > 1)
+  var tabControl = document.getElementById("tabbox");
+  if ("arguments" in window && window.arguments.length >= 1 && window.arguments[0] && window.arguments[0].initialTab)
   {
-    var tabName = window.arguments[1];
-
-    if (tabName)
+    var tab = document.getElementById(window.arguments[0].initialTab);
+    if (tab)
     {
-      var tabControl = document.getElementById("tabbox");
-      var tab = document.getElementById(tabName);
-
-      if (tabControl && tab)
-      {
-        tabControl.selectedTab = tab;
-      }
+      tabControl.selectedTab = tab;
     }
   }
+  tabControl.selectedTab.focus();
 }
 
 function doHelpButton() {
+  var helpdoc;
   var tabControl = document.getElementById("tabbox");
   switch (tabControl.selectedTab.id) {
     case "generalTab":
@@ -354,7 +348,7 @@ function doHelpButton() {
       helpdoc = "pageinfo_general";
       break;
   }
-  openHelp(helpdoc);  
+  openHelp(helpdoc, 'chrome://browser/locale/help/help.rdf');
 }
  
 function makeGeneralTab()
@@ -362,18 +356,18 @@ function makeGeneralTab()
   var title = (theDocument.title) ? theBundle.getFormattedString("pageTitle", [theDocument.title]) : theBundle.getString("noPageTitle");
   document.getElementById("titletext").value = title;
 
-  var url = theDocument.location;
-  document.getElementById("urltext").value = url;
+  var url = theDocument.location.toString();
+  setItemValue("urltext", url, gStrings.unknown);
 
   var mode = ("compatMode" in theDocument && theDocument.compatMode == "BackCompat") ? theBundle.getString("generalQuirksMode") : theBundle.getString("generalStrictMode");
   document.getElementById("modetext").value = mode;
 
-  var referrer = ("referrer" in theDocument && theDocument.referrer) || theBundle.getString("generalNoReferrer");
-  document.getElementById('refertext').value = referrer;
+  var referrer = ("referrer" in theDocument && theDocument.referrer);
+  setItemValue("refertext", referrer);
 
   // find out the mime type
-  var mimeType = theDocument.contentType || gStrings.unknown;
-  document.getElementById("typetext").value = mimeType;
+  var mimeType = theDocument.contentType;
+  setItemValue("typetext", mimeType, gStrings.unknown);
   
   // get the meta tags
   var metaNodes = theDocument.getElementsByTagName("meta");
@@ -385,8 +379,6 @@ function makeGeneralTab()
   for (var i = 0; i < length; i++)
     metaView.addRow([metaNodes[i].name || metaNodes[i].httpEquiv, metaNodes[i].content]);
 
-  metaView.rowCountChanged(0, length);
-  
   // get the document characterset
   var encoding = theDocument.characterSet;
   document.getElementById("encodingtext").value = encoding;
@@ -396,17 +388,18 @@ function makeGeneralTab()
   document.getElementById("modifiedtext").value = modifiedText;
   
   // get cache info
-  var sourceText = theBundle.getString("generalNotCached");
-  var expirationText = theBundle.getString("generalNoExpiration");
-  var sizeText = gStrings.unknown;
+  var sourceText;
+  var expirationText;
+  var sizeText;
 
   var pageSize = 0; 
   var kbSize = 0;
   var expirationTime = 0;
 
+  var cacheKey = url.replace(/#.*$/, "");
   try
   {
-    var cacheEntryDescriptor = httpCacheSession.openCacheEntry(url, Components.interfaces.nsICache.ACCESS_READ, false);
+    var cacheEntryDescriptor = httpCacheSession.openCacheEntry(cacheKey, Components.interfaces.nsICache.ACCESS_READ, false);
     if (cacheEntryDescriptor)
     { 
       switch(cacheEntryDescriptor.deviceID)
@@ -421,19 +414,13 @@ function makeGeneralTab()
           sourceText = cacheEntryDescriptor.deviceID;
           break;
       }
-
-      pageSize = cacheEntryDescriptor.dataSize;
-      kbSize = pageSize / 1024;
-      sizeText = theBundle.getFormattedString("generalSize", [Math.round(kbSize*100)/100, pageSize]);
-
-      expirationText = formatDate(cacheEntryDescriptor.expirationTime*1000, gStrings.notSet);
     }
   }
   catch(ex)
   {
     try
     {
-      cacheEntryDescriptor = ftpCacheSession.openCacheEntry(url, Components.interfaces.nsICache.ACCESS_READ, false);
+      cacheEntryDescriptor = ftpCacheSession.openCacheEntry(cacheKey, Components.interfaces.nsICache.ACCESS_READ, false);
       if (cacheEntryDescriptor)
       {
         switch(cacheEntryDescriptor.deviceID)
@@ -448,22 +435,25 @@ function makeGeneralTab()
             sourceText = cacheEntryDescriptor.deviceID;
             break;
         }
-
-        pageSize = cacheEntryDescriptor.dataSize;
-        kbSize = pageSize / 1024;
-        sizeText = theBundle.getFormattedString("generalSize", [Math.round(kbSize*100)/100, pageSize]);
-
-        expirationText = formatDate(cacheEntryDescriptor.expirationTime*1000, gStrings.notSet);
       }
     }
     catch(ex2)
     {
-      sourceText = theBundle.getString("generalNotCached");
     }
   }
-  document.getElementById("sourcetext").value = sourceText;
-  document.getElementById("expirestext").value = expirationText;
-  document.getElementById("sizetext").value = sizeText;
+
+  if (cacheEntryDescriptor)
+  {
+    pageSize = cacheEntryDescriptor.dataSize;
+    kbSize = pageSize / 1024;
+    sizeText = theBundle.getFormattedString("generalSize", [formatNumber(Math.round(kbSize*100)/100), formatNumber(pageSize)]);
+
+    expirationText = formatDate(cacheEntryDescriptor.expirationTime*kmsPerSec, gStrings.notSet);
+  }
+
+  setItemValue("sourcetext", sourceText, theBundle.getString("generalNotCached"));
+  setItemValue("expirestext", expirationText, gStrings.noExpiration);
+  setItemValue("sizetext", sizeText, gStrings.unknown);
 }
 
 //******** Generic Build-a-tab
@@ -490,15 +480,16 @@ function makeTabs(aDocument, aWindow)
   imageTree.treeBoxObject.view = imageView;
   
   var iterator = aDocument.createTreeWalker(aDocument, NodeFilter.SHOW_ELEMENT, grabAll, true);
-  setTimeout(doGrab, 1, iterator);
+  setTimeout(doGrab, 16, iterator);
 }
 
 function doGrab(iterator)
 {
-  if (iterator.nextNode())
-  {
-    setTimeout(doGrab, 1, iterator);
-  }
+  for (var i = 0; i < 50; ++i)
+    if (!iterator.nextNode())
+      return;
+
+  setTimeout(doGrab, 16, iterator);
 }
 
 function ensureSelection(view)
@@ -509,55 +500,76 @@ function ensureSelection(view)
     view.selection.select(0);
 }
 
+function addImage(url, type, alt, elem, isBg)
+{
+  if (url == "")
+    return;
+  if (!(url in imageHash))
+    imageHash[url] = {};
+  if (!(type in imageHash[url]))
+    imageHash[url][type] = {};
+  if (!(alt in imageHash[url][type])) {
+    imageHash[url][type][alt] = imageView.data.length;
+    imageView.addRow([url, type, alt, 1, elem, isBg]);
+  } else {
+    var i = imageHash[url][type][alt];
+    imageView.data[i][3]++;
+  }
+}
+
 function grabAll(elem)
 {
-  var linktext;
-
   // check for background images, any node may have one
-  var url = elem.ownerDocument.defaultView.getComputedStyle(elem, "").getPropertyCSSValue("background-image");
+  var ComputedStyle = elem.ownerDocument.defaultView.getComputedStyle(elem, "");
+  var url = ComputedStyle && ComputedStyle.getPropertyCSSValue("background-image");
   if (url && url.primitiveType == CSSPrimitiveValue.CSS_URI)
-    imageView.addRow([url.getStringValue(), gStrings.mediaBGImg, gStrings.notSet, elem, true]);
+    addImage(url.getStringValue(), gStrings.mediaBGImg, gStrings.notSet, elem, true);
 
   // one swi^H^H^Hif-else to rule them all
   if (elem instanceof nsIAnchorElement)
-  {
-    linktext = getValueText(elem);
-    linkView.addRow([linktext, getAbsoluteURL(elem.href, elem), gStrings.linkAnchor, elem.target, elem.accessKey]);
-  }
+    linkView.addRow([getValueText(elem), elem.href, gStrings.linkAnchor, elem.target, elem.accessKey]);
   else if (elem instanceof nsIImageElement)
-  {
-    imageView.addRow([getAbsoluteURL(elem.src, elem), gStrings.mediaImg, (elem.hasAttribute("alt")) ? elem.alt : gStrings.notSet, elem, false]);
-  }
+    addImage(elem.src, gStrings.mediaImg, (elem.hasAttribute("alt")) ? elem.alt : gStrings.notSet, elem, false);
   else if (elem instanceof nsIAreaElement)
-  {
-    linkView.addRow([elem.alt, getAbsoluteURL(elem.href, elem), gStrings.linkArea, elem.target]);
-  }
+    linkView.addRow([elem.alt, elem.href, gStrings.linkArea, elem.target]);
   else if (elem instanceof nsILinkElement)
   {
     if (elem.rel)
     {
       var rel = elem.rel;
       if (/\bicon\b/i.test(rel))
-        imageView.addRow([getAbsoluteURL(elem.href, elem), gStrings.mediaLink, "", elem, false]);
+        addImage(elem.href, gStrings.mediaLink, "", elem, false);
       else if (/\bstylesheet\b/i.test(rel))
-        linkView.addRow([elem.rel, getAbsoluteURL(elem.href, elem), gStrings.linkStylesheet, elem.target]);
+        linkView.addRow([elem.rel, elem.href, gStrings.linkStylesheet, elem.target]);
       else
-        linkView.addRow([elem.rel, getAbsoluteURL(elem.href, elem), gStrings.linkRel, elem.target]);
+        linkView.addRow([elem.rel, elem.href, gStrings.linkRel, elem.target]);
     }
     else
-      linkView.addRow([elem.rev, getAbsoluteURL(elem.href, elem), gStrings.linkRev, elem.target]);
-
+      linkView.addRow([elem.rev, elem.href, gStrings.linkRev, elem.target]);
   }
-  else if (elem instanceof nsIInputElement)
+  else if (elem instanceof nsIInputElement || elem instanceof nsIButtonElement)
   {
-    if (/^image$/i.test(elem.type))
-      imageView.addRow([getAbsoluteURL(elem.src, elem), gStrings.mediaInput, (elem.hasAttribute("alt")) ? elem.alt : gStrings.notSet, elem, false]);
-    else if (/^submit$/i.test(elem.type))
-      linkView.addRow([elem.value || gStrings.linkSubmit, getAbsoluteURL(elem.form.getAttribute("action"), elem), gStrings.linkSubmission, elem.form.getAttribute("target")]); // use getAttribute() due to bug 122128
+    switch (elem.type.toLowerCase())
+    {
+      case "image":
+        addImage(elem.src, gStrings.mediaInput, (elem.hasAttribute("alt")) ? elem.alt : gStrings.notSet, elem, false);
+        // Fall through, <input type="image"> submits, too
+      case "submit":
+        // Form element properties can be hidden by child elements with the same name, so
+        // we need to use a special access method, XPCNativeWrapper, to get their real values
+        if ("form" in elem && elem.form)
+        {
+          var formWrapper = new XPCNativeWrapper(elem.form, "target", "action");
+          linkView.addRow([elem.value || getValueText(elem) || gStrings.linkSubmit, formWrapper.action, gStrings.linkSubmission, formWrapper.target]);
+        }
+        else
+          linkView.addRow([elem.value || getValueText(elem) || gStrings.linkSubmit, '', gStrings.linkSubmission, '']);
+    }
   }
   else if (elem instanceof nsIFormElement)
   {
-    formView.addRow([elem.name, elem.method, getAbsoluteURL(elem.getAttribute("action"), elem), elem]);  // use getAttribute() because of bug 122128
+    formWrapper = new XPCNativeWrapper(elem, "name", "method", "action");
+    formView.addRow([formWrapper.name, formWrapper.method, formWrapper.action, elem]);
   }
   else if (elem instanceof nsIAppletElement)
   {
@@ -566,22 +578,18 @@ function grabAll(elem)
     // content from two hosts (bug 136539) so just drop applets from Page Info when
     // Java is on. For the 1.0.1 branch; get a real fix on the trunk.
     if (!navigator.javaEnabled())
-      imageView.addRow([getAbsoluteURL(elem.code || elem.object, elem), gStrings.mediaApplet, "", elem, false]);
+      addImage(elem.code || elem.object, gStrings.mediaApplet, "", elem, false);
   }
   else if (elem instanceof nsIObjectElement)
-  {
-    imageView.addRow([getAbsoluteURL(elem.data, elem), gStrings.mediaObject, getValueText(elem), elem, false]);
-  }
+    addImage(elem.data, gStrings.mediaObject, getValueText(elem), elem, false);
   else if (elem instanceof nsIEmbedElement)
-  {
-    imageView.addRow([getAbsoluteURL(elem.src, elem), gStrings.mediaEmbed, "", elem, false]);
-  }
+    addImage(elem.src, gStrings.mediaEmbed, "", elem, false);
   else
     if (elem.hasAttributeNS(XLinkNS, "href"))
-    {
-      linktext = getValueText(elem);
-      linkView.addRow([linktext, getAbsoluteURL(elem.href, elem), gStrings.linkX, ""]);
-    }
+      linkView.addRow([getValueText(elem),
+                       ioService.newURI(elem.getAttributeNS(XLinkNS, "href"), null, elem.baseURI).spec,
+                       gStrings.linkX,
+                       ""]);
 
   return NodeFilter.FILTER_ACCEPT;
 }
@@ -599,25 +607,27 @@ function onFormSelect()
     formPreview.treeBoxObject.view = fieldView;
 
     var clickedRow = formView.selection.currentIndex;
-    var form = formView.getCellText(clickedRow, "form-node");
+    // form-node;
+    var form = formView.data[clickedRow][3];
+    const formWrapper = new XPCNativeWrapper(form,
+      "name", "elements", "encoding", "target", "getElementsByTagName()");
 
     var ft = null;
-    if (form.name)
-      ft = theBundle.getFormattedString("formTitle", [form.name]);
+    if (formWrapper.name)
+      ft = theBundle.getFormattedString("formTitle", [formWrapper.name]);
 
+    setItemValue("formenctype", formWrapper.encoding, theBundle.getString("default"));
+    setItemValue("formtarget", formWrapper.target, theBundle.getString("formDefaultTarget"));
     document.getElementById("formname").value = ft || theBundle.getString("formUntitled");
-    document.getElementById("formenctype").value = form.encoding || theBundle.getString("default");
-    document.getElementById("formtarget").value = form.target || theBundle.getString("formDefaultTarget");
 
-    var formfields = form.elements;
+    var formfields = formWrapper.elements;
 
     var length = formfields.length;
-    var i = 0;
 
     var checked = theBundle.getString("formChecked");
     var unchecked = theBundle.getString("formUnchecked");    
 
-    for (i = 0; i < length; i++)
+    for (var i = 0; i < length; i++)
     {
       var elem = formfields[i], val;
 
@@ -629,7 +639,7 @@ function onFormSelect()
       fieldView.addRow(["", elem.name, elem.type, val]);
     }
 
-    var labels = form.getElementsByTagName("label");
+    var labels = formWrapper.getElementsByTagName("label");
     var llength = labels.length;
     var label;
 
@@ -644,12 +654,12 @@ function onFormSelect()
       {
         var labeltext = getValueText(label);
         for (var j = 0; j < length; j++)
-          if (formfields[j] == whatfor)
-            fieldView.setCellText(j, "field-label", labeltext);
+          if (formfields[j] == whatfor) {
+            var col = formPreview.columns["field-label"];
+            fieldView.setCellText(j, col, labeltext);
+          }
       }
     }
-
-    fieldView.rowCountChanged(0, length);
   }
 }
 
@@ -685,11 +695,8 @@ function onBeginLinkDrag(event,urlField,descField)
   if (!("treeBoxObject" in tree))
     tree = tree.parentNode;
 
-  var row = {};
-  var col = {};
-  var elt = {};
-  tree.treeBoxObject.getCellAt(event.clientX, event.clientY, row, col, elt);
-  if (row.value == -1)
+  var row = tree.treeBoxObject.getRowAt(event.clientX, event.clientY);
+  if (row == -1)
     return;
 
   // Getting drag-system needed services
@@ -703,8 +710,10 @@ function onBeginLinkDrag(event,urlField,descField)
   
   // Adding URL flavor
   trans.addDataFlavor("text/x-moz-url");
-  var url = tree.treeBoxObject.view.getCellText(row.value, urlField);
-  var desc = tree.treeBoxObject.view.getCellText(row.value, descField);
+  var col = tree.columns[urlField];
+  var url = tree.view.getCellText(row, col);
+  col = tree.columns[descField];
+  var desc = tree.view.getCellText(row, col);
   var stringURL = Components.classes[STRING_CONTRACTID].createInstance(Components.interfaces.nsISupportsString);
   stringURL.data = url + "\n"+desc;
   trans.setTransferData("text/x-moz-url", stringURL, stringURL.data.length * 2 );
@@ -719,8 +728,9 @@ function getSelectedImage(tree)
   if (!imageView.rowCount) return null;
 
   // Only works if only one item is selected
-  var clickedRow = tree.treeBoxObject.selection.currentIndex;
-  return imageView.getCellText(clickedRow, "image-node");
+  var clickedRow = tree.currentIndex;
+  // image-node
+  return imageView.data[clickedRow][4];
 }
 
 function saveMedia()
@@ -730,7 +740,8 @@ function saveMedia()
   var url = imageView.data[tree.currentIndex][0];
 
   if (url)
-    saveURL(url, null, 'SaveImageTitle', false, false, makeURL(item.baseURI));
+    // XXX Firefox specfic
+    saveURL(url, null, 'SaveImageTitle', false, false, makeURI(item.baseURI));
 }
 
 function onImageSelect()
@@ -738,9 +749,9 @@ function onImageSelect()
   var tree = document.getElementById("imagetree");
   var saveAsButton = document.getElementById("imagesaveasbutton");
 
-  if (tree.treeBoxObject.selection.count == 1)
+  if (tree.view.selection.count == 1)
   {
-    makePreview(tree.treeBoxObject.selection.currentIndex);
+    makePreview(tree.view.selection.currentIndex);
     saveAsButton.setAttribute("disabled", "false");
   }
   else
@@ -749,47 +760,48 @@ function onImageSelect()
 
 function makePreview(row)
 {
-  var item = getSelectedImage(document.getElementById("imagetree"));
-  var url = imageView.getCellText(row, "image-address");
-  var isBG = imageView.getCellText(row, "image-bg");
+  var imageTree = document.getElementById("imagetree");
+  var item = getSelectedImage(imageTree);
+  var col = imageTree.columns["image-address"];
+  var url = imageView.getCellText(row, col);
+  // image-bg
+  var isBG = imageView.data[row][5];
 
-  document.getElementById("imageurltext").value = url;
-  document.getElementById("imagetitletext").value = item.title || gStrings.notSet;
+  setItemValue("imageurltext", url);
 
-  var altText = null;
-  if (item.hasAttribute("alt") && ("alt" in item))
-    altText = item.alt;
-  else if (!isBG)
-    altText = getValueText(item);
-  if (altText == null)
-    altText = gStrings.notSet;
-  var textbox=document.getElementById("imagealttext");
-  
-  // IMO all text that is not really the value text should go in italics
-  // What if somebody has <img alt="Not specified">? =)
-  // We can't use textbox.style because of bug 7639
-  if (!altText) {
-      textbox.value = gStrings.emptyString;
-      textbox.setAttribute("style","font-style:italic");
-  } else {
-      textbox.value = altText;
-      textbox.setAttribute("style","font-style:inherit");
-  }
-  document.getElementById("imagelongdesctext").value = ("longDesc" in item && item.longDesc) || gStrings.notSet;
+  if (item.hasAttribute("title"))
+    setItemValue("imagetitletext", item.title, gStrings.emptyString);
+  else
+    setItemValue("imagetitletext", null);
+
+  if (item.hasAttribute("longDesc"))
+    setItemValue("imagelongdesctext", item.longDesc, gStrings.emptyString);
+  else
+    setItemValue("imagelongdesctext", null);
+
+  if (item.hasAttribute("alt"))
+    setItemValue("imagealttext", item.alt, gStrings.emptyString);
+  else if (item instanceof nsIImageElement || isBG)
+    setItemValue("imagealttext", null);
+  else
+    setItemValue("imagealttext", getValueText(item));
 
   // get cache info
   var sourceText = theBundle.getString("generalNotCached");
-  var expirationText = gStrings.unknown;
-  var sizeText = gStrings.unknown;
+  var expirationText;
+  var sizeText;
 
   var pageSize = 0; 
   var kbSize = 0;
   var expirationTime = 0;
   var expirationDate = null;
 
+  document.getElementById("imagesourcetext").removeAttribute("disabled");
+
+  var cacheKey = url.replace(/#.*$/, "");
   try
   {
-    var cacheEntryDescriptor = httpCacheSession.openCacheEntry(url, Components.interfaces.nsICache.ACCESS_READ, false);   // open for READ, in non-blocking mode
+    var cacheEntryDescriptor = httpCacheSession.openCacheEntry(cacheKey, Components.interfaces.nsICache.ACCESS_READ, false);   // open for READ, in non-blocking mode
     if (cacheEntryDescriptor)
     {
       switch(cacheEntryDescriptor.deviceID)
@@ -810,7 +822,7 @@ function makePreview(row)
   {
     try
     {
-      cacheEntryDescriptor = ftpCacheSession.openCacheEntry(url, Components.interfaces.nsICache.ACCESS_READ, false);   // open for READ, in non-blocking mode
+      cacheEntryDescriptor = ftpCacheSession.openCacheEntry(cacheKey, Components.interfaces.nsICache.ACCESS_READ, false);   // open for READ, in non-blocking mode
       if (cacheEntryDescriptor)
       {
         switch(cacheEntryDescriptor.deviceID)
@@ -829,7 +841,6 @@ function makePreview(row)
     }
     catch(ex2)
     {
-      sourceText = theBundle.getString("generalNotCached");
     }
   }
 
@@ -838,39 +849,43 @@ function makePreview(row)
   {
     pageSize = cacheEntryDescriptor.dataSize;
     kbSize = pageSize / 1024;
-    sizeText = theBundle.getFormattedString("generalSize", [Math.round(kbSize*100)/100, pageSize]);
+    sizeText = theBundle.getFormattedString("generalSize", [formatNumber(Math.round(kbSize*100)/100), formatNumber(pageSize)]);
 
-    expirationText = formatDate(cacheEntryDescriptor.expirationTime*1000, gStrings.notSet);
+    expirationText = formatDate(cacheEntryDescriptor.expirationTime*kmsPerSec, null);
   }
 
-  var mimeType = ("type" in item && item.type) ||
-                 ("codeType" in item && item.codeType) ||
-                 ("contentType" in item && item.contentType) ||
-                 getContentTypeFromImgRequest(item) ||
-                 getContentTypeFromHeaders(cacheEntryDescriptor) ||
-                 gStrings.unknown;
+  setItemValue("imageexpirestext", expirationText, gStrings.noExpiration);
+  setItemValue("imagesizetext", sizeText, gStrings.unknown);
+  setItemValue("imagesourcetext", sourceText, theBundle.getString("generalNotCached"));
 
-  document.getElementById("imagetypetext").value = mimeType;
-  document.getElementById("imagesourcetext").value = sourceText;
-  document.getElementById("imageexpirestext").value = expirationText;
-  document.getElementById("imagesizetext").value = sizeText;
+  var mimeType;
+  if (item instanceof nsIObjectElement || item instanceof nsIEmbedElement || item instanceof nsILinkElement)
+    mimeType = item.type;
+  if (!mimeType)
+    mimeType = getContentTypeFromImgRequest(item) ||
+               getContentTypeFromHeaders(cacheEntryDescriptor);
+
+  setItemValue("imagetypetext", mimeType, gStrings.unknown);
 
   var imageContainer = document.getElementById("theimagecontainer");
   var oldImage = document.getElementById("thepreviewimage");
 
-  var regex = new RegExp("^(https?|ftp|file|gopher)://");
-  var absoluteURL = getAbsoluteURL(url, item);
-  var isProtocolAllowed = regex.test(absoluteURL); 
+  const regex = /^(https?|ftp|file|gopher|about|chrome|resource):/;
+  var isProtocolAllowed = regex.test(url);
+  if (/^data:/.test(url) && /^image\//.test(mimeType))
+    isProtocolAllowed = true;
+
   var newImage = new Image();
   newImage.setAttribute("id", "thepreviewimage");
   var physWidth = 0, physHeight = 0;
+  var width = 0, height = 0;
 
-  if ((item instanceof nsILinkElement || item instanceof nsIInputElement || 
-       item instanceof nsIImageElement || isBG) && isProtocolAllowed)
+  if ((item instanceof nsILinkElement || item instanceof nsIInputElement || item instanceof nsIImageElement || 
+      (item instanceof nsIObjectElement && /^image\//.test(mimeType)) || isBG) && isProtocolAllowed)
   {
-    newImage.src = absoluteURL;
-    physWidth = newImage.width;
-    physHeight = newImage.height;
+    newImage.setAttribute("src", url);
+    physWidth = newImage.width || 0;
+    physHeight = newImage.height || 0;
 
     // "width" and "height" attributes must be set to newImage,
     // even if there is no "width" or "height attribute in item;
@@ -887,29 +902,41 @@ function makePreview(row)
       newImage.width = newImage.naturalWidth;
       newImage.height = newImage.naturalHeight;
     }
+
+    width = newImage.width;
+    height = newImage.height;
+
+    document.getElementById("theimagecontainer").collapsed = false
+    document.getElementById("brokenimagecontainer").collapsed = true;
   } 
   else 
   {
     // fallback image for protocols not allowed (e.g., data: or javascript:) 
-    // or elements not [yet] handled (e.g., object, embed). XXX blank??
-    newImage.src = "resource://gre/res/loading-image.gif";
-    newImage.width = 40;
-    newImage.height = 40;
+    // or elements not [yet] handled (e.g., object, embed).
+    document.getElementById("brokenimagecontainer").collapsed = false;
+    document.getElementById("theimagecontainer").collapsed = true;
   }
 
-  var width = ("width" in item && item.width) || ("width" in newImage && newImage.width) || "0";
-  var height = ("height" in item && item.height) || ("height" in newImage && newImage.height) || "0";
-
-  document.getElementById("imageSize").value = theBundle.getFormattedString("mediaSize", [width, height]);
-
-  if (width != physWidth || height != physHeight)
+  var imageSize = document.getElementById("imageSize");
+  if (url)
   {
-    document.getElementById("physSize").removeAttribute("hidden");
-    document.getElementById("physSize").value = theBundle.getFormattedString("mediaPhysSize", [physWidth, physHeight]);
+    imageSize.value = theBundle.getFormattedString("mediaSize", [formatNumber(width), formatNumber(height)]);
+    imageSize.removeAttribute("disabled");
   }
   else
-    document.getElementById("physSize").setAttribute("hidden", "true");
+  {
+    imageSize.value = gStrings.notSet;
+    imageSize.setAttribute("disabled", "true");
+  }
 
+  var physRow = document.getElementById("physRow");
+  if (width != physWidth || height != physHeight)
+  {
+    physRow.collapsed = false;
+    document.getElementById("physSize").value = theBundle.getFormattedString("mediaSize", [formatNumber(physWidth), formatNumber(physHeight)]);
+  }
+  else
+    physRow.collapsed = true;
 
   imageContainer.removeChild(oldImage);
   imageContainer.appendChild(newImage);
@@ -917,14 +944,11 @@ function makePreview(row)
 
 function getContentTypeFromHeaders(cacheEntryDescriptor)
 {
-  var headers, match;
+  if (!cacheEntryDescriptor)
+    return null;
 
-  if (cacheEntryDescriptor)
-  {  
-    headers = cacheEntryDescriptor.getMetaDataElement("response-head");
-    match = /^Content-Type:\s*(.*?)\s*(?:\;|$)/mi.exec(headers);
-    return match[1];
-  }
+  return (/^Content-Type:\s*(.*?)\s*(?:\;|$)/mi
+          .exec(cacheEntryDescriptor.getMetaDataElement("response-head")))[1];
 }
 
 function getContentTypeFromImgRequest(item)
@@ -1007,83 +1031,66 @@ function stripWS(text)
   return text.replace(endRE, "");
 }
 
+function setItemValue(id, value, other)
+{
+  var item = document.getElementById(id);
+  item.value = value || other || gStrings.notSet;
+  if (value)
+    item.removeAttribute("disabled");
+  else
+    item.setAttribute("disabled", "true");
+}
+
+function formatNumber(number)
+{
+  return (+number).toLocaleString();  // coerce number to a numeric value before calling toLocaleString()
+}
+
 function formatDate(datestr, unknown)
 {
   var date = new Date(datestr);
   return (date.valueOf()) ? dateService.FormatDateTime("", dateService.dateFormatLong, dateService.timeFormatSeconds, date.getFullYear(), date.getMonth()+1, date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds()) : unknown;
 }
 
-/*
- * Takes care of XMLBase and <base>
- * url is the possibly relative url.
- * node is the node where the url was given (needed for XMLBase)
- *
- * This function is called in many places as a workaround for bug 72524
- * Once bug 72522 is fixed this code should use the Node.baseURI attribute
- *
- * for node==null or url=="", empty string is returned
- *
- * This is basically just copied from http://lxr.mozilla.org/seamonkey/source/xpfe/browser/resources/content/metadata.js,
- * though I've modified it so that it doesn't assign to .spec
- */
-
-function getAbsoluteURL(url, node)
-{
-  if (!url || !node)
-    return "";
-  var urlArr = new Array(url);
-
-  var doc = node.ownerDocument;
-  if (node.nodeType == Node.ATTRIBUTE_NODE)
-    node = node.ownerElement;
-
-  while (node && node.nodeType == Node.ELEMENT_NODE) 
-  {
-    var att = node.getAttributeNS(XMLNS, "base");
-    if (att != "")
-      urlArr.unshift(att);
-
-    node = node.parentNode;
-  }
-
-  // Look for a <base>.
-  var baseTags = doc.getElementsByTagNameNS(XHTMLNS, "base");
-
-  if (baseTags && baseTags.length) 
-  {
-    urlArr.unshift(baseTags[baseTags.length - 1].getAttribute("href"));
-  }
-
-  // resolve everything from bottom up, starting with document location
-  var ioService = Components.classes["@mozilla.org/network/io-service;1"].getService(Components.interfaces.nsIIOService);
-  var URL = ioService.newURI(doc.location.href, null, null);
-
-  for (var i=0; i<urlArr.length; i++) 
-  {
-    try
-    {
-      URL = ioService.newURI(urlArr[i], URL.originCharset, URL);
-    }
-    catch (ex)
-    {
-      ; // do nothing
-    }
-  }
-
-  return URL.spec;
-}
-
-function doCopy(event)
+function doCopy()
 {
   if (!gClipboardHelper) 
     return;
 
-  var elem = event.originalTarget;
-  if (elem && "treeBoxObject" in elem)
-    elem.treeBoxObject.view.performActionOnRow("copy", elem.currentIndex);
+  var elem = document.commandDispatcher.focusedElement;
 
-  var text = elem.getAttribute("copybuffer");
-  if (text) 
-    gClipboardHelper.copyString(text);
+  if (elem && "treeBoxObject" in elem)
+  {
+    var view = elem.treeBoxObject.view;
+    var selection = view.selection;
+    var text = [], tmp = '';
+    var min = {}, max = {};
+
+    var count = selection.getRangeCount();
+
+    for (var i = 0; i < count; i++)
+    {
+      selection.getRangeAt(i, min, max);
+
+      for (var row = min.value; row <= max.value; row++)
+      {
+        view.performActionOnRow("copy", row);
+
+        tmp = elem.getAttribute("copybuffer");
+        if (tmp)
+          text.push(tmp);
+        elem.removeAttribute("copybuffer");
+      }
+    }
+    gClipboardHelper.copyString(text.join("\n"));
+  }
+}
+
+function doSelectAll()
+{
+  var elem = document.commandDispatcher.focusedElement;
+
+  if (elem && "treeBoxObject" in elem)
+    elem.treeBoxObject.view.selection.selectAll();
 }
 

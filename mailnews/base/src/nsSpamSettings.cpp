@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,27 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001-2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Seth Spitzer <sspitzer@netscape.com>
- *  Dan Mosedale <dmose@netscape.com>
+ *   Seth Spitzer <sspitzer@netscape.com>
+ *   Dan Mosedale <dmose@netscape.com>
+ *   David Bienvenu <bienvenu@mozilla.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -57,12 +58,17 @@ nsSpamSettings::nsSpamSettings()
 {
   mLevel = 0;
   mMoveOnSpam = PR_FALSE;
+  mMarkAsReadOnSpam = PR_FALSE;
   mMoveTargetMode = nsISpamSettings::MOVE_TARGET_MODE_ACCOUNT;
   mPurge = PR_FALSE;
   mPurgeInterval = 14; // 14 days
+
+  mServerFilterTrustFlags = 0;
+
   mUseWhiteList = PR_FALSE;
   mLoggingEnabled = PR_FALSE;
   mManualMark = PR_FALSE;
+  mUseServerFilter = PR_FALSE;
   mManualMarkMode = nsISpamSettings::MANUAL_MARK_MODE_MOVE;
 }
 
@@ -119,8 +125,10 @@ NS_IMETHODIMP nsSpamSettings::SetManualMarkMode(PRInt32 aManualMarkMode)
 
 NS_IMPL_GETSET(nsSpamSettings, LoggingEnabled, PRBool, mLoggingEnabled)
 NS_IMPL_GETSET(nsSpamSettings, MoveOnSpam, PRBool, mMoveOnSpam)
+NS_IMPL_GETSET(nsSpamSettings, MarkAsReadOnSpam, PRBool, mMarkAsReadOnSpam)
 NS_IMPL_GETSET(nsSpamSettings, Purge, PRBool, mPurge)
 NS_IMPL_GETSET(nsSpamSettings, UseWhiteList, PRBool, mUseWhiteList)
+NS_IMPL_GETSET(nsSpamSettings, UseServerFilter, PRBool, mUseServerFilter)
 NS_IMPL_GETSET(nsSpamSettings, ManualMark, PRBool, mManualMark)
 
 NS_IMETHODIMP nsSpamSettings::GetWhiteListAbURI(char * *aWhiteListAbURI)
@@ -345,9 +353,11 @@ NS_IMETHODIMP nsSpamSettings::Clone(nsISpamSettings *aSpamSettings)
   NS_ENSURE_SUCCESS(rv,rv);
 
   (void)aSpamSettings->GetMoveOnSpam(&mMoveOnSpam);
+  (void)aSpamSettings->GetMarkAsReadOnSpam(&mMarkAsReadOnSpam);
   (void)aSpamSettings->GetManualMark(&mManualMark); 
   (void)aSpamSettings->GetManualMarkMode(&mManualMarkMode); 
   (void)aSpamSettings->GetPurge(&mPurge); 
+  (void)aSpamSettings->GetUseServerFilter(&mUseServerFilter);
 
   rv = aSpamSettings->GetPurgeInterval(&mPurgeInterval); 
   NS_ENSURE_SUCCESS(rv,rv);
@@ -373,10 +383,11 @@ NS_IMETHODIMP nsSpamSettings::Clone(nsISpamSettings *aSpamSettings)
   NS_ENSURE_SUCCESS(rv,rv);
   mWhiteListAbURI = whiteListAbURI;
   
-  PRBool loggingEnabled;
-  rv = aSpamSettings->GetLoggingEnabled(&loggingEnabled);
-  NS_ENSURE_SUCCESS(rv,rv);
-  mLoggingEnabled = loggingEnabled;
+  rv = aSpamSettings->GetLoggingEnabled(&mLoggingEnabled);
+
+  aSpamSettings->GetServerFilterName(mServerFilterName);
+  aSpamSettings->GetServerFilterTrustFlags(&mServerFilterTrustFlags);
+
   return rv;
 }
 
@@ -438,6 +449,19 @@ NS_IMETHODIMP nsSpamSettings::GetSpamFolderURI(char **aSpamFolderURI)
     return rv;
 }
 
+NS_IMETHODIMP nsSpamSettings::GetServerFilterName(nsACString &aFilterName)
+{
+  aFilterName = mServerFilterName;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsSpamSettings::SetServerFilterName(const nsACString &aFilterName)
+{
+  mServerFilterName = aFilterName;
+  return NS_OK;
+}
+
+NS_IMPL_GETSET(nsSpamSettings, ServerFilterTrustFlags, PRBool, mServerFilterTrustFlags)
 
 #define LOG_ENTRY_START_TAG "<p>\n"
 #define LOG_ENTRY_START_TAG_LEN (strlen(LOG_ENTRY_START_TAG))
@@ -453,10 +477,6 @@ NS_IMETHODIMP nsSpamSettings::LogJunkHit(nsIMsgDBHdr *aMsgHdr, PRBool aMoveMessa
   if (!loggingEnabled)
     return NS_OK;
 
-  nsCOMPtr <nsIOutputStream> logStream;
-  rv = GetLogStream(getter_AddRefs(logStream));
-  NS_ENSURE_SUCCESS(rv,rv);
-  
   PRTime date;
   char dateStr[40];	/* 30 probably not enough */
   
@@ -499,6 +519,22 @@ NS_IMETHODIMP nsSpamSettings::LogJunkHit(nsIMsgDBHdr *aMsgHdr, PRBool aMoveMessa
     buffer += junkFolderURI.get();
     buffer += "\n";
   }
+
+  return LogJunkString(buffer.get());
+}
+
+NS_IMETHODIMP nsSpamSettings::LogJunkString(const char *string)
+{
+  PRBool loggingEnabled;
+  nsresult rv = GetLoggingEnabled(&loggingEnabled);
+  NS_ENSURE_SUCCESS(rv,rv);
+
+  if (!loggingEnabled)
+    return NS_OK;
+
+  nsCOMPtr <nsIOutputStream> logStream;
+  rv = GetLogStream(getter_AddRefs(logStream));
+  NS_ENSURE_SUCCESS(rv,rv);
   
   PRUint32 writeCount;
   
@@ -509,13 +545,13 @@ NS_IMETHODIMP nsSpamSettings::LogJunkHit(nsIMsgDBHdr *aMsgHdr, PRBool aMoveMessa
   // html escape the log for security reasons.
   // we don't want some to send us a message with a subject with
   // html tags, especially <script>
-  char *escapedBuffer = nsEscapeHTML(buffer.get());
+  char *escapedBuffer = nsEscapeHTML(string);
   if (!escapedBuffer)
     return NS_ERROR_OUT_OF_MEMORY;
   
   PRUint32 escapedBufferLen = strlen(escapedBuffer);
   rv = logStream->Write(escapedBuffer, escapedBufferLen, &writeCount);
-  PR_FREEIF(escapedBuffer);
+  PR_Free(escapedBuffer);
   NS_ENSURE_SUCCESS(rv,rv);
   NS_ASSERTION(writeCount == escapedBufferLen, "failed to write out log hit");
   
@@ -524,7 +560,6 @@ NS_IMETHODIMP nsSpamSettings::LogJunkHit(nsIMsgDBHdr *aMsgHdr, PRBool aMoveMessa
   NS_ASSERTION(writeCount == LOG_ENTRY_END_TAG_LEN, "failed to write out end log tag");
   return NS_OK;
 }
-
 
 NS_IMETHODIMP nsSpamSettings::OnStartRunningUrl(nsIURI* aURL)
 {

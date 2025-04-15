@@ -1,21 +1,39 @@
-/*
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
  * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with the
- * License. You may obtain a copy of the License at http://www.mozilla.org/MPL/
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License for
- * the specific language governing rights and limitations under the License.
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is the Python XPCOM language bindings.
  *
- * The Initial Developer of the Original Code is ActiveState Tool Corp.
- * Portions created by ActiveState Tool Corp. are Copyright (C) 2000, 2001
- * ActiveState Tool Corp.  All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * ActiveState Tool Corp.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): Mark Hammond <MarkH@ActiveState.com> (original author)
+ * Contributor(s):
+ *   Mark Hammond <MarkH@ActiveState.com> (original author)
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 // Pyxpt_info.cpp - wrappers for the xpt_info objects.
 //
@@ -134,24 +152,27 @@ PyObject *PyObject_FromXPTConstant( const XPTConstDescriptor *c)
 			v = PyString_FromStringAndSize(&c->value.ch, 1);
 			break;
 		case TD_WCHAR:
-			v = PyUnicode_FromUnicode((PRUnichar *)&c->value.wch, 1);
+			v = PyUnicode_FromPRUnichar((PRUnichar *)&c->value.wch, 1);
 			break;
 	//    TD_VOID              = 13,  
 		case TD_PNSIID:
 			v = Py_nsIID::PyObjectFromIID(*c->value.iid);
 			break;
-	//    TD_PBSTR             = 15,
+	//    TD_DOMSTRING         = 15,
 		case TD_PSTRING:
 			v = PyString_FromString(c->value.str);
 			break;
 		case TD_PWSTRING:
-			v = PyUnicode_FromUnicode((PRUnichar *)c->value.wstr, nsCRT::strlen((PRUnichar *)c->value.wstr));
+			v = PyUnicode_FromPRUnichar((PRUnichar *)c->value.wstr, nsCRT::strlen((PRUnichar *)c->value.wstr));
 			break;
 	//    TD_INTERFACE_TYPE    = 18,
 	//    TD_INTERFACE_IS_TYPE = 19,
 	//    TD_ARRAY             = 20,
 	//    TD_PSTRING_SIZE_IS   = 21,
 	//    TD_PWSTRING_SIZE_IS  = 22
+	//    TD_UTF8STRING        = 23,
+	//    TD_CSTRING           = 24,
+	//    TD_ASTRING           = 25
 		default:
 			v = PyString_FromString("Unknown type code!!");
 			break;

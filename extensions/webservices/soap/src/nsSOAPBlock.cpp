@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,11 +27,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -69,7 +68,6 @@ NS_IMETHODIMP nsSOAPBlock::Init(nsISOAPAttachments * aAttachments,
 /* attribute AString namespaceURI; */
 NS_IMETHODIMP nsSOAPBlock::GetNamespaceURI(nsAString & aNamespaceURI)
 {
-  NS_ENSURE_ARG_POINTER(&aNamespaceURI);
   if (mElement) {
     if (mEncoding) {
       nsAutoString temp;
@@ -87,7 +85,6 @@ NS_IMETHODIMP nsSOAPBlock::GetNamespaceURI(nsAString & aNamespaceURI)
 
 NS_IMETHODIMP nsSOAPBlock::SetNamespaceURI(const nsAString & aNamespaceURI)
 {
-  NS_ENSURE_ARG_POINTER(&aNamespaceURI);
   nsresult rc = SetElement(nsnull);
   if (NS_FAILED(rc))
     return rc;
@@ -98,7 +95,6 @@ NS_IMETHODIMP nsSOAPBlock::SetNamespaceURI(const nsAString & aNamespaceURI)
 /* attribute AString name; */
 NS_IMETHODIMP nsSOAPBlock::GetName(nsAString & aName)
 {
-  NS_ENSURE_ARG_POINTER(&aName);
   if (mElement) {
     return mElement->GetLocalName(aName);
   } else {
@@ -109,7 +105,6 @@ NS_IMETHODIMP nsSOAPBlock::GetName(nsAString & aName)
 
 NS_IMETHODIMP nsSOAPBlock::SetName(const nsAString & aName)
 {
-  NS_ENSURE_ARG_POINTER(&aName);
   nsresult rc = SetElement(nsnull);
   if (NS_FAILED(rc))
     return rc;
@@ -217,9 +212,9 @@ NS_IMETHODIMP
                            &s3))
     return SOAP_EXCEPTION(NS_ERROR_ILLEGAL_VALUE,"SOAP_BLOCK_INIT", "Could not interpret block initialization arguments.");
   
-  nsCOMPtr < nsIVariant > value = dont_AddRef(s1);
-  nsCOMPtr < nsISupports > schemaType = dont_AddRef(s2);
-  nsCOMPtr < nsISupports > encoding = dont_AddRef(s3);
+  nsCOMPtr<nsIVariant> value = dont_AddRef(s1);
+  nsCOMPtr<nsISupports> schemaType = dont_AddRef(s2);
+  nsCOMPtr<nsISupports> encoding = dont_AddRef(s3);
 
   nsresult rc = SetValue(value);
   if (NS_FAILED(rc))
@@ -231,7 +226,7 @@ NS_IMETHODIMP
   if (NS_FAILED(rc))
     return rc;
   if (schemaType) {
-    nsCOMPtr < nsISchemaType > v = do_QueryInterface(schemaType, &rc);
+    nsCOMPtr<nsISchemaType> v = do_QueryInterface(schemaType, &rc);
     if (NS_FAILED(rc))
       return rc;
     rc = SetSchemaType(v);
@@ -239,7 +234,7 @@ NS_IMETHODIMP
       return rc;
   }
   if (encoding) {
-    nsCOMPtr < nsISOAPEncoding > v = do_QueryInterface(encoding, &rc);
+    nsCOMPtr<nsISOAPEncoding> v = do_QueryInterface(encoding, &rc);
     if (NS_FAILED(rc))
       return rc;
     rc = SetEncoding(v);

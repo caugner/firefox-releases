@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,24 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): Neil Cronin (neil@rackle.com)
+ * Contributor(s):
+ *   Neil Cronin (neil@rackle.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -51,7 +52,7 @@
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
 #include "nsCOMPtr.h"
-#include "nsIServiceManagerUtils.h"
+#include "nsServiceManagerUtils.h"
 
 #include <math.h>
 
@@ -76,7 +77,8 @@ public:
   nscoord mDestinationY;
 };
 
-nsScrollPortView::nsScrollPortView()
+nsScrollPortView::nsScrollPortView(nsViewManager* aViewManager)
+  : nsView(aViewManager)
 {
   mOffsetX = mOffsetY = 0;
   mOffsetXpx = mOffsetYpx = 0;
@@ -117,31 +119,12 @@ nsresult nsScrollPortView::QueryInterface(const nsIID& aIID, void** aInstancePtr
     return NS_OK;
   }
 
-  if (aIID.Equals(NS_GET_IID(nsIClipView))) {
-    *aInstancePtr = (void*)(nsIClipView*)this;
-    return NS_OK;
-  }
-
   return nsView::QueryInterface(aIID, aInstancePtr);
 }
 
-nsrefcnt nsScrollPortView::AddRef()
+NS_IMETHODIMP_(nsIView*) nsScrollPortView::View()
 {
-  NS_WARNING("not supported for views");
-  return 1;
-}
-
-nsrefcnt nsScrollPortView::Release()
-{
-  NS_WARNING("not supported for views");
-  return 1;
-}
-
-
-NS_IMETHODIMP nsScrollPortView::GetClipView(const nsIView** aClipView) const
-{
-  *aClipView = this; 
-  return NS_OK;
+  return this;
 }
 
 NS_IMETHODIMP nsScrollPortView::AddScrollPositionListener(nsIScrollPositionListener* aListener)
@@ -183,11 +166,6 @@ NS_IMETHODIMP nsScrollPortView::SetWidget(nsIWidget *aWidget)
   return NS_OK;
 }
 
-NS_IMETHODIMP nsScrollPortView::ComputeScrollOffsets(PRBool aAdjustWidgets)
-{
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsScrollPortView::GetContainerSize(nscoord *aWidth, nscoord *aHeight) const
 {
   if (!aWidth || !aHeight)
@@ -206,16 +184,6 @@ NS_IMETHODIMP nsScrollPortView::GetContainerSize(nscoord *aWidth, nscoord *aHeig
   *aWidth = sz.width;
   *aHeight = sz.height;
   return NS_OK;
-}
-
-NS_IMETHODIMP nsScrollPortView::SetScrollPreference(nsScrollPreference aPref)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsScrollPortView::GetScrollPreference(nsScrollPreference &aScrollPreference) const
-{
-  return nsScrollPreference_kNeverScroll;
 }
 
 static void ComputeVelocities(PRInt32 aCurVelocity, nscoord aCurPos, nscoord aDstPos,
@@ -360,36 +328,29 @@ NS_IMETHODIMP nsScrollPortView::ScrollTo(nscoord aDestinationX, nscoord aDestina
   return NS_OK;
 }
 
-NS_IMETHODIMP nsScrollPortView::SetControlInsets(const nsMargin &aInsets)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsScrollPortView::GetControlInsets(nsMargin &aInsets) const
-{
-  aInsets.left = aInsets.right = aInsets.top = aInsets.bottom = 0;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsScrollPortView::GetScrollbarVisibility(PRBool *aVerticalVisible,
-                                                       PRBool *aHorizontalVisible) const
-{ 
-  NS_WARNING("Attempt to get scrollbars visibility this is not xp!");
-  return NS_OK;
-}
-
 static void AdjustChildWidgets(nsView *aView,
   nsPoint aWidgetToParentViewOrigin, float aScale, PRBool aInvalidate)
 {
   if (aView->HasWidget()) {
-    nsRect bounds = aView->GetBounds();
-    nsPoint widgetOrigin = aWidgetToParentViewOrigin
-      + nsPoint(bounds.x, bounds.y);
     nsIWidget* widget = aView->GetWidget();
-    widget->Move(NSTwipsToIntPixels(widgetOrigin.x, aScale),
-                 NSTwipsToIntPixels(widgetOrigin.y, aScale));
-    if (aInvalidate) {
-      widget->Invalidate(PR_FALSE);
+    nsWindowType type;
+    widget->GetWindowType(type);
+    if (type != eWindowType_popup) {
+      nsRect bounds = aView->GetBounds();
+      nsPoint widgetOrigin = aWidgetToParentViewOrigin
+        + nsPoint(bounds.x, bounds.y);
+      widget->Move(NSTwipsToIntPixels(widgetOrigin.x, aScale),
+                   NSTwipsToIntPixels(widgetOrigin.y, aScale));
+      if (aInvalidate) {
+        // Force the widget and everything in it to repaint. We can't
+        // just use Invalidate because the widget might have child
+        // widgets and they wouldn't get updated. We can't call
+        // UpdateView(aView) because the area to be repainted might be
+        // outside aView's clipped bounds. This isn't the greatest way
+        // to achieve this, perhaps, but it works.
+        widget->Show(PR_FALSE);
+        widget->Show(PR_TRUE);
+      }
     }
   } else {
     // Don't recurse if the view has a widget, because we adjusted the view's
@@ -465,20 +426,30 @@ NS_IMETHODIMP nsScrollPortView::ScrollByLines(PRInt32 aNumLinesX, PRInt32 aNumLi
   return ScrollTo(mOffsetX + dx, mOffsetY + dy, NS_VMREFRESH_SMOOTHSCROLL);
 }
 
-NS_IMETHODIMP nsScrollPortView::ScrollByPages(PRInt32 aNumPagesX, PRInt32 aNumPagesY)
+NS_IMETHODIMP nsScrollPortView::GetPageScrollDistances(nsSize *aDistances)
 {
   nsSize size;
   GetDimensions(size);
+
+  // The page increment is the size of the page, minus the smaller of
+  // 10% of the size or 2 lines.
+  aDistances->width  = size.width  - PR_MIN(size.width  / 10, 2 * mLineHeight);
+  aDistances->height = size.height - PR_MIN(size.height / 10, 2 * mLineHeight);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsScrollPortView::ScrollByPages(PRInt32 aNumPagesX, PRInt32 aNumPagesY)
+{
+  nsSize delta;
+  GetPageScrollDistances(&delta);
     
-  // scroll % of the window
-  nscoord dx = nscoord(float(size.width)*PAGE_SCROLL_PERCENT);
-  nscoord dy = nscoord(float(size.height)*PAGE_SCROLL_PERCENT);
-
   // put in the number of pages.
-  dx *= aNumPagesX;
-  dy *= aNumPagesY;
+  delta.width *= aNumPagesX;
+  delta.height *= aNumPagesY;
 
-  return ScrollTo(mOffsetX + dx, mOffsetY + dy, NS_VMREFRESH_SMOOTHSCROLL);
+  return ScrollTo(mOffsetX + delta.width, mOffsetY + delta.height,
+                  NS_VMREFRESH_SMOOTHSCROLL);
 }
 
 NS_IMETHODIMP nsScrollPortView::ScrollByWhole(PRBool aTop)
@@ -492,7 +463,56 @@ NS_IMETHODIMP nsScrollPortView::ScrollByWhole(PRBool aTop)
     newPos = scrolledSize.height;
   }
 
-  ScrollTo(0, newPos, 0);
+  ScrollTo(mOffsetX, newPos, 0);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsScrollPortView::CanScroll(PRBool aHorizontal,
+                                          PRBool aForward,
+                                          PRBool &aResult)
+{
+  nscoord offset = aHorizontal ? mOffsetX : mOffsetY;
+
+  // Can scroll to Top or to Left?
+  if (!aForward) {
+    aResult = (offset > 0) ? PR_TRUE : PR_FALSE;
+    return NS_OK;
+  }
+
+  nsView* scrolledView = GetScrolledView();
+  if (!scrolledView) {
+    aResult = PR_FALSE;
+    return NS_ERROR_FAILURE;
+  }
+
+  nsSize scrolledSize;
+  scrolledView->GetDimensions(scrolledSize);
+
+  nsSize portSize;
+  GetDimensions(portSize);
+
+  nsCOMPtr<nsIDeviceContext> dev;
+  mViewManager->GetDeviceContext(*getter_AddRefs(dev));
+  float t2p, p2t;
+  t2p = dev->AppUnitsToDevUnits();
+  p2t = dev->DevUnitsToAppUnits();
+
+  nscoord max;
+  if (aHorizontal) {
+    max = scrolledSize.width - portSize.width;
+    // Round by pixel
+    nscoord maxPx = NSTwipsToIntPixels(max, t2p);
+    max = NSIntPixelsToTwips(maxPx, p2t);
+  } else {
+    max = scrolledSize.height - portSize.height;
+    // Round by pixel
+    nscoord maxPx = NSTwipsToIntPixels(max, t2p);
+    max = NSIntPixelsToTwips(maxPx, p2t);
+  }
+
+  // Can scroll to Bottom or to Right?
+  aResult = (offset < max) ? PR_TRUE : PR_FALSE;
 
   return NS_OK;
 }
@@ -508,20 +528,23 @@ PRBool nsScrollPortView::CannotBitBlt(nsView* aScrolledView)
 }
 
 
-void nsScrollPortView::Scroll(nsView *aScrolledView, PRInt32 aDx, PRInt32 aDy, float scale, PRUint32 aUpdateFlags)
+void nsScrollPortView::Scroll(nsView *aScrolledView, nsPoint aTwipsDelta, nsPoint aPixDelta,
+                              float aT2P)
 {
-  if ((aDx != 0) || (aDy != 0))
+  if (aTwipsDelta.x != 0 || aTwipsDelta.y != 0)
   {
-    // Since we keep track of the dirty region as absolute screen coordintes,
-    // we need to offset it by the amount we scrolled.
-    nsCOMPtr<nsIRegion> dirtyRegion;
-    GetDirtyRegion(*getter_AddRefs(dirtyRegion));
-    dirtyRegion->Offset(aDx, aDy);
-
     nsIWidget *scrollWidget = GetWidget();
- 
+    PRBool canBitBlit = scrollWidget && !CannotBitBlt(aScrolledView);
+
+    if (canBitBlit) {
+      // We're going to bit-blit.  Let the viewmanager know so it can
+      // adjust dirty regions appropriately.
+      mViewManager->WillBitBlit(this, aTwipsDelta);
+    }
+    
     if (!scrollWidget)
     {
+      NS_ASSERTION(!canBitBlit, "Someone screwed up");
       nsPoint offsetToWidget;
       GetNearestWidget(&offsetToWidget);
       // We're moving the child widgets because we are scrolling. But
@@ -529,27 +552,27 @@ void nsScrollPortView::Scroll(nsView *aScrolledView, PRInt32 aDx, PRInt32 aDy, f
       // may include area that's not supposed to be scrolled. We need
       // to invalidate to ensure that any such area is properly
       // repainted back to the right rendering.
-      AdjustChildWidgets(aScrolledView, offsetToWidget, scale, PR_TRUE);
+      AdjustChildWidgets(aScrolledView, offsetToWidget, aT2P, PR_TRUE);
       // If we don't have a scroll widget then we must just update.
       // We should call this after fixing up the widget positions to be
       // consistent with the view hierarchy.
       mViewManager->UpdateView(this, 0);
-    } else if (CannotBitBlt(aScrolledView)) {
+    } else if (!canBitBlit) {
       // We can't blit for some reason.
       // Just update the view and adjust widgets
       // Recall that our widget's origin is at our bounds' top-left
       nsRect bounds(GetBounds());
       nsPoint topLeft(bounds.x, bounds.y);
       AdjustChildWidgets(aScrolledView,
-                         GetPosition() - topLeft, scale, PR_FALSE);
+                         GetPosition() - topLeft, aT2P, PR_FALSE);
       // We should call this after fixing up the widget positions to be
       // consistent with the view hierarchy.
       mViewManager->UpdateView(this, 0);
     } else { // if we can blit and have a scrollwidget then scroll.
       // Scroll the contents of the widget by the specfied amount, and scroll
       // the child widgets
-      scrollWidget->Scroll(aDx, aDy, nsnull);
-      mViewManager->UpdateViewAfterScroll(this, aDx, aDy);
+      scrollWidget->Scroll(aPixDelta.x, aPixDelta.y, nsnull);
+      mViewManager->UpdateViewAfterScroll(this);
     }
   }
 }
@@ -557,16 +580,15 @@ void nsScrollPortView::Scroll(nsView *aScrolledView, PRInt32 aDx, PRInt32 aDy, f
 NS_IMETHODIMP nsScrollPortView::Paint(nsIRenderingContext& rc, const nsRect& rect,
                                       PRUint32 aPaintFlags, PRBool &aResult)
 {
-  PRBool clipEmpty;
   rc.PushState();
   nsRect bounds;
   GetDimensions(bounds);
   bounds.x = bounds.y = 0;
-  rc.SetClipRect(bounds, nsClipCombine_kIntersect, clipEmpty);
+  rc.SetClipRect(bounds, nsClipCombine_kIntersect);
 
   nsresult rv = nsView::Paint(rc, rect, aPaintFlags, aResult);
 
-  rc.PopState(clipEmpty);
+  rc.PopState();
     
   return rv;
 }
@@ -574,16 +596,15 @@ NS_IMETHODIMP nsScrollPortView::Paint(nsIRenderingContext& rc, const nsRect& rec
 NS_IMETHODIMP nsScrollPortView::Paint(nsIRenderingContext& aRC, const nsIRegion& aRegion,
                                       PRUint32 aPaintFlags, PRBool &aResult)
 {
-  PRBool clipEmpty;
   aRC.PushState();
   nsRect bounds;
   GetDimensions(bounds);
   bounds.x = bounds.y = 0;
-  aRC.SetClipRect(bounds, nsClipCombine_kIntersect, clipEmpty);
+  aRC.SetClipRect(bounds, nsClipCombine_kIntersect);
 
   nsresult rv = nsView::Paint(aRC, aRegion, aPaintFlags, aResult);
 
-  aRC.PopState(clipEmpty);
+  aRC.PopState();
     
   return rv;
 }
@@ -591,17 +612,13 @@ NS_IMETHODIMP nsScrollPortView::Paint(nsIRenderingContext& aRC, const nsIRegion&
 NS_IMETHODIMP nsScrollPortView::ScrollToImpl(nscoord aX, nscoord aY, PRUint32 aUpdateFlags)
 {
   PRInt32           dxPx = 0, dyPx = 0;
-  
-  // convert to pixels
-  nsIDeviceContext  *dev;
-  float             t2p;
-  float             p2t;
 
-  mViewManager->GetDeviceContext(dev);
-  t2p = dev->AppUnitsToDevUnits(); 
+  // convert to pixels
+  nsCOMPtr<nsIDeviceContext> dev;
+  mViewManager->GetDeviceContext(*getter_AddRefs(dev));
+  float t2p, p2t;
+  t2p = dev->AppUnitsToDevUnits();
   p2t = dev->DevUnitsToAppUnits();
-  
-  NS_RELEASE(dev);
 
   // Update the scrolled view's position
   nsresult rv = ClampScrollValues(aX, aY, this);
@@ -655,11 +672,15 @@ NS_IMETHODIMP nsScrollPortView::ScrollToImpl(nscoord aX, nscoord aY, PRUint32 aU
   mOffsetXpx = aXpx;
   mOffsetYpx = aYpx;
       
+  nsPoint twipsDelta(aX - mOffsetX, aY - mOffsetY);
+
   // store the new position
   mOffsetX = aX;
   mOffsetY = aY;
   
-  Scroll(scrolledView, dxPx, dyPx, t2p, 0);
+  Scroll(scrolledView, twipsDelta, nsPoint(dxPx, dyPx), t2p);
+
+  mViewManager->SynthesizeMouseMove(PR_TRUE);
   
   // notify the listeners.
   if (nsnull != mListeners) {

@@ -1,9 +1,11 @@
-/.cvsignore/1.1/Wed Feb 16 04:26:00 2000//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.7/Wed Sep 20 19:33:16 2000//TFIREFOX_1_0_RELEASE
-/browserOverlay.dtd/1.2/Fri Jan 23 06:37:07 2004//TFIREFOX_1_0_RELEASE
-/chatzilla.dtd/1.12/Sat Jan  3 22:21:35 2004//TFIREFOX_1_0_RELEASE
-/chatzilla.properties/1.32/Wed Mar 10 04:37:06 2004//TFIREFOX_1_0_RELEASE
-/chatzillaOverlay.dtd/1.4/Tue May 20 17:21:52 2003//TFIREFOX_1_0_RELEASE
-/contents.rdf/1.11/Wed Feb  4 14:24:25 2004//TFIREFOX_1_0_RELEASE
-/pref-irc.dtd/1.9/Sat Feb 21 04:52:29 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Wed Feb 16 04:26:00 2000//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.8/Sun Apr 18 22:13:51 2004//TFIREFOX_1_5_RELEASE
+/browserOverlay.dtd/1.2/Fri Jan 23 06:37:07 2004//TFIREFOX_1_5_RELEASE
+/channels.dtd/1.1/Sun Dec 19 22:52:36 2004//TFIREFOX_1_5_RELEASE
+/chatzilla.dtd/1.12/Sat Jan  3 22:21:35 2004//TFIREFOX_1_5_RELEASE
+/chatzilla.properties/1.70/Wed Jul 27 16:14:49 2005//TFIREFOX_1_5_RELEASE
+/chatzillaOverlay.dtd/1.4/Tue May 20 17:21:52 2003//TFIREFOX_1_5_RELEASE
+/config.dtd/1.1/Wed Jun  9 03:33:49 2004//TFIREFOX_1_5_RELEASE
+/contents.rdf/1.11/Wed Feb  4 14:24:25 2004//TFIREFOX_1_5_RELEASE
+/pref-irc.dtd/1.11/Sat Sep 18 13:39:52 2004//TFIREFOX_1_5_RELEASE
 D

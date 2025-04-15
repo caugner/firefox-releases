@@ -1,30 +1,46 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla MathML Project.
  *
- * The Initial Developer of the Original Code is The University Of
- * Queensland.  Portions created by The University Of Queensland are
- * Copyright (C) 1999 The University Of Queensland.  All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * The University Of Queensland.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Roger B. Sidje <rbs@maths.uq.edu.au>
  *   David J. Fiddes <D.J.Fiddes@hw.ac.uk>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 
 #include "nsCOMPtr.h"
 #include "nsCRT.h"  // to get NS_IS_SPACE
 #include "nsFrame.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsUnitConversion.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
@@ -74,11 +90,10 @@ nsMathMLmpaddedFrame::~nsMathMLmpaddedFrame()
 }
 
 NS_IMETHODIMP
-nsMathMLmpaddedFrame::InheritAutomaticData(nsIPresContext* aPresContext,
-                                           nsIFrame*       aParent) 
+nsMathMLmpaddedFrame::InheritAutomaticData(nsIFrame* aParent) 
 {
   // let the base class get the default from our parent
-  nsMathMLContainerFrame::InheritAutomaticData(aPresContext, aParent);
+  nsMathMLContainerFrame::InheritAutomaticData(aParent);
 
   mPresentationData.flags |= NS_MATHML_STRETCH_ALL_CHILDREN_VERTICALLY;
 
@@ -86,7 +101,7 @@ nsMathMLmpaddedFrame::InheritAutomaticData(nsIPresContext* aPresContext,
 }
 
 void
-nsMathMLmpaddedFrame::ProcessAttributes(nsIPresContext* aPresContext)
+nsMathMLmpaddedFrame::ProcessAttributes()
 {
   /*
   parse the attributes
@@ -173,7 +188,7 @@ nsMathMLmpaddedFrame::ParseAttribute(nsString&   aString,
     aSign = NS_MATHML_SIGN_UNSPECIFIED;
 
   // skip any space after the sign
-  if (i < stringLength && NS_IS_SPACE(aString[i]))
+  if (i < stringLength && nsCRT::IsAsciiSpace(aString[i]))
     i++;
 
   // get the number
@@ -214,7 +229,7 @@ nsMathMLmpaddedFrame::ParseAttribute(nsString&   aString,
   }
 
   // skip any space after the number
-  if (i < stringLength && NS_IS_SPACE(aString[i]))
+  if (i < stringLength && nsCRT::IsAsciiSpace(aString[i]))
     i++;
 
   // see if this is a percentage-based value
@@ -223,7 +238,7 @@ nsMathMLmpaddedFrame::ParseAttribute(nsString&   aString,
     gotPercent = PR_TRUE;
 
     // skip any space after the '%' sign
-    if (i < stringLength && NS_IS_SPACE(aString[i]))
+    if (i < stringLength && nsCRT::IsAsciiSpace(aString[i]))
       i++;
   }
 
@@ -248,10 +263,10 @@ nsMathMLmpaddedFrame::ParseAttribute(nsString&   aString,
     }
     */
   }
-  else if (unit.Equals(NS_LITERAL_STRING("width")))  aPseudoUnit = NS_MATHML_PSEUDO_UNIT_WIDTH;
-  else if (unit.Equals(NS_LITERAL_STRING("height"))) aPseudoUnit = NS_MATHML_PSEUDO_UNIT_HEIGHT;
-  else if (unit.Equals(NS_LITERAL_STRING("depth")))  aPseudoUnit = NS_MATHML_PSEUDO_UNIT_DEPTH;
-  else if (unit.Equals(NS_LITERAL_STRING("lspace"))) aPseudoUnit = NS_MATHML_PSEUDO_UNIT_LSPACE;
+  else if (unit.EqualsLiteral("width"))  aPseudoUnit = NS_MATHML_PSEUDO_UNIT_WIDTH;
+  else if (unit.EqualsLiteral("height")) aPseudoUnit = NS_MATHML_PSEUDO_UNIT_HEIGHT;
+  else if (unit.EqualsLiteral("depth"))  aPseudoUnit = NS_MATHML_PSEUDO_UNIT_DEPTH;
+  else if (unit.EqualsLiteral("lspace")) aPseudoUnit = NS_MATHML_PSEUDO_UNIT_LSPACE;
   else if (!gotPercent) { // percentage can only apply to a pseudo-unit
 
     // see if the unit is a named-space
@@ -291,7 +306,7 @@ nsMathMLmpaddedFrame::ParseAttribute(nsString&   aString,
 }
 
 void
-nsMathMLmpaddedFrame::UpdateValue(nsIPresContext*      aPresContext,
+nsMathMLmpaddedFrame::UpdateValue(nsPresContext*      aPresContext,
                                   nsStyleContext*      aStyleContext,
                                   PRInt32              aSign,
                                   PRInt32              aPseudoUnit,
@@ -357,12 +372,12 @@ nsMathMLmpaddedFrame::UpdateValue(nsIPresContext*      aPresContext,
 }
 
 NS_IMETHODIMP
-nsMathMLmpaddedFrame::Reflow(nsIPresContext*          aPresContext,
+nsMathMLmpaddedFrame::Reflow(nsPresContext*          aPresContext,
                              nsHTMLReflowMetrics&     aDesiredSize,
                              const nsHTMLReflowState& aReflowState,
                              nsReflowStatus&          aStatus)
 {
-  ProcessAttributes(aPresContext);
+  ProcessAttributes();
 
   ///////////////
   // Let the base class format our content like an inferred mrow
@@ -455,15 +470,7 @@ nsMathMLmpaddedFrame::Reflow(nsIPresContext*          aPresContext,
   mReference.x = 0;
   mReference.y = aDesiredSize.ascent;
 
-  // If we have tweaked things so that our children now stick outside,
-  // we need to update our NS_FRAME_OUTSIDE_CHILDREN bit
-  if (aDesiredSize.mOverflowArea.x < 0 ||
-      aDesiredSize.mOverflowArea.y < 0 ||
-      aDesiredSize.mOverflowArea.XMost() > aDesiredSize.width ||
-      aDesiredSize.mOverflowArea.YMost() > aDesiredSize.height)
-    mState |= NS_FRAME_OUTSIDE_CHILDREN;
-  else
-    mState &= ~NS_FRAME_OUTSIDE_CHILDREN;
+  FinishAndStoreOverflow(&aDesiredSize);
 
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
   return NS_OK;

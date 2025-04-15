@@ -1,24 +1,41 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is the gopher-directory to http-index code.
  *
- * The Initial Developer of the Original Code is Bradley Baetz.
- * Portions created by Bradley Baetz are Copyright (C) 2000 Bradley Baetz.
- * All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Bradley Baetz.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
- *  Bradley Baetz <bbaetz@student.usyd.edu.au>
- */
+ * Contributor(s):
+ *   Bradley Baetz <bbaetz@student.usyd.edu.au>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* This code is based on the ftp directory translation code */
 
@@ -53,8 +70,8 @@ NS_IMPL_THREADSAFE_ISUPPORTS3(nsGopherDirListingConv,
 
 NS_IMETHODIMP
 nsGopherDirListingConv::Convert(nsIInputStream *aFromStream,
-                                const PRUnichar *aFromType,
-                                const PRUnichar *aToType,
+                                const char *aFromType,
+                                const char *aToType,
                                 nsISupports *aCtxt, nsIInputStream **_retval) {
     
     nsresult rv;
@@ -72,7 +89,7 @@ nsGopherDirListingConv::Convert(nsIInputStream *aFromStream,
     rv = mUri->GetAsciiSpec(spec);
     if (NS_FAILED(rv)) return rv;
 
-    convertedData.Append("300: ");
+    convertedData.AppendLiteral("300: ");
     convertedData.Append(spec);
     convertedData.Append(char(nsCRT::LF));
     // END 300:
@@ -84,7 +101,7 @@ nsGopherDirListingConv::Convert(nsIInputStream *aFromStream,
 
     // Should also possibly use different hosts as a symlink, but the directory
     // viewer stuff doesn't support SYM-FILE or SYM-DIRECTORY
-    convertedData.Append("200: description filename file-type\n");
+    convertedData.AppendLiteral("200: description filename file-type\n");
 
     // build up the body
     while (1) {
@@ -109,8 +126,8 @@ nsGopherDirListingConv::Convert(nsIInputStream *aFromStream,
 // Stream converter service calls this to initialize the actual
 // stream converter (us).
 NS_IMETHODIMP
-nsGopherDirListingConv::AsyncConvertData(const PRUnichar *aFromType,
-                                         const PRUnichar *aToType,
+nsGopherDirListingConv::AsyncConvertData(const char *aFromType,
+                                         const char *aToType,
                                          nsIStreamListener *aListener,
                                          nsISupports *aCtxt) {
     NS_ASSERTION(aListener && aFromType && aToType,
@@ -132,8 +149,7 @@ nsGopherDirListingConv::AsyncConvertData(const PRUnichar *aFromType,
     rv = NS_NewInputStreamChannel(&mPartChannel,
                                   mUri,
                                   nsnull,
-                                  NS_LITERAL_CSTRING(APPLICATION_HTTP_INDEX_FORMAT),
-                                  EmptyCString());
+                                  NS_LITERAL_CSTRING(APPLICATION_HTTP_INDEX_FORMAT));
     if (NS_FAILED(rv)) return rv;
 
     return NS_OK;
@@ -156,6 +172,7 @@ nsGopherDirListingConv::OnDataAvailable(nsIRequest *request,
     if (NS_FAILED(rv)) return rv;
 
     char *buffer = (char*)nsMemory::Alloc(streamLen + 1);
+    if (!buffer) return NS_ERROR_OUT_OF_MEMORY;
     rv = inStr->Read(buffer, streamLen, &read);
     if (NS_FAILED(rv)) return rv;
 
@@ -179,19 +196,18 @@ nsGopherDirListingConv::OnDataAvailable(nsIRequest *request,
 
         //printf("spec is %s\n",spec.get());
         
-        indexFormat.Append("300: ");
+        indexFormat.AppendLiteral("300: ");
         indexFormat.Append(spec);
         indexFormat.Append(char(nsCRT::LF));
         // END 300:
 
         // build up the column heading; 200:
-        indexFormat.Append("200: description filename file-type\n");
+        indexFormat.AppendLiteral("200: description filename file-type\n");
         // END 200:
         
         mSentHeading = PR_TRUE;
     }
-    char *line = buffer;
-    line = DigestBufferLines(line, indexFormat);
+    char *line = DigestBufferLines(buffer, indexFormat);
     // if there's any data left over, buffer it.
     if (line && *line) {
         mBuffer.Append(line);
@@ -286,12 +302,21 @@ nsGopherDirListingConv::DigestBufferLines(char* aBuffer, nsCAutoString& aString)
 
         /* Get the description */
         if (tabPos) {
-            char* descStr = PL_strndup(line,tabPos-line);
-            char* escName = nsEscape(descStr,url_Path);
-            desc = escName;
-            nsMemory::Free(escName);
-            nsMemory::Free(descStr);
-
+            /* if the description is not empty */
+            if (tabPos != line) {
+                char* descStr = PL_strndup(line,tabPos-line);
+                if (!descStr) return nsnull;
+                char* escName = nsEscape(descStr,url_Path);
+                if (!escName) {
+                    PL_strfree(descStr);
+                    return nsnull;
+                }
+                desc = escName;
+                nsCRT::free(escName);
+                PL_strfree(descStr);
+            } else {
+                desc = "%20";
+            }
             line = tabPos+1;
             tabPos = PL_strchr(line,'\t');
         }
@@ -299,10 +324,15 @@ nsGopherDirListingConv::DigestBufferLines(char* aBuffer, nsCAutoString& aString)
         /* Get selector */
         if (tabPos) {
             char* sel = PL_strndup(line,tabPos-line);
+            if (!sel) return nsnull;
             char* escName = nsEscape(sel,url_Path);
+            if (!escName) {
+                PL_strfree(sel);
+                return nsnull;
+            }
             selector = escName;
-            nsMemory::Free(escName);
-            nsMemory::Free(sel);
+            nsCRT::free(escName);
+            PL_strfree(sel);
             line = tabPos+1;
             tabPos = PL_strchr(line,'\t');
         }
@@ -325,7 +355,7 @@ nsGopherDirListingConv::DigestBufferLines(char* aBuffer, nsCAutoString& aString)
         // Now create the url
         nsCAutoString filename;
         if (type != '8' && type != 'T') {
-            filename.Assign("gopher://");
+            filename.AssignLiteral("gopher://");
             filename.Append(host);
             if (port != GOPHER_PORT) {
                 filename.Append(':');
@@ -340,10 +370,10 @@ nsGopherDirListingConv::DigestBufferLines(char* aBuffer, nsCAutoString& aString)
             // (I do get the correct error message though)
             if (type == '8')
                 // telnet
-                filename.Assign("telnet://");
+                filename.AssignLiteral("telnet://");
             else
                 // tn3270
-                filename.Assign("tn3270://");
+                filename.AssignLiteral("tn3270://");
             if (!selector.IsEmpty()) {
                 filename.Append(selector);
                 filename.Append('@');
@@ -363,15 +393,19 @@ nsGopherDirListingConv::DigestBufferLines(char* aBuffer, nsCAutoString& aString)
                same method to display these
             */
             if (type != '3' && type != 'i') {
-                aString.Append("201: ");
+                aString.AppendLiteral("201: ");
                 aString.Append(desc);
                 aString.Append(' ');
                 aString.Append(filename);
                 aString.Append(' ');
                 if (type == '1')
-                    aString.Append("DIRECTORY");
+                    aString.AppendLiteral("DIRECTORY");
                 else
-                    aString.Append("FILE");
+                    aString.AppendLiteral("FILE");
+                aString.Append(char(nsCRT::LF));
+            } else if(type == 'i'){
+                aString.AppendLiteral("101: ");
+                aString.Append(desc);
                 aString.Append(char(nsCRT::LF));
             }
         } else {

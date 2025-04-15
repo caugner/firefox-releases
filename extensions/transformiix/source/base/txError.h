@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is TransforMiiX XSLT Processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Axel Hecht.
@@ -20,7 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Axel Hecht <axel@pike.org>
+ *   Axel Hecht <axel@pike.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -128,5 +128,11 @@
 
 #define NS_ERROR_XPATH_BINARY_EXPECTED                 \
     NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_XSLT, 26)
+
+#define NS_ERROR_XSLT_LOAD_BLOCKED_ERROR               \
+    NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_XSLT, 27)
+
+#define NS_ERROR_XPATH_INVALID_EXPRESSION_EVALUATED    \
+    NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_XSLT, 28)
 
 #endif // __TX_ERROR

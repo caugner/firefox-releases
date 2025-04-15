@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -117,8 +117,8 @@ class nsMsgLocalMailFolder : public nsMsgDBFolder,
                              public nsIJunkMailClassificationListener
 {
 public:
-	nsMsgLocalMailFolder(void);
-	virtual ~nsMsgLocalMailFolder(void);
+  nsMsgLocalMailFolder(void);
+  virtual ~nsMsgLocalMailFolder(void);
   NS_DECL_NSICOPYMESSAGELISTENER
   NS_DECL_NSIMSGLOCALMAILFOLDER
   NS_DECL_NSIJUNKMAILCLASSIFICATIONLISTENER
@@ -128,7 +128,7 @@ public:
 #endif
   // nsIRDFResource methods:
   NS_IMETHOD Init(const char *aURI);
-
+  
   // nsICollection methods:
   NS_IMETHOD Enumerate(nsIEnumerator* *result);
 
@@ -145,18 +145,18 @@ public:
   NS_IMETHOD UpdateFolder(nsIMsgWindow *aWindow);
 
   NS_IMETHOD CreateSubfolder(const PRUnichar *folderName ,nsIMsgWindow *msgWindow);
-  NS_IMETHOD AddSubfolder(const nsAString &folderName, nsIMsgFolder** newFolder);
+  NS_IMETHOD AddSubfolder(const nsAString& folderName, nsIMsgFolder** newFolder);
 
   NS_IMETHOD Compact(nsIUrlListener *aListener, nsIMsgWindow *aMsgWindow);
   NS_IMETHOD CompactAll(nsIUrlListener *aListener, nsIMsgWindow *aMsgWindow, nsISupportsArray *aFolderArray, PRBool aCompactOfflineAlso, nsISupportsArray *aOfflineFolderArray);
   NS_IMETHOD EmptyTrash(nsIMsgWindow *msgWindow, nsIUrlListener *aListener);
-	NS_IMETHOD Delete ();
+  NS_IMETHOD Delete ();
   NS_IMETHOD DeleteSubFolders(nsISupportsArray *folders, nsIMsgWindow *msgWindow);
   NS_IMETHOD CreateStorageIfMissing(nsIUrlListener* urlListener);
-	NS_IMETHOD Rename (const PRUnichar *aNewName, nsIMsgWindow *msgWindow);
-    NS_IMETHOD RenameSubFolders (nsIMsgWindow *msgWindow, nsIMsgFolder *oldFolder);
+  NS_IMETHOD Rename (const PRUnichar *aNewName, nsIMsgWindow *msgWindow);
+  NS_IMETHOD RenameSubFolders (nsIMsgWindow *msgWindow, nsIMsgFolder *oldFolder);
 
-	NS_IMETHOD GetPrettyName(PRUnichar** prettyName);	// Override of the base, for top-level mail folder
+  NS_IMETHOD GetPrettyName(PRUnichar** prettyName);	// Override of the base, for top-level mail folder
   NS_IMETHOD SetPrettyName(const PRUnichar *aName);
 
   NS_IMETHOD GetFolderURL(char **url);
@@ -182,6 +182,7 @@ public:
                           nsIMsgCopyServiceListener* listener);
   NS_IMETHOD CopyFileMessage(nsIFileSpec* fileSpec, nsIMsgDBHdr* msgToReplace,
                              PRBool isDraftOrTemplate, 
+                             PRUint32 newMsgFlags,
                              nsIMsgWindow *msgWindow,
                              nsIMsgCopyServiceListener* listener);
   NS_IMETHOD GetNewMessages(nsIMsgWindow *aWindow, nsIUrlListener *aListener);

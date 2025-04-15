@@ -1,10 +1,10 @@
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -13,7 +13,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -21,16 +21,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -113,31 +113,32 @@ nsresult MRJPlugin::GetService(const char* aContractID, const nsIID& aIID, void*
 
 nsresult NSGetFactory(nsISupports* serviceManager, const nsCID &aClass, const char *aClassName, const char *aContractID, nsIFactory **aFactory)
 {
-	nsresult result = NS_OK;
-
     if (theServiceManager == NULL && theServiceManagerObsolete == NULL) {
         if (NS_FAILED(serviceManager->QueryInterface(NS_GET_IID(nsIServiceManager), (void**)&theServiceManager)))
             if (NS_FAILED(serviceManager->QueryInterface(NS_GET_IID(nsIServiceManagerObsolete), (void**)&theServiceManagerObsolete)))
                 return NS_ERROR_FAILURE;
 
-		// Our global operator new wants to use nsIMalloc to do all of its allocation.
-		// This should be available from the Service Manager.
-#ifdef MRJPLUGIN_4X	
-		if (MRJPlugin::GetService(kMemoryCID, NS_GET_IID(nsIMemory), (void**)&theMemoryAllocator) != NS_OK)
-			return NS_ERROR_FAILURE;
+        // Our global operator new wants to use nsIMalloc to do all of its allocation.
+        // This should be available from the Service Manager.
+#ifdef MRJPLUGIN_4X    
+        if (MRJPlugin::GetService(kMemoryCID, NS_GET_IID(nsIMemory), (void**)&theMemoryAllocator) != NS_OK)
+            return NS_ERROR_FAILURE;
 #else
         if (NS_FAILED(MRJPlugin::GetService("@mozilla.org/xpcom/memory-service;1", NS_GET_IID(nsIMemory), (void **)&theMemoryAllocator)))
-			return NS_ERROR_FAILURE;
+            return NS_ERROR_FAILURE;
 #endif
-	}
+    }
 
-	if (aClass.Equals(kPluginCID)) {
-		MRJPlugin* pluginFactory = new MRJPlugin();
-		pluginFactory->AddRef();
-		*aFactory = pluginFactory;
-		return NS_OK;
-	}
-	return NS_NOINTERFACE;
+    if (!aClass.Equals(kPluginCID))
+        return NS_NOINTERFACE;
+
+    MRJPlugin* pluginFactory = new MRJPlugin();
+    if (!pluginFactory)
+        return NS_ERROR_OUT_OF_MEMORY;
+
+    pluginFactory->AddRef();
+    *aFactory = pluginFactory;
+    return NS_OK;
 }
 
 #pragma export off
@@ -213,31 +214,18 @@ MRJPlugin::MRJPlugin()
 
 MRJPlugin::~MRJPlugin()
 {
-	// make sure the plugin is no longer visible.
-	::thePlugin = NULL;
+    // make sure the plugin is no longer visible.
+    ::thePlugin = NULL;
 
-	// Release the console.
-	if (mConsole != NULL) {
-		mConsole->Release();
-		mConsole = NULL;
-	}
+    // Release the console.
+    NS_IF_RELEASE(mConsole);
 
-	// tear down the MRJ session, if it exists.
-	if (mSession != NULL) {
-		delete mSession;
-		mSession = NULL;
-	}
+    // tear down the MRJ session, if it exists.
+    delete mSession;
 
-	// Release the manager?
-	if (mManager != NULL) {
-		mManager->Release();
-		mManager = NULL;
-	}
-	
-	if (mThreadManager != NULL) {
-		mThreadManager->Release();
-		mThreadManager = NULL;
-	}
+    // Release the manager?
+    NS_IF_RELEASE(mManager);
+    NS_IF_RELEASE(mThreadManager);
 }
 
 /**
@@ -249,11 +237,14 @@ MRJPlugin::~MRJPlugin()
  */
 NS_METHOD MRJPlugin::QueryInterface(const nsIID& aIID, void** instancePtr)
 {
-	nsresult result = queryInterface(aIID, instancePtr);
-	if (result == NS_NOINTERFACE) {
-		result = mConsole->queryInterface(aIID, instancePtr);
-	}
-	return result;
+    nsresult result = queryInterface(aIID, instancePtr);
+    if (result == NS_NOINTERFACE) {
+        if (!mConsole)
+            return NS_ERROR_NOT_AVAILABLE;
+
+        result = mConsole->queryInterface(aIID, instancePtr);
+    }
+    return result;
 }
 
 NS_METHOD MRJPlugin::CreateInstance(nsISupports *aOuter, const nsIID& aIID, void **aResult)
@@ -274,58 +265,61 @@ NS_METHOD MRJPlugin::CreateInstance(nsISupports *aOuter, const nsIID& aIID, void
 
 NS_METHOD MRJPlugin::CreatePluginInstance(nsISupports *aOuter, REFNSIID aIID, const char* aPluginMIMEType, void **aResult)
 {
-	nsresult result = NS_NOINTERFACE;
+    nsresult result = NS_NOINTERFACE;
 
-	if (::strcmp(aPluginMIMEType, "application/x-java-frame") == 0) {
-		// create a special plugin instance that manages an embedded frame.
-		EmbeddedFramePluginInstance* instance = new EmbeddedFramePluginInstance();
-		nsresult result = instance->QueryInterface(aIID, aResult);
-		if (result != NS_OK)
-			delete instance;
-	} else {
-		// assume it's some kind of an applet.
-		result = CreateInstance(aOuter, aIID, aResult);
-	}
-	return result;
+    if (::strcmp(aPluginMIMEType, "application/x-java-frame") == 0) {
+        // create a special plugin instance that manages an embedded frame.
+        EmbeddedFramePluginInstance* instance = new EmbeddedFramePluginInstance();
+        if (!instance)
+            return NS_ERROR_OUT_OF_MEMORY;
+            
+        nsresult result = instance->QueryInterface(aIID, aResult);
+        if (result != NS_OK)
+            delete instance;
+    } else {
+        // assume it's some kind of an applet.
+        result = CreateInstance(aOuter, aIID, aResult);
+    }
+    return result;
 }
 
 NS_METHOD MRJPlugin::Initialize()
 {
-	nsresult result = NS_OK;
+    nsresult result = NS_OK;
 
-	// try to get a plugin manager.
-	if (thePluginManager == NULL) {
-		result = MRJPlugin::GetService(kPluginManagerCID, NS_GET_IID(nsIPluginManager), (void**)&thePluginManager);
-		if (result != NS_OK || thePluginManager == NULL)
-			return NS_ERROR_FAILURE;
-	}
+    // try to get a plugin manager.
+    if (thePluginManager == NULL) {
+        result = MRJPlugin::GetService(kPluginManagerCID, NS_GET_IID(nsIPluginManager), (void**)&thePluginManager);
+        if (result != NS_OK || thePluginManager == NULL)
+            return NS_ERROR_FAILURE;
+    }
 
-	// see if the enhanced plugin manager exists.
-	if (thePluginManager2 == NULL) {
-		if (thePluginManager->QueryInterface(NS_GET_IID(nsIPluginManager2), (void**)&thePluginManager2) != NS_OK)
-			thePluginManager2 = NULL;
-	}
+    // see if the enhanced plugin manager exists.
+    if (thePluginManager2 == NULL) {
+        if (thePluginManager->QueryInterface(NS_GET_IID(nsIPluginManager2), (void**)&thePluginManager2) != NS_OK)
+            thePluginManager2 = NULL;
+    }
 
-	// try to get a JVM manager. we have to be able to run without one.
-	if (MRJPlugin::GetService(kJVMManagerCID, NS_GET_IID(nsIJVMManager), (void**)&mManager) != NS_OK)
-		mManager = NULL;
-	
-	// try to get a Thread manager.
-	if (mManager != NULL) {
-		if (mManager->QueryInterface(NS_GET_IID(nsIThreadManager), (void**)&mThreadManager) != NS_OK)
-			mThreadManager = NULL;
+    // try to get a JVM manager. we have to be able to run without one.
+    if (MRJPlugin::GetService(kJVMManagerCID, NS_GET_IID(nsIJVMManager), (void**)&mManager) != NS_OK)
+        mManager = NULL;
+    
+    // try to get a Thread manager.
+    if (mManager != NULL) {
+        if (mManager->QueryInterface(NS_GET_IID(nsIThreadManager), (void**)&mThreadManager) != NS_OK)
+            mThreadManager = NULL;
 
-		if (mThreadManager != NULL)
-			mThreadManager->GetCurrentThread(&mPluginThreadID);
-	}
+        if (mThreadManager != NULL)
+            mThreadManager->GetCurrentThread(&mPluginThreadID);
+    }
 
-	// create a console, only if there's user interface for it.
-	if (thePluginManager2 != NULL) {
-		mConsole = new MRJConsole(this);
-		mConsole->AddRef();
-	}
+    // create a console, only if there's user interface for it.
+    if (thePluginManager2 != NULL) {
+        mConsole = new MRJConsole(this);
+        NS_IF_ADDREF(mConsole);
+    }
 
-	return result;
+    return result;
 }
 
 NS_METHOD MRJPlugin::Shutdown()
@@ -621,35 +615,28 @@ MRJPluginInstance::MRJPluginInstance(MRJPlugin* plugin)
 
 MRJPluginInstance::~MRJPluginInstance()
 {
-	// Remove this instance from the global list.
-	popInstance();
+    // Remove this instance from the global list.
+    popInstance();
 
 #if 0
-	if (mContext != NULL) {
-		delete mContext;
-		mContext = NULL;
-	}
+    delete mContext;
 
-	if (mPlugin != NULL) {
-		mPlugin->Release();
-		mPlugin = NULL;
-	}
+    if (mPlugin != NULL) {
+        mPlugin->Release();
+    }
 
-	if (mWindowlessPeer != NULL) {
-		mWindowlessPeer->Release();
-		mWindowlessPeer = NULL;
-	}
+    if (mWindowlessPeer != NULL) {
+        mWindowlessPeer->Release();
+    }
 
-	if (mPeer != NULL) {
-		mPeer->Release();
-		mPeer = NULL;
-	}
+    if (mPeer != NULL) {
+        mPeer->Release();
+    }
 
-	if (mApplet != NULL) {
-		JNIEnv* env = mSession->getCurrentEnv();
-		env->DeleteGlobalRef(mApplet);
-		mApplet = NULL;
-	}
+    if (mApplet != NULL) {
+        JNIEnv* env = mSession->getCurrentEnv();
+        env->DeleteGlobalRef(mApplet);
+    }
 #endif
 }
 
@@ -668,29 +655,31 @@ static bool hasTagInfo(nsISupports* supports)
 
 NS_METHOD MRJPluginInstance::Initialize(nsIPluginInstancePeer* peer)
 {
-	// Tell the peer we are retaining a reference.
-	mPeer = peer;
-	mPeer->AddRef();
+    // Tell the peer we are retaining a reference.
+    mPeer = peer;
+    mPeer->AddRef();
 
-	// See if we have a windowless peer.
-	nsresult result = mPeer->QueryInterface(kIWindowlessPluginInstancePeerIID, (void **)&mWindowlessPeer);
-	if (result != NS_OK) mWindowlessPeer = NULL;
+    // See if we have a windowless peer.
+    nsresult result = mPeer->QueryInterface(kIWindowlessPluginInstancePeerIID, (void **)&mWindowlessPeer);
+    if (result != NS_OK) mWindowlessPeer = NULL;
 
-	// create a context for the applet we will run.
-	mContext = new MRJContext(mSession, this);
+    // create a context for the applet we will run.
+    mContext = new MRJContext(mSession, this);
+    if (!mContext)
+        return NS_ERROR_OUT_OF_MEMORY;
 
-	if (hasTagInfo(mPeer)) {
-		mContext->processAppletTag();
-		mContext->createContext();
-	} else {
-		// we'll be using JavaScript to create windows.
-		// fire up a JavaScript URL to get the current document's location.
-		nsIPluginInstance* pluginInstance = this;
-		nsIPluginStreamListener* listener = this;
-		result = thePluginManager->GetURL(pluginInstance, kGetDocumentBaseScriptURL, NULL, listener);
-	}
+    if (hasTagInfo(mPeer)) {
+        mContext->processAppletTag();
+        mContext->createContext();
+    } else {
+        // we'll be using JavaScript to create windows.
+        // fire up a JavaScript URL to get the current document's location.
+        nsIPluginInstance* pluginInstance = this;
+        nsIPluginStreamListener* listener = this;
+        result = thePluginManager->GetURL(pluginInstance, kGetDocumentBaseScriptURL, NULL, listener);
+    }
 
-	return NS_OK;
+    return NS_OK;
 }
 
 NS_METHOD MRJPluginInstance::OnDataAvailable(nsIPluginStreamInfo* pluginInfo, nsIInputStream* input, PRUint32 length)

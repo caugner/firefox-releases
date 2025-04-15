@@ -1,22 +1,40 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  * here's how this dialog works:
@@ -83,12 +101,11 @@ function updateElementWithKeys(account, element, type) {
       element["serverkey"] = account.incomingServer.key;
       break;
     case "smtp":
-      try {element["serverkey"] = smtpService.defaultServer.key;}
-      catch(ex){}
+      if (smtpService.defaultServer)
+        element["serverkey"] = smtpService.defaultServer.key;
       break;
     default:
 //      dump("unknown element type! "+type+"\n");
-      break;
   }
 }
 
@@ -150,7 +167,7 @@ function onLoad() {
   setDefaultButton = document.getElementById("setDefaultButton");
 
   sortAccountList(accounttree);
-  setTimeout(selectServer, 0, selectedServer, selectPage);
+  setTimeout(selectServer, 0, selectedServer ? selectedServer.serverURI : "", selectPage);
 }
 
 function sortAccountList(accounttree)
@@ -159,22 +176,22 @@ function sortAccountList(accounttree)
   xulSortService.sort(accounttree, 'http://home.netscape.com/NC-rdf#FolderTreeName?sort=true', 'ascending');
 }
 
-function selectServer(server, selectPage)
+function selectServer(serverId, selectPage)
 {
   var selectedServer, selectedItem;
 
-  if (server)
-    selectedServer = document.getElementById(server.serverURI);
+  if (serverId)
+    selectedServer = document.getElementById(serverId);
   if (!selectedServer)
     selectedServer = getFirstAccount();
 
-  if (server && selectedServer && selectPage)
+  if (serverId && selectedServer && selectPage)
     selectedItem = findSelectPage(selectedServer, selectPage);
   if (!selectedItem)
     selectedItem = selectedServer;
 
   var index = accounttree.contentView.getIndexOfItem(selectedItem);
-  accounttree.treeBoxObject.selection.select(index);
+  accounttree.view.selection.select(index);
   accounttree.treeBoxObject.ensureRowIsVisible(index);
 
   var lastItem = selectedServer.lastChild.lastChild;
@@ -182,8 +199,6 @@ function selectServer(server, selectPage)
     index = accounttree.contentView.getIndexOfItem(lastItem);
 
   accounttree.treeBoxObject.ensureRowIsVisible(index);
-
-  updateButtons(accounttree, selectedServer.id);
 }
 
 function findSelectPage(selectServer, selectPage)
@@ -261,6 +276,7 @@ function replaceWithDefaultSmtpServer(deletedSmtpServerKey)
     }
   }
 }
+
 function onAccept() {
   // Check if user/host have been modified.
   if (!checkUserServerChanges(true))
@@ -352,7 +368,7 @@ function checkUserServerChanges(showAlert) {
 
   // If something is changed then check if the new user/host already exists.
   if ( (oldUser != newUser) || (oldHost != newHost) ) {
-    var newServer = accountManager.findRealServer(newUser, newHost, newType);
+    var newServer = accountManager.findRealServer(newUser, newHost, newType, 0);
     if (newServer) {
       if (showAlert) {
         var alertText = gPrefsBundle.getString("modifiedAccountExists");
@@ -434,11 +450,10 @@ function ReloadSmtpPanel()
   if (smtpAuthMethod.getAttribute("value") == "1")
     smtpUseUsername.checked = true;
   var elements = smtpTrySSL.getElementsByAttribute("value", defaultServer.trySSL);
-  if (elements.length == 0)
+  if (!elements.item(0))
     elements = smtpTrySSL.getElementsByAttribute("value", "1");
   smtpTrySSL.selectedItem = elements[0];
 }
-
 
 function onDuplicateAccount() {
   //dump("onDuplicateAccount\n");
@@ -533,7 +548,7 @@ function onRemoveAccount(event) {
   try {
     // clear cached data out of the account array
     if (accountArray[result.serverId])
-      accountArray[result.serverId] = null;
+      delete accountArray[result.serverId];
     currentServerId = currentPageId = null;
 
     accountManager.removeAccount(account);
@@ -568,13 +583,10 @@ function saveAccount(accountValues, account)
         dest = server;
       else if (type == "pop3")
         dest = server.QueryInterface(Components.interfaces.nsIPop3IncomingServer);
-
       else if (type == "imap")
         dest = server.QueryInterface(Components.interfaces.nsIImapIncomingServer);
-
       else if (type == "none")
         dest = server.QueryInterface(Components.interfaces.nsINoIncomingServer);
-
       else if (type == "nntp")
         dest = server.QueryInterface(Components.interfaces.nsINntpIncomingServer);
       else if (type == "smtp")
@@ -618,7 +630,7 @@ function saveAccount(accountValues, account)
         }
       }
       else {
-      if (slot in dest && dest[slot] != typeArray[slot]) {
+      if (slot in dest && typeArray[slot] != undefined && dest[slot] != typeArray[slot]) {
         try {
           dest[slot] = typeArray[slot];
           } 
@@ -630,7 +642,6 @@ function saveAccount(accountValues, account)
   }
 }
 }
-
 
 function updateButtons(tree,serverId) {
   var canCreate = true;
@@ -671,7 +682,7 @@ function updateButtons(tree,serverId) {
     canDuplicate = false;
   }
 
-  if (tree.treeBoxObject.selection.count < 1)
+  if (tree.view.selection.count < 1)
     canDuplicate = canSetDefault = canDelete = false;
 
   // check for disabled preferences on the account buttons.  
@@ -715,8 +726,8 @@ function onAccountClick(tree)
   if (!currentSelection)
     return;
 
-  showPage(currentSelection.serverId, currentSelection.pageId);
-  updateButtons(tree, currentSelection.serverId);
+  if (showPage(currentSelection.serverId, currentSelection.pageId))
+    updateButtons(tree, currentSelection.serverId);
 }
 
 // show the page for the given server:
@@ -726,19 +737,21 @@ function showPage(serverId, pageId)
 {
   if (pageId == currentPageId &&
       serverId == currentServerId)
-    return;
+    return false;
 
   // check if user/host names have been changed
   checkUserServerChanges(false);
 
   if (gSmtpHostNameIsIllegal) {
     gSmtpHostNameIsIllegal = false;
-    return;
+    selectServer(currentServerId, currentPageId);
+    return false;
   }
 
   // save the previous page
   savePage(currentServerId);
 
+  var changeServerId = (serverId != currentServerId);
   // loading a complete different page
   if (pageId != currentPageId) {
 
@@ -751,9 +764,10 @@ function showPage(serverId, pageId)
   }
 
   // same page, different server
-  else if (serverId != currentServerId) {
+  else if (changeServerId) {
     restorePage(pageId, serverId);
   }
+  return changeServerId;
 }
 
 // page has loaded
@@ -855,25 +869,18 @@ function getAccountValue(account, accountValues, type, slot, preftype, isGeneric
     try {
     if (type == "identity")
       source = account.defaultIdentity;
-
     else if (type == "server")
       source = account.incomingServer;
-
     else if (type == "pop3")
       source = server.QueryInterface(Components.interfaces.nsIPop3IncomingServer);
-
     else if (type == "imap")
       source = server.QueryInterface(Components.interfaces.nsIImapIncomingServer);
-
     else if (type == "none")
       source = server.QueryInterface(Components.interfaces.nsINoIncomingServer);
-
     else if (type == "nntp")
       source = server.QueryInterface(Components.interfaces.nsINntpIncomingServer);
-
     else if (type == "smtp")
       source = smtpService.defaultServer;
-
     } catch (ex) {
     }
 
@@ -916,6 +923,7 @@ function getAccountValue(account, accountValues, type, slot, preftype, isGeneric
   //dump("Array->Form: accountValues[" + type + "][" + slot + "] = " + value + "\n");
   return value;
 }
+
 //
 // restore the values of the widgets from the given server
 //
@@ -977,9 +985,6 @@ function getFormElementValue(formElement) {
       if (formElement.getAttribute("reversed"))
         return !formElement.checked;
       return formElement.checked;
-    }
-    if (type == "radiogroup" || type=="menulist") {
-      return formElement.selectedItem.value;
     }
     if (type == "textbox" &&
         formElement.getAttribute("datatype") == "nsIFileSpec") {
@@ -1174,7 +1179,7 @@ function getServerIdAndPageIdFromTree(tree)
 {
   var serverId = null;
 
-  if (tree.treeBoxObject.selection.count < 1) return null;
+  if (tree.view.selection.count < 1) return null;
   var node = tree.contentView.getItemAtIndex(tree.currentIndex);
 
   // get the page to load

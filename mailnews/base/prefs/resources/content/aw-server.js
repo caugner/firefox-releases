@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Alec Flett <alecf@netscape.com>
- * Seth Spitzer <sspitzer@netscape.com>
+ *   Alec Flett <alecf@netscape.com>
+ *   Seth Spitzer <sspitzer@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,14 +44,14 @@ var gHideIncoming;
 
 function serverPageValidate() 
 {
-  var smtpserver = document.getElementById("smtphostname");
-  var incomingServerName = document.getElementById("incomingServer");
-  var newsServerName = document.getElementById("newsServer");
+  var smtpServerName = trim(document.getElementById("smtphostname").value);
+  var incomingServerName = trim(document.getElementById("incomingServer").value);
+  var newsServerName = trim(document.getElementById("newsServer").value);
 
   if ((gOnMailServersPage && 
-      ((hostnameIsIllegal(incomingServerName.value) && !gHideIncoming) || 
-       (hostnameIsIllegal(smtpserver.value)))) ||
-      (gOnNewsServerPage && hostnameIsIllegal(newsServerName.value))) {
+      ((hostnameIsIllegal(incomingServerName) && !gHideIncoming) || 
+       (hostnameIsIllegal(smtpServerName)))) ||
+      (gOnNewsServerPage && hostnameIsIllegal(newsServerName))) {
     var alertText = gPrefsBundle.getString("enterValidHostname");
     window.alert(alertText);
     return false;
@@ -68,9 +68,9 @@ function serverPageValidate()
     var userName = parent.getCurrentUserName(pageData);
     var hostName;
     if (gOnMailServersPage)
-      hostName = incomingServerName.value;
+      hostName = incomingServerName;
     else if (gOnNewsServerPage)
-      hostName = newsServerName.value;
+      hostName = newsServerName;
 
     if (parent.AccountExists(userName,hostName,serverType)) {
       alertText = gPrefsBundle.getString("accountExists");
@@ -85,12 +85,12 @@ function serverPageValidate()
     // If we have hidden the incoming server dialogs, we don't want
     // to set the server to an empty value here
     if (!gHideIncoming) {
-      setPageData(pageData, "server", "hostname", incomingServerName.value);
+      setPageData(pageData, "server", "hostname", incomingServerName);
     }
-    setPageData(pageData, "server", "smtphostname", smtpserver.value);
+    setPageData(pageData, "server", "smtphostname", smtpServerName);
   }
   else if (gOnNewsServerPage) {
-    setPageData(pageData, "newsserver", "hostname", newsServerName.value);
+    setPageData(pageData, "newsserver", "hostname", newsServerName);
   }
 
   return true;
@@ -157,14 +157,12 @@ function serverPageInit() {
 
   gPrefsBundle = document.getElementById("bundle_prefs");
   var smtpServer = null;
-  try {
-    // don't use the default smtp server if it has a redirector type
-    if (!parent.smtpService.defaultServer.redirectorType) {
-      smtpServer = parent.smtpService.defaultServer;
-      setPageData(pageData, "identity", "smtpServerKey", smtpServer.key);
-    }
+  // don't use the default smtp server if it has a redirector type
+  if (parent.smtpService.defaultServer &&
+      !parent.smtpService.defaultServer.redirectorType) {
+    smtpServer = parent.smtpService.defaultServer;
+    setPageData(pageData, "identity", "smtpServerKey", smtpServer.key);
   }
-  catch(ex){}
 
   var noSmtpBox = document.getElementById("noSmtp");
   var haveSmtpBox = document.getElementById("haveSmtp");
@@ -208,7 +206,7 @@ function modifyStaticText(smtpMod, smtpBox)
 function setServerType()
 {
   var pageData = parent.GetPageData();
-  var serverType = (document.getElementById("servertype")).selectedItem.value;
+  var serverType = document.getElementById("servertype").value;
   var deferStorageBox = document.getElementById("deferStorageBox");
   deferStorageBox.hidden = serverType == "imap";
   document.getElementById("incomingServerSeparator").hidden = false;

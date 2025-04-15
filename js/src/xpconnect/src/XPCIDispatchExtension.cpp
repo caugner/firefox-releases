@@ -78,7 +78,7 @@ CommonConstructor(JSContext *cx, int name, JSObject *obj, uintN argc,
     }
     PRUint32 len;
     jschar * className = xpc_JSString2String(ccx, argv[0], &len);
-    CComBSTR bstrClassName(len, className);
+    CComBSTR bstrClassName(len, NS_REINTERPRET_CAST(const WCHAR *, className));
     if(!className)
     {
         XPCThrower::Throw(NS_ERROR_XPC_COM_INVALID_CLASS_ID, ccx);
@@ -156,7 +156,7 @@ ActiveXSupports(JSContext *cx, JSObject *obj, uintN argc, jsval *argv,
     }
     PRUint32 len;
     jschar * className = xpc_JSString2String(ccx, argv[0], &len);
-    CComBSTR bstrClassName(len, className);
+    CComBSTR bstrClassName(len, NS_REINTERPRET_CAST(const WCHAR *, className));
     if(!className)
     {
         XPCThrower::Throw(NS_ERROR_XPC_COM_INVALID_CLASS_ID, ccx);
@@ -237,15 +237,13 @@ JSBool XPCIDispatchExtension::DefineProperty(XPCCallContext & ccx,
     // Look up the native interface for IDispatch and then find a tearoff
     XPCNativeInterface* iface = XPCNativeInterface::GetNewOrUsed(ccx,
                                                                  "IDispatch");
+    // The native interface isn't defined so just exit with an error
     if(iface == nsnull)
         return JS_FALSE;
     XPCWrappedNativeTearOff* to = 
-        wrapperToReflectInterfaceNames->FindTearOff(ccx, iface, JS_TRUE);
+        wrapperToReflectInterfaceNames->LocateTearOff(ccx, iface);
+    // This object has no IDispatch interface so bail.
     if(to == nsnull)
-        return JS_FALSE;
-    // get the JS Object for the tea
-    JSObject* jso = to->GetJSObject();
-    if(jso == nsnull)
         return JS_FALSE;
     // Look up the member in the interface
     const XPCDispInterface::Member * member = to->GetIDispatchInfo()->FindMember(idval);
@@ -266,7 +264,7 @@ JSBool XPCIDispatchExtension::DefineProperty(XPCCallContext & ccx,
     // Protect the jsval 
     AUTO_MARK_JSVAL(ccx, funval);
     // clone a function we can use for this object 
-    JSObject* funobj = JS_CloneFunctionObject(ccx, JSVAL_TO_OBJECT(funval), obj);
+    JSObject* funobj = xpc_CloneJSFunction(ccx, JSVAL_TO_OBJECT(funval), obj);
     if(!funobj)
         return JS_FALSE;
     jsid id;

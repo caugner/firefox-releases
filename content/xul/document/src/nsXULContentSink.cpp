@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,18 +24,17 @@
  *   David Hyatt <hyatt@netscape.com>
  *   Brendan Eich <brendan@mozilla.org>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -64,15 +63,13 @@
 #include "nsIDocument.h"
 #include "nsIDocumentLoader.h"
 #include "nsIFormControl.h"
-#include "nsIHTMLStyleSheet.h"
-#include "nsINameSpace.h"
+#include "nsHTMLStyleSheet.h"
 #include "nsINameSpaceManager.h"
 #include "nsINodeInfo.h"
 #include "nsIParser.h"
 #include "nsIPresShell.h"
 #include "nsIScriptContext.h"
 #include "nsIScriptGlobalObject.h"
-#include "nsIScriptGlobalObjectOwner.h"
 #include "nsIServiceManager.h"
 #include "nsITextContent.h"
 #include "nsIURL.h"
@@ -86,6 +83,7 @@
 #include "nsNetUtil.h"
 #include "nsRDFCID.h"
 #include "nsParserUtils.h"
+#include "nsIMIMEHeaderParam.h"
 #include "nsVoidArray.h"
 #include "nsWeakPtr.h"
 #include "nsXPIDLString.h"
@@ -104,10 +102,11 @@
 #include "nsUnicharUtils.h"
 #include "nsXULAtoms.h"
 #include "nsHTMLAtoms.h"
+#include "nsNodeInfoManager.h"
 #include "nsContentUtils.h"
 #include "nsAttrName.h"
-
-static const char kNameSpaceSeparator = ':';
+#include "nsXMLContentSink.h"
+#include "nsLayoutAtoms.h"
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gLog;
@@ -134,7 +133,7 @@ public:
     NS_IMETHOD WillInterrupt(void);
     NS_IMETHOD WillResume(void);
     NS_IMETHOD SetParser(nsIParser* aParser);  
-    NS_IMETHOD FlushPendingNotifications() { return NS_OK; }
+    virtual void FlushPendingNotifications(mozFlushType aType) { }
     NS_IMETHOD SetDocumentCharset(nsACString& aCharset);
     virtual nsISupports *GetTarget();
 
@@ -151,11 +150,6 @@ protected:
     PRInt32 mTextSize;
     PRBool mConstrainSize;
 
-    // namespace management -- XXX combine with ContextStack?
-    nsresult PushNameSpacesFrom(const PRUnichar** aAttributes);
-
-    // RDF-specific parsing
-    nsresult ParseTag(const PRUnichar* aText, nsINodeInfo** aNodeInfo);
     nsresult AddAttributes(const PRUnichar** aAttributes, 
                            const PRUint32 aAttrLen, 
                            nsXULPrototypeElement* aElement);
@@ -180,17 +174,11 @@ protected:
     nsresult AddText(const PRUnichar* aText, PRInt32 aLength);
 
 
-    
-    void PopNameSpaces(void);
-    nsresult GetTopNameSpace(nsCOMPtr<nsINameSpace>* aNameSpace);
-
-    nsAutoVoidArray mNameSpaceStack;
-
-    nsCOMPtr<nsINodeInfoManager> mNodeInfoManager;
+    nsRefPtr<nsNodeInfoManager> mNodeInfoManager;
     
     
-    nsresult NormalizeAttributeString(const nsAFlatString& aText,
-                                      nsAttrName& aName);
+    nsresult NormalizeAttributeString(const PRUnichar *aExpatName,
+                                      nsAttrName &aName);
     nsresult CreateElement(nsINodeInfo *aNodeInfo, nsXULPrototypeElement** aResult);
 
     // Style sheets
@@ -352,47 +340,6 @@ XULContentSinkImpl::XULContentSinkImpl(nsresult& rv)
 XULContentSinkImpl::~XULContentSinkImpl()
 {
     NS_IF_RELEASE(mParser); // XXX should've been released by now, unless error.
-
-    {
-        // There shouldn't be any here except in an error condition
-        PRInt32 i = mNameSpaceStack.Count();
-
-        while (0 < i--) {
-            nsINameSpace* nameSpace = (nsINameSpace*)mNameSpaceStack[i];
-
-#ifdef PR_LOGGING
-            if (PR_LOG_TEST(gLog, PR_LOG_ALWAYS)) {
-                nsAutoString uri;
-                nsCOMPtr<nsIAtom> prefixAtom;
-
-                nameSpace->GetNameSpaceURI(uri);
-                nameSpace->GetNameSpacePrefix(getter_AddRefs(prefixAtom));
-
-                nsAutoString prefix;
-                if (prefixAtom)
-                    {
-                        prefixAtom->ToString(prefix);
-                    }
-                else
-                    {
-                        prefix.Assign(NS_LITERAL_STRING("<default>"));
-                    }
-
-                char* prefixStr = ToNewCString(prefix);
-                char* uriStr = ToNewCString(uri);
-
-                PR_LOG(gLog, PR_LOG_ALWAYS,
-                       ("xul: warning: unclosed namespace '%s' (%s)",
-                        prefixStr, uriStr));
-
-                nsCRT::free(prefixStr);
-                nsCRT::free(uriStr);
-            }
-#endif
-
-            NS_RELEASE(nameSpace);
-        }
-    }
 
     // Pop all of the elements off of the context stack, and delete
     // any remaining content elements. The context stack _should_ be
@@ -605,11 +552,11 @@ XULContentSinkImpl::Init(nsIDocument* aDocument, nsIXULPrototypeDocument* aProto
 
     // Get the CSS loader from the document so we can load
     // stylesheets
-    mCSSLoader = aDocument->GetCSSLoader();
-    NS_ENSURE_TRUE(mCSSLoader, NS_ERROR_OUT_OF_MEMORY);
+    mCSSLoader = aDocument->CSSLoader();
 
-    rv = aPrototype->GetNodeInfoManager(getter_AddRefs(mNodeInfoManager));
-    if (NS_FAILED(rv)) return rv;
+    mNodeInfoManager = aPrototype->GetNodeInfoManager();
+    if (! mNodeInfoManager)
+        return NS_ERROR_UNEXPECTED;
 
     mState = eInProlog;
     return NS_OK;
@@ -698,51 +645,22 @@ XULContentSinkImpl::FlushText(PRBool aCreateTextNode)
 //----------------------------------------------------------------------
 
 nsresult
-XULContentSinkImpl::NormalizeAttributeString(const nsAFlatString& aText,
-                                             nsAttrName& aName)
+XULContentSinkImpl::NormalizeAttributeString(const PRUnichar *aExpatName,
+                                             nsAttrName &aName)
 {
-    PRInt32 nameSpaceID = kNameSpaceID_None;
+    PRInt32 nameSpaceID;
+    nsCOMPtr<nsIAtom> prefix, localName;
+    nsContentUtils::SplitExpatName(aExpatName, getter_AddRefs(prefix),
+                                   getter_AddRefs(localName), &nameSpaceID);
 
-    nsAFlatString::const_iterator start, end;
-    aText.BeginReading(start);
-    aText.EndReading(end);
-
-    nsAFlatString::const_iterator colon(start);
-
-    nsCOMPtr<nsIAtom> prefix;
-
-    if (!FindCharInReadable(kNameSpaceSeparator, colon, end)) {
-        nsCOMPtr<nsIAtom> atom = do_GetAtom(aText);
-        NS_ENSURE_TRUE(atom, NS_ERROR_OUT_OF_MEMORY);
-
-        aName.SetTo(atom);
+    if (nameSpaceID == kNameSpaceID_None) {
+        aName.SetTo(localName);
 
         return NS_OK;
     }
 
-    if (start != colon) {
-        prefix = do_GetAtom(Substring(start, colon));
-
-        nsCOMPtr<nsINameSpace> ns;
-        GetTopNameSpace(address_of(ns));
-
-        if (ns) {
-            ns->FindNameSpaceID(prefix, &nameSpaceID);
-
-            if (nameSpaceID == kNameSpaceID_Unknown) {
-                NS_WARNING("Undeclared prefix used in attribute name.");
-
-                nameSpaceID = kNameSpaceID_None;
-            }
-        } else {
-            NS_WARNING("Undeclared prefix used in attribute name.");
-        }
-
-        ++colon; // Skip over the ':'
-    }
-
     nsCOMPtr<nsINodeInfo> ni;
-    nsresult rv = mNodeInfoManager->GetNodeInfo(Substring(colon, end), prefix,
+    nsresult rv = mNodeInfoManager->GetNodeInfo(localName, prefix,
                                                 nameSpaceID,
                                                 getter_AddRefs(ni));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -813,18 +731,15 @@ XULContentSinkImpl::HandleStartElement(const PRUnichar *aName,
       FlushText();
   }
 
-  // We must register namespace declarations found in the attribute
-  // list of an element before creating the element. This is because
-  // the namespace prefix for an element might be declared within
-  // the attribute list.
-  nsresult rv = PushNameSpacesFrom(aAtts);
-  NS_ENSURE_SUCCESS(rv, rv);
+  PRInt32 nameSpaceID;
+  nsCOMPtr<nsIAtom> prefix, localName;
+  nsContentUtils::SplitExpatName(aName, getter_AddRefs(prefix),
+                                 getter_AddRefs(localName), &nameSpaceID);
 
   nsCOMPtr<nsINodeInfo> nodeInfo;
-  rv = ParseTag(aName, getter_AddRefs(nodeInfo));
-  if (NS_FAILED(rv)) {
-     return rv;
-  }
+  nsresult rv = mNodeInfoManager->GetNodeInfo(localName, prefix, nameSpaceID,
+                                              getter_AddRefs(nodeInfo));
+  NS_ENSURE_SUCCESS(rv, rv);
 
   switch (mState) {
   case eInProlog:
@@ -838,7 +753,7 @@ XULContentSinkImpl::HandleStartElement(const PRUnichar *aName,
 
   case eInEpilog:
   case eInScript:
-      PR_LOG(gLog, PR_LOG_ALWAYS,
+      PR_LOG(gLog, PR_LOG_WARNING,
              ("xul: warning: unexpected tags in epilog at line %d",
              aLineNumber));
       rv = NS_ERROR_UNEXPECTED; // XXX
@@ -927,8 +842,6 @@ XULContentSinkImpl::HandleEndElement(const PRUnichar *aName)
     rv = mContextStack.Pop(&mState);
     NS_ASSERTION(NS_SUCCEEDED(rv), "context stack corrupted");
     if (NS_FAILED(rv)) return rv;
-
-    PopNameSpaces();
 
     if (mContextStack.Depth() == 0) {
         // The root element should -always- be an element, because
@@ -1058,7 +971,7 @@ XULContentSinkImpl::HandleProcessingInstruction(const PRUnichar *aTarget,
         nsParserUtils::GetQuotedAttributeValue(data, NS_LITERAL_STRING("alternate"), alternate);
 
         nsresult result =  ProcessStyleLink(nsnull /* XXX need a node here */,
-                                            href, alternate.Equals(NS_LITERAL_STRING("yes")),  /* XXX ignore case? */
+                                            href, alternate.EqualsLiteral("yes"),  /* XXX ignore case? */
                                             title, type, media);
         if (NS_FAILED(result)) {
           if (result == NS_ERROR_HTMLPARSER_BLOCK && mParser) {
@@ -1074,8 +987,9 @@ XULContentSinkImpl::HandleProcessingInstruction(const PRUnichar *aTarget,
 
 
 NS_IMETHODIMP
-XULContentSinkImpl::HandleXMLDeclaration(const PRUnichar *aData, 
-                                         PRUint32 aLength)
+XULContentSinkImpl::HandleXMLDeclaration(const PRUnichar *aVersion,
+                                         const PRUnichar *aEncoding,
+                                         PRInt32 aStandalone)
 {
   return NS_OK;
 }
@@ -1107,175 +1021,45 @@ XULContentSinkImpl::ReportError(const PRUnichar* aErrorText,
 
   mState = eInProlog;
 
-  NS_NAMED_LITERAL_STRING(name, "xmlns");
-  NS_NAMED_LITERAL_STRING(value, "http://www.mozilla.org/newlayout/xml/parsererror.xml");
+  // Clear any buffered-up text we have.  It's enough to set the length to 0.
+  // The buffer itself is allocated when we're created and deleted in our
+  // destructor, so don't mess with it.
+  mTextLength = 0;
 
-  const PRUnichar* atts[] = {name.get(), value.get(), nsnull};
-    
-  rv = HandleStartElement(NS_LITERAL_STRING("parsererror").get(), atts, 2, -1, 0);
+  const PRUnichar* noAtts[] = { 0, 0 };
+
+  NS_NAMED_LITERAL_STRING(errorNs,
+                          "http://www.mozilla.org/newlayout/xml/parsererror.xml");
+
+  nsAutoString parsererror(errorNs);
+  parsererror.Append((PRUnichar)0xFFFF);
+  parsererror.AppendLiteral("parsererror");
+  
+  rv = HandleStartElement(parsererror.get(), noAtts, 0, -1, 0);
   NS_ENSURE_SUCCESS(rv,rv);
 
   rv = HandleCharacterData(aErrorText, nsCRT::strlen(aErrorText));
   NS_ENSURE_SUCCESS(rv,rv);  
   
-  const PRUnichar* noAtts[] = {0, 0};
-  rv = HandleStartElement(NS_LITERAL_STRING("sourcetext").get(), noAtts, 0, -1, 0);
+  nsAutoString sourcetext(errorNs);
+  sourcetext.Append((PRUnichar)0xFFFF);
+  sourcetext.AppendLiteral("sourcetext");
+
+  rv = HandleStartElement(sourcetext.get(), noAtts, 0, -1, 0);
   NS_ENSURE_SUCCESS(rv,rv);
   
   rv = HandleCharacterData(aSourceText, nsCRT::strlen(aSourceText));
   NS_ENSURE_SUCCESS(rv,rv);
   
-  rv = HandleEndElement(NS_LITERAL_STRING("sourcetext").get());
+  rv = HandleEndElement(sourcetext.get());
   NS_ENSURE_SUCCESS(rv,rv); 
   
-  rv = HandleEndElement(NS_LITERAL_STRING("parsererror").get());
+  rv = HandleEndElement(parsererror.get());
   NS_ENSURE_SUCCESS(rv,rv);
 
   return rv;
 }
 
-//----------------------------------------------------------------------
-//
-// Namespace management
-//
-
-nsresult
-XULContentSinkImpl::PushNameSpacesFrom(const PRUnichar** aAttributes)
-{
-    nsCOMPtr<nsINameSpace> nameSpace;
-
-    if (mNameSpaceStack.Count() > 0) {
-        nameSpace =
-            (nsINameSpace*)mNameSpaceStack.ElementAt(mNameSpaceStack.Count() - 1);
-    } else {
-        nsContentUtils::GetNSManagerWeakRef()->
-            CreateRootNameSpace(getter_AddRefs(nameSpace));
-        if (! nameSpace)
-            return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    static const NS_NAMED_LITERAL_STRING(kNameSpaceDef, "xmlns");
-    static const PRUint32 xmlns_len = kNameSpaceDef.Length();
-
-    for (; *aAttributes; aAttributes += 2) {
-        nsDependentString key(aAttributes[0]);
-
-        // Look for "xmlns" at the start of the attribute name
-
-        if (StringBeginsWith(key, kNameSpaceDef)) {
-            nsCOMPtr<nsIAtom> prefixAtom;
-
-            // If key.Length() > xmlns_len we have a xmlns:foo type attribute,
-            // extract the prefix. If not, we have a xmlns attribute in
-            // which case there is no prefix.
-
-            if (key.Length() > xmlns_len) {
-                nsDependentString::const_iterator start, end;
-
-                key.BeginReading(start);
-                key.EndReading(end);
-
-                start.advance(xmlns_len);
-
-                if (*start == ':' && ++start != end) {
-                    prefixAtom = do_GetAtom(Substring(start, end));
-                } else {
-                    NS_WARNING("Bad XML namespace declaration 'xmlns:' "
-                               "found!");
-                }
-            }
-
-            nsDependentString value(aAttributes[1]);
-
-            nsCOMPtr<nsINameSpace> child;
-            nsresult rv =
-                nameSpace->CreateChildNameSpace(prefixAtom, value,
-                                                getter_AddRefs(child));
-            NS_ENSURE_SUCCESS(rv, rv);
-
-            nameSpace = child;
-        }
-    }
-
-    nsINameSpace *tmp = nameSpace;
-    mNameSpaceStack.AppendElement(tmp);
-    NS_ADDREF(tmp);
-
-    return NS_OK;
-}
-
-void
-XULContentSinkImpl::PopNameSpaces(void)
-{
-    if (0 < mNameSpaceStack.Count()) {
-        PRInt32 i = mNameSpaceStack.Count() - 1;
-        nsINameSpace* nameSpace = (nsINameSpace*)mNameSpaceStack[i];
-        mNameSpaceStack.RemoveElementAt(i);
-
-        // Releasing the most deeply nested namespace will recursively
-        // release intermediate parent namespaces until the next
-        // reference is held on the namespace stack.
-        NS_RELEASE(nameSpace);
-    }
-}
-
-nsresult
-XULContentSinkImpl::GetTopNameSpace(nsCOMPtr<nsINameSpace>* aNameSpace)
-{
-    PRInt32 count = mNameSpaceStack.Count();
-    if (count == 0)
-        return NS_ERROR_UNEXPECTED;
-
-    *aNameSpace = NS_REINTERPRET_CAST(nsINameSpace*, mNameSpaceStack[count - 1]);
-    return NS_OK;
-}
-
-//----------------------------------------------------------------------
-
-nsresult
-XULContentSinkImpl::ParseTag(const PRUnichar* aText, 
-                             nsINodeInfo** aNodeInfo)
-{
-    // Split the tag into prefix and tag substrings.
-
-    nsDependentString text(aText);
-
-    nsDependentString::const_iterator start, end;
-    text.BeginReading(start);
-    text.EndReading(end);
-
-    nsDependentString::const_iterator colon(start);
-
-    nsCOMPtr<nsIAtom> prefix;
-
-    if (!FindCharInReadable(kNameSpaceSeparator, colon, end)) {
-        colon = start; // No ':' found, reset colon
-    } else if (colon != start) {
-        prefix = do_GetAtom(Substring(start, colon));
-
-        ++colon; // Step over ':'
-    }
-
-    nsCOMPtr<nsINameSpace> ns;
-    GetTopNameSpace(address_of(ns));
-
-    PRInt32 namespaceID = kNameSpaceID_None;
-
-    if (ns) {
-        ns->FindNameSpaceID(prefix, &namespaceID);
-
-        if (namespaceID == kNameSpaceID_Unknown) {
-            NS_WARNING("Undeclared prefix used in tag name!");
-
-            namespaceID = kNameSpaceID_None;
-        }
-    } else {
-        NS_WARNING("Undeclared prefix used in tag name!");
-    }
-
-    return mNodeInfoManager->GetNodeInfo(Substring(colon, end), prefix,
-                                         namespaceID, aNodeInfo);
-}
 
 nsresult
 XULContentSinkImpl::OpenRoot(const PRUnichar** aAttributes, 
@@ -1290,7 +1074,7 @@ XULContentSinkImpl::OpenRoot(const PRUnichar** aAttributes,
 
     if (aNodeInfo->Equals(nsHTMLAtoms::script, kNameSpaceID_XHTML) || 
         aNodeInfo->Equals(nsHTMLAtoms::script, kNameSpaceID_XUL)) {
-        PR_LOG(gLog, PR_LOG_ALWAYS,
+        PR_LOG(gLog, PR_LOG_ERROR,
                ("xul: script tag not allowed as root content element"));
 
         return NS_ERROR_UNEXPECTED;
@@ -1302,12 +1086,14 @@ XULContentSinkImpl::OpenRoot(const PRUnichar** aAttributes,
 
     if (NS_FAILED(rv)) {
 #ifdef PR_LOGGING
-        nsAutoString anodeC;
-        aNodeInfo->GetName(anodeC);
-        PR_LOG(gLog, PR_LOG_ALWAYS,
-               ("xul: unable to create element '%s' at line %d",
-                NS_ConvertUCS2toUTF8(anodeC).get(),
-                -1)); // XXX pass in line number
+        if (PR_LOG_TEST(gLog, PR_LOG_ERROR)) {
+            nsAutoString anodeC;
+            aNodeInfo->GetName(anodeC);
+            PR_LOG(gLog, PR_LOG_ERROR,
+                   ("xul: unable to create element '%s' at line %d",
+                    NS_ConvertUCS2toUTF8(anodeC).get(),
+                    -1)); // XXX pass in line number
+        }
 #endif
 
         return rv;
@@ -1343,12 +1129,14 @@ XULContentSinkImpl::OpenTag(const PRUnichar** aAttributes,
 
     if (NS_FAILED(rv)) {
 #ifdef PR_LOGGING
-        nsAutoString anodeC;
-        aNodeInfo->GetName(anodeC);
-        PR_LOG(gLog, PR_LOG_ALWAYS,
-               ("xul: unable to create element '%s' at line %d",
-                NS_ConvertUCS2toUTF8(anodeC).get(),
-                aLineNumber));
+        if (PR_LOG_TEST(gLog, PR_LOG_ERROR)) {
+            nsAutoString anodeC;
+            aNodeInfo->GetName(anodeC);
+            PR_LOG(gLog, PR_LOG_ERROR,
+                   ("xul: unable to create element '%s' at line %d",
+                    NS_ConvertUCS2toUTF8(anodeC).get(),
+                    aLineNumber));
+        }
 #endif
 
         return rv;
@@ -1390,44 +1178,91 @@ XULContentSinkImpl::OpenScript(const PRUnichar** aAttributes,
 {
   nsresult rv = NS_OK;
   PRBool isJavaScript = PR_TRUE;
+  PRBool hasE4XOption = PR_TRUE;
   const char* jsVersionString = nsnull;
 
   // Look for SRC attribute and look for a LANGUAGE attribute
   nsAutoString src;
   while (*aAttributes) {
       const nsDependentString key(aAttributes[0]);
-      if (key.Equals(NS_LITERAL_STRING("src"))) {
+      if (key.EqualsLiteral("src")) {
           src.Assign(aAttributes[1]);
       }
-      else if (key.Equals(NS_LITERAL_STRING("type"))) {
-          nsAutoString  type(aAttributes[1]);
-          nsAutoString  mimeType;
-          nsAutoString  params;
-          nsParserUtils::SplitMimeType(type, mimeType, params);
+      else if (key.EqualsLiteral("type")) {
+          nsCOMPtr<nsIMIMEHeaderParam> mimeHdrParser =
+              do_GetService("@mozilla.org/network/mime-hdrparam;1");
+          NS_ENSURE_TRUE(mimeHdrParser, NS_ERROR_FAILURE);
 
-          isJavaScript = mimeType.EqualsIgnoreCase("application/x-javascript") ||
-                         mimeType.EqualsIgnoreCase("text/javascript");
+          NS_ConvertUTF16toUTF8 typeAndParams(aAttributes[1]);
+
+          nsAutoString mimeType;
+          rv = mimeHdrParser->GetParameter(typeAndParams, nsnull,
+                                           EmptyCString(), PR_FALSE, nsnull,
+                                           mimeType);
+          NS_ENSURE_SUCCESS(rv, rv);
+
+          // Table ordered from most to least likely JS MIME types. For .xul
+          // files that we host, the likeliest type is application/x-javascript.
+          // See bug 62485, feel free to add <script type="..."> survey data to it,
+          // or to a new bug once 62485 is closed.
+          static const char *jsTypes[] = {
+              "application/x-javascript",
+              "text/javascript",
+              "text/ecmascript",
+              "application/javascript",
+              "application/ecmascript",
+              nsnull
+          };
+
+          isJavaScript = PR_FALSE;
+          for (PRInt32 i = 0; jsTypes[i]; i++) {
+              if (mimeType.LowerCaseEqualsASCII(jsTypes[i])) {
+                  isJavaScript = PR_TRUE;
+                  break;
+              }
+          }
+
           if (isJavaScript) {
               JSVersion jsVersion = JSVERSION_DEFAULT;
-              if (params.Find("version=", PR_TRUE) == 0) {
-                  if (params.Length() != 11 || params[8] != '1' || params[9] != '.')
+              nsAutoString value;
+              rv = mimeHdrParser->GetParameter(typeAndParams, "version",
+                                               EmptyCString(), PR_FALSE, nsnull,
+                                               value);
+              if (NS_FAILED(rv)) {
+                  if (rv != NS_ERROR_INVALID_ARG)
+                      return rv;
+              } else {
+                  if (value.Length() != 3 || value[0] != '1' || value[1] != '.')
                       jsVersion = JSVERSION_UNKNOWN;
-                  else switch (params[10]) {
+                  else switch (value[2]) {
                       case '0': jsVersion = JSVERSION_1_0; break;
                       case '1': jsVersion = JSVERSION_1_1; break;
                       case '2': jsVersion = JSVERSION_1_2; break;
                       case '3': jsVersion = JSVERSION_1_3; break;
                       case '4': jsVersion = JSVERSION_1_4; break;
                       case '5': jsVersion = JSVERSION_1_5; break;
+                      case '6': jsVersion = JSVERSION_1_6; break;
                       default:  jsVersion = JSVERSION_UNKNOWN;
                   }
               }
-              jsVersionString = JS_VersionToString(jsVersion);
+              jsVersionString = ::JS_VersionToString(jsVersion);
+
+              rv = mimeHdrParser->GetParameter(typeAndParams, "e4x",
+                                               EmptyCString(), PR_FALSE, nsnull,
+                                               value);
+              if (NS_FAILED(rv)) {
+                  if (rv != NS_ERROR_INVALID_ARG)
+                      return rv;
+              } else {
+                  if (value.Length() == 1 && value[0] == '0')
+                      hasE4XOption = PR_FALSE;
+              }
           }
       }
-      else if (key.Equals(NS_LITERAL_STRING("language"))) {
-        nsAutoString  lang(aAttributes[1]);
-        isJavaScript = nsParserUtils::IsJavaScriptLanguage(lang, &jsVersionString);
+      else if (key.EqualsLiteral("language")) {
+          nsAutoString lang(aAttributes[1]);
+          isJavaScript =
+              nsParserUtils::IsJavaScriptLanguage(lang, &jsVersionString);
       }
       aAttributes += 2;
   }
@@ -1435,10 +1270,14 @@ XULContentSinkImpl::OpenScript(const PRUnichar** aAttributes,
   // Don't process scripts that aren't JavaScript
   if (isJavaScript) {
       nsXULPrototypeScript* script =
-          new nsXULPrototypeScript(aLineNumber,
-                                   jsVersionString);
+          new nsXULPrototypeScript(aLineNumber, jsVersionString, hasE4XOption,
+                                   &rv);
       if (! script)
           return NS_ERROR_OUT_OF_MEMORY;
+      if (NS_FAILED(rv)) {
+          delete script;
+          return rv;
+      }      
 
       // If there is a SRC attribute...
       if (! src.IsEmpty()) {
@@ -1452,8 +1291,14 @@ XULContentSinkImpl::OpenScript(const PRUnichar** aAttributes,
               if (!mSecMan)
                   mSecMan = do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
               if (NS_SUCCEEDED(rv)) {
-                  rv = mSecMan->CheckLoadURI(mDocumentURL, script->mSrcURI,
-                                             nsIScriptSecurityManager::ALLOW_CHROME);
+                  nsCOMPtr<nsIDocument> doc = do_QueryReferent(mDocument, &rv);
+
+                  if (NS_SUCCEEDED(rv)) {
+                      rv = mSecMan->
+                          CheckLoadURIWithPrincipal(doc->GetPrincipal(),
+                                                    script->mSrcURI,
+                                                    nsIScriptSecurityManager::ALLOW_CHROME);
+                  }
               }
           }
 
@@ -1517,8 +1362,7 @@ XULContentSinkImpl::AddAttributes(const PRUnichar** aAttributes,
   // Copy the attributes into the prototype
   PRUint32 i;
   for (i = 0; i < aAttrLen; ++i) {
-      rv = NormalizeAttributeString(nsDependentString(aAttributes[i * 2]),
-                                    attrs[i].mName);
+      rv = NormalizeAttributeString(aAttributes[i * 2], attrs[i].mName);
       NS_ENSURE_SUCCESS(rv, rv);
 
       rv = aElement->SetAttrAt(i, nsDependentString(aAttributes[i * 2 + 1]),
@@ -1530,7 +1374,7 @@ XULContentSinkImpl::AddAttributes(const PRUnichar** aAttributes,
           nsAutoString extraWhiteSpace;
           PRInt32 cnt = mContextStack.Depth();
           while (--cnt >= 0)
-              extraWhiteSpace.Append(NS_LITERAL_STRING("  "));
+              extraWhiteSpace.AppendLiteral("  ");
           nsAutoString qnameC,valueC;
           qnameC.Assign(aAttributes[0]);
           valueC.Assign(aAttributes[1]);

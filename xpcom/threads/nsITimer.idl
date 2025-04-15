@@ -1,6 +1,9 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
  * The contents of this file are subject to the Mozilla Public License Version
  * 1.1 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -13,15 +16,16 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation. Portions created by the Initial Developer are
- * Copyright (C) 2002 the Initial Developer. All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2002
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -30,7 +34,8 @@
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
- */
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsISupports.idl"
 
@@ -38,12 +43,12 @@ interface nsIObserver;
 
 %{C++
 /**
- * The signature of the timer callback function passed to initWithCallback. This
- * is the function that will get called when the timer expires if the timer is 
- * initialized via initWithCallback.
+ * The signature of the timer callback function passed to initWithFuncCallback.
+ * This is the function that will get called when the timer expires if the
+ * timer is initialized via initWithFuncCallback.
  *
  * @param aTimer the timer which has expired
- * @param aClosure opaque parameter passed to initWithCallback
+ * @param aClosure opaque parameter passed to initWithFuncCallback
  *
  * Implementers should return the following:
  *
@@ -77,7 +82,7 @@ interface nsITimerCallback : nsISupports
  * delay to avoid the overhead of destroying and creating a timer.  It is not
  * necessary to cancel the timer in that case.
  */
-[scriptable, uuid(29ee628e-a3ea-471f-965d-dc9f11d1c183)]
+[scriptable, uuid(436a83fa-b396-11d9-bcfa-00112478d626)]
 interface nsITimer : nsISupports
 {
   /* Timer types */
@@ -174,9 +179,14 @@ interface nsITimer : nsISupports
   attribute unsigned long type;
 
   /**
-   * The opaque pointer pass to initWithCallback.
+   * The opaque pointer pass to initWithFuncCallback.
    */  
   [noscript] readonly attribute voidPtr closure;
+
+  /**
+   * The nsITimerCallback object passed to initWithCallback.
+   */
+  readonly attribute nsITimerCallback callback;
 };
 
 %{C++

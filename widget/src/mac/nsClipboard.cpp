@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -48,7 +48,6 @@
 #include "nsCOMPtr.h"
 #include "nsClipboard.h"
 
-#include "nsVoidArray.h"
 #include "nsIClipboardOwner.h"
 #include "nsString.h"
 #include "nsIFormatConverter.h"
@@ -66,6 +65,7 @@
 #include "nsCRT.h"
 #include "nsStylClipboardUtils.h"
 #include "nsLinebreakConverter.h"
+#include "nsAutoPtr.h"
 
 #include <Scrap.h>
 #include <Script.h>
@@ -114,11 +114,7 @@ nsClipboard :: SetNativeClipboardData ( PRInt32 aWhichClipboard )
   
   nsMimeMapperMac theMapper;
 
-#if TARGET_CARBON
   ::ClearCurrentScrap();
-#else
-  ::ZeroScrap();
-#endif
 
   // get flavor list that includes all flavors that can be written (including ones 
   // obtained through conversion)
@@ -284,15 +280,9 @@ nsClipboard :: PutOnClipboard ( ResType inFlavor, const void* inData, PRInt32 in
 {
   nsresult errCode = NS_OK;
   
-#if TARGET_CARBON
   ScrapRef scrap;
   ::GetCurrentScrap(&scrap);
   ::PutScrapFlavor( scrap, inFlavor, kScrapFlavorMaskNone, inLen, inData );
-#else
-  long numBytes = ::PutScrap ( inLen, inFlavor, inData );
-  if ( numBytes != noErr )
-    errCode = NS_ERROR_FAILURE;
-#endif
 
   return errCode;
   
@@ -363,7 +353,7 @@ nsClipboard :: GetNativeClipboardData ( nsITransferable * aTransferable, PRInt32
           loadResult = GetDataOffClipboard ( 'styl', &clipboardData, &dataSize );
           if (NS_SUCCEEDED(loadResult) && 
               clipboardData &&
-              (dataSize >= (sizeof(ScrpSTElement) + 2))) {
+              ((PRUint32)dataSize >= (sizeof(ScrpSTElement) + 2))) {
             StScrpRec *scrpRecP = (StScrpRec *) clipboardData;
             ScrpSTElement *styl = scrpRecP->scrpStyleTab;
             ScriptCode script = styl ? ::FontToScript(styl->scrpFont) : smCurrentScript;
@@ -426,7 +416,6 @@ nsClipboard :: GetNativeClipboardData ( nsITransferable * aTransferable, PRInt32
           nsLinebreakHelpers::ConvertPlatformToDOMLinebreaks ( flavorStr, &clipboardData, &dataSize );
           
           unsigned char *clipboardDataPtr = (unsigned char *) clipboardData;
-#if TARGET_CARBON
           // skip BOM (Byte Order Mark to distinguish little or big endian) in 'utxt'
           // 10.2 puts BOM for 'utxt', we need to remove it here
           // for little endian case, we also need to convert the data to big endian
@@ -438,7 +427,6 @@ nsClipboard :: GetNativeClipboardData ( nsITransferable * aTransferable, PRInt32
             dataSize -= sizeof(PRUnichar);
             clipboardDataPtr += sizeof(PRUnichar);
           }
-#endif
 
           // put it into the transferable
           nsCOMPtr<nsISupports> genericDataWrapper;
@@ -475,10 +463,7 @@ nsClipboard :: GetDataOffClipboard ( ResType inMacFlavor, void** outData, PRInt3
   if ( outDataSize )
       *outDataSize = 0;
 
-  // check if it is on the clipboard
-  long offsetUnused = 0;
 
-#if TARGET_CARBON
   ScrapRef scrap;
   long dataSize;
   OSStatus err;
@@ -508,32 +493,6 @@ nsClipboard :: GetDataOffClipboard ( ResType inMacFlavor, void** outData, PRInt3
       *outDataSize = dataSize;
     *outData = dataBuff;
   }
-#else
-  long clipResult = ::GetScrap(NULL, inMacFlavor, &offsetUnused);
-  if ( clipResult > 0 ) {
-    Handle dataHand = ::NewHandle(0);
-    if ( !dataHand )
-      return NS_ERROR_OUT_OF_MEMORY;
-    long dataSize = ::GetScrap ( dataHand, inMacFlavor, &offsetUnused );
-    NS_ASSERTION(dataSize > 0, "nsClipboard:: Error getting data off the clipboard, size negative");
-    if ( dataSize > 0 ) {
-      char* dataBuff = NS_REINTERPRET_CAST(char*, nsMemory::Alloc(dataSize));
-      if ( !dataBuff )
-        return NS_ERROR_OUT_OF_MEMORY;
-      ::HLock(dataHand);
-      ::BlockMoveData ( *dataHand, dataBuff, dataSize );
-      ::HUnlock(dataHand);
-      
-      ::DisposeHandle(dataHand);
-      
-      if ( outDataSize )
-        *outDataSize = dataSize;
-      *outData = dataBuff;
-    } 
-    else
-      return NS_ERROR_FAILURE;
-  }
-#endif /* TARGET_CARBON */
   return NS_OK;
   
 } // GetDataOffClipboard
@@ -615,7 +574,6 @@ nsClipboard :: CheckIfFlavorPresent ( ResType inMacFlavor )
 {
   PRBool retval = PR_FALSE;
 
-#if TARGET_CARBON
   ScrapRef scrap = nsnull;
   OSStatus err = ::GetCurrentScrap(&scrap);
   if ( scrap ) {
@@ -625,26 +583,18 @@ nsClipboard :: CheckIfFlavorPresent ( ResType inMacFlavor )
     // see the list of what could be there if we asked for it. This is really
     // fast. Iterate over the list, and if we find it, we're good to go.
     UInt32 flavorCount = 0;
-    ::GetScrapFlavorCount ( scrap, &flavorCount );    
-    ScrapFlavorInfo* flavorList = new ScrapFlavorInfo[flavorCount];
+    ::GetScrapFlavorCount ( scrap, &flavorCount );
+    nsAutoArrayPtr<ScrapFlavorInfo> flavorList(new ScrapFlavorInfo[flavorCount]);
     if ( flavorList ) {
       err = ::GetScrapFlavorInfoList ( scrap, &flavorCount, flavorList );
       if ( !err && flavorList ) {
-        for ( int i = 0; i < flavorCount; ++i ) {
+        for ( unsigned int i = 0; i < flavorCount; ++i ) {
           if ( flavorList[i].flavorType == inMacFlavor )
             retval = PR_TRUE;
         }
-        delete flavorList;
       }
     }
 
   }
-#else
-  long offsetUnused = 0;
-  long clipResult = ::GetScrap(NULL, inMacFlavor, &offsetUnused);
-  if ( clipResult > 0 )   
-    retval = PR_TRUE;   // we found one!
-#endif
-
   return retval;
 } // CheckIfFlavorPresent

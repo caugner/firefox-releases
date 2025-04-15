@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -204,6 +203,7 @@ nsRect& nsRect::ScaleRoundIn(const float aScale)
   return *this;
 }
 
+#ifdef DEBUG
 // Diagnostics
 
 FILE* operator<<(FILE* out, const nsRect& rect)
@@ -211,15 +211,89 @@ FILE* operator<<(FILE* out, const nsRect& rect)
   nsAutoString tmp;
 
   // Output the coordinates in fractional points so they're easier to read
-  tmp.Append(NS_LITERAL_STRING("{"));
+  tmp.AppendLiteral("{");
   tmp.AppendFloat(NSTwipsToFloatPoints(rect.x));
-  tmp.Append(NS_LITERAL_STRING(", "));
+  tmp.AppendLiteral(", ");
   tmp.AppendFloat(NSTwipsToFloatPoints(rect.y));
-  tmp.Append(NS_LITERAL_STRING(", "));
+  tmp.AppendLiteral(", ");
   tmp.AppendFloat(NSTwipsToFloatPoints(rect.width));
-  tmp.Append(NS_LITERAL_STRING(", "));
+  tmp.AppendLiteral(", ");
   tmp.AppendFloat(NSTwipsToFloatPoints(rect.height));
-  tmp.Append(NS_LITERAL_STRING("}"));
+  tmp.AppendLiteral("}");
   fputs(NS_LossyConvertUCS2toASCII(tmp).get(), out);
   return out;
 }
+
+#ifdef NS_COORD_IS_FLOAT
+// Computes the area in which aRect1 and aRect2 overlap and fills 'this' with
+// the result. Returns FALSE if the rectangles don't intersect.
+PRBool nsIntRect::IntersectRect(const nsIntRect &aRect1, const nsIntRect &aRect2)
+{
+  PRInt32  xmost1 = aRect1.XMost();
+  PRInt32  ymost1 = aRect1.YMost();
+  PRInt32  xmost2 = aRect2.XMost();
+  PRInt32  ymost2 = aRect2.YMost();
+  PRInt32  temp;
+
+  x = MAX(aRect1.x, aRect2.x);
+  y = MAX(aRect1.y, aRect2.y);
+
+  // Compute the destination width
+  temp = MIN(xmost1, xmost2);
+  if (temp <= x) {
+    Empty();
+    return PR_FALSE;
+  }
+  width = temp - x;
+
+  // Compute the destination height
+  temp = MIN(ymost1, ymost2);
+  if (temp <= y) {
+    Empty();
+    return PR_FALSE;
+  }
+  height = temp - y;
+
+  return PR_TRUE;
+}
+
+// Computes the smallest rectangle that contains both aRect1 and aRect2 and
+// fills 'this' with the result. Returns FALSE if both aRect1 and aRect2 are
+// empty and TRUE otherwise
+PRBool nsIntRect::UnionRect(const nsIntRect &aRect1, const nsIntRect &aRect2)
+{
+  PRBool  result = PR_TRUE;
+
+  // Is aRect1 empty?
+  if (aRect1.IsEmpty()) {
+    if (aRect2.IsEmpty()) {
+      // Both rectangles are empty which is an error
+      Empty();
+      result = PR_FALSE;
+    } else {
+      // aRect1 is empty so set the result to aRect2
+      *this = aRect2;
+    }
+  } else if (aRect2.IsEmpty()) {
+    // aRect2 is empty so set the result to aRect1
+    *this = aRect1;
+  } else {
+    PRInt32 xmost1 = aRect1.XMost();
+    PRInt32 xmost2 = aRect2.XMost();
+    PRInt32 ymost1 = aRect1.YMost();
+    PRInt32 ymost2 = aRect2.YMost();
+
+    // Compute the origin
+    x = MIN(aRect1.x, aRect2.x);
+    y = MIN(aRect1.y, aRect2.y);
+
+    // Compute the size
+    width = MAX(xmost1, xmost2) - x;
+    height = MAX(ymost1, ymost2) - y;
+  }
+
+  return result;
+}
+#endif
+
+#endif // DEBUG

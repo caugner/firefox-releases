@@ -90,7 +90,7 @@ nsNativeScrollbarFrame::~nsNativeScrollbarFrame ( )
   // the content node just to be safe about lifetime issues
   nsCOMPtr<nsINativeScrollbar> scrollbar ( do_QueryInterface(mScrollbar) );
   if ( scrollbar )
-    scrollbar->SetContent(nsnull, nsnull);
+    scrollbar->SetContent(nsnull, nsnull, nsnull);
 }
 
 
@@ -100,7 +100,7 @@ nsNativeScrollbarFrame::~nsNativeScrollbarFrame ( )
 // Pass along to our parent, but also create the native widget that we wrap. 
 //
 NS_IMETHODIMP
-nsNativeScrollbarFrame::Init(nsIPresContext* aPresContext, nsIContent* aContent,
+nsNativeScrollbarFrame::Init(nsPresContext* aPresContext, nsIContent* aContent,
                                nsIFrame* aParent, nsStyleContext* aContext, nsIFrame* aPrevInFlow)
 {
   nsresult  rv = nsBoxFrame::Init(aPresContext, aContent, aParent, aContext, aPrevInFlow);
@@ -169,7 +169,7 @@ nsNativeScrollbarFrame::FindScrollbar(nsIFrame* start, nsIFrame** outFrame,
 }
 
 NS_IMETHODIMP
-nsNativeScrollbarFrame::Reflow(nsIPresContext*          aPresContext,
+nsNativeScrollbarFrame::Reflow(nsPresContext*          aPresContext,
                                nsHTMLReflowMetrics&     aDesiredSize,
                                const nsHTMLReflowState& aReflowState,
                                nsReflowStatus&          aStatus)
@@ -198,15 +198,13 @@ nsNativeScrollbarFrame::Reflow(nsIPresContext*          aPresContext,
 // our native scrollbar with the correct values.
 //
 NS_IMETHODIMP
-nsNativeScrollbarFrame::AttributeChanged(nsIPresContext* aPresContext,
-                                         nsIContent* aChild,
+nsNativeScrollbarFrame::AttributeChanged(nsIContent* aChild,
                                          PRInt32 aNameSpaceID,
                                          nsIAtom* aAttribute,
                                          PRInt32 aModType)
 {
-  nsresult rv = nsBoxFrame::AttributeChanged(aPresContext, aChild,
-                                             aNameSpaceID, aAttribute,
-                                             aModType);
+  nsresult rv = nsBoxFrame::AttributeChanged(aChild, aNameSpaceID,
+                                             aAttribute, aModType);
   
   if (  aAttribute == nsXULAtoms::curpos ||
         aAttribute == nsXULAtoms::maxpos || 
@@ -240,7 +238,7 @@ nsNativeScrollbarFrame::AttributeChanged(nsIPresContext* aPresContext,
             nsCOMPtr<nsIScrollbarMediator> mediator;
             scrollbarFrame->GetScrollbarMediator(getter_AddRefs(mediator));
             if (mediator)
-              mediator->PositionChanged(oldPosition, /* inout */ curPosition);
+              mediator->PositionChanged(scrollbarFrame, oldPosition, /* inout */ curPosition);
           }
 
           nsAutoString currentStr;
@@ -274,7 +272,7 @@ NS_IMETHODIMP
 nsNativeScrollbarFrame::GetPrefSize(nsBoxLayoutState& aState, nsSize& aSize)
 {
   float p2t = 0.0;
-  p2t = aState.GetPresContext()->PixelsToTwips();
+  p2t = aState.PresContext()->PixelsToTwips();
   
   PRInt32 narrowDimension = 0;
   nsCOMPtr<nsINativeScrollbar> native ( do_QueryInterface(mScrollbar) );
@@ -327,7 +325,7 @@ nsNativeScrollbarFrame::Hookup()
     return;
   }
 
-  scrollbar->SetContent(scrollbarContent, mediator);
+  scrollbar->SetContent(scrollbarContent, sb, mediator);
   mScrollbarNeedsContent = PR_FALSE;
 
   if (!scrollbarContent)

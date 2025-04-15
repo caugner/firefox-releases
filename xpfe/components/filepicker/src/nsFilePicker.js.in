@@ -1,24 +1,40 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s): Stuart Parmenter <pavlov@netscape.com>
- */
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Stuart Parmenter <pavlov@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  * No magic constructor behaviour, as is de rigeur for XPCOM.
@@ -67,21 +83,30 @@ function nsFilePicker()
   /* attributes */
   this.mDefaultString = "";
   this.mFilterIndex = 0;
-  if (lastDirectory) {
-    this.mDisplayDirectory = Components.classes[LOCAL_FILE_CONTRACTID].createInstance(nsILocalFile);
-    this.mDisplayDirectory.initWithPath(lastDirectory);
-  } else {
-    this.mDisplayDirectory = null;
-  }
   this.mFilterTitles = new Array();
   this.mFilters = new Array();
+  this.mDisplayDirectory = null;
+  if (lastDirectory) {
+    try {
+      var dir = Components.classes[LOCAL_FILE_CONTRACTID].createInstance(nsILocalFile);
+      dir.initWithPath(lastDirectory);
+      this.mDisplayDirectory = dir;
+    } catch (e) {}
+  }
 }
 
 nsFilePicker.prototype = {
 
   /* attribute nsILocalFile displayDirectory; */
-  set displayDirectory(a) { this.mDisplayDirectory = a; },
-  get displayDirectory()  { return this.mDisplayDirectory; },
+  set displayDirectory(a) {
+    this.mDisplayDirectory = a &&
+      a.clone().QueryInterface(nsILocalFile);
+  },
+  get displayDirectory()  {
+    return this.mDisplayDirectory &&
+           this.mDisplayDirectory.clone()
+               .QueryInterface(nsILocalFile);
+  },
 
   /* readonly attribute nsILocalFile file; */
   set file(a) { throw "readonly property"; },
@@ -93,7 +118,7 @@ nsFilePicker.prototype = {
 
   /* readonly attribute nsIFileURL fileURL; */
   set fileURL(a) { throw "readonly property"; },
-  get fileURL()  { 
+  get fileURL()  {
     if (this.mFilesEnumerator) {
       var ioService = Components.classes["@mozilla.org/network/io-service;1"]
                     .getService(Components.interfaces.nsIIOService);
@@ -110,7 +135,7 @@ nsFilePicker.prototype = {
   /* attribute wstring defaultExtension */
   set defaultExtension(ext) { },
   get defaultExtension() { return ""; },
-  
+
   /* attribute long filterIndex; */
   set filterIndex(a) { this.mFilterIndex = a; },
   get filterIndex() { return this.mFilterIndex; },
@@ -164,10 +189,12 @@ nsFilePicker.prototype = {
   },
 
   QueryInterface: function(iid) {
-    if (!iid.equals(nsIFilePicker) &&
-        !iid.equals(nsISupports))
-        throw Components.results.NS_ERROR_NO_INTERFACE;
-    return this;
+    if (iid.equals(nsIFilePicker) ||
+        iid.equals(nsISupports))
+      return this;
+
+    Components.returnCode = Components.results.NS_ERROR_NO_INTERFACE;
+    return null;
   },
 
   show: function() {
@@ -243,14 +270,14 @@ function (compMgr, fileSpec, location, type)
     debug("registering (all right -- a JavaScript module!)");
     compMgr = compMgr.QueryInterface(Components.interfaces.nsIComponentRegistrar);
 
-    compMgr.registerFactoryLocation(FILEPICKER_CID, 
+    compMgr.registerFactoryLocation(FILEPICKER_CID,
                                     "FilePicker JS Component",
 #ifndef MOZ_WIDGET_GTK2
-                                    FILEPICKER_CONTRACTID, 
+                                    FILEPICKER_CONTRACTID,
 #else
                                     "",
 #endif
-                                    fileSpec, 
+                                    fileSpec,
                                     location,
                                     type);
 }
@@ -259,10 +286,10 @@ filePickerModule.getClassObject =
 function (compMgr, cid, iid) {
     if (!cid.equals(FILEPICKER_CID))
         throw Components.results.NS_ERROR_NO_INTERFACE;
-    
+
     if (!iid.equals(Components.interfaces.nsIFactory))
         throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
-    
+
     return filePickerFactory;
 }
 
@@ -272,7 +299,7 @@ function(compMgr)
     debug("Unloading component.");
     return true;
 }
-    
+
 /* factory object */
 var filePickerFactory = new Object();
 
@@ -310,7 +337,7 @@ function srGetStrBundle(path)
     }
   }
 
-  strBundle = strBundleService.createBundle(path); 
+  strBundle = strBundleService.createBundle(path);
   if (!strBundle) {
 	dump("\n--** strBundle createInstance failed **--\n");
   }

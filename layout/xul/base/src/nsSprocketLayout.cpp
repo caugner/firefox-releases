@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -46,7 +46,7 @@
 
 #include "nsBoxLayoutState.h"
 #include "nsSprocketLayout.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsCOMPtr.h"
 #include "nsIContent.h"
 #include "nsIViewManager.h"
@@ -92,25 +92,19 @@ nsSprocketLayout::nsSprocketLayout()
 PRBool 
 nsSprocketLayout::IsHorizontal(nsIBox* aBox)
 {
-   nsIFrame* frame = nsnull;
-   aBox->GetFrame(&frame);
-   return frame->GetStateBits() & NS_STATE_IS_HORIZONTAL;
+   return (aBox->GetStateBits() & NS_STATE_IS_HORIZONTAL) != 0;
 }
 
 void
 nsSprocketLayout::GetFrameState(nsIBox* aBox, nsFrameState& aState)
 {
-   nsIFrame* frame = nsnull;
-   aBox->GetFrame(&frame);
-   aState = frame->GetStateBits();
+   aState = aBox->GetStateBits();
 }
 
 static PRUint8
 GetFrameDirection(nsIBox* aBox)
 {
-   nsIFrame* frame = nsnull;
-   aBox->GetFrame(&frame);
-   return frame->GetStyleVisibility()->mDirection;
+   return aBox->GetStyleVisibility()->mDirection;
 }
 
 static void
@@ -223,7 +217,7 @@ nsSprocketLayout::Layout(nsIBox* aBox, nsBoxLayoutState& aState)
     aBox->GetChildBox(&child);
     while(child) 
     {
-      nsContainerBox::LayoutChildAt(aState, child, nsRect(0,0,0,0));  
+      nsBoxFrame::LayoutChildAt(aState, child, nsRect(0,0,0,0));  
       child->GetNextBox(&child);
     }
     return NS_OK;
@@ -502,17 +496,16 @@ nsSprocketLayout::Layout(nsIBox* aBox, nsBoxLayoutState& aState)
         PRBool dirtyChildren = PR_FALSE;           
         child->IsDirty(dirty);
         child->HasDirtyChildren(dirtyChildren);
-        if (!(dirty || dirtyChildren) && aState.GetLayoutReason() != nsBoxLayoutState::Initial)
+        if (!(dirty || dirtyChildren) && aState.LayoutReason() != nsBoxLayoutState::Initial)
           layout = PR_FALSE;
       }
 
       // We computed a childRect.  Now we want to set the bounds of the child to be that rect.
       // If our old rect is different, then we know our size changed and we cache that fact
       // in the |sizeChanged| variable.
-      nsRect oldRect(0,0,0,0);
+      nsRect oldRect(child->GetRect());
       PRBool sizeChanged = PR_FALSE;
 
-      child->GetBounds(oldRect);
       child->SetBounds(aState, childRect);
       sizeChanged = (childRect.width != oldRect.width || childRect.height != oldRect.height);
 
@@ -521,7 +514,9 @@ nsSprocketLayout::Layout(nsIBox* aBox, nsBoxLayoutState& aState)
       if (sizeChanged) {
         // Our size is different.  Sanity check against our maximum allowed size to ensure
         // we didn't exceed it.
+        child->GetMinSize(aState, minSize);
         child->GetMaxSize(aState, maxSize);
+        nsBox::BoundsCheckMinMax(minSize, maxSize);
 
         // make sure the size is in our max size.
         if (childRect.width > maxSize.width)
@@ -549,8 +544,7 @@ nsSprocketLayout::Layout(nsIBox* aBox, nsBoxLayoutState& aState)
       
       // If the child was a block or inline (e.g., HTML) it may have changed its rect *during* layout. 
       // We have to check for this.
-      nsRect newChildRect;
-      child->GetBounds(newChildRect);
+      nsRect newChildRect(child->GetRect());
 
       if (newChildRect != childRect) {
 #ifdef DEBUG_GROW
@@ -586,6 +580,19 @@ nsSprocketLayout::Layout(nsIBox* aBox, nsBoxLayoutState& aState)
 
           if (clientRect.height > originalClientRect.height)
             originalClientRect.height = clientRect.height;
+        }
+
+        if (!(frameState & NS_STATE_IS_DIRECTION_NORMAL)) {
+          // Our childRect had its XMost() or YMost() (depending on our layout
+          // direction), positioned at a certain point.  Ensure that the
+          // newChildRect satisfies the same constraint.  Note that this is
+          // just equivalent to adjusting the x/y by the difference in
+          // width/height between childRect and newChildRect.  So we don't need
+          // to reaccount for the left and right of the box layout state again.
+          if (frameState & NS_STATE_IS_HORIZONTAL)
+            newChildRect.x = childRect.XMost() - newChildRect.width;
+          else
+            newChildRect.y = childRect.YMost() - newChildRect.height;
         }
 
         // If the child resized then recompute its position.
@@ -669,8 +676,7 @@ nsSprocketLayout::Layout(nsIBox* aBox, nsBoxLayoutState& aState)
     if (tmpClientRect.width > contentRect.width || tmpClientRect.height > contentRect.height)
     {
       // if it did reset our bounds.
-      nsRect bounds(0,0,0,0);
-      aBox->GetBounds(bounds);
+      nsRect bounds(aBox->GetRect());
       if (tmpClientRect.width > contentRect.width)
         bounds.width = tmpClientRect.width;
 
@@ -695,8 +701,7 @@ nsSprocketLayout::Layout(nsIBox* aBox, nsBoxLayoutState& aState)
 
     while (child) 
     {
-      nsRect childRect;
-      child->GetBounds(childRect);
+      nsRect childRect(child->GetRect());
       childRect.x += (x - origX);
       childRect.y += (y - origY);
       child->SetBounds(aState, childRect);
@@ -1047,7 +1052,10 @@ nsSprocketLayout::ChildResized(nsIBox* aBox,
             // so we will set the changed index to be us. And signal that we need a new pass.
 
             nsSize max(0,0);
+            nsSize min(0,0);
             aChild->GetMaxSize(aState, max);
+            aChild->GetMinSize(aState, min);
+            nsBox::BoundsCheckMinMax(min, max);
             AddMargin(aChild, max);
 
             if (isHorizontal)
@@ -1082,7 +1090,10 @@ nsSprocketLayout::ChildResized(nsIBox* aBox,
       
       if (childActualWidth > childLayoutWidth) {
             nsSize max(0,0);
+            nsSize min(0,0);
+            aChild->GetMinSize(aState, min);
             aChild->GetMaxSize(aState, max);
+            nsBox::BoundsCheckMinMax(min, max);
             AddMargin(aChild, max);
 
             // our width now becomes the new size
@@ -1156,9 +1167,7 @@ nsSprocketLayout::ComputeChildSizes(nsIBox* aBox,
                            nsComputedBoxSize*& aComputedBoxSizes)
 {  
 
- // float p2t;
- // aState.GetPresContext()->GetScaledPixelsToTwips(&p2t);
-  //nscoord onePixel = NSIntPixelsToTwips(1, p2t);
+  //nscoord onePixel = aState.PresContext()->IntScaledPixelsToTwips(1);
 
   PRInt32 sizeRemaining            = aGivenSize;
   PRInt32 spacerConstantsRemaining = 0;
@@ -1479,7 +1488,10 @@ nsSprocketLayout::GetMaxSize(nsIBox* aBox, nsBoxLayoutState& aState, nsSize& aSi
       {
         // if completely redefined don't even ask our child for its size.
         nsSize max(NS_INTRINSICSIZE, NS_INTRINSICSIZE);
+        nsSize min(NS_INTRINSICSIZE, NS_INTRINSICSIZE);
         child->GetMaxSize(aState, max);
+        child->GetMinSize(aState, min);
+        nsBox::BoundsCheckMinMax(min, max);
 
         AddMargin(child, max);
         AddSmallestSize(aSize, max, isHorizontal);

@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sw=4 et tw=80:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
@@ -51,12 +52,12 @@
 #include <math.h>
 #include "nscore.h"
 #include "nsXPCOM.h"
+#include "nsAutoPtr.h"
 #include "nsISupports.h"
 #include "nsIServiceManager.h"
 #include "nsIClassInfo.h"
 #include "nsIComponentManager.h"
 #include "nsIComponentRegistrar.h"
-#include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
 #include "nsIGenericFactory.h"
 #include "nsMemory.h"
@@ -104,6 +105,7 @@
 
 #include "nsVariant.h"
 #include "nsIPropertyBag.h"
+#include "nsIProperty.h"
 #include "nsSupportsArray.h"
 
 #include "nsIXPCScriptNotify.h"  // used to notify: ScriptEvaluated
@@ -135,8 +137,12 @@
 
 // Note that one would not normally turn *any* of these on in a non-DEBUG build.
 
-#if defined(DEBUG_jband) || defined(DEBUG_jst) || defined(DEBUG_dbradley) || defined(DEBUG_shaver) || defined(DEBUG_dbaron) || defined(DEBUG_timeless)
+#if defined(DEBUG_jband) || defined(DEBUG_jst) || defined(DEBUG_dbradley) || defined(DEBUG_shaver_no) || defined(DEBUG_timeless)
 #define DEBUG_xpc_hacker
+#endif
+
+#if defined(DEBUG_brendan) || defined(DEBUG_bzbarsky)
+#define DEBUG_XPCNativeWrapper 1
 #endif
 
 #ifdef DEBUG
@@ -160,6 +166,10 @@
 //#define XPC_REPORT_NATIVE_INTERFACE_AND_SET_FLUSHING
 //#define XPC_REPORT_JSCLASS_FLUSHING
 //#define XPC_TRACK_AUTOMARKINGPTR_STATS
+#endif
+
+#if defined(DEBUG_dbaron) // only part of DEBUG_xpc_hacker!
+#define XPC_DUMP_AT_SHUTDOWN
 #endif
 
 /***************************************************************************/
@@ -204,6 +214,7 @@ void DEBUG_CheckWrapperThreadSafety(const XPCWrappedNative* wrapper);
 #define XPC_NATIVE_SET_MAP_SIZE             64
 #define XPC_NATIVE_JSCLASS_MAP_SIZE         32
 #define XPC_THIS_TRANSLATOR_MAP_SIZE         8
+#define XPC_NATIVE_WRAPPER_MAP_SIZE         16
 
 /***************************************************************************/
 // data declarations...
@@ -427,6 +438,8 @@ public:
     // NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR
     static nsXPConnect* GetSingleton();
 
+    // Called by module code in dll startup
+    static void InitStatics() { gSelf = nsnull; gOnceAliveNowDead = JS_FALSE; }
     // Called by module code on dll shutdown.
     static void ReleaseXPConnectSingleton();
 
@@ -514,6 +527,9 @@ public:
     XPCWrappedNativeProtoMap* GetDetachedWrappedNativeProtoMap() const
         {return mDetachedWrappedNativeProtoMap;}
 
+    XPCNativeWrapperMap* GetExplicitNativeWrapperMap() const
+        {return mExplicitNativeWrapperMap;}
+
     XPCLock* GetMapLock() const {return mMapLock;}
 
     XPCContext* GetXPCContext(JSContext* cx);
@@ -548,8 +564,10 @@ public:
         IDX_COMPONENTS              ,
         IDX_WRAPPED_JSOBJECT        ,
         IDX_OBJECT                  ,
+        IDX_FUNCTION                ,
         IDX_PROTOTYPE               ,
         IDX_CREATE_INSTANCE         ,
+        IDX_ITEM                    ,
 #ifdef XPC_IDISPATCH_SUPPORT
         IDX_ACTIVEX_OBJECT          ,
         IDX_COM_OBJECT              ,
@@ -628,6 +646,7 @@ private:
     XPCNativeScriptableSharedMap* mNativeScriptableSharedMap;
     XPCWrappedNativeProtoMap* mDyingWrappedNativeProtoMap;
     XPCWrappedNativeProtoMap* mDetachedWrappedNativeProtoMap;
+    XPCNativeWrapperMap*     mExplicitNativeWrapperMap;
     XPCLock* mMapLock;
     PRThread* mThreadRunningGC;
     nsVoidArray mWrappedJSToReleaseArray;
@@ -946,7 +965,7 @@ private:
 // These are the various JSClasses and callbacks whose use that required
 // visibility from more than one .cpp file.
 
-extern JSClass XPC_WN_NoHelper_JSClass;
+extern JSExtendedClass XPC_WN_NoHelper_JSClass;
 extern JSClass XPC_WN_NoMods_Proto_JSClass;
 extern JSClass XPC_WN_ModsAllowed_Proto_JSClass;
 extern JSClass XPC_WN_Tearoff_JSClass;
@@ -967,6 +986,10 @@ XPC_WN_GetterSetter(JSContext *cx, JSObject *obj,
 
 extern JSBool
 xpc_InitWrappedNativeJSOps();
+
+#define IS_PROTO_CLASS(clazz)                                                 \
+          ((clazz) == &XPC_WN_NoMods_Proto_JSClass ||                         \
+           (clazz) == &XPC_WN_ModsAllowed_Proto_JSClass)
 
 // Comes from xpcwrappednativeops.cpp
 extern void
@@ -1001,6 +1024,9 @@ public:
 
     JSObject*
     GetPrototypeJSObject() const {return mPrototypeJSObject;}
+
+    JSObject*
+    GetPrototypeJSFunction() const {return mPrototypeJSFunction;}
 
     void RemoveWrappedNativeProtos();
 
@@ -1043,6 +1069,8 @@ public:
     void SetComponents(nsXPCComponents* aComponents);
     void SetGlobal(XPCCallContext& ccx, JSObject* aGlobal);
 
+    static void InitStatics() { gScopes = nsnull; gDyingScopes = nsnull; }
+
 protected:
     XPCWrappedNativeScope(XPCCallContext& ccx, JSObject* aGlobal);
     virtual ~XPCWrappedNativeScope();
@@ -1062,6 +1090,7 @@ private:
     XPCWrappedNativeScope*           mNext;
     JSObject*                        mGlobalJSObject;
     JSObject*                        mPrototypeJSObject;
+    JSObject*                        mPrototypeJSFunction;
 };
 
 /***************************************************************************/
@@ -1191,7 +1220,8 @@ public:
                     {return 0 != (mMemberCount & XPC_NATIVE_IFACE_MARK_FLAG);}
 
     // NOP. This is just here to make the AutoMarkingPtr code compile.
-    inline void MarkBeforeJSFinalize(JSContext*) {};
+    inline void MarkBeforeJSFinalize(JSContext*) {}
+    inline void AutoMark(JSContext*) {}
 
     static void DestroyInstance(JSContext* cx, XPCJSRuntime* rt,
                                 XPCNativeInterface* inst);
@@ -1319,7 +1349,8 @@ public:
     inline void Mark();
 
     // NOP. This is just here to make the AutoMarkingPtr code compile.
-    inline void MarkBeforeJSFinalize(JSContext*) {};
+    inline void MarkBeforeJSFinalize(JSContext*) {}
+    inline void AutoMark(JSContext*) {}
 
 private:
     void MarkSelfOnly() {mInterfaceCount |= XPC_NATIVE_SET_MARK_FLAG;}
@@ -1408,6 +1439,9 @@ public:
     JSBool WantConstruct()                GET_IT(WANT_CONSTRUCT)
     JSBool WantHasInstance()              GET_IT(WANT_HASINSTANCE)
     JSBool WantMark()                     GET_IT(WANT_MARK)
+    JSBool WantEquality()                 GET_IT(WANT_EQUALITY)
+    JSBool WantOuterObject()              GET_IT(WANT_OUTER_OBJECT)
+    JSBool WantInnerObject()              GET_IT(WANT_INNER_OBJECT)
     JSBool UseJSStubForAddProperty()      GET_IT(USE_JSSTUB_FOR_ADDPROPERTY)
     JSBool UseJSStubForDelProperty()      GET_IT(USE_JSSTUB_FOR_DELPROPERTY)
     JSBool UseJSStubForSetProperty()      GET_IT(USE_JSSTUB_FOR_SETPROPERTY)
@@ -1437,20 +1471,21 @@ class XPCNativeScriptableShared
 {
 public:
     const XPCNativeScriptableFlags& GetFlags() const {return mFlags;}
-    JSClass*                        GetJSClass() {return &mJSClass;}
+    JSClass*                        GetJSClass() {return &mJSClass.base;}
 
     XPCNativeScriptableShared(JSUint32 aFlags = 0, char* aName = nsnull)
         : mFlags(aFlags)
-        {memset(&mJSClass, 0, sizeof(JSClass));
-         mJSClass.name = aName;  // take ownership
+        {memset(&mJSClass, 0, sizeof(mJSClass));
+         mJSClass.base.name = aName;  // take ownership
          MOZ_COUNT_CTOR(XPCNativeScriptableShared);}
 
     ~XPCNativeScriptableShared()
-        {if(mJSClass.name)nsMemory::Free((void*)mJSClass.name);
+        {if(mJSClass.base.name)nsMemory::Free((void*)mJSClass.base.name);
          MOZ_COUNT_DTOR(XPCNativeScriptableShared);}
 
     char* TransferNameOwnership()
-        {char* name=(char*)mJSClass.name; mJSClass.name = nsnull; return name;}
+        {char* name=(char*)mJSClass.base.name; mJSClass.base.name = nsnull;
+        return name;}
 
     void PopulateJSClass();
 
@@ -1460,7 +1495,7 @@ public:
 
 private:
     XPCNativeScriptableFlags mFlags;
-    JSClass                  mJSClass;
+    JSExtendedClass          mJSClass;
 };
 
 /***************************************************************************/
@@ -1620,6 +1655,8 @@ public:
             JS_MarkGCThing(cx, mJSProtoObject, 
                            "XPCWrappedNativeProto::mJSProtoObject", nsnull);
          if(mScriptableInfo) mScriptableInfo->Mark();}
+    // NOP. This is just here to make the AutoMarkingPtr code compile.
+    inline void AutoMark(JSContext*) {}
 
     // Yes, we *do* need to mark the mScriptableInfo in both cases.
     void Mark() const
@@ -1637,7 +1674,7 @@ protected:
     XPCWrappedNativeProto(const XPCWrappedNativeProto& r); // not implemented
     XPCWrappedNativeProto& operator= (const XPCWrappedNativeProto& r); // not implemented
 
-    // hide ctor and dtor
+    // hide ctor
     XPCWrappedNativeProto(XPCWrappedNativeScope* Scope,
                           nsIClassInfo* ClassInfo,
                           PRUint32 ClassInfoFlags,
@@ -1686,6 +1723,10 @@ public:
     XPCWrappedNativeTearOff()
         : mInterface(nsnull), mNative(nsnull), mJSObject(nsnull) {}
     ~XPCWrappedNativeTearOff();
+
+    // NOP. This is just here to make the AutoMarkingPtr code compile.
+    inline void MarkBeforeJSFinalize(JSContext*) {}
+    inline void AutoMark(JSContext*) {}
 
     void Mark()       {mJSObject = (JSObject*)(((jsword)mJSObject) | 1);}
     void Unmark()     {mJSObject = (JSObject*)(((jsword)mJSObject) & ~1);}
@@ -1889,20 +1930,44 @@ public:
     inline JSBool HasInterfaceNoQI(XPCNativeInterface* aInterface);
     inline JSBool HasInterfaceNoQI(const nsIID& iid);
 
+    XPCWrappedNativeTearOff* LocateTearOff(XPCCallContext& ccx,
+                                           XPCNativeInterface* aInterface);
     XPCWrappedNativeTearOff* FindTearOff(XPCCallContext& ccx,
                                          XPCNativeInterface* aInterface,
                                          JSBool needJSObject = JS_FALSE,
                                          nsresult* pError = nsnull);
-    void
-    Mark() const
-        {mSet->Mark();
-         if(mScriptableInfo) mScriptableInfo->Mark();
-         if(HasProto()) mMaybeProto->Mark();}
+    void Mark() const
+    {
+        mSet->Mark();
+        if(mScriptableInfo) mScriptableInfo->Mark();
+        if(HasProto()) mMaybeProto->Mark();
+    }
 
     // Yes, we *do* need to mark the mScriptableInfo in both cases.
     inline void MarkBeforeJSFinalize(JSContext* cx)
-        {if(mScriptableInfo) mScriptableInfo->Mark();
-         if(HasProto()) mMaybeProto->MarkBeforeJSFinalize(cx);}
+    {
+        if(mScriptableInfo) mScriptableInfo->Mark();
+        if(HasProto()) mMaybeProto->MarkBeforeJSFinalize(cx);
+        if(mNativeWrapper)
+        {
+            JS_MarkGCThing(cx, mNativeWrapper, 
+                           "XPCWrappedNative::mNativeWrapper", nsnull);
+        }
+    }
+
+    inline void AutoMark(JSContext* cx)
+    {
+        // If this got called, we're being kept alive by someone who really
+        // needs us alive and whole.  Do not let our mFlatJSObject go away.
+        // This is the only time we should be marking our mFlatJSObject;
+        // normally we just go away quietly when it does.  Be careful not to
+        // mark the bogus JSVAL_ONE value we can have during init, though.
+        if(mFlatJSObject && mFlatJSObject != (JSObject*)JSVAL_ONE)
+        {
+            ::JS_MarkGCThing(cx, mFlatJSObject,
+                             "XPCWrappedNative::mFlatJSObject", nsnull);
+        }
+    }
 
 #ifdef DEBUG
     void ASSERT_SetsNotMarked() const
@@ -1925,6 +1990,9 @@ public:
                         XPCNativeScriptableCreateInfo* sciProto);
 
     JSBool HasExternalReference() const {return mRefCnt > 1;}
+
+    JSObject* GetNativeWrapper()              { return mNativeWrapper; }
+    void      SetNativeWrapper(JSObject *obj) { mNativeWrapper = obj; }
 
     // Make ctor and dtor protected (rather than private) to placate nsCOMPtr.
 protected:
@@ -1968,10 +2036,10 @@ private:
         XPCWrappedNativeProto*   mMaybeProto;
     };
     XPCNativeSet*                mSet;
-    nsISupports*                 mIdentity;
     JSObject*                    mFlatJSObject;
     XPCNativeScriptableInfo*     mScriptableInfo;
     XPCWrappedNativeTearOffChunk mFirstChunk;
+    JSObject*                    mNativeWrapper;
 
 #ifdef XPC_CHECK_WRAPPER_THREADSAFETY
 public:
@@ -2151,7 +2219,7 @@ public:
     // longer root their JSObject and are only still alive because they
     // were being used via nsSupportsWeakReference at the time when their
     // last (outside) reference was released. Wrappers that fit into that
-    // category are only deleted when we see that their cooresponding JSObject
+    // category are only deleted when we see that their corresponding JSObject
     // is to be finalized.
     JSBool IsSubjectToFinalization() const {return IsValid() && mRefCnt == 1;}
 
@@ -2263,7 +2331,9 @@ public:
                                            nsIXPConnectJSObjectHolder** dest,
                                            nsISupports* src,
                                            const nsID* iid,
-                                           JSObject* scope, nsresult* pErr);
+                                           JSObject* scope,
+                                           PRBool allowNativeWrapper,
+                                           nsresult* pErr);
 
     static JSBool GetNativeInterfaceFromJSObject(XPCCallContext& ccx,
                                                  void** dest, JSObject* src,
@@ -2351,6 +2421,8 @@ public:
                                         const nsAString &readable);
 
     static XPCReadableJSStringWrapper *JSStringToReadable(JSString *str);
+
+    static void ShutdownDOMStringFinalizer();
 
 private:
     XPCStringConvert();         // not implemented
@@ -2448,6 +2520,8 @@ public:
     nsXPCException();
     virtual ~nsXPCException();
 
+    static void InitStatics() { sEverMadeOneFromFactory = JS_FALSE; }
+
 protected:
     void Reset();
 private:
@@ -2460,6 +2534,8 @@ private:
     int             mLineNumber;
     nsIException*   mInner;
     PRBool          mInitialized;
+
+    static JSBool sEverMadeOneFromFactory;
 };
 
 /***************************************************************************/
@@ -2577,7 +2653,10 @@ public:
 
 #ifdef DEBUG
     JSBool DEBUG_StackHasJSContext(JSContext*  aJSContext);
-#endif    
+#endif
+
+    const nsDeque &GetStack()
+    { return mStack; }
 
 private:
     void SyncJSContexts();
@@ -2591,9 +2670,27 @@ private:
     JSContext*  mOwnSafeJSContext;
 };
 
+/***************************************************************************/
+
+#define NS_XPC_JSCONTEXT_STACK_ITERATOR_CID \
+{ 0x05bae29d, 0x8aef, 0x486d, \
+  { 0x84, 0xaa, 0x53, 0xf4, 0x8f, 0x14, 0x68, 0x11 } }
+
+class nsXPCJSContextStackIterator : public nsIJSContextStackIterator
+{
+public:
+    NS_DECL_ISUPPORTS
+    NS_DECL_NSIJSCONTEXTSTACKITERATOR
+
+private:
+    // XXX These don't really want to be pointers.
+    nsAutoPtr<nsDequeIterator> mIterator;
+};
 
 /**************************************************************/
 // All of our thread local storage.
+
+#define BAD_TLS_INDEX ((PRUint32) -1)
 
 class XPCPerThreadData
 {
@@ -2688,6 +2785,9 @@ public:
     void MarkAutoRootsBeforeJSFinalize(JSContext* cx);
     void MarkAutoRootsAfterJSFinalize();
 
+    static void InitStatics()
+        { gLock = nsnull; gThreads = nsnull; gTLSIndex = BAD_TLS_INDEX; }
+
 #ifdef XPC_CHECK_WRAPPER_THREADSAFETY
     JSUint32  IncrementWrappedNativeThreadsafetyReportDepth()
         {return ++mWrappedNativeThreadsafetyReportDepth;}
@@ -2741,6 +2841,7 @@ public:
     // NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR
     static nsXPCThreadJSContextStackImpl* GetSingleton();
 
+    static void InitStatics() { gXPCThreadJSContextStack = nsnull; }
     static void FreeSingleton();
 
     nsXPCThreadJSContextStackImpl();
@@ -2750,12 +2851,58 @@ private:
     XPCJSContextStack* GetStackForCurrentThread()
         {XPCPerThreadData* data = XPCPerThreadData::GetData();
          return data ? data->GetJSContextStack() : nsnull;}
+
+    static nsXPCThreadJSContextStackImpl* gXPCThreadJSContextStack;
+    friend class nsXPCJSContextStackIterator;
 };
 
 /***************************************************************************/
 #define NS_JS_RUNTIME_SERVICE_CID \
 {0xb5e65b52, 0x1dd1, 0x11b2, \
     { 0xae, 0x8f, 0xf0, 0x92, 0x8e, 0xd8, 0x84, 0x82 }}
+
+#ifndef XPCONNECT_STANDALONE
+#include "nsIScriptSecurityManager.h"
+#include "nsIPrincipal.h"
+#include "nsIScriptObjectPrincipal.h"
+
+class BackstagePass : public nsIScriptObjectPrincipal, public nsIXPCScriptable
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIXPCSCRIPTABLE
+  
+  virtual nsIPrincipal* GetPrincipal() {
+    return mPrincipal;
+  }
+
+  BackstagePass(nsIPrincipal *prin) :
+    mPrincipal(prin)
+  {
+  }
+
+  virtual ~BackstagePass() { }
+
+private:
+  nsCOMPtr<nsIPrincipal> mPrincipal;
+};
+
+#else
+
+class BackstagePass : public nsIXPCScriptable
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIXPCSCRIPTABLE
+
+  BackstagePass()
+  {
+  }
+
+  virtual ~BackstagePass() { }
+};
+
+#endif
 
 class nsJSRuntimeServiceImpl : public nsIJSRuntimeService,
                                public nsSupportsWeakReference
@@ -2764,7 +2911,7 @@ class nsJSRuntimeServiceImpl : public nsIJSRuntimeService,
     NS_DECL_ISUPPORTS
     NS_DECL_NSIJSRUNTIMESERVICE
 
-    // This returns and AddRef'd pointer. It does not do this with an out param
+    // This returns an AddRef'd pointer. It does not do this with an out param
     // only because this form  is required by generic module macro:
     // NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR
     static nsJSRuntimeServiceImpl* GetSingleton();
@@ -2773,8 +2920,12 @@ class nsJSRuntimeServiceImpl : public nsIJSRuntimeService,
 
     nsJSRuntimeServiceImpl();
     virtual ~nsJSRuntimeServiceImpl();
+
+    static void InitStatics() { gJSRuntimeService = nsnull; }
  protected:
     JSRuntime *mRuntime;
+    static nsJSRuntimeServiceImpl* gJSRuntimeService;
+    nsCOMPtr<nsIXPCScriptable> mBackstagePass;
 };
 
 /***************************************************************************/
@@ -2818,6 +2969,7 @@ private:
     nsXPCComponents_ID*             mID;
     nsXPCComponents_Exception*      mException;
     nsXPCComponents_Constructor*    mConstructor;
+    nsXPCComponents_Utils*          mUtils;
 };
 
 /***************************************************************************/
@@ -3072,6 +3224,7 @@ public:
         {if(JSVAL_IS_GCTHING(*mValPtr))
             JS_MarkGCThing(cx, JSVAL_TO_GCTHING(*mValPtr), 
                            "XPCMarkableJSVal", nsnull);}
+    void AutoMark(JSContext*) {}
 private:
     XPCMarkableJSVal(); // not implemented    
     jsval  mVal;
@@ -3130,7 +3283,10 @@ public:                                                                      \
     virtual ~ class_ () {}                                                   \
                                                                              \
     virtual void MarkBeforeJSFinalize(JSContext* cx)                         \
-        {if(mPtr) mPtr->MarkBeforeJSFinalize(cx);                            \
+        {if(mPtr) {                                                          \
+           mPtr->MarkBeforeJSFinalize(cx);                                   \
+           mPtr->AutoMark(cx);                                               \
+         }                                                                   \
          if(mNext) mNext->MarkBeforeJSFinalize(cx);}                         \
                                                                              \
     virtual void MarkAfterJSFinalize()                                       \
@@ -3153,9 +3309,65 @@ protected:                                                                   \
 DEFINE_AUTO_MARKING_PTR_TYPE(AutoMarkingNativeInterfacePtr, XPCNativeInterface)
 DEFINE_AUTO_MARKING_PTR_TYPE(AutoMarkingNativeSetPtr, XPCNativeSet)
 DEFINE_AUTO_MARKING_PTR_TYPE(AutoMarkingWrappedNativePtr, XPCWrappedNative)
+DEFINE_AUTO_MARKING_PTR_TYPE(AutoMarkingWrappedNativeTearOffPtr, XPCWrappedNativeTearOff)
 DEFINE_AUTO_MARKING_PTR_TYPE(AutoMarkingWrappedNativeProtoPtr, XPCWrappedNativeProto)
 DEFINE_AUTO_MARKING_PTR_TYPE(AutoMarkingJSVal, XPCMarkableJSVal)
                                     
+#define DEFINE_AUTO_MARKING_ARRAY_PTR_TYPE(class_, type_)                    \
+class class_ : public AutoMarkingPtr                                         \
+{                                                                            \
+public:                                                                      \
+    class_ (XPCCallContext& ccx)                                             \
+        : AutoMarkingPtr(ccx), mPtr(nsnull), mCount(0) {}                    \
+    class_ (XPCCallContext& ccx, type_** aPtr, PRUint32 aCount,              \
+            PRBool aClear = PR_FALSE)                                        \
+        : AutoMarkingPtr(ccx), mPtr(aPtr), mCount(aCount)                    \
+    {                                                                        \
+        if(!mPtr) mCount = 0;                                                \
+        else if(aClear) memset(mPtr, 0, mCount*sizeof(type_*));              \
+    }                                                                        \
+    virtual ~ class_ () {}                                                   \
+                                                                             \
+    virtual void MarkBeforeJSFinalize(JSContext* cx)                         \
+    {                                                                        \
+        for(PRUint32 i = 0; i < mCount; ++i)                                 \
+        {                                                                    \
+            type_* cur = mPtr[i];                                            \
+            if(cur)                                                          \
+            {                                                                \
+                cur->MarkBeforeJSFinalize(cx);                               \
+                cur->AutoMark(cx);                                           \
+            }                                                                \
+        }                                                                    \
+        if(mNext) mNext->MarkBeforeJSFinalize(cx);                           \
+    }                                                                        \
+                                                                             \
+    virtual void MarkAfterJSFinalize()                                       \
+    {                                                                        \
+        for(PRUint32 i = 0; i < mCount; ++i)                                 \
+        {                                                                    \
+            type_* cur = mPtr[i];                                            \
+            if(cur)                                                          \
+                cur->Mark();                                                 \
+        }                                                                    \
+        if(mNext) mNext->MarkAfterJSFinalize();                              \
+    }                                                                        \
+                                                                             \
+    type_ ** get()       const  {return mPtr;}                               \
+    operator type_ **()  const  {return mPtr;}                               \
+    type_ ** operator->() const  {return mPtr;}                              \
+                                                                             \
+    class_ & operator =(const class_ & inst)                                 \
+        {mPtr = inst.mPtr; mCount = inst.mCount; return *this;}              \
+                                                                             \
+protected:                                                                   \
+    type_ ** mPtr;                                                           \
+    PRUint32 mCount;                                                         \
+};
+
+DEFINE_AUTO_MARKING_ARRAY_PTR_TYPE(AutoMarkingNativeInterfacePtrArrayPtr,
+                                   XPCNativeInterface)
+    
 // Note: It looked like I would need one of these AutoMarkingPtr types for
 // XPCNativeScriptableInfo in order to manage marking its 
 // XPCNativeScriptableShared member during construction. But AFAICT we build
@@ -3219,6 +3431,9 @@ protected:
 // Utilities
 
 JSBool xpc_IsReportableErrorCode(nsresult code);
+
+JSObject* xpc_CloneJSFunction(XPCCallContext &ccx, JSObject *funobj,
+                              JSObject *parent);
 
 /***************************************************************************/
 // Inlined utilities.

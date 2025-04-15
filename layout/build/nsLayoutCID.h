@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -54,10 +54,6 @@
 #define NS_LAYOUT_DEBUGGER_CID \
  { 0xa6cf90f9, 0x15b3, 0x11d2,{0x93, 0x2e, 0x00, 0x80, 0x5f, 0x8a, 0xdd, 0x32}}
 
-/* a6cf90fc-15b3-11d2-932e-00805f8add32 */
-#define NS_HTML_ELEMENT_FACTORY_CID \
- { 0xa6cf90fc, 0x15b3, 0x11d2,{0x93, 0x2e, 0x00, 0x80, 0x5f, 0x8a, 0xdd, 0x32}}
-
 #define NS_HTMLDOCUMENT_CID                       \
 { /* 5d0fcdd0-4daa-11d2-b328-00805f8a3859 */      \
  0x5d0fcdd0, 0x4daa, 0x11d2,                      \
@@ -67,11 +63,6 @@
 { /* a6cf9063-15b3-11d2-932e-00805f8add32 */      \
  0xa6cf9063, 0x15b3, 0x11d2,                      \
  {0x93, 0x2e, 0x00, 0x80, 0x5f, 0x8a, 0xdd, 0x32}}
-
-#define NS_XML_ELEMENT_FACTORY_CID                \
-{ /* CF170391-79CC-11d3-BE44-0020A6361667 */      \
- 0xcf170391, 0x79cc, 0x11d3,                      \
- {0xbe, 0x44, 0x0, 0x20, 0xa6, 0x36, 0x16, 0x67}}
 
 #define NS_IMAGEDOCUMENT_CID                      \
 { /* e11a6080-4daa-11d2-b328-00805f8a3859 */      \
@@ -110,18 +101,6 @@
 #define NS_PRESSHELL_CID \
 { 0xe6fd9940, 0x899d, 0x11d2, { 0x8e, 0xae, 0x0, 0x80, 0x5f, 0x29, 0xf3, 0x70 } }
 
-// {A1FDE861-E802-11d4-9885-00C04FA0CF4B}
-#define NS_PRESSTATE_CID \
-{ 0xa1fde861, 0xe802, 0x11d4, { 0x98, 0x85, 0x0, 0xc0, 0x4f, 0xa0, 0xcf, 0x4b } }
-
-// {A1FDE85E-E802-11d4-9885-00C04FA0CF4B}
-#define NS_GALLEYCONTEXT_CID \
-{ 0xa1fde85e, 0xe802, 0x11d4, { 0x98, 0x85, 0x0, 0xc0, 0x4f, 0xa0, 0xcf, 0x4b } }
-
-// {A1FDE85F-E802-11d4-9885-00C04FA0CF4B}
-#define NS_PRINTCONTEXT_CID \
-{ 0xa1fde85f, 0xe802, 0x11d4, { 0x98, 0x85, 0x0, 0xc0, 0x4f, 0xa0, 0xcf, 0x4b } }
-
 // {95F46161-D177-11d2-BF86-00105A1B0627}
 #define NS_HTML_CSS_STYLESHEET_CID \
 { 0x95f46161, 0xd177, 0x11d2, { 0xbf, 0x86, 0x0, 0x10, 0x5a, 0x1b, 0x6, 0x27 } }
@@ -129,10 +108,6 @@
 // {eaca2576-0d4a-11d3-9d7e-0060088f9ff7}
 #define NS_CSS_LOADER_CID \
 { 0xeaca2576, 0x0d4a, 0x11d3, { 0x9d, 0x7e, 0x00, 0x60, 0x08, 0x8f, 0x9f, 0xf7 } }
-
-// {96882B71-8A27-11d2-8EAF-00805F29F370}
-#define NS_TEXTNODE_CID \
-{ 0x96882b71, 0x8a27, 0x11d2, { 0x8e, 0xaf, 0x0, 0x80, 0x5f, 0x29, 0xf3, 0x70 } }
 
 // {96882B72-8A27-11d2-8EAF-00805F29F370}
 #define NS_SELECTION_CID \
@@ -166,17 +141,9 @@
 {/* {a6cf90e5-15b3-11d2-932e-00805f8add32}*/ \
  0xa6cf90e5, 0x15b3, 0x11d2, {0x93, 0x2e, 0x00, 0x80, 0x5f, 0x8a, 0xdd, 0x32 } }
 
-/* a6cf90f7-15b3-11d2-932e-00805f8add32 */
-#define NS_PRINT_PREVIEW_CONTEXT_CID \
- { 0xa6cf90f7, 0x15b3, 0x11d2,{0x93, 0x2e, 0x00, 0x80, 0x5f, 0x8a, 0xdd, 0x32}}
-
 // {64F300A1-C88C-11d3-97FB-00400553EEF0}
 #define NS_XBLSERVICE_CID \
 { 0x64f300a1, 0xc88c, 0x11d3, { 0x97, 0xfb, 0x0, 0x40, 0x5, 0x53, 0xee, 0xf0 } }
-
-// {15671AF5-39F9-4c70-8CE3-72C97111B52D}
-#define NS_BINDINGMANAGER_CID \
-{ 0x15671af5, 0x39f9, 0x4c70, { 0x8c, 0xe3, 0x72, 0xc9, 0x71, 0x11, 0xb5, 0x2d } }
 
 // {D750A964-2D14-484c-B3AA-8ED7823B5C7B}
 #define NS_BOXOBJECT_CID \
@@ -258,6 +225,8 @@
 #define NS_PLUGINDOCUMENT_CID \
 { 0xf96f5ec9, 0x755b, 0x447e, { 0xb1, 0xf3, 0x71, 0x7d, 0x1a, 0x84, 0xbb, 0x41 } }
 
-
+// {a35d1cd4-c505-4d2d-a0f9-aef00b7ce5a5}
+#define NS_CANVASRENDERINGCONTEXT2D_CID \
+{ 0xa35d1cd4, 0xc505, 0x4d2d, { 0xa0, 0xf9, 0xae, 0xf0, 0x0b, 0x7c, 0xe5, 0xa5 } }
 
 #endif /* nsLayoutCID_h__ */

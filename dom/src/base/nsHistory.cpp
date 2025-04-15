@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Travis Bogard <travis@netscape.com> 
- *
+ *   Travis Bogard <travis@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -41,14 +40,12 @@
 #include "nscore.h"
 #include "nsHistory.h"
 #include "nsIDOMWindowInternal.h"
+#include "nsPIDOMWindow.h"
+#include "nsIScriptGlobalObject.h"
 #include "nsIDOMDocument.h"
 #include "nsIDocument.h"
 #include "nsIPresShell.h"
-#include "nsIPresContext.h"
-#include "nsJSUtils.h"
-#include "nsPIDOMWindow.h"
-#include "nsIScriptGlobalObject.h"
-#include "nsIWebShell.h"
+#include "nsPresContext.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIWebNavigation.h"
@@ -59,20 +56,22 @@
 #include "nsXPIDLString.h"
 #include "nsReadableUtils.h"
 #include "nsDOMClassInfo.h"
+#include "nsContentUtils.h"
+
 //
 //  History class implementation 
 //
-HistoryImpl::HistoryImpl(nsIDocShell* aDocShell) : mDocShell(aDocShell)
+nsHistory::nsHistory(nsIDocShell* aDocShell) : mDocShell(aDocShell)
 {
 }
 
-HistoryImpl::~HistoryImpl()
+nsHistory::~nsHistory()
 {
 }
 
 
-// QueryInterface implementation for HistoryImpl
-NS_INTERFACE_MAP_BEGIN(HistoryImpl)
+// QueryInterface implementation for nsHistory
+NS_INTERFACE_MAP_BEGIN(nsHistory)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMHistory)
   NS_INTERFACE_MAP_ENTRY(nsIDOMHistory)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNSHistory)
@@ -80,18 +79,18 @@ NS_INTERFACE_MAP_BEGIN(HistoryImpl)
 NS_INTERFACE_MAP_END
 
 
-NS_IMPL_ADDREF(HistoryImpl)
-NS_IMPL_RELEASE(HistoryImpl)
+NS_IMPL_ADDREF(nsHistory)
+NS_IMPL_RELEASE(nsHistory)
 
 
 void
-HistoryImpl::SetDocShell(nsIDocShell *aDocShell)
+nsHistory::SetDocShell(nsIDocShell *aDocShell)
 {
   mDocShell = aDocShell; // Weak Reference
 }
 
 NS_IMETHODIMP
-HistoryImpl::GetLength(PRInt32* aLength)
+nsHistory::GetLength(PRInt32* aLength)
 {
   nsCOMPtr<nsISHistory>   sHistory;
 
@@ -102,7 +101,7 @@ HistoryImpl::GetLength(PRInt32* aLength)
 }
 
 NS_IMETHODIMP
-HistoryImpl::GetCurrent(nsAString& aCurrent)
+nsHistory::GetCurrent(nsAString& aCurrent)
 {
   PRInt32 curIndex=0;
   nsCAutoString curURL;
@@ -131,7 +130,7 @@ HistoryImpl::GetCurrent(nsAString& aCurrent)
 }
 
 NS_IMETHODIMP
-HistoryImpl::GetPrevious(nsAString& aPrevious)
+nsHistory::GetPrevious(nsAString& aPrevious)
 {
   PRInt32 curIndex;
   nsCAutoString prevURL;
@@ -160,7 +159,7 @@ HistoryImpl::GetPrevious(nsAString& aPrevious)
 }
 
 NS_IMETHODIMP
-HistoryImpl::GetNext(nsAString& aNext)
+nsHistory::GetNext(nsAString& aNext)
 {
   PRInt32 curIndex;
   nsCAutoString nextURL;
@@ -189,7 +188,7 @@ HistoryImpl::GetNext(nsAString& aNext)
 }
 
 NS_IMETHODIMP
-HistoryImpl::Back()
+nsHistory::Back()
 {
   nsCOMPtr<nsISHistory>  sHistory;
 
@@ -205,7 +204,7 @@ HistoryImpl::Back()
 }
 
 NS_IMETHODIMP
-HistoryImpl::Forward()
+nsHistory::Forward()
 {
   nsCOMPtr<nsISHistory>  sHistory;
 
@@ -221,7 +220,7 @@ HistoryImpl::Forward()
 }
 
 NS_IMETHODIMP
-HistoryImpl::Go(PRInt32 aDelta)
+nsHistory::Go(PRInt32 aDelta)
 {
   nsCOMPtr<nsISHistory> session_history;
 
@@ -247,15 +246,11 @@ HistoryImpl::Go(PRInt32 aDelta)
 }
 
 NS_IMETHODIMP
-HistoryImpl::Go()
+nsHistory::Go()
 {
-  nsresult rv;
-  nsCOMPtr<nsIXPConnect> xpc(do_GetService(nsIXPConnect::GetCID(), &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
   nsCOMPtr<nsIXPCNativeCallContext> ncc;
-
-  rv = xpc->GetCurrentNativeCallContext(getter_AddRefs(ncc));
+  nsresult rv = nsContentUtils::XPConnect()->
+    GetCurrentNativeCallContext(getter_AddRefs(ncc));
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!ncc)
@@ -293,19 +288,14 @@ HistoryImpl::Go()
       // trick to work around gecko reflow bugs, and this should have
       // the same effect.
 
-      nsCOMPtr<nsIDOMDocument> domDoc;
-      window->GetExtantDocument(getter_AddRefs(domDoc));
-
-      nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
+      nsCOMPtr<nsIDocument> doc =
+        do_QueryInterface(window->GetExtantDocument());
 
       nsIPresShell *shell;
-      if (doc && (shell = doc->GetShellAt(0))) {
-        nsCOMPtr<nsIPresContext> pcx;
-        shell->GetPresContext(getter_AddRefs(pcx));
-
-        if (pcx) {
-          pcx->ClearStyleDataAndReflow();
-        }
+      nsPresContext *pcx;
+      if (doc && (shell = doc->GetShellAt(0)) &&
+          (pcx = shell->GetPresContext())) {
+        pcx->ClearStyleDataAndReflow();
       }
 
       return NS_OK;
@@ -316,7 +306,7 @@ HistoryImpl::Go()
 }
 
 NS_IMETHODIMP
-HistoryImpl::Item(PRUint32 aIndex, nsAString& aReturn)
+nsHistory::Item(PRUint32 aIndex, nsAString& aReturn)
 {
   aReturn.Truncate();
 
@@ -347,8 +337,8 @@ HistoryImpl::Item(PRUint32 aIndex, nsAString& aReturn)
 }
 
 nsresult
-HistoryImpl::GetSessionHistoryFromDocShell(nsIDocShell * aDocShell, 
-                                           nsISHistory ** aReturn)
+nsHistory::GetSessionHistoryFromDocShell(nsIDocShell * aDocShell, 
+                                         nsISHistory ** aReturn)
 {
 
   NS_ENSURE_TRUE(aDocShell, NS_ERROR_FAILURE);

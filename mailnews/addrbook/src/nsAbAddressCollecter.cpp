@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Seth Spitzer <sspitzer@netscape.com>
- *  Pierre Phaneuf <pp@ludusdesign.com>
+ *   Seth Spitzer <sspitzer@netscape.com>
+ *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,7 +44,8 @@
 #include "nsIAbCard.h"
 #include "nsAbBaseCID.h"
 #include "nsAbAddressCollecter.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch2.h"
 #include "nsIAddrBookSession.h"
 #include "nsIMsgHeaderParser.h"
 #include "nsIRDFService.h"
@@ -54,7 +55,7 @@
 #include "prmem.h"
 #include "nsIAddressBook.h"
 
-NS_IMPL_ISUPPORTS1(nsAbAddressCollecter, nsIAbAddressCollecter)
+NS_IMPL_ISUPPORTS2(nsAbAddressCollecter, nsIAbAddressCollecter, nsIObserver)
 
 #define PREF_MAIL_COLLECT_ADDRESSBOOK "mail.collect_addressbook"
 
@@ -69,6 +70,11 @@ nsAbAddressCollecter::~nsAbAddressCollecter()
     m_database->Close(PR_FALSE);
     m_database = nsnull;
   }
+
+  nsresult rv;
+  nsCOMPtr<nsIPrefBranch2> pPrefBranchInt(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
+  if(NS_SUCCEEDED(rv))
+    pPrefBranchInt->RemoveObserver(PREF_MAIL_COLLECT_ADDRESSBOOK, this);
 }
 
 NS_IMETHODIMP nsAbAddressCollecter::CollectUnicodeAddress(const PRUnichar *aAddress, PRBool aCreateCard, PRUint32 aSendFormat)
@@ -83,7 +89,12 @@ NS_IMETHODIMP nsAbAddressCollecter::CollectUnicodeAddress(const PRUnichar *aAddr
 NS_IMETHODIMP nsAbAddressCollecter::GetCardFromAttribute(const char *aName, const char *aValue, nsIAbCard **aCard)
 {
   NS_ENSURE_ARG_POINTER(aCard);
-  return m_database->GetCardFromAttribute(m_directory, aName, aValue, PR_FALSE /* retain case */, aCard);
+  if (m_database)
+    // Please DO NOT change the 3rd param of GetCardFromAttribute() call to 
+    // PR_TRUE (ie, case insensitive) without reading bugs #128535 and #121478.
+    return m_database->GetCardFromAttribute(m_directory, aName, aValue, PR_FALSE /* retain case */, aCard);
+
+  return NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP nsAbAddressCollecter::CollectAddress(const char *aAddress, PRBool aCreateCard, PRUint32 aSendFormat)
@@ -118,8 +129,6 @@ NS_IMETHODIMP nsAbAddressCollecter::CollectAddress(const char *aAddress, PRBool 
     nsCOMPtr <nsIAbCard> existingCard;
     nsCOMPtr <nsIAbCard> cardInstance;
 
-    // Please DO NOT change the 3rd param of GetCardFromAttribute() call to 
-    // PR_TRUE (ie, case insensitive) without reading bugs #128535 and #121478.
     rv = GetCardFromAttribute(kPriEmailColumn, curAddress, getter_AddRefs(existingCard));
     if (!existingCard && aCreateCard)
     {
@@ -222,8 +231,7 @@ nsresult nsAbAddressCollecter::AutoCollectScreenName(nsIAbCard *aCard, const cha
       strcmp(domain,"netscape.net"))
     return NS_OK;
 
-  nsAutoString userName(NS_ConvertASCIItoUCS2(aEmail).get());
-  userName.SetLength(atPos - aEmail);
+  NS_ConvertASCIItoUTF16 userName(Substring(aEmail, atPos));
 
   rv = aCard->SetAimScreenName(userName.get());
   NS_ENSURE_SUCCESS(rv,rv);
@@ -297,35 +305,30 @@ nsresult nsAbAddressCollecter::SplitFullName(const char *fullName, char **firstN
   return NS_OK;
 }
 
-int PR_CALLBACK 
-nsAbAddressCollecter::collectAddressBookPrefChanged(const char *aNewpref, void *aData)
+NS_IMETHODIMP nsAbAddressCollecter::Observe(nsISupports *aSubject, const char *aTopic, const PRUnichar *aData)
 {
-  nsresult rv;
-  nsAbAddressCollecter *adCol = (nsAbAddressCollecter *) aData;
-  nsCOMPtr<nsIPref> pPref = do_GetService(NS_PREF_CONTRACTID, &rv); 
-  NS_ASSERTION(NS_SUCCEEDED(rv), "failed to get prefs");
+  nsCOMPtr<nsIPrefBranch2> pPrefBranchInt = do_QueryInterface(aSubject);
+  NS_ASSERTION(pPrefBranchInt, "failed to get prefs");
 
+  nsresult rv;
   nsXPIDLCString prefVal;
-  rv = pPref->GetCharPref(PREF_MAIL_COLLECT_ADDRESSBOOK, getter_Copies(prefVal));
-  rv = adCol->SetAbURI((NS_FAILED(rv) || prefVal.IsEmpty()) ? kPersonalAddressbookUri : prefVal.get());
+  pPrefBranchInt->GetCharPref(PREF_MAIL_COLLECT_ADDRESSBOOK, getter_Copies(prefVal));
+  rv = SetAbURI(prefVal.IsEmpty() ? kPersonalAddressbookUri : prefVal.get());
   NS_ASSERTION(NS_SUCCEEDED(rv),"failed to change collected ab");
-  return 0;
+  return NS_OK;
 }
 
 nsresult nsAbAddressCollecter::Init(void)
 {
   nsresult rv;
-  nsCOMPtr<nsIPref> pPref = do_GetService(NS_PREF_CONTRACTID, &rv); 
-  NS_ENSURE_SUCCESS(rv,rv);
-  
-  rv = pPref->RegisterCallback(PREF_MAIL_COLLECT_ADDRESSBOOK, collectAddressBookPrefChanged, this);
+  nsCOMPtr<nsIPrefBranch2> pPrefBranchInt(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv,rv);
 
+  rv = pPrefBranchInt->AddObserver(PREF_MAIL_COLLECT_ADDRESSBOOK, this, PR_FALSE);
+
   nsXPIDLCString prefVal;
-  rv = pPref->GetCharPref(PREF_MAIL_COLLECT_ADDRESSBOOK, getter_Copies(prefVal));
-  rv = SetAbURI((NS_FAILED(rv) || prefVal.IsEmpty()) ? kPersonalAddressbookUri : prefVal.get());
-  NS_ENSURE_SUCCESS(rv,rv);
-  return NS_OK;
+  pPrefBranchInt->GetCharPref(PREF_MAIL_COLLECT_ADDRESSBOOK, getter_Copies(prefVal));
+  return rv = SetAbURI(prefVal.IsEmpty() ? kPersonalAddressbookUri : prefVal.get());
 }
 
 nsresult nsAbAddressCollecter::AddCardToAddressBook(nsIAbCard *card)
@@ -333,9 +336,10 @@ nsresult nsAbAddressCollecter::AddCardToAddressBook(nsIAbCard *card)
   NS_ENSURE_ARG_POINTER(card);
 
   nsCOMPtr <nsIAbCard> addedCard;
-  nsresult rv = m_directory->AddCard(card, getter_AddRefs(addedCard));
-  NS_ENSURE_SUCCESS(rv,rv);
-  return rv;
+  if (m_directory)
+    return m_directory->AddCard(card, getter_AddRefs(addedCard));
+
+  return NS_ERROR_FAILURE;
 }
 
 nsresult nsAbAddressCollecter::SetAbURI(const char *aURI)

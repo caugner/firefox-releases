@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *       Ben Bucksch <mozilla@bucksch.org>
+ *   Ben Bucksch <mozilla@bucksch.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,7 +44,7 @@
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsMimeStringResources.h"
-#include "nsIPref.h"
+#include "nsIPrefBranch.h"
 #include "nsIServiceManager.h"
 #include "mimemoz2.h"
 #include "prprf.h"
@@ -125,6 +125,20 @@ MimeInlineTextPlainFlowed_parse_begin (MimeObject *obj)
   exdata->quotelevel = 0;
   exdata->isSig = PR_FALSE;
 
+  // check for DelSp=yes (RFC 3676)
+
+  char *content_type_row =
+    (obj->headers
+     ? MimeHeaders_get(obj->headers, HEADER_CONTENT_TYPE, PR_FALSE, PR_FALSE)
+     : 0);
+  char *content_type_delsp =
+    (content_type_row
+     ? MimeHeaders_get_parameter(content_type_row, "delsp", NULL,NULL)
+     : 0);
+  ((MimeInlineTextPlainFlowed *)obj)->delSp = content_type_delsp && !nsCRT::strcasecmp(content_type_delsp, "yes");
+  PR_Free(content_type_delsp);
+  PR_Free(content_type_row);
+
   // Get Prefs for viewing
 
   exdata->fixedwidthfont = PR_FALSE;
@@ -133,14 +147,14 @@ MimeInlineTextPlainFlowed_parse_begin (MimeObject *obj)
   text->mQuotedStyleSetting = 0;  // mail.quoted_style
   text->mCitationColor = nsnull;  // mail.citation_color
 
-  nsIPref *prefs = GetPrefServiceManager(obj->options);
-  if (prefs)
+  nsIPrefBranch *prefBranch = GetPrefBranch(obj->options);
+  if (prefBranch)
   {
-    prefs->GetIntPref("mail.quoted_size", &(text->mQuotedSizeSetting));
-    prefs->GetIntPref("mail.quoted_style", &(text->mQuotedStyleSetting));
-    prefs->CopyCharPref("mail.citation_color", &(text->mCitationColor));
-    nsresult rv = prefs->GetBoolPref("mail.fixed_width_messages",
-                                     &(exdata->fixedwidthfont));
+    prefBranch->GetIntPref("mail.quoted_size", &(text->mQuotedSizeSetting));
+    prefBranch->GetIntPref("mail.quoted_style", &(text->mQuotedStyleSetting));
+    prefBranch->GetCharPref("mail.citation_color", &(text->mCitationColor));
+    nsresult rv = prefBranch->GetBoolPref("mail.fixed_width_messages",
+                                          &(exdata->fixedwidthfont));
     NS_ASSERTION(NS_SUCCEEDED(rv), "failed to get pref");
          // Check at least the success of one
   }
@@ -324,7 +338,16 @@ MimeInlineTextPlainFlowed_parse_line (char *line, PRInt32 length, MimeObject *ob
   if (index > linep - line && ' ' == line[index])
        /* Ignore space stuffing, i.e. lines with just
           (quote marks and) a space count as empty */
+  {
     flowed = PR_TRUE;
+    if (((MimeInlineTextPlainFlowed *) obj)->delSp)
+       /* If line is flowed and DelSp=yes, logically
+          delete trailing space (RFC 3676) */
+    {
+      length--;
+      line[index] = '\0';
+    }
+  }
 
   mozITXTToHTMLConv *conv = GetTextConverter(obj->options);
 
@@ -342,44 +365,43 @@ MimeInlineTextPlainFlowed_parse_line (char *line, PRInt32 length, MimeObject *ob
     // Convert only if the source string is not empty
     if (length - (linep - line) > 0)
     {
-    PRBool whattodo = obj->options->whattodo;
-    if (plainHTML)
-    {
-      if (quoting)
-        whattodo = 0;
-      else
-        whattodo = whattodo & ~mozITXTToHTMLConv::kGlyphSubstitution;
-                   /* Do recognition for the case, the result is viewed in
-                      Mozilla, but not GlyphSubstitution, because other UAs
-                      might not be able to display the glyphs. */
-    }
-
-    nsDependentCString inputStr(linep, length - (linep - line));
-
-    // For 'SaveAs', |line| is in |mailCharset|.
-    // convert |line| to UTF-16 before 'html'izing (calling ScanTXT())
-    if (obj->options->format_out == nsMimeOutput::nsMimeMessageSaveAs)
-    {
-      // Get the mail charset of this message.
-      MimeInlineText  *inlinetext = (MimeInlineText *) obj;
-      if (!inlinetext->initializeCharset)
-         ((MimeInlineTextClass*)&mimeInlineTextClass)->initialize_charset(obj);
-      mailCharset = inlinetext->charset;
-      if (mailCharset && *mailCharset) {
-        rv = nsMsgI18NConvertToUnicode(nsDependentCString(mailCharset), 
-                                       inputStr, lineSource);
-        NS_ENSURE_SUCCESS(rv, -1);
+      PRBool whattodo = obj->options->whattodo;
+      if (plainHTML)
+      {
+        if (quoting)
+          whattodo = 0;
+        else
+          whattodo = whattodo & ~mozITXTToHTMLConv::kGlyphSubstitution;
+                    /* Do recognition for the case, the result is viewed in
+                        Mozilla, but not GlyphSubstitution, because other UAs
+                        might not be able to display the glyphs. */
       }
-      else // this probably never happens...
-        CopyUTF8toUTF16(inputStr, lineSource);
-    }
-    else   // line is in UTF-8
-      CopyUTF8toUTF16(inputStr, lineSource);
 
-    // This is the main TXT to HTML conversion:
-    // escaping (very important), eventually recognizing etc.
-    rv = conv->ScanTXT(lineSource.get(), whattodo, getter_Copies(lineResult));
-    NS_ENSURE_SUCCESS(rv, -1);
+      nsDependentCString inputStr(linep, length - (linep - line));
+
+      // For 'SaveAs', |line| is in |mailCharset|.
+      // convert |line| to UTF-16 before 'html'izing (calling ScanTXT())
+      if (obj->options->format_out == nsMimeOutput::nsMimeMessageSaveAs)
+      {
+        // Get the mail charset of this message.
+        MimeInlineText  *inlinetext = (MimeInlineText *) obj;
+        if (!inlinetext->initializeCharset)
+          ((MimeInlineTextClass*)&mimeInlineTextClass)->initialize_charset(obj);
+        mailCharset = inlinetext->charset;
+        if (mailCharset && *mailCharset) {
+          rv = nsMsgI18NConvertToUnicode(mailCharset, inputStr, lineSource);
+          NS_ENSURE_SUCCESS(rv, -1);
+        }
+        else // this probably never happens...
+          CopyUTF8toUTF16(inputStr, lineSource);
+      }
+      else   // line is in UTF-8
+        CopyUTF8toUTF16(inputStr, lineSource);
+
+      // This is the main TXT to HTML conversion:
+      // escaping (very important), eventually recognizing etc.
+      rv = conv->ScanTXT(lineSource.get(), whattodo, getter_Copies(lineResult));
+      NS_ENSURE_SUCCESS(rv, -1);
     }
   }
   else
@@ -434,8 +456,8 @@ MimeInlineTextPlainFlowed_parse_line (char *line, PRInt32 length, MimeObject *ob
         && lineSource[0] == '-'
         &&
         (
-          Substring(lineSource, 0, 4).Equals(NS_LITERAL_STRING("-- \r")) ||
-          Substring(lineSource, 0, 4).Equals(NS_LITERAL_STRING("-- \n"))
+          Substring(lineSource, 0, 4).EqualsLiteral("-- \r") ||
+          Substring(lineSource, 0, 4).EqualsLiteral("-- \n")
         )
       )
     {
@@ -460,7 +482,7 @@ MimeInlineTextPlainFlowed_parse_line (char *line, PRInt32 length, MimeObject *ob
                               /* If wrap, convert all spaces but the last in
                                  a row into nbsp, otherwise all. */,
                             lineResult2);
-    lineResult2 += NS_LITERAL_STRING("<br>");
+    lineResult2.AppendLiteral("<br>");
     exdata->inflow = PR_FALSE;
   } // End Fixed line
 
@@ -474,8 +496,7 @@ MimeInlineTextPlainFlowed_parse_line (char *line, PRInt32 length, MimeObject *ob
       CopyUTF16toUTF8(lineResult2, outString);
     else
     { // convert back to mailCharset before writing.       
-      rv = nsMsgI18NConvertFromUnicode(nsDependentCString(mailCharset), 
-                                       lineResult2, outString);
+      rv = nsMsgI18NConvertFromUnicode(mailCharset, lineResult2, outString);
       NS_ENSURE_SUCCESS(rv, -1);
     }
     status = MimeObject_write(obj, outString.get(), outString.Length(), PR_TRUE);
@@ -580,12 +601,12 @@ static void Convert_whitespace(const PRUnichar a_current_char,
   }
 
   while(number_of_nbsp--) {
-    a_out_string += NS_LITERAL_STRING("&nbsp;");
+    a_out_string.AppendLiteral("&nbsp;");
   }
 
   while(number_of_space--) {
     // a_out_string += ' '; gives error
-    a_out_string += NS_LITERAL_STRING(" ");
+    a_out_string.AppendLiteral(" ");
   }
 
   return;

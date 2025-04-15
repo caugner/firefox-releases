@@ -1,28 +1,44 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Hubbie Shaw
  *   Doug Turner <dougt@netscape.com>
  *   Brian Ryner <bryner@brianryner.com>
  *   Kai Engert <kaie@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef _nsNSSComponent_h_
 #define _nsNSSComponent_h_
@@ -34,15 +50,19 @@
 #include "nsIEntropyCollector.h"
 #include "nsString.h"
 #include "nsIStringBundle.h"
-#include "nsIPref.h"
+#include "nsIDOMEventTarget.h"
+#include "nsIPrefBranch.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
 #include "nsWeakReference.h"
 #include "nsIScriptSecurityManager.h"
+#include "nsSmartCardMonitor.h"
 #include "nsITimer.h"
 #include "nsNetUtil.h"
 #include "nsHashtable.h"
 #include "prlock.h"
+#include "nsICryptoHash.h"
+#include "hasht.h"
 
 #include "nsNSSHelper.h"
 
@@ -62,6 +82,10 @@
 
 #define NS_PSMCONTENTLISTEN_CID {0xc94f4a30, 0x64d7, 0x11d4, {0x99, 0x60, 0x00, 0xb0, 0xd0, 0x23, 0x54, 0xa0}}
 #define NS_PSMCONTENTLISTEN_CONTRACTID "@mozilla.org/security/psmdownload;1"
+
+#define NS_CRYPTO_HASH_CLASSNAME "Mozilla Cryto Hash Function Component"
+#define NS_CRYPTO_HASH_CONTRACTID "@mozilla.org/security/hash;1"
+#define NS_CRYPTO_HASH_CID {0x36a1d3b3, 0xd886, 0x4317, {0x96, 0xff, 0x87, 0xb0, 0x00, 0x5c, 0xfe, 0xf7}}
 
 //--------------------------------------------
 // Now we need a content listener to register 
@@ -125,7 +149,28 @@ class NS_NO_VTABLE nsINSSComponent : public nsISupports {
   NS_IMETHOD DownloadCRLDirectly(nsAutoString, nsAutoString) = 0;
   
   NS_IMETHOD LogoutAuthenticatedPK11() = 0;
+
+  NS_IMETHOD LaunchSmartCardThread(SECMODModule *module) = 0;
+
+  NS_IMETHOD ShutdownSmartCardThread(SECMODModule *module) = 0;
+
+  NS_IMETHOD PostEvent(const nsAString &eventType, const nsAString &token) = 0;
+
+  NS_IMETHOD DispatchEvent(const nsAString &eventType, const nsAString &token) = 0;
   
+};
+
+class nsCryptoHash : public nsICryptoHash
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSICRYPTOHASH
+
+  nsCryptoHash();
+
+private:
+  ~nsCryptoHash();
+  HASHContext* mHashContext;
 };
 
 struct PRLock;
@@ -170,6 +215,11 @@ public:
   NS_IMETHOD RememberCert(CERTCertificate *cert);
   static nsresult GetNSSCipherIDFromPrefString(const nsACString &aPrefString, PRUint16 &aCipherId);
 
+  NS_IMETHOD LaunchSmartCardThread(SECMODModule *module);
+  NS_IMETHOD ShutdownSmartCardThread(SECMODModule *module);
+  NS_IMETHOD PostEvent(const nsAString &eventType, const nsAString &token);
+  NS_IMETHOD DispatchEvent(const nsAString &eventType, const nsAString &token);
+
 private:
 
   nsresult InitializeNSS(PRBool showWarningBox);
@@ -188,21 +238,22 @@ private:
   
   void ShowAlert(AlertIdentifier ai);
   void InstallLoadableRoots();
+  void LaunchSmartCardThreads();
+  void ShutdownSmartCardThreads();
   nsresult InitializePIPNSSBundle();
   nsresult ConfigureInternalPKCS11Token();
   nsresult RegisterPSMContentListener();
   nsresult RegisterObservers();
-  static int PR_CALLBACK PrefChangedCallback(const char* aPrefName, void* data);
-  void PrefChanged(const char* aPrefName);
   nsresult DownloadCrlSilently();
   nsresult PostCRLImportEvent(nsCAutoString *urlString, PSMContentDownloader *psmDownloader);
   nsresult getParamsForNextCrlToDownload(nsAutoString *url, PRTime *time, nsAutoString *key);
+  nsresult DispatchEventToWindow(nsIDOMWindow *domWin, const nsAString &eventType, const nsAString &token);
   PRLock *mutex;
   
   nsCOMPtr<nsIScriptSecurityManager> mScriptSecurityManager;
   nsCOMPtr<nsIStringBundle> mPIPNSSBundle;
   nsCOMPtr<nsIURIContentListener> mPSMContentListener;
-  nsCOMPtr<nsIPref> mPref;
+  nsCOMPtr<nsIPrefBranch> mPrefBranch;
   nsCOMPtr<nsITimer> mTimer;
   PRBool mNSSInitialized;
   PRBool mObserversRegistered;
@@ -215,6 +266,7 @@ private:
   PRBool mUpdateTimerInitialized;
   static int mInstanceCount;
   nsNSSShutDownList *mShutdownObjectList;
+  SmartCardThreadList *mThreadList;
 };
 
 class PSMContentListener : public nsIURIContentListener,

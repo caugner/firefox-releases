@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -40,6 +40,7 @@
 #include "nsFont.h"
 #include "nsFontUtils.h"
 #include "nsToolkit.h"
+#include "nsGfxUtils.h"
 
 #include "nsMacControl.h"
 #include "nsColor.h"
@@ -48,20 +49,40 @@
 #include "nsIServiceManager.h"
 #include "nsIPlatformCharset.h"
 
-#if TARGET_CARBON || (UNIVERSAL_INTERFACES_VERSION >= 0x0330)
 #include <ControlDefinitions.h>
-#endif
 
 #include <Appearance.h>
 #include <TextUtils.h>
 #include <UnicodeConverter.h>
 #include <Fonts.h>
 
+#if 0
+void DumpControlState(ControlHandle inControl, const char* message)
+{
+  if (!message) message = "gdb called";
+  
+  CGrafPtr curPort;
+  ::GetPort((GrafPtr*)&curPort);
+  Rect portBounds;
+  ::GetPortBounds(curPort, &portBounds);
+
+  Rect controlBounds = {0, 0, 0, 0};
+  if (inControl)
+    ::GetControlBounds(inControl, &controlBounds);
+    
+  printf("%20s -- port %p bounds %d, %d, %d, %d, control bounds %d, %d, %d, %d\n", message, curPort,
+    portBounds.left, portBounds.top, portBounds.right, portBounds.bottom,
+    controlBounds.left, controlBounds.top, controlBounds.right, controlBounds.bottom);
+}
+#endif
+
+
 static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
 // TODO: leaks, need to release when unloading the dll
 nsIUnicodeEncoder * nsMacControl::mUnicodeEncoder = nsnull;
 nsIUnicodeDecoder * nsMacControl::mUnicodeDecoder = nsnull;
 
+#pragma mark -
 
 //-------------------------------------------------------------------------
 //
@@ -117,9 +138,28 @@ nsMacControl::~nsMacControl()
 	if (mControl)
 	{
 		Show(PR_FALSE);
-		::DisposeControl(mControl);
+		ClearControl();
 		mControl = nsnull;
 	}
+}
+
+//-------------------------------------------------------------------------
+//
+//
+//-------------------------------------------------------------------------
+NS_IMETHODIMP
+nsMacControl::Destroy()
+{
+	if (mOnDestroyCalled)
+		return NS_OK;
+
+	// Hide the control to avoid drawing.  Even if we're very careful
+	// and avoid drawing the control ourselves after Destroy() is
+	// called, the system still might draw it, and it might wind up
+	// in the wrong location.
+	Show(PR_FALSE);
+
+	return Inherited::Destroy();
 }
 
 #pragma mark -
@@ -176,27 +216,17 @@ PRBool nsMacControl::OnPaint(nsPaintEvent &aEvent)
 		}
 
 		// update hilite
-		PRInt16 hilite;
-		if (mEnabled)
-			hilite = (mWidgetArmed && mMouseInButton ? 1 : 0);
-		else
-			hilite = kControlInactivePart;
-		if (hilite != mLastHilite)
+		PRInt16 curHilite = GetControlHiliteState();
+		if (curHilite != mLastHilite)
 		{
-			mLastHilite = hilite;
-			::HiliteControl(mControl, hilite);
+			mLastHilite = curHilite;
+			::HiliteControl(mControl, curHilite);
 		}
 
 		::SetControlVisibility(mControl, isVisible, false);
 
 		// Draw the control
 		::DrawOneControl(mControl);
-
-		Rect macRect;
-		nsRect bounds = mBounds;
-		bounds.x = bounds. y = 0;
-		nsRectToMacRect(bounds, macRect);
-		::ValidWindowRect(mWindowPtr, &macRect);
 	}
 	return PR_FALSE;
 }
@@ -261,7 +291,7 @@ void  nsMacControl::ControlChanged(PRInt32 aNewValue)
 		mValue = aNewValue;
 		mLastValue = mValue;	// safely assume that the control has been repainted already
 
-		nsGUIEvent guiEvent(NS_CONTROL_CHANGE, this);
+		nsGUIEvent guiEvent(PR_TRUE, NS_CONTROL_CHANGE, this);
  		guiEvent.time	 	= PR_IntervalNow();
 		Inherited::DispatchWindowEvent(guiEvent);
 	}
@@ -325,24 +355,40 @@ void nsMacControl::GetRectForMacControl(nsRect &outRect)
 
 //-------------------------------------------------------------------------
 //
+// Get the current hilite state of the control
+//
+//-------------------------------------------------------------------------
+ControlPartCode nsMacControl::GetControlHiliteState()
+{
+	// update hilite
+	PRInt16 curHilite;
+	if (mEnabled)
+		curHilite = (mWidgetArmed && mMouseInButton ? 1 : 0);
+	else
+		curHilite = kControlInactivePart;
+
+	return curHilite;
+}
+
+//-------------------------------------------------------------------------
+//
 //
 //-------------------------------------------------------------------------
 
-NS_METHOD nsMacControl::CreateOrReplaceMacControl(short inControlType)
+nsresult nsMacControl::CreateOrReplaceMacControl(short inControlType)
 {
 	nsRect		controlRect;
 	GetRectForMacControl(controlRect);
 	Rect macRect;
 	nsRectToMacRect(controlRect, macRect);
 
-	if(nsnull != mWindowPtr)
+	if (nsnull != mWindowPtr)
 	{
-		if (mControl)
-			::DisposeControl(mControl);
+		ClearControl();
 
 		StartDraw();
 		mControl = ::NewControl(mWindowPtr, &macRect, "\p", mVisible, mValue, mMin, mMax, inControlType, nil);
-  		EndDraw();
+		EndDraw();
 		
 		// need to reset the font now
 		// XXX to do: transfer the text in the old control over too
@@ -355,6 +401,18 @@ NS_METHOD nsMacControl::CreateOrReplaceMacControl(short inControlType)
 	return (mControl) ? NS_OK : NS_ERROR_NULL_POINTER;
 }
 
+//-------------------------------------------------------------------------
+//
+//
+//-------------------------------------------------------------------------
+void nsMacControl::ClearControl()
+{
+	if (mControl)
+	{
+		::DisposeControl(mControl);
+		mControl = nsnull;
+	}
+}
 
 //-------------------------------------------------------------------------
 //
@@ -366,9 +424,6 @@ void nsMacControl::SetupMacControlFont()
 	NS_PRECONDITION(mContext != nsnull, "No context metrics in SetupMacControlFont");
 	
 	TextStyle		theStyle;
-#if !TARGET_CARBON
-	nsFontUtils::GetNativeTextStyle(*mFontMetrics, *mContext, theStyle);
-#endif
 	// if needed, impose a min size of 9pt on the control font
 	if (theStyle.tsSize < 9)
 		theStyle.tsSize = 9;
@@ -388,10 +443,12 @@ void nsMacControl::SetupMacControlFont()
 //
 //-------------------------------------------------------------------------
 
-void nsMacControl::StringToStr255(const nsString& aText, Str255& aStr255)
+void nsMacControl::StringToStr255(const nsAString& aText, Str255& aStr255)
 {
 	nsresult rv = NS_OK;
-	
+	nsAString::const_iterator begin;
+	const PRUnichar *text = aText.BeginReading(begin).get();
+
 	// get file system charset and create a unicode encoder
 	if (nsnull == mUnicodeEncoder) {
 		nsCAutoString fileSystemCharset;
@@ -411,13 +468,13 @@ void nsMacControl::StringToStr255(const nsString& aText, Str255& aStr255)
 	if (NS_SUCCEEDED(rv)) {
 		PRInt32 inLength = aText.Length();
 		PRInt32 outLength = 255;
-		rv = mUnicodeEncoder->Convert(aText.get(), &inLength, (char *) &aStr255[1], &outLength);
+		rv = mUnicodeEncoder->Convert(text, &inLength, (char *) &aStr255[1], &outLength);
 		if (NS_SUCCEEDED(rv))
 			aStr255[0] = outLength;
 	}
 
 	if (NS_FAILED(rv)) {
-//		NS_ASSERTION(0, "error: charset covnersion");
+//		NS_ASSERTION(0, "error: charset conversion");
 		NS_LossyConvertUCS2toASCII buffer(Substring(aText,0,254));
 		PRInt32 len = buffer.Length();
 		memcpy(&aStr255[1], buffer.get(), len);
@@ -458,7 +515,7 @@ void nsMacControl::Str255ToString(const Str255& aStr255, nsString& aText)
 	}
 	
 	if (NS_FAILED(rv)) {
-//		NS_ASSERTION(0, "error: charset covnersion");
+//		NS_ASSERTION(0, "error: charset conversion");
 		aText.AssignWithConversion((char *) &aStr255[1], aStr255[0]);
 	}
 }
@@ -470,96 +527,10 @@ void nsMacControl::Str255ToString(const Str255& aStr255, nsString& aText)
 
 void nsMacControl::NSStringSetControlTitle(ControlHandle theControl, nsString title)
 {	
-#if TARGET_CARBON
-
   // wow, it sure is nice being able to use core foundation ;)
   CFStringRef str = CFStringCreateWithCharacters(NULL, (const UniChar*)title.get(), title.Length());
   SetControlTitleWithCFString(theControl, str);
   CFRelease(str);
-
-#else
-	TextStyle				theStyle;
-	ScriptCode				fontScript;
-	OSErr					err;
-	UnicodeToTextRunInfo	unicodeTextRunInfo;
-	const PRUnichar*		unicodeText;
-	char*					scriptRunText;
-	size_t					unicodeTextLengthInBytes, unicodeTextReadInBytes,
-							scriptRunTextSizeInBytes, scriptRunTextLengthInBytes,
-							scriptCodeRunListLength;
-	ScriptCodeRun			convertedTextScript;
-	
-	NS_PRECONDITION(mFontMetrics != nsnull, "nsMacControl::NSStringSetControlTitle: no Font Metrics");
-	
-	//
-	// determine the script of the font that the control is supposed to be drawn in
-	//
-#if !TARGET_CARBON
-	nsFontUtils::GetNativeTextStyle(*mFontMetrics, *mContext, theStyle);
-#endif
-	fontScript = ::FontToScript(theStyle.tsFont);
-	
-	//
-	// create a Unicode Conveter object (from Unicode -> font)
-	//
- 	err = ::CreateUnicodeToTextRunInfoByScriptCode(1,&fontScript,&unicodeTextRunInfo);
-  	NS_ASSERTION(err==noErr,"nsMacControl::NSStringSetControlTitle: CreateUnicodeToTextRunInfoByScriptCode failed.");
-  	if (err!=noErr) { return; }
-
-	//
-	// get the Unicode text and prepare buffers
-	//
-	unicodeText = title.get();
-	unicodeTextLengthInBytes = title.Length() * sizeof(PRUnichar);
-	scriptRunTextSizeInBytes = unicodeTextLengthInBytes * 2;
-	scriptRunText = new char[scriptRunTextSizeInBytes];
-
-
-  	//
-  	// convert from Unicode to script run
-  	// 
-	err = ::ConvertFromUnicodeToScriptCodeRun(unicodeTextRunInfo,
-				unicodeTextLengthInBytes,NS_REINTERPRET_CAST(const PRUint16*, unicodeText),
-				0, /* no flags */
-				0,NULL,NULL,NULL, /* no offset arrays */
-				scriptRunTextSizeInBytes,&unicodeTextReadInBytes,&scriptRunTextLengthInBytes,
-				scriptRunText,
-				1 /* count of scrip runs*/,&scriptCodeRunListLength,&convertedTextScript);
-  	if (err!=noErr)
-  	{ 
-  		//
-  		// the font script is not capable of rendering this string, we need to find an installed
-  		//	script that can
-  		//
- 		err = ::CreateUnicodeToTextRunInfoByScriptCode(0,NULL,&unicodeTextRunInfo);
-  		NS_ASSERTION(err==noErr,"nsMacControl::NSStringSetControlTitle: CreateUnicodeToTextRunInfoByScriptCode failed.");
-  		if (err!=noErr) { return; }
-
-	  	//
-	  	// convert from Unicode to script run
-	  	// 
-		err = ::ConvertFromUnicodeToScriptCodeRun(unicodeTextRunInfo,
-					unicodeTextLengthInBytes,NS_REINTERPRET_CAST(const PRUint16*, unicodeText),
-					0, /* no flags */
-					0,NULL,NULL,NULL, /* no offset arrays */
-					scriptRunTextSizeInBytes,&unicodeTextReadInBytes,&scriptRunTextLengthInBytes,
-					scriptRunText,
-					1 /* count of scrip runs*/,&scriptCodeRunListLength,&convertedTextScript);
-  					NS_ASSERTION(err==noErr,"nsMacControl::NSStringSetControlTitle: CreateUnicodeToTextRunInfoByScriptCode failed.");
-  					if (err!=noErr) { delete [] scriptRunText; return;}
-  	}	
-
-	scriptRunText[scriptRunTextLengthInBytes] = 0;	// null terminate
-
-	if (convertedTextScript.script!=fontScript)
-		SetupMacControlFontForScript(convertedTextScript.script);
-
-	//
-	// set the control title
-	//
-	::SetControlTitle(theControl,c2pstr(scriptRunText));
-	delete [] scriptRunText;	
-#endif					
 }
 //-------------------------------------------------------------------------
 //
@@ -576,9 +547,6 @@ void nsMacControl::SetupMacControlFontForScript(short theScript)
 
 	NS_PRECONDITION(mFontMetrics != nsnull, "No font metrics in SetupMacControlFont");
 	NS_PRECONDITION(mContext != nsnull, "No context metrics in SetupMacControlFont");
-#if !TARGET_CARBON
-	nsFontUtils::GetNativeTextStyle(*mFontMetrics, *mContext, theStyle);
-#endif
 
 	//
 	// take the script and select and override font
@@ -614,7 +582,7 @@ void nsMacControl::GetFileSystemCharset(nsCString & fileSystemCharset)
 
     NS_ASSERTION(NS_SUCCEEDED(rv), "error getting platform charset");
 	  if (NS_FAILED(rv)) 
-		  aCharset.Assign(NS_LITERAL_CSTRING("x-mac-roman"));
+		  aCharset.AssignLiteral("x-mac-roman");
   }
   fileSystemCharset = aCharset;
 }

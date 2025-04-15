@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,14 +14,13 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
- *   Adam Lock <adamlock@eircom.net>
+ *   Adam Lock <adamlock@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -29,11 +28,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #ifndef IEHTMLELEMENT_H
@@ -43,11 +42,16 @@
 #include "IEHtmlElementCollection.h"
 
 class CIEHtmlElement :
-    public CIEHtmlNode,
+    public CNode,
     public IDispatchImpl<IHTMLElement, &IID_IHTMLElement, &LIBID_MSHTML>
 {
 public:
+    DECLARE_AGGREGATABLE(CIEHtmlElement)
     CIEHtmlElement();
+    HRESULT FinalConstruct( );
+    void FinalRelease( );
+
+DECLARE_GET_CONTROLLING_UNKNOWN()
 
 protected:
     virtual ~CIEHtmlElement();
@@ -55,11 +59,15 @@ protected:
 public:
 
 BEGIN_COM_MAP(CIEHtmlElement)
-    COM_INTERFACE_ENTRY_IID(IID_IDispatch, IHTMLElement)
-    COM_INTERFACE_ENTRY_IID(IID_IHTMLElement, IHTMLElement)
+    COM_INTERFACE_ENTRY2(IDispatch, IHTMLElement)
+    COM_INTERFACE_ENTRY(IHTMLElement)
+    COM_INTERFACE_ENTRY_AGGREGATE(__uuidof(IHTMLDOMNode), m_pNodeAgg)
 END_COM_MAP()
 
     virtual HRESULT GetChildren(CIEHtmlElementCollectionInstance **ppCollection);
+    virtual HRESULT GetHtmlDomNode(CIEHtmlDomNode **ppHtmlDomNode);
+    virtual HRESULT SetDOMNode(nsIDOMNode *pDomNode);
+    virtual HRESULT SetParent(CNode *pParent);
 
     // Implementation of IHTMLElement
     virtual HRESULT STDMETHODCALLTYPE setAttribute(BSTR strAttributeName, VARIANT AttributeValue, LONG lFlags);
@@ -149,6 +157,9 @@ END_COM_MAP()
     virtual HRESULT STDMETHODCALLTYPE get_onfilterchange(VARIANT __RPC_FAR *p);
     virtual HRESULT STDMETHODCALLTYPE get_children(IDispatch __RPC_FAR *__RPC_FAR *p);
     virtual HRESULT STDMETHODCALLTYPE get_all(IDispatch __RPC_FAR *__RPC_FAR *p);
+    
+protected:
+    IUnknown* m_pNodeAgg;
 };
 
 #define CIEHTMLELEMENT_INTERFACES \
@@ -158,3 +169,5 @@ END_COM_MAP()
 typedef CComObject<CIEHtmlElement> CIEHtmlElementInstance;
 
 #endif
+
+

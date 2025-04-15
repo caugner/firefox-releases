@@ -1,31 +1,47 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla MathML Project.
- * 
- * The Initial Developer of the Original Code is The University Of 
- * Queensland.  Portions created by The University Of Queensland are
- * Copyright (C) 1999 The University Of Queensland.  All Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * The University Of Queensland.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Roger B. Sidje <rbs@maths.uq.edu.au>
  *   David J. Fiddes <D.J.Fiddes@hw.ac.uk>
  *   Vilya Harvey <vilya@nag.co.uk>
  *   Shyjan Mahamud <mahamud@cs.cmu.edu>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 
 #include "nsCOMPtr.h"
 #include "nsFrame.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsUnitConversion.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
@@ -78,7 +94,7 @@ nsMathMLmrootFrame::~nsMathMLmrootFrame()
 }
 
 NS_IMETHODIMP
-nsMathMLmrootFrame::Init(nsIPresContext*  aPresContext,
+nsMathMLmrootFrame::Init(nsPresContext*  aPresContext,
                          nsIContent*      aContent,
                          nsIFrame*        aParent,
                          nsStyleContext*  aContext,
@@ -98,23 +114,23 @@ nsMathMLmrootFrame::Init(nsIPresContext*  aPresContext,
 }
 
 NS_IMETHODIMP
-nsMathMLmrootFrame::TransmitAutomaticData(nsIPresContext* aPresContext)
+nsMathMLmrootFrame::TransmitAutomaticData()
 {
   // 1. The REC says:
   //    The <mroot> element increments scriptlevel by 2, and sets displaystyle to
   //    "false", within index, but leaves both attributes unchanged within base.
   // 2. The TeXbook (Ch 17. p.141) says \sqrt is compressed
-  UpdatePresentationDataFromChildAt(aPresContext, 1, 1, 2,
+  UpdatePresentationDataFromChildAt(1, 1, 2,
     ~NS_MATHML_DISPLAYSTYLE | NS_MATHML_COMPRESSED,
      NS_MATHML_DISPLAYSTYLE | NS_MATHML_COMPRESSED);
-  UpdatePresentationDataFromChildAt(aPresContext, 0, 0, 0,
+  UpdatePresentationDataFromChildAt(0, 0, 0,
      NS_MATHML_COMPRESSED, NS_MATHML_COMPRESSED);
 
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMathMLmrootFrame::Paint(nsIPresContext*      aPresContext,
+nsMathMLmrootFrame::Paint(nsPresContext*      aPresContext,
                           nsIRenderingContext& aRenderingContext,
                           const nsRect&        aDirtyRect,
                           nsFramePaintLayer    aWhichLayer,
@@ -130,7 +146,9 @@ nsMathMLmrootFrame::Paint(nsIPresContext*      aPresContext,
     mSqrChar.Paint(aPresContext, aRenderingContext,
                    aDirtyRect, aWhichLayer, this);
 
-    if (NS_FRAME_PAINT_LAYER_FOREGROUND == aWhichLayer && !mBarRect.IsEmpty()) {
+    if (NS_FRAME_PAINT_LAYER_FOREGROUND == aWhichLayer &&
+        mStyleContext->GetStyleVisibility()->IsVisible() &&
+        !mBarRect.IsEmpty()) {
       // paint the overline bar
       const nsStyleColor* color = GetStyleColor();
       aRenderingContext.SetColor(color->mColor);
@@ -160,7 +178,7 @@ nsMathMLmrootFrame::Paint(nsIPresContext*      aPresContext,
 }
 
 NS_IMETHODIMP
-nsMathMLmrootFrame::Reflow(nsIPresContext*          aPresContext,
+nsMathMLmrootFrame::Reflow(nsPresContext*          aPresContext,
                            nsHTMLReflowMetrics&     aDesiredSize,
                            const nsHTMLReflowState& aReflowState,
                            nsReflowStatus&          aStatus)
@@ -215,7 +233,7 @@ nsMathMLmrootFrame::Reflow(nsIPresContext*          aPresContext,
   if (2 != count) {
     // report an error, encourage people to get their markups in order
     NS_WARNING("invalid markup");
-    return ReflowError(aPresContext, renderingContext, aDesiredSize);
+    return ReflowError(renderingContext, aDesiredSize);
   }
 
   ////////////
@@ -268,9 +286,7 @@ nsMathMLmrootFrame::Reflow(nsIPresContext*          aPresContext,
   // the thickness of the overline
   ruleThickness = bmSqr.ascent;
   // make sure that the rule appears on on screen
-  float p2t;
-  aPresContext->GetScaledPixelsToTwips(&p2t);
-  nscoord onePixel = NSIntPixelsToTwips(1, p2t);
+  nscoord onePixel = aPresContext->IntScaledPixelsToTwips(1);
   if (ruleThickness < onePixel) {
     ruleThickness = onePixel;
   }

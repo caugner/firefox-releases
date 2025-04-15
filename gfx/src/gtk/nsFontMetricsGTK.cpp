@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,31 +14,30 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Pierre Phaneuf <pp@ludusdesign.com> 
+ *   Pierre Phaneuf <pp@ludusdesign.com>
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
  *   Brian Stell <bstell@ix.netcom.com>
  *   Morten Nilsen <morten@nilsen.com>
  *   Jungshik Shin <jshin@mailaps.org>
  *   IBM Corporation
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -62,8 +61,10 @@
 #include "nsAString.h"
 #include "nsXPIDLString.h"
 #include "nsFontDebug.h"
+#ifdef MOZ_ENABLE_FREETYPE2
 #include "nsFT2FontNode.h"
 #include "nsFontFreeType.h"
+#endif
 #include "nsXFontNormal.h"
 #include "nsX11AlphaBlend.h"
 #include "nsXFontAAScaledBitmap.h"
@@ -102,6 +103,10 @@ static PRLogModuleInfo * FontMetricsGTKLM = PR_NewLogModule("FontMetricsGTK");
 #undef NOISY_FONTS
 #undef REALLY_NOISY_FONTS
 
+#ifndef MOZ_ENABLE_FREETYPE2
+static PRUint32 gFontDebug = 0 | NS_FONT_DEBUG_FONT_SCAN;
+#endif
+
 struct nsFontCharSetMap;
 struct nsFontFamilyName;
 struct nsFontPropertyName;
@@ -114,8 +119,10 @@ struct nsFontCharSetInfo
   const char*            mCharSet;
   nsFontCharSetConverter Convert;
   PRUint8                mSpecialUnderline;
+#ifdef MOZ_ENABLE_FREETYPE2
   PRInt32                mCodeRange1Bits;
   PRInt32                mCodeRange2Bits;
+#endif
   PRUint16*              mCCMap;
   nsIUnicodeEncoder*     mConverter;
   nsIAtom*               mLangGroup;
@@ -220,6 +227,7 @@ static gint ISO10646Convert(nsFontCharSetInfo* aSelf, XFontStruct* aFont,
 static nsFontCharSetInfo Unknown = { nsnull };
 static nsFontCharSetInfo Special = { nsnull };
 
+#ifdef MOZ_ENABLE_FREETYPE2
 static nsFontCharSetInfo USASCII =
   { "us-ascii", SingleByteConvert, 0,
     TT_OS2_CPR1_LATIN1 | TT_OS2_CPR1_MAC_ROMAN,
@@ -425,7 +433,160 @@ static nsFontCharSetInfo Mathematica4 =
    { "x-mathematica4", SingleByteConvert, 0, TT_OS2_CPR1_SYMBOL, 0};
 static nsFontCharSetInfo Mathematica5 =
    { "x-mathematica5", SingleByteConvert, 0, TT_OS2_CPR1_SYMBOL, 0};
-#endif
+#endif /* MATHML */
+
+#else
+
+static nsFontCharSetInfo USASCII =
+  { "us-ascii", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO88591 =
+  { "ISO-8859-1", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO88592 =
+  { "ISO-8859-2", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO88593 =
+  { "ISO-8859-3", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO88594 =
+  { "ISO-8859-4", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO88595 =
+  { "ISO-8859-5", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO88596 =
+  { "ISO-8859-6", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO885968x =
+  { "x-iso-8859-6-8-x", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO8859616 =
+  { "x-iso-8859-6-16", SingleByteConvert, 0 };
+static nsFontCharSetInfo IBM1046 =
+  { "x-IBM1046", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO88597 =
+  { "ISO-8859-7", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO88598 =
+  { "ISO-8859-8", SingleByteConvert, 0 };
+// change from  
+// { "ISO-8859-8", SingleByteConvertReverse, 0, 0, 0 };
+// untill we fix the layout and ensure we only call this with pure RTL text
+static nsFontCharSetInfo ISO88599 =
+  { "ISO-8859-9", SingleByteConvert, 0 };
+// no support for iso-8859-10 (Nordic/Icelandic) currently
+// static nsFontCharSetInfo ISO885910 =
+// { "ISO-8859-10", SingleByteConvert, 0,
+//   0, TT_OS2_CPR2_NORDIC | TT_OS2_CPR2_ICELANDIC };
+// no support for iso-8859-12 (Vietnamese) currently
+// static nsFontCharSetInfo ISO885912 =
+// { "ISO-8859-12", SingleByteConvert, 0,
+//   TT_OS2_CPR1_VIETNAMESE, 0 };
+static nsFontCharSetInfo ISO885913 =
+  { "ISO-8859-13", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO885915 =
+  { "ISO-8859-15", SingleByteConvert, 0 };
+static nsFontCharSetInfo JISX0201 =
+  { "jis_0201", SingleByteConvert, 1 };
+static nsFontCharSetInfo KOI8R =
+  { "KOI8-R", SingleByteConvert, 0 };
+static nsFontCharSetInfo KOI8U =
+  { "KOI8-U", SingleByteConvert, 0 };
+static nsFontCharSetInfo TIS6202 =
+/* Added to support thai context sensitive shaping if
+ * CTL extension is is in force */
+#ifdef SUNCTL
+  { "tis620-2", SingleByteConvert, 0 };
+#else
+  { "windows-874", SingleByteConvert, 0 };
+#endif /* SUNCTL */
+static nsFontCharSetInfo TIS620 =
+  { "TIS-620", SingleByteConvert, 0 };
+static nsFontCharSetInfo ISO885911 =
+  { "ISO-8859-11", SingleByteConvert, 0 };
+static nsFontCharSetInfo Big5 =
+  { "x-x-big5", DoubleByteConvert, 1 };
+// a kludge to distinguish zh-TW only fonts in Big5 (such as hpbig5-)
+// from zh-TW/zh-HK common fonts in Big5 (such as big5-1)
+static nsFontCharSetInfo Big5TWHK =
+  { "x-x-big5", DoubleByteConvert, 1 };
+static nsFontCharSetInfo CNS116431 =
+  { "x-cns-11643-1", DoubleByteConvert, 1 };
+static nsFontCharSetInfo CNS116432 =
+  { "x-cns-11643-2", DoubleByteConvert, 1 };
+static nsFontCharSetInfo CNS116433 =
+  { "x-cns-11643-3", DoubleByteConvert, 1 };
+static nsFontCharSetInfo CNS116434 =
+  { "x-cns-11643-4", DoubleByteConvert, 1 };
+static nsFontCharSetInfo CNS116435 =
+  { "x-cns-11643-5", DoubleByteConvert, 1 };
+static nsFontCharSetInfo CNS116436 =
+  { "x-cns-11643-6", DoubleByteConvert, 1 };
+static nsFontCharSetInfo CNS116437 =
+  { "x-cns-11643-7", DoubleByteConvert, 1 };
+static nsFontCharSetInfo GB2312 =
+  { "gb_2312-80", DoubleByteConvert, 1 };
+static nsFontCharSetInfo GB18030_0 =
+  { "gb18030.2000-0", DoubleByteConvert, 1 };
+static nsFontCharSetInfo GB18030_1 =
+  { "gb18030.2000-1", DoubleByteConvert, 1 };
+static nsFontCharSetInfo GBK =
+  { "x-gbk-noascii", DoubleByteConvert, 1 };
+static nsFontCharSetInfo HKSCS =
+  { "hkscs-1", DoubleByteConvert, 1 };
+static nsFontCharSetInfo JISX0208 =
+  { "jis_0208-1983", DoubleByteConvert, 1 };
+static nsFontCharSetInfo JISX0212 =
+  { "jis_0212-1990", DoubleByteConvert, 1 };
+static nsFontCharSetInfo KSC5601 =
+  { "ks_c_5601-1987", DoubleByteConvert, 1 };
+static nsFontCharSetInfo X11Johab =
+  { "x-x11johab", DoubleByteConvert, 1 };
+static nsFontCharSetInfo JohabNoAscii =
+  { "x-johab-noascii", DoubleByteConvert, 1 };
+static nsFontCharSetInfo JamoTTF =
+  { "x-koreanjamo-0", DoubleByteConvert, 1 };
+static nsFontCharSetInfo TamilTTF =
+  { "x-tamilttf-0", DoubleByteConvert, 0 };
+static nsFontCharSetInfo CP1250 =
+  { "windows-1250", SingleByteConvert, 0 };
+static nsFontCharSetInfo CP1251 =
+  { "windows-1251", SingleByteConvert, 0 };
+static nsFontCharSetInfo CP1252 =
+  { "windows-1252", SingleByteConvert, 0 };
+static nsFontCharSetInfo CP1253 =
+  { "windows-1253", SingleByteConvert, 0 };
+static nsFontCharSetInfo CP1257 =
+  { "windows-1257", SingleByteConvert, 0 };
+
+#ifdef SUNCTL
+/* Hindi range currently unsupported in FT2 range. Change TT* once we 
+   arrive at a way to identify hindi */
+static nsFontCharSetInfo SunIndic =
+  { "x-sun-unicode-india-0", DoubleByteConvert, 0 };
+#endif /* SUNCTL */
+
+static nsFontCharSetInfo ISO106461 =
+  { nsnull, ISO10646Convert, 1};
+
+static nsFontCharSetInfo AdobeSymbol =
+   { "Adobe-Symbol-Encoding", SingleByteConvert, 0 };
+static nsFontCharSetInfo AdobeEuro =
+  { "x-adobe-euro", SingleByteConvert, 0 };
+         
+#ifdef MOZ_MATHML
+static nsFontCharSetInfo CMCMEX =
+   { "x-t1-cmex", SingleByteConvert, 0};
+static nsFontCharSetInfo CMCMSY =
+   { "x-t1-cmsy", SingleByteConvert, 0};
+static nsFontCharSetInfo CMCMR =
+   { "x-t1-cmr", SingleByteConvert, 0};
+static nsFontCharSetInfo CMCMMI =
+   { "x-t1-cmmi", SingleByteConvert, 0};
+static nsFontCharSetInfo Mathematica1 =
+   { "x-mathematica1", SingleByteConvert, 0};
+static nsFontCharSetInfo Mathematica2 =
+   { "x-mathematica2", SingleByteConvert, 0}; 
+static nsFontCharSetInfo Mathematica3 =
+   { "x-mathematica3", SingleByteConvert, 0};
+static nsFontCharSetInfo Mathematica4 =
+   { "x-mathematica4", SingleByteConvert, 0}; 
+static nsFontCharSetInfo Mathematica5 =
+   { "x-mathematica5", SingleByteConvert, 0};
+#endif /* MATHML */
+#endif /* FREETYPE2 */
 
 static nsFontLangGroup FLG_WESTERN = { "x-western",     nsnull };
 static nsFontLangGroup FLG_RUSSIAN = { "x-cyrillic",    nsnull };
@@ -821,7 +982,9 @@ FreeGlobals(void)
 
   gInitialized = 0;
 
+#ifdef MOZ_ENABLE_FREETYPE2
   nsFT2FontNode::FreeGlobals();
+#endif
 
 #ifdef ENABLE_X_FONT_BANNING
   if (gFontRejectRegEx) {
@@ -930,14 +1093,12 @@ InitGlobals(nsIDeviceContext *aDevice)
 
   aDevice->GetCanonicalPixelScale(gDevScale);
 
-  nsServiceManager::GetService(kCharSetManagerCID,
-    NS_GET_IID(nsICharsetConverterManager), (nsISupports**) &gCharSetManager);
+  CallGetService(kCharSetManagerCID, &gCharSetManager);
   if (!gCharSetManager) {
     FreeGlobals();
     return NS_ERROR_FAILURE;
   }
-  nsServiceManager::GetService(kPrefCID, NS_GET_IID(nsIPref),
-    (nsISupports**) &gPref);
+  CallGetService(kPrefCID, &gPref);
   if (!gPref) {
     FreeGlobals();
     return NS_ERROR_FAILURE;
@@ -1156,7 +1317,7 @@ InitGlobals(nsIDeviceContext *aDevice)
   nsCOMPtr<nsILanguageAtomService> langService;
   langService = do_GetService(NS_LANGUAGEATOMSERVICE_CONTRACTID);
   if (langService) {
-    langService->GetLocaleLanguageGroup(&gUsersLocale);
+    NS_IF_ADDREF(gUsersLocale = langService->GetLocaleLanguageGroup());
   }
   if (!gUsersLocale) {
     gUsersLocale = NS_NewAtom("x-western");
@@ -1221,11 +1382,13 @@ InitGlobals(nsIDeviceContext *aDevice)
   }
 #endif /* ENABLE_X_FONT_BANNING */
 
+#ifdef MOZ_ENABLE_FREETYPE2
   rv = nsFT2FontNode::InitGlobals();
   if (NS_FAILED(rv)) {
     FreeGlobals();
     return NS_ERROR_OUT_OF_MEMORY;
   }
+#endif
 
   gInitialized = 1;
 
@@ -1361,11 +1524,6 @@ nsFontMetricsGTK::~nsFontMetricsGTK()
 {
   // do not free mGeneric here
 
-  if (nsnull != mFont) {
-    delete mFont;
-    mFont = nsnull;
-  }
-
   if (mLoadedFonts) {
     PR_Free(mLoadedFonts);
     mLoadedFonts = nsnull;
@@ -1450,7 +1608,7 @@ NS_IMETHODIMP nsFontMetricsGTK::Init(const nsFont& aFont, nsIAtom* aLangGroup,
       return res;
   }
 
-  mFont = new nsFont(aFont);
+  mFont = aFont;
   mLangGroup = aLangGroup;
 
   mDeviceContext = aContext;
@@ -1458,18 +1616,22 @@ NS_IMETHODIMP nsFontMetricsGTK::Init(const nsFont& aFont, nsIAtom* aLangGroup,
   float app2dev;
   app2dev = mDeviceContext->AppUnitsToDevUnits();
 
-  mPixelSize = NSToIntRound(app2dev * mFont->size);
+  mPixelSize = NSToIntRound(app2dev * mFont.size);
   // Make sure to clamp the pixel size to something reasonable so we
   // don't make the X server blow up.
   mPixelSize = PR_MIN(gdk_screen_height() * FONT_MAX_FONT_SCALE, mPixelSize);
 
   mStretchIndex = 4; // normal
-  mStyleIndex = mFont->style;
+  mStyleIndex = mFont.style;
 
-  mFont->EnumerateFamilies(FontEnumCallback, this);
+  mFont.EnumerateFamilies(FontEnumCallback, this);
   nsXPIDLCString value;
+  const char* langGroup;
+  mLangGroup->GetUTF8String(&langGroup);
   if (!mGeneric) {
-    gPref->CopyCharPref("font.default", getter_Copies(value));
+    nsCAutoString name("font.default.");
+    name.Append(langGroup);
+    gPref->CopyCharPref(name.get(), getter_Copies(value));
     if (value.get()) {
       mDefaultFont = value.get();
     }
@@ -1488,8 +1650,6 @@ NS_IMETHODIMP nsFontMetricsGTK::Init(const nsFont& aFont, nsIAtom* aLangGroup,
       name.Append("variable");
     }
     name.Append(char('.'));
-    const char* langGroup = nsnull;
-    mLangGroup->GetUTF8String(&langGroup);
     name.Append(langGroup);
     PRInt32 minimum = 0;
     res = gPref->GetIntPref(name.get(), &minimum);
@@ -1557,6 +1717,7 @@ void nsFontMetricsGTK::RealizeFont()
   float f;
   f = mDeviceContext->DevUnitsToAppUnits();
 
+#ifdef MOZ_ENABLE_FREETYPE2
   if (mWesternFont->IsFreeTypeFont()) {
     nsFreeTypeFont *ft = (nsFreeTypeFont *)mWesternFont;
     if (!ft)
@@ -1565,7 +1726,6 @@ void nsFontMetricsGTK::RealizeFont()
     // and TrueType fonts) there should be a common set of methods 
     // to get the metrics info from the font object. These methods
     // probably should be virtual functions defined in nsFontGTK.
-#if (defined(MOZ_ENABLE_FREETYPE2))
     int lineSpacing = ft->ascent() + ft->descent();
     if (lineSpacing > mWesternFont->mSize) {
       mLeading = nscoord((lineSpacing - mWesternFont->mSize) * f);
@@ -1637,8 +1797,8 @@ void nsFontMetricsGTK::RealizeFont()
     mStrikeoutSize = mUnderlineSize;
 
     return;
-#endif /* (defined(MOZ_ENABLE_FREETYPE2)) */
   }
+#endif
   nsXFont *xFont = mWesternFont->GetXFont();
   XFontStruct *fontInfo = xFont->GetXFontStruct();
   f = mDeviceContext->DevUnitsToAppUnits();
@@ -1655,7 +1815,12 @@ void nsFontMetricsGTK::RealizeFont()
   mMaxAscent = nscoord(fontInfo->ascent * f);
   mMaxDescent = nscoord(fontInfo->descent * f);
 
-  mEmAscent = nscoord(mMaxAscent * mEmHeight / lineSpacing);
+  if (lineSpacing == 0) {
+    mEmAscent = mEmHeight;
+  }
+  else {
+    mEmAscent = nscoord(mMaxAscent * mEmHeight / lineSpacing);
+  }
   mEmDescent = mEmHeight - mEmAscent;
 
   mMaxAdvance = nscoord(fontInfo->max_bounds.width * f);
@@ -1848,12 +2013,6 @@ NS_IMETHODIMP  nsFontMetricsGTK::GetMaxAdvance(nscoord &aAdvance)
 NS_IMETHODIMP nsFontMetricsGTK::GetAveCharWidth(nscoord &aAveCharWidth)
 {
   aAveCharWidth = mAveCharWidth;
-  return NS_OK;
-}
-
-NS_IMETHODIMP  nsFontMetricsGTK::GetFont(const nsFont*& aFont)
-{
-  aFont = mFont;
   return NS_OK;
 }
 
@@ -2847,8 +3006,7 @@ nsFontGTKSubstitute::Convert(const PRUnichar* aSrc, PRUint32 aSrcLen,
 {
   nsresult res;
   if (!gFontSubConverter) {
-    nsComponentManager::CreateInstance(kSaveAsCharsetCID, nsnull,
-      NS_GET_IID(nsISaveAsCharset), (void**) &gFontSubConverter);
+    CallCreateInstance(kSaveAsCharsetCID, &gFontSubConverter);
     if (gFontSubConverter) {
       res = gFontSubConverter->Init("ISO-8859-1",
                              nsISaveAsCharset::attr_FallbackQuestionMark +
@@ -3255,6 +3413,8 @@ nsFontGTK*
 nsFontMetricsGTK::PickASizeAndLoad(nsFontStretch* aStretch,
   nsFontCharSetInfo* aCharSet, PRUint32 aChar, const char *aName)
 {
+
+#ifdef MOZ_ENABLE_FREETYPE2
   if (aStretch->mFreeTypeFaceID) {
     //FREETYPE_FONT_PRINTF(("mFreeTypeFaceID = 0x%p", aStretch->mFreeTypeFaceID));
     nsFreeTypeFont *ftfont = nsFreeTypeFont::NewFont(aStretch->mFreeTypeFaceID,
@@ -3287,6 +3447,7 @@ nsFontMetricsGTK::PickASizeAndLoad(nsFontStretch* aStretch,
     // SURROGATE is only supported by FreeType
     return nsnull;
   }
+#endif
 
   PRBool use_scaled_font = PR_FALSE;
   PRBool have_nearly_rightsized_bitmap = PR_FALSE;
@@ -3467,18 +3628,9 @@ nsFontMetricsGTK::GetWidth  (const char* aString, PRUint32 aLength,
     gint rawWidth;
     
     if (mCurrentFont->IsFreeTypeFont()) {
-        PRUnichar unichars[WIDEN_8_TO_16_BUF_SIZE];
-
-        // need to fix this for long strings
-        PRUint32 len = PR_MIN(aLength, WIDEN_8_TO_16_BUF_SIZE);
-
-        // convert 7 bit data to unicode
         // this function is only supposed to be called for ascii data
-        for (PRUint32 i=0; i<len; i++) {
-            unichars[i] = (PRUnichar)((unsigned char)aString[i]);
-        }
-
-        rawWidth = mCurrentFont->GetWidth(unichars, len);
+        rawWidth = mCurrentFont->
+          GetWidth(NS_ConvertASCIItoUTF16(aString, aLength).get(), aLength);
     }
     else if (!mCurrentFont->GetXFontIs10646()) {
         NS_ASSERTION(xFont->IsSingleByte(),"wrong string/font size");
@@ -3603,19 +3755,10 @@ nsFontMetricsGTK::DrawString(const char *aString, PRUint32 aLength,
           aContext->GetTranMatrix()->TransformCoord(&xx, &yy);
 
           if (mCurrentFont->IsFreeTypeFont()) {
-              PRUnichar unichars[WIDEN_8_TO_16_BUF_SIZE];
-
-              // need to fix this for long strings
-              PRUint32 len = PR_MIN(aLength, WIDEN_8_TO_16_BUF_SIZE);
-
-              // convert 7 bit data to unicode
               // this function is only supposed to be called for ascii data
-              for (PRUint32 i=0; i<len; i++) {
-                  unichars[i] = (PRUnichar)((unsigned char)aString[i]);
-              }
-
-              rv = mCurrentFont->DrawString(aContext, aSurface, xx, yy,
-                                            unichars, len);
+              rv = mCurrentFont->DrawString(aContext, aSurface, xx, yy, 
+                                 NS_ConvertASCIItoUTF16(aString, aLength).get(),
+                                 aLength);
           }
           else if (!mCurrentFont->GetXFontIs10646()) {
               // 8 bit data with an 8 bit font
@@ -3636,19 +3779,10 @@ nsFontMetricsGTK::DrawString(const char *aString, PRUint32 aLength,
       aContext->GetTranMatrix()->TransformCoord(&x, &y);
 
       if (mCurrentFont->IsFreeTypeFont()) {
-          PRUnichar unichars[WIDEN_8_TO_16_BUF_SIZE];
-
-          // need to fix this for long strings
-          PRUint32 len = PR_MIN(aLength, WIDEN_8_TO_16_BUF_SIZE);
-
-          // convert 7 bit data to unicode
           // this function is only supposed to be called for ascii data
-          for (PRUint32 i=0; i<len; i++) {
-              unichars[i] = (PRUnichar)((unsigned char)aString[i]);
-          }
-
-          rv = mCurrentFont->DrawString(aContext, aSurface, x, y,
-                                        unichars, len);
+          rv = mCurrentFont->DrawString(aContext, aSurface, x, y, 
+                             NS_ConvertASCIItoUTF16(aString, aLength).get(),
+                             aLength);
       }
       else if (!mCurrentFont->GetXFontIs10646()) { // keep 8 bit path fast
           // 8 bit data with an 8 bit font
@@ -3810,21 +3944,12 @@ nsFontMetricsGTK::GetBoundingMetrics(const char *aString, PRUint32 aLength,
     nsXFont *xFont = mCurrentFont->GetXFont();
 
     if (mCurrentFont->IsFreeTypeFont()) {
-        PRUnichar unichars[WIDEN_8_TO_16_BUF_SIZE];
-
-        // need to fix this for long strings
-        PRUint32 len = PR_MIN(aLength, WIDEN_8_TO_16_BUF_SIZE);
-
-        // convert 7 bit data to unicode
         // this function is only supposed to be called for ascii data
-        for (PRUint32 i=0; i<len; i++) {
-            unichars[i] = (PRUnichar)((unsigned char)aString[i]);
-        }
-
-        rv = mCurrentFont->GetBoundingMetrics(unichars, len,
-                                              aBoundingMetrics);
+        rv = mCurrentFont->GetBoundingMetrics(
+                           NS_ConvertASCIItoUTF16(aString, aLength).get(),
+                           aLength, aBoundingMetrics);
     }
-    if (!mCurrentFont->GetXFontIs10646()) {
+    else if (!mCurrentFont->GetXFontIs10646()) {
         // 8 bit data with an 8 bit font
         NS_ASSERTION(xFont->IsSingleByte(),"wrong string/font size");
         xFont->TextExtents8(aString, aLength,
@@ -4201,7 +4326,7 @@ struct BreakGetTextDimensionsData {
   // Remember the fonts that we use so that we can deal with
   // line-breaking in-between fonts later. mOffsets[0] is also used
   // to initialize the current offset from where to start measuring
-  nsVoidArray* mFonts;   // OUT
+  nsVoidArray* mFonts;   // IN/OUT
   nsVoidArray* mOffsets; // IN/OUT
 };
 
@@ -4222,10 +4347,10 @@ do_BreakGetTextDimensions(const nsFontSwitchGTK *aFontSwitch,
   PRInt32 numCharsFit = data->mNumCharsFit;
   nscoord width = data->mWidth;
   PRInt32 start = (PRInt32)(aSubstring - pstr);
-  PRInt32 i = start + aSubstringLength;
+  PRInt32 end = start + aSubstringLength;
   PRBool allDone = PR_FALSE;
 
-  while (start < i) {
+  while (start < end) {
     // Estimate how many characters will fit. Do that by dividing the
     // available space by the average character width
     PRInt32 estimatedNumChars = data->mEstimatedNumChars;
@@ -4245,9 +4370,9 @@ do_BreakGetTextDimensions(const nsFontSwitchGTK *aFontSwitch,
 
     // Avoid scanning the break array in the case where we think all
     // the text should fit
-    if (i <= estimatedBreakOffset) {
+    if (end <= estimatedBreakOffset) {
       // Everything should fit
-      numChars = i - start;
+      numChars = end - start;
     }
     else {
       // Find the nearest place to break that is less than or equal to
@@ -4267,20 +4392,20 @@ do_BreakGetTextDimensions(const nsFontSwitchGTK *aFontSwitch,
       if (start < data->mBreaks[breakIndex]) {
         // The text crosses at least one segment boundary so measure to the
         // break point just before the estimated break offset
-        numChars = PR_MIN(data->mBreaks[breakIndex] - start, (PRInt32)aSubstringLength);
+        numChars = PR_MIN(data->mBreaks[breakIndex], end) - start;
       } 
       else {
         // See whether there is another segment boundary between this one
         // and the end of the text
-        if ((breakIndex < (data->mNumBreaks - 1)) && (data->mBreaks[breakIndex] < i)) {
+        if ((breakIndex < (data->mNumBreaks - 1)) && (data->mBreaks[breakIndex] < end)) {
           ++breakIndex;
-          numChars = PR_MIN(data->mBreaks[breakIndex] - start, (PRInt32)aSubstringLength);
+          numChars = PR_MIN(data->mBreaks[breakIndex], end) - start;
         }
         else {
-          NS_ASSERTION(i != data->mBreaks[breakIndex], "don't expect to be at segment boundary");
+          NS_ASSERTION(end != data->mBreaks[breakIndex], "don't expect to be at segment boundary");
 
           // The text is all within the same segment
-          numChars = i - start;
+          numChars = end - start;
 
           // Remember we're in the middle of a segment and not between
           // two segments
@@ -4344,17 +4469,15 @@ do_BreakGetTextDimensions(const nsFontSwitchGTK *aFontSwitch,
 
       // We can't just revert to the previous break state. Find the break
       // index just before the end of the text
-      i = start + numChars;
-      if (breakIndex == -1) {
-        breakIndex = 0;
-        if (data->mBreaks[breakIndex] < i) {
-          while ((breakIndex + 1 < data->mNumBreaks) && (data->mBreaks[breakIndex + 1] < i)) {
-            ++breakIndex;
-          }
+      end = start + numChars;
+      breakIndex = 0;
+      if (data->mBreaks[breakIndex] < end) {
+        while ((breakIndex + 1 < data->mNumBreaks) && (data->mBreaks[breakIndex + 1] < end)) {
+          ++breakIndex;
         }
       }
 
-      if ((0 == breakIndex) && (i <= data->mBreaks[0])) {
+      if ((0 == breakIndex) && (end <= data->mBreaks[0])) {
         // There's no place to back up to, so even though the text doesn't fit
         // return it anyway
         numCharsFit += numChars;
@@ -4383,21 +4506,52 @@ do_BreakGetTextDimensions(const nsFontSwitchGTK *aFontSwitch,
       // all the way back to the first word
       width += twWidth;
       while ((breakIndex >= 0) && (width > data->mAvailWidth)) {
-        twWidth = 0;
         start = data->mBreaks[breakIndex];
-        numChars = i - start;
+        numChars = end - start;
+        numCharsFit = start;
         if ((1 == numChars) && (pstr[start] == ' ')) {
-          twWidth = data->mSpaceWidth;
+          width -= data->mSpaceWidth;
         }
-        else if (numChars > 0) {
+        else if (pstr + start >= aSubstring) {
+          // The entire fragment to chop is within the current font.
           pxWidth = fontGTK->GetWidth(&pstr[start], numChars);
-          twWidth = NSToCoordRound(float(pxWidth) * data->mP2T);
+          width -= NSToCoordRound(float(pxWidth) * data->mP2T);
+        }
+        else {
+          // The fragment that we want to chop extends back into previous fonts.
+          // We need to reverse into previous fonts. Fortunately,
+          // data->mFonts[] and data->mOffsets[] tell us which fonts are used
+          // and when. 
+          end = data->mNumCharsFit; // same as aSubstring - pstr
+          data->mNumCharsFit = numCharsFit; // has got shorter...
+          PRInt32 k = data->mFonts->Count() - 1;
+          for ( ; k >= 0 && start < end; --k, end -= numChars) {
+            fontGTK = (nsFontGTK*)data->mFonts->ElementAt(k);
+            const PRUnichar* ps = (const PRUnichar*)data->mOffsets->ElementAt(k);
+            if (ps < pstr + start)
+              ps = pstr + start;
+
+            numChars = pstr + end - ps;
+            NS_ASSERTION(numChars > 0, "empty string");
+
+            pxWidth = fontGTK->GetWidth(ps, numChars);
+            data->mWidth -= NSToCoordRound(float(pxWidth) * data->mP2T);
+
+            // By construction, mFonts[k] is the last font, and
+            // mOffsets[k+1] is the last offset.
+            data->mFonts->RemoveElementAt(k);
+            data->mOffsets->RemoveElementAt(k+1);
+          }
+
+          // We are done, update the data now because we won't do it later.
+          // The |if (data->mNumCharsFit != numCharsFit)| won't apply below
+          data->mFonts->AppendElement(fontGTK);
+          data->mOffsets->AppendElement((void*)&pstr[numCharsFit]);
+          break;
         }
 
-        width -= twWidth;
-        numCharsFit = start;
         --breakIndex;
-        i = start;
+        end = start;
       }
     }
 
@@ -4405,7 +4559,7 @@ do_BreakGetTextDimensions(const nsFontSwitchGTK *aFontSwitch,
   }
 
 #ifdef DEBUG_rbs
-  NS_ASSERTION(allDone || start == i, "internal error");
+  NS_ASSERTION(allDone || start == end, "internal error");
   NS_ASSERTION(allDone || data->mNumCharsFit != numCharsFit, "internal error");
 #endif /* DEBUG_rbs */
 
@@ -4598,6 +4752,49 @@ GdkFont *
 nsFontMetricsGTK::GetCurrentGDKFont(void)
 {
   return mCurrentFont->GetGDKFont();
+}
+
+nsresult
+nsFontMetricsGTK::SetRightToLeftText(PRBool aIsRTL)
+{
+    return NS_OK;
+}
+
+nsresult
+nsFontMetricsGTK::GetClusterInfo(const PRUnichar *aText,
+                                 PRUint32 aLength,
+                                 PRUint8 *aClusterStarts)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+PRInt32
+nsFontMetricsGTK::GetPosition(const PRUnichar *aText,
+                              PRUint32 aLength,
+                              nsPoint aPt)
+{
+    return -1;
+}
+
+
+nsresult
+nsFontMetricsGTK::GetRangeWidth(const PRUnichar *aText,
+                                PRUint32 aLength,
+                                PRUint32 aStart,
+                                PRUint32 aEnd,
+                                PRUint32 &aWidth)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+nsresult
+nsFontMetricsGTK::GetRangeWidth(const char *aText,
+                                PRUint32 aLength,
+                                PRUint32 aStart,
+                                PRUint32 aEnd,
+                                PRUint32 &aWidth)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 PR_BEGIN_EXTERN_C
@@ -4877,7 +5074,7 @@ check_done:
   nsFontStyle* style = aNode->mStyles[mStyleIndex];
 
   nsFontWeight** weights = style->mWeights;
-  int weight = mFont->weight;
+  int weight = mFont.weight;
   int steps = (weight % 100);
   int weightIndex;
   if (steps) {
@@ -5195,8 +5392,10 @@ GetFontNames(const char* aPattern, PRBool aAnyFoundry, PRBool aOnlyOutlineScaled
   }
 #endif
 
+#ifdef MOZ_ENABLE_FREETYPE2
   // get FreeType fonts
   nsFT2FontNode::GetFontNames(aPattern, aNodes);
+#endif
 
   nsCAutoString previousNodeName;
   nsHashtable* node_hash;
@@ -6569,6 +6768,7 @@ GetCharSetMap(const char *aCharSetName)
   return charSetMap;
 }
 
+#ifdef MOZ_ENABLE_FREETYPE2
 void
 CharSetNameToCodeRangeBits(const char *aCharset,
                            PRUint32 *aCodeRange1, PRUint32 *aCodeRange2)
@@ -6579,4 +6779,4 @@ CharSetNameToCodeRangeBits(const char *aCharset,
   *aCodeRange1 = charSetInfo->mCodeRange1Bits;
   *aCodeRange2 = charSetInfo->mCodeRange2Bits;
 }
-
+#endif

@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is the TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
@@ -20,7 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Peter Van der Beken <peterv@netscape.com>
+ *   Peter Van der Beken <peterv@propagandism.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -54,6 +54,7 @@ class nsIDOMDocumentFragment;
 class nsIDOMElement;
 class nsIStyleSheet;
 class nsIDOMNode;
+class nsITransformObserver;
 
 class txTransformNotifier : public nsIScriptLoaderObserver,
                             public nsICSSLoaderObserver
@@ -69,18 +70,18 @@ public:
     NS_IMETHOD StyleSheetLoaded(nsICSSStyleSheet* aSheet, PRBool aNotify);
 
     void Init(nsITransformObserver* aObserver);
-    void AddScriptElement(nsIDOMHTMLScriptElement* aElement);
+    void AddScriptElement(nsIScriptElement* aElement);
     void AddStyleSheet(nsIStyleSheet* aStyleSheet);
-    void OnTransformEnd();
+    void OnTransformEnd(nsresult aResult = NS_OK);
     void OnTransformStart();
     void SetOutputDocument(nsIDOMDocument* aDocument);
 
 private:
-    void SignalTransformEnd();
+    void SignalTransformEnd(nsresult aResult = NS_OK);
 
     nsCOMPtr<nsIDOMDocument> mDocument;
     nsCOMPtr<nsITransformObserver> mObserver;
-    nsCOMArray<nsIDOMHTMLScriptElement> mScriptElements;
+    nsCOMArray<nsIScriptElement> mScriptElements;
     nsCOMArray<nsIStyleSheet> mStylesheets;
     PRPackedBool mInTransform;
 };
@@ -122,7 +123,7 @@ private:
 
     nsRefPtr<txTransformNotifier> mNotifier;
 
-    PRUint32 mBadChildLevel;
+    PRUint32 mTreeDepth, mBadChildLevel;
     nsCString mRefreshString;
 
     txStack mTableStateStack;

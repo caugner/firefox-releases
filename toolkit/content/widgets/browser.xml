@@ -1,41 +1,45 @@
 <?xml version="1.0"?>
 
-<!--
-   - The contents of this file are subject to the Mozilla Public
-   - License Version 1.1 (the "License"); you may not use this file
-   - except in compliance with the License. You may obtain a copy of
-   - the License at http://www.mozilla.org/MPL/
+<!-- ***** BEGIN LICENSE BLOCK *****
+   - Version: MPL 1.1/GPL 2.0/LGPL 2.1
    -
-   - Software distributed under the License is distributed on an "AS
-   - IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-   - implied. See the License for the specific language governing
-   - rights and limitations under the License.
+   - The contents of this file are subject to the Mozilla Public License Version
+   - 1.1 (the "License"); you may not use this file except in compliance with
+   - the License. You may obtain a copy of the License at
+   - http://www.mozilla.org/MPL/
    -
-   - The Original Code is this file as it was released on
-   - March 28, 2001.
+   - Software distributed under the License is distributed on an "AS IS" basis,
+   - WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+   - for the specific language governing rights and limitations under the
+   - License.
    -
-   - The Initial Developer of the Original Code is Peter Annema.
-   - Portions created by Peter Annema are Copyright (C) 2001
-   - Peter Annema.  All Rights Reserved.
+   - The Original Code is this file as it was released on March 28, 2001.
+   -
+   - The Initial Developer of the Original Code is
+   - Peter Annema.
+   - Portions created by the Initial Developer are Copyright (C) 2001
+   - the Initial Developer. All Rights Reserved.
    -
    - Contributor(s):
    -   Peter Annema <disttsc@bart.nl> (Original Author of <browser>)
+   -   Peter Parente <parente@cs.unc.edu>
    -
-   - Alternatively, the contents of this file may be used under the
-   - terms of the GNU General Public License Version 2 or later (the
-   - "GPL"), in which case the provisions of the GPL are applicable
-   - instead of those above.  If you wish to allow use of your
-   - version of this file only under the terms of the GPL and not to
-   - allow others to use your version of this file under the MPL,
-   - indicate your decision by deleting the provisions above and
-   - replace them with the notice and other provisions required by
-   - the GPL.  If you do not delete the provisions above, a recipient
-   - may use your version of this file under either the MPL or the
-   - GPL.
-  -->
+   - Alternatively, the contents of this file may be used under the terms of
+   - either the GNU General Public License Version 2 or later (the "GPL"), or
+   - the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+   - in which case the provisions of the GPL or the LGPL are applicable instead
+   - of those above. If you wish to allow use of your version of this file only
+   - under the terms of either the GPL or the LGPL, and not to allow others to
+   - use your version of this file under the terms of the MPL, indicate your
+   - decision by deleting the provisions above and replace them with the notice
+   - and other provisions required by the GPL or the LGPL. If you do not delete
+   - the provisions above, a recipient may use your version of this file under
+   - the terms of any one of the MPL, the GPL or the LGPL.
+   -
+   - ***** END LICENSE BLOCK ***** -->
 
 <!DOCTYPE window [
-  <!ENTITY % findBarDTD SYSTEM "chrome://global/locale/findBar.dtd" >
+  <!ENTITY % findBarDTD SYSTEM "chrome://global/locale/findbar.dtd" >
   %findBarDTD;
 ]>
 
@@ -162,7 +166,7 @@
               catch (e) {
               }
             }
-            this.mFavIconURL = null;
+            this.mIconURL = null;
             this.webNavigation.loadURI(aURI, aFlags, aReferrerURI, aPostData, null);
           ]]>
         </body>
@@ -302,7 +306,7 @@
                 readonly="true"/>
 
       <property name="contentTitle"
-                onget="return Components.lookupMethod(this.contentDocument, 'title').call(this.contentDocument);"
+                onget="return this.contentDocument.title;"
                 readonly="true"/>
 
       <field name="mPrefs" readonly="true">
@@ -362,10 +366,10 @@
                                getService(Components.interfaces.nsIFormFillController);
 
             var popup = document.getElementById(this.getAttribute("autocompletepopup"));
-            if (popup)
+            if (popup) {
               controller.attachToBrowser(this.docShell, popup.QueryInterface(Components.interfaces.nsIAutoCompletePopup));
-            
-            this.mFormFillAttached = true;
+              this.mFormFillAttached = true;
+            }
           }
           ]]>
         </body>
@@ -407,7 +411,7 @@
         </body>
       </method>
 
-      <method name="onLoad">
+      <method name="onPageShow">
         <parameter name="aEvent"/>
         <body>
           <![CDATA[
@@ -430,7 +434,7 @@
         </body>
       </method>
 
-      <method name="onUnload">
+      <method name="onPageHide">
         <parameter name="aEvent"/>
         <body>
           <![CDATA[
@@ -481,12 +485,31 @@
         null
       </field>
 
-      <field name="securityUI">
-        null
-      </field>
-      
+      <property name="securityUI">
+        <getter>
+          <![CDATA[
+            if (!this.docShell.securityUI) {
+              const SECUREBROWSERUI_CONTRACTID = "@mozilla.org/secure_browser_ui;1";
+              if (!this.hasAttribute("disablesecurity") &&
+                  SECUREBROWSERUI_CONTRACTID in Components.classes) {
+                var securityUI = Components.classes[SECUREBROWSERUI_CONTRACTID]
+                                           .createInstance(Components.interfaces.nsISecureBrowserUI);
+                securityUI.init(this.contentWindow);
+              }
+            }
+            
+            return this.docShell.securityUI;
+          ]]>
+        </getter>
+        <setter>
+          <![CDATA[
+            this.docShell.securityUI = val;
+          ]]>
+        </setter>
+      </property>
+
       <field name="userTypedClear">
-        true
+        1
       </field>
 
       <field name="_userTypedValue">
@@ -495,7 +518,7 @@
 
       <property name="userTypedValue"
                 onget="return this._userTypedValue;"
-                onset="this.userTypedClear = false; return this._userTypedValue = val;"/>
+                onset="this.userTypedClear = 0; return this._userTypedValue = val;"/>
 
       <field name="mFormFillAttached">
         false
@@ -507,13 +530,15 @@
 
       <field name="focusedElement">
         null
-      </field>     
+      </field>
       
       <field name="isShowingMessage">
         false
       </field>
 
-      <field name="mFavIconURL">null</field>
+      <field name="mIconURL">null</field>
+
+      <field name="mDestroyed">false</field>
 
       <constructor>
         <![CDATA[
@@ -536,19 +561,14 @@
           catch (e) {
           }
           try {
-            const SECUREBROWSERUI_CONTRACTID = "@mozilla.org/secure_browser_ui;1";
-            if (!this.hasAttribute("disablesecurity") &&
-                SECUREBROWSERUI_CONTRACTID in Components.classes) {
-              this.securityUI = Components.classes[SECUREBROWSERUI_CONTRACTID].createInstance(Components.interfaces.nsISecureBrowserUI);
-              this.securityUI.init(this.contentWindow);
-            }
+            var securityUI = this.securityUI;
           }
           catch (e) {
           }
 
           // Listen for first load for lazy attachment to form fill controller
-          this.addEventListener("load", this.onLoad, true);
-          this.addEventListener("unload", this.onUnload, true);
+          this.addEventListener("pageshow", this.onPageShow, true);
+          this.addEventListener("pagehide", this.onPageHide, true);
           this.addEventListener("DOMPopupBlocked", this.onPopupBlocked, false);
         ]]>
       </constructor>
@@ -564,9 +584,17 @@
       <method name="destroy">
         <body>
           <![CDATA[
+          if (this.mDestroyed)
+            return;
+          this.mDestroyed = true;
+
           if (!this.hasAttribute("disablehistory")) {
             var os = Components.classes["@mozilla.org/observer-service;1"].getService(Components.interfaces.nsIObserverService);
-            os.removeObserver(this, "browser:purge-session-history", false);
+            try {
+              os.removeObserver(this, "browser:purge-session-history", false);
+            } catch (ex) {
+              // It's not clear why this sometimes throws an exception.
+            }
           }
 
           if (this.mDragDropHandler)
@@ -575,11 +603,11 @@
 
           this.detachFormFill();
           
-          this.securityUI = null;
           this._fastFind = null;
+          this._webBrowserFind = null;
 
-          this.removeEventListener("load", this.onLoad, true);
-          this.removeEventListener("unload", this.onUnload, true);
+          this.removeEventListener("pageshow", this.onPageShow, true);
+          this.removeEventListener("pagehide", this.onPageHide, true);
           this.removeEventListener("DOMPopupBlocked", this.onPopupBlocked, true);
           ]]>
         </body>
@@ -594,6 +622,14 @@
             if (aTopic != "browser:purge-session-history")
               return;
               
+            // place the entry at current index at the end of the history list, so it won't get removed
+            if (this.sessionHistory.index < this.sessionHistory.count - 1) {
+              var indexEntry = this.sessionHistory.getEntryAtIndex(this.sessionHistory.index, false);
+              this.sessionHistory.QueryInterface(Components.interfaces.nsISHistoryInternal);
+              indexEntry.QueryInterface(Components.interfaces.nsISHEntry);
+              this.sessionHistory.addEntry(indexEntry, true);
+            }
+            
             var purge = this.sessionHistory.count;
             if (this.currentURI != "about:blank")
               --purge; // Don't remove the page the user's staring at from shistory
@@ -612,13 +648,14 @@
       <field name="_scrollCount">0</field>
       <field name="_startX">null</field>
       <field name="_startY">null</field>
-      <field name="_clientX">null</field>
-      <field name="_clientY">null</field>
+      <field name="_screenX">null</field>
+      <field name="_screenY">null</field>
 
       <method name="stopScroll">
         <body>
           <![CDATA[
             this._isScrolling = false;
+            this.removeEventListener('mousemove', this.handleMouseMove, false);            
             if (this._autoScrollMarkerImage) {
               this._autoScrollMarkerImage.style.display = 'none';  // seems to avoid blocking when autoscroll is initited during pageload
               this._autoScrollMarkerImage.parentNode.removeChild(this._autoScrollMarkerImage);
@@ -632,8 +669,8 @@
        <body>
          <![CDATA[
            if (this._isScrolling) {
-             var x = (this._clientX - this._startX) / this._AUTOSCROLL_SPEED;
-             var y = (this._clientY - this._startY) / this._AUTOSCROLL_SPEED;
+             var x = (this._screenX - this._startX) / this._AUTOSCROLL_SPEED;
+             var y = (this._screenY - this._startY) / this._AUTOSCROLL_SPEED;
          
              if(Math.abs(x) > 0 && Math.abs(y) > 0)
              {
@@ -691,8 +728,8 @@
          <![CDATA[
            var scrollCursor  = new Array("move", "n-resize", "e-resize");
            var docBox = this._clientFrameDoc.getBoxObjectFor(this._clientFrameDoc.documentElement);
-           var left = evt.screenX - docBox.screenX;
-           var top = evt.screenY - docBox.screenY;
+           var left = evt.clientX;
+           var top = evt.clientY;
            
            
            var documentWidth = docBox.width;
@@ -733,6 +770,24 @@
          ]]>
        </body>
      </method>
+     <method name="handleMouseMove">
+        <parameter name="aEvent"/>
+        <body>
+        <![CDATA[
+          this._screenX = aEvent.screenX;
+          this._screenY = aEvent.screenY;
+        
+          if (this._isScrolling) {
+            var x = this._screenX - this._startX;
+            var y = this._screenY - this._startY;
+        
+            if ((x > this._AUTOSCROLL_SNAP || x < -this._AUTOSCROLL_SNAP) ||
+                (y > this._AUTOSCROLL_SNAP || y < -this._AUTOSCROLL_SNAP))
+              this._snapOn = false;
+          }
+        ]]>
+        </body>
+      </method>
 
      <field name="_findInstData">null</field>
      <property name="findInstData" readonly="true">
@@ -777,9 +832,9 @@
     </implementation>
 
     <handlers>
-      <handler event="keypress" keycode="VK_F7">
+      <handler event="keypress" keycode="VK_F7" group="system">
         <![CDATA[
-          if (!event.isTrusted)
+          if (event.getPreventDefault() || !event.isTrusted)
             return;
 
           // Toggle browse with caret mode
@@ -837,30 +892,20 @@
           if (this._isScrolling) {
             stopScroll();
           } else if (event.button == 1) {
-          if (!this.autoscrollEnabled || this.isAutoscrollBlocker(event.originalTarget))
-            return;
-
-              this._startX = event.clientX;
-              this._startY = event.clientY;
-              this._clientFrameDoc = event.originalTarget.ownerDocument;
-              this._isScrolling = true;
-              this._snapOn = true; 
-              this.showAutoscrollMarker(event);
-              window.setTimeout(function foo(a) { a.autoScrollLoop() }, 5, this);
-            }
-        ]]>
-      </handler>
-      <handler event="mousemove">
-        <![CDATA[          
-          this._clientX = event.clientX;
-          this._clientY = event.clientY;
-        
-          if (this._isScrolling) {
-            var x = this._clientX - this._startX;
-            var y = this._clientY - this._startY;
-        
-            if ((x > this._AUTOSCROLL_SNAP || x < -this._AUTOSCROLL_SNAP) || (y > this._AUTOSCROLL_SNAP || y < -this._AUTOSCROLL_SNAP))
-              this._snapOn = false;            
+            if (!this.autoscrollEnabled  ||
+                this.currentURI.spec == "about:blank"|| 
+                this.isAutoscrollBlocker(event.originalTarget))
+              return;
+            this.addEventListener('mousemove', this.handleMouseMove, false);
+            this._screenX = event.screenX;
+            this._screenY = event.screenY;
+            this._startX = event.screenX;
+            this._startY = event.screenY;
+            this._clientFrameDoc = event.originalTarget.ownerDocument;
+            this._isScrolling = true;
+            this._snapOn = true; 
+            this.showAutoscrollMarker(event);
+            window.setTimeout(function foo(a) { a.autoScrollLoop() }, 5, this);
           }
         ]]>
       </handler>
@@ -870,20 +915,29 @@
   
   <binding id="browsermessage" extends="xul:hbox">
     <content align="center">
-      <xul:hbox anonid="messagePopupContainer" align="center" flex="1">
+      <xul:hbox align="center" flex="1">
         <xul:image       anonid="messageImage"   class="messageImage"/>
         <xul:description anonid="messageText"    class="messageText" flex="1"/>
       </xul:hbox>
-      <xul:button       anonid="messageButton"  class="messageButton"/>
+      <xul:button anonid="messageButton" class="messageButton"/>
       <xul:spacer class="tabs-right"/>
-      <xul:hbox hidden="true" anonid="messageClose" class="tabs-closebutton-box" 
+      <xul:hbox hidden="true" anonid="messageClose" class="tabs-closebutton-box"
                 align="center" pack="end">
-        <xul:toolbarbutton ondblclick="event.preventBubble();" 
-                           class="tabs-closebutton close-button" 
+        <xul:toolbarbutton ondblclick="event.preventBubble();"
+                           class="tabs-closebutton close-button"
                            oncommand="this.parentNode.parentNode.hide();"/>
       </xul:hbox>
     </content>
-    <implementation>
+    <implementation implements="nsIAccessibleProvider">
+      <property name="accessible">
+        <getter>
+          <![CDATA[
+            var accService = Components.classes["@mozilla.org/accessibilityService;1"].getService(Components.interfaces.nsIAccessibilityService);
+            return accService.createXULAlertAccessible(this);
+          ]]>
+        </getter>
+      </property>
+
       <property name="type" onget="return this.getAttribute('type');"
                             onset="this.setAttribute('type', val); return val;"/>
 
@@ -900,7 +954,7 @@
           <![CDATA[
             this._imageElement.setAttribute("src", val);
             return val;
-          ]]>        
+          ]]>
         </setter>
       </property>
       
@@ -910,19 +964,30 @@
       <field name="source">
         "";
       </field>
+
+      <field name="_popup">
+        "";
+      </field>
       <property name="popup">
         <setter>
           <![CDATA[
-            if (val)
-              document.getAnonymousElementByAttribute(this, "anonid", "messagePopupContainer").setAttribute("popup", val);
-            else
-              document.getAnonymousElementByAttribute(this, "anonid", "messagePopupContainer").removeAttribute("popup");
+           this._popup = val;
+
+           // store scope
+           var myThis = this;
+           var lambda = function (event) {myThis.showPopup(event);}
+
+           if (val) {
+              document.getAnonymousElementByAttribute(this, "anonid", "messageButton").addEventListener("command", lambda, false);
+            } else {
+              document.getAnonymousElementByAttribute(this, "anonid", "messageButton").removeEventListener("command", lambda, false);
+            }
             return val;
           ]]>
         </setter>
         <getter>
           <![CDATA[
-            return document.getAnonymousElementByAttribute(this, "anonid", "messagePopupContainer").getAttribute("popup");
+            return this._popup;
           ]]>
         </getter>
       </property>
@@ -946,7 +1011,7 @@
               this._textElement.removeChild(this._textElement.firstChild);
             this._textElement.appendChild(document.createTextNode(val));
             return val;
-          ]]>        
+          ]]>
         </setter>
       </property>
       
@@ -956,19 +1021,32 @@
       <property name="buttonText">
         <getter>
           <![CDATA[
-            return this._buttonElement.getAttribute("label");
+            return this._buttonElement.label;
           ]]>
         </getter>
         <setter>
           <![CDATA[
             if (val != "") {
               this._buttonElement.removeAttribute("style");
-              this._buttonElement.setAttribute("label", val);
+              this._buttonElement.label = val;
             }
             else
               this._buttonElement.setAttribute("style", "max-width: 1px; visibility: hidden;");
             return val;
-          ]]>        
+          ]]>
+        </setter>
+      </property>
+      <property name="buttonAccesskey">
+        <getter>
+          <![CDATA[
+            return this._buttonElement.getAttribute("accesskey");
+          ]]>
+        </getter>
+        <setter>
+          <![CDATA[
+            this._buttonElement.setAttribute("accesskey", val);
+            return val;
+          ]]>
         </setter>
       </property>
       <property name="closeButton">
@@ -982,7 +1060,7 @@
             var elm = document.getAnonymousElementByAttribute(this, "anonid", "messageClose");
             elm.hidden = !val;
             return val;
-          ]]>        
+          ]]>
         </setter>
       </property>
       <method name="hide">
@@ -992,9 +1070,18 @@
           ]]>
         </body>
       </method>
+      <method name="showPopup">
+        <parameter name="event"/>
+        <body>
+          <![CDATA[
+            document.getElementById(this.popup).showPopup(event.originalTarget, -1, -1, "popup", "bottomleft", "topleft");
+          ]]>
+        </body>
+      </method>
+
     </implementation>
     <handlers>
-      <handler event="click">
+      <handler event="command">
         if (event.originalTarget.getAttribute("anonid") == "messageButton") {
           var os = Components.classes["@mozilla.org/observer-service;1"]
                              .getService(Components.interfaces.nsIObserverService);

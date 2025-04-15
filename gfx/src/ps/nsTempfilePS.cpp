@@ -21,11 +21,11 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Kenneth Herron <kherron@newsguy.com>
+ *   Kenneth Herron <kherron@newsguy.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -59,12 +59,6 @@ nsTempfilePS::nsTempfilePS()
     // filenames.
     LL_L2UI(mCount, PR_Now());
 
-#ifdef VMS
-    // On OpenVMS we can't use a subdirectory because the temp print file
-    // can not be deleted until after the print job has completed, and this
-    // would orphan the temp subdirectory.
-    mTempDir = nsnull;
-#else
     // Append an arbitrary subdirectory name to the temp dir...
     rv = mTempDir->Append(
             NS_ConvertASCIItoUCS2(nsPrintfCString("%lx.tmp", mCount++)));
@@ -77,7 +71,6 @@ nsTempfilePS::nsTempfilePS()
     rv = mTempDir->CreateUnique(nsIFile::DIRECTORY_TYPE, 0700);
     if (NS_FAILED(rv))
         mTempDir = nsnull;
-#endif /* VMS */
 }
 
 nsTempfilePS::~nsTempfilePS()

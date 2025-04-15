@@ -114,6 +114,11 @@
       <![CDATA[({
         tabbox: this,
         handleEvent: function handleEvent(event) {
+          if (!event.isTrusted) {
+            // Don't let untrusted events mess with tabs.
+            return;
+          }
+
           switch (event.keyCode) {
             case event.DOM_VK_TAB:
               if (event.ctrlKey && !event.altKey && !event.metaKey)
@@ -286,6 +291,23 @@
         </setter>
       </property>
     
+      <method name="selectNewTab">
+        <parameter name="aNewTab"/>
+        <body>
+        <![CDATA[
+          var isTabFocused =
+            (document.commandDispatcher.focusedElement == this.selectedItem);
+          this.selectedItem = aNewTab;
+          if (isTabFocused) {
+            aNewTab.focus();
+          }
+          else if (this.getAttribute("setfocus") != "false") {
+            document.commandDispatcher.advanceFocusIntoSubtree(aNewTab);
+          }
+        ]]>
+        </body>
+      </method>
+      
       <method name="advanceSelectedTab">
         <parameter name="aDir"/>
         <body>
@@ -301,11 +323,7 @@
           }
 
           if (next && next != startTab) {
-            this.selectedItem = next;
-            if (this.getAttribute("setfocus") != "false") {
-              next.focus();
-              document.commandDispatcher.advanceFocusIntoSubtree(next);
-            }
+            this.selectNewTab(next);
           }
         ]]>
         </body>
@@ -365,7 +383,7 @@
     <content>
       <xul:stack>
         <xul:spacer class="tabs-left"/>
-        <xul:toolbarbutton class="tabs-newbutton" xbl:inherits="oncommand=onnewtab,tooltiptext=tooltiptextnew"/>
+        <xul:toolbarbutton ondblclick="event.preventBubble();" class="tabs-newbutton" xbl:inherits="oncommand=onnewtab,tooltiptext=tooltiptextnew"/>
       </xul:stack>
       <xul:hbox flex="1" style="min-width: 1px;">
         <children/>
@@ -374,7 +392,7 @@
       <xul:stack>
         <xul:spacer class="tabs-right"/>
         <xul:hbox class="tabs-closebutton-box" align="center" pack="end">
-          <xul:toolbarbutton class="tabs-closebutton close-button" xbl:inherits="disabled=disableclose,oncommand=onclosetab"/>
+          <xul:toolbarbutton ondblclick="event.preventBubble();" class="tabs-closebutton close-button" xbl:inherits="disabled=disableclose,oncommand=onclosetab"/>
         </xul:hbox>
       </xul:stack>
     </content>
@@ -441,8 +459,10 @@
   <binding id="tab" display="xul:button"
            extends="chrome://global/content/bindings/tabbox.xml#tab-base">
     <content>
-      <xul:image class="tab-icon" xbl:inherits="validate,src=image"/>
-      <xul:label class="tab-text" xbl:inherits="value=label,accesskey,crop,disabled" flex="1"/>
+      <xul:hbox class="tab-middle box-inherit" xbl:inherits="align,dir,pack,orient,selected" flex="1">
+        <xul:image class="tab-icon" xbl:inherits="validate,src=image"/>
+        <xul:label class="tab-text" xbl:inherits="value=label,accesskey,crop,disabled" flex="1"/>
+      </xul:hbox>
     </content>
     
     <implementation implements="nsIDOMXULSelectControlItemElement, nsIAccessibleProvider">
@@ -499,19 +519,21 @@
     <handlers>
       <handler event="click" button="0">
       <![CDATA[
-        this.parentNode.selectedItem = this;
+        this.parentNode.selectNewTab(this);
       ]]>
       </handler>
       
       <handler event="keypress" keycode="vk_left">
       <![CDATA[
-        this.parentNode.advanceSelectedTab(-1);
+        var direction = window.getComputedStyle(this.parentNode, null).direction;
+        this.parentNode.advanceSelectedTab(direction == 'ltr' ? -1 : 1);
       ]]>
       </handler>
       
       <handler event="keypress" keycode="vk_right">
       <![CDATA[
-        this.parentNode.advanceSelectedTab(1);
+        var direction = window.getComputedStyle(this.parentNode, null).direction;
+        this.parentNode.advanceSelectedTab(direction == 'ltr' ? 1 : -1);
       ]]>
       </handler>
       

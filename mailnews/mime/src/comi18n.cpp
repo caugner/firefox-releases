@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -25,16 +25,16 @@
  *   Takayuki Tei   <taka@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -53,7 +53,9 @@
 #include "comi18n.h"
 #include "nsIServiceManager.h"
 #include "nsIStringCharsetDetector.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
+#include "nsMsgUtils.h"
 #include "mimebuf.h"
 #include "nsMsgI18N.h"
 #include "nsMimeTypes.h"
@@ -239,19 +241,17 @@ PRInt32 generate_encodedwords(char *pUTF8, const char *charset, char method, cha
     if (!nsCRT::strcasecmp("ISO-2022-JP", charset)) {
       static PRInt32  conv_kana = -1;
       if (conv_kana < 0) {
-        nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &rv));
-        if (nsnull != prefs && NS_SUCCEEDED(rv)) {
-          PRBool val;
-          if (NS_FAILED(prefs->GetBoolPref("mailnews.send_hankaku_kana", &val)))
-            val = PR_FALSE;  // no pref means need the mapping
+        nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
+        if (NS_SUCCEEDED(rv)) {
+          PRBool val = PR_FALSE; // no pref means need the mapping
+          prefBranch->GetBoolPref("mailnews.send_hankaku_kana", &val);
           conv_kana = val ? 0 : 1;
         }
       }
       // Do nsITextTransform if needed
       if (conv_kana > 0) {
-        nsCOMPtr <nsITextTransform> textTransform;
-        rv = nsComponentManager::CreateInstance(NS_HANKAKUTOZENKAKU_CONTRACTID, nsnull, 
-                                                NS_GET_IID(nsITextTransform), getter_AddRefs(textTransform));
+        nsCOMPtr <nsITextTransform> textTransform =
+            do_CreateInstance(NS_HANKAKUTOZENKAKU_CONTRACTID, &rv);
         if (NS_SUCCEEDED(rv)) {
           nsString text(pUCS2), result;
           rv = textTransform->Change(pUCS2, nsCRT::strlen(pUCS2), result);
@@ -754,24 +754,18 @@ char * NextChar_UTF8(char *str)
 nsresult
 MIME_detect_charset(const char *aBuf, PRInt32 aLength, const char** aCharset)
 {
-  nsresult res;
-  char theBuffer[128];
-  nsFixedCString detector_contractid(theBuffer, sizeof(theBuffer), 0);
+  nsresult res = NS_ERROR_UNEXPECTED;
   nsXPIDLString detector_name;
-  nsCOMPtr<nsIStringCharsetDetector> detector;
   *aCharset = nsnull;
 
-  detector_contractid.Assign(NS_STRCDETECTOR_CONTRACTID_BASE);
+  NS_GetLocalizedUnicharPreferenceWithDefault(nsnull, "intl.charset.detector", EmptyString(), detector_name);
 
-  nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &res)); 
-  if (NS_SUCCEEDED(res)) {
-    if (NS_SUCCEEDED(prefs->GetLocalizedUnicharPref("intl.charset.detector", getter_Copies(detector_name)))) {
-      AppendUTF16toUTF8(detector_name, detector_contractid);
-    }
-  }
+  if (!detector_name.IsEmpty()) {
+    nsCAutoString detector_contractid;
+    detector_contractid.AssignLiteral(NS_STRCDETECTOR_CONTRACTID_BASE);
 
-  if (detector_contractid.Length() > sizeof(NS_STRCDETECTOR_CONTRACTID_BASE)) {
-    detector = do_CreateInstance(detector_contractid.get(), &res);
+    AppendUTF16toUTF8(detector_name, detector_contractid);
+    nsCOMPtr<nsIStringCharsetDetector> detector = do_CreateInstance(detector_contractid.get(), &res);
     if (NS_SUCCEEDED(res)) {
       nsDetectionConfident oConfident;
       res = detector->DoIt(aBuf, aLength, aCharset, oConfident);

@@ -1,23 +1,39 @@
-/*
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
- * Software distributed under the License is distributed on an "AS IS"
- * basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See the
- * License for the specific language governing rights and limitations
- * under the License.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is the Mozilla OS/2 libraries.
  *
- * The Initial Developer of the Original Code is John Fairhurst,
- * <john_fairhurst@iname.com>.  Portions created by John Fairhurst are
- * Copyright (C) 1999 John Fairhurst. All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * John Fairhurst, <john_fairhurst@iname.com>.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsGfxDefs.h"
 #include "nsIPref.h"
@@ -198,8 +214,7 @@ static nsFontCleanupObserver *gFontCleanupObserver;
 static nsresult
 InitGlobals(void)
 {
-  nsServiceManager::GetService(kPrefCID, NS_GET_IID(nsIPref),
-    (nsISupports**) &gPref);
+  CallGetService(kPrefCID, &gPref);
   if (!gPref) {
     FreeGlobals();
     return NS_ERROR_FAILURE;
@@ -208,7 +223,7 @@ InitGlobals(void)
   nsCOMPtr<nsILanguageAtomService> langService;
   langService = do_GetService(NS_LANGUAGEATOMSERVICE_CONTRACTID);
   if (langService) {
-    langService->GetLocaleLanguageGroup(&gUsersLocale);
+    NS_IF_ADDREF(gUsersLocale = langService->GetLocaleLanguageGroup());
   }
   if (!gUsersLocale) {
     gUsersLocale = NS_NewAtom("x-western");
@@ -289,15 +304,17 @@ InitGlobals(void)
 
   gSystemCodePage = ::WinQueryCp(HMQ_CURRENT);
 
+  nsresult res;
+
   if (!nsFontMetricsOS2::gGlobalFonts) {
-    nsresult res = nsFontMetricsOS2::InitializeGlobalFonts();
+    res = nsFontMetricsOS2::InitializeGlobalFonts();
     if (NS_FAILED(res)) {
       FreeGlobals();
       return res;
     }
   }
 
-  nsresult res = gPref->GetBoolPref("browser.display.substitute_vector_fonts",
+  res = gPref->GetBoolPref("browser.display.substitute_vector_fonts",
                                     &nsFontMetricsOS2::gSubstituteVectorFonts);
   NS_ASSERTION( NS_SUCCEEDED(res), "Could not get pref 'browser.display.substitute_vector_fonts'" );
 
@@ -642,10 +659,11 @@ nsFontMetricsOS2::LoadFont(HPS aPS, const nsAString& aFontname)
     FONTMETRICS* pMetrics = getMetrics(lFonts, facename.get(), aPS);
 
     if (lFonts > 0) {
-      nsAutoString familyname;
-      CopyASCIItoUCS2(nsDependentCString(pMetrics[0].szFamilyname),
-                      familyname);
-      GlobalFontEntry* globalEntry = gGlobalFonts->GetEntry(familyname);
+      nsAutoChar16Buffer familyname;
+      MultiByteToWideChar(0, pMetrics[0].szFamilyname,
+                          strlen(pMetrics[0].szFamilyname), familyname, len);
+      nsAutoString name(familyname.get());
+      GlobalFontEntry* globalEntry = gGlobalFonts->GetEntry(name);
       if (globalEntry) {
         // Look through metrics for one that matches given facename
         nsMiniMetrics* metrics = globalEntry->mMetrics;
@@ -759,6 +777,7 @@ nsFontMetricsOS2::InitializeGlobalFonts()
   lRemFonts = GFX (::GpiQueryFonts(ps, QF_PUBLIC, NULL, &lNumFonts,
                                    sizeof (FONTMETRICS), pFontMetrics),
                    GPI_ALTERROR);
+  ::WinReleasePS(ps);
 
   for (int i = 0; i < lNumFonts; i++) {
     FONTMETRICS* font = &(pFontMetrics[i]);
@@ -790,19 +809,21 @@ nsFontMetricsOS2::InitializeGlobalFonts()
      //           'italic', 'oblique', 'regular').  If the Facename contains
      //           one of these indicators, then we will create the sort key
      //           based on the Familyname.  Otherwise, use the Facename.
-    nsAutoString fontptr;
+    char* f;
     if (PL_strcasestr(font->szFacename, "bold") != nsnull ||
         PL_strcasestr(font->szFacename, "italic") != nsnull ||
         PL_strcasestr(font->szFacename, "oblique") != nsnull ||
         PL_strcasestr(font->szFacename, "regular") != nsnull ||
         PL_strcasestr(font->szFacename, "-normal") != nsnull)
     {
-      CopyASCIItoUCS2(nsDependentCString(NS_STATIC_CAST(char*, font->szFamilyname)),
-                      fontptr);
+      f = NS_STATIC_CAST(char*, font->szFamilyname);
     } else {
-      CopyASCIItoUCS2(nsDependentCString(NS_STATIC_CAST(char*, font->szFacename)),
-                      fontptr);
+      f = NS_STATIC_CAST(char*, font->szFacename);
     }
+    nsAutoChar16Buffer fontname;
+    PRInt32 len;
+    MultiByteToWideChar(0, f, strlen(f), fontname, len);
+    nsAutoString fontptr(fontname.get());
 
     // The fonts in gBadDBCSFontMapping do not display well in non-Chinese
     //   systems.  Map them to a more intelligible name.
@@ -813,8 +834,7 @@ nsFontMetricsOS2::InitializeGlobalFonts()
           (gSystemCodePage != 950))
       {
         for (int i = 0; gBadDBCSFontMapping[i].mName != nsnull; i++) {
-          if (fontptr.Equals(NS_ConvertASCIItoUCS2(gBadDBCSFontMapping[i].mName),
-                            nsCaseInsensitiveStringComparator()))
+          if (strcmp(f, gBadDBCSFontMapping[i].mName) == 0)
           {
             CopyASCIItoUCS2(nsDependentCString(gBadDBCSFontMapping[i].mWinName),
                             fontptr);
@@ -853,8 +873,6 @@ nsFontMetricsOS2::InitializeGlobalFonts()
     globalEntry->mCodePage = font->usCodePage;
   }
 
-  ::WinReleasePS(ps);
-
 #ifdef DEBUG_pedemonte
   gGlobalFonts->EnumerateEntries(DebugOutputEnumFunc, nsnull);
   fflush(stdout);
@@ -871,9 +889,9 @@ nsFontMetricsOS2::FindGlobalFont(HPS aPS, PRUint32 aChar)
   nsFontOS2* fh = nsnull;
   nsAutoString fontname;
   if (!IsDBCS())
-    fontname = NS_LITERAL_STRING("Helv");
+    fontname.AssignLiteral("Helv");
   else
-    fontname = NS_LITERAL_STRING("Helv Combined");
+    fontname.AssignLiteral("Helv Combined");
   fh = LoadFont(aPS, fontname);
   NS_ASSERTION(fh, "Couldn't load default font - BAD things are happening");
   return fh;
@@ -1276,22 +1294,22 @@ PRBool
 nsFontMetricsOS2::GetVectorSubstitute(HPS aPS, const nsAString& aFamilyname,
                                       nsAString& aAlias)
 {
-  if (aFamilyname.Equals(NS_LITERAL_STRING("Tms Rmn"))) {
-    aAlias = NS_LITERAL_STRING("Times New Roman");
-  } else if (aFamilyname.Equals(NS_LITERAL_STRING("Helv"))) {
-    aAlias = NS_LITERAL_STRING("Helvetica");
+  if (aFamilyname.EqualsLiteral("Tms Rmn")) {
+    aAlias.AssignLiteral("Times New Roman");
+  } else if (aFamilyname.EqualsLiteral("Helv")) {
+    aAlias.AssignLiteral("Helvetica");
   }
 
   // When printing, substitute vector fonts for these common bitmap fonts
   if (!mDeviceContext->SupportsRasterFonts()) {
-    if (aFamilyname.Equals(NS_LITERAL_STRING("System Proportional")) ||
-        aFamilyname.Equals(NS_LITERAL_STRING("WarpSans")))
+    if (aFamilyname.EqualsLiteral("System Proportional") ||
+        aFamilyname.EqualsLiteral("WarpSans"))
     {
-      aAlias = NS_LITERAL_STRING("Helvetica");
-    } else if (aFamilyname.Equals(NS_LITERAL_STRING("System Monospaced")) ||
-               aFamilyname.Equals(NS_LITERAL_STRING("System VIO")))
+      aAlias.AssignLiteral("Helvetica");
+    } else if (aFamilyname.EqualsLiteral("System Monospaced") ||
+               aFamilyname.EqualsLiteral("System VIO"))
     {
-      aAlias = NS_LITERAL_STRING("Courier");
+      aAlias.AssignLiteral("Courier");
     }
   }
 
@@ -1324,12 +1342,16 @@ nsFontMetricsOS2::RealizeFont()
 
   // set a fallback generic font if the font-family list didn't have one
   if (mGeneric.IsEmpty()) {
-    rv = gPref->CopyUnicharPref("font.default", getter_Copies(value));
+    const char* langGroup = nsnull;
+    mLangGroup->GetUTF8String(&langGroup);
+    pref.Assign("font.default.");
+    pref.Append(langGroup);
+    rv = gPref->CopyUnicharPref(pref.get(), getter_Copies(value));
     if (NS_SUCCEEDED(rv)) {
       mGeneric.Assign(value);
     }
     else {
-      mGeneric.Assign(NS_LITERAL_STRING("serif"));
+      mGeneric.AssignLiteral("serif");
     }
   }
 
@@ -1518,12 +1540,6 @@ NS_IMETHODIMP nsFontMetricsOS2::GetMaxAdvance( nscoord &aAdvance)
   return NS_OK;
 }
 
-NS_IMETHODIMP nsFontMetricsOS2::GetFont( const nsFont *&aFont)
-{
-  aFont = &mFont;
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsFontMetricsOS2::GetFontHandle( nsFontHandle &aHandle)
 {
   aHandle = mFontHandle;
@@ -1670,8 +1686,11 @@ nsFontMetricsOS2::FindWesternFont()
   // Create a 'western' font by making a copy of the currently selected font
   // and changing the codepage 1252
   nsFontOS2* font = new nsFontOS2();
-  *font = *mFontHandle;
+  font->mFattrs = mFontHandle->mFattrs;
   font->mFattrs.usCodePage = 1252;
+  font->mCharbox = mFontHandle->mCharbox;
+  font->mMaxAscent = mFontHandle->mMaxAscent;
+  font->mMaxDescent = mFontHandle->mMaxDescent;
   font->mConvertCodePage = 1252;
   mLoadedFonts.AppendElement(font);
   mWesternFont = font;
@@ -2262,12 +2281,56 @@ nsFontMetricsOS2FT::ResolveBackwards(HPS                  aPS,
   count = mLoadedFonts.Count();
 
   // see if one of our loaded fonts can represent the current character
-  currFont = LocateFont(aPS, *currChar, count);
+  if (IS_LOW_SURROGATE(*currChar) && (currChar-1) > lastChar && IS_HIGH_SURROGATE(*(currChar-1))) {
+    currFont = LocateFont(aPS, SURROGATE_TO_UCS4(*(currChar-1), *currChar), count);
+    currChar -= 2;
+  }
+  else {
+    currFont = LocateFont(aPS, *currChar, count);
+    --currChar;
+  }
+
+  //This if block is meant to speedup the process in normal situation, when
+  //most characters can be found in first font
+  if (currFont == mLoadedFonts[0]) {
+    while (currChar > lastChar && (currFont->HasGlyph(aPS, *currChar)))
+      --currChar;
+    fontSwitch.mFont = currFont;
+    if (!(*aFunc)(&fontSwitch, currChar+1, firstChar - currChar, aData))
+      return NS_OK;
+    if (currChar == lastChar)
+      return NS_OK;
+    // continue with the next substring, re-using the available loaded fonts
+    firstChar = currChar;
+    if (IS_LOW_SURROGATE(*currChar) && (currChar-1) > lastChar && IS_HIGH_SURROGATE(*(currChar-1))) {
+      currFont = LocateFont(aPS, SURROGATE_TO_UCS4(*(currChar-1), *currChar), count);
+      currChar -= 2;
+    }
+    else {
+      currFont = LocateFont(aPS, *currChar, count);
+      --currChar;
+    }
+  }
 
   // see if we can keep the same font for adjacent characters
-  while (--currChar > lastChar) {
-    nextFont = LocateFont(aPS, *currChar, count);
-    if (nextFont != currFont) {
+  PRInt32 lastCharLen;
+  PRUint32 codepoint;
+
+  while (currChar > lastChar) {
+    if (IS_LOW_SURROGATE(*currChar) && (currChar-1) > lastChar && IS_HIGH_SURROGATE(*(currChar-1))) {
+      codepoint =  SURROGATE_TO_UCS4(*(currChar-1), *currChar);
+      nextFont = LocateFont(aPS, codepoint, count);
+      lastCharLen = 2;
+    }
+    else {
+      codepoint = *currChar;
+      nextFont = LocateFont(aPS, codepoint, count);
+      lastCharLen = 1;
+    }
+    if (nextFont != currFont ||
+        /* render right-to-left characters outside the BMP one by one, because
+           OS/2 doesn't reorder them. */
+        codepoint > 0xFFFF) {
       // We have a substring that can be represented with the same font, and
       // we are about to switch fonts, it is time to notify our caller.
       fontSwitch.mFont = currFont;
@@ -2277,6 +2340,7 @@ nsFontMetricsOS2FT::ResolveBackwards(HPS                  aPS,
       firstChar = currChar;
       currFont = nextFont; // use the font found earlier for the char
     }
+    currChar -= lastCharLen;
   }
 
   //do it for last part of the string
@@ -2479,9 +2543,7 @@ SubstituteChars(const PRUnichar*    aString,
 {
   nsresult res;
   if (!gFontSubstituteConverter) {
-    nsComponentManager::CreateInstance(NS_SAVEASCHARSET_CONTRACTID, nsnull,
-                                       NS_GET_IID(nsISaveAsCharset),
-                                       (void**)&gFontSubstituteConverter);
+    CallCreateInstance(NS_SAVEASCHARSET_CONTRACTID, &gFontSubstituteConverter);
     if (gFontSubstituteConverter) {
       res = gFontSubstituteConverter->Init("ISO-8859-1",
                               nsISaveAsCharset::attr_EntityAfterCharsetConv +

@@ -1,5 +1,5 @@
 # -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
-# **** BEGIN LICENSE BLOCK ****
+# ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
 # The contents of this file are subject to the Mozilla Public License Version
@@ -14,7 +14,8 @@
 #
 # The Original Code is mozilla.org view-source front-end.
 #
-# The Initial Developer of the Original Code is mozilla.org.
+# The Initial Developer of the Original Code is
+# mozilla.org.
 # Portions created by the Initial Developer are Copyright (C) 2002
 # the Initial Developer. All Rights Reserved.
 #
@@ -35,7 +36,7 @@
 # the provisions above, a recipient may use your version of this file under
 # the terms of any one of the MPL, the GPL or the LGPL.
 #
-# **** END LICENSE BLOCK ****
+# ***** END LICENSE BLOCK *****
 
 var gDebug = 0;
 var gLineCount = 0;
@@ -76,12 +77,6 @@ function onLoadViewPartialSource()
   }
   
   initFindBar();
-
-  // disable menu items that don't work since the selection is munged and
-  // the editor doesn't work for MathML
-  document.getElementById('cmd_savePage').setAttribute('disabled', 'true');
-  // we don't support external editors
-  //document.getElementById('cmd_editPage').setAttribute('disabled', 'true');
 
   if (window.arguments[3] == 'selection')
     viewPartialSourceForSelection(window.arguments[2]);
@@ -128,70 +123,77 @@ function viewPartialSourceForSelection(selection)
   var endPath = getPath(ancestorContainer, endContainer);
 
   // clone the fragment of interest and reset everything to be relative to it
-  // note: it is with the clone that we operate from now on
+  // note: it is with the clone that we operate/munge from now on
   ancestorContainer = ancestorContainer.cloneNode(true);
   startContainer = ancestorContainer;
   endContainer = ancestorContainer;
-  var i;
-  for (i = startPath ? startPath.length-1 : -1; i >= 0; i--) {
-    startContainer = startContainer.childNodes.item(startPath[i]);
-  }
-  for (i = endPath ? endPath.length-1 : -1; i >= 0; i--) {
-    endContainer = endContainer.childNodes.item(endPath[i]);
-  }
 
-  // add special markers to record the extent of the selection
-  // note: |startOffset| and |endOffset| are interpreted either as
-  // offsets in the text data or as child indices (see the Range spec)
-  // (here, munging the end point first to keep the start point safe...)
-  var tmpNode;
-  if (endContainer.nodeType == Node.TEXT_NODE ||
-      endContainer.nodeType == Node.CDATA_SECTION_NODE) {
-    // do some extra tweaks to try to avoid the view-source output to look like
-    // ...<tag>]... or ...]</tag>... (where ']' marks the end of the selection).
-    // To get a neat output, the idea here is to remap the end point from:
-    // 1. ...<tag>]...   to   ...]<tag>...
-    // 2. ...]</tag>...  to   ...</tag>]...
-    if ((endOffset > 0 && endOffset < endContainer.data.length) ||
-        !endContainer.parentNode || !endContainer.parentNode.parentNode)
-      endContainer.insertData(endOffset, MARK_SELECTION_END);
+  // Only bother with the selection if it can be remapped. Don't mess with
+  // leaf elements (such as <isindex>) that secretly use anynomous content
+  // for their display appearance.
+  var canDrawSelection = ancestorContainer.hasChildNodes();
+  if (canDrawSelection) {
+    var i;
+    for (i = startPath ? startPath.length-1 : -1; i >= 0; i--) {
+      startContainer = startContainer.childNodes.item(startPath[i]);
+    }
+    for (i = endPath ? endPath.length-1 : -1; i >= 0; i--) {
+      endContainer = endContainer.childNodes.item(endPath[i]);
+    }
+
+    // add special markers to record the extent of the selection
+    // note: |startOffset| and |endOffset| are interpreted either as
+    // offsets in the text data or as child indices (see the Range spec)
+    // (here, munging the end point first to keep the start point safe...)
+    var tmpNode;
+    if (endContainer.nodeType == Node.TEXT_NODE ||
+        endContainer.nodeType == Node.CDATA_SECTION_NODE) {
+      // do some extra tweaks to try to avoid the view-source output to look like
+      // ...<tag>]... or ...]</tag>... (where ']' marks the end of the selection).
+      // To get a neat output, the idea here is to remap the end point from:
+      // 1. ...<tag>]...   to   ...]<tag>...
+      // 2. ...]</tag>...  to   ...</tag>]...
+      if ((endOffset > 0 && endOffset < endContainer.data.length) ||
+          !endContainer.parentNode || !endContainer.parentNode.parentNode)
+        endContainer.insertData(endOffset, MARK_SELECTION_END);
+      else {
+        tmpNode = doc.createTextNode(MARK_SELECTION_END);
+        endContainer = endContainer.parentNode;
+        if (endOffset == 0)
+          endContainer.parentNode.insertBefore(tmpNode, endContainer);
+        else
+          endContainer.parentNode.insertBefore(tmpNode, endContainer.nextSibling);
+      }
+    }
     else {
       tmpNode = doc.createTextNode(MARK_SELECTION_END);
-      endContainer = endContainer.parentNode;
-      if (endOffset == 0)
-        endContainer.parentNode.insertBefore(tmpNode, endContainer);
-      else
-        endContainer.parentNode.insertBefore(tmpNode, endContainer.nextSibling);
+      endContainer.insertBefore(tmpNode, endContainer.childNodes.item(endOffset));
     }
-  }
-  else {
-    tmpNode = doc.createTextNode(MARK_SELECTION_END);
-    endContainer.insertBefore(tmpNode, endContainer.childNodes.item(endOffset));
-  }
 
-  if (startContainer.nodeType == Node.TEXT_NODE ||
-      startContainer.nodeType == Node.CDATA_SECTION_NODE) {
-    // do some extra tweaks to try to avoid the view-source output to look like
-    // ...<tag>[... or ...[</tag>... (where '[' marks the start of the selection).
-    // To get a neat output, the idea here is to remap the start point from:
-    // 1. ...<tag>[...   to   ...[<tag>...
-    // 2. ...[</tag>...  to   ...</tag>[...
-    if ((startOffset > 0 && startOffset < startContainer.data.length) ||
-        !startContainer.parentNode || !startContainer.parentNode.parentNode ||
-        startContainer != startContainer.parentNode.lastChild)
-      startContainer.insertData(startOffset, MARK_SELECTION_START);
+    if (startContainer.nodeType == Node.TEXT_NODE ||
+        startContainer.nodeType == Node.CDATA_SECTION_NODE) {
+      // do some extra tweaks to try to avoid the view-source output to look like
+      // ...<tag>[... or ...[</tag>... (where '[' marks the start of the selection).
+      // To get a neat output, the idea here is to remap the start point from:
+      // 1. ...<tag>[...   to   ...[<tag>...
+      // 2. ...[</tag>...  to   ...</tag>[...
+      if ((startOffset > 0 && startOffset < startContainer.data.length) ||
+          !startContainer.parentNode || !startContainer.parentNode.parentNode ||
+          startContainer != startContainer.parentNode.lastChild)
+        startContainer.insertData(startOffset, MARK_SELECTION_START);
+      else {
+        tmpNode = doc.createTextNode(MARK_SELECTION_START);
+        startContainer = startContainer.parentNode;
+        if (startOffset == 0)
+          startContainer.parentNode.insertBefore(tmpNode, startContainer);
+        else
+          startContainer.parentNode.insertBefore(tmpNode, startContainer.nextSibling);
+      }
+    }
     else {
       tmpNode = doc.createTextNode(MARK_SELECTION_START);
-      startContainer = startContainer.parentNode;
-      if (startOffset == 0)
-        startContainer.parentNode.insertBefore(tmpNode, startContainer);
-      else
-        startContainer.parentNode.insertBefore(tmpNode, startContainer.nextSibling);
+      startContainer.insertBefore(tmpNode, startContainer.childNodes.item(startOffset));
     }
-  }
-  else {
-    tmpNode = doc.createTextNode(MARK_SELECTION_START);
-    startContainer.insertBefore(tmpNode, startContainer.childNodes.item(startOffset));
   }
 
   // now extract and display the syntax highlighted source
@@ -200,7 +202,9 @@ function viewPartialSourceForSelection(selection)
 
   // the load is aynchronous and so we will wait until the view-source DOM is done
   // before drawing the selection.
-  window.document.getElementById("appcontent").addEventListener("load", drawSelection, true);
+  if (canDrawSelection) {
+    window.document.getElementById("appcontent").addEventListener("load", drawSelection, true);
+  }
 
   // all our content is held by the data:URI and URIs are internally stored as utf-8 (see nsIURI.idl)
   var loadFlags = Components.interfaces.nsIWebNavigation.LOAD_FLAGS_BYPASS_CACHE;
@@ -240,6 +244,9 @@ function getPath(ancestor, node)
 // on the inflated view-source DOM
 function drawSelection()
 {
+  getBrowser().contentDocument.title =
+    getViewSourceBundle().getString("viewSelectionSourceTitle");
+
   // find the special selection markers that we added earlier, and
   // draw the selection between the two...
   var findService = null;
@@ -348,18 +355,19 @@ function viewPartialSourceForFragment(node, context)
   if (!topNode)
     return;
 
-  // serialize (note: the main window overrides the title set here)
+  // serialize
+  var title = getViewSourceBundle().getString("viewMathMLSourceTitle");
   var wrapClass = gWrapLongLines ? ' class="wrap"' : '';
   var source =
     '<html>'
-  + '<head><title>Mozilla</title>'
+  + '<head><title>' + title + '</title>'
   + '<link rel="stylesheet" type="text/css" href="' + gViewSourceCSS + '">'
   + '<style type="text/css">'
   + '#target { border: dashed 1px; background-color: lightyellow; }'
   + '</style>'
   + '</head>'
   + '<body id="viewsource"' + wrapClass
-  +        ' onload="document.getElementById(\'target\').scrollIntoView(true)">'
+  +        ' onload="document.title=\''+title+'\';document.getElementById(\'target\').scrollIntoView(true)">'
   + '<pre>'
   + getOuterMarkup(topNode, 0)
   + '</pre></body></html>'

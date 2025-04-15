@@ -1,11 +1,11 @@
 /* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Peter Annema <disttsc@bart.nl>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -66,6 +66,7 @@ nsBrowserStatusHandler.prototype =
     this.urlBar          = document.getElementById("urlbar");
     this.throbberElement = document.getElementById("navigator-throbber");
     this.statusMeter     = document.getElementById("statusbar-icon");
+    this.statusPanel     = document.getElementById("progress-panel");
     this.stopButton      = document.getElementById("stop-button");
     this.stopMenu        = document.getElementById("menuitem-stop");
     this.stopContext     = document.getElementById("context-stop");
@@ -84,6 +85,7 @@ nsBrowserStatusHandler.prototype =
     this.urlBar          = null;
     this.throbberElement = null;
     this.statusMeter     = null;
+    this.statusPanel     = null;
     this.stopButton      = null;
     this.stopMenu        = null;
     this.stopContext     = null;
@@ -184,6 +186,8 @@ nsBrowserStatusHandler.prototype =
           aRequest && aWebProgress.DOMWindow == content)
         this.startDocumentLoad(aRequest);
 
+      // Show the progress meter
+      this.statusPanel.hidden = false;
       // Turn the throbber on.
       this.throbberElement.setAttribute("busy", "true");
 
@@ -243,6 +247,7 @@ nsBrowserStatusHandler.prototype =
       }
 
       // Turn the progress meter and throbber off.
+      this.statusPanel.hidden = true;
       this.statusMeter.value = 0;  // be sure to clear the progress bar
       this.throbberElement.removeAttribute("busy");
 
@@ -305,10 +310,6 @@ nsBrowserStatusHandler.prototype =
       var userTypedValue = browser.userTypedValue;
       if (userTypedValue === null) {
         this.urlBar.value = location;
-        if (this.urlBar.value != location) {
-          this.urlBar.value = ""; // hack for bug 249322
-          this.urlBar.value = location;
-        }
         SetPageProxyState("valid", aLocation);
 
         // Setting the urlBar value in some cases causes userTypedValue to
@@ -330,6 +331,8 @@ nsBrowserStatusHandler.prototype =
     if (blank ||
         !("popupDomain" in browser)) {
       browser.popupDomain = null;
+      browser.popupUrls = [];
+      browser.popupFeatures = [];
     }
     else {
       var hostPort = "";
@@ -337,8 +340,11 @@ nsBrowserStatusHandler.prototype =
         hostPort = locationURI.hostPort;
       }
       catch(ex) { }
-      if (hostPort != browser.popupDomain)
+      if (hostPort != browser.popupDomain) {
         browser.popupDomain = null;
+        browser.popupUrls = [];
+        browser.popupFeatures = [];
+      }
     }
 
     var popupIcon = document.getElementById("popupIcon");
@@ -392,7 +398,7 @@ nsBrowserStatusHandler.prototype =
     var observerService = Components.classes["@mozilla.org/observer-service;1"]
                                     .getService(Components.interfaces.nsIObserverService);
     try {
-      observerService.notifyObservers(_content, "StartDocumentLoad", urlStr);
+      observerService.notifyObservers(content, "StartDocumentLoad", urlStr);
     } catch (e) {
     }
   },
@@ -425,7 +431,7 @@ nsBrowserStatusHandler.prototype =
 
     var notification = Components.isSuccessCode(aStatus) ? "EndDocumentLoad" : "FailDocumentLoad";
     try {
-      observerService.notifyObservers(_content, notification, urlStr);
+      observerService.notifyObservers(content, notification, urlStr);
     } catch (e) {
     }
   }

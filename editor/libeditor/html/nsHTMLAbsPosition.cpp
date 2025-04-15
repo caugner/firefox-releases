@@ -111,7 +111,7 @@ nsHTMLEditor::GetAbsolutelyPositionedSelectionContainer(nsIDOMElement **_retval)
     res = mHTMLCSSUtils->GetComputedProperty(node, nsEditProperty::cssPosition,
                                              positionStr);
     if (NS_FAILED(res)) return res;
-    if (positionStr.Equals(NS_LITERAL_STRING("absolute")))
+    if (positionStr.EqualsLiteral("absolute"))
       resultNode = node;
     else {
       nsCOMPtr<nsIDOMNode> parentNode;
@@ -222,7 +222,7 @@ nsHTMLEditor::GetElementZIndex(nsIDOMElement * aElement,
                                                      nsEditProperty::cssZIndex,
                                                      zIndexStr);
   if (NS_FAILED(res)) return res;
-  if (zIndexStr.Equals(NS_LITERAL_STRING("auto"))) {
+  if (zIndexStr.EqualsLiteral("auto")) {
     // we have to look at the positioned ancestors
     // cf. CSS 2 spec section 9.9.1
     nsCOMPtr<nsIDOMNode> parentNode;
@@ -231,13 +231,13 @@ nsHTMLEditor::GetElementZIndex(nsIDOMElement * aElement,
     nsCOMPtr<nsIDOMNode> node = parentNode;
     nsAutoString positionStr;
     while (node && 
-           zIndexStr.Equals(NS_LITERAL_STRING("auto")) &&
+           zIndexStr.EqualsLiteral("auto") &&
            !nsTextEditUtils::IsBody(node)) {
       res = mHTMLCSSUtils->GetComputedProperty(node,
                                                nsEditProperty::cssPosition,
                                                positionStr);
       if (NS_FAILED(res)) return res;
-      if (positionStr.Equals(NS_LITERAL_STRING("absolute"))) {
+      if (positionStr.EqualsLiteral("absolute")) {
         // ah, we found one, what's its z-index ? If its z-index is auto,
         // we have to continue climbing the document's tree
         res = mHTMLCSSUtils->GetComputedProperty(node,
@@ -251,7 +251,7 @@ nsHTMLEditor::GetElementZIndex(nsIDOMElement * aElement,
     }
   }
 
-  if (!zIndexStr.Equals(NS_LITERAL_STRING("auto"))) {
+  if (!zIndexStr.EqualsLiteral("auto")) {
     PRInt32 errorCode;
     *aZindex = zIndexStr.ToInteger(&errorCode);
   }
@@ -321,16 +321,14 @@ nsHTMLEditor::HideGrabber()
 
   // get the root content node.
 
-  nsCOMPtr<nsIDOMElement> bodyElement;
-  res = GetRootElement(getter_AddRefs(bodyElement));
-  if (NS_FAILED(res)) return res;
+  nsIDOMElement *rootElement = GetRoot();
 
-  nsCOMPtr<nsIContent> bodyContent = do_QueryInterface(bodyElement);
-  if (!bodyContent) return NS_ERROR_NULL_POINTER;
+  nsCOMPtr<nsIContent> rootContent = do_QueryInterface(rootElement);
+  if (!rootContent) return NS_ERROR_NULL_POINTER;
 
-  DeleteRefToAnonymousNode(mGrabber, bodyContent, docObserver);
+  DeleteRefToAnonymousNode(mGrabber, rootContent, docObserver);
   mGrabber = nsnull;
-  DeleteRefToAnonymousNode(mPositioningShadow, bodyContent, docObserver);
+  DeleteRefToAnonymousNode(mPositioningShadow, rootContent, docObserver);
   mPositioningShadow = nsnull;
 
   return NS_OK;
@@ -352,12 +350,10 @@ nsHTMLEditor::ShowGrabberOnElement(nsIDOMElement * aElement)
   // first, let's keep track of that element...
   mAbsolutelyPositionedObject = aElement;
 
-  nsCOMPtr<nsIDOMElement> bodyElement;
-  res = GetRootElement(getter_AddRefs(bodyElement));
-  if (NS_FAILED(res)) return res;
-  if (!bodyElement)   return NS_ERROR_NULL_POINTER;
+  nsIDOMElement *rootElement = GetRoot();
+  if (!rootElement)   return NS_ERROR_NULL_POINTER;
 
-  res = CreateGrabber(bodyElement, getter_AddRefs(mGrabber));
+  res = CreateGrabber(rootElement, getter_AddRefs(mGrabber));
   if (NS_FAILED(res)) return res;
   // and set its position
   return RefreshGrabber();
@@ -366,14 +362,12 @@ nsHTMLEditor::ShowGrabberOnElement(nsIDOMElement * aElement)
 nsresult
 nsHTMLEditor::StartMoving(nsIDOMElement *aHandle)
 {
-  nsCOMPtr<nsIDOMElement> bodyElement;
-  nsresult result = GetRootElement(getter_AddRefs(bodyElement));
-  if (NS_FAILED(result)) return result;
-  if (!bodyElement)   return NS_ERROR_NULL_POINTER;
+  nsIDOMElement *rootElement = GetRoot();
+  if (!rootElement)   return NS_ERROR_NULL_POINTER;
 
   // now, let's create the resizing shadow
-  result = CreateShadow(getter_AddRefs(mPositioningShadow), bodyElement,
-                        mAbsolutelyPositionedObject);
+  nsresult result = CreateShadow(getter_AddRefs(mPositioningShadow),
+                                 rootElement, mAbsolutelyPositionedObject);
   if (NS_FAILED(result)) return result;
   result = SetShadowPosition(mPositioningShadow, mAbsolutelyPositionedObject,
                              mPositionedObjectX, mPositionedObjectY);
@@ -412,15 +406,13 @@ nsHTMLEditor::GrabberClicked()
     mMouseMotionListenerP = new ResizerMouseMotionListener(this);
     if (!mMouseMotionListenerP) {return NS_ERROR_NULL_POINTER;}
 
-    nsCOMPtr<nsIDOMEventReceiver> erP;
-    res = GetDOMEventReceiver(getter_AddRefs(erP));
-    if (NS_SUCCEEDED(res ))
-    {
-      res = erP->AddEventListenerByIID(mMouseMotionListenerP, NS_GET_IID(nsIDOMMouseMotionListener));
-      NS_ASSERTION(NS_SUCCEEDED(res), "failed to register mouse motion listener");
-    }
-    else
-      HandleEventListenerError();
+    nsCOMPtr<nsIDOMEventReceiver> erP = GetDOMEventReceiver();
+    NS_ENSURE_TRUE(erP, NS_ERROR_FAILURE);
+
+    res = erP->AddEventListenerByIID(mMouseMotionListenerP,
+                                     NS_GET_IID(nsIDOMMouseMotionListener));
+    NS_ASSERTION(NS_SUCCEEDED(res),
+                 "failed to register mouse motion listener");
   }
   mGrabberClicked = PR_TRUE;
   return res;
@@ -438,21 +430,21 @@ nsHTMLEditor::EndMoving()
 
     // get the root content node.
 
-    nsCOMPtr<nsIDOMElement> bodyElement;
-    nsresult res = GetRootElement(getter_AddRefs(bodyElement));
-    if (NS_FAILED(res)) return res;
+    nsIDOMElement *rootElement = GetRoot();
 
-    nsCOMPtr<nsIContent> bodyContent( do_QueryInterface(bodyElement) );
-    if (!bodyContent) return NS_ERROR_FAILURE;
+    nsCOMPtr<nsIContent> rootContent( do_QueryInterface(rootElement) );
+    if (!rootContent) return NS_ERROR_FAILURE;
 
-    DeleteRefToAnonymousNode(mPositioningShadow, bodyContent, docObserver);
+    DeleteRefToAnonymousNode(mPositioningShadow, rootContent, docObserver);
     mPositioningShadow = nsnull;
   }
-  nsCOMPtr<nsIDOMEventReceiver> erP;
-  nsresult res = GetDOMEventReceiver(getter_AddRefs(erP));
+  nsCOMPtr<nsIDOMEventReceiver> erP = GetDOMEventReceiver();
 
-  if (NS_SUCCEEDED(res) && erP && mMouseMotionListenerP) {
-    res = erP->RemoveEventListenerByIID(mMouseMotionListenerP, NS_GET_IID(nsIDOMMouseMotionListener));
+  if (erP && mMouseMotionListenerP) {
+#ifdef DEBUG
+    nsresult res =
+#endif
+    erP->RemoveEventListenerByIID(mMouseMotionListenerP, NS_GET_IID(nsIDOMMouseMotionListener));
     NS_ASSERTION(NS_SUCCEEDED(res), "failed to remove mouse motion listener");
   }
   mMouseMotionListenerP = nsnull;
@@ -524,7 +516,7 @@ nsHTMLEditor::AbsolutelyPositionElement(nsIDOMElement * aElement,
   nsAutoString positionStr;
   mHTMLCSSUtils->GetComputedProperty(aElement, nsEditProperty::cssPosition,
                                      positionStr);
-  PRBool isPositioned = (positionStr.Equals(NS_LITERAL_STRING("absolute")));
+  PRBool isPositioned = (positionStr.EqualsLiteral("absolute"));
 
   // nothing to do if the element is already in the state we want
   if (isPositioned == aEnabled)
@@ -681,14 +673,14 @@ nsHTMLEditor::CheckPositionedElementBGandFG(nsIDOMElement * aElement,
                                        nsEditProperty::cssBackgroundImage,
                                        bgImageStr);
   if (NS_FAILED(res)) return res;
-  if (bgImageStr.Equals(NS_LITERAL_STRING("none"))) {
+  if (bgImageStr.EqualsLiteral("none")) {
     nsAutoString bgColorStr;
     res =
       mHTMLCSSUtils->GetComputedProperty(aElement,
                                          nsEditProperty::cssBackgroundColor,
                                          bgColorStr);
     if (NS_FAILED(res)) return res;
-    if (bgColorStr.Equals(NS_LITERAL_STRING("transparent"))) {
+    if (bgColorStr.EqualsLiteral("transparent")) {
 
       nsCOMPtr<nsIDOMViewCSS> viewCSS;
       res = mHTMLCSSUtils->GetDefaultViewCSS(aElement, getter_AddRefs(viewCSS));
@@ -729,9 +721,9 @@ nsHTMLEditor::CheckPositionedElementBGandFG(nsIDOMElement * aElement,
           if (r >= BLACK_BG_RGB_TRIGGER &&
               g >= BLACK_BG_RGB_TRIGGER &&
               b >= BLACK_BG_RGB_TRIGGER)
-            aReturn = NS_LITERAL_STRING("black");
+            aReturn.AssignLiteral("black");
           else
-            aReturn = NS_LITERAL_STRING("white");
+            aReturn.AssignLiteral("white");
           return NS_OK;
         }
       }

@@ -45,7 +45,7 @@ extern "C" {
 #include "nsIGenericFactory.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIPrefService.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "nsIObserver.h"
 #include "nsEventQueueUtils.h"
 #include "nsProxyRelease.h"
@@ -141,30 +141,6 @@ MapGnomeVFSResult(GnomeVFSResult result)
 
 //-----------------------------------------------------------------------------
 
-// Query the channel for a nsIAuthPrompt reference (use the canonical method of
-// searching the channel's notification callbacks first, and its loadgroup's
-// callbacks seconds).  XXX This should really live somewhere else.
-static void
-GetAuthPromptFromChannel(nsIChannel *channel, nsIAuthPrompt **result)
-{
-  nsCOMPtr<nsIInterfaceRequestor> cbs;
-  channel->GetNotificationCallbacks(getter_AddRefs(cbs));
-  if (cbs)
-    CallGetInterface(cbs.get(), result);
-
-  if (!*result)
-  {
-    nsCOMPtr<nsILoadGroup> loadGroup;
-    channel->GetLoadGroup(getter_AddRefs(loadGroup));
-    if (loadGroup)
-    {
-      loadGroup->GetNotificationCallbacks(getter_AddRefs(cbs));
-      if (cbs)
-        CallGetInterface(cbs.get(), result);
-    }
-  }
-}
-
 static void
 ProxiedAuthCallback(gconstpointer in,
                     gsize         in_size,
@@ -185,7 +161,7 @@ ProxiedAuthCallback(gconstpointer in,
     return;
 
   nsCOMPtr<nsIAuthPrompt> prompt;
-  GetAuthPromptFromChannel(channel, getter_AddRefs(prompt));
+  NS_QueryNotificationCallbacks(channel, prompt);
 
   // If no auth prompt, then give up.  We could failover to using the
   // WindowWatcher service, but that might defeat a consumer's purposeful
@@ -613,13 +589,13 @@ nsGnomeVFSInputStream::DoRead(char *aBuf, PRUint32 aCount, PRUint32 *aCountRead)
         switch (info->type)
         {
           case GNOME_VFS_FILE_TYPE_REGULAR:
-            mDirBuf += NS_LITERAL_CSTRING("FILE ");
+            mDirBuf.AppendLiteral("FILE ");
             break;
           case GNOME_VFS_FILE_TYPE_DIRECTORY:
-            mDirBuf += NS_LITERAL_CSTRING("DIRECTORY ");
+            mDirBuf.AppendLiteral("DIRECTORY ");
             break;
           case GNOME_VFS_FILE_TYPE_SYMBOLIC_LINK:
-            mDirBuf += NS_LITERAL_CSTRING("SYMBOLIC-LINK ");
+            mDirBuf.AppendLiteral("SYMBOLIC-LINK ");
             break;
           default:
             break;
@@ -841,7 +817,7 @@ nsGnomeVFSProtocolHandler::Init()
     }
   }
 
-  nsCOMPtr<nsIPrefBranchInternal> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
+  nsCOMPtr<nsIPrefBranch2> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
   if (prefs)
   {
     InitSupportedProtocolsPref(prefs);
@@ -860,7 +836,7 @@ nsGnomeVFSProtocolHandler::InitSupportedProtocolsPref(nsIPrefBranch *prefs)
   if (NS_SUCCEEDED(rv))
     mSupportedProtocols.StripWhitespace();
   else
-    mSupportedProtocols = NS_LITERAL_CSTRING("smb:,sftp:"); // use defaults
+    mSupportedProtocols.AssignLiteral("smb:,sftp:"); // use defaults
 
   LOG(("gnomevfs: supported protocols \"%s\"\n", mSupportedProtocols.get()));
 }
@@ -887,7 +863,7 @@ nsGnomeVFSProtocolHandler::IsSupportedProtocol(const nsCString &spec)
 NS_IMETHODIMP
 nsGnomeVFSProtocolHandler::GetScheme(nsACString &aScheme)
 {
-  aScheme = NS_LITERAL_CSTRING(MOZ_GNOMEVFS_SCHEME);
+  aScheme.AssignLiteral(MOZ_GNOMEVFS_SCHEME);
   return NS_OK;
 }
 

@@ -1,38 +1,40 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
- * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s):
- *  Ian McGreer <mcgreer@netscape.com>
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * $Id: nsPKCS12Blob.cpp,v 1.38 2004/02/26 04:07:23 jgmyers%speakeasy.net Exp $
- */
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is the Netscape security libraries.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Ian McGreer <mcgreer@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
+/* $Id: nsPKCS12Blob.cpp,v 1.42 2004/11/05 15:23:35 timeless%mozdev.org Exp $ */
 
 #include "prmem.h"
 #include "prprf.h"
@@ -170,8 +172,6 @@ nsPKCS12Blob::ImportFromFileHelper(nsILocalFile *file, PRBool &aWantRetry)
 
   PK11SlotInfo *slot=nsnull;
   nsXPIDLString tokenName;
-  nsXPIDLCString tokenNameCString;
-  const char *tokNameRef;
   
   aWantRetry = PR_FALSE;
 
@@ -185,12 +185,10 @@ nsPKCS12Blob::ImportFromFileHelper(nsILocalFile *file, PRBool &aWantRetry)
   }
 
   mToken->GetTokenName(getter_Copies(tokenName));
-  tokenNameCString.Adopt(ToNewUTF8String(tokenName));
-  tokNameRef = tokenNameCString; //I do this here so that the
-                                 //NS_CONST_CAST below doesn't
-                                 //break the build on Win32
-
-  slot = PK11_FindSlotByName(NS_CONST_CAST(char*,tokNameRef));
+  {
+    NS_ConvertUTF16toUTF8 tokenNameCString(tokenName);
+    slot = PK11_FindSlotByName(tokenNameCString.get());
+  }
   if (!slot) {
     srv = SECFailure;
     goto finish;
@@ -405,7 +403,7 @@ nsPKCS12Blob::ExportToFile(nsILocalFile *file,
     // We're going to add the .p12 extension to the file name just like
     // Communicator used to.  We create a new nsILocalFile and initialize
     // it with the new patch.
-    filePath.Append(NS_LITERAL_STRING(".p12"));
+    filePath.AppendLiteral(".p12");
     localFileRef = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
     if (NS_FAILED(rv)) goto finish;
     localFileRef->InitWithPath(filePath);
@@ -604,6 +602,7 @@ nsPKCS12Blob::digest_open(void *arg, PRBool reading)
     nsCAutoString pathBuf;
     tmpFile->GetNativePath(pathBuf);
     cx->mTmpFilePath = ToNewCString(pathBuf);
+    if (!cx->mTmpFilePath) return SECFailure;
 #ifdef XP_MAC
     char *unixPath = nsnull;
     ConvertMacPathToUnixPath(cx->mTmpFilePath, &unixPath);
@@ -670,8 +669,7 @@ nsPKCS12Blob::nickname_collision(SECItem *oldNick, PRBool *cancel, void *wincx)
   nsCString nickname;
   nsAutoString nickFromProp;
   nssComponent->GetPIPNSSBundleString("P12DefaultNickname", nickFromProp);
-  nsXPIDLCString nickFromPropC;
-  nickFromPropC.Adopt(ToNewUTF8String(nickFromProp));
+  NS_ConvertUTF16toUTF8 nickFromPropC(nickFromProp);
   // The user is trying to import a PKCS#12 file that doesn't have the
   // attribute we use to set the nickname.  So in order to reduce the
   // number of interactions we require with the user, we'll build a nickname

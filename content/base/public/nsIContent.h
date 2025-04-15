@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #ifndef nsIContent_h___
@@ -44,11 +43,12 @@
 #include "nsEvent.h"
 #include "nsAString.h"
 #include "nsContentErrors.h"
+#include "nsPropertyTable.h"
 
 // Forward declarations
 class nsIAtom;
 class nsIDocument;
-class nsIPresContext;
+class nsPresContext;
 class nsVoidArray;
 class nsIDOMEvent;
 class nsIContent;
@@ -60,8 +60,8 @@ class nsIURI;
 
 // IID for the nsIContent interface
 #define NS_ICONTENT_IID       \
-{ 0x78030220, 0x9447, 0x11d1, \
-  {0x93, 0x23, 0x00, 0x80, 0x5f, 0x8a, 0xdd, 0x32} }
+{ 0x3fecc374, 0x2839, 0x4db3, \
+ { 0x8d, 0xe8, 0x6b, 0x76, 0xd1, 0xd8, 0xe6, 0xf6 } }
 
 /**
  * A node of content in a document's content model. This interface
@@ -72,27 +72,87 @@ public:
   NS_DEFINE_STATIC_IID_ACCESSOR(NS_ICONTENT_IID)
 
   nsIContent()
-    : mDocument(nsnull), mParentPtrBits(0) { }
+    : mParentPtrBits(0) { }
 
   /**
+   * DEPRECATED - Use GetCurrentDoc or GetOwnerDoc.
    * Get the document for this content.
    * @return the document
    */
-  nsIDocument* GetDocument() const { return mDocument; }
+  virtual nsIDocument* GetDocument() const = 0;
 
   /**
-   * Set the document for this content.
-   *
-   * @param aDocument the new document to set (could be null)
-   * @param aDeep whether to set the document on children
+   * Bind this content node to a tree.  If this method throws, the caller must
+   * call UnbindFromTree() on the node.  In the typical case of a node being
+   * appended to a parent, this will be called after the node has been added to
+   * the parent's child list and before nsIDocumentObserver notifications for
+   * the addition are dispatched.
+   * @param aDocument The new document for the content node.  Must match the
+   *                  current document of aParent, if aParent is not null.
+   *                  May not be null if aParent is null.
+   * @param aParent The new parent for the content node.  May be null if the
+   *                node is being bound as a direct child of the document.
+   * @param aBindingParent The new binding parent for the content node.
+   *                       This is allowed to be null.  In that case, the
+   *                       binding parent of aParent, if any, will be used.
    * @param aCompileEventHandlers whether to initialize the event handlers in
    *        the document (used by nsXULElement)
+   * @note either aDocument or aParent must be non-null.  If both are null,
+   *       this method _will_ crash.
+   * @note This method must not be called by consumers of nsIContent on a node
+   *       that is already bound to a tree.  Call UnbindFromTree first.
+   * @note This method will handle rebinding descendants appropriately (eg
+   *       changing their binding parent as needed).
+   * @note This method does not add the content node to aParent's child list
+   * @throws NS_ERROR_OUT_OF_MEMORY if that happens
    */
-  virtual void SetDocument(nsIDocument* aDocument, PRBool aDeep,
-                           PRBool aCompileEventHandlers)
+  virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
+                              nsIContent* aBindingParent,
+                              PRBool aCompileEventHandlers) = 0;
+
+  /**
+   * Unbind this content node from a tree.  This will set its current document
+   * and binding parent to null.  In the typical case of a node being removed
+   * from a parent, this will be called after it has been removed from the
+   * parent's child list and after the nsIDocumentObserver notifications for
+   * the removal have been dispatched.   
+   * @param aDeep Whether to recursively unbind the entire subtree rooted at
+   *        this node.  The only time PR_FALSE should be passed is when the
+   *        parent node of the content is being destroyed.
+   * @param aNullParent Whether to null out the parent pointer as well.  This
+   *        is usually desirable.  This argument should only be false while
+   *        recursively calling UnbindFromTree when a subtree is detached.
+   * @note This method is safe to call on nodes that are not bound to a tree.
+   */
+  virtual void UnbindFromTree(PRBool aDeep = PR_TRUE,
+                              PRBool aNullParent = PR_TRUE) = 0;
+  
+  /**
+   * Returns true if the content has an ancestor that is a document.
+   *
+   * @return whether this content is in a document tree
+   */
+  virtual PRBool IsInDoc() const = 0;
+
+  /**
+   * Get the document that this content is currently in, if any. This will be
+   * null if the content has no ancestor that is a document.
+   *
+   * @return the current document
+   */
+  nsIDocument *GetCurrentDoc() const
   {
-    mDocument = aDocument;
+    // XXX This should become:
+    // return IsInDoc() ? GetOwnerDoc() : nsnull;
+    return GetDocument();
   }
+
+  /**
+   * Get the ownerDocument for this content.
+   *
+   * @return the ownerDocument
+   */
+  virtual nsIDocument *GetOwnerDoc() const = 0;
 
   /**
    * Get the parent content for this content.
@@ -101,17 +161,6 @@ public:
   nsIContent* GetParent() const
   {
     return NS_REINTERPRET_CAST(nsIContent *, mParentPtrBits & ~kParentBitMask);
-  }
-
-  /**
-   * Set the parent content for this content.  (This does not add the child to
-   * its parent's child list.)  This clobbers the low 2 bits of the parent
-   * pointer, so subclasses which use those bits should override this.
-   * @param aParent the new parent content to set (could be null)
-   */
-  virtual void SetParent(nsIContent* aParent)
-  {
-    mParentPtrBits = NS_REINTERPRET_CAST(PtrBits, aParent);
   }
 
   /**
@@ -130,9 +179,9 @@ public:
 
   /**
    * Get the namespace that this element's tag is defined in
-   * @param aResult the namespace [OUT]
+   * @return the namespace
    */
-  virtual void GetNameSpaceID(PRInt32* aResult) const = 0;
+  virtual PRInt32 GetNameSpaceID() const = 0;
 
   /**
    * Get the tag for this element. This will always return a non-null
@@ -175,22 +224,9 @@ public:
    *        after it is inserted)
    * @param aNotify whether to notify the document that the insert has
    *        occurred
-   * @param aDeepSetDocument whether to set document on all children of aKid
    */
   virtual nsresult InsertChildAt(nsIContent* aKid, PRUint32 aIndex,
-                                 PRBool aNotify, PRBool aDeepSetDocument) = 0;
-
-  /**
-   * Remove a child and replace it with another.
-   *
-   * @param aKid the content to replace with
-   * @param aIndex the index of the content to replace
-   * @param aNotify whether to notify the document that the replace has
-   *        occurred
-   * @param aDeepSetDocument whether to set document on all children of aKid
-   */
-  virtual nsresult ReplaceChildAt(nsIContent* aKid, PRUint32 aIndex,
-                                  PRBool aNotify, PRBool aDeepSetDocument) = 0;
+                                 PRBool aNotify) = 0;
 
   /**
    * Append a content node to the end of the child list.
@@ -198,10 +234,8 @@ public:
    * @param aKid the content to append
    * @param aNotify whether to notify the document that the replace has
    *        occurred
-   * @param aDeepSetDocument whether to set document on all children of aKid
    */
-  virtual nsresult AppendChildTo(nsIContent* aKid, PRBool aNotify,
-                                 PRBool aDeepSetDocument) = 0;
+  virtual nsresult AppendChildTo(nsIContent* aKid, PRBool aNotify) = 0;
 
   /**
    * Remove a child from this content node.
@@ -218,13 +252,6 @@ public:
    * content nodes.
    */
   virtual nsIAtom *GetIDAttributeName() const = 0;
-
-  /**
-   * Returns an atom holding the name of the "class" attribute on this
-   * content node (if applicable).  Returns null for non-element
-   * content nodes.
-   */
-  virtual nsIAtom *GetClassAttributeName() const = 0;
 
   /**
    * Normalizes an attribute name and returns it as a nodeinfo if an attribute
@@ -392,7 +419,7 @@ public:
    * @param aEventStatus the status returned from the function.  Generally
    *        nsEventStatus_eIgnore
    */
-  virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext,
+  virtual nsresult HandleDOMEvent(nsPresContext* aPresContext,
                                   nsEvent* aEvent, nsIDOMEvent** aDOMEvent,
                                   PRUint32 aFlags,
                                   nsEventStatus* aEventStatus) = 0;
@@ -424,12 +451,12 @@ public:
    * something like nsGenericHTMLElement::SetElementFocus().  This method is
    * the end result, the point where the content finds out it has been focused.
    * 
-   * All content elements are potentially focusable (according to CSS3).
+   * All content elements are potentially focusable.
    *
    * @param aPresContext the pres context
    * @see nsGenericHTMLElement::SetElementFocus()
    */
-  virtual void SetFocus(nsIPresContext* aPresContext)
+  virtual void SetFocus(nsPresContext* aPresContext)
   {
   }
 
@@ -439,23 +466,43 @@ public:
    * something like nsGenericHTMLElement::SetElementFocus().  This method is
    * the end result, the point where the content finds out it has been focused.
    * 
-   * All content elements are potentially focusable (according to CSS3).
+   * All content elements are potentially focusable.
    *
    * @param aPresContext the pres context
    * @see nsGenericHTMLElement::SetElementFocus()
    */
-  virtual void RemoveFocus(nsIPresContext* aPresContext)
+  virtual void RemoveFocus(nsPresContext* aPresContext)
   {
   }
 
   /**
-   * Sets content node with the binding responsible for our construction (and
-   * existence).  Used by anonymous content (XBL-generated). null for all
-   * explicit content.
-   *
-   * @param aContent the new binding parent
+   * Check if this content is focusable and in the current tab order.
+   * Note: most callers should use nsIFrame::IsFocusable() instead as it 
+   *       checks visibility and other layout factors as well.
+   * Tabbable is indicated by a nonnegative tabindex & is a subset of focusable.
+   * For example, only the selected radio button in a group is in the 
+   * tab order, unless the radio group has no selection in which case
+   * all of the visible, non-disabled radio buttons in the group are 
+   * in the tab order. On the other hand, all of the visible, non-disabled 
+   * radio buttons are always focusable via clicking or script.
+   * Also, depending on either the accessibility.tabfocus pref or
+   * a system setting (nowadays: Full keyboard access, mac only)
+   * some widgets may be focusable but removed from the tab order.
+   * @param  [inout, optional] aTabIndex the computed tab index
+   *         In: default tabindex for element (-1 nonfocusable, == 0 focusable)
+   *         Out: computed tabindex
+   * @param  [optional] aTabIndex the computed tab index
+   *         < 0 if not tabbable
+   *         == 0 if in normal tab order
+   *         > 0 can be tabbed to in the order specified by this value
+   * @return whether the content is focusable via mouse, kbd or script.
    */
-  virtual nsresult SetBindingParent(nsIContent* aContent) = 0;
+  virtual PRBool IsFocusable(PRInt32 *aTabIndex = nsnull)
+  {
+    if (aTabIndex) 
+      *aTabIndex = -1; // Default, not tabbable
+    return PR_FALSE;
+  }
 
   /**
    * Gets content node with the binding responsible for our construction (and
@@ -481,7 +528,11 @@ public:
     /** XUL elements */
     eXUL                 = 0x00000010,
     /** xml processing instructions */
-    ePROCESSING_INSTRUCTION = 0x00000020
+    ePROCESSING_INSTRUCTION = 0x00000020,
+    /** svg elements */
+    eSVG                 = 0x00000040,
+    /** comment nodes */
+    eCOMMENT             = 0x00000080
   };
 
   /**
@@ -505,7 +556,8 @@ public:
   /**
    * Get the base URI for any relative URIs within this piece of
    * content. Generally, this is the document's base URI, but certain
-   * content carries a local base for backward compatibility.
+   * content carries a local base for backward compatibility, and XML
+   * supports setting a per-node base URI.
    *
    * @return the base URI
    */
@@ -543,6 +595,34 @@ public:
   }
 
   /**
+   * Call to let the content node know that it may now have a frame.
+   * The content node may use this to determine what MayHaveFrame
+   * returns.
+   */
+  virtual void SetMayHaveFrame(PRBool aMayHaveFrame)
+  {
+  }
+
+  /**
+   * Returns PR_TRUE if there is a chance that the content node has a
+   * frame, PR_FALSE otherwise.
+   */
+  virtual PRBool MayHaveFrame() const
+  {
+    return PR_TRUE;
+  }
+    
+  /**
+   * This method is called when the parser begins creating the element's 
+   * children, if any are present.
+   *
+   * This is only called for XTF elements currently.
+   */
+  virtual void BeginAddingChildren()
+  {
+  }
+
+  /**
    * This method is called when the parser finishes creating the element's children,
    * if any are present.
    *
@@ -571,6 +651,41 @@ public:
     return PR_TRUE;
   }
 
+  /**
+   * Method to get the _intrinsic_ content state of this content node.  This is
+   * the state that is independent of the node's presentation.  To get the full
+   * content state, use nsIEventStateManager.  Also see nsIEventStateManager
+   * for the possible bits that could be set here.
+   */
+  // XXXbz this is PRInt32 because all the ESM content state APIs use
+  // PRInt32.  We should really use PRUint32 instead.
+  virtual PRInt32 IntrinsicState() const
+  {
+    return 0;
+  }
+    
+
+  /* Methods for manipulating content node properties.  For documentation on
+   * properties, see nsPropertyTable.h.
+   */
+
+  virtual void* GetProperty(nsIAtom  *aPropertyName,
+                            nsresult *aStatus = nsnull) const
+  { if (aStatus) *aStatus = NS_ERROR_NOT_IMPLEMENTED; return nsnull; }
+
+  virtual nsresult SetProperty(nsIAtom                   *aPropertyName,
+                               void                      *aValue,
+                               NSPropertyDtorFunc         aDtor = nsnull)
+  { return NS_ERROR_NOT_IMPLEMENTED; }
+
+  virtual nsresult DeleteProperty(nsIAtom *aPropertyName)
+  { return NS_ERROR_NOT_IMPLEMENTED; }
+
+  virtual void* UnsetProperty(nsIAtom  *aPropertyName,
+                              nsresult *aStatus = nsnull)
+  { if (aStatus) *aStatus = NS_ERROR_NOT_IMPLEMENTED; return nsnull; }
+
+
 #ifdef DEBUG
   /**
    * List the content (and anything it contains) out to the given
@@ -588,13 +703,26 @@ public:
                            PRBool aDumpAll = PR_TRUE) const = 0;
 #endif
 
+  enum ETabFocusType {
+  //eTabFocus_textControlsMask = (1<<0),  // unused - textboxes always tabbable
+    eTabFocus_formElementsMask = (1<<1),  // non-text form elements
+    eTabFocus_linksMask = (1<<2),         // links
+    eTabFocus_any = 1 + (1<<1) + (1<<2)   // everything that can be focused
+  };
+
+  // Tab focus model bit field:
+  static PRInt32 sTabFocusModel;
+
+  // accessibility.tabfocus_applies_to_xul pref - if it is set to true,
+  // the tabfocus bit field applies to xul elements.
+  static PRBool sTabFocusModelAppliesToXUL;
+
 protected:
   typedef PRWord PtrBits;
 
   // Subclasses may use the low two bits of mParentPtrBits to store other data
   enum { kParentBitMask = 0x3 };
 
-  nsIDocument *mDocument;
   PtrBits      mParentPtrBits;
 };
 

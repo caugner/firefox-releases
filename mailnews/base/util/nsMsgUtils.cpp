@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -60,17 +60,26 @@
 #include "nsIMimeConverter.h"
 #include "nsMsgMimeCID.h"
 #include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
+#include "nsISupportsPrimitives.h"
+#include "nsIPrefLocalizedString.h"
 #include "nsIRelativeFilePref.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsICategoryManager.h"
 #include "nsCategoryManagerUtils.h"
 #include "nsISpamSettings.h"
 #include "nsISignatureVerifier.h"
+#include "nsICryptoHash.h"
 #include "nsNativeCharsetUtils.h"
+#include "nsIRssIncomingServer.h"
+#include "nsIMsgFolder.h"
+#include "nsIMsgMessageService.h"
 
 static NS_DEFINE_CID(kImapUrlCID, NS_IMAPURL_CID);
 static NS_DEFINE_CID(kCMailboxUrl, NS_MAILBOXURL_CID);
 static NS_DEFINE_CID(kCNntpUrlCID, NS_NNTPURL_CID);
+
+#define ILLEGAL_FOLDER_CHARS ";#"
 
 #define NS_PASSWORDMANAGER_CATEGORY "passwordmanager"
 static PRBool gInitPasswordManager = PR_FALSE;
@@ -87,6 +96,8 @@ nsresult GetMessageServiceContractIDForURI(const char *uri, nsCString &contractI
   nsCAutoString protocol;
   uriStr.Left(protocol, pos);
 
+  if (protocol.Equals("file") && uriStr.Find("application/x-message-display") != kNotFound)
+    protocol.Assign("mailbox");
   //Build message service contractid
   contractID = "@mozilla.org/messenger/messageservice;1?type=";
   contractID += protocol.get();
@@ -205,22 +216,22 @@ nsresult NS_MsgGetUntranslatedPriorityName (nsMsgPriorityValue p, nsString *outN
 	{
 	case nsMsgPriority::notSet:
 	case nsMsgPriority::none:
-		outName->Assign(NS_LITERAL_STRING("None"));
+		outName->AssignLiteral("None");
 		break;
 	case nsMsgPriority::lowest:
-		outName->Assign(NS_LITERAL_STRING("Lowest"));
+		outName->AssignLiteral("Lowest");
 		break;
 	case nsMsgPriority::low:
-		outName->Assign(NS_LITERAL_STRING("Low"));
+		outName->AssignLiteral("Low");
 		break;
 	case nsMsgPriority::normal:
-		outName->Assign(NS_LITERAL_STRING("Normal"));
+		outName->AssignLiteral("Normal");
 		break;
 	case nsMsgPriority::high:
-		outName->Assign(NS_LITERAL_STRING("High"));
+		outName->AssignLiteral("High");
 		break;
 	case nsMsgPriority::highest:
-		outName->Assign(NS_LITERAL_STRING("Highest"));
+		outName->AssignLiteral("Highest");
 		break;
 	default:
 		NS_ASSERTION(PR_FALSE, "invalid priority value");
@@ -263,7 +274,7 @@ inline PRUint32 StringHash(const nsAutoString& str)
 nsresult NS_MsgHashIfNecessary(nsCAutoString &name)
 {
   NS_NAMED_LITERAL_CSTRING (illegalChars, 
-                            FILE_PATH_SEPARATOR FILE_ILLEGAL_CHARACTERS);
+                            FILE_PATH_SEPARATOR FILE_ILLEGAL_CHARACTERS ILLEGAL_FOLDER_CHARS);
   nsCAutoString str(name);
 
   // Given a filename, make it safe for filesystem
@@ -306,7 +317,9 @@ nsresult NS_MsgHashIfNecessary(nsCAutoString &name)
 // because MAX_LEN is defined rather conservatively in the first place.
 nsresult NS_MsgHashIfNecessary(nsAutoString &name)
 {
-  PRInt32 illegalCharacterIndex = name.FindCharInSet(FILE_PATH_SEPARATOR FILE_ILLEGAL_CHARACTERS);
+  PRInt32 illegalCharacterIndex = name.FindCharInSet(
+                                  FILE_PATH_SEPARATOR FILE_ILLEGAL_CHARACTERS ILLEGAL_FOLDER_CHARS);
+
   char hashedname[9];
   if (illegalCharacterIndex == kNotFound) 
   {
@@ -328,50 +341,61 @@ nsresult NS_MsgHashIfNecessary(nsAutoString &name)
 }
 
 
-nsresult NS_MsgCreatePathStringFromFolderURI(const char *folderURI, nsCString& pathCString)
+nsresult NS_MsgCreatePathStringFromFolderURI(const char *aFolderURI,
+                                             nsCString& aPathCString,
+                                             PRBool aIsNewsFolder)
 {
   // A file name has to be in native charset. Here we convert 
   // to UTF-16 and check for 'unsafe' characters before converting 
   // to native charset.
-  NS_ENSURE_TRUE(IsUTF8(nsDependentCString(folderURI)), NS_ERROR_UNEXPECTED);
-  NS_ConvertUTF8toUTF16 oldPath(folderURI);
+  NS_ENSURE_TRUE(IsUTF8(nsDependentCString(aFolderURI)), NS_ERROR_UNEXPECTED); 
+  NS_ConvertUTF8toUTF16 oldPath(aFolderURI);
 
   nsAutoString pathPiece, path;
 
-	PRInt32 startSlashPos = oldPath.FindChar('/');
-	PRInt32 endSlashPos = (startSlashPos >= 0) 
-		? oldPath.FindChar('/', startSlashPos + 1) - 1 : oldPath.Length() - 1;
-	if (endSlashPos < 0)
-		endSlashPos = oldPath.Length();
-    // trick to make sure we only add the path to the first n-1 folders
-    PRBool haveFirst=PR_FALSE;
-    while (startSlashPos != -1) {
-	  oldPath.Mid(pathPiece, startSlashPos + 1, endSlashPos - startSlashPos);
-      // skip leading '/' (and other // style things)
-      if (!pathPiece.IsEmpty()) {
+  PRInt32 startSlashPos = oldPath.FindChar('/');
+  PRInt32 endSlashPos = (startSlashPos >= 0) 
+    ? oldPath.FindChar('/', startSlashPos + 1) - 1 : oldPath.Length() - 1;
+  if (endSlashPos < 0)
+    endSlashPos = oldPath.Length();
+  // trick to make sure we only add the path to the first n-1 folders
+  PRBool haveFirst=PR_FALSE;
+  while (startSlashPos != -1) {
+    oldPath.Mid(pathPiece, startSlashPos + 1, endSlashPos - startSlashPos);
+    // skip leading '/' (and other // style things)
+    if (!pathPiece.IsEmpty())
+    {
 
-        // add .sbd onto the previous path
-        if (haveFirst) {
-        AppendASCIItoUTF16(".sbd/", path);
-        }
-        
-        NS_MsgHashIfNecessary(pathPiece);
-        path += pathPiece;
-        haveFirst=PR_TRUE;
+      // add .sbd onto the previous path
+      if (haveFirst)
+      {
+        path.AppendLiteral(".sbd/");
       }
-	  // look for the next slash
-      startSlashPos = endSlashPos + 1;
 
-	  endSlashPos = (startSlashPos >= 0) 
-			? oldPath.FindChar('/', startSlashPos + 1)  - 1: oldPath.Length() - 1;
-	  if (endSlashPos < 0)
-			endSlashPos = oldPath.Length();
-
-      if (startSlashPos >= endSlashPos)
-		  break;
+      if (aIsNewsFolder)
+      {
+          nsCAutoString tmp;
+          CopyUTF16toMUTF7(pathPiece, tmp); 
+          CopyASCIItoUTF16(tmp, pathPiece);
+      }
+        
+      NS_MsgHashIfNecessary(pathPiece);
+      path += pathPiece;
+      haveFirst=PR_TRUE;
     }
+    // look for the next slash
+    startSlashPos = endSlashPos + 1;
 
-  return NS_CopyUnicodeToNative(path, pathCString);
+    endSlashPos = (startSlashPos >= 0) 
+      ? oldPath.FindChar('/', startSlashPos + 1)  - 1: oldPath.Length() - 1;
+    if (endSlashPos < 0)
+      endSlashPos = oldPath.Length();
+
+    if (startSlashPos >= endSlashPos)
+      break;
+  }
+
+  return NS_CopyUnicodeToNative(path, aPathCString);
 }
 
 /* Given a string and a length, removes any "Re:" strings from the front.
@@ -552,21 +576,23 @@ char * NS_MsgSACat (char **destination, const char *source)
   return *destination;
 }
 
-nsresult NS_MsgEscapeEncodeURLPath(const nsAString& str, nsAFlatCString& result)
+nsresult NS_MsgEscapeEncodeURLPath(const nsAString& aStr, nsAFlatCString& aResult)
 {
-  char *escapedString = nsEscape(NS_ConvertUTF16toUTF8(str).get(), url_Path); 
+  char *escapedString = nsEscape(NS_ConvertUTF16toUTF8(aStr).get(), url_Path); 
   if (!*escapedString)
     return NS_ERROR_OUT_OF_MEMORY;
-  result.Adopt(escapedString);
+  aResult.Adopt(escapedString);
   return NS_OK;
 }
 
-nsresult NS_MsgDecodeUnescapeURLPath(const nsASingleFragmentCString& path, nsAString& result)
+nsresult NS_MsgDecodeUnescapeURLPath(const nsACString& aPath,
+                                     nsAString& aResult)
 {
   nsCAutoString unescapedName;
-  NS_UnescapeURL(path, esc_FileBaseName|esc_Forced|esc_AlwaysCopy,
+  NS_UnescapeURL(PromiseFlatCString(aPath), 
+                 esc_FileBaseName|esc_Forced|esc_AlwaysCopy,
                  unescapedName);
-  CopyUTF8toUTF16(unescapedName, result);
+  CopyUTF8toUTF16(unescapedName, aResult);
   return NS_OK;
 }
 
@@ -692,6 +718,7 @@ nsresult IsRFC822HeaderFieldName(const char *aHdr, PRBool *aResult)
   return NS_OK;
 }
 
+// Warning, currently this routine only works for the Junk Folder
 nsresult
 GetOrCreateFolder(const nsACString &aURI, nsIUrlListener *aListener)
 {
@@ -743,8 +770,19 @@ GetOrCreateFolder(const nsACString &aURI, nsIUrlListener *aListener)
       folderPath->Exists(&exists);
     if (!exists)
     {
+      // Hack to work around a localization bug with the Junk Folder.
+      // Please see Bug #270261 for more information...
+      nsXPIDLString localizedJunkName; 
+      msgFolder->GetName(getter_Copies(localizedJunkName));
+
+      // force the junk folder name to be Junk so it gets created on disk correctly...
+      msgFolder->SetName(NS_LITERAL_STRING("Junk").get());
+
       rv = msgFolder->CreateStorageIfMissing(aListener);
       NS_ENSURE_SUCCESS(rv,rv);
+
+      // now restore the localized folder name...
+      msgFolder->SetName(localizedJunkName.get());
 
       // XXX TODO
       // JUNK MAIL RELATED
@@ -780,14 +818,54 @@ GetOrCreateFolder(const nsACString &aURI, nsIUrlListener *aListener)
   return NS_OK;
 }
 
+nsresult IsRSSArticle(nsIURI * aMsgURI, PRBool *aIsRSSArticle)
+{
+  nsresult rv;
+  *aIsRSSArticle = PR_FALSE;
+
+  nsCOMPtr<nsIMsgMessageUrl> msgUrl = do_QueryInterface(aMsgURI, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsXPIDLCString resourceURI;
+  msgUrl->GetUri(getter_Copies(resourceURI));
+  
+  // get the msg service for this URI
+  nsCOMPtr<nsIMsgMessageService> msgService;
+  rv = GetMessageServiceFromURI(resourceURI.get(), getter_AddRefs(msgService));
+  NS_ENSURE_SUCCESS(rv, rv);
+  
+  nsCOMPtr<nsIMsgDBHdr> msgHdr;
+  rv = msgService->MessageURIToMsgHdr(resourceURI, getter_AddRefs(msgHdr));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(aMsgURI, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // get the folder and the server from the msghdr
+  nsCOMPtr<nsIRssIncomingServer> rssServer;
+  nsCOMPtr<nsIMsgFolder> folder;
+  rv = msgHdr->GetFolder(getter_AddRefs(folder));
+  if (NS_SUCCEEDED(rv) && folder)
+  {
+    nsCOMPtr<nsIMsgIncomingServer> server;
+    folder->GetServer(getter_AddRefs(server));
+    rssServer = do_QueryInterface(server);
+
+    if (rssServer)
+      *aIsRSSArticle = PR_TRUE;
+  }
+
+  return rv;
+}
+
+
 // digest needs to be a pointer to a DIGEST_LENGTH (16) byte buffer
 nsresult MSGCramMD5(const char *text, PRInt32 text_len, const char *key, PRInt32 key_len, unsigned char *digest)
 {
   nsresult rv;
-  unsigned char result[DIGEST_LENGTH];
-  unsigned char *presult = result;
 
-  nsCOMPtr<nsISignatureVerifier> verifier = do_GetService(SIGNATURE_VERIFIER_CONTRACTID, &rv);
+  nsCAutoString hash;
+  nsCOMPtr<nsICryptoHash> hasher = do_CreateInstance("@mozilla.org/security/hash;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
 
@@ -800,17 +878,16 @@ nsresult MSGCramMD5(const char *text, PRInt32 text_len, const char *key, PRInt32
   if (key_len > 64) 
   {
 
-    HASHContextStr      *tctx;
-    PRUint32 resultLen;
-
-    rv = verifier->HashBegin(nsISignatureVerifier::MD5, &tctx);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = verifier->HashUpdate(tctx, key, key_len);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = verifier->HashEnd(tctx, &presult, &resultLen, DIGEST_LENGTH);
+    rv = hasher->Init(nsICryptoHash::MD5);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    key = (const char *) result;
+    rv = hasher->Update((const PRUint8*) key, key_len);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = hasher->Finish(PR_FALSE, hash);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    key = hash.get();
     key_len = DIGEST_LENGTH;
   }
 
@@ -840,21 +917,25 @@ nsresult MSGCramMD5(const char *text, PRInt32 text_len, const char *key, PRInt32
   /*
    * perform inner MD5
    */
-  HASHContextStr      *context;
-  PRUint32 resultLen;
+  nsCAutoString result;
+  rv = hasher->Init(nsICryptoHash::MD5); /* init context for 1st pass */
+  rv = hasher->Update((const PRUint8*)innerPad, 64);       /* start with inner pad */
+  rv = hasher->Update((const PRUint8*)text, text_len);     /* then text of datagram */
+  rv = hasher->Finish(PR_FALSE, result);   /* finish up 1st pass */
 
-  rv = verifier->HashBegin(nsISignatureVerifier::MD5, &context); /* init context for 1st pass */
-  rv = verifier->HashUpdate(context, innerPad, 64);      /* start with inner pad */
-  rv = verifier->HashUpdate(context, text, text_len); /* then text of datagram */
-  rv = verifier->HashEnd(context, &presult, &resultLen, DIGEST_LENGTH);          /* finish up 1st pass */
   /*
    * perform outer MD5
    */
-  verifier->HashBegin(nsISignatureVerifier::MD5, &context);  /* init context for 2nd pass */
-  rv = verifier->HashUpdate(context, outerPad, 64);     /* start with outer pad */
-  rv = verifier->HashUpdate(context, (const char *) result, 16);     /* then results of 1st hash */
-  rv = verifier->HashEnd(context, &presult, &resultLen, DIGEST_LENGTH);  /* finish up 2nd pass */
-  memcpy(digest, result, DIGEST_LENGTH);
+  hasher->Init(nsICryptoHash::MD5);       /* init context for 2nd pass */
+  rv = hasher->Update((const PRUint8*)outerPad, 64);    /* start with outer pad */
+  rv = hasher->Update((const PRUint8*)result.get(), 16);/* then results of 1st hash */
+  rv = hasher->Finish(PR_FALSE, result);    /* finish up 2nd pass */
+
+  if (result.Length() != DIGEST_LENGTH)
+    return NS_ERROR_UNEXPECTED;
+
+  memcpy(digest, result.get(), DIGEST_LENGTH);
+
   return rv;
 
 }
@@ -864,25 +945,27 @@ nsresult MSGCramMD5(const char *text, PRInt32 text_len, const char *key, PRInt32
 nsresult MSGApopMD5(const char *text, PRInt32 text_len, const char *password, PRInt32 password_len, unsigned char *digest)
 {
   nsresult rv;
-  unsigned char result[DIGEST_LENGTH];
-  unsigned char *presult = result;
+  nsCAutoString result;
 
-  nsCOMPtr<nsISignatureVerifier> verifier = do_GetService(SIGNATURE_VERIFIER_CONTRACTID, &rv);
+  nsCOMPtr<nsICryptoHash> hasher = do_CreateInstance("@mozilla.org/security/hash;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  rv = hasher->Init(nsICryptoHash::MD5);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  HASHContextStr      *context;
-  PRUint32 resultLen;
+  rv = hasher->Update((const PRUint8*) text, text_len);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = verifier->HashBegin(nsISignatureVerifier::MD5, &context);
+  rv = hasher->Update((const PRUint8*) password, password_len);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = verifier->HashUpdate(context, text, text_len);
+
+  rv = hasher->Finish(PR_FALSE, result);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = verifier->HashUpdate(context, password, password_len);
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = verifier->HashEnd(context, &presult, &resultLen, DIGEST_LENGTH);
-  NS_ENSURE_SUCCESS(rv, rv);
-  memcpy(digest, result, DIGEST_LENGTH);
+
+  if (result.Length() != DIGEST_LENGTH)
+    return NS_ERROR_UNEXPECTED;
+
+  memcpy(digest, result.get(), DIGEST_LENGTH);
   return rv;
 }
 
@@ -955,17 +1038,90 @@ NS_MSG_BASE nsresult NS_SetPersistentFile(const char *relPrefName,
     prefService->GetBranch(nsnull, getter_AddRefs(mainBranch));
     if (!mainBranch) return NS_ERROR_FAILURE;
 
-    // Write the relative.
-    nsCOMPtr<nsIRelativeFilePref> relFilePref;
-    NS_NewRelativeFilePref(aFile, nsDependentCString(NS_APP_USER_PROFILE_50_DIR), getter_AddRefs(relFilePref));
-    if (!relFilePref) return NS_ERROR_FAILURE;
-    rv = mainBranch->SetComplexValue(relPrefName, NS_GET_IID(nsIRelativeFilePref), relFilePref);
-    NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to write profile-relative file pref.");
-    
     // Write the absolute for backwards compatibilty's sake.
     // Or, if aPath is on a different drive than the profile dir.
     rv = mainBranch->SetComplexValue(absPrefName, NS_GET_IID(nsILocalFile), aFile);
     
+    // Write the relative path.
+    nsCOMPtr<nsIRelativeFilePref> relFilePref;
+    NS_NewRelativeFilePref(aFile, nsDependentCString(NS_APP_USER_PROFILE_50_DIR), getter_AddRefs(relFilePref));
+    if (relFilePref) {
+        nsresult rv2 = mainBranch->SetComplexValue(relPrefName, NS_GET_IID(nsIRelativeFilePref), relFilePref);
+        if (NS_FAILED(rv2) && NS_SUCCEEDED(rv))
+            mainBranch->ClearUserPref(relPrefName);
+    }
+
     return rv;
 }
 
+NS_MSG_BASE nsresult NS_GetUnicharPreferenceWithDefault(nsIPrefBranch *prefBranch,  //can be null, if so uses the root branch
+                                                        const char *prefName,
+                                                        const nsString& defValue,
+                                                        nsString& prefValue)
+{
+    NS_ENSURE_ARG(prefName);
+
+    nsCOMPtr<nsIPrefBranch> pbr;
+    if(!prefBranch) {
+        pbr = do_GetService(NS_PREFSERVICE_CONTRACTID);
+        prefBranch = pbr;
+    }
+    nsCOMPtr<nsISupportsString> str;
+
+    nsresult rv = prefBranch->GetComplexValue(prefName, NS_GET_IID(nsISupportsString), getter_AddRefs(str));
+    if (NS_SUCCEEDED(rv))
+        return str->GetData(prefValue);
+
+    prefValue = defValue;
+    return NS_OK;
+}
+ 
+NS_MSG_BASE nsresult NS_GetLocalizedUnicharPreferenceWithDefault(nsIPrefBranch *prefBranch,  //can be null, if so uses the root branch
+                                                                 const char *prefName,
+                                                                 const nsString& defValue,
+                                                                 nsXPIDLString& prefValue)
+{
+    NS_ENSURE_ARG(prefName);
+
+    nsCOMPtr<nsIPrefBranch> pbr;
+    if(!prefBranch) {
+        pbr = do_GetService(NS_PREFSERVICE_CONTRACTID);
+        prefBranch = pbr;
+    }
+
+    nsCOMPtr<nsIPrefLocalizedString> str;
+
+    nsresult rv = prefBranch->GetComplexValue(prefName, NS_GET_IID(nsIPrefLocalizedString), getter_AddRefs(str));
+    if (NS_SUCCEEDED(rv))
+        str->ToString(getter_Copies(prefValue));
+    else
+        prefValue = defValue;
+    return NS_OK;
+}
+
+void PRTime2Seconds(PRTime prTime, PRUint32 *seconds)
+{
+  PRInt64 microSecondsPerSecond, intermediateResult;
+  
+  LL_I2L(microSecondsPerSecond, PR_USEC_PER_SEC);
+  LL_DIV(intermediateResult, prTime, microSecondsPerSecond);
+  LL_L2UI((*seconds), intermediateResult);
+}
+
+void PRTime2Seconds(PRTime prTime, PRInt32 *seconds)
+{
+  PRInt64 microSecondsPerSecond, intermediateResult;
+  
+  LL_I2L(microSecondsPerSecond, PR_USEC_PER_SEC);
+  LL_DIV(intermediateResult, prTime, microSecondsPerSecond);
+  LL_L2I((*seconds), intermediateResult);
+}
+
+void Seconds2PRTime(PRUint32 seconds, PRTime *prTime)
+{
+  PRInt64 microSecondsPerSecond, intermediateResult;
+  
+  LL_I2L(microSecondsPerSecond, PR_USEC_PER_SEC);
+  LL_UI2L(intermediateResult, seconds);
+  LL_MUL((*prTime), intermediateResult, microSecondsPerSecond);
+}

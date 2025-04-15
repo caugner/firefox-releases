@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #ifndef nsContentList_h___
@@ -44,11 +43,17 @@
 #include "nsIDOMHTMLCollection.h"
 #include "nsIDOMNodeList.h"
 #include "nsStubDocumentObserver.h"
-#include "nsIContentList.h"
 #include "nsIAtom.h"
+#include "nsINameSpaceManager.h"
 
+// This is a callback function type that can be used to implement an
+// arbitrary matching algorithm.  aContent is the content that may
+// match the list, while aNamespaceID, aAtom, and aData are whatever
+// was passed to the list's constructor.
 typedef PRBool (*nsContentListMatchFunc)(nsIContent* aContent,
-                                         nsString* aData);
+                                         PRInt32 aNamespaceID,
+                                         nsIAtom* aAtom,
+                                         const nsAString& aData);
 
 class nsIDocument;
 class nsIDOMHTMLFormElement;
@@ -152,8 +157,7 @@ protected:
 class nsContentList : public nsBaseContentList,
                       protected nsContentListKey,
                       public nsIDOMHTMLCollection,
-                      public nsStubDocumentObserver,
-                      public nsIContentList
+                      public nsStubDocumentObserver
 {
 public:
   NS_DECL_ISUPPORTS_INHERITED
@@ -161,40 +165,47 @@ public:
   nsContentList(nsIDocument *aDocument, 
                 nsIAtom* aMatchAtom, 
                 PRInt32 aMatchNameSpaceId,
-                nsIContent* aRootContent=nsnull);
+                nsIContent* aRootContent = nsnull,
+                PRBool aDeep = PR_TRUE);
   nsContentList(nsIDocument *aDocument, 
                 nsContentListMatchFunc aFunc,
                 const nsAString& aData,
-                nsIContent* aRootContent=nsnull);
+                nsIContent* aRootContent = nsnull,
+                PRBool aDeep = PR_TRUE,
+                nsIAtom* aMatchAtom = nsnull,
+                PRInt32 aMatchNameSpaceId = kNameSpaceID_None);
   virtual ~nsContentList();
 
   // nsIDOMHTMLCollection
   NS_DECL_NSIDOMHTMLCOLLECTION
 
-  /// nsIContentList
-  virtual nsISupports *GetParentObject();
-  virtual PRUint32 Length(PRBool aDoFlush);
-  virtual nsIContent *Item(PRUint32 aIndex, PRBool aDoFlush);
-  virtual nsIContent *NamedItem(const nsAString& aName, PRBool aDoFlush);
+  // nsBaseContentList overrides
   virtual PRInt32 IndexOf(nsIContent *aContent, PRBool aDoFlush);
 
-  // nsIDocumentObserver
-  virtual void ContentAppended(nsIDocument *aDocument, nsIContent* aContainer,
-                               PRInt32 aNewIndexInContainer);
-  virtual void ContentInserted(nsIDocument *aDocument, nsIContent* aContainer,
-                               nsIContent* aChild, PRInt32 aIndexInContainer);
-  virtual void ContentReplaced(nsIDocument *aDocument, nsIContent* aContainer,
-                               nsIContent* aOldChild, nsIContent* aNewChild,
-                               PRInt32 aIndexInContainer);
-  virtual void ContentRemoved(nsIDocument *aDocument, nsIContent* aContainer,
-                              nsIContent* aChild, PRInt32 aIndexInContainer);
-  virtual void DocumentWillBeDestroyed(nsIDocument *aDocument);
+  // nsContentList public methods
+  NS_HIDDEN_(nsISupports*) GetParentObject();
+  NS_HIDDEN_(PRUint32) Length(PRBool aDoFlush);
+  NS_HIDDEN_(nsIContent*) Item(PRUint32 aIndex, PRBool aDoFlush);
+  NS_HIDDEN_(nsIContent*) NamedItem(const nsAString& aName, PRBool aDoFlush);
+  NS_HIDDEN_(void) RootDestroyed();
 
-  // Other public methods
   nsContentListKey* GetKey() {
     return NS_STATIC_CAST(nsContentListKey*, this);
   }
   
+
+  // nsIDocumentObserver
+  virtual void AttributeChanged(nsIDocument *aDocument, nsIContent* aContent,
+                                PRInt32 aNameSpaceID, nsIAtom* aAttribute,
+                                PRInt32 aModType);
+  virtual void ContentAppended(nsIDocument *aDocument, nsIContent* aContainer,
+                               PRInt32 aNewIndexInContainer);
+  virtual void ContentInserted(nsIDocument *aDocument, nsIContent* aContainer,
+                               nsIContent* aChild, PRInt32 aIndexInContainer);
+  virtual void ContentRemoved(nsIDocument *aDocument, nsIContent* aContainer,
+                              nsIContent* aChild, PRInt32 aIndexInContainer);
+  virtual void DocumentWillBeDestroyed(nsIDocument *aDocument);
+
 protected:
   void Init(nsIDocument *aDocument);
   /**
@@ -264,10 +275,11 @@ protected:
    * @param  aContainer a content node which could be a descendant of
    *         mRootContent
    * @return PR_TRUE if mRootContent is null, PR_FALSE if aContainer
-   *         is null, PR_TRUE if aContainer is a descendant of mRootContent,
-   *         PR_FALSE otherwise
+   *         is null, PR_TRUE if aContainer is a descendant of mRootContent
+   *         (though if mDeep is false, only aContainer == mRootContent
+   *         counts), PR_FALSE otherwise
    */
-  PRBool IsDescendantOfRoot(nsIContent* aContainer);
+  PRBool MayContainRelevantNodes(nsIContent* aContainer);
   /**
    * Does this subtree contain our mRootContent?
    *
@@ -282,9 +294,22 @@ protected:
    * observer of the document.
    */
   void CheckDocumentExistence();
+  /**
+   * Remove ourselves from the hashtable that caches commonly accessed
+   * content lists.  Generally done on destruction.
+   */
   void RemoveFromHashtable();
+  /**
+   * If state is not LIST_UP_TO_DATE, fully populate ourselves with
+   * all the nodes we can find.
+   */
   inline void BringSelfUpToDate(PRBool aDoFlush);
-
+  /**
+   * A function to check whether aContent is anonymous from our point
+   * of view.  If it is, we don't care about it, since we should never
+   * contain it or any of its kids.
+   */
+  PRBool IsContentAnonymous(nsIContent* aContent);
   /**
    * Function to use to determine whether a piece of content matches
    * our criterion
@@ -293,7 +318,7 @@ protected:
   /**
    * Closure data to pass to mFunc when we call it
    */
-  nsString* mData;
+  const nsAFlatString* mData;
   /**
    * True if we are looking for elements named "*"
    */
@@ -303,6 +328,11 @@ protected:
    * LIST_UP_TO_DATE, LIST_LAZY, LIST_DIRTY
    */
   PRUint8 mState;
+  /**
+   * Whether to actually descend the tree.  If this is false, we won't
+   * consider grandkids of mRootContent.
+   */
+  PRPackedBool mDeep;
 };
 
 /**
@@ -325,9 +355,8 @@ protected:
  */
 #define LIST_LAZY 2
 
-nsresult
+already_AddRefed<nsContentList>
 NS_GetContentList(nsIDocument* aDocument, nsIAtom* aMatchAtom,
-                  PRInt32 aMatchNameSpaceId, nsIContent* aRootContent,
-                  nsIContentList** aInstancePtrResult);
+                  PRInt32 aMatchNameSpaceId, nsIContent* aRootContent);
 
 #endif // nsContentList_h___

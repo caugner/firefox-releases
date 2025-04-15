@@ -1,38 +1,40 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
- * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s):
- *  Ian McGreer <mcgreer@netscape.com>
- *  Javier Delgadillo <javi@netscape.com>
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- */
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is the Netscape security libraries.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Ian McGreer <mcgreer@netscape.com>
+ *   Javier Delgadillo <javi@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsNSSComponent.h"
 #include "nsNSSCertificateDB.h"
@@ -51,6 +53,8 @@
 #include "nsReadableUtils.h"
 #include "nsArray.h"
 #include "nsNSSShutDown.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 
 #include "nspr.h"
 extern "C" {
@@ -258,13 +262,13 @@ nsNSSCertificateDB::handleCACertDownload(nsIArray *x509Certs,
   // certs which may or may not be a chained list of certs.  Until
   // the day we can design some solid UI for the general case, we'll
   // code to the > 90% case.  That case is where a CA sends down a
-  // list that is a chain up to its root in either ascending or 
-  // descending order.  What we're gonna do is compare the first 
-  // 2 entries, if the first was signed by the second, we assume
-  // the leaf cert is the first cert and display it.  If the second
-  // cert was signed by the first cert, then we assume the first cert
-  // is the root and the last cert in the array is the leaf.  In this
-  // case we display the last cert.
+  // list that is a hierarchy whose root is either the first or 
+  // the last cert.  What we're gonna do is compare the first 
+  // 2 entries, if the second was signed by the first, we assume
+  // the root cert is the first cert and display it.  Otherwise,
+  // we compare the last 2 entries, if the second to last cert was
+  // signed by the last cert, then we assume the last cert is the
+  // root and display it.
 
   nsNSSShutDownPreventionLock locker;
 
@@ -283,35 +287,37 @@ nsNSSCertificateDB::handleCACertDownload(nsIArray *x509Certs,
     selCertIndex = 0;
     certToShow = do_QueryElementAt(x509Certs, selCertIndex);
   } else {
-    nsCOMPtr<nsIX509Cert> cert0;
-    nsCOMPtr<nsIX509Cert> cert1;
+    nsCOMPtr<nsIX509Cert> cert0;    // first cert
+    nsCOMPtr<nsIX509Cert> cert1;    // second cert
+    nsCOMPtr<nsIX509Cert> certn_2;  // second to last cert
+    nsCOMPtr<nsIX509Cert> certn_1;  // last cert
 
     cert0 = do_QueryElementAt(x509Certs, 0);
     cert1 = do_QueryElementAt(x509Certs, 1);
+    certn_2 = do_QueryElementAt(x509Certs, numCerts-2);
+    certn_1 = do_QueryElementAt(x509Certs, numCerts-1);
 
     nsXPIDLString cert0SubjectName;
-    nsXPIDLString cert0IssuerName;
-    nsXPIDLString cert1SubjectName;
     nsXPIDLString cert1IssuerName;
+    nsXPIDLString certn_2IssuerName;
+    nsXPIDLString certn_1SubjectName;
 
-    cert0->GetIssuerName(cert0IssuerName);
     cert0->GetSubjectName(cert0SubjectName);
-
     cert1->GetIssuerName(cert1IssuerName);
-    cert1->GetSubjectName(cert1SubjectName);
+    certn_2->GetIssuerName(certn_2IssuerName);
+    certn_1->GetSubjectName(certn_1SubjectName);
 
     if (cert1IssuerName.Equals(cert0SubjectName)) {
       // In this case, the first cert in the list signed the second,
-      // so the first cert is the root.  Let's display the last cert 
-      // in the list.
-      selCertIndex = numCerts-1;
-      certToShow = do_QueryElementAt(x509Certs, selCertIndex);
-    } else 
-    if (cert0IssuerName.Equals(cert1SubjectName)) { 
-      // In this case the second cert has signed the first cert.  The 
-      // first cert is the leaf, so let's display it.
+      // so the first cert is the root.  Let's display it. 
       selCertIndex = 0;
       certToShow = cert0;
+    } else 
+    if (certn_2IssuerName.Equals(certn_1SubjectName)) { 
+      // In this case the last cert has signed the second to last cert.
+      // The last cert is the root, so let's display it.
+      selCertIndex = numCerts-1;
+      certToShow = certn_1;
     } else {
       // It's not a chain, so let's just show the first one in the 
       // downloaded list.
@@ -351,6 +357,11 @@ nsNSSCertificateDB::handleCACertDownload(nsIArray *x509Certs,
   }
 
   CERTCertificateCleaner tmpCertCleaner(tmpCert);
+
+  if (!CERT_IsCACert(tmpCert, NULL)) {
+    // Should pop up an error dialog.
+    return NS_ERROR_FAILURE;
+  }
 
   if (tmpCert->isperm) {
     nsPSMUITracker tracker;
@@ -937,12 +948,18 @@ nsNSSCertificateDB::IsCertTrusted(nsIX509Cert *cert,
                                   PRUint32 trustType,
                                   PRBool *_isTrusted)
 {
+  NS_ENSURE_ARG_POINTER(_isTrusted);
+  *_isTrusted = PR_FALSE;
+
   nsNSSShutDownPreventionLock locker;
   SECStatus srv;
   nsNSSCertificate *pipCert = NS_STATIC_CAST(nsNSSCertificate *, cert);
   CERTCertificate *nsscert = pipCert->GetCert();
   CERTCertTrust nsstrust;
   srv = CERT_GetCertTrust(nsscert, &nsstrust);
+  if (srv != SECSuccess)
+    return NS_ERROR_FAILURE;
+
   nsNSSCertTrust trust(&nsstrust);
   CERT_DestroyCertificate(nsscert);
   if (certType == nsIX509Cert::CA_CERT) {
@@ -1052,9 +1069,9 @@ nsNSSCertificateDB::ImportPKCS12File(nsISupports *aToken,
 {
   NS_ENSURE_ARG(aFile);
   nsPKCS12Blob blob;
-  if (aToken) {
-    nsCOMPtr<nsIPK11Token> t = do_QueryInterface(aToken);
-    blob.SetToken(t);
+  nsCOMPtr<nsIPK11Token> token = do_QueryInterface(aToken);
+  if (token) {
+    blob.SetToken(token);
   }
   return blob.ImportFromFile(aFile);
 }
@@ -1237,10 +1254,10 @@ finish:
 NS_IMETHODIMP 
 nsNSSCertificateDB::GetIsOcspOn(PRBool *aOcspOn)
 {
-  nsCOMPtr<nsIPref> prefService = do_GetService(NS_PREF_CONTRACTID);
+  nsCOMPtr<nsIPrefBranch> pref = do_GetService(NS_PREFSERVICE_CONTRACTID);
 
   PRInt32 ocspEnabled;
-  prefService->GetIntPref("security.OCSP.enabled", &ocspEnabled);
+  pref->GetIntPref("security.OCSP.enabled", &ocspEnabled);
   *aOcspOn = ( ocspEnabled == 0 ) ? PR_FALSE : PR_TRUE; 
   return NS_OK;
 }

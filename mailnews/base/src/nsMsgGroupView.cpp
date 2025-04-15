@@ -14,6 +14,11 @@
  *
  * The Original Code is mozilla.org code.
  *
+ * The Initial Developer of the Original Code is
+ * David Bienvenu.
+ * Portions created by the Initial Developer are Copyright (C) 2004
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
@@ -37,6 +42,7 @@
 #include "nsIDBFolderInfo.h"
 #include "nsIMsgSearchSession.h"
 #include "nsMsgGroupThread.h"
+#include "nsITreeColumns.h"
 
 #define MSGHDR_CACHE_LOOK_AHEAD_SIZE  25    // Allocate this more to avoid reallocation on new mail.
 #define MSGHDR_CACHE_MAX_SIZE         8192  // Max msghdr cache entries.
@@ -59,6 +65,8 @@ nsMsgGroupView::nsMsgGroupView()
     kTwoWeeksAgoString = GetString(NS_LITERAL_STRING("twoWeeksAgo").get());
     kOldMailString = GetString(NS_LITERAL_STRING("older").get());
   }
+  m_dayChanged = PR_FALSE;
+  m_lastCurExplodedTime.tm_mday = 0;
 }
 
 nsMsgGroupView::~nsMsgGroupView()
@@ -96,11 +104,41 @@ NS_IMETHODIMP nsMsgGroupView::Open(nsIMsgFolder *aFolder, nsMsgViewSortTypeValue
   return kHashEnumerateNext;
 }
 
+void nsMsgGroupView::InternalClose()
+{
+  if (m_db && m_sortType == nsMsgViewSortType::byDate)
+  {
+    nsCOMPtr <nsIDBFolderInfo> dbFolderInfo;
+    nsresult rv = m_db->GetDBFolderInfo(getter_AddRefs(dbFolderInfo));
+    if (dbFolderInfo)
+    {
+      PRUint32 expandFlags = 0;
+      PRUint32 num = GetSize();
+	  
+      for (PRUint32 i = 0; i < num; i++) 
+      {
+        if (m_flags[i] & MSG_VIEW_FLAG_ISTHREAD && ! (m_flags[i] & MSG_FLAG_ELIDED))
+        {
+          nsCOMPtr <nsIMsgDBHdr> msgHdr;
+          nsresult rv = GetMsgHdrForViewIndex(i, getter_AddRefs(msgHdr));
+          if (msgHdr)
+          {
+             nsHashKey *hashKey = AllocHashKeyForHdr(msgHdr);
+             if (hashKey)
+               expandFlags |=  1 << ((nsPRUint32Key *)hashKey)->GetValue();
+          }
+        }
+      }
+      dbFolderInfo->SetUint32Property("dateGroupFlags", expandFlags);
+    }
+  }
+  // enumerate m_groupsTable releasing the thread objects.
+  m_groupsTable.Reset(ReleaseThread);
+}
 
 NS_IMETHODIMP nsMsgGroupView::Close()
 {
-  // enumerate m_groupsTable releasing the thread objects.
-  m_groupsTable.Enumerate(ReleaseThread);
+  InternalClose();
   return nsMsgThreadedDBView::Close();
 }
 
@@ -115,8 +153,8 @@ nsHashKey *nsMsgGroupView::AllocHashKeyForHdr(nsIMsgDBHdr *msgHdr)
       return new nsCStringKey(cStringKey.get());
       break;
     case nsMsgViewSortType::byAuthor:
-      (void) msgHdr->GetAuthor(getter_Copies(cStringKey));
-      return new nsCStringKey(cStringKey.get());
+      (void) nsMsgDBView::FetchAuthor(msgHdr, getter_Copies(stringKey));
+      return new nsStringKey(stringKey.get());
     case nsMsgViewSortType::byRecipient:
       (void) msgHdr->GetRecipients(getter_Copies(cStringKey));
       return new nsCStringKey(cStringKey.get());
@@ -157,22 +195,23 @@ nsHashKey *nsMsgGroupView::AllocHashKeyForHdr(nsIMsgDBHdr *msgHdr)
     {
       PRUint32 ageBucket = 1;
       PRTime dateOfMsg;
-      PRUint32 dateOfMsgInSeconds, currentTimeInSeconds;
 	    
       nsresult rv = msgHdr->GetDate(&dateOfMsg);
-      (void) msgHdr->GetDateInSeconds(&dateOfMsgInSeconds);
 
       PRTime currentTime = PR_Now();
-      PRExplodedTime explodedCurrentTime;
-      PR_ExplodeTime(currentTime, PR_LocalTimeParameters, &explodedCurrentTime);
+      PRExplodedTime currentExplodedTime;
+      PR_ExplodeTime(currentTime, PR_LocalTimeParameters, &currentExplodedTime);
       PRExplodedTime explodedMsgTime;
       PR_ExplodeTime(dateOfMsg, PR_LocalTimeParameters, &explodedMsgTime);
 
-      dateOfMsgInSeconds -= explodedMsgTime.tm_params.tp_gmt_offset;
+      if (m_lastCurExplodedTime.tm_mday &&
+         m_lastCurExplodedTime.tm_mday != currentExplodedTime.tm_mday)
+        m_dayChanged = PR_TRUE; // this will cause us to rebuild the view.
 
-      if (explodedCurrentTime.tm_year == explodedMsgTime.tm_year &&
-          explodedCurrentTime.tm_month == explodedMsgTime.tm_month &&
-          explodedCurrentTime.tm_mday == explodedMsgTime.tm_mday)
+      m_lastCurExplodedTime = currentExplodedTime;
+      if (currentExplodedTime.tm_year == explodedMsgTime.tm_year &&
+          currentExplodedTime.tm_month == explodedMsgTime.tm_month &&
+          currentExplodedTime.tm_mday == explodedMsgTime.tm_mday)
       {
         // same day...
         ageBucket = 1;
@@ -183,7 +222,10 @@ nsHashKey *nsMsgGroupView::AllocHashKeyForHdr(nsIMsgDBHdr *msgHdr)
         // some constants for calculation
         static PRInt64 microSecondsPerSecond;
         static PRInt64 microSecondsPerDay;
-
+	static PRInt64 secondsPerDay;
+	static PRInt64 microSecondsPer6Days;
+	static PRInt64 microSecondsPer13Days;
+			
         static PRBool bGotConstants = PR_FALSE;
         if ( !bGotConstants )
         {
@@ -195,41 +237,43 @@ nsHashKey *nsMsgGroupView::AllocHashKeyForHdr(nsIMsgDBHdr *msgHdr)
     
           // derivees
           LL_MUL( microSecondsPerDay,   secondsPerDay,      microSecondsPerSecond );
-          bGotConstants = PR_TRUE;
+          LL_MUL( microSecondsPer6Days, microSecondsPerDay, 6 );
+	  LL_MUL( microSecondsPer13Days, microSecondsPerDay, 13 );
+	  
+	  bGotConstants = PR_TRUE;
         }
 
-        const PRUint32 secondsPerDay = 60 * 60 * 24;
-        const PRUint32 secondsPer6Days = 60 * 60 * 24 * 6;
-        const PRUint32 secondsPer13Days = 60 * 60 * 24 * 13;
-        PRInt64 temp;
-        PRUint32 mostRecentMidnightSeconds;
-
-        LL_DIV(temp, currentTime, microSecondsPerSecond);
-        LL_L2UI(currentTimeInSeconds, temp);
-
-        PRUint32 nowSeconds;
-        LL_L2UI(nowSeconds, temp);
-
-        nowSeconds -= explodedCurrentTime.tm_params.tp_gmt_offset;
-
-        PRUint32 todaysSeconds = (nowSeconds % (60 * 60 * 24));
-        mostRecentMidnightSeconds = currentTimeInSeconds - todaysSeconds;
-        PRUint32 mostRecentWeekSeconds = mostRecentMidnightSeconds - secondsPer6Days;
-        PRUint32 yesterdayInSeconds = mostRecentMidnightSeconds - secondsPerDay;
-
+	// setting the time variables to local time
+        PRInt64 GMTLocalTimeShift;
+        LL_ADD( GMTLocalTimeShift, currentExplodedTime.tm_params.tp_gmt_offset, currentExplodedTime.tm_params.tp_dst_offset );
+        LL_MUL( GMTLocalTimeShift, GMTLocalTimeShift, microSecondsPerSecond );
+        LL_ADD( currentTime, currentTime, GMTLocalTimeShift );
+        LL_ADD( dateOfMsg, dateOfMsg, GMTLocalTimeShift );
+	
+	// the most recent midnight, counting from current time
+	PRInt64 todaysMicroSeconds, mostRecentMidnight;
+	LL_MOD( todaysMicroSeconds, currentTime, microSecondsPerDay );
+	LL_SUB( mostRecentMidnight, currentTime, todaysMicroSeconds );
+	PRInt64 yesterday;
+	LL_SUB( yesterday, mostRecentMidnight, microSecondsPerDay );
+	// most recent midnight minus 6 days
+	PRInt64 mostRecentWeek;
+	LL_SUB( mostRecentWeek, mostRecentMidnight, microSecondsPer6Days );
+	
         // was the message sent yesterday?
-        if (dateOfMsgInSeconds >= yesterdayInSeconds)
+        if ( LL_CMP( dateOfMsg, >=, yesterday ) )
         { // yes ....
           ageBucket = 2;
         }
-        else if (dateOfMsgInSeconds >= mostRecentWeekSeconds)
+        else if ( LL_CMP(dateOfMsg, >=, mostRecentWeek) )
         {
           ageBucket = 3;
         }
         else
         {
-          PRUint32 lastTwoWeeks = mostRecentMidnightSeconds - secondsPer13Days;
-          ageBucket = (dateOfMsgInSeconds >= lastTwoWeeks) ? 4 : 5;
+          PRInt64 lastTwoWeeks;
+	  LL_SUB( lastTwoWeeks, mostRecentMidnight, microSecondsPer13Days);
+	  ageBucket = LL_CMP(dateOfMsg, >=, lastTwoWeeks) ? 4 : 5;
         }
       }
       return new nsPRUint32Key(ageBucket);
@@ -285,7 +329,7 @@ nsMsgGroupThread *nsMsgGroupView::AddHdrToThread(nsIMsgDBHdr *msgHdr, PRBool *pN
   }
   delete hashKey;
   if (foundThread)
-    foundThread->AddChild(msgHdr, nsnull, PR_FALSE, nsnull /* announcer */);
+    foundThread->AddChildFromGroupView(msgHdr, this);
   // check if new hdr became thread root
   if (!newThread && foundThread->m_keys[0] == msgKey)
   {
@@ -326,9 +370,18 @@ NS_IMETHODIMP nsMsgGroupView::OpenWithHdrs(nsISimpleEnumerator *aHeaders, nsMsgV
       AddHdrToThread(msgHdr, &notUsed);
     }
   }
-  *aCount = m_keys.GetSize();
+  PRUint32 expandFlags = 0;
   PRUint32 viewFlag = (m_sortType == nsMsgViewSortType::byDate) ? MSG_VIEW_FLAG_DUMMY : 0;
-  //go through the view updating the flags for threads with more than one message...
+  if (viewFlag)
+  {
+    nsCOMPtr <nsIDBFolderInfo> dbFolderInfo;
+    nsresult rv = m_db->GetDBFolderInfo(getter_AddRefs(dbFolderInfo));
+    if (dbFolderInfo)
+      dbFolderInfo->GetUint32Property("dateGroupFlags",  0, &expandFlags);
+
+  }
+  // go through the view updating the flags for threads with more than one message...
+  // and if grouped by date, expanding threads that were expanded before.
   for (PRUint32 viewIndex = 0; viewIndex < m_keys.GetSize(); viewIndex++)
   {
     nsCOMPtr <nsIMsgThread> thread;
@@ -339,13 +392,70 @@ NS_IMETHODIMP nsMsgGroupView::OpenWithHdrs(nsISimpleEnumerator *aHeaders, nsMsgV
       thread->GetNumChildren(&numChildren);
       if (numChildren > 1 || viewFlag)
         OrExtraFlag(viewIndex, viewFlag | MSG_VIEW_FLAG_HASCHILDREN);
+      if (expandFlags)
+      {
+        nsMsgGroupThread *groupThread = NS_STATIC_CAST(nsMsgGroupThread *, (nsIMsgThread *) thread);
+        if (expandFlags & (1 << groupThread->m_threadKey))
+        {
+          PRUint32 numExpanded;
+          ExpandByIndex(viewIndex, &numExpanded);
+          viewIndex += numExpanded;
+        }
+      }
     }
   }
+  *aCount = m_keys.GetSize();
   return rv;
+}
+
+// if the day has changed, we need to close and re-open the view.
+nsresult nsMsgGroupView::HandleDayChange()
+{
+  nsCOMPtr <nsISimpleEnumerator> headers;
+  if (NS_SUCCEEDED(m_db->EnumerateMessages(getter_AddRefs(headers))))
+  {
+    PRInt32 count;
+    m_dayChanged = PR_FALSE;
+    nsMsgKeyArray preservedSelection;
+    nsMsgKey curSelectedKey;
+    SaveAndClearSelection(&curSelectedKey, &preservedSelection);
+    InternalClose();
+    PRInt32 oldSize = GetSize();
+    // this is important, because the tree will ask us for our
+    // row count, which get determine from the number of keys.
+    m_keys.RemoveAll();
+    // be consistent
+    m_flags.RemoveAll();
+    m_levels.RemoveAll();
+
+    // this needs to happen after we remove all the keys, since RowCountChanged() will call our GetRowCount()
+    if (mTree) 
+      mTree->RowCountChanged(0, -oldSize);
+    DisableChangeUpdates();
+    nsresult rv = OpenWithHdrs(headers, m_sortType, m_sortOrder, m_viewFlags, &count);
+    EnableChangeUpdates();
+    if (mTree) 
+      mTree->RowCountChanged(0, GetSize());
+
+    NS_ENSURE_SUCCESS(rv,rv);
+
+    // now, restore our desired selection
+    nsMsgKeyArray keyArray;
+    keyArray.Add(curSelectedKey);
+
+    return RestoreSelection(curSelectedKey, &keyArray);
+  }
+  return NS_OK;
 }
 
 nsresult nsMsgGroupView::OnNewHeader(nsIMsgDBHdr *newHdr, nsMsgKey aParentKey, PRBool /*ensureListed*/)
 {
+
+  // check if we're adding a header, and the current day has changed. If it has, we're just going to 
+  // close and re-open the view so things will be correctly categorized.
+  if (m_dayChanged)
+    return HandleDayChange();
+
   PRBool newThread;
   nsMsgGroupThread *thread = AddHdrToThread(newHdr, &newThread); 
   if (thread)
@@ -368,10 +478,10 @@ nsresult nsMsgGroupView::OnNewHeader(nsIMsgDBHdr *newHdr, nsMsgKey aParentKey, P
         m_flags[threadIndex] |= MSG_VIEW_FLAG_HASCHILDREN | MSG_VIEW_FLAG_ISTHREAD;
 
       PRInt32 numRowsToInvalidate = 1;
-
       if (! (m_flags[threadIndex] & MSG_FLAG_ELIDED))
       {
         PRUint32 msgIndexInThread = thread->m_keys.IndexOf(msgKey);
+        PRBool insertedAtThreadRoot = !msgIndexInThread;
         if (!msgIndexInThread && GroupViewUsesDummyRow())
           msgIndexInThread++;
 
@@ -408,9 +518,8 @@ nsresult nsMsgGroupView::OnNewHeader(nsIMsgDBHdr *newHdr, nsMsgKey aParentKey, P
         }
         // the call to NoteChange() has to happen after we add the key
         // as NoteChange() will call RowCountChanged() which will call our GetRowCount()
-        NoteChange((newThread && GroupViewUsesDummyRow()) ? threadIndex + msgIndexInThread - 1 : threadIndex + msgIndexInThread,
+        NoteChange((insertedAtThreadRoot && GroupViewUsesDummyRow()) ? threadIndex + msgIndexInThread - 1 : threadIndex + msgIndexInThread,
                       numRowsInserted, nsMsgViewNotificationCode::insertOrDelete);
-
         numRowsToInvalidate = msgIndexInThread;
       }
       NoteChange(threadIndex, numRowsToInvalidate, nsMsgViewNotificationCode::changed);
@@ -425,6 +534,11 @@ NS_IMETHODIMP nsMsgGroupView::OnHdrChange(nsIMsgDBHdr *aHdrChanged, PRUint32 aOl
 {
   nsCOMPtr <nsIMsgThread> thread;
 
+  // check if we're adding a header, and the current day has changed. If it has, we're just going to 
+  // close and re-open the view so things will be correctly categorized.
+  if (m_dayChanged)
+    return HandleDayChange();
+
   nsresult rv = GetThreadContainingMsgHdr(aHdrChanged, getter_AddRefs(thread));
   NS_ENSURE_SUCCESS(rv, rv);
   PRUint32 deltaFlags = (aOldFlags ^ aNewFlags);
@@ -437,6 +551,11 @@ NS_IMETHODIMP nsMsgGroupView::OnHdrChange(nsIMsgDBHdr *aHdrChanged, PRUint32 aOl
 NS_IMETHODIMP nsMsgGroupView::OnHdrDeleted(nsIMsgDBHdr *aHdrDeleted, nsMsgKey aParentKey, PRInt32 aFlags, 
                             nsIDBChangeListener *aInstigator)
 {
+  // check if we're adding a header, and the current day has changed. If it has, we're just going to 
+  // close and re-open the view so things will be correctly categorized.
+  if (m_dayChanged)
+    return HandleDayChange();
+
   nsCOMPtr <nsIMsgThread> thread;
   nsMsgKey keyDeleted;
   aHdrDeleted->GetMessageKey(&keyDeleted);
@@ -456,7 +575,10 @@ NS_IMETHODIMP nsMsgGroupView::OnHdrDeleted(nsIMsgDBHdr *aHdrDeleted, nsMsgKey aP
     {
       thread->RemoveChildAt(0); // get rid of dummy
       nsMsgDBView::RemoveByIndex(viewIndexOfThread - 1);
-      NoteChange(viewIndexOfThread - 1, -1, nsMsgViewNotificationCode::insertOrDelete); // an example where view is not the listener - D&D messages
+      if (m_deletingRows)
+        mIndicesToNoteChange.Add(viewIndexOfThread - 1);
+      else
+        NoteChange(viewIndexOfThread - 1, -1, nsMsgViewNotificationCode::insertOrDelete); // an example where view is not the listener - D&D messages
     }
     else if (rootDeleted)
     {
@@ -468,7 +590,7 @@ NS_IMETHODIMP nsMsgGroupView::OnHdrDeleted(nsIMsgDBHdr *aHdrDeleted, nsMsgKey aP
   {
     nsHashKey *hashKey = AllocHashKeyForHdr(aHdrDeleted);
     if (hashKey)
-    m_groupsTable.Remove(hashKey);
+      m_groupsTable.Remove(hashKey);
     delete hashKey;
   }
   return rv;
@@ -484,16 +606,18 @@ NS_IMETHODIMP nsMsgGroupView::GetRowProperties(PRInt32 aRow, nsISupportsArray *a
   return nsMsgDBView::GetRowProperties(aRow, aProperties);
 }
 
-NS_IMETHODIMP nsMsgGroupView::GetCellProperties(PRInt32 aRow, const PRUnichar *aColID, nsISupportsArray *aProperties)
+NS_IMETHODIMP nsMsgGroupView::GetCellProperties(PRInt32 aRow, nsITreeColumn *aCol, nsISupportsArray *aProperties)
 {
   if (m_flags[aRow] & MSG_VIEW_FLAG_DUMMY)
     return aProperties->AppendElement(kDummyMsgAtom);
-  return nsMsgDBView::GetCellProperties(aRow, aColID, aProperties);
+  return nsMsgDBView::GetCellProperties(aRow, aCol, aProperties);
 }
 
-NS_IMETHODIMP nsMsgGroupView::GetCellText(PRInt32 aRow, const PRUnichar *aColID, nsAString& aValue)
+NS_IMETHODIMP nsMsgGroupView::GetCellText(PRInt32 aRow, nsITreeColumn* aCol, nsAString& aValue)
 {
-  if (m_flags[aRow] & MSG_VIEW_FLAG_DUMMY && aColID[0] != 'u')
+  const PRUnichar* colID;
+  aCol->GetIdConst(&colID);
+  if (m_flags[aRow] & MSG_VIEW_FLAG_DUMMY && colID[0] != 'u')
   {
     nsCOMPtr <nsIMsgDBHdr> msgHdr;
     nsresult rv = GetMsgHdrForViewIndex(aRow, getter_AddRefs(msgHdr));
@@ -503,7 +627,7 @@ NS_IMETHODIMP nsMsgGroupView::GetCellText(PRInt32 aRow, const PRUnichar *aColID,
       return NS_OK;
 
     nsMsgGroupThread *groupThread = (nsMsgGroupThread *) m_groupsTable.Get(hashKey);
-    if (aColID[0] == 's'  && aColID[1] == 'u' )
+    if (colID[0] == 's'  && colID[1] == 'u' )
     {
       aValue.SetCapacity(0);
       nsXPIDLString valueText;
@@ -569,7 +693,7 @@ NS_IMETHODIMP nsMsgGroupView::GetCellText(PRInt32 aRow, const PRUnichar *aColID,
           break;
       }
     }
-    else if (aColID[0] == 't')
+    else if (colID[0] == 't')
     {
       nsAutoString formattedCountString;
       PRUint32 numChildren = (groupThread) ? groupThread->NumRealChildren() : 0;
@@ -579,7 +703,7 @@ NS_IMETHODIMP nsMsgGroupView::GetCellText(PRInt32 aRow, const PRUnichar *aColID,
     delete hashKey;
     return NS_OK;
   }
-  return nsMsgDBView::GetCellText(aRow, aColID, aValue);
+  return nsMsgDBView::GetCellText(aRow, aCol, aValue);
 }
 
 NS_IMETHODIMP nsMsgGroupView::LoadMessageByViewIndex(nsMsgViewIndex aViewIndex)

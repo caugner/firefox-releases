@@ -1,11 +1,12 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim:set ts=4 sw=4 sts=4 et cindent: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -28,11 +29,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -49,10 +50,6 @@
 #include "nsNetCID.h"
 #include "netCore.h"
 #include "prprf.h"
-
-#if defined(XP_WIN)
-#include <windows.h> // ::IsDBCSLeadByte need
-#endif
 
 //----------------------------------------------------------------------------
 // Init/Shutdown
@@ -291,17 +288,6 @@ net_CoalesceDirs(netCoalesceFlags flags, char* path)
             (*fwdPtr != '?') && 
             (*fwdPtr != '#'); ++fwdPtr)
     {
-
-#if defined(XP_WIN)
-        // At first, If this is DBCS character, it skips next character.
-        if (::IsDBCSLeadByte(*fwdPtr) && *(fwdPtr+1) != '\0') 
-        {
-            *urlPtr++ = *fwdPtr++;
-            *urlPtr++ = *fwdPtr;
-            continue;
-        }
-#endif
-
         if (*fwdPtr == '/' && *(fwdPtr+1) == '.' && *(fwdPtr+2) == '/' )
         {
             // remove . followed by slash
@@ -421,7 +407,7 @@ net_ResolveRelativePath(const nsACString &relativePath,
             // fall through...
           case '/':
             // delimiter found
-            if (name.Equals("..")) {
+            if (name.EqualsLiteral("..")) {
                 // pop path
                 // If we already have the delim at end, then
                 //  skip over that when searching for next one to the left
@@ -435,17 +421,17 @@ net_ResolveRelativePath(const nsACString &relativePath,
                 else
                     path.Truncate();
             }
-            else if (name.Equals(".") || name.Equals("")) {
+            else if (name.IsEmpty() || name.EqualsLiteral(".")) {
                 // do nothing
             }
             else {
                 // append name to path
                 if (needsDelim)
-                    path += "/";
+                    path += '/';
                 path += name;
                 needsDelim = PR_TRUE;
             }
-            name = "";
+            name.Truncate();
             break;
 
           default:
@@ -575,6 +561,36 @@ net_FilterURIString(const char *str, nsACString& result)
     return writing;
 }
 
+#if defined(XP_WIN) || defined(XP_OS2)
+PRBool
+net_NormalizeFileURL(const nsACString &aURL, nsCString &aResultBuf)
+{
+    PRBool writing = PR_FALSE;
+
+    nsACString::const_iterator beginIter, endIter;
+    aURL.BeginReading(beginIter);
+    aURL.EndReading(endIter);
+
+    const char *s, *begin = beginIter.get();
+
+    for (s = begin; s != endIter.get(); ++s)
+    {
+        if (*s == '\\')
+        {
+            writing = PR_TRUE;
+            if (s > begin)
+                aResultBuf.Append(begin, s - begin);
+            aResultBuf += '/';
+            begin = s + 1;
+        }
+    }
+    if (writing && s > begin)
+        aResultBuf.Append(begin, s - begin);
+
+    return writing;
+}
+#endif
+
 //----------------------------------------------------------------------------
 // miscellaneous (i.e., stuff that should really be elsewhere)
 //----------------------------------------------------------------------------
@@ -658,4 +674,237 @@ repeat:
         }
     }
     return (char *) iter;
+}
+
+#define HTTP_LWS " \t"
+
+// Return the index of the closing quote of the string, if any
+static PRUint32
+net_FindStringEnd(const nsCString& flatStr,
+                  PRUint32 stringStart,
+                  char stringDelim)
+{
+    NS_ASSERTION(stringStart < flatStr.Length() &&
+                 flatStr.CharAt(stringStart) == stringDelim &&
+                 (stringDelim == '"' || stringDelim == '\''),
+                 "Invalid stringStart");
+
+    const char set[] = { stringDelim, '\\', '\0' };
+    do {
+        // stringStart points to either the start quote or the last
+        // escaped char (the char following a '\\')
+                
+        // Write to searchStart here, so that when we get back to the
+        // top of the loop right outside this one we search from the
+        // right place.
+        PRUint32 stringEnd = flatStr.FindCharInSet(set, stringStart + 1);
+        if (stringEnd == PRUint32(kNotFound))
+            return flatStr.Length();
+
+        if (flatStr.CharAt(stringEnd) == '\\') {
+            // Hit a backslash-escaped char.  Need to skip over it.
+            stringStart = stringEnd + 1;
+            if (stringStart == flatStr.Length())
+                return stringStart;
+
+            // Go back to looking for the next escape or the string end
+            continue;
+        }
+
+        return stringEnd;
+
+    } while (PR_TRUE);
+
+    NS_NOTREACHED("How did we get here?");
+    return flatStr.Length();
+}
+                  
+
+static PRUint32
+net_FindMediaDelimiter(const nsCString& flatStr,
+                       PRUint32 searchStart,
+                       char delimiter)
+{
+    do {
+        // searchStart points to the spot from which we should start looking
+        // for the delimiter.
+        const char delimStr[] = { delimiter, '"', '\'', '\0' };
+        PRUint32 curDelimPos = flatStr.FindCharInSet(delimStr, searchStart);
+        if (curDelimPos == PRUint32(kNotFound))
+            return flatStr.Length();
+            
+        char ch = flatStr.CharAt(curDelimPos);
+        if (ch == delimiter) {
+            // Found delimiter
+            return curDelimPos;
+        }
+
+        // We hit the start of a quoted string.  Look for its end.
+        searchStart = net_FindStringEnd(flatStr, curDelimPos, ch);
+        if (searchStart == flatStr.Length())
+            return searchStart;
+
+        ++searchStart;
+
+        // searchStart now points to the first char after the end of the
+        // string, so just go back to the top of the loop and look for
+        // |delimiter| again.
+    } while (PR_TRUE);
+
+    NS_NOTREACHED("How did we get here?");
+    return flatStr.Length();
+}
+
+static void
+net_ParseMediaType(const nsACString &aMediaTypeStr,
+                   nsACString       &aContentType,
+                   nsACString       &aContentCharset,
+                   PRBool           *aHadCharset)
+{
+    const nsCString& flatStr = PromiseFlatCString(aMediaTypeStr);
+    const char* start = flatStr.get();
+    const char* end = start + flatStr.Length();
+
+    // Trim LWS leading and trailing whitespace from type.  We include '(' in
+    // the trailing trim set to catch media-type comments, which are not at all
+    // standard, but may occur in rare cases.
+    const char* type = net_FindCharNotInSet(start, end, HTTP_LWS);
+    const char* typeEnd = net_FindCharInSet(type, end, HTTP_LWS ";(");
+
+    const char* charset = "";
+    const char* charsetEnd = charset;
+
+    // Iterate over parameters
+    PRBool typeHasCharset = PR_FALSE;
+    PRUint32 paramStart = flatStr.FindChar(';', typeEnd - start);
+    if (paramStart != PRUint32(kNotFound)) {
+        // We have parameters.  Iterate over them.
+        PRUint32 curParamStart = paramStart + 1;
+        do {
+            PRUint32 curParamEnd =
+                net_FindMediaDelimiter(flatStr, curParamStart, ';');
+
+            const char* paramName = net_FindCharNotInSet(start + curParamStart,
+                                                         start + curParamEnd,
+                                                         HTTP_LWS);
+            static const char charsetStr[] = "charset=";
+            if (PL_strncasecmp(paramName, charsetStr,
+                               sizeof(charsetStr) - 1) == 0) {
+                charset = paramName + sizeof(charsetStr) - 1;
+                charsetEnd = start + curParamEnd;
+                typeHasCharset = PR_TRUE;
+            }
+
+            curParamStart = curParamEnd + 1;
+        } while (curParamStart < flatStr.Length());
+    }
+
+    if (typeHasCharset) {
+        // Trim LWS leading and trailing whitespace from charset.  We include
+        // '(' in the trailing trim set to catch media-type comments, which are
+        // not at all standard, but may occur in rare cases.
+        charset = net_FindCharNotInSet(charset, charsetEnd, HTTP_LWS);
+        if (*charset == '"' || *charset == '\'') {
+            charsetEnd =
+                start + net_FindStringEnd(flatStr, charset - start, *charset);
+            charset++;
+            NS_ASSERTION(charsetEnd >= charset, "Bad charset parsing");
+        } else {
+            charsetEnd = net_FindCharInSet(charset, charsetEnd, HTTP_LWS ";(");
+        }
+    }
+
+    // if the server sent "*/*", it is meaningless, so do not store it.
+    // also, if type is the same as aContentType, then just update the
+    // charset.  however, if charset is empty and aContentType hasn't
+    // changed, then don't wipe-out an existing aContentCharset.  We
+    // also want to reject a mime-type if it does not include a slash.
+    // some servers give junk after the charset parameter, which may
+    // include a comma, so this check makes us a bit more tolerant.
+
+    if (type != typeEnd && strncmp(type, "*/*", typeEnd - type) != 0 &&
+        memchr(type, '/', typeEnd - type) != NULL) {
+        // Common case here is that aContentType is empty
+        PRBool eq = !aContentType.IsEmpty() &&
+            aContentType.Equals(Substring(type, typeEnd),
+                                nsCaseInsensitiveCStringComparator());
+        if (!eq) {
+            aContentType.Assign(type, typeEnd - type);
+            ToLowerCase(aContentType);
+        }
+        if ((!eq && *aHadCharset) || typeHasCharset) {
+            *aHadCharset = PR_TRUE;
+            aContentCharset.Assign(charset, charsetEnd - charset);
+        }
+    }
+}
+
+#undef HTTP_LWS
+
+void
+net_ParseContentType(const nsACString &aHeaderStr,
+                     nsACString       &aContentType,
+                     nsACString       &aContentCharset,
+                     PRBool           *aHadCharset)
+{
+    //
+    // Augmented BNF (from RFC 2616 section 3.7):
+    //
+    //   header-value = media-type *( LWS "," LWS media-type )
+    //   media-type   = type "/" subtype *( LWS ";" LWS parameter )
+    //   type         = token
+    //   subtype      = token
+    //   parameter    = attribute "=" value
+    //   attribute    = token
+    //   value        = token | quoted-string
+    //   
+    //
+    // Examples:
+    //
+    //   text/html
+    //   text/html, text/html
+    //   text/html,text/html; charset=ISO-8859-1
+    //   text/html,text/html; charset="ISO-8859-1"
+    //   text/html;charset=ISO-8859-1, text/html
+    //   text/html;charset='ISO-8859-1', text/html
+    //   application/octet-stream
+    //
+
+    *aHadCharset = PR_FALSE;
+    const nsCString& flatStr = PromiseFlatCString(aHeaderStr);
+    
+    // iterate over media-types.  Note that ',' characters can happen
+    // inside quoted strings, so we need to watch out for that.
+    PRUint32 curTypeStart = 0;
+    do {
+        // curTypeStart points to the start of the current media-type.  We want
+        // to look for its end.
+        PRUint32 curTypeEnd =
+            net_FindMediaDelimiter(flatStr, curTypeStart, ',');
+        
+        // At this point curTypeEnd points to the spot where the media-type
+        // starting at curTypeEnd ends.  Time to parse that!
+        net_ParseMediaType(Substring(flatStr, curTypeStart,
+                                     curTypeEnd - curTypeStart),
+                           aContentType, aContentCharset, aHadCharset);
+
+        // And let's move on to the next media-type
+        curTypeStart = curTypeEnd + 1;
+    } while (curTypeStart < flatStr.Length());
+}
+
+PRBool
+net_IsValidHostName(const nsCSubstring &host)
+{
+    const char *end = host.EndReading();
+    // ctrl-chars and  !\"#%&'()*+,/;<=>?@\\^{|}\x7f
+    // if one of these chars is found return false
+    return net_FindCharInSet(host.BeginReading(), end,
+                             "\x01\x02\x03\x04\x05\x06\x07\x08"
+                             "\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10"
+                             "\x11\x12\x13\x14\x15\x16\x17\x18"
+                             "\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20"
+                             "\x21\x22\x23\x25\x26\x27\x28\x29"
+                             "\x2a\x2b\x2c\x2f\x3b\x3c\x3d\x3e"
+                             "\x3f\x40\x5c\x5e\x7b\x7c\x7e\x7f") == end;
 }

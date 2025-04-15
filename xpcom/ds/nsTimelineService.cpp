@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -48,10 +48,6 @@
 #ifdef MOZ_TIMELINE
 
 #define MAXINDENT 20
-
-#ifdef XP_MAC
-static PRIntervalTime initInterval = 0;
-#endif
 
 static PRFileDesc *timelineFD = PR_STDERR;
 static PRBool gTimelineDisabled = PR_TRUE;
@@ -78,8 +74,6 @@ public:
 
 /* Implementation file */
 NS_IMPL_THREADSAFE_ISUPPORTS1(nsTimelineService, nsITimelineService)
-
-static PRTime Now(void);
 
 /*
  * Timer structure stored in a hash table to keep track of named
@@ -127,7 +121,7 @@ void nsTimelineServiceTimer::start()
 {
     TIMER_CHECK_OWNER();
     if (!mRunning) {
-        mStart = Now();
+        mStart = PR_Now();
     }
     mRunning++;
 }
@@ -160,7 +154,7 @@ PRTime nsTimelineServiceTimer::getAccum()
         accum = mAccum;
     } else {
         PRTime delta;
-        LL_SUB(delta, Now(), mStart);
+        LL_SUB(delta, PR_Now(), mStart);
         LL_ADD(accum, mAccum, delta);
     }
     return accum;
@@ -180,29 +174,6 @@ PRTime nsTimelineServiceTimer::getAccum(PRTime now)
     }
     return accum;
 }
-
-#ifdef XP_MAC
-/*
- * PR_Now() on the Mac only gives us a resolution of seconds.  Using
- * PR_IntervalNow() gives us better resolution. with the drawback that 
- * the timeline is only good for about six hours.
- *
- * PR_IntervalNow() occasionally exhibits discontinuities on Windows,
- * so we only use it on the Mac.  Bleah!
- */
-static PRTime Now(void)
-{
-    PRIntervalTime numTicks = PR_IntervalNow() - initInterval;
-    PRTime now;
-    LL_ADD(now, initTime, PR_IntervalToMilliseconds(numTicks) * 1000);
-    return now;
-}
-#else
-static PRTime Now(void)
-{
-    return PR_Now();
-}
-#endif
 
 static TimelineThreadData *GetThisThreadData()
 {
@@ -238,7 +209,7 @@ done:
 extern "C" {
   static void ThreadDestruct (void *data);
   static PRStatus TimelineInit(void);
-};
+}
 
 void ThreadDestruct( void *data )
 {
@@ -263,9 +234,7 @@ PRStatus TimelineInit(void)
     NS_WARN_IF_FALSE(status==0, "TimelineService could not allocate TLS storage.");
 
     timeStr = PR_GetEnv("NS_TIMELINE_INIT_TIME");
-#ifdef XP_MAC    
-    initInterval = PR_IntervalNow();
-#endif
+
     // NS_TIMELINE_INIT_TIME only makes sense for the main thread, so if it
     // exists, set it there.  If not, let normal thread management code take
     // care of setting the init time.
@@ -274,17 +243,9 @@ PRStatus TimelineInit(void)
         LL_MUL(tmp1, (PRInt64)secs, 1000000);
         LL_MUL(tmp2, (PRInt64)msecs, 1000);
         LL_ADD(initTime, tmp1, tmp2);
-#ifdef XP_MAC
-        initInterval -= PR_MicrosecondsToInterval(
-            (PRUint32)(PR_Now() - initTime));
-#endif
     }
     // Get the log file.
-#ifdef XP_MAC
-    fileName = "timeline.txt";
-#else
     fileName = PR_GetEnv("NS_TIMELINE_LOG_FILE");
-#endif
     if (fileName != NULL
         && (fd = PR_Open(fileName, PR_WRONLY | PR_CREATE_FILE | PR_TRUNCATE,
                          0666)) != NULL) {
@@ -357,7 +318,7 @@ static nsresult NS_TimelineMarkV(const char *text, va_list args)
 
     TimelineThreadData *thread = GetThisThreadData();
 
-    tmp = Now();
+    tmp = PR_Now();
     LL_SUB(elapsed, tmp, thread->initTime);
 
     PrintTime(elapsed, text, args);
@@ -430,7 +391,7 @@ PR_IMPLEMENT(nsresult) NS_TimelineStopTimer(const char *timerName)
      * including time spent in TLS and PL_HashTableLookup in the
      * timer.
      */
-    PRTime now = Now();
+    PRTime now = PR_Now();
 
     TimelineThreadData *thread = GetThisThreadData();
     if (thread->timers == NULL)

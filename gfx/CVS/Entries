@@ -1,7 +1,9 @@
-/.cvsignore/1.1/Sat Dec  5 09:02:00 1998//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.7/Sat Aug 16 00:41:41 2003//TFIREFOX_1_0_RELEASE
-/gfx-config.h.in/1.1/Tue Apr 22 16:24:59 2003//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Sat Dec  5 09:02:00 1998//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.12/Sat Jul  2 01:36:23 2005//TFIREFOX_1_5_RELEASE
+/gfx-config.h.in/1.2/Wed Aug 25 23:02:45 2004//TFIREFOX_1_5_RELEASE
+D/cairo////
 D/idl////
 D/public////
 D/src////
 D/tests////
+D/thebes////

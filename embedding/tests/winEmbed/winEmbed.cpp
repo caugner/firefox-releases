@@ -25,8 +25,8 @@
  * DEALINGS IN THE SOFTWARE.
  *
  * Contributor(s):
- *  Doug Turner <dougt@netscape.com> 
- *  Adam Lock <adamlock@netscape.com>
+ *   Doug Turner <dougt@netscape.com>
+ *   Adam Lock <adamlock@netscape.com>
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -45,20 +45,16 @@
 
 // Mozilla header files
 #include "nsEmbedAPI.h"
-#include "nsWeakReference.h"
 #include "nsIClipboardCommands.h"
 #include "nsXPIDLString.h"
 #include "nsIWebBrowserPersist.h"
 #include "nsIWebBrowserFocus.h"
 #include "nsIWindowWatcher.h"
-#include "nsIProfile.h"
 #include "nsIObserverService.h"
 #include "nsIObserver.h"
-#include "nsIProfileChangeStatus.h"
 #include "nsIURI.h"
 #include "plstr.h"
 #include "nsIInterfaceRequestor.h"
-#include "nsCRT.h"
 
 #include "nsDirectoryService.h"
 #include "nsDirectoryServiceDefs.h"
@@ -70,6 +66,7 @@
 #include "WebBrowserChrome.h"
 #include "WindowCreator.h"
 #include "resource.h"
+#include "nsStaticComponents.h"
 
 // Printing header files
 #include "nsIPrintSettings.h"
@@ -79,12 +76,10 @@
 #define MAX_LOADSTRING 100
 
 
-#ifdef _BUILD_STATIC_BIN
-#include "nsStaticComponent.h"
-nsresult PR_CALLBACK
-app_getModuleInfo(nsStaticModuleInfo **info, PRUint32 *count);
+#ifndef _BUILD_STATIC_BIN
+nsStaticModuleInfo const *const kPStaticModules = nsnull;
+PRUint32 const kStaticModuleCount = 0;
 #endif
-
 
 const TCHAR *szWindowClass = _T("WINEMBED");
 
@@ -163,13 +158,8 @@ int main(int argc, char *argv[])
     LoadString(ghInstanceResources, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
     MyRegisterClass(ghInstanceApp);
 
-#ifdef _BUILD_STATIC_BIN
-    // Initialize XPCOM's module info table
-    NSGetStaticModuleInfo = app_getModuleInfo;
-#endif
-
     // Init Embedding APIs
-    NS_InitEmbedding(nsnull, nsnull);
+    NS_InitEmbedding(nsnull, nsnull, kPStaticModules, kStaticModuleCount);
 
     // Choose the new profile
     if (NS_FAILED(StartupProfile()))

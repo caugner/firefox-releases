@@ -31,13 +31,13 @@ function MailMultiplexHandler(event)
     } else if (name == 'charsetGroup') {
         var charset = node.getAttribute('id');
         charset = charset.substring('charset.'.length, charset.length)
-        MessengerSetDefaultCharacterSet(charset);
+        MessengerSetForcedCharacterSet(charset);
     } else if (name == 'charsetCustomize') {
         // please remove this else statement, once the charset prefs moves to the pref window
         window.openDialog("chrome://communicator/content/pref/pref-charset.xul",
                           "_blank", "chrome,modal,resizable", "browser");
     } else {
-        MessengerSetDefaultCharacterSet(node.getAttribute('id'));
+        MessengerSetForcedCharacterSet(node.getAttribute('id'));
     }
 }
 
@@ -100,7 +100,7 @@ function SelectDetector(event, doReload)
         str.data = prefvalue;
         pref.setComplexValue("intl.charset.detector",
                              Components.interfaces.nsISupportsString, str);
-        if (doReload) window._content.location.reload();
+        if (doReload) window.content.location.reload();
     }
     catch (ex) {
         dump("Failed to set the intl.charset.detector preference.\n");
@@ -150,7 +150,7 @@ function UpdateCurrentCharset()
 
     // exctract the charset from DOM
     var wnd = document.commandDispatcher.focusedWindow;
-    if ((window == wnd) || (wnd == null)) wnd = window._content;
+    if ((window == wnd) || (wnd == null)) wnd = window.content;
     menuitem = document.getElementById('charset.' + wnd.document.characterSet);
 
     if (menuitem) {
@@ -208,9 +208,9 @@ function UpdateMenus(event)
     // when onmenucomplete is ready then use it instead of oncreate
     // see bug 78290 for the detail
     UpdateCurrentCharset();
-    setTimeout("UpdateCurrentCharset()", 0);
+    setTimeout(UpdateCurrentCharset, 0);
     UpdateCharsetDetector();
-    setTimeout("UpdateCharsetDetector()", 0);
+    setTimeout(UpdateCharsetDetector, 0);
 }
 
 function CreateMenu(node)
@@ -225,9 +225,9 @@ function UpdateMailMenus(event)
     // when onmenucomplete is ready then use it instead of oncreate
     // see bug 78290 for the detail
     UpdateCurrentMailCharset();
-    setTimeout("UpdateCurrentMailCharset()", 0);
+    setTimeout(UpdateCurrentMailCharset, 0);
     UpdateCharsetDetector();
-    setTimeout("UpdateCharsetDetector()", 0);
+    setTimeout(UpdateCharsetDetector, 0);
 }
 
 var gCharsetMenu = Components.classes['@mozilla.org/rdf/datasource;1?name=charset-menu'].getService().QueryInterface(Components.interfaces.nsICurrentCharsetListener);
@@ -235,7 +235,7 @@ var gLastBrowserCharset = null;
 
 function charsetLoadListener (event)
 {
-    var charset = window._content.document.characterSet;
+    var charset = window.content.document.characterSet;
 
     if (charset.length > 0 && (charset != gLastBrowserCharset)) {
         gCharsetMenu.SetCurrentCharset(charset);
@@ -247,7 +247,7 @@ function charsetLoadListener (event)
 
 function composercharsetLoadListener (event)
 {
-    var charset = window._content.document.characterSet;
+    var charset = window.content.document.characterSet;
 
  
     if (charset.length > 0 ) {
@@ -283,7 +283,7 @@ if (window && (wintype == "navigator:browser"))
 {
     var contentArea = window.document.getElementById("appcontent");
     if (contentArea)
-        contentArea.addEventListener("load", charsetLoadListener, true);
+        contentArea.addEventListener("pageshow", charsetLoadListener, true);
 }
 else
 {
@@ -292,14 +292,14 @@ else
     {
         var messageContent = window.document.getElementById("messagepane");
         if (messageContent)
-            messageContent.addEventListener("load", mailCharsetLoadListener, true);
+            messageContent.addEventListener("pageshow", mailCharsetLoadListener, true);
     }
     else
     if (window && arrayOfStrings[0] == "composer") 
     {
         contentArea = window.document.getElementById("appcontent");
         if (contentArea)
-            contentArea.addEventListener("load", composercharsetLoadListener, true);
+            contentArea.addEventListener("pageshow", composercharsetLoadListener, true);
     }
 
 }

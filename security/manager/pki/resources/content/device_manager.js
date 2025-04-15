@@ -1,25 +1,40 @@
- /*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 2001 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Bob Lord <lord@netscape.com>
- *  Ian McGreer <mcgreer@netscape.com>
- */
+ *   Bob Lord <lord@netscape.com>
+ *   Ian McGreer <mcgreer@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 const nsIFilePicker = Components.interfaces.nsIFilePicker;
 const nsFilePicker = "@mozilla.org/filepicker;1";
@@ -41,8 +56,18 @@ function LoadModules()
 {
   bundle = srGetStrBundle("chrome://pippki/locale/pippki.properties");
   secmoddb = Components.classes[nsPKCS11ModuleDB].getService(nsIPKCS11ModuleDB);
+  window.crypto.enableSmartCardEvents = true;
+  document.addEventListener("smartcard-insert", onSmartCardChange, false);
+  document.addEventListener("smartcard-remove", onSmartCardChange, false);
+
+  RefreshDeviceList();
+}
+
+function RefreshDeviceList()
+{
   var modules = secmoddb.listModules();
   var done = false;
+
   try {
     modules.isDone();
   } catch (e) { done = true; }
@@ -215,20 +240,33 @@ function ClearInfoList()
       info_list.removeChild(info_list.firstChild);
 }
 
+function ClearDeviceList()
+{
+  // Remove the existing listed modules so that refresh doesn't 
+  // display the module that just changed.
+  var device_list = document.getElementById("device_list");
+  while (device_list.firstChild)
+    device_list.removeChild(device_list.firstChild);
+}
+
+
 // show a list of info about a slot
 function showSlotInfo()
 {
+  var present = true;
   ClearInfoList();
   switch (selected_slot.status) {
    case nsIPKCS11Slot.SLOT_DISABLED:
      AddInfoRow(bundle.GetStringFromName("devinfo_status"), 
                 bundle.GetStringFromName("devinfo_stat_disabled"), 
                 "tok_status");
+     present = false;
      break;
    case nsIPKCS11Slot.SLOT_NOT_PRESENT:
      AddInfoRow(bundle.GetStringFromName("devinfo_status"), 
                 bundle.GetStringFromName("devinfo_stat_notpresent"), 
                 "tok_status");
+     present = false;
      break;
    case nsIPKCS11Slot.SLOT_UNINITIALIZED:
      AddInfoRow(bundle.GetStringFromName("devinfo_status"), 
@@ -259,6 +297,9 @@ function showSlotInfo()
              selected_slot.HWVersion, "slot_hwv");
   AddInfoRow(bundle.GetStringFromName("devinfo_fwversion"),
              selected_slot.FWVersion, "slot_fwv");
+  if (present) {
+     showTokenInfo();
+  }
 }
 
 function showModuleInfo()
@@ -338,10 +379,8 @@ function doLoad()
 {
   window.open("load_device.xul", "loaddevice", 
               "chrome,centerscreen,modal");
-  var device_list = document.getElementById("device_list");
-  while (device_list.firstChild)
-    device_list.removeChild(device_list.firstChild);
-  LoadModules();
+  ClearDeviceList();
+  RefreshDeviceList();
 }
 
 function doUnload()
@@ -349,11 +388,21 @@ function doUnload()
   getSelectedItem();
   if (selected_module) {
     pkcs11.deletemodule(selected_module.name);
-    var device_list = document.getElementById("device_list");
-    while (device_list.firstChild)
-      device_list.removeChild(device_list.firstChild);
-    LoadModules();
+    ClearDeviceList();
+    RefreshDeviceList();
   }
+}
+
+// handle card insertion and removal
+function onSmartCardChange()
+{
+  var tree = document.getElementById('device_tree');
+  var index = tree.currentIndex;
+  tree.currentIndex = 0;
+  ClearDeviceList();
+  RefreshDeviceList();
+  tree.currentIndex = index;
+  enableButtons();
 }
 
 function changePassword()
@@ -388,15 +437,15 @@ function doLoadDevice()
   var name_box = document.getElementById("device_name");
   var path_box = document.getElementById("device_path");
   pkcs11.addmodule(name_box.value, path_box.value, 0,0);
-  window.close();
+  return true;
 }
 
 // -------------------------------------   Old code
 
 function showTokenInfo()
 {
-  ClearInfoList();
-  getSelectedToken();
+  //ClearInfoList();
+  var selected_token = selected_slot.getToken();
   AddInfoRow(bundle.GetStringFromName("devinfo_label"), 
              selected_token.tokenLabel, "tok_label");
   AddInfoRow(bundle.GetStringFromName("devinfo_manID"),
@@ -431,9 +480,7 @@ function toggleFIPS()
   secmoddb.toggleFIPSMode();
   //Remove the existing listed modules so that re-fresh doesn't 
   //display the module that just changed.
-  var device_list = document.getElementById("device_list");
-  while (device_list.firstChild)
-    device_list.removeChild(device_list.firstChild);
+  ClearDeviceList();
 
-  LoadModules();
+  RefreshDeviceList();
 }

@@ -35,6 +35,7 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include "TestCommon.h"
 #include <stdlib.h>
 #include "nsIServiceManager.h"
 #include "nsIEventQueueService.h"
@@ -103,7 +104,7 @@ MySocketListener::OnSocketAccepted(nsIServerSocket *serv,
         return rv;
 
     const char response[] = "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nFooooopy!!\r\n";
-    rv = output->Write(response, sizeof(response), &n);
+    rv = output->Write(response, sizeof(response) - 1, &n);
     if (NS_FAILED(rv))
         return rv;
 
@@ -144,6 +145,9 @@ MakeServer(PRInt32 port)
 int
 main(int argc, char* argv[])
 {
+    if (test_common_init(&argc, &argv) != 0)
+        return -1;
+
     nsresult rv= (nsresult)-1;
     if (argc < 2) {
         printf("usage: %s <port>\n", argv[0]);

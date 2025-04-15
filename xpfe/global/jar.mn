@@ -1,7 +1,9 @@
 toolkit.jar:
+#ifndef MOZ_XUL_APP
 *       content/global/contents.rdf                 (resources/content/contents.rdf)
 *       content/global-platform/contents.rdf        (resources/content/contents-platform.rdf)
 *       content/global-region/contents.rdf          (resources/content/contents-region.rdf)
+#endif
         content/global/hiddenWindow.xul             (resources/content/hiddenWindow.xul) 
         content/global/globalOverlay.xul            (resources/content/globalOverlay.xul) 
         content/global/globalOverlay.js             (resources/content/globalOverlay.js) 
@@ -10,7 +12,11 @@ toolkit.jar:
         content/global/commonDialog.xul             (resources/content/commonDialog.xul) 
         content/global/commonDialog.js              (resources/content/commonDialog.js) 
         content/global/strres.js                    (resources/content/strres.js) 
+#ifdef MOZ_SUITE
+        content/global/logo.gif                     (/suite/branding/content/logo.gif) 
+#else
         content/global/logo.gif                     (resources/content/logo.gif) 
+#endif
         content/global/aboutAbout.html              (resources/content/aboutAbout.html) 
         content/global/about.xul                    (resources/content/about.xul) 
         content/global/config.xul                   (resources/content/config.xul) 
@@ -22,7 +28,6 @@ toolkit.jar:
         content/global/selectDialog.js              (resources/content/selectDialog.js) 
         content/global/selectDialog.xul             (resources/content/selectDialog.xul) 
         content/global/nsWidgetStateManager.js      (resources/content/nsWidgetStateManager.js) 
-        content/global/widgetStateManager.js        (resources/content/widgetStateManager.js) 
         content/global/nsTreeController.js          (resources/content/nsTreeController.js) 
         content/global/nsTreeSorting.js             (resources/content/nsTreeSorting.js) 
         content/global/nsClipboard.js               (resources/content/nsClipboard.js) 
@@ -41,6 +46,7 @@ toolkit.jar:
         content/global/plugins.html                 (resources/content/plugins.html)
         content/global/fullScreen.js                (resources/content/fullScreen.js)
         content/global/build.dtd                    (build.dtd)
+*       content/global/about.xhtml                  (resources/content/about.xhtml) 
         content/global/MPL-1.1.html                 (resources/content/MPL-1.1.html)
         content/global/NPL-1.1.html                 (resources/content/NPL-1.1.html)
         content/global/bindings/browser.xml         (resources/content/bindings/browser.xml)
@@ -75,9 +81,11 @@ toolkit.jar:
         content/global/fontpackage.xul              (resources/content/fontpackage.xul)
         content/global/fontpackage.js               (resources/content/fontpackage.js)
         content/global/XPCNativeWrapper.js          (resources/content/XPCNativeWrapper.js) 
+#ifdef MOZ_SVG
+        content/global/svg/svgBindings.xml          (/layout/svg/base/src/resources/content/svgBindings.xml)
+#endif
 
 #ifndef MOZ_XUL_APP
-
 en-US.jar:
 *   locale/en-US/global/contents.rdf                (resources/locale/en-US/contents.rdf) 
     locale/en-US/global/intl.css                    (resources/locale/en-US/intl.css) 
@@ -85,8 +93,7 @@ en-US.jar:
     locale/en-US/global/commonDialog.dtd            (resources/locale/en-US/commonDialog.dtd) 
     locale/en-US/global/charsetOverlay.dtd          (resources/locale/en-US/charsetOverlay.dtd) 
     locale/en-US/global/textcontext.dtd             (resources/locale/en-US/textcontext.dtd) 
-    locale/en-US/global/brand.properties            (resources/locale/en-US/brand.properties) 
-*   locale/en-US/global/brand.dtd                   (resources/locale/en-US/brand.dtd) 
+    locale/en-US/global/brand.dtd                   (resources/locale/en-US/brand.dtd) 
     locale/en-US/global/tabbrowser.dtd              (resources/locale/en-US/tabbrowser.dtd)
     locale/en-US/global/tabbrowser.properties       (resources/locale/en-US/tabbrowser.properties)
     locale/en-US/global/keys.properties             (resources/locale/en-US/keys.properties)
@@ -96,11 +103,9 @@ en-US.jar:
     locale/en-US/global/accept2locale.properties    (resources/locale/en-US/accept2locale.properties) 
     locale/en-US/global/languageNames.properties    (resources/locale/en-US/languageNames.properties) 
     locale/en-US/global/regionNames.properties      (resources/locale/en-US/regionNames.properties) 
-    locale/en-US/global/about.xhtml                 (resources/locale/en-US/about.xhtml) 
     locale/en-US/global/commonDialogs.properties    (resources/locale/en-US/commonDialogs.properties) 
     locale/en-US/global/nsTreeSorting.properties    (resources/locale/en-US/nsTreeSorting.properties)
     locale/en-US/global/dialog.properties           (resources/locale/en-US/dialog.properties)
-    locale/en-US/global/plugins.properties          (/toolkit/locales/en-US/chrome/global/plugins.properties)
     locale/en-US/global/printdialog.dtd             (resources/locale/en-US/printdialog.dtd)
     locale/en-US/global/printPageSetup.dtd          (resources/locale/en-US/printPageSetup.dtd)
     locale/en-US/global/printPageSetup.properties   (resources/locale/en-US/printPageSetup.properties)
@@ -108,12 +113,14 @@ en-US.jar:
     locale/en-US/global/printPreviewProgress.dtd    (resources/locale/en-US/printPreviewProgress.dtd)
     locale/en-US/global/fontpackage.dtd             (resources/locale/en-US/fontpackage.dtd)
     locale/en-US/global/fontpackage.properties      (resources/locale/en-US/fontpackage.properties)
+    locale/en-US/global/tree.dtd                    (resources/locale/en-US/tree.dtd)
 
 US.jar:
 *   locale/US/global-region/contents.rdf            (resources/locale/en-US/contents-region.rdf) 
 *   locale/US/global-region/region.dtd              (resources/locale/en-US/region.dtd)
     locale/US/global-region/region.properties       (resources/locale/en-US/region.properties)
     locale/US/global-region/builtinURLs.rdf         (resources/locale/en-US/builtinURLs.rdf) 
+
 
 en-win.jar:
 *   locale/en-US/global-platform/contents.rdf 		(resources/locale/en-US/win/contents-platform.rdf)

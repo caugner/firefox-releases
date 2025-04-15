@@ -1,30 +1,44 @@
 /* -*- Mode: C; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code,
- * released March 31, 1998.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
- * Contributor(s): 
- *     Sean Su <ssu@netscape.com>
- *     Curt Patrick <curt@netscape.com>
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- *  Next Generation Apps Version:
- *     Ben Goodger <ben@mozilla.org>
- */
+ * Contributor(s):
+ *   Sean Su <ssu@netscape.com>
+ *   Curt Patrick <curt@netscape.com>
+ *   Ben Goodger <ben@mozilla.org>
+ *   Masayuki Nakano <masayuki@d-toybox.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 // needed to build with mingw
 #ifndef _WIN32_IE
@@ -60,6 +74,10 @@
 #define PSH_WIZARD97            0x01000000
 #endif
 #endif
+
+#ifndef CSIDL_PROGRAM_FILES
+#define CSIDL_PROGRAM_FILES     0x0026
+#endif // CSIDL_PROGRAM_FILES
 
 // Turn off default to safe upgrade for 0.8... until we can guarantee that we won't be deleting other files. 
 #define DEFAULT_SAFE_UPGRADE FALSE
@@ -219,19 +237,50 @@ void InitSequence(HINSTANCE hInstance)
   psh.nPages            = count;
 
 
-  // Create the Font for Intro/End page headers.
-#ifdef MOZ_THUNDERBIRD
-  // The title text "Welcome to Mozilla Thunderbird" is too large to fit on the screen with a 14 pt
-  // font. For now, use a 12 pt font to prevent the text from getting clipped because it is too big.
-  sgInstallGui.welcomeTitleFont = MakeFont(TEXT("Trebuchet MS Bold"), 12, FW_BOLD);
-#else
-  sgInstallGui.welcomeTitleFont = MakeFont(TEXT("Trebuchet MS Bold"), 14, FW_BOLD);
-#endif
-
   // Start the Wizard.
-  PropertySheet(&psh);
+  if (psh.nPages > 1) {
+    PropertySheet(&psh);
+  } else {
+    if (psh.nPages == 1) {
+      // Auto install
+      CreateDialog(hSetupRscInst, MAKEINTRESOURCE(DLG_EXTRACTING), NULL, DlgProcInstalling);
+    } else {
+      // Silent install
+      InstallFiles(NULL);
+    }
 
-  DeleteObject(sgInstallGui.welcomeTitleFont);
+    gbIgnoreRunAppX = TRUE;
+    // Apply settings and close. 
+    if (sgProduct.bInstallFiles)
+      UpdateJSProxyInfo();
+
+    /* POST_SMARTUPDATE process file manipulation functions */
+    ProcessFileOpsForAll(T_POST_SMARTUPDATE);
+
+    if (sgProduct.bInstallFiles) {
+      /* PRE_LAUNCHAPP process file manipulation functions */
+      ProcessFileOpsForAll(T_PRE_LAUNCHAPP);
+
+      LaunchApps();
+
+      // Refresh system icons if necessary
+      if (gSystemInfo.bRefreshIcons)
+        RefreshIcons();
+
+      UnsetSetupState(); // clear setup state
+      ClearWinRegUninstallFileDeletion();
+      if (!gbIgnoreProgramFolderX)
+        ProcessProgramFolderShowCmd();
+
+      CleanupArgsRegistry();
+      CleanupPreviousVersionRegKeys();
+
+      /* POST_LAUNCHAPP process file manipulation functions */
+      ProcessFileOpsForAll(T_POST_LAUNCHAPP);
+      /* DEPEND_REBOOT process file manipulation functions */
+      ProcessFileOpsForAll(T_DEPEND_REBOOT);
+    }
+  }
 }
 
 HFONT MakeFont(TCHAR* aFaceName, int aFontSize, LONG aWeight) 
@@ -281,8 +330,8 @@ BOOL ShouldExitSetup(HWND hDlg)
                     MB_SETFOREGROUND) == IDYES;
   }
   else {
-    GetPrivateProfileString("Strings", "Message Cancel Setup AUTO mode", "", szMsg, 
-                            sizeof(szMsg), szFileIniConfig);
+    GetConfigIniProfileString("Strings", "Message Cancel Setup AUTO mode",
+                              "", szMsg, sizeof(szMsg));
     ShowMessage(szMsg, TRUE);
     Delay(5);
     ShowMessage(szMsg, FALSE);
@@ -293,7 +342,7 @@ BOOL ShouldExitSetup(HWND hDlg)
     SetWindowLong(hDlg, DWL_MSGRESULT, (LONG)TRUE);
 
   return rv;
-} 
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -304,14 +353,9 @@ LRESULT CALLBACK DlgProcWelcome(HWND hDlg, UINT msg, WPARAM wParam, LONG lParam)
 {
   char szBuf[MAX_BUF];
   LPNMHDR notifyMessage;
-  HWND hControl;
-  
+
   switch(msg) {
   case WM_INITDIALOG:
-    // The header on the welcome page uses a larger font.
-    hControl = GetDlgItem(hDlg, IDC_STATIC_TITLE);
-    SendMessage(hControl, WM_SETFONT, (WPARAM)sgInstallGui.welcomeTitleFont, (LPARAM)TRUE);
-
     // UI Text, from localized config files
     wsprintf(szBuf, diWelcome.szMessageWelcome, sgProduct.szProductName);
     SetDlgItemText(hDlg, IDC_STATIC_TITLE, szBuf);
@@ -321,6 +365,14 @@ LRESULT CALLBACK DlgProcWelcome(HWND hDlg, UINT msg, WPARAM wParam, LONG lParam)
     SetDlgItemText(hDlg, IDC_STATIC2, diWelcome.szMessage2);
     wsprintf(szBuf, diWelcome.szMessage3, sgProduct.szProductName);
     SetDlgItemText(hDlg, IDC_STATIC3, szBuf);
+
+    // The header on the welcome page uses another font.
+    SendDlgItemMessage(hDlg, IDC_STATIC_TITLE, WM_SETFONT, (WPARAM)sgInstallGui.welcomeTitleFont, 0L);
+
+    SendDlgItemMessage(hDlg, IDC_STATIC0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_STATIC1, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_STATIC2, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_STATIC3, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
 
     // Subclass dialog to paint all static controls white.
     OldDialogWndProc = SubclassWindow(hDlg, (WNDPROC)NewDialogWndProc);
@@ -366,9 +418,14 @@ LRESULT CALLBACK DlgProcLicense(HWND hDlg, UINT msg, WPARAM wParam, LONG lParam)
     SetDlgItemText(hDlg, IDC_RADIO_ACCEPT, diLicense.szRadioAccept);
     SetDlgItemText(hDlg, IDC_RADIO_DECLINE, diLicense.szRadioDecline);
 
+    SendDlgItemMessage(hDlg, IDC_MESSAGE0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_RADIO_ACCEPT, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_RADIO_DECLINE, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+
     // Check the "Decline" Radio button by default. 
     CheckDlgButton(hDlg, IDC_RADIO_DECLINE, BST_CHECKED);
     SendMessage(GetDlgItem(hDlg, IDC_RADIO_DECLINE), BM_SETCHECK, BST_CHECKED, 0);
+    SendDlgItemMessage(hDlg, IDC_RADIO_DECLINE, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
 
     // License Text
     lstrcpy(szBuf, szSetupDir);
@@ -391,6 +448,7 @@ LRESULT CALLBACK DlgProcLicense(HWND hDlg, UINT msg, WPARAM wParam, LONG lParam)
         FreeMemory(&szLicenseFilenameBuf);
       }
     }
+    SendDlgItemMessage(hDlg, IDC_EDIT_LICENSE, WM_SETFONT, (WPARAM)sgInstallGui.systemFont, 0L);
     break;
 
   case WM_COMMAND:
@@ -450,10 +508,13 @@ LRESULT CALLBACK DlgProcSetupType(HWND hDlg, UINT msg, WPARAM wParam, LONG lPara
     lstrcpy(defaultPath, sgProduct.szPath);
 
     SetDlgItemText(hDlg, IDC_STATIC_MSG0, diSetupType.szMessage0);
+    SendDlgItemMessage(hDlg, IDC_STATIC_MSG0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
 
     if(diSetupType.stSetupType0.bVisible) {
       SetDlgItemText(hDlg, IDC_RADIO_ST0, diSetupType.stSetupType0.szDescriptionShort);
       SetDlgItemText(hDlg, IDC_STATIC_ST0_DESCRIPTION, diSetupType.stSetupType0.szDescriptionLong);
+      SendDlgItemMessage(hDlg, IDC_RADIO_ST0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+      SendDlgItemMessage(hDlg, IDC_STATIC_ST0_DESCRIPTION, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
       ShowWindow(hRadioSt0, SW_SHOW);
       ShowWindow(hStaticSt0, SW_SHOW);
     }
@@ -465,6 +526,8 @@ LRESULT CALLBACK DlgProcSetupType(HWND hDlg, UINT msg, WPARAM wParam, LONG lPara
     if(diSetupType.stSetupType1.bVisible) {
       SetDlgItemText(hDlg, IDC_RADIO_ST1, diSetupType.stSetupType1.szDescriptionShort);
       SetDlgItemText(hDlg, IDC_STATIC_ST1_DESCRIPTION, diSetupType.stSetupType1.szDescriptionLong);
+      SendDlgItemMessage(hDlg, IDC_RADIO_ST1, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+      SendDlgItemMessage(hDlg, IDC_STATIC_ST1_DESCRIPTION, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
       ShowWindow(hRadioSt1, SW_SHOW);
       ShowWindow(hStaticSt1, SW_SHOW);
     }
@@ -559,19 +622,22 @@ int CALLBACK BrowseCallbackProc(HWND hwnd, UINT uMsg, LPARAM lParam, LPARAM lpDa
 
 void BrowseForDirectory(HWND hParent)
 { 
-	LPITEMIDLIST  itemIDList;
-	BROWSEINFO    browseInfo;
+  LPITEMIDLIST  itemIDList;
+  BROWSEINFO    browseInfo;
   char          currDir[MAX_PATH];
-  
-  GetCurrentDirectory(MAX_PATH, currDir);
 
-	browseInfo.hwndOwner		  = hParent;
-	browseInfo.pidlRoot			  = NULL;
-	browseInfo.pszDisplayName	= currDir;
-	browseInfo.lpszTitle		  = sgInstallGui.szBrowseInfo;
-	browseInfo.ulFlags			  = BIF_USENEWUI | BIF_RETURNONLYFSDIRS;
-	browseInfo.lpfn				    = NULL;
-	browseInfo.lParam			    = 0;
+  if(SHGetSpecialFolderLocation(hParent, CSIDL_PROGRAM_FILES, &itemIDList) == S_OK)
+    SHGetPathFromIDList(itemIDList, (LPTSTR) currDir);
+  else
+    strncpy(currDir, "C:\\", sizeof(currDir));
+
+  browseInfo.hwndOwner		  = hParent;
+  browseInfo.pidlRoot			  = NULL;
+  browseInfo.pszDisplayName	= currDir;
+  browseInfo.lpszTitle		  = sgInstallGui.szBrowseInfo;
+  browseInfo.ulFlags			  = BIF_USENEWUI | BIF_RETURNONLYFSDIRS;
+  browseInfo.lpfn				    = NULL;
+  browseInfo.lParam			    = 0;
 
   if (currDir[0]) {
     browseInfo.lParam = (LPARAM) strdup(currDir);
@@ -684,6 +750,11 @@ LRESULT CALLBACK DlgProcSelectInstallPath(HWND hDlg, UINT msg, WPARAM wParam, LO
     InitPathDisplay(hDlg, szTempSetupPath, IDC_FOLDER_ICON, IDC_EDIT_DESTINATION);
 
     SetDlgItemText(hDlg, IDC_BUTTON_BROWSE, sgInstallGui.szBrowse_);
+
+    SendDlgItemMessage(hDlg, IDC_STATIC_MSG0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_EDIT_DESTINATION, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_BUTTON_BROWSE, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+
     break;
 
   case WM_COMMAND:
@@ -810,6 +881,9 @@ LRESULT CALLBACK DlgProcUpgrade(HWND hDlg, UINT msg, WPARAM wParam, LONG lParam)
   case WM_INITDIALOG:
     SetDlgItemText(hDlg, IDC_MESSAGE_UPGRADE, diUpgrade.szMessageCleanup);
     SetDlgItemText(hDlg, IDC_CHECK_SAFE_INSTALL, diUpgrade.szCheckboxSafeInstall);
+
+    SendDlgItemMessage(hDlg, IDC_MESSAGE_UPGRADE, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_CHECK_SAFE_INSTALL, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
 
     // Default to "Safe Upgrade".
     CheckDlgButton(hDlg, IDC_CHECK_SAFE_INSTALL, BST_CHECKED);
@@ -1186,6 +1260,7 @@ LRESULT CALLBACK DlgProcSelectComponents(HWND hDlg, UINT msg, WPARAM wParam, LON
   switch(msg) {
   case WM_INITDIALOG:
     SetDlgItemText(hDlg, IDC_MESSAGE0, diSelectComponents.szMessage0);
+    SendDlgItemMessage(hDlg, IDC_MESSAGE0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
 
     siCTemp = siComponents;
     if(siCTemp != NULL)
@@ -1204,15 +1279,22 @@ LRESULT CALLBACK DlgProcSelectComponents(HWND hDlg, UINT msg, WPARAM wParam, LON
       SetFocus(hwndLBComponents);
       SendMessage(hwndLBComponents, LB_SETCURSEL, 0, 0);
       SetDlgItemText(hDlg, IDC_STATIC_DESCRIPTION, SiCNodeGetDescriptionLong(0, FALSE, AC_COMPONENTS));
+      SendDlgItemMessage(hDlg, IDC_STATIC_DESCRIPTION, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
     }
 
     SetDlgItemText(hDlg, IDC_STATIC1, sgInstallGui.szComponents_);
     SetDlgItemText(hDlg, IDC_STATIC2, sgInstallGui.szDescription);
 
+    SendDlgItemMessage(hDlg, IDC_STATIC1, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_STATIC2, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+
 #ifdef STUB_INSTALLER
     // XXXben We don't support net stub installs yet. 
     SetDlgItemText(hDlg, IDC_STATIC_DOWNLOAD_SIZE, sgInstallGui.szTotalDownloadSize);
+    SendDlgItemMessage(hDlg, IDC_STATIC_DOWNLOAD_SIZE, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
 #endif
+
+    SendDlgItemMessage(hDlg, IDC_LIST_COMPONENTS, WM_SETFONT, (WPARAM)sgInstallGui.systemFont, 0L);
 
     gdwACFlag = AC_COMPONENTS;
     OldListBoxWndProc = SubclassWindow(hwndLBComponents, (WNDPROC)NewListBoxWndProc);
@@ -1363,6 +1445,15 @@ LRESULT CALLBACK DlgProcSummary(HWND hDlg, UINT msg, WPARAM wParam, LONG lParam)
     SetDlgItemText(hDlg, IDC_CONNECTION_SETTINGS, sgInstallGui.szProxyButton);
     SetDlgItemText(hDlg, IDC_INSTALL_FOLDER_LABEL, sgInstallGui.szInstallFolder);
 
+    SendDlgItemMessage(hDlg, IDC_MESSAGE0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_MESSAGE1, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_MESSAGE2, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_CONNECTION_SETTINGS, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_INSTALL_FOLDER_LABEL, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_INSTALL_FOLDER, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_PRIMARY_COMPONENT, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_OPTIONAL_COMPONENTS, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+
     ExtractIconEx("setuprsc.dll", 1, &largeIcon, &smallIcon, 1);
     SendMessage(GetDlgItem(hDlg, IDC_APP_ICON), STM_SETICON, (LPARAM)smallIcon, 0);
 
@@ -1398,9 +1489,8 @@ LRESULT CALLBACK DlgProcSummary(HWND hDlg, UINT msg, WPARAM wParam, LONG lParam)
 
       // Update the registry keys that the installer scripts use to determine
       // what shortcuts to create
-      result = RegOpenKeyEx(HKEY_CURRENT_USER, diWindowsIntegration.szRegistryKey, 0, KEY_READ | KEY_WRITE, &theKey);
-      if (result == ERROR_FILE_NOT_FOUND)
-        result = RegCreateKey(HKEY_CURRENT_USER, diWindowsIntegration.szRegistryKey, &theKey);
+      result = RegCreateKeyEx(HKEY_CURRENT_USER, diWindowsIntegration.szRegistryKey, 0, NULL,
+                              0, KEY_READ | KEY_WRITE, NULL, &theKey, NULL);
       if (result == ERROR_SUCCESS) {
         RegSetValueEx(theKey, "Create Desktop Shortcut", 0, REG_DWORD, 
                       (LPBYTE)&(diWindowsIntegration.wiCB0.bCheckBoxState), 
@@ -1411,6 +1501,7 @@ LRESULT CALLBACK DlgProcSummary(HWND hDlg, UINT msg, WPARAM wParam, LONG lParam)
         RegSetValueEx(theKey, "Create Quick Launch Shortcut", 0, REG_DWORD, 
                       (LPBYTE)&(diWindowsIntegration.wiCB2.bCheckBoxState), 
                       sizeof(DWORD));
+        RegCloseKey(theKey);
       }
 
       // Show the components we're going to install
@@ -1659,9 +1750,9 @@ LRESULT CALLBACK DlgProcAdvancedSettings(HWND hDlg, UINT msg, WPARAM wParam, LON
       SetDlgItemText(hDlg, IDC_EDIT_PROXY_USER,   diAdvancedSettings.szProxyUser);
       SetDlgItemText(hDlg, IDC_EDIT_PROXY_PASSWD, diAdvancedSettings.szProxyPasswd);
 
-      GetPrivateProfileString("Strings", "IDC Use Ftp", "", szBuf, sizeof(szBuf), szFileIniConfig);
+      GetIniConfigProfileString("Strings", "IDC Use Ftp", "", szBuf, sizeof(szBuf));
       SetDlgItemText(hDlg, IDC_USE_FTP, szBuf);
-      GetPrivateProfileString("Strings", "IDC Use Http", "", szBuf, sizeof(szBuf), szFileIniConfig);
+      GetIniConfigProfileString("Strings", "IDC Use Http", "", szBuf, sizeof(szBuf));
       SetDlgItemText(hDlg, IDC_USE_HTTP, szBuf);
 
       SetDlgItemText(hDlg, IDC_STATIC, sgInstallGui.szProxySettings);
@@ -1757,6 +1848,11 @@ LRESULT CALLBACK DlgProcDownloading(HWND hDlg, UINT msg, WPARAM wParam, LONG lPa
       SetDlgItemText(hDlg, IDC_MESSAGE0, diDownloading.szBlurb);
       SetDlgItemText(hDlg, IDC_STATIC0, diDownloading.szFileNameKey);
       SetDlgItemText(hDlg, IDC_STATIC1, diDownloading.szTimeRemainingKey);
+
+      SendDlgItemMessage(hDlg, IDC_MESSAGE0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+      SendDlgItemMessage(hDlg, IDC_STATIC0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+      SendDlgItemMessage(hDlg, IDC_STATIC1, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+
       break;
 
     case WM_COMMAND:
@@ -1812,6 +1908,9 @@ LRESULT CALLBACK DlgProcInstalling(HWND hDlg, UINT msg, WPARAM wParam, LONG lPar
     SetDlgItemText(hDlg, IDC_STATUS0, diInstalling.szStatusFile);
     SetDlgItemText(hDlg, IDC_STATUS3, diInstalling.szStatusComponent);
 
+    SendDlgItemMessage(hDlg, IDC_STATUS0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_STATUS3, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+
     break;
 
   case WM_PAINT:
@@ -1821,7 +1920,9 @@ LRESULT CALLBACK DlgProcInstalling(HWND hDlg, UINT msg, WPARAM wParam, LONG lPar
     initialized = TRUE;
 
     if (InstallFiles(hDlg)) {
-      PropSheet_SetCurSelByID(parent, DLG_INSTALL_SUCCESSFUL);
+      if (sgProduct.mode != AUTO) {
+        PropSheet_SetCurSelByID(parent, DLG_INSTALL_SUCCESSFUL);
+      }
       break;
     }
     else {
@@ -1845,12 +1946,14 @@ LRESULT CALLBACK DlgProcInstalling(HWND hDlg, UINT msg, WPARAM wParam, LONG lPar
 
       SetDlgItemText(hDlg, IDC_STATUS0, installStart);
 
-      // Disable the Cancel button. This leaves the button disabled for
-      // this page (Installing) and the final page (Finish) because it 
-      // is meaningless and potentially damaging in both places. 
-      EnumChildWindows(parent, DisableCancelButton, (LPARAM)parent);
+      if (sgProduct.mode != AUTO) {
+        // Disable the Cancel button. This leaves the button disabled for
+        // this page (Installing) and the final page (Finish) because it 
+        // is meaningless and potentially damaging in both places. 
+        EnumChildWindows(parent, DisableCancelButton, (LPARAM)parent);
 
-      PropSheet_SetWizButtons(parent, 0);
+        PropSheet_SetWizButtons(parent, 0);
+      }
 
       break;
 
@@ -1866,7 +1969,6 @@ LRESULT CALLBACK DlgProcInstalling(HWND hDlg, UINT msg, WPARAM wParam, LONG lPar
 BOOL InstallFiles(HWND hDlg)
 {
   HRESULT err;
-  char szDestPath[MAX_PATH];
 
   // Clean up old versions of GRE previously installed.
   // These GREs should only be fully uninstalled if they were only
@@ -1919,9 +2021,6 @@ BOOL InstallFiles(HWND hDlg)
     // PRE_SMARTUPDATE process file manipulation functions
     ProcessFileOpsForAll(T_PRE_SMARTUPDATE);
 
-    lstrcat(szDestPath, "uninstall\\");
-    CreateDirectoriesAll(szDestPath, ADD_TO_UNINSTALL_LOG);
-
     //XXXben TODO - process this return result!
     err = SmartUpdateJars(hDlg);
   }
@@ -1940,15 +2039,16 @@ BOOL InstallFiles(HWND hDlg)
 LRESULT CALLBACK DlgProcWindowsIntegration(HWND hDlg, UINT msg, WPARAM wParam, LONG lParam)
 {
   LPNMHDR notifyMessage;
-  char szBuf[MAX_BUF];
 
   switch (msg) {
   case WM_INITDIALOG:
     SetDlgItemText(hDlg, IDC_MESSAGE0, diWindowsIntegration.szMessage0);
+    SendDlgItemMessage(hDlg, IDC_MESSAGE0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
 
     if (diWindowsIntegration.wiCB0.bEnabled) {
       ShowWindow(GetDlgItem(hDlg, IDC_CHECK0), SW_SHOW);
       SetDlgItemText(hDlg, IDC_CHECK0, diWindowsIntegration.wiCB0.szDescription);
+      SendDlgItemMessage(hDlg, IDC_CHECK0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
     }
     else
       ShowWindow(GetDlgItem(hDlg, IDC_CHECK0), SW_HIDE);
@@ -1956,6 +2056,7 @@ LRESULT CALLBACK DlgProcWindowsIntegration(HWND hDlg, UINT msg, WPARAM wParam, L
     if (diWindowsIntegration.wiCB1.bEnabled) {
       ShowWindow(GetDlgItem(hDlg, IDC_CHECK1), SW_SHOW);
       SetDlgItemText(hDlg, IDC_CHECK1, diWindowsIntegration.wiCB1.szDescription);
+      SendDlgItemMessage(hDlg, IDC_CHECK1, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
     }
     else
       ShowWindow(GetDlgItem(hDlg, IDC_CHECK1), SW_HIDE);
@@ -1963,6 +2064,7 @@ LRESULT CALLBACK DlgProcWindowsIntegration(HWND hDlg, UINT msg, WPARAM wParam, L
     if (diWindowsIntegration.wiCB2.bEnabled) {
       ShowWindow(GetDlgItem(hDlg, IDC_CHECK2), SW_SHOW);
       SetDlgItemText(hDlg, IDC_CHECK2, diWindowsIntegration.wiCB2.szDescription);
+      SendDlgItemMessage(hDlg, IDC_CHECK2, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
     }
     else
       ShowWindow(GetDlgItem(hDlg, IDC_CHECK2), SW_HIDE);
@@ -2015,18 +2117,11 @@ LRESULT CALLBACK DlgProcInstallSuccessful(HWND hDlg, UINT msg, WPARAM wParam, LO
 {
   char szBuf[MAX_BUF];
   LPNMHDR notifyMessage;
-  HWND ctrl;
   static BOOL launchAppChecked = TRUE;
-  static BOOL resetHomepageChecked = TRUE;
   DWORD result;
-  HKEY theKey;
   
   switch(msg) {
   case WM_INITDIALOG:
-    // The header on the welcome page uses a larger font.
-    ctrl = GetDlgItem(hDlg, IDC_STATIC_TITLE);
-    SendMessage(ctrl, WM_SETFONT, (WPARAM)sgInstallGui.welcomeTitleFont, (LPARAM)TRUE);
-
     // UI Text, from localized config files
     SetDlgItemText(hDlg, IDC_STATIC_TITLE, diInstallSuccessful.szMessageHeader);
     wsprintf(szBuf, diInstallSuccessful.szMessage0, sgProduct.szProductName);
@@ -2034,15 +2129,15 @@ LRESULT CALLBACK DlgProcInstallSuccessful(HWND hDlg, UINT msg, WPARAM wParam, LO
     SetDlgItemText(hDlg, IDC_STATIC1, diInstallSuccessful.szMessage1);
     wsprintf(szBuf, diInstallSuccessful.szLaunchApp, sgProduct.szProductName);
     SetDlgItemText(hDlg, IDC_START_APP, szBuf);
-    SetDlgItemText(hDlg, IDC_RESET_HOMEPAGE, diInstallSuccessful.szResetHomepage);
 
-#ifndef MOZ_PHOENIX
-    // Hide the "Reset Homepage" item for non-Firefox installers. 
-    ShowWindow(GetDlgItem(hDlg, IDC_RESET_HOMEPAGE), SW_HIDE);
-#endif
+    // The header on the welcome page uses another font.
+    SendDlgItemMessage(hDlg, IDC_STATIC_TITLE, WM_SETFONT, (WPARAM)sgInstallGui.welcomeTitleFont, 0L);
+
+    SendDlgItemMessage(hDlg, IDC_STATIC0, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_STATIC1, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+    SendDlgItemMessage(hDlg, IDC_START_APP, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
 
     launchAppChecked = diInstallSuccessful.bLaunchAppChecked;
-    resetHomepageChecked = diInstallSuccessful.bResetHomepageChecked;
 
     // Subclass dialog to paint all static controls white.
     OldDialogWndProc = SubclassWindow(hDlg, (WNDPROC)NewDialogWndProc);
@@ -2058,8 +2153,6 @@ LRESULT CALLBACK DlgProcInstallSuccessful(HWND hDlg, UINT msg, WPARAM wParam, LO
       // Restore state from default or cached value. 
       CheckDlgButton(hDlg, IDC_START_APP, 
                      launchAppChecked ? BST_CHECKED : BST_UNCHECKED);
-      CheckDlgButton(hDlg, IDC_RESET_HOMEPAGE, 
-                     resetHomepageChecked ? BST_CHECKED : BST_UNCHECKED);
 
       // Don't show the back button here UNLESS the previous 
       // page was Windows Integration - and that only happens on a custom
@@ -2071,26 +2164,9 @@ LRESULT CALLBACK DlgProcInstallSuccessful(HWND hDlg, UINT msg, WPARAM wParam, LO
       // Store the checkbox state in case the user goes back to any post-install
       // pages that we might add.
       launchAppChecked = IsDlgButtonChecked(hDlg, IDC_START_APP) == BST_CHECKED;
-      resetHomepageChecked = IsDlgButtonChecked(hDlg, IDC_RESET_HOMEPAGE) == BST_CHECKED;
-      
       break;
 
     case PSN_WIZFINISH:
-#ifdef MOZ_PHOENIX
-      // Store the "Reset Homepage" preference in the Registry. 
-      resetHomepageChecked = IsDlgButtonChecked(hDlg, IDC_RESET_HOMEPAGE) == BST_CHECKED;
-      if (resetHomepageChecked) {
-        result = RegOpenKeyEx(HKEY_CURRENT_USER, diInstallSuccessful.szRegistryKey, 0, KEY_READ | KEY_WRITE, &theKey);
-        if (result == ERROR_FILE_NOT_FOUND)
-          result = RegCreateKey(HKEY_CURRENT_USER, diInstallSuccessful.szRegistryKey, &theKey);
-        if (result == ERROR_SUCCESS) {
-          RegSetValueEx(theKey, "Reset Home Page", 0, REG_DWORD, 
-                        (LPBYTE)&(resetHomepageChecked), 
-                        sizeof(DWORD));
-        }
-      }
-#endif
-
       // Store state from the "Run App Now" checkbox. ProcessFileOpsForAll
       // uses this variable to decide whether or not to launch the browser.
       gbIgnoreRunAppX = IsDlgButtonChecked(hDlg, IDC_START_APP) != BST_CHECKED;
@@ -2186,6 +2262,9 @@ LRESULT CALLBACK DlgProcMessage(HWND hDlg, UINT msg, WPARAM wParam, LONG lParam)
         lstrcpy(szBuf, sgProduct.szProductName);
 
       SetWindowText(hDlg, szBuf);
+
+      SendDlgItemMessage(hDlg, IDC_MESSAGE, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
+
       break;
 
     case WM_COMMAND:
@@ -2244,7 +2323,6 @@ void ShowMessage(LPSTR szMessage, BOOL bShow)
       GetPrivateProfileString("Messages", "MB_MESSAGE_STR", "", szBuf, sizeof(szBuf), szFileIniInstall);
       hDlgMessage = InstantiateDialog(hWndMain, DLG_MESSAGE, szBuf, DlgProcMessage);
       SendMessage(hDlgMessage, WM_COMMAND, IDC_MESSAGE, (LPARAM)szMessage);
-      SendDlgItemMessage (hDlgMessage, IDC_MESSAGE, WM_SETFONT, (WPARAM)sgInstallGui.definedFont, 0L);
     }
     else
     {

@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is mozilla.org code.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
@@ -20,9 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Peter Van der Beken <peterv@netscape.com> (original author)
+ *   Peter Van der Beken <peterv@propagandism.org>
  *   Axel Hecht <axel@pike.org>
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -225,7 +224,7 @@ txStandaloneXSLTProcessor::transform(txXPathNode& aSource,
 
     // Process root of XML source document
     nsresult rv = txXSLTProcessor::execute(es);
-    es.end();
+    es.end(rv);
 
 #ifndef XP_WIN
     aOut.sync_with_stdio(sync);
@@ -236,10 +235,10 @@ txStandaloneXSLTProcessor::transform(txXPathNode& aSource,
 
 /**
  * Parses the XML Stylesheet PIs associated with the
- * given XML document. If a stylesheet PIs is found with type="text/xsl"
- * or type="text/xml" the href psuedo attribute value will be appended to
- * the given href argument. If multiple text/xsl stylesheet PIs
- * are found, the first one is used.
+ * given XML document. If a stylesheet PIs is found with type="text/xsl",
+ * type="text/xml" or type="application/xml" the href pseudo attribute
+ * value will be appended to the given href argument. If multiple XSLT
+ * stylesheet PIs are found, the first one is used.
  */
 void txStandaloneXSLTProcessor::getHrefFromStylesheetPI(Document& xmlDocument,
                                                         nsAString& href)
@@ -251,14 +250,15 @@ void txStandaloneXSLTProcessor::getHrefFromStylesheetPI(Document& xmlDocument,
         if (node->getNodeType() == Node::PROCESSING_INSTRUCTION_NODE) {
             nsAutoString target;
             node->getNodeName(target);
-            if (target.Equals(NS_LITERAL_STRING("xml-stylesheet"))) {
+            if (target.EqualsLiteral("xml-stylesheet")) {
                 nsAutoString data;
                 node->getNodeValue(data);
                 type.Truncate();
                 tmpHref.Truncate();
                 parseStylesheetPI(data, type, tmpHref);
-                if (type.Equals(NS_LITERAL_STRING("text/xsl")) ||
-                    type.Equals(NS_LITERAL_STRING("text/xml"))) {
+                if (type.EqualsLiteral("text/xsl") ||
+                    type.EqualsLiteral("text/xml") ||
+                    type.EqualsLiteral("application/xml")) {
                     href = tmpHref;
                     return;
                 }
@@ -335,11 +335,11 @@ void txStandaloneXSLTProcessor::parseStylesheetPI(const nsAFlatString& aData,
     
     // At this point attrName holds the name of the "attribute" and
     // the value is between start and iter.
-    if (attrName.Equals(NS_LITERAL_STRING("type"))) {
+    if (attrName.EqualsLiteral("type")) {
       aType = Substring(start, iter);
       ++found;
     }
-    else if (attrName.Equals(NS_LITERAL_STRING("href"))) {
+    else if (attrName.EqualsLiteral("href")) {
       aHref = Substring(start, iter);
       ++found;
     }

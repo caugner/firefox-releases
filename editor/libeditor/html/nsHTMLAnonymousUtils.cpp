@@ -87,11 +87,11 @@ static PRInt32 GetCSSFloatValue(nsIDOMCSSStyleDeclaration * aDecl,
       // numeric values
       nsAutoString str;
       res = val->GetStringValue(str);
-      if (str.Equals(NS_LITERAL_STRING("thin")))
+      if (str.EqualsLiteral("thin"))
         f = 1;
-      if (str.Equals(NS_LITERAL_STRING("medium")))
+      if (str.EqualsLiteral("medium"))
         f = 3;
-      if (str.Equals(NS_LITERAL_STRING("thick")))
+      if (str.EqualsLiteral("thick"))
         f = 5;
       break;
     }
@@ -153,9 +153,12 @@ nsHTMLEditor::CreateAnonymousElement(const nsAString & aTag, nsIDOMNode *  aPare
 
   // establish parenthood of the element
   newContent->SetNativeAnonymous(PR_TRUE);
-  newContent->SetParent(parentContent);
-  newContent->SetDocument(doc, PR_TRUE, PR_TRUE);
-  newContent->SetBindingParent(newContent);
+  res = newContent->BindToTree(doc, parentContent, newContent, PR_TRUE);
+  if (NS_FAILED(res)) {
+    newContent->UnbindFromTree();
+    return res;
+  }
+  
   // display the element
   ps->RecreateFramesFor(newContent);
 
@@ -177,10 +180,9 @@ nsHTMLEditor::DeleteRefToAnonymousNode(nsIDOMElement* aElement,
   if (aElement) {
     nsCOMPtr<nsIContent> content = do_QueryInterface(aElement);
     if (content) {
-      aDocObserver->ContentRemoved(nsnull, aParentContent, content, -1);
-      content->SetParent(nsnull);
-      content->SetBindingParent(nsnull);
-      content->SetDocument(nsnull, PR_TRUE, PR_TRUE);
+      aDocObserver->ContentRemoved(content->GetCurrentDoc(),
+				   aParentContent, content, -1);
+      content->UnbindFromTree();
     }
   }
 }  
@@ -333,7 +335,7 @@ nsHTMLEditor::GetPositionAndDimensions(nsIDOMElement * aElement,
     nsAutoString positionStr;
     mHTMLCSSUtils->GetComputedProperty(aElement, nsEditProperty::cssPosition,
                                        positionStr);
-    isPositioned = positionStr.Equals(NS_LITERAL_STRING("absolute"));
+    isPositioned = positionStr.EqualsLiteral("absolute");
   }
 
   if (isPositioned) {

@@ -1,5 +1,5 @@
-/.cvsignore/1.1/Wed Oct  2 09:02:15 2002//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.12/Wed Jan  7 13:36:36 2004//TFIREFOX_1_0_RELEASE
-/bayesian.pkg/1.2/Wed Jan  7 01:21:50 2004//TFIREFOX_1_0_RELEASE
-/nsBayesianFilterFactory.cpp/1.2/Sun Sep  7 22:55:34 2003//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Wed Oct  2 09:02:15 2002//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.14/Tue Apr  5 13:09:03 2005//TFIREFOX_1_5_RELEASE
+/bayesian.pkg/1.2/Wed Jan  7 01:21:50 2004//TFIREFOX_1_5_RELEASE
+/nsBayesianFilterFactory.cpp/1.3/Sat Apr 17 18:32:25 2004//TFIREFOX_1_5_RELEASE
 D

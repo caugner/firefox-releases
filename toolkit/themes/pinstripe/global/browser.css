@@ -16,11 +16,11 @@ tab:not([selected="true"]):hover {
 }
 
 tab:not([selected="true"]) > .tab-image-middle > .tab-icon {
-   -moz-opacity: 0.5;
+   opacity: 0.5;
 }
 
 tab:not([selected="true"]):hover > .tab-image-middle > .tab-icon {
-   -moz-opacity: 1.0;
+   opacity: 1.0;
 }
 
 tab:hover > .tab-image-middle > .tab-icon > .tab-extra-status {
@@ -57,6 +57,16 @@ tab {
   padding: 0px;
   border: none !important;
   height: 22px !important;
+}
+
+tab[selected="true"] {
+  -moz-user-focus: normal;
+}
+
+tab:focus {
+  outline: 1.4pt solid -moz-mac-focusring;
+  -moz-outline-radius-topleft: 50%;
+  -moz-outline-radius-topright: 50%;
 }
 
 tab[selected="true"], tab:hover {
@@ -152,3 +162,23 @@ background: url("chrome://global/skin/10pct_transparent_pixel.png") repeat;
 tabbrowser > tabbox > tabpanels {
 	-moz-appearance: none !important;
 }
+
+.tab-drop-indicator-bar {
+    display:none;
+    height: 9px;
+    margin-top: -9px;
+    position: relative;
+}
+
+.tab-drop-indicator {
+    height: 9px;
+    width: 9px;
+    margin-bottom: -5px;
+    position: relative;
+    background: url('chrome://global/skin/tabDragDrop/tabDragIndicator.png') 50% 50% no-repeat;
+}
+
+.tab-drop-indicator-bar[dragging="true"] {
+    display: -moz-box;
+}
+

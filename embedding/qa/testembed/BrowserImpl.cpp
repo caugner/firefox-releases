@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,18 +23,17 @@
  *   Chak Nanga <chak@netscape.com>
  *   David Epstein <depstein@netscape.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -102,6 +101,8 @@ CBrowserImpl::CBrowserImpl()
 CBrowserImpl::~CBrowserImpl()
 {
 }
+
+extern storage getSupportObj;
 
 // It's very important that the creator of this CBrowserImpl object
 // Call on this Init() method with proper values after creation
@@ -538,28 +539,35 @@ NS_IMETHODIMP CBrowserImpl::OnStartRequest(nsIRequest *request,
 	QAOutput("\n");
 	QAOutput("##### BEGIN: nsIRequestObserver::OnStartRequest() #####");
 
+	if (!ctxt)
+		QAOutput("We did NOT get the context object.\n");
+
+	if (ctxt == getSupportObj.sup)
+		QAOutput("Context objects equal each other.\n");
+	else
+		QAOutput("Context objects don't equal each other.\n");
+
 	RequestName(request, stringMsg, 1);
 
 	// these are for nsIChannel tests found in nsichanneltests.cpp (post AsyncOpen() tests)
-	// they will only be run if a nsISupports context was passed to AsyncOpen()
 	nsCOMPtr<nsIChannel> channel = do_QueryInterface(request);
 	nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(channel);
 	CBrowserImpl *aBrowserImpl = new CBrowserImpl();
-	CnsIChannelTests  *obj = new CnsIChannelTests(mWebBrowser, aBrowserImpl);
-	CnsIHttpChannelTests *httpObj = new CnsIHttpChannelTests(mWebBrowser, aBrowserImpl);
-	if (obj && ctxt && channel) {
-		QAOutput("  nsIChannel tests:");
-		obj->PostAsyncTests(channel, 1);
+	CnsIChannelTests  *channelTests = new CnsIChannelTests(mWebBrowser, aBrowserImpl);
+	CnsIHttpChannelTests *httpChannelTests = new CnsIHttpChannelTests(mWebBrowser, aBrowserImpl);
+	if (channelTests && channel) {
+		QAOutput("\n  Start nsIChannel PostAsyncOpenTests tests:");
+		channelTests->PostAsyncOpenTests(channel, 1);
 	}
-	else if (!obj && ctxt)
-		QAOutput("No object to run PostAsyncTests() for nsIChannel.", 1);
+	else if (!channelTests)
+		QAOutput("No object to run PostAsyncOpenTests() for nsIChannel.", 1);
 
-	if (!httpObj)
+	if (!httpChannelTests)
 		QAOutput("No object to run CallResponseTests() for nsIHttpChannel.", 1);
 	else
 	{
-		QAOutput("  nsIHttpChannel response tests:");
-		httpObj->CallResponseTests(httpChannel, 1);
+		QAOutput("\n  Start nsIHttpChannel response tests:");
+		httpChannelTests->CallResponseTests(httpChannel, 1);
 	}
 
 	if (!ctxt)
@@ -628,7 +636,7 @@ NS_IMETHODIMP CBrowserImpl::OnStartURIOpen(nsIURI *aURI, PRBool *_retval)
 {
 	QAOutput("nsIURIContentListener->OnStartURIOpen()",1);
 
-	GetTheUri(aURI, 1);
+	GetTheURI(aURI, 1);
 	// set return boolean to false so uriOpen doesn't abort
 	*_retval = PR_FALSE;
 	FormatAndPrintOutput("_retval set to = ", *_retval, 1);

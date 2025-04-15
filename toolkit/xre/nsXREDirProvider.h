@@ -57,36 +57,38 @@ public:
   NS_DECL_NSIPROFILESTARTUP
 
   nsXREDirProvider();
-  nsresult Initialize();
+  nsresult Initialize(nsIFile *aXULAppDir);
   ~nsXREDirProvider();
 
   // We only set the profile dir, we don't ensure that it exists;
   // that is the responsibility of the toolkit profile service.
   // We also don't fire profile-changed notifications... that is
   // the responsibility of the apprunner.
-  nsresult SetProfileDir(nsIFile* aProfileDir);
-
-  // Causes any attempts to retrieve an enumeration of directories for the
-  // "ComsDL" property to return a list of directories specified in the 
-  // "components.ini" manifest in the profile/application directories.
-  // This results in component registration at those locations during 
-  // XPCOM startup. 
-  void RegisterExtraComponents();
+  nsresult SetProfile(nsIFile* aProfileDir, nsIFile* aProfileLocalDir);
 
   void DoShutdown();
 
   nsresult GetProfileDefaultsDir(nsIFile* *aResult);
-  static nsresult GetUserAppDataDirectory(nsILocalFile* *aFile);
+
+  static nsresult GetUserAppDataDirectory(nsILocalFile* *aFile) {
+    return GetUserDataDirectory(aFile, PR_FALSE);
+  }
+  static nsresult GetUserLocalDataDirectory(nsILocalFile* *aFile) {
+    return GetUserDataDirectory(aFile, PR_TRUE);
+  }
 
   /* make sure you clone it, if you need to do stuff to it */
   nsIFile* GetAppDir() { return mAppDir; }
 
 protected:
+  static nsresult GetUserDataDirectory(nsILocalFile* *aFile, PRBool aLocal);
   static nsresult EnsureDirectoryExists(nsIFile* aDirectory);
   void EnsureProfileFileExists(nsIFile* aFile);
 
   nsCOMPtr<nsILocalFile> mAppDir;
+  nsCOMPtr<nsIFile>      mXULAppDir;
   nsCOMPtr<nsIFile>      mProfileDir;
+  nsCOMPtr<nsIFile>      mProfileLocalDir;
   PRBool                 mProfileNotified;
 };
 

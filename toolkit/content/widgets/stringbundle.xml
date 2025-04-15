@@ -33,7 +33,7 @@
               return this.stringBundle.formatStringFromName(aStringKey, aStringsArray, aStringsArray.length);
             }
             catch (e) {
-              dump("*** Failed to get string " + aStringKey + " in bundle: " + this.src + "\n");
+              dump("*** Failed to format string " + aStringKey + " in bundle: " + this.src + "\n");
               throw e;
             }
           ]]>
@@ -85,6 +85,16 @@
             catch (ex) {
               return null;
             }
+          ]]>
+        </getter>
+      </property>
+      
+      <property name="strings">
+        <getter>
+          <![CDATA[
+            // Note: this is a sucky method name! Should be:
+            //       readonly attribute nsISimpleEnumerator strings;
+            return this.stringBundle.getSimpleEnumeration();
           ]]>
         </getter>
       </property>

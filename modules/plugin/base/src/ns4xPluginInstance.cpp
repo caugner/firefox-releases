@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -48,6 +48,12 @@
 #include "nsPluginHostImpl.h"
 #include "nsPluginSafety.h"
 #include "nsPluginLogging.h"
+
+#include "nsPIPluginInstancePeer.h"
+#include "nsIDOMWindow.h"
+#include "nsPIDOMWindow.h"
+#include "nsIDocument.h"
+#include "nsIScriptGlobalObject.h"
 
 #include "nsJSNPRuntime.h"
 
@@ -764,7 +770,7 @@ nsInstanceStream::~nsInstanceStream()
 ///////////////////////////////////////////////////////////////////////////////
 
 NS_IMPL_ISUPPORTS3(ns4xPluginInstance, nsIPluginInstance, nsIScriptablePlugin,
-                   nsINPRuntimePlugin)
+                   nsIPluginInstanceInternal)
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -877,6 +883,16 @@ NS_IMETHODIMP ns4xPluginInstance::Stop(void)
 
   NPError error;
 
+  // Make sure the plugin didn't leave popups enabled.
+  if (mPopupStates.Count() > 0) {
+    nsCOMPtr<nsIDOMWindow> window = GetDOMWindow();
+    nsCOMPtr<nsPIDOMWindow> piwindow = do_QueryInterface(window);
+
+    if (piwindow) {
+      piwindow->PopPopupControlState(openAbused);
+    }
+  }
+
 #if defined(MOZ_WIDGET_GTK) || defined (MOZ_WIDGET_GTK2)
   if (mXtBin) {
     gtk_widget_destroy(mXtBin);
@@ -927,6 +943,39 @@ NS_IMETHODIMP ns4xPluginInstance::Stop(void)
     return NS_OK;
 }
 
+already_AddRefed<nsIDOMWindow>
+ns4xPluginInstance::GetDOMWindow()
+{
+  nsCOMPtr<nsPIPluginInstancePeer> pp (do_QueryInterface(mPeer));
+  if (!pp) {
+    return nsnull;
+  }
+
+  nsCOMPtr<nsIPluginInstanceOwner> owner;
+  pp->GetOwner(getter_AddRefs(owner));
+
+  if (!owner) {
+    return nsnull;
+  }
+
+  nsCOMPtr<nsIDocument> doc;
+  owner->GetDocument(getter_AddRefs(doc));
+
+  if (!doc) {
+    return nsnull;
+  }
+
+  nsIScriptGlobalObject *sgo = doc->GetScriptGlobalObject();
+
+  if (!sgo) {
+    return nsnull;
+  }
+
+  nsIDOMWindow *window;
+  CallQueryInterface(sgo, &window);
+
+  return window;
+}
 
 ////////////////////////////////////////////////////////////////////////
 nsresult ns4xPluginInstance::InitializePlugin(nsIPluginInstancePeer* peer)
@@ -1095,7 +1144,7 @@ NS_IMETHODIMP ns4xPluginInstance::SetWindow(nsPluginWindow* window)
 
   gpointer user_data = nsnull;
   gdk_window_get_user_data(win, &user_data);
-  if (user_data) {
+  if (user_data && GTK_IS_WIDGET(user_data)) {
     GtkWidget* widget = GTK_WIDGET(user_data);
 
     if (GTK_IS_SOCKET(widget))
@@ -1544,4 +1593,74 @@ ns4xPluginInstance::GetJSObject(JSContext *cx)
   }
 
   return obj;
+}
+
+nsresult
+ns4xPluginInstance::GetFormValue(nsAString& aValue)
+{
+  aValue.Truncate();
+
+  char *value = nsnull;
+  nsresult rv = GetValueInternal(NPPVformValue, &value);
+
+  if (NS_SUCCEEDED(rv) && value) {
+    CopyUTF8toUTF16(value, aValue);
+
+    // NPPVformValue allocates with NPN_MemAlloc(), which uses
+    // nsMemory.
+    nsMemory::Free(value);
+  }
+
+  return NS_OK;
+}
+
+void
+ns4xPluginInstance::PushPopupsEnabledState(PRBool aEnabled)
+{
+  nsCOMPtr<nsIDOMWindow> window = GetDOMWindow();
+  nsCOMPtr<nsPIDOMWindow> piwindow = do_QueryInterface(window);
+
+  if (!piwindow)
+    return;
+
+  PopupControlState oldState =
+    piwindow->PushPopupControlState(aEnabled ? openAllowed : openAbused,
+                                    PR_TRUE);
+
+  if (!mPopupStates.AppendElement(NS_INT32_TO_PTR(oldState))) {
+    // Appending to our state stack failed, push what we just popped.
+
+    piwindow->PopPopupControlState(oldState);
+  }
+}
+
+void
+ns4xPluginInstance::PopPopupsEnabledState()
+{
+  PRInt32 last = mPopupStates.Count() - 1;
+
+  if (last < 0) {
+    // Nothing to pop.
+
+    return;
+  }
+
+  nsCOMPtr<nsIDOMWindow> window = GetDOMWindow();
+  nsCOMPtr<nsPIDOMWindow> piwindow = do_QueryInterface(window);
+
+  if (!piwindow)
+    return;
+
+  PopupControlState oldState =
+    (PopupControlState)NS_PTR_TO_INT32(mPopupStates[last]);
+
+  piwindow->PopPopupControlState(oldState);
+
+  mPopupStates.RemoveElementAt(last);
+}
+
+PRUint16
+ns4xPluginInstance::GetPluginAPIVersion()
+{
+  return fCallbacks->version;
 }

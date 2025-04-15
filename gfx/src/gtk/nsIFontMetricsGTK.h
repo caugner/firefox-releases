@@ -16,9 +16,10 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code Christopher Blizzard
- * <blizzard@mozilla.org>.  Portions created by the Initial Developer
- * are Copyright (C) 2002 the Initial Developer. All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Christopher Blizzard <blizzard@mozilla.org>.  
+ * Portions created by the Initial Developer are Copyright (C) 2002
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
@@ -120,6 +121,28 @@ public:
     // return 0, which means there is no GdkFont associated with this
     // particular handle.
     virtual GdkFont* GetCurrentGDKFont(void) = 0;
+
+    // Set the direction of the text rendering
+    virtual nsresult SetRightToLeftText(PRBool aIsRTL) = 0;
+
+    virtual nsresult GetClusterInfo(const PRUnichar *aText,
+                                    PRUint32 aLength,
+                                    PRUint8 *aClusterStarts) = 0;
+
+    virtual PRInt32 GetPosition(const PRUnichar *aText,
+                                PRUint32 aLength,
+                                nsPoint aPt) = 0;
+
+    virtual nsresult GetRangeWidth(const PRUnichar *aText,
+                                   PRUint32 aLength,
+                                   PRUint32 aStart,
+                                   PRUint32 aEnd,
+                                   PRUint32 &aWidth) = 0;
+    virtual nsresult GetRangeWidth(const char *aText,
+                                   PRUint32 aLength,
+                                   PRUint32 aStart,
+                                   PRUint32 aEnd,
+                                   PRUint32 &aWidth) = 0;
 
 };
 

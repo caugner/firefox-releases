@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -58,8 +58,13 @@
 #include <sys/stat.h>
 #include "nsString.h"
 #include "nsILocalFile.h"
-#include "nsIPref.h"
-static NS_DEFINE_CID(kPrefServiceCID, NS_PREF_CID);
+#include "nsIPrefBranch.h"
+#include "nsIPrefService.h"
+#ifdef AIX
+#include "nsPluginLogging.h"
+#include "prprf.h"
+#define LOG(args)  PLUGIN_LOG(PLUGIN_LOG_NORMAL, args)
+#endif
 
 #define LOCAL_PLUGIN_DLL_SUFFIX ".so"
 #if defined(__hpux)
@@ -156,12 +161,12 @@ static void LoadExtraSharedLibs()
 {
     // check out if user's prefs.js has libs name
     nsresult res;
-    nsCOMPtr<nsIPref> prefs = do_GetService(kPrefServiceCID, &res);
+    nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID, &res));
     if (NS_SUCCEEDED(res) && (prefs != nsnull)) {
         char *sonamesListFromPref = PREF_PLUGINS_SONAME;
         char *sonameList = NULL;
         PRBool prefSonameListIsSet = PR_TRUE;
-        res = prefs->CopyCharPref(sonamesListFromPref, &sonameList);
+        res = prefs->GetCharPref(sonamesListFromPref, &sonameList);
         if (!sonameList) {
             // pref is not set, lets use hardcoded list
             prefSonameListIsSet = PR_FALSE;
@@ -283,6 +288,66 @@ nsPluginFile::~nsPluginFile()
     // nada
 }
 
+#ifdef AIX
+/**
+ * This code is necessary for Java 1.4.2 SR2 and later on AIX, as the
+ * loadquery() function is no longer used to determine the path to the
+ * installed JVM, so we need to manually set the LIBPATH variable to
+ * include the proper directories needed to run the Java plug-in.
+ *
+ * See Bug 297807 for more information.
+ */
+static char *javaLibPath = NULL;
+
+static void SetJavaLibPath(const nsCString& pluginPath)
+{
+    // If javaLibPath is non-NULL, that means we have already set the LIBPATH
+    // variable once this session, so we don't need to do it again.
+    if (javaLibPath)
+        return;
+
+    nsCAutoString javaDir, newLibPath;
+
+    PRInt32 pos = pluginPath.RFindChar('/');
+    if (pos == kNotFound || pos == 0)
+        return;
+
+    javaDir = Substring(pluginPath, 0, pos);
+    LOG(("AIX: Java dir is %s\n", javaDir.get()));
+
+    // Add jre/bin to new LIBPATH
+    newLibPath += javaDir;
+
+    // Check for existance of jre/bin/classic dir, and append it to
+    // LIBPATH if found
+    PRFileInfo info;
+    javaDir.AppendLiteral("/classic");
+    if (PR_GetFileInfo(javaDir.get(), &info) == PR_SUCCESS &&
+        info.type == PR_FILE_DIRECTORY)
+    {
+        newLibPath.Append(':');
+        newLibPath.Append(javaDir);
+    }
+
+    // Get the current LIBPATH, and append it to the new LIBPATH
+    const char *currentLibPath = PR_GetEnv("LIBPATH");
+    LOG(("AIX: current LIBPATH=%s\n", currentLibPath));
+    if (currentLibPath && *currentLibPath) {
+        newLibPath.Append(':');
+        newLibPath.Append(currentLibPath);
+    }
+
+    // Set the LIBPATH to include the path to the JRE directories.
+    // NOTE: We are leaking javaLibPath here, as it needs to remain in memory
+    // for PR_SetEnv to work properly.
+    javaLibPath = PR_smprintf("LIBPATH=%s", newLibPath.get());
+    if (javaLibPath) {
+        LOG(("AIX: new LIBPATH=%s\n", newLibPath.get()));
+        PR_SetEnv(javaLibPath);
+    }
+}
+#endif
+
 /**
  * Loads the plugin into memory using NSPR's shared-library loading
  * mechanism. Handles platform differences in loading shared libraries.
@@ -301,6 +366,16 @@ nsresult nsPluginFile::LoadPlugin(PRLibrary* &outLibrary)
     rv = mPlugin->GetNativePath(path);
     if (NS_FAILED(rv))
         return rv;
+
+#ifdef AIX
+    nsCAutoString leafName;
+    rv = mPlugin->GetNativeLeafName(leafName);
+    if (NS_FAILED(rv))
+        return rv;
+
+    if (StringBeginsWith(leafName, NS_LITERAL_CSTRING("libjavaplugin_oji")))
+        SetJavaLibPath(path);
+#endif
 
     libSpec.value.pathname = path.get();
 

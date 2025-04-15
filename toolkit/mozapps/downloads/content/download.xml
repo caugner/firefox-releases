@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
 
 # -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+# ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
 # 
 # The contents of this file are subject to the Mozilla Public License Version
@@ -15,7 +16,8 @@
 # 
 # The Original Code is Mozilla.org Code.
 # 
-# The Initial Developer of the Original Code is.
+# The Initial Developer of the Original Code is
+# Blake Ross.
 # Portions created by the Initial Developer are Copyright (C) 2001
 # the Initial Developer. All Rights Reserved.
 # 
@@ -41,8 +43,6 @@
 <!DOCTYPE window [
   <!ENTITY % downloadDTD SYSTEM "chrome://mozapps/locale/downloads/downloads.dtd" >
   %downloadDTD;
-  <!ENTITY % browserDTD  SYSTEM "chrome://browser/locale/browser.dtd" >
-  %browserDTD;
 ]>
 
 <bindings id="downloadBindings"
@@ -51,7 +51,7 @@
           xmlns:xbl="http://www.mozilla.org/xbl"
           xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
 
-  <binding id="download-base">
+  <binding id="download-base" extends="chrome://global/content/bindings/richlistbox.xml#richlistitem">
     <resources>
       <stylesheet src="chrome://mozapps/skin/downloads/downloads.css"/>
     </resources>
@@ -141,7 +141,7 @@
           <xul:label value="&starting.label;"/>
         </xul:vbox>
         <xul:vbox pack="start">
-          <xul:label value="&cmd.cancel.label;" class="link" 
+          <xul:label value="&cmd.cancel.label;" class="text-link" 
                      onclick="this.parentNode.parentNode.parentNode.fireEvent('cancel');"/>
         </xul:vbox>
       </xul:hbox>
@@ -164,12 +164,12 @@
                                 xbl:inherits="value=progress,mode=progressmode"/>
             </xul:vbox>
             <xul:vbox pack="start">
-              <xul:label value="&cmd.cancel.label;" class="link"
+              <xul:label value="&cmd.cancel.label;" class="text-link"
                         onclick="this.parentNode.parentNode.parentNode.parentNode.parentNode.fireEvent('cancel');"/>          
             </xul:vbox>
           </xul:hbox>                              
           <xul:hbox align="center">
-            <xul:label value="&cmd.pause.label;" class="link"
+            <xul:label value="&cmd.pause.label;" class="text-link"
                        onclick="this.parentNode.parentNode.parentNode.parentNode.fireEvent('pause');"/>
             <xul:label xbl:inherits="value=status" flex="1" crop="right"/>
           </xul:hbox>                            
@@ -207,7 +207,7 @@
           else if (aDownload._atiStep  == aDownload._ati_kLowerBounds)
             aDownload._atiIsIncrementing = true;
 
-          aIcon.setAttribute("style", "-moz-opacity: 0." + aDownload._atiStep );
+          aIcon.setAttribute("style", "opacity: 0." + aDownload._atiStep );
         ]]>
         </body>
       </method>
@@ -246,7 +246,7 @@
             return;
             
           aDownload._adlStep += aDownload._adl_kIncrement;
-          aContent.setAttribute("style", "-moz-opacity: " + aDownload._adlStep + "!important;");
+          aContent.setAttribute("style", "opacity: " + aDownload._adlStep + "!important;");
           
           setTimeout(aDownload._adlTimerCallback, aDownload._adl_kTimeout, aDownload, aContent);
         ]]>
@@ -305,12 +305,12 @@
                                 xbl:inherits="value=progress,mode=progressmode"/>
             </xul:vbox>
             <xul:vbox pack="start">
-              <xul:label value="&cmd.cancel.label;" class="link"
-                        onclick="this.parentNode.parentNode.parentNode.parentNode.parentNode.fireEvent('cancel');"/>          
+              <xul:label value="&cmd.cancel.label;" class="text-link"
+                         onclick="this.parentNode.parentNode.parentNode.parentNode.parentNode.fireEvent('cancel');"/>
             </xul:vbox>
           </xul:hbox>                              
           <xul:hbox align="center">
-            <xul:label value="&cmd.resume.label;" class="link"
+            <xul:label value="&cmd.resume.label;" class="text-link"
                        onclick="this.parentNode.parentNode.parentNode.parentNode.fireEvent('resume');"/>
             <xul:label xbl:inherits="value=status" flex="1" crop="right"/>
           </xul:hbox>                            
@@ -341,9 +341,9 @@
           <xul:label value="&done.label;"/>
         </xul:vbox>
         <xul:vbox pack="start">
-          <xul:label value="&cmd.open.label;" class="link" 
+          <xul:label value="&cmd.open.label;" class="text-link" 
                      onclick="this.parentNode.parentNode.parentNode.fireEvent('open');"/>
-          <xul:label value="&cmd.remove.label;" class="link" 
+          <xul:label value="&cmd.remove.label;" class="text-link" 
                      onclick="this.parentNode.parentNode.parentNode.fireEvent('remove');"/>
         </xul:vbox>
       </xul:hbox>
@@ -363,9 +363,9 @@
           <xul:label value="&canceled.label;"/>
         </xul:vbox>
         <xul:vbox pack="start">
-          <xul:label value="&cmd.retry.label;" class="link" 
+          <xul:label value="&cmd.retry.label;" class="text-link" 
                      onclick="this.parentNode.parentNode.parentNode.fireEvent('retry');"/>
-          <xul:label value="&cmd.remove.label;" class="link" 
+          <xul:label value="&cmd.remove.label;" class="text-link" 
                      onclick="this.parentNode.parentNode.parentNode.fireEvent('remove');"/>
         </xul:vbox>
       </xul:hbox>
@@ -385,9 +385,9 @@
           <xul:label value="&failed.label;"/>
         </xul:vbox>
         <xul:vbox pack="start">
-          <xul:label value="&cmd.retry.label;" class="link" 
+          <xul:label value="&cmd.retry.label;" class="text-link" 
                      onclick="this.parentNode.parentNode.parentNode.fireEvent('retry');"/>
-          <xul:label value="&cmd.remove.label;" class="link" 
+          <xul:label value="&cmd.remove.label;" class="text-link" 
                      onclick="this.parentNode.parentNode.parentNode.fireEvent('remove');"/>
         </xul:vbox>
       </xul:hbox>
@@ -441,7 +441,7 @@
           <xul:label value="&done.label;"/>
         </xul:vbox>
         <xul:vbox pack="start">
-          <xul:label value="&cmd.remove.label;" class="link" 
+          <xul:label value="&cmd.remove.label;" class="text-link" 
                      onclick="this.parentNode.parentNode.parentNode.fireEvent('remove');"/>
         </xul:vbox>
       </xul:hbox>
@@ -503,6 +503,11 @@
       </method>
     </implementation>
     <handlers>
+      <handler event="focus">
+      <![CDATA[
+        this.selected = event.target;
+      ]]>
+      </handler>
       <handler event="click">
       <![CDATA[
         if (event.ctrlKey) {
@@ -525,7 +530,6 @@
       <handler event="keypress" keycode="vk_right" modifiers="meta" action="this.selected = null"/>
       <handler event="keypress" keycode="vk_delete" action="if (this.selected) this.selected.fireEvent('remove');"/>
       <handler event="keypress" key=" " action="if (this.selected) { this.selected.pauseResume(); }"/>
-      <handler event="keypress" key="&newNavigatorCmd.key;" modifiers="control" action="parent.window.open('');"/>
     </handlers>
   </binding>
   

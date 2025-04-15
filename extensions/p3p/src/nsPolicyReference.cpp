@@ -186,7 +186,7 @@ nsPolicyReference::LoadPolicyReferenceFileFor(nsIURI* aURI,
     if (!mDocument) {
       nsXPIDLCString value;
       mMainURI->GetPrePath(value);
-      value += NS_LITERAL_CSTRING(kWellKnownLocation);
+      value.AppendLiteral(kWellKnownLocation);
       result = Load(value);
     }
     else {
@@ -200,7 +200,7 @@ nsPolicyReference::LoadPolicyReferenceFileFor(nsIURI* aURI,
     // well known location
     nsXPIDLCString value;
     mCurrentURI->GetPrePath(value);
-    value += NS_LITERAL_CSTRING(kWellKnownLocation);
+    value.AppendLiteral(kWellKnownLocation);
     result = Load(value);
   }
   else if (mFlags & IS_LINKED_URI) {
@@ -245,7 +245,7 @@ nsPolicyReference::Load(const nsACString& aURI)
                                         aURI, PR_TRUE, empty, empty);
   NS_ENSURE_SUCCESS(result, result);
    
-  mXMLHttpRequest->OverrideMimeType(NS_LITERAL_CSTRING("text/xml"));
+  mXMLHttpRequest->OverrideMimeType(NS_LITERAL_CSTRING("application/xml"));
 
   return mXMLHttpRequest->Send(nsnull);
 
@@ -271,7 +271,7 @@ nsPolicyReference::ProcessPolicyReferenceFile(nsIDOMDocument* aDocument,
   nsresult result = NS_OK;
   
   // The root element MUST be META
-  mError = name.Equals(NS_LITERAL_STRING("META")) 
+  mError = name.EqualsLiteral("META") 
     ? POLICY_LOAD_SUCCESS : POLICY_SYNTAX_ERROR;
  
   if (mError != POLICY_LOAD_SUCCESS)

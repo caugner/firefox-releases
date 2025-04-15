@@ -1,23 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.0 (the "NPL"); you may not use this file except in
- * compliance with the NPL.  You may obtain a copy of the NPL at
- * http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the NPL is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the NPL
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * NPL.
+ * License.
  *
- * The Initial Developer of this code under the NPL is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.  All Rights
- * Reserved.
- * 
- * Contributor(s): 
+ * The Original Code is mozilla.org Code.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 
 /*
@@ -45,11 +63,14 @@
 #include "nsIImportFieldMap.h"
 #include "nsIOutputStream.h"
 #include "nsIAddrDatabase.h"
+#include "nsIAbLDIFService.h"
+#include "nsAbBaseCID.h"
 #include "nsTextFormatter.h"
 #include "nsTextStringBundle.h"
 #include "nsIStringBundle.h"
 #include "nsTextAddress.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "nsXPIDLString.h"
 #include "nsProxiedService.h"
 #include "TextDebugLog.h"
@@ -498,7 +519,16 @@ NS_IMETHODIMP ImportAddressImpl::ImportAddressBook(	nsIImportABDescriptor *pSour
 	
     nsresult rv = NS_OK;
 	PRBool	isLDIF = PR_FALSE;
-	rv = nsTextAddress::IsLDIFFile( inFile, &isLDIF);
+
+    nsCOMPtr<nsIAbLDIFService> ldifService = do_GetService(NS_ABLDIFSERVICE_CONTRACTID, &rv);
+
+    if (NS_SUCCEEDED(rv)) {
+      rv = ldifService->IsLDIFFile(inFile, &isLDIF);
+      if (NS_FAILED(rv)) {
+        IMPORT_LOG0( "*** Error reading address file\n");
+      }
+    }
+
 	if (NS_FAILED( rv)) {
 		inFile->Release();
 		ReportError( TEXTIMPORT_ADDRESS_CONVERTERROR, name, &error);
@@ -507,11 +537,10 @@ NS_IMETHODIMP ImportAddressImpl::ImportAddressBook(	nsIImportABDescriptor *pSour
 	}
 	
     if (isLDIF) {
-		// This get's tricky, the database really requires the thing
-		// to have an .ldi extension so if it doesn't we may need to
-		// copy the file to a temp file with the correct name, then
-		// import it!
-		rv = m_text.ImportLDIF( &addrAbort, name.get(), inFile, pDestination, error, &m_bytesImported);
+        if (ldifService)
+          rv = ldifService->ImportLDIFFile(pDestination, inFile, PR_FALSE, &m_bytesImported);
+        else
+          return NS_ERROR_FAILURE;
 	}
 	else {	
 		rv = m_text.ImportAddresses( &addrAbort, name.get(), inFile, pDestination, fieldMap, error, &m_bytesImported);
@@ -560,7 +589,11 @@ NS_IMETHODIMP ImportAddressImpl::GetNeedsFieldMap(nsIFileSpec *location, PRBool 
 		return( NS_ERROR_FAILURE);
 
 	PRBool	isLDIF = PR_FALSE;
-	rv = nsTextAddress::IsLDIFFile( location, &isLDIF);
+    nsCOMPtr<nsIAbLDIFService> ldifService = do_GetService(NS_ABLDIFSERVICE_CONTRACTID, &rv);
+
+    if (NS_SUCCEEDED(rv))
+      rv = ldifService->IsLDIFFile(location, &isLDIF);
+
 	if (NS_FAILED( rv)) {
 		IMPORT_LOG0( "*** Error determining if file is of type LDIF\n");
 		return( rv);
@@ -636,7 +669,7 @@ NS_IMETHODIMP ImportAddressImpl::GetSampleData( PRInt32 index, PRBool *pFound, P
 		PRInt32		fNum = 0;
 		while (nsTextAddress::GetField( pLine, lineLen, fNum, field, m_delim)) {
 			if (fNum)
-				str.Append(NS_LITERAL_STRING("\n"));
+				str.AppendLiteral("\n");
 			SanitizeSampleData( field);
 			if (impSvc)
 				impSvc->SystemStringToUnicode( field.get(), uField);
@@ -695,10 +728,10 @@ NS_IMETHODIMP ImportAddressImpl::InitFieldMap(nsIFileSpec *location, nsIImportFi
 	// from the same file format.
 	
 	nsresult rv;
-	nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &rv));
+	nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
 	if (NS_SUCCEEDED( rv)) {
 		nsXPIDLCString	prefStr;
-		rv = prefs->CopyCharPref( "mailnews.import.text.fieldmap", getter_Copies(prefStr));
+		rv = prefs->GetCharPref( "mailnews.import.text.fieldmap", getter_Copies(prefStr));
 		if (NS_SUCCEEDED( rv)) {
 			const char *pStr = (const char *)prefStr;
 			if (pStr) {
@@ -740,6 +773,14 @@ NS_IMETHODIMP ImportAddressImpl::InitFieldMap(nsIFileSpec *location, nsIImportFi
 				}
 			}
 		}
+
+        // Now also get the last used skip first record value.
+        PRBool skipFirstRecord = PR_FALSE;
+        rv = prefs->GetBoolPref("mailnews.import.text.skipfirstrecord", &skipFirstRecord);
+        if (NS_SUCCEEDED(rv))
+        {
+          fieldMap->SetSkipFirstRecord(skipFirstRecord);
+        }
 	}
 
 	return( NS_OK);
@@ -773,12 +814,12 @@ void ImportAddressImpl::SaveFieldMap( nsIImportFieldMap *pMap)
 
 	PRBool	done = PR_FALSE;
 	nsresult rv;
-	// NS_WITH_PROXIED_SERVICE( nsIPref, prefs, kPrefServiceCID, NS_UI_THREAD_EVENTQ, &rv);
-  nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &rv));
+
+	nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
 
 	if (NS_SUCCEEDED( rv)) {
 		nsXPIDLCString	prefStr;
-		rv = prefs->CopyCharPref( "mailnews.import.text.fieldmap", getter_Copies(prefStr));
+		rv = prefs->GetCharPref( "mailnews.import.text.fieldmap", getter_Copies(prefStr));
 		if (NS_SUCCEEDED( rv)) {
 			if (str.Equals(prefStr))
 				done = PR_TRUE;
@@ -787,4 +828,12 @@ void ImportAddressImpl::SaveFieldMap( nsIImportFieldMap *pMap)
 			rv = prefs->SetCharPref( "mailnews.import.text.fieldmap", str.get());
 		}
 	}
+
+    // Now also save last used skip first record value.
+    PRBool skipFirstRecord = PR_FALSE;
+    rv = pMap->GetSkipFirstRecord(&skipFirstRecord);
+    if (NS_SUCCEEDED(rv))
+    {
+      prefs->SetBoolPref("mailnews.import.text.skipfirstrecord", skipFirstRecord);
+    }
 }

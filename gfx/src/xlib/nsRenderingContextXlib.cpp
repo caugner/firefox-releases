@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -27,18 +27,17 @@
  *   Tim Copperfield <timecop@network.email.ne.jp>
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -73,12 +72,6 @@ static void Widen8To16AndDraw(Drawable    drawable,
                               const char  *text,
                               int          text_length);
 
-
-class nsRenderingContextXlibContext
-{
-public:
-  nsGCCacheXlib mGcCache;
-};
 
 nsresult CreateRenderingContextXlibContext(nsIDeviceContext *aDevice, nsRenderingContextXlibContext **aContext)
 {
@@ -157,10 +150,8 @@ nsRenderingContextXlib::~nsRenderingContextXlib()
   /* Destroy the State Machine */
   PRInt32 cnt = mStateCache.Count();
 
-  while (--cnt >= 0) {
-    PRBool clipstate;
-    PopState(clipstate);
-  }
+  while (--cnt >= 0)
+    PopState();
 
   if (mTranMatrix)
     delete mTranMatrix;
@@ -202,7 +193,7 @@ nsRenderingContextXlib::Init(nsIDeviceContext* aContext, nsIWidget *aWindow)
 }
 
 NS_IMETHODIMP
-nsRenderingContextXlib::Init(nsIDeviceContext* aContext, nsDrawingSurface aSurface)
+nsRenderingContextXlib::Init(nsIDeviceContext* aContext, nsIDrawingSurface* aSurface)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContxtXlib::Init(DeviceContext, DrawingSurface)\n"));
 
@@ -337,8 +328,7 @@ NS_IMETHODIMP
 nsRenderingContextXlib::UnlockDrawingSurface(void)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::UnlockDrawingSurface()\n"));
-  PRBool clipstate;
-  PopState(clipstate);
+  PopState();
 
   mSurface->Unlock();
   
@@ -346,7 +336,7 @@ nsRenderingContextXlib::UnlockDrawingSurface(void)
 }
 
 NS_IMETHODIMP
-nsRenderingContextXlib::SelectOffScreenDrawingSurface(nsDrawingSurface aSurface)
+nsRenderingContextXlib::SelectOffScreenDrawingSurface(nsIDrawingSurface* aSurface)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::SelectOffScreenDrawingSurface()\n"));
   if (nsnull == aSurface)
@@ -358,7 +348,7 @@ nsRenderingContextXlib::SelectOffScreenDrawingSurface(nsDrawingSurface aSurface)
 }
 
 NS_IMETHODIMP
-nsRenderingContextXlib::GetDrawingSurface(nsDrawingSurface *aSurface)
+nsRenderingContextXlib::GetDrawingSurface(nsIDrawingSurface* *aSurface)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::GetDrawingSurface()\n"));
   *aSurface = mSurface;
@@ -414,7 +404,7 @@ nsRenderingContextXlib::PushState(void)
 }
 
 NS_IMETHODIMP
-nsRenderingContextXlib::PopState(PRBool &aClipState)
+nsRenderingContextXlib::PopState(void)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::PopState()\n"));
 
@@ -440,11 +430,6 @@ nsRenderingContextXlib::PopState(PRBool &aClipState)
 
     delete state;
   }
-
-  if (mClipRegion)
-    aClipState = mClipRegion->IsEmpty();
-  else 
-    aClipState = PR_TRUE;
 
   return NS_OK;
 }
@@ -499,20 +484,18 @@ nsRenderingContextXlib::IsVisibleRect(const nsRect& aRect, PRBool &aVisible)
 
 NS_IMETHODIMP 
 nsRenderingContextXlib::SetClipRect(const nsRect& aRect,
-                                    nsClipCombine aCombine,
-                                    PRBool &aClipEmpty)
+                                    nsClipCombine aCombine)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::SetClipRect()\n"));
   nsRect trect = aRect;
   mTranMatrix->TransformCoord(&trect.x, &trect.y,
                               &trect.width, &trect.height);
-  SetClipRectInPixels(trect, aCombine, aClipEmpty);
+  SetClipRectInPixels(trect, aCombine);
   return NS_OK;
 }
 
 void nsRenderingContextXlib::SetClipRectInPixels(const nsRect& aRect,
-                                                 nsClipCombine aCombine,
-                                                 PRBool &aClipEmpty)
+                                                 nsClipCombine aCombine)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::SetClipRectInPixels()\n"));
 
@@ -531,8 +514,6 @@ void nsRenderingContextXlib::SetClipRectInPixels(const nsRect& aRect,
       mClipRegion->SetTo(aRect.x,aRect.y,aRect.width,aRect.height);
       break;
   }
-  
-  aClipEmpty = mClipRegion->IsEmpty();
 }
 
 NS_IMETHODIMP
@@ -552,7 +533,7 @@ nsRenderingContextXlib::GetClipRect(nsRect &aRect, PRBool &aClipState)
 }
 
 NS_IMETHODIMP
-nsRenderingContextXlib::SetClipRegion(const nsIRegion& aRegion, nsClipCombine aCombine, PRBool &aClipState)
+nsRenderingContextXlib::SetClipRegion(const nsIRegion& aRegion, nsClipCombine aCombine)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::SetClipRegion()\n"));
   switch(aCombine)
@@ -570,8 +551,6 @@ nsRenderingContextXlib::SetClipRegion(const nsIRegion& aRegion, nsClipCombine aC
       mClipRegion->SetTo(aRegion);
       break;
   }
-
-  aClipState = mClipRegion->IsEmpty();
 
   return NS_OK;
 }
@@ -604,7 +583,7 @@ void nsRenderingContextXlib::UpdateGC()
    XGCValues     values;
    unsigned long valuesMask = 0;
 
-   Drawable drawable; mSurface->GetDrawable(drawable);
+   Drawable drawable; mOffscreenSurface->GetDrawable(drawable);
  
    if (mGC)
      mGC->Release();
@@ -773,7 +752,7 @@ nsRenderingContextXlib::GetCurrentTransform(nsTransform2D *&aTransform)
 NS_IMETHODIMP
 nsRenderingContextXlib::CreateDrawingSurface(const nsRect& aBounds,
                                              PRUint32 aSurfFlags,
-                                             nsDrawingSurface &aSurface)
+                                             nsIDrawingSurface* &aSurface)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::CreateDrawingSurface()\n"));
 
@@ -794,13 +773,13 @@ nsRenderingContextXlib::CreateDrawingSurface(const nsRect& aBounds,
     rv = surf->Init(mXlibRgbHandle, mGC, aBounds.width, aBounds.height, aSurfFlags);    
   }
 
-  aSurface = (nsDrawingSurface)surf;
+  aSurface = surf;
 
   return rv;
 }
 
 NS_IMETHODIMP
-nsRenderingContextXlib::DestroyDrawingSurface(nsDrawingSurface aDS)
+nsRenderingContextXlib::DestroyDrawingSurface(nsIDrawingSurface* aDS)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::DestroyDrawingSurface()\n"));
   nsIDrawingSurfaceXlib *surf = NS_STATIC_CAST(nsIDrawingSurfaceXlib *, aDS);;
@@ -816,37 +795,6 @@ NS_IMETHODIMP
 nsRenderingContextXlib::DrawLine(nscoord aX0, nscoord aY0, nscoord aX1, nscoord aY1)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::DrawLine()\n"));
-
-  nscoord diffX, diffY;
-
-  NS_ENSURE_TRUE(mTranMatrix != nsnull, NS_ERROR_FAILURE);
-  NS_ENSURE_TRUE(mSurface    != nsnull, NS_ERROR_FAILURE);
-
-  mTranMatrix->TransformCoord(&aX0,&aY0);
-  mTranMatrix->TransformCoord(&aX1,&aY1);
-  
-  diffX = aX1-aX0;
-  diffY = aY1-aY0;
-
-  if (0!=diffX) {
-    diffX = (diffX>0?1:-1);
-  }
-  if (0!=diffY) {
-    diffY = (diffY>0?1:-1);
-  }
-
-  UpdateGC();
-  Drawable drawable; mSurface->GetDrawable(drawable);
-  ::XDrawLine(mDisplay, drawable,
-              *mGC, aX0, aY0, aX1 - diffX, aY1 - diffY);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsRenderingContextXlib::DrawStdLine(nscoord aX0, nscoord aY0, nscoord aX1, nscoord aY1)
-{
-  PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::DrawStdLine()\n"));
 
   nscoord diffX, diffY;
 
@@ -1011,6 +959,10 @@ nsRenderingContextXlib::InvertRect(nscoord aX, nscoord aY, nscoord aWidth, nscoo
   NS_ENSURE_TRUE(mTranMatrix != nsnull, NS_ERROR_FAILURE);
   NS_ENSURE_TRUE(mSurface    != nsnull, NS_ERROR_FAILURE);
   
+  // Back up the current color, and use GXxor against white to get a
+  // visible result.
+  nscolor backupColor = mCurrentColor;
+  mCurrentColor = NS_RGB(255, 255, 255);
   nscoord x,y,w,h;
 
   x = aX;
@@ -1038,6 +990,9 @@ nsRenderingContextXlib::InvertRect(nscoord aX, nscoord aY, nscoord aWidth, nscoo
                    h);
   
   mFunction = GXcopy;
+
+  // Restore current color
+  mCurrentColor = backupColor;
 
   return NS_OK;
 }
@@ -1379,15 +1334,9 @@ nsRenderingContextXlib::GetWidth(const char* aString, PRUint32 aLength,
     nsXFont *xFont = mCurrentFont->GetXFont();
 #ifdef USE_FREETYPE
     if (mCurrentFont->IsFreeTypeFont()) {
-      PRUnichar unichars[WIDEN_8_TO_16_BUF_SIZE];
-      // need to fix this for long strings
-      PRUint32 len = PR_MIN(aLength, WIDEN_8_TO_16_BUF_SIZE);
-      // convert 7 bit data to unicode
       // this function is only supposed to be called for ascii data
-      for (PRUint32 i=0; i<len; i++) {
-        unichars[i] = (PRUnichar)((unsigned char)aString[i]);
-      }
-      rawWidth = mCurrentFont->GetWidth(unichars, len);
+      rawWidth = mCurrentFont->
+        GetWidth(NS_ConvertASCIItoUTF16(aString, aLength).get(), aLength);
     }
     else
 #endif /* USE_FREETYPE */
@@ -1628,7 +1577,7 @@ struct BreakGetTextDimensionsData {
   // Remember the fonts that we use so that we can deal with
   // line-breaking in-between fonts later. mOffsets[0] is also used
   // to initialize the current offset from where to start measuring
-  nsVoidArray* mFonts;   // OUT
+  nsVoidArray* mFonts;   // IN/OUT
   nsVoidArray* mOffsets; // IN/OUT
 };
 
@@ -1649,10 +1598,10 @@ do_BreakGetTextDimensions(const nsFontSwitchXlib *aFontSwitch,
   PRInt32 numCharsFit = data->mNumCharsFit;
   nscoord width = data->mWidth;
   PRInt32 start = (PRInt32)(aSubstring - pstr);
-  PRInt32 i = start + aSubstringLength;
+  PRInt32 end = start + aSubstringLength;
   PRBool allDone = PR_FALSE;
 
-  while (start < i) {
+  while (start < end) {
     // Estimate how many characters will fit. Do that by dividing the
     // available space by the average character width
     PRInt32 estimatedNumChars = data->mEstimatedNumChars;
@@ -1672,9 +1621,9 @@ do_BreakGetTextDimensions(const nsFontSwitchXlib *aFontSwitch,
 
     // Avoid scanning the break array in the case where we think all
     // the text should fit
-    if (i <= estimatedBreakOffset) {
+    if (end <= estimatedBreakOffset) {
       // Everything should fit
-      numChars = i - start;
+      numChars = end - start;
     }
     else {
       // Find the nearest place to break that is less than or equal to
@@ -1694,20 +1643,20 @@ do_BreakGetTextDimensions(const nsFontSwitchXlib *aFontSwitch,
       if (start < data->mBreaks[breakIndex]) {
         // The text crosses at least one segment boundary so measure to the
         // break point just before the estimated break offset
-        numChars = PR_MIN(data->mBreaks[breakIndex] - start, (PRInt32)aSubstringLength);
+        numChars = PR_MIN(data->mBreaks[breakIndex], end) - start;
       } 
       else {
         // See whether there is another segment boundary between this one
         // and the end of the text
-        if ((breakIndex < (data->mNumBreaks - 1)) && (data->mBreaks[breakIndex] < i)) {
+        if ((breakIndex < (data->mNumBreaks - 1)) && (data->mBreaks[breakIndex] < end)) {
           ++breakIndex;
-          numChars = PR_MIN(data->mBreaks[breakIndex] - start, (PRInt32)aSubstringLength);
+          numChars = PR_MIN(data->mBreaks[breakIndex], end) - start;
         }
         else {
-          NS_ASSERTION(i != data->mBreaks[breakIndex], "don't expect to be at segment boundary");
+          NS_ASSERTION(end != data->mBreaks[breakIndex], "don't expect to be at segment boundary");
 
           // The text is all within the same segment
-          numChars = i - start;
+          numChars = end - start;
 
           // Remember we're in the middle of a segment and not between
           // two segments
@@ -1771,17 +1720,15 @@ do_BreakGetTextDimensions(const nsFontSwitchXlib *aFontSwitch,
 
       // We can't just revert to the previous break state. Find the break
       // index just before the end of the text
-      i = start + numChars;
-      if (breakIndex == -1) {
-        breakIndex = 0;
-        if (data->mBreaks[breakIndex] < i) {
-          while ((breakIndex + 1 < data->mNumBreaks) && (data->mBreaks[breakIndex + 1] < i)) {
-            ++breakIndex;
-          }
+      end = start + numChars;
+      breakIndex = 0;
+      if (data->mBreaks[breakIndex] < end) {
+        while ((breakIndex + 1 < data->mNumBreaks) && (data->mBreaks[breakIndex + 1] < end)) {
+          ++breakIndex;
         }
       }
 
-      if ((0 == breakIndex) && (i <= data->mBreaks[0])) {
+      if ((0 == breakIndex) && (end <= data->mBreaks[0])) {
         // There's no place to back up to, so even though the text doesn't fit
         // return it anyway
         numCharsFit += numChars;
@@ -1810,21 +1757,52 @@ do_BreakGetTextDimensions(const nsFontSwitchXlib *aFontSwitch,
       // all the way back to the first word
       width += twWidth;
       while ((breakIndex >= 0) && (width > data->mAvailWidth)) {
-        twWidth = 0;
         start = data->mBreaks[breakIndex];
-        numChars = i - start;
+        numChars = end - start;
+        numCharsFit = start;
         if ((1 == numChars) && (pstr[start] == ' ')) {
-          twWidth = data->mSpaceWidth;
+          width -= data->mSpaceWidth;
         }
-        else if (numChars > 0) {
+        else if (pstr + start >= aSubstring) {
+          // The entire fragment to chop is within the current font.
           pxWidth = fontXlib->GetWidth(&pstr[start], numChars);
-          twWidth = NSToCoordRound(float(pxWidth) * data->mP2T);
+          width -= NSToCoordRound(float(pxWidth) * data->mP2T);
+        }
+        else {
+          // The fragment that we want to chop extends back into previous fonts.
+          // We need to reverse into previous fonts. Fortunately,
+          // data->mFonts[] and data->mOffsets[] tell us which fonts are used
+          // and when. 
+          end = data->mNumCharsFit; // same as aSubstring - pstr
+          data->mNumCharsFit = numCharsFit; // has got shorter...
+          PRInt32 k = data->mFonts->Count() - 1;
+          for ( ; k >= 0 && start < end; --k, end -= numChars) {
+            fontXlib = (nsFontXlib*)data->mFonts->ElementAt(k);
+            const PRUnichar* ps = (const PRUnichar*)data->mOffsets->ElementAt(k);
+            if (ps < pstr + start)
+              ps = pstr + start;
+
+            numChars = pstr + end - ps;
+            NS_ASSERTION(numChars > 0, "empty string");
+
+            pxWidth = fontXlib->GetWidth(ps, numChars);
+            data->mWidth -= NSToCoordRound(float(pxWidth) * data->mP2T);
+
+            // By construction, mFonts[k] is the last font, and
+            // mOffsets[k+1] is the last offset.
+            data->mFonts->RemoveElementAt(k);
+            data->mOffsets->RemoveElementAt(k+1);
+          }
+
+          // We are done, update the data now because we won't do it later.
+          // The |if (data->mNumCharsFit != numCharsFit)| won't apply below
+          data->mFonts->AppendElement(fontXlib);
+          data->mOffsets->AppendElement((void*)&pstr[numCharsFit]);
+          break;
         }
 
-        width -= twWidth;
-        numCharsFit = start;
         --breakIndex;
-        i = start;
+        end = start;
       }
     }
 
@@ -1832,7 +1810,7 @@ do_BreakGetTextDimensions(const nsFontSwitchXlib *aFontSwitch,
   }
 
 #ifdef DEBUG_rbs
-  NS_ASSERTION(allDone || start == i, "internal error");
+  NS_ASSERTION(allDone || start == end, "internal error");
   NS_ASSERTION(allDone || data->mNumCharsFit != numCharsFit, "internal error");
 #endif /* DEBUG_rbs */
 
@@ -2111,16 +2089,10 @@ nsRenderingContextXlib::DrawString(const char *aString, PRUint32 aLength,
         mTranMatrix->TransformCoord(&xx, &yy);
 #ifdef USE_FREETYPE
         if (mCurrentFont->IsFreeTypeFont()) {
-          PRUnichar unichars[WIDEN_8_TO_16_BUF_SIZE];
-          // need to fix this for long strings
-          PRUint32 len = PR_MIN(aLength, WIDEN_8_TO_16_BUF_SIZE);
-          // convert 7 bit data to unicode
           // this function is only supposed to be called for ascii data
-          for (PRUint32 i=0; i<len; i++) {
-            unichars[i] = (PRUnichar)((unsigned char)aString[i]);
-          }
-          res = mCurrentFont->DrawString(this, mSurface, xx, yy,
-                                         unichars, len);
+          res = mCurrentFont->DrawString(this, mSurface, xx, yy, 
+                            NS_ConvertASCIItoUTF16(aString, aLength).get(),
+                            aLength);
         }
         else
 #endif /* USE_FREETYPE */
@@ -2142,16 +2114,10 @@ nsRenderingContextXlib::DrawString(const char *aString, PRUint32 aLength,
       mTranMatrix->TransformCoord(&x, &y);
 #ifdef USE_FREETYPE
       if (mCurrentFont->IsFreeTypeFont()) {
-        PRUnichar unichars[WIDEN_8_TO_16_BUF_SIZE];
-        // need to fix this for long strings
-        PRUint32 len = PR_MIN(aLength, WIDEN_8_TO_16_BUF_SIZE);
-        // convert 7 bit data to unicode
         // this function is only supposed to be called for ascii data
-        for (PRUint32 i=0; i<len; i++) {
-          unichars[i] = (PRUnichar)((unsigned char)aString[i]);
-        }
-        res = mCurrentFont->DrawString(this, mSurface, x, y,
-                                       unichars, len);
+        res = mCurrentFont->DrawString(this, mSurface, x, y, 
+                          NS_ConvertASCIItoUTF16(aString, aLength).get(),
+                          aLength);
       }
       else
 #endif /* USE_FREETYPE */
@@ -2174,9 +2140,7 @@ nsRenderingContextXlib::DrawString(const char *aString, PRUint32 aLength,
   //will take it's place that will need this code again. MMP
   if (mFontMetrics)
   {
-    const nsFont *font;
-    mFontMetrics->GetFont(font);
-    PRUint8 deco = font->decorations;
+    PRUint8 deco = mFontMetrics->Font().decorations;
 
     if (deco & NS_FONT_DECORATION_OVERLINE)
       DrawLine(aX, aY, aX + aWidth, aY);
@@ -2319,7 +2283,7 @@ nsRenderingContextXlib::DrawString(const nsString& aString,
 }
 
 NS_IMETHODIMP
-nsRenderingContextXlib::CopyOffScreenBits(nsDrawingSurface aSrcSurf, PRInt32 aSrcX, PRInt32 aSrcY,
+nsRenderingContextXlib::CopyOffScreenBits(nsIDrawingSurface* aSrcSurf, PRInt32 aSrcX, PRInt32 aSrcY,
                                           const nsRect &aDestBounds, PRUint32 aCopyFlags)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::CopyOffScreenBits()\n"));
@@ -2426,16 +2390,10 @@ nsRenderingContextXlib::GetBoundingMetrics(const char*        aString,
     nsXFont *xFont = mCurrentFont->GetXFont();
 #ifdef USE_FREETYPE
     if (mCurrentFont->IsFreeTypeFont()) {
-      PRUnichar unichars[WIDEN_8_TO_16_BUF_SIZE];
-      // need to fix this for long strings
-      PRUint32 len = PR_MIN(aLength, WIDEN_8_TO_16_BUF_SIZE);
-      // convert 7 bit data to unicode
       // this function is only supposed to be called for ascii data
-      for (PRUint32 i=0; i<len; i++) {
-        unichars[i] = (PRUnichar)((unsigned char)aString[i]);
-      }
-      res = mCurrentFont->GetBoundingMetrics(unichars, len,
-                                            aBoundingMetrics);
+      res = mCurrentFont->GetBoundingMetrics(
+                        NS_ConvertASCIItoUTF16(aString, aLength).get(),
+                        aLength, aBoundingMetrics);
     }
     else
 #endif /* USE_FREETYPE */
@@ -2548,28 +2506,23 @@ nsRenderingContextXlib::GetBoundingMetrics(const PRUnichar*   aString,
 #endif /* MOZ_MATHML */
 
 NS_IMETHODIMP
-nsRenderingContextXlib::DrawImage(imgIContainer *aImage, const nsRect * aSrcRect, const nsPoint * aDestPoint)
+nsRenderingContextXlib::DrawImage(imgIContainer *aImage, const nsRect & aSrcRect, const nsRect & aDestRect)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::DrawImage()\n"));
   UpdateGC();
-  return nsRenderingContextImpl::DrawImage(aImage, aSrcRect, aDestPoint);
+  return nsRenderingContextImpl::DrawImage(aImage, aSrcRect, aDestRect);
 }
 
 NS_IMETHODIMP
-nsRenderingContextXlib::DrawScaledImage(imgIContainer *aImage, const nsRect * aSrcRect, const nsRect * aDestRect)
-{
-  PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::DrawScaledImage()\n"));
-  UpdateGC();
-  return nsRenderingContextImpl::DrawScaledImage(aImage, aSrcRect, aDestRect);
-}
-
-NS_IMETHODIMP
-nsRenderingContextXlib::GetBackbuffer(const nsRect &aRequestedSize, const nsRect &aMaxSize, nsDrawingSurface &aBackbuffer)
+nsRenderingContextXlib::GetBackbuffer(const nsRect &aRequestedSize,
+                                      const nsRect &aMaxSize,
+                                      PRBool aForBlending,
+                                      nsIDrawingSurface* &aBackbuffer)
 {
   PR_LOG(RenderingContextXlibLM, PR_LOG_DEBUG, ("nsRenderingContextXlib::GetBackbuffer()\n"));
   /* Do not cache the backbuffer. On X11 it is more efficient to allocate
    * the backbuffer as needed and it doesn't cause a performance hit. @see bug 95952 */
-  return AllocateBackbuffer(aRequestedSize, aMaxSize, aBackbuffer, PR_FALSE);
+  return AllocateBackbuffer(aRequestedSize, aMaxSize, aBackbuffer, PR_FALSE, 0);
 }
  
 NS_IMETHODIMP

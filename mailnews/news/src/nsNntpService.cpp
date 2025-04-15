@@ -1,11 +1,11 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -27,16 +27,16 @@
  *   David Bienvenu < bienvenu@nventure.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -66,7 +66,6 @@
 #include "nsIMsgAccountManager.h"
 #include "nsIMessengerMigrator.h"
 #include "nsINntpIncomingServer.h"
-#include "nsICmdLineHandler.h"
 #include "nsICategoryManager.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellLoadInfo.h"
@@ -86,6 +85,11 @@
 #include "nsMsgUtils.h"
 #include "nsEscape.h"
 #include "nsNetUtil.h"
+#include "nsIWindowWatcher.h"
+
+#ifdef MOZ_XUL_APP
+#include "nsICommandLine.h"
+#endif
 
 #undef GetPort  // XXX Windows!
 #undef SetPort  // XXX Windows!
@@ -117,7 +121,7 @@ NS_IMPL_QUERY_INTERFACE7(nsNntpService,
                          nsIMsgMessageService,
                          nsIProtocolHandler,
                          nsIMsgProtocolInfo,
-                         nsICmdLineHandler,
+                         ICOMMANDLINEHANDLER,
                          nsIMsgMessageFetchPartService,
                          nsIContentHandler)
 
@@ -619,29 +623,15 @@ nsNntpService::GetFolderFromUri(const char *aUri, nsIMsgFolder **aFolder)
   nsresult rv = NS_NewURI(getter_AddRefs(uri), nsDependentCString(aUri));
   NS_ENSURE_SUCCESS(rv,rv);
 
-  nsCAutoString hostName;
-  rv = uri->GetAsciiHost(hostName);
-  NS_ENSURE_SUCCESS(rv,rv);
-
   nsCAutoString path;
   rv = uri->GetPath(path);
   NS_ENSURE_SUCCESS(rv,rv);
-
-  nsCAutoString userPass;
-  rv = uri->GetUserPass(userPass);
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  char *unescapedUserPass = ToNewCString(userPass);
-  if (!unescapedUserPass)
-    return NS_ERROR_OUT_OF_MEMORY;
-  nsUnescape(unescapedUserPass);
 
   nsCOMPtr <nsIMsgAccountManager> accountManager = do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv,rv);
 
   nsCOMPtr <nsIMsgIncomingServer> server;
-  rv = accountManager->FindServer(unescapedUserPass, hostName.get(), "nntp", getter_AddRefs(server));
-  PR_Free(unescapedUserPass);
+  rv = accountManager->FindServerByURI(uri, PR_FALSE, getter_AddRefs(server));
   NS_ENSURE_SUCCESS(rv,rv);
 
   nsCOMPtr <nsIMsgFolder> rootFolder;
@@ -666,7 +656,8 @@ nsNntpService::GetFolderFromUri(const char *aUri, nsIMsgFolder **aFolder)
   nsUnescape(unescapedPath);
 
   nsCOMPtr<nsISupports> subFolder;
-  rv = rootFolder->GetChildNamed(NS_ConvertASCIItoUCS2(unescapedPath).get() , getter_AddRefs(subFolder));
+  rv = rootFolder->GetChildNamed(NS_ConvertUTF8toUTF16(unescapedPath).get() ,
+                                 getter_AddRefs(subFolder));
   PL_strfree(unescapedPath);
   NS_ENSURE_SUCCESS(rv,rv);
 
@@ -695,10 +686,10 @@ nsNntpService::CopyMessages(nsMsgKeyArray *keys, nsIMsgFolder *srcFolder, nsIStr
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-typedef struct _findNewsServerEntry {
+struct findNewsServerEntry {
   const char *newsgroup;
   nsINntpIncomingServer *server;
-} findNewsServerEntry;
+};
 
 
 PRBool 
@@ -713,7 +704,10 @@ nsNntpService::findNewsServerWithGroup(nsISupports *aElement, void *data)
   
   PRBool containsGroup = PR_FALSE;
   
-  rv = newsserver->ContainsNewsgroup((const char *)(entry->newsgroup), &containsGroup);
+  NS_ASSERTION(IsUTF8(nsDependentCString(entry->newsgroup)),
+                      "newsgroup is not in UTF-8");
+  rv = newsserver->ContainsNewsgroup(nsDependentCString(entry->newsgroup),
+                                     &containsGroup);
   if (NS_FAILED(rv)) return PR_TRUE;
   
   if (containsGroup) 
@@ -795,9 +789,10 @@ nsNntpService::SetUpNntpUrlForPosting(const char *aAccountKey, char **newsUrlSpe
 
   return NS_OK;
 }
-////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 // nsINntpService support
-////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// XXX : may not work with non-ASCII newsgroup names and IDN hostnames
 NS_IMETHODIMP
 nsNntpService::GenerateNewsHeaderValsForPosting(const char *newsgroupsList, char **newsgroupsHeaderVal, char **newshostHeaderVal)
 {
@@ -1136,17 +1131,13 @@ nsNntpService::GetProtocolForUri(nsIURI *aUri, nsIMsgWindow *aMsgWindow, nsINNTP
   //
   // xxx todo what if we have two servers on the same host, but different ports?
   // or no port, but isSecure (snews:// vs news://) is different?
-  rv = accountManager->FindServer("",
-                                hostName.get(),
-                                "nntp",
+  rv = accountManager->FindServerByURI(aUri, PR_FALSE,
                                 getter_AddRefs(server));
 
   if (!server)
   {
     // try the "real" settings ("realservername" and "realusername")
-    rv = accountManager->FindRealServer("",
-                                hostName.get(),
-                                "nntp",
+    rv = accountManager->FindServerByURI(aUri, PR_TRUE,
                                 getter_AddRefs(server));
   }
 
@@ -1159,7 +1150,7 @@ nsNntpService::GetProtocolForUri(nsIURI *aUri, nsIMsgWindow *aMsgWindow, nsINNTP
     NS_ENSURE_SUCCESS(rv,rv);
 
     // until we support default news servers, use the first nntp server we find
-    rv = accountManager->FindServer("","","nntp", getter_AddRefs(server));
+    rv = accountManager->FindServerByURI(aUri, PR_FALSE, getter_AddRefs(server));
     if (NS_FAILED(rv) || !server)
     {
         // step 2, set the uri's hostName and the local variable hostName
@@ -1708,11 +1699,42 @@ nsNntpService::GetListOfGroupsOnServer(nsINntpIncomingServer *aNntpServer, nsIMs
   return NS_OK;
 }
 
+
+#ifdef MOZ_XUL_APP
+
+NS_IMETHODIMP
+nsNntpService::Handle(nsICommandLine* aCmdLine)
+{
+  nsresult rv;
+  PRBool found;
+
+  rv = aCmdLine->HandleFlag(NS_LITERAL_STRING("news"), PR_FALSE, &found);
+  if (NS_SUCCEEDED(rv) && found) {
+    nsCOMPtr<nsIWindowWatcher> wwatch (do_GetService(NS_WINDOWWATCHER_CONTRACTID));
+    NS_ENSURE_TRUE(wwatch, NS_ERROR_FAILURE);
+
+    nsCOMPtr<nsIDOMWindow> opened;
+    wwatch->OpenWindow(nsnull, "chrome://messenger/content/", "_blank",
+                       "chrome,dialog=no,all", nsnull, getter_AddRefs(opened));
+    aCmdLine->SetPreventDefault(PR_TRUE);
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNntpService::GetHelpInfo(nsACString& aResult)
+{
+  aResult.Assign(NS_LITERAL_CSTRING("  -news                Open the news client.\n"));
+  return NS_OK;
+}
+
+#else // MOZ_XUL_APP
+
 CMDLINEHANDLER3_IMPL(nsNntpService,"-news","general.startup.news","Start with news.",NS_NEWSSTARTUPHANDLER_CONTRACTID,"News Cmd Line Handler", PR_FALSE,"", PR_TRUE)
 
 NS_IMETHODIMP nsNntpService::GetChromeUrlForTask(char **aChromeUrlForTask) 
 { 
-#ifndef MOZ_THUNDERBIRD
   if (!aChromeUrlForTask) return NS_ERROR_FAILURE; 
   nsresult rv;
   nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
@@ -1733,14 +1755,11 @@ NS_IMETHODIMP nsNntpService::GetChromeUrlForTask(char **aChromeUrlForTask)
   }
   *aChromeUrlForTask = PL_strdup("chrome://messenger/content/messenger.xul"); 
   return NS_OK; 
-#else
-  NS_ENSURE_ARG_POINTER(aChromeUrlForTask);
-  *aChromeUrlForTask = PL_strdup("chrome://messenger/content/"); 
-#endif
 }
+#endif // MOZ_XUL_APP
 
 NS_IMETHODIMP 
-nsNntpService::HandleContent(const char * aContentType, const char * aCommand, nsISupports * aWindowContext, nsIRequest *request)
+nsNntpService::HandleContent(const char * aContentType, nsIInterfaceRequestor* aWindowContext, nsIRequest *request)
 {
   nsresult rv;
   NS_ENSURE_ARG_POINTER(request);

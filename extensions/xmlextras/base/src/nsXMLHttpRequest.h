@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,11 +27,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -55,7 +54,7 @@
 #include "nsISupportsArray.h"
 #include "jsapi.h"
 #include "nsIScriptContext.h"
-#include "nsIHttpEventSink.h"
+#include "nsIChannelEventSink.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIHttpHeaderVisitor.h"
 #include "nsIProgressEventSink.h"
@@ -69,7 +68,7 @@ class nsXMLHttpRequest : public nsIXMLHttpRequest,
                          public nsIDOMLoadListener,
                          public nsIDOMEventTarget,
                          public nsIStreamListener,
-                         public nsIHttpEventSink, 
+                         public nsIChannelEventSink,
                          public nsIInterfaceRequestor,
                          public nsIProgressEventSink,
                          public nsSupportsWeakReference
@@ -80,10 +79,10 @@ public:
 
   NS_DECL_ISUPPORTS
 
-  // nsIXMLHttpRequest  
+  // nsIXMLHttpRequest
   NS_DECL_NSIXMLHTTPREQUEST
 
-  // nsIJSXMLHttpRequest  
+  // nsIJSXMLHttpRequest
   NS_DECL_NSIJSXMLHTTPREQUEST
 
   // nsIDOMEventTarget
@@ -105,8 +104,8 @@ public:
   // nsIRequestObserver
   NS_DECL_NSIREQUESTOBSERVER
 
-  // nsIHttpEventSink
-  NS_DECL_NSIHTTPEVENTSINK
+  // nsIChannelEventSink
+  NS_DECL_NSICHANNELEVENTSINK
 
   // nsIProgressEventSink
   NS_DECL_NSIPROGRESSEVENTSINK
@@ -125,9 +124,14 @@ protected:
                 PRUint32 toOffset,
                 PRUint32 count,
                 PRUint32 *writeCount);
-  // Change the state of the object with this. The broadcast member determines
-  // if the onreadystatechange listener should be called.
-  nsresult ChangeState(PRUint32 aState, PRBool aBroadcast = PR_TRUE);
+  // Change the state of the object with this. The broadcast argument
+  // determines if the onreadystatechange listener should be called.
+  // If aClearEventListeners is true, ChangeState will take refs to
+  // any event listeners it needs and call ClearEventListeners before
+  // making any HandleEvent() calls that could change the listener
+  // values.
+  nsresult ChangeState(PRUint32 aState, PRBool aBroadcast = PR_TRUE,
+                       PRBool aClearEventListeners = PR_FALSE);
   nsresult RequestCompleted();
   nsresult GetLoadGroup(nsILoadGroup **aLoadGroup);
   nsIURI *GetBaseURI();
@@ -150,7 +154,7 @@ protected:
   nsCOMPtr<nsIDOMEventListener> mOnErrorListener;
   nsCOMPtr<nsIDOMEventListener> mOnProgressListener;
 
-  nsCOMPtr<nsIOnReadystatechangeHandler> mOnReadystatechangeListener;
+  nsCOMPtr<nsIOnReadyStateChangeHandler> mOnReadystatechangeListener;
 
   nsCOMPtr<nsIStreamListener> mXMLParserStreamListener;
   nsCOMPtr<nsIEventQueueService> mEventQService;
@@ -170,7 +174,20 @@ protected:
   nsCString mResponseBody;
 
   nsCString mOverrideMimeType;
-  
+
+  /**
+   * The notification callbacks the channel had when Send() was
+   * called.  We want to forward things here as needed.
+   */
+  nsCOMPtr<nsIInterfaceRequestor> mNotificationCallbacks;
+  /**
+   * Sink interfaces that we implement that mNotificationCallbacks may
+   * want to also be notified for.  These are inited lazily if we're
+   * asked for the relevant interface.
+   */
+  nsCOMPtr<nsIChannelEventSink> mChannelEventSink;
+  nsCOMPtr<nsIProgressEventSink> mProgressEventSink;
+
   PRUint32 mState;
 };
 
@@ -180,7 +197,7 @@ protected:
 class nsXMLHttpProgressEvent : public nsIDOMLSProgressEvent
 {
 public:
-  nsXMLHttpProgressEvent(nsIDOMEvent * aInner, PRUint32 aCurrentProgress, PRUint32 aMaxProgress);
+  nsXMLHttpProgressEvent(nsIDOMEvent * aInner, PRUint64 aCurrentProgress, PRUint64 aMaxProgress);
   virtual ~nsXMLHttpProgressEvent();
 
   NS_DECL_ISUPPORTS
@@ -189,8 +206,8 @@ public:
 
 protected:
   nsCOMPtr<nsIDOMEvent> mInner;
-  PRUint32 mCurProgress;
-  PRUint32 mMaxProgress;
+  PRUint64 mCurProgress;
+  PRUint64 mMaxProgress;
 };
 
 #endif

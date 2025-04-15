@@ -1,25 +1,41 @@
-/* -*- Mode: IDL; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   John Bandhauer <jband@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* The long avoided variant support for xpcom. */
 
@@ -68,7 +84,6 @@ static nsresult ACString2Double(const nsACString& aString, double* retval)
 static nsresult ToManageableNumber(const nsDiscriminatedUnion& inData,
                                    nsDiscriminatedUnion* outData)
 {
-    nsAutoString tempString;
     nsresult rv;
 
     switch(inData.mType)
@@ -146,8 +161,8 @@ static nsresult ToManageableNumber(const nsDiscriminatedUnion& inData,
         return NS_OK;
     case nsIDataType::VTYPE_WCHAR_STR:
     case nsIDataType::VTYPE_WSTRING_SIZE_IS:
-        tempString.Assign(inData.u.wstr.mWStringValue);
-        rv = AString2Double(tempString, &outData->u.mDoubleValue);
+        rv = AString2Double(nsDependentString(inData.u.wstr.mWStringValue),
+                            &outData->u.mDoubleValue);
         if(NS_FAILED(rv))
             return rv;
         outData->mType = nsIDataType::VTYPE_DOUBLE;
@@ -779,8 +794,12 @@ static nsresult ToString(const nsDiscriminatedUnion& data,
     // XXX We might want stringified versions of these... ???
 
     case nsIDataType::VTYPE_VOID:
-    case nsIDataType::VTYPE_EMPTY_ARRAY:
     case nsIDataType::VTYPE_EMPTY:
+        outString.Truncate();
+        outString.SetIsVoid(true);
+        return NS_OK;
+
+    case nsIDataType::VTYPE_EMPTY_ARRAY:
     case nsIDataType::VTYPE_ARRAY:
     case nsIDataType::VTYPE_INTERFACE:
     case nsIDataType::VTYPE_INTERFACE_IS:
@@ -796,6 +815,21 @@ static nsresult ToString(const nsDiscriminatedUnion& data,
         outString.Assign(ptr);
         nsMemory::Free(ptr);
         return NS_OK;
+
+    // Can't use PR_smprintf for floats, since it's locale-dependent
+#define CASE__APPENDFLOAT_NUMBER(type_, member_)                        \
+    case nsIDataType :: type_ :                                         \
+    {                                                                   \
+        nsCAutoString str;                                              \
+        str.AppendFloat(data.u. member_);                               \
+        outString.Assign(str);                                          \
+        return NS_OK;                                                   \
+    }
+
+    CASE__APPENDFLOAT_NUMBER(VTYPE_FLOAT,  mFloatValue)
+    CASE__APPENDFLOAT_NUMBER(VTYPE_DOUBLE, mDoubleValue)
+
+#undef CASE__APPENDFLOAT_NUMBER
 
     // the rest can be PR_smprintf'd and use common code.
 
@@ -813,9 +847,6 @@ static nsresult ToString(const nsDiscriminatedUnion& data,
     CASE__SMPRINTF_NUMBER(VTYPE_UINT16, "%u",   unsigned, mUint16Value)
     CASE__SMPRINTF_NUMBER(VTYPE_UINT32, "%u",   unsigned, mUint32Value)
     CASE__SMPRINTF_NUMBER(VTYPE_UINT64, "%llu", PRInt64,  mUint64Value)
-
-    CASE__SMPRINTF_NUMBER(VTYPE_FLOAT,  "%f",   float,    mFloatValue)
-    CASE__SMPRINTF_NUMBER(VTYPE_DOUBLE, "%f",   double,   mDoubleValue)
 
     // XXX Would we rather print "true" / "false" ?
     CASE__SMPRINTF_NUMBER(VTYPE_BOOL,   "%d",   int,      mBoolValue)
@@ -914,7 +945,7 @@ nsVariant::ConvertToACString(const nsDiscriminatedUnion& data,
     case nsIDataType::VTYPE_WCHAR:
     {
         const PRUnichar* str = &data.u.mWCharValue;
-        CopyUCS2toASCII(Substring(str, str), _retval);
+        CopyUCS2toASCII(Substring(str, str + 1), _retval);
         return NS_OK;
     }
     default:
@@ -965,7 +996,7 @@ nsVariant::ConvertToAUTF8String(const nsDiscriminatedUnion& data,
     case nsIDataType::VTYPE_WCHAR:
     {
         const PRUnichar* str = &data.u.mWCharValue;
-        CopyUTF16toUTF8(Substring(str, str), _retval);
+        CopyUTF16toUTF8(Substring(str, str + 1), _retval);
         return NS_OK;
     }
     default:
@@ -997,7 +1028,8 @@ nsVariant::ConvertToWString(const nsDiscriminatedUnion& data, PRUnichar **_retva
 }
 
 /* static */ nsresult
-nsVariant::ConvertToStringWithSize(const nsDiscriminatedUnion& data, PRUint32 *size, char **str)
+nsVariant::ConvertToStringWithSize(const nsDiscriminatedUnion& data,
+                                   PRUint32 *size, char **str)
 {
     nsAutoString  tempString;
     nsCAutoString tempCString;
@@ -1009,11 +1041,11 @@ nsVariant::ConvertToStringWithSize(const nsDiscriminatedUnion& data, PRUint32 *s
     case nsIDataType::VTYPE_DOMSTRING:
         *size = data.u.mAStringValue->Length();
         *str = ToNewCString(*data.u.mAStringValue);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     case nsIDataType::VTYPE_CSTRING:
         *size = data.u.mCStringValue->Length();
         *str = ToNewCString(*data.u.mCStringValue);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     case nsIDataType::VTYPE_UTF8STRING:
     {
         // XXX This is doing 1 extra copy.  Need to fix this
@@ -1025,21 +1057,21 @@ nsVariant::ConvertToStringWithSize(const nsDiscriminatedUnion& data, PRUint32 *s
         NS_ConvertUTF8toUCS2 tempString(*data.u.mUTF8StringValue);
         *size = tempString.Length();
         *str = ToNewCString(tempString);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     }
     case nsIDataType::VTYPE_CHAR_STR:
     {
         nsDependentCString cString(data.u.str.mStringValue);
         *size = cString.Length();
         *str = ToNewCString(cString);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     }
     case nsIDataType::VTYPE_WCHAR_STR:
     {
         nsDependentString string(data.u.wstr.mWStringValue);
         *size = string.Length();
         *str = ToNewCString(string);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     }
     case nsIDataType::VTYPE_STRING_SIZE_IS:
     {
@@ -1047,7 +1079,7 @@ nsVariant::ConvertToStringWithSize(const nsDiscriminatedUnion& data, PRUint32 *s
                                    data.u.str.mStringLength);
         *size = cString.Length();
         *str = ToNewCString(cString);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     }
     case nsIDataType::VTYPE_WSTRING_SIZE_IS:
     {
@@ -1055,24 +1087,27 @@ nsVariant::ConvertToStringWithSize(const nsDiscriminatedUnion& data, PRUint32 *s
                                  data.u.wstr.mWStringLength);
         *size = string.Length();
         *str = ToNewCString(string);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     }
     case nsIDataType::VTYPE_WCHAR:
         tempString.Assign(data.u.mWCharValue);
         *size = tempString.Length();
         *str = ToNewCString(tempString);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     default:
         rv = ToString(data, tempCString);
         if(NS_FAILED(rv))
             return rv;
         *size = tempCString.Length();
         *str = ToNewCString(tempCString);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     }
+
+    return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 /* static */ nsresult
-nsVariant::ConvertToWStringWithSize(const nsDiscriminatedUnion& data, PRUint32 *size, PRUnichar **str)
+nsVariant::ConvertToWStringWithSize(const nsDiscriminatedUnion& data,
+                                    PRUint32 *size, PRUnichar **str)
 {
     nsAutoString  tempString;
     nsCAutoString tempCString;
@@ -1084,37 +1119,29 @@ nsVariant::ConvertToWStringWithSize(const nsDiscriminatedUnion& data, PRUint32 *
     case nsIDataType::VTYPE_DOMSTRING:
         *size = data.u.mAStringValue->Length();
         *str = ToNewUnicode(*data.u.mAStringValue);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     case nsIDataType::VTYPE_CSTRING:
         *size = data.u.mCStringValue->Length();
         *str = ToNewUnicode(*data.u.mCStringValue);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     case nsIDataType::VTYPE_UTF8STRING:
     {
-        // XXX This is an extra copy that should be avoided
-        // once Jag lands his new UTF8String code.
-        // We want this:
-        // *size = data.u.mUTF8StringValue->Length();
-        // *str = ToNewUnicode(*data.u.mUTF8StringValue);
-        // But this will have to do for now.
-        NS_ConvertUTF8toUCS2 ucString(*data.u.mUTF8StringValue);
-        *size = ucString.Length();
-        *str = ToNewUnicode(ucString);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        *str = UTF8ToNewUnicode(*data.u.mUTF8StringValue, size);
+        break;
     }
     case nsIDataType::VTYPE_CHAR_STR:
     {
         nsDependentCString cString(data.u.str.mStringValue);
         *size = cString.Length();
         *str = ToNewUnicode(cString);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     }
     case nsIDataType::VTYPE_WCHAR_STR:
     {
         nsDependentString string(data.u.wstr.mWStringValue);
         *size = string.Length();
         *str = ToNewUnicode(string);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     }
     case nsIDataType::VTYPE_STRING_SIZE_IS:
     {
@@ -1122,7 +1149,7 @@ nsVariant::ConvertToWStringWithSize(const nsDiscriminatedUnion& data, PRUint32 *
                                    data.u.str.mStringLength);
         *size = cString.Length();
         *str = ToNewUnicode(cString);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     }
     case nsIDataType::VTYPE_WSTRING_SIZE_IS:
     {
@@ -1130,25 +1157,28 @@ nsVariant::ConvertToWStringWithSize(const nsDiscriminatedUnion& data, PRUint32 *
                                  data.u.wstr.mWStringLength);
         *size = string.Length();
         *str = ToNewUnicode(string);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     }
     case nsIDataType::VTYPE_WCHAR:
         tempString.Assign(data.u.mWCharValue);
         *size = tempString.Length();
         *str = ToNewUnicode(tempString);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     default:
         rv = ToString(data, tempCString);
         if(NS_FAILED(rv))
             return rv;
         *size = tempCString.Length();
         *str = ToNewUnicode(tempCString);
-        return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+        break;
     }
+
+    return *str ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
 /* static */ nsresult
-nsVariant::ConvertToISupports(const nsDiscriminatedUnion& data, nsISupports **_retval)
+nsVariant::ConvertToISupports(const nsDiscriminatedUnion& data,
+                              nsISupports **_retval)
 {
     switch(data.mType)
     {
@@ -1157,17 +1187,18 @@ nsVariant::ConvertToISupports(const nsDiscriminatedUnion& data, nsISupports **_r
         if (data.u.iface.mInterfaceValue) {
             return data.u.iface.mInterfaceValue->
                 QueryInterface(NS_GET_IID(nsISupports), (void**)_retval);
+        } else {
+            *_retval = nsnull;
+            return NS_OK;
         }
-
-        *_retval = nsnull;
-        return NS_OK;
     default:
         return NS_ERROR_CANNOT_CONVERT_DATA;
     }
 }
 
 /* static */ nsresult
-nsVariant::ConvertToInterface(const nsDiscriminatedUnion& data, nsIID * *iid, void * *iface)
+nsVariant::ConvertToInterface(const nsDiscriminatedUnion& data, nsIID * *iid,
+                              void * *iface)
 {
     const nsIID* piid;
 
@@ -1196,7 +1227,8 @@ nsVariant::ConvertToInterface(const nsDiscriminatedUnion& data, nsIID * *iid, vo
 }
 
 /* static */ nsresult
-nsVariant::ConvertToArray(const nsDiscriminatedUnion& data, PRUint16 *type, nsIID* iid, PRUint32 *count, void * *ptr)
+nsVariant::ConvertToArray(const nsDiscriminatedUnion& data, PRUint16 *type,
+                          nsIID* iid, PRUint32 *count, void * *ptr)
 {
     // XXX perhaps we'd like to add support for converting each of the various
     // types into an array containing one element of that type. We can leverage
@@ -1276,7 +1308,8 @@ nsVariant::SetFromVariant(nsDiscriminatedUnion* data, nsIVariant* aValue)
 
     switch(type)
     {
-        CASE__SET_FROM_VARIANT_VTYPE_CAST(VTYPE_INT8, (PRUint8*), mInt8Value, Int8)
+        CASE__SET_FROM_VARIANT_VTYPE_CAST(VTYPE_INT8, (PRUint8*), mInt8Value,
+                                          Int8)
         CASE__SET_FROM_VARIANT_TYPE(VTYPE_INT16,  mInt16Value,  Int16)
         CASE__SET_FROM_VARIANT_TYPE(VTYPE_INT32,  mInt32Value,  Int32)
         CASE__SET_FROM_VARIANT_TYPE(VTYPE_UINT8,  mUint8Value,  Uint8)
@@ -1447,7 +1480,8 @@ nsVariant::SetFromAString(nsDiscriminatedUnion* data, const nsAString & aValue)
 }
 
 /* static */ nsresult
-nsVariant::SetFromACString(nsDiscriminatedUnion* data, const nsACString & aValue)
+nsVariant::SetFromACString(nsDiscriminatedUnion* data,
+                           const nsACString & aValue)
 {
     DATA_SETTER_PROLOGUE(data);
     if(!(data->u.mCStringValue = new nsCString(aValue)))
@@ -1456,7 +1490,8 @@ nsVariant::SetFromACString(nsDiscriminatedUnion* data, const nsACString & aValue
 }
 
 /* static */ nsresult
-nsVariant::SetFromAUTF8String(nsDiscriminatedUnion* data, const nsAUTF8String & aValue)
+nsVariant::SetFromAUTF8String(nsDiscriminatedUnion* data,
+                              const nsAUTF8String & aValue)
 {
     DATA_SETTER_PROLOGUE(data);
     if(!(data->u.mUTF8StringValue = new nsUTF8String(aValue)))
@@ -1486,7 +1521,8 @@ nsVariant::SetFromISupports(nsDiscriminatedUnion* data, nsISupports *aValue)
     return SetFromInterface(data, NS_GET_IID(nsISupports), aValue);
 }
 /* static */ nsresult
-nsVariant::SetFromInterface(nsDiscriminatedUnion* data, const nsIID& iid, nsISupports *aValue)
+nsVariant::SetFromInterface(nsDiscriminatedUnion* data, const nsIID& iid,
+                            nsISupports *aValue)
 {
     DATA_SETTER_PROLOGUE(data);
     NS_IF_ADDREF(aValue);
@@ -1495,7 +1531,8 @@ nsVariant::SetFromInterface(nsDiscriminatedUnion* data, const nsIID& iid, nsISup
     DATA_SETTER_EPILOGUE(data, VTYPE_INTERFACE_IS);
 }
 /* static */ nsresult
-nsVariant::SetFromArray(nsDiscriminatedUnion* data, PRUint16 type, const nsIID* iid, PRUint32 count, void * aValue)
+nsVariant::SetFromArray(nsDiscriminatedUnion* data, PRUint16 type,
+                        const nsIID* iid, PRUint32 count, void * aValue)
 {
     DATA_SETTER_PROLOGUE(data);
     if(!aValue || !count)

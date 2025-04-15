@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -49,7 +49,7 @@
 #include "nsIFontMetrics.h"
 #include "nsHTMLAtoms.h"
 #include "nsXULAtoms.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIRenderingContext.h"
 #include "nsStyleContext.h"
 #include "nsIContent.h"
@@ -83,8 +83,10 @@ NS_NewLeafBoxFrame ( nsIPresShell* aPresShell, nsIFrame** aNewFrame )
   
 } // NS_NewTextFrame
 
-nsLeafBoxFrame::nsLeafBoxFrame(nsIPresShell* aShell):nsBox(aShell)
+nsLeafBoxFrame::nsLeafBoxFrame(nsIPresShell* aShell)
+    : mMouseThrough(unset)
 {
+    mState |= NS_FRAME_IS_BOX;
 }
 
 #ifdef DEBUG_LAYOUT
@@ -100,7 +102,7 @@ nsLeafBoxFrame::GetBoxName(nsAutoString& aName)
  * Initialize us. This is a good time to get the alignment of the box
  */
 NS_IMETHODIMP
-nsLeafBoxFrame::Init(nsIPresContext*  aPresContext,
+nsLeafBoxFrame::Init(nsPresContext*  aPresContext,
               nsIContent*      aContent,
               nsIFrame*        aParent,
               nsStyleContext*  aContext,
@@ -109,10 +111,9 @@ nsLeafBoxFrame::Init(nsIPresContext*  aPresContext,
   nsresult  rv = nsLeafFrame::Init(aPresContext, aContent, aParent, aContext, aPrevInFlow);
 
    // see if we need a widget
-  nsIBox *parent;
-  if (aParent && NS_SUCCEEDED(CallQueryInterface(aParent, &parent))) {
+  if (aParent && aParent->IsBoxFrame()) {
     PRBool needsWidget = PR_FALSE;
-    parent->ChildrenMustHaveWidgets(needsWidget);
+    aParent->ChildrenMustHaveWidgets(needsWidget);
     if (needsWidget) {
         nsHTMLContainerFrame::CreateViewForFrame(this, nsnull, PR_TRUE); 
         nsIView* view = GetView();
@@ -130,15 +131,13 @@ nsLeafBoxFrame::Init(nsIPresContext*  aPresContext,
 }
 
 NS_IMETHODIMP
-nsLeafBoxFrame::AttributeChanged(nsIPresContext* aPresContext,
-                                 nsIContent* aChild,
+nsLeafBoxFrame::AttributeChanged(nsIContent* aChild,
                                  PRInt32 aNameSpaceID,
                                  nsIAtom* aAttribute,
                                  PRInt32 aModType)
 {
-  nsresult rv = nsLeafFrame::AttributeChanged(aPresContext, aChild,
-                                              aNameSpaceID, aAttribute,
-                                              aModType);
+  nsresult rv = nsLeafFrame::AttributeChanged(aChild, aNameSpaceID,
+                                              aAttribute, aModType);
 
   if (aAttribute == nsXULAtoms::mousethrough) 
     UpdateMouseThrough();
@@ -151,19 +150,42 @@ void nsLeafBoxFrame::UpdateMouseThrough()
   if (mContent) {
     nsAutoString value;
     if (NS_CONTENT_ATTR_HAS_VALUE == mContent->GetAttr(kNameSpaceID_None, nsXULAtoms::mousethrough, value)) {
-        if (value.Equals(NS_LITERAL_STRING("never")))
+        if (value.EqualsLiteral("never"))
           mMouseThrough = never;
-        else if (value.Equals(NS_LITERAL_STRING("always")))
+        else if (value.EqualsLiteral("always"))
           mMouseThrough = always;
       
     }
   }
 }
 
+NS_IMETHODIMP
+nsLeafBoxFrame::GetMouseThrough(PRBool& aMouseThrough)
+{
+  switch (mMouseThrough)
+  {
+    case always:
+      aMouseThrough = PR_TRUE;
+      return NS_OK;
+    case never:
+      aMouseThrough = PR_FALSE;      
+      return NS_OK;
+    case unset:
+    {
+      if (mParent && mParent->IsBoxFrame())
+        return mParent->GetMouseThrough(aMouseThrough);
+      else {
+        aMouseThrough = PR_FALSE;      
+        return NS_OK;
+      }
+    }
+  }
+
+  return NS_ERROR_FAILURE;
+}
 
 NS_IMETHODIMP  
-nsLeafBoxFrame::GetFrameForPoint(nsIPresContext* aPresContext,
-                             const nsPoint& aPoint, 
+nsLeafBoxFrame::GetFrameForPoint(const nsPoint& aPoint, 
                              nsFramePaintLayer aWhichLayer,    
                              nsIFrame**     aFrame)
 {   
@@ -178,14 +200,7 @@ nsLeafBoxFrame::GetFrameForPoint(nsIPresContext* aPresContext,
 }
 
 NS_IMETHODIMP
-nsLeafBoxFrame::GetFrame(nsIFrame** aFrame)
-{
-  *aFrame = this;  
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsLeafBoxFrame::DidReflow(nsIPresContext*           aPresContext,
+nsLeafBoxFrame::DidReflow(nsPresContext*           aPresContext,
                           const nsHTMLReflowState*  aReflowState,
                           nsDidReflowStatus         aStatus)
 {
@@ -204,7 +219,7 @@ nsLeafBoxFrame::DidReflow(nsIPresContext*           aPresContext,
 
 
 NS_IMETHODIMP
-nsLeafBoxFrame::Reflow(nsIPresContext*   aPresContext,
+nsLeafBoxFrame::Reflow(nsPresContext*   aPresContext,
                      nsHTMLReflowMetrics&     aDesiredSize,
                      const nsHTMLReflowState& aReflowState,
                      nsReflowStatus&          aStatus)
@@ -315,10 +330,9 @@ nsLeafBoxFrame::Reflow(nsIPresContext*   aPresContext,
   Layout(state);
   
   // ok our child could have gotten bigger. So lets get its bounds
-  GetBounds(r);
   
   // get the ascent
-  nscoord ascent = r.height;
+  nscoord ascent = mRect.height;
 
   // Only call GetAscent when not doing Initial reflow while in PP
   // or when it is Initial reflow while in PP and a chrome doc
@@ -330,10 +344,17 @@ nsLeafBoxFrame::Reflow(nsIPresContext*   aPresContext,
     GetAscent(state, ascent);
   }
 
-  aDesiredSize.width  = r.width;
-  aDesiredSize.height = r.height;
+  aDesiredSize.width  = mRect.width;
+  aDesiredSize.height = mRect.height;
   aDesiredSize.ascent = ascent;
   aDesiredSize.descent = 0;
+
+  // NS_FRAME_OUTSIDE_CHILDREN is set in SetBounds() above
+  if (mState & NS_FRAME_OUTSIDE_CHILDREN) {
+    nsRect* overflowArea = GetOverflowAreaProperty();
+    NS_ASSERTION(overflowArea, "Failed to set overflow area property");
+    aDesiredSize.mOverflowArea = *overflowArea;
+  }
 
   // max sure the max element size reflects
   // our min width
@@ -390,7 +411,7 @@ nsLeafBoxFrame::Release(void)
 }
 
 NS_IMETHODIMP
-nsLeafBoxFrame::CharacterDataChanged(nsIPresContext* aPresContext,
+nsLeafBoxFrame::CharacterDataChanged(nsPresContext* aPresContext,
                                      nsIContent*     aChild,
                                      PRBool          aAppend)
 {
@@ -398,6 +419,71 @@ nsLeafBoxFrame::CharacterDataChanged(nsIPresContext* aPresContext,
   return nsLeafFrame::CharacterDataChanged(aPresContext, aChild, aAppend);
 }
 
+NS_IMETHODIMP
+nsLeafBoxFrame::GetPrefSize(nsBoxLayoutState& aState, nsSize& aSize)
+{
+    return nsBox::GetPrefSize(aState, aSize);
+}
+
+NS_IMETHODIMP
+nsLeafBoxFrame::GetMinSize(nsBoxLayoutState& aState, nsSize& aSize)
+{
+    return nsBox::GetMinSize(aState, aSize);
+}
+
+NS_IMETHODIMP
+nsLeafBoxFrame::GetMaxSize(nsBoxLayoutState& aState, nsSize& aSize)
+{
+    return nsBox::GetMaxSize(aState, aSize);
+}
+
+NS_IMETHODIMP
+nsLeafBoxFrame::GetFlex(nsBoxLayoutState& aState, nscoord& aFlex)
+{
+    return nsBox::GetFlex(aState, aFlex);
+}
+
+NS_IMETHODIMP
+nsLeafBoxFrame::GetAscent(nsBoxLayoutState& aState, nscoord& aAscent)
+{
+    return nsBox::GetAscent(aState, aAscent);
+}
+
+NS_IMETHODIMP
+nsLeafBoxFrame::NeedsRecalc()
+{
+    return nsBox::NeedsRecalc();
+}
+
+NS_IMETHODIMP
+nsLeafBoxFrame::DoLayout(nsBoxLayoutState& aState)
+{
+    return nsBox::DoLayout(aState);
+}
+
+PRBool
+nsLeafBoxFrame::HasStyleChange()
+{
+    return nsBox::HasStyleChange();
+}
+
+void
+nsLeafBoxFrame::SetStyleChangeFlag(PRBool aDirty)
+{
+    nsBox::SetStyleChangeFlag(aDirty);
+}
+
+PRBool
+nsLeafBoxFrame::GetWasCollapsed(nsBoxLayoutState& aState)
+{
+    return nsBox::GetWasCollapsed(aState);
+}
+
+void
+nsLeafBoxFrame::SetWasCollapsed(nsBoxLayoutState& aState, PRBool aWas)
+{
+    nsBox::SetWasCollapsed(aState, aWas);
+}
 
 NS_INTERFACE_MAP_BEGIN(nsLeafBoxFrame)
   NS_INTERFACE_MAP_ENTRY(nsIBox)

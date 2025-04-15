@@ -1,11 +1,12 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim:set ts=4 sw=4 sts=4 et: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,44 +15,206 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *  Malcolm Smith <malsmith@cs.rmit.edu.au>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsProtocolProxyService.h"
+#include "nsProxyInfo.h"
 #include "nsIServiceManager.h"
 #include "nsXPIDLString.h"
 #include "nsIProxyAutoConfig.h"
 #include "nsAutoLock.h"
+#include "nsEventQueueUtils.h"
 #include "nsIIOService.h"
-#include "nsIEventQueueService.h"
+#include "nsIObserverService.h"
 #include "nsIProtocolHandler.h"
+#include "nsIProtocolProxyCallback.h"
+#include "nsICancelable.h"
 #include "nsIDNSService.h"
 #include "nsIPrefService.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "nsReadableUtils.h"
 #include "nsString.h"
 #include "nsNetUtil.h"
 #include "nsCRT.h"
 #include "prnetdb.h"
 #include "nsEventQueueUtils.h"
+#include "nsPACMan.h"
+
+//----------------------------------------------------------------------------
+
+#include "prlog.h"
+#if defined(PR_LOGGING)
+static PRLogModuleInfo *sLog = PR_NewLogModule("proxy");
+#endif
+#define LOG(args) PR_LOG(sLog, PR_LOG_DEBUG, args)
+
+//----------------------------------------------------------------------------
+
+// This structure is intended to be allocated on the stack
+struct nsProtocolInfo {
+    nsCAutoString scheme;
+    PRUint32 flags;
+    PRInt32 defaultPort;
+};
+
+//----------------------------------------------------------------------------
+
+class nsAsyncResolveRequest : public PLEvent
+                            , public nsPACManCallback 
+                            , public nsICancelable
+{
+public:
+    NS_DECL_ISUPPORTS
+
+    nsAsyncResolveRequest(nsProtocolProxyService *pps, nsIURI *uri,
+                          nsIProtocolProxyCallback *callback)
+        : mStatus(NS_OK)
+        , mDispatched(PR_FALSE)
+        , mPPS(pps)
+        , mURI(uri)
+        , mCallback(callback)
+    {
+        NS_ASSERTION(mCallback, "null callback");
+        PL_InitEvent(this, nsnull, HandleEvent, CleanupEvent);
+    }
+
+    void SetResult(nsresult status, nsIProxyInfo *pi)
+    {
+        mStatus = status;
+        mProxyInfo = pi;
+    }
+
+    NS_IMETHOD Cancel(nsresult reason)
+    {
+        NS_ENSURE_ARG(NS_FAILED(reason));
+
+        // If we've already called DoCallback then, nothing more to do.
+        if (!mCallback)
+            return NS_OK;
+
+        SetResult(reason, nsnull);
+        return DispatchCallback();
+    }
+
+    nsresult DispatchCallback()
+    {
+        if (mDispatched)  // Only need to dispatch once
+            return NS_OK;
+
+        nsCOMPtr<nsIEventQueue> eventQ;
+        nsresult rv = NS_GetCurrentEventQ(getter_AddRefs(eventQ));
+        if (NS_FAILED(rv))
+            NS_WARNING("could not get current event queue");
+        else {
+            NS_ADDREF_THIS();
+            rv = eventQ->PostEvent(this);
+            if (NS_FAILED(rv)) {
+                NS_WARNING("unable to dispatch callback event");
+                PL_DestroyEvent(this);
+            }
+            else {
+                mDispatched = PR_TRUE;
+                return NS_OK;
+            }
+        }
+
+        mCallback = nsnull;  // break possible reference cycle
+        return rv;
+    }
+
+private:
+
+    // Called asynchronously, so we do not need to post another PLEvent
+    // before calling DoCallback.
+    void OnQueryComplete(nsresult status, const nsCString &pacString)
+    {
+        // If we've already called DoCallback then, nothing more to do.
+        if (!mCallback)
+            return;
+
+        // Provided we haven't been canceled...
+        if (mStatus == NS_OK) {
+            mStatus = status;
+            mPACString = pacString;
+        }
+
+        // In the cancelation case, we may still have another PLEvent in
+        // the queue that wants to call DoCallback.  No need to wait for
+        // it, just run the callback now.
+        DoCallback();
+    }
+
+    void DoCallback()
+    {
+        // Generate proxy info from the PAC string if appropriate
+        if (NS_SUCCEEDED(mStatus) && !mProxyInfo && !mPACString.IsEmpty())
+            mPPS->ProcessPACString(mPACString, getter_AddRefs(mProxyInfo));
+
+        // Now apply proxy filters
+        if (NS_SUCCEEDED(mStatus)) {
+            nsProtocolInfo info;
+            mStatus = mPPS->GetProtocolInfo(mURI, &info);
+            if (NS_SUCCEEDED(mStatus))
+                mPPS->ApplyFilters(mURI, info, mProxyInfo);
+            else
+                mProxyInfo = nsnull;
+        }
+
+        mCallback->OnProxyAvailable(this, mURI, mProxyInfo, mStatus);
+        mCallback = nsnull;  // in case the callback holds an owning ref to us
+    }
+
+    PR_STATIC_CALLBACK(void *) HandleEvent(PLEvent *ev)
+    {
+        nsAsyncResolveRequest *self =
+                NS_STATIC_CAST(nsAsyncResolveRequest *, ev);
+        if (self->mCallback)
+            self->DoCallback();
+        return nsnull;
+    }
+
+    PR_STATIC_CALLBACK(void) CleanupEvent(PLEvent *ev)
+    {
+        nsAsyncResolveRequest *self =
+                NS_STATIC_CAST(nsAsyncResolveRequest *, ev);
+        NS_RELEASE(self);  // balance AddRef in DispatchCallback
+    }
+
+private:
+
+    nsresult  mStatus;
+    nsCString mPACString;
+    PRBool    mDispatched;
+
+    nsRefPtr<nsProtocolProxyService>   mPPS;
+    nsCOMPtr<nsIURI>                   mURI;
+    nsCOMPtr<nsIProtocolProxyCallback> mCallback;
+    nsCOMPtr<nsIProxyInfo>             mProxyInfo;
+};
+
+NS_IMPL_ISUPPORTS1(nsAsyncResolveRequest, nsICancelable)
+
+//----------------------------------------------------------------------------
 
 #define IS_ASCII_SPACE(_c) ((_c) == ' ' || (_c) == '\t')
 
@@ -120,38 +283,59 @@ proxy_GetIntPref(nsIPrefBranch *aPrefBranch,
         aResult = temp;
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS3(nsProtocolProxyService,
-                              nsIProtocolProxyService,
-                              nsIDNSListener,
-                              nsIObserver)
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsProtocolProxyService::nsProxyInfo,
-                              nsIProxyInfo)
+static void
+proxy_GetBoolPref(nsIPrefBranch *aPrefBranch,
+                 const char    *aPref,
+                 PRBool        &aResult)
+{
+    PRBool temp;
+    nsresult rv = aPrefBranch->GetBoolPref(aPref, &temp);
+    if (NS_FAILED(rv)) 
+        aResult = PR_FALSE;
+    else
+        aResult = temp;
+}
+
+//----------------------------------------------------------------------------
+
+NS_IMPL_ISUPPORTS3(nsProtocolProxyService,
+                   nsIProtocolProxyService,
+                   nsPIProtocolProxyService,
+                   nsIObserver)
 
 nsProtocolProxyService::nsProtocolProxyService()
-    : mUseProxy(0)
+    : mFilters(nsnull)
+    , mProxyConfig(eProxyConfig_Direct)
     , mHTTPProxyPort(-1)
     , mFTPProxyPort(-1)
     , mGopherProxyPort(-1)
     , mHTTPSProxyPort(-1)
     , mSOCKSProxyPort(-1)
     , mSOCKSProxyVersion(4)
+    , mSOCKSProxyRemoteDNS(PR_FALSE)
+    , mPACMan(nsnull)
+    , mSessionStart(PR_Now())
+    , mFailedProxyTimeout(30 * 60) // 30 minute default
 {
 }
 
 nsProtocolProxyService::~nsProtocolProxyService()
 {
-    if (mFiltersArray.Count() > 0) {
-        mFiltersArray.EnumerateForwards(CleanupFilterArray, nsnull);
-        mFiltersArray.Clear();
-    }
+    // These should have been cleaned up in our Observe method.
+    NS_ASSERTION(mHostFiltersArray.Count() == 0 && mFilters == nsnull &&
+                 mPACMan == nsnull, "what happened to xpcom-shutdown?");
 }
 
 // nsProtocolProxyService methods
 nsresult
 nsProtocolProxyService::Init()
 {
+    if (!mFailedProxies.Init())
+        return NS_ERROR_OUT_OF_MEMORY;
+
     // failure to access prefs is non-fatal
-    nsCOMPtr<nsIPrefBranchInternal> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID);
+    nsCOMPtr<nsIPrefBranch2> prefBranch =
+            do_GetService(NS_PREFSERVICE_CONTRACTID);
     if (prefBranch) {
         // monitor proxy prefs
         prefBranch->AddObserver("network.proxy", this, PR_FALSE);
@@ -159,6 +343,13 @@ nsProtocolProxyService::Init()
         // read all prefs
         PrefsChanged(prefBranch, nsnull);
     }
+
+    // register for shutdown notification so we can clean ourselves up properly.
+    nsCOMPtr<nsIObserverService> obs =
+            do_GetService("@mozilla.org/observer-service;1");
+    if (obs)
+        obs->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, PR_FALSE);
+
     return NS_OK;
 }
 
@@ -167,9 +358,28 @@ nsProtocolProxyService::Observe(nsISupports     *aSubject,
                                 const char      *aTopic,
                                 const PRUnichar *aData)
 {
-    nsCOMPtr<nsIPrefBranch> prefs = do_QueryInterface(aSubject);
-    if (prefs)
-        PrefsChanged(prefs, NS_LossyConvertUTF16toASCII(aData).get());
+    if (strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0) {
+        // cleanup
+        if (mHostFiltersArray.Count() > 0) {
+            mHostFiltersArray.EnumerateForwards(CleanupFilterArray, nsnull);
+            mHostFiltersArray.Clear();
+        }
+        if (mFilters) {
+            delete mFilters;
+            mFilters = nsnull;
+        }
+        if (mPACMan) {
+            mPACMan->Shutdown();
+            mPACMan = nsnull;
+        }
+    }
+    else {
+        NS_ASSERTION(strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID) == 0,
+                     "what is this random observer event?");
+        nsCOMPtr<nsIPrefBranch> prefs = do_QueryInterface(aSubject);
+        if (prefs)
+            PrefsChanged(prefs, NS_LossyConvertUTF16toASCII(aData).get());
+    }
     return NS_OK;
 }
 
@@ -185,18 +395,20 @@ nsProtocolProxyService::PrefsChanged(nsIPrefBranch *prefBranch,
         PRInt32 type = -1;
         rv = prefBranch->GetIntPref("network.proxy.type",&type);
         if (NS_SUCCEEDED(rv)) {
-            // bug 115720 - type 3 is the same as 0 (no proxy),
-            // for ns4.x backwards compatability
-            if (type == 3) {
-                type = 0;
+            // bug 115720 - for ns4.x backwards compatability
+            if (type == eProxyConfig_Direct4x) {
+                type = eProxyConfig_Direct;
                 // Reset the type so that the dialog looks correct, and we
                 // don't have to handle this case everywhere else
                 // I'm paranoid about a loop of some sort - only do this
                 // if we're enumerating all prefs, and ignore any error
                 if (!pref)
-                    prefBranch->SetIntPref("network.proxy.type", 0);
+                    prefBranch->SetIntPref("network.proxy.type", type);
+            } else if (type >= eProxyConfig_Last) {
+                LOG(("unknown proxy type: %lu; assuming direct\n", type));
+                type = eProxyConfig_Direct;
             }
-            mUseProxy = type; // type == 2 is fixed PAC URL, 4 is WPAD
+            mProxyConfig = NS_STATIC_CAST(ProxyConfig, type);
             reloadPAC = PR_TRUE;
         }
     }
@@ -241,85 +453,53 @@ nsProtocolProxyService::PrefsChanged(nsIPrefBranch *prefBranch,
             mSOCKSProxyVersion = 4;
     }
 
+    if (!pref || !strcmp(pref, "network.proxy.socks_remote_dns"))
+        proxy_GetBoolPref(prefBranch, "network.proxy.socks_remote_dns", mSOCKSProxyRemoteDNS);
+
+    if (!pref || !strcmp(pref, "network.proxy.failover_timeout"))
+        proxy_GetIntPref(prefBranch, "network.proxy.failover_timeout", mFailedProxyTimeout);
+
     if (!pref || !strcmp(pref, "network.proxy.no_proxies_on")) {
         rv = prefBranch->GetCharPref("network.proxy.no_proxies_on",
                                      getter_Copies(tempString));
         if (NS_SUCCEEDED(rv))
-            LoadFilters(tempString.get());
+            LoadHostFilters(tempString.get());
     }
 
-    if ((!pref || !strcmp(pref, "network.proxy.autoconfig_url") || reloadPAC) &&
-        (mUseProxy == 2)) {
-        rv = prefBranch->GetCharPref("network.proxy.autoconfig_url", 
-                                     getter_Copies(tempString));
-        if (NS_SUCCEEDED(rv) && (!reloadPAC || strcmp(tempString.get(), mPACURL.get()))) 
-            ConfigureFromPAC(tempString);
+    // We're done if not using PAC or WPAD
+    if (mProxyConfig != eProxyConfig_PAC && mProxyConfig != eProxyConfig_WPAD)
+        return;
+
+    // OK, we need to reload the PAC file if:
+    //  1) network.proxy.type changed, or
+    //  2) network.proxy.autoconfig_url changed and PAC is configured
+
+    if (!pref || !strcmp(pref, "network.proxy.autoconfig_url"))
+        reloadPAC = PR_TRUE;
+
+    if (reloadPAC) {
+        tempString.Truncate();
+        if (mProxyConfig == eProxyConfig_PAC) {
+            prefBranch->GetCharPref("network.proxy.autoconfig_url",
+                                    getter_Copies(tempString));
+        }
+        else if (mProxyConfig == eProxyConfig_WPAD) {
+            // We diverge from the WPAD spec here in that we don't walk the
+            // hosts's FQDN, stripping components until we hit a TLD.  Doing so
+            // is dangerous in the face of an incomplete list of TLDs, and TLDs
+            // get added over time.  We could consider doing only a single
+            // substitution of the first component, if that proves to help
+            // compatibility.
+            tempString.AssignLiteral("http://wpad/wpad.dat");
+        }
+        ConfigureFromPAC(tempString);
     }
-
-    if ((!pref || reloadPAC) && (mUseProxy == 4))
-        ConfigureFromWPAD();
-}
-
-// this is the main ui thread calling us back, load the pac now
-void* PR_CALLBACK
-nsProtocolProxyService::HandlePACLoadEvent(PLEvent* aEvent)
-{
-    nsresult rv = NS_OK;
-
-    nsProtocolProxyService *pps = 
-        (nsProtocolProxyService *) PL_GetEventOwner(aEvent);
-    if (!pps) {
-        NS_ERROR("HandlePACLoadEvent owner is null");
-        return NULL;
-    }
-
-    // create pac js component
-    pps->mPAC = do_CreateInstance(NS_PROXYAUTOCONFIG_CONTRACTID, &rv);
-    if (!pps->mPAC || NS_FAILED(rv)) {
-        NS_ERROR("Cannot load PAC js component");
-        return NULL;
-    }
-
-    if (pps->mPACURL.IsEmpty()) {
-        NS_ERROR("HandlePACLoadEvent: js PACURL component is empty");
-        return NULL;
-    }
-
-    nsCOMPtr<nsIIOService> pIOService(do_GetIOService(&rv));
-    if (!pIOService || NS_FAILED(rv)) {
-        NS_ERROR("Cannot get IO Service");
-        return NULL;
-    }
-
-    nsCOMPtr<nsIURI> pURI;
-    rv = pIOService->NewURI(pps->mPACURL, nsnull, nsnull, getter_AddRefs(pURI));
-    if (NS_FAILED(rv)) {
-        NS_ERROR("New URI failed");
-        return NULL;
-    }
-     
-    rv = pps->mPAC->LoadPACFromURI(pURI, pIOService);
-    if (NS_FAILED(rv)) {
-        NS_ERROR("Load PAC failed");
-        return NULL;
-    }
-
-    return NULL;
-}
-
-void PR_CALLBACK
-nsProtocolProxyService::DestroyPACLoadEvent(PLEvent* aEvent)
-{
-    nsProtocolProxyService *pps = 
-        (nsProtocolProxyService*) PL_GetEventOwner(aEvent);
-    NS_IF_RELEASE(pps);
-    delete aEvent;
 }
 
 PRBool
 nsProtocolProxyService::CanUseProxy(nsIURI *aURI, PRInt32 defaultPort) 
 {
-    if (mFiltersArray.Count() == 0)
+    if (mHostFiltersArray.Count() == 0)
         return PR_TRUE;
 
     PRInt32 port;
@@ -356,8 +536,8 @@ nsProtocolProxyService::CanUseProxy(nsIURI *aURI, PRInt32 defaultPort)
     }
     
     PRInt32 index = -1;
-    while (++index < mFiltersArray.Count()) {
-        HostInfo *hinfo = (HostInfo *) mFiltersArray[index];
+    while (++index < mHostFiltersArray.Count()) {
+        HostInfo *hinfo = (HostInfo *) mHostFiltersArray[index];
 
         if (is_ipaddr != hinfo->is_ipaddr)
             continue;
@@ -391,19 +571,21 @@ nsProtocolProxyService::CanUseProxy(nsIURI *aURI, PRInt32 defaultPort)
     return PR_TRUE;
 }
 
-static const char kProxyType_HTTP[]   = "http";
-static const char kProxyType_PROXY[]  = "proxy";
-static const char kProxyType_SOCKS[]  = "socks";
-static const char kProxyType_SOCKS4[] = "socks4";
-static const char kProxyType_SOCKS5[] = "socks5";
-static const char kProxyType_DIRECT[] = "direct";
+static const char kProxyType_HTTP[]    = "http";
+static const char kProxyType_PROXY[]   = "proxy";
+static const char kProxyType_SOCKS[]   = "socks";
+static const char kProxyType_SOCKS4[]  = "socks4";
+static const char kProxyType_SOCKS5[]  = "socks5";
+static const char kProxyType_DIRECT[]  = "direct";
+static const char kProxyType_UNKNOWN[] = "unknown";
 
 const char *
-nsProtocolProxyService::ExtractProxyInfo(const char *start, PRBool permitHttp, nsProxyInfo **result)
+nsProtocolProxyService::ExtractProxyInfo(const char *start, nsProxyInfo **result)
 {
-    // see BNF in nsIProxyAutoConfig.idl
-
     *result = nsnull;
+    PRUint32 flags = 0;
+
+    // see BNF in nsIProxyAutoConfig.idl
 
     // find end of proxy info delimiter
     const char *end = start;
@@ -417,7 +599,7 @@ nsProtocolProxyService::ExtractProxyInfo(const char *start, PRBool permitHttp, n
     const char *type = nsnull;
     switch (len) {
     case 5:
-        if (permitHttp && PL_strncasecmp(start, kProxyType_PROXY, 5) == 0)
+        if (PL_strncasecmp(start, kProxyType_PROXY, 5) == 0)
             type = kProxyType_HTTP;
         else if (PL_strncasecmp(start, kProxyType_SOCKS, 5) == 0)
             type = kProxyType_SOCKS4; // assume v4 for 4x compat
@@ -436,6 +618,13 @@ nsProtocolProxyService::ExtractProxyInfo(const char *start, PRBool permitHttp, n
     if (type) {
         const char *host = nsnull, *hostEnd = nsnull;
         PRInt32 port = -1;
+
+        // If it's a SOCKS5 proxy, do name resolution on the server side.
+        // We could use this with SOCKS4a servers too, but they might not
+        // support it.
+        if (type == kProxyType_SOCKS)
+            flags |= nsIProxyInfo::TRANSPARENT_PROXY_RESOLVES_HOST;
+
         // extract host:port
         start = sp;
         while ((*start == ' ' || *start == '\t') && start < end)
@@ -457,9 +646,11 @@ nsProtocolProxyService::ExtractProxyInfo(const char *start, PRBool permitHttp, n
         nsProxyInfo *pi = new nsProxyInfo;
         if (pi) {
             pi->mType = type;
+            pi->mFlags = flags;
+            pi->mTimeout = mFailedProxyTimeout;
             // YES, it is ok to specify a null proxy host.
             if (host) {
-                pi->mHost = PL_strndup(host, hostEnd - host);
+                pi->mHost.Assign(host, hostEnd - host);
                 pi->mPort = port;
             }
             NS_ADDREF(*result = pi);
@@ -471,124 +662,223 @@ nsProtocolProxyService::ExtractProxyInfo(const char *start, PRBool permitHttp, n
     return end;
 }
 
+void
+nsProtocolProxyService::GetProxyKey(nsProxyInfo *pi, nsCString &key)
+{
+    key.AssignASCII(pi->mType);
+    if (!pi->mHost.IsEmpty()) {
+        key.Append(' ');
+        key.Append(pi->mHost);
+        key.Append(':');
+        key.AppendInt(pi->mPort);
+    }
+} 
+
+PRUint32
+nsProtocolProxyService::SecondsSinceSessionStart()
+{
+    PRTime now = PR_Now();
+
+    // get time elapsed since session start
+    PRInt64 diff;
+    LL_SUB(diff, now, mSessionStart);
+
+    // convert microseconds to seconds
+    PRTime ups;
+    LL_I2L(ups, PR_USEC_PER_SEC);
+    LL_DIV(diff, diff, ups);
+
+    // convert to 32 bit value
+    PRUint32 dsec;
+    LL_L2UI(dsec, diff);
+
+    return dsec;
+}
+
+void
+nsProtocolProxyService::EnableProxy(nsProxyInfo *pi)
+{
+    nsCAutoString key;
+    GetProxyKey(pi, key);
+    mFailedProxies.Remove(key);
+}
+
+void
+nsProtocolProxyService::DisableProxy(nsProxyInfo *pi)
+{
+    nsCAutoString key;
+    GetProxyKey(pi, key);
+
+    PRUint32 dsec = SecondsSinceSessionStart();
+
+    // Add timeout to interval (this is the time when the proxy can
+    // be tried again).
+    dsec += pi->mTimeout;
+
+    // NOTE: The classic codebase would increase the timeout value
+    //       incrementally each time a subsequent failure occured.
+    //       We could do the same, but it would require that we not
+    //       remove proxy entries in IsProxyDisabled or otherwise
+    //       change the way we are recording disabled proxies.
+    //       Simpler is probably better for now, and at least the
+    //       user can tune the timeout setting via preferences.
+
+    LOG(("DisableProxy %s %d\n", key.get(), dsec));
+
+    // If this fails, oh well... means we don't have enough memory
+    // to remember the failed proxy.
+    mFailedProxies.Put(key, dsec);
+}
+
+PRBool
+nsProtocolProxyService::IsProxyDisabled(nsProxyInfo *pi)
+{
+    nsCAutoString key;
+    GetProxyKey(pi, key);
+
+    PRUint32 val;
+    if (!mFailedProxies.Get(key, &val))
+        return PR_FALSE;
+
+    PRUint32 dsec = SecondsSinceSessionStart();
+
+    // if time passed has exceeded interval, then try proxy again.
+    if (dsec > val) {
+        mFailedProxies.Remove(key);
+        return PR_FALSE;
+    }
+
+    return PR_TRUE;
+}
+
+void
+nsProtocolProxyService::ProcessPACString(const nsCString &pacString,
+                                         nsIProxyInfo **result)
+{
+    if (pacString.IsEmpty()) {
+        *result = nsnull;
+        return;
+    }
+
+    const char *proxies = pacString.get();
+
+    nsProxyInfo *pi = nsnull, *first = nsnull, *last = nsnull;
+    while (*proxies) {
+        proxies = ExtractProxyInfo(proxies, &pi);
+        if (pi) {
+            if (last) {
+                NS_ASSERTION(last->mNext == nsnull, "leaking nsProxyInfo");
+                last->mNext = pi;
+            }
+            else
+                first = pi;
+            last = pi;
+        }
+    }
+    *result = first;
+}
+
 // nsIProtocolProxyService
 NS_IMETHODIMP
-nsProtocolProxyService::ExamineForProxy(nsIURI *aURI, nsIProxyInfo **aResult)
+nsProtocolProxyService::Resolve(nsIURI *uri, PRUint32 flags,
+                                nsIProxyInfo **result)
 {
-    nsresult rv = NS_OK;
-    
-    NS_ASSERTION(aURI, "need a uri folks.");
+    nsProtocolInfo info;
+    nsresult rv = GetProtocolInfo(uri, &info);
+    if (NS_FAILED(rv))
+        return rv;
 
-    *aResult = nsnull;
+    PRBool usePAC;
+    rv = Resolve_Internal(uri, info, &usePAC, result);
+    if (NS_FAILED(rv))
+        return rv;
 
-    nsCAutoString scheme;
-    rv = aURI->GetScheme(scheme);
-    if (NS_FAILED(rv)) return rv;
+    if (usePAC && mPACMan) {
+        NS_ASSERTION(*result == nsnull, "we should not have a result yet");
 
-    PRUint32 flags;
-    PRInt32 defaultPort;
-    rv = GetProtocolInfo(scheme.get(), flags, defaultPort);
-    if (NS_FAILED(rv)) return rv;
+        // If the caller didn't want us to invoke PAC, then error out.
+        if (flags & RESOLVE_NON_BLOCKING)
+            return NS_BASE_STREAM_WOULD_BLOCK;
 
-    if (!(flags & nsIProtocolHandler::ALLOWS_PROXY))
-        return NS_OK; // Can't proxy this
-
-    // if proxies are enabled and this host:port combo is
-    // supposed to use a proxy, check for a proxy.
-    if (0 == mUseProxy || (1 == mUseProxy && !CanUseProxy(aURI, defaultPort)))
-        return NS_OK;
-
-    // proxy info values
-    const char *type = nsnull;
-    char *host = nsnull;
-    PRInt32 port = -1;
-    
-    // Proxy auto config magic...
-    if (2 == mUseProxy || 4 == mUseProxy) {
-        if (!mPAC) {
-            NS_ERROR("ERROR: PAC js component is null, assuming DIRECT");
-            return NS_OK; // assume DIRECT connection for now
+        // Query the PAC file synchronously.
+        nsCString pacString;
+        rv = mPACMan->GetProxyForURI(uri, pacString);
+        if (NS_SUCCEEDED(rv))
+            ProcessPACString(pacString, result);
+        else if (rv == NS_ERROR_IN_PROGRESS) {
+            // Construct a special UNKNOWN proxy entry that informs the caller
+            // that the proxy info is yet to be determined.
+            rv = NewProxyInfo_Internal(kProxyType_UNKNOWN, EmptyCString(), -1,
+                                       0, 0, nsnull, result);
+            if (NS_FAILED(rv))
+                return rv;
         }
-
-        nsCAutoString proxyStr;
-        rv = mPAC->GetProxyForURI(aURI, proxyStr);
-        if (NS_SUCCEEDED(rv)) {
-            PRBool permitHttp = (flags & nsIProtocolHandler::ALLOWS_PROXY_HTTP);
-            nsProxyInfo *pi, *last = nsnull;
-            const char *p = proxyStr.get();
-            while (*p) {
-                p = ExtractProxyInfo(p, permitHttp, &pi);
-                if (pi) {
-                    if (last)
-                        last->mNext = pi;
-                    else
-                        NS_ADDREF(*aResult = pi);
-                    last = pi;
-                }
-            }
-            // if only DIRECT was specified then return no proxy info.
-            if (last && *aResult == last && last->mType == kProxyType_DIRECT)
-                NS_RELEASE(*aResult);
-        }
-        return NS_OK;
-    }
-
-    if (!mHTTPProxyHost.IsEmpty() && mHTTPProxyPort > 0 &&
-        scheme.Equals(NS_LITERAL_CSTRING("http"))) {
-        host = ToNewCString(mHTTPProxyHost);
-        type = kProxyType_HTTP;
-        port = mHTTPProxyPort;
-    }
-    else if (!mHTTPSProxyHost.IsEmpty() && mHTTPSProxyPort > 0 &&
-             scheme.Equals(NS_LITERAL_CSTRING("https"))) {
-        host = ToNewCString(mHTTPSProxyHost);
-        type = kProxyType_HTTP;
-        port = mHTTPSProxyPort;
-    }
-    else if (!mFTPProxyHost.IsEmpty() && mFTPProxyPort > 0 &&
-             scheme.Equals(NS_LITERAL_CSTRING("ftp"))) {
-        host = ToNewCString(mFTPProxyHost);
-        type = kProxyType_HTTP;
-        port = mFTPProxyPort;
-    }
-    else if (!mGopherProxyHost.IsEmpty() && mGopherProxyPort > 0 &&
-             scheme.Equals(NS_LITERAL_CSTRING("gopher"))) {
-        host = ToNewCString(mGopherProxyHost);
-        type = kProxyType_HTTP;
-        port = mGopherProxyPort;
-    }
-    else if (!mSOCKSProxyHost.IsEmpty() && mSOCKSProxyPort > 0) {
-        host = ToNewCString(mSOCKSProxyHost);
-        if (mSOCKSProxyVersion == 4) 
-            type = kProxyType_SOCKS4;
         else
-            type = kProxyType_SOCKS;
-        port = mSOCKSProxyPort;
+            NS_WARNING("failed querying PAC file; trying DIRECT");
     }
 
-    if (type)
-        return NewProxyInfo_Internal(type, host, port, aResult);
-
+    ApplyFilters(uri, info, result);
     return NS_OK;
 }
 
 NS_IMETHODIMP
-nsProtocolProxyService::NewProxyInfo(const char *aType,
-                                     const char *aHost,
+nsProtocolProxyService::AsyncResolve(nsIURI *uri, PRUint32 flags,
+                                     nsIProtocolProxyCallback *callback,
+                                     nsICancelable **result)
+{
+    nsRefPtr<nsAsyncResolveRequest> ctx =
+            new nsAsyncResolveRequest(this, uri, callback);
+    if (!ctx)
+        return NS_ERROR_OUT_OF_MEMORY;
+
+    nsProtocolInfo info;
+    nsresult rv = GetProtocolInfo(uri, &info);
+    if (NS_FAILED(rv))
+        return rv;
+
+    PRBool usePAC;
+    nsCOMPtr<nsIProxyInfo> pi;
+    rv = Resolve_Internal(uri, info, &usePAC, getter_AddRefs(pi));
+    if (NS_FAILED(rv))
+        return rv;
+
+    if (!usePAC || !mPACMan) {
+        ApplyFilters(uri, info, pi);
+
+        ctx->SetResult(NS_OK, pi);
+        return ctx->DispatchCallback();
+    }
+
+    // else kick off a PAC query
+    rv = mPACMan->AsyncGetProxyForURI(uri, ctx);
+    if (NS_SUCCEEDED(rv)) {
+        *result = ctx;
+        NS_ADDREF(*result);
+    }
+    return rv;
+}
+
+NS_IMETHODIMP
+nsProtocolProxyService::NewProxyInfo(const nsACString &aType,
+                                     const nsACString &aHost,
                                      PRInt32 aPort,
+                                     PRUint32 aFlags,
+                                     PRUint32 aFailoverTimeout,
+                                     nsIProxyInfo *aFailoverProxy,
                                      nsIProxyInfo **aResult)
 {
     static const char *types[] = {
         kProxyType_HTTP,
         kProxyType_SOCKS,
-        kProxyType_SOCKS4
+        kProxyType_SOCKS4,
+        kProxyType_DIRECT
     };
 
     // resolve type; this allows us to avoid copying the type string into each
     // proxy info instance.  we just reference the string literals directly :)
     const char *type = nsnull;
     for (PRUint32 i=0; i<NS_ARRAY_LENGTH(types); ++i) {
-        if (PL_strcasecmp(aType, types[i]) == 0) {
+        if (aType.LowerCaseEqualsASCII(types[i])) {
             type = types[i];
             break;
         }
@@ -598,59 +888,119 @@ nsProtocolProxyService::NewProxyInfo(const char *aType,
     if (aPort <= 0)
         aPort = -1;
 
-    return NewProxyInfo_Internal(type, nsCRT::strdup(aHost), aPort, aResult);
+    return NewProxyInfo_Internal(type, aHost, aPort, aFlags, aFailoverTimeout,
+                                 aFailoverProxy, aResult);
 }
 
 NS_IMETHODIMP
-nsProtocolProxyService::ConfigureFromPAC(const char *url)
+nsProtocolProxyService::ConfigureFromPAC(const nsACString &spec)
 {
-    nsresult rv = NS_OK;
-    mPACURL.Assign(url);
+    if (!mPACMan) {
+        mPACMan = new nsPACMan();
+        if (!mPACMan)
+            return NS_ERROR_OUT_OF_MEMORY;
+    }
 
-    /* now we need to setup a callback from the main ui thread
-       in which we will load the pac file from the specified
-       url. loading it now, in the current thread results in a
-       browser crash */
+    mFailedProxies.Clear();
 
-    // get event queue service
-    nsCOMPtr<nsIEventQueueService> eqs = 
-        do_GetService(NS_EVENTQUEUESERVICE_CONTRACTID);
-    if (!eqs) {
-        NS_ERROR("Failed to get EventQueue service");
+    nsCOMPtr<nsIURI> pacURI;
+    nsresult rv = NS_NewURI(getter_AddRefs(pacURI), spec);
+    if (NS_FAILED(rv))
         return rv;
-    }
 
-    // get ui thread's event queue
-    nsCOMPtr<nsIEventQueue> eq = nsnull;
-    rv = eqs->GetThreadEventQueue(NS_UI_THREAD, getter_AddRefs(eq));
-    if (NS_FAILED(rv) || !eqs) {
-        NS_ERROR("Failed to get UI EventQueue");
-        return rv;
-    }
-
-    // create an event
-    PLEvent* event = new PLEvent;
-    // AddRef this because it is being placed in the PLEvent struct
-    // It will be Released when DestroyPACLoadEvent is called
-    NS_ADDREF_THIS();
-    PL_InitEvent(event, this,
-            nsProtocolProxyService::HandlePACLoadEvent,
-            nsProtocolProxyService::DestroyPACLoadEvent);
-
-    // post the event into the ui event queue
-    rv = eq->PostEvent(event);
-    if (NS_FAILED(rv)) {
-        NS_ERROR("Failed to post PAC load event to UI EventQueue");
-        PL_DestroyEvent(event);
-    }
-    return rv;
+    return mPACMan->LoadPACFromURI(pacURI);
 }
 
 NS_IMETHODIMP
-nsProtocolProxyService::GetProxyEnabled(PRBool *enabled)
+nsProtocolProxyService::GetFailoverForProxy(nsIProxyInfo  *aProxy,
+                                            nsIURI        *aURI,
+                                            nsresult       aStatus,
+                                            nsIProxyInfo **aResult)
 {
-    NS_ENSURE_ARG_POINTER(enabled);
-    *enabled = mUseProxy;
+    // We only support failover when a PAC file is configured.
+    if (mProxyConfig != eProxyConfig_PAC && mProxyConfig != eProxyConfig_WPAD)
+        return NS_ERROR_NOT_AVAILABLE;
+
+    // Verify that |aProxy| is one of our nsProxyInfo objects.
+    nsCOMPtr<nsProxyInfo> pi = do_QueryInterface(aProxy);
+    NS_ENSURE_ARG(pi);
+    // OK, the QI checked out.  We can proceed.
+
+    // Remember that this proxy is down.
+    DisableProxy(pi);
+
+    // NOTE: At this point, we might want to prompt the user if we have
+    //       not already tried going DIRECT.  This is something that the
+    //       classic codebase supported; however, IE6 does not prompt.
+
+    if (!pi->mNext)
+        return NS_ERROR_NOT_AVAILABLE;
+
+    LOG(("PAC failover from %s %s:%d to %s %s:%d\n",
+        pi->mType, pi->mHost.get(), pi->mPort,
+        pi->mNext->mType, pi->mNext->mHost.get(), pi->mNext->mPort));
+
+    NS_ADDREF(*aResult = pi->mNext);
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsProtocolProxyService::RegisterFilter(nsIProtocolProxyFilter *filter,
+                                       PRUint32 position)
+{
+    UnregisterFilter(filter);  // remove this filter if we already have it
+
+    FilterLink *link = new FilterLink(position, filter);
+    if (!link)
+        return NS_ERROR_OUT_OF_MEMORY;
+
+    if (!mFilters) {
+        mFilters = link;
+        return NS_OK;
+    }
+
+    // insert into mFilters in sorted order
+    FilterLink *last = nsnull;
+    for (FilterLink *iter = mFilters; iter; iter = iter->next) {
+        if (position < iter->position) {
+            if (last) {
+                link->next = last->next;
+                last->next = link;
+            } else {
+                link->next = mFilters;
+                mFilters = link;
+            }
+            return NS_OK;
+        }
+        last = iter;
+    }
+    // our position is equal to or greater than the last link in the list
+    last->next = link;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsProtocolProxyService::UnregisterFilter(nsIProtocolProxyFilter *filter)
+{
+    // QI to nsISupports so we can safely test object identity.
+    nsCOMPtr<nsISupports> givenObject = do_QueryInterface(filter);
+
+    FilterLink *last = nsnull;
+    for (FilterLink *iter = mFilters; iter; iter = iter->next) {
+        nsCOMPtr<nsISupports> object = do_QueryInterface(iter->filter);
+        if (object == givenObject) {
+            if (last)
+                last->next = iter->next;
+            else
+                mFilters = iter->next;
+            iter->next = nsnull;
+            delete iter;
+            return NS_OK;
+        }
+        last = iter;
+    }
+
+    // No need to throw an exception in this case.
     return NS_OK;
 }
 
@@ -664,12 +1014,12 @@ nsProtocolProxyService::CleanupFilterArray(void *aElement, void *aData)
 }
 
 void
-nsProtocolProxyService::LoadFilters(const char *filters)
+nsProtocolProxyService::LoadHostFilters(const char *filters)
 {
     // check to see the owners flag? /!?/ TODO
-    if (mFiltersArray.Count() > 0) {
-        mFiltersArray.EnumerateForwards(CleanupFilterArray, nsnull);
-        mFiltersArray.Clear();
+    if (mHostFiltersArray.Count() > 0) {
+        mHostFiltersArray.EnumerateForwards(CleanupFilterArray, nsnull);
+        mHostFiltersArray.Clear();
     }
 
     if (!filters)
@@ -764,7 +1114,7 @@ nsProtocolProxyService::LoadFilters(const char *filters)
 
 //#define DEBUG_DUMP_FILTERS
 #ifdef DEBUG_DUMP_FILTERS
-        printf("loaded filter[%u]:\n", mFiltersArray.Count());
+        printf("loaded filter[%u]:\n", mHostFiltersArray.Count());
         printf("  is_ipaddr = %u\n", hinfo->is_ipaddr);
         printf("  port = %u\n", hinfo->port);
         if (hinfo->is_ipaddr) {
@@ -785,8 +1135,8 @@ nsProtocolProxyService::LoadFilters(const char *filters)
         }
 #endif
 
-        mFiltersArray.AppendElement(hinfo);
-        hinfo = NULL;
+        mHostFiltersArray.AppendElement(hinfo);
+        hinfo = nsnull;
 loser:
         if (hinfo)
             delete hinfo;
@@ -794,87 +1144,264 @@ loser:
 }
 
 nsresult
-nsProtocolProxyService::GetProtocolInfo(const char *aScheme,
-                                        PRUint32 &aFlags,
-                                        PRInt32 &defaultPort)
+nsProtocolProxyService::GetProtocolInfo(nsIURI *uri, nsProtocolInfo *info)
 {
     nsresult rv;
 
-    if (!mIOService) {
-        mIOService = do_GetIOService(&rv);
-        if (NS_FAILED(rv)) return rv;
-    }
+    rv = uri->GetScheme(info->scheme);
+    if (NS_FAILED(rv))
+        return rv;
+
+    nsCOMPtr<nsIIOService> ios = do_GetIOService(&rv);
+    if (NS_FAILED(rv))
+        return rv;
 
     nsCOMPtr<nsIProtocolHandler> handler;
-    rv = mIOService->GetProtocolHandler(aScheme, getter_AddRefs(handler));
-    if (NS_FAILED(rv)) return rv;
+    rv = ios->GetProtocolHandler(info->scheme.get(), getter_AddRefs(handler));
+    if (NS_FAILED(rv))
+        return rv;
 
-    rv = handler->GetProtocolFlags(&aFlags);
-    if (NS_FAILED(rv)) return rv;
+    rv = handler->GetProtocolFlags(&info->flags);
+    if (NS_FAILED(rv))
+        return rv;
 
-    return handler->GetDefaultPort(&defaultPort);
+    rv = handler->GetDefaultPort(&info->defaultPort);
+    return rv;
 }
 
 nsresult
 nsProtocolProxyService::NewProxyInfo_Internal(const char *aType,
-                                              char *aHost,
+                                              const nsACString &aHost,
                                               PRInt32 aPort,
+                                              PRUint32 aFlags,
+                                              PRUint32 aFailoverTimeout,
+                                              nsIProxyInfo *aFailoverProxy,
                                               nsIProxyInfo **aResult)
 {
-    nsProxyInfo *proxyInfo = nsnull;
-    NS_NEWXPCOM(proxyInfo, nsProxyInfo);
+    nsCOMPtr<nsProxyInfo> failover;
+    if (aFailoverProxy) {
+        failover = do_QueryInterface(aFailoverProxy);
+        NS_ENSURE_ARG(failover);
+    }
+
+    nsProxyInfo *proxyInfo = new nsProxyInfo();
     if (!proxyInfo)
         return NS_ERROR_OUT_OF_MEMORY;
 
     proxyInfo->mType = aType;
     proxyInfo->mHost = aHost;
     proxyInfo->mPort = aPort;
+    proxyInfo->mFlags = aFlags;
+    proxyInfo->mTimeout = aFailoverTimeout == PR_UINT32_MAX
+        ? mFailedProxyTimeout : aFailoverTimeout;
+    failover.swap(proxyInfo->mNext);
 
     NS_ADDREF(*aResult = proxyInfo);
     return NS_OK;
 }
 
-void
-nsProtocolProxyService::ConfigureFromWPAD()
+nsresult
+nsProtocolProxyService::Resolve_Internal(nsIURI *uri,
+                                         const nsProtocolInfo &info,
+                                         PRBool *usePAC,
+                                         nsIProxyInfo **result)
 {
-    nsCOMPtr<nsIDNSService> dnsService = do_GetService(NS_DNSSERVICE_CONTRACTID);
-    if (!dnsService) {
-        NS_ERROR("Can't run WPAD: no DNS service?");
-        return;
-    }
-    
-    // Asynchronously resolve "wpad", configuring from PAC if we find one (in our
-    // OnLookupComplete method).
-    //
-    // We diverge from the WPAD spec here in that we don't walk the hosts's
-    // FQDN, stripping components until we hit a TLD.  Doing so is dangerous in
-    // the face of an incomplete list of TLDs, and TLDs get added over time.  We
-    // could consider doing only a single substitution of the first component,
-    // if that proves to help compatibility.
-    nsresult rv;
+    NS_ENSURE_ARG_POINTER(uri);
 
-    nsCOMPtr<nsIEventQueue> curQ;
-    rv = NS_GetCurrentEventQ(getter_AddRefs(curQ));
-    if (NS_FAILED(rv)) {
-        NS_ERROR("Can't run WPAD: can't get event queue for async resolve!");
-        return;
-    }
+    *usePAC = PR_FALSE;
+    *result = nsnull;
+
+    if (!(info.flags & nsIProtocolHandler::ALLOWS_PROXY))
+        return NS_OK;  // Can't proxy this (filters may not override)
+
+    // if proxies are enabled and this host:port combo is supposed to use a
+    // proxy, check for a proxy.
+    if (mProxyConfig == eProxyConfig_Direct ||
+            (mProxyConfig == eProxyConfig_Manual &&
+             !CanUseProxy(uri, info.defaultPort)))
+        return NS_OK;
     
-    nsCOMPtr<nsIDNSRequest> request;
-    rv = dnsService->AsyncResolve(NS_LITERAL_CSTRING("wpad"),
-                                  nsIDNSService::RESOLVE_BYPASS_CACHE,
-                                  this, curQ, getter_AddRefs(request));
-    if (NS_FAILED(rv)) {
-        NS_ERROR("Can't run WPAD: AsyncResolve failed");
+    // Proxy auto config magic...
+    if (mProxyConfig == eProxyConfig_PAC || mProxyConfig == eProxyConfig_WPAD) {
+        // Do not query PAC now.
+        *usePAC = PR_TRUE;
+        return NS_OK;
     }
+
+    // proxy info values
+    const char *type = nsnull;
+    const nsACString *host = nsnull;
+    PRInt32 port = -1;
+
+    PRUint32 proxyFlags = 0;
+
+    if (!mHTTPProxyHost.IsEmpty() && mHTTPProxyPort > 0 &&
+        info.scheme.EqualsLiteral("http")) {
+        host = &mHTTPProxyHost;
+        type = kProxyType_HTTP;
+        port = mHTTPProxyPort;
+    }
+    else if (!mHTTPSProxyHost.IsEmpty() && mHTTPSProxyPort > 0 &&
+             info.scheme.EqualsLiteral("https")) {
+        host = &mHTTPSProxyHost;
+        type = kProxyType_HTTP;
+        port = mHTTPSProxyPort;
+    }
+    else if (!mFTPProxyHost.IsEmpty() && mFTPProxyPort > 0 &&
+             info.scheme.EqualsLiteral("ftp")) {
+        host = &mFTPProxyHost;
+        type = kProxyType_HTTP;
+        port = mFTPProxyPort;
+    }
+    else if (!mGopherProxyHost.IsEmpty() && mGopherProxyPort > 0 &&
+             info.scheme.EqualsLiteral("gopher")) {
+        host = &mGopherProxyHost;
+        type = kProxyType_HTTP;
+        port = mGopherProxyPort;
+    }
+    else if (!mSOCKSProxyHost.IsEmpty() && mSOCKSProxyPort > 0) {
+        host = &mSOCKSProxyHost;
+        if (mSOCKSProxyVersion == 4) 
+            type = kProxyType_SOCKS4;
+        else
+            type = kProxyType_SOCKS;
+        port = mSOCKSProxyPort;
+        if (mSOCKSProxyRemoteDNS)
+            proxyFlags |= nsIProxyInfo::TRANSPARENT_PROXY_RESOLVES_HOST;
+    }
+
+    if (type) {
+        nsresult rv = NewProxyInfo_Internal(type, *host, port, proxyFlags,
+                                            PR_UINT32_MAX, nsnull, result);
+        if (NS_FAILED(rv))
+            return rv;
+    }
+
+    return NS_OK;
 }
 
-NS_IMETHODIMP
-nsProtocolProxyService::OnLookupComplete(nsIDNSRequest *aRequest,
-                                         nsIDNSRecord *aRecord,
-                                         nsresult aStatus)
+void
+nsProtocolProxyService::ApplyFilters(nsIURI *uri, const nsProtocolInfo &info,
+                                     nsIProxyInfo **list)
 {
-    if (aRecord)
-        ConfigureFromPAC("http://wpad/wpad.dat");
-    return NS_OK;
+    if (!(info.flags & nsIProtocolHandler::ALLOWS_PROXY))
+        return;
+
+    // We prune the proxy list prior to invoking each filter.  This may be
+    // somewhat inefficient, but it seems like a good idea since we want each
+    // filter to "see" a valid proxy list.
+
+    nsresult rv;
+    nsCOMPtr<nsIProxyInfo> result;
+
+    for (FilterLink *iter = mFilters; iter; iter = iter->next) {
+        PruneProxyInfo(info, list);
+
+        rv = iter->filter->ApplyFilter(this, uri, *list,
+                                       getter_AddRefs(result));
+        if (NS_FAILED(rv))
+            continue;
+        result.swap(*list);
+    }
+
+    PruneProxyInfo(info, list);
+}
+
+void
+nsProtocolProxyService::PruneProxyInfo(const nsProtocolInfo &info,
+                                       nsIProxyInfo **list)
+{
+    if (!*list)
+        return;
+    nsProxyInfo *head = nsnull;
+    CallQueryInterface(*list, &head);
+    if (!head) {
+        NS_NOTREACHED("nsIProxyInfo must QI to nsProxyInfo");
+        return;
+    }
+    NS_RELEASE(*list);
+
+    // Pruning of disabled proxies works like this:
+    //   - If all proxies are disabled, return the full list
+    //   - Otherwise, remove the disabled proxies.
+    //
+    // Pruning of disallowed proxies works like this:
+    //   - If the protocol handler disallows the proxy, then we disallow it.
+
+    // Start by removing all disallowed proxies if required:
+    if (!(info.flags & nsIProtocolHandler::ALLOWS_PROXY_HTTP)) {
+        nsProxyInfo *last = nsnull, *iter = head; 
+        while (iter) {
+            if (iter->Type() == kProxyType_HTTP) {
+                // reject!
+                if (last)
+                    last->mNext = iter->mNext;
+                else
+                    head = iter->mNext;
+                nsProxyInfo *next = iter->mNext;
+                iter->mNext = nsnull;
+                iter->Release();
+                iter = next;
+            } else {
+                last = iter;
+                iter = iter->mNext;
+            }
+        }
+        if (!head)
+            return;
+    }
+
+    // Now, scan to see if all remaining proxies are disabled.  If so, then
+    // we'll just bail and return them all.  Otherwise, we'll go and prune the
+    // disabled ones.
+    
+    PRBool allDisabled = PR_TRUE;
+
+    nsProxyInfo *iter;
+    for (iter = head; iter; iter = iter->mNext) {
+        if (!IsProxyDisabled(iter)) {
+            allDisabled = PR_FALSE;
+            break;
+        }
+    }
+
+    if (allDisabled)
+        LOG(("All proxies are disabled, so trying all again"));
+    else {
+        // remove any disabled proxies.
+        nsProxyInfo *last = nsnull; 
+        for (iter = head; iter; ) {
+            if (IsProxyDisabled(iter)) {
+                // reject!
+                nsProxyInfo *reject = iter;
+
+                iter = iter->mNext;
+                if (last)
+                    last->mNext = iter;
+                else
+                    head = iter;
+
+                reject->mNext = nsnull;
+                NS_RELEASE(reject);
+                continue;
+            }
+
+            // since we are about to use this proxy, make sure it is not on
+            // the disabled proxy list.  we'll add it back to that list if
+            // we have to (in GetFailoverForProxy).
+            //
+            // XXX(darin): It might be better to do this as a final pass.
+            //
+            EnableProxy(iter);
+
+            last = iter;
+            iter = iter->mNext;
+        }
+    }
+
+    // if only DIRECT was specified then return no proxy info, and we're done.
+    if (head && !head->mNext && head->mType == kProxyType_DIRECT)
+        NS_RELEASE(head);
+
+    *list = head;  // Transfer ownership
 }

@@ -72,6 +72,7 @@ components\gkcontent.dll
 components\gklayout.dll                   
 components\gkparser.dll                 
 components\layout_base.xpt              
+components\layout_printing.xpt              
 components\layout_xul.xpt               
 components\content_base.xpt
 res\dtd\xhtml11.dtd
@@ -174,9 +175,6 @@ components\dom_views.xpt
 components\dom_xbl.xpt
 components\dom_xul.xpt
 
-; "javascript:" URLs
-components\jsurl.xpt
-
 ; editor
 components\editor.dll                   
 components\editor.xpt
@@ -192,7 +190,6 @@ components\necko_about.xpt
 components\necko_data.xpt               
 components\necko_dns.xpt                
 components\necko_http.xpt               
-components\necko_jar.xpt                
 components\necko_res.xpt                
 components\necko_strconv.xpt
 
@@ -236,14 +233,13 @@ components\xmlextras.xpt
 res\html.css   
 res\quirk.css
 res\viewsource.css
+res\hiddenWindow.html
 res\ua.css
 res\forms.css
-res\platform-forms.css
 res\arrow.gif
 res\arrowd.gif
 res\loading-image.gif
 res\broken-image.gif
-res\builtin\platformHTMLBindings.xml
 res\entityTables\html40Special.properties
 res\entityTables\htmlEntityVersions.properties
 res\entityTables\html40Latin1.properties

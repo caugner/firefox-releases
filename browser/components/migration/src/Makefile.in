@@ -43,6 +43,7 @@ include $(DEPTH)/config/autoconf.mk
 
 MODULE		= migration
 LIBRARY_NAME	= migration_s
+MOZILLA_INTERNAL_API = 1
 
 REQUIRES	= \
       xpcom \
@@ -62,7 +63,6 @@ REQUIRES	= \
 		  windowwatcher \
 		  dom \
 		  docshell \
-		  cookie \
 		  xulapp \
 		  $(NULL)
 
@@ -71,7 +71,6 @@ CPPSRCS  = nsProfileMigrator.cpp \
            nsNetscapeProfileMigratorBase.cpp \
            nsSeamonkeyProfileMigrator.cpp \
            nsPhoenixProfileMigrator.cpp \
-           nsINIParser.cpp \
            $(NULL)
 
 ifneq ($(OS_ARCH),BeOS)

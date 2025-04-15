@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -205,194 +205,224 @@ CWAB::~CWAB()
 
 HRESULT CWAB::IterateWABContents(CWabIterator *pIter, int *pDone)
 {
-	if (!m_bInitialized || !m_lpAdrBook)
-		return( E_FAIL);
-
-    ULONG			ulObjType =   0;
-	LPMAPITABLE		lpAB =  NULL;
-    ULONG			cRows =       0;
- 	LPSRowSet		lpRowAB = NULL;
-    LPABCONT		lpContainer = NULL;
-	int				cNumRows = 0;
-	nsresult			keepGoing;
-
-    HRESULT			hr = E_FAIL;
-
-    ULONG			lpcbEID = 0;
-	LPENTRYID		lpEID = NULL;
-	ULONG			rowCount = 0;
-	ULONG			curCount = 0;
-
-	nsString		uniStr;
-
-    // Get the entryid of the root PAB container
-    //
-    hr = m_lpAdrBook->GetPAB( &lpcbEID, &lpEID);
-
-	if (HR_FAILED( hr))
-		goto exit;
-
-	ulObjType = 0;
-
-    // Open the root PAB container
-    // This is where all the WAB contents reside
-    //
-    hr = m_lpAdrBook->OpenEntry(lpcbEID,
-					    		(LPENTRYID)lpEID,
-						    	NULL,
-							    0,
-							    &ulObjType,
-							    (LPUNKNOWN *)&lpContainer);
-
-	m_lpWABObject->FreeBuffer(lpEID);
-
-	lpEID = NULL;
-	
+  if (!m_bInitialized || !m_lpAdrBook)
+    return( E_FAIL);
+  
+  ULONG			ulObjType =   0;
+  LPMAPITABLE		lpAB =  NULL;
+  ULONG			cRows =       0;
+  LPSRowSet		lpRowAB = NULL;
+  LPABCONT		lpContainer = NULL;
+  int				cNumRows = 0;
+  nsresult			keepGoing;
+  
+  HRESULT			hr = E_FAIL;
+  
+  ULONG			lpcbEID = 0;
+  LPENTRYID		lpEID = NULL;
+  ULONG			rowCount = 0;
+  ULONG			curCount = 0;
+  
+  nsString		uniStr;
+  
+  // Get the entryid of the root PAB container
+  //
+  hr = m_lpAdrBook->GetPAB( &lpcbEID, &lpEID);
+  
+  if (HR_FAILED( hr))
+    goto exit;
+  
+  ulObjType = 0;
+  
+  // Open the root PAB container
+  // This is where all the WAB contents reside
+  //
+  hr = m_lpAdrBook->OpenEntry(lpcbEID,
+    (LPENTRYID)lpEID,
+    NULL,
+    0,
+    &ulObjType,
+    (LPUNKNOWN *)&lpContainer);
+  
+  m_lpWABObject->FreeBuffer(lpEID);
+  
+  lpEID = NULL;
+  
+  if(HR_FAILED(hr))
+    goto exit;
+  
+  // Get a contents table of all the contents in the
+  // WABs root container
+  //
+  hr = lpContainer->GetContentsTable( 0,
+    &lpAB);
+  
+  if(HR_FAILED(hr))
+    goto exit;
+  
+  hr = lpAB->GetRowCount( 0, &rowCount);
+  if (HR_FAILED(hr))
+    rowCount = 100;
+  if (rowCount == 0)
+    rowCount = 1;
+  
+  // Order the columns in the ContentsTable to conform to the
+  // ones we want - which are mainly DisplayName, EntryID and
+  // ObjectType
+  // The table is gauranteed to set the columns in the order 
+  // requested
+  //
+  hr =lpAB->SetColumns( (LPSPropTagArray)&ptaEid, 0 );
+  
+  if(HR_FAILED(hr))
+    goto exit;
+  
+  
+  // Reset to the beginning of the table
+  //
+  hr = lpAB->SeekRow( BOOKMARK_BEGINNING, 0, NULL );
+  
+  if(HR_FAILED(hr))
+    goto exit;
+  
+  // Read all the rows of the table one by one
+  //
+  
+  do {
+    
+    hr = lpAB->QueryRows(1,	0, &lpRowAB);
+    
     if(HR_FAILED(hr))
-        goto exit;
-
-    // Get a contents table of all the contents in the
-    // WABs root container
-    //
-    hr = lpContainer->GetContentsTable( 0,
-            							&lpAB);
-
-    if(HR_FAILED(hr))
-        goto exit;
-	
-	hr = lpAB->GetRowCount( 0, &rowCount);
-	if (HR_FAILED(hr))
-		rowCount = 100;
-	if (rowCount == 0)
-		rowCount = 1;
-
-    // Order the columns in the ContentsTable to conform to the
-    // ones we want - which are mainly DisplayName, EntryID and
-    // ObjectType
-    // The table is gauranteed to set the columns in the order 
-    // requested
-    //
-	hr =lpAB->SetColumns( (LPSPropTagArray)&ptaEid, 0 );
-
-    if(HR_FAILED(hr))
-        goto exit;
-
-
-    // Reset to the beginning of the table
-    //
-	hr = lpAB->SeekRow( BOOKMARK_BEGINNING, 0, NULL );
-
-    if(HR_FAILED(hr))
-        goto exit;
-
-    // Read all the rows of the table one by one
-    //
-
-	do {
-
-		hr = lpAB->QueryRows(1,	0, &lpRowAB);
-
-        if(HR_FAILED(hr))
-            break;
-
-        if(lpRowAB)
+      break;
+    
+    if(lpRowAB)
+    {
+      cNumRows = lpRowAB->cRows;
+      
+      if (cNumRows)
+      {
+        LPTSTR lpsz = lpRowAB->aRow[0].lpProps[ieidPR_DISPLAY_NAME].Value.lpszA;
+        LPENTRYID lpEID = (LPENTRYID) lpRowAB->aRow[0].lpProps[ieidPR_ENTRYID].Value.bin.lpb;
+        ULONG cbEID = lpRowAB->aRow[0].lpProps[ieidPR_ENTRYID].Value.bin.cb;
+        
+        // There are 2 kinds of objects - the MAPI_MAILUSER contact object
+        // and the MAPI_DISTLIST contact object
+        // For the purposes of this sample, we will only consider MAILUSER
+        // objects
+        //
+        if(lpRowAB->aRow[0].lpProps[ieidPR_OBJECT_TYPE].Value.l == MAPI_MAILUSER)
         {
-            cNumRows = lpRowAB->cRows;
-
-		    if (cNumRows)
-		    {
-                LPTSTR lpsz = lpRowAB->aRow[0].lpProps[ieidPR_DISPLAY_NAME].Value.lpszA;
-                LPENTRYID lpEID = (LPENTRYID) lpRowAB->aRow[0].lpProps[ieidPR_ENTRYID].Value.bin.lpb;
-                ULONG cbEID = lpRowAB->aRow[0].lpProps[ieidPR_ENTRYID].Value.bin.cb;
-
-                // There are 2 kinds of objects - the MAPI_MAILUSER contact object
-                // and the MAPI_DISTLIST contact object
-                // For the purposes of this sample, we will only consider MAILUSER
-                // objects
-                //
-                if(lpRowAB->aRow[0].lpProps[ieidPR_OBJECT_TYPE].Value.l == MAPI_MAILUSER)
-                {
-                    // We will now take the entry-id of each object and cache it
-                    // on the listview item representing that object. This enables
-                    // us to uniquely identify the object later if we need to
-                    //
-					CStrToUnicode( lpsz, uniStr);
-					keepGoing = pIter->EnumUser( uniStr.get(), lpEID, cbEID);
-					curCount++;
-					if (pDone) {
-						*pDone = (curCount * 100) / rowCount;
-						if (*pDone > 100)
-							*pDone = 100;
-					}
-                }
-		    }
-		    FreeProws(lpRowAB );		
+          // We will now take the entry-id of each object and cache it
+          // on the listview item representing that object. This enables
+          // us to uniquely identify the object later if we need to
+          //
+          CStrToUnicode( lpsz, uniStr);
+          keepGoing = pIter->EnumUser( uniStr.get(), lpEID, cbEID);
+          curCount++;
+          if (pDone) {
+            *pDone = (curCount * 100) / rowCount;
+            if (*pDone > 100)
+              *pDone = 100;
+          }
         }
-		
-
-	} while ( SUCCEEDED(hr) && cNumRows && lpRowAB && NS_SUCCEEDED(keepGoing) )  ;
-
-	hr = lpAB->SeekRow( BOOKMARK_BEGINNING, 0, NULL );
-
+      }
+      FreeProws(lpRowAB );		
+    }
+    
+    
+  } while ( SUCCEEDED(hr) && cNumRows && lpRowAB && NS_SUCCEEDED(keepGoing) )  ;
+  
+  hr = lpAB->SeekRow( BOOKMARK_BEGINNING, 0, NULL );
+  
+  if(HR_FAILED(hr))
+    goto exit;
+  
+  // Read all the rows of the table one by one
+  //
+  keepGoing = TRUE;
+  do {
+    
+    hr = lpAB->QueryRows(1,	0, &lpRowAB);
+    
     if(HR_FAILED(hr))
-        goto exit;
-
-    // Read all the rows of the table one by one
-    //
-	keepGoing = TRUE;
-	do {
-
-		hr = lpAB->QueryRows(1,	0, &lpRowAB);
-
-        if(HR_FAILED(hr))
-            break;
-
-        if(lpRowAB)
+      break;
+    
+    if(lpRowAB)
+    {
+      cNumRows = lpRowAB->cRows;
+      
+      if (cNumRows)
+      {
+        LPTSTR lpsz = lpRowAB->aRow[0].lpProps[ieidPR_DISPLAY_NAME].Value.lpszA;
+        LPENTRYID lpEID = (LPENTRYID) lpRowAB->aRow[0].lpProps[ieidPR_ENTRYID].Value.bin.lpb;
+        ULONG cbEID = lpRowAB->aRow[0].lpProps[ieidPR_ENTRYID].Value.bin.cb;
+        
+        // There are 2 kinds of objects - the MAPI_MAILUSER contact object
+        // and the MAPI_DISTLIST contact object
+        // For the purposes of this sample, we will only consider MAILUSER
+        // objects
+        //
+        if(lpRowAB->aRow[0].lpProps[ieidPR_OBJECT_TYPE].Value.l == MAPI_DISTLIST)
         {
-            cNumRows = lpRowAB->cRows;
+          LPABCONT distListContainer = NULL;
+          // We will now take the entry-id of each object and cache it
+          // on the listview item representing that object. This enables
+          // us to uniquely identify the object later if we need to
+          //
+          hr = m_lpAdrBook->OpenEntry(cbEID, lpEID, NULL,
+            0,&ulObjType,(LPUNKNOWN *)&distListContainer);
+          
+          LPMAPITABLE		distListTable =  NULL;
 
-		    if (cNumRows)
-		    {
-                LPTSTR lpsz = lpRowAB->aRow[0].lpProps[ieidPR_DISPLAY_NAME].Value.lpszA;
-                LPENTRYID lpEID = (LPENTRYID) lpRowAB->aRow[0].lpProps[ieidPR_ENTRYID].Value.bin.lpb;
-                ULONG cbEID = lpRowAB->aRow[0].lpProps[ieidPR_ENTRYID].Value.bin.cb;
 
-                // There are 2 kinds of objects - the MAPI_MAILUSER contact object
-                // and the MAPI_DISTLIST contact object
-                // For the purposes of this sample, we will only consider MAILUSER
-                // objects
-                //
-                if(lpRowAB->aRow[0].lpProps[ieidPR_OBJECT_TYPE].Value.l == MAPI_DISTLIST)
-                {
-                    // We will now take the entry-id of each object and cache it
-                    // on the listview item representing that object. This enables
-                    // us to uniquely identify the object later if we need to
-                    //
-					CStrToUnicode( lpsz, uniStr);
-					keepGoing = pIter->EnumList( uniStr.get(), lpEID, cbEID);
-					curCount++;
-					if (pDone) {
-						*pDone = (curCount * 100) / rowCount;
-						if (*pDone > 100)
-							*pDone = 100;
-					}
-                 }
-		    }
-		    FreeProws(lpRowAB );		
+          // Get a contents table of the dist list
+          //
+          hr = distListContainer->GetContentsTable( 0, &distListTable);
+          if (lpAB) 
+          {
+            hr = distListTable->GetRowCount( 0, &rowCount);
+            if (HR_FAILED(hr))
+              rowCount = 100;
+            if (rowCount == 0)
+              rowCount = 1;
+  
+            // Order the columns in the ContentsTable to conform to the
+            // ones we want - which are mainly DisplayName, EntryID and
+            // ObjectType
+            // The table is gauranteed to set the columns in the order 
+            // requested
+            //
+            hr = distListTable->SetColumns( (LPSPropTagArray)&ptaEid, 0 );
+            CStrToUnicode( lpsz, uniStr);
+            keepGoing = pIter->EnumList( uniStr.get(), lpEID, cbEID, distListTable);
+            curCount++;
+            if (pDone) {
+              *pDone = (curCount * 100) / rowCount;
+              if (*pDone > 100)
+                *pDone = 100;
+            }
+          }
+          if (distListContainer)
+            distListContainer->Release();
+          if (distListTable)
+            distListTable->Release();
         }
-
-	} while ( SUCCEEDED(hr) && cNumRows && lpRowAB && NS_SUCCEEDED(keepGoing) )  ;
-
-
+      }
+      FreeProws(lpRowAB );		
+    }
+    
+  } while ( SUCCEEDED(hr) && cNumRows && lpRowAB && NS_SUCCEEDED(keepGoing) )  ;
+  
+  
 exit:
-
-	if ( lpContainer )
-		lpContainer->Release();
-
-	if ( lpAB )
-		lpAB->Release();
-
-    return hr;
+  
+  if ( lpContainer )
+    lpContainer->Release();
+  
+  if ( lpAB )
+    lpAB->Release();
+  
+  return hr;
 }
 
 
@@ -435,7 +465,7 @@ LPSPropValue CWAB::GetListProperty( LPDISTLIST pUser, ULONG tag)
 	LPSPropValue	lpProp = NULL;
 	ULONG	cValues = 0;
 	HRESULT hr = pUser->GetProps( pTag, 0, &cValues, &lpProp);
-	delete pTag;
+	delete [] pTag;
 	if (HR_FAILED( hr) || (cValues != 1)) {
 		if (lpProp)
 			m_lpWABObject->FreeBuffer( lpProp);
@@ -495,7 +525,7 @@ LPSPropValue CWAB::GetUserProperty( LPMAILUSER pUser, ULONG tag)
 			}
 		}
 	}
-	delete pTag;
+	delete [] pTag;
 	return( lpProp);
 }
 

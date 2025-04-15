@@ -1,6 +1,5 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * ex: set tabstop=8 softtabstop=2 shiftwidth=2 expandtab:
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Mozilla Public License Version
@@ -17,16 +16,16 @@
  *
  * The Initial Developer of the Original Code is
  * Brian Stell <bstell@ix.netcom.com>.
- *
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Brian Stell <bstell@ix.netcom.com>.
+ *   Brian Stell <bstell@ix.netcom.com>.
+ *   Jungshik Shin <jshin@i18nl10n.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -54,7 +53,15 @@
 
 #include <stdio.h>
 #include "nspr.h"
+#ifdef MOZ_ENABLE_XFT
+#include "nsISupports.h"
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#include FT_GLYPH_H
+#include FT_OUTLINE_H
+#else
 #include "nsIFreeType2.h"
+#endif
 
 /* to/from Character Space */
 inline int
@@ -95,8 +102,31 @@ fromCS(double upm, double x)
 #define TYPE1_ENCRYPTION_C1  52845
 #define TYPE1_ENCRYPTION_C2  22719
 
+#ifdef MOZ_ENABLE_XFT  
+FT_Error FT2GlyphToType1CharString(FT_Face aFace,
+#else /* MOZ_ENABLE_FREETYPE2 */
 FT_Error FT2GlyphToType1CharString(nsIFreeType2 *aFt2, FT_Face aFace,
+#endif
                                    PRUint32 aGlyphID, int aWmode, int aLenIV,
                                    unsigned char *aBuf);
+#ifdef MOZ_ENABLE_XFT
+// macros to handle FreeType2 26.6 numbers (26 bit number with 6 bit fraction)
+#define FT_REG_TO_16_16(x) ((x)<<16)
+#ifndef FT_MulFix
+#define FT_MulFix(v, s) (((v)*(s))>>16)
+#endif
+#define FT_ROUND(x) (((x) + 32) & ~63) // 63 = 2^6 - 1
+#define FT_TRUNC(x) ((x) >> 6)
+#define FT_DESIGN_UNITS_TO_PIXELS(v, s) FT_TRUNC(FT_ROUND(FT_MulFix((v) , (s))))
+#endif /* MOZ_ENABLE_XFT */
+
+class nsString;
+class nsCString;
+
+PRBool FT2SubsetToType1FontSet(FT_Face aFace, const nsString& aSubset,
+                               int aWmode,  FILE *aFile);
+nsresult FT2ToType1FontName(FT_Face aFace, int aWmode,
+                            nsCString& aFontName);
+  
 
 #endif /* TYPE1_H */

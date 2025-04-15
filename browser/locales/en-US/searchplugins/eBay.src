@@ -4,6 +4,7 @@ name="eBay"
 description="eBay - Online actions"
 action="http://search.ebay.com/search/search.dll"
 method="GET"
+queryCharset="ISO-8859-1"
 >
 
 <input name="query" user />
@@ -30,7 +31,7 @@ dateEnd='</font></td></tr></table>'
 </search>
 
 <BROWSER
-   update="http://www.mozilla.org/products/firefox/plugins/ebay.src" 
-   updateIcon="http://www.mozilla.org/products/firefox/plugins/eBay.gif" 
+   update="https://addons.mozilla.org/searchplugins/updates/eBay.src" 
+   updateIcon="https://addons.mozilla.org/searchplugins/updates/eBay.gif" 
    updateCheckDays="3"
 >

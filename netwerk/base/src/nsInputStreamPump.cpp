@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -45,6 +45,7 @@
 #include "nsNetUtil.h"
 #include "nsCOMPtr.h"
 #include "prlog.h"
+#include "nsInt64.h"
 
 static NS_DEFINE_CID(kStreamTransportServiceCID, NS_STREAMTRANSPORTSERVICE_CID);
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
@@ -64,7 +65,7 @@ static PRLogModuleInfo *gStreamPumpLog = nsnull;
 nsInputStreamPump::nsInputStreamPump()
     : mState(STATE_IDLE)
     , mStreamOffset(0)
-    , mStreamLength(PR_UINT32_MAX)
+    , mStreamLength(LL_MaxUint())
     , mStatus(NS_OK)
     , mSuspendCount(0)
     , mLoadFlags(LOAD_NORMAL)
@@ -213,14 +214,15 @@ nsInputStreamPump::SetLoadGroup(nsILoadGroup *aLoadGroup)
 
 NS_IMETHODIMP
 nsInputStreamPump::Init(nsIInputStream *stream,
-                        PRInt32 streamPos, PRInt32 streamLen,
+                        PRInt64 streamPos, PRInt64 streamLen,
                         PRUint32 segsize, PRUint32 segcount,
                         PRBool closeWhenDone)
 {
     NS_ENSURE_TRUE(mState == STATE_IDLE, NS_ERROR_IN_PROGRESS);
 
-    mStreamOffset = (PRUint32) streamPos;
-    mStreamLength = (PRUint32) streamLen;
+    mStreamOffset = PRUint64(streamPos);
+    if (nsInt64(streamLen) >= nsInt64(0))
+        mStreamLength = PRUint64(streamLen);
     mStream = stream;
     mSegSize = segsize;
     mSegCount = segcount;
@@ -255,10 +257,10 @@ nsInputStreamPump::AsyncRead(nsIStreamListener *listener, nsISupports *ctxt)
         // stream case, the stream transport service will take care of seeking
         // for us.
         // 
-        if (mAsyncStream && (mStreamOffset != PR_UINT32_MAX)) {
+        if (mAsyncStream && (mStreamOffset != nsUint64(LL_MaxUint()))) {
             nsCOMPtr<nsISeekableStream> seekable = do_QueryInterface(mStream);
             if (seekable)
-                seekable->Seek(nsISeekableStream::NS_SEEK_SET, mStreamOffset);
+                seekable->Seek(nsISeekableStream::NS_SEEK_SET, PRInt64(PRUint64(mStreamOffset)));
         }
     }
 
@@ -269,7 +271,9 @@ nsInputStreamPump::AsyncRead(nsIStreamListener *listener, nsISupports *ctxt)
         if (NS_FAILED(rv)) return rv;
 
         nsCOMPtr<nsITransport> transport;
-        rv = sts->CreateInputTransport(mStream, mStreamOffset, mStreamLength,
+        // Note: The casts to PRUint64 are needed to cast to PRInt64, as
+        // nsUint64 can't directly be cast to PRInt64
+        rv = sts->CreateInputTransport(mStream, PRUint64(mStreamOffset), PRUint64(mStreamLength),
                                        mCloseWhenDone, getter_AddRefs(transport));
         if (NS_FAILED(rv)) return rv;
 
@@ -405,7 +409,7 @@ nsInputStreamPump::OnStateTransfer()
     }
     else if (NS_SUCCEEDED(rv) && avail) {
         // figure out how much data to report (XXX detect overflow??)
-        if (avail + mStreamOffset > mStreamLength)
+        if (nsUint64(avail) + mStreamOffset > mStreamLength)
             avail = mStreamLength - mStreamOffset;
 
         if (avail) {
@@ -424,22 +428,26 @@ nsInputStreamPump::OnStateTransfer()
 
             // in most cases this QI will succeed (mAsyncStream is almost always
             // a nsPipeInputStream, which implements nsISeekableStream::Tell).
-            PRUint32 offsetBefore;
+            PRInt64 offsetBefore;
             nsCOMPtr<nsISeekableStream> seekable = do_QueryInterface(mAsyncStream);
             if (seekable)
                 seekable->Tell(&offsetBefore);
 
-            LOG(("  calling OnDataAvailable [offset=%u count=%u]\n", mStreamOffset, avail));
+            LOG(("  calling OnDataAvailable [offset=%lld count=%u]\n", PRUint64(mStreamOffset), avail));
             rv = mListener->OnDataAvailable(this, mListenerContext, mAsyncStream, mStreamOffset, avail);
 
             // don't enter this code if ODA failed or called Cancel
             if (NS_SUCCEEDED(rv) && NS_SUCCEEDED(mStatus)) {
                 // test to see if this ODA failed to consume data
                 if (seekable) {
-                    PRUint32 offsetAfter;
+                    PRInt64 offsetAfter;
                     seekable->Tell(&offsetAfter);
-                    if (offsetAfter > offsetBefore)
-                        mStreamOffset += (offsetAfter - offsetBefore);
+                    nsUint64 offsetBefore64 = PRUint64(offsetBefore);
+                    nsUint64 offsetAfter64 = PRUint64(offsetAfter);
+                    if (offsetAfter64 > offsetBefore64) {
+                        nsUint64 offsetDelta = offsetAfter64 - offsetBefore64;
+                        mStreamOffset += offsetDelta;
+                    }
                     else if (mSuspendCount == 0) {
                         //
                         // possible infinite loop if we continue pumping data!

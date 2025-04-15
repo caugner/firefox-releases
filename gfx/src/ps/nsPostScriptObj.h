@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,27 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
- *   Ken Herron <kherron@newsguy.com>
- *
+ *   Ken Herron <kherron@fastmail.us>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -57,8 +56,10 @@
 #include "nsIDeviceContextSpecPS.h"
 #include "nsIPersistentProperties2.h"
 #include "nsTempfilePS.h"
+#include "nsEPSObjectPS.h"
 
 class nsIImage;
+class nsIAtom;
 #endif
 
 #include <stdio.h>
@@ -138,12 +139,9 @@ struct PrintSetup_ {
   const char* bullet;           /* What char to use for bullets */
 
   struct URL_Struct_ *url;      /* url of doc being translated */
-  FILE *out;                    /* Where to send the output */
-  FILE *tmpBody;                   /* temp file for True-Type printing */
   XL_CompletionRoutine completion; /* Called when translation finished */
   void* carg;                   /* Data saved for completion routine */
   int status;                   /* Status of URL on completion */
-  const char *print_cmd;        /* print command */
   int num_copies;               /* Number of copies of job to print */
 };
 
@@ -158,6 +156,10 @@ struct PSContext_{
     PrintInfo	  *prInfo;	    /* State information for printing process */
 };
 typedef struct PSContext_ PSContext;
+
+struct PSBoundingBox {          /* For BeginEPSF() */
+  float llx, lly, urx, ury;
+};
 
 #ifdef __cplusplus
 class nsPostScriptObj
@@ -184,22 +186,28 @@ public:
    *	@update 2/1/99 dwc
    */
   void end_page();
-  /** ---------------------------------------------------
-   *  start the current document
-   *	@update 2/1/99 dwc
-   */
-  void begin_document();
 
   /** ---------------------------------------------------
    *  end the current document
    *	@update 2/1/99 dwc
    */
   nsresult end_document();
+
   /** ---------------------------------------------------
-   *  add CID check code
-   *	@update 01/20/03 louie
+   *  Write the document prolog to the given file handle
+   *	@update 2/8/2005 jshin
+   *  @param File handle which should receive the prolog.
+   *  @param aFTPenable  FT2 printing is enabled? 
    */
-  void add_cid_check();
+  void write_prolog(FILE *aHandle, PRBool aFTPenable = PR_FALSE);
+
+  /** ---------------------------------------------------
+   *  Write the document script (body) to the given file handle.
+   *  @param File handle which should receive the prolog.
+   *  @return NS_OK or a suitable error code for I/O errors.
+   */
+  nsresult write_script(FILE *aHandle);
+
   /** ---------------------------------------------------
    *  move the current point to this location
    *	@update 9/30/2003 kherron
@@ -338,6 +346,13 @@ public:
    */
   void show(const PRUnichar* aText, int aLen, const char *aAlign, int aType);
   /** ---------------------------------------------------
+   *  This version takes a PRUnichar string, a font subset string
+   *  for freetype printing and a subfont index
+   *	@update 2/15/2005 jshin@mailaps.org
+   */
+  void show(const PRUnichar* aText, int aLen, const nsAFlatString& aCharList,
+            PRUint16 aSubFontIdx);
+  /** ---------------------------------------------------
    *  set the clipping path to the current path using the winding rule
    *	@update 2/1/99 dwc
    */
@@ -376,7 +391,8 @@ public:
    *  Set up the font
    *    @update 12/17/2002 louie
    */
-  void setfont(const nsCString aFontName, PRUint32 aHeight);
+  void setfont(const nsCString &aFontName, PRUint32 aHeight,
+               PRInt32 aSubFont = -1);
   /** ---------------------------------------------------
    *  output a postscript comment
    *	@update 2/1/99 dwc
@@ -392,10 +408,37 @@ public:
    *	@update 6/1/2000 katakai
    */
   void preshow(const PRUnichar* aText, int aLen);
+
+  /** ---------------------------------------------------
+   *  Render an encapsulated postscript object into the document
+   *	@update 3/6/2004 kherron
+   *	@param aRect Rectangle in which to render the EPS
+   *	@param anEPS Object to render
+   *	@return NS_OK if the object was copied successfully.
+   */
+  nsresult render_eps(const nsRect& aRect, nsEPSObjectPS &anEPS);
   
   void settitle(PRUnichar * aTitle);
 
-  FILE * GetPrintFile();
+  /** ---------------------------------------------------
+   *  Retrieve the handle for the temp file holding the
+   *  document script.
+   *  @return the script file handle.
+   */
+  FILE * GetScriptHandle() { return mScriptFP; }
+
+  /** ---------------------------------------------------
+   *  Set the number of copies attribute for this document.
+   *  If the number of copies is > 1, then the generated
+   *  postscript will contain code to request the specified
+   *  number of copies from the printer.
+   *  This must be called after Init() and before the first
+   *  begin_page() call.
+   *
+   *  @param aNumCopies Number of copies for this document.
+   */
+  void SetNumCopies(int aNumCopies);
+
   PRBool  GetUnixPrinterSetting(const nsCAutoString&, char**);
   PrintSetup            *mPrintSetup;
 private:
@@ -404,9 +447,8 @@ private:
   nsCOMPtr<nsIPersistentProperties> mPrinterProps;
   char                  *mTitle;
   nsTempfilePS          mTempfileFactory;
-  nsCOMPtr<nsILocalFile> mDocProlog;
   nsCOMPtr<nsILocalFile> mDocScript;
-
+  FILE                  *mScriptFP;
 
 
   /** ---------------------------------------------------
@@ -416,9 +458,10 @@ private:
   void initialize_translation(PrintSetup* aPi);
   /** ---------------------------------------------------
    *  initialize language group
-   *	@update 5/30/00 katakai
+   *	@update 5/17/2004 kherron
+   *	@param aHandle File handle to write langgroup directives
    */
-  void initlanggroup();
+  void initlanggroup(FILE *aHandle);
 
 };
 

@@ -1,25 +1,40 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications.  Portions created by Netscape Communications are
- * Copyright (C) 2001 by Netscape Communications.  All
- * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Vidur Apparao <vidur@netscape.com> (original author)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsSchemaPrivate.h"
 
@@ -37,7 +52,7 @@ nsSchemaParticleBase::~nsSchemaParticleBase()
 {
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaParticleBase::GetMinOccurs(PRUint32 *aMinOccurs)
 {
   NS_ENSURE_ARG_POINTER(aMinOccurs);
@@ -57,7 +72,7 @@ nsSchemaParticleBase::GetMaxOccurs(PRUint32 *aMaxOccurs)
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaParticleBase::SetMinOccurs(PRUint32 aMinOccurs)
 {
   mMinOccurs = aMinOccurs;
@@ -69,7 +84,7 @@ nsSchemaParticleBase::SetMinOccurs(PRUint32 aMinOccurs)
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaParticleBase::SetMaxOccurs(PRUint32 aMaxOccurs)
 {
   mMaxOccurs = aMaxOccurs;
@@ -102,9 +117,9 @@ NS_IMPL_ISUPPORTS3_CI(nsSchemaModelGroup,
                       nsISchemaModelGroup)
 
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaModelGroup::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaModelGroup::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   if (mIsResolved) {
     return NS_OK;
@@ -114,17 +129,23 @@ nsSchemaModelGroup::Resolve()
   nsresult rv;
   PRUint32 i, count;
 
-  mParticles.Count(&count);
-  for (i = 0; i < count; i++) {
-    nsCOMPtr<nsISchemaParticle> particle;
-    
-    rv = mParticles.QueryElementAt(i, NS_GET_IID(nsISchemaParticle),
-                                   getter_AddRefs(particle));
-    if (NS_SUCCEEDED(rv)) {
-      rv = particle->Resolve();
-      if (NS_FAILED(rv)) {
-        return rv;
-      }
+  count = mParticles.Count();
+  for (i = 0; i < count; ++i) {
+    rv = mParticles.ObjectAt(i)->Resolve(aErrorHandler);
+    if (NS_FAILED(rv)) {
+      nsAutoString name;
+      nsresult rc = mParticles.ObjectAt(i)->GetName(name);
+      NS_ENSURE_SUCCESS(rc, rc);
+      
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure resolving schema particle, cannot ");
+      errorMsg.AppendLiteral("resolve particle \"");
+      errorMsg.Append(name);
+      errorMsg.AppendLiteral("\"");
+      
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+      
+      return rv;
     }
   }
 
@@ -132,7 +153,7 @@ nsSchemaModelGroup::Resolve()
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaModelGroup::Clear()
 {
   if (mIsCleared) {
@@ -140,24 +161,17 @@ nsSchemaModelGroup::Clear()
   }
 
   mIsCleared = PR_TRUE;
-  nsresult rv;
-  PRUint32 i, count;
 
-  mParticles.Count(&count);
-  for (i = 0; i < count; i++) {
-    nsCOMPtr<nsISchemaParticle> particle;
-    
-    rv = mParticles.QueryElementAt(i, NS_GET_IID(nsISchemaParticle),
-                                   getter_AddRefs(particle));
-    if (NS_SUCCEEDED(rv)) {
-      particle->Clear();
-    }
+  PRUint32 i, count;
+  count = mParticles.Count();
+  for (i = 0; i < count; ++i) {
+    mParticles.ObjectAt(i)->Clear();
   }
 
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaModelGroup::GetParticleType(PRUint16 *aParticleType)
 {
   NS_ENSURE_ARG_POINTER(aParticleType);
@@ -176,7 +190,7 @@ nsSchemaModelGroup::GetName(nsAString& aName)
 }
 
 /* readonly attribute unsigned short compositor; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaModelGroup::GetCompositor(PRUint16 *aCompositor)
 {
   NS_ENSURE_ARG_POINTER(aCompositor);
@@ -187,52 +201,59 @@ nsSchemaModelGroup::GetCompositor(PRUint16 *aCompositor)
 }
 
 /* readonly attribute PRUint32 particleCount; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaModelGroup::GetParticleCount(PRUint32 *aParticleCount)
 {
   NS_ENSURE_ARG_POINTER(aParticleCount);
 
-  return mParticles.Count(aParticleCount);
+  *aParticleCount = mParticles.Count();
+
+  return NS_OK;
 }
 
 /* nsISchemaParticle getParticle (in PRUint32 index); */
-NS_IMETHODIMP 
-nsSchemaModelGroup::GetParticle(PRUint32 index, nsISchemaParticle **_retval)
+NS_IMETHODIMP
+nsSchemaModelGroup::GetParticle(PRUint32 aIndex, nsISchemaParticle** aResult)
 {
-  NS_ENSURE_ARG_POINTER(_retval);
+  NS_ENSURE_ARG_POINTER(aResult);
 
-  return mParticles.QueryElementAt(index, NS_GET_IID(nsISchemaParticle),
-                                   (void**)_retval);
+  if (aIndex >= (PRUint32)mParticles.Count()) {
+    return NS_ERROR_FAILURE;
+  }
+
+  NS_ADDREF(*aResult = mParticles.ObjectAt(aIndex));
+
+  return NS_OK;
 }
 
 /* nsISchemaElement getElementByName(in AString name); */
 NS_IMETHODIMP
 nsSchemaModelGroup::GetElementByName(const nsAString& aName,
-                                     nsISchemaElement** _retval)
+                                     nsISchemaElement** aResult)
 {
-  NS_ENSURE_ARG_POINTER(_retval);
+  NS_ENSURE_ARG_POINTER(aResult);
 
   PRUint32 i, count;
-  mParticles.Count(&count);
+  count = mParticles.Count();
 
-  for (i = 0; i < count; i++) {
-    nsCOMPtr<nsISchemaParticle> particle;
-    GetParticle(i, getter_AddRefs(particle));
-    nsCOMPtr<nsISchemaElement> element(do_QueryInterface(particle));
+  for (i = 0; i < count; ++i) {
+    nsISchemaParticle* particle = mParticles.ObjectAt(i);
+
+    nsCOMPtr<nsISchemaElement> element = do_QueryInterface(particle);
     if (element) {
       nsAutoString name;
       element->GetName(name);
 
       if (name.Equals(aName)) {
-        *_retval = element;
-        NS_ADDREF(*_retval);
+        NS_ADDREF(*aResult = element);
+
         return NS_OK;
       }
     }
     else {
-      nsCOMPtr<nsISchemaModelGroup> group(do_QueryInterface(particle));
+      nsCOMPtr<nsISchemaModelGroup> group = do_QueryInterface(particle);
       if (group) {
-        nsresult rv = group->GetElementByName(aName, _retval);
+        nsresult rv = group->GetElementByName(aName, aResult);
         if (NS_SUCCEEDED(rv)) {
           return NS_OK;
         }
@@ -251,12 +272,12 @@ nsSchemaModelGroup::SetCompositor(PRUint16 aCompositor)
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaModelGroup::AddParticle(nsISchemaParticle* aParticle)
 {
   NS_ENSURE_ARG_POINTER(aParticle);
 
-  return mParticles.AppendElement(aParticle);
+  return mParticles.AppendObject(aParticle) ? NS_OK : NS_ERROR_FAILURE;
 }
 
 ////////////////////////////////////////////////////////////
@@ -265,8 +286,9 @@ nsSchemaModelGroup::AddParticle(nsISchemaParticle* aParticle)
 //
 ////////////////////////////////////////////////////////////
 nsSchemaModelGroupRef::nsSchemaModelGroupRef(nsSchema* aSchema,
-                                             const nsAString& aRef)
-  : nsSchemaParticleBase(aSchema), mRef(aRef)
+                                             const nsAString& aRef,
+                                             const nsAString& aRefNS)
+  : nsSchemaParticleBase(aSchema), mRef(aRef), mRefNS(aRefNS)
 {
 }
 
@@ -279,9 +301,9 @@ NS_IMPL_ISUPPORTS3_CI(nsSchemaModelGroupRef,
                       nsISchemaParticle,
                       nsISchemaModelGroup)
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaModelGroupRef::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaModelGroupRef::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   nsresult rv = NS_OK;
 
@@ -291,18 +313,28 @@ nsSchemaModelGroupRef::Resolve()
 
   mIsResolved = PR_TRUE;
   if (!mModelGroup && mSchema) {
-    mSchema->GetModelGroupByName(mRef, getter_AddRefs(mModelGroup));
+    // use the namespace and type
+    nsCOMPtr<nsISchemaCollection> schemaColl;
+    mSchema->GetCollection(getter_AddRefs(schemaColl));
+    NS_ENSURE_STATE(schemaColl);
+
+    // get the right schema
+    nsCOMPtr<nsISchema> schema;
+    schemaColl->GetSchema(mRefNS, getter_AddRefs(schema));
+    NS_ENSURE_STATE(schema);
+
+    schema->GetModelGroupByName(mRef, getter_AddRefs(mModelGroup));
   }
 
   if (mModelGroup) {
-    rv = mModelGroup->Resolve();
+    rv = mModelGroup->Resolve(aErrorHandler);
   }
 
   return rv;
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaModelGroupRef::Clear()
 {
   if (mIsCleared) {
@@ -318,7 +350,7 @@ nsSchemaModelGroupRef::Clear()
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaModelGroupRef::GetParticleType(PRUint16 *aParticleType)
 {
   NS_ENSURE_ARG_POINTER(aParticleType);
@@ -340,7 +372,7 @@ nsSchemaModelGroupRef::GetName(nsAString& aName)
 
 
 /* readonly attribute unsigned short compositor; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaModelGroupRef::GetCompositor(PRUint16 *aCompositor)
 {
   NS_ENSURE_ARG_POINTER(aCompositor);
@@ -353,7 +385,7 @@ nsSchemaModelGroupRef::GetCompositor(PRUint16 *aCompositor)
 }
 
 /* readonly attribute PRUint32 particleCount; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaModelGroupRef::GetParticleCount(PRUint32 *aParticleCount)
 {
   NS_ENSURE_ARG_POINTER(aParticleCount);
@@ -366,7 +398,7 @@ nsSchemaModelGroupRef::GetParticleCount(PRUint32 *aParticleCount)
 }
 
 /* nsISchemaParticle getParticle (in PRUint32 index); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaModelGroupRef::GetParticle(PRUint32 index, nsISchemaParticle **_retval)
 {
   NS_ENSURE_ARG_POINTER(_retval);
@@ -411,21 +443,21 @@ NS_IMPL_ISUPPORTS3_CI(nsSchemaAnyParticle,
                       nsISchemaAnyParticle)
 
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaAnyParticle::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaAnyParticle::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   return NS_OK;
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaAnyParticle::Clear()
 {
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaAnyParticle::GetParticleType(PRUint16 *aParticleType)
 {
   NS_ENSURE_ARG_POINTER(aParticleType);
@@ -438,13 +470,13 @@ nsSchemaAnyParticle::GetParticleType(PRUint16 *aParticleType)
 NS_IMETHODIMP
 nsSchemaAnyParticle::GetName(nsAString& aName)
 {
-  aName.Assign(NS_LITERAL_STRING("any"));
+  aName.AssignLiteral("any");
 
   return NS_OK;
 }
 
 /* readonly attribute unsigned short process; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaAnyParticle::GetProcess(PRUint16 *aProcess)
 {
   NS_ENSURE_ARG_POINTER(aProcess);
@@ -455,7 +487,7 @@ nsSchemaAnyParticle::GetProcess(PRUint16 *aProcess)
 }
 
 /* readonly attribute AString namespace; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaAnyParticle::GetNamespace(nsAString & aNamespace)
 {
   aNamespace.Assign(mNamespace);
@@ -471,7 +503,7 @@ nsSchemaAnyParticle::SetProcess(PRUint16 aProcess)
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaAnyParticle::SetNamespace(const nsAString& aNamespace)
 {
   mNamespace.Assign(aNamespace);
@@ -499,9 +531,9 @@ NS_IMPL_ISUPPORTS3_CI(nsSchemaElement,
                       nsISchemaParticle,
                       nsISchemaElement)
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaElement::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaElement::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   if (mIsResolved) {
     return NS_OK;
@@ -511,20 +543,20 @@ nsSchemaElement::Resolve()
   nsresult rv = NS_OK;
   if (mType && mSchema) {
     nsCOMPtr<nsISchemaType> type;
-    rv = mSchema->ResolveTypePlaceholder(mType, getter_AddRefs(type));
+    rv = mSchema->ResolveTypePlaceholder(aErrorHandler, mType, getter_AddRefs(type));
     if (NS_FAILED(rv)) {
       return rv;
     }
     
     mType = type;
-    rv = mType->Resolve();
+    rv = mType->Resolve(aErrorHandler);
   }
 
   return rv;
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElement::Clear()
 {
   if (mIsCleared) {
@@ -540,7 +572,7 @@ nsSchemaElement::Clear()
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElement::GetParticleType(PRUint16 *aParticleType)
 {
   NS_ENSURE_ARG_POINTER(aParticleType);
@@ -559,19 +591,18 @@ nsSchemaElement::GetName(nsAString& aName)
 }
 
 /* readonly attribute nsISchemaType type; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElement::GetType(nsISchemaType * *aType)
 {
   NS_ENSURE_ARG_POINTER(aType);
   
-  *aType = mType;
-  NS_IF_ADDREF(*aType);
+  NS_IF_ADDREF(*aType = mType);
 
   return NS_OK;
 }
 
 /* readonly attribute AString defaultValue; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElement::GetDefaultValue(nsAString & aDefaultValue)
 {
   aDefaultValue.Assign(mDefaultValue);
@@ -580,7 +611,7 @@ nsSchemaElement::GetDefaultValue(nsAString & aDefaultValue)
 }
 
 /* readonly attribute AString fixedValue; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElement::GetFixedValue(nsAString & aFixedValue)
 {
   aFixedValue.Assign(mFixedValue);
@@ -589,7 +620,7 @@ nsSchemaElement::GetFixedValue(nsAString & aFixedValue)
 }
 
 /* readonly attribute boolean nillable; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElement::GetNillable(PRBool *aNillable)
 {
   NS_ENSURE_ARG_POINTER(aNillable);
@@ -600,7 +631,7 @@ nsSchemaElement::GetNillable(PRBool *aNillable)
 }
 
 /* readonly attribute boolean abstract; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElement::GetAbstract(PRBool *aAbstract)
 {
   NS_ENSURE_ARG_POINTER(aAbstract);
@@ -620,7 +651,7 @@ nsSchemaElement::SetType(nsISchemaType* aType)
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElement::SetConstraints(const nsAString& aDefaultValue,
                                 const nsAString& aFixedValue)
 {
@@ -630,14 +661,14 @@ nsSchemaElement::SetConstraints(const nsAString& aDefaultValue,
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElement::SetFlags(PRInt32 aFlags)
 {
   mFlags = aFlags;
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElement::GetTargetNamespace(nsAString& aTargetNamespace)
 {
   if ((mFlags & nsSchemaElement::FORM_QUALIFIED) && mSchema) {
@@ -653,8 +684,9 @@ nsSchemaElement::GetTargetNamespace(nsAString& aTargetNamespace)
 //
 ////////////////////////////////////////////////////////////
 nsSchemaElementRef::nsSchemaElementRef(nsSchema* aSchema, 
-                                       const nsAString& aRef)
-  : nsSchemaParticleBase(aSchema), mRef(aRef)
+                                       const nsAString& aRef,
+                                       const nsAString& aRefNS)
+  : nsSchemaParticleBase(aSchema), mRef(aRef), mRefNS(aRefNS)
 {
 }
 
@@ -662,14 +694,14 @@ nsSchemaElementRef::~nsSchemaElementRef()
 {
 }
 
-NS_IMPL_ISUPPORTS3_CI(nsSchemaElementRef, 
+NS_IMPL_ISUPPORTS3_CI(nsSchemaElementRef,
                       nsISchemaComponent,
                       nsISchemaParticle,
                       nsISchemaElement)
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaElementRef::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaElementRef::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   nsresult rv = NS_OK;
   if (mIsResolved) {
@@ -678,18 +710,27 @@ nsSchemaElementRef::Resolve()
 
   mIsResolved = PR_TRUE;
   if (!mElement && mSchema) {
-    mSchema->GetElementByName(mRef, getter_AddRefs(mElement));
+    if (mRefNS.IsEmpty()) {
+      mSchema->GetElementByName(mRef, getter_AddRefs(mElement));
+    } else {
+      // use the namespace and type
+      nsCOMPtr<nsISchemaCollection> schemaColl;
+      mSchema->GetCollection(getter_AddRefs(schemaColl));
+      NS_ENSURE_STATE(schemaColl);
+
+      schemaColl->GetElement(mRef, mRefNS, getter_AddRefs(mElement));
+    }
   }
 
   if (mElement) {
-    rv = mElement->Resolve();
+    rv = mElement->Resolve(aErrorHandler);
   }
 
   return rv;
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElementRef::Clear()
 {
   if (mIsCleared) {
@@ -705,7 +746,7 @@ nsSchemaElementRef::Clear()
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElementRef::GetParticleType(PRUint16 *aParticleType)
 {
   NS_ENSURE_ARG_POINTER(aParticleType);
@@ -726,7 +767,7 @@ nsSchemaElementRef::GetName(nsAString& aName)
 }
 
 /* readonly attribute nsISchemaType type; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElementRef::GetType(nsISchemaType * *aType)
 {
   NS_ENSURE_ARG_POINTER(aType);
@@ -739,7 +780,7 @@ nsSchemaElementRef::GetType(nsISchemaType * *aType)
 }
 
 /* readonly attribute AString defaultValue; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElementRef::GetDefaultValue(nsAString & aDefaultValue)
 {
   if (!mElement) {
@@ -750,7 +791,7 @@ nsSchemaElementRef::GetDefaultValue(nsAString & aDefaultValue)
 }
 
 /* readonly attribute AString fixedValue; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElementRef::GetFixedValue(nsAString & aFixedValue)
 {
   if (!mElement) {
@@ -761,7 +802,7 @@ nsSchemaElementRef::GetFixedValue(nsAString & aFixedValue)
 }
 
 /* readonly attribute boolean nillable; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElementRef::GetNillable(PRBool *aNillable)
 {
   NS_ENSURE_ARG_POINTER(aNillable);
@@ -774,7 +815,7 @@ nsSchemaElementRef::GetNillable(PRBool *aNillable)
 }
 
 /* readonly attribute boolean abstract; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaElementRef::GetAbstract(PRBool *aAbstract)
 {
   NS_ENSURE_ARG_POINTER(aAbstract);

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *     Jerry.Kirk@Nexwarecorp.com
- *	   Dale.Stansberry@Nexwarecorop.com
+ *   Jerry.Kirk@Nexwarecorp.com
+ *   Dale.Stansberry@Nexwarecorop.com
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -546,7 +546,7 @@ NS_METHOD nsWindow::ScrollWidgets( PRInt32 aDx, PRInt32 aDy ) {
 	return NS_OK;    
 	}
 
-NS_METHOD nsWindow::SetTitle( const nsString& aTitle ) {
+NS_METHOD nsWindow::SetTitle( const nsAString& aTitle ) {
   if( mWidget ) {
   	char * title = ToNewUTF8String(aTitle);
     PtSetResource( mWidget, Pt_ARG_WINDOW_TITLE, title, 0 );
@@ -594,10 +594,13 @@ NS_IMETHODIMP nsWindow::Resize(PRInt32 aWidth, PRInt32 aHeight, PRBool aRepaint)
 		if( aRepaint == PR_FALSE )  PtStartFlux(mWidget);
 		PtSetResource( mWidget, Pt_ARG_DIM, &dim, 0 );
 		if( aRepaint == PR_FALSE ) PtEndFlux(mWidget);
+
+		/* ATENTIE Remove when wojtek fixes PR:22930 in the photon library */
+		if( PtWidgetClass( mWidget ) == PtRegion ) PtSetResource( mWidget, Pt_ARG_REGION_OPAQUE, 0, Ph_EV_KEY );
 		}
 
 	if( mIsToplevel || mListenForResizes ) {
-		nsSizeEvent sevent;
+		nsSizeEvent sevent(PR_TRUE, 0, nsnull);
 		sevent.message = NS_SIZE;
 		sevent.widget = this;
 		
@@ -628,7 +631,7 @@ int nsWindow::WindowWMHandler( PtWidget_t *widget, void *data, PtCallbackInfo_t 
 			  NS_ADDREF(win);
 			  
 			  // dispatch an "onclose" event. to delete immediately, call win->Destroy()
-			  nsGUIEvent event;
+			  nsGUIEvent event(PR_TRUE, 0, nsnull);
 			  nsEventStatus status;
 			  
 			  event.message = NS_XUL_CLOSE;
@@ -668,8 +671,7 @@ void nsWindow::RawDrawFunc( PtWidget_t * pWidget, PhTile_t * damage )
   nsWindow  * pWin = (nsWindow*) GetInstance( pWidget );
   nsresult    result;
   PhTile_t  * dmg = NULL;
-  PRBool      aClipState;
-  nsPaintEvent pev;
+  nsPaintEvent pev(PR_TRUE, 0, nsnull);
   PhRect_t   extent;
 
   if( !pWin || !pWin->mContext ) return;
@@ -723,7 +725,7 @@ void nsWindow::RawDrawFunc( PtWidget_t * pWidget, PhTile_t * damage )
 			if( pev.renderingContext ) {
 				nsIRegion *ClipRegion = pWin->GetRegion( );
 				ClipRegion->SetTo( nsDmg.x, nsDmg.y, nsDmg.width, nsDmg.height );
-				pev.renderingContext->SetClipRegion( NS_STATIC_CAST(const nsIRegion &, *(ClipRegion)), nsClipCombine_kReplace, aClipState );
+				pev.renderingContext->SetClipRegion( NS_STATIC_CAST(const nsIRegion &, *(ClipRegion)), nsClipCombine_kReplace );
 
 				NS_RELEASE( ClipRegion );
 				
@@ -889,6 +891,9 @@ NS_METHOD nsWindow::Move( PRInt32 aX, PRInt32 aY ) {
     if(( mWidget->area.pos.x != aX ) || ( mWidget->area.pos.y != aY )) {
       PhPoint_t pos = { aX, aY };
       PtSetResource( mWidget, Pt_ARG_POS, &pos, 0 );
+
+			/* ATENTIE Remove when wojtek fixes PR:22930 in the photon library */
+			if( PtWidgetClass( mWidget ) == PtRegion ) PtSetResource( mWidget, Pt_ARG_REGION_OPAQUE, 0, Ph_EV_KEY );
     	}
   	}
 
@@ -932,8 +937,8 @@ inline nsIRegion *nsWindow::GetRegion()
 
   static NS_DEFINE_CID(kRegionCID, NS_REGION_CID);
 
-  res = nsComponentManager::CreateInstance( kRegionCID, nsnull, NS_GET_IID(nsIRegion), (void **)&region );
-  if (NS_OK == res) region->Init();
+  res = CallCreateInstance( kRegionCID, &region );
+  if (NS_SUCCEEDED(res)) region->Init();
 
   NS_ASSERTION(NULL != region, "Null region context");
   

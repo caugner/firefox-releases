@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,23 +22,22 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #ifndef nsIView_h___
 #define nsIView_h___
 
-#include "nsISupports.h"
 #include "nsCoord.h"
 #include "nsRect.h"
 #include "nsPoint.h"
@@ -46,6 +45,7 @@
 #include "nsIWidget.h"
 
 class nsIViewManager;
+class nsIScrollableView;
 class nsViewManager;
 class nsView;
 struct nsRect;
@@ -61,60 +61,34 @@ enum nsViewVisibility {
 
 // IID for the nsIView interface
 #define NS_IVIEW_IID    \
-{ 0xf0a21c40, 0xa7e1, 0x11d1, \
-{ 0xa8, 0x24, 0x00, 0x40, 0x95, 0x9a, 0x28, 0xc9 } }
+{ 0x658f72ee, 0x32ef, 0x4e93, \
+{ 0xb8, 0x4e, 0x5f, 0x0f, 0x8f, 0x77, 0xe4, 0x22 } }
 
-//Flag to determine whether the view will check if events can be handled
-//by its children or just handle the events itself
-#define NS_VIEW_FLAG_DONT_CHECK_CHILDREN  0x0001
+// Public view flags are defined in this file
+#define NS_VIEW_FLAGS_PUBLIC              0x00FF
+// Private view flags are private to the view module,
+// and are defined in nsView.h
+#define NS_VIEW_FLAGS_PRIVATE             0xFF00
 
-// indicates that the view is or contains a placeholder view
-#define NS_VIEW_FLAG_CONTAINS_PLACEHOLDER 0x0002
+// Public view flags
 
-//the view is transparent
-#define NS_VIEW_FLAG_TRANSPARENT          0x0004
+// The view is transparent
+#define NS_VIEW_FLAG_TRANSPARENT          0x0001
 
 // The view is always painted onto a background consisting
 // of a uniform field of opaque pixels.
-#define NS_VIEW_FLAG_UNIFORM_BACKGROUND   0x0008
+#define NS_VIEW_FLAG_UNIFORM_BACKGROUND   0x0002
 
-//indicates that the view should not be bitblt'd when moved
-//or scrolled and instead must be repainted
-#define NS_VIEW_FLAG_DONT_BITBLT          0x0010
+// Indicates that the view is using auto z-indexing
+#define NS_VIEW_FLAG_AUTO_ZINDEX          0x0004
 
-// indicates that the view is using auto z-indexing
-#define NS_VIEW_FLAG_AUTO_ZINDEX          0x0020
+// Indicates that the view is a floating view.
+#define NS_VIEW_FLAG_FLOATING             0x0008
 
-// indicates that the view is a floating view.
-#define NS_VIEW_FLAG_FLOATING             0x0040
-
-// set if our widget resized. 
-#define NS_VIEW_FLAG_WIDGET_RESIZED       0x0080
-
-// set if our widget moved. 
-#define NS_VIEW_FLAG_WIDGET_MOVED         0x0100
-
-// set if this view is clipping its normal descendants
-// to its bounds. When this flag is set, child views
-// bounds need not be inside this view's bounds.
-#define NS_VIEW_FLAG_CLIP_CHILDREN_TO_BOUNDS      0x0200
-
-// set if this view is clipping its descendants (including
-// placeholders) to its bounds
-#define NS_VIEW_FLAG_CLIP_PLACEHOLDERS_TO_BOUNDS  0x0400
-
-// set if this view is clipping its normal descendants to
-// a specified region. When this flag is set, child views
-// bounds need not be inside this view's bounds. The region
-// will always lie inside this view's bounds.
-// #define NS_VIEW_FLAG_CLIP_CHILDREN_TO_REGION      0x0800
-// we don't need this flag; we just check whether mClipRect
-// is null
-
-// if set it indicates that this view should be
+// If set it indicates that this view should be
 // displayed above z-index:auto views if this view 
 // is z-index:auto also
-#define NS_VIEW_FLAG_TOPMOST              0x0800
+#define NS_VIEW_FLAG_TOPMOST              0x0010
 
 struct nsViewZIndex {
   PRBool mIsAuto;
@@ -140,16 +114,24 @@ struct nsViewZIndex {
  * of a view, go through nsIViewManager.
  */
 
-// hack to make egcs / gcc 2.95.2 happy
-class nsIView_base : public nsISupports
+class nsIView
 {
 public:
   NS_DEFINE_STATIC_IID_ACCESSOR(NS_IVIEW_IID)
-};
 
-class nsIView : public nsIView_base
-{
-public:
+  /**
+   * See if this view is scrollable.
+   * @result an nsIScrollableView* if the view is scrollable, or nsnull if not.
+   */
+  virtual nsIScrollableView* ToScrollableView() { return nsnull; }
+
+  /**
+   * Find the view for the given widget, if there is one.
+   * @return the view the widget belongs to, or null if the widget doesn't
+   * belong to any view.
+   */
+  static nsIView* GetViewFor(nsIWidget* aWidget);
+
   /**
    * Get the view manager which "owns" the view.
    * This method might require some expensive traversal work in the future. If you can get the
@@ -158,25 +140,6 @@ public:
    */
   nsIViewManager* GetViewManager() const
   { return NS_REINTERPRET_CAST(nsIViewManager*, mViewManager); }
-
-  /**
-   * Initialize the view
-   * @param aManager view manager that "owns" the view. The view does NOT
-   *        hold a reference to the view manager
-   * @param aBounds initial bounds for view
-   *        XXX We should eliminate this parameter; you can set the bounds after Init
-   * @param aParent intended parent for view. this is not actually set in the
-   *        nsIView through this method. it is only used by the initialization
-   *        code to walk up the view tree, if necessary, to find resources.
-   *        XXX We should eliminate this parameter!
-   * @param aVisibilityFlag initial visibility state of view
-   *        XXX We should eliminate this parameter; you can set it after Init
-   * @result The result of the initialization, NS_OK if no errors
-   */
-  nsresult Init(nsIViewManager* aManager,
-                const nsRect &aBounds,
-                const nsIView *aParent,
-                nsViewVisibility aVisibilityFlag = nsViewVisibility_kShow);
 
   /**
    * Destroy the view.
@@ -214,6 +177,28 @@ public:
    */
   nsRect GetBounds() const { return mDimBounds; }
 
+  /**
+   * Get the offset between the coordinate systems of |this| and aOther.
+   * Adding the return value to a point in the coordinate system of |this|
+   * will transform the point to the coordinate system of aOther.
+   *
+   * If aOther is null, this will return the offset of |this| from the
+   * root of the viewmanager tree.
+   * 
+   * This function is fastest when aOther is an ancestor of |this|.
+   *
+   * NOTE: this actually returns the offset from aOther to |this|, but
+   * that offset is added to transform _coordinates_ from |this| to aOther.
+   */
+  nsPoint GetOffsetTo(const nsIView* aOther) const;
+
+  /**
+   * Get the screen position of the view.
+   * @return the pixel position of the top-left of the view in screen
+   * coordinates.
+   */
+  nsIntPoint GetScreenPosition() const;
+  
   /**
    * Called to query the visibility state of a view.
    * @result current visibility state
@@ -314,13 +299,14 @@ public:
    * Get the nearest widget in this view or a parent of this view and
    * the offset from the widget's origin to this view's origin
    * @param aOffset the offset from this view's origin to the widget's origin
+   * (usually positive)
    * @return the widget closest to this view; can be null because some view trees
    * don't have widgets at all (e.g., printing), but if any view in the view tree
    * has a widget, then it's safe to assume this will not return null
    * XXX Remove this 'virtual' when gfx+widget are merged into gklayout;
    * Mac widget depends on this method, which is BOGUS!
    */
-  virtual nsIWidget* GetNearestWidget(nsPoint* aOffset);
+  virtual nsIWidget* GetNearestWidget(nsPoint* aOffset) const;
 
   /**
    * Create a widget to associate with this view.
@@ -374,10 +360,6 @@ public:
   PRBool IsRoot() const;
 
   virtual PRBool ExternalIsRoot() const;
-
-private:
-  NS_IMETHOD_(nsrefcnt) AddRef(void) = 0;
-  NS_IMETHOD_(nsrefcnt) Release(void) = 0;
 
 protected:
   nsViewManager     *mViewManager;

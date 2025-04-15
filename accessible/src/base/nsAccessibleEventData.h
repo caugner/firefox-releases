@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *     Kyle Yuan (kyle.yuan@sun.com)
- *     John Sun (john.sun@sun.com)
+ *   Kyle Yuan (kyle.yuan@sun.com)
+ *   John Sun (john.sun@sun.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,27 +44,34 @@
 #include "nsIAccessibleEvent.h"
 #include "nsIAccessible.h"
 #include "nsIAccessibleDocument.h"
+#include "nsIDOMNode.h"
 
 class nsAccessibleEventData: public nsIAccessibleEvent
 {
   public:
+    // Initialize with an nsIAccessible
     nsAccessibleEventData(PRUint32 aEventType, nsIAccessible *aAccessible, 
-                         nsIAccessibleDocument *aDocAccessible, 
-                         void *aEventData);
+                          nsIAccessibleDocument *aDocAccessible, 
+                          void *aEventData);
+    // Initialize with an nsIDOMNode
+    nsAccessibleEventData(PRUint32 aEventType, nsIDOMNode *aDOMNode,
+                          nsIAccessibleDocument *aDocAccessible,
+                          void *aEventData);
     virtual ~nsAccessibleEventData() {};
 
     NS_DECL_ISUPPORTS
 
     //nsIAccessibleEvent
     NS_IMETHOD GetEventType(PRUint32 *aEventType) {*aEventType = mEventType; return NS_OK;}
-    NS_IMETHOD GetAccessible(nsIAccessible **aAccessible) 
-      {NS_ADDREF(*aAccessible = mAccessible); return NS_OK;}
+    NS_IMETHOD GetAccessible(nsIAccessible **aAccessible);
     NS_IMETHOD GetAccessibleDocument(nsIAccessibleDocument **aDocAccessible) 
       {NS_ADDREF(*aDocAccessible = mDocAccessible); return NS_OK;}
+    NS_IMETHOD GetDOMNode(nsIDOMNode **aDOMNode);
 
   private:
     PRUint32 mEventType;
     nsCOMPtr<nsIAccessible> mAccessible;
+    nsCOMPtr<nsIDOMNode> mDOMNode;
     nsCOMPtr<nsIAccessibleDocument> mDocAccessible;
     void *mEventData;
 };
@@ -75,7 +82,13 @@ class nsAccessibleEventData: public nsIAccessibleEvent
 
 struct AtkStateChange {
   PRUint32 state;
+  PRUint32 extState;
   PRBool   enable;
+  AtkStateChange() {
+    state = 0;
+    extState = 0;
+    enable = PR_FALSE;
+  }
 };
 
 enum AtkProperty {

@@ -37,6 +37,10 @@ bin/defaults/profile/localstore.rdf
 bin/defaults/profile/search.rdf
 bin/defaults/profile/mimeTypes.rdf
 bin/defaults/messenger/mailViews.dat
+bin/defaults/messenger/Habeas.sfd
+bin/defaults/messenger/SpamAssassin.sfd
+bin/defaults/messenger/SpamCatcher.sfd
+bin/defaults/messenger/SpamPal.sfd
 
 [xpcom]
 ; files required to initialize xpinstall for Install Wizard
@@ -47,6 +51,7 @@ bin/nspr4.dll
 bin/plc4.dll
 bin/plds4.dll
 bin/xpcom.dll
+bin/xpcomcor.dll
 bin/xpistub.dll
 ;bin/zlib.dll
 bin/mozz.dll
@@ -68,13 +73,14 @@ bin/components/wdgtos2.dll
 ;bin/jpeg3250.dll
 ;bin/jsj3250.dll
 bin/jsj.dll
-bin/mozilla.exe
+bin/seamonkey.exe
 bin/mozturbo.exe
 ;bin/mozctl.dll
 ;bin/mozctlx.dll
 bin/regxpcom.exe
 bin/xpicleanup.exe
 bin/res/cmessage.txt
+bin/components/alerts.xpt
 bin/components/access.dll
 bin/components/accessibility.xpt
 ;bin/components/AcctIdl.dll
@@ -82,8 +88,11 @@ bin/components/accessibility.xpt
 bin/components/appshell.xpt
 bin/components/appshell.dll
 bin/components/appcomps.dll
+bin/components/srchsvc.dll
+bin/components/appstartup.xpt
 bin/components/autocomplete.xpt
 bin/components/bookmarks.xpt
+bin/components/chrome.xpt
 bin/components/directory.xpt
 bin/components/downloadmanager.xpt
 ;bin/components/embedcomponents.dll
@@ -94,17 +103,18 @@ bin/components/history.xpt
 ;bin/components/alerts.xpt
 bin/components/related.xpt
 bin/components/search.xpt
-bin/components/urlbarhistory.xpt
 ;bin/components/urlwidgt.xpt
 bin/components/caps.dll
 bin/components/caps.xpt
 ;bin/components/chardetc.dll
+bin/components/nsComposerCmdLineHandler.js
 ;bin/components/universalchardet.dll
 bin/components/ucdet.dll
 bin/components/chrome.dll
 bin/components/chrome.xpt
 bin/components/cookie.dll
 bin/components/cookie.xpt
+bin/components/perms.dll
 bin/components/composer.dll
 bin/components/composer.xpt
 bin/components/docshell.dll
@@ -115,10 +125,12 @@ bin/components/jsd.dll
 bin/components/jsdservice.xpt
 bin/components/dom.xpt
 bin/components/dom_base.xpt
+bin/components/dom_canvas.xpt
 bin/components/dom_core.xpt
 bin/components/dom_css.xpt
 bin/components/dom_events.xpt
 bin/components/dom_html.xpt
+bin/components/dom_loadsave.xpt
 bin/components/dom_range.xpt
 bin/components/dom_stylesheets.xpt
 bin/components/dom_traversal.xpt
@@ -131,11 +143,13 @@ bin/components/editor.dll
 ;bin/components/evntloop.dll
 bin/components/find.xpt
 bin/components/gfx.xpt
+bin/components/gksvgrenderer.xpt
 bin/components/content_base.xpt
 bin/components/content_html.xpt
 bin/components/content_htmldoc.xpt
 bin/components/content_xmldoc.xpt
 bin/components/content_xslt.xpt
+bin/components/content_xtf.xpt
 bin/components/xuldoc.xpt
 bin/components/xultmpl.xpt
 bin/components/gklayout.dll
@@ -148,9 +162,10 @@ bin/components/imgicon.xpt
 bin/components/intl.xpt
 bin/components/chardet.xpt
 bin/components/jar.xpt
+bin/components/jsconsole.xpt
 bin/components/jsconsole-clhandler.js
-bin/components/jsurl.xpt
 bin/components/layout_base.xpt
+bin/components/layout_printing.xpt
 bin/components/layout_xul.xpt
 bin/components/layout_xul_tree.xpt
 bin/components/locale.xpt
@@ -174,7 +189,6 @@ bin/components/necko_data.xpt
 bin/components/necko_dns.xpt
 bin/components/necko_ftp.xpt
 bin/components/necko_http.xpt
-bin/components/necko_jar.xpt
 bin/components/necko_res.xpt
 bin/components/necko_cookie.xpt
 bin/components/necko_file.xpt
@@ -260,9 +274,25 @@ bin/components/t8iix.dll
 bin/components/typeaheadfind.xpt
 bin/components/typahead.dll
 bin/components/nsCloseAllWindows.js
+bin/components/htmlparser.xpt
+bin/components/lwbrk.xpt
+bin/components/nsInterfaceInfoToIDL.js
+bin/components/nsResetPref.js
+bin/components/nsUpdateNotifier.js
+bin/components/plugin.xpt
+bin/components/prefetch.xpt
+bin/components/imgicon.xpt
+bin/components/libimgicon.dll
 
 bin/components/websrvcs.dll
 bin/components/websrvcs.xpt
+
+bin/components/xulappinfo.js
+bin/components/xulappinfo.xpt
+
+; Roaming
+bin/components/sroaming.dll
+bin/chrome/sroaming.jar
 
 ; LDAP components need to be in the browser for AutoConfig
 bin/components/mozldap.dll
@@ -306,11 +336,11 @@ bin/chrome/icons/default/main-window.ico
 bin/greprefs/*
 bin/defaults/pref/*
 bin/defaults/autoconfig/*
+bin/res/hiddenWindow.html
 bin/res/ua.css
 bin/res/html.css
 bin/res/quirk.css
 bin/res/forms.css
-bin/res/platform-forms.css
 bin/res/EditorOverride.css
 bin/res/grabber.gif
 bin/res/table-add-column-after-active.gif
@@ -334,6 +364,7 @@ bin/res/table-remove-row.gif
 bin/res/viewsource.css
 bin/res/mathml.css
 bin/res/arrow.gif
+bin/res/arrowd.gif
 bin/res/loading-image.gif
 bin/res/broken-image.gif
 bin/res/html/*
@@ -356,10 +387,6 @@ bin/res/entityTables/*
 bin/res/rdf/folder-closed.gif
 bin/res/rdf/folder-open.gif
 bin/res/rdf/loading.gif
-bin/res/throbber/*
-;debug menus reference samples dir - remove for actual releases:
-bin/res/samples/*
-bin/res/builtin/platformHTMLBindings.xml
 
 [mail]
 bin/msgbsutl.dll
@@ -397,6 +424,7 @@ bin/components/impText.dll
 ;bin/components/impComm4xMail.dll
 bin/components/imp4Mail.dll
 bin/components/impComm4xMail.xpt
+bin/components/nsAbLDAPAttributeMap.js
 bin/components/nsLDAPPrefsService.js
 bin/chrome/messenger.jar
 bin/chrome/icons/default/abcardWindow.ico
@@ -463,17 +491,17 @@ bin/components/spellchk.dll
 bin/components/spellchecker.xpt
 bin/components/myspell/*
 
+[reporter]
+bin/chrome/reporter.jar
+
 ;Things that aren't packaged and why (or not why)
 ;accproxy.dll - I don't know
 ;accessproxy.xpt - I don't know
-;htmlparser.xpt - I don't know
 ;iiextras.dll - I don't know
 ;iiextras.xpt - I don't know
-;jsconsole.xpt - I don't know
 ;MyServce.dll - Sample
 ;p3p.dll - I don't know
 ;p3p.xpt - I don't know
-;plugin.xpt - I don't know
 ;proxytext.xpt - Test
 ;tdynamic.dll - Test
 ;xpcomsmp.dll - Sample

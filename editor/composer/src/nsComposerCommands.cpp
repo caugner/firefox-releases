@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -25,18 +25,17 @@
  *   Charles Manske <cmanske@netscape.com>
  *   Kathleen Brade <brade@netscape.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -260,8 +259,8 @@ nsStyleUpdatingCommand::ToggleState(nsIEditor *aEditor, const char* aTagName)
   // they are used to remove named anchor/link and shouldn't be used for insertion
   nsAutoString tagName; tagName.AssignWithConversion(aTagName);
   PRBool doTagRemoval;
-  if (tagName.Equals(NS_LITERAL_STRING("href")) ||
-      tagName.Equals(NS_LITERAL_STRING("name")))
+  if (tagName.EqualsLiteral("href") ||
+      tagName.EqualsLiteral("name"))
     doTagRemoval = PR_TRUE;
   else
   {
@@ -282,14 +281,14 @@ nsStyleUpdatingCommand::ToggleState(nsIEditor *aEditor, const char* aTagName)
     nsAutoString removeName; 
     aEditor->BeginTransaction();
 
-    if (tagName.Equals(NS_LITERAL_STRING("sub")))
+    if (tagName.EqualsLiteral("sub"))
     {
-      removeName.AssignWithConversion("sup");
+      removeName.AssignLiteral("sup");
       rv = RemoveTextProperty(aEditor,tagName.get(), nsnull);
     } 
-    else if (tagName.Equals(NS_LITERAL_STRING("sup")))
+    else if (tagName.EqualsLiteral("sup"))
     {
-      removeName.AssignWithConversion("sub");
+      removeName.AssignLiteral("sub");
       rv = RemoveTextProperty(aEditor, tagName.get(), nsnull);
     }
     if (NS_SUCCEEDED(rv))
@@ -766,7 +765,7 @@ nsFontFaceStateCommand::SetState(nsIEditor *aEditor, nsString& newState)
   nsCOMPtr<nsIAtom> ttAtom = do_GetAtom("tt");
   nsCOMPtr<nsIAtom> fontAtom = do_GetAtom("font");
 
-  if (newState.Equals(NS_LITERAL_STRING("tt")))
+  if (newState.EqualsLiteral("tt"))
   {
     // The old "teletype" attribute  
     rv = htmlEditor->SetInlineProperty(ttAtom, EmptyString(), 
@@ -779,7 +778,7 @@ nsFontFaceStateCommand::SetState(nsIEditor *aEditor, nsString& newState)
     // Remove any existing TT nodes
     rv = htmlEditor->RemoveInlineProperty(ttAtom, EmptyString());  
 
-    if (newState.IsEmpty() || newState.Equals(NS_LITERAL_STRING("normal"))) {
+    if (newState.IsEmpty() || newState.EqualsLiteral("normal")) {
       rv = htmlEditor->RemoveInlineProperty(fontAtom, NS_LITERAL_STRING("face"));
     } else {
       rv = htmlEditor->SetInlineProperty(fontAtom, NS_LITERAL_STRING("face"),
@@ -848,8 +847,8 @@ nsFontSizeStateCommand::SetState(nsIEditor *aEditor, nsString& newState)
   nsresult rv;
   nsCOMPtr<nsIAtom> fontAtom = do_GetAtom("font");
   if (newState.IsEmpty() || 
-      newState.Equals(NS_LITERAL_STRING("normal")) ||
-      newState.Equals(NS_LITERAL_STRING("medium"))) {
+      newState.EqualsLiteral("normal") ||
+      newState.EqualsLiteral("medium")) {
     // remove any existing font size, big or small
     rv = htmlEditor->RemoveInlineProperty(fontAtom, NS_LITERAL_STRING("size"));  
     if (NS_FAILED(rv)) return rv;
@@ -910,7 +909,7 @@ nsFontColorStateCommand::SetState(nsIEditor *aEditor, nsString& newState)
   nsresult rv;
   nsCOMPtr<nsIAtom> fontAtom = do_GetAtom("font");
 
-  if (newState.IsEmpty() || newState.Equals(NS_LITERAL_STRING("normal"))) {
+  if (newState.IsEmpty() || newState.EqualsLiteral("normal")) {
     rv = htmlEditor->RemoveInlineProperty(fontAtom, NS_LITERAL_STRING("color"));
   } else {
     rv = htmlEditor->SetInlineProperty(fontAtom, NS_LITERAL_STRING("color"), 
@@ -960,7 +959,7 @@ nsHighlightColorStateCommand::SetState(nsIEditor *aEditor, nsString& newState)
   nsresult rv;
   nsCOMPtr<nsIAtom> fontAtom = do_GetAtom("font");
 
-  if (newState.IsEmpty() || newState.Equals(NS_LITERAL_STRING("normal"))) {
+  if (newState.IsEmpty() || newState.EqualsLiteral("normal")) {
 //    rv = RemoveOneProperty(htmlEditor, NS_LITERAL_STRING("font"), NS_LITERAL_STRING("bgcolor"));
     rv = htmlEditor->RemoveInlineProperty(fontAtom, NS_LITERAL_STRING("bgcolor"));
   } else {
@@ -1053,19 +1052,19 @@ nsAlignCommand::GetCurrentState(nsIEditor *aEditor, nsICommandParams *aParams)
   {
     default:
     case nsIHTMLEditor::eLeft:
-      outStateString.Assign(NS_LITERAL_STRING("left"));
+      outStateString.AssignLiteral("left");
       break;
       
     case nsIHTMLEditor::eCenter:
-      outStateString.Assign(NS_LITERAL_STRING("center"));
+      outStateString.AssignLiteral("center");
       break;
       
     case nsIHTMLEditor::eRight:
-      outStateString.Assign(NS_LITERAL_STRING("right"));
+      outStateString.AssignLiteral("right");
       break;
 
     case nsIHTMLEditor::eJustify:
-      outStateString.Assign(NS_LITERAL_STRING("justify"));
+      outStateString.AssignLiteral("justify");
       break;
   }
   nsCAutoString tOutStateString;
@@ -1134,7 +1133,7 @@ nsAbsolutePositioningCommand::GetCurrentState(nsIEditor *aEditor, const char* aT
 
   nsAutoString outStateString;
   if (elt)
-    outStateString.Assign(NS_LITERAL_STRING("absolute"));
+    outStateString.AssignLiteral("absolute");
 
   aParams->SetBooleanValue(STATE_MIXED,PR_FALSE);
   aParams->SetCStringValue(STATE_ATTRIBUTE, NS_ConvertUCS2toUTF8(outStateString).get());
@@ -1568,9 +1567,9 @@ nsInsertTagCommand::DoCommandParams(const char *aCommandName,
   // filter out tags we don't know how to insert
   nsAutoString attributeType;
   if (0 == nsCRT::strcmp(mTagName, "a")) {
-    attributeType = NS_LITERAL_STRING("href");
+    attributeType.AssignLiteral("href");
   } else if (0 == nsCRT::strcmp(mTagName, "img")) {
-    attributeType = NS_LITERAL_STRING("src");
+    attributeType.AssignLiteral("src");
   } else {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
@@ -1633,11 +1632,11 @@ GetListState(nsIEditor *aEditor, PRBool *aMixed, PRUnichar **_retval)
       {
         nsAutoString tagStr;
         if (bOL) 
-          tagStr.AssignWithConversion("ol");
+          tagStr.AssignLiteral("ol");
         else if (bUL) 
-          tagStr.AssignWithConversion("ul");
+          tagStr.AssignLiteral("ul");
         else if (bDL) 
-          tagStr.AssignWithConversion("dl");
+          tagStr.AssignLiteral("dl");
         *_retval = ToNewUnicode(tagStr);
       }
     }  
@@ -1677,7 +1676,7 @@ RemoveTextProperty(nsIEditor *aEditor, const PRUnichar *prop,
   nsAutoString  allStr(prop);
   
   ToLowerCase(allStr);
-  PRBool    doingAll = (allStr.Equals(NS_LITERAL_STRING("all")));
+  PRBool    doingAll = (allStr.EqualsLiteral("all"));
   nsresult  err = NS_OK;
 
   if (doingAll)

@@ -38,7 +38,6 @@
 
 #include "nsString.h"
 #include "nsUnicharUtils.h"
-#include "nsReadableUtils.h"
 #include "nsUnicharUtilCIID.h"
 #include "nsICaseConversion.h"
 #include "nsIServiceManager.h"
@@ -112,6 +111,7 @@ public:
     }
 };
 
+#ifdef MOZ_V1_STRING_ABI
 void
 ToLowerCase( nsAString& aString )
   {
@@ -119,6 +119,7 @@ ToLowerCase( nsAString& aString )
     ConvertToLowerCase converter;
     copy_string(aString.BeginWriting(fromBegin), aString.EndWriting(fromEnd), converter);
   }
+#endif
 
 void
 ToLowerCase( nsASingleFragmentString& aString )
@@ -155,7 +156,7 @@ class CopyToLowerCase
               gCaseConv->ToLower(aSource, dest, len);
           else {
               NS_WARNING("No case converter: only copying");
-              memcpy((void*)aSource, (void*)dest, len * sizeof(*aSource));
+              memcpy(dest, aSource, len * sizeof(*aSource));
           }
           mIter.advance(len);
           return len;
@@ -196,6 +197,7 @@ public:
     }
 };
 
+#ifdef MOZ_V1_STRING_ABI
 void
 ToUpperCase( nsAString& aString )
   {
@@ -203,6 +205,7 @@ ToUpperCase( nsAString& aString )
     ConvertToUpperCase converter;
     copy_string(aString.BeginWriting(fromBegin), aString.EndWriting(fromEnd), converter);
   }
+#endif
 
 void
 ToUpperCase( nsASingleFragmentString& aString )
@@ -239,7 +242,7 @@ class CopyToUpperCase
               gCaseConv->ToUpper(aSource, dest, len);
           else {
               NS_WARNING("No case converter: only copying");
-              memcpy((void*)aSource, (void*)dest, len * sizeof(*aSource));
+              memcpy(dest, aSource, len * sizeof(*aSource));
           }
           mIter.advance(len);
           return len;
@@ -258,13 +261,6 @@ ToUpperCase( const nsAString& aSource, nsAString& aDest )
     CopyToUpperCase converter(aDest.BeginWriting(toBegin));
     copy_string(aSource.BeginReading(fromBegin), aSource.EndReading(fromEnd), converter);
   }
-
-PRBool
-CaseInsensitiveFindInReadable( const nsAString& aPattern, nsAString::const_iterator& aSearchStart, nsAString::const_iterator& aSearchEnd )
-{
-    return FindInReadable(aPattern, aSearchStart, aSearchEnd, nsCaseInsensitiveStringComparator());
-}
-
 
 int
 nsCaseInsensitiveStringComparator::operator()( const PRUnichar* lhs, const PRUnichar* rhs, PRUint32 aLength ) const

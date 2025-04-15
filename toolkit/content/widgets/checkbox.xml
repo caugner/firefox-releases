@@ -35,9 +35,9 @@
         <body>
         <![CDATA[
           var change = (aValue != (this.getAttribute('checked') == 'true'));
-          if (aValue) 
+          if (aValue)
             this.setAttribute('checked', 'true');
-          else 
+          else
             this.removeAttribute('checked');
           if (change) {
             var event = document.createEvent('Events');

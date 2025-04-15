@@ -48,6 +48,7 @@ XPIDLSRCS =                                   \
 	nsISVGGeometrySource.idl                  \
 	nsISVGGlyphGeometrySource.idl             \
 	nsISVGGlyphMetricsSource.idl              \
+	nsISVGGradient.idl                        \
 	nsISVGPathGeometrySource.idl              \
 	nsISVGRectangleSink.idl                   \
 	nsISVGRenderer.idl                        \
@@ -57,6 +58,7 @@ XPIDLSRCS =                                   \
 	nsISVGRendererPathBuilder.idl             \
 	nsISVGRendererPathGeometry.idl            \
 	nsISVGRendererRegion.idl                  \
+	nsISVGRendererSurface.idl                 \
 	$(NULL)
 
 include $(topsrcdir)/config/rules.mk

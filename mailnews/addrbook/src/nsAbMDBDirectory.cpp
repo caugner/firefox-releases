@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -54,7 +54,6 @@
 #include "nsAbDirectoryQuery.h"
 #include "nsIAbDirectoryQueryProxy.h"
 #include "nsAbQueryStringToExpression.h"
-#include "nsAbUtils.h"
 #include "nsArrayEnumerator.h"
 #include "nsAbMDBCardProperty.h"
 
@@ -93,6 +92,24 @@ nsresult nsAbMDBDirectory::RemoveCardFromAddressList(nsIAbCard* card)
   nsresult rv = NS_OK;
   PRUint32 listTotal;
   PRInt32 i, j;
+
+  // These checks ensure we don't run into null pointers
+  // as we did when we caused bug 280463.
+  if (!mDatabase)
+  {
+    rv = GetAbDatabase();
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  if (!m_AddressList)
+  {
+    rv = mDatabase->GetMailingListsFromDB(this);
+    NS_ENSURE_SUCCESS(rv, rv);
+    // Ensure that the previous call did set the address list pointer
+    if (!m_AddressList)
+      return NS_ERROR_NULL_POINTER;
+  }
+
   rv = m_AddressList->Count(&listTotal);
   NS_ENSURE_SUCCESS(rv,rv);
 
@@ -101,6 +118,10 @@ nsresult nsAbMDBDirectory::RemoveCardFromAddressList(nsIAbCard* card)
     nsCOMPtr<nsIAbDirectory> listDir(do_QueryElementAt(m_AddressList, i, &rv));
     if (listDir)
     {
+      // First remove the instance in the database
+      mDatabase->DeleteCardFromMailList(listDir, card, PR_FALSE);
+
+      // Now remove the instance in any lists we hold.
       nsCOMPtr <nsISupportsArray> pAddressLists;
       listDir->GetAddressLists(getter_AddRefs(pAddressLists));
       if (pAddressLists)
@@ -467,9 +488,10 @@ NS_IMETHODIMP nsAbMDBDirectory::DeleteCards(nsISupportsArray *cards)
         {
           mDatabase->DeleteCardFromMailList(this, card, PR_TRUE);
 
-          PRUint32 cardTotal;
+          PRUint32 cardTotal = 0;
           PRInt32 i;
-          rv = m_AddressList->Count(&cardTotal);
+          if (m_AddressList)
+            rv = m_AddressList->Count(&cardTotal);
           for (i = cardTotal - 1; i >= 0; i--)
           {            
             nsCOMPtr<nsIAbMDBCard> dbarrayCard(do_QueryElementAt(m_AddressList, i, &rv));
@@ -495,8 +517,10 @@ NS_IMETHODIMP nsAbMDBDirectory::DeleteCards(nsISupportsArray *cards)
             //to do, get mailing list dir side uri and notify rdf to remove it
             PRUint32 rowID;
             dbcard->GetDbRowID(&rowID);
-            char *listUri = PR_smprintf("%s/MailList%ld", mURI.get(), rowID);
-            if (listUri)
+            nsCAutoString listUri(mURI);
+            listUri.AppendLiteral("/MailList");
+            listUri.AppendInt(rowID);
+            if (!listUri.IsEmpty())
             {
               nsresult rv = NS_OK;
               nsCOMPtr<nsIRDFService> rdfService = 
@@ -505,7 +529,7 @@ NS_IMETHODIMP nsAbMDBDirectory::DeleteCards(nsISupportsArray *cards)
               if(NS_SUCCEEDED(rv))
                 {
                 nsCOMPtr<nsIRDFResource> listResource;
-                rv = rdfService->GetResource(nsDependentCString(listUri),
+                rv = rdfService->GetResource(listUri,
                                              getter_AddRefs(listResource));
                 nsCOMPtr<nsIAbDirectory> listDir = do_QueryInterface(listResource, &rv);
                 if(NS_SUCCEEDED(rv))
@@ -516,17 +540,14 @@ NS_IMETHODIMP nsAbMDBDirectory::DeleteCards(nsISupportsArray *cards)
 
                   if (listDir)
                     NotifyItemDeleted(listDir);
-                  PR_smprintf_free(listUri);
                   }
                 else 
                   {
-                  PR_smprintf_free(listUri);
                   return rv;
                   }
                 }
               else
                 {
-                PR_smprintf_free(listUri);
                 return rv;
                 }
             }
@@ -657,8 +678,8 @@ nsresult nsAbMDBDirectory::InternalAddMailList(nsIAbDirectory *list, PRUint32 *k
   PRUint32 dbRowID;
   dblist->GetDbRowID(&dbRowID);
 
-  nsCAutoString listUri;
-  listUri = mURI + NS_LITERAL_CSTRING("/MailList");
+  nsCAutoString listUri(mURI);
+  listUri.AppendLiteral("/MailList");
   listUri.AppendInt(dbRowID);
 
   nsCOMPtr<nsIAbDirectory> newList;
@@ -712,7 +733,7 @@ NS_IMETHODIMP nsAbMDBDirectory::AddCard(nsIAbCard* card, nsIAbCard **addedCard)
 
   dbcard->SetAbDatabase (mDatabase);
   if (mIsMailingList == 1)
-    mDatabase->CreateNewListCardAndAddToDB(this, m_dbRowID, newCard, PR_TRUE);
+    mDatabase->CreateNewListCardAndAddToDB(this, m_dbRowID, newCard, PR_TRUE /* notify */);
   else
     mDatabase->CreateNewCardAndAddToDB(newCard, PR_TRUE);
   mDatabase->Commit(nsAddrDBCommitType::kLargeCommit);
@@ -745,10 +766,7 @@ NS_IMETHODIMP nsAbMDBDirectory::DropCard(nsIAbCard* aCard, PRBool needToCopyCard
      * moz-abmdbdirectory://foo/bar
      */
     NS_ENSURE_TRUE(mURI.Length() > kMDBDirectoryRootLen, NS_ERROR_UNEXPECTED);
-    if (strchr(mURI.get() + kMDBDirectoryRootLen, '/'))
-      mIsMailingList = 1;
-    else
-      mIsMailingList = 0;
+    mIsMailingList = (strchr(mURI.get() + kMDBDirectoryRootLen, '/')) ? 1 : 0;
   }
   if (!mDatabase)
     rv = GetAbDatabase();
@@ -779,8 +797,14 @@ NS_IMETHODIMP nsAbMDBDirectory::DropCard(nsIAbCard* aCard, PRBool needToCopyCard
 
   if (mIsMailingList == 1) {
     if (needToCopyCard) {
-      // first, add the card to the directory that contains the mailing list.
-      mDatabase->CreateNewCardAndAddToDB(newCard, PR_TRUE /* notify */);
+      nsCOMPtr <nsIMdbRow> cardRow;
+      // if card doesn't exist in db, add the card to the directory that 
+      // contains the mailing list.
+      mDatabase->FindRowByCard(newCard, getter_AddRefs(cardRow));
+      if (!cardRow)
+        mDatabase->CreateNewCardAndAddToDB(newCard, PR_TRUE /* notify */);
+      else
+        mDatabase->InitCardFromRow(newCard, cardRow);
     }
     // since we didn't copy the card, we don't have to notify that it was inserted
     mDatabase->CreateNewListCardAndAddToDB(this, m_dbRowID, newCard, PR_FALSE /* notify */);
@@ -820,13 +844,13 @@ NS_IMETHODIMP nsAbMDBDirectory::EditMailListToDatabase(const char *uri, nsIAbCar
 
 // nsIAddrDBListener methods
 
-NS_IMETHODIMP nsAbMDBDirectory::OnCardAttribChange(PRUint32 abCode, nsIAddrDBListener *instigator)
+NS_IMETHODIMP nsAbMDBDirectory::OnCardAttribChange(PRUint32 abCode)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP nsAbMDBDirectory::OnCardEntryChange
-(PRUint32 abCode, nsIAbCard *card, nsIAddrDBListener *instigator)
+(PRUint32 abCode, nsIAbCard *card)
 {
   NS_ENSURE_ARG_POINTER(card);
   nsCOMPtr<nsISupports> cardSupports(do_QueryInterface(card));
@@ -852,7 +876,7 @@ NS_IMETHODIMP nsAbMDBDirectory::OnCardEntryChange
 }
 
 NS_IMETHODIMP nsAbMDBDirectory::OnListEntryChange
-(PRUint32 abCode, nsIAbDirectory *list, nsIAddrDBListener *instigator)
+(PRUint32 abCode, nsIAbDirectory *list)
 {
   nsresult rv = NS_OK;
   
@@ -877,7 +901,7 @@ NS_IMETHODIMP nsAbMDBDirectory::OnListEntryChange
   return rv;
 }
 
-NS_IMETHODIMP nsAbMDBDirectory::OnAnnouncerGoingAway(nsIAddrDBAnnouncer *instigator)
+NS_IMETHODIMP nsAbMDBDirectory::OnAnnouncerGoingAway()
 {
   if (mDatabase)
       mDatabase->RemoveListener(this);
@@ -909,13 +933,8 @@ NS_IMETHODIMP nsAbMDBDirectory::StartSearch()
 
   // Set the return properties to
   // return nsIAbCard interfaces
-  nsCStringArray properties;
-  properties.AppendCString(nsCAutoString("card:nsIAbCard"));
-  CharPtrArrayGuard returnProperties(PR_FALSE);
-  rv = CStringArrayToCharPtrArray::Convert(properties,returnProperties.GetSizeAddr(),
-          returnProperties.GetArrayAddr(), PR_FALSE);
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = arguments->SetReturnProperties(returnProperties.GetSize(), returnProperties.GetArray());
+  const char *arr = "card:nsIAbCard";
+  rv = arguments->SetReturnProperties(1, &arr);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // don't search the subdirectories 
@@ -986,22 +1005,17 @@ nsresult nsAbMDBDirectory::GetAbDatabase()
 {
   NS_ASSERTION(!mURI.IsEmpty(), "Not initialized?");
 
-  if (!mDatabase) {
-    nsresult rv;
+  nsresult rv = NS_OK;
 
+  if (!mDatabase) {
     nsCOMPtr<nsIAddressBook> addressBook = do_GetService(NS_ADDRESSBOOK_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv,rv);
 
     rv = addressBook->GetAbDatabaseFromURI(mURI.get(), getter_AddRefs(mDatabase));
-    NS_ENSURE_SUCCESS(rv,rv);
-
-    rv = mDatabase->AddListener(this);
-    NS_ENSURE_SUCCESS(rv, rv);
+    if (NS_SUCCEEDED(rv))
+      rv = mDatabase->AddListener(this);
   }
-
-  if (!mDatabase)
-    return NS_ERROR_NULL_POINTER;
-  return NS_OK;
+  return rv;
 }
 
 NS_IMETHODIMP nsAbMDBDirectory::HasCardForEmailAddress(const char * aEmailAddress, PRBool * aCardExists)
@@ -1011,6 +1025,11 @@ NS_IMETHODIMP nsAbMDBDirectory::HasCardForEmailAddress(const char * aEmailAddres
 
   if (!mDatabase)
     rv = GetAbDatabase();
+  if (rv == NS_ERROR_FILE_NOT_FOUND)
+  {
+    // If file wasn't found, the card cannot exist.
+    return NS_OK;
+  }
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIAbCard> card; 

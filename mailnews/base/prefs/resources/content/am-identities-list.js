@@ -14,6 +14,11 @@
  *
  * The Original Code is Mozilla Mail Code.
  *
+ * The Initial Developer of the Original Code is
+ * Scott MacGregor.
+ * Portions created by the Initial Developer are Copyright (C) 2004
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Scott MacGregor <mscott@mozilla.org>
  *
@@ -52,11 +57,14 @@ function onLoad()
   gAccount = window.arguments[0].account;
 
   var accountName = window.arguments[0].accountName;
-  window.title = document.getElementById("bundle_prefs")
-                    .getFormattedString("identity-list-title", [accountName]);
+  document.title = document.getElementById("bundle_prefs")
+                           .getFormattedString("identity-list-title", [accountName]);
 
   // extract the account from 
   refreshIdentityList();
+
+  // try selecting the first identity
+  gIdentityListBox.selectedIndex = 0;
 }
 
 function refreshIdentityList()
@@ -87,10 +95,15 @@ function openIdentityEditor(identity)
   var result = false; 
   var args = { identity: identity, account: gAccount, result: result };
 
-  window.openDialog('am-identity-edit.xul', 'identity-edit', 'modal,titlebar,chrome', args);
+  window.openDialog('am-identity-edit.xul', '', 'modal,titlebar,chrome', args);
+
+  var selectedItemIndex = gIdentityListBox.selectedIndex;
 
   if (args.result)
+  {
     refreshIdentityList();   
+    gIdentityListBox.selectedIndex = selectedItemIndex;
+  }
 }
 
 function getSelectedIdentity()

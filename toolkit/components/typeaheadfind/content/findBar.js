@@ -21,6 +21,8 @@
 # 
 # Contributor(s):
 #     Blake Ross     <blake@cs.stanford.edu> (Original Author)
+#     Masayuki Nakano <masayuki@d-toybox.com>
+#     Ben Basson <contact@cusser.net>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -40,8 +42,17 @@ const FIND_NORMAL = 0;
 const FIND_TYPEAHEAD = 1;
 const FIND_LINKS = 2;
 
+const CHAR_CODE_SPACE = " ".charCodeAt(0);
+const CHAR_CODE_SLASH = "/".charCodeAt(0);
+const CHAR_CODE_APOSTROPHE = "'".charCodeAt(0);
+
 // Global find variables
 var gFindMode = FIND_NORMAL;
+var gFoundLink = null;
+var gCurrentWindow = null;
+var gTmpOutline = null;
+var gTmpOutlineOffset = "0";
+var gDrawOutline = false;
 var gQuickFindTimeout = null;
 var gQuickFindTimeoutLength = 0;
 var gHighlightTimeout = null;
@@ -49,14 +60,13 @@ var gUseTypeAheadFind = false;
 var gWrappedToTopStr = "";
 var gWrappedToBottomStr = "";
 var gNotFoundStr = "";
-var gTypeAheadFindBuffer = "";
-var gIsBack = true;
-var gBackProtectBuffer = 3;
 var gFlashFindBar = 0;
 var gFlashFindBarCount = 6;
 var gFlashFindBarTimeout = null;
 var gLastHighlightString = "";
 var gTypeAheadLinksOnly = false;
+var gIsIMEComposing = false;
+var gTextToSubURIService = null;
 
 // DOMRange used during highlighting
 var searchRange;
@@ -83,12 +93,12 @@ var gTypeAheadFind = {
 function initFindBar()
 {
   getBrowser().addEventListener("keypress", onBrowserKeyPress, false);
-  getBrowser().addEventListener("mousedown", onBrowserMouseDown, false);
+  getBrowser().addEventListener("mouseup", onBrowserMouseUp, false);
   
   var prefService = Components.classes["@mozilla.org/preferences-service;1"]
                               .getService(Components.interfaces.nsIPrefBranch);
 
-  var pbi = prefService.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+  var pbi = prefService.QueryInterface(Components.interfaces.nsIPrefBranch2);
 
   gQuickFindTimeoutLength = prefService.getIntPref("accessibility.typeaheadfind.timeout");
   gFlashFindBar = prefService.getIntPref("accessibility.typeaheadfind.flashBar");
@@ -97,39 +107,64 @@ function initFindBar()
   pbi.addObserver(gTypeAheadFind.searchLinksPref, gTypeAheadFind, false);
   gUseTypeAheadFind = prefService.getBoolPref("accessibility.typeaheadfind");
   gTypeAheadLinksOnly = prefService.getBoolPref("accessibility.typeaheadfind.linksonly");
+
+  var fastFind = getBrowser().fastFind;
+  fastFind.focusLinks = true;
+  
+  var findField = document.getElementById("find-field");
+  findField.addEventListener("dragdrop", findBarOnDrop, true);
+
+  gTextToSubURIService =
+    Components.classes["@mozilla.org/intl/texttosuburi;1"]
+                .getService(Components.interfaces.nsITextToSubURI);
 }
+
+var findbarObserver = {
+  onDrop: function (aEvent, aXferData, aDragSession)
+    {
+      var findField = document.getElementById("find-field");
+      findField.value = aXferData.data;
+      find(aXferData.data);
+    },
+  getSupportedFlavours: function ()
+    {
+      var flavourSet = new FlavourSet();
+      flavourSet.appendFlavour("text/unicode");
+      return flavourSet;
+    }
+};
 
 function uninitFindBar()
 {
    var prefService = Components.classes["@mozilla.org/preferences-service;1"]
                                .getService(Components.interfaces.nsIPrefBranch);
 
-   var pbi = prefService.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+   var pbi = prefService.QueryInterface(Components.interfaces.nsIPrefBranch2);
    pbi.removeObserver(gTypeAheadFind.useTAFPref, gTypeAheadFind);
    pbi.removeObserver(gTypeAheadFind.searchLinksPref, gTypeAheadFind);
 
    getBrowser().removeEventListener("keypress", onBrowserKeyPress, false);
-   getBrowser().removeEventListener("mousedown", onBrowserMouseDown, false);
+   getBrowser().removeEventListener("mouseup", onBrowserMouseUp, false);
 }
 
 function toggleHighlight(aHighlight)
 {
   var word = document.getElementById("find-field").value;
   if (aHighlight) {
-    highlightDoc('yellow', word);
+    highlightDoc('yellow', 'black', word);
   } else {
-    highlightDoc(null, null);
+    highlightDoc(null, null, null);
     gLastHighlightString = null;
   }
 }
 
-function highlightDoc(color, word, win)
+function highlightDoc(highBackColor, highTextColor, word, win)
 {
   if (!win)
     win = window._content; 
 
   for (var i = 0; win.frames && i < win.frames.length; i++) {
-    highlightDoc(color, word, win.frames[i]);
+    highlightDoc(highBackColor, highTextColor, word, win.frames[i]);
   }
 
   var doc = win.document;
@@ -154,7 +189,7 @@ function highlightDoc(color, word, win)
   endPt.setStart(body, count);
   endPt.setEnd(body, count);
 
-  if (!color) {
+  if (!highBackColor) {
     // Remove highlighting.  We use the find API again rather than
     // searching for our span elements by id so that we gain access to the
     // anonymous content that nsIFind searches.
@@ -189,6 +224,7 @@ function highlightDoc(color, word, win)
 
         parent.removeChild(elem);
         parent.insertBefore(docfrag, next);
+        parent.normalize();
       }
       else {
         // Somehow we didn't highlight this instance; just skip it.
@@ -202,7 +238,8 @@ function highlightDoc(color, word, win)
   }
 
   var baseNode = doc.createElement("span");
-  baseNode.setAttribute("style", "background-color: " + color + ";");
+  baseNode.setAttribute("style", "background-color: " + highBackColor + "; color: " + highTextColor + ";"
+                                   + "display: inline; font-size: inherit; padding: 0;");
   baseNode.setAttribute("id", "__firefox-findbar-search-id");
 
   highlightText(word, baseNode);
@@ -243,9 +280,10 @@ function highlight(range, node)
 
 function getSelectionControllerForFindToolbar(ds)
 {
-  var display = ds.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsISelectionDisplay);
-  if (!display)
-    return null;
+  try {
+    var display = ds.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsISelectionDisplay);
+  }
+  catch (e) { return null; }
   return display.QueryInterface(Components.interfaces.nsISelectionController);
 }
 
@@ -260,7 +298,13 @@ function toggleCaseSensitivity(aCaseSensitive)
   
 function changeSelectionColor(aAttention)
 {
-  var ds = getBrowser().docShell;
+  try {
+    var ds = getBrowser().docShell;
+  } catch(e) {
+    // If we throw here, the browser we were in is already destroyed.
+    // See bug 273200.
+    return;
+  }
   var dsEnum = ds.getDocShellEnumerator(Components.interfaces.nsIDocShellTreeItem.typeContent,
                                         Components.interfaces.nsIDocShell.ENUMERATE_FORWARDS);
   while (dsEnum.hasMoreElements()) {
@@ -312,17 +356,140 @@ function selectFindBar()
 
 function closeFindBar()
 {
-  var findField = document.getElementById("find-field");
-  var ww = Components.classes["@mozilla.org/embedcomp/window-watcher;1"]
-                     .getService(Components.interfaces.nsIWindowWatcher);
-  if (window == ww.activeWindow && document.commandDispatcher.focusedElement &&
-      document.commandDispatcher.focusedElement.parentNode.parentNode == findField) {
-    _content.focus();
+  // ensure the dom is ready...
+  setTimeout(delayedCloseFindBar, 0);
+}
+
+function fireKeypressEvent(target, evt)
+{
+  if (!target)
+    return;
+  var event = document.createEvent("KeyEvents");
+  event.initKeyEvent(evt.type, evt.canBubble, evt.cancelable,
+                     evt.view, evt.ctrlKey, evt.altKey, evt.shiftKey,
+                     evt.metaKey, evt.keyCode, evt.charCode);
+  target.dispatchEvent(event);
+}
+
+function updateStatusBarFind()
+{
+  var xulBrowserWindow = window.XULBrowserWindow;
+  if (!xulBrowserWindow)
+    return false;
+
+  if (!gFoundLink || !gFoundLink.href || gFoundLink.href == "") {
+    xulBrowserWindow.setOverLink("");
+    return true;
   }
 
+  var docCharset = "";
+  var ownerDoc = gFoundLink.ownerDocument;
+  if (ownerDoc)
+    docCharset = ownerDoc.characterSet;
+
+  var url =
+    gTextToSubURIService.unEscapeURIForUI(docCharset, gFoundLink.href);
+  xulBrowserWindow.setOverLink(url);
+
+  return true;
+}
+
+function setFoundLink(foundLink)
+{
+  if (gFoundLink == foundLink)
+    return;
+
+  if (gFoundLink && gDrawOutline) {
+    // restore original outline
+    gFoundLink.style.outline = gTmpOutline;
+    gFoundLink.style.outlineOffset = gTmpOutlineOffset;
+  }
+  gDrawOutline = (foundLink && gFindMode != FIND_NORMAL);
+  if (gDrawOutline) {
+    // backup original outline
+    gTmpOutline = foundLink.style.outline;
+    gTmpOutlineOffset = foundLink.style.outlineOffset;
+    // draw pseudo focus rect
+    // XXX Should we change the following style for FAYT pseudo focus?
+    // XXX Shouldn't we change default design if outline is visible already?
+    foundLink.style.outline = "1px dotted invert";
+    foundLink.style.outlineOffset = "0";
+  }
+
+  gFoundLink = foundLink;
+
+  // We should update status bar. But we need delay. If the mouse cursor is
+  // on the document, the status bar text is changed by mouse event that is
+  // fired by scroll event. So, we need to change the status bar text after
+  // mouse event.
+  if (gFindMode != FIND_NORMAL)
+    setTimeout(updateStatusBarFind, 0);
+}
+
+function finishFAYT(aKeypressEvent)
+{
+  try {
+    if (gFoundLink)
+      gFoundLink.focus();
+    else if (gCurrentWindow)
+      gCurrentWindow.focus();
+    else
+      return false;
+  }
+  catch(e) {
+    return false;
+  }
+
+  // NOTE: In this time, gFoundLink and gCurrentWindow are set null.
+  // Because find toolbar lost focus.
+
+  if (aKeypressEvent)
+    aKeypressEvent.preventDefault();
+
+  closeFindBar();
+  return true;
+}
+
+function delayedCloseFindBar()
+{
+  var findField = document.getElementById("find-field");
   var findToolbar = document.getElementById("FindToolbar");
+  var ww = Components.classes["@mozilla.org/embedcomp/window-watcher;1"]
+                     .getService(Components.interfaces.nsIWindowWatcher);
+
+  if (window == ww.activeWindow) { 
+    var focusedElement = document.commandDispatcher.focusedElement;
+    if (focusedElement && focusedElement.parentNode &&
+          (focusedElement.parentNode == findToolbar ||
+           focusedElement.parentNode.parentNode == findField)) {
+      // block scrolling on focus since find already scrolls, further
+      // scrolling is due to user action, so don't override this
+      var suppressedScroll = document.commandDispatcher.suppressFocusScroll;
+      document.commandDispatcher.suppressFocusScroll = true;
+      // We MUST reset suppressFocusScroll.
+      try {
+        if (gFoundLink)
+          gFoundLink.focus();
+        else if (gCurrentWindow)
+          gCurrentWindow.focus();
+        else
+          window.content.focus();
+      }
+      catch(e) {
+        // Retry to set focus.
+        try {
+          window.content.focus();
+        }
+        catch(e) { /* We lose focused element! */ }
+      }
+      document.commandDispatcher.suppressFocusScroll = suppressedScroll;
+    }
+  }
+
   findToolbar.hidden = true;
-  gTypeAheadFindBuffer = "";
+  setFindMode(FIND_NORMAL);
+  setFoundLink(null);
+  gCurrentWindow = null;
   changeSelectionColor(false);
   if (gQuickFindTimeout) {
     clearTimeout(gQuickFindTimeout);
@@ -337,11 +504,28 @@ function shouldFastFind(evt)
     
   var elt = document.commandDispatcher.focusedElement;
   if (elt) {
-    var ln = elt.localName.toLowerCase();
-    if (ln == "input" || ln == "textarea" || ln == "select" || ln == "button" || ln == "isindex")
+    if (elt instanceof HTMLInputElement) {
+      // block FAYT when an <input> textfield element is focused
+      var inputType = elt.type;
+      switch (inputType) {
+        case "text":
+        case "password":
+        case "file":
+          return false;
+      }
+    }
+    else if (elt instanceof HTMLTextAreaElement ||
+             elt instanceof HTMLSelectElement ||
+             elt instanceof HTMLIsIndexElement)
       return false;
   }
-  
+
+  // disable FAYT in about:config and about:blank to prevent FAYT opening
+  // unexpectedly - to fix bugs 264562, 267150, 269712
+  var url = getBrowser().currentURI.spec;
+  if (url == "about:blank" || url == "about:config")
+    return false;
+
   var win = document.commandDispatcher.focusedWindow;
   if (win && win.document.designMode == "on")
     return false;
@@ -349,18 +533,14 @@ function shouldFastFind(evt)
   return true;
 }
 
-function onFindBarFocus()
-{
-  toggleLinkFocus(false);
-}
-
 function onFindBarBlur()
 {
-  toggleLinkFocus(true);
   changeSelectionColor(false);
+  setFoundLink(null);
+  gCurrentWindow = null;
 }
 
-function onBrowserMouseDown(evt)
+function onBrowserMouseUp(evt)
 {
   var findToolbar = document.getElementById("FindToolbar");
   if (!findToolbar.hidden && gFindMode != FIND_NORMAL)
@@ -368,97 +548,91 @@ function onBrowserMouseDown(evt)
 }
 
 function onBrowserKeyPress(evt)
-{  
+{
   // Check focused elt
   if (!shouldFastFind(evt))
     return;
-  
+
   var findField = document.getElementById("find-field");
-  if (gFindMode != FIND_NORMAL && gQuickFindTimeout) {    
-    if (evt.keyCode == 8) { // Backspace
-      if (findField.value) {
-        findField.value = findField.value.substr(0, findField.value.length - 1);
-        gIsBack = true;   
-        gBackProtectBuffer = 3;
-      }
-      else if (gBackProtectBuffer > 0) {
-        gBackProtectBuffer--;
-      }
-      
-      if (gIsBack || gBackProtectBuffer > 0)
-        evt.preventDefault();
-        
-      find(findField.value);
-    }
-    else if (evt.keyCode == 27) { // Escape
-      closeFindBar();
-      evt.preventDefault();
-    }
-    else if (evt.charCode) {
-      if (evt.charCode == 32) // Space
-        evt.preventDefault();
-        
-      findField.value += String.fromCharCode(evt.charCode);
-      find(findField.value);
-    }
+  if (gFindMode != FIND_NORMAL && gQuickFindTimeout) {
+    if (!evt.charCode)
+      return;
+    selectFindBar();
+    focusFindBar();
+    fireKeypressEvent(findField.inputField, evt);
+    evt.preventDefault();
     return;
   }
-  
-  if (evt.charCode == 39 /* ' */ || evt.charCode == 47 /* / */ || (gUseTypeAheadFind && evt.charCode && evt.charCode != 32)) {   
-    gFindMode = (evt.charCode == 39 || (gTypeAheadLinksOnly && evt.charCode != 47)) ? FIND_LINKS : FIND_TYPEAHEAD;
-    toggleLinkFocus(true);
-    if (openFindBar()) {      
-      setFindCloseTimeout();      
-      if (gUseTypeAheadFind && evt.charCode != 39 && evt.charCode != 47) {
-        gTypeAheadFindBuffer += String.fromCharCode(evt.charCode);        
-        findField.value = gTypeAheadFindBuffer;
-        find(findField.value);
-      }
-      else {
-        findField.value = "";
-      }
+
+  if (evt.charCode == CHAR_CODE_APOSTROPHE || evt.charCode == CHAR_CODE_SLASH ||
+      (gUseTypeAheadFind && evt.charCode && evt.charCode != CHAR_CODE_SPACE)) {
+    var findMode = (evt.charCode == CHAR_CODE_APOSTROPHE ||
+                    (gTypeAheadLinksOnly && evt.charCode != CHAR_CODE_SLASH))
+                   ? FIND_LINKS : FIND_TYPEAHEAD;
+    setFindMode(findMode);
+    if (openFindBar()) {
+      setFindCloseTimeout();
+      selectFindBar();
+      focusFindBar();
+      findField.value = "";
+      if (gUseTypeAheadFind &&
+          evt.charCode != CHAR_CODE_APOSTROPHE &&
+          evt.charCode != CHAR_CODE_SLASH)
+        fireKeypressEvent(findField.inputField, evt);
+      evt.preventDefault();
     }
     else {
-      if (gFindMode == FIND_NORMAL) {
-        selectFindBar();      
-        focusFindBar();
+      selectFindBar();
+      focusFindBar();
+      if (gFindMode != FIND_NORMAL) {
+        findField.value = "";
+        if (evt.charCode != CHAR_CODE_APOSTROPHE &&
+            evt.charCode != CHAR_CODE_SLASH)
+          fireKeypressEvent(findField.inputField, evt);
+        evt.preventDefault();
       }
-      else {
-        findField.value = String.fromCharCode(evt.charCode);
-        find(findField.value);
-      }
-    }        
+    }
   }
-}
-
-function toggleLinkFocus(aFocusLinks)
-{
-  var fastFind = getBrowser().fastFind;
-  fastFind.focusLinks = aFocusLinks;
-}
-
-function onBrowserKeyUp(evt)
-{
-  if (evt.keyCode == 8)
-    gIsBack = false;
 }
 
 function onFindBarKeyPress(evt)
 {
   if (evt.keyCode == KeyEvent.DOM_VK_RETURN) {
-    var findString = document.getElementById("find-field");
-    if (!findString.value)
-      return;
-      
-    if (evt.ctrlKey) {
-      document.getElementById("highlight").click();
-      return;
+    if (gFindMode == FIND_NORMAL) {
+      var findString = document.getElementById("find-field");
+      if (!findString.value)
+        return;
+
+#ifdef XP_MACOSX
+      if (evt.metaKey) {
+#else
+      if (evt.ctrlKey) {
+#endif
+        document.getElementById("highlight").click();
+        return;
+      }
+
+      if (evt.shiftKey)
+        findPrevious();
+      else
+        findNext();
     }
-    
-    if (evt.shiftKey)
-      findPrevious();
-    else
-      findNext();
+    else {
+      if (gFoundLink) {
+        var tmpLink = gFoundLink;
+        if (finishFAYT(evt))
+          fireKeypressEvent(tmpLink, evt);
+      }
+    }
+  }
+  else if (evt.keyCode == KeyEvent.DOM_VK_TAB) {
+    var shouldHandle = !evt.altKey && !evt.ctrlKey && !evt.metaKey;
+    if (shouldHandle && gFindMode != FIND_NORMAL && finishFAYT(evt)) {
+      if (evt.shiftKey)
+        document.commandDispatcher.rewindFocus();
+      else
+        document.commandDispatcher.advanceFocus();
+    }
   }
   else if (evt.keyCode == KeyEvent.DOM_VK_ESCAPE) {
     closeFindBar();
@@ -491,22 +665,36 @@ function enableFindButtons(aEnable)
   findNext.disabled = findPrev.disabled = highlight.disabled = !aEnable;  
 }
 
+function updateFoundLink(res)
+{
+  var val = document.getElementById("find-field").value;
+  if (res == Components.interfaces.nsITypeAheadFind.FIND_NOTFOUND || !val) {
+    setFoundLink(null);
+    gCurrentWindow = null;
+  } else {
+    setFoundLink(getBrowser().fastFind.foundLink);
+    gCurrentWindow = getBrowser().fastFind.currentWindow;
+  }
+}
+
 function find(val)
 {
   if (!val)
     val = document.getElementById("find-field").value;
-    
+
   enableFindButtons(val);
- 
+
   var highlightBtn = document.getElementById("highlight");
   if (highlightBtn.checked)
     setHighlightTimeout();
-        
+
   changeSelectionColor(true);
-  var fastFind = getBrowser().fastFind;  
+
+  var fastFind = getBrowser().fastFind;
   var res = fastFind.find(val, gFindMode == FIND_LINKS);
+  updateFoundLink(res);
   updateStatus(res, true);
-  
+
   if (gFindMode != FIND_NORMAL)
     setFindCloseTimeout();
 }
@@ -518,7 +706,7 @@ function flashFindBar()
     clearInterval(gFlashFindBarTimeout);
     findToolbar.removeAttribute("flash");
     gFlashFindBarCount = 6;
-    return true;
+    return;
   }
  
   findToolbar.setAttribute("flash", (gFlashFindBarCount % 2 == 0) ? "false" : "true");
@@ -526,7 +714,7 @@ function flashFindBar()
 
 function onFindCmd()
 {
-  gFindMode = FIND_NORMAL;
+  setFindMode(FIND_NORMAL);
   openFindBar();
   if (gFlashFindBar) {
     gFlashFindBarTimeout = setInterval(flashFindBar, 500);
@@ -542,8 +730,10 @@ function onFindCmd()
 function onFindAgainCmd()
 {
   var findString = getBrowser().findString;
-  if (!findString)
-    return onFindCmd();
+  if (!findString) {
+    onFindCmd();
+    return;
+  }
 
   var res = findNext();
   if (res == Components.interfaces.nsITypeAheadFind.FIND_NOTFOUND) {
@@ -561,8 +751,10 @@ function onFindAgainCmd()
 function onFindPreviousCmd()
 {
   var findString = getBrowser().findString;
-  if (!findString)
-    return onFindCmd();
+  if (!findString) {
+    onFindCmd();
+    return;
+  }
  
   var res = findPrevious();
   if (res == Components.interfaces.nsITypeAheadFind.FIND_NOTFOUND) {
@@ -593,26 +785,30 @@ function isFindBarVisible()
 function findNext()
 {
   changeSelectionColor(true);
+
   var fastFind = getBrowser().fastFind; 
   var res = fastFind.findNext();  
+  updateFoundLink(res);
   updateStatus(res, true);
-    
+
   if (gFindMode != FIND_NORMAL && isFindBarVisible())
     setFindCloseTimeout();
-  
+
   return res;
 }
 
 function findPrevious()
 {
   changeSelectionColor(true);
+
   var fastFind = getBrowser().fastFind;
   var res = fastFind.findPrevious();
+  updateFoundLink(res);
   updateStatus(res, false);
-  
+
   if (gFindMode != FIND_NORMAL && isFindBarVisible())
     setFindCloseTimeout();
-  
+
   return res;
 }
 
@@ -645,5 +841,44 @@ function setFindCloseTimeout()
 {
   if (gQuickFindTimeout)
     clearTimeout(gQuickFindTimeout);
-  gQuickFindTimeout = setTimeout(function() { if (gFindMode != FIND_NORMAL) closeFindBar(); }, gQuickFindTimeoutLength);
+
+  // Don't close the find toolbar while IME is composing.
+  if (gIsIMEComposing) {
+    gQuickFindTimeout = null;
+    return;
+  }
+
+  gQuickFindTimeout =
+    setTimeout(function() { if (gFindMode != FIND_NORMAL) closeFindBar(); },
+               gQuickFindTimeoutLength);
+}
+
+function findBarOnDrop(evt)
+{
+    nsDragAndDrop.drop(evt, findbarObserver);
+}
+
+function onFindBarCompositionStart(evt)
+{
+  gIsIMEComposing = true;
+  // Don't close the find toolbar while IME is composing.
+  if (gQuickFindTimeout) {
+    clearTimeout(gQuickFindTimeout);
+    gQuickFindTimeout = null;
+  }
+}
+
+function onFindBarCompositionEnd(evt)
+{
+  gIsIMEComposing = false;
+  if (gFindMode != FIND_NORMAL && isFindBarVisible())
+    setFindCloseTimeout();
+}
+
+function setFindMode(mode)
+{
+  if (mode == gFindMode)
+    return;
+
+  gFindMode = mode;
 }

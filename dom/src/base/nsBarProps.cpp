@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Travis Bogard <travis@netscape.com> 
- *
+ *   Travis Bogard <travis@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -52,36 +51,36 @@
 //
 //  Basic (virtual) BarProp class implementation
 //
-BarPropImpl::BarPropImpl() : mBrowserChrome(nsnull)
+nsBarProp::nsBarProp() : mBrowserChrome(nsnull)
 {
 }
 
-BarPropImpl::~BarPropImpl()
+nsBarProp::~nsBarProp()
 {
 }
 
 
-// QueryInterface implementation for BarPropImpl
-NS_INTERFACE_MAP_BEGIN(BarPropImpl)
+// QueryInterface implementation for BarProp
+NS_INTERFACE_MAP_BEGIN(nsBarProp)
   NS_INTERFACE_MAP_ENTRY(nsIDOMBarProp)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(BarProp)
 NS_INTERFACE_MAP_END
 
 
-NS_IMPL_ADDREF(BarPropImpl)
-NS_IMPL_RELEASE(BarPropImpl)
+NS_IMPL_ADDREF(nsBarProp)
+NS_IMPL_RELEASE(nsBarProp)
 
 
 NS_IMETHODIMP
-BarPropImpl::SetWebBrowserChrome(nsIWebBrowserChrome* aBrowserChrome)
+nsBarProp::SetWebBrowserChrome(nsIWebBrowserChrome* aBrowserChrome)
 {
   mBrowserChrome = aBrowserChrome;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-BarPropImpl::GetVisibleByFlag(PRBool *aVisible, PRUint32 aChromeFlag)
+nsBarProp::GetVisibleByFlag(PRBool *aVisible, PRUint32 aChromeFlag)
 {
   NS_ENSURE_TRUE(mBrowserChrome, NS_ERROR_FAILURE);
 
@@ -97,7 +96,7 @@ BarPropImpl::GetVisibleByFlag(PRBool *aVisible, PRUint32 aChromeFlag)
 }
 
 NS_IMETHODIMP
-BarPropImpl::SetVisibleByFlag(PRBool aVisible, PRUint32 aChromeFlag)
+nsBarProp::SetVisibleByFlag(PRBool aVisible, PRUint32 aChromeFlag)
 {
   NS_ENSURE_TRUE(mBrowserChrome, NS_ERROR_FAILURE);
 
@@ -128,145 +127,153 @@ BarPropImpl::SetVisibleByFlag(PRBool aVisible, PRUint32 aChromeFlag)
 // MenubarProp class implementation
 //
 
-MenubarPropImpl::MenubarPropImpl()
+nsMenubarProp::nsMenubarProp()
 {
 }
 
-MenubarPropImpl::~MenubarPropImpl()
+nsMenubarProp::~nsMenubarProp()
 {
-}
-
-NS_IMETHODIMP
-MenubarPropImpl::GetVisible(PRBool *aVisible)
-{
-  return BarPropImpl::GetVisibleByFlag(aVisible,
-                                       nsIWebBrowserChrome::CHROME_MENUBAR);
 }
 
 NS_IMETHODIMP
-MenubarPropImpl::SetVisible(PRBool aVisible)
+nsMenubarProp::GetVisible(PRBool *aVisible)
 {
-  return BarPropImpl::SetVisibleByFlag(aVisible,
-                                       nsIWebBrowserChrome::CHROME_MENUBAR);
+  return nsBarProp::GetVisibleByFlag(aVisible,
+                                     nsIWebBrowserChrome::CHROME_MENUBAR);
+}
+
+NS_IMETHODIMP
+nsMenubarProp::SetVisible(PRBool aVisible)
+{
+  return nsBarProp::SetVisibleByFlag(aVisible,
+                                     nsIWebBrowserChrome::CHROME_MENUBAR);
 }
 
 //
 // ToolbarProp class implementation
 //
 
-ToolbarPropImpl::ToolbarPropImpl()
+nsToolbarProp::nsToolbarProp()
 {
 }
 
-ToolbarPropImpl::~ToolbarPropImpl()
+nsToolbarProp::~nsToolbarProp()
 {
-}
-
-NS_IMETHODIMP
-ToolbarPropImpl::GetVisible(PRBool *aVisible)
-{
-  return BarPropImpl::GetVisibleByFlag(aVisible,
-                                       nsIWebBrowserChrome::CHROME_TOOLBAR);
 }
 
 NS_IMETHODIMP
-ToolbarPropImpl::SetVisible(PRBool aVisible)
+nsToolbarProp::GetVisible(PRBool *aVisible)
 {
-  return BarPropImpl::SetVisibleByFlag(aVisible,
-                                       nsIWebBrowserChrome::CHROME_TOOLBAR);
+  return nsBarProp::GetVisibleByFlag(aVisible,
+                                     nsIWebBrowserChrome::CHROME_TOOLBAR);
+}
+
+NS_IMETHODIMP
+nsToolbarProp::SetVisible(PRBool aVisible)
+{
+  return nsBarProp::SetVisibleByFlag(aVisible,
+                                     nsIWebBrowserChrome::CHROME_TOOLBAR);
 }
 
 //
 // LocationbarProp class implementation
 //
 
-LocationbarPropImpl::LocationbarPropImpl()
+nsLocationbarProp::nsLocationbarProp()
 {
 }
 
-LocationbarPropImpl::~LocationbarPropImpl()
+nsLocationbarProp::~nsLocationbarProp()
 {
-}
-
-NS_IMETHODIMP
-LocationbarPropImpl::GetVisible(PRBool *aVisible)
-{
-  return BarPropImpl::GetVisibleByFlag(aVisible, nsIWebBrowserChrome::CHROME_LOCATIONBAR);
 }
 
 NS_IMETHODIMP
-LocationbarPropImpl::SetVisible(PRBool aVisible)
+nsLocationbarProp::GetVisible(PRBool *aVisible)
 {
-  return BarPropImpl::SetVisibleByFlag(aVisible, nsIWebBrowserChrome::CHROME_LOCATIONBAR);
+  return
+    nsBarProp::GetVisibleByFlag(aVisible,
+                                nsIWebBrowserChrome::CHROME_LOCATIONBAR);
+}
+
+NS_IMETHODIMP
+nsLocationbarProp::SetVisible(PRBool aVisible)
+{
+  return
+    nsBarProp::SetVisibleByFlag(aVisible,
+                                nsIWebBrowserChrome::CHROME_LOCATIONBAR);
 }
 
 //
 // PersonalbarProp class implementation
 //
 
-PersonalbarPropImpl::PersonalbarPropImpl()
+nsPersonalbarProp::nsPersonalbarProp()
 {
 }
 
-PersonalbarPropImpl::~PersonalbarPropImpl()
+nsPersonalbarProp::~nsPersonalbarProp()
 {
-}
-
-NS_IMETHODIMP
-PersonalbarPropImpl::GetVisible(PRBool *aVisible)
-{
-  return BarPropImpl::GetVisibleByFlag(aVisible, nsIWebBrowserChrome::CHROME_PERSONAL_TOOLBAR);
 }
 
 NS_IMETHODIMP
-PersonalbarPropImpl::SetVisible(PRBool aVisible)
+nsPersonalbarProp::GetVisible(PRBool *aVisible)
 {
-  return BarPropImpl::SetVisibleByFlag(aVisible, nsIWebBrowserChrome::CHROME_PERSONAL_TOOLBAR);
+  return
+    nsBarProp::GetVisibleByFlag(aVisible,
+                                nsIWebBrowserChrome::CHROME_PERSONAL_TOOLBAR);
+}
+
+NS_IMETHODIMP
+nsPersonalbarProp::SetVisible(PRBool aVisible)
+{
+  return
+    nsBarProp::SetVisibleByFlag(aVisible,
+                                nsIWebBrowserChrome::CHROME_PERSONAL_TOOLBAR);
 }
 
 //
 // StatusbarProp class implementation
 //
 
-StatusbarPropImpl::StatusbarPropImpl()
+nsStatusbarProp::nsStatusbarProp()
 {
 }
 
-StatusbarPropImpl::~StatusbarPropImpl()
+nsStatusbarProp::~nsStatusbarProp()
 {
-}
-
-NS_IMETHODIMP
-StatusbarPropImpl::GetVisible(PRBool *aVisible)
-{
-  return BarPropImpl::GetVisibleByFlag(aVisible,
-                                       nsIWebBrowserChrome::CHROME_STATUSBAR);
 }
 
 NS_IMETHODIMP
-StatusbarPropImpl::SetVisible(PRBool aVisible)
+nsStatusbarProp::GetVisible(PRBool *aVisible)
 {
-  return BarPropImpl::SetVisibleByFlag(aVisible,
-                                       nsIWebBrowserChrome::CHROME_STATUSBAR);
+  return nsBarProp::GetVisibleByFlag(aVisible,
+                                     nsIWebBrowserChrome::CHROME_STATUSBAR);
+}
+
+NS_IMETHODIMP
+nsStatusbarProp::SetVisible(PRBool aVisible)
+{
+  return nsBarProp::SetVisibleByFlag(aVisible,
+                                     nsIWebBrowserChrome::CHROME_STATUSBAR);
 }
 
 //
 // ScrollbarsProp class implementation
 //
 
-ScrollbarsPropImpl::ScrollbarsPropImpl(GlobalWindowImpl *aWindow)
+nsScrollbarsProp::nsScrollbarsProp(nsGlobalWindow *aWindow)
 {
   mDOMWindow = aWindow;
   nsISupports *supwin = NS_STATIC_CAST(nsIScriptGlobalObject *, aWindow);
   mDOMWindowWeakref = do_GetWeakReference(supwin);
 }
 
-ScrollbarsPropImpl::~ScrollbarsPropImpl()
+nsScrollbarsProp::~nsScrollbarsProp()
 {
 }
 
 NS_IMETHODIMP
-ScrollbarsPropImpl::GetVisible(PRBool *aVisible)
+nsScrollbarsProp::GetVisible(PRBool *aVisible)
 {
   *aVisible = PR_TRUE; // one assumes
 
@@ -276,15 +283,14 @@ ScrollbarsPropImpl::GetVisible(PRBool *aVisible)
       do_QueryInterface(mDOMWindow->GetDocShell());
 
     if (scroller) {
-      PRInt32 prefValue = aVisible ? NS_STYLE_OVERFLOW_AUTO :
-                                     NS_STYLE_OVERFLOW_HIDDEN;
+      PRInt32 prefValue;
       scroller->GetDefaultScrollbarPreferences(
                   nsIScrollable::ScrollOrientation_Y, &prefValue);
-      if (prefValue == NS_STYLE_OVERFLOW_HIDDEN) // try the other way
+      if (prefValue == nsIScrollable::Scrollbar_Never) // try the other way
         scroller->GetDefaultScrollbarPreferences(
                     nsIScrollable::ScrollOrientation_X, &prefValue);
 
-      if (prefValue == NS_STYLE_OVERFLOW_HIDDEN)
+      if (prefValue == nsIScrollable::Scrollbar_Never)
         *aVisible = PR_FALSE;
     }
   }
@@ -293,7 +299,7 @@ ScrollbarsPropImpl::GetVisible(PRBool *aVisible)
 }
 
 NS_IMETHODIMP
-ScrollbarsPropImpl::SetVisible(PRBool aVisible)
+nsScrollbarsProp::SetVisible(PRBool aVisible)
 {
   /* Scrollbars, unlike the other barprops, implement visibility directly
      rather than handing off to the superclass (and from there to the
@@ -308,8 +314,14 @@ ScrollbarsPropImpl::SetVisible(PRBool aVisible)
       do_QueryInterface(mDOMWindow->GetDocShell());
 
     if (scroller) {
-      PRInt32 prefValue = aVisible ? NS_STYLE_OVERFLOW_AUTO :
-                                     NS_STYLE_OVERFLOW_HIDDEN;
+      PRInt32 prefValue;
+
+      if (aVisible) {
+        prefValue = nsIScrollable::Scrollbar_Auto;
+      } else {
+        prefValue = nsIScrollable::Scrollbar_Never;
+      }
+
       scroller->SetDefaultScrollbarPreferences(
                   nsIScrollable::ScrollOrientation_Y, prefValue);
       scroller->SetDefaultScrollbarPreferences(

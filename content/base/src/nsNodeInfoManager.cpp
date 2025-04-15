@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -49,20 +48,6 @@
 #include "nsReadableUtils.h"
 
 PRUint32 nsNodeInfoManager::gNodeManagerCount;
-
-
-nsresult NS_NewNodeInfoManager(nsINodeInfoManager** aResult)
-{
-  NS_ENSURE_ARG_POINTER(aResult);
-
-  *aResult = new nsNodeInfoManager;
-  NS_ENSURE_TRUE(*aResult, NS_ERROR_OUT_OF_MEMORY);
-
-  NS_ADDREF(*aResult);
-
-  return NS_OK;
-}
-
 
 PLHashNumber
 nsNodeInfoManager::GetNodeInfoInnerHashValue(const void *key)
@@ -93,7 +78,7 @@ nsNodeInfoManager::NodeInfoInnerKeyCompare(const void *key1, const void *key2)
 }
 
 
-nsNodeInfoManager::nsNodeInfoManager()
+nsNodeInfoManager::nsNodeInfoManager() : mDocument(nsnull)
 {
   ++gNodeManagerCount;
 
@@ -125,10 +110,31 @@ nsNodeInfoManager::~nsNodeInfoManager()
 }
 
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsNodeInfoManager, nsINodeInfoManager)
+nsrefcnt
+nsNodeInfoManager::AddRef()
+{
+  NS_PRECONDITION(PRInt32(mRefCnt) >= 0, "illegal refcnt");
 
+  nsrefcnt count = PR_AtomicIncrement((PRInt32*)&mRefCnt);
+  NS_LOG_ADDREF(this, count, "nsNodeInfoManager", sizeof(*this));
 
-// nsINodeInfoManager
+  return count;
+}
+
+nsrefcnt
+nsNodeInfoManager::Release()
+{
+  NS_PRECONDITION(0 != mRefCnt, "dup release");
+
+  nsrefcnt count = PR_AtomicDecrement((PRInt32 *)&mRefCnt);
+  NS_LOG_RELEASE(this, count, "nsNodeInfoManager");
+  if (count == 0) {
+    mRefCnt = 1; /* stabilize */
+    delete this;
+  }
+
+  return count;
+}
 
 nsresult
 nsNodeInfoManager::Init(nsIDocument *aDocument)
@@ -251,27 +257,9 @@ nsNodeInfoManager::GetNodeInfo(const nsAString& aQualifiedName,
   return GetNodeInfo(nameAtom, prefixAtom, nsid, aNodeInfo);
 }
 
-nsresult
-nsNodeInfoManager::GetNodeInfo(const nsAString& aName, nsIAtom *aPrefix,
-                               const nsAString& aNamespaceURI,
-                               nsINodeInfo** aNodeInfo)
+nsIPrincipal*
+nsNodeInfoManager::GetDocumentPrincipal()
 {
-  nsCOMPtr<nsIAtom> nameAtom = do_GetAtom(aName);
-
-  PRInt32 nsid = kNameSpaceID_None;
-  if (!aNamespaceURI.IsEmpty()) {
-    nsresult rv = nsContentUtils::GetNSManagerWeakRef()->
-      RegisterNameSpace(aNamespaceURI, nsid);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-
-  return GetNodeInfo(nameAtom, aPrefix, nsid, aNodeInfo);
-}
-
-nsresult
-nsNodeInfoManager::GetDocumentPrincipal(nsIPrincipal** aPrincipal)
-{
-  NS_ENSURE_ARG_POINTER(aPrincipal);
   NS_ASSERTION(!mDocument || !mPrincipal,
                "how'd we end up with both a document and a principal?");
 
@@ -279,28 +267,23 @@ nsNodeInfoManager::GetDocumentPrincipal(nsIPrincipal** aPrincipal)
     // If the document has a uri we'll ask for it's principal. Otherwise we'll
     // consider this document 'anonymous'
     if (!mDocument->GetDocumentURI()) {
-      *aPrincipal = nsnull;
-      return NS_OK;
+      return nsnull;
     }
 
-    *aPrincipal = mDocument->GetPrincipal();
-    if (!*aPrincipal)
-      return NS_ERROR_FAILURE;
-
-    NS_ADDREF(*aPrincipal);
-    return NS_OK;
+    return mDocument->GetPrincipal();
   }
-  *aPrincipal = mPrincipal;
-  NS_IF_ADDREF(*aPrincipal);
-  return NS_OK;
+
+  return mPrincipal;
 }
 
-nsresult
-nsNodeInfoManager::SetDocumentPrincipal(nsIPrincipal* aPrincipal)
+void
+nsNodeInfoManager::SetDocumentPrincipal(nsIPrincipal *aPrincipal)
 {
-  NS_ENSURE_FALSE(mDocument, NS_ERROR_UNEXPECTED);
-  mPrincipal = aPrincipal;
-  return NS_OK;
+  NS_ASSERTION(!mDocument,
+               "Don't set a principal, we already have a document.");
+  if (!mDocument) {
+    mPrincipal = aPrincipal;
+  }
 }
 
 void

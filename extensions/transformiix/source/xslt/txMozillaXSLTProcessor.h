@@ -1,4 +1,4 @@
-/* -*- Mode: IDL; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is mozilla.org code.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
@@ -20,8 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Peter Van der Beken <peterv@netscape.com> (original author)
- *
+ *   Peter Van der Beken <peterv@propagandism.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -57,6 +56,7 @@
 class nsIURI;
 class nsIXMLContentSink;
 class nsIDOMNode;
+class nsIPrincipal;
 
 /* bacd8ad0-552f-11d3-a9f7-000064657374 */
 #define TRANSFORMIIX_XSLT_PROCESSOR_CID   \
@@ -65,7 +65,7 @@ class nsIDOMNode;
 #define TRANSFORMIIX_XSLT_PROCESSOR_CONTRACTID \
 "@mozilla.org/document-transformer;1?type=xslt"
 
-#define XSLT_MSGS_URL  "chrome://global/locale/layout/xslt.properties"
+#define XSLT_MSGS_URL  "chrome://global/locale/xslt/xslt.properties"
 
 class txVariable : public txIGlobalParameter
 {
@@ -139,7 +139,7 @@ public:
     // nsIDocumentTransformer interface
     NS_IMETHOD SetTransformObserver(nsITransformObserver* aObserver);
     NS_IMETHOD LoadStyleSheet(nsIURI* aUri, nsILoadGroup* aLoadGroup,
-                              nsIURI* aReferrerUri);
+                              nsIPrincipal* aCallerPrincipal);
     NS_IMETHOD SetSourceContentModel(nsIDOMNode* aSource);
     NS_IMETHOD CancelLoads() {return NS_OK;};
 
@@ -150,10 +150,17 @@ public:
     void reportError(nsresult aResult, const PRUnichar *aErrorText,
                      const PRUnichar *aSourceText);
 
+    nsIDOMNode *GetSourceContentModel()
+    {
+        return mSource;
+    }
+
 private:
     nsresult DoTransform();
     void notifyError();
     nsresult ensureStylesheet();
+    nsresult TransformToDoc(nsIDOMDocument *aOutputDoc,
+                            nsIDOMDocument **aResult);
 
     nsRefPtr<txStylesheet> mStylesheet;
     nsIDocument* mStylesheetDocument; // weak
@@ -168,7 +175,8 @@ private:
 };
 
 extern nsresult TX_LoadSheet(nsIURI* aUri, txMozillaXSLTProcessor* aProcessor,
-                             nsILoadGroup* aLoadGroup, nsIURI* aReferrerUri);
+                             nsILoadGroup* aLoadGroup,
+                             nsIPrincipal* aCallerPrincipal);
 
 extern nsresult TX_CompileStylesheet(nsIDOMNode* aNode,
                                      txStylesheet** aStylesheet);

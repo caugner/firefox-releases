@@ -1,26 +1,46 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.0 (the "NPL"); you may not use this file except in
- * compliance with the NPL. You may obtain a copy of the NPL at
- * http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the NPL is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the NPL
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * NPL.
+ * License.
  *
- * The Initial Developer of this code under the NPL is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998,2000 Netscape Communications Corporation. All Rights
- * Reserved.
+ * The Original Code is mozilla.org Code.
  *
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsJARChannel.h"
 #include "nsJARProtocolHandler.h"
 #include "nsMimeTypes.h"
 #include "nsNetUtil.h"
+#include "nsInt64.h"
 
 #include "nsIScriptSecurityManager.h"
 #include "nsIPrincipal.h"
@@ -156,7 +176,6 @@ nsJARInputThunk::ReadSegments(nsWriteSegmentFun writer, void *closure,
                               PRUint32 count, PRUint32 *countRead)
 {
     // stream transport does only calls Read()
-    NS_NOTREACHED("nsJarInputThunk::ReadSegments");
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -208,6 +227,22 @@ nsJARChannel::Init(nsIURI *uri)
 {
     nsresult rv;
     mJarURI = do_QueryInterface(uri, &rv);
+    if (NS_FAILED(rv))
+        return rv;
+
+    // Prevent loading jar:javascript URIs (see bug 290982).
+    nsCOMPtr<nsIURI> innerURI;
+    rv = mJarURI->GetJARFile(getter_AddRefs(innerURI));
+    if (NS_FAILED(rv))
+        return rv;
+    PRBool isJS;
+    rv = innerURI->SchemeIs("javascript", &isJS);
+    if (NS_FAILED(rv))
+        return rv;
+    if (isJS) {
+        NS_WARNING("blocking jar:javascript:");
+        return NS_ERROR_INVALID_ARG;
+    }
 
 #if defined(PR_LOGGING)
     mJarURI->GetSpec(mSpec);
@@ -420,25 +455,32 @@ nsJARChannel::GetOwner(nsISupports **result)
     if (NS_FAILED(rv)) return rv;
 
     if (cert) {
-        nsXPIDLCString certID;
-        rv = cert->GetCertificateID(getter_Copies(certID));
+        nsCAutoString certFingerprint;
+        rv = cert->GetFingerprint(certFingerprint);
         if (NS_FAILED(rv)) return rv;
 
-        nsXPIDLCString commonName;
-        rv = cert->GetCommonName(getter_Copies(commonName));
+        nsCAutoString subjectName;
+        rv = cert->GetSubjectName(subjectName);
         if (NS_FAILED(rv)) return rv;
 
+        nsCAutoString prettyName;
+        rv = cert->GetPrettyName(prettyName);
+        if (NS_FAILED(rv)) return rv;
+
+        nsCOMPtr<nsISupports> certificate;
+        rv = cert->GetCertificate(getter_AddRefs(certificate));
+        if (NS_FAILED(rv)) return rv;
+        
         nsCOMPtr<nsIScriptSecurityManager> secMan = 
                  do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
         if (NS_FAILED(rv)) return rv;
 
-        rv = secMan->GetCertificatePrincipal(certID, mJarBaseURI,
+        rv = secMan->GetCertificatePrincipal(certFingerprint, subjectName,
+                                             prettyName, certificate,
+                                             mJarBaseURI,
                                              getter_AddRefs(cert));
         if (NS_FAILED(rv)) return rv;
 
-        rv = cert->SetCommonName(commonName);
-        if (NS_FAILED(rv)) return rv;
-        
         mOwner = do_QueryInterface(cert, &rv);
         if (NS_FAILED(rv)) return rv;
 
@@ -465,7 +507,6 @@ NS_IMETHODIMP
 nsJARChannel::SetNotificationCallbacks(nsIInterfaceRequestor *aCallbacks)
 {
     mCallbacks = aCallbacks;
-    mProgressSink = do_GetInterface(mCallbacks);
     return NS_OK;
 }
 
@@ -499,15 +540,11 @@ nsJARChannel::GetContentType(nsACString &result)
         }
         if (ext) {
             nsIMIMEService *mimeServ = gJarHandler->MimeService();
-            if (mimeServ) {
-                nsXPIDLCString mimeType;
-                nsresult rv = mimeServ->GetTypeFromExtension(ext, getter_Copies(mimeType));
-                if (NS_SUCCEEDED(rv))
-                    mContentType = mimeType;
-            }
+            if (mimeServ)
+                mimeServ->GetTypeFromExtension(nsDependentCString(ext), mContentType);
         }
         if (mContentType.IsEmpty())
-            mContentType = NS_LITERAL_CSTRING(UNKNOWN_CONTENT_TYPE);
+            mContentType.AssignLiteral(UNKNOWN_CONTENT_TYPE);
     }
     result = mContentType;
     return NS_OK;
@@ -587,6 +624,9 @@ nsJARChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
     LOG(("nsJARChannel::AsyncOpen [this=%x]\n", this));
 
     NS_ENSURE_TRUE(!mIsPending, NS_ERROR_IN_PROGRESS);
+
+    // Initialize mProgressSink
+    NS_QueryNotificationCallbacks(mCallbacks, mLoadGroup, mProgressSink);
 
     nsresult rv = EnsureJarInput(PR_FALSE);
     if (NS_FAILED(rv)) return rv;
@@ -680,6 +720,11 @@ nsJARChannel::OnStopRequest(nsIRequest *req, nsISupports *ctx, nsresult status)
     NS_IF_RELEASE(mJarInput);
     mIsPending = PR_FALSE;
     mDownloader = 0; // this may delete the underlying jar file
+
+    // Drop notification callbacks to prevent cycles.
+    mCallbacks = 0;
+    mProgressSink = 0;
+
     return NS_OK;
 }
 
@@ -698,8 +743,10 @@ nsJARChannel::OnDataAvailable(nsIRequest *req, nsISupports *ctx,
 
     // simply report progress here instead of hooking ourselves up as a
     // nsITransportEventSink implementation.
+    // XXX do the 64-bit stuff for real
     if (mProgressSink && NS_SUCCEEDED(rv) && !(mLoadFlags & LOAD_BACKGROUND))
-        mProgressSink->OnProgress(this, nsnull, offset + count, mContentLength);
+        mProgressSink->OnProgress(this, nsnull, nsUint64(offset + count),
+                                  nsUint64(mContentLength));
 
     return rv; // let the pump cancel on failure
 }

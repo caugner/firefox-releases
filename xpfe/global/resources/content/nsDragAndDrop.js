@@ -1,11 +1,11 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Pierre Chanial <pierrechanial@netscape.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -55,9 +55,26 @@
  * nsDragAndDrop - a convenience wrapper for nsTransferable, nsITransferable
  *                 and nsIDragService/nsIDragSession. 
  *
- * USAGE INFORMATION: see 'README-nsDragAndDrop.html' in the same source directory
- *                    as this file (typically xpfe/global/resources/content)
- */
+ * Use: map the handler functions to the 'ondraggesture', 'ondragover' and
+ *   'ondragdrop' event handlers on your XML element, e.g.                   
+ *   <xmlelement ondraggesture="nsDragAndDrop.startDrag(event, observer);"   
+ *               ondragover="nsDragAndDrop.startDrag(event, observer);"      
+ *               ondragdrop="nsDragAndDrop.drop(event, observer);"/>         
+ *                                                                           
+ *   You need to create an observer js object with the following member      
+ *   functions:                                                              
+ *     Object onDragStart (event)        // called when drag initiated,      
+ *                                       // returns flavour list with data   
+ *                                       // to stuff into transferable      
+ *     void onDragOver (Object flavour)  // called when element is dragged   
+ *                                       // over, so that it can perform     
+ *                                       // any drag-over feedback for provided
+ *                                       // flavour                          
+ *     void onDrop (Object data)         // formatted data object dropped.   
+ *     Object getSupportedFlavours ()    // returns a flavour list so that   
+ *                                       // nsTransferable can determine
+ *                                       // whether or not to accept drop. 
+ **/                                                                  
 
 var nsDragAndDrop = {
   
@@ -117,7 +134,7 @@ var nsDragAndDrop = {
           region.init();
           var obo = tree.treeBoxObject;
           var bo = obo.treeBody.boxObject;
-          var obosel= obo.selection;
+          var sel= tree.view.selection;
 
           var rowX = bo.x;
           var rowY = bo.y;
@@ -127,7 +144,7 @@ var nsDragAndDrop = {
           //add a rectangle for each visible selected row
           for (var i = obo.getFirstVisibleRow(); i <= obo.getLastVisibleRow(); i ++)
           {
-            if (obosel.isSelected(i))
+            if (sel.isSelected(i))
               region.unionRect(rowX, rowY, rowWidth, rowHeight);
             rowY = rowY + rowHeight;
           }
@@ -308,6 +325,63 @@ var nsDragAndDrop = {
       if ("canDrop" in aDragDropObserver)
         this.mDragSession.canDrop &= aDragDropObserver.canDrop(aEvent, this.mDragSession);
       return true;
-    } 
-};
+    },
 
+  /**
+   * Do a security check for drag n' drop. Make sure the source document
+   * can load the dragged link.
+   *
+   * @param DOMEvent aEvent
+   *        the DOM event fired by leaving the element
+   * @param Object aDragDropObserver
+   *        javascript object of format described above that specifies
+   *        the way in which the element responds to drag events.
+   * @param String aUri
+   *        the uri being dragged
+   **/
+  dragDropSecurityCheck: function (aEvent, aDragSession, aUri)
+    {
+      var sourceDoc = aDragSession.sourceDocument;
+
+      if (sourceDoc) {
+        // Strip leading and trailing whitespace, then try to create a
+        // URI from the dropped string. If that succeeds, we're
+        // dropping a URI and we need to do a security check to make
+        // sure the source document can load the dropped URI. We don't
+        // so much care about creating the real URI here
+        // (i.e. encoding differences etc don't matter), we just want
+        // to know if aUri really is a URI.
+
+        var uriStr = aUri.replace(/^\s*|\s*$/g, '');
+        var uri = null;
+
+        try {
+          uri = Components.classes["@mozilla.org/network/io-service;1"]
+            .getService(Components.interfaces.nsIIOService)
+            .newURI(uriStr, null, null);
+        } catch (e) {
+        }
+
+        if (uri) {
+          // aUri is a URI, do the security check.
+          var sourceURI = sourceDoc.documentURI;
+
+          const nsIScriptSecurityManager =
+            Components.interfaces.nsIScriptSecurityManager;
+          var secMan =
+            Components.classes["@mozilla.org/scriptsecuritymanager;1"]
+            .getService(nsIScriptSecurityManager);
+
+          try {
+            secMan.checkLoadURIStr(sourceURI, uriStr,
+                                   nsIScriptSecurityManager.STANDARD);
+          } catch (e) {
+            // Stop event propagation right here.
+            aEvent.stopPropagation();
+
+            throw "Drop of " + aUri + " denied.";
+          }
+        }
+      }
+    }
+};

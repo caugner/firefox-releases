@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -120,9 +120,11 @@ nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor &aColor)
 		aColor = PH_TO_NS_RGB(Pg_DGREY);
 		break;
 	  case eColor_highlight:
+	  case eColor__moz_menuhover:
 		aColor = PH_TO_NS_RGB(0x9ba9c9); // bill blue
 		break;
 	  case eColor_highlighttext:
+	  case eColor__moz_menuhovertext:
 		aColor = PH_TO_NS_RGB(Pg_BLACK);
 		break;
 	  case eColor_inactiveborder:
@@ -151,6 +153,7 @@ nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor &aColor)
 		break;
 	  case eColor_threedface:
 	  case eColor_buttonface:
+	  case eColor__moz_buttonhoverface:
 		aColor = PH_TO_NS_RGB(Pg_LGREY);
 		break;
 
@@ -160,6 +163,7 @@ nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor &aColor)
 		break;
 
 	  case eColor_buttontext:
+	  case eColor__moz_buttonhovertext:
 		aColor = PH_TO_NS_RGB(Pg_BLACK);
 		break;
 
@@ -200,10 +204,12 @@ nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor &aColor)
 	  break;
 
 	case eColor__moz_dialog:
+	case eColor__moz_cellhighlight:
 	  aColor = PH_TO_NS_RGB(Pg_LGREY);
 	  break;
 
 	case eColor__moz_dialogtext:
+	case eColor__moz_cellhighlighttext:
 	  aColor = PH_TO_NS_RGB(Pg_BLACK);
 	  break;
 
@@ -300,9 +306,8 @@ NS_IMETHODIMP nsLookAndFeel::GetMetric(const nsMetricID aID, PRInt32 & aMetric)
   case eMetric_CaretBlinkTime:
     aMetric = 500;
     break;
-  case eMetric_SingleLineCaretWidth:
-  case eMetric_MultiLineCaretWidth:
-    aMetric = 2;
+  case eMetric_CaretWidth:
+    aMetric = 1;
     break;
 	case eMetric_ShowCaretDuringSelection:
 		aMetric = 0;

@@ -2,29 +2,44 @@
 
 <!--
 
-The contents of this file are subject to the Netscape Public
-License Version 1.1 (the "License"); you may not use this file
-except in compliance with the License. You may obtain a copy of
-the License at http://www.mozilla.org/NPL/
+ ***** BEGIN LICENSE BLOCK *****
+ Version: MPL 1.1/GPL 2.0/LGPL 2.1
 
-Software distributed under the License is distributed on an "AS
-IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-implied. See the License for the specific language governing
-rights and limitations under the License.
+ The contents of this file are subject to the Mozilla Public License Version
+ 1.1 (the "License"); you may not use this file except in compliance with
+ the License. You may obtain a copy of the License at
+ http://www.mozilla.org/MPL/
 
-The Original Code is Mozilla Communicator client code, released
-March 31, 1998.
+ Software distributed under the License is distributed on an "AS IS" basis,
+ WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ for the specific language governing rights and limitations under the
+ License.
 
-The Initial Developer of the Original Code is Netscape
-Communications Corporation. Portions created by Netscape are
- Copyright (C) 1998-2003 Netscape Communications Corporation. All
-Rights Reserved.
+ The Original Code is Mozilla Communicator client code, released
+ March 31, 1998.
 
-Contributors:
-  Håkan Waara <hwaara@chello.se>
-  bienvenu@nventure.com
+ The Initial Developer of the Original Code is
+ Netscape Communications Corporation.
+ Portions created by the Initial Developer are Copyright (C) 1998-2003
+ the Initial Developer. All Rights Reserved.
 
--->
+ Contributor(s):
+   Håkan Waara <hwaara@chello.se>
+   bienvenu@nventure.com
+
+ Alternatively, the contents of this file may be used under the terms of
+ either of the GNU General Public License Version 2 or later (the "GPL"),
+ or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ in which case the provisions of the GPL or the LGPL are applicable instead
+ of those above. If you wish to allow use of your version of this file only
+ under the terms of either the GPL or the LGPL, and not to allow others to
+ use your version of this file under the terms of the MPL, indicate your
+ decision by deleting the provisions above and replace them with the notice
+ and other provisions required by the GPL or the LGPL. If you do not delete
+ the provisions above, a recipient may use your version of this file under
+ the terms of any one of the MPL, the GPL or the LGPL.
+
+ ***** END LICENSE BLOCK ***** -->
 
 <?xml-stylesheet href="chrome://messenger/skin/accountManage.css" type="text/css"?>
 
@@ -93,25 +108,48 @@ Contributors:
 
   <separator class="thin"/>
 
+  <groupbox hidefor="movemail">
+    <caption label="&securitySettings.label;"/>
+    <vbox align="start" hidefor="nntp,movemail">
+      <label value="&socketType.label;"/>
+      <radiogroup wsm_persist="true" id="server.socketType"
+                  prefattribute="value"
+                  prefstring="mail.server.%serverkey%.socketType"
+                  oncommand="secureSelect();"
+                  orient="horizontal" class="indent">
+        <radio value="0" id="neverSecure"
+               label="&neverSecure.label;" accesskey="&neverSecure.accesskey;"/>
+        <radio value="1" id="sometimesSecure"
+               label="&sometimesSecure.label;" accesskey="&sometimesSecure.accesskey;"/>
+        <radio value="2" id="alwaysSecure"
+               label="&alwaysSecure.label;" accesskey="&alwaysSecure.accesskey;"/>
+        <radio value="3" id="alwaysSSL"
+               label="&alwaysSSL.label;" accesskey="&alwaysSSL.accesskey;"/>
+      </radiogroup>
+    </vbox>
+    <checkbox wsm_persist="true" id="server.isSecure"
+              label="&isSecure.label;" hidefor="pop3,imap,movemail"
+              oncommand="secureSelect();"
+              accesskey="&isSecure.accesskey;"
+              prefattribute="value"
+              prefstring="mail.server.%serverkey%.isSecure"/>
+    <checkbox wsm_persist="true" id="server.useSecAuth"
+              label="&useSecAuth.label;" hidefor="nntp,movemail"
+              accesskey="&useSecAuth.accesskey;"
+              prefattribute="value"
+              prefstring="mail.server.%serverkey%.useSecAuth"/>
+  </groupbox>
+
   <groupbox>
-  <caption label="&serverSettings.label;"/>
-  <vbox flex="1">
-  <checkbox wsm_persist="true" id="server.isSecure"
-            label="&isSecure.label;" oncommand="secureSelect();"
-            accesskey="&isSecure.accesskey;"
-            prefattribute="value"
-            prefstring="mail.server.%serverkey%.isSecure"/>
-  <checkbox wsm_persist="true" id="server.useSecAuth"
-            label="&useSecAuth.label;" hidefor="nntp,movemail"
-            accesskey="&useSecAuth.accesskey;"
-            prefattribute="value"
-            prefstring="mail.server.%serverkey%.useSecAuth"/>
-  <checkbox wsm_persist="true"
-            id="server.loginAtStartUp" hidefor="nntp"
-            label="&loginAtStartup.label;"
-            accesskey="&loginAtStartup.accesskey;"
-            prefattribute="value"
-            prefstring="mail.server.%serverkey%.login_at_startup"/>
+    <caption label="&serverSettings.label;"/>
+    <vbox align="start">
+    <checkbox wsm_persist="true"
+              id="server.loginAtStartUp" hidefor="nntp"
+              label="&loginAtStartup.label;"
+              accesskey="&loginAtStartup.accesskey;"
+              prefattribute="value"
+              prefstring="mail.server.%serverkey%.login_at_startup"/>
+  </vbox>
 <!--
   <checkbox wsm_persist="true" id="server.rememberPassword" hidefor="nntp"
             value="&savePassword.label;"/>
@@ -248,7 +286,7 @@ Contributors:
 -->
 
   <hbox align="end">
-    <vbox flex="1">
+    <vbox align="start" flex="1">
       <checkbox hidefor="pop3,nntp,movemail" wsm_persist="true" id="imap.cleanupInboxOnExit"
                 label="&expungeOnExit.label;"
                 accesskey="&expungeOnExit.accesskey;"
@@ -264,8 +302,8 @@ Contributors:
             accesskey="&advancedButton.accesskey;"
             oncommand="onAdvanced();"
             wsm_persist="true" id="server.advancedbutton" 
-            prefstring="mail.server.%serverkey%.advanced.disable"/>
-    <label hidden="true" wsm_persist="true" id="identity.smtpServerKey"/>
+            prefstring="mail.server.%serverkey%.advanced.disable"
+            hidefor="nntp,movemail"/>
   </hbox>
 
   <vbox hidefor="imap,pop3,movemail">
@@ -278,8 +316,6 @@ Contributors:
       <button id="browseForNewsrc" label="&browseNewsrc.label;" filepickertitle="&newsrcPicker.label;"
               accesskey="&browseNewsrc.accesskey;" oncommand="BrowseForNewsrc()"/>
     </hbox>
-  </vbox>
-
   </vbox>
   </groupbox>
 
@@ -294,4 +330,17 @@ Contributors:
               accesskey="&browseFolder.accesskey;" oncommand="BrowseForLocalFolders()"/>
     </hbox>
   </vbox>
+  <separator class="thin"/>
+   <hbox hidefor="imap,pop3,movemail" align="center" valign="middle" iscontrolcontainer="true">
+     <label value="&serverDefaultCharset.label;" control="nntp.charset"/>
+     <menulist hidable="true" hidefor="imap,pop3,movemail" wsm_persist="true" id="nntp.charset" 
+                 ref="NC:DecodersRoot" datasources="rdf:charset-menu"
+                 preftype="string" prefstring="mail.server.%serverkey%.charset"> 
+       <template>
+         <menupopup>
+           <menuitem label="rdf:http://home.netscape.com/NC-rdf#Name" value="..." uri="..."/>
+         </menupopup>
+       </template>
+     </menulist>
+   </hbox> 
 </page>

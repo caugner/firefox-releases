@@ -72,7 +72,7 @@ function searchResultsOpenURL(event)
   if ("loadURI" in top)
     top.loadURI(url);
   else
-    top._content.location.href = url;
+    top.content.location.href = url;
 
   return true;
 }
@@ -97,8 +97,8 @@ function onLoadInternetResults()
                             .getService(Components.interfaces.nsIInternetSearchService);
     iSearch.ClearResultSearchSites();
 
-    // the search URI is passed in as a parameter, so get it and them root the results list
-    var searchURI = top._content.location.href;
+    // the search URI is passed in as a parameter, so get it and then root the results list
+    var searchURI = top.content.location.href;
     if (searchURI) {
       const lastSearchURIPref = "browser.search.lastMultipleSearchURI";
       var offset = searchURI.indexOf("?");
@@ -138,7 +138,7 @@ function doEngineClick( event, aNode )
   var html = null;
 
   var resultsTree = document.getElementById("resultsList");
-  var contentArea = document.getElementById("content");
+  var contentArea = document.getElementById("resultsContent");
   var splitter = document.getElementById("results-splitter");
   var engineURI = aNode.id;
   if (engineURI == "allEngines") {
@@ -182,7 +182,8 @@ function doEngineClick( event, aNode )
     }
   }
   else
-    frames[0].document.location = "chrome://communicator/locale/search/default.htm";
+    frames[0].document.location.href = 
+      "chrome://communicator/locale/search/default.htm";
 }
 
 

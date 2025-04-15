@@ -1,11 +1,11 @@
 # -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 # ***** BEGIN LICENSE BLOCK *****
-# Version: NPL 1.1/GPL 2.0/LGPL 2.1
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
-# The contents of this file are subject to the Netscape Public License
-# Version 1.1 (the "License"); you may not use this file except in
-# compliance with the License. You may obtain a copy of the License at
-# http://www.mozilla.org/NPL/
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
 #
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
 #
 # The Original Code is mozilla.org code.
 #
-# The Initial Developer of the Original Code is 
+# The Initial Developer of the Original Code is
 # Netscape Communications Corporation.
 # Portions created by the Initial Developer are Copyright (C) 1998
 # the Initial Developer. All Rights Reserved.
@@ -26,20 +26,23 @@
 #   Pierre Chanial <p_ch@verizon.net>
 #
 # Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or 
+# either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
 # in which case the provisions of the GPL or the LGPL are applicable instead
 # of those above. If you wish to allow use of your version of this file only
 # under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the NPL, indicate your
+# use your version of this file under the terms of the MPL, indicate your
 # decision by deleting the provisions above and replace them with the notice
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
-# the terms of any one of the NPL, the GPL or the LGPL.
+# the terms of any one of the MPL, the GPL or the LGPL.
 #
-# ***** END LICENSE BLOCK ***** */
+# ***** END LICENSE BLOCK *****
 
 var  XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
+
+var gPrintSettingsAreGlobal = false;
+var gSavePrintSettings = false;
 
 var PrintUtils = {
 
@@ -50,8 +53,12 @@ var PrintUtils = {
       var PRINTPROMPTSVC = Components.classes["@mozilla.org/embedcomp/printingprompt-service;1"]
                                      .getService(Components.interfaces.nsIPrintingPromptService);
       PRINTPROMPTSVC.showPageSetup(window, printSettings, null);
-      this.savePrintSettings(printSettings);
-
+      if (gSavePrintSettings) {
+        // Page Setup data is a "native" setting on the Mac
+        var PSSVC = Components.classes["@mozilla.org/gfx/printsettings-service;1"]
+                              .getService(Components.interfaces.nsIPrintSettingsService);
+        PSSVC.savePrintSettingsToPrefs(printSettings, true, printSettings.kInitSaveNativeData);
+      }
     } catch (e) {
       dump("showPageSetup "+e+"\n");
       return false;
@@ -65,6 +72,14 @@ var PrintUtils = {
     var printSettings = this.getPrintSettings();
     try {
       webBrowserPrint.print(printSettings, null);
+      if (gPrintSettingsAreGlobal && gSavePrintSettings) {
+        var PSSVC = Components.classes["@mozilla.org/gfx/printsettings-service;1"]
+                              .getService(Components.interfaces.nsIPrintSettingsService);
+        PSSVC.savePrintSettingsToPrefs(printSettings, true,
+                                       printSettings.kInitSaveAll);
+        PSSVC.savePrintSettingsToPrefs(printSettings, false,
+                                       printSettings.kInitSavePrinterName);
+      }
     } catch (e) {
       // Pressing cancel is expressed as an NS_ERROR_ABORT return value,
       // causing an exception to be thrown which we catch here.
@@ -75,11 +90,20 @@ var PrintUtils = {
 
   printPreview: function (aEnterPPCallback, aExitPPCallback)
   {
-    // if we're in PP mode, don't copy the callbacks.
-    if (!document.getElementById("print-preview-toolbar")) {
+    // if we're already in PP mode, don't set the callbacks; chances
+    // are they're null because someone is calling printPreview() to
+    // get us to refresh the display.
+    var pptoolbar = document.getElementById("print-preview-toolbar");
+    if (!pptoolbar) {
       this._onEnterPP = aEnterPPCallback;
       this._onExitPP  = aExitPPCallback;
+    } else {
+      // hide the toolbar here -- it will be shown in
+      // onEnterPrintPreview; this forces a reflow which fixes display
+      // issues in bug 267422.
+      pptoolbar.hidden = true;
     }
+
     this._webProgressPP = {};
     var ppParams        = {};
     var notifyOnOpen    = {};
@@ -118,13 +142,6 @@ var PrintUtils = {
                    .getInterface(Components.interfaces.nsIWebBrowserPrint);
   },
 
-  savePrintSettings: function (aPrintSettings)
-  {
-    var PSSVC = Components.classes["@mozilla.org/gfx/printsettings-service;1"]
-                          .getService(Components.interfaces.nsIPrintSettingsService);
-    PSSVC.savePrintSettingsToPrefs(aPrintSettings, false, aPrintSettings.kInitSaveNativeData);
-  },
-
   ////////////////////////////////////////
   // "private" methods. Don't use them. //
   ////////////////////////////////////////
@@ -142,12 +159,23 @@ var PrintUtils = {
 
   getPrintSettings: function ()
   {
+    var pref = Components.classes["@mozilla.org/preferences-service;1"]
+                         .getService(Components.interfaces.nsIPrefBranch);
+    if (pref) {
+      gPrintSettingsAreGlobal = pref.getBoolPref("print.use_global_printsettings", false);
+      gSavePrintSettings = pref.getBoolPref("print.save_print_settings", false);
+    }
+
     var printSettings;
     try {
       var PSSVC = Components.classes["@mozilla.org/gfx/printsettings-service;1"]
                             .getService(Components.interfaces.nsIPrintSettingsService);
-      printSettings = PSSVC.globalPrintSettings;
-      this.setPrinterDefaultsForSelectedPrinter(PSSVC, printSettings);
+      if (gPrintSettingsAreGlobal) {
+        printSettings = PSSVC.globalPrintSettings;
+        this.setPrinterDefaultsForSelectedPrinter(PSSVC, printSettings);
+      } else {
+        printSettings = PSSVC.newPrintSettings;
+      }
     } catch (e) {
       dump("getPrintSettings: "+e+"\n");
     }
@@ -194,6 +222,7 @@ var PrintUtils = {
     var printPreviewTB = document.getElementById("print-preview-toolbar");
     if (printPreviewTB) {
       printPreviewTB.updateToolbar();
+      printPreviewTB.hidden = false;
       return;
     }
 
@@ -224,7 +253,7 @@ var PrintUtils = {
     window.addEventListener("keypress", this.onKeyPressPP, true);
  
     _content.focus();
-    
+
     // on Enter PP Call back
     if (this._onEnterPP) {
       this._onEnterPP();

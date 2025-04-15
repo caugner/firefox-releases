@@ -48,12 +48,14 @@ MODULE_NAME	= msgMapiModule
 EXPORT_LIBRARY  = 1
 IS_COMPONENT	= 1
 META_COMPONENT	= mail
+MOZILLA_INTERNAL_API = 1
 
 REQUIRES	= xpcom \
 		  xpcom_obsolete \
                   string \
 		  MapiProxy \
 		  appshell \
+		  appcomps \
 		  windowwatcher \
 		  dom \
 		  profile \
@@ -71,6 +73,8 @@ REQUIRES	= xpcom \
 		  uriloader \
 		  unicharutil \
 		  embedcomponents \
+      xulapp \
+		  embed_base \
 		  $(NULL)
 
 EXPORTS		= \

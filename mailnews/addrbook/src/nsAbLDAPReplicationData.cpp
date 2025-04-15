@@ -21,6 +21,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *  Dan Mosedale <dan.mosedale@oracle.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -36,17 +37,14 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-
+#include "nsILDAPMessage.h"
 #include "nsAbLDAPReplicationData.h"
 #include "nsLDAP.h"
 #include "nsIAbCard.h"
 #include "nsIAddrBookSession.h"
 #include "nsAbBaseCID.h"
 #include "nsAbUtils.h"
-#include "nsAbMDBCard.h"
-#include "nsAbLDAPCard.h"
-#include "nsFileSpec.h"
-#include "nsAbLDAPProperties.h"
+#include "nsIAbMDBCard.h"
 #include "nsAbLDAPReplicationQuery.h"
 #include "nsProxiedService.h"
 #include "nsCPasswordManager.h"
@@ -90,6 +88,15 @@ NS_IMETHODIMP nsAbLDAPProcessReplicationData::Init(nsIAbLDAPReplicationQuery *qu
        mQuery = nsnull;
        return NS_ERROR_FAILURE;   
    }
+
+   nsCOMPtr<nsIAbLDAPAttributeMapService> mapSvc = 
+       do_GetService("@mozilla.org/addressbook/ldap-attribute-map-service;1",
+                     &rv);
+   NS_ENSURE_SUCCESS(rv, rv);
+
+   rv = mapSvc->GetMapForPrefBranch(
+       nsDependentCString(mDirServerInfo->prefName), getter_AddRefs(mAttrMap));
+   NS_ENSURE_SUCCESS(rv, rv);
 
    mListener = progressListener;
 
@@ -215,7 +222,7 @@ NS_IMETHODIMP nsAbLDAPProcessReplicationData::Abort()
     nsresult rv = mQuery->GetOperation(getter_AddRefs(operation));
     if(operation && mState != kIdle)
     {
-        rv = operation->Abandon();
+        rv = operation->AbandonExt();
         if(NS_SUCCEEDED(rv))
             mState = kIdle;
     }
@@ -271,7 +278,6 @@ NS_IMETHODIMP nsAbLDAPProcessReplicationData::PopulateAuthData()
             return rv;
 
         if (!passwordFound.IsEmpty())
-            // XXX This needs CopyUCS2toUTF8
             CopyUTF16toUTF8(passwordFound, mAuthPswd);
     }
 
@@ -327,20 +333,28 @@ nsresult nsAbLDAPProcessReplicationData::OnLDAPSearchEntry(nsILDAPMessage *aMess
     if(!mReplicationDB || !mDBOpen) 
         return NS_ERROR_FAILURE;
 
-    nsAbLDAPCard card;
-    PRBool hasSetCardProperty = PR_FALSE;
+  nsresult rv = NS_OK;
 
-    nsresult rv = MozillaLdapPropertyRelator::createCardPropertyFromLDAPMessage(aMessage,
-                                                                     &card, &hasSetCardProperty);
-    if(NS_FAILED(rv)) {
-        Abort();
-        return rv;
-    }
+  // Although we would may naturally create an nsIAbLDAPCard here, we don't
+  // need to as we are writing this straight to the database, so just create
+  // the database version instead.
+  nsCOMPtr<nsIAbMDBCard> dbCard(do_CreateInstance(NS_ABMDBCARD_CONTRACTID, &rv));
+  if(NS_FAILED(rv)) {
+    Abort();
+    return rv;
+  }
 
-    if(hasSetCardProperty == PR_FALSE)
+  nsCOMPtr<nsIAbCard> newCard(do_QueryInterface(dbCard, &rv));
+  if(NS_FAILED(rv)) {
+    Abort();
+    return rv;
+  }
+
+    rv = mAttrMap->SetCardPropertiesFromLDAPMessage(aMessage, newCard);
+    if (NS_FAILED(rv))
     {
         NS_WARNING("nsAbLDAPProcessReplicationData::OnLDAPSearchEntry"
-           "No card Properties found and set");
+           "No card properties could be set");
         // if some entries are bogus for us, continue with next one
         return NS_OK;
     }
@@ -358,26 +372,6 @@ nsresult nsAbLDAPProcessReplicationData::OnLDAPSearchEntry(nsILDAPMessage *aMess
         name.AppendWithConversion(lastName);
         printf("\n LDAPReplication :: got card #: %d, name: %s \n", mCount, name.get());
 #endif
-
-    nsCOMPtr<nsIAbMDBCard> dbCard;
-    dbCard = do_CreateInstance(NS_ABMDBCARD_CONTRACTID, &rv);
-    if(NS_FAILED(rv)) {
-        Abort();
-        return rv;
-    }
-
-    nsCOMPtr<nsIAbCard> newCard;
-    newCard = do_QueryInterface(dbCard, &rv);
-    if(NS_FAILED(rv)) {
-        Abort();
-        return rv;
-    }
-
-    rv = newCard->Copy(&card);
-    if(NS_FAILED(rv)) {
-        Abort();
-        return rv;
-    }
 
     rv = mReplicationDB->CreateNewCardAndAddToDB(newCard, PR_FALSE);
     if(NS_FAILED(rv)) {
@@ -497,25 +491,23 @@ nsresult nsAbLDAPProcessReplicationData::OpenABForReplicatedDir(PRBool aCreate)
         return NS_ERROR_FAILURE;
     }
 
-    nsFileSpec* dbPath;
-    rv = abSession->GetUserProfileDirectory(&dbPath);
+    rv = abSession->GetUserProfileDirectory(getter_AddRefs(mReplicationFile));
     if(NS_FAILED(rv)) {
         Done(PR_FALSE);
         return rv;
     }
 
-    (*dbPath) += mDirServerInfo->replInfo->fileName;
+    rv = mReplicationFile->AppendNative(nsDependentCString(mDirServerInfo->replInfo->fileName));
+    if(NS_FAILED(rv)) {
+        Done(PR_FALSE);
+        return rv;
+    }
 
     // if the AB DB already exists backup existing one, 
     // in case if the user cancels or Abort put back the backed up file
-    if(dbPath->Exists()) {
-        // get nsIFile for nsFileSpec from abSession, why use a obsolete class if not required!
-        rv = NS_FileSpecToIFile(dbPath, getter_AddRefs(mReplicationFile));
-        if(NS_FAILED(rv))  {
-            delete dbPath;
-            Done(PR_FALSE);
-            return rv;
-        }
+    PRBool fileExists;
+    rv = mReplicationFile->Exists(&fileExists);
+    if(NS_SUCCEEDED(rv) && fileExists) {
         // create the backup file object same as the Replication file object.
         // we create a backup file here since we need to cleanup the existing file
         // for create and then commit so instead of deleting existing cards we just
@@ -525,33 +517,28 @@ nsresult nsAbLDAPProcessReplicationData::OpenABForReplicatedDir(PRBool aCreate)
         nsCOMPtr<nsIFile> clone;
         rv = mReplicationFile->Clone(getter_AddRefs(clone));
         if(NS_FAILED(rv))  {
-            delete dbPath;
             Done(PR_FALSE);
             return rv;
         }
         mBackupReplicationFile = do_QueryInterface(clone, &rv);
         if(NS_FAILED(rv))  {
-            delete dbPath;
             Done(PR_FALSE);
             return rv;
         }
         rv = mBackupReplicationFile->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0777);
         if(NS_FAILED(rv))  {
-            delete dbPath;
             Done(PR_FALSE);
             return rv;
         }
         nsAutoString backupFileLeafName;
         rv = mBackupReplicationFile->GetLeafName(backupFileLeafName);
         if(NS_FAILED(rv))  {
-            delete dbPath;
             Done(PR_FALSE);
             return rv;
         }
         // remove the newly created unique backup file so that move and copy succeeds.
         rv = mBackupReplicationFile->Remove(PR_FALSE);
         if(NS_FAILED(rv))  {
-            delete dbPath;
             Done(PR_FALSE);
             return rv;
         }
@@ -579,7 +566,6 @@ nsresult nsAbLDAPProcessReplicationData::OpenABForReplicatedDir(PRBool aCreate)
                 mBackupReplicationFile->SetLeafName(backupFileLeafName);
         }
         if(NS_FAILED(rv))  {
-            delete dbPath;
             Done(PR_FALSE);
             return rv;
         }
@@ -588,15 +574,13 @@ nsresult nsAbLDAPProcessReplicationData::OpenABForReplicatedDir(PRBool aCreate)
     nsCOMPtr<nsIAddrDatabase> addrDBFactory = 
              do_GetService(NS_ADDRDATABASE_CONTRACTID, &rv);
     if(NS_FAILED(rv)) {
-        delete dbPath;
         if (mBackupReplicationFile)
             mBackupReplicationFile->Remove(PR_FALSE);
         Done(PR_FALSE);
         return rv;
     }
     
-    rv = addrDBFactory->Open(dbPath, aCreate, getter_AddRefs(mReplicationDB), PR_TRUE);
-    delete dbPath;
+    rv = addrDBFactory->Open(mReplicationFile, aCreate, PR_TRUE, getter_AddRefs(mReplicationDB));
     if(NS_FAILED(rv)) {
         Done(PR_FALSE);
         if (mBackupReplicationFile)

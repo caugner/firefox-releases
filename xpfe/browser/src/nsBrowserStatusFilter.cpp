@@ -140,9 +140,12 @@ nsBrowserStatusFilter::OnStateChange(nsIWebProgress *aWebProgress,
     else if (aStateFlags & STATE_STOP) {
         if (aStateFlags & STATE_IS_REQUEST) {
             ++mFinishedRequests;
+            // Note: Do not return from here. This is necessary so that the
+            // STATE_STOP can still be relayed to the listener if needed
+            // (bug 209330)
             if (!mUseRealProgressFlag && mTotalRequests)
-                return OnProgressChange(nsnull, nsnull, 0, 0,
-                                        mFinishedRequests, mTotalRequests);
+                OnProgressChange(nsnull, nsnull, 0, 0,
+                                 mFinishedRequests, mTotalRequests);
         }
     }
     else if (aStateFlags & STATE_TRANSFERRING) {

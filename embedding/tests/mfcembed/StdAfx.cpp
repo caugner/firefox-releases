@@ -25,7 +25,7 @@
  * DEALINGS IN THE SOFTWARE.
  *
  * Contributor(s):
- *   Chak Nanga <chak@netscape.com> 
+ *   Chak Nanga <chak@netscape.com>
  *
  * ***** END LICENSE BLOCK ***** */
 

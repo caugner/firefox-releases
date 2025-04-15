@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,32 +14,32 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: David W. Hyatt (hyatt@netscape.com)
- *
+ *   Original Author: David W. Hyatt (hyatt@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsCOMPtr.h"
 #include "nsXBLPrototypeHandler.h"
 #include "nsXBLPrototypeBinding.h"
+#include "nsContentUtils.h"
 #include "nsIContent.h"
 #include "nsIAtom.h"
 #include "nsIDOMKeyEvent.h"
@@ -63,11 +63,10 @@
 #include "nsIDOMEventReceiver.h"
 #include "nsIDOMEventListener.h"
 #include "nsIPrivateDOMEvent.h"
+#include "nsIDOMNSEvent.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIWindowRoot.h"
 #include "nsIDOMWindowInternal.h"
-#include "nsIPrefBranch.h"
-#include "nsIPrefService.h"
 #include "nsIServiceManager.h"
 #include "nsXPIDLString.h"
 #include "nsReadableUtils.h"
@@ -82,6 +81,7 @@
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
 #include "nsXBLEventHandler.h"
+#include "nsHTMLAtoms.h"
 
 static NS_DEFINE_CID(kDOMScriptObjectFactoryCID,
                      NS_DOM_SCRIPT_OBJECT_FACTORY_CID);
@@ -91,11 +91,17 @@ PRUint32 nsXBLPrototypeHandler::gRefCnt = 0;
 PRInt32 nsXBLPrototypeHandler::kMenuAccessKey = -1;
 PRInt32 nsXBLPrototypeHandler::kAccelKey = -1;
 
-const PRInt32 nsXBLPrototypeHandler::cShift = (1<<1);
-const PRInt32 nsXBLPrototypeHandler::cAlt = (1<<2);
-const PRInt32 nsXBLPrototypeHandler::cControl = (1<<3);
-const PRInt32 nsXBLPrototypeHandler::cMeta = (1<<4);
-const PRInt32 nsXBLPrototypeHandler::cAllModifiers = cShift | cAlt | cControl | cMeta;
+const PRInt32 nsXBLPrototypeHandler::cShift = (1<<0);
+const PRInt32 nsXBLPrototypeHandler::cAlt = (1<<1);
+const PRInt32 nsXBLPrototypeHandler::cControl = (1<<2);
+const PRInt32 nsXBLPrototypeHandler::cMeta = (1<<3);
+
+const PRInt32 nsXBLPrototypeHandler::cShiftMask = (1<<4);
+const PRInt32 nsXBLPrototypeHandler::cAltMask = (1<<5);
+const PRInt32 nsXBLPrototypeHandler::cControlMask = (1<<6);
+const PRInt32 nsXBLPrototypeHandler::cMetaMask = (1<<7);
+
+const PRInt32 nsXBLPrototypeHandler::cAllModifiers = cShiftMask | cAltMask | cControlMask | cMetaMask;
 
 nsXBLPrototypeHandler::nsXBLPrototypeHandler(const PRUnichar* aEvent,
                                              const PRUnichar* aPhase,
@@ -106,7 +112,9 @@ nsXBLPrototypeHandler::nsXBLPrototypeHandler(const PRUnichar* aEvent,
                                              const PRUnichar* aModifiers,
                                              const PRUnichar* aButton,
                                              const PRUnichar* aClickCount,
+                                             const PRUnichar* aGroup,
                                              const PRUnichar* aPreventDefault,
+                                             const PRUnichar* aAllowUntrusted,
                                              nsXBLPrototypeBinding* aBinding)
   : mHandlerText(nsnull),
     mLineNumber(0),
@@ -120,7 +128,7 @@ nsXBLPrototypeHandler::nsXBLPrototypeHandler(const PRUnichar* aEvent,
 
   ConstructPrototype(nsnull, aEvent, aPhase, aAction, aCommand, aKeyCode,
                      aCharCode, aModifiers, aButton, aClickCount,
-                     aPreventDefault);
+                     aGroup, aPreventDefault, aAllowUntrusted);
 }
 
 nsXBLPrototypeHandler::nsXBLPrototypeHandler(nsIContent* aHandlerElement)
@@ -194,11 +202,9 @@ nsXBLPrototypeHandler::InitAccessKeys()
 #endif
 
   // Get the menu access key value from prefs, overriding the default:
-  nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID));
-  if (prefBranch) {
-    prefBranch->GetIntPref("ui.key.menuAccessKey", &kMenuAccessKey);
-    prefBranch->GetIntPref("ui.key.accelKey", &kAccelKey);
-  }
+  kMenuAccessKey =
+    nsContentUtils::GetIntPref("ui.key.menuAccessKey", kMenuAccessKey);
+  kAccelKey = nsContentUtils::GetIntPref("ui.key.accelKey", kAccelKey);
 }
 
 nsresult
@@ -225,13 +231,14 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
   // XUL handlers and commands shouldn't be triggered by non-trusted
   // events.
   if (isXULKey || isXBLCommand) {
-    nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(aEvent);
-    if (privateEvent) {
-      PRBool trustedEvent;
-      privateEvent->IsTrustedEvent(&trustedEvent);
-      if (!trustedEvent)
-        return NS_OK;
+    nsCOMPtr<nsIDOMNSEvent> domNSEvent = do_QueryInterface(aEvent);
+    PRBool trustedEvent = PR_FALSE;
+    if (domNSEvent) {
+      domNSEvent->GetIsTrusted(&trustedEvent);
     }
+
+    if (!trustedEvent)
+      return NS_OK;
   }
     
   PRBool isReceiverCommandElement = PR_FALSE;
@@ -274,7 +281,7 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
         nsCOMPtr<nsIContent> elt(do_QueryInterface(aReceiver));
         nsCOMPtr<nsIDocument> doc;
         if (elt)
-          doc = elt->GetDocument();
+          doc = elt->GetOwnerDoc();
 
         if (!doc)
           doc = do_QueryInterface(aReceiver);
@@ -283,9 +290,11 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
           return NS_ERROR_FAILURE;
 
         privateWindow = do_QueryInterface(doc->GetScriptGlobalObject());
+        if (!privateWindow)
+          return NS_ERROR_FAILURE;
       }
 
-      privateWindow->GetRootFocusController(getter_AddRefs(focusController));
+      focusController = privateWindow->GetRootFocusController();
     }
 
     NS_LossyConvertUCS2toASCII command(mHandlerText);
@@ -297,21 +306,43 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
     nsAutoString type;
     mEventName->ToString(type);
 
-    if (type == NS_LITERAL_STRING("keypress") &&
+    if (type.EqualsLiteral("keypress") &&
         mDetail == nsIDOMKeyEvent::DOM_VK_SPACE &&
         mMisc == 1) {
       // get the focused element so that we can pageDown only at
       // certain times.
       nsCOMPtr<nsIDOMElement> focusedElement;
       focusController->GetFocusedElement(getter_AddRefs(focusedElement));
-      
-      if (focusedElement) {
-        nsAutoString tagName;
-        focusedElement->GetTagName(tagName);
-        
-        // if the focused element is a link then we do want space to
-        // scroll down.
-        if (tagName != NS_LITERAL_STRING("A"))
+      PRBool isLink = PR_FALSE;
+      nsCOMPtr<nsIContent> focusedContent = do_QueryInterface(focusedElement);
+      nsIContent *content = focusedContent;
+
+      // if the focused element is a link then we do want space to
+      // scroll down. focused element may be an element in a link,
+      // we need to check the parent node too.
+      if (focusedContent) {
+        while (content) {
+          if (content->Tag() == nsHTMLAtoms::a &&
+              content->IsContentOfType(nsIContent::eHTML)) {
+            isLink = PR_TRUE;
+            break;
+          }
+
+          if (content->HasAttr(kNameSpaceID_XLink, nsHTMLAtoms::type)) {
+            nsAutoString type;
+            content->GetAttr(kNameSpaceID_XLink, nsHTMLAtoms::type, type);
+
+            isLink = type.EqualsLiteral("simple");
+
+            if (isLink) {
+              break;
+            }
+          }
+
+          content = content->GetParent();
+        }
+
+        if (!isLink)
           return NS_OK;
       }
     }
@@ -338,15 +369,19 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
   
   // Compile the event handler.
   nsAutoString xulText;
+  nsIContent* keyCommandContent = nsnull;
   if (isXULKey) {
     // Try an oncommand attribute (used by XUL <key> elements, which
     // are implemented using this code).
     mHandlerElement->GetAttr(kNameSpaceID_None, nsLayoutAtoms::oncommand, xulText);
+    keyCommandContent = mHandlerElement;
     if (xulText.IsEmpty()) {
       // Maybe the receiver is a <command> elt.
-      if (isReceiverCommandElement)
+      if (isReceiverCommandElement) {
         // It is!  See if it has an oncommand attribute.
         content->GetAttr(kNameSpaceID_None, nsLayoutAtoms::oncommand, xulText);
+        keyCommandContent = content;
+      }
       
       if (xulText.IsEmpty())
         return NS_ERROR_FAILURE; // For whatever reason, they didn't give us anything to do.
@@ -370,10 +405,16 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
   // if the focused window was found get our script global object from
   // that.
   if (focusedWin) {
+    NS_ASSERTION(isXULKey, "We should only use the focused window for "
+                 "XUL key handlers!");
     nsCOMPtr<nsPIDOMWindow> piWin(do_QueryInterface(focusedWin));
-    nsCOMPtr<nsIDOMWindowInternal> rootWin;
-    piWin->GetPrivateRoot(getter_AddRefs(rootWin));
-    boundGlobal = do_QueryInterface(rootWin);
+
+    if (piWin) {
+      piWin = piWin->GetCurrentInnerWindow();
+      NS_ENSURE_TRUE(piWin, NS_ERROR_UNEXPECTED);
+    }
+
+    boundGlobal = do_QueryInterface(piWin->GetPrivateRoot());
   }
   else boundGlobal = do_QueryInterface(aReceiver);
 
@@ -384,7 +425,7 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
       nsCOMPtr<nsIContent> content(do_QueryInterface(aReceiver));
       if (!content)
         return NS_OK;
-      boundDocument = content->GetDocument();
+      boundDocument = content->GetOwnerDoc();
       if (!boundDocument)
         return NS_OK;
     }
@@ -412,48 +453,49 @@ nsXBLPrototypeHandler::ExecuteHandler(nsIDOMEventReceiver* aReceiver,
     JSObject *global = boundGlobal->GetGlobalJSObject();
     JSContext *cx = (JSContext *)boundContext->GetNativeContext();
 
-    nsCOMPtr<nsIXPConnect> xpc(do_GetService(nsIXPConnect::GetCID(), &rv));
-
     // XXX: Don't use the global object!
-    rv = xpc->WrapNative(cx, global, aReceiver, NS_GET_IID(nsISupports),
-                         getter_AddRefs(wrapper));
+    rv = nsContentUtils::XPConnect()->WrapNative(cx, global, aReceiver,
+                                                 NS_GET_IID(nsISupports),
+                                                 getter_AddRefs(wrapper));
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = wrapper->GetJSObject(&scriptObject);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  if (isXULKey)
-    boundContext->CompileEventHandler(scriptObject, onEventAtom, xulText,
-                                      nsnull, 0,
-                                      PR_TRUE, &handler);
+  const char *eventName = nsContentUtils::GetEventArgName(kNameSpaceID_XBL);
+
+  if (isXULKey) {
+    nsCAutoString documentURI;
+    keyCommandContent->GetOwnerDoc()->GetDocumentURI()->GetSpec(documentURI);
+    rv = boundContext->CompileEventHandler(scriptObject, onEventAtom, eventName,
+                                           xulText, documentURI.get(), 0, 
+                                           PR_TRUE, &handler);
+  }
   else {
     nsDependentString handlerText(mHandlerText);
     if (handlerText.IsEmpty())
       return NS_ERROR_FAILURE;
     
     nsCAutoString bindingURI;
-    if (mPrototypeBinding)
-      mPrototypeBinding->DocURI()->GetSpec(bindingURI);
+    mPrototypeBinding->DocURI()->GetSpec(bindingURI);
     
-    boundContext->CompileEventHandler(scriptObject, onEventAtom, handlerText,
-                                      bindingURI.get(),
-                                      mLineNumber,
-                                      PR_TRUE, &handler);
+    rv = boundContext->CompileEventHandler(scriptObject, onEventAtom, eventName,
+                                           handlerText, bindingURI.get(),
+                                           mLineNumber, PR_TRUE, &handler);
   }
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsAutoGCRoot root(&handler, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // Temporarily bind it to the bound element
   boundContext->BindCompiledEventHandler(scriptObject, onEventAtom, handler);
 
   // Execute it.
-  nsCOMPtr<nsIDOMScriptObjectFactory> factory =
-    do_GetService(kDOMScriptObjectFactoryCID);
-  NS_ENSURE_TRUE(factory, NS_ERROR_FAILURE);
-
   nsCOMPtr<nsIDOMEventListener> eventListener;
-
-  factory->NewJSEventListener(boundContext, aReceiver,
-                              getter_AddRefs(eventListener));
+  NS_NewJSEventListener(boundContext, boundGlobal->GetGlobalJSObject(),
+                        aReceiver, getter_AddRefs(eventListener));
 
   nsCOMPtr<nsIJSEventListener> jsListener(do_QueryInterface(eventListener));
   jsListener->SetEventName(onEventAtom);
@@ -469,70 +511,6 @@ nsXBLPrototypeHandler::GetEventName()
   nsIAtom* eventName = mEventName;
   NS_IF_ADDREF(eventName);
   return eventName;
-}
-
-nsresult
-nsXBLPrototypeHandler::BindingAttached(nsIDOMEventReceiver* aReceiver)
-{
-  nsresult ret;
-  nsMouseEvent event(NS_XUL_COMMAND);
-
-  nsCOMPtr<nsIEventListenerManager> listenerManager;
-  if (NS_FAILED(ret = aReceiver->GetListenerManager(getter_AddRefs(listenerManager)))) {
-    NS_ERROR("Unable to instantiate a listener manager on this event.");
-    return ret;
-  }
-  nsAutoString empty;
-
-  nsCOMPtr<nsIDOMEvent> domEvent;
-  if (NS_FAILED(ret = listenerManager->CreateEvent(nsnull, &event, empty, getter_AddRefs(domEvent)))) {
-    NS_ERROR("The binding attach handler will fail without the ability to create the event early.");
-    return ret;
-  }
-
-  // We need to explicitly set the target here, because the
-  // DOM implementation will try to compute the target from
-  // the frame. If we don't have a frame then that breaks.
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(domEvent);
-  if (privateEvent) {
-    privateEvent->SetTarget(aReceiver);
-  }
-
-  ExecuteHandler(aReceiver, domEvent);
- 
-  return NS_OK;
-}
-
-nsresult
-nsXBLPrototypeHandler::BindingDetached(nsIDOMEventReceiver* aReceiver)
-{
-  nsresult ret;
-  nsMouseEvent event(NS_XUL_COMMAND);
-
-  nsCOMPtr<nsIEventListenerManager> listenerManager;
-  if (NS_FAILED(ret = aReceiver->GetListenerManager(getter_AddRefs(listenerManager)))) {
-    NS_ERROR("Unable to instantiate a listener manager on this event.");
-    return ret;
-  }
-  nsAutoString empty;
-
-  nsCOMPtr<nsIDOMEvent> domEvent;
-  if (NS_FAILED(ret = listenerManager->CreateEvent(nsnull, &event, empty, getter_AddRefs(domEvent)))) {
-    NS_ERROR("The binding attach handler will fail without the ability to create the event early.");
-    return ret;
-  }
-
-  // We need to explicitly set the target here, because the
-  // DOM implementation will try to compute the target from
-  // the frame. If we don't have a frame then that breaks.
-  nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(domEvent);
-  if (privateEvent) {
-    privateEvent->SetTarget(aReceiver);
-  }
-
-  ExecuteHandler(aReceiver, domEvent);
-  
-  return NS_OK;
 }
 
 already_AddRefed<nsIController>
@@ -579,33 +557,26 @@ nsXBLPrototypeHandler::GetController(nsIDOMEventReceiver* aReceiver)
 PRBool
 nsXBLPrototypeHandler::KeyEventMatched(nsIDOMKeyEvent* aKeyEvent)
 {
-  if (mDetail == -1 && mMisc == 0 && mKeyMask == 0)
+  if (mDetail == -1)
     return PR_TRUE; // No filters set up. It's generic.
 
-  // Get the keycode and charcode of the key event.
-  PRUint32 keyCode, charCode;
-  aKeyEvent->GetKeyCode(&keyCode);
-  aKeyEvent->GetCharCode(&charCode);
+  // Get the keycode or charcode of the key event.
+  PRUint32 code;
+  if (mMisc)
+    aKeyEvent->GetCharCode(&code);
+  else
+    aKeyEvent->GetKeyCode(&code);
 
-  PRBool keyMatched = (mDetail == PRInt32(mMisc ? charCode : keyCode));
-
-  if (!keyMatched)
+  if (code != PRUint32(mDetail))
     return PR_FALSE;
 
-  // Now check modifier keys
-  PRInt32 modKeys = cAllModifiers;
-  // Don't check shift if we matched the char code and shift isn't specified
-  // in the handler.
-  if (mMisc && !(mKeyMask & cShift))
-    modKeys &= ~cShift;
-
-  return ModifiersMatchMask(aKeyEvent, modKeys);
+  return ModifiersMatchMask(aKeyEvent);
 }
 
 PRBool
 nsXBLPrototypeHandler::MouseEventMatched(nsIDOMMouseEvent* aMouseEvent)
 {
-  if (mDetail == -1 && mMisc == 0 && mKeyMask == 0)
+  if (mDetail == -1 && mMisc == 0 && (mKeyMask & cAllModifiers) == 0)
     return PR_TRUE; // No filters set up. It's generic.
 
   unsigned short button;
@@ -617,8 +588,8 @@ nsXBLPrototypeHandler::MouseEventMatched(nsIDOMMouseEvent* aMouseEvent)
   aMouseEvent->GetDetail(&clickcount);
   if (mMisc != 0 && (clickcount != mMisc))
     return PR_FALSE;
-  
-  return ModifiersMatchMask(aMouseEvent, cAllModifiers);
+
+  return ModifiersMatchMask(aMouseEvent);
 }
 
 struct keyCodeData {
@@ -776,18 +747,18 @@ PRInt32 nsXBLPrototypeHandler::KeyToMask(PRInt32 key)
   switch (key)
   {
     case nsIDOMKeyEvent::DOM_VK_META:
-      return cMeta;
+      return cMeta | cMetaMask;
       break;
 
     case nsIDOMKeyEvent::DOM_VK_ALT:
-      return cAlt;
+      return cAlt | cAltMask;
       break;
 
     case nsIDOMKeyEvent::DOM_VK_CONTROL:
     default:
-      return cControl;
+      return cControl | cControlMask;
   }
-  return cControl;  // for warning avoidance
+  return cControl | cControlMask;  // for warning avoidance
 }
 
 void
@@ -797,7 +768,7 @@ nsXBLPrototypeHandler::GetEventType(nsAString& aEvent)
   
   if (aEvent.IsEmpty() && (mType & NS_HANDLER_TYPE_XUL))
     // If no type is specified for a XUL <key> element, let's assume that we're "keypress".
-    aEvent = NS_LITERAL_STRING("keypress");
+    aEvent.AssignLiteral("keypress");
 }
 
 void
@@ -811,7 +782,9 @@ nsXBLPrototypeHandler::ConstructPrototype(nsIContent* aKeyElement,
                                           const PRUnichar* aModifiers,
                                           const PRUnichar* aButton,
                                           const PRUnichar* aClickCount,
-                                          const PRUnichar* aPreventDefault)
+                                          const PRUnichar* aGroup,
+                                          const PRUnichar* aPreventDefault,
+                                          const PRUnichar* aAllowUntrusted)
 {
   mType = 0;
 
@@ -822,6 +795,10 @@ nsXBLPrototypeHandler::ConstructPrototype(nsIContent* aKeyElement,
   else {
     mType |= aCommand ? NS_HANDLER_TYPE_XBL_COMMAND : NS_HANDLER_TYPE_XBL_JS;
     mHandlerText = nsnull;
+
+    if (mPrototypeBinding && !mPrototypeBinding->IsChrome()) {
+      mType |= NS_HANDLER_ALLOW_UNTRUSTED;
+    }
   }
 
   mDetail = -1;
@@ -846,9 +823,9 @@ nsXBLPrototypeHandler::ConstructPrototype(nsIContent* aKeyElement,
 
   if (aPhase) {
     const nsDependentString phase(aPhase);
-    if (phase.Equals(NS_LITERAL_STRING("capturing")))
+    if (phase.EqualsLiteral("capturing"))
       mPhase = NS_PHASE_CAPTURING;
-    else if (phase.Equals(NS_LITERAL_STRING("target")))
+    else if (phase.EqualsLiteral("target"))
       mPhase = NS_PHASE_TARGET;
   }
 
@@ -866,22 +843,25 @@ nsXBLPrototypeHandler::ConstructPrototype(nsIContent* aKeyElement,
     mHandlerElement->GetAttr(kNameSpaceID_None, nsXBLAtoms::modifiers, modifiers);
   
   if (!modifiers.IsEmpty()) {
+    mKeyMask = cAllModifiers;
     char* str = ToNewCString(modifiers);
     char* newStr;
     char* token = nsCRT::strtok( str, ", ", &newStr );
     while( token != NULL ) {
       if (PL_strcmp(token, "shift") == 0)
-        mKeyMask |= cShift;
+        mKeyMask |= cShift | cShiftMask;
       else if (PL_strcmp(token, "alt") == 0)
-        mKeyMask |= cAlt;
+        mKeyMask |= cAlt | cAltMask;
       else if (PL_strcmp(token, "meta") == 0)
-        mKeyMask |= cMeta;
+        mKeyMask |= cMeta | cMetaMask;
       else if (PL_strcmp(token, "control") == 0)
-        mKeyMask |= cControl;
+        mKeyMask |= cControl | cControlMask;
       else if (PL_strcmp(token, "accel") == 0)
         mKeyMask |= KeyToMask(kAccelKey);
       else if (PL_strcmp(token, "access") == 0)
         mKeyMask |= KeyToMask(kMenuAccessKey);
+      else if (PL_strcmp(token, "any") == 0)
+        mKeyMask &= ~(mKeyMask << 4);
     
       token = nsCRT::strtok( newStr, ", ", &newStr );
     }
@@ -899,6 +879,10 @@ nsXBLPrototypeHandler::ConstructPrototype(nsIContent* aKeyElement,
   }
 
   if (!key.IsEmpty()) {
+    if (mKeyMask == 0)
+      mKeyMask = cAllModifiers;
+    if (!(mKeyMask & cShift))
+      mKeyMask &= ~cShiftMask;
     if ((mKeyMask & cShift) != 0)
       ToUpperCase(key);
     else
@@ -913,42 +897,55 @@ nsXBLPrototypeHandler::ConstructPrototype(nsIContent* aKeyElement,
     if (mType & NS_HANDLER_TYPE_XUL)
       mHandlerElement->GetAttr(kNameSpaceID_None, nsXBLAtoms::keycode, key);
     
-    if (!key.IsEmpty())
+    if (!key.IsEmpty()) {
+      if (mKeyMask == 0)
+        mKeyMask = cAllModifiers;
       mDetail = GetMatchingKeyCode(key);
+    }
   }
 
+  if (aGroup && nsDependentString(aGroup).EqualsLiteral("system"))
+    mType |= NS_HANDLER_TYPE_SYSTEM;
+
   nsAutoString preventDefault(aPreventDefault);
-  if (preventDefault.Equals(NS_LITERAL_STRING("true")))
+  if (preventDefault.EqualsLiteral("true"))
     mType |= NS_HANDLER_TYPE_PREVENTDEFAULT;
+
+  if (aAllowUntrusted) {
+    if (nsDependentString(aAllowUntrusted).EqualsLiteral("true")) {
+      mType |= NS_HANDLER_ALLOW_UNTRUSTED;
+    } else {
+      mType &= ~NS_HANDLER_ALLOW_UNTRUSTED;
+    }
+  }
 }
 
 PRBool
-nsXBLPrototypeHandler::ModifiersMatchMask(nsIDOMUIEvent* aEvent,
-                                          PRInt32 aModifiersMask)
+nsXBLPrototypeHandler::ModifiersMatchMask(nsIDOMUIEvent* aEvent)
 {
   nsCOMPtr<nsIDOMKeyEvent> key(do_QueryInterface(aEvent));
   nsCOMPtr<nsIDOMMouseEvent> mouse(do_QueryInterface(aEvent));
 
   PRBool keyPresent;
-  if (aModifiersMask & cMeta) {
+  if (mKeyMask & cMetaMask) {
     key ? key->GetMetaKey(&keyPresent) : mouse->GetMetaKey(&keyPresent);
     if (keyPresent != ((mKeyMask & cMeta) != 0))
       return PR_FALSE;
   }
 
-  if (aModifiersMask & cShift) {
+  if (mKeyMask & cShiftMask) {
     key ? key->GetShiftKey(&keyPresent) : mouse->GetShiftKey(&keyPresent);
     if (keyPresent != ((mKeyMask & cShift) != 0))
       return PR_FALSE;
   }
 
-  if (aModifiersMask & cAlt) {
+  if (mKeyMask & cAltMask) {
     key ? key->GetAltKey(&keyPresent) : mouse->GetAltKey(&keyPresent);
     if (keyPresent != ((mKeyMask & cAlt) != 0))
       return PR_FALSE;
   }
 
-  if (aModifiersMask & cControl) {
+  if (mKeyMask & cControlMask) {
     key ? key->GetCtrlKey(&keyPresent) : mouse->GetCtrlKey(&keyPresent);
     if (keyPresent != ((mKeyMask & cControl) != 0))
       return PR_FALSE;

@@ -1,29 +1,45 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is the Mozilla OS/2 libraries.
  *
- * The Initial Developer of the Original Code is John Fairhurst,
- * <john_fairhurst@iname.com>.  Portions created by John Fairhurst are
- * Copyright (C) 1999 John Fairhurst. All 
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * John Fairhurst, <john_fairhurst@iname.com>.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *   IBM Corp.
  *   Rich Walsh <dragtext@e-vertise.com>
+ *   Dan Rosen <dr@netscape.com>
  *   Dainis Jonitis <Dainis_Jonitis@swh-t.lv>
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsWindow.h"
 #include "nsIAppShell.h"
@@ -64,10 +80,11 @@
 #include "nsXPIDLString.h"
 #include "nsIFile.h"
 
-#include "nsISupportsPrimitives.h"
-
 #include "nsOS2Uni.h"
 #include "nsPaletteOS2.h"
+
+#include "imgIContainer.h"
+#include "gfxIImageFrame.h"
 
 #include <stdlib.h>
 #include <ctype.h>
@@ -121,9 +138,6 @@ PRBool gJustGotDeactivate = PR_FALSE;
 // Mouse Clicks - static variable defintions 
 // for figuring out 1 - 3 Clicks
 ////////////////////////////////////////////////////
-static POINTL gLastMousePoint;
-static LONG   gLastMsgTime    = 0;
-static LONG   gLastClickCount = 0;
 static POINTS gLastButton1Down = {0,0};
 
 #define XFROMMP(m)    (SHORT(LOUSHORT(m)))
@@ -141,7 +155,7 @@ static PRBool gIsDBCS = PR_FALSE;
 static PRUint32 gLastInputEventTime = 0;
 
 #ifdef DEBUG_FOCUS
-static int currentWindowIdentifier = 0;
+  int currentWindowIdentifier = 0;
 #endif
 
 //-------------------------------------------------------------------------
@@ -203,6 +217,7 @@ nsWindow::nsWindow() : nsBaseWidget()
     mHaveDeadKey        = FALSE;
     mIsDestroying       = PR_FALSE;
     mOnDestroyCalled    = PR_FALSE;
+    mIsVisible          = FALSE;
 
     mPreferredWidth     = 0;
     mPreferredHeight    = 0;
@@ -216,6 +231,7 @@ nsWindow::nsWindow() : nsBaseWidget()
     mChromeHidden       = FALSE;
     mDragHps            = 0;
     mDragStatus         = 0;
+    mCssCursorHPtr      = 0;
 
     mIsTopWidgetWindow = PR_FALSE;
 
@@ -267,6 +283,11 @@ nsWindow::~nsWindow()
   if (mFrameIcon) {
      WinFreeFileIcon(mFrameIcon);
      mFrameIcon = NULLHANDLE;
+  }
+
+  if (mCssCursorHPtr) {
+    WinDestroyPointer(mCssCursorHPtr);
+    mCssCursorHPtr = 0;
   }
 
   // If the widget was released without calling Destroy() then the native
@@ -509,7 +530,7 @@ PRBool nsWindow::DispatchWindowEvent(nsGUIEvent*event, nsEventStatus &aStatus) {
 
 PRBool nsWindow::DispatchStandardEvent(PRUint32 aMsg)
 {
-  nsGUIEvent event(aMsg, this);
+  nsGUIEvent event(PR_TRUE, aMsg, this);
   InitEvent(event);
 
   PRBool result = DispatchWindowEvent(&event);
@@ -524,7 +545,7 @@ PRBool nsWindow::DispatchStandardEvent(PRUint32 aMsg)
 //-------------------------------------------------------------------------
 PRBool nsWindow::DispatchAppCommandEvent(PRUint32 aEventCommand)
 {
-  nsAppCommandEvent event(NS_APPCOMMAND_START, this);
+  nsAppCommandEvent event(PR_TRUE, NS_APPCOMMAND_START, this);
 
   InitEvent(event);
   event.appCommand = NS_APPCOMMAND_START + aEventCommand;
@@ -783,21 +804,21 @@ MRESULT EXPENTRY fnwpNSWindow( HWND hwnd, ULONG msg, MPARAM mp1, MPARAM mp2)
     if (!wnd->mIsDestroying) // not if we're in the destructor!
       kungFuDeathGrip = do_QueryInterface((nsBaseWidget*)wnd);
 
-   MRESULT mRC = 0;
+   MRESULT mresult = 0;
 
-   if( wnd)
+   if (wnd)
    {
-      if( PR_FALSE == wnd->ProcessMessage( msg, mp1, mp2, mRC) &&
+      if( PR_FALSE == wnd->ProcessMessage( msg, mp1, mp2, mresult) &&
           WinIsWindow( (HAB)0, hwnd) && wnd->GetPrevWP())
       {
-         mRC = (wnd->GetPrevWP())( hwnd, msg, mp1, mp2);
+         mresult = (wnd->GetPrevWP())( hwnd, msg, mp1, mp2);
 
       }
    }
    else
-      /* erm */ mRC = WinDefWindowProc( hwnd, msg, mp1, mp2);
+      /* erm */ mresult = WinDefWindowProc( hwnd, msg, mp1, mp2);
 
-   return mRC;
+   return mresult;
 }
 
 //-------------------------------------------------------------------------
@@ -931,11 +952,10 @@ void nsWindow::RealDoCreate( HWND              hwndP,
 #ifdef DEBUG_FOCUS
    mWindowIdentifier = currentWindowIdentifier;
    currentWindowIdentifier++;
-   if (aInitData && (aInitData->mWindowType == eWindowType_toplevel)) {
-      printf("[%x] Create Frame Window (%d)\n", this, mWindowIdentifier);
-   } else {
-     printf("[%x] Create Window  (%d)\n", this, mWindowIdentifier);
-   }
+   if (aInitData && (aInitData->mWindowType == eWindowType_toplevel))
+     DEBUGFOCUS(Create Frame Window);
+   else
+     DEBUGFOCUS(Create Window);
 #endif
 
    // Create a window: create hidden & then size to avoid swp_noadjust problems
@@ -974,12 +994,10 @@ void nsWindow::RealDoCreate( HWND              hwndP,
    }
    else
    {
-      nsresult rc = NS_OK;
+      nsresult rc;
       static NS_DEFINE_IID(kDeviceContextCID, NS_DEVICE_CONTEXT_CID);
 
-      rc = nsComponentManager::CreateInstance( kDeviceContextCID, nsnull,
-                                               NS_GET_IID(nsIDeviceContext),
-                                               (void **)&mContext);
+      rc = CallCreateInstance(kDeviceContextCID, &mContext);
       if( NS_SUCCEEDED(rc))
          mContext->Init( (nsNativeWidget) mWnd);
 #ifdef DEBUG
@@ -995,7 +1013,7 @@ void nsWindow::RealDoCreate( HWND              hwndP,
    // NB: We haven't subclassed yet, so callbacks to change mBounds won't
    //     have happened!
    mBounds = aRect;
-   mBounds.height = GetHeight( aRect.height);
+   mBounds.height = aRect.height;
 
    // Record passed in things
    mAppShell = aAppShell;
@@ -1109,9 +1127,7 @@ NS_METHOD nsWindow::Destroy()
       if( mWnd)
       {
          HWND hwndBeingDestroyed = mFrameWnd ? mFrameWnd : mWnd;
-#ifdef DEBUG_FOCUS
-         printf("[%x] Destroy (%d)\n", this, mWindowIdentifier);
-#endif
+         DEBUGFOCUS(Destroy);
          if (hwndBeingDestroyed == WinQueryFocus(HWND_DESKTOP)) {
            WinSetFocus(HWND_DESKTOP, WinQueryWindow(hwndBeingDestroyed, QW_PARENT));
          }
@@ -1180,7 +1196,7 @@ void nsWindow::NS2PM( POINTL &ptl)
 {
    ptl.y = GetClientHeight() - ptl.y - 1;
 #if 0
-   printf("+++++++++In NS2PM client height = %ld\n", GetClientHeight());
+   printf("+++++++++In NS2PM client height = %d\n", GetClientHeight());
 #endif
 }
 
@@ -1213,6 +1229,7 @@ NS_METHOD nsWindow::Show(PRBool bState)
       else
          WinShowWindow( hwnd, FALSE);
    }
+   mIsVisible = bState;
 
    return NS_OK;
 }
@@ -1226,7 +1243,18 @@ NS_METHOD nsWindow::IsVisible(PRBool & bState)
 {
    // I guess this means visible & not showing...
    bState = WinIsWindowVisible( mWnd) ? PR_TRUE : PR_FALSE;
+   mIsVisible = bState;
    return NS_OK;
+}
+
+//-------------------------------------------------------------------------
+//
+// Return the last value passed to Show.
+//
+//-------------------------------------------------------------------------
+PRBool nsWindow::IsShown()
+{
+  return mIsVisible;
 }
 
 //-------------------------------------------------------------------------
@@ -1252,30 +1280,44 @@ NS_METHOD nsWindow::PlaceBehind(nsTopLevelWidgetZPlacement aPlacement,
 //
 //-------------------------------------------------------------------------
 
-NS_IMETHODIMP nsWindow::SetSizeMode(PRInt32 aMode) {
+// when the frame has its controls, this method is advisory because
+// the min/max/restore has already occurred;  only when the frame is
+// in kiosk/fullscreen mode does it perform the minimize or restore
 
+NS_IMETHODIMP nsWindow::SetSizeMode(PRInt32 aMode)
+{
   nsresult rv;
-  PRBool visible;
 
   // save the requested state
   rv = nsBaseWidget::SetSizeMode(aMode);
 
-  IsVisible( visible);
-  if (NS_SUCCEEDED(rv) && visible) {
-    ULONG mode;
-    switch (aMode) {
-      case nsSizeMode_Maximized :
-        mode = SWP_MAXIMIZE;
-        break;
-      case nsSizeMode_Minimized :
-        mode = SWP_MINIMIZE;
-        break;
-      default :
-        mode = SWP_RESTORE;
-    }
-    ::WinSetWindowPos(GetMainWindow(), NULLHANDLE, 0L, 0L, 0L, 0L, mode);
+  // this is part of a kludge to keep minimized windows from getting
+  // restored when they get the focus - we defer the activation event
+  // until the window has actually been restored;  see WM_FOCUSCHANGED
+  if (gJustGotActivate) {
+    DEBUGFOCUS(deferred NS_ACTIVATE);
+    gJustGotActivate = PR_FALSE;
+    gJustGotDeactivate = PR_FALSE;
+    DispatchFocus(NS_ACTIVATE, TRUE);
   }
-  return rv;
+
+  // nothing to do in these cases
+  if (!NS_SUCCEEDED(rv) || !mChromeHidden || aMode == nsSizeMode_Maximized)
+    return rv;
+
+  HWND  hFrame = GetMainWindow();
+  ULONG ulStyle = WinQueryWindowULong( hFrame, QWL_STYLE);
+
+  // act on the request if the frame isn't already in the requested state
+  if (aMode == nsSizeMode_Minimized) {
+    if (!(ulStyle & WS_MINIMIZED))
+      WinSetWindowPos(hFrame, 0, 0, 0, 0, 0, SWP_MINIMIZE | SWP_DEACTIVATE);
+  }
+  else
+    if (ulStyle & (WS_MAXIMIZED | WS_MINIMIZED))
+      WinSetWindowPos(hFrame, 0, 0, 0, 0, 0, SWP_RESTORE);
+
+  return NS_OK;
 }
 
 //-------------------------------------------------------------------------
@@ -1437,35 +1479,38 @@ NS_METHOD nsWindow::Resize(PRInt32 aX,
   //   NS_ASSERTION((w >=0 ), "Negative width passed to nsWindow::Resize");
   //   NS_ASSERTION((h >=0 ), "Negative height passed to nsWindow::Resize");
 
+   // Set cached value for lightweight and printing
+   mBounds.x      = aX;
+   mBounds.y      = aY;
+   mBounds.width  = w;
+   mBounds.height = h;
+
    // WinSetWindowPos() appears not to require a msgq
    if( mWnd)
    {
       // need to keep top-left corner in the same place
       // work out real coords of top left
-      POINTL ptl= { aX, aY };
+      POINTL ptl = { aX, aY };
       NS2PM_PARENT( ptl);
       // work out real coords of bottom left
-      ptl.y -= GetHeight( h) - 1;
-      if( mParent)
+      ptl.y -= h - 1;
+      if( mParent && mWindowType != eWindowType_popup)
       {
          WinMapWindowPoints( mParent->mWnd, WinQueryWindow(mWnd, QW_PARENT), &ptl, 1);
       }
+      else if (mWindowType == eWindowType_popup ) {
+         // aX already gives the right position, just transform aY by hand:
+         ptl.y = WinQuerySysValue(HWND_DESKTOP, SV_CYSCREEN) - h - 1 - aY;
+      }
 
-      if( !SetWindowPos( 0, ptl.x, ptl.y, w, GetHeight(h), SWP_MOVE | SWP_SIZE))
+      if( !SetWindowPos( 0, ptl.x, ptl.y, w, h, SWP_MOVE | SWP_SIZE))
          if( aRepaint)
             Invalidate(PR_FALSE);
 
 #if DEBUG_sobotka
-   printf("+++++++++++Resized 0x%lx at %ld, %ld to %ld x %ld\n\n", mWnd, ptl.x, ptl.y, w, GetHeight(h));
+   printf("+++++++++++Resized 0x%lx at %ld, %ld to %d x %d (%d,%d)\n", mWnd, ptl.x, ptl.y, w, h, aX, aY);
 #endif
 
-   }
-   else
-   {
-      mBounds.x = aX;
-      mBounds.y = aY;
-      mBounds.width = w;
-      mBounds.height = h;
    }
    return NS_OK;
 }
@@ -1513,17 +1558,10 @@ NS_METHOD nsWindow::SetFocus(PRBool aRaise)
     else
     if (mWnd) {
         if (!mInSetFocus) {
-#ifdef DEBUG_FOCUS
-           printf("[%x] SetFocus (%d)\n", this, mWindowIdentifier);
-#endif
-           ULONG sessionID;
-           DosQuerySysInfo(QSV_FOREGROUND_FS_SESSION, QSV_FOREGROUND_FS_SESSION, 
-                           &sessionID, sizeof(ULONG));
-           if (sessionID <= 0xFF) {
-             mInSetFocus = TRUE;
-             WinSetFocus( HWND_DESKTOP, mWnd);
-             mInSetFocus = FALSE;
-           }
+           DEBUGFOCUS(SetFocus);
+           mInSetFocus = TRUE;
+           WinSetFocus( HWND_DESKTOP, mWnd);
+           mInSetFocus = FALSE;
         }
 
     }
@@ -1654,8 +1692,8 @@ NS_METHOD nsWindow::SetFont(const nsFont &aFont)
       char *buffer = new char[fontnameLength + 6];
       if (buffer) {
         sprintf(buffer, "%d.%s", points, fontname.get());
-        BOOL rc = ::WinSetPresParam(mWnd, PP_FONTNAMESIZE,
-                                    strlen(buffer) + 1, buffer);
+        ::WinSetPresParam(mWnd, PP_FONTNAMESIZE,
+                          strlen(buffer) + 1, buffer);
         delete [] buffer;
       }
    }
@@ -1678,126 +1716,132 @@ NS_METHOD nsWindow::SetCursor(nsCursor aCursor)
 {
   HPOINTER newPointer = NULLHANDLE;
 
-  switch(aCursor) {
-  case eCursor_select:
-    newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_TEXT, FALSE);
-    break;
-    
-  case eCursor_wait:
-    newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_WAIT, FALSE);
-    break;
-
-  case eCursor_hyperlink:
-    newPointer = gPtrArray[IDC_SELECTANCHOR-IDC_BASE];
-    break;
-
-  case eCursor_standard:
-    newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_ARROW, FALSE);
-    break;
-
-  case eCursor_sizeWE:
-    newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZEWE, FALSE);
-    break;
-
-  case eCursor_sizeNS:
-    newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZENS, FALSE);
-    break;
-
-  case eCursor_sizeNW:
-  case eCursor_sizeSE:
-    newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZENWSE, FALSE);
-    break;
-
-  case eCursor_sizeNE:
-  case eCursor_sizeSW:
-    newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZENESW, FALSE);
-    break;
-
-  case eCursor_arrow_north:
-    newPointer = gPtrArray[IDC_ARROWNORTH-IDC_BASE];
-    break;
-
-  case eCursor_arrow_north_plus:
-    newPointer = gPtrArray[IDC_ARROWNORTHPLUS-IDC_BASE];
-    break;
-
-  case eCursor_arrow_south:
-    newPointer = gPtrArray[IDC_ARROWSOUTH-IDC_BASE];
-    break;
-
-  case eCursor_arrow_south_plus:
-    newPointer = gPtrArray[IDC_ARROWSOUTHPLUS-IDC_BASE];
-    break;
-
-  case eCursor_arrow_east:
-    newPointer = gPtrArray[IDC_ARROWEAST-IDC_BASE];
-    break;
-
-  case eCursor_arrow_east_plus:
-    newPointer = gPtrArray[IDC_ARROWEASTPLUS-IDC_BASE];
-    break;
-
-  case eCursor_arrow_west:
-    newPointer = gPtrArray[IDC_ARROWWEST-IDC_BASE];
-    break;
-
-  case eCursor_arrow_west_plus:
-    newPointer = gPtrArray[IDC_ARROWWESTPLUS-IDC_BASE];
-    break;
-
-  case eCursor_crosshair:
-    newPointer = gPtrArray[IDC_CROSS-IDC_BASE];
-    break;
-             
-  case eCursor_move:
-    newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_MOVE, FALSE);
-    break;
-
-  case eCursor_help:
-    newPointer = gPtrArray[IDC_HELP-IDC_BASE];
-    break;
-
-  case eCursor_copy: // CSS3
-    newPointer = gPtrArray[IDC_COPY-IDC_BASE];
-    break;
-
-  case eCursor_alias:
-    newPointer = gPtrArray[IDC_ALIAS-IDC_BASE];
-    break;
-
-  case eCursor_cell:
-    newPointer = gPtrArray[IDC_CELL-IDC_BASE];
-    break;
-
-  case eCursor_grab:
-    newPointer = gPtrArray[IDC_GRAB-IDC_BASE];
-    break;
-
-  case eCursor_grabbing:
-    newPointer = gPtrArray[IDC_GRABBING-IDC_BASE];
-    break;
-
-  case eCursor_spinning:
-    newPointer = gPtrArray[IDC_ARROWWAIT-IDC_BASE];
-    break;
-
-  case eCursor_context_menu:
-  case eCursor_count_up:
-  case eCursor_count_down:
-  case eCursor_count_up_down:
-    break;
-
-  case eCursor_zoom_in:
-    newPointer = gPtrArray[IDC_ZOOMIN-IDC_BASE];
-    break;
-
-  case eCursor_zoom_out:
-    newPointer = gPtrArray[IDC_ZOOMOUT-IDC_BASE];
-    break;
-
-  default:
-    NS_ASSERTION(0, "Invalid cursor type");
-    break;
+  switch (aCursor) {
+    case eCursor_select:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_TEXT, FALSE);
+      break;
+      
+    case eCursor_wait:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_WAIT, FALSE);
+      break;
+  
+    case eCursor_hyperlink:
+      newPointer = gPtrArray[IDC_SELECTANCHOR-IDC_BASE];
+      break;
+  
+    case eCursor_standard:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_ARROW, FALSE);
+      break;
+  
+    case eCursor_n_resize:
+    case eCursor_s_resize:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZENS, FALSE);
+      break;
+  
+    case eCursor_w_resize:
+    case eCursor_e_resize:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZEWE, FALSE);
+      break;
+  
+    case eCursor_nw_resize:
+    case eCursor_se_resize:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZENWSE, FALSE);
+      break;
+  
+    case eCursor_ne_resize:
+    case eCursor_sw_resize:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZENESW, FALSE);
+      break;
+  
+    case eCursor_crosshair:
+      newPointer = gPtrArray[IDC_CROSS-IDC_BASE];
+      break;
+               
+    case eCursor_move:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_MOVE, FALSE);
+      break;
+  
+    case eCursor_help:
+      newPointer = gPtrArray[IDC_HELP-IDC_BASE];
+      break;
+  
+    case eCursor_copy: // CSS3
+      newPointer = gPtrArray[IDC_COPY-IDC_BASE];
+      break;
+  
+    case eCursor_alias:
+      newPointer = gPtrArray[IDC_ALIAS-IDC_BASE];
+      break;
+  
+    case eCursor_cell:
+      newPointer = gPtrArray[IDC_CELL-IDC_BASE];
+      break;
+  
+    case eCursor_grab:
+      newPointer = gPtrArray[IDC_GRAB-IDC_BASE];
+      break;
+  
+    case eCursor_grabbing:
+      newPointer = gPtrArray[IDC_GRABBING-IDC_BASE];
+      break;
+  
+    case eCursor_spinning:
+      newPointer = gPtrArray[IDC_ARROWWAIT-IDC_BASE];
+      break;
+  
+    case eCursor_context_menu:
+      // XXX this CSS3 cursor needs to be implemented
+      break;
+  
+    case eCursor_zoom_in:
+      newPointer = gPtrArray[IDC_ZOOMIN-IDC_BASE];
+      break;
+  
+    case eCursor_zoom_out:
+      newPointer = gPtrArray[IDC_ZOOMOUT-IDC_BASE];
+      break;
+  
+    case eCursor_not_allowed:
+    case eCursor_no_drop:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_ILLEGAL, FALSE);
+      break;
+  
+    case eCursor_col_resize:
+      newPointer = gPtrArray[IDC_COLRESIZE-IDC_BASE];
+      break;
+  
+    case eCursor_row_resize:
+      newPointer = gPtrArray[IDC_ROWRESIZE-IDC_BASE];
+      break;
+  
+    case eCursor_vertical_text:
+      newPointer = gPtrArray[IDC_VERTICALTEXT-IDC_BASE];
+      break;
+  
+    case eCursor_all_scroll:
+      // XXX not 100% appropriate perhaps
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_MOVE, FALSE);
+      break;
+  
+    case eCursor_nesw_resize:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZENESW, FALSE);
+      break;
+  
+    case eCursor_nwse_resize:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZENWSE, FALSE);
+      break;
+  
+    case eCursor_ns_resize:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZENS, FALSE);
+      break;
+  
+    case eCursor_ew_resize:
+      newPointer = ::WinQuerySysPointer(HWND_DESKTOP, SPTR_SIZEWE, FALSE);
+      break;
+  
+    default:
+      NS_ASSERTION(0, "Invalid cursor type");
+      break;
   }
 
   if (newPointer) {
@@ -1806,6 +1850,259 @@ NS_METHOD nsWindow::SetCursor(nsCursor aCursor)
 
   return NS_OK;
 }
+
+//-------------------------------------------------------------------------
+
+// create a mouse pointer on the fly to support the CSS 'cursor' style;
+// this code is based on the Win version by C. Biesinger but has been
+// substantially modified to accommodate platform differences and to
+// improve efficiency
+
+NS_IMETHODIMP nsWindow::SetCursor(imgIContainer* aCursor,
+                                  PRUint32 aHotspotX, PRUint32 aHotspotY)
+{
+
+  // if this is the same image as last time, reuse the saved hptr;
+  // it will be destroyed when we create a new one or when the
+  // current window is destroyed
+  if (mCssCursorImg == aCursor && mCssCursorHPtr) {
+    WinSetPointer(HWND_DESKTOP, mCssCursorHPtr);
+    return NS_OK;
+  }
+
+  nsCOMPtr<gfxIImageFrame> frame;
+  aCursor->GetFrameAt(0, getter_AddRefs(frame));
+  if (!frame)
+    return NS_ERROR_NOT_AVAILABLE;
+
+  // if the image is ridiculously large, exit because
+  // it will be unrecognizable when shrunk to 32x32
+  PRInt32 width, height;
+  frame->GetWidth(&width);
+  frame->GetHeight(&height);
+  if (width > 128 || height > 128)
+    return NS_ERROR_FAILURE;
+
+  gfx_format format;
+  nsresult rv = frame->GetFormat(&format);
+  if (NS_FAILED(rv))
+    return rv;
+
+  // only 24-bit images with 0, 1, or 8-bit alpha data are supported
+  if (format != gfxIFormats::BGR_A1 && format != gfxIFormats::BGR_A8 &&
+      format != gfxIFormats::BGR)
+    return NS_ERROR_UNEXPECTED;
+
+  frame->LockImageData();
+  PRUint32 dataLen;
+  PRUint8* data;
+  rv = frame->GetImageData(&data, &dataLen);
+  if (NS_FAILED(rv)) {
+    frame->UnlockImageData();
+    return rv;
+  }
+
+  // create the color bitmap
+  HBITMAP hBmp = 0;
+  hBmp = DataToBitmap(data, width, height, 24);
+  frame->UnlockImageData();
+  if (!hBmp)
+    return NS_ERROR_FAILURE;
+
+  // create a transparency mask from the alpha data;
+  HBITMAP hAlpha = 0;
+
+  // image has no alpha data - make the pointer opaque
+  if (format == gfxIFormats::BGR) {
+    hAlpha = CreateTransparencyMask(format, 0, width, height);
+    if (!hAlpha) {
+      GpiDeleteBitmap(hBmp);
+      return NS_ERROR_FAILURE;
+    }
+  }
+  // image has either 1 or 8 bits of alpha data
+  else {
+    PRUint8* adata;
+    frame->LockAlphaData();
+    rv = frame->GetAlphaData(&adata, &dataLen);
+    if (NS_FAILED(rv)) {
+      GpiDeleteBitmap(hBmp);
+      frame->UnlockAlphaData();
+      return rv;
+    }
+
+    // create the bitmap
+    hAlpha = CreateTransparencyMask(format, adata, width, height);
+    frame->UnlockAlphaData();
+    if (!hAlpha) {
+      GpiDeleteBitmap(hBmp);
+      return NS_ERROR_FAILURE;
+    }
+  }
+
+  POINTERINFO info = {0};
+  info.fPointer = TRUE;
+  info.xHotspot = aHotspotX;
+  info.yHotspot = height - aHotspotY - 1;
+  info.hbmPointer = hAlpha;
+  info.hbmColor = hBmp;
+
+  // create the pointer
+  HPOINTER cursor = WinCreatePointerIndirect(HWND_DESKTOP, &info);
+  GpiDeleteBitmap(hBmp);
+  GpiDeleteBitmap(hAlpha);
+  if (cursor == NULL)
+    return NS_ERROR_FAILURE;
+
+  // use it
+  WinSetPointer(HWND_DESKTOP, cursor);
+
+  // destroy the previous hptr;  this has to be done after the
+  // new pointer is set or else WinDestroyPointer() will fail
+  if (mCssCursorHPtr)
+    WinDestroyPointer(mCssCursorHPtr);
+
+  // save the hptr and a reference to the image for next time
+  mCssCursorHPtr = cursor;
+  mCssCursorImg = aCursor;
+
+  return NS_OK;
+}
+
+//-------------------------------------------------------------------------
+
+// render image or modified alpha data as a native bitmap
+
+// aligned bytes per row, rounded up to next dword bounday
+#define ALIGNEDBPR(cx,bits) ( ( ( ((cx)*(bits)) + 31) / 32) * 4)
+
+HBITMAP nsWindow::DataToBitmap(PRUint8* aImageData, PRUint32 aWidth,
+                               PRUint32 aHeight, PRUint32 aDepth)
+{
+  // get a presentation space for this window
+  HPS hps = (HPS)GetNativeData(NS_NATIVE_GRAPHIC);
+  if (!hps)
+    return 0;
+
+  // a handy structure that does double duty
+  // as both BITMAPINFOHEADER2 & BITMAPINFO2
+  struct {
+    BITMAPINFOHEADER2 head;
+    RGB2 black;
+    RGB2 white;
+  } bi;
+
+  memset( &bi, 0, sizeof(bi));
+  bi.white.bBlue = 255;
+  bi.white.bGreen = 255;
+  bi.white.bRed = 255;
+
+  // fill in the particulars
+  bi.head.cbFix = sizeof(bi.head);
+  bi.head.cx = aWidth;
+  bi.head.cy = aHeight;
+  bi.head.cPlanes = 1;
+  bi.head.cBitCount = aDepth;
+  bi.head.ulCompression = BCA_UNCOMP;
+  bi.head.cbImage = ALIGNEDBPR(aWidth, aDepth) * aHeight;
+  bi.head.cclrUsed = (aDepth == 1 ? 2 : 0);
+
+  // create a bitmap from the image data
+  HBITMAP hBmp = GpiCreateBitmap(hps, &bi.head, CBM_INIT,
+                 NS_REINTERPRET_CAST(const BYTE*, aImageData),
+                 (BITMAPINFO2*)&bi);
+
+  // free the hps, then return the bitmap
+  FreeNativeData((void*)hps, NS_NATIVE_GRAPHIC);
+  return hBmp;
+}
+
+//-------------------------------------------------------------------------
+
+// create a monochrome AND/XOR bitmap from 0, 1, or 8-bit alpha data
+
+HBITMAP nsWindow::CreateTransparencyMask(gfx_format format,
+                                         PRUint8* aImageData,
+                                         PRUint32 aWidth,
+                                         PRUint32 aHeight)
+{
+  // calc width in bytes, rounding up to a dword boundary
+  PRUint32 abpr = ALIGNEDBPR(aWidth, 1);
+  PRUint32 cbData = abpr * aHeight;
+
+  // alloc space to hold both the AND & XOR bitmaps
+  PRUint8* mono = (PRUint8*)malloc(cbData * 2);
+  if (!mono)
+    return NULL;
+
+  // init the XOR bitmap to produce either black or transparent pixels
+  memset(mono, 0x00, cbData);
+
+  switch (format) {
+
+    // make the AND mask opaque
+    case gfxIFormats::BGR:
+      memset(&mono[cbData], 0x00, cbData);
+      break;
+
+    // make the AND mask the inverse of the 1-bit alpha data
+    case gfxIFormats::BGR_A1: {
+      PRUint32* pSrc = (PRUint32*)aImageData;
+      PRUint32* pAnd = (PRUint32*)&mono[cbData];
+
+      for (PRUint32 dataNdx = 0; dataNdx < cbData; dataNdx += 4)
+        *pAnd++ = ~(*pSrc++);
+
+      break;
+    }
+
+    // make the AND mask the inverse of the 8-bit alpha data
+    case gfxIFormats::BGR_A8: {
+      PRUint8*  pSrc = aImageData;
+      PRUint32* pAnd = (PRUint32*)&mono[cbData];
+
+      // if aWidth isn't a multiple of 4, the input contains byte padding;
+      // if aWidth isn't a multiple of 32, the output contains bit padding
+      for (PRUint32 dataNdx = 0; dataNdx < cbData; dataNdx += 4) {
+        PRUint32 dst = 0;
+        PRUint32 colNdx = 0;
+
+        // construct an output dword, then save
+        for (PRUint32 byteNdx = 0; byteNdx < 4; byteNdx++) {
+          PRUint32 mask = 0x80 << (byteNdx * 8);
+
+          // construct an output byte from 8 input bytes
+          for (PRUint32 bitNdx = 0; bitNdx < 8; bitNdx++) {
+            if (*pSrc++ < 128)
+              dst |= mask;
+            mask >>= 1;
+
+            // at the end of a row, skip over any padding in the
+            // input, then break out of the byte & dword loops
+            if (++colNdx >= aWidth) {
+              pSrc += (4 - (aWidth & 3)) & 3;
+              break;
+            }
+          }
+          if (colNdx >= aWidth)
+            break;
+        }
+        *pAnd++ = dst;
+      }
+
+      break;
+    }
+  }
+
+  // create the bitmap
+  HBITMAP hAlpha = DataToBitmap(mono, aWidth, aHeight * 2, 1);
+
+  // free the buffer, then return the bitmap
+  free(mono);
+  return hAlpha;
+}
+
+//-------------------------------------------------------------------------
 
 NS_IMETHODIMP nsWindow::HideWindowChrome(PRBool aShouldHide) 
 {
@@ -2132,7 +2429,7 @@ BOOL nsWindow::CallMethod(MethodInfo *info)
 
         case nsWindow::SET_TITLE:
             NS_ASSERTION(info->nArgs == 1, "Wrong number of arguments to CallMethod SetTitle");
-            SetTitle( (const nsString &) info->args[0]);
+            SetTitle( (const nsAString &) info->args[0]);
             break;
 
         case nsWindow::GET_TITLE:
@@ -2163,12 +2460,11 @@ BOOL nsWindow::CallMethod(MethodInfo *info)
 //
 PRBool nsWindow::OnKey( MPARAM mp1, MPARAM mp2)
 {
-   nsKeyEvent pressEvent;
+   nsKeyEvent pressEvent(PR_TRUE, 0, nsnull);
    USHORT     fsFlags = SHORT1FROMMP(mp1);
    USHORT     usVKey = SHORT2FROMMP(mp2);
    USHORT     usChar = SHORT1FROMMP(mp2);
-   UCHAR      uchScan = CHAR4FROMMP(mp1);
-   int        unirc = ULS_SUCCESS;
+//   UCHAR      uchScan = CHAR4FROMMP(mp1);
 
    // It appears we're not supposed to transmit shift, control & alt events
    // to gecko.  Shrug.
@@ -2204,7 +2500,8 @@ PRBool nsWindow::OnKey( MPARAM mp1, MPARAM mp2)
    // have the unicode charcode in.
 
    nsPoint point(0,0);
-   nsKeyEvent event((fsFlags & KC_KEYUP) ? NS_KEY_UP : NS_KEY_DOWN, this);
+   nsKeyEvent event(PR_TRUE, (fsFlags & KC_KEYUP) ? NS_KEY_UP : NS_KEY_DOWN,
+                    this);
    InitEvent( event, &point);
    event.keyCode   = WMChar2KeyCode( mp1, mp2);
    event.isShift   = (fsFlags & KC_SHIFT) ? PR_TRUE : PR_FALSE;
@@ -2259,6 +2556,9 @@ PRBool nsWindow::OnKey( MPARAM mp1, MPARAM mp2)
    // Now we need to dispatch a keypress event which has the unicode char.
 
    pressEvent.message = NS_KEY_PRESS;
+   if (rc) { // If keydown default was prevented, do same for keypress
+     pressEvent.flags |= NS_EVENT_FLAG_NO_DEFAULT;
+   }
 
    if( usChar)
    {
@@ -2308,7 +2608,7 @@ PRBool nsWindow::OnKey( MPARAM mp1, MPARAM mp2)
 
 void nsWindow::ConstrainZLevel(HWND *aAfter) {
 
-  nsZLevelEvent  event(NS_SETZLEVEL, this);
+  nsZLevelEvent  event(PR_TRUE, NS_SETZLEVEL, this);
   nsWindow      *aboveWindow = 0;
 
   InitEvent(event);
@@ -2350,13 +2650,12 @@ void nsWindow::ConstrainZLevel(HWND *aAfter) {
 PRBool nsWindow::ProcessMessage( ULONG msg, MPARAM mp1, MPARAM mp2, MRESULT &rc)
 {
     PRBool result = PR_FALSE; // call the default window procedure
-    PRBool isMozWindowTakingFocus = PR_TRUE;
 
     switch (msg) {
 //#if 0
         case WM_COMMAND: // fire off menu selections
         {
-           nsMenuEvent event(NS_MENU_SELECTED, this);
+           nsMenuEvent event(PR_TRUE, NS_MENU_SELECTED, this);
            event.mCommand = SHORT1FROMMP(mp1);
            InitEvent(event);
            result = DispatchWindowEvent(&event);
@@ -2381,7 +2680,7 @@ PRBool nsWindow::ProcessMessage( ULONG msg, MPARAM mp1, MPARAM mp2, MRESULT &rc)
 #if 0  // Tooltips appear to be gone
         case WMU_SHOW_TOOLTIP:
         {
-          nsTooltipEvent event(NS_SHOW_TOOLTIP, this);
+          nsTooltipEvent event(PR_TRUE, NS_SHOW_TOOLTIP, this);
           InitEvent( event );
           event.tipIndex = LONGFROMMP(mp1);
           result = DispatchWindowEvent(&event);
@@ -2458,7 +2757,7 @@ PRBool nsWindow::ProcessMessage( ULONG msg, MPARAM mp1, MPARAM mp2, MRESULT &rc)
         case WM_QUERYCONVERTPOS:
           {
             PRECTL pCursorRect = (PRECTL)mp1;
-            nsCompositionEvent event(NS_COMPOSITION_QUERY, this);
+            nsCompositionEvent event(PR_TRUE, NS_COMPOSITION_QUERY, this);
             nsPoint point;
             point.x = 0;
             point.y = 0;
@@ -2547,7 +2846,7 @@ PRBool nsWindow::ProcessMessage( ULONG msg, MPARAM mp1, MPARAM mp2, MRESULT &rc)
                   (WinQuerySysValue(HWND_DESKTOP, SV_CYMOTIONSTART) / 2))
               isCopy = TRUE;
 
-            nsKeyEvent event(NS_KEY_PRESS, this);
+            nsKeyEvent event(PR_TRUE, NS_KEY_PRESS, this);
             nsPoint point(0,0);
             InitEvent( event, &point);
 
@@ -2631,68 +2930,66 @@ PRBool nsWindow::ProcessMessage( ULONG msg, MPARAM mp1, MPARAM mp2, MRESULT &rc)
           result = OnScroll( msg, mp1, mp2);
           break;
 
-       case WM_ACTIVATE:
-#ifdef DEBUG_FOCUS
-          printf("[%x] WM_ACTIVATE (%d)\n", this, mWindowIdentifier);
-#endif
-          if (mp1) {
-            /* The window is being activated */
+        case WM_ACTIVATE:
+          DEBUGFOCUS(WM_ACTIVATE);
+          if (mp1)
             gJustGotActivate = PR_TRUE;
-          } else {
-            /* The window is being deactivated */
+          else
             gJustGotDeactivate = PR_TRUE;
-          }
           break;
 
         case WM_FOCUSCHANGED:
-#ifdef DEBUG_FOCUS
-          printf("[%x] WM_FOCUSCHANGED (%d)\n", this, mWindowIdentifier);
-#endif
+        {
+          PRBool isMozWindowTakingFocus = PR_TRUE;
+          DEBUGFOCUS(WM_FOCUSCHANGED);
+
+          // If the frame was activated earlier or mp1 is 0, dispatch
+          // focus & activation events.  However, if the frame is minimized,
+          // defer activation and let SetSizeMode() dispatch it after the
+          // window has been restored by the user - otherwise, Show() will
+          // restore it involuntarily.  
+
           if (SHORT1FROMMP(mp2)) {
-            /* We are receiving focus */
-#ifdef DEBUG_FOCUS
-            printf("[%x] NS_GOTFOCUS (%d)\n", this, mWindowIdentifier);
-#endif
+            DEBUGFOCUS(NS_GOTFOCUS);
             result = DispatchFocus(NS_GOTFOCUS, isMozWindowTakingFocus);
-            /* If mp1 is 0, this is the special WM_FOCUSCHANGED we got */
-            /* from the frame activate, so act like we just got activated */
+
             if (gJustGotActivate || mp1 == 0) {
-              gJustGotActivate = PR_FALSE;
-              gJustGotDeactivate = PR_FALSE;
-#ifdef DEBUG_FOCUS
-              printf("[%x] NS_ACTIVATE (%d)\n", this, mWindowIdentifier);
-#endif
-              result = DispatchFocus(NS_ACTIVATE, isMozWindowTakingFocus);
+              HWND hActive = WinQueryActiveWindow( HWND_DESKTOP);
+              if (!(WinQueryWindowULong( hActive, QWL_STYLE) & WS_MINIMIZED)) {
+                DEBUGFOCUS(NS_ACTIVATE);
+                gJustGotActivate = PR_FALSE;
+                gJustGotDeactivate = PR_FALSE;
+                result = DispatchFocus(NS_ACTIVATE, isMozWindowTakingFocus);
+              }
             }
+
             if ( WinIsChild( mWnd, HWNDFROMMP(mp1)) && mNextID == 1) {
-#ifdef DEBUG_FOCUS
-              printf("[%x] NS_PLUGIN_ACTIVATE (%d)\n", this, mWindowIdentifier);
-#endif
+              DEBUGFOCUS(NS_PLUGIN_ACTIVATE);
               result = DispatchFocus(NS_PLUGIN_ACTIVATE, isMozWindowTakingFocus);
               WinSetFocus(HWND_DESKTOP, mWnd);
             }
-
-          } else {
-            /* We are losing focus */
+          }
+          // We are losing focus
+          else {
             char className[19];
             ::WinQueryClassName((HWND)mp1, 19, className);
             if (strcmp(className, WindowClass()) != 0 && 
                 strcmp(className, WC_SCROLLBAR_STRING) != 0) {
-               isMozWindowTakingFocus = PR_FALSE;
+              isMozWindowTakingFocus = PR_FALSE;
             }
+
             if (gJustGotDeactivate) {
-               gJustGotDeactivate = PR_FALSE;
-#ifdef DEBUG_FOCUS
-               printf("[%x] NS_DEACTIVATE (%d)\n", this, mWindowIdentifier);
-#endif
-               result = DispatchFocus(NS_DEACTIVATE, isMozWindowTakingFocus);
+              DEBUGFOCUS(NS_DEACTIVATE);
+              gJustGotDeactivate = PR_FALSE;
+              result = DispatchFocus(NS_DEACTIVATE, isMozWindowTakingFocus);
             }
-#ifdef DEBUG_FOCUS
-            printf("[%x] NS_LOSTFOCUS (%d)\n", this, mWindowIdentifier);
-#endif
+
+            DEBUGFOCUS(NS_LOSTFOCUS);
             result = DispatchFocus(NS_LOSTFOCUS, isMozWindowTakingFocus);
           }
+
           break;
+        }
 
         case WM_WINDOWPOSCHANGED: 
           result = OnReposition( (PSWP) mp1);
@@ -2860,7 +3157,7 @@ void nsWindow::OnDestroy()
 PRBool nsWindow::OnMove(PRInt32 aX, PRInt32 aY)
 {            
   // Params here are in XP-space for the desktop
-  nsGUIEvent event(NS_MOVE, this);
+  nsGUIEvent event(PR_TRUE, NS_MOVE, this);
   InitEvent( event);
   event.point.x = aX;
   event.point.y = aY;
@@ -2878,6 +3175,19 @@ PRBool nsWindow::OnMove(PRInt32 aX, PRInt32 aY)
 PRBool nsWindow::OnPaint()
 {
    PRBool rc = PR_FALSE;
+   nsEventStatus eventStatus = nsEventStatus_eIgnore;
+
+#ifdef NS_DEBUG
+   HRGN debugPaintFlashRegion = NULL;
+   HPS debugPaintFlashPS = NULL;
+
+   if (debug_WantPaintFlashing())
+   {
+      debugPaintFlashPS = ::WinGetPS(mWnd);
+      debugPaintFlashRegion = ::GpiCreateRegion(debugPaintFlashPS, 0, NULL);
+      ::WinQueryUpdateRegion(mWnd, debugPaintFlashRegion);
+   }
+#endif
 
    if( mContext && (mEventCallback || mEventListener))
    {
@@ -2898,7 +3208,7 @@ PRBool nsWindow::OnPaint()
           // call the event callback 
           if (mEventCallback) 
           {
-              nsPaintEvent event(NS_PAINT, this);
+              nsPaintEvent event(PR_TRUE, NS_PAINT, this);
               InitEvent(event);
      
               // build XP rect from in-ex window rect
@@ -2922,22 +3232,20 @@ PRBool nsWindow::OnPaint()
              
               static NS_DEFINE_CID(kRenderingContextCID, NS_RENDERING_CONTEXT_CID);
              
-              if( NS_OK == nsComponentManager::CreateInstance(kRenderingContextCID, nsnull,
-                                                       NS_GET_IID(nsIRenderingContext),
-                                                       (void **)&event.renderingContext) )
+              if (NS_SUCCEEDED(CallCreateInstance(kRenderingContextCID, &event.renderingContext)))
               {
                  nsIRenderingContextOS2 *winrc;
 
                  if (NS_OK == event.renderingContext->QueryInterface(NS_GET_IID(nsIRenderingContextOS2), (void **)&winrc))
                  {
-                    nsDrawingSurface surf;
+                    nsIDrawingSurface* surf;
                    
                     //i know all of this seems a little backwards. i'll fix it, i swear. MMP
                    
                     if (NS_OK == winrc->CreateDrawingSurface(hPS, surf, event.widget))
                     {
                       event.renderingContext->Init(mContext, surf);
-                      rc = DispatchWindowEvent(&event);
+                      rc = DispatchWindowEvent(&event, eventStatus);
                       event.renderingContext->DestroyDrawingSurface(surf);
                     }
 
@@ -2954,6 +3262,29 @@ PRBool nsWindow::OnPaint()
       if (hpsDrag)
         ReleaseIfDragHPS(hpsDrag);
    }
+
+#ifdef NS_DEBUG
+  if (debug_WantPaintFlashing())
+  {
+     // Only flash paint events which have not ignored the paint message.
+     // Those that ignore the paint message aren't painting anything so there
+     // is only the overhead of the dispatching the paint event.
+     if (nsEventStatus_eIgnore != eventStatus)
+     {
+        LONG CurMix = ::GpiQueryMix(debugPaintFlashPS);
+        ::GpiSetMix(debugPaintFlashPS, FM_INVERT);
+
+        ::GpiPaintRegion(debugPaintFlashPS, debugPaintFlashRegion);
+        PR_Sleep(PR_MillisecondsToInterval(30));
+        ::GpiPaintRegion(debugPaintFlashPS, debugPaintFlashRegion);
+        PR_Sleep(PR_MillisecondsToInterval(30));
+
+        ::GpiSetMix (debugPaintFlashPS, CurMix);
+     }
+     ::GpiDestroyRegion(debugPaintFlashPS, debugPaintFlashRegion);
+     ::WinReleasePS(debugPaintFlashPS);
+  }
+#endif
 
    return rc;
 }
@@ -2975,7 +3306,7 @@ PRBool nsWindow::DispatchResizeEvent( PRInt32 aX, PRInt32 aY)
 {
    PRBool result;
    // call the event callback 
-   nsSizeEvent event(NS_SIZE, this);
+   nsSizeEvent event(PR_TRUE, NS_SIZE, this);
    nsRect      rect( 0, 0, aX, aY);
 
    InitEvent( event);
@@ -3001,7 +3332,7 @@ PRBool nsWindow::DispatchMouseEvent( PRUint32 aEventType, MPARAM mp1, MPARAM mp2
     return result;
   }
 
-  nsMouseEvent event(aEventType, this);
+  nsMouseEvent event(PR_TRUE, aEventType, this, nsMouseEvent::eReal);
 
   // Mouse leave & enter messages don't seem to have position built in.
   if( aEventType && aEventType != NS_MOUSE_ENTER && aEventType != NS_MOUSE_EXIT)
@@ -3171,7 +3502,11 @@ PRBool nsWindow::DispatchMouseEvent( PRUint32 aEventType, MPARAM mp1, MPARAM mp2
       }
     }
 #endif //OS2TODO
-    NS_RELEASE(event.widget);
+
+    // Release the widget with NS_IF_RELEASE() just in case
+    // the context menu key code in nsEventListenerManager::HandleEvent()
+    // released it already.
+    NS_IF_RELEASE(event.widget);
     return result;
   }
 
@@ -3226,7 +3561,7 @@ PRBool nsWindow::DispatchFocus(PRUint32 aEventType, PRBool isMozWindowTakingFocu
 {
   // call the event callback 
   if (mEventCallback) {
-    nsFocusEvent event(aEventType, this);
+    nsFocusEvent event(PR_TRUE, aEventType, this);
     InitEvent(event);
 
     //focus and blur event should go to their base widget loc, not current mouse pos
@@ -3275,7 +3610,7 @@ PRBool nsWindow::OnScroll( ULONG msgid, MPARAM mp1, MPARAM mp2)
 PRBool nsWindow::OnVScroll( MPARAM mp1, MPARAM mp2)
 {
     if (nsnull != mEventCallback) {
-        nsMouseScrollEvent scrollEvent(NS_MOUSE_SCROLL, this);
+        nsMouseScrollEvent scrollEvent(PR_TRUE, NS_MOUSE_SCROLL, this);
         InitEvent(scrollEvent);
         scrollEvent.isShift = WinIsKeyDown( VK_SHIFT);
         scrollEvent.isControl = WinIsKeyDown( VK_CTRL);
@@ -3310,7 +3645,7 @@ PRBool nsWindow::OnVScroll( MPARAM mp1, MPARAM mp2)
 PRBool nsWindow::OnHScroll( MPARAM mp1, MPARAM mp2)
 {
     if (nsnull != mEventCallback) {
-        nsMouseScrollEvent scrollEvent(NS_MOUSE_SCROLL, this);
+        nsMouseScrollEvent scrollEvent(PR_TRUE, NS_MOUSE_SCROLL, this);
         InitEvent(scrollEvent);
         scrollEvent.isShift = WinIsKeyDown( VK_SHIFT);
         scrollEvent.isControl = WinIsKeyDown( VK_CTRL);
@@ -3346,7 +3681,7 @@ PRBool nsWindow::OnHScroll( MPARAM mp1, MPARAM mp2)
 /* We are going to limit our titlebars to 256 just to be on the safe side */
 #define MAX_TITLEBAR_LENGTH 256
 
-NS_METHOD nsWindow::SetTitle(const nsString& aTitle) 
+NS_METHOD nsWindow::SetTitle(const nsAString& aTitle) 
 {
    // Switch to the PM thread if necessary...
    if( mOS2Toolkit && !mOS2Toolkit->IsGuiThread())
@@ -3355,10 +3690,10 @@ NS_METHOD nsWindow::SetTitle(const nsString& aTitle)
       MethodInfo info( this, nsWindow::SET_TITLE, 1, &ulong);
       mOS2Toolkit->CallMethod( &info);
    }
-   else if( mWnd)
+   else if (mWnd)
    {
       PRUnichar* uchtemp = ToNewUnicode(aTitle);
-      for (int i=0;i<aTitle.Length();i++) {
+      for (PRUint32 i=0;i<aTitle.Length();i++) {
        switch (uchtemp[i]) {
          case 0x2018:
          case 0x2019:
@@ -3394,49 +3729,43 @@ NS_METHOD nsWindow::SetTitle(const nsString& aTitle)
    return NS_OK;
 } 
 
-NS_METHOD nsWindow::SetIcon(const nsAString& anIconSpec) 
+// this implementation guarantees that sysmenus & minimized windows
+// will always have some icon other than the sysmenu default
+
+NS_METHOD nsWindow::SetIcon(const nsAString& aIconSpec) 
 {
-  // Start at app chrome directory.
-  nsCOMPtr<nsIFile> chromeDir;
-  if ( NS_FAILED( NS_GetSpecialDirectory( NS_APP_CHROME_DIR,
-                                          getter_AddRefs( chromeDir ) ) ) ) {
-      return NS_ERROR_FAILURE;
-  }
-  // Get native file name of that directory.
-  nsAutoString iconPath;
-  chromeDir->GetPath( iconPath );
+  static HPOINTER hDefaultIcon = 0;
+  HPOINTER        hWorkingIcon = 0;
 
-  // Now take input path...
-  nsAutoString iconSpec( anIconSpec );
-  // ...append ".ico" to that.
-  iconSpec.Append( NS_LITERAL_STRING(".ico") );
-  // ...and figure out where /chrome/... is within that
-  // (and skip the "resource:///chrome" part).
-  nsAutoString key(NS_LITERAL_STRING("/chrome/"));
-  PRInt32 n = iconSpec.Find( key ) + key.Length();
-  // Convert / to \.
-  nsAutoString slash(NS_LITERAL_STRING("/"));
-  nsAutoString bslash(NS_LITERAL_STRING("\\"));
-  iconSpec.ReplaceChar( *(slash.get()), *(bslash.get()) );
+  // Assume the given string is a local identifier for an icon file.
+  nsCOMPtr<nsILocalFile> iconFile;
+  ResolveIconName(aIconSpec, NS_LITERAL_STRING(".ico"),
+                  getter_AddRefs(iconFile));
 
-  // Append that to icon resource path.
-  iconPath.Append( iconSpec.get() + n - 1 );
+  // if the file was found, try to use it
+  if (iconFile) {
+    nsCAutoString path;
+    iconFile->GetNativePath(path);
 
-  nsCOMPtr<nsILocalFile> pathConverter;
-  if ( NS_SUCCEEDED( NS_NewLocalFile( iconPath,
-                                      PR_FALSE,
-                                      getter_AddRefs( pathConverter ) ) ) ) {
-    // Now try the char* path.
-    nsCAutoString aPath;
-    pathConverter->GetNativePath( aPath );
-    if (mFrameIcon) {
-      WinFreeFileIcon(mFrameIcon);
-      mFrameIcon = NULLHANDLE;
-    }
-    mFrameIcon = WinLoadFileIcon(aPath.get(), FALSE);
     if (mFrameIcon)
-      WinSendMsg(mFrameWnd, WM_SETICON, (MPARAM)mFrameIcon, (MPARAM)0);
+      WinFreeFileIcon(mFrameIcon);
+
+    mFrameIcon = WinLoadFileIcon(path.get(), FALSE);
+    hWorkingIcon = mFrameIcon;
   }
+
+  // if that doesn't work, use the app's icon (let's hope it can be
+  // loaded because nobody should have to look at SPTR_APPICON - ugggh!)
+  if (hWorkingIcon == 0) {
+    if (hDefaultIcon == 0) {
+      hDefaultIcon = WinLoadPointer(HWND_DESKTOP, 0, 1);
+      if (hDefaultIcon == 0)
+        hDefaultIcon =  WinQuerySysPointer(HWND_DESKTOP, SPTR_APPICON, FALSE);
+    }
+    hWorkingIcon = hDefaultIcon;
+  }
+
+  WinSendMsg(mFrameWnd, WM_SETICON, (MPARAM)hWorkingIcon, (MPARAM)0);
   return NS_OK;
 }
 
@@ -3816,7 +4145,7 @@ ULONG nsWindow::WindowStyle()
 ULONG nsWindow::GetFCFlags()
 {
   ULONG style = FCF_TITLEBAR | FCF_SYSMENU | FCF_TASKLIST |
-                FCF_CLOSEBUTTON | FCF_NOBYTEALIGN |
+                FCF_CLOSEBUTTON | FCF_NOBYTEALIGN | FCF_AUTOICON |
                 (gIsDBCS ? FCF_DBE_APPSTAT : 0);
 
   if (mWindowType == eWindowType_dialog) {

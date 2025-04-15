@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -133,7 +133,10 @@ nsresult nsMailboxProtocol::OpenMultipleMsgTransport(PRUint32 offset, PRInt32 si
       do_GetService(kStreamTransportServiceCID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = serv->CreateInputTransport(m_multipleMsgMoveCopyStream, offset, size, PR_FALSE, getter_AddRefs(m_transport));
+  // XXX 64-bit
+  rv = serv->CreateInputTransport(m_multipleMsgMoveCopyStream, nsInt64(offset),
+                                  nsInt64(size), PR_FALSE,
+                                  getter_AddRefs(m_transport));
 
   return rv;
 }
@@ -409,27 +412,31 @@ PRInt32 nsMailboxProtocol::DoneReadingMessage()
 
 PRInt32 nsMailboxProtocol::SetupMessageExtraction()
 {
-	// Determine the number of bytes we are going to need to read out of the 
-	// mailbox url....
-	nsCOMPtr<nsIMsgDBHdr> msgHdr;
-	nsresult rv = NS_OK;
-	
+  // Determine the number of bytes we are going to need to read out of the 
+  // mailbox url....
+  nsCOMPtr<nsIMsgDBHdr> msgHdr;
+  nsresult rv = NS_OK;
+  
   NS_ASSERTION(m_runningUrl, "Not running a url");
   if (m_runningUrl)
   {
-        nsCOMPtr<nsIMsgMessageUrl> msgUrl = do_QueryInterface(m_runningUrl, &rv);
-        NS_ENSURE_SUCCESS(rv,rv);
-	  rv = msgUrl->GetMessageHeader(getter_AddRefs(msgHdr));
-	  if (NS_SUCCEEDED(rv) && msgHdr)
-	  {
-		  PRUint32 messageSize = 0;
-		  msgHdr->GetMessageSize(&messageSize);
-		  m_runningUrl->SetMessageSize(messageSize);
-	  }
-    else
-      NS_ASSERTION(PR_FALSE, "couldn't get message header");
+    PRUint32 messageSize = 0;
+    m_runningUrl->GetMessageSize(&messageSize);
+    if (!messageSize)
+    {
+      nsCOMPtr<nsIMsgMessageUrl> msgUrl = do_QueryInterface(m_runningUrl, &rv);
+      NS_ENSURE_SUCCESS(rv,rv);
+      rv = msgUrl->GetMessageHeader(getter_AddRefs(msgHdr));
+      if (NS_SUCCEEDED(rv) && msgHdr)
+      {
+        msgHdr->GetMessageSize(&messageSize);
+        m_runningUrl->SetMessageSize(messageSize);
+      }
+      else
+        NS_ASSERTION(PR_FALSE, "couldn't get message header");
+    }
   }
-	return rv;
+  return rv;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////
@@ -465,7 +472,7 @@ nsresult nsMailboxProtocol::LoadUrl(nsIURI * aURL, nsISupports * aConsumer)
 
         // check if this is a filter plugin requesting the message.
         // in that case, set up a text converter
-        convertData = (queryStr.Find("header=filter") != kNotFound);
+        convertData = (queryStr.Find("header=filter") != kNotFound || queryStr.Find("header=attach") != kNotFound);
       }
       else if (m_mailboxAction == nsIMailboxUrl::ActionFetchPart)
       {
@@ -483,8 +490,8 @@ nsresult nsMailboxProtocol::LoadUrl(nsIURI * aURL, nsISupports * aConsumer)
           nsCOMPtr<nsIChannel> channel;
           QueryInterface(NS_GET_IID(nsIChannel), getter_AddRefs(channel));
 
-          rv = streamConverter->AsyncConvertData(NS_LITERAL_STRING("message/rfc822").get(),
-                                                 NS_LITERAL_STRING("*/*").get(),
+          rv = streamConverter->AsyncConvertData("message/rfc822",
+                                                 "*/*",
                                                  consumer, channel, getter_AddRefs(m_channelListener));
       }
       
@@ -656,7 +663,10 @@ PRInt32 nsMailboxProtocol::ReadMessageResponse(nsIInputStream * inputStream, PRU
   {
     PRInt32 contentLength = 0;
     GetContentLength(&contentLength);
-    mProgressEventSink->OnProgress(this, m_channelContext, mCurrentProgress, contentLength);
+    // XXX 64-bit
+    mProgressEventSink->OnProgress(this, m_channelContext,
+                                   nsUint64(mCurrentProgress),
+                                   nsUint64(contentLength));
   }
   
   if (NS_FAILED(rv)) return -1;

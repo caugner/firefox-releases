@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include <stdio.h>
@@ -39,7 +39,7 @@
 #include "nsIAtom.h"
 #include "nsCRT.h"
 #include "nsHTMLParts.h"
-#include "nsIHTMLContent.h"
+#include "nsGenericHTMLElement.h"
 #include "nsITextContent.h"
 #include "nsString.h"
 #include "nsIDocument.h"
@@ -49,7 +49,7 @@
 #include "nsIDOMText.h"
 #include "nsINameSpaceManager.h"
 
-void testAttributes(nsIHTMLContent* content) {
+void testAttributes(nsGenericHTMLElement* content) {
   nsIAtom* sBORDER = NS_NewAtom("border");
   nsIAtom* sHEIGHT = NS_NewAtom("height");
   nsIAtom* sSRC = NS_NewAtom("src");
@@ -61,15 +61,14 @@ void testAttributes(nsIHTMLContent* content) {
   content->SetAttribute(kNameSpaceID_None, sHEIGHT, sempty, PR_FALSE);
   content->SetAttribute(kNameSpaceID_None, sSRC, sfoo_gif, PR_FALSE);
 
-  nsHTMLValue ret;
-  nsresult rv;
-  rv = content->GetHTMLAttribute(sBORDER, ret);
-  if (rv == NS_CONTENT_ATTR_NOT_THERE || ret.GetUnit() != eHTMLUnit_String) {
+  const nsAttrValue* attr;
+  attr = content->GetParsedAttr(sBORDER);
+  if (!attr || attr->Type() != nsAttrValue::eString) {
     printf("test 0 failed\n");
   }
 
-  rv = content->GetHTMLAttribute(sBAD, ret);
-  if (rv != NS_CONTENT_ATTR_NOT_THERE) {
+  attr = content->GetParsedAttr(sBAD);
+  if (attr) {
     printf("test 2 failed\n");
   }
 
@@ -124,36 +123,36 @@ void testStrings(nsIDocument* aDoc) {
 
   PRBool val;
   // regular Equals
-  val = (NS_ConvertASCIItoUCS2("mrString")).Equals(NS_LITERAL_STRING("mrString")); // XXXjag
+  val = (NS_ConvertASCIItoUCS2("mrString")).EqualsLiteral("mrString"); // XXXjag
   if (PR_TRUE != val) {
     printf("test 0 failed\n");
   }
-  val = (NS_ConvertASCIItoUCS2("mrString")).Equals(NS_LITERAL_STRING("MRString")); // XXXjag
+  val = (NS_ConvertASCIItoUCS2("mrString")).EqualsLiteral("MRString"); // XXXjag
   if (PR_FALSE != val) {
     printf("test 1 failed\n");
   }
-  val = (NS_ConvertASCIItoUCS2("mrString")).Equals(NS_LITERAL_STRING("mrStri")); // XXXjag
+  val = (NS_ConvertASCIItoUCS2("mrString")).EqualsLiteral("mrStri"); // XXXjag
   if (PR_FALSE != val) {
     printf("test 2 failed\n");
   }
-  val = (NS_ConvertASCIItoUCS2("mrStri")).Equals(NS_LITERAL_STRING("mrString")); // XXXjag
+  val = (NS_ConvertASCIItoUCS2("mrStri")).EqualsLiteral("mrString"); // XXXjag
   if (PR_FALSE != val) {
     printf("test 3 failed\n");
   }
   // EqualsIgnoreCase
-  val = (NS_ConvertASCIItoUCS2("mrString")).EqualsIgnoreCase("mrString");
+  val = (NS_ConvertASCIItoUCS2("mrString")).LowerCaseEqualsLiteral("mrstring");
   if (PR_TRUE != val) {
     printf("test 4 failed\n");
   }
-  val = (NS_ConvertASCIItoUCS2("mrString")).EqualsIgnoreCase("mrStrinG");
+  val = (NS_ConvertASCIItoUCS2("mrString")).LowerCaseEqualsLiteral("mrstring");
   if (PR_TRUE != val) {
     printf("test 5 failed\n");
   }
-  val = (NS_ConvertASCIItoUCS2("mrString")).EqualsIgnoreCase("mrStri");
+  val = (NS_ConvertASCIItoUCS2("mrString")).LowerCaseEqualsLiteral("mrstri");
   if (PR_FALSE != val) {
     printf("test 6 failed\n");
   }
-  val = (NS_ConvertASCIItoUCS2("mrStri")).EqualsIgnoreCase("mrString");
+  val = (NS_ConvertASCIItoUCS2("mrStri")).LowerCaseEqualsLiteral("mrstring");
   if (PR_FALSE != val) {
     printf("test 7 failed\n");
   }
@@ -264,7 +263,12 @@ int main(int argc, char** argv)
   txt->AppendData(tmp);
   NS_RELEASE(txt);
 
-  text->SetDocument(myDoc, PR_FALSE, PR_TRUE);
+  rv = text->BindToTree(myDoc, nsnull, nsnull, PR_FALSE);
+  if (NS_FAILED(rv)) {
+    printf("Could not bind text content to tree.\n");
+    text->UnbindFromTree();
+    return -1;
+  }
 
 #if 0
   // Query ITextContent interface
@@ -284,22 +288,20 @@ int main(int argc, char** argv)
 #endif
 
   // Create a simple container.
-  nsIHTMLContent* container;
+  nsGenericHTMLElement* container;
   nsIAtom* li = NS_NewAtom("li");
 
-  nsCOMPtr<nsINodeInfoManager> nimgr;
   nsCOMPtr<nsINodeInfo> ni;
-  myDoc->GetNodeInfoManager(getter_AddRefs(nimgr));
-  nimgr->GetNodeInfo(li, nsnull, kNameSpaceID_None, *getter_AddRefs(ni));
+  myDoc->NodeInfoManager()->GetNodeInfo(li, nsnull, kNameSpaceID_None,
+                                        getter_AddRefs(ni));
 
   rv = NS_NewHTMLLIElement(&container,ni);
   if (NS_OK != rv) {
     printf("Could not create container.\n");
     return -1;
   }
-  container->SetDocument(myDoc, PR_FALSE, PR_TRUE);
 
-  container->AppendChildTo(text, PR_FALSE, PR_FALSE);
+  container->AppendChildTo(text, PR_FALSE);
   PRInt32 nk;
   container->ChildCount(nk);
   if (nk != 1) {

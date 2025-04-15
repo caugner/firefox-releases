@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is the TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Jonas Sicking.
@@ -21,7 +21,7 @@
  *
  * Contributor(s):
  *   Jonas Sicking <sicking@bigfoot.com>
- *   Peter Van der Beken <peterv@netscape.com>
+ *   Peter Van der Beken <peterv@propagandism.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -40,7 +40,7 @@
 #include "txXPathResultComparator.h"
 #include "Expr.h"
 #include "ExprResult.h"
-#include "primitives.h"
+#include "txCore.h"
 #ifndef TX_EXE
 #include "nsCollationCID.h"
 #include "nsILocale.h"

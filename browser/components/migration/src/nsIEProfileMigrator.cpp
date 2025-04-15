@@ -60,7 +60,6 @@
 #include "nsILocalFile.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
-#include "nsIServiceManagerUtils.h"
 #include "nsISimpleEnumerator.h"
 #include "nsISupportsArray.h"
 #include "nsIProfileMigrator.h"
@@ -302,11 +301,11 @@ TranslatePropFont(unsigned char *aRegValue, DWORD aRegValueLength,
   if (isSerif) {
     prefs->SetCharPref("font.name.serif.x-western",
                        NS_REINTERPRET_CAST(char *, aRegValue));
-    prefs->SetCharPref("font.default", "serif");
+    prefs->SetCharPref("font.default.x-western", "serif");
   } else {
     prefs->SetCharPref("font.name.sans-serif.x-western",
                        NS_REINTERPRET_CAST(char *, aRegValue));
-    prefs->SetCharPref("font.default", "sans-serif");
+    prefs->SetCharPref("font.default.x-western", "sans-serif");
   }
 }
 
@@ -492,6 +491,40 @@ nsIEProfileMigrator::GetSourceProfiles(nsISupportsArray** aResult)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsIEProfileMigrator::GetSourceHomePageURL(nsACString& aResult)
+{
+  HKEY            regKey;
+  DWORD           regType;
+  DWORD           regLength;
+  unsigned char   regValue[MAX_PATH];
+  nsresult        rv;
+  
+  if (::RegOpenKeyEx(HKEY_CURRENT_USER, 
+                     "Software\\Microsoft\\Internet Explorer\\Main",
+                     0, KEY_READ, &regKey) != ERROR_SUCCESS)
+    return NS_OK;
+
+  // read registry data
+  regLength = MAX_PATH;
+  if (::RegQueryValueEx(regKey, "Start Page", 0,
+                        &regType, regValue, &regLength) == ERROR_SUCCESS) {
+
+    if (regType == REG_SZ) {
+      regValue[MAX_PATH] = '\0';
+      nsCAutoString  homePageURL;
+      nsCOMPtr<nsIURI> homePageURI;
+      NS_NewURI(getter_AddRefs(homePageURI), NS_REINTERPRET_CAST(char *, regValue), nsnull, nsnull);
+      rv = homePageURI->GetSpec(homePageURL);
+
+      if (NS_SUCCEEDED(rv) && !homePageURL.IsEmpty())
+        aResult.Assign(homePageURL);
+    }
+  }
+  ::RegCloseKey(regKey);
+  return NS_OK;
+}
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // nsIEProfileMigrator
@@ -557,9 +590,14 @@ nsIEProfileMigrator::CopyHistory(PRBool aReplace)
           // 3 - URL
           url = statURL.pwcsUrl;
 
-          nsDependentCString urlStr((const char *) url);
-          if (NS_FAILED(ios->ExtractScheme(urlStr, scheme)))
+          NS_ConvertUTF16toUTF8 urlStr(url);
+
+          if (NS_FAILED(ios->ExtractScheme(urlStr, scheme))) {
+            ::CoTaskMemFree(statURL.pwcsUrl);    
+            if (statURL.pwcsTitle) 
+              ::CoTaskMemFree(statURL.pwcsTitle);
             continue;
+          }
           ToLowerCase(scheme);
 
           // XXXben - 
@@ -579,13 +617,14 @@ nsIEProfileMigrator::CopyHistory(PRBool aReplace)
             if (uri) {
               if (tempTitle) 
                 hist->AddPageWithDetails(uri, tempTitle, lastVisited);
-              else {
-                NS_ConvertUTF8toUTF16 urlTitle(urlStr);
-                hist->AddPageWithDetails(uri, urlTitle.get(), lastVisited);
-              }
+              else
+                hist->AddPageWithDetails(uri, url, lastVisited);
             }
           }
+          ::CoTaskMemFree(statURL.pwcsUrl);    
         }
+        if (statURL.pwcsTitle) 
+          ::CoTaskMemFree(statURL.pwcsTitle);    
       }
       nsCOMPtr<nsIRDFRemoteDataSource> ds(do_QueryInterface(hist));
       if (ds)
@@ -1232,13 +1271,9 @@ nsIEProfileMigrator::ResolveShortcut(const nsAFlatString &aFileName, char** aOut
         result = urlLink->GetURL(&lpTemp);
         if (SUCCEEDED(result) && lpTemp) {
           *aOutURL = PL_strdup(lpTemp);
+
           // free the string that GetURL alloc'd
-          IMalloc* pMalloc;
-          result = SHGetMalloc(&pMalloc);
-          if (SUCCEEDED(result)) {
-            pMalloc->Free(lpTemp);
-            pMalloc->Release();
-          } 
+          ::CoTaskMemFree(lpTemp);
         }
       }
       urlFile->Release();

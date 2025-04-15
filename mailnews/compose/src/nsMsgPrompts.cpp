@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,22 +22,21 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsMsgPrompts.h"
 
 #include "nsMsgCopy.h"
-#include "nsIPref.h"
 #include "nsIMsgStringService.h"
 #include "nsIPrompt.h"
 #include "nsIWindowWatcher.h"
@@ -61,12 +60,12 @@ nsMsgBuildErrorMessageByID(PRInt32 msgID, nsString& retval, nsString* param0, ns
     nsString target;
     if (param0)
     {
-      target.Assign(NS_LITERAL_STRING("%P0%"));
+      target.AssignLiteral("%P0%");
       retval.ReplaceSubstring(target, *param0);
     }
     if (param1)
     {
-      target.Assign(NS_LITERAL_STRING("%P1%"));
+      target.AssignLiteral("%P1%");
       retval.ReplaceSubstring(target, *param1);
     }
   }
@@ -153,3 +152,59 @@ nsMsgAskBooleanQuestionByString(nsIPrompt * aPrompt, const PRUnichar * msg, PRBo
 
   return NS_OK;
 }     
+
+// returns 0 (send in UTF-8) in case of error
+PRInt32
+nsMsgAskAboutUncoveredCharacters(nsIPrompt * aPrompt)
+{
+  PRInt32 result;
+  nsCOMPtr<nsIPrompt> dialog = aPrompt;
+
+  if (!dialog)
+  {
+    nsCOMPtr<nsIWindowWatcher> wwatch(do_GetService(NS_WINDOWWATCHER_CONTRACTID));
+    if (wwatch)
+      wwatch->GetNewPrompter(0, getter_AddRefs(dialog));
+  }
+
+  NS_ENSURE_TRUE(dialog, 0);
+
+  nsCOMPtr<nsIStringBundleService> bundleService =
+    do_GetService(NS_STRINGBUNDLE_CONTRACTID);
+  NS_ENSURE_TRUE(bundleService, 0);
+
+  nsCOMPtr<nsIStringBundle> composeBundle;
+  bundleService->CreateBundle("chrome://messenger/locale/messengercompose/"
+                              "composeMsgs.properties",
+                               getter_AddRefs(composeBundle));
+  NS_ENSURE_TRUE(composeBundle, 0);
+
+  nsXPIDLString title;
+  nsXPIDLString msg;
+  nsXPIDLString button0;
+  nsXPIDLString button1;
+
+  composeBundle->
+    GetStringFromName(NS_LITERAL_STRING("initErrorDlogTitle").get(),
+                      getter_Copies(title));
+  composeBundle->
+    GetStringFromID(NS_ERROR_GET_CODE(NS_ERROR_MSG_MULTILINGUAL_SEND),
+                    getter_Copies(msg));
+  composeBundle->
+    GetStringFromName(NS_LITERAL_STRING("sendInUTF8").get(),
+                      getter_Copies(button0));
+  composeBundle->
+    GetStringFromName(NS_LITERAL_STRING("sendAnyway").get(),
+                      getter_Copies(button1));
+
+  nsresult rv = dialog->
+    ConfirmEx(title, msg, 
+              nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_0 +
+              nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_1 +
+              nsIPrompt::BUTTON_TITLE_CANCEL * nsIPrompt::BUTTON_POS_2 +
+              nsIPrompt::BUTTON_POS_0_DEFAULT,
+              button0, button1, nsnull, nsnull, 0, &result);
+
+  NS_ENSURE_SUCCESS(rv, 0);
+  return result;
+}

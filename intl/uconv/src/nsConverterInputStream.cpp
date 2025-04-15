@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,35 +14,36 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsConverterInputStream.h"
+#include "nsIInputStream.h"
 #include "nsICharsetConverterManager.h"
 #include "nsIServiceManager.h"
 
 #define CONVERTER_BUFFER_SIZE 8192
 
-NS_IMPL_ISUPPORTS1(nsConverterInputStream, nsIConverterInputStream)
+NS_IMPL_ISUPPORTS3(nsConverterInputStream, nsIConverterInputStream,
+                   nsIUnicharInputStream, nsIUnicharLineInputStream)
     
 static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
 
@@ -50,8 +51,11 @@ NS_IMETHODIMP
 nsConverterInputStream::Init(nsIInputStream* aStream,
                              const char *aCharset,
                              PRInt32 aBufferSize,
-                             PRBool aRecoverFromErrors)
+                             PRUnichar aReplacementChar)
 {
+    if (!aCharset)
+        aCharset = "UTF-8";
+
     nsresult rv;
 
     if (aBufferSize <=0) aBufferSize=CONVERTER_BUFFER_SIZE;
@@ -72,7 +76,7 @@ nsConverterInputStream::Init(nsIInputStream* aStream,
     if (NS_FAILED(rv)) return rv;
 
     mInput = aStream;
-    mRecoverFromErrors = aRecoverFromErrors;
+    mReplacementChar = aReplacementChar;
     
     return NS_OK;
 }
@@ -80,11 +84,13 @@ nsConverterInputStream::Init(nsIInputStream* aStream,
 NS_IMETHODIMP
 nsConverterInputStream::Close()
 {
+    nsresult rv = mInput ? mInput->Close() : NS_OK;
+    PR_FREEIF(mLineBuffer);
     mInput = nsnull;
     mConverter = nsnull;
     mByteData = nsnull;
     mUnicharData = nsnull;
-    return NS_OK;
+    return rv;
 }
 
 NS_IMETHODIMP
@@ -93,22 +99,22 @@ nsConverterInputStream::Read(PRUnichar* aBuf,
                              PRUint32 *aReadCount)
 {
   NS_ASSERTION(mUnicharDataLength >= mUnicharDataOffset, "unsigned madness");
-  PRUint32 rv = mUnicharDataLength - mUnicharDataOffset;
-  if (0 == rv) {
+  PRUint32 readCount = mUnicharDataLength - mUnicharDataOffset;
+  if (0 == readCount) {
     // Fill the unichar buffer
-    rv = Fill(&mLastErrorCode);
-    if (rv == 0) {
+    readCount = Fill(&mLastErrorCode);
+    if (readCount == 0) {
       *aReadCount = 0;
       return mLastErrorCode;
     }
   }
-  if (rv > aCount) {
-    rv = aCount;
+  if (readCount > aCount) {
+    readCount = aCount;
   }
   memcpy(aBuf, mUnicharData->GetBuffer() + mUnicharDataOffset,
-         rv * sizeof(PRUnichar));
-  mUnicharDataOffset += rv;
-  *aReadCount = rv;
+         readCount * sizeof(PRUnichar));
+  mUnicharDataOffset += readCount;
+  *aReadCount = readCount;
   return NS_OK;
 }
 
@@ -152,6 +158,32 @@ nsConverterInputStream::ReadSegments(nsWriteUnicharSegmentFun aWriter,
 
   *aReadCount = totalBytesWritten;
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsConverterInputStream::ReadString(PRUint32 aCount, nsAString& aString,
+                                   PRUint32* aReadCount)
+{
+  NS_ASSERTION(mUnicharDataLength >= mUnicharDataOffset, "unsigned madness");
+  PRUint32 readCount = mUnicharDataLength - mUnicharDataOffset;
+  if (0 == readCount) {
+    // Fill the unichar buffer
+    readCount = Fill(&mLastErrorCode);
+    if (readCount == 0) {
+      *aReadCount = 0;
+      return mLastErrorCode;
+    }
+  }
+  if (readCount > aCount) {
+    readCount = aCount;
+  }
+  const PRUnichar* buf = NS_REINTERPRET_CAST(const PRUnichar*, 
+                                             mUnicharData->GetBuffer() +
+                                             mUnicharDataOffset);
+  aString.Assign(buf, readCount);
+  mUnicharDataOffset += readCount;
+  *aReadCount = readCount;
   return NS_OK;
 }
 
@@ -209,11 +241,11 @@ nsConverterInputStream::Fill(nsresult * aErrorCode)
     // the erroneous byte sequence and try again.  This is not quite
     // possible right now -- see bug 160784
     srcConsumed += srcLen;
-    if (NS_FAILED(*aErrorCode) && mRecoverFromErrors) {
+    if (NS_FAILED(*aErrorCode) && mReplacementChar) {
       NS_ASSERTION(0 < mUnicharData->GetBufferSize() - mUnicharDataLength,
                    "Decoder returned an error but filled the output buffer! "
                    "Should not happen.");
-      mUnicharData->GetBuffer()[mUnicharDataLength++] = (PRUnichar)0xFFFD;
+      mUnicharData->GetBuffer()[mUnicharDataLength++] = mReplacementChar;
       ++srcConsumed;
       // XXX this is needed to make sure we don't underrun our buffer;
       // bug 160784 again
@@ -222,10 +254,20 @@ nsConverterInputStream::Fill(nsresult * aErrorCode)
     }
     NS_ASSERTION(srcConsumed <= mByteData->GetLength(),
                  "Whoa.  The converter should have returned NS_OK_UDEC_MOREINPUT before this point!");
-  } while (mRecoverFromErrors &&
+  } while (mReplacementChar &&
            NS_FAILED(*aErrorCode));
 
   mLeftOverBytes = mByteData->GetLength() - srcConsumed;
 
   return mUnicharDataLength;
+}
+
+NS_IMETHODIMP
+nsConverterInputStream::ReadLine(nsAString& aLine, PRBool* aResult)
+{
+  if (!mLineBuffer) {
+    nsresult rv = NS_InitLineBuffer(&mLineBuffer);
+    if (NS_FAILED(rv)) return rv;
+  }
+  return NS_ReadLine(this, mLineBuffer, aLine, aResult);
 }

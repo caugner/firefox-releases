@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,18 +23,17 @@
  *   Daniel Glazman <glazman@netscape.com>
  *   Kathleen Brade <brade@netscape.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -49,6 +48,7 @@
 #include "nsITableEditor.h"
 #include "nsIEditorMailSupport.h"
 #include "nsIEditorStyleSheets.h"
+#include "nsITextServicesDocument.h"
 
 #include "nsEditor.h"
 #include "nsIDOMElement.h"
@@ -56,13 +56,11 @@
 #include "nsICSSLoader.h"
 #include "nsICSSLoaderObserver.h"
 #include "nsITableLayout.h"
-#include "nsIRangeUtils.h"
 
 #include "nsEditRules.h"
 
 #include "nsEditProperty.h"
 #include "nsHTMLCSSUtils.h"
-#include "nsIParserService.h"
 
 #include "nsVoidArray.h"
 
@@ -84,6 +82,8 @@ class nsIClipboard;
 class TypeInState;
 class nsIContentFilter;
 class nsIURL;
+class nsIRangeUtils;
+class nsILinkHandler;
 
 /**
  * The HTML editor implementation.<br>
@@ -327,10 +327,6 @@ public:
   /** Internal, static version */
   static nsresult NodeIsBlockStatic(nsIDOMNode *aNode, PRBool *aIsBlock);
 
-
-  /** we override this here to install event listeners */
-  NS_IMETHOD PostCreate();
-
   NS_IMETHOD GetFlags(PRUint32 *aFlags);
   NS_IMETHOD SetFlags(PRUint32 aFlags);
 
@@ -444,12 +440,10 @@ protected:
 
   NS_IMETHOD  InitRules();
 
-  /** install the event listeners for the editor 
-    * used to be part of Init, but now broken out into a separate method
-    * called by PostCreate, giving the caller the chance to interpose
-    * their own listeners before we install our own backstops.
-    */
-  NS_IMETHOD InstallEventListeners();
+  // Create the event listeners for the editor to install
+  virtual nsresult CreateEventListeners();
+
+  virtual void RemoveEventListeners();
 
   /** returns the layout object (nsIFrame in the real world) for aNode
     * @param aNode          the content to get a frame for
@@ -659,9 +653,6 @@ protected:
                                      PRInt32 aHighWaterMark);
   nsIDOMNode* GetArrayEndpoint(PRBool aEnd, nsCOMArray<nsIDOMNode>& aNodeArray);
 
-  /** simple utility to handle any error with event listener allocation or registration */
-  void HandleEventListenerError();
-
   /* small utility routine to test if a break node is visible to user */
   PRBool   IsVisBreak(nsIDOMNode *aNode);
 
@@ -746,8 +737,6 @@ protected:
   nsresult GetFirstEditableLeaf( nsIDOMNode *aNode, nsCOMPtr<nsIDOMNode> *aOutFirstLeaf);
   nsresult GetLastEditableLeaf( nsIDOMNode *aNode, nsCOMPtr<nsIDOMNode> *aOutLastLeaf);
 
-  nsresult GetDOMEventReceiver(nsIDOMEventReceiver **aEventReceiver);
-
   //XXX Kludge: Used to suppress spurious drag/drop events (bug 50703)
   PRBool   mIgnoreSpuriousDragEvent;
 
@@ -769,45 +758,35 @@ protected:
 
   TypeInState*         mTypeInState;
 
-  nsCOMPtr<nsIAtom>    mBoldAtom;
-  nsCOMPtr<nsIAtom>    mItalicAtom;
-  nsCOMPtr<nsIAtom>    mUnderlineAtom;
-  nsCOMPtr<nsIAtom>    mFontAtom;
-  nsCOMPtr<nsIAtom>    mLinkAtom;
-
   nsCOMPtr<nsIDOMNode> mCachedNode;
-  
-  PRBool   mCachedBoldStyle;
-  PRBool   mCachedItalicStyle;
-  PRBool   mCachedUnderlineStyle;
-  nsString mCachedFontName;
 
-  // Used to disable HTML formatting commands during HTML source editing
-  PRBool   mCanEditHTML;
+  PRPackedBool mCRInParagraphCreatesParagraph;
+
+  PRPackedBool mCSSAware;
+  nsHTMLCSSUtils *mHTMLCSSUtils;
 
   // Used by GetFirstSelectedCell and GetNextSelectedCell
   PRInt32  mSelectedCellIndex;
 
-  nsCOMPtr<nsIRangeUtils> mRangeHelper;
-
   nsString mLastStyleSheetURL;
   nsString mLastOverrideStyleSheetURL;
-
-  PRBool mCSSAware;
-  nsHTMLCSSUtils *mHTMLCSSUtils;
 
   // Maintain a list of associated style sheets and their urls.
   nsStringArray mStyleSheetURLs;
   nsCOMArray<nsICSSStyleSheet> mStyleSheets;
-  PRInt32 mNumStyleSheets;
   
   // an array for holding default style settings
   nsVoidArray mDefaultStyles;
 
-  // Maintain a static parser service ...
-  static nsCOMPtr<nsIParserService> sParserService;
-  // ... which means that we need an instance count to know when to delete it
-  static PRInt32 sInstanceCount;
+   // for real-time spelling
+   nsCOMPtr<nsITextServicesDocument> mTextServices;
+
+  // And a static range utils service
+  static nsIRangeUtils* sRangeHelper;
+
+public:
+  // ... which means that we need to listen to shutdown
+  static void Shutdown();
 
 protected:
 
@@ -864,7 +843,6 @@ protected:
   nsCOMPtr<nsIDOMElement> mResizedObject;
 
   nsCOMPtr<nsIDOMEventListener>  mMouseMotionListenerP;
-  nsCOMPtr<nsIDOMEventListener>  mMutationListenerP;
   nsCOMPtr<nsISelectionListener> mSelectionListenerP;
   nsCOMPtr<nsIDOMEventListener>  mResizeEventListenerP;
 
@@ -961,6 +939,8 @@ protected:
 
   void     AddMouseClickListener(nsIDOMElement * aElement);
   void     RemoveMouseClickListener(nsIDOMElement * aElement);
+
+  nsCOMPtr<nsILinkHandler> mLinkHandler;
 
 public:
 

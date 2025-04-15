@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Adam D. Moss <adam@gimp.org>
- * Seth Spitzer <sspitzer@netscape.com>
+ *   Adam D. Moss <adam@gimp.org>
+ *   Seth Spitzer <sspitzer@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -278,7 +278,7 @@ LocateSpoolFile(nsACString & spoolPath)
     nsresult rv;
 
     nsCOMPtr<nsILocalFile> spoolFile;
-    rv = NS_NewNativeLocalFile(nsCString(), PR_TRUE, getter_AddRefs(spoolFile));
+    rv = NS_NewNativeLocalFile(EmptyCString(), PR_TRUE, getter_AddRefs(spoolFile));
     NS_ENSURE_SUCCESS(rv, rv);
 
     char * mailEnv = PR_GetEnv("MAIL");
@@ -396,7 +396,7 @@ nsMovemailService::GetNewMail(nsIMsgWindow *aMsgWindow,
     // Try and obtain the lock for the spool file
     if (!ObtainSpoolLock(spoolPath.get(), 5)) {
         nsAutoString lockFile = NS_ConvertUTF8toUCS2(spoolPath);
-        lockFile += NS_LITERAL_STRING(".lock");
+        lockFile.AppendLiteral(".lock");
         const PRUnichar *params[] = {
             lockFile.get()
         };
@@ -425,10 +425,10 @@ nsMovemailService::GetNewMail(nsIMsgWindow *aMsgWindow,
 
         // 'From' lines delimit messages
         if (isMore && !strncmp(buffer.get(), "From ", 5)) {
-            buffer = NS_LITERAL_CSTRING("X-Mozilla-Status: 8000" MSG_LINEBREAK);
+            buffer.AssignLiteral("X-Mozilla-Status: 8000" MSG_LINEBREAK);
             newMailParser->HandleLine(buffer.BeginWriting(), buffer.Length());
             outFileStream << buffer.get();
-            buffer = NS_LITERAL_CSTRING("X-Mozilla-Status2: 00000000" MSG_LINEBREAK);
+            buffer.AssignLiteral("X-Mozilla-Status2: 00000000" MSG_LINEBREAK);
             newMailParser->HandleLine(buffer.BeginWriting(), buffer.Length());
             outFileStream << buffer.get();
         }
@@ -451,7 +451,7 @@ nsMovemailService::GetNewMail(nsIMsgWindow *aMsgWindow,
 
     if (!YieldSpoolLock(spoolPath.get())) {
         nsAutoString spoolLock = NS_ConvertUTF8toUCS2(spoolPath);
-        spoolLock += NS_LITERAL_STRING(".lock");
+        spoolLock.AppendLiteral(".lock");
         const PRUnichar *params[] = {
             spoolLock.get()
         };

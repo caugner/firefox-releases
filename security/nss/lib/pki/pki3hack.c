@@ -1,38 +1,41 @@
-/* 
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifdef DEBUG
-static const char CVS_ID[] = "@(#) $RCSfile: pki3hack.c,v $ $Revision: 1.79.20.1 $ $Date: 2004/10/15 21:13:55 $ $Name: FIREFOX_1_0_RELEASE $";
+static const char CVS_ID[] = "@(#) $RCSfile: pki3hack.c,v $ $Revision: 1.86 $ $Date: 2005/03/04 04:32:04 $";
 #endif /* DEBUG */
 
 /*
@@ -70,6 +73,7 @@ static const char CVS_ID[] = "@(#) $RCSfile: pki3hack.c,v $ $Revision: 1.79.20.1
 #include "pk11func.h"
 #include "pkistore.h"
 #include "secmod.h"
+#include "nssrwlk.h"
 
 NSSTrustDomain *g_default_trust_domain = NULL;
 
@@ -389,39 +393,39 @@ nss3certificate_isNewerThan(nssDecodedCert *dc, nssDecodedCert *cmpdc)
 
 /* CERT_FilterCertListByUsage */
 static PRBool
-nss3certificate_matchUsage(nssDecodedCert *dc, NSSUsage *usage)
+nss3certificate_matchUsage(nssDecodedCert *dc, const NSSUsage *usage)
 {
+    CERTCertificate *cc;
+    unsigned int requiredKeyUsage = 0;
+    unsigned int requiredCertType = 0;
     SECStatus secrv;
-    unsigned int requiredKeyUsage;
-    unsigned int requiredCertType;
-    unsigned int certType;
     PRBool match;
-    CERTCertificate *cc = (CERTCertificate *)dc->data;
-    SECCertUsage secUsage = usage->nss3usage;
-    PRBool ca = usage->nss3lookingForCA;
+    PRBool ca;
 
     /* This is for NSS 3.3 functions that do not specify a usage */
     if (usage->anyUsage) {
 	return PR_TRUE;
     }
-    secrv = CERT_KeyUsageAndTypeForCertUsage(secUsage, ca,
+    ca = usage->nss3lookingForCA;
+    secrv = CERT_KeyUsageAndTypeForCertUsage(usage->nss3usage, ca,
                                              &requiredKeyUsage,
                                              &requiredCertType);
     if (secrv != SECSuccess) {
 	return PR_FALSE;
     }
-    match = PR_TRUE;
+    cc = (CERTCertificate *)dc->data;
     secrv = CERT_CheckKeyUsage(cc, requiredKeyUsage);
-    if (secrv != SECSuccess) {
-	match = PR_FALSE;
-    }
-    if (ca) {
-	(void)CERT_IsCACert(cc, &certType);
-    } else {
-	certType = cc->nsCertType;
-    }
-    if (!(certType & requiredCertType)) {
-	match = PR_FALSE;
+    match = (PRBool)(secrv == SECSuccess);
+    if (match) {
+	unsigned int certType = 0;
+	if (ca) {
+	    (void)CERT_IsCACert(cc, &certType);
+	} else {
+	    certType = cc->nsCertType;
+	}
+	if (!(certType & requiredCertType)) {
+	    match = PR_FALSE;
+	}
     }
     return match;
 }
@@ -574,6 +578,10 @@ cert_trust_from_stan_trust(NSSTrust *t, PRArenaPool *arena)
     rvTrust->sslFlags |= client;
     rvTrust->emailFlags = get_nss3trust_from_nss4trust(t->emailProtection);
     rvTrust->objectSigningFlags = get_nss3trust_from_nss4trust(t->codeSigning);
+    /* The cert is a valid step-up cert (in addition to/lieu of trust above */
+    if (t->stepUpApproved) {
+	rvTrust->sslFlags |= CERTDB_GOVT_APPROVED_CA;
+    }
     return rvTrust;
 }
 
@@ -829,7 +837,7 @@ STAN_GetCERTCertificate(NSSCertificate *c)
     return stan_GetCERTCertificate(c, PR_FALSE);
 }
 /*
- * Many callers of STAN_GetCERTCertificate() intend that
+ * many callers of STAN_GetCERTCertificate() intend that
  * the CERTCertificate returned inherits the reference to the 
  * NSSCertificate. For these callers it's convenient to have 
  * this function 'own' the reference and either return a valid 
@@ -1026,6 +1034,8 @@ STAN_ChangeCertTrust(CERTCertificate *cc, CERTCertTrust *trust)
     nssTrust->clientAuth = get_stan_trust(trust->sslFlags, PR_TRUE);
     nssTrust->emailProtection = get_stan_trust(trust->emailFlags, PR_FALSE);
     nssTrust->codeSigning = get_stan_trust(trust->objectSigningFlags, PR_FALSE);
+    nssTrust->stepUpApproved = 
+                    (PRBool)(trust->sslFlags & CERTDB_GOVT_APPROVED_CA);
     if (c->object.cryptoContext != NULL) {
 	/* The cert is in a context, set the trust there */
 	NSSCryptoContext *cc = c->object.cryptoContext;
@@ -1092,7 +1102,8 @@ STAN_ChangeCertTrust(CERTCertificate *cc, CERTCertTrust *trust)
 	                                   nssTrust->serverAuth,
 	                                   nssTrust->clientAuth,
 	                                   nssTrust->codeSigning,
-	                                   nssTrust->emailProtection, PR_TRUE);
+	                                   nssTrust->emailProtection,
+	                                   nssTrust->stepUpApproved, PR_TRUE);
 	/* If the selected token can't handle trust, dump the trust on 
 	 * the internal token */
 	if (!newInstance && !PK11_IsInternal(tok->pk11slot)) {
@@ -1122,7 +1133,8 @@ STAN_ChangeCertTrust(CERTCertificate *cc, CERTCertTrust *trust)
 	                                   nssTrust->serverAuth,
 	                                   nssTrust->clientAuth,
 	                                   nssTrust->codeSigning,
-	                                   nssTrust->emailProtection, PR_TRUE);
+	                                   nssTrust->emailProtection,
+	                                   nssTrust->stepUpApproved, PR_TRUE);
 	}
 	if (newInstance) {
 	    nssCryptokiObject_Destroy(newInstance);

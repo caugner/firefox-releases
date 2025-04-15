@@ -15,7 +15,7 @@
       </xul:vbox>
     </content>
   
-    <implementation>
+    <implementation implements="nsIConsoleListener">
       <field name="limit" readonly="true">
         250
       </field>
@@ -70,20 +70,15 @@
         <body><![CDATA[
           this.mCount = 0;
           
-          this.mConsoleListener = {
-            console: this, 
-            observe : function(aObject) { this.console.appendItem(aObject); }
-          };
-          
           this.mConsoleRowBox = document.getAnonymousElementByAttribute(this, "role", "console-rows");
           this.mStrBundle = document.getAnonymousElementByAttribute(this, "role", "string-bundle");
           
           try {
-            var isupports = Components.classes['@mozilla.org/consoleservice;1'].getService();
-            this.mCService = isupports.QueryInterface(Components.interfaces.nsIConsoleService);
-            this.mCService.registerListener(this.mConsoleListener);
+            this.mCService = Components.classes['@mozilla.org/consoleservice;1']
+                           .getService(Components.interfaces.nsIConsoleService);
+            this.mCService.registerListener(this);
           } catch (ex) {
-            appendItem(
+            this.appendMessage(
               "Unable to display errors - couldn't get Console Service component. " +
               "(Missing @mozilla.org/consoleservice;1)");
             return;
@@ -97,7 +92,7 @@
     
       <method name="destroy">
         <body><![CDATA[
-          this.mCService.unregisterListener(this.mConsoleListener);
+          this.mCService.unregisterListener(this);
         ]]></body>
       </method>
     
@@ -121,33 +116,45 @@
         
           // Populate with messages after latest "clear"
           while (++i < messages.length)
-            this.appendItem(messages[i]);
+            this.observe(messages[i]);
         ]]></body>
       </method>
 
-      <method name="appendItem">
-        <parameter name="aObject"/>
+      <!-- nsIConsoleListener -->
+      <method name="observe">
+        <parameter name="aConsoleMessage"/>
         <body><![CDATA[
-          if (!aObject.message) return;
-
+          /* This method may be called in cases where the code
+           * called by this method has thrown an exception because
+           * some resource ran OUT OF MEMORY (OOM).
+           *
+           * This method must not throw an exception, because
+           * an exception thrown by it could be asynchrounously
+           * dispatched back to this method resulting in an
+           * asynchronous loop - bug 288544.
+           *
+           * If you need any try/catch handling for code in this
+           * function, please stick it in its own try block inside
+           * the main try block. Do *NOT* use the main try block.
+           */
           try {
-            // Try to QI it to a script error to get more info
-            var scriptError = aObject.QueryInterface(Components.interfaces.nsIScriptError);
-            
-            // filter chrome urls
-            if (!this.showChromeErrors && scriptError.sourceName.substr(0, 9) == "chrome://")
-              return;
+            if (aConsoleMessage instanceof 
+                Components.interfaces.nsIScriptError) {
+              // filter chrome urls
+              if (!this.showChromeErrors &&
+                  /^chrome:/.test(aConsoleMessage.sourceName))
+                return;
  
-            this.appendError(scriptError);
-          } catch (ex) {
-            try {
-              // Try to QI it to a console message
-              var msg = aObject.QueryInterface(Components.interfaces.nsIConsoleMessage);
-              this.appendMessage(msg.message);
-            } catch (ex2) {
-              // Give up and append the object itself as a string
-              this.appendMessage(aObject);
+              this.appendError(aConsoleMessage);
+            } else if (aConsoleMessage.message) {
+              this.appendMessage(aConsoleMessage.message);
             }
+          } catch (e) {
+            /* This catch block is for bug 288544,
+             * if you want to handle some edge case, please
+             * make your own inner try block inside preceding
+             * try block. Do *NOT* stick any code in here.
+             */
           }
         ]]></body>
       </method>
@@ -164,7 +171,7 @@
           var typetext = warning ? "typeWarning" : "typeError";
           row.setAttribute("typetext", this.mStrBundle.getString(typetext));
           row.setAttribute("type", warning ? "warning" : "error");
-          row.setAttribute("msg", aObject.message);
+          row.setAttribute("msg", aObject.errorMessage);
           if (aObject.lineNumber || aObject.sourceName) {
             row.setAttribute("url", aObject.sourceName);
             row.setAttribute("line", aObject.lineNumber);
@@ -369,7 +376,7 @@
     </content>
 
     <handlers>
-      <handler event="click"><![CDATA[
+      <handler event="click" button="0"><![CDATA[
           var url = this.getAttribute("url");
           var line = getAttribute("line");  
           window.openDialog(

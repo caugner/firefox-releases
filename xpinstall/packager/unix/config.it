@@ -1,9 +1,13 @@
 ;-------------------------------------------------------------------------
 [General]
 ;-------------------------------------------------------------------------
-Default Location=/usr/local/mozilla
+Default Location=/usr/local/$AppName$
 ; *** LOCALIZE ME BABY ***
-Title=Mozilla Installer
+Title=$AppDisplayName$ Installer
+; The Default Setup Type value must exactly match the "Description Short"
+; value of the desired setup type.
+; *** LOCALIZE ME BABY ***
+Default Setup Type=Typical
 
 
 ;-------------------------------------------------------------------------
@@ -17,7 +21,7 @@ ObjectToIgnore1=install.log
 [Dialog Welcome]
 ;-------------------------------------------------------------------------
 Show Dialog=TRUE
-Title=Mozilla Installer
+Title=$AppDisplayName$ Installer
 Readme File=README
 
 
@@ -25,15 +29,14 @@ Readme File=README
 [Dialog License]
 ;-------------------------------------------------------------------------
 Show Dialog=TRUE
-Title=Mozilla Installer
+Title=$AppDisplayName$ Installer
 License File=MPL-1.1.txt
 
 
 ;-------------------------------------------------------------------------
 [Dialog Setup Type]
 ;-------------------------------------------------------------------------
-Show Dialog=TRUE
-Title=Mozilla Installer
+Title=$AppDisplayName$ Installer
 ; *** LOCALIZE ME BABY ***
 Message0=Please select the setup type you wish to install.
 
@@ -50,12 +53,13 @@ C4=Component5
 C5=Component6
 C6=Component7
 C7=Component8
+C8=Component11
 
 [Setup Type1]
 ; *** LOCALIZE ME BABY ***
 Description Short=Complete
 ; *** LOCALIZE ME BABY ***
-Description Long=Navigator, Mail & News, Spellchecker, Chatzilla, Debugger, and Inspector
+Description Long=Navigator, Mail & News, Spellchecker, Chatzilla, Debugger, Inspector, and Reporter
 C0=Component0
 C1=Component1
 C2=Component2
@@ -68,6 +72,7 @@ C8=Component8
 C9=Component9
 C10=Component10
 C11=Component11
+C12=Component12
 
 [Setup Type2]
 ; *** LOCALIZE ME BABY ***
@@ -99,13 +104,13 @@ C8=Component8
 C9=Component9
 C10=Component10
 C11=Component11
+C12=Component12
 
 
 ;-------------------------------------------------------------------------
 [Dialog Select Components]
 ;-------------------------------------------------------------------------
-Show Dialog=TRUE
-Title=Mozilla Installer
+Title=$AppDisplayName$ Installer
 ; *** LOCALIZE ME BABY ***
 Message0=Please select the components you wish to install.
 
@@ -162,7 +167,7 @@ URL0=$URLPath$
 [Component5]
 Description Short=Quality Feedback Agent
 ; *** LOCALIZE ME BABY ***
-Description Long=for reporting Mozilla crash information
+Description Long=for reporting $AppDisplayName$ crash information
 Archive=talkback.xpi
 Install Size=1960
 Archive Size=812
@@ -229,11 +234,21 @@ $InstallSizeArchive$:spellcheck.xpi
 Attributes=SELECTED
 URL0=$URLPath$
 
+[Component12]
+Description Short=Website Reporter
+; *** LOCALIZE ME BABY ***
+Description Long=Website Reporter
+Archive=reporter.xpi
+$InstallSize$:reporter
+$InstallSizeArchive$:reporter.xpi
+Attributes=SELECTED
+URL0=$URLPath$
+
 ;-------------------------------------------------------------------------
 [Dialog Start Install]
 ;-------------------------------------------------------------------------
 Show Dialog=TRUE
-Title=Mozilla Installer
+Title=$AppDisplayName$ Installer
 ; *** LOCALIZE ME BABY ***
 Message0=Click the Install button to proceed with this installation.
 XPInstall Engine=xpcom.xpi
@@ -256,6 +271,6 @@ Arguments=regchrome
 ;-------------------------------------------------------------------------
 [LegacyCheck0]
 ;-------------------------------------------------------------------------
-Filename=mozilla-bin
+Filename=$AppName$-bin
 ; *** LOCALIZE ME BABY ***
-Message=The selected directory already contains a Mozilla installation. To delete %s completely, please press the 'Delete Directory' button. Information in your Mozilla profile(s) should not be affected. Or, please press the 'Cancel' button and choose a different destination directory.
+Message=The selected directory already contains a $AppDisplayName$ installation. To delete %s completely, please press the 'Delete Directory' button. Information in your $AppDisplayName$ profile(s) should not be affected. Or, please press the 'Cancel' button and choose a different destination directory.

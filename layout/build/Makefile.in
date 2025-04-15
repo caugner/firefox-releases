@@ -1,23 +1,39 @@
 #
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
 #
 # The Original Code is mozilla.org code.
 #
-# The Initial Developer of the Original Code is Netscape
-# Communications Corporation.  Portions created by Netscape are
-# Copyright (C) 1998 Netscape Communications Corporation. All
-# Rights Reserved.
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1998
+# the Initial Developer. All Rights Reserved.
 #
-# Contributor(s): 
+# Contributor(s):
 #
+# Alternatively, the contents of this file may be used under the terms of
+# either of the GNU General Public License Version 2 or later (the "GPL"),
+# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
 DEPTH		= ../..
 topsrcdir	= @top_srcdir@
@@ -26,8 +42,11 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-# Solaris' sh blows
+# Solaris and Tru64 UNIX sh blows
 ifeq ($(OS_ARCH),SunOS)
+SHELL := ksh
+endif
+ifeq ($(OS_ARCH),OSF1)
 SHELL := ksh
 endif
 
@@ -40,11 +59,14 @@ EXPORT_LIBRARY = 1
 IS_COMPONENT	= 1
 MODULE_NAME	= nsLayoutModule
 GRE_MODULE	= 1
+LIBXUL_LIBRARY	= 1
 
 PACKAGE_FILE = layout.pkg
 PACKAGE_VARS += MOZ_XUL
 
+ifndef MOZ_ENABLE_LIBXUL
 EXTRA_DSO_LIBS	= gkgfx
+endif
 ifdef MOZ_PERF_METRICS
 EXTRA_DSO_LIBS	+= mozutil_s
 endif
@@ -87,26 +109,29 @@ CPPSRCS		= \
 		nsContentDLF.cpp \
 		$(NULL)
 
-EXPORTS		= nsLayoutCID.h
+EXPORTS		= \
+		nsLayoutCID.h \
+		nsContentDLF.h \
+		$(NULL)
 
 SHARED_LIBRARY_LIBS = \
-		$(DIST)/lib/$(LIB_PREFIX)gkhtmlbase_s.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)gkhtmldoc_s.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)gkhtmlforms_s.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)gkhtmlstyle_s.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)gkhtmltable_s.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)gkxulbase_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkbase_s.$(LIB_SUFFIX) \
+		$(DIST)/lib/$(LIB_PREFIX)gkgeneric_s.$(LIB_SUFFIX) \
+		$(DIST)/lib/$(LIB_PREFIX)gkforms_s.$(LIB_SUFFIX) \
+		$(DIST)/lib/$(LIB_PREFIX)gkstyle_s.$(LIB_SUFFIX) \
+		$(DIST)/lib/$(LIB_PREFIX)gkprinting_s.$(LIB_SUFFIX) \
+		$(DIST)/lib/$(LIB_PREFIX)gktable_s.$(LIB_SUFFIX) \
+		$(DIST)/lib/$(LIB_PREFIX)gkxulbase_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkconbase_s.$(LIB_SUFFIX) \
+		$(DIST)/lib/$(LIB_PREFIX)gkconcvs_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkconevents_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkconhtmlcon_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkconhtmldoc_s.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)gkconhtmlstyle_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkconxmlcon_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkconxmldoc_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkconxbl_s.$(LIB_SUFFIX) \
+		$(DIST)/lib/$(LIB_PREFIX)gkconxulcon_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkconxuldoc_s.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)gkconshared_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkview_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)jsdombase_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)jsdomevents_s.$(LIB_SUFFIX) \
@@ -117,7 +142,6 @@ ifdef MOZ_XUL
 SHARED_LIBRARY_LIBS += \
 		$(DIST)/lib/$(LIB_PREFIX)gkxultree_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkxulgrid_s.$(LIB_SUFFIX) \
-		$(DIST)/lib/$(LIB_PREFIX)gkconxulcon_s.$(LIB_SUFFIX) \
 		$(DIST)/lib/$(LIB_PREFIX)gkconxultmpl_s.$(LIB_SUFFIX) \
 		$(NULL)
 endif
@@ -127,6 +151,13 @@ SHARED_LIBRARY_LIBS += \
                 $(DIST)/lib/$(LIB_PREFIX)gkmathmlcon_s.$(LIB_SUFFIX) \
                 $(DIST)/lib/$(LIB_PREFIX)gkmathmlbase_s.$(LIB_SUFFIX) \
                 $(NULL)
+endif
+
+ifdef MOZ_XTF
+SHARED_LIBRARY_LIBS += \
+		$(DIST)/lib/$(LIB_PREFIX)gkcontentxtf_s.$(LIB_SUFFIX) \
+                $(DIST)/lib/$(LIB_PREFIX)gkxtfbase_s.$(LIB_SUFFIX) \
+		$(NULL)
 endif
 
 ifdef MOZ_SVG
@@ -165,6 +196,12 @@ EXTRA_DSO_LDOPTS = \
 		$(MOZ_JS_LIBS) \
 		$(NULL)
 
+ifdef MOZ_ENABLE_XLIB
+EXTRA_DSO_LDOPTS += \
+		-lxlibrgb \
+		$(NULL)
+endif
+
 ifdef NS_TRACE_MALLOC
 EXTRA_DSO_LIBS	+= tracemalloc
 endif
@@ -174,13 +211,13 @@ EXTRA_DSO_LDOPTS += $(MOZ_LIBART_LIBS) \
 		    $(NULL)
 endif
 
-ifdef MOZ_SVG_RENDERER_CAIRO
-EXTRA_DSO_LDOPTS += $(MOZ_CAIRO_LIBS) \
+ifdef MOZ_ENABLE_GTK2
+EXTRA_DSO_LDOPTS += $(MOZ_GTK2_LIBS) \
 		    $(NULL)
 endif
 
-ifdef MOZ_ENABLE_GTK2
-EXTRA_DSO_LDOPTS += $(MOZ_GTK2_LIBS) \
+ifneq (,$(MOZ_ENABLE_CANVAS)$(MOZ_SVG_RENDERER_CAIRO))
+EXTRA_DSO_LDOPTS += $(MOZ_CAIRO_LIBS) \
 		    $(NULL)
 endif
 
@@ -192,10 +229,10 @@ endif
 
 include $(topsrcdir)/config/rules.mk
 
-INCLUDES	+= -I$(srcdir)/../base/src \
-		   -I$(srcdir)/../html/base/src \
-		   -I$(srcdir)/../html/forms/src \
-		   -I$(srcdir)/../html/style/src \
+LOCAL_INCLUDES	+= -I$(srcdir)/../base \
+		   -I$(srcdir)/../generic \
+		   -I$(srcdir)/../forms \
+		   -I$(srcdir)/../style \
 		   -I$(srcdir)/../xul/content/src \
 		   -I$(srcdir)/../xul/base/src \
 		   -I$(srcdir)/../../content/base/src \
@@ -213,11 +250,11 @@ INCLUDES	+= -I$(srcdir)/../base/src \
 		   $(NULL)
 
 ifdef MOZ_MATHML
-INCLUDES += -I$(srcdir)/../mathml/content/src
+LOCAL_INCLUDES	+= -I$(srcdir)/../mathml/content/src
 endif
 
 ifdef MOZ_SVG
-INCLUDES += -I$(srcdir)/../../content/svg/content/src
+LOCAL_INCLUDES	+= -I$(srcdir)/../../content/svg/content/src
 endif
 
 DEFINES += -D_IMPL_NS_LAYOUT

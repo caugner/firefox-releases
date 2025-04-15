@@ -1,7 +1,7 @@
-/.cvsignore/1.1/Fri Jul  6 02:36:21 2001//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.8/Thu Oct 17 06:46:30 2002//TFIREFOX_1_0_RELEASE
-/nsViewSourceChannel.cpp/1.21/Mon Jul 14 23:18:54 2003//TFIREFOX_1_0_RELEASE
-/nsViewSourceChannel.h/1.8/Mon Jul 14 23:18:53 2003//TFIREFOX_1_0_RELEASE
-/nsViewSourceHandler.cpp/1.10.54.1/Mon Aug  9 23:49:01 2004//TFIREFOX_1_0_RELEASE
-/nsViewSourceHandler.h/1.2/Fri Sep 28 20:09:35 2001//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Fri Jul  6 02:36:21 2001//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.10/Thu Dec  9 19:28:28 2004//TFIREFOX_1_5_RELEASE
+/nsViewSourceChannel.cpp/1.24/Thu May 12 15:20:43 2005//TFIREFOX_1_5_RELEASE
+/nsViewSourceChannel.h/1.10/Thu Jul  1 23:45:34 2004//TFIREFOX_1_5_RELEASE
+/nsViewSourceHandler.cpp/1.12/Thu Jul  1 23:45:34 2004//TFIREFOX_1_5_RELEASE
+/nsViewSourceHandler.h/1.4/Thu Jul  1 23:45:34 2004//TFIREFOX_1_5_RELEASE
 D

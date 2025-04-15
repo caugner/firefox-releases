@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Dean Tessman <dean_tessman@hotmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -40,9 +40,9 @@
 #define nsIMenuParent_h___
 
 
-// {D407BF61-3EFA-11d3-97FA-00400553EEF0}
+// {81C0BF71-9F50-4f4d-8B6A-D6B233C100C2}
 #define NS_IMENUPARENT_IID \
-{ 0xd407bf61, 0x3efa, 0x11d3, { 0x97, 0xfa, 0x0, 0x40, 0x5, 0x53, 0xee, 0xf0 } }
+{ 0x81c0bf71, 0x9f50, 0x4f4d, { 0x8b, 0x6a, 0xd6, 0xb2, 0x33, 0xc1, 0x0, 0xc2 } };
 
 class nsIMenuFrame;
 class nsIDOMKeyEvent;
@@ -139,10 +139,10 @@ class nsIMenuParent : public nsISupports {
 public:
   NS_DEFINE_STATIC_IID_ACCESSOR(NS_IMENUPARENT_IID)
 
-  NS_IMETHOD GetCurrentMenuItem(nsIMenuFrame** aMenuItem) = 0;
+  virtual nsIMenuFrame *GetCurrentMenuItem() = 0;
   NS_IMETHOD SetCurrentMenuItem(nsIMenuFrame* aMenuItem) = 0;
-  NS_IMETHOD GetNextMenuItem(nsIMenuFrame* aStart, nsIMenuFrame** aResult) = 0;
-  NS_IMETHOD GetPreviousMenuItem(nsIMenuFrame* aStart, nsIMenuFrame** aResult) = 0;
+  virtual nsIMenuFrame *GetNextMenuItem(nsIMenuFrame* aStart) = 0;
+  virtual nsIMenuFrame *GetPreviousMenuItem(nsIMenuFrame* aStart) = 0;
 
   NS_IMETHOD SetActive(PRBool aActiveFlag) = 0;
   NS_IMETHOD GetIsActive(PRBool& isActive) = 0;

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,18 +24,17 @@
  *   L. David Baron <dbaron@dbaron.org>
  *   Ben Goodger <ben@netscape.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -51,7 +50,6 @@
 #include "nsIObjectInputStream.h"
 #include "nsIObjectOutputStream.h"
 #include "nsIPrincipal.h"
-#include "nsIPrincipalObsolete.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptGlobalObjectOwner.h"
 #include "nsIScriptObjectPrincipal.h"
@@ -70,6 +68,7 @@
 #include "nsIDOMScriptObjectFactory.h"
 #include "nsDOMCID.h"
 #include "nsArray.h"
+#include "nsNodeInfoManager.h"
 #include "nsContentUtils.h"
 
 
@@ -90,6 +89,7 @@ public:
     virtual void SetContext(nsIScriptContext *aContext);
     virtual nsIScriptContext *GetContext();
     virtual nsresult SetNewDocument(nsIDOMDocument *aDocument,
+                                    nsISupports *aState,
                                     PRBool aRemoveEventListeners,
                                     PRBool aClearScope);
     virtual void SetDocShell(nsIDocShell *aDocShell);
@@ -97,7 +97,7 @@ public:
     virtual void SetOpenerWindow(nsIDOMWindowInternal *aOpener);
     virtual void SetGlobalObjectOwner(nsIScriptGlobalObjectOwner* aOwner);
     virtual nsIScriptGlobalObjectOwner *GetGlobalObjectOwner();
-    virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext, 
+    virtual nsresult HandleDOMEvent(nsPresContext* aPresContext, 
                                     nsEvent* aEvent, 
                                     nsIDOMEvent** aDOMEvent,
                                     PRUint32 aFlags,
@@ -105,10 +105,10 @@ public:
     virtual JSObject *GetGlobalJSObject();
     virtual void OnFinalize(JSObject *aObject);
     virtual void SetScriptsEnabled(PRBool aEnabled, PRBool aFireTimeouts);
+    virtual nsresult SetNewArguments(PRUint32 aArgc, void* aArgv);
 
     // nsIScriptObjectPrincipal methods
-    NS_IMETHOD GetPrincipalObsolete(nsIPrincipalObsolete** aPrincipal);
-    NS_IMETHOD GetPrincipal(nsIPrincipal** aPrincipal);
+    virtual nsIPrincipal* GetPrincipal();
     
 protected:
     virtual ~nsXULPDGlobalObject();
@@ -150,16 +150,16 @@ public:
     NS_IMETHOD GetHeaderData(nsIAtom* aField, nsAString& aData) const;
     NS_IMETHOD SetHeaderData(nsIAtom* aField, const nsAString& aData);
 
-    virtual nsIPrincipal* GetDocumentPrincipal();
-    NS_IMETHOD SetDocumentPrincipal(nsIPrincipal* aPrincipal);
+    virtual nsIPrincipal *GetDocumentPrincipal();
+    void SetDocumentPrincipal(nsIPrincipal *aPrincipal);
 
     NS_IMETHOD AwaitLoadDone(nsIXULDocument* aDocument, PRBool* aResult);
     NS_IMETHOD NotifyLoadDone();
     
-    NS_IMETHOD GetNodeInfoManager(nsINodeInfoManager** aNodeInfoManager);
+    virtual nsNodeInfoManager *GetNodeInfoManager();
 
     // nsIScriptGlobalObjectOwner methods
-    NS_DECL_NSISCRIPTGLOBALOBJECTOWNER
+    virtual nsIScriptGlobalObject* GetScriptGlobalObject();
 
     NS_DEFINE_STATIC_CID_ACCESSOR(NS_XULPROTOTYPEDOCUMENT_CID);
 
@@ -175,7 +175,7 @@ protected:
     PRPackedBool mLoaded;
     nsCOMPtr<nsICollection> mPrototypeWaiters;
 
-    nsCOMPtr<nsINodeInfoManager> mNodeInfoManager;
+    nsRefPtr<nsNodeInfoManager> mNodeInfoManager;
 
     nsXULPrototypeDocument();
     virtual ~nsXULPrototypeDocument();
@@ -259,13 +259,10 @@ nsXULPrototypeDocument::Init()
     rv = NS_NewISupportsArray(getter_AddRefs(mOverlayReferences));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = NS_NewNodeInfoManager(getter_AddRefs(mNodeInfoManager));
-    NS_ENSURE_SUCCESS(rv, rv);
+    mNodeInfoManager = new nsNodeInfoManager();
+    NS_ENSURE_TRUE(mNodeInfoManager, NS_ERROR_OUT_OF_MEMORY);
 
-    rv = mNodeInfoManager->Init(nsnull);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    return NS_OK;
+    return mNodeInfoManager->Init(nsnull);
 }
 
 nsXULPrototypeDocument::~nsXULPrototypeDocument()
@@ -545,8 +542,8 @@ nsXULPrototypeDocument::Write(nsIObjectOutputStream* aStream)
     }
 
     // Now serialize the document contents
-    nsCOMPtr<nsIScriptGlobalObject> globalObject;
-    rv |= GetScriptGlobalObject(getter_AddRefs(globalObject));
+    nsIScriptGlobalObject* globalObject = GetScriptGlobalObject();
+    NS_ENSURE_TRUE(globalObject, NS_ERROR_UNEXPECTED);
 
     nsIScriptContext *scriptContext = globalObject->GetContext();
 
@@ -699,21 +696,18 @@ nsXULPrototypeDocument::GetDocumentPrincipal()
 }
 
 
-NS_IMETHODIMP
-nsXULPrototypeDocument::SetDocumentPrincipal(nsIPrincipal* aPrincipal)
+void
+nsXULPrototypeDocument::SetDocumentPrincipal(nsIPrincipal *aPrincipal)
 {
     NS_PRECONDITION(mNodeInfoManager, "missing nodeInfoManager");
     mDocumentPrincipal = aPrincipal;
     mNodeInfoManager->SetDocumentPrincipal(aPrincipal);
-    return NS_OK;
 }
 
-NS_IMETHODIMP
-nsXULPrototypeDocument::GetNodeInfoManager(nsINodeInfoManager** aNodeInfoManager)
+nsNodeInfoManager*
+nsXULPrototypeDocument::GetNodeInfoManager()
 {
-    *aNodeInfoManager = mNodeInfoManager;
-    NS_IF_ADDREF(*aNodeInfoManager);
-    return NS_OK;
+    return mNodeInfoManager;
 }
 
 
@@ -772,39 +766,13 @@ nsXULPrototypeDocument::NotifyLoadDone()
 // nsIScriptGlobalObjectOwner methods
 //
 
-NS_IMETHODIMP
-nsXULPrototypeDocument::GetScriptGlobalObject(nsIScriptGlobalObject** _result)
+nsIScriptGlobalObject*
+nsXULPrototypeDocument::GetScriptGlobalObject()
 {
-    nsresult rv = NS_OK;
     if (!mGlobalObject)
-         rv = NewXULPDGlobalObject(getter_AddRefs(mGlobalObject));
-    *_result = mGlobalObject;
-    NS_IF_ADDREF(*_result);
-    return rv;
-}
+        NewXULPDGlobalObject(getter_AddRefs(mGlobalObject));
 
-NS_IMETHODIMP
-nsXULPrototypeDocument::ReportScriptError(nsIScriptError *errorObject)
-{
-   nsresult rv;
-
-   if (errorObject == nsnull)
-      return NS_ERROR_NULL_POINTER;
-
-   // Get the console service, where we're going to register the error.
-   nsCOMPtr<nsIConsoleService> consoleService
-      (do_GetService("@mozilla.org/consoleservice;1"));
-
-   if (consoleService != nsnull) {
-       rv = consoleService->LogMessage(errorObject);
-       if (NS_SUCCEEDED(rv)) {
-           return NS_OK;
-       } else {
-           return rv;
-       }
-   } else {
-       return NS_ERROR_NOT_AVAILABLE;
-   }
+    return mGlobalObject;
 }
 
 //----------------------------------------------------------------------
@@ -879,6 +847,7 @@ nsXULPDGlobalObject::GetContext()
 
 nsresult
 nsXULPDGlobalObject::SetNewDocument(nsIDOMDocument *aDocument,
+                                    nsISupports *aState,
                                     PRBool aRemoveEventListeners,
                                     PRBool aClearScope)
 {
@@ -925,7 +894,7 @@ nsXULPDGlobalObject::GetGlobalObjectOwner()
 
 
 nsresult
-nsXULPDGlobalObject::HandleDOMEvent(nsIPresContext* aPresContext, 
+nsXULPDGlobalObject::HandleDOMEvent(nsPresContext* aPresContext, 
                                        nsEvent* aEvent, 
                                        nsIDOMEvent** aDOMEvent,
                                        PRUint32 aFlags,
@@ -966,48 +935,32 @@ nsXULPDGlobalObject::SetScriptsEnabled(PRBool aEnabled, PRBool aFireTimeouts)
     // We don't care...
 }
 
+nsresult
+nsXULPDGlobalObject::SetNewArguments(PRUint32 aArgc, void* aArgv)
+{
+    NS_NOTREACHED("waaah!");
+    return NS_ERROR_UNEXPECTED;
+}
 
 //----------------------------------------------------------------------
 //
 // nsIScriptObjectPrincipal methods
 //
 
-NS_IMETHODIMP
-nsXULPDGlobalObject::GetPrincipalObsolete(nsIPrincipalObsolete** aPrincipal)
-{
-    nsCOMPtr<nsIPrincipal> principal;
-    nsresult rv = nsXULPDGlobalObject::GetPrincipal(getter_AddRefs(principal));
-    if (principal)
-        CallQueryInterface(principal, aPrincipal);
-    else
-        *aPrincipal = nsnull;
-
-    return rv;
-}
-
-NS_IMETHODIMP
-nsXULPDGlobalObject::GetPrincipal(nsIPrincipal** aPrincipal)
+nsIPrincipal*
+nsXULPDGlobalObject::GetPrincipal()
 {
     if (!mGlobalObjectOwner) {
         // See nsXULPrototypeDocument::NewXULPDGlobalObject, the comment
         // about gSystemGlobal implying gSystemPrincipal.
         if (this == nsXULPrototypeDocument::gSystemGlobal) {
-            *aPrincipal = nsXULPrototypeDocument::gSystemPrincipal;
-            NS_ADDREF(*aPrincipal);
-            return NS_OK;
+            return nsXULPrototypeDocument::gSystemPrincipal;
         }
-        *aPrincipal = nsnull;
-        return NS_ERROR_FAILURE;
+        return nsnull;
     }
     nsCOMPtr<nsIXULPrototypeDocument> protoDoc
       = do_QueryInterface(mGlobalObjectOwner);
 
-    *aPrincipal = protoDoc->GetDocumentPrincipal();
-    if (!*aPrincipal) {
-        return NS_ERROR_FAILURE;
-    }
-
-    NS_ADDREF(*aPrincipal);
-    return NS_OK;
+    return protoDoc->GetDocumentPrincipal();
 }
 

@@ -1,11 +1,11 @@
 /* -*- Mode: IDL; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Seth Spitzer <sspitzer@netscape.com>
+ *   Seth Spitzer <sspitzer@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -47,10 +47,13 @@
 interface nsIMsgFolderCache;
 interface nsIFolderListener;
 
-[scriptable, uuid(6ed2cc00-e623-11d2-b7fc-00805f05ffa5)]
+[scriptable, uuid(0dc74b96-c2fc-4ce0-baed-c6f03c69026e)]
 interface nsIMsgAccountManager : nsISupports {
 
   nsIMsgAccount createAccount();
+  /*
+   * Return the account with the provided key, or null if none found.
+   */
   nsIMsgAccount getAccount(in string key);
     
   void removeAccount(in nsIMsgAccount account);
@@ -125,11 +128,20 @@ interface nsIMsgAccountManager : nsISupports {
       FindServer(in string userName, in string hostname, in string type);
 
   /*
+   * search for the server with the given uri
+   * an analog to FindServer()
+   * The boolean flag selects whether we compare input against the    
+   * 'realhostname' and 'realuserName' pref settings.
+   */
+  nsIMsgIncomingServer
+      findServerByURI(in nsIURI aURI, in boolean aRealFlag);
+
+  /*
    * Same as FindServer() except it compares the input values against
    * 'realhostname' and 'realuserName' pref settings.
    */
   nsIMsgIncomingServer
-      findRealServer(in string userName, in string hostname, in string type);
+      findRealServer(in string userName, in string hostname, in string type, in long port );
 
   /**
    * find the index of this server in the (ordered) list of accounts
@@ -166,6 +178,8 @@ interface nsIMsgAccountManager : nsISupports {
   void LoadAccounts();
 
   void setSpecialFolders();
+
+  void loadVirtualFolders();
 
   /* unload accounts frees all the account manager data structures */
   void UnloadAccounts();
@@ -210,7 +224,7 @@ interface nsIMsgAccountManager : nsISupports {
 interface nsIMsgAccountManagerExtension : nsISupports
 {
     readonly attribute string name;   // examples:  mdn
-	boolean showPanel(in nsIMsgIncomingServer server);
-	readonly attribute string chromePackageName;  // example:  messenger, chrome://messenger/content/am-mdn.xul and chrome://messenger/locale/am-mdn.properties
+    boolean showPanel(in nsIMsgIncomingServer server);
+    readonly attribute string chromePackageName;  // example:  messenger, chrome://messenger/content/am-mdn.xul and chrome://messenger/locale/am-mdn.properties
 };
 

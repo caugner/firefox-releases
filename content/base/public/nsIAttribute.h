@@ -21,7 +21,7 @@
  *
  * Contributor(s):
  *   Peter Van der Beken <peterv@netscape.com>
- *
+ *   Allan Beaufour <allan@beaufour.dk>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -42,26 +42,26 @@
 
 #include "nsISupports.h"
 #include "nsINodeInfo.h"
+#include "nsIContent.h"
+#include "nsPropertyTable.h"
 
-class nsIContent;
+class nsIAtom;
+class nsDOMAttributeMap;
 
 #define NS_IATTRIBUTE_IID  \
- {0xa6cf90dd, 0x15b3, 0x11d2,        \
- {0x93, 0x2e, 0x00, 0x80, 0x5f, 0x8a, 0xdd, 0x32}}
+ {0x4940cc50, 0x2ede, 0x4883,        \
+ {0x95, 0xf5, 0x53, 0xdb, 0x50, 0x50, 0x13, 0x3e}}
 
 class nsIAttribute : public nsISupports
 {
 public:
   NS_DEFINE_STATIC_IID_ACCESSOR(NS_IATTRIBUTE_IID)
 
-  void SetContent(nsIContent* aContent)
+  virtual void SetMap(nsDOMAttributeMap *aMap) = 0;
+  
+  nsDOMAttributeMap *GetMap()
   {
-    mContent = aContent;
-  }
-
-  nsIContent *GetContent()
-  {
-    return mContent;
+    return mAttrMap;
   }
 
   nsINodeInfo *NodeInfo()
@@ -69,13 +69,37 @@ public:
     return mNodeInfo;
   }
 
+  virtual nsIContent* GetContent() const = 0;
+
+  nsIDocument *GetOwnerDoc() const
+  {
+    nsIContent* content = GetContent();
+    return content ? content->GetOwnerDoc() : mNodeInfo->GetDocument();
+  }
+
+  /*
+   * Methods for manipulating content node properties.  For documentation on
+   * properties, see nsPropertyTable.h.
+   */
+  virtual void* GetProperty(nsIAtom  *aPropertyName,
+                            nsresult *aStatus = nsnull) = 0;
+
+  virtual nsresult SetProperty(nsIAtom                   *aPropertyName,
+                               void                      *aValue,
+                               NSPropertyDtorFunc         aDtor = nsnull) = 0;
+
+  virtual nsresult DeleteProperty(nsIAtom *aPropertyName) = 0;
+
+  virtual void* UnsetProperty(nsIAtom  *aPropertyName,
+                              nsresult *aStatus = nsnull) = 0;
+
 protected:
-  nsIAttribute(nsIContent *aContent, nsINodeInfo *aNodeInfo)
-    : mContent(aContent), mNodeInfo(aNodeInfo)
+  nsIAttribute(nsDOMAttributeMap *aAttrMap, nsINodeInfo *aNodeInfo)
+    : mAttrMap(aAttrMap), mNodeInfo(aNodeInfo)
   {
   }
 
-  nsIContent *mContent; // WEAK
+  nsDOMAttributeMap *mAttrMap; // WEAK
   nsCOMPtr<nsINodeInfo> mNodeInfo; // STRONG
 
 private:

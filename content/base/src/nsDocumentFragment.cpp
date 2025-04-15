@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -45,6 +44,7 @@
 #include "nsNodeInfoManager.h"
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
+#include "nsIDOMAttr.h"
 #include "nsDOMError.h"
 #include "nsIDOM3Node.h"
 #include "nsLayoutAtoms.h"
@@ -55,7 +55,7 @@ class nsDocumentFragment : public nsGenericElement,
                            public nsIDOM3Node
 {
 public:
-  nsDocumentFragment(nsIDocument* aOwnerDocument);
+  nsDocumentFragment(nsINodeInfo *aNodeInfo, nsIDocument* aOwnerDocument);
   virtual ~nsDocumentFragment();
 
   // nsISupports
@@ -155,7 +155,7 @@ public:
     *aPrefix = nsnull;
     return NS_ERROR_ILLEGAL_VALUE;
   }
-  virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext,
+  virtual nsresult HandleDOMEvent(nsPresContext* aPresContext,
                                   nsEvent* aEvent, nsIDOMEvent** aDOMEvent,
                                   PRUint32 aFlags, nsEventStatus* aEventStatus)
   {
@@ -174,7 +174,7 @@ NS_NewDocumentFragment(nsIDOMDocumentFragment** aInstancePtrResult,
 {
   NS_ENSURE_ARG(aOwnerDocument);
 
-  nsINodeInfoManager *nimgr = aOwnerDocument->GetNodeInfoManager();
+  nsNodeInfoManager *nimgr = aOwnerDocument->NodeInfoManager();
 
   nsCOMPtr<nsINodeInfo> nodeInfo;
   nsresult rv = nimgr->GetNodeInfo(nsLayoutAtoms::documentFragmentNodeName,
@@ -182,17 +182,9 @@ NS_NewDocumentFragment(nsIDOMDocumentFragment** aInstancePtrResult,
                                    getter_AddRefs(nodeInfo));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsDocumentFragment* it = new nsDocumentFragment(aOwnerDocument);
+  nsDocumentFragment* it = new nsDocumentFragment(nodeInfo, aOwnerDocument);
   if (!it) {
     return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  rv = it->Init(nodeInfo);
-
-  if (NS_FAILED(rv)) {
-    delete it;
-
-    return rv;
   }
 
   *aInstancePtrResult = NS_STATIC_CAST(nsIDOMDocumentFragment *, it);
@@ -202,7 +194,9 @@ NS_NewDocumentFragment(nsIDOMDocumentFragment** aInstancePtrResult,
   return NS_OK;
 }
 
-nsDocumentFragment::nsDocumentFragment(nsIDocument* aOwnerDocument)
+nsDocumentFragment::nsDocumentFragment(nsINodeInfo *aNodeInfo,
+                                       nsIDocument* aOwnerDocument)
+  : nsGenericElement(aNodeInfo)
 {
   mOwnerDocument = aOwnerDocument;
 }
@@ -233,7 +227,11 @@ nsDocumentFragment::DisconnectChildren()
   PRUint32 i, count = GetChildCount();
 
   for (i = 0; i < count; i++) {
-    GetChildAt(i)->SetParent(nsnull);
+    NS_ASSERTION(GetChildAt(i)->GetCurrentDoc() == nsnull,
+                 "How did we get a child with a current doc?");
+    // Safe to unbind PR_FALSE, since kids should never have a current document
+    // or a binding parent
+    GetChildAt(i)->UnbindFromTree(PR_FALSE);
   }
 
   return NS_OK;
@@ -243,6 +241,8 @@ NS_IMETHODIMP
 nsDocumentFragment::ReconnectChildren()
 {
   PRUint32 i, count = GetChildCount();
+  NS_PRECONDITION(GetCurrentDoc() == nsnull,
+                  "We really shouldn't have a current doc!");
 
   for (i = 0; i < count; i++) {
     nsIContent *child = GetChildAt(i);
@@ -252,6 +252,7 @@ nsDocumentFragment::ReconnectChildren()
       // This is potentially a O(n**2) operation, but it should only
       // happen in error cases (such as out of memory or something
       // similar) so we don't care for now.
+      // XXXbz I don't think this is O(n**2) with our IndexOf cache, is it?
 
       PRInt32 indx = parent->IndexOf(child);
 
@@ -260,7 +261,15 @@ nsDocumentFragment::ReconnectChildren()
       }
     }
 
-    child->SetParent(this);
+    nsresult rv = child->BindToTree(nsnull, this, nsnull, PR_FALSE);
+    if (NS_FAILED(rv)) {
+      // It's all bad now...  Just  forget about this kid, I guess
+      child->UnbindFromTree();
+      mAttrsAndChildren.RemoveChildAt(i);
+      // Adjust count and iterator accordingly
+      --count;
+      --i;
+    }
   }
 
   return NS_OK;
@@ -373,9 +382,8 @@ NS_IMETHODIMP
 nsDocumentFragment::IsDefaultNamespace(const nsAString& aNamespaceURI,
                                        PRBool* aReturn)
 {
-  NS_NOTYETIMPLEMENTED("nsDocumentFragment::IsDefaultNamespace()");
-
-  return NS_ERROR_NOT_IMPLEMENTED;
+  *aReturn = PR_FALSE;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -488,15 +496,7 @@ nsDocumentFragment::GetUserData(const nsAString& aKey,
 NS_IMETHODIMP
 nsDocumentFragment::GetTextContent(nsAString &aTextContent)
 {
-  if (mOwnerDocument) {
-    return nsNode3Tearoff::GetTextContent(mOwnerDocument,
-                                          this,
-                                          aTextContent);
-  }
-
-  SetDOMStringToNull(aTextContent);
-
-  return NS_OK;
+  return nsNode3Tearoff::GetTextContent(this, aTextContent);
 }
 
 NS_IMETHODIMP

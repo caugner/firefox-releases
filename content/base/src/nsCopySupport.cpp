@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Kathleen Brade <brade@netscape.com>
+ *   David Gardiner <david.gardiner@unisa.edu.au>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -45,41 +46,27 @@
 #include "nsIClipboard.h"
 #include "nsISelection.h"
 #include "nsWidgetsCID.h"
-#include "nsIEventStateManager.h"
-#include "nsIPresContext.h"
-#include "nsIDOMNSHTMLInputElement.h"
-#include "nsIDOMNSHTMLTextAreaElement.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
 #include "nsIDOMRange.h"
-#include "nsIFrame.h"
 
 #include "nsIDocShell.h"
+#include "nsIContentViewerEdit.h"
 #include "nsIClipboardDragDropHooks.h"
 #include "nsIClipboardDragDropHookList.h"
-#include "nsIInterfaceRequestorUtils.h"
 
-// for IBMBIDI
 #include "nsIDocument.h"
-#include "nsIPresShell.h"
 #include "nsIDOMNode.h"
 #include "nsIDOMElement.h"
+#include "nsIDOMDocument.h"
 #include "nsIHTMLDocument.h"
 #include "nsHTMLAtoms.h"
-#ifdef IBMBIDI
-#include "nsBidiUtils.h"
-#endif
 
 // image copy stuff
-#include "nsIDOMHTMLImageElement.h"
-#include "nsLayoutAtoms.h"
 #include "nsIImageLoadingContent.h"
-#include "imgIContainer.h"
-#include "imgIRequest.h"
-#include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "gfxIImageFrame.h"
 #include "nsIImage.h"
+#include "nsContentUtils.h"
 
 static NS_DEFINE_CID(kCClipboardCID,           NS_CLIPBOARD_CID);
 static NS_DEFINE_CID(kCTransferableCID,        NS_TRANSFERABLE_CID);
@@ -89,53 +76,85 @@ static NS_DEFINE_CID(kHTMLConverterCID,        NS_HTMLFORMATCONVERTER_CID);
 #define kHTMLContext   "text/_moz_htmlcontext"
 #define kHTMLInfo      "text/_moz_htmlinfo"
 
+// copy string data onto the transferable
+static nsresult AppendString(nsITransferable *aTransferable,
+                             const nsAString& aString,
+                             const char* aFlavor);
+
+// copy HTML node data
+static nsresult AppendDOMNode(nsITransferable *aTransferable,
+                              nsIDOMNode *aDOMNode);
 
 nsresult nsCopySupport::HTMLCopy(nsISelection *aSel, nsIDocument *aDoc, PRInt16 aClipboardID)
 {
   nsresult rv = NS_OK;
   
+  PRBool bIsPlainTextContext = PR_FALSE;
+
+  rv = IsPlainTextContext(aSel, aDoc, &bIsPlainTextContext);
+  if (NS_FAILED(rv)) 
+    return rv;
+
+  PRBool bIsHTMLCopy = !bIsPlainTextContext;
+  nsAutoString mimeType;
+
   nsCOMPtr<nsIDocumentEncoder> docEncoder;
 
   docEncoder = do_CreateInstance(NS_HTMLCOPY_ENCODER_CONTRACTID);
   NS_ENSURE_TRUE(docEncoder, NS_ERROR_FAILURE);
 
-  PRBool bIsPlainTextContext = PR_FALSE;
-
-  rv = IsPlainTextContext(aSel, aDoc, &bIsPlainTextContext);
-  if (NS_FAILED(rv)) return rv;
-
-  PRBool bIsHTMLCopy = !bIsPlainTextContext;
-  PRUint32 flags = 0;
-  nsAutoString mimeType;
-
-  if (bIsHTMLCopy)
-    mimeType = NS_LITERAL_STRING(kHTMLMime);
-  else
-  {
-    flags |= nsIDocumentEncoder::OutputBodyOnly | nsIDocumentEncoder::OutputPreformatted;
-    mimeType = NS_LITERAL_STRING(kUnicodeMime);
-  }
+  // We always require a plaintext version
+  mimeType.AssignLiteral(kUnicodeMime);
+  PRUint32 flags = nsIDocumentEncoder::OutputPreformatted;
 
   rv = docEncoder->Init(aDoc, mimeType, flags);
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) 
+    return rv;
   rv = docEncoder->SetSelection(aSel);
-  if (NS_FAILED(rv)) return rv;
-    
-  nsAutoString buffer, parents, info;
+  if (NS_FAILED(rv)) 
+    return rv;
 
-  if (bIsHTMLCopy)
-  {
+  nsAutoString buffer, parents, info, shortcut, textBuffer, plaintextBuffer;
+
+  rv = docEncoder->EncodeToString(textBuffer);
+  if (NS_FAILED(rv)) 
+    return rv;
+
+  nsCOMPtr<nsIFormatConverter> htmlConverter;
+
+  // sometimes we also need the HTML version
+  if (bIsHTMLCopy) {
+
+    // this string may still contain HTML formatting, so we need to remove that too.
+    htmlConverter = do_CreateInstance(kHTMLConverterCID);
+    NS_ENSURE_TRUE(htmlConverter, NS_ERROR_FAILURE);
+
+    nsCOMPtr<nsISupportsString> plainHTML = do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID);
+    NS_ENSURE_TRUE(plainHTML, NS_ERROR_FAILURE);
+    plainHTML->SetData(textBuffer);
+
+    nsCOMPtr<nsISupportsString> ConvertedData;
+    PRUint32 ConvertedLen;
+    htmlConverter->Convert(kHTMLMime, plainHTML, textBuffer.Length() * 2, kUnicodeMime, getter_AddRefs(ConvertedData), &ConvertedLen);
+
+    ConvertedData->GetData(plaintextBuffer);
+
+    mimeType.AssignLiteral(kHTMLMime);
+
+    flags = 0;
+
+    rv = docEncoder->Init(aDoc, mimeType, flags);
+    if (NS_FAILED(rv)) 
+      return rv;
+    rv = docEncoder->SetSelection(aSel);
+    if (NS_FAILED(rv)) 
+      return rv;
+
     // encode the selection as html with contextual info
     rv = docEncoder->EncodeToStringWithContext(buffer, parents, info);
     if (NS_FAILED(rv)) 
       return rv;
-  }
-  else
-  {
-    // encode the selection
-    rv = docEncoder->EncodeToString(buffer);
-    if (NS_FAILED(rv)) 
-      return rv;
+
   }
   
   // Get the Clipboard
@@ -152,68 +171,64 @@ nsresult nsCopySupport::HTMLCopy(nsISelection *aSel, nsIDocument *aDoc, PRInt16 
       if (bIsHTMLCopy)
       {
         // set up the data converter
-        nsCOMPtr<nsIFormatConverter> htmlConverter = do_CreateInstance(kHTMLConverterCID);
-        NS_ENSURE_TRUE(htmlConverter, NS_ERROR_FAILURE);
         trans->SetConverter(htmlConverter);
-      }
-      
-      // get wStrings to hold clip data
-      nsCOMPtr<nsISupportsString> dataWrapper, contextWrapper, infoWrapper;
-      dataWrapper = do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID);
-      NS_ENSURE_TRUE(dataWrapper, NS_ERROR_FAILURE);
-      if (bIsHTMLCopy)
-      {
-        contextWrapper = do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID);
-        NS_ENSURE_TRUE(contextWrapper, NS_ERROR_FAILURE);
-        infoWrapper = do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID);
-        NS_ENSURE_TRUE(infoWrapper, NS_ERROR_FAILURE);
-      }
-      
-      // populate the strings
-      nsresult data_rv = NS_OK, context_rv = NS_OK, info_rv = NS_OK;
-      data_rv =
-        dataWrapper->SetData(buffer);
-      if (bIsHTMLCopy)
-      {
-        context_rv =
-          contextWrapper->SetData(parents);
-        info_rv =
-          infoWrapper->SetData(info);
-      }
-      
-      // QI the data object an |nsISupports| so that when the transferable holds
-      // onto it, it will addref the correct interface.
-      nsCOMPtr<nsISupports> genericDataObj ( do_QueryInterface(dataWrapper) );
-      if (bIsHTMLCopy)
-      {
-        if (!buffer.IsEmpty() && NS_SUCCEEDED(data_rv))
+
+        // Try and get source URI of the items that are being dragged
+        nsIURI *uri = aDoc->GetDocumentURI();
+
+        nsCAutoString spec;
+        uri->GetSpec(spec);
+
+        AppendUTF8toUTF16(spec, shortcut);
+        shortcut.Append(PRUnichar('\n'));
+
+        // and get document title
+        shortcut.Append(aDoc->GetDocumentTitle());
+
+        if (!buffer.IsEmpty())
         {
           // Add the html DataFlavor to the transferable
-          trans->AddDataFlavor(kHTMLMime);
-          trans->SetTransferData(kHTMLMime, genericDataObj, buffer.Length()*2);
+          rv = AppendString(trans, buffer, kHTMLMime);
+          NS_ENSURE_SUCCESS(rv, rv);
         }
-        if (!parents.IsEmpty() && NS_SUCCEEDED(context_rv))
         {
           // Add the htmlcontext DataFlavor to the transferable
-          trans->AddDataFlavor(kHTMLContext);
-          genericDataObj = do_QueryInterface(contextWrapper);
-          trans->SetTransferData(kHTMLContext, genericDataObj, parents.Length()*2);
+          // Even if parents is empty string, this flavor should
+          // be attached to the transferable
+          rv = AppendString(trans, parents, kHTMLContext);
+          NS_ENSURE_SUCCESS(rv, rv);
         }
-        if (!info.IsEmpty() && NS_SUCCEEDED(info_rv))
+        if (!info.IsEmpty())
         {
           // Add the htmlinfo DataFlavor to the transferable
-          trans->AddDataFlavor(kHTMLInfo);
-          genericDataObj = do_QueryInterface(infoWrapper);
-          trans->SetTransferData(kHTMLInfo, genericDataObj, info.Length()*2);
+          rv = AppendString(trans, info, kHTMLInfo);
+          NS_ENSURE_SUCCESS(rv, rv);
         }
+        if (!plaintextBuffer.IsEmpty())
+        {
+          // unicode text
+          // Add the unicode DataFlavor to the transferable
+          // If we didn't have this, then nsDataObj::GetData matches text/unicode against
+          // the kURLMime flavour which is not desirable (eg. when pasting into Notepad)
+          rv = AppendString(trans, plaintextBuffer, kUnicodeMime);
+          NS_ENSURE_SUCCESS(rv, rv);
+        }
+        // url
+        if (!shortcut.IsEmpty())
+        {
+          // Add the URL DataFlavor to the transferable
+          rv = AppendString(trans, shortcut, kURLMime);
+          NS_ENSURE_SUCCESS(rv, rv);
+        }
+
       }
       else
       {
-        if (!buffer.IsEmpty() && NS_SUCCEEDED(data_rv))
+        if (!textBuffer.IsEmpty())
         {
          // Add the unicode DataFlavor to the transferable
-          trans->AddDataFlavor(kUnicodeMime);
-          trans->SetTransferData(kUnicodeMime, genericDataObj, buffer.Length()*2);
+          rv = AppendString(trans, textBuffer, kUnicodeMime);
+          NS_ENSURE_SUCCESS(rv, rv);
         }
       }
 
@@ -335,9 +350,13 @@ nsresult nsCopySupport::IsPlainTextContext(nsISelection *aSel, nsIDocument *aDoc
     }
   }
   
-  // also consider ourselves in a text widget if we can't find an html document
+  // also consider ourselves in a text widget if we can't find an html
+  // document. Note that XHTML is not counted as HTML here, because we can't
+  // copy it properly (all the copy code for non-plaintext assumes using HTML
+  // serializers and parsers is OK, and those mess up XHTML).
   nsCOMPtr<nsIHTMLDocument> htmlDoc = do_QueryInterface(aDoc);
-  if (!htmlDoc) *aIsPlainTextContext = PR_TRUE;
+  if (!htmlDoc || aDoc->IsCaseSensitive())
+    *aIsPlainTextContext = PR_TRUE;
 
   return NS_OK;
 }
@@ -376,86 +395,146 @@ nsCopySupport::GetContents(const nsACString& aMimeType, PRUint32 aFlags, nsISele
 
 
 nsresult
-nsCopySupport::ImageCopy(nsIDOMHTMLImageElement* imageElement, PRInt16 aClipboardID)
+nsCopySupport::ImageCopy(nsIImageLoadingContent* aImageElement,
+                         PRInt32 aCopyFlags)
+{
+  nsresult rv;
+
+  // create a transferable for putting data on the Clipboard
+  nsCOMPtr<nsITransferable> trans(do_CreateInstance(kCTransferableCID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (aCopyFlags & nsIContentViewerEdit::COPY_IMAGE_TEXT) {
+    // get the location from the element
+    nsCOMPtr<nsIURI> uri;
+    rv = aImageElement->GetCurrentURI(getter_AddRefs(uri));
+    NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_TRUE(uri, NS_ERROR_FAILURE);
+
+    nsCAutoString location;
+    rv = uri->GetSpec(location);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // append the string to the transferable
+    rv = AppendString(trans, NS_ConvertUTF8toUTF16(location), kUnicodeMime);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  if (aCopyFlags & nsIContentViewerEdit::COPY_IMAGE_HTML) {
+    // append HTML data to the transferable
+    nsCOMPtr<nsIDOMNode> node(do_QueryInterface(aImageElement, &rv));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = AppendDOMNode(trans, node);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  if (aCopyFlags & nsIContentViewerEdit::COPY_IMAGE_DATA) {
+    // get the image data from the element
+    nsCOMPtr<nsIImage> image =
+      nsContentUtils::GetImageFromContent(aImageElement);
+    NS_ENSURE_TRUE(image, NS_ERROR_FAILURE);
+
+    nsCOMPtr<nsISupportsInterfacePointer>
+      imgPtr(do_CreateInstance(NS_SUPPORTS_INTERFACE_POINTER_CONTRACTID, &rv));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = imgPtr->SetData(image);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // copy the image data onto the transferable
+    rv = trans->SetTransferData(kNativeImageMime, imgPtr,
+                                sizeof(nsISupports*));
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // get clipboard
+  nsCOMPtr<nsIClipboard> clipboard(do_GetService(kCClipboardCID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // check whether the system supports the selection clipboard or not.
+  PRBool selectionSupported;
+  rv = clipboard->SupportsSelectionClipboard(&selectionSupported);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // put the transferable on the clipboard
+  if (selectionSupported) {
+    rv = clipboard->SetData(trans, nsnull, nsIClipboard::kSelectionClipboard);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return clipboard->SetData(trans, nsnull, nsIClipboard::kGlobalClipboard);
+}
+
+static nsresult AppendString(nsITransferable *aTransferable,
+                             const nsAString& aString,
+                             const char* aFlavor)
+{
+  nsresult rv;
+
+  nsCOMPtr<nsISupportsString>
+    data(do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = data->SetData(aString);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = aTransferable->AddDataFlavor(aFlavor);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return aTransferable->SetTransferData(aFlavor, data,
+                                        aString.Length() * sizeof(PRUnichar));
+}
+
+static nsresult AppendDOMNode(nsITransferable *aTransferable,
+                              nsIDOMNode *aDOMNode)
 {
   nsresult rv;
   
-  nsCOMPtr<nsIDOMNode> imageNode = do_QueryInterface(imageElement, &rv);
-  if (NS_FAILED(rv)) return rv;
-  if (!imageNode) return NS_ERROR_FAILURE;
-  
-  nsCOMPtr<nsIImage> image;
-  rv = GetImageFromDOMNode(imageNode, getter_AddRefs(image));
-  if (NS_FAILED(rv)) return rv;
-  if (!image) return NS_ERROR_FAILURE;
+  // selializer
+  nsCOMPtr<nsIDocumentEncoder>
+    docEncoder(do_CreateInstance(NS_HTMLCOPY_ENCODER_CONTRACTID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // Get the Clipboard
-  nsCOMPtr<nsIClipboard> clipboard(do_GetService(kCClipboardCID, &rv));
-  if (NS_FAILED(rv)) return rv;
-  if (!clipboard) return NS_ERROR_FAILURE;
+  // get document for the encoder
+  nsCOMPtr<nsIDOMDocument> domDocument;
+  rv = aDOMNode->GetOwnerDocument(getter_AddRefs(domDocument));
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIDocument> document(do_QueryInterface(domDocument, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // Create a transferable for putting data on the Clipboard
-  nsCOMPtr<nsITransferable> trans = do_CreateInstance(kCTransferableCID, &rv);
-  if (NS_FAILED(rv)) return rv;
-  if (!trans) return NS_ERROR_FAILURE;
+  // Note that XHTML is not counted as HTML here, because we can't copy it
+  // properly (all the copy code for non-plaintext assumes using HTML
+  // serializers and parsers is OK, and those mess up XHTML).
+  nsCOMPtr<nsIHTMLDocument> htmlDoc = do_QueryInterface(document, &rv);
+  NS_ENSURE_SUCCESS(rv, NS_OK);
+  NS_ENSURE_TRUE(!(document->IsCaseSensitive()), NS_OK);
 
-  nsCOMPtr<nsISupportsInterfacePointer> ptrPrimitive(do_CreateInstance(NS_SUPPORTS_INTERFACE_POINTER_CONTRACTID, &rv));
-  if (NS_FAILED(rv)) return rv;
-  if (!ptrPrimitive)  return NS_ERROR_FAILURE;
-  ptrPrimitive->SetData(image);
+  // init encoder with document and node
+  rv = docEncoder->Init(document, NS_LITERAL_STRING(kHTMLMime),
+                        nsIDocumentEncoder::OutputAbsoluteLinks |
+                        nsIDocumentEncoder::OutputEncodeW3CEntities);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  trans->SetTransferData(kNativeImageMime, ptrPrimitive, sizeof(nsISupports*));
+  rv = docEncoder->SetNode(aDOMNode);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // put the transferable on the clipboard
-  return clipboard->SetData(trans, nsnull, aClipboardID);
+  // serialize to string
+  nsAutoString html, context, info;
+  rv = docEncoder->EncodeToStringWithContext(html, context, info);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // copy them to the transferable
+  if (!html.IsEmpty()) {
+    rv = AppendString(aTransferable, html, kHTMLMime);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  if (!info.IsEmpty()) {
+    rv = AppendString(aTransferable, info, kHTMLInfo);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // add a special flavor, even if we don't have html context data
+  return AppendString(aTransferable, context, kHTMLContext);
 }
-
-//
-// GetImage
-//
-// Given a dom node that's an image, finds the nsIImage associated with it.
-//
-// XXX see also nsContentAreaDragDrop, and factor!
-nsresult
-nsCopySupport::GetImageFromDOMNode(nsIDOMNode* inNode, nsIImage**outImage)
-{
-  NS_ENSURE_ARG_POINTER(outImage);
-  *outImage = nsnull;
-
-  nsCOMPtr<nsIImageLoadingContent> content(do_QueryInterface(inNode));
-  if (!content) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-
-  nsCOMPtr<imgIRequest> imgRequest;
-  content->GetRequest(nsIImageLoadingContent::CURRENT_REQUEST,
-                      getter_AddRefs(imgRequest));
-  if (!imgRequest) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-  
-  nsCOMPtr<imgIContainer> imgContainer;
-  imgRequest->GetImage(getter_AddRefs(imgContainer));
-
-  if (!imgContainer) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-    
-  nsCOMPtr<gfxIImageFrame> imgFrame;
-  imgContainer->GetFrameAt(0, getter_AddRefs(imgFrame));
-
-  if (!imgFrame) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-  
-  nsCOMPtr<nsIInterfaceRequestor> ir = do_QueryInterface(imgFrame);
-
-  if (!ir) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-  
-  return CallGetInterface(ir.get(), outImage);
-}
-
-
-

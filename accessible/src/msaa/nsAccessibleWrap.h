@@ -20,11 +20,11 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: Aaron Leventhal (aaronl@netscape.com)
+ *   Original Author: Aaron Leventhal (aaronl@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -179,6 +179,7 @@ class nsAccessibleWrap : public nsAccessible,
 
   virtual void GetXPAccessibleFor(const VARIANT& aVarChild, nsIAccessible **aXPAccessible);
   NS_IMETHOD GetNativeInterface(void **aOutAccessible);
+  NS_IMETHOD GetDescription(nsAString& aDescription);
 
   // NT4 does not have the oleacc that defines these methods. So we define copies here that automatically
   // load the library only if needed.
@@ -199,8 +200,7 @@ typedef class nsHTMLTextFieldAccessible    nsHTMLTextFieldAccessibleWrap;
 typedef class nsHTMLLinkAccessible         nsHTMLLinkAccessibleWrap;
 typedef class nsHTMLTableCellAccessible    nsHTMLTableCellAccessibleWrap;
 typedef class nsHTMLTableAccessible        nsHTMLTableAccessibleWrap;
-typedef class nsXULTreeAccessible          nsXULTreeAccessibleWrap;
-typedef class nsXULTreeColumnsAccessible   nsXULTreeColumnsAccessibleWrap;
 typedef class nsXULProgressMeterAccessible nsXULProgressMeterAccessibleWrap;
+typedef class nsXULTextFieldAccessible     nsXULTextFieldAccessibleWrap;
 
 #endif

@@ -1,34 +1,50 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Paul Hangas <hangas@netscape.com>
  *   Alec Flett <alecf@netscape.com>
  *   Seth Spitzer <sspitzer@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 var addressbook = 0;
 var composeWindow = 0;
 var msgCompFields = 0;
 var editCardCallback = 0;
 
-var gAddressBookBundle;
+var gPromptService = GetPromptService();
 
 var gSearchInput;
 var gSearchTimer = null;
@@ -64,12 +80,11 @@ function GetAbViewListener()
 
 function OnLoadSelectAddress()
 {
-  gAddressBookBundle = document.getElementById("bundle_addressBook");
+  InitCommonJS();
+
   prefixTo = gAddressBookBundle.getString("prefixTo") + ": ";
   prefixCc = gAddressBookBundle.getString("prefixCc") + ": ";
   prefixBcc = gAddressBookBundle.getString("prefixBcc") + ": ";
-
-  InitCommonJS();
 
   UpgradeAddressBookResultsPaneUI("mailnews.ui.select_addresses_results.version");
 
@@ -134,23 +149,23 @@ function AddAddressFromComposeWindow(addresses, prefix)
 {
   if ( addresses )
   {
-    var addressArray = addresses.split(",");
+    var emails = {};
+    var names = {};
+    var fullNames = {};
+    var numAddresses = gHeaderParser.parseHeadersWithArray(addresses, emails, names, fullNames);
 
-    for ( var index = 0; index < addressArray.length; index++ )
+    for ( var index = 0; index < numAddresses; index++ )
     {
-      // remove leading spaces
-      while ( addressArray[index][0] == " " )
-        addressArray[index] = addressArray[index].substring(1, addressArray[index].length);
-
-      AddAddressIntoBucket(prefix + addressArray[index]);
+      AddAddressIntoBucket(prefix, fullNames.value[index], emails.value[index]);
     }
   }
 }
 
 function SelectAddressOKButton()
 {
+  // Empty email checks are now done in AddAddressIntoBucket below.
   var body = document.getElementById('bucketBody');
-  var item, row, cell, text, colon,email;
+  var item, row, cell, prefix, address, email;
   var toAddress="", ccAddress="", bccAddress="", emptyEmail="";
 
   for ( var index = 0; index < body.childNodes.length; index++ )
@@ -162,43 +177,32 @@ function SelectAddressOKButton()
       if (  row.childNodes &&  row.childNodes.length )
       {
         cell = row.childNodes[0];
-        text = cell.getAttribute('label');
+        prefix = cell.getAttribute('prefix');
+        address = cell.getAttribute('address');
         email = cell.getAttribute('email');
-        if ( text )
+        if ( prefix )
         {
-          switch ( text[0] )
+          switch ( prefix )
           {
-            case prefixTo[0]:
+            case prefixTo:
               if ( toAddress )
                 toAddress += ", ";
-              toAddress += text.substring(prefixTo.length, text.length);
+              toAddress += address;
               break;
-            case prefixCc[0]:
+            case prefixCc:
               if ( ccAddress )
                 ccAddress += ", ";
-              ccAddress += text.substring(prefixCc.length, text.length);
+              ccAddress += address;
               break;
-            case prefixBcc[0]:
+            case prefixBcc:
               if ( bccAddress )
                 bccAddress += ", ";
-              bccAddress += text.substring(prefixBcc.length, text.length);
+              bccAddress += address;
               break;
           }
         }
-        if(!email)
-        {
-          if (emptyEmail)
-            emptyEmail +=", ";
-            emptyEmail += text.substring(prefixTo.length, text.length-2);
-        }
       }
     }
-  }
-  if(emptyEmail)
-  {
-    var alertText = gAddressBookBundle.getString("emptyEmailCard");
-    alert(alertText + emptyEmail);
-    return false;
   }
   // reset the UI in compose window
   msgCompFields.to = toAddress;
@@ -239,28 +243,40 @@ function AddSelectedAddressesIntoBucket(prefix)
 
 function AddCardIntoBucket(prefix, card)
 {
-  var address = prefix + GenerateAddressFromCard(card);
+  var address = GenerateAddressFromCard(card);
   if (card.isMailList) {
-    AddAddressIntoBucket(address, card.displayName);
+    AddAddressIntoBucket(prefix, address, card.displayName);
     }
   else {
-    AddAddressIntoBucket(address, card.primaryEmail);
+    AddAddressIntoBucket(prefix, address, card.primaryEmail);
   }
 }
 
-function AddAddressIntoBucket(address,email)
+function AddAddressIntoBucket(prefix, address, email)
 {
-  var body = document.getElementById("bucketBody");
+  if (email == "")
+  {
+    if (gPromptService)
+        gPromptService.alert(window,
+                             gAddressBookBundle.getString("emptyEmailAddCardTitle"),
+                             gAddressBookBundle.getString("emptyEmailAddCard"));
+  }
+  else
+  {
+    var body = document.getElementById("bucketBody");
 
-  var item = document.createElement('treeitem');
-  var row = document.createElement('treerow');
-  var cell = document.createElement('treecell');
-  cell.setAttribute('label', address);
-  cell.setAttribute('email',email);
+    var item = document.createElement('treeitem');
+    var row = document.createElement('treerow');
+    var cell = document.createElement('treecell');
+    cell.setAttribute('label', prefix + address);
+    cell.setAttribute('prefix', prefix);
+    cell.setAttribute('address', address);
+    cell.setAttribute('email', email);
 
-  row.appendChild(cell);
-  item.appendChild(row);
-  body.appendChild(item);
+    row.appendChild(cell);
+    item.appendChild(row);
+    body.appendChild(item);
+  }
 }
 
 function RemoveSelectedFromBucket()
@@ -354,46 +370,9 @@ function UpdateCardView()
   // in the select address dialog, do nothing
 }
 
-function DragOverBucketPane(event)
+function DropRecipient(address)
 {
-  var dragSession = gDragService.getCurrentSession();
-
-  if (dragSession.isDataFlavorSupported("text/x-moz-address"))
-    dragSession.canDrop = true;
-}
-
-function DropOnBucketPane(event)
-{
-  var dragSession = gDragService.getCurrentSession();
-  var trans;
-  
-  try {
-    trans = Components.classes["@mozilla.org/widget/transferable;1"].createInstance(Components.interfaces.nsITransferable);
-    trans.addDataFlavor("text/x-moz-address");
-  }
-  catch (ex) {
-    return;
-  }
-
-  for ( var i = 0; i < dragSession.numDropItems; ++i )
-  {
-    dragSession.getData ( trans, i );
-    var dataObj = new Object();
-    var bestFlavor = new Object();
-    var len = new Object();
-    trans.getAnyTransferData ( bestFlavor, dataObj, len );
-    if ( dataObj )  
-      dataObj = dataObj.value.QueryInterface(Components.interfaces.nsISupportsString);
-    if ( !dataObj ) 
-      continue;
-
-    // pull the address out of the data object
-    var address = dataObj.data.substring(0, len.value);
-    if (!address)
-      continue;
-
-    AddAddressIntoBucket(prefixTo + address, address);
-  }
+  AddAddressIntoBucket(prefixTo, address, address);
 }
 
 function OnReturnHit(event)
@@ -421,17 +400,13 @@ function onEnterInSearchBar()
                                               Components.interfaces.nsIPrefLocalizedString).data;
   }
   
-  var sortColumn = selectedNode.getAttribute("sortColumn");
-  var sortDirection = selectedNode.getAttribute("sortDirection");
   var searchURI = selectedNode.getAttribute("id");
 
   if (gSearchInput.value != "") {
     searchURI += gQueryURIFormat.replace(/@V/g, encodeURIComponent(gSearchInput.value));
   }
 
-  if (!sortColumn.Length)
-    sortColumn = "GeneratedName";
-  SetAbView(searchURI, true, sortColumn, sortDirection);
+  SetAbView(searchURI, true);
   
   SelectFirstCard();
 }
@@ -449,5 +424,16 @@ function DirPaneSelectionChangeMenulist()
       onEnterInSearchBar();
     else
       ChangeDirectoryByURI(abList.selectedItem.id);
+  }
+}
+
+function GetPromptService()
+{
+  try {
+    return Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
+                     .getService(Components.interfaces.nsIPromptService);
+  }
+  catch (e) {
+    return null;
   }
 }

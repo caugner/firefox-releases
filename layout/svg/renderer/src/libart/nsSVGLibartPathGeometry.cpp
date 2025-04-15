@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,27 +14,27 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is Crocodile Clips Ltd.
- * 
+ * The Initial Developer of the Original Code is
+ * Crocodile Clips Ltd.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsCOMPtr.h"
 #include "nsSVGLibartPathGeometry.h"
@@ -44,14 +44,19 @@
 #include "nsSVGLibartRegion.h"
 #include "nsISVGRendererRegion.h"
 #include "nsSVGLibartBPathBuilder.h"
+#include "nsSVGLibartGradient.h"
 #include "nsISVGRendererPathBuilder.h"
 #include "nsISVGPathGeometrySource.h"
+#include "nsISVGGradient.h"
 #include "nsSVGFill.h"
 #include "nsSVGStroke.h"
 #include "nsIServiceManager.h"
-#include "nsIPref.h"
 #include "nsMemory.h"
 #include "prdtoa.h"
+#include "nsString.h"
+#include "nsIDOMSVGRect.h"
+#include "nsSVGTypeCIDs.h"
+#include "nsIComponentManager.h"
 
 // comment from art_vpath_path.c: The Adobe PostScript reference
 // manual defines flatness as the maximum deviation between any
@@ -93,6 +98,7 @@ protected:
   ArtVpath *GetPath();
   ArtSVP *GetFill();
   ArtSVP *GetStroke();
+  ArtSVP *GetGradient();
   
   private:
   nsCOMPtr<nsISVGPathGeometrySource> mSource;
@@ -175,7 +181,7 @@ nsSVGLibartPathGeometry::GetPath()
   double matrix[6];
   {
     nsCOMPtr<nsIDOMSVGMatrix> ctm;
-    mSource->GetCTM(getter_AddRefs(ctm));
+    mSource->GetCanvasTM(getter_AddRefs(ctm));
     NS_ASSERTION(ctm, "graphic source didn't have a ctm");
     
     float val;
@@ -197,7 +203,7 @@ nsSVGLibartPathGeometry::GetPath()
     ctm->GetF(&val);
     matrix[5] = val;
   }
-  
+
   if ( bpath &&
        ( matrix[0] != 1.0 || matrix[2] != 0.0 || matrix[4] != 0.0 ||
          matrix[1] != 0.0 || matrix[3] != 1.0 || matrix[5] != 0.0 ))
@@ -249,6 +255,7 @@ nsSVGLibartPathGeometry::Render(nsISVGRendererCanvas *canvas)
   
   // paint fill:
   mSource->GetFillPaintType(&type);
+
   if (type == nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR && GetFill()) {
     nscolor rgb;
     mSource->GetFillPaint(&rgb);
@@ -261,9 +268,36 @@ nsSVGLibartPathGeometry::Render(nsISVGRendererCanvas *canvas)
     ArtRender* render = libartCanvas->NewRender();
     NS_ASSERTION(render, "could not create render");
 
+#ifdef DEBUG_scooter
+    printf("nsSVGLibartPathGeometry::Render - opacity=%f\n",opacity);
+#endif
+
     art_render_mask_solid(render, (int)(0x10000 * opacity));
     art_render_svp(render, GetFill());
     art_render_image_solid(render, col);
+    libartCanvas->InvokeRender(render);
+  } else if (type == nsISVGGeometrySource::PAINT_TYPE_SERVER && GetFill() ) {
+    // Handle gradients
+    nsCOMPtr<nsISVGGradient> aGrad;
+    mSource->GetFillGradient(getter_AddRefs(aGrad));
+    float opacity;
+    mSource->GetFillOpacity(&opacity);
+    
+    ArtRender* render = libartCanvas->NewRender();
+    NS_ASSERTION(render, "could not create render");
+
+    art_render_mask_solid(render, (int)(0x10000 * opacity));
+    art_render_svp(render, GetFill());
+
+    // Now, get the appropriate gradient fill
+    nsCOMPtr<nsISVGRendererRegion> region;
+    GetCoveredRegion(getter_AddRefs(region));
+    nsCOMPtr<nsISVGLibartRegion> aLibartRegion = do_QueryInterface(region);
+    nsCOMPtr<nsIDOMSVGMatrix> ctm;
+    mSource->GetCanvasTM(getter_AddRefs(ctm));
+    LibartGradient(render, ctm, aGrad, aLibartRegion, mSource);
+
+    // And draw it
     libartCanvas->InvokeRender(render);
   }
 
@@ -285,6 +319,29 @@ nsSVGLibartPathGeometry::Render(nsISVGRendererCanvas *canvas)
     art_render_svp(render, GetStroke());
     art_render_image_solid(render, col);
     libartCanvas->InvokeRender(render);
+  } else if (type == nsISVGGeometrySource::PAINT_TYPE_SERVER && GetStroke()) {
+    // Handle gradients
+    nsCOMPtr<nsISVGGradient> aGrad;
+    mSource->GetStrokeGradient(getter_AddRefs(aGrad));
+    float opacity;
+    mSource->GetStrokeOpacity(&opacity);
+    
+    ArtRender* render = libartCanvas->NewRender();
+    NS_ASSERTION(render, "could not create render");
+
+    art_render_mask_solid(render, (int)(0x10000 * opacity));
+    art_render_svp(render, GetStroke());
+
+    // Now, get the appropriate gradient fill
+    nsCOMPtr<nsISVGRendererRegion> region;
+    GetCoveredRegion(getter_AddRefs(region));
+    nsCOMPtr<nsISVGLibartRegion> aLibartRegion = do_QueryInterface(region);
+    nsCOMPtr<nsIDOMSVGMatrix> ctm;
+    mSource->GetCanvasTM(getter_AddRefs(ctm));
+    LibartGradient(render, ctm, aGrad, aLibartRegion, mSource);
+
+    // And draw it
+    libartCanvas->InvokeRender(render);
   }
   
   return NS_OK;
@@ -298,7 +355,7 @@ nsSVGLibartPathGeometry::Update(PRUint32 updatemask, nsISVGRendererRegion **_ret
 
   const unsigned long pathmask =
     nsISVGPathGeometrySource::UPDATEMASK_PATH |
-    nsISVGGeometrySource::UPDATEMASK_CTM;
+    nsISVGGeometrySource::UPDATEMASK_CANVAS_TM;
 
   const unsigned long fillmask = 
     pathmask |
@@ -320,7 +377,9 @@ nsSVGLibartPathGeometry::Update(PRUint32 updatemask, nsISVGRendererRegion **_ret
     nsISVGGeometrySource::UPDATEMASK_STROKE_PAINT_TYPE;
   
   nsCOMPtr<nsISVGRendererRegion> before;
-  GetCoveredRegion(getter_AddRefs(before));
+  // only obtain the 'before' region if we have built a path before:
+  if (!mFill.IsEmpty() || !mStroke.IsEmpty())
+    GetCoveredRegion(getter_AddRefs(before));
 
   if ((updatemask & pathmask)!=0){
     ClearPath();
@@ -336,7 +395,8 @@ nsSVGLibartPathGeometry::Update(PRUint32 updatemask, nsISVGRendererRegion **_ret
     if (after)
       after->Combine(before, _retval);
   }
-  else if (updatemask != nsISVGGeometrySource::UPDATEMASK_NOTHING) {
+
+  if (!*_retval) {
     *_retval = before;
     NS_IF_ADDREF(*_retval);
   }
@@ -407,4 +467,33 @@ nsSVGLibartPathGeometry::ContainsPoint(float x, float y, PRBool *_retval)
   }
   
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSVGLibartPathGeometry::GetBoundingBox(nsIDOMSVGRect * *aBoundingBox)
+{
+  *aBoundingBox = nsnull;
+
+  ArtSVP *path = GetFill();
+  if (!path)
+    return NS_ERROR_FAILURE;
+
+  nsCOMPtr<nsIDOMSVGRect> rect = do_CreateInstance(NS_SVGRECT_CONTRACTID);
+
+  NS_ASSERTION(rect, "could not create rect");
+  if (!rect) return NS_ERROR_FAILURE;
+
+  ArtDRect bound;
+  art_drect_svp(&bound, path);
+
+  rect->SetX(bound.x0);
+  rect->SetY(bound.y0);
+  rect->SetWidth(bound.x1 - bound.x0);
+  rect->SetHeight(bound.y1 - bound.y0);
+
+  *aBoundingBox = rect;
+  NS_ADDREF(*aBoundingBox);
+  
+  return NS_OK;
+
 }

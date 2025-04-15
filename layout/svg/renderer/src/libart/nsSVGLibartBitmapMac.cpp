@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,34 +14,34 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is Alex Fritze.
- * 
+ * The Initial Developer of the Original Code is
+ * Alex Fritze.
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex@croczilla.com> (original author)
+ *   Alex Fritze <alex@croczilla.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 
 #include "nsCOMPtr.h"
 #include "nsISVGLibartBitmap.h"
 #include "nsIRenderingContext.h"
 #include "nsIDeviceContext.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsRect.h"
 #include "nsIImage.h"
 #include "nsIComponentManager.h"
@@ -66,7 +66,7 @@ public:
   nsSVGLibartBitmapMac();
   ~nsSVGLibartBitmapMac();
   nsresult Init(nsIRenderingContext *ctx,
-                nsIPresContext* presContext,
+                nsPresContext* presContext,
                 const nsRect & rect);
 
   // nsISupports interface:
@@ -111,7 +111,7 @@ nsSVGLibartBitmapMac::~nsSVGLibartBitmapMac()
 
 nsresult
 nsSVGLibartBitmapMac::Init(nsIRenderingContext* ctx,
-                               nsIPresContext* presContext,
+                               nsPresContext* presContext,
                                const nsRect & rect)
 {
   mRenderingContext = ctx;
@@ -138,7 +138,7 @@ nsSVGLibartBitmapMac::Init(nsIRenderingContext* ctx,
 nsresult
 NS_NewSVGLibartBitmap(nsISVGLibartBitmap **result,
                       nsIRenderingContext *ctx,
-                      nsIPresContext* presContext,
+                      nsPresContext* presContext,
                       const nsRect & rect)
 {
   nsSVGLibartBitmapMac* bm = new nsSVGLibartBitmapMac();
@@ -253,21 +253,26 @@ nsSVGLibartBitmapMac::Flush()
   if (ireq) {
     nsCOMPtr<nsIImage> img(do_GetInterface(ireq));
 
-    if (!img->GetIsRowOrderTopToBottom()) {
-      // XXX we need to flip the image. This is silly. Blt should take
-      // care of it
-      int stride = img->GetLineStride();
-      int height = GetHeight();
-      PRUint8* bits = img->GetBits();
-      PRUint8* rowbuf = new PRUint8[stride];
-      for (int row=0; row<height/2; ++row) {
-        memcpy(rowbuf, bits+row*stride, stride);
-        memcpy(bits+row*stride, bits+(height-1-row)*stride, stride);
-        memcpy(bits+(height-1-row)*stride, rowbuf, stride);
+    // need to flip the words
+    int stride = img->GetLineStride();
+    int height = GetHeight();
+    int width = GetWidth();
+    PRUint8* bits = img->GetBits();
+    PRUint8* rowbuf = new PRUint8[stride];
+    for (int row = 0; row < height; row++) {
+      PRUint8 *src = bits + row * stride;
+      PRUint8 *dst = rowbuf + 3;
+      for (int x = 0; x < width; x++) {
+        *dst-- = *src++;
+        *dst-- = *src++;
+        *dst-- = *src++;
+        *dst   = *src++;
+        dst += 7;
       }
-      delete[] rowbuf;
+      memcpy(bits + row * stride, rowbuf, stride);
     }
-    
+    delete[] rowbuf;
+
     nsRect r(0, 0, GetWidth(), GetHeight());
     img->ImageUpdated(ctx, nsImageUpdateFlags_kBitsChanged, &r);
   }

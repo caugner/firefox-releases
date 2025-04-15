@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,32 +14,39 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *   Andrei Volkov <av@netscape.com>
  *   Brian Stell <bstell@netscape.com>
  *   Peter Lubczynski <peterl@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "windows.h"
 #include "windowsx.h"
+
+// XXXbz windowsx.h defines GetFirstChild, GetNextSibling,
+// GetPrevSibling are macros, apparently... Eeevil.  We have functions
+// called that on some classes, so undef them.
+#undef GetFirstChild
+#undef GetNextSibling
+#undef GetPrevSibling
 
 #include "nsDebug.h"
 
@@ -47,6 +54,7 @@
 #include "nsIEventQueueService.h"
 
 #include "nsIPluginInstancePeer.h"
+#include "nsIPluginInstanceInternal.h"
 #include "nsPluginSafety.h"
 #include "nsPluginNativeWindow.h"
 
@@ -121,13 +129,15 @@ public:
   virtual nsresult CallSetWindow(nsCOMPtr<nsIPluginInstance> &aPluginInstance);
 
 private:
+#ifndef WINCE
   nsresult SubclassAndAssociateWindow();
   nsresult UndoSubclassAndAssociateWindow();
+#endif
 
 public:
   // locals
   WNDPROC GetWindowProc();
-  nsresult GetEventService(nsCOMPtr<nsIEventQueueService> &aEventService);
+  nsIEventQueueService *GetEventService();
   PluginWindowEvent * GetPluginWindowEvent(HWND aWnd, UINT aMsg, WPARAM aWParam, LPARAM aLParam);
 
 private:
@@ -151,10 +161,11 @@ static PRBool ProcessFlashMessageDelayed(nsPluginNativeWindowWin * aWin,
     return PR_FALSE; // no need to delay
 
   // do stuff
-  nsCOMPtr<nsIEventQueueService> eventService;
-  if (NS_SUCCEEDED(aWin->GetEventService(eventService))) {
+  nsIEventQueueService *eventService = aWin->GetEventService();
+  if (eventService) {
     nsCOMPtr<nsIEventQueue> eventQueue;  
-    eventService->GetThreadEventQueue(PR_GetCurrentThread(), getter_AddRefs(eventQueue));
+    eventService->GetThreadEventQueue(PR_GetCurrentThread(),
+                                      getter_AddRefs(eventQueue));
     if (eventQueue) {
       PluginWindowEvent *pwe = aWin->GetPluginWindowEvent(hWnd, msg, wParam, lParam);
       if (pwe) {
@@ -164,6 +175,28 @@ static PRBool ProcessFlashMessageDelayed(nsPluginNativeWindowWin * aWin,
     }
   }
   return PR_FALSE;
+}
+
+PR_STATIC_CALLBACK(void*)
+DelayedPopupsEnabledEvent_Handle(PLEvent *event)
+{
+  nsIPluginInstanceInternal *instInternal =
+    (nsIPluginInstanceInternal *)event->owner;
+
+  instInternal->PushPopupsEnabledState(PR_FALSE);
+
+  return nsnull;
+}
+
+PR_STATIC_CALLBACK(void)
+DelayedPopupsEnabledEvent_Destroy(PLEvent *event)
+{
+  nsIPluginInstanceInternal *instInternal =
+    (nsIPluginInstanceInternal *)event->owner;
+
+  NS_RELEASE(instInternal);
+
+  delete event;
 }
 
 /**
@@ -213,7 +246,7 @@ static LRESULT CALLBACK PluginWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
     }
   }
 
-
+  PRBool enablePopups = PR_FALSE;
 
   // Activate/deactivate mouse capture on the plugin widget
   // here, before we pass the Windows event to the plugin
@@ -230,8 +263,11 @@ static LRESULT CALLBACK PluginWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
         widget->CaptureMouse(PR_TRUE);
       break;
     }
-    case WM_MBUTTONUP:
     case WM_LBUTTONUP:
+      enablePopups = PR_TRUE;
+
+      // fall through
+    case WM_MBUTTONUP:
     case WM_RBUTTONUP: {
       nsCOMPtr<nsIWidget> widget;
       win->GetPluginWidget(getter_AddRefs(widget));
@@ -239,8 +275,18 @@ static LRESULT CALLBACK PluginWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
         widget->CaptureMouse(PR_FALSE);
       break;
     }
-  }
+    case WM_KEYDOWN:
+      // Ignore repeating keydown messages...
+      if ((lParam & 0x40000000) != 0) {
+        break;
+      }
 
+      // fall through
+    case WM_KEYUP:
+      enablePopups = PR_TRUE;
+
+      break;
+  }
 
   // Macromedia Flash plugin may flood the message queue with some special messages
   // (WM_USER+1) causing 100% CPU consumption and GUI freeze, see mozilla bug 132759;
@@ -252,8 +298,20 @@ static LRESULT CALLBACK PluginWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 
   LRESULT res = TRUE;
 
+  nsCOMPtr<nsIPluginInstanceInternal> instInternal;
   nsCOMPtr<nsIPluginInstance> inst;
   win->GetPluginInstance(inst);
+
+  if (enablePopups) {
+    nsCOMPtr<nsIPluginInstanceInternal> tmp = do_QueryInterface(inst);
+
+    if (tmp && !nsVersionOK(tmp->GetPluginAPIVersion(),
+                            NP_POPUP_API_VERSION)) {
+      tmp.swap(instInternal);
+
+      instInternal->PushPopupsEnabledState(PR_TRUE);
+    }
+  }
 
   sInMessageDispatch = PR_TRUE;
 
@@ -262,6 +320,44 @@ static LRESULT CALLBACK PluginWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
                           nsnull, inst);
 
   sInMessageDispatch = PR_FALSE;
+
+  if (instInternal) {
+    // Popups are enabled (were enabled before the call to
+    // CallWindowProc()). Some plugins (at least the flash player)
+    // post messages from their key handlers etc that delay the actual
+    // processing, so we need to delay the disabling of popups so that
+    // popups remain enabled when the flash player ends up processing
+    // the actual key handlers. We do this by posting an event that
+    // does the disabling, this way our disabling will happen after
+    // the handlers in the plugin are done.
+
+    // Note that it's not fatal if any of this fails (which won't
+    // happen unless we're out of memory anyways) since the plugin
+    // code will pop any popup state pushed by this plugin on
+    // destruction.
+
+    nsIEventQueueService *eventService = win->GetEventService();
+    if (eventService) {
+      nsCOMPtr<nsIEventQueue> eventQueue;  
+      eventService->GetThreadEventQueue(PR_GetCurrentThread(),
+                                        getter_AddRefs(eventQueue));
+      if (eventQueue) {
+        PLEvent *event = new PLEvent;
+
+        if (event) {
+          nsIPluginInstanceInternal *eventInst = instInternal;
+
+          // Make the event own the plugin instance.
+          NS_ADDREF(eventInst);
+
+          PL_InitEvent(event, eventInst, DelayedPopupsEnabledEvent_Handle,
+                       DelayedPopupsEnabledEvent_Destroy);
+
+          eventQueue->PostEvent(event);
+        }
+      }
+    }
+  }
 
   return res;
 }
@@ -342,15 +438,13 @@ PluginWindowEvent_Destroy(PLEvent* self)
     event->Clear();
 }
 
-nsresult nsPluginNativeWindowWin::GetEventService(nsCOMPtr<nsIEventQueueService> &aEventService)
+nsIEventQueueService *nsPluginNativeWindowWin::GetEventService()
 {
   if (!mEventService) {
     mEventService = do_GetService(kEventQueueServiceCID);
-    if (!mEventService)
-      return NS_ERROR_FAILURE;
   }
-  aEventService = mEventService;
-  return NS_OK;
+
+  return mEventService;
 }
 
 PluginWindowEvent*
@@ -382,16 +476,24 @@ nsresult nsPluginNativeWindowWin::CallSetWindow(nsCOMPtr<nsIPluginInstance> &aPl
 {
   // check the incoming instance, null indicates that window is going away and we are
   // not interested in subclassing business any more, undo and don't subclass
+
+  // WINCE does not subclass windows.  See bug 300011 for the details.
+#ifndef WINCE
   if (!aPluginInstance)
     UndoSubclassAndAssociateWindow();
+#endif
 
   nsPluginNativeWindow::CallSetWindow(aPluginInstance);
 
+#ifndef WINCE
   if (aPluginInstance)
     SubclassAndAssociateWindow();
+#endif
 
   return NS_OK;
 }
+
+#ifndef WINCE
 
 nsresult nsPluginNativeWindowWin::SubclassAndAssociateWindow()
 {
@@ -440,6 +542,7 @@ nsresult nsPluginNativeWindowWin::UndoSubclassAndAssociateWindow()
 
   return NS_OK;
 }
+#endif // WINCE
 
 nsresult PLUG_NewPluginNativeWindow(nsPluginNativeWindow ** aPluginNativeWindow)
 {

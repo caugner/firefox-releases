@@ -1,23 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.0 (the "NPL"); you may not use this file except in
- * compliance with the NPL.  You may obtain a copy of the NPL at
- * http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the NPL is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the NPL
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * NPL.
+ * License.
  *
- * The Initial Developer of this code under the NPL is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.  All Rights
- * Reserved.
+ * The Original Code is mozilla.org Code.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsProfileAccess.h"
 #include "nsProfile.h"
@@ -36,6 +54,7 @@
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsILocalFile.h"
 #include "nsReadableUtils.h"
+#include "nsNativeCharsetUtils.h"
 
 #if defined(XP_MAC) || defined(XP_MACOSX)
 #include <Processes.h>
@@ -56,10 +75,6 @@
 #include <rmsdef.h>
 #endif
 
-#include "nsICharsetConverterManager.h"
-#include "nsIPlatformCharset.h"
-
-
 #if defined (XP_UNIX)
 #define USER_ENVIRONMENT_VARIABLE "USER"
 #define LOGNAME_ENVIRONMENT_VARIABLE "LOGNAME"
@@ -72,9 +87,6 @@
 #endif
 #elif defined (XP_BEOS)
 #endif
-
-// IID and CIDs of all the services needed
-static NS_DEFINE_CID(kCharsetConverterManagerCID, NS_ICHARSETCONVERTERMANAGER_CID);
 
 // Registry Keys
 
@@ -130,63 +142,6 @@ nsProfileAccess::~nsProfileAccess()
     // Release all resources.
     mNewRegFile = nsnull;
     FreeProfileMembers(mProfiles);
-}
-
-// A wrapper function to call the interface to get a platform file charset.
-nsresult
-GetPlatformCharset(nsCString& aCharset)
-{
-    nsresult rv;
-
-    // we may cache it since the platform charset will not change through application life
-    nsCOMPtr <nsIPlatformCharset> platformCharset = do_GetService(NS_PLATFORMCHARSET_CONTRACTID, &rv);
-    if (NS_SUCCEEDED(rv) && platformCharset) {
-        rv = platformCharset->GetCharset(kPlatformCharsetSel_FileName, aCharset);
-    }
-    if (NS_FAILED(rv)) {
-        aCharset.Assign(NS_LITERAL_CSTRING("ISO-8859-1"));  // use ISO-8859-1 in case of any error
-    }
-    return rv;
-}
-
-// Apply a charset conversion from the given charset to Unicode for input C string.
-nsresult
-ConvertStringToUnicode(nsCString& aCharset, const char* inString, nsAString& outString)
-{
-    nsresult rv;
-    // convert result to unicode
-    nsCOMPtr<nsICharsetConverterManager> ccm =
-             do_GetService(kCharsetConverterManagerCID, &rv);
-
-    if(NS_SUCCEEDED(rv)) {
-        nsCOMPtr <nsIUnicodeDecoder> decoder; // this may be cached
-        rv = ccm->GetUnicodeDecoderRaw(aCharset.get(), getter_AddRefs(decoder));
-
-        if(NS_SUCCEEDED(rv) && decoder) {
-            PRInt32 uniLength = 0;
-            PRInt32 srcLength = strlen(inString);
-            rv = decoder->GetMaxLength(inString, srcLength, &uniLength);
-
-            if (NS_SUCCEEDED(rv)) {
-                PRUnichar *unichars = new PRUnichar [uniLength];
-
-                if (nsnull != unichars) {
-                    // convert to unicode
-                    rv = decoder->Convert(inString, &srcLength, unichars, &uniLength);
-
-                    if (NS_SUCCEEDED(rv)) {
-                        // Pass back the unicode string
-                        outString.Assign(unichars, uniLength);
-                    }
-                    delete [] unichars;
-                }
-                else {
-                    rv = NS_ERROR_OUT_OF_MEMORY;
-                }
-            }
-        }
-    }
-    return rv;
 }
 
 // Free up the member profile structs
@@ -1056,10 +1011,6 @@ nsProfileAccess::Get4xProfileInfo(nsIFile *registryFile, PRBool fromImport)
     if (fromImport && m4xProfilesAdded)
         return rv;
 
-    nsCAutoString charSet;
-    rv = GetPlatformCharset(charSet);
-    if (NS_FAILED(rv)) return rv;
-
 #if defined(XP_WIN) || defined(XP_OS2) || defined(XP_MAC) || defined(XP_MACOSX)
     NS_ENSURE_ARG(registryFile);
 
@@ -1106,15 +1057,15 @@ nsProfileAccess::Get4xProfileInfo(nsIFile *registryFile, PRBool fromImport)
 #if defined(XP_MAC) || defined(XP_MACOSX)
         // 4.x profiles coming from japanese machine are already in unicode.
         // So, there is no need to decode into unicode further.
-        NS_ConvertUCS2toUTF8 temp(profile);
+        NS_ConvertUTF16toUTF8 temp(profile);
         nsCAutoString profileName(nsUnescape(temp.BeginWriting()));
-        nsAutoString convertedProfName(NS_ConvertUTF8toUCS2(profileName).get());
+        NS_ConvertUTF8toUTF16 convertedProfName(profileName);
 #else
-        nsCAutoString temp; temp.AssignWithConversion(profile);
-
+        nsCAutoString temp;
+        NS_CopyUnicodeToNative(profile, temp);
         nsCAutoString profileName(nsUnescape(temp.BeginWriting()));
         nsAutoString convertedProfName;
-        ConvertStringToUnicode(charSet, profileName.get(), convertedProfName);
+        NS_CopyNativeToUnicode(profileName, convertedProfName);
 #endif
 
         PRBool exists = PR_FALSE;
@@ -1170,7 +1121,9 @@ nsProfileAccess::Get4xProfileInfo(nsIFile *registryFile, PRBool fromImport)
 
         PRBool exists = PR_FALSE;
         if (!fromImport) {
-            exists = ProfileExists(NS_ConvertASCIItoUCS2(unixProfileName).get());
+            nsAutoString profileNameUTF16;
+            NS_CopyNativeToUnicode(unixProfileName, profileNameUTF16);
+            exists = ProfileExists(profileNameUTF16.get());
             if (exists)
             {
                 return NS_OK;
@@ -1197,7 +1150,7 @@ nsProfileAccess::Get4xProfileInfo(nsIFile *registryFile, PRBool fromImport)
 
                 profileItem->updateProfileEntry = PR_TRUE;
 
-                CopyASCIItoUTF16(unixProfileName, profileItem->profileName);
+                NS_CopyNativeToUnicode(unixProfileName, profileItem->profileName);
 
                 nsCOMPtr<nsILocalFile> localFile;
                 rv = NS_NewNativeLocalFile(profileLocation, PR_TRUE, getter_AddRefs(localFile));
@@ -1397,24 +1350,11 @@ nsresult ProfileStruct::InternalizeLocation(nsIRegistry *aRegistry, nsRegistryKe
         // So, there is no need to decode into unicode further.
 
         // Unescape profile location
-        NS_ConvertUCS2toUTF8 tempLoc(profLoc);
+        NS_ConvertUTF16toUTF8 tempLoc(profLoc);
         nsCAutoString profileLocation(nsUnescape(tempLoc.BeginWriting()));
-        nsAutoString convertedProfLoc(NS_ConvertUTF8toUCS2(profileLocation).get());
-#else
-        nsCAutoString charSet;
-        rv = GetPlatformCharset(charSet);
-        if (NS_FAILED(rv)) return rv;
-
-        // Unescape profile location and convert it to the right format
-        nsCAutoString tempLoc; tempLoc.AssignWithConversion(profLoc);
-
-        nsCAutoString profileLocation(nsUnescape(tempLoc.BeginWriting()));
-        nsAutoString convertedProfLoc;
-        ConvertStringToUnicode(charSet, profileLocation.get(), convertedProfLoc);
-#endif
+        NS_ConvertUTF8toUTF16 convertedProfLoc(profileLocation);
 
         // Now we have a unicode path - make it into a file
-#if defined(XP_MACOSX)
         // This is an HFS style path, which can't be used with nsIFile, so convert it.
         rv = NS_ERROR_FAILURE;
         CFStringRef pathStrRef = ::CFStringCreateWithCharacters(NULL,
@@ -1424,7 +1364,7 @@ nsresult ProfileStruct::InternalizeLocation(nsIRegistry *aRegistry, nsRegistryKe
             CFURLRef pathURLRef = ::CFURLCreateWithFileSystemPath(NULL, pathStrRef, kCFURLHFSPathStyle, true);
             if (pathURLRef)
             {
-                rv = NS_NewNativeLocalFile(nsCString(), PR_TRUE, getter_AddRefs(tempLocal));
+                rv = NS_NewNativeLocalFile(EmptyCString(), PR_TRUE, getter_AddRefs(tempLocal));
                 if (NS_SUCCEEDED(rv))
                 {
                     nsCOMPtr<nsILocalFileMac> tempLocalMac(do_QueryInterface(tempLocal));
@@ -1435,7 +1375,13 @@ nsresult ProfileStruct::InternalizeLocation(nsIRegistry *aRegistry, nsRegistryKe
             ::CFRelease(pathStrRef);
         }
 #else        
-        rv = NS_NewLocalFile(convertedProfLoc, PR_TRUE, getter_AddRefs(tempLocal));
+        // Unescape profile location and convert it to the right format
+        nsCAutoString tempLoc;
+        rv = NS_CopyUnicodeToNative(profLoc, tempLoc); 
+        NS_ASSERTION(NS_SUCCEEDED(rv), 
+                     "failed to convert profile location to native encoding");
+        nsCAutoString profileLocation(nsUnescape(tempLoc.BeginWriting()));
+        rv = NS_NewNativeLocalFile(profileLocation, PR_TRUE, getter_AddRefs(tempLocal));
 #endif
     }
     else
@@ -1449,7 +1395,7 @@ nsresult ProfileStruct::InternalizeLocation(nsIRegistry *aRegistry, nsRegistryKe
         regLocationData = regData;
 
 #if defined(XP_MAC) || defined(XP_MACOSX)
-            rv = NS_NewNativeLocalFile(nsCString(), PR_TRUE, getter_AddRefs(tempLocal));
+            rv = NS_NewNativeLocalFile(EmptyCString(), PR_TRUE, getter_AddRefs(tempLocal));
         if (NS_SUCCEEDED(rv)) // regLocationData is ASCII so no loss
             rv = tempLocal->SetPersistentDescriptor(NS_LossyConvertUCS2toASCII(regLocationData));
 #else
@@ -1486,7 +1432,7 @@ nsresult ProfileStruct::ExternalizeLocation(nsIRegistry *aRegistry, nsRegistryKe
         if (NS_FAILED(rv)) return rv;
         if (leafCreated)
             resolvedLocation->Remove(PR_FALSE);
-        regData = NS_ConvertUTF8toUCS2(descBuf);
+        AppendUTF8toUTF16(descBuf, regData);
 #else
         rv = resolvedLocation->GetPath(regData);
         if (NS_FAILED(rv)) return rv;
@@ -1525,7 +1471,7 @@ nsresult ProfileStruct::InternalizeMigratedFromLocation(nsIRegistry *aRegistry, 
     if (NS_SUCCEEDED(rv))
     {
 #if defined(XP_MAC) || defined(XP_MACOSX)
-        rv = NS_NewLocalFile(nsString(), PR_TRUE, getter_AddRefs(tempLocal));
+        rv = NS_NewLocalFile(EmptyString(), PR_TRUE, getter_AddRefs(tempLocal));
         if (NS_SUCCEEDED(rv))
         {
             // The persistent desc on Mac is base64 encoded so plain ASCII
@@ -1534,7 +1480,7 @@ nsresult ProfileStruct::InternalizeMigratedFromLocation(nsIRegistry *aRegistry, 
                 migratedFrom = tempLocal;
         }
 #else
-        rv = NS_NewLocalFile(NS_ConvertUTF8toUCS2(regData), PR_TRUE, getter_AddRefs(tempLocal));
+        rv = NS_NewLocalFile(NS_ConvertUTF8toUTF16(regData), PR_TRUE, getter_AddRefs(tempLocal));
         if (NS_SUCCEEDED(rv))
             migratedFrom = tempLocal;
 #endif
@@ -1554,7 +1500,7 @@ nsresult ProfileStruct::ExternalizeMigratedFromLocation(nsIRegistry *aRegistry, 
 #else
         nsAutoString path;
         rv = migratedFrom->GetPath(path);
-        regData = NS_ConvertUCS2toUTF8(path);
+        AppendUTF16toUTF8(path, regData);
 #endif
 
         if (NS_SUCCEEDED(rv))

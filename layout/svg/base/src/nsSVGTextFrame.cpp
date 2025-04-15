@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,31 +14,31 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Crocodile Clips Ltd..
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsContainerFrame.h"
 #include "nsIDOMSVGTextElement.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsISVGTextFrame.h"
 #include "nsISVGRendererCanvas.h"
 #include "nsWeakReference.h"
@@ -52,6 +52,7 @@
 #include "nsIDOMSVGLength.h"
 #include "nsISVGValueUtils.h"
 #include "nsIDOMSVGAnimatedLengthList.h"
+#include "nsIDOMSVGTransformList.h"
 #include "nsISVGContainerFrame.h"
 #include "nsISVGChildFrame.h"
 #include "nsISVGGlyphFragmentNode.h"
@@ -60,6 +61,9 @@
 #include "nsISVGOuterSVGFrame.h"
 #include "nsIDOMSVGRect.h"
 #include "nsISVGTextContentMetrics.h"
+#include "nsSVGRect.h"
+#include "nsSVGMatrix.h"
+#include "nsLayoutAtoms.h"
 
 typedef nsContainerFrame nsSVGTextFrameBase;
 
@@ -87,43 +91,49 @@ private:
 public:
   // nsIFrame:
 
-  NS_IMETHOD  AppendFrames(nsIPresContext* aPresContext,
-                           nsIPresShell&   aPresShell,
-                           nsIAtom*        aListName,
+  NS_IMETHOD  AppendFrames(nsIAtom*        aListName,
                            nsIFrame*       aFrameList);
-  NS_IMETHOD  InsertFrames(nsIPresContext* aPresContext,
-                           nsIPresShell&   aPresShell,
-                           nsIAtom*        aListName,
+  NS_IMETHOD  InsertFrames(nsIAtom*        aListName,
                            nsIFrame*       aPrevFrame,
                            nsIFrame*       aFrameList);
-  NS_IMETHOD  RemoveFrame(nsIPresContext* aPresContext,
-                          nsIPresShell&   aPresShell,
-                          nsIAtom*        aListName,
+  NS_IMETHOD  RemoveFrame(nsIAtom*        aListName,
                           nsIFrame*       aOldFrame);
-  NS_IMETHOD  ReplaceFrame(nsIPresContext* aPresContext,
-                           nsIPresShell&   aPresShell,
-                           nsIAtom*        aListName,
+  NS_IMETHOD  ReplaceFrame(nsIAtom*        aListName,
                            nsIFrame*       aOldFrame,
                            nsIFrame*       aNewFrame);
   
-  NS_IMETHOD Init(nsIPresContext*  aPresContext,
+  NS_IMETHOD Init(nsPresContext*  aPresContext,
                   nsIContent*      aContent,
                   nsIFrame*        aParent,
                   nsStyleContext*  aContext,
                   nsIFrame*        aPrevInFlow);
 
-  NS_IMETHOD  AttributeChanged(nsIPresContext* aPresContext,
-                               nsIContent*     aChild,
+  NS_IMETHOD  AttributeChanged(nsIContent*     aChild,
                                PRInt32         aNameSpaceID,
                                nsIAtom*        aAttribute,
-                               PRInt32         aModType,
-                               PRInt32         aHint);
+                               PRInt32         aModType);
 
-  NS_IMETHOD DidSetStyleContext(nsIPresContext* aPresContext);
+  NS_IMETHOD DidSetStyleContext(nsPresContext* aPresContext);
+
+  /**
+   * Get the "type" of the frame
+   *
+   * @see nsLayoutAtoms::svgTextFrame
+   */
+  virtual nsIAtom* GetType() const;
+
+#ifdef DEBUG
+  NS_IMETHOD GetFrameName(nsAString& aResult) const
+  {
+    return MakeFrameName(NS_LITERAL_STRING("SVGText"), aResult);
+  }
+#endif
 
   // nsISVGValueObserver
-  NS_IMETHOD WillModifySVGObservable(nsISVGValue* observable);
-  NS_IMETHOD DidModifySVGObservable (nsISVGValue* observable);
+  NS_IMETHOD WillModifySVGObservable(nsISVGValue* observable,
+                                     nsISVGValue::modificationType aModType);
+  NS_IMETHOD DidModifySVGObservable (nsISVGValue* observable,
+                                     nsISVGValue::modificationType aModType);
 
   // nsISVGTextContentMetrics
   NS_IMETHOD GetExtentOfChar(PRUint32 charnum, nsIDOMSVGRect **_retval);
@@ -132,22 +142,24 @@ public:
   // implementation inherited from nsSupportsWeakReference
   
   // nsISVGChildFrame interface:
-  NS_IMETHOD Paint(nsISVGRendererCanvas* canvas, const nsRect& dirtyRectTwips);
-  NS_IMETHOD GetFrameForPoint(float x, float y, nsIFrame** hit);
+  NS_IMETHOD PaintSVG(nsISVGRendererCanvas* canvas, const nsRect& dirtyRectTwips);
+  NS_IMETHOD GetFrameForPointSVG(float x, float y, nsIFrame** hit);
   NS_IMETHOD_(already_AddRefed<nsISVGRendererRegion>) GetCoveredRegion();
   NS_IMETHOD InitialUpdate();
-  NS_IMETHOD NotifyCTMChanged();
+  NS_IMETHOD NotifyCanvasTMChanged();
   NS_IMETHOD NotifyRedrawSuspended();
   NS_IMETHOD NotifyRedrawUnsuspended();
+  NS_IMETHOD SetMatrixPropagation(PRBool aPropagate);
   NS_IMETHOD GetBBox(nsIDOMSVGRect **_retval);
   
   // nsISVGContainerFrame interface:
-  NS_IMETHOD_(nsISVGOuterSVGFrame *) GetOuterSVGFrame();
+  nsISVGOuterSVGFrame *GetOuterSVGFrame();
+  already_AddRefed<nsIDOMSVGMatrix> GetCanvasTM();
+  already_AddRefed<nsSVGCoordCtxProvider> GetCoordContextProvider();
   
   // nsISVGTextFrame interface:
   NS_IMETHOD_(void) NotifyGlyphMetricsChange(nsISVGGlyphFragmentNode* caller);
   NS_IMETHOD_(void) NotifyGlyphFragmentTreeChange(nsISVGGlyphFragmentNode* caller);
-  NS_IMETHOD GetCTM(nsIDOMSVGMatrix **aCTM);
   NS_IMETHOD_(PRBool) IsMetricsSuspended();
   NS_IMETHOD_(PRBool) IsGlyphFragmentTreeSuspended();
 
@@ -157,13 +169,15 @@ public:
   NS_IMETHOD_(PRBool) GetAbsolutePositionAdjustmentY(float &y, PRUint32 charNum);
   NS_IMETHOD_(PRBool) GetRelativePositionAdjustmentX(float &dx, PRUint32 charNum);
   NS_IMETHOD_(PRBool) GetRelativePositionAdjustmentY(float &dy, PRUint32 charNum);
+  NS_IMETHOD_(already_AddRefed<nsIDOMSVGLengthList>) GetX();
+  NS_IMETHOD_(already_AddRefed<nsIDOMSVGLengthList>) GetY();
+  NS_IMETHOD_(already_AddRefed<nsIDOMSVGLengthList>) GetDx();
+  NS_IMETHOD_(already_AddRefed<nsIDOMSVGLengthList>) GetDy();
 
 protected:
   void EnsureFragmentTreeUpToDate();
   void UpdateFragmentTree();
   void UpdateGlyphPositioning();
-  already_AddRefed<nsIDOMSVGLengthList> GetX();
-  already_AddRefed<nsIDOMSVGLengthList> GetY();
   already_AddRefed<nsIDOMSVGAnimatedTransformList> GetTransform();
   nsISVGGlyphFragmentNode *GetFirstGlyphFragmentChildNode();
   nsISVGGlyphFragmentNode *GetNextGlyphFragmentChildNode(nsISVGGlyphFragmentNode*node);
@@ -173,11 +187,13 @@ protected:
     unsuspended,
     suspended,
     updating};
-  UpdateState mMetricsState;
   UpdateState mFragmentTreeState;
-  PRBool mPositioningDirty;
+  UpdateState mMetricsState;
   PRBool mFragmentTreeDirty;
-    
+  PRBool mPositioningDirty;
+
+  nsCOMPtr<nsIDOMSVGMatrix> mCanvasTM;
+  PRBool mPropagateTransform;
 };
 
 //----------------------------------------------------------------------
@@ -209,7 +225,8 @@ NS_NewSVGTextFrame(nsIPresShell* aPresShell, nsIContent* aContent,
 
 nsSVGTextFrame::nsSVGTextFrame()
     : mFragmentTreeState(suspended), mMetricsState(suspended),
-      mFragmentTreeDirty(PR_FALSE), mPositioningDirty(PR_FALSE)
+      mFragmentTreeDirty(PR_FALSE), mPositioningDirty(PR_FALSE),
+      mPropagateTransform(PR_TRUE)
 {
 }
 
@@ -223,6 +240,16 @@ nsSVGTextFrame::~nsSVGTextFrame()
 
   {
     nsCOMPtr<nsIDOMSVGLengthList> lengthList = GetY();
+    NS_REMOVE_SVGVALUE_OBSERVER(lengthList);
+  }
+
+  {
+    nsCOMPtr<nsIDOMSVGLengthList> lengthList = GetDx();
+    NS_REMOVE_SVGVALUE_OBSERVER(lengthList);
+  }
+
+  {
+    nsCOMPtr<nsIDOMSVGLengthList> lengthList = GetDy();
     NS_REMOVE_SVGVALUE_OBSERVER(lengthList);
   }
 
@@ -245,6 +272,16 @@ nsresult nsSVGTextFrame::Init()
 
   {
     nsCOMPtr<nsIDOMSVGLengthList> lengthList = GetY();
+    NS_ADD_SVGVALUE_OBSERVER(lengthList);
+  }
+
+  {
+    nsCOMPtr<nsIDOMSVGLengthList> lengthList = GetDx();
+    NS_ADD_SVGVALUE_OBSERVER(lengthList);
+  }
+
+  {
+    nsCOMPtr<nsIDOMSVGLengthList> lengthList = GetDy();
     NS_ADD_SVGVALUE_OBSERVER(lengthList);
   }
 
@@ -273,7 +310,7 @@ NS_INTERFACE_MAP_END_INHERITING(nsSVGTextFrameBase)
 //----------------------------------------------------------------------
 // nsIFrame methods
 NS_IMETHODIMP
-nsSVGTextFrame::Init(nsIPresContext*  aPresContext,
+nsSVGTextFrame::Init(nsPresContext*   aPresContext,
                      nsIContent*      aContent,
                      nsIFrame*        aParent,
                      nsStyleContext*  aContext,
@@ -289,12 +326,10 @@ nsSVGTextFrame::Init(nsIPresContext*  aPresContext,
 }
 
 NS_IMETHODIMP
-nsSVGTextFrame::AttributeChanged(nsIPresContext* aPresContext,
-                                 nsIContent*     aChild,
+nsSVGTextFrame::AttributeChanged(nsIContent*     aChild,
                                  PRInt32         aNameSpaceID,
                                  nsIAtom*        aAttribute,
-                                 PRInt32         aModType,
-                                 PRInt32         aHint)
+                                 PRInt32         aModType)
 {
   // we don't use this notification mechanism
   
@@ -302,9 +337,7 @@ nsSVGTextFrame::AttributeChanged(nsIPresContext* aPresContext,
   printf("** nsSVGTextFrame::AttributeChanged(");
   nsAutoString str;
   aAttribute->ToString(str);
-  nsCAutoString cstr;
-  cstr.AssignWithConversion(str);
-  printf(cstr.get());
+  printf(NS_ConvertUTF16toUTF8(str).get());
   printf(")\n");
 #endif
   
@@ -312,7 +345,7 @@ nsSVGTextFrame::AttributeChanged(nsIPresContext* aPresContext,
 }
 
 NS_IMETHODIMP
-nsSVGTextFrame::DidSetStyleContext(nsIPresContext* aPresContext)
+nsSVGTextFrame::DidSetStyleContext(nsPresContext* aPresContext)
 {
 #ifdef DEBUG
   printf("** nsSVGTextFrame::DidSetStyleContext\n");
@@ -321,21 +354,22 @@ nsSVGTextFrame::DidSetStyleContext(nsIPresContext* aPresContext)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsSVGTextFrame::AppendFrames(nsIPresContext* aPresContext,
-                             nsIPresShell&   aPresShell,
-                             nsIAtom*        aListName,
-                             nsIFrame*       aFrameList)
+nsIAtom *
+nsSVGTextFrame::GetType() const
 {
-  // append == insert at end:
-  return InsertFrames(aPresContext, aPresShell, aListName,
-                      mFrames.LastChild(), aFrameList);  
+  return nsLayoutAtoms::svgTextFrame;
 }
 
 NS_IMETHODIMP
-nsSVGTextFrame::InsertFrames(nsIPresContext* aPresContext,
-                             nsIPresShell&   aPresShell,
-                             nsIAtom*        aListName,
+nsSVGTextFrame::AppendFrames(nsIAtom*        aListName,
+                             nsIFrame*       aFrameList)
+{
+  // append == insert at end:
+  return InsertFrames(aListName, mFrames.LastChild(), aFrameList);  
+}
+
+NS_IMETHODIMP
+nsSVGTextFrame::InsertFrames(nsIAtom*        aListName,
                              nsIFrame*       aPrevFrame,
                              nsIFrame*       aFrameList)
 {
@@ -368,9 +402,7 @@ nsSVGTextFrame::InsertFrames(nsIPresContext* aPresContext,
 }
 
 NS_IMETHODIMP
-nsSVGTextFrame::RemoveFrame(nsIPresContext* aPresContext,
-                            nsIPresShell&   aPresShell,
-                            nsIAtom*        aListName,
+nsSVGTextFrame::RemoveFrame(nsIAtom*        aListName,
                             nsIFrame*       aOldFrame)
 {
   nsCOMPtr<nsISVGRendererRegion> dirty_region;
@@ -381,7 +413,7 @@ nsSVGTextFrame::RemoveFrame(nsIPresContext* aPresContext,
   if (SVGFrame)
     dirty_region = SVGFrame->GetCoveredRegion();
   
-  PRBool result = mFrames.DestroyFrame(aPresContext, aOldFrame);
+  PRBool result = mFrames.DestroyFrame(GetPresContext(), aOldFrame);
 
   nsISVGOuterSVGFrame* outerSVGFrame = GetOuterSVGFrame();
   NS_ASSERTION(outerSVGFrame, "no outer svg frame");
@@ -404,38 +436,42 @@ nsSVGTextFrame::RemoveFrame(nsIPresContext* aPresContext,
 }
 
 NS_IMETHODIMP
-nsSVGTextFrame::ReplaceFrame(nsIPresContext* aPresContext,
-                             nsIPresShell&   aPresShell,
-                             nsIAtom*        aListName,
+nsSVGTextFrame::ReplaceFrame(nsIAtom*        aListName,
                              nsIFrame*       aOldFrame,
                              nsIFrame*       aNewFrame)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
-  return NS_ERROR_UNEXPECTED;
+  NS_NOTYETIMPLEMENTED("nsSVGTextFrame::ReplaceFrame");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 //----------------------------------------------------------------------
 // nsISVGValueObserver methods:
 
 NS_IMETHODIMP
-nsSVGTextFrame::WillModifySVGObservable(nsISVGValue* observable)
+nsSVGTextFrame::WillModifySVGObservable(nsISVGValue* observable,
+                                        nsISVGValue::modificationType aModType)
 {
   return NS_OK;
 }
 
 
 NS_IMETHODIMP
-nsSVGTextFrame::DidModifySVGObservable (nsISVGValue* observable)
-{
+nsSVGTextFrame::DidModifySVGObservable (nsISVGValue* observable,
+                                        nsISVGValue::modificationType aModType)
+{  
   nsCOMPtr<nsIDOMSVGAnimatedTransformList> transforms = GetTransform();
   if (SameCOMIdentity(observable, transforms)) {
     // transform has changed
+
+    // make sure our cached transform matrix gets (lazily) updated
+    mCanvasTM = nsnull;
+    
     nsIFrame* kid = mFrames.FirstChild();
     while (kid) {
       nsISVGChildFrame* SVGFrame=0;
       kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
       if (SVGFrame)
-        SVGFrame->NotifyCTMChanged();
+        SVGFrame->NotifyCanvasTMChanged();
       kid = kid->GetNextSibling();
     }
   }
@@ -464,7 +500,7 @@ nsSVGTextFrame::GetExtentOfChar(PRUint32 charnum, nsIDOMSVGRect **_retval)
   // query the renderer metrics for the bounds of the character
   nsCOMPtr<nsISVGRendererGlyphMetrics> metrics;
   fragment->GetGlyphMetrics(getter_AddRefs(metrics));
-  NS_ASSERTION(metrics, "null metrics");
+  if (!metrics) return NS_ERROR_FAILURE;
   nsresult rv = metrics->GetExtentOfChar(charnum-fragment->GetCharNumberOffset(),
                                          _retval);
   if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
@@ -484,7 +520,7 @@ nsSVGTextFrame::GetExtentOfChar(PRUint32 charnum, nsIDOMSVGRect **_retval)
 // nsISVGChildFrame methods
 
 NS_IMETHODIMP
-nsSVGTextFrame::Paint(nsISVGRendererCanvas* canvas, const nsRect& dirtyRectTwips)
+nsSVGTextFrame::PaintSVG(nsISVGRendererCanvas* canvas, const nsRect& dirtyRectTwips)
 {
 #ifdef DEBUG
 //  printf("nsSVGTextFrame(%p)::Paint\n", this);
@@ -495,7 +531,7 @@ nsSVGTextFrame::Paint(nsISVGRendererCanvas* canvas, const nsRect& dirtyRectTwips
     nsISVGChildFrame* SVGFrame=0;
     kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
     if (SVGFrame)
-      SVGFrame->Paint(canvas, dirtyRectTwips);
+      SVGFrame->PaintSVG(canvas, dirtyRectTwips);
     kid = kid->GetNextSibling();
   }
 
@@ -503,7 +539,7 @@ nsSVGTextFrame::Paint(nsISVGRendererCanvas* canvas, const nsRect& dirtyRectTwips
 }
 
 NS_IMETHODIMP
-nsSVGTextFrame::GetFrameForPoint(float x, float y, nsIFrame** hit)
+nsSVGTextFrame::GetFrameForPointSVG(float x, float y, nsIFrame** hit)
 {
 #ifdef DEBUG
 //  printf("nsSVGTextFrame(%p)::GetFrameForPoint\n", this);
@@ -515,7 +551,7 @@ nsSVGTextFrame::GetFrameForPoint(float x, float y, nsIFrame** hit)
     kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
     if (SVGFrame) {
       nsIFrame* temp=nsnull;
-      nsresult rv = SVGFrame->GetFrameForPoint(x, y, &temp);
+      nsresult rv = SVGFrame->GetFrameForPointSVG(x, y, &temp);
       if (NS_SUCCEEDED(rv) && temp) {
         *hit = temp;
         // return NS_OK; can't return. we need reverse order but only
@@ -586,14 +622,17 @@ nsSVGTextFrame::InitialUpdate()
 }
 
 NS_IMETHODIMP
-nsSVGTextFrame::NotifyCTMChanged()
+nsSVGTextFrame::NotifyCanvasTMChanged()
 {
+  // make sure our cached transform matrix gets (lazily) updated
+  mCanvasTM = nsnull;
+  
   nsIFrame* kid = mFrames.FirstChild();
   while (kid) {
     nsISVGChildFrame* SVGFrame=0;
     kid->QueryInterface(NS_GET_IID(nsISVGChildFrame),(void**)&SVGFrame);
     if (SVGFrame) {
-      SVGFrame->NotifyCTMChanged();
+      SVGFrame->NotifyCanvasTMChanged();
     }
     kid = kid->GetNextSibling();
   }
@@ -673,6 +712,13 @@ nsSVGTextFrame::NotifyRedrawUnsuspended()
 }
 
 NS_IMETHODIMP
+nsSVGTextFrame::SetMatrixPropagation(PRBool aPropagate)
+{
+  mPropagateTransform = aPropagate;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsSVGTextFrame::GetBBox(nsIDOMSVGRect **_retval)
 {
   *_retval = nsnull;
@@ -692,27 +738,28 @@ nsSVGTextFrame::GetBBox(nsIDOMSVGRect **_retval)
     if (SVGFrame) {
       nsCOMPtr<nsIDOMSVGRect> r;
       SVGFrame->GetBBox(getter_AddRefs(r));
-      NS_ASSERTION(r, "no bounding box");
-      if (!r) continue;
-
-      float x,y,w,h;
-      r->GetX(&x);
-      r->GetY(&y);
-      r->GetWidth(&w);
-      r->GetHeight(&h);
+      if (!r) {
+        NS_WARNING("no bounding box");
+      } else {
+        float x,y,w,h;
+        r->GetX(&x);
+        r->GetY(&y);
+        r->GetWidth(&w);
+        r->GetHeight(&h);
       
-      if (bFirst) {
-        bFirst = PR_FALSE;
-        x1 = x;
-        y1 = y;
-        x2 = x+w;
-        y2 = y+h;
-      }
-      else {
-        if (x<x1) x1 = x;
-        if (x+w>x2) x2 = x+w;
-        if (y<y1) y1 = y;
-        if (y+h>y2) y2 = y+h;
+        if (bFirst) {
+          bFirst = PR_FALSE;
+          x1 = x;
+          y1 = y;
+          x2 = x+w;
+          y2 = y+h;
+        }
+        else {
+          if (x<x1) x1 = x;
+          if (x+w>x2) x2 = x+w;
+          if (y<y1) y1 = y;
+          if (y+h>y2) y2 = y+h;
+        }
       }
     }
     kid = kid->GetNextSibling();
@@ -724,20 +771,13 @@ nsSVGTextFrame::GetBBox(nsIDOMSVGRect **_retval)
     return NS_ERROR_FAILURE;
   }
 
-  outerSVGFrame->CreateSVGRect(_retval);
-
-  (*_retval)->SetWidth(x2-x1);
-  (*_retval)->SetHeight(y2-y1);
-  (*_retval)->SetX(x1);
-  (*_retval)->SetY(y1);
-
-  return NS_OK;  
+  return NS_NewSVGRect(_retval, x1, y1, x2 - x1, y2 - y1);
 }
 
 //----------------------------------------------------------------------
 // nsISVGContainerFrame methods:
 
-NS_IMETHODIMP_(nsISVGOuterSVGFrame *)
+nsISVGOuterSVGFrame *
 nsSVGTextFrame::GetOuterSVGFrame()
 {
   NS_ASSERTION(mParent, "null parent");
@@ -751,6 +791,71 @@ nsSVGTextFrame::GetOuterSVGFrame()
 
   return containerFrame->GetOuterSVGFrame();  
 }
+
+already_AddRefed<nsIDOMSVGMatrix>
+nsSVGTextFrame::GetCanvasTM()
+{
+  if (!mCanvasTM) {
+    if (!mPropagateTransform) {
+      nsIDOMSVGMatrix *retval;
+      NS_NewSVGMatrix(&retval);
+      return retval;
+    }
+
+    // get our parent's tm and append local transforms (if any):
+    NS_ASSERTION(mParent, "null parent");
+    nsISVGContainerFrame *containerFrame;
+    mParent->QueryInterface(NS_GET_IID(nsISVGContainerFrame), (void**)&containerFrame);
+    if (!containerFrame) {
+      NS_ERROR("invalid parent");
+      return nsnull;
+    }
+    nsCOMPtr<nsIDOMSVGMatrix> parentTM = containerFrame->GetCanvasTM();
+    NS_ASSERTION(parentTM, "null TM");
+
+    // got the parent tm, now check for local tm:
+    nsCOMPtr<nsIDOMSVGMatrix> localTM;
+    {
+      nsCOMPtr<nsIDOMSVGTransformable> transformable = do_QueryInterface(mContent);
+      NS_ASSERTION(transformable, "wrong content element");
+      nsCOMPtr<nsIDOMSVGAnimatedTransformList> atl;
+      transformable->GetTransform(getter_AddRefs(atl));
+      NS_ASSERTION(atl, "null animated transform list");
+      nsCOMPtr<nsIDOMSVGTransformList> transforms;
+      atl->GetAnimVal(getter_AddRefs(transforms));
+      NS_ASSERTION(transforms, "null transform list");
+      PRUint32 numberOfItems;
+      transforms->GetNumberOfItems(&numberOfItems);
+      if (numberOfItems>0)
+        transforms->GetConsolidationMatrix(getter_AddRefs(localTM));
+    }
+    
+    if (localTM)
+      parentTM->Multiply(localTM, getter_AddRefs(mCanvasTM));
+    else
+      mCanvasTM = parentTM;
+  }
+
+  nsIDOMSVGMatrix* retval = mCanvasTM.get();
+  NS_IF_ADDREF(retval);
+  return retval;
+}
+
+already_AddRefed<nsSVGCoordCtxProvider>
+nsSVGTextFrame::GetCoordContextProvider()
+{
+  NS_ASSERTION(mParent, "null parent");
+  
+  nsISVGContainerFrame *containerFrame;
+  mParent->QueryInterface(NS_GET_IID(nsISVGContainerFrame), (void**)&containerFrame);
+  if (!containerFrame) {
+    NS_ERROR("invalid container");
+    return nsnull;
+  }
+
+  return containerFrame->GetCoordContextProvider();  
+}
+
 
 //----------------------------------------------------------------------
 // nsISVGTextFrame methods
@@ -773,14 +878,6 @@ nsSVGTextFrame::NotifyGlyphFragmentTreeChange(nsISVGGlyphFragmentNode* caller)
   if (mFragmentTreeState == unsuspended) {
     UpdateFragmentTree();
   }
-}
-
-NS_IMETHODIMP
-nsSVGTextFrame::GetCTM(nsIDOMSVGMatrix **aCTM)
-{
-  nsCOMPtr<nsIDOMSVGTransformable> transformable = do_QueryInterface(mContent);
-  NS_ASSERTION(transformable, "wrong content type");
-  return transformable->GetCTM(aCTM);
 }
 
 NS_IMETHODIMP_(PRBool)
@@ -915,81 +1012,38 @@ nsSVGTextFrame::UpdateFragmentTree()
     UpdateGlyphPositioning();
 }
 
+static void
+GetSingleValue(nsIDOMSVGLengthList *list, float *val)
+{
+  if (!list)
+    return;
+
+  PRUint32 count = 0;
+  list->GetNumberOfItems(&count);
+#ifdef DEBUG
+  if (count > 1)
+    NS_WARNING("multiple lengths for x/y attributes on <text> elements not implemented yet!");
+#endif
+  if (count) {
+    nsCOMPtr<nsIDOMSVGLength> length;
+    list->GetItem(0, getter_AddRefs(length));
+    length->GetValue(val);
+  }
+}
+
 void
 nsSVGTextFrame::UpdateGlyphPositioning()
 {
-  // XXX need to iterate separately over each chunk (currently we
-  // treat everything underneath this text-element as a single chunk)
-  
   NS_ASSERTION(mMetricsState == unsuspended, "updating during suspension");
 
   nsISVGGlyphFragmentNode *node = GetFirstGlyphFragmentChildNode();
   if (!node) return;
 
-  nsISVGGlyphFragmentLeaf* fragment;
-
-  float x=0.0f;
-  {
-    nsCOMPtr<nsIDOMSVGLengthList> list = GetX();
-    PRUint32 count = 0;
-    list->GetNumberOfItems(&count);
-#ifdef DEBUG
-    if (count > 1)
-      NS_WARNING("multiple lengths for x/y attributes on <text> elements not implemented yet!");
-#endif
-    if (count) {
-      nsCOMPtr<nsIDOMSVGLength> length;
-      list->GetItem(0, getter_AddRefs(length));
-      length->GetValue(&x);
-    }
-  }
-  
-  float y=0.0f;
-  {
-    nsCOMPtr<nsIDOMSVGLengthList> list = GetY();
-    PRUint32 count = 0;
-    list->GetNumberOfItems(&count);
-#ifdef DEBUG
-    if (count > 1)
-      NS_WARNING("multiple lengths for x/y attributes on <text> elements not implemented yet!");
-#endif
-    if (count) {
-      nsCOMPtr<nsIDOMSVGLength> length;
-      list->GetItem(0, getter_AddRefs(length));
-      length->GetValue(&y);
-    }
-  }
-
-  // determine x offset based on text_anchor:
-  
-  PRUint8 anchor = ((const nsStyleSVG*)mStyleContext->GetStyleData(eStyleStruct_SVG))->mTextAnchor;
-
-  float chunkLength = 0.0f;
-  if (anchor != NS_STYLE_TEXT_ANCHOR_START) {
-    // need to get the total chunk length
-    
-    fragment = node->GetFirstGlyphFragment();
-    while (fragment) {
-      nsCOMPtr<nsISVGRendererGlyphMetrics> metrics;
-      fragment->GetGlyphMetrics(getter_AddRefs(metrics));
-      NS_ASSERTION(metrics, "null metrics");
-      float advance;
-      metrics->GetAdvance(&advance);
-      chunkLength+=advance;
-      fragment = fragment->GetNextGlyphFragment();
-    }
-  }
-
-  if (anchor == NS_STYLE_TEXT_ANCHOR_MIDDLE) 
-    x -= chunkLength/2.0f;
-  else if (anchor == NS_STYLE_TEXT_ANCHOR_END)
-    x -= chunkLength;
-
   // we'll align every fragment in this chunk on the dominant-baseline:
   // XXX should actually inspect 'alignment-baseline' for each fragment
   
   PRUint8 baseline;
-  switch(((const nsStyleSVGReset*)mStyleContext->GetStyleData(eStyleStruct_SVGReset))->mDominantBaseline) {
+  switch(GetStyleSVGReset()->mDominantBaseline) {
     case NS_STYLE_DOMINANT_BASELINE_TEXT_BEFORE_EDGE:
       baseline = nsISVGRendererGlyphMetrics::BASELINE_TEXT_BEFORE_EDGE;
       break;
@@ -1018,31 +1072,100 @@ nsSVGTextFrame::UpdateGlyphPositioning()
       baseline = nsISVGRendererGlyphMetrics::BASELINE_ALPHABETIC;
       break;
   }
+
+  nsISVGGlyphFragmentLeaf *fragment, *firstFragment;
+
+  firstFragment = node->GetFirstGlyphFragment();
+
+  float x, y;
+
+  {
+    nsCOMPtr<nsIDOMSVGLengthList> list = GetX();
+    GetSingleValue(list, &x);
+  }
+  {
+    nsCOMPtr<nsIDOMSVGLengthList> list = GetY();
+    GetSingleValue(list, &y);
+  }
+
+  // loop over chunks
+  while (firstFragment) {
+    {
+      nsCOMPtr<nsIDOMSVGLengthList> list = firstFragment->GetX();
+      GetSingleValue(list, &x);
+    }
+    {
+      nsCOMPtr<nsIDOMSVGLengthList> list = firstFragment->GetY();
+      GetSingleValue(list, &y);
+    }
+
+    // determine x offset based on text_anchor:
   
-  // set position of each fragment in this chunk:
+    PRUint8 anchor = firstFragment->GetTextAnchor();
+
+    float chunkLength = 0.0f;
+    if (anchor != NS_STYLE_TEXT_ANCHOR_START) {
+      // need to get the total chunk length
+    
+      fragment = firstFragment;
+      while (fragment) {
+        nsCOMPtr<nsISVGRendererGlyphMetrics> metrics;
+        fragment->GetGlyphMetrics(getter_AddRefs(metrics));
+        if (!metrics) continue;
+
+        float advance, dx = 0.0f;
+        nsCOMPtr<nsIDOMSVGLengthList> list = fragment->GetDx();
+        GetSingleValue(list, &dx);
+        metrics->GetAdvance(&advance);
+        chunkLength += advance + dx;
+        fragment = fragment->GetNextGlyphFragment();
+        if (fragment && fragment->IsAbsolutelyPositioned())
+          break;
+      }
+    }
+
+    if (anchor == NS_STYLE_TEXT_ANCHOR_MIDDLE)
+      x -= chunkLength/2.0f;
+    else if (anchor == NS_STYLE_TEXT_ANCHOR_END)
+      x -= chunkLength;
   
-  fragment = node->GetFirstGlyphFragment();
-  while (fragment) {
-    nsCOMPtr<nsISVGRendererGlyphMetrics> metrics;
-    fragment->GetGlyphMetrics(getter_AddRefs(metrics));
-    NS_ASSERTION(metrics, "null metrics");
+    // set position of each fragment in this chunk:
+  
+    fragment = firstFragment;
+    while (fragment) {
+      nsCOMPtr<nsISVGRendererGlyphMetrics> metrics;
+      fragment->GetGlyphMetrics(getter_AddRefs(metrics));
+      if (!metrics) continue;
 
-    float baseline_offset;
-    metrics->GetBaselineOffset(baseline, &baseline_offset);
+      float baseline_offset, dx = 0.0f, dy = 0.0f;
+      metrics->GetBaselineOffset(baseline, &baseline_offset);
+      {
+        nsCOMPtr<nsIDOMSVGLengthList> list = fragment->GetDx();
+        GetSingleValue(list, &dx);
+      }
+      {
+        nsCOMPtr<nsIDOMSVGLengthList> list = fragment->GetDy();
+        GetSingleValue(list, &dy);
+      }
 
-    fragment->SetGlyphPosition(x, y - baseline_offset);
+      fragment->SetGlyphPosition(x + dx, y + dy - baseline_offset);
 
-    float advance;
-    metrics->GetAdvance(&advance);
-    x+=advance;
-    fragment = fragment->GetNextGlyphFragment();
+      float advance;
+      metrics->GetAdvance(&advance);
+      x += dx + advance;
+      y += dy;
+      fragment = fragment->GetNextGlyphFragment();
+      if (fragment && fragment->IsAbsolutelyPositioned())
+        break;
+    }
+    firstFragment = fragment;
   }
 
   mPositioningDirty = PR_FALSE;
 }
 
 
-already_AddRefed<nsIDOMSVGLengthList>
+NS_IMETHODIMP_(already_AddRefed<nsIDOMSVGLengthList>)
 nsSVGTextFrame::GetX()
 {
   nsCOMPtr<nsIDOMSVGTextPositioningElement> tpElement = do_QueryInterface(mContent);
@@ -1055,7 +1178,7 @@ nsSVGTextFrame::GetX()
   return retval;
 }
 
-already_AddRefed<nsIDOMSVGLengthList>
+NS_IMETHODIMP_(already_AddRefed<nsIDOMSVGLengthList>)
 nsSVGTextFrame::GetY()
 {
   nsCOMPtr<nsIDOMSVGTextPositioningElement> tpElement = do_QueryInterface(mContent);
@@ -1063,6 +1186,32 @@ nsSVGTextFrame::GetY()
 
   nsCOMPtr<nsIDOMSVGAnimatedLengthList> animLengthList;
   tpElement->GetY(getter_AddRefs(animLengthList));
+  nsIDOMSVGLengthList *retval;
+  animLengthList->GetAnimVal(&retval);
+  return retval;
+}
+
+NS_IMETHODIMP_(already_AddRefed<nsIDOMSVGLengthList>)
+nsSVGTextFrame::GetDx()
+{
+  nsCOMPtr<nsIDOMSVGTextPositioningElement> tpElement = do_QueryInterface(mContent);
+  NS_ASSERTION(tpElement, "wrong content element");
+
+  nsCOMPtr<nsIDOMSVGAnimatedLengthList> animLengthList;
+  tpElement->GetDx(getter_AddRefs(animLengthList));
+  nsIDOMSVGLengthList *retval;
+  animLengthList->GetAnimVal(&retval);
+  return retval;
+}
+
+NS_IMETHODIMP_(already_AddRefed<nsIDOMSVGLengthList>)
+nsSVGTextFrame::GetDy()
+{
+  nsCOMPtr<nsIDOMSVGTextPositioningElement> tpElement = do_QueryInterface(mContent);
+  NS_ASSERTION(tpElement, "wrong content element");
+
+  nsCOMPtr<nsIDOMSVGAnimatedLengthList> animLengthList;
+  tpElement->GetDy(getter_AddRefs(animLengthList));
   nsIDOMSVGLengthList *retval;
   animLengthList->GetAnimVal(&retval);
   return retval;

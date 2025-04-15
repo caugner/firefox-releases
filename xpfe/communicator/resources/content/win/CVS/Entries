@@ -1,7 +1,5 @@
-/.cvsignore/1.1/Sat Dec 29 04:16:46 2001//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.1/Thu Sep 13 22:58:20 2001//TFIREFOX_1_0_RELEASE
-/jar.mn/1.5/Mon Dec  3 21:35:31 2001//TFIREFOX_1_0_RELEASE
-/platformBrowserBindings.xul/1.8/Sat Nov  3 04:14:27 2001//TFIREFOX_1_0_RELEASE
-/platformCommunicatorOverlay.xul/1.4/Fri Mar 14 02:17:06 2003//TFIREFOX_1_0_RELEASE
-/platformEditorBindings.xul/1.8/Sat Nov  3 04:14:27 2001//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Sat Dec 29 04:16:46 2001//TFIREFOX_1_5_RELEASE
+/platformBrowserBindings.xul/1.8/Sat Nov  3 04:14:27 2001//TFIREFOX_1_5_RELEASE
+/platformCommunicatorOverlay.xul/1.6/Fri Jul  1 14:12:46 2005//TFIREFOX_1_5_RELEASE
+/platformEditorBindings.xul/1.8/Sat Nov  3 04:14:27 2001//TFIREFOX_1_5_RELEASE
 D

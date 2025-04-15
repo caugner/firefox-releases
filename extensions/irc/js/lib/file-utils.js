@@ -1,37 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/ 
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * License. 
+ * License.
  *
- * The Original Code is The JavaScript Debugger
- * 
+ * The Original Code is The JavaScript Debugger.
+ *
  * The Initial Developer of the Original Code is
- * Netscape Communications Corporation
- * Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.
- *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the MPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the MPL or the GPL.
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Robert Ginda, <rginda@netscape.com>, original author
+ *   Robert Ginda, <rginda@netscape.com>, original author
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* notice that these valuse are octal. */
 const PERM_IRWXU = 00700;  /* read, write, execute/search by owner */
@@ -99,11 +103,11 @@ function futils_nosepicker(initialPath, typeList, attribs)
     }
     else
         throw "bad type for param |attribs|";
-    
+
     if (initialPath)
     {
         var localFile;
-        
+
         if (typeof initialPath == "string")
         {
             localFile =
@@ -117,9 +121,11 @@ function futils_nosepicker(initialPath, typeList, attribs)
 
             localFile = initialPath;
         }
-        
+
         picker.displayDirectory = localFile
     }
+
+    var allIncluded = false;
 
     if (typeof typeList == "string")
         typeList = typeList.split(" ");
@@ -131,51 +137,65 @@ function futils_nosepicker(initialPath, typeList, attribs)
             switch (typeList[i])
             {
                 case "$all":
+                    allIncluded = true;
                     picker.appendFilters(FILTER_ALL);
                     break;
-                    
+
                 case "$html":
                     picker.appendFilters(FILTER_HTML);
                     break;
-                    
+
                 case "$text":
                     picker.appendFilters(FILTER_TEXT);
                     break;
-                    
+
                 case "$images":
                     picker.appendFilters(FILTER_IMAGES);
                     break;
-                    
+
                 case "$xml":
                     picker.appendFilters(FILTER_XML);
                     break;
-                    
+
                 case "$xul":
                     picker.appendFilters(FILTER_XUL);
                     break;
 
+                case "$noAll":
+                    // This prevents the automatic addition of "All Files"
+                    // as a file type option by pretending it is already there.
+                    allIncluded = true;
+                    break;
+
                 default:
-                    picker.appendFilter(typeList[i], typeList[i]);
+                    if ((typeof typeList[i] == "object") && isinstance(typeList[i], Array))
+                        picker.appendFilter(typeList[i][0], typeList[i][1]);
+                    else
+                        picker.appendFilter(typeList[i], typeList[i]);
                     break;
             }
         }
     }
- 
+
+    if (!allIncluded)
+        picker.appendFilters(FILTER_ALL);
+
     return picker;
 }
 
-function pickSaveAs (title, typeList, defaultFile, defaultDir)
+function pickSaveAs (title, typeList, defaultFile, defaultDir, defaultExt)
 {
     if (!defaultDir && "lastSaveAsDir" in futils)
         defaultDir = futils.lastSaveAsDir;
-    
-    var picker = futils.getPicker (defaultDir, typeList, 
-                                   {defaultString: defaultFile});
+
+    var picker = futils.getPicker (defaultDir, typeList,
+                                   {defaultString: defaultFile,
+                                    defaultExtension: defaultExt});
     picker.init (window, title ? title : futils.MSG_SAVE_AS,
                  Components.interfaces.nsIFilePicker.modeSave);
 
     var reason;
-    
+
     try
     {
         reason = picker.show();
@@ -184,12 +204,12 @@ function pickSaveAs (title, typeList, defaultFile, defaultDir)
     {
         dd ("caught exception from file picker: " + ex);
     }
-    
+
     var obj = new Object();
-    
+
     obj.reason = reason;
     obj.picker = picker;
-    
+
     if (reason != PICK_CANCEL)
     {
         obj.file = picker.file;
@@ -207,14 +227,14 @@ function pickOpen (title, typeList, defaultFile, defaultDir)
 {
     if (!defaultDir && "lastOpenDir" in futils)
         defaultDir = futils.lastOpenDir;
-    
-    var picker = futils.getPicker (defaultDir, typeList, 
+
+    var picker = futils.getPicker (defaultDir, typeList,
                                    {defaultString: defaultFile});
     picker.init (window, title ? title : futils.MSG_OPEN,
                  Components.interfaces.nsIFilePicker.modeOpen);
 
     var rv = picker.show();
-    
+
     if (rv != PICK_CANCEL)
         futils.lastOpenDir = picker.file.parent;
 
@@ -254,13 +274,13 @@ function LocalFile(file, mode, perms, tmp)
     const FILEIN_CTRID = "@mozilla.org/network/file-input-stream;1";
     const FILEOUT_CTRID = "@mozilla.org/network/file-output-stream;1";
     const SCRIPTSTREAM_CTRID = "@mozilla.org/scriptableinputstream;1";
-    
+
     const nsIFile = interfaces.nsIFile;
     const nsILocalFile = interfaces.nsILocalFile;
     const nsIFileOutputStream = interfaces.nsIFileOutputStream;
     const nsIFileInputStream = interfaces.nsIFileInputStream;
     const nsIScriptableInputStream = interfaces.nsIScriptableInputStream;
-    
+
     if (typeof perms == "undefined")
         perms = 0666 & ~futils.umask;
 
@@ -281,7 +301,7 @@ function LocalFile(file, mode, perms, tmp)
                 throw "Invalid mode ``" + mode + "''";
         }
     }
-        
+
     if (typeof file == "string")
     {
         this.localFile = new nsLocalFile(file);
@@ -296,22 +316,23 @@ function LocalFile(file, mode, perms, tmp)
     }
 
     this.path = this.localFile.path;
-    
+
     if (mode & (MODE_WRONLY | MODE_RDWR))
     {
-        this.outputStream = 
+        this.outputStream =
             classes[FILEOUT_CTRID].createInstance(nsIFileOutputStream);
         this.outputStream.init(this.localFile, mode, perms, 0);
     }
-    
+
     if (mode & (MODE_RDONLY | MODE_RDWR))
     {
-        var is = classes[FILEIN_CTRID].createInstance(nsIFileInputStream);
-        is.init(this.localFile, mode, perms, tmp);
+        this.baseInputStream =
+            classes[FILEIN_CTRID].createInstance(nsIFileInputStream);
+        this.baseInputStream.init(this.localFile, mode, perms, tmp);
         this.inputStream =
             classes[SCRIPTSTREAM_CTRID].createInstance(nsIScriptableInputStream);
-        this.inputStream.init(is);
-    }    
+        this.inputStream.init(this.baseInputStream);
+    }
 }
 
 LocalFile.prototype.write =
@@ -319,7 +340,7 @@ function fo_write(buf)
 {
     if (!("outputStream" in this))
         throw "file not open for writing.";
-    
+
     return this.outputStream.write(buf, buf.length);
 }
 
@@ -334,8 +355,8 @@ function fo_read(max)
         max = av;
 
     if (!av)
-        return null;    
-    
+        return null;
+
     var rv = this.inputStream.read(max);
     return rv;
 }

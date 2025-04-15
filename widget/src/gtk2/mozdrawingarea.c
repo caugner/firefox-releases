@@ -14,9 +14,9 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code mozilla.org code.
+ * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code Christopher Blizzard
+ * The Initial Developer of the Original Code is Christopher Blizzard
  * <blizzard@mozilla.org>.  Portions created by the Initial Developer
  * are Copyright (C) 2001 the Initial Developer. All Rights Reserved.
  *
@@ -116,6 +116,13 @@ moz_drawingarea_init (MozDrawingarea *drawingarea)
 }
 
 void
+moz_drawingarea_reparent (MozDrawingarea *drawingarea, GdkWindow *aNewParent)
+{
+    gdk_window_reparent(drawingarea->clip_window,
+                        aNewParent, 0, 0);
+}
+
+void
 moz_drawingarea_create_windows (MozDrawingarea *drawingarea, GdkWindow *parent,
                                 GtkWidget *widget)
 {
@@ -168,7 +175,9 @@ moz_drawingarea_finalize (GObject *object)
 
     drawingarea = MOZ_DRAWINGAREA(object);
 
+    gdk_window_set_user_data(drawingarea->inner_window, NULL);
     gdk_window_destroy(drawingarea->inner_window);
+    gdk_window_set_user_data(drawingarea->clip_window, NULL);
     gdk_window_destroy(drawingarea->clip_window);
 
     (* parent_class->finalize) (object);
@@ -202,8 +211,8 @@ moz_drawingarea_set_visibility (MozDrawingarea *drawingarea,
                                 gboolean visibility)
 {
     if (visibility) {
-        gdk_window_show(drawingarea->inner_window);
-        gdk_window_show(drawingarea->clip_window);
+        gdk_window_show_unraised(drawingarea->inner_window);
+        gdk_window_show_unraised(drawingarea->clip_window);
     }
     else    {
         gdk_window_hide(drawingarea->clip_window);

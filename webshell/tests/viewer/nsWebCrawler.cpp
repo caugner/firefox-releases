@@ -1,24 +1,40 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
- *   Pierre Phaneuf <pp@ludusdesign.com>
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK *****
  * This Original Code has been modified by IBM Corporation. Modifications made by IBM 
  * described herein are Copyright (c) International Business Machines Corporation, 2000.
  * Modifications to Mozilla code or documentation identified per MPL Section 3.3
@@ -30,13 +46,12 @@
 #include "nsCOMPtr.h"
 #include "nsWebCrawler.h"
 #include "nsViewerApp.h"
-#include "nsIWebShell.h"
 #include "nsIContentViewer.h"
 #include "nsIDocumentViewer.h"
 #include "nsIDocument.h"
 #include "nsIContent.h"
 #include "nsIPresShell.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIViewManager.h"
 #include "nsIFrame.h"
 #include "nsIFrameDebug.h"
@@ -63,7 +78,6 @@
 #include "nsIWebProgress.h"
 
 static NS_DEFINE_IID(kFrameUtilCID, NS_FRAME_UTIL_CID);
-static NS_DEFINE_IID(kIFrameUtilIID, NS_IFRAME_UTIL_IID);
 
 static PLHashNumber
 HashKey(nsIAtom* key)
@@ -220,18 +234,17 @@ void
 nsWebCrawler::DumpRegressionData()
 {
 #ifdef NS_DEBUG
-  nsCOMPtr<nsIWebShell> webshell;
-  mBrowser->GetWebShell(*getter_AddRefs(webshell));
-  if (! webshell)
+  nsCOMPtr<nsIDocShell> docshell;
+  mBrowser->GetDocShell(*getter_AddRefs(docshell));
+  if (! docshell)
     return;
 
   if (mOutputDir.Length() > 0) {
-    nsIPresShell* shell = GetPresShell(webshell);
+    nsCOMPtr<nsIPresShell> shell = GetPresShell(docshell);
     if (!shell) return;
     if ( mPrinterTestType > 0 ) {
       nsCOMPtr <nsIContentViewer> viewer;
-      nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(webshell));
-      docShell->GetContentViewer(getter_AddRefs(viewer));
+      docshell->GetContentViewer(getter_AddRefs(viewer));
 
       if (viewer){
         nsCOMPtr<nsIContentViewerFile> viewerFile = do_QueryInterface(viewer);
@@ -270,11 +283,9 @@ nsWebCrawler::DumpRegressionData()
       }
     } 
     else {
-      nsIFrame* root;
-      shell->GetRootFrame(&root);
+      nsIFrame* root = shell->GetRootFrame();
       if (nsnull != root) {
-        nsCOMPtr<nsIPresContext> presContext;
-        shell->GetPresContext(getter_AddRefs(presContext));
+        nsPresContext *presContext = shell->GetPresContext();
         
         if (mOutputDir.Length() > 0) {
           nsAutoString regressionFileName;
@@ -308,7 +319,6 @@ nsWebCrawler::DumpRegressionData()
         }
       }
     }
-    NS_RELEASE(shell);
   }
 #endif
 }
@@ -321,11 +331,10 @@ nsWebCrawler::LoadNextURLCallback(nsITimer *aTimer, void *aClosure)
   // if we are doing printing regression tests, check to see 
   // if we can print (a previous job is not printing)
   if (self->mPrinterTestType > 0) {
-    nsCOMPtr<nsIWebShell> webshell;
-    self->mBrowser->GetWebShell(*getter_AddRefs(webshell));
-    if (webshell){
+    nsCOMPtr<nsIDocShell> docShell;
+    self->mBrowser->GetDocShell(*getter_AddRefs(docShell));
+    if (docShell){
       nsCOMPtr <nsIContentViewer> viewer;
-      nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(webshell));
       docShell->GetContentViewer(getter_AddRefs(viewer));
       if (viewer){
         nsCOMPtr<nsIContentViewerFile> viewerFile = do_QueryInterface(viewer);
@@ -364,9 +373,8 @@ nsWebCrawler::OnStateChange(nsIWebProgress* aWebProgress,
 {
   // Make sure that we're being notified for _our_ shell, and not some
   // subshell that's been created e.g. for an IFRAME.
-  nsCOMPtr<nsIWebShell> shell;
-  mBrowser->GetWebShell(*getter_AddRefs(shell));
-  nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(shell);
+  nsCOMPtr<nsIDocShell> docShell;
+  mBrowser->GetDocShell(*getter_AddRefs(docShell));
   if (docShell) {
     nsCOMPtr<nsIWebProgress> progress = do_GetInterface(docShell);
     if (aWebProgress != progress)
@@ -420,19 +428,10 @@ nsWebCrawler::OnStateChange(nsIWebProgress* aWebProgress,
     printf("+++ %s: done loading (%lld msec)\n", spec.get(), delta);
 
     // Make sure the document bits make it to the screen at least once
-    nsCOMPtr<nsIPresShell> shell = dont_AddRef(GetPresShell());
+    nsCOMPtr<nsIPresShell> shell = GetPresShell();
     if (shell) {
-      // Force the presentation shell to flush any pending reflows
-      shell->FlushPendingNotifications(PR_FALSE);
-
-      // Force the view manager to update itself
-      nsCOMPtr<nsIViewManager> vm;
-      shell->GetViewManager(getter_AddRefs(vm));
-      if (vm) {
-        nsIView* rootView;
-        vm->GetRootView(rootView);
-        vm->UpdateView(rootView, NS_VMREFRESH_IMMEDIATE);
-      }
+      // Force the presentation shell to update the display
+      shell->FlushPendingNotifications(Flush_Display);
 
       if (mJiggleLayout) {
         nsRect r;
@@ -610,9 +609,8 @@ void
 nsWebCrawler::Start()
 {
   // Enable observing each URL load...
-  nsCOMPtr<nsIWebShell> shell;
-  mBrowser->GetWebShell(*getter_AddRefs(shell));
-  nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(shell));
+  nsCOMPtr<nsIDocShell> docShell;
+  mBrowser->GetDocShell(*getter_AddRefs(docShell));
   if (docShell) {
     nsCOMPtr<nsIWebProgress> progress(do_GetInterface(docShell));
     if (progress) {
@@ -808,10 +806,9 @@ nsWebCrawler::FindURLsIn(nsIDocument* aDocument, nsIContent* aNode)
 void
 nsWebCrawler::FindMoreURLs()
 {
-  nsCOMPtr<nsIWebShell> shell;
-  mBrowser->GetWebShell(*getter_AddRefs(shell));
+  nsCOMPtr<nsIDocShell> docShell;
+  mBrowser->GetDocShell(*getter_AddRefs(docShell));
 
-  nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(shell));
   if (docShell) {
     nsCOMPtr<nsIContentViewer> cv;
     docShell->GetContentViewer(getter_AddRefs(cv));
@@ -856,8 +853,6 @@ nsWebCrawler::LoadNextURL(PRBool aQueueLoad)
       if (nsnull != url) {
         if (OkToLoad(*url)) {
           RecordLoadedURL(*url);
-          nsIWebShell* webShell;
-          mBrowser->GetWebShell(webShell);
           if (aQueueLoad) {
             // Call stop to cancel any pending URL Refreshes...
 ///            webShell->Stop();
@@ -866,10 +861,11 @@ nsWebCrawler::LoadNextURL(PRBool aQueueLoad)
           else {
             mCurrentURL = *url;
             mStartLoad = PR_Now();
-            nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(webShell));
+            nsCOMPtr<nsIDocShell> docShell;
+            mBrowser->GetDocShell(*getter_AddRefs(docShell));
+            nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(docShell));
             webNav->LoadURI(url->get(), nsIWebNavigation::LOAD_FLAGS_NONE, nsnull, nsnull, nsnull);
           }
-          NS_RELEASE(webShell);
 
           if (mMaxPages > 0) {
             --mMaxPages;
@@ -889,35 +885,16 @@ nsWebCrawler::LoadNextURL(PRBool aQueueLoad)
 
 } 
 
-nsIPresShell*
-nsWebCrawler::GetPresShell(nsIWebShell* aWebShell)
+already_AddRefed<nsIPresShell>
+nsWebCrawler::GetPresShell(nsIDocShell* aDocShell)
 {
-  nsIWebShell* webShell = aWebShell;
-  if (webShell) {
-    NS_ADDREF(webShell);
-  }
-  else {
-    mBrowser->GetWebShell(webShell);
-  }
   nsIPresShell* shell = nsnull;
-  nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(webShell));
-  if (nsnull != webShell) {
-    nsIContentViewer* cv = nsnull;
-    docShell->GetContentViewer(&cv);
-    if (nsnull != cv) {
-      nsIDocumentViewer* docv = nsnull;
-      cv->QueryInterface(NS_GET_IID(nsIDocumentViewer), (void**) &docv);
-      if (nsnull != docv) {
-        nsCOMPtr<nsIPresContext> cx;
-        docv->GetPresContext(getter_AddRefs(cx));
-        if (nsnull != cx) {
-          NS_IF_ADDREF(shell = cx->GetPresShell());
-        }
-        NS_RELEASE(docv);
-      }
-      NS_RELEASE(cv);
-    }
-    NS_RELEASE(webShell);
+  nsCOMPtr<nsIDocShell> docShell(aDocShell);
+  if (!docShell) {
+    mBrowser->GetDocShell(*getter_AddRefs(docShell));
+  }
+  if (docShell) {
+    docShell->GetPresShell(&shell);
   }
   return shell;
 }
@@ -927,7 +904,7 @@ OpenRegressionFile(const nsString& aBaseName, const nsString& aOutputName)
 {
   nsAutoString a;
   a.Append(aBaseName);
-  a.Append(NS_LITERAL_STRING("/"));
+  a.AppendLiteral("/");
   a.Append(aOutputName);
   char* fn = ToNewCString(a);
   FILE* fp = fopen(fn, "r");
@@ -946,8 +923,7 @@ nsWebCrawler::PerformRegressionTest(const nsString& aOutputName)
 {
   // First load the trees
   nsIFrameUtil* fu;
-  nsresult rv = nsComponentManager::CreateInstance(kFrameUtilCID, nsnull,
-                                             kIFrameUtilIID, (void **)&fu);
+  nsresult rv = CallCreateInstance(kFrameUtilCID, &fu);
   if (NS_FAILED(rv)) {
     printf("Can't find nsIFrameUtil implementation\n");
     return;
@@ -982,16 +958,13 @@ static NS_DEFINE_IID(kIEventQueueServiceIID, NS_IEVENTQUEUESERVICE_IID);
 static nsresult
 QueueEvent(PLEvent* aEvent)
 {
-  nsISupports* is;
-  nsresult rv = nsServiceManager::GetService(kEventQueueServiceCID,
-                                             kIEventQueueServiceIID,
-                                             &is,
-                                             nsnull);
+  nsresult rv;
+  nsCOMPtr<nsIEventQueueService> eqs =
+      do_GetService(kEventQueueServiceCID, &rv);
   if (NS_FAILED(rv)) {
     return rv;
   }
 
-  nsCOMPtr<nsIEventQueueService> eqs = do_QueryInterface(is);
   if (eqs) {
     nsCOMPtr<nsIEventQueue> eq;
     rv = eqs->GetThreadEventQueue(NS_CURRENT_THREAD, getter_AddRefs(eq));
@@ -1000,7 +973,6 @@ QueueEvent(PLEvent* aEvent)
     }
   }
 
-  nsServiceManager::ReleaseService(kEventQueueServiceCID, is, nsnull);
   return rv;
 }
 
@@ -1104,14 +1076,13 @@ LoadEvent::DeleteMe(LoadEvent* e)
 void
 nsWebCrawler::GoToQueuedURL(const nsString& aURL)
 {
-  nsIWebShell* webShell;
-  mBrowser->GetWebShell(webShell);
-  nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(webShell));
+  nsCOMPtr<nsIDocShell> docShell;
+  mBrowser->GetDocShell(*getter_AddRefs(docShell));
+  nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(docShell));
   if (webNav) {
     mCurrentURL = aURL;
     mStartLoad = PR_Now();
     webNav->LoadURI(aURL.get(), nsIWebNavigation::LOAD_FLAGS_NONE, nsnull, nsnull, nsnull);
-    NS_RELEASE(webShell);
   }
   mQueuedLoadURLs--;
 

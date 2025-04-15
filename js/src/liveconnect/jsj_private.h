@@ -63,11 +63,6 @@
 #   include "jsutil.h"
 #   include "jshash.h"
 
-#ifdef XP_MAC
-/* #include "macstdlibextras.h"  *//* for strdup() */
-extern char* strdup(const char* str);
-#endif
-
 #include "jsj_hash.h"        /* Hash tables */
 #include "jni.h"             /* Java Native Interface */
 #include "jsapi.h"           /* JavaScript engine API */
@@ -658,7 +653,7 @@ jsj_wrapper_destroyObjectMap(JSContext *cx, JSObjectMap *map);
 extern jsval JS_DLL_CALLBACK
 jsj_wrapper_getRequiredSlot(JSContext *cx, JSObject *obj, uint32 slot);
 
-extern void JS_DLL_CALLBACK
+extern JSBool JS_DLL_CALLBACK
 jsj_wrapper_setRequiredSlot(JSContext *cx, JSObject *obj, uint32 slot, jsval v);
 
 #ifdef DEBUG

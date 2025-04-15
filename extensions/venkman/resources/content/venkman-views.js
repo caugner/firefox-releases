@@ -1,37 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/ 
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * License. 
+ * License.
  *
- * The Original Code is The JavaScript Debugger
- * 
+ * The Original Code is The JavaScript Debugger.
+ *
  * The Initial Developer of the Original Code is
- * Netscape Communications Corporation
- * Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.
- *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the MPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the MPL or the GPL.
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Robert Ginda, <rginda@netscape.com>, original author
+ *   Robert Ginda, <rginda@netscape.com>, original author
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 const DEFAULT_VURLS =
 ("x-vloc:/mainwindow/initial-container?target=container&id=outer&type=horizontal;" +
@@ -142,10 +146,9 @@ function syncTreeView (treeContent, treeView, cb)
             throw "tantrum";
         
         treeContent.treeBoxObject.view = treeView;
-        if (treeContent.treeBoxObject.selection)
+        if (treeView.selection)
         {
-            treeContent.treeBoxObject.selection.tree =
-                treeContent.treeBoxObject;
+            treeView.selection.tree = treeContent.treeBoxObject;
         }
     }
     catch (ex)
@@ -194,7 +197,7 @@ function getTreeContext (view, cx, recordContextGetter)
     //dd ("getTreeContext {");
 
     var i = 0;
-    var selection = view.tree.selection;
+    var selection = view.tree.view.selection;
     var row = selection.currentIndex;
     var rec;
     
@@ -488,9 +491,9 @@ function bv_getcx(cx)
 }
 
 console.views.breaks.getCellProperties =
-function bv_cellprops (index, colID, properties)
+function bv_cellprops (index, col, properties)
 {
-    if (colID == "breaks:col-0")
+    if (col.id == "breaks:col-0")
     {
         var row = this.childData.locateChildByVisualRow(index);
         if (row.type == "future")
@@ -766,9 +769,9 @@ function lv_rowcommand(rec)
 }
 
 console.views.locals.getCellProperties =
-function lv_cellprops (index, colID, properties)
+function lv_cellprops (index, col, properties)
 {
-    if (colID != "locals:col-0")
+    if (col.id != "locals:col-0")
         return null;
     
     var row = this.childData.locateChildByVisualRow(index);
@@ -1256,13 +1259,13 @@ function scv_click (e)
     {
         /* resort by column */
         var rowIndex = new Object();
-        var colID = new Object();
+        var col = new Object();
         var childElt = new Object();
         
         var treeBox = console.views.scripts.tree;
-        treeBox.getCellAt(e.clientX, e.clientY, rowIndex, colID, childElt);
+        treeBox.getCellAt(e.clientX, e.clientY, rowIndex, col, childElt);
         var prop;
-        switch (colID.value)
+        switch (col.value.id)
         {
             case "scripts:col-0":
                 prop = "functionName";
@@ -1287,15 +1290,11 @@ console.views.scripts.onDragStart = Prophylactic(console.views.scripts,
                                                  scv_dstart);
 function scv_dstart (e, transferData, dragAction)
 {
-    var row = new Object();
-    var colID = new Object();
-    var childElt = new Object();
-
-    this.tree.getCellAt(e.clientX, e.clientY, row, colID, childElt);
-    if (!colID.value)
+    var row = this.tree.getRowAt(e.clientX, e.clientY);
+    if (row == -1)
         return false;
     
-    row = this.childData.locateChildByVisualRow (row.value);
+    row = this.childData.locateChildByVisualRow (row);
     var rv = false;
     if (row && ("onDragStart" in row))
         rv = row.onDragStart (e, transferData, dragAction);
@@ -1314,9 +1313,9 @@ function scv_setmode (flag)
 }
 
 console.views.scripts.getCellProperties =
-function scv_cellprops (index, colID, properties)
+function scv_cellprops (index, col, properties)
 {
-    if (colID != "scripts:col-0")
+    if (col.id != "scripts:col-0")
         return null;
     
     var row = this.childData.locateChildByVisualRow(index);
@@ -2108,7 +2107,7 @@ function skv_hookFrame (e)
     if (console.views.stack.tree)
     {
         stackView.scrollTo (e.frameIndex, 0);
-        stackView.tree.selection.currentIndex = e.frameIndex;
+        stackView.tree.view.selection.currentIndex = e.frameIndex;
         stackView.tree.invalidate();
     }
 }
@@ -2182,9 +2181,9 @@ function sv_getcx(cx)
 }    
 
 console.views.stack.getCellProperties =
-function sv_cellprops (index, colID, properties)
+function sv_cellprops (index, col, properties)
 {
-    if (colID != "stack:col-0")
+    if (col.id != "stack:col-0")
         return;
 
     var row = this.childData.locateChildByVisualRow(index);
@@ -2797,7 +2796,7 @@ function s2v_sourceclick (event)
         target = target.parentNode;
     }
     
-    if (target && target.localName == "margin")
+    if (target && target.localName == "margin" && event.button == 0)
     {
         var line = parseInt (target.nextSibling.firstChild.data);
         sourceText.onMarginClick (event, line);
@@ -3671,21 +3670,21 @@ function sv_click (e)
     if (target.localName == "treechildren")
     {
         var row = new Object();
-        var colID = new Object();
+        var col = new Object();
         var childElt = new Object();
         
         var treeBox = console.views.source.tree;
-        treeBox.getCellAt(e.clientX, e.clientY, row, colID, childElt);
+        treeBox.getCellAt(e.clientX, e.clientY, row, col, childElt);
         if (row.value == -1)
           return;
         
-        colID = colID.value;
+        colID = col.value.id;
         row = row.value;
         
         if (colID == "source:col-0")
         {
             if ("onMarginClick" in console.views.source.childData)
-                console.views.source.childData.onMarginClick (e, row + 1);
+                console.views.source.childData.onMarginClick (e, row.value + 1);
         }
     }
 
@@ -3695,7 +3694,7 @@ console.views.source.onSelect =
 function sv_select (e)
 {
     var sourceView = console.views.source;
-    sourceView.currentLine = sourceView.tree.selection.currentIndex + 1;
+    sourceView.currentLine = sourceView.tree.view.selection.currentIndex + 1;
     console.views.source.syncHeader();
 }
 
@@ -3965,7 +3964,7 @@ function sv_rowprops (row, properties)
 
 /* nsITreeView */
 console.views.source.getCellProperties =
-function sv_cellprops (row, colID, properties)
+function sv_cellprops (row, col, properties)
 {
     if (!("childData" in this) || !this.childData.isLoaded ||
         row < 0 || row >= this.childData.lines.length)
@@ -3975,7 +3974,7 @@ function sv_cellprops (row, colID, properties)
     if (!line)
         return;
     
-    if (colID == "source:col-0")
+    if (col.id == "source:col-0")
     {
         if ("lineMap" in this.childData && row in this.childData.lineMap)
         {
@@ -4018,17 +4017,17 @@ function sv_cellprops (row, colID, properties)
 
 /* nsITreeView */
 console.views.source.getCellText =
-function sv_getcelltext (row, colID)
+function sv_getcelltext (row, col)
 {    
     if (!this.childData.isLoaded || 
         row < 0 || row > this.childData.lines.length)
         return "";
     
-    var ary = colID.match (/:(.*)/);
+    var ary = col.id.match (/:(.*)/);
     if (ary)
-        colID = ary[1];
+        col = ary[1];
     
-    switch (colID)
+    switch (col)
     {
         case "col-2":
             return this.childData.lines[row];
@@ -4136,9 +4135,9 @@ function onHide()
 }
 
 console.views.watches.getCellProperties =
-function wv_cellprops (index, colID, properties)
+function wv_cellprops (index, col, properties)
 {
-    if (colID != "watches:col-0")
+    if (col.id != "watches:col-0")
         return null;
     
     var row = this.childData.locateChildByVisualRow(index);
@@ -4460,9 +4459,9 @@ function winv_hide ()
 }
 
 console.views.windows.getCellProperties =
-function winv_cellprops (index, colID, properties)
+function winv_cellprops (index, col, properties)
 {
-    if (colID == "windows:col-0")
+    if (col.id == "windows:col-0")
     {
         var row = this.childData.locateChildByVisualRow(index);
         if (row)

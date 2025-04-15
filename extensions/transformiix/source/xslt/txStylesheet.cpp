@@ -12,12 +12,12 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Jonas Sicking.
  * Portions created by the Initial Developer are Copyright (C) 2002
- * Jonas Sicking. All Rights Reserved.
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Jonas Sicking <jonas@sicking.cc>
@@ -41,7 +41,6 @@
 #include "txXSLTPatterns.h"
 #include "txToplevelItems.h"
 #include "txInstructions.h"
-#include "primitives.h"
 #include "XSLTFunctions.h"
 #include "TxLog.h"
 #include "txKey.h"
@@ -197,7 +196,9 @@ txStylesheet::findTemplate(const txXPathNode& aNode,
     txXPathNodeUtils::getNodeName(aNode, nodeName);
     if (matchTemplate) {
         nsAutoString matchAttr;
+#ifdef TX_TO_STRING
         match->toString(matchAttr);
+#endif
         PR_LOG(txLog::xslt, PR_LOG_DEBUG,
                ("MatchTemplate, Pattern %s, Mode %s, Node %s\n",
                 NS_LossyConvertUCS2toASCII(matchAttr).get(),
@@ -213,25 +214,16 @@ txStylesheet::findTemplate(const txXPathNode& aNode,
 #endif
 
     if (!matchTemplate) {
-        switch (txXPathNodeUtils::getNodeType(aNode)) {
-            case txXPathNodeType::ELEMENT_NODE:
-            case txXPathNodeType::DOCUMENT_NODE:
-            {
-                matchTemplate = mContainerTemplate;
-                break;
-            }
-            case txXPathNodeType::ATTRIBUTE_NODE:
-            case txXPathNodeType::TEXT_NODE:
-            case txXPathNodeType::CDATA_SECTION_NODE:
-            {
-                matchTemplate = mCharactersTemplate;
-                break;
-            }
-            default:
-            {
-                matchTemplate = mEmptyTemplate;
-                break;
-            }
+        if (txXPathNodeUtils::isElement(aNode) ||
+            txXPathNodeUtils::isRoot(aNode)) {
+            matchTemplate = mContainerTemplate;
+        }
+        else if (txXPathNodeUtils::isAttribute(aNode) ||
+                 txXPathNodeUtils::isText(aNode)) {
+            matchTemplate = mCharactersTemplate;
+        }
+        else {
+            matchTemplate = mEmptyTemplate;
         }
     }
 
@@ -284,20 +276,16 @@ txStylesheet::isStripSpaceAllowed(const txXPathNode& aNode, txIMatchContext* aCo
 
     txXPathTreeWalker walker(aNode);
 
-    PRUint16 nodeType = walker.getNodeType();
-    if (nodeType == txXPathNodeType::TEXT_NODE ||
-        nodeType == txXPathNodeType::CDATA_SECTION_NODE) {
-        if (!txXPathNodeUtils::isWhitespace(aNode) || !walker.moveToParent()) {
-            return PR_FALSE;
-        }
-        nodeType = walker.getNodeType();
-    }
-
-    if (nodeType != txXPathNodeType::ELEMENT_NODE) {
+    if (txXPathNodeUtils::isText(walker.getCurrentPosition()) &&
+        (!txXPathNodeUtils::isWhitespace(aNode) || !walker.moveToParent())) {
         return PR_FALSE;
     }
 
     const txXPathNode& node = walker.getCurrentPosition();
+
+    if (!txXPathNodeUtils::isElement(node)) {
+        return PR_FALSE;
+    }
 
     // check Whitespace stipping handling list against given Node
     PRInt32 i;

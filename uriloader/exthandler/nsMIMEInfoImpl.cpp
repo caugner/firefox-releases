@@ -1,11 +1,12 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim:set ts=4 sw=4 sts=4 et: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +15,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +23,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -52,6 +53,13 @@ nsMIMEInfoBase::nsMIMEInfoBase(const char *aMIMEType) :
 {
 }
 
+nsMIMEInfoBase::nsMIMEInfoBase(const nsACString& aMIMEType) :
+    mMIMEType(aMIMEType),
+    mPreferredAction(nsIMIMEInfo::saveToDisk),
+    mAlwaysAskBeforeHandling(PR_TRUE)
+{
+}
+
 nsMIMEInfoBase::~nsMIMEInfoBase()
 {
 }
@@ -63,19 +71,16 @@ nsMIMEInfoBase::GetFileExtensions(nsIUTF8StringEnumerator** aResult)
 }
 
 NS_IMETHODIMP
-nsMIMEInfoBase::ExtensionExists(const char *aExtension, PRBool *_retval)
+nsMIMEInfoBase::ExtensionExists(const nsACString& aExtension, PRBool *_retval)
 {
-    NS_ASSERTION(aExtension, "no extension");
+    NS_ASSERTION(!aExtension.IsEmpty(), "no extension");
     PRBool found = PR_FALSE;
     PRUint32 extCount = mExtensions.Count();
     if (extCount < 1) return NS_OK;
 
-    if (!aExtension) return NS_ERROR_NULL_POINTER;
-
-    nsDependentCString extension(aExtension);
     for (PRUint8 i=0; i < extCount; i++) {
         nsCString* ext = (nsCString*)mExtensions.CStringAt(i);
-        if (ext->Equals(extension, nsCaseInsensitiveCStringComparator())) {
+        if (ext->Equals(aExtension, nsCaseInsensitiveCStringComparator())) {
             found = PR_TRUE;
             break;
         }
@@ -86,27 +91,25 @@ nsMIMEInfoBase::ExtensionExists(const char *aExtension, PRBool *_retval)
 }
 
 NS_IMETHODIMP
-nsMIMEInfoBase::GetPrimaryExtension(char **_retval)
+nsMIMEInfoBase::GetPrimaryExtension(nsACString& _retval)
 {
     PRUint32 extCount = mExtensions.Count();
     if (extCount < 1) return NS_ERROR_NOT_INITIALIZED;
 
-    *_retval = ToNewCString(*(mExtensions.CStringAt(0)));
-    if (!*_retval) return NS_ERROR_OUT_OF_MEMORY;
+    _retval = *(mExtensions.CStringAt(0));
     return NS_OK;    
 }
 
 NS_IMETHODIMP
-nsMIMEInfoBase::SetPrimaryExtension(const char *aExtension)
+nsMIMEInfoBase::SetPrimaryExtension(const nsACString& aExtension)
 {
-  NS_ASSERTION(aExtension, "no extension");
+  NS_ASSERTION(!aExtension.IsEmpty(), "no extension");
   PRUint32 extCount = mExtensions.Count();
-  nsCString extension(aExtension);
   PRUint8 i;
   PRBool found = PR_FALSE;
   for (i=0; i < extCount; i++) {
     nsCString* ext = (nsCString*)mExtensions.CStringAt(i);
-    if (ext->Equals(extension, nsCaseInsensitiveCStringComparator())) {
+    if (ext->Equals(aExtension, nsCaseInsensitiveCStringComparator())) {
       found = PR_TRUE;
       break;
     }
@@ -115,55 +118,40 @@ nsMIMEInfoBase::SetPrimaryExtension(const char *aExtension)
     mExtensions.RemoveCStringAt(i);
   }
 
-  mExtensions.InsertCStringAt(extension, 0);
+  mExtensions.InsertCStringAt(aExtension, 0);
   
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMIMEInfoBase::AppendExtension(const char *aExtension)
+nsMIMEInfoBase::AppendExtension(const nsACString& aExtension)
 {
-	mExtensions.AppendCString( nsCAutoString(aExtension) );
-	return NS_OK;
+  mExtensions.AppendCString(aExtension);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMIMEInfoBase::GetMIMEType(char * *aMIMEType)
+nsMIMEInfoBase::GetMIMEType(nsACString& aMIMEType)
 {
-    if (!aMIMEType) return NS_ERROR_NULL_POINTER;
-
     if (mMIMEType.IsEmpty())
         return NS_ERROR_NOT_INITIALIZED;
 
-    *aMIMEType = ToNewCString(mMIMEType);
-    if (!*aMIMEType) return NS_ERROR_OUT_OF_MEMORY;
+    aMIMEType = mMIMEType;
     return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMIMEInfoBase::SetMIMEType(const char* aMIMEType)
+nsMIMEInfoBase::GetDescription(nsAString& aDescription)
 {
-    if (!aMIMEType) return NS_ERROR_NULL_POINTER;
-
-    mMIMEType=aMIMEType;
+    aDescription = mDescription;
     return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMIMEInfoBase::GetDescription(PRUnichar * *aDescription)
+nsMIMEInfoBase::SetDescription(const nsAString& aDescription) 
 {
-    if (!aDescription) return NS_ERROR_NULL_POINTER;
-
-    *aDescription = ToNewUnicode(mDescription);
-    if (!*aDescription) return NS_ERROR_OUT_OF_MEMORY;
+    mDescription = aDescription;
     return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMIMEInfoBase::SetDescription(const PRUnichar * aDescription) 
-{
-	mDescription =  aDescription;
-	return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -171,11 +159,11 @@ nsMIMEInfoBase::Equals(nsIMIMEInfo *aMIMEInfo, PRBool *_retval)
 {
     if (!aMIMEInfo) return NS_ERROR_NULL_POINTER;
 
-    nsXPIDLCString type;
-    nsresult rv = aMIMEInfo->GetMIMEType(getter_Copies(type));
+    nsCAutoString type;
+    nsresult rv = aMIMEInfo->GetMIMEType(type);
     if (NS_FAILED(rv)) return rv;
 
-    *_retval = mMIMEType.EqualsWithConversion(type);
+    *_retval = mMIMEType.Equals(type);
 
     return NS_OK;
 }
@@ -183,77 +171,74 @@ nsMIMEInfoBase::Equals(nsIMIMEInfo *aMIMEInfo, PRBool *_retval)
 NS_IMETHODIMP
 nsMIMEInfoBase::GetMacType(PRUint32 *aMacType)
 {
-	*aMacType = mMacType;
-	return NS_OK;
+    *aMacType = mMacType;
+    return NS_OK;
 }
 
 NS_IMETHODIMP
 nsMIMEInfoBase::SetMacType(PRUint32 aMacType)
 {
-	mMacType = aMacType;
-	return NS_OK;
+    mMacType = aMacType;
+    return NS_OK;
 }
 
 NS_IMETHODIMP
 nsMIMEInfoBase::GetMacCreator(PRUint32 *aMacCreator)
 {
-	*aMacCreator = mMacCreator;
-	return NS_OK;
+    *aMacCreator = mMacCreator;
+    return NS_OK;
 }
 
 NS_IMETHODIMP
 nsMIMEInfoBase::SetMacCreator(PRUint32 aMacCreator)
 {
-	mMacCreator = aMacCreator;
-	return NS_OK;
+    mMacCreator = aMacCreator;
+    return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMIMEInfoBase::SetFileExtensions(const char* aExtensions)
+nsMIMEInfoBase::SetFileExtensions(const nsACString& aExtensions)
 {
-	mExtensions.Clear();
-	nsCString extList( aExtensions );
-	
-	PRInt32 breakLocation = -1;
-	while ( (breakLocation= extList.FindChar(',') )!= -1)
-	{
-		nsCString ext( extList.get(), breakLocation );
-		mExtensions.AppendCString( ext );
-		extList.Cut(0, breakLocation+1 );
-	}
-	if ( !extList.IsEmpty() )
-		mExtensions.AppendCString( extList );
-	return NS_OK;
+    mExtensions.Clear();
+    nsCString extList( aExtensions );
+    
+    PRInt32 breakLocation = -1;
+    while ( (breakLocation= extList.FindChar(',') )!= -1)
+    {
+        mExtensions.AppendCString(Substring(extList.get(), extList.get() + breakLocation));
+        extList.Cut(0, breakLocation+1 );
+    }
+    if ( !extList.IsEmpty() )
+        mExtensions.AppendCString( extList );
+    return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMIMEInfoBase::GetApplicationDescription(PRUnichar ** aApplicationDescription)
+nsMIMEInfoBase::GetApplicationDescription(nsAString& aApplicationDescription)
 {
   if (mPreferredAppDescription.IsEmpty() && mPreferredApplication) {
     // Don't want to cache this, just in case someone resets the app
     // without changing the description....
-    nsAutoString leafName;
-    mPreferredApplication->GetLeafName(leafName);
-    *aApplicationDescription = ToNewUnicode(leafName);
+    mPreferredApplication->GetLeafName(aApplicationDescription);
   } else {
-    *aApplicationDescription = ToNewUnicode(mPreferredAppDescription);
+    aApplicationDescription = mPreferredAppDescription;
   }
   
-  return *aApplicationDescription ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+  return NS_OK;
 }
  
 NS_IMETHODIMP
-nsMIMEInfoBase::SetApplicationDescription(const PRUnichar * aApplicationDescription)
+nsMIMEInfoBase::SetApplicationDescription(const nsAString& aApplicationDescription)
 {
   mPreferredAppDescription = aApplicationDescription;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMIMEInfoBase::GetDefaultDescription(PRUnichar ** aDefaultDescription)
+nsMIMEInfoBase::GetDefaultDescription(nsAString& aDefaultDescription)
 {
-  *aDefaultDescription = ToNewUnicode(mDefaultAppDescription);
-  return *aDefaultDescription ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+  aDefaultDescription = mDefaultAppDescription;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -352,19 +337,17 @@ nsMIMEInfoBase::LaunchWithIProcess(nsIFile* aApp, nsIFile* aFile)
 
 // nsMIMEInfoImpl implementation
 NS_IMETHODIMP
-nsMIMEInfoImpl::GetDefaultDescription(PRUnichar ** aDefaultDescription)
+nsMIMEInfoImpl::GetDefaultDescription(nsAString& aDefaultDescription)
 {
   if (mDefaultAppDescription.IsEmpty() && mDefaultApplication) {
     // Don't want to cache this, just in case someone resets the app
     // without changing the description....
-    nsAutoString leafName;
-    mDefaultApplication->GetLeafName(leafName);
-    *aDefaultDescription = ToNewUnicode(leafName);
+    mDefaultApplication->GetLeafName(aDefaultDescription);
   } else {
-    *aDefaultDescription = ToNewUnicode(mDefaultAppDescription);
+    aDefaultDescription = mDefaultAppDescription;
   }
   
-  return *aDefaultDescription ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -386,5 +369,4 @@ nsMIMEInfoImpl::LaunchDefaultWithFile(nsIFile* aFile)
 
   return LaunchWithIProcess(mDefaultApplication, aFile);
 }
-
 

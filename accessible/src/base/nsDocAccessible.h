@@ -20,11 +20,11 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: Aaron Leventhal (aaronl@netscape.com)
+ *   Original Author: Aaron Leventhal (aaronl@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -42,15 +42,15 @@
 #include "nsBaseWidgetAccessible.h"
 #include "nsIAccessibleDocument.h"
 #include "nsPIAccessibleDocument.h"
+#include "nsIAccessibleEvent.h"
+#include "nsIArray.h"
 #include "nsIDocument.h"
-#include "nsIDOMMutationListener.h"
+#include "nsIDocumentObserver.h"
 #include "nsIEditor.h"
 #include "nsIObserver.h"
 #include "nsIScrollPositionListener.h"
 #include "nsITimer.h"
 #include "nsIWeakReference.h"
-#include "nsIWebProgress.h"
-#include "nsIWebProgressListener.h"
 
 class nsIScrollableView;
 
@@ -59,14 +59,11 @@ const PRUint32 kDefaultCacheSize = 256;
 class nsDocAccessible : public nsBlockAccessible,
                         public nsIAccessibleDocument,
                         public nsPIAccessibleDocument,
-                        public nsIWebProgressListener,
+                        public nsIDocumentObserver,
                         public nsIObserver,
-                        public nsIDOMMutationListener,
                         public nsIScrollPositionListener,
                         public nsSupportsWeakReference
-{
-  enum EBusyState {eBusyStateUninitialized, eBusyStateLoading, eBusyStateDone};
-  
+{  
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIACCESSIBLEDOCUMENT
   NS_DECL_NSPIACCESSIBLEDOCUMENT
@@ -80,55 +77,47 @@ class nsDocAccessible : public nsBlockAccessible,
     NS_IMETHOD GetName(nsAString& aName);
     NS_IMETHOD GetValue(nsAString& aValue);
     NS_IMETHOD GetState(PRUint32 *aState);
+    NS_IMETHOD GetFocusedChild(nsIAccessible **aFocusedChild);
+    NS_IMETHOD GetParent(nsIAccessible **aParent);
 
     // ----- nsIScrollPositionListener ---------------------------
     NS_IMETHOD ScrollPositionWillChange(nsIScrollableView *aView, nscoord aX, nscoord aY);
     NS_IMETHOD ScrollPositionDidChange(nsIScrollableView *aView, nscoord aX, nscoord aY);
 
-    // ----- nsIDOMMutationListener -------------------------
-    NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent);
-    NS_IMETHOD SubtreeModified(nsIDOMEvent* aMutationEvent);
-    NS_IMETHOD NodeInserted(nsIDOMEvent* aMutationEvent);
-    NS_IMETHOD NodeRemoved(nsIDOMEvent* aMutationEvent);
-    NS_IMETHOD NodeRemovedFromDocument(nsIDOMEvent* aMutationEvent);
-    NS_IMETHOD NodeInsertedIntoDocument(nsIDOMEvent* aMutationEvent);
-    NS_IMETHOD AttrModified(nsIDOMEvent* aMutationEvent);
-    NS_IMETHOD CharacterDataModified(nsIDOMEvent* aMutationEvent);
-
-    NS_DECL_NSIWEBPROGRESSLISTENER
+    // nsIDocumentObserver
+    NS_DECL_NSIDOCUMENTOBSERVER
 
     NS_IMETHOD FireToolkitEvent(PRUint32 aEvent, nsIAccessible* aAccessible, void* aData);
+    static void FlushEventsCallback(nsITimer *aTimer, void *aClosure);
 
     // nsIAccessNode
     NS_IMETHOD Shutdown();
     NS_IMETHOD Init();
 
+    // nsPIAccessNode
+    NS_IMETHOD_(nsIFrame *) GetFrame(void);
+
   protected:
     virtual void GetBoundsRect(nsRect& aRect, nsIFrame** aRelativeFrame);
-    virtual nsIFrame* GetFrame();
     virtual nsresult AddEventListeners();
     virtual nsresult RemoveEventListeners();
-    void AddScrollListener(nsIPresShell *aPresShell);
-    void RemoveScrollListener(nsIPresShell *aPresShell);
-    void FireDocLoadFinished();
-    void HandleMutationEvent(nsIDOMEvent *aEvent, PRUint32 aEventType);
-    static void DocLoadCallback(nsITimer *aTimer, void *aClosure);
+    void AddScrollListener();
+    void RemoveScrollListener();
+    void RefreshNodes(nsIDOMNode *aStartNode, PRUint32 aChangeEvent);
     static void ScrollTimerCallback(nsITimer *aTimer, void *aClosure);
-    void GetEventShell(nsIDOMNode *aNode, nsIPresShell **aEventShell);
-    void GetEventDocAccessible(nsIDOMNode *aNode, 
-                               nsIAccessibleDocument **aAccessibleDoc);
     virtual void CheckForEditor();
+    nsresult FireDelayedToolkitEvent(PRUint32 aEvent, nsIDOMNode *aDOMNode,
+                                     void *aData, PRBool aAllowDupes = PR_FALSE);
 
     nsInterfaceHashtable<nsVoidHashKey, nsIAccessNode> mAccessNodeCache;
     void *mWnd;
     nsCOMPtr<nsIDocument> mDocument;
     nsCOMPtr<nsITimer> mScrollWatchTimer;
-    nsCOMPtr<nsITimer> mDocLoadTimer;
-    nsCOMPtr<nsIWebProgress> mWebProgress;
+    nsCOMPtr<nsITimer> mFireEventTimer;
     nsCOMPtr<nsIEditor> mEditor; // Editor, if there is one
-    EBusyState mBusy;
     PRUint16 mScrollPositionChangedTicks; // Used for tracking scroll events
-    PRPackedBool mIsNewDocument;
+    PRPackedBool mIsContentLoaded;
+    nsCOMArray<nsIAccessibleEvent> mEventsToFire;
 };
 
 #endif  

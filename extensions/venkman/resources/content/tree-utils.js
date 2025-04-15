@@ -1,37 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/ 
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * License. 
+ * License.
  *
- * The Original Code is The JavaScript Debugger
- * 
+ * The Original Code is The JavaScript Debugger.
+ *
  * The Initial Developer of the Original Code is
- * Netscape Communications Corporation
- * Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.
- *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the MPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the MPL or the GPL.
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Robert Ginda, <rginda@netscape.com>, original author
+ *   Robert Ginda, <rginda@netscape.com>, original author
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  * BasicOView provides functionality of tree whose elements have no children.
@@ -141,11 +145,11 @@ function bov_scrollto (line, align)
 BasicOView.prototype.__defineGetter__("selectedIndex", bov_getsel);
 function bov_getsel()
 {
-    if (!this.tree || this.tree.selection.getRangeCount() < 1)
+    if (!this.tree || this.tree.view.selection.getRangeCount() < 1)
         return -1;
 
     var min = new Object();
-    this.tree.selection.getRangeAt(0, min, {});
+    this.tree.view.selection.getRangeAt(0, min, {});
     return min.value;
 }
 
@@ -153,9 +157,9 @@ BasicOView.prototype.__defineSetter__("selectedIndex", bov_setsel);
 function bov_setsel(i)
 {
     if (i == -1)
-        this.tree.selection.clearSelection();
+        this.tree.view.selection.clearSelection();
     else
-        this.tree.selection.timedSelect (i, 500);
+        this.tree.view.selection.timedSelect (i, 500);
     return i;
 }
 
@@ -166,12 +170,12 @@ function bov_setsel(i)
 BasicOView.prototype.rowCount = 0;
 
 BasicOView.prototype.getCellProperties =
-function bov_cellprops (row, colID, properties)
+function bov_cellprops (row, col, properties)
 {
 }
 
 BasicOView.prototype.getColumnProperties =
-function bov_colprops (colID, elem, properties)
+function bov_colprops (col, properties)
 {
 }
 
@@ -210,14 +214,8 @@ function bov_issorted (index)
     return false;
 }
 
-BasicOView.prototype.canDropOn =
-function bov_dropon (index)
-{
-    return false;
-}
-
-BasicOView.prototype.canDropBeforeAfter =
-function bov_dropba (index, before)
+BasicOView.prototype.canDrop =
+function bov_drop (index, orientation)
 {
     return false;
 }
@@ -250,36 +248,36 @@ function bov_getlvl (index)
 }
 
 BasicOView.prototype.getImageSrc =
-function bov_getimgsrc (row, colID)
+function bov_getimgsrc (row, col)
 {
 }
 
 BasicOView.prototype.getProgressMode =
-function bov_getprgmode (row, colID)
+function bov_getprgmode (row, col)
 {
 }
 
 BasicOView.prototype.getCellValue =
-function bov_getcellval (row, colID)
+function bov_getcellval (row, col)
 {
 }
 
 BasicOView.prototype.getCellText =
-function bov_getcelltxt (row, colID)
+function bov_getcelltxt (row, col)
 {
     if (!this.columnNames)
         return "";
     
-    var ary = colID.match (/:(.*)/);
+    var ary = col.id.match (/:(.*)/);
     if (ary)
-        colID = ary[1];
+        col = ary[1];
 
-    var col = this.columnNames[colID];
+    var colName = this.columnNames[col];
     
-    if (typeof col == "undefined")
+    if (typeof colName == "undefined")
         return "";
     
-    return this.data[row][col];
+    return this.data[row][colName];
 }
 
 BasicOView.prototype.setTree =
@@ -294,7 +292,7 @@ function bov_toggleopen (index)
 }
 
 BasicOView.prototype.cycleHeader =
-function bov_cyclehdr (colID, elt)
+function bov_cyclehdr (col)
 {
 }
 
@@ -304,18 +302,23 @@ function bov_selchg ()
 }
 
 BasicOView.prototype.cycleCell =
-function bov_cyclecell (row, colID)
+function bov_cyclecell (row, col)
 {
 }
 
 BasicOView.prototype.isEditable =
-function bov_isedit (row, colID)
+function bov_isedit (row, col)
 {
     return false;
 }
 
+BasicOView.prototype.setCellValue =
+function bov_setct (row, col, value)
+{
+}
+
 BasicOView.prototype.setCellText =
-function bov_setct (row, colID, value)
+function bov_setct (row, col, value)
 {
 }
 
@@ -339,7 +342,7 @@ function bov_rdblclick (event)
     if (!("onRowCommand" in this) || event.target.localName != "treechildren")
         return;
 
-    var rowIndex = this.tree.selection.currentIndex;
+    var rowIndex = this.tree.view.selection.currentIndex;
     if (rowIndex == -1 || rowIndex > this.rowCount)
         return;
     var rec = this.childData.locateChildByVisualRow(rowIndex);
@@ -363,7 +366,7 @@ function bov_rkeypress (event)
         if (!this.selection)
             return;
         
-        rowIndex = this.tree.selection.currentIndex;
+        rowIndex = this.tree.view.selection.currentIndex;
         if (rowIndex == -1 || rowIndex > this.rowCount)
             return;
         rec = this.childData.locateChildByVisualRow(rowIndex);
@@ -377,7 +380,7 @@ function bov_rkeypress (event)
     }
     else if ("onKeyPress" in this)
     {
-        rowIndex = this.tree.selection.currentIndex;
+        rowIndex = this.tree.view.selection.currentIndex;
         if (rowIndex != -1 && rowIndex < this.rowCount)
         {
             rec = this.childData.locateChildByVisualRow(rowIndex);
@@ -1323,20 +1326,20 @@ function xtv_isctr (index)
 XULTreeView.prototype.__defineGetter__("selectedIndex", xtv_getsel);
 function xtv_getsel()
 {
-    if (!this.tree || this.tree.selection.getRangeCount() < 1)
+    if (!this.tree || this.tree.view.selection.getRangeCount() < 1)
         return -1;
 
     var min = new Object();
-    this.tree.selection.getRangeAt(0, min, {});
+    this.tree.view.selection.getRangeAt(0, min, {});
     return min.value;
 }
 
 XULTreeView.prototype.__defineSetter__("selectedIndex", xtv_setsel);
 function xtv_setsel(i)
 {
-    this.tree.selection.clearSelection();
+    this.tree.view.selection.clearSelection();
     if (i != -1)
-        this.tree.selection.timedSelect (i, 500);
+        this.tree.view.selection.timedSelect (i, 500);
     return i;
 }
 
@@ -1440,42 +1443,42 @@ function xtv_getlvl (index)
 }
 
 XULTreeView.prototype.getImageSrc =
-function xtv_getimgsrc (index, colID)
+function xtv_getimgsrc (index, col)
 {
 }
 
 XULTreeView.prototype.getProgressMode =
-function xtv_getprgmode (index, colID)
+function xtv_getprgmode (index, col)
 {
 }
 
 XULTreeView.prototype.getCellValue =
-function xtv_getcellval (index, colID)
+function xtv_getcellval (index, col)
 {
 }
 
 XULTreeView.prototype.getCellText =
-function xtv_getcelltxt (index, colID)
+function xtv_getcelltxt (index, col)
 {
     var row = this.childData.locateChildByVisualRow (index);
     //ASSERT(row, "bogus row " + index);
 
-    var ary = colID.match (/:(.*)/);
+    var ary = col.id.match (/:(.*)/);
     if (ary)
-        colID = ary[1];
+        col = ary[1];
 
-    if (row && row._colValues && colID in row._colValues)
-        return row._colValues[colID];
+    if (row && row._colValues && col in row._colValues)
+        return row._colValues[col];
     else
         return "";
 }
 
 XULTreeView.prototype.getCellProperties =
-function xtv_cellprops (row, colID, properties)
+function xtv_cellprops (row, col, properties)
 {}
 
 XULTreeView.prototype.getColumnProperties =
-function xtv_colprops (colID, elem, properties)
+function xtv_colprops (col, properties)
 {}
 
 XULTreeView.prototype.getRowProperties =
@@ -1488,21 +1491,12 @@ function xtv_issorted (index)
     return false;
 }
 
-XULTreeView.prototype.canDropOn =
-function xtv_dropon (index)
+XULTreeView.prototype.canDrop =
+function xtv_drop (index, orientation)
 {
     var row = this.childData.locateChildByVisualRow (index);
     //ASSERT(row, "bogus row " + index);
-    return (row && ("canDropOn" in row) && row.canDropOn());
-}
-
-XULTreeView.prototype.canDropBeforeAfter =
-function xtv_dropba (index, before)
-{
-    var row = this.childData.locateChildByVisualRow (index);
-    //ASSERT(row, "bogus row " + index);
-    return (row && ("canDropBeforeAfter" in row) &&
-            row.canDropBeforeAfter(before));
+    return (row && ("canDrop" in row) && row.canDrop(orientation));
 }
 
 XULTreeView.prototype.drop =
@@ -1521,7 +1515,7 @@ function xtv_seto (tree)
 }
 
 XULTreeView.prototype.cycleHeader =
-function xtv_cyclehdr (colID, elt)
+function xtv_cyclehdr (col)
 {
 }
 
@@ -1531,18 +1525,23 @@ function xtv_selchg ()
 }
 
 XULTreeView.prototype.cycleCell =
-function xtv_cyclecell (row, colID)
+function xtv_cyclecell (row, col)
 {
 }
 
 XULTreeView.prototype.isEditable =
-function xtv_isedit (row, colID)
+function xtv_isedit (row, col)
 {
     return false;
 }
 
+XULTreeView.prototype.setCellValue =
+function xtv_setct (row, col, value)
+{
+}
+
 XULTreeView.prototype.setCellText =
-function xtv_setct (row, colID, value)
+function xtv_setct (row, col, value)
 {
 }
 
@@ -1581,7 +1580,7 @@ function xtv_rdblclick (event)
     if (!("onRowCommand" in this) || event.target.localName != "treechildren")
         return;
 
-    var rowIndex = this.tree.selection.currentIndex;
+    var rowIndex = this.tree.view.selection.currentIndex;
     if (rowIndex == -1 || rowIndex > this.rowCount)
         return;
     var rec = this.childData.locateChildByVisualRow(rowIndex);
@@ -1605,7 +1604,7 @@ function xtv_rkeypress (event)
         if (!this.selection)
             return;
         
-        rowIndex = this.tree.selection.currentIndex;
+        rowIndex = this.tree.view.selection.currentIndex;
         if (rowIndex == -1 || rowIndex > this.rowCount)
             return;
         rec = this.childData.locateChildByVisualRow(rowIndex);
@@ -1619,7 +1618,7 @@ function xtv_rkeypress (event)
     }
     else if ("onKeyPress" in this)
     {
-        rowIndex = this.tree.selection.currentIndex;
+        rowIndex = this.tree.view.selection.currentIndex;
         if (rowIndex != -1 && rowIndex < this.rowCount)
         {
             rec = this.childData.locateChildByVisualRow(rowIndex);

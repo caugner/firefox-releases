@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,15 +14,14 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   David Epstein <depstein@netscape.com> 
- *   Ashish Bhatt <ashishbhatt@netscape.com> 
- *
+ *   David Epstein <depstein@netscape.com>
+ *   Ashish Bhatt <ashishbhatt@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -30,11 +29,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -114,13 +113,13 @@ void CNsIWebNav::OnStartTests(UINT nMenuID)
 			GoToIndexTest(2);
 			break ;
 		case ID_INTERFACES_NSIWEBNAV_LOADURI :
-			LoadUriTest(nsnull, nsnull, 2, PR_FALSE);
+			LoadURITest(nsnull, nsnull, 2, PR_FALSE);
 			break ;
 		case ID_INTERFACES_NSIWEBNAV_RELOAD  :
 			ReloadTest(nsIWebNavigation::LOAD_FLAGS_NONE, 2);
 			break ;
 		case ID_INTERFACES_NSIWEBNAV_STOP    :
-			StopUriTest("file://C|/Program Files",
+			StopURITest("file://C|/Program Files",
 						 nsIWebNavigation::STOP_CONTENT, 2);
 			break ;
 		case ID_INTERFACES_NSIWEBNAV_GETDOCUMENT :
@@ -153,8 +152,8 @@ void CNsIWebNav::RunAllTests()
    }
 
    // load a couple of URLs to get things going
-	LoadUriTest("http://www.cisco.com", nsIWebNavigation::LOAD_FLAGS_NONE, 2, PR_TRUE);
-	LoadUriTest("www.google.com", nsIWebNavigation::LOAD_FLAGS_NONE, 2, PR_TRUE);
+	LoadURITest("http://www.cisco.com", nsIWebNavigation::LOAD_FLAGS_NONE, 2, PR_TRUE);
+	LoadURITest("www.google.com", nsIWebNavigation::LOAD_FLAGS_NONE, 2, PR_TRUE);
 	
    // canGoBack attribute test
    CanGoBackTest(1);
@@ -180,9 +179,9 @@ void CNsIWebNav::RunAllTests()
 
  
 	// Stop() tests
-   StopUriTest("http://www.microsoft.com", nsIWebNavigation::STOP_ALL, 1);
-   StopUriTest("https://www.microsoft.com/", nsIWebNavigation::STOP_NETWORK, 1);
-   StopUriTest("ftp://ftp.microsoft.com/", nsIWebNavigation::STOP_CONTENT, 1);
+   StopURITest("http://www.microsoft.com", nsIWebNavigation::STOP_ALL, 1);
+   StopURITest("https://www.microsoft.com/", nsIWebNavigation::STOP_NETWORK, 1);
+   StopURITest("ftp://ftp.microsoft.com/", nsIWebNavigation::STOP_CONTENT, 1);
 
    // document test
    GetDocumentTest(1);
@@ -207,7 +206,7 @@ void CNsIWebNav::LoadUriandReload(int URItotal)
    {
 	   for (i=0; i < URItotal; i++)
 	   {
-		   LoadUriTest(UrlTable[i].theUri, UrlTable[j].theFlag, 2, PR_TRUE);
+		   LoadURITest(UrlTable[i].theURI, UrlTable[j].theFlag, 2, PR_TRUE);
 		   switch (i)
 		   {
 		   case 0:
@@ -275,7 +274,7 @@ void CNsIWebNav::GoToIndexTest(PRInt16 displayMode)
    RvTestResult(rv, "GotoIndex() test", displayMode);
 }
 
-void CNsIWebNav::LoadUriTest(char *theUrl, PRUint32 theFlag,
+void CNsIWebNav::LoadURITest(char *theUrl, PRUint32 theFlag,
 							 PRInt16 displayMode, PRBool runAllTests)
 {
    char theTotalString[500];
@@ -382,7 +381,7 @@ void CNsIWebNav::ReloadTest(PRUint32 theFlag, PRInt16 displayMode)
    RvTestResult(rv, theTotalString, displayMode);
 }
 
-void CNsIWebNav::StopUriTest(char *theUrl, PRUint32 theFlag,
+void CNsIWebNav::StopURITest(char *theUrl, PRUint32 theFlag,
 							 PRInt16 displayMode)
 {
    char theTotalString[200];

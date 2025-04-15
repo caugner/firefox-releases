@@ -1,7 +1,7 @@
-/.cvsignore/1.1/Tue Apr 11 00:00:31 2000//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.13/Mon Jun  3 04:05:32 2002//TFIREFOX_1_0_RELEASE
-/nsAutoComplete.cpp/1.9/Wed Jan  8 23:19:02 2003//TFIREFOX_1_0_RELEASE
-/nsAutoComplete.h/1.5/Tue Oct 23 01:37:21 2001//TFIREFOX_1_0_RELEASE
-/nsLDAPAutoCompleteSession.cpp/1.39/Sat Feb 14 02:09:28 2004//TFIREFOX_1_0_RELEASE
-/nsLDAPAutoCompleteSession.h/1.14/Sat Feb 14 02:09:28 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Tue Apr 11 00:00:31 2000//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.15/Tue Apr  5 14:50:14 2005//TFIREFOX_1_5_RELEASE
+/nsAutoComplete.cpp/1.10/Sat Apr 17 16:51:19 2004//TFIREFOX_1_5_RELEASE
+/nsAutoComplete.h/1.6/Sat Apr 17 16:51:20 2004//TFIREFOX_1_5_RELEASE
+/nsLDAPAutoCompleteSession.cpp/1.41/Tue Jul 26 15:27:16 2005//TFIREFOX_1_5_RELEASE
+/nsLDAPAutoCompleteSession.h/1.17/Tue Jul 26 15:27:16 2005//TFIREFOX_1_5_RELEASE
 D

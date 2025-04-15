@@ -1,12 +1,12 @@
-/.cvsignore/1.1/Mon Apr 26 18:25:57 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.34/Sun Jul 13 22:27:43 2003//TFIREFOX_1_0_RELEASE
-/nsFilteredContentIterator.cpp/1.8/Sat Jan 24 00:46:13 2004//TFIREFOX_1_0_RELEASE
-/nsFilteredContentIterator.h/1.2/Sat Jan 24 00:46:13 2004//TFIREFOX_1_0_RELEASE
-/nsTSAtomList.h/1.1/Thu Apr 10 21:04:07 2003//TFIREFOX_1_0_RELEASE
-/nsTSDNotifier.cpp/1.14/Sun Jul 20 07:45:56 2003//TFIREFOX_1_0_RELEASE
-/nsTSDNotifier.h/1.12/Sat Mar 23 22:08:20 2002//TFIREFOX_1_0_RELEASE
-/nsTextServicesDocument.cpp/1.54/Wed Jan 28 04:09:23 2004//TFIREFOX_1_0_RELEASE
-/nsTextServicesDocument.h/1.17/Fri May  2 21:13:41 2003//TFIREFOX_1_0_RELEASE
-/nsTextServicesFactory.cpp/1.17/Tue Jul  9 20:24:34 2002//TFIREFOX_1_0_RELEASE
-/win32.order/1.3/Thu Apr  5 05:57:37 2001//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Mon Apr 26 18:25:57 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.36/Wed Dec 15 04:06:58 2004//TFIREFOX_1_5_RELEASE
+/nsFilteredContentIterator.cpp/1.9/Sun Apr 18 14:19:39 2004//TFIREFOX_1_5_RELEASE
+/nsFilteredContentIterator.h/1.3/Sun Apr 18 14:19:39 2004//TFIREFOX_1_5_RELEASE
+/nsTSAtomList.h/1.1/Thu Apr 10 21:04:07 2003//TFIREFOX_1_5_RELEASE
+/nsTSDNotifier.cpp/1.15/Sun Apr 18 14:19:39 2004//TFIREFOX_1_5_RELEASE
+/nsTSDNotifier.h/1.13/Sun Apr 18 14:19:39 2004//TFIREFOX_1_5_RELEASE
+/nsTextServicesDocument.cpp/1.58/Tue Feb  1 21:12:52 2005//TFIREFOX_1_5_RELEASE
+/nsTextServicesDocument.h/1.20/Tue Feb  1 21:12:52 2005//TFIREFOX_1_5_RELEASE
+/nsTextServicesFactory.cpp/1.18/Sun Apr 18 14:19:39 2004//TFIREFOX_1_5_RELEASE
+/win32.order/1.3/Thu Apr  5 05:57:37 2001//TFIREFOX_1_5_RELEASE
 D

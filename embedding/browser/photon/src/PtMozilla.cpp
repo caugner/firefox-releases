@@ -1,25 +1,41 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Christopher Blizzard.
- * Portions created by Christopher Blizzard are Copyright (C)
- * Christopher Blizzard.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Christopher Blizzard. Portions created by Christopher Blizzard are Copyright (C) Christopher Blizzard.  All Rights Reserved.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Christopher Blizzard <blizzard@mozilla.org>
  *   Ramiro Estrugo <ramiro@eazel.com>
- *	 Brian Edmond <briane@qnx.com>
- */
+ *   Brian Edmond <briane@qnx.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 #include <stdlib.h>
 
 #include "nsCWebBrowser.h"
@@ -65,6 +81,7 @@
 
 #include "nsIEventQueueService.h"
 #include "nsIServiceManager.h"
+#include "nsIComponentRegistrar.h"
 #include "nsUnknownContentTypeHandler.h"
 
 #include "EmbedPrivate.h"
@@ -229,8 +246,7 @@ static int child_getting_focus( PtWidget_t *widget, PtWidget_t *child, PhEvent_t
 	moz->EmbedRef->GetPIDOMWindow( getter_AddRefs( piWin ) );
 	if( !piWin ) return Pt_CONTINUE;
 
-	nsCOMPtr<nsIFocusController> focusController;
-	piWin->GetRootFocusController(getter_AddRefs(focusController));
+	nsIFocusController *focusController = piWin->GetRootFocusController();
 	if( focusController )
 		focusController->SetActive( PR_TRUE );
 
@@ -249,8 +265,7 @@ static int child_losing_focus( PtWidget_t *widget, PtWidget_t *child, PhEvent_t 
 	moz->EmbedRef->GetPIDOMWindow( getter_AddRefs( piWin ) );
 	if( !piWin ) return Pt_CONTINUE;
 
-	nsCOMPtr<nsIFocusController> focusController;
-	piWin->GetRootFocusController(getter_AddRefs(focusController));
+	nsIFocusController *focusController = piWin->GetRootFocusController();
 	if( focusController )
 		focusController->SetActive( PR_FALSE );
 
@@ -259,7 +274,6 @@ static int child_losing_focus( PtWidget_t *widget, PtWidget_t *child, PhEvent_t 
 
 	return Pt_CONTINUE;
 	}
-
 
 static void 
 mozilla_extent(PtWidget_t *widget)
@@ -342,19 +356,20 @@ mozilla_modify( PtWidget_t *widget, PtArg_t const *argt, PtResourceRec_t const *
 			}
 			break;
 
-		case Pt_ARG_MOZ_COMMAND:
+		case Pt_ARG_MOZ_COMMAND: {
+			PtWebClient2Command_t *wdata = ( PtWebClient2Command_t * ) argt->len;
 			switch ((int)(argt->value)) 
 			{
 				case Pt_MOZ_COMMAND_CUT: {
-					moz->EmbedRef->Cut();
+					moz->EmbedRef->Cut(wdata?wdata->ClipboardInfo.input_group:1);
 					}
 					break;
 				case Pt_MOZ_COMMAND_COPY: {
-					moz->EmbedRef->Copy();
+					moz->EmbedRef->Copy(wdata?wdata->ClipboardInfo.input_group:1);
 					}
 					break;
 				case Pt_MOZ_COMMAND_PASTE: {
-					moz->EmbedRef->Paste();
+					moz->EmbedRef->Paste(wdata?wdata->ClipboardInfo.input_group:1);
 					}
 					break;
 				case Pt_MOZ_COMMAND_SELECTALL: {
@@ -367,7 +382,6 @@ mozilla_modify( PtWidget_t *widget, PtArg_t const *argt, PtResourceRec_t const *
 					break;
 
 				case Pt_MOZ_COMMAND_FIND: {
-					PtWebClient2Command_t *wdata = ( PtWebClient2Command_t * ) argt->len;
 					nsCOMPtr<nsIWebBrowserFind> finder( do_GetInterface( moz->EmbedRef->mWindow->mWebBrowser ) );
 					finder->SetSearchString( NS_ConvertASCIItoUCS2(wdata->FindInfo.string).get() );
 					finder->SetMatchCase( wdata->FindInfo.flags & Pt_WEB_FIND_MATCH_CASE );
@@ -381,7 +395,6 @@ mozilla_modify( PtWidget_t *widget, PtArg_t const *argt, PtResourceRec_t const *
 					}
 
 				case Pt_MOZ_COMMAND_SAVEAS: {
-					PtWebClient2Command_t *wdata = ( PtWebClient2Command_t * ) argt->len;
 					char *dirname = ( char * ) calloc( 1, strlen( wdata->SaveasInfo.filename + 7 ) );
 					if( dirname ) {
 						sprintf( dirname, "%s_files", wdata->SaveasInfo.filename );
@@ -390,6 +403,7 @@ mozilla_modify( PtWidget_t *widget, PtArg_t const *argt, PtResourceRec_t const *
 						}
 					break;
 					}
+				}
 			}
 			break;
 
@@ -405,7 +419,7 @@ mozilla_modify( PtWidget_t *widget, PtArg_t const *argt, PtResourceRec_t const *
 			if( unknown->response == Pt_WEB_RESPONSE_CANCEL ) {
 				EmbedDownload *d = FindDownload( moz, unknown->download_ticket );
 				if( d ) {
-					if( d->mLauncher ) d->mLauncher->Cancel(); /* this will also call the EmbedDownload destructor */
+					if( d->mLauncher ) d->mLauncher->Cancel(NS_BINDING_ABORTED); /* this will also call the EmbedDownload destructor */
 					else if( d->mPersist ) d->mPersist->CancelSave(); /* this will also call the EmbedDownload destructor */
 					else delete d; /* just in case neither d->mLauncher or d->mPersist was set */
 					}
@@ -606,7 +620,7 @@ mozilla_set_pref( PtWidget_t *widget, char *option, char *value )
 		char *font_default = NULL;
 		char preference[256];
 
-		pref->CopyCharPref( "font.default", &font_default );
+		pref->CopyCharPref( "font.default.x-western", &font_default );
 		if( !font_default ) font_default = "serif";
 
 		sprintf( preference, "font.name.%s.x-western", font_default );
@@ -663,8 +677,6 @@ mozilla_set_pref( PtWidget_t *widget, char *option, char *value )
 		pref->SetIntPref( "network.proxy.gopher_port", atoi(value) );
 
 /* TCP/IP options */
-	else if( !strcmp( option, "socket_timeout" ) )
-		pref->SetIntPref( "network.http.connect.timeout", atoi( value ) );
 	else if( !strcmp( option, "max_connections" ) )
 		pref->SetIntPref( "network.http.max-connections", atoi( value ) );
 
@@ -752,6 +764,7 @@ mozilla_set_pref( PtWidget_t *widget, char *option, char *value )
 	else if( !strcmp( option, "quantize_jpegs" ) ) 		; /* not used */
 	else if( !strcmp( option, "concurrent_decodes" ) ) 		; /* not used */
 
+
 /* Print options */
 	else if( !strcmp( option, "Print_Header_Font" ) ) 		; /* not used */
 	else if( !strcmp( option, "Print_Header_Font_Size" ) ) 		; /* not used */
@@ -808,23 +821,23 @@ static void mozilla_get_pref( PtWidget_t *widget, char *option, char *value ) {
 	/* HTML Options */
 	if( !strcmp( option, "A:link color" ) || !strcmp( option, "A:active color" ) ) {
 		nsXPIDLCString colorStr;
-		pref->CopyCharPref( "browser.anchor_color", getter_Copies(colorStr) );
-		strcpy( value, colorStr );
+		if( pref->CopyCharPref( "browser.anchor_color", getter_Copies(colorStr) ) == NS_OK )
+			strcpy( value, colorStr );
 		}
 	else if( !strcmp( option, "A:visited color" ) ) {
 		nsXPIDLCString colorStr;
-		pref->CopyCharPref( "browser.visited_color", getter_Copies(colorStr) );
-		strcpy( value, colorStr );
+		if( pref->CopyCharPref( "browser.visited_color", getter_Copies(colorStr) ) == NS_OK )
+			strcpy( value, colorStr );
 		}
 	else if( !strcmp( option, "BODY color" ) ) {
 		nsXPIDLCString colorStr;
-		pref->CopyCharPref( "browser.display.foreground_color", getter_Copies(colorStr) );
-		strcpy( value, colorStr );
+		if( pref->CopyCharPref( "browser.display.foreground_color", getter_Copies(colorStr) ) == NS_OK )
+			strcpy( value, colorStr );
 		}
 	else if( !strcmp( option, "BODY background" ) ) {
 		nsXPIDLCString colorStr;
-		pref->CopyCharPref( "browser.display.background_color", getter_Copies(colorStr) );
-		strcpy( value, colorStr );
+		if( pref->CopyCharPref( "browser.display.background_color", getter_Copies(colorStr) ) == NS_OK )
+			strcpy( value, colorStr );
 		}
 	else if( !strcmp( option, "bIgnoreDocumentAttributes" ) ) {
 		PRBool val;
@@ -847,28 +860,28 @@ static void mozilla_get_pref( PtWidget_t *widget, char *option, char *value ) {
 		}
 	else if( !strcmp( option, "BODY font-family" ) || !strcmp( option, "H* font-family" ) ) {
 		/* set the current font */
-		char *font_default = NULL, *font = NULL;
+		char *font_default = NULL, *font;
 		char preference[256];
 
-		pref->CopyCharPref( "font.default", &font_default );
+		pref->CopyCharPref( "font.default.x-western", &font_default );
 		if( !font_default ) font_default = "serif";
 
 		sprintf( preference, "font.name.%s.x-western", font_default );
-		pref->CopyCharPref( preference, &font );
-		strcpy( value, font );
+		if( pref->CopyCharPref( preference, &font ) == NS_OK )
+			strcpy( value, font );
 		}
 	else if( !strcmp( option, "PRE font-family" ) ) {
 		/* set the current font */
-		char *font = NULL;
-		pref->CopyCharPref( "font.name.monospace.x-western", &font );
-		strcpy( value, font );
+		char *font;
+		if( pref->CopyCharPref( "font.name.monospace.x-western", &font ) == NS_OK )
+			strcpy( value, font );
 		}
 
 /* HTTP options */
   else if( !strcmp( option, "http_proxy_host" ) ) {
-		char *s = NULL;
-		pref->CopyCharPref( "network.proxy.http", &s );
-		if( s ) strcpy( value, s );
+		char *s;
+		if( pref->CopyCharPref( "network.proxy.http", &s ) == NS_OK )
+			strcpy( value, s );
 		}
   else if( !strcmp( option, "http_proxy_port" ) ) {
 		int n;
@@ -876,14 +889,14 @@ static void mozilla_get_pref( PtWidget_t *widget, char *option, char *value ) {
 		sprintf( value, "%d", n );
 		}
   else if( !strcmp( option, "proxy_overrides" ) ) {
-		char *s = NULL;
-		pref->CopyCharPref( "network.proxy.no_proxies_on", &s );
-		if( s ) strcpy( value, s );
+		char *s;
+		if( pref->CopyCharPref( "network.proxy.no_proxies_on", &s ) == NS_OK )
+			strcpy( value, s );
 		}
   else if( !strcmp( option, "https_proxy_host" ) ) {
-		char *s = NULL;
-		pref->CopyCharPref( "network.proxy.ssl", &s );
-		if( s ) strcpy( value, s );
+		char *s;
+		if( pref->CopyCharPref( "network.proxy.ssl", &s ) == NS_OK )
+			strcpy( value, s );
     }
   else if( !strcmp( option, "https_proxy_port" ) ) {
 		int n;
@@ -894,9 +907,9 @@ static void mozilla_get_pref( PtWidget_t *widget, char *option, char *value ) {
 
 /* FTP options */
   else if( !strcmp( option, "ftp_proxy_host" ) ) {
-		char *s = NULL;
-		pref->CopyCharPref( "network.proxy.ftp", &s );
-		if( s ) strcpy( value, s );
+		char *s;
+		if( pref->CopyCharPref( "network.proxy.ftp", &s ) == NS_OK )
+			strcpy( value, s );
 		}
   else if( !strcmp( option, "ftp_proxy_port" ) ) {
 		int n;
@@ -906,9 +919,9 @@ static void mozilla_get_pref( PtWidget_t *widget, char *option, char *value ) {
 
 /* Gopher options */
   else if( !strcmp( option, "gopher_proxy_host" ) ) {
-		char *s = NULL;
-		pref->CopyCharPref( "network.proxy.gopher", &s );
-		if( s ) strcpy( value, s );
+		char *s;
+		if( pref->CopyCharPref( "network.proxy.gopher", &s ) == NS_OK )
+			strcpy( value, s );
 		}
   else if( !strcmp( option, "gopher_proxy_port" ) ) {
 		int n;
@@ -917,11 +930,6 @@ static void mozilla_get_pref( PtWidget_t *widget, char *option, char *value ) {
 		}
 
 /* TCP/IP options */
-  else if( !strcmp( option, "socket_timeout" ) ) {
-		int n;
-		pref->GetIntPref( "network.http.connect.timeout", &n );
-		sprintf( value, "%d", n );
-		}
   else if( !strcmp( option, "max_connections" ) ) {
 		int n;
 		pref->GetIntPref( "network.http.max-connections", &n );
@@ -1127,9 +1135,12 @@ PtWidgetClass_t *PtCreateMozillaClass( void )
 
 	nsCOMPtr<nsIFactory> promptFactory;
 	NS_NewPromptServiceFactory(getter_AddRefs(promptFactory));
-	nsComponentManager::RegisterFactory(kPromptServiceCID, "Prompt Service", 
+
+  nsCOMPtr<nsIComponentRegistrar> registrar;
+  NS_GetComponentRegistrar(getter_AddRefs(registrar));
+  registrar->RegisterFactory(kPromptServiceCID, "Prompt Service", 
 			"@mozilla.org/embedcomp/prompt-service;1",
-			promptFactory, PR_TRUE); // replace existing
+			promptFactory);
 	PtMozilla->wclass = PtCreateWidgetClass(PtContainer, 0, sizeof(args)/sizeof(args[0]), args);
 
 	return (PtMozilla->wclass);

@@ -1,23 +1,40 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK *****
  *
  *
  * This Original Code has been modified by IBM Corporation.
@@ -51,8 +68,7 @@
 #include "nsIWindowWatcher.h"
 #include "nsIDOMWindow.h"
 #include "nsIScriptGlobalObject.h"
-#include "nsIPresContext.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIDocShellTreeOwner.h"
@@ -62,7 +78,10 @@
 
 #include "nsIStringBundle.h"
 
-#include "nsIPref.h"
+#include "nsIObserver.h"
+#include "nsIPrefBranch.h"
+#include "nsIPrefBranch2.h"
+#include "nsIPrefService.h"
 #include "lcglue.h"
 
 #include "nspr.h"
@@ -82,7 +101,6 @@ extern "C" int XP_JAVA_DEBUGGER_FAILED;
 
 static NS_DEFINE_CID(kStringBundleServiceCID, NS_STRINGBUNDLESERVICE_CID);
 
-static NS_DEFINE_CID(kPrefCID, NS_PREF_CID);
 static NS_DEFINE_CID(kJVMManagerCID, NS_JVMMANAGER_CID);
 
 static NS_DEFINE_CID(kPluginManagerCID, NS_PLUGINMANAGER_CID);
@@ -105,7 +123,6 @@ static NS_DEFINE_IID(kILiveConnectManagerIID, NS_ILIVECONNECTMANAGER_IID);
 static NS_DEFINE_IID(kIJVMPluginIID, NS_IJVMPLUGIN_IID);
 
 #define PLUGIN_REGIONAL_URL "chrome://global-region/locale/region.properties"
-
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -191,7 +208,7 @@ nsJVMManager::ShowJavaConsole(void)
                     nsMemory::Free((void *)messageUni);
                     
                     msg.Append(PRUnichar(' '));
-                    msg.Append(NS_LITERAL_STRING("application/x-java-vm"));
+                    msg.AppendLiteral("application/x-java-vm");
                     chrome->SetStatus(nsIWebBrowserChrome::STATUS_SCRIPT, 
                                       msg.get());
                 }
@@ -214,9 +231,9 @@ nsJVMManager::ShowJavaConsole(void)
 // nsIThreadManager:
 
 NS_METHOD
-nsJVMManager::GetCurrentThread(nsPluginThread* *threadID)
+nsJVMManager::GetCurrentThread(PRThread* *threadID)
 {
-	*threadID = (nsPluginThread *) PR_GetCurrentThread();
+	*threadID = PR_GetCurrentThread();
 	return NS_OK;
 }
 
@@ -267,11 +284,11 @@ static void PR_CALLBACK thread_starter(void* arg)
 }
 
 NS_METHOD
-nsJVMManager::CreateThread(PRUint32* outThreadID, nsIRunnable* runnable)
+nsJVMManager::CreateThread(PRThread **outThread, nsIRunnable* runnable)
 {
 	PRThread* thread = PR_CreateThread(PR_USER_THREAD, &thread_starter, (void*) runnable,
 									PR_PRIORITY_NORMAL, PR_GLOBAL_THREAD, PR_JOINABLE_THREAD, 0);
-	*outThreadID = NS_PTR_TO_INT32(thread);
+	*outThread = thread;
 	return (thread != NULL ?  NS_OK : NS_ERROR_FAILURE);
 }
 
@@ -307,7 +324,7 @@ JVMRunnableEvent::~JVMRunnableEvent()
 }
 
 NS_METHOD
-nsJVMManager::PostEvent(PRUint32 threadID, nsIRunnable* runnable, PRBool async)
+nsJVMManager::PostEvent(PRThread* thread, nsIRunnable* runnable, PRBool async)
 {
     nsresult rv;
     nsCOMPtr<nsIEventQueueService> eventService = 
@@ -315,7 +332,7 @@ nsJVMManager::PostEvent(PRUint32 threadID, nsIRunnable* runnable, PRBool async)
     if (NS_FAILED(rv)) return rv;
 
     nsCOMPtr<nsIEventQueue> eventQueue = NULL;
-    rv = eventService->GetThreadEventQueue((PRThread*)threadID, getter_AddRefs(eventQueue));
+    rv = eventService->GetThreadEventQueue(thread, getter_AddRefs(eventQueue));
     if (NS_FAILED(rv)) return rv;
 
     JVMRunnableEvent* runnableEvent = new JVMRunnableEvent(runnable);
@@ -350,11 +367,21 @@ nsJVMManager::Create(nsISupports* outer, const nsIID& aIID, void* *aInstancePtr)
 
 nsJVMManager::nsJVMManager(nsISupports* outer)
     : fJVM(NULL), fStatus(nsJVMStatus_Enabled),
-      fRegisteredJavaPrefChanged(PR_FALSE), fDebugManager(NULL), fJSJavaVM(NULL),
+      fDebugManager(NULL), fJSJavaVM(NULL),
       fClassPathAdditions(new nsVoidArray()), fClassPathAdditionsString(NULL),
       fStartupMessagePosted(PR_FALSE)
 {
     NS_INIT_AGGREGATED(outer);
+
+    nsCOMPtr<nsIPrefBranch2> branch = do_GetService(NS_PREFSERVICE_CONTRACTID);
+    if (branch) {
+        branch->AddObserver("security.enable_java", this, PR_FALSE);
+        PRBool prefBool = PR_TRUE;
+        nsresult rv = branch->GetBoolPref("security.enable_java", &prefBool);
+        if (NS_SUCCEEDED(rv)) {
+            SetJVMEnabled(prefBool);
+        }
+    }
 }
 
 nsJVMManager::~nsJVMManager()
@@ -377,22 +404,27 @@ nsJVMManager::AggregatedQueryInterface(const nsIID& aIID, void** aInstancePtr)
 {
     if (aIID.Equals(kIJVMManagerIID)) {
         *aInstancePtr = this;
-        AddRef();
+        NS_ADDREF_THIS();
         return NS_OK;
     }
     if (aIID.Equals(kIThreadManagerIID)) {
         *aInstancePtr = (void*) NS_STATIC_CAST(nsIThreadManager*, this);
-        AddRef();
+        NS_ADDREF_THIS();
         return NS_OK;
     }
     if (aIID.Equals(kILiveConnectManagerIID)) {
         *aInstancePtr = (void*) NS_STATIC_CAST(nsILiveConnectManager*, this);
-        AddRef();
+        NS_ADDREF_THIS();
         return NS_OK;
     }
     if (aIID.Equals(kISupportsIID)) {
         *aInstancePtr = GetInner();
         NS_ADDREF((nsISupports*)*aInstancePtr);
+        return NS_OK;
+    }
+    if (aIID.Equals(NS_GET_IID(nsIObserver))) {
+        *aInstancePtr = (void*) NS_STATIC_CAST(nsIObserver*, this);
+        NS_ADDREF_THIS();
         return NS_OK;
     }
 #if defined(XP_WIN) || defined(XP_OS2)
@@ -733,33 +765,6 @@ nsJVMManager::ShutdownJVM(PRBool fullShutdown)
 
 ////////////////////////////////////////////////////////////////////////////////
 
-/**
-
- * This is called when the user changes the state of the
- * security.enable_java preference.  
-
- */
-
-static int PR_CALLBACK
-JavaPrefChanged(const char *prefStr, void* data)
-{
-    nsJVMManager* mgr = (nsJVMManager*)data;
-    PRBool prefBool = PR_TRUE;
-    nsCOMPtr<nsIPref> prefs(do_GetService(kPrefCID));
-    nsresult rv;
-    
-    // check for success
-    if (!prefs) {
-        return 0;
-    }
-    rv = prefs->GetBoolPref("security.enable_java", &prefBool);
-    if (NS_SUCCEEDED(rv)) {
-        mgr->SetJVMEnabled(prefBool);
-    }
-
-    return 0;
-}
-
 void
 nsJVMManager::SetJVMEnabled(PRBool enabled)
 {
@@ -772,46 +777,6 @@ nsJVMManager::SetJVMEnabled(PRBool enabled)
         if (fStatus == nsJVMStatus_Running) 
             (void)ShutdownJVM();
         fStatus = nsJVMStatus_Disabled;
-    }
-}
-
-/**
-
- * Called from GetJVMStatus. <P>
-
- * We only take action once per nsJVMManager instance.  
-
- */ 
-
-void
-nsJVMManager::EnsurePrefCallbackRegistered(void)
-{
-    if (fRegisteredJavaPrefChanged != PR_TRUE) {
-        nsCOMPtr<nsIPref> prefs(do_GetService(kPrefCID));
-        PRBool isJavaEnabled = PR_TRUE;
-        nsresult rv;
-
-        // check for success
-        if (!prefs) {
-            return;
-        }
-
-        // step one, register the callback for the pref changing.
-        rv = prefs->RegisterCallback("security.enable_java", 
-                                     JavaPrefChanged, this);
-        if (NS_SUCCEEDED(rv)) {
-            fRegisteredJavaPrefChanged = PR_TRUE;
-        }
-
-        // step two, update our fStatus ivar with the current value of the 
-        // pref
-        rv = prefs->GetBoolPref("security.enable_java", &isJavaEnabled);
-        if (NS_SUCCEEDED(rv)) {
-            if (!isJavaEnabled) {
-                fStatus = nsJVMStatus_Disabled;
-            }
-            // else, we leave it with the value it had at construction
-        }
     }
 }
 
@@ -837,7 +802,7 @@ nsJVMManager::GetChrome(nsIWebBrowserChrome **theChrome)
     if (!docShell) {
         return NS_OK;
     }
-    nsCOMPtr<nsIPresContext> presContext;
+    nsCOMPtr<nsPresContext> presContext;
     rv = docShell->GetPresContext(getter_AddRefs(presContext));
     if (!presContext) {
         return rv;
@@ -856,10 +821,27 @@ nsJVMManager::GetChrome(nsIWebBrowserChrome **theChrome)
     return rv;
 }
 
+NS_IMETHODIMP
+nsJVMManager::Observe(nsISupports*     subject,
+                      const char*      topic,
+                      const PRUnichar* data_unicode)
+{
+    nsresult rv;
+    nsCOMPtr<nsIPrefBranch> branch = do_QueryInterface(subject, &rv);
+    if (NS_FAILED(rv)) return rv;
+
+    PRBool prefBool = PR_TRUE;
+    rv = branch->GetBoolPref("security.enable_java", &prefBool);
+    if (NS_SUCCEEDED(rv)) {
+        SetJVMEnabled(prefBool);
+    }
+
+    return rv;
+}
+
 nsJVMStatus
 nsJVMManager::GetJVMStatus(void)
 {
-    EnsurePrefCallbackRegistered();
     return fStatus;
 }
 
@@ -873,11 +855,11 @@ nsJVMManager::MaybeStartupLiveConnect(void)
 
 	do {
 		static PRBool registeredLiveConnectFactory = NS_SUCCEEDED(JSJ_RegisterLiveConnectFactory());
-        if (IsLiveConnectEnabled() && StartupJVM() == nsJVMStatus_Running) {
+        if (IsLiveConnectEnabled()) {
             JVM_InitLCGlue();
+#if 0
             nsIJVMPlugin* plugin = GetJVMPlugin();
             if (plugin) {
-#if 0
 	            const char* classpath = NULL;
 	            nsresult err = plugin->GetClassPath(&classpath);
 	            if (err != NS_OK) break;
@@ -890,7 +872,7 @@ nsJVMManager::MaybeStartupLiveConnect(void)
 	            if (fJSJavaVM != NULL)
 	                return PR_TRUE;
 	            // plugin->Release(); // GetJVMPlugin no longer calls AddRef
-	        }
+	        //}
 	    }
 	} while (0);
     return PR_FALSE;
@@ -927,7 +909,10 @@ nsJVMManager::IsLiveConnectEnabled(void)
  * be derived, should have been verified before this method is 
  * called.
  */
-
+// XXXbz this function has been deprecated for 4.5 years.  We have no
+// callers in the tree.  Is it time to remove it?  It's returning
+// PRBools for a NS_METHOD, and NS_METHOD for an interface method, for
+// goodness' sake!
 NS_METHOD
 nsJVMManager::IsAllPermissionGranted(
     const char * lastFP,
@@ -936,6 +921,10 @@ nsJVMManager::IsAllPermissionGranted(
     const char * rootCN, 
     PRBool * isGranted)
 {
+    if (!lastFP || !lastCN) {
+        return PR_FALSE;
+    }
+    
     nsresult rv      = NS_OK;
 
     nsCOMPtr<nsIPrincipal> pIPrincipal;
@@ -950,12 +939,15 @@ nsJVMManager::IsAllPermissionGranted(
     // The fingerprint is a one way hash of this certificate. It is used
     // as the key to store the principal in the principal database.
 
-    rv = secMan->GetCertificatePrincipal(lastFP, nsnull,
+    // XXXbz using the |lastCN| for the subjectName for lack of
+    // anything better.  Also not passing in a pointer to a cert,
+    // since we don't have one.
+    rv = secMan->GetCertificatePrincipal(nsDependentCString(lastFP),
+                                         nsDependentCString(lastCN),
+                                         nsDependentCString(lastCN),
+                                         nsnull, nsnull,
                                          getter_AddRefs(pIPrincipal));
     if (NS_FAILED(rv)) return PR_FALSE;
-
-    // Set the common name.
-    rv = pIPrincipal->SetCommonName(lastCN);
 
     PRInt16 ret;
 

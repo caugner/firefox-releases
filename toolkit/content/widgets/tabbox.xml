@@ -1,5 +1,10 @@
 <?xml version="1.0"?>
 
+<!DOCTYPE bindings [
+  <!ENTITY % globalDTD SYSTEM "chrome://global/locale/global.dtd">
+  %globalDTD;
+]>
+
 <bindings id="tabBindings"
           xmlns="http://www.mozilla.org/xbl"
           xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
@@ -51,6 +56,14 @@
         </getter>
       </property>
 
+      <field name="_handleMetaAltArrows" readonly="true">
+#ifdef XP_MACOSX
+        true
+#else
+        false
+#endif
+      </field>
+
       <property name="_tabs">
         <getter>
         <![CDATA[
@@ -79,6 +92,7 @@
         <![CDATA[
           if (this._tabs)
             this._tabs.selectedIndex = val;
+          this.setAttribute("selectedIndex", val);
           return val;
         ]]>
         </setter>
@@ -114,16 +128,16 @@
       <![CDATA[({
         tabbox: this,
         handleEvent: function handleEvent(event) {
-	  if (!event.isTrusted) {
-	    // Don't let untrusted events mess with tabs.
-	    return;
-	  }
+          if (!event.isTrusted) {
+            // Don't let untrusted events mess with tabs.
+            return;
+          }
 
           switch (event.keyCode) {
             case event.DOM_VK_TAB:
               if (event.ctrlKey && !event.altKey && !event.metaKey)
                 if (this.tabbox._tabs && this.tabbox.handleCtrlTab) {
-                  this.tabbox._tabs.advanceSelectedTab(event.shiftKey ? -1 : 1);
+                  this.tabbox._tabs.advanceSelectedTab(event.shiftKey ? -1 : 1, true);
                   event.stopPropagation();
                   event.preventDefault();
                 }
@@ -131,7 +145,7 @@
             case event.DOM_VK_PAGE_UP:
               if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey)
                 if (this.tabbox._tabs && this.tabbox.handleCtrlPageUpDown) {
-                  this.tabbox._tabs.advanceSelectedTab(-1);
+                  this.tabbox._tabs.advanceSelectedTab(-1, true);
                   event.stopPropagation();
                   event.preventDefault();
                 }
@@ -139,7 +153,27 @@
             case event.DOM_VK_PAGE_DOWN:
               if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey)
                 if (this.tabbox._tabs && this.tabbox.handleCtrlPageUpDown) {
-                  this.tabbox._tabs.advanceSelectedTab(1);
+                  this.tabbox._tabs.advanceSelectedTab(1, true);
+                  event.stopPropagation();
+                  event.preventDefault();
+                }
+              break;
+            case event.DOM_VK_LEFT:
+              if (event.metaKey &&  event.altKey && !event.shiftKey && !event.ctrlKey)
+                if (this.tabbox._tabs && this.tabbox._handleMetaAltArrows) {
+                  var offset = window.getComputedStyle(this.tabbox, "")
+                                     .direction == "ltr" ? -1 : 1;
+                  this.tabbox._tabs.advanceSelectedTab(offset, true);
+                  event.stopPropagation();
+                  event.preventDefault();
+                }
+              break;
+            case event.DOM_VK_RIGHT:
+              if (event.metaKey &&  event.altKey && !event.shiftKey && !event.ctrlKey)
+                if (this.tabbox._tabs && this.tabbox._handleMetaAltArrows) {
+                  var offset = window.getComputedStyle(this.tabbox, "")
+                                     .direction == "ltr" ? 1 : -1;
+                  this.tabbox._tabs.advanceSelectedTab(offset, true);
                   event.stopPropagation();
                   event.preventDefault();
                 }
@@ -155,8 +189,8 @@
         <setter>
           <![CDATA[
             if (val != this._eventNode) {
-              val.addEventListener("keypress", this._keyEventHandler, true);
-              this._eventNode.removeEventListener("keypress", this._keyEventHandler, true);
+              val.addEventListener("keypress", this._keyEventHandler, false);
+              this._eventNode.removeEventListener("keypress", this._keyEventHandler, false);
               this._eventNode = val;
             }
             return val;
@@ -170,11 +204,11 @@
           case "window": this._eventNode = window; break;
           case "document": this._eventNode = document; break;
         }
-        this._eventNode.addEventListener("keypress", this._keyEventHandler, true);
+        this._eventNode.addEventListener("keypress", this._keyEventHandler, false);
       </constructor>
 
       <destructor>
-        this._eventNode.removeEventListener("keypress", this._keyEventHandler, true);
+        this._eventNode.removeEventListener("keypress", this._keyEventHandler, false);
       </destructor>
     </implementation>
   </binding>
@@ -196,7 +230,13 @@
           this.firstChild.setAttribute("first-tab", "true");
         if (this.lastChild)
           this.lastChild.setAttribute("last-tab", "true");
-        this.selectedIndex = 0;
+        
+        var selectedIndex = -1;
+        for (var parent = this.parentNode; parent; parent = parent.parentNode) {
+          if (parent.localName == "tabbox" && parent.hasAttribute("selectedIndex"))
+            selectedIndex = parseInt(parent.getAttribute("selectedIndex"));
+        }
+        this.selectedIndex = selectedIndex > 0 ? selectedIndex : 0;
         var o = this.getAttribute("orient");
         if (!o)
           this.setAttribute("orient", "horizontal");
@@ -290,27 +330,47 @@
         ]]>
         </setter>
       </property>
-    
+
+      <method name="selectNewTab">
+        <parameter name="aNewTab"/>
+        <parameter name="aFallbackDir"/>
+        <parameter name="aWrap"/>
+        <body>
+        <![CDATA[
+          while (aNewTab.getAttribute("hidden")) {
+            aNewTab = aFallbackDir == -1 ? aNewTab.previousSibling : aNewTab.nextSibling;
+            if (!aNewTab && aWrap)
+              aNewTab = aFallbackDir == -1 ? this.childNodes[this.childNodes.length - 1] :
+                                             this.childNodes[0];
+          }
+          
+          var isTabFocused =
+            (document.commandDispatcher.focusedElement == this.selectedItem);
+          this.selectedItem = aNewTab;
+          if (isTabFocused) {
+            aNewTab.focus();
+          }
+          else if (this.getAttribute("setfocus") != "false") {
+            document.commandDispatcher.advanceFocusIntoSubtree(aNewTab);
+          }
+        ]]>
+        </body>
+      </method>
+
+
       <method name="advanceSelectedTab">
         <parameter name="aDir"/>
+        <parameter name="aWrap"/>
         <body>
         <![CDATA[
           var startTab = this.selectedItem;
           var next = startTab[aDir == -1 ? "previousSibling" : "nextSibling"];
-
-          while (next != startTab && (!next || next.getAttribute("hidden"))) {
-            if (next && next.getAttribute("hidden"))
-              next = next[aDir == -1 ? "previousSibling" : "nextSibling"];
-            if (!next)
-              next = aDir == 1 ? this.childNodes[0] : this.childNodes[this.childNodes.length - 1];
+          if (!next && aWrap) {
+            next = aDir == -1 ? this.childNodes[this.childNodes.length - 1] :
+                                this.childNodes[0];
           }
-
           if (next && next != startTab) {
-            this.selectedItem = next;
-            if (this.getAttribute("setfocus") != "false") {
-              next.focus();
-              document.commandDispatcher.advanceFocusIntoSubtree(next);
-            }
+            this.selectNewTab(next, aDir, aWrap);
           }
         ]]>
         </body>
@@ -441,9 +501,11 @@
 
   <binding id="tab" display="xul:button"
            extends="chrome://global/content/bindings/tabbox.xml#tab-base">
-    <content>
-      <xul:image class="tab-icon" xbl:inherits="validate,src=image"/>
-      <xul:label class="tab-text" xbl:inherits="value=label,accesskey,crop,disabled" flex="1"/>
+    <content chromedir="&locale.dir;">
+      <xul:hbox class="tab-middle box-inherit" xbl:inherits="align,dir,pack,orient,selected" flex="1">
+        <xul:image class="tab-icon" xbl:inherits="validate,src=image"/>
+        <xul:label class="tab-text" xbl:inherits="value=label,accesskey,crop,disabled" flex="1"/>
+      </xul:hbox> 
     </content>
     
     <implementation implements="nsIDOMXULSelectControlItemElement, nsIAccessibleProvider">
@@ -495,36 +557,69 @@
 
       <property name="linkedPanel" onget="return this.getAttribute('linkedpanel')"
                                    onset="this.setAttribute('linkedpanel', val); return val;"/>
+
+      <field name="arrowKeysShouldWrap" readonly="true">
+#ifdef XP_MACOSX
+        true
+#else
+        false
+#endif
+      </field>    
     </implementation>
     
     <handlers>
-      <handler event="click" button="0">
+      <handler event="mousedown" button="0">
       <![CDATA[
-        this.parentNode.selectedItem = this;
+        if (this != this.parentNode.selectedItem) { // Not selected yet
+          // Select new tab after short delay so that PostHandleEvent() doesn't see
+          // the tab as selected yet, otherwise it will focus the tab for us --
+          // the CSS for tab has -moz-user-focus: normal only for selected="true".
+          function setTab(tab) {
+            tab.parentNode.selectNewTab(tab);
+          }
+          setTimeout(setTab, 0, this);
+        }
+        // Otherwise this tab is already selected and we will fall
+        // through to mousedown behavior which sets focus on the current tab,
+        // Only a click on an already selected tab should focus the tab itself.
       ]]>
       </handler>
       
-      <handler event="keypress" keycode="vk_left">
+      <handler event="keypress" keycode="VK_LEFT">
       <![CDATA[
-        this.parentNode.advanceSelectedTab(-1);
+        var direction = window.getComputedStyle(this.parentNode, null).direction;
+        this.parentNode.advanceSelectedTab(direction == 'ltr' ? -1 : 1, this.arrowKeysShouldWrap);
       ]]>
       </handler>
       
-      <handler event="keypress" keycode="vk_right">
+      <handler event="keypress" keycode="VK_RIGHT">
       <![CDATA[
-        this.parentNode.advanceSelectedTab(1);
+        var direction = window.getComputedStyle(this.parentNode, null).direction;
+        this.parentNode.advanceSelectedTab(direction == 'ltr' ? 1 : -1, this.arrowKeysShouldWrap);
       ]]>
       </handler>
       
-      <handler event="keypress" keycode="vk_up">
+      <handler event="keypress" keycode="VK_UP">
       <![CDATA[
-        this.parentNode.advanceSelectedTab(-1);
+        this.parentNode.advanceSelectedTab(-1, this.arrowKeysShouldWrap);
       ]]>
       </handler>
       
-      <handler event="keypress" keycode="vk_down">
+      <handler event="keypress" keycode="VK_DOWN">
       <![CDATA[
-        this.parentNode.advanceSelectedTab(1);
+        this.parentNode.advanceSelectedTab(1, this.arrowKeysShouldWrap);
+      ]]>
+      </handler>
+      
+      <handler event="keypress" keycode="VK_HOME">
+      <![CDATA[
+        this.parentNode.selectNewTab(this.parentNode.childNodes[0]);
+      ]]>
+      </handler>
+      
+      <handler event="keypress" keycode="VK_END">
+      <![CDATA[
+        this.parentNode.selectNewTab(this.parentNode.childNodes[this.parentNode.childNodes.length - 1], -1);
       ]]>
       </handler>
     </handlers>

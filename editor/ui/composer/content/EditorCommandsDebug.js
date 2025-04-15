@@ -1,11 +1,11 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,28 +14,27 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2000
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
- 
+
 /* Main Composer window debug menu functions */
 
 // --------------------------- Output ---------------------------
@@ -113,11 +112,11 @@ function EditorTestSelection()
 
   dump("====== Selection as HTML ======================\n");
   output = editor.outputToString("text/html", 1);
-  dump(output + "\n\n");  
+  dump(output + "\n\n");
 
   dump("====== Selection as prettyprinted HTML ========\n");
   output = editor.outputToString("text/html", 3);
-  dump(output + "\n\n");  
+  dump(output + "\n\n");
 
   dump("====== Length and status =====================\n");
   output = "Document is ";
@@ -150,7 +149,7 @@ function EditorTestTableLayout()
     dump("Enclosing Table not found: Place caret in a table cell to do this test\n\n");
     return;
   }
-    
+
   var cell;
   var startRowIndexObj = { value: null };
   var startColIndexObj = { value: null };
@@ -179,7 +178,7 @@ function EditorTestTableLayout()
   //   but this tests using out-of-bounds offsets to detect end of row or column
 
   while (!doneWithRow)  // Iterate through rows
-  {  
+  {
     dump("* Data for ROW="+row+":\n");
     while(!doneWithCol)  // Iterate through cells in the row
     {
@@ -197,7 +196,7 @@ function EditorTestTableLayout()
           actualRowSpan = actualRowSpanObj.value;
           actualColSpan = actualColSpanObj.value;
           isSelected = isSelectedObj.value;
-          
+
           dump(" Row="+row+", Col="+col+"  StartRow="+startRowIndexObj.value+", StartCol="+startColIndexObj.value+"\n");
           dump("  RowSpan="+rowSpan+", ColSpan="+colSpan+"  ActualRowSpan="+actualRowSpan+", ActualColSpan="+actualColSpan);
           if (isSelected)
@@ -240,7 +239,7 @@ function EditorTestTableLayout()
       col = 0;
       row++;
       doneWithCol = false;
-    }      
+    }
   }
   dump("Counted during scan: Number of rows="+rowCount+" Number of Columns="+maxColCount+"\n");
   rowCount = editor.getTableRowCount(table);
@@ -291,12 +290,12 @@ function EditorExecuteScript(theFile)
   inputStream = inputStream.QueryInterface(Components.interfaces.nsIFileInputStream);
 
   inputStream.init(theFile, 1, 0, false);    // open read only
-  
+
   var scriptableInputStream = Components.classes["@mozilla.org/scriptableinputstream;1"].createInstance();
   scriptableInputStream = scriptableInputStream.QueryInterface(Components.interfaces.nsIScriptableInputStream);
-  
+
   scriptableInputStream.init(inputStream);    // open read only
-  
+
   var buf         = { value:null };
   var tmpBuf      = { value:null };
   var didTruncate = { value:false };
@@ -335,9 +334,9 @@ function EditorExecuteScript(theFile)
     // suck in the entire file
     var fileSize = scriptableInputStream.available();
     var fileContents = scriptableInputStream.read(fileSize);
-    
+
     dump(fileContents);
-    
+
     try       { eval(fileContents); }
     catch(ex) { dump("Playback ERROR: Line " + lineNum + "  " + ex + "\n"); return; }
   }
@@ -360,7 +359,7 @@ function EditorStartLog()
     var edlog = GetCurrentEditor().QueryInterface(Components.interfaces.nsIEditorLogging);
     var fs = EditorGetScriptFileSpec();
     edlog.startLogging(fs);
-    window._content.focus();
+    window.content.focus();
 
     fs = null;
   }
@@ -372,7 +371,7 @@ function EditorStopLog()
   try {
     var edlog = GetCurrentEditor().QueryInterface(Components.interfaces.nsIEditorLogging);
     edlog.stopLogging();
-    window._content.focus();
+    window.content.focus();
   }
   catch(ex) { dump("Can't stop logging!:\n" + ex + "\n"); }
 }
@@ -382,7 +381,7 @@ function EditorRunLog()
   var fs;
   fs = EditorGetScriptFileSpec();
   EditorExecuteScript(fs);
-  window._content.focus();
+  window.content.focus();
 }
 
 // --------------------------- TransactionManager ---------------------------
@@ -473,7 +472,7 @@ sampleJSTransaction.prototype = {
 
   doTransaction: function()
   {
-    if (this.mContainer.nodeName != "#text")
+    if (this.mContainer.nodeType != Node.TEXT_NODE)
     {
       // We're not in a text node, so create one and
       // we'll just insert it at (mContainer, mOffset).
@@ -507,13 +506,14 @@ sampleJSTransaction.prototype = {
     return false;
   },
 
-  QueryInterface: function(theUID, theResult)
+  QueryInterface: function(aIID, theResult)
   {
-    if (theUID == Components.interfaces.nsITransaction ||
-        theUID == Components.interfaces.nsISupports)
-     return this;
+    if (aIID.equals(Components.interfaces.nsITransaction) ||
+        aIID.equals(Components.interfaces.nsISupports))
+      return this;
 
-    return nsnull;
+    Components.returnCode = Components.results.NS_ERROR_NO_INTERFACE;
+    return null;
   },
 
   insert_node_at_point: function(node, container, offset)

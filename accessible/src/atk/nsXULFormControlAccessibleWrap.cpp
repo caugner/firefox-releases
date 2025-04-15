@@ -39,6 +39,10 @@
 
 #include "nsIDOMElement.h"
 #include "nsXULFormControlAccessibleWrap.h"
+#include "nsIFrame.h"
+#include "nsIPresShell.h"
+#include "nsIDOMHTMLInputElement.h"
+#include "nsIDOMXULTextboxElement.h"
 
 NS_IMPL_ISUPPORTS_INHERITED1(nsXULProgressMeterAccessibleWrap, nsXULProgressMeterAccessible, nsIAccessibleValue)
 
@@ -88,10 +92,63 @@ NS_IMETHODIMP nsXULProgressMeterAccessibleWrap::SetCurrentValue(double aValue, P
   PRUint32 value = PRUint32(aValue * 100.0 + 0.5);
   nsAutoString valueString;
   valueString.AppendInt(value);
-  valueString.Append(NS_LITERAL_STRING("%"));
+  valueString.AppendLiteral("%");
   if (NS_SUCCEEDED(element->SetAttribute(NS_LITERAL_STRING("value"), valueString))) {
     *_retval = PR_TRUE;
     return NS_OK;
   }
   return NS_ERROR_INVALID_ARG;
+}
+
+NS_IMPL_ISUPPORTS_INHERITED2(nsXULTextFieldAccessibleWrap, nsXULTextFieldAccessible, nsIAccessibleText, nsIAccessibleEditableText)
+
+nsXULTextFieldAccessibleWrap::nsXULTextFieldAccessibleWrap(nsIDOMNode* aNode, nsIWeakReference* aShell):
+nsXULTextFieldAccessible(aNode, aShell), nsAccessibleEditableText(aNode)
+{
+  nsCOMPtr<nsIDOMXULTextBoxElement> textBox(do_QueryInterface(aNode));
+  NS_ASSERTION(textBox, "Not a XUL textbox!");
+  if (!textBox)
+    return;
+
+  textBox->GetInputField(getter_AddRefs(mTextNode));
+  if (!mTextNode)
+    return;
+
+  nsCOMPtr<nsIPresShell> shell(do_QueryReferent(mWeakShell));
+  if (!shell)
+    return;
+
+  nsIFrame* frame = nsnull;
+  nsCOMPtr<nsIContent> content(do_QueryInterface(mTextNode));
+  shell->GetPrimaryFrameFor(content, &frame);
+
+  if (!frame)
+    return;
+
+  nsITextControlFrame *textFrame;
+  frame->QueryInterface(NS_GET_IID(nsITextControlFrame), (void**)&textFrame);
+  if (textFrame) {
+    nsCOMPtr<nsIEditor> editor;
+    textFrame->GetEditor(getter_AddRefs(editor));
+    SetEditor(editor);
+  }
+}
+
+NS_IMETHODIMP nsXULTextFieldAccessibleWrap::GetRole(PRUint32 *aRole)
+{
+  PRUint32 state = 0;
+
+  nsresult rv = GetState(&state);
+  if (NS_SUCCEEDED(rv) && (state & STATE_PROTECTED))
+    *aRole = ROLE_PASSWORD_TEXT;
+  else
+    *aRole = ROLE_TEXT;
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsXULTextFieldAccessibleWrap::Shutdown()
+{
+  nsAccessibleEditableText::ShutdownEditor();
+  return nsXULTextFieldAccessible::Shutdown();
 }

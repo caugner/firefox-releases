@@ -1,27 +1,43 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla browser.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1999 Netscape Communications Corporation. All
- * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Stuart Parmenter <pavlov@netscape.com>
  *   Steve Dagley <sdagley@netscape.com>
  *   Simon Fraser <sfraser@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsCOMPtr.h"
 #include "nsReadableUtils.h"
@@ -37,7 +53,6 @@
 
 #include <InternetConfig.h>
 
-#include "nsMacControl.h"
 #include "nsCarbonHelpers.h"
 
 #include "nsFilePicker.h"
@@ -187,7 +202,7 @@ void nsFilePicker::HandleShowPopupMenuSelect(NavCBRecPtr callBackParms)
     { // Special case Nav Services prior to 2.0
       // Make sure the menu item selected was one of ours
       if ((menuItemSpec.menuType != menuItemSpec.menuCreator) ||
-          (menuItemSpec.menuType < mTypeOffset) ||
+          ((PRInt32)menuItemSpec.menuType < mTypeOffset) ||
           (menuItemSpec.menuType > numMenuItems))
       { // Doesn't appear to be one of our items selected so force it to be
         NavMenuItemSpec  menuItem;
@@ -415,7 +430,7 @@ nsFilePicker::GetLocalFiles(const nsString& inTitle, PRBool inAllowMultiple, nsC
             if (anErr == noErr)
             {
               nsCOMPtr<nsILocalFile> localFile;
-              NS_NewLocalFile(nsString(), PR_TRUE, getter_AddRefs(localFile));
+              NS_NewLocalFile(EmptyString(), PR_TRUE, getter_AddRefs(localFile));
               nsCOMPtr<nsILocalFileMac> macLocalFile = do_QueryInterface(localFile);
               if (macLocalFile && NS_SUCCEEDED(macLocalFile->InitWithFSRef(&theFSRef)))
                 outFiles.AppendObject(localFile);
@@ -509,7 +524,7 @@ nsFilePicker::GetLocalFolder(const nsString& inTitle, nsILocalFile** outFile)
         if (anErr == noErr)
         {
           nsCOMPtr<nsILocalFile> localFile;
-          NS_NewLocalFile(nsString(), PR_TRUE, getter_AddRefs(localFile));
+          NS_NewLocalFile(EmptyString(), PR_TRUE, getter_AddRefs(localFile));
           nsCOMPtr<nsILocalFileMac> macLocalFile = do_QueryInterface(localFile);
           if (macLocalFile && NS_SUCCEEDED(macLocalFile->InitWithFSRef(&theFSRef)))
           {
@@ -618,7 +633,7 @@ nsFilePicker::PutLocalFile(const nsString& inTitle, const nsString& inDefaultNam
             if (fileURL)
             {
               nsCOMPtr<nsILocalFile> localFile;
-              NS_NewLocalFile(nsString(), PR_TRUE, getter_AddRefs(localFile));
+              NS_NewLocalFile(EmptyString(), PR_TRUE, getter_AddRefs(localFile));
               nsCOMPtr<nsILocalFileMac> macLocalFile = do_QueryInterface(localFile);
               if (macLocalFile && NS_SUCCEEDED(macLocalFile->InitWithCFURL(fileURL)))
               {
@@ -683,7 +698,7 @@ nsFilePicker::MapFilterToFileTypes ( )
     }
     
     // Now loop through each of the filter strings
-    for (PRInt32 loop1 = 0; loop1 < mFilters.Count(); loop1++)
+    for (PRInt32 loop1 = 0; loop1 < mFilters.Count() && loop1 < kMaxTypeListCount; loop1++)
     {
       const nsString& filterWide = *mFilters[loop1];
       char* filter = ToNewCString(filterWide);
@@ -691,7 +706,7 @@ nsFilePicker::MapFilterToFileTypes ( )
       NS_ASSERTION ( filterWide.Length(), "Oops. filepicker.properties not correctly installed");       
 
       // look for the flag indicating applications
-      if (filterWide.Equals(NS_LITERAL_STRING("..apps")))
+      if (filterWide.EqualsLiteral("..apps"))
         mApplicationsDisplayed = PR_TRUE;
 
       if ( filterWide.Length() && filter )
@@ -869,30 +884,6 @@ NS_IMETHODIMP nsFilePicker::SetDefaultExtension(const nsAString& aExtension)
 {
   return NS_OK;
 }
-
-//-------------------------------------------------------------------------
-//
-// Set the display directory
-//
-//-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::SetDisplayDirectory(nsILocalFile *aDirectory)
-{
-  mDisplayDirectory = aDirectory;
-  return NS_OK;
-}
-
-//-------------------------------------------------------------------------
-//
-// Get the display directory
-//
-//-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::GetDisplayDirectory(nsILocalFile **aDirectory)
-{
-  *aDirectory = mDisplayDirectory;
-  NS_IF_ADDREF(*aDirectory);
-  return NS_OK;
-}
-
 
 //-------------------------------------------------------------------------
 //-------------------------------------------------------------------------

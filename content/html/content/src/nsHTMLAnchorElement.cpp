@@ -1,12 +1,12 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim:set tw=80 expandtab softtabstop=2 ts=2 sw=2: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -15,7 +15,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,18 +23,17 @@
  * Contributor(s):
  *   Daniel Glazman <glazman@netscape.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsCOMPtr.h"
@@ -43,13 +42,12 @@
 #include "nsIDOMHTMLAnchorElement.h"
 #include "nsIDOMNSHTMLAnchorElement.h"
 #include "nsIDOMEventReceiver.h"
-#include "nsIHTMLContent.h"
 #include "nsIHTMLDocument.h"
 #include "nsGenericHTMLElement.h"
 #include "nsILink.h"
 #include "nsHTMLAtoms.h"
 #include "nsStyleConsts.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIEventStateManager.h"
 #include "nsIURL.h"
 #include "nsIEventStateManager.h"
@@ -74,7 +72,7 @@ class nsHTMLAnchorElement : public nsGenericHTMLElement,
                             public nsILink
 {
 public:
-  nsHTMLAnchorElement();
+  nsHTMLAnchorElement(nsINodeInfo *aNodeInfo);
   virtual ~nsHTMLAnchorElement();
 
   // nsISupports
@@ -99,15 +97,18 @@ public:
   NS_IMETHOD GetLinkState(nsLinkState &aState);
   NS_IMETHOD SetLinkState(nsLinkState aState);
   NS_IMETHOD GetHrefURI(nsIURI** aURI);
+  NS_IMETHOD LinkAdded() { return NS_OK; }
+  NS_IMETHOD LinkRemoved() { return NS_OK; }
 
-  virtual void SetDocument(nsIDocument* aDocument, PRBool aDeep,
-                           PRBool aCompileEventHandlers);
-  virtual void SetFocus(nsIPresContext* aPresContext);
-  virtual void RemoveFocus(nsIPresContext* aPresContext);
-  virtual PRBool ParseAttribute(nsIAtom* aAttribute,
-                                const nsAString& aValue,
-                                nsAttrValue& aResult);
-  virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext,
+  virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
+                              nsIContent* aBindingParent,
+                              PRBool aCompileEventHandlers);
+  virtual void UnbindFromTree(PRBool aDeep = PR_TRUE,
+                              PRBool aNullParent = PR_TRUE);
+  virtual void SetFocus(nsPresContext* aPresContext);
+  virtual PRBool IsFocusable(PRBool *aTabIndex = nsnull);
+
+  virtual nsresult HandleDOMEvent(nsPresContext* aPresContext,
                                   nsEvent* aEvent, nsIDOMEvent** aDOMEvent,
                                   PRUint32 aFlags,
                                   nsEventStatus* aEventStatus);
@@ -129,34 +130,12 @@ protected:
 };
 
 
-nsresult
-NS_NewHTMLAnchorElement(nsIHTMLContent** aInstancePtrResult,
-                        nsINodeInfo *aNodeInfo, PRBool aFromParser)
-{
-  NS_ENSURE_ARG_POINTER(aInstancePtrResult);
-
-  nsHTMLAnchorElement* it = new nsHTMLAnchorElement();
-
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsresult rv = it->Init(aNodeInfo);
-
-  if (NS_FAILED(rv)) {
-    delete it;
-
-    return rv;
-  }
-
-  *aInstancePtrResult = it;
-  NS_ADDREF(*aInstancePtrResult);
-
-  return NS_OK;
-}
+NS_IMPL_NS_NEW_HTML_ELEMENT(Anchor)
 
 
-nsHTMLAnchorElement::nsHTMLAnchorElement() : mLinkState(eLinkState_Unknown)
+nsHTMLAnchorElement::nsHTMLAnchorElement(nsINodeInfo *aNodeInfo)
+  : nsGenericHTMLElement(aNodeInfo),
+    mLinkState(eLinkState_Unknown)
 {
 }
 
@@ -178,33 +157,7 @@ NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLAnchorElement, nsGenericHTMLElement)
 NS_HTML_CONTENT_INTERFACE_MAP_END
 
 
-nsresult
-nsHTMLAnchorElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
-{
-  NS_ENSURE_ARG_POINTER(aReturn);
-  *aReturn = nsnull;
-
-  nsHTMLAnchorElement* it = new nsHTMLAnchorElement();
-
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsCOMPtr<nsIDOMNode> kungFuDeathGrip(it);
-
-  nsresult rv = it->Init(mNodeInfo);
-
-  if (NS_FAILED(rv))
-    return rv;
-
-  CopyInnerTo(it, aDeep);
-
-  *aReturn = it;
-
-  NS_ADDREF(*aReturn);
-
-  return NS_OK;
-}
+NS_IMPL_DOM_CLONENODE(nsHTMLAnchorElement)
 
 
 NS_IMPL_STRING_ATTR(nsHTMLAnchorElement, Charset, charset)
@@ -215,34 +168,48 @@ NS_IMPL_STRING_ATTR(nsHTMLAnchorElement, Name, name)
 NS_IMPL_STRING_ATTR(nsHTMLAnchorElement, Rel, rel)
 NS_IMPL_STRING_ATTR(nsHTMLAnchorElement, Rev, rev)
 NS_IMPL_STRING_ATTR(nsHTMLAnchorElement, Shape, shape)
-NS_IMPL_INT_ATTR(nsHTMLAnchorElement, TabIndex, tabindex)
+NS_IMPL_INT_ATTR_DEFAULT_VALUE(nsHTMLAnchorElement, TabIndex, tabindex, 0)
 NS_IMPL_STRING_ATTR(nsHTMLAnchorElement, Type, type)
 NS_IMPL_STRING_ATTR(nsHTMLAnchorElement, AccessKey, accesskey)
 
 
-void
-nsHTMLAnchorElement::SetDocument(nsIDocument* aDocument, PRBool aDeep,
-                                 PRBool aCompileEventHandlers)
+nsresult
+nsHTMLAnchorElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
+                                nsIContent* aBindingParent,
+                                PRBool aCompileEventHandlers)
 {
-  PRBool documentChanging = (aDocument != mDocument);
-  
-  // Unregister the access key for the old document.
-  if (documentChanging && mDocument) {
-    RegUnRegAccessKey(PR_FALSE);
-  }
+  nsresult rv = nsGenericHTMLElement::BindToTree(aDocument, aParent,
+                                                 aBindingParent,
+                                                 aCompileEventHandlers);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  nsGenericHTMLElement::SetDocument(aDocument, aDeep, aCompileEventHandlers);
-
-  // Register the access key for the new document.
-  if (documentChanging && mDocument) {
+  if (aDocument) {
     RegUnRegAccessKey(PR_TRUE);
   }
+
+  return rv;
+}
+
+void
+nsHTMLAnchorElement::UnbindFromTree(PRBool aDeep, PRBool aNullParent)
+{
+  if (IsInDoc()) {
+    RegUnRegAccessKey(PR_FALSE);
+    GetCurrentDoc()->ForgetLink(this);
+    // If this link is ever reinserted into a document, it might
+    // be under a different xml:base, so forget the cached state now
+    mLinkState = eLinkState_Unknown;
+  }
+    
+  nsGenericHTMLElement::UnbindFromTree(aDeep, aNullParent);
 }
 
 NS_IMETHODIMP
 nsHTMLAnchorElement::Blur()
 {
-  SetElementFocus(PR_FALSE);
+  if (ShouldFocus(this)) {
+    SetElementFocus(PR_FALSE);
+  }
 
   return NS_OK;
 }
@@ -258,7 +225,7 @@ nsHTMLAnchorElement::Focus()
 }
 
 void
-nsHTMLAnchorElement::SetFocus(nsIPresContext* aPresContext)
+nsHTMLAnchorElement::SetFocus(nsPresContext* aPresContext)
 {
   if (!aPresContext) {
     return;
@@ -271,8 +238,9 @@ nsHTMLAnchorElement::SetFocus(nsIPresContext* aPresContext)
                                                        NS_EVENT_STATE_FOCUS);
 
     // Make sure the presentation is up-to-date
-    if (mDocument) {
-      mDocument->FlushPendingNotifications();
+    nsIDocument* doc = GetCurrentDoc();
+    if (doc) {
+      doc->FlushPendingNotifications(Flush_Layout);
     }
 
     nsIPresShell *presShell = aPresContext->GetPresShell();
@@ -288,36 +256,35 @@ nsHTMLAnchorElement::SetFocus(nsIPresContext* aPresContext)
   }
 }
 
-void
-nsHTMLAnchorElement::RemoveFocus(nsIPresContext* aPresContext)
-{
-  if (!aPresContext) {
-    return;
-  }
-
-  // If we are disabled, we probably shouldn't have focus in the
-  // first place, so allow it to be removed.
-
-  if (mDocument) {
-    aPresContext->EventStateManager()->SetContentState(nsnull,
-                                                       NS_EVENT_STATE_FOCUS);
-  }
-}
-
 PRBool
-nsHTMLAnchorElement::ParseAttribute(nsIAtom* aAttribute,
-                                    const nsAString& aValue,
-                                    nsAttrValue& aResult)
+nsHTMLAnchorElement::IsFocusable(PRInt32 *aTabIndex)
 {
-  if (aAttribute == nsHTMLAtoms::tabindex) {
-    return aResult.ParseIntWithBounds(aValue, 0, 32767);
+  if (!nsGenericHTMLElement::IsFocusable(aTabIndex)) {
+    return PR_FALSE;
   }
 
-  return nsGenericHTMLElement::ParseAttribute(aAttribute, aValue, aResult);
+  if (!HasAttr(kNameSpaceID_None, nsHTMLAtoms::tabindex)) {
+    // check whether we're actually a link
+    nsCOMPtr<nsIURI> linkURI = nsContentUtils::GetLinkURI(this);
+    if (!linkURI) {
+      // Not tabbable or focusable without href (bug 17605), unless
+      // forced to be via presence of nonnegative tabindex attribute
+      if (aTabIndex) {
+        *aTabIndex = -1;
+      }
+      return PR_FALSE;
+    }
+  }
+
+  if (aTabIndex && (sTabFocusModel & eTabFocus_linksMask) == 0) {
+    *aTabIndex = -1;
+  }
+
+  return PR_TRUE;
 }
 
 nsresult
-nsHTMLAnchorElement::HandleDOMEvent(nsIPresContext* aPresContext,
+nsHTMLAnchorElement::HandleDOMEvent(nsPresContext* aPresContext,
                                     nsEvent* aEvent,
                                     nsIDOMEvent** aDOMEvent,
                                     PRUint32 aFlags,
@@ -332,8 +299,7 @@ nsHTMLAnchorElement::GetTarget(nsAString& aValue)
 {
   aValue.Truncate();
 
-  nsresult rv;
-  rv = GetAttr(kNameSpaceID_None, nsHTMLAtoms::target, aValue);
+  nsresult rv = GetAttr(kNameSpaceID_None, nsHTMLAtoms::target, aValue);
   if (rv == NS_CONTENT_ATTR_NOT_THERE) {
     GetBaseTarget(aValue);
   }
@@ -356,8 +322,7 @@ nsHTMLAnchorElement::GetProtocol(nsAString& aProtocol)
     return rv;
 
   // XXX this should really use GetHrefURI and not do so much string stuff
-  return GetProtocolFromHrefString(href, aProtocol,
-                                   nsGenericHTMLElement::GetOwnerDocument());
+  return GetProtocolFromHrefString(href, aProtocol, GetOwnerDoc());
 }
 
 NS_IMETHODIMP
@@ -618,6 +583,13 @@ nsHTMLAnchorElement::SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
     nsAutoString val;
     GetHref(val);
     if (!val.Equals(aValue)) {
+      nsIDocument* doc = GetCurrentDoc();
+      if (doc) {
+        doc->ForgetLink(this);
+        // The change to 'href' will cause style reresolution which will
+        // eventually recompute the link state and re-add this element
+        // to the link map if necessary.
+      }
       SetLinkState(eLinkState_Unknown);
     }
   }

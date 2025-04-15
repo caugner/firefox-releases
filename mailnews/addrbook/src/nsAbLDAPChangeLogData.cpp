@@ -1,10 +1,10 @@
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -13,39 +13,39 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Rajiv Dayal <rdayal@netscape.com>
+ *   Dan Mosedale <dan.mosedale@oracle.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsAbLDAPChangeLogData.h"
 #include "nsAbLDAPChangeLogQuery.h"
 #include "nsLDAP.h"
+#include "nsILDAPMessage.h"
 #include "nsIAbCard.h"
 #include "nsIAddrBookSession.h"
 #include "nsAbBaseCID.h"
 #include "nsAbUtils.h"
 #include "nsAbMDBCard.h"
 #include "nsAbLDAPCard.h"
-#include "nsFileSpec.h"
-#include "nsAbLDAPProperties.h"
 #include "nsProxiedService.h"
 #include "nsAutoLock.h"
 #include "nsIAuthPrompt.h"
@@ -191,14 +191,27 @@ nsresult nsAbLDAPProcessChangeLogData::OnLDAPSearchResult(nsILDAPMessage *aMessa
                 nsCOMPtr<nsIAddrBookSession> abSession = do_GetService(NS_ADDRBOOKSESSION_CONTRACTID, &rv);
                 if(NS_FAILED(rv)) 
                     break;
-                nsFileSpec* dbPath;
-                rv = abSession->GetUserProfileDirectory(&dbPath);
+                nsCOMPtr<nsILocalFile> dbPath;
+                rv = abSession->GetUserProfileDirectory(getter_AddRefs(dbPath));
                 if(NS_FAILED(rv)) 
                     break;
-                (*dbPath) += mDirServerInfo->replInfo->fileName;
-                if (!dbPath->Exists() || !dbPath->GetFileSize()) 
+
+                rv = dbPath->AppendNative(nsDependentCString(mDirServerInfo->replInfo->fileName));
+                if(NS_FAILED(rv)) 
+                    break;
+
+                PRBool fileExists;
+                rv = dbPath->Exists(&fileExists);
+                if(NS_FAILED(rv)) 
+                    break;
+
+                PRInt64 fileSize;
+                rv = dbPath->GetFileSize(&fileSize);
+                if(NS_FAILED(rv)) 
+                    break;
+
+                if (!fileExists || !fileSize)
                     mUseChangeLog = PR_FALSE;
-                delete dbPath;
 
                 // open / create the AB here since it calls Done,
                 // just return from here. 
@@ -292,9 +305,8 @@ nsresult nsAbLDAPProcessChangeLogData::GetAuthData()
                                             getter_Copies(username), getter_Copies(password), 
                                             &btnResult);
     if(NS_SUCCEEDED(rv) && btnResult) {
-        // XXX This needs CopyUCS2toUTF8
-        mAuthUserID.Assign(NS_ConvertUCS2toUTF8(username));
-        mAuthPswd.Assign(NS_ConvertUCS2toUTF8(password));
+        CopyUTF16toUTF8(username, mAuthUserID);
+        CopyUTF16toUTF8(password, mAuthPswd);
         mDirServerInfo->enableAuth=PR_TRUE;
         mDirServerInfo->savePassword=PR_TRUE;
     }
@@ -342,8 +354,7 @@ nsresult nsAbLDAPProcessChangeLogData::ParseRootDSEEntry(nsILDAPMessage *aMessag
             continue;
         if(vals.GetSize()) {
             if (!PL_strcasecmp(attrs[i], "changelog"))
-                // XXX This needs CopyUCS2toUTF8
-                mRootDSEEntry.changeLogDN.Assign(NS_ConvertUCS2toUTF8(vals[0]));
+                CopyUTF16toUTF8(vals[0], mRootDSEEntry.changeLogDN);
             if (!PL_strcasecmp(attrs[i], "firstChangeNumber"))
                 mRootDSEEntry.firstChangeNumber = atol(NS_LossyConvertUCS2toASCII(vals[0]).get());
             if (!PL_strcasecmp(attrs[i], "lastChangeNumber"))

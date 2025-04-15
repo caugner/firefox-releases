@@ -8,7 +8,7 @@
   <binding id="urlbar" extends="chrome://global/content/autocomplete.xml#autocomplete">
     <implementation>
       <constructor><![CDATA[
-        var pbi = this.mPrefs.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+        var pbi = this.mPrefs.QueryInterface(Components.interfaces.nsIPrefBranch2);
         if (pbi)
           pbi.addObserver("browser.urlbar", this.mPrefObserver, false);
         
@@ -17,7 +17,7 @@
       ]]></constructor>
 
       <destructor><![CDATA[
-        var pbi = this.mPrefs.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+        var pbi = this.mPrefs.QueryInterface(Components.interfaces.nsIPrefBranch2);
         if (pbi)
           pbi.removeObserver("browser.urlbar", this.mPrefObserver);
       ]]></destructor>
@@ -65,7 +65,7 @@
     <implementation>
       <constructor><![CDATA[
         // listen for changes to default search engine
-        var pbi = this.mPrefs.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+        var pbi = this.mPrefs.QueryInterface(Components.interfaces.nsIPrefBranch2);
         if (pbi) {
           pbi.addObserver("browser.search", this.mPrefObserver, false);
           pbi.addObserver("browser.urlbar", this.mPrefObserver, false);
@@ -73,7 +73,7 @@
       ]]></constructor>
 
       <destructor><![CDATA[
-        var pbi = this.mPrefs.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+        var pbi = this.mPrefs.QueryInterface(Components.interfaces.nsIPrefBranch2);
         if (pbi) {
           pbi.removeObserver("browser.search", this.mPrefObserver);
           pbi.removeObserver("browser.urlbar", this.mPrefObserver);
@@ -191,9 +191,8 @@
 
       <method name="clearEngines">
         <body><![CDATA[
-          var kids = this.mSearchBox.childNodes;
-          for (var i = kids.length-1; i >= 0; --i)
-            this.mSearchBox.removeChild(kids[i]);
+          while (this.mSearchBox.hasChildNodes())
+            this.mSearchBox.removeChild(this.mSearchBox.lastChild);
         ]]></body>
       </method>
    
@@ -217,9 +216,9 @@
             defaultEngine = this.mPrefs.getComplexValue("browser.search.defaultengine",
                                                         Components.interfaces.nsISupportsString).data;
           } catch(ex) {
+            // this will re-invoke updateEngines via the pref observer if the pref changes
             this.ensureDefaultEnginePrefs(rdf, ds);
-            defaultEngine = this.mPrefs.getComplexValue("browser.search.defaultengine",
-                                                        Components.interfaces.nsISupportsString).data;
+            return;
           }
           
           if (defaultEngine) {
@@ -232,10 +231,15 @@
               } catch(ex) {
                 searchBarUrl = null;
               }
-                this.addEngine(res.Value, 
-                              this.readRDFString(ds, res, kNC_Name),
-                              this.readRDFString(ds, res, kNC_Icon),
-                              searchBarUrl);					  							  
+              if (searchBarUrl == null) {
+                // this will re-invoke updateEngines via the pref observer if the pref changes
+                this.ensureDefaultEnginePrefs(rdf, ds);
+                return;
+              }
+              this.addEngine(res.Value, 
+                            this.readRDFString(ds, res, kNC_Name),
+                            this.readRDFString(ds, res, kNC_Icon),
+                            searchBarUrl);
             }
           }
           

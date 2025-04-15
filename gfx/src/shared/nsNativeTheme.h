@@ -44,14 +44,22 @@
 #include "nsCOMPtr.h"
 #include "nsString.h"
 #include "nsMargin.h"
+#include "nsILookAndFeel.h"
 
 class nsIFrame;
 class nsIPresShell;
-class nsIPresContext;
+class nsPresContext;
 
 class nsNativeTheme
 {
  protected:
+
+  enum TreeSortDirection {
+    eTreeSortDirection_Descending,
+    eTreeSortDirection_Natural,
+    eTreeSortDirection_Ascending
+  };
+
   nsNativeTheme();
 
   // Returns the content state (hover, focus, etc), see nsIEventStateManager.h
@@ -60,7 +68,7 @@ class nsNativeTheme
   // Returns whether the widget is already styled by content
   // Normally called from ThemeSupportsWidget to turn off native theming
   // for elements that are already styled.
-  PRBool IsWidgetStyled(nsIPresContext* aPresContext, nsIFrame* aFrame,
+  PRBool IsWidgetStyled(nsPresContext* aPresContext, nsIFrame* aFrame,
                         PRUint8 aWidgetType);                                              
 
   // Accessors to widget-specific state information
@@ -94,19 +102,22 @@ class nsNativeTheme
     return CheckBooleanAttr(aFrame, mSelectedAtom);
   }
 
-  // treeheadercell:
-  PRBool IsSortedColumn(nsIFrame* aFrame) {
-    nsAutoString sortdir;
-    if (GetAttr(aFrame, mSortDirectionAtom, sortdir))
-      return !sortdir.IsEmpty();
-    return PR_FALSE;
+  // toolbarbutton:
+  PRBool IsCheckedButton(nsIFrame* aFrame) {
+    return CheckBooleanAttr(aFrame, mCheckedAtom);
   }
-
-  PRBool IsSortReversed(nsIFrame* aFrame) {
+  
+  // treeheadercell:
+  TreeSortDirection GetTreeSortDirection(nsIFrame* aFrame) {
     nsAutoString sortdir;
-    if (GetAttr(aFrame, mSortDirectionAtom, sortdir))
-      return sortdir.Equals(NS_LITERAL_STRING("descending"));
-    return PR_FALSE;
+    if (GetAttr(aFrame, mSortDirectionAtom, sortdir)) {
+      if (sortdir.EqualsLiteral("descending"))
+        return eTreeSortDirection_Descending;
+      else if (sortdir.EqualsLiteral("ascending"))
+        return eTreeSortDirection_Ascending;
+    }
+
+    return eTreeSortDirection_Natural;
   }
 
   // tab:
@@ -121,7 +132,7 @@ class nsNativeTheme
   PRBool IsIndeterminateProgress(nsIFrame* aFrame) {
     nsAutoString mode;
     if (GetAttr(aFrame, mModeAtom, mode))
-      return mode.Equals(NS_LITERAL_STRING("undetermined"));
+      return mode.EqualsLiteral("undetermined");
     return PR_FALSE;
   }
 
@@ -133,11 +144,13 @@ class nsNativeTheme
   PRBool IsReadOnly(nsIFrame* aFrame) {
       return CheckBooleanAttr(aFrame, mReadOnlyAtom);
   }
-  
-private:
-  nsIPresShell *GetPrimaryPresShell(nsIFrame* aFrame);
-  PRBool CheckBooleanAttr(nsIFrame* aFrame, nsIAtom* aAtom);
+
+  // These are used by nsNativeThemeGtk
+  nsIPresShell *GetPresShell(nsIFrame* aFrame);
   PRInt32 CheckIntAttr(nsIFrame* aFrame, nsIAtom* aAtom);
+  PRBool CheckBooleanAttr(nsIFrame* aFrame, nsIAtom* aAtom);
+
+private:
   PRBool GetAttr(nsIFrame* aFrame, nsIAtom* aAtom, nsAString& attrValue);
   PRBool GetCheckedOrSelected(nsIFrame* aFrame, PRBool aCheckSelected);
 
@@ -147,21 +160,37 @@ protected:
   nsCOMPtr<nsIAtom> mDisabledAtom;
   nsCOMPtr<nsIAtom> mCheckedAtom;
   nsCOMPtr<nsIAtom> mSelectedAtom;
+  nsCOMPtr<nsIAtom> mReadOnlyAtom;
+  nsCOMPtr<nsIAtom> mFirstTabAtom;
+  nsCOMPtr<nsIAtom> mFocusedAtom;
+  nsCOMPtr<nsIAtom> mSortDirectionAtom;
 
   // these should be set to appropriate platform values by the subclass, to
-  // match the values in platform-forms.css.  These defaults match forms.css
-  static nsMargin sButtonBorderSize;
-  static nsMargin sButtonDisabledBorderSize;
-  static nsMargin sTextfieldBorderSize;
-  static PRBool   sTextfieldBGTransparent;
+  // match the values in forms.css.  These defaults match forms.css
+  static nsMargin                  sButtonBorderSize;
+  static nsMargin                  sButtonDisabledBorderSize;
+  static PRUint8                   sButtonActiveBorderStyle;
+  static PRUint8                   sButtonInactiveBorderStyle;
+  static nsILookAndFeel::nsColorID sButtonBorderColorID;
+  static nsILookAndFeel::nsColorID sButtonDisabledBorderColorID;
+  static nsILookAndFeel::nsColorID sButtonBGColorID;
+  static nsILookAndFeel::nsColorID sButtonDisabledBGColorID;
+  static nsMargin                  sTextfieldBorderSize;
+  static PRUint8                   sTextfieldBorderStyle;
+  static nsILookAndFeel::nsColorID sTextfieldBorderColorID;
+  static PRBool                    sTextfieldBGTransparent;
+  static nsILookAndFeel::nsColorID sTextfieldBGColorID;
+  static nsILookAndFeel::nsColorID sTextfieldDisabledBGColorID;
+  static nsMargin                  sListboxBorderSize;
+  static PRUint8                   sListboxBorderStyle;
+  static nsILookAndFeel::nsColorID sListboxBorderColorID;
+  static PRBool                    sListboxBGTransparent;
+  static nsILookAndFeel::nsColorID sListboxBGColorID;
+  static nsILookAndFeel::nsColorID sListboxDisabledBGColorID;
 
 private:
-  nsCOMPtr<nsIAtom> mFocusedAtom;
-  nsCOMPtr<nsIAtom> mFirstTabAtom;
   nsCOMPtr<nsIAtom> mDefaultAtom;
   nsCOMPtr<nsIAtom> mValueAtom;
   nsCOMPtr<nsIAtom> mModeAtom;
   nsCOMPtr<nsIAtom> mClassAtom;
-  nsCOMPtr<nsIAtom> mSortDirectionAtom;
-  nsCOMPtr<nsIAtom> mReadOnlyAtom;
 };

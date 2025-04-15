@@ -1,39 +1,43 @@
 # -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 #
-# The contents of this file are subject to the Mozilla Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/MPL/
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
 #
-# The Original Code is this file as it was released on
-# January 3, 2001.
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
 #
-# The Initial Developer of the Original Code is Jonas Sicking.
-# Portions created by Jonas Sicking are Copyright (C) 2000
-# Jonas Sicking.  All Rights Reserved.
+# The Original Code is this file as it was released on January 3, 2001.
+#
+# The Initial Developer of the Original Code is
+# Jonas Sicking.
+# Portions created by the Initial Developer are Copyright (C) 2000
+# the Initial Developer. All Rights Reserved.
 #
 # Contributor(s):
 #   Jonas Sicking <sicking@bigfoot.com> (Original Author)
 #   Gervase Markham <gerv@gerv.net>
 #   Heikki Toivonen <heikki@netscape.com>
 #
-# Alternatively, the contents of this file may be used under the
-# terms of the GNU General Public License Version 2 or later (the
-# "GPL"), in which case the provisions of the GPL are applicable
-# instead of those above.  If you wish to allow use of your
-# version of this file only under the terms of the GPL and not to
-# allow others to use your version of this file under the MPL,
-# indicate your decision by deleting the provisions above and
-# replace them with the notice and other provisions required by
-# the GPL.  If you do not delete the provisions above, a recipient
-# may use your version of this file under either the MPL or the
-# GPL.
+# Alternatively, the contents of this file may be used under the terms of
+# either the GNU General Public License Version 2 or later (the "GPL"), or
+# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
 #
+# ***** END LICENSE BLOCK *****
 
 const XLinkNS = "http://www.w3.org/1999/xlink";
 const XULNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
@@ -100,6 +104,11 @@ function showMetadataFor(elem)
   // Each of them could be at a different level in the tree, so they each
   // need their own boolean to tell us to stop looking.
   while (elem && elem.nodeType == Node.ELEMENT_NODE) {
+    htmllocalname = "";
+    if (isHTMLElement(elem,"")) { 
+      htmllocalname = elem.localName.toLowerCase();
+    }
+
     if (!onLink)   checkForLink(elem, htmllocalname);
     if (!onInsDel) checkForInsDel(elem, htmllocalname);
     if (!onQuote)  checkForQuote(elem, htmllocalname);
@@ -108,11 +117,6 @@ function showMetadataFor(elem)
     if (!onLang)   checkForLang(elem, htmllocalname);
       
     elem = elem.parentNode;
-
-    htmllocalname = "";
-    if (isHTMLElement(elem,"")) { 
-      htmllocalname = elem.localName.toLowerCase();
-    }
   }
   
   // Decide which sections to show
@@ -245,15 +249,19 @@ function checkForLink(elem, htmllocalname)
       break;
     case "":
     case "_self":
-      if (elem.ownerDocument != elem.ownerDocument.defaultView._content.document)
-        setInfo("link-target", gMetadataBundle.getString("sameFrameText"));
-      else
-        setInfo("link-target", gMetadataBundle.getString("sameWindowText"));
+      if (elem.ownerDocument.defaultView) {
+        if (elem.ownerDocument != elem.ownerDocument.defaultView.content.document)
+          setInfo("link-target", gMetadataBundle.getString("sameFrameText"));
+        else
+          setInfo("link-target", gMetadataBundle.getString("sameWindowText"));
+      } else {
+        hideNode("link-target");
+      }
       break;
     default:
       setInfo("link-target", "\"" + target + "\"");
     }
-    
+
     onLink = true;
   }
 
@@ -273,7 +281,7 @@ function checkForLink(elem, htmllocalname)
         break;
     case "":
     case "replace":
-        if (elem.ownerDocument != elem.ownerDocument.defaultView._content.document)
+        if (elem.ownerDocument != elem.ownerDocument.defaultView.content.document)
             setInfo("link-target", gMetadataBundle.getString("sameFrameText"));
         else
             setInfo("link-target", gMetadataBundle.getString("sameWindowText"));
@@ -368,36 +376,6 @@ function hideNode(id)
 {
     var style = document.getElementById(id).getAttribute("style");
     document.getElementById(id).setAttribute("style", "display:none;" + style);
-}
-
-const nsIScriptSecurityManager = Components.interfaces.nsIScriptSecurityManager;
-
-// opens the link contained in the node's "value" attribute.
-function openLink(node)
-{
-  var url = node.getAttribute("value");
-  // Security-Critical: Only links to 'safe' protocols should be functional.
-  // Specifically, javascript: and data: URLs must be made non-functional
-  // here, because they will run with full privilege.
-  var safeurls = /^https?:|^file:|^chrome:|^resource:|^mailbox:|^imap:|^s?news:|^nntp:|^about:|^mailto:|^ftp:|^gopher:/i;
-  if (safeurls.test(url)) {
-    var sourceURI = Components.classes["@mozilla.org/network/standard-url;1"]
-                            .createInstance(Components.interfaces.nsIURI);
-    sourceURI.spec = nodeView._content.document.location;
-    var destURI = Components.classes["@mozilla.org/network/standard-url;1"]
-                          .createInstance(Components.interfaces.nsIURI);
-    destURI.spec = url;
-
-    var secMan = Components.classes["@mozilla.org/scriptsecuritymanager;1"].getService()
-                           .QueryInterface(nsIScriptSecurityManager);
-    try {
-      secMan.checkLoadURI(sourceURI, destURI, nsIScriptSecurityManager.STANDARD);
-    } catch (e) {
-      return;
-    }
-    nodeView._content.document.location = url;
-    window.close();
-  }
 }
 
 /*

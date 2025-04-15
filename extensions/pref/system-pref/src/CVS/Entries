@@ -1,6 +1,6 @@
-/Makefile.in/1.2/Mon Oct 27 10:10:59 2003//TFIREFOX_1_0_RELEASE
-/nsSystemPref.cpp/1.4.6.1/Mon May 17 18:32:11 2004//TFIREFOX_1_0_RELEASE
-/nsSystemPref.h/1.3/Mon Jun  9 08:29:59 2003//TFIREFOX_1_0_RELEASE
-/nsSystemPrefFactory.cpp/1.1/Tue Apr 15 02:28:25 2003//TFIREFOX_1_0_RELEASE
-/nsSystemPrefLog.h/1.1/Tue Apr 15 02:28:25 2003//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.4/Mon Apr  4 18:37:58 2005//TFIREFOX_1_5_RELEASE
+/nsSystemPref.cpp/1.9/Sat Apr 30 02:37:41 2005//TFIREFOX_1_5_RELEASE
+/nsSystemPref.h/1.4/Wed Feb 23 16:15:37 2005//TFIREFOX_1_5_RELEASE
+/nsSystemPrefFactory.cpp/1.1/Tue Apr 15 02:28:25 2003//TFIREFOX_1_5_RELEASE
+/nsSystemPrefLog.h/1.1/Tue Apr 15 02:28:25 2003//TFIREFOX_1_5_RELEASE
 D/gconf////

@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Henrik Gemal <mozilla@gemal.dk>
+ *   Henrik Gemal <mozilla@gemal.dk>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsCOMPtr.h"
@@ -155,8 +155,6 @@ nsMimeHtmlDisplayEmitter::GetHeaderSink(nsIMsgHeaderSink ** aHeaderSink)
 
 nsresult nsMimeHtmlDisplayEmitter::BroadcastHeaders(nsIMsgHeaderSink * aHeaderSink, PRInt32 aHeaderMode, PRBool aFromNewsgroup)
 {
-  nsresult rv = NS_OK;
-
   // two string enumerators to pass out to the header sink
   nsCOMPtr<nsIUTF8StringEnumerator> headerNameEnumerator;
   nsCOMPtr<nsIUTF8StringEnumerator> headerValueEnumerator;
@@ -168,6 +166,7 @@ nsresult nsMimeHtmlDisplayEmitter::BroadcastHeaders(nsIMsgHeaderSink * aHeaderSi
   nsCAutoString convertedDateString;
 
   PRBool displayOriginalDate = PR_FALSE;
+  nsresult rv;
   nsCOMPtr<nsIPrefBranch> pPrefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   if (pPrefBranch)
     pPrefBranch->GetBoolPref("mailnews.display.original_date", &displayOriginalDate);
@@ -189,8 +188,10 @@ nsresult nsMimeHtmlDisplayEmitter::BroadcastHeaders(nsIMsgHeaderSink * aHeaderSi
           nsCRT::strcasecmp("bcc", headerInfo->name) && nsCRT::strcasecmp("followup-to", headerInfo->name) &&
           nsCRT::strcasecmp("reply-to", headerInfo->name) && nsCRT::strcasecmp("subject", headerInfo->name) &&
           nsCRT::strcasecmp("organization", headerInfo->name) && nsCRT::strcasecmp("user-agent", headerInfo->name) &&
-          nsCRT::strcasecmp("content-base", headerInfo->name) && 
-          nsCRT::strcasecmp("date", headerInfo->name) && nsCRT::strcasecmp("x-mailer", headerInfo->name))
+          nsCRT::strcasecmp("content-base", headerInfo->name) && nsCRT::strcasecmp("sender", headerInfo->name) &&
+          nsCRT::strcasecmp("date", headerInfo->name) && nsCRT::strcasecmp("x-mailer", headerInfo->name) &&
+          nsCRT::strcasecmp("content-type", headerInfo->name) && nsCRT::strcasecmp("message-id", headerInfo->name) &&
+          nsCRT::strcasecmp("x-newsreader", headerInfo->name) && nsCRT::strcasecmp("x-mimeole", headerInfo->name))
             continue;
     }
 
@@ -272,14 +273,17 @@ nsresult nsMimeHtmlDisplayEmitter::GenerateDateString(const char * dateString, n
   nsAutoString formattedDateString;
   nsresult rv = NS_OK;
 
-  if (!mDateFormater)
-    mDateFormater = do_CreateInstance(kDateTimeFormatCID);
+  if (!mDateFormater) {
+    mDateFormater = do_CreateInstance(kDateTimeFormatCID, &rv);
+    if (NS_FAILED(rv))
+      return rv;
+  }
 
   PRTime messageTime;
   PR_ParseTimeString(dateString, PR_FALSE, &messageTime);
 
   PRTime currentTime = PR_Now();
-	PRExplodedTime explodedCurrentTime;
+  PRExplodedTime explodedCurrentTime;
   PR_ExplodeTime(currentTime, PR_LocalTimeParameters, &explodedCurrentTime);
   PRExplodedTime explodedMsgTime;
   PR_ExplodeTime(messageTime, PR_LocalTimeParameters, &explodedMsgTime);
@@ -321,7 +325,7 @@ nsresult nsMimeHtmlDisplayEmitter::GenerateDateString(const char * dateString, n
                                       formattedDateString);
 
   if (NS_SUCCEEDED(rv))
-    formattedDate = NS_ConvertUCS2toUTF8(formattedDateString);
+    CopyUTF16toUTF8(formattedDateString, formattedDate);
 
   return rv;
 }
@@ -342,6 +346,8 @@ nsMimeHtmlDisplayEmitter::EndHeader()
       {
         PRInt32 bufLen = strlen(subject) + 16;
         char *buf = new char[bufLen];
+        if (!buf)
+          return NS_ERROR_OUT_OF_MEMORY;
         PR_snprintf(buf, bufLen, "<title>%s</title>", subject);
         UtilityWriteCRLF(buf);
         delete [] buf;
@@ -365,7 +371,7 @@ nsresult
 nsMimeHtmlDisplayEmitter::StartAttachment(const char *name,
                                           const char *contentType,
                                           const char *url,
-                                          PRBool aNotDownloaded)
+                                          PRBool aIsExternalAttachment)
 {
   nsresult rv = NS_OK;
   nsCOMPtr<nsIMsgHeaderSink> headerSink; 
@@ -399,7 +405,7 @@ nsMimeHtmlDisplayEmitter::StartAttachment(const char *name,
 
     if (NS_FAILED(rv))
     {
-      unicodeHeaderValue.Assign(NS_ConvertUTF8toUCS2(name));
+      CopyUTF8toUTF16(name, unicodeHeaderValue);
 
       // but it's not really a failure if we didn't have a converter
       // in the first place
@@ -409,7 +415,7 @@ nsMimeHtmlDisplayEmitter::StartAttachment(const char *name,
 
     headerSink->HandleAttachment(contentType, url /* was escapedUrl */,
                                  unicodeHeaderValue, uriString,
-                                 aNotDownloaded);
+                                 aIsExternalAttachment);
 
     nsCRT::free(escapedUrl);
     mSkipAttachment = PR_TRUE;

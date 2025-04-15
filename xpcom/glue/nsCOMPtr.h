@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   L. David Baron <dbaron@dbaron.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -67,7 +67,7 @@
 
 #ifndef nscore_h___
 #include "nscore.h"
-  // for |NS_..._CAST|, |NS_COM|
+  // for |NS_..._CAST|, |NS_COM_GLUE|
 #endif
 
 
@@ -331,7 +331,7 @@ class nsCOMPtr_helper
     */
   {
     public:
-      virtual nsresult operator()( const nsIID&, void** ) const = 0;
+      virtual nsresult NS_FASTCALL operator()( const nsIID&, void** ) const = 0;
   };
 
 /*
@@ -341,22 +341,23 @@ class nsCOMPtr_helper
   warrant the specialcasing.
 */
 
-class NS_COM nsQueryInterface
+class NS_COM_GLUE nsQueryInterface
   {
     public:
+      explicit
       nsQueryInterface( nsISupports* aRawPtr )
           : mRawPtr(aRawPtr)
         {
           // nothing else to do here
         }
 
-      nsresult operator()( const nsIID& aIID, void** ) const;
+      nsresult NS_FASTCALL operator()( const nsIID& aIID, void** ) const;
 
     private:
       nsISupports*  mRawPtr;
   };
 
-class NS_COM nsQueryInterfaceWithError
+class NS_COM_GLUE nsQueryInterfaceWithError
   {
     public:
       nsQueryInterfaceWithError( nsISupports* aRawPtr, nsresult* error )
@@ -366,7 +367,7 @@ class NS_COM nsQueryInterfaceWithError
           // nothing else to do here
         }
 
-      nsresult operator()( const nsIID& aIID, void** ) const;
+      nsresult NS_FASTCALL operator()( const nsIID& aIID, void** ) const;
 
     private:
       nsISupports*  mRawPtr;
@@ -408,6 +409,71 @@ do_QueryInterface( already_AddRefed<T>&, nsresult* )
   }
 
 
+////////////////////////////////////////////////////////////////////////////
+// Using servicemanager with COMPtrs
+class NS_COM_GLUE nsGetServiceByCID
+{
+ public:
+    nsGetServiceByCID(const nsCID& aCID)
+        : mCID(aCID)
+        {
+            // nothing else to do
+        }
+    
+    nsresult NS_FASTCALL operator()( const nsIID&, void** ) const;
+    
+ private:
+    const nsCID&                mCID;
+};
+
+class NS_COM_GLUE nsGetServiceByCIDWithError
+{
+ public:
+    nsGetServiceByCIDWithError( const nsCID& aCID, nsresult* aErrorPtr )
+        : mCID(aCID),
+          mErrorPtr(aErrorPtr)
+        {
+            // nothing else to do
+        }
+    
+    nsresult NS_FASTCALL operator()( const nsIID&, void** ) const;
+    
+ private:
+    const nsCID&                mCID;
+    nsresult*                   mErrorPtr;
+};
+
+class NS_COM_GLUE nsGetServiceByContractID
+{
+ public:
+    nsGetServiceByContractID(const char* aContractID)
+        : mContractID(aContractID)
+        {
+            // nothing else to do
+        }
+    
+    nsresult NS_FASTCALL operator()( const nsIID&, void** ) const;
+    
+ private:
+    const char*                 mContractID;
+};
+
+class NS_COM_GLUE nsGetServiceByContractIDWithError
+{
+ public:
+    nsGetServiceByContractIDWithError(const char* aContractID, nsresult* aErrorPtr)
+        : mContractID(aContractID),
+          mErrorPtr(aErrorPtr)
+        {
+            // nothing else to do
+        }
+    
+    nsresult NS_FASTCALL operator()( const nsIID&, void** ) const;
+    
+ private:
+    const char*                 mContractID;
+    nsresult*                   mErrorPtr;
+};
 
 class nsCOMPtr_base
     /*
@@ -431,13 +497,17 @@ class nsCOMPtr_base
           // nothing else to do here
         }
 
-      NS_COM ~nsCOMPtr_base();
+      NS_COM_GLUE NS_FASTCALL ~nsCOMPtr_base();
 
-      NS_COM void    assign_with_AddRef( nsISupports* );
-      NS_COM void    assign_from_qi( const nsQueryInterface, const nsIID& );
-      NS_COM void    assign_from_qi_with_error( const nsQueryInterfaceWithError&, const nsIID& );
-      NS_COM void    assign_from_helper( const nsCOMPtr_helper&, const nsIID& );
-      NS_COM void**  begin_assignment();
+      NS_COM_GLUE void NS_FASTCALL   assign_with_AddRef( nsISupports* );
+      NS_COM_GLUE void NS_FASTCALL   assign_from_qi( const nsQueryInterface, const nsIID& );
+      NS_COM_GLUE void NS_FASTCALL   assign_from_qi_with_error( const nsQueryInterfaceWithError&, const nsIID& );
+      NS_COM_GLUE void NS_FASTCALL   assign_from_gs_cid( const nsGetServiceByCID, const nsIID& );
+      NS_COM_GLUE void NS_FASTCALL   assign_from_gs_cid_with_error( const nsGetServiceByCIDWithError&, const nsIID& );
+      NS_COM_GLUE void NS_FASTCALL   assign_from_gs_contractid( const nsGetServiceByContractID, const nsIID& );
+      NS_COM_GLUE void NS_FASTCALL   assign_from_gs_contractid_with_error( const nsGetServiceByContractIDWithError&, const nsIID& );
+      NS_COM_GLUE void NS_FASTCALL   assign_from_helper( const nsCOMPtr_helper&, const nsIID& );
+      NS_COM_GLUE void** NS_FASTCALL begin_assignment();
 
     protected:
       NS_MAY_ALIAS_PTR(nsISupports) mRawPtr;
@@ -480,6 +550,10 @@ class nsCOMPtr
       void    assign_with_AddRef( nsISupports* );
       void    assign_from_qi( const nsQueryInterface, const nsIID& );
       void    assign_from_qi_with_error( const nsQueryInterfaceWithError&, const nsIID& );
+      void    assign_from_gs_cid( const nsGetServiceByCID, const nsIID& );
+      void    assign_from_gs_cid_with_error( const nsGetServiceByCIDWithError&, const nsIID& );
+      void    assign_from_gs_contractid( const nsGetServiceByContractID, const nsIID& );
+      void    assign_from_gs_contractid_with_error( const nsGetServiceByContractIDWithError&, const nsIID& );
       void    assign_from_helper( const nsCOMPtr_helper&, const nsIID& );
       void**  begin_assignment();
 
@@ -579,6 +653,38 @@ class nsCOMPtr
           assign_from_qi_with_error(qi, NS_GET_IID(T));
         }
 
+      nsCOMPtr( const nsGetServiceByCID gs )
+            : NSCAP_CTOR_BASE(0)
+          // construct from |do_GetService(cid_expr)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_gs_cid(gs, NS_GET_IID(T));
+        }
+
+      nsCOMPtr( const nsGetServiceByCIDWithError& gs )
+            : NSCAP_CTOR_BASE(0)
+          // construct from |do_GetService(cid_expr, &rv)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_gs_cid_with_error(gs, NS_GET_IID(T));
+        }
+
+      nsCOMPtr( const nsGetServiceByContractID gs )
+            : NSCAP_CTOR_BASE(0)
+          // construct from |do_GetService(contractid_expr)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_gs_contractid(gs, NS_GET_IID(T));
+        }
+
+      nsCOMPtr( const nsGetServiceByContractIDWithError& gs )
+            : NSCAP_CTOR_BASE(0)
+          // construct from |do_GetService(contractid_expr, &rv)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_gs_contractid_with_error(gs, NS_GET_IID(T));
+        }
+
       nsCOMPtr( const nsCOMPtr_helper& helper )
             : NSCAP_CTOR_BASE(0)
           // ...and finally, anything else we might need to construct from
@@ -631,6 +737,38 @@ class nsCOMPtr
           // assign from |do_QueryInterface(expr, &rv)|
         {
           assign_from_qi_with_error(rhs, NS_GET_IID(T));
+          return *this;
+        }
+
+      nsCOMPtr<T>&
+      operator=( const nsGetServiceByCID rhs )
+          // assign from |do_GetService(cid_expr)|
+        {
+          assign_from_gs_cid(rhs, NS_GET_IID(T));
+          return *this;
+        }
+
+      nsCOMPtr<T>&
+      operator=( const nsGetServiceByCIDWithError& rhs )
+          // assign from |do_GetService(cid_expr, &rv)|
+        {
+          assign_from_gs_cid_with_error(rhs, NS_GET_IID(T));
+          return *this;
+        }
+
+      nsCOMPtr<T>&
+      operator=( const nsGetServiceByContractID rhs )
+          // assign from |do_GetService(contractid_expr)|
+        {
+          assign_from_gs_contractid(rhs, NS_GET_IID(T));
+          return *this;
+        }
+
+      nsCOMPtr<T>&
+      operator=( const nsGetServiceByContractIDWithError& rhs )
+          // assign from |do_GetService(contractid_expr, &rv)|
+        {
+          assign_from_gs_contractid_with_error(rhs, NS_GET_IID(T));
           return *this;
         }
 
@@ -836,6 +974,38 @@ class nsCOMPtr<nsISupports>
           assign_from_qi_with_error(qi, NS_GET_IID(nsISupports));
         }
 
+      nsCOMPtr( const nsGetServiceByCID gs )
+            : nsCOMPtr_base(0)
+          // assign from |do_GetService(cid_expr)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_gs_cid(gs, NS_GET_IID(nsISupports));
+        }
+
+      nsCOMPtr( const nsGetServiceByCIDWithError& gs )
+            : nsCOMPtr_base(0)
+          // assign from |do_GetService(cid_expr, &rv)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_gs_cid_with_error(gs, NS_GET_IID(nsISupports));
+        }
+
+      nsCOMPtr( const nsGetServiceByContractID gs )
+            : nsCOMPtr_base(0)
+          // assign from |do_GetService(contractid_expr)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_gs_contractid(gs, NS_GET_IID(nsISupports));
+        }
+
+      nsCOMPtr( const nsGetServiceByContractIDWithError& gs )
+            : nsCOMPtr_base(0)
+          // assign from |do_GetService(contractid_expr, &rv)|
+        {
+          NSCAP_LOG_ASSIGNMENT(this, 0);
+          assign_from_gs_contractid_with_error(gs, NS_GET_IID(nsISupports));
+        }
+
       nsCOMPtr( const nsCOMPtr_helper& helper )
             : nsCOMPtr_base(0)
           // ...and finally, anything else we might need to construct from
@@ -885,6 +1055,38 @@ class nsCOMPtr<nsISupports>
           // assign from |do_QueryInterface(expr, &rv)|
         {
           assign_from_qi_with_error(rhs, NS_GET_IID(nsISupports));
+          return *this;
+        }
+
+      nsCOMPtr<nsISupports>&
+      operator=( const nsGetServiceByCID rhs )
+          // assign from |do_GetService(cid_expr)|
+        {
+          assign_from_gs_cid(rhs, NS_GET_IID(nsISupports));
+          return *this;
+        }
+
+      nsCOMPtr<nsISupports>&
+      operator=( const nsGetServiceByCIDWithError& rhs )
+          // assign from |do_GetService(cid_expr, &rv)|
+        {
+          assign_from_gs_cid_with_error(rhs, NS_GET_IID(nsISupports));
+          return *this;
+        }
+
+      nsCOMPtr<nsISupports>&
+      operator=( const nsGetServiceByContractID rhs )
+          // assign from |do_GetService(contractid_expr)|
+        {
+          assign_from_gs_contractid(rhs, NS_GET_IID(nsISupports));
+          return *this;
+        }
+
+      nsCOMPtr<nsISupports>&
+      operator=( const nsGetServiceByContractIDWithError& rhs )
+          // assign from |do_GetService(contractid_expr, &rv)|
+        {
+          assign_from_gs_contractid_with_error(rhs, NS_GET_IID(nsISupports));
           return *this;
         }
 
@@ -1038,6 +1240,46 @@ nsCOMPtr<T>::assign_from_qi_with_error( const nsQueryInterfaceWithError& qi, con
   {
     T* newRawPtr;
     if ( NS_FAILED( qi(aIID, NS_REINTERPRET_CAST(void**, &newRawPtr)) ) )
+      newRawPtr = 0;
+    assign_assuming_AddRef(newRawPtr);
+  }
+
+template <class T>
+void
+nsCOMPtr<T>::assign_from_gs_cid( const nsGetServiceByCID gs, const nsIID& aIID )
+  {
+    T* newRawPtr;
+    if ( NS_FAILED( gs(aIID, NS_REINTERPRET_CAST(void**, &newRawPtr)) ) )
+      newRawPtr = 0;
+    assign_assuming_AddRef(newRawPtr);
+  }
+
+template <class T>
+void
+nsCOMPtr<T>::assign_from_gs_cid_with_error( const nsGetServiceByCIDWithError& gs, const nsIID& aIID )
+  {
+    T* newRawPtr;
+    if ( NS_FAILED( gs(aIID, NS_REINTERPRET_CAST(void**, &newRawPtr)) ) )
+      newRawPtr = 0;
+    assign_assuming_AddRef(newRawPtr);
+  }
+
+template <class T>
+void
+nsCOMPtr<T>::assign_from_gs_contractid( const nsGetServiceByContractID gs, const nsIID& aIID )
+  {
+    T* newRawPtr;
+    if ( NS_FAILED( gs(aIID, NS_REINTERPRET_CAST(void**, &newRawPtr)) ) )
+      newRawPtr = 0;
+    assign_assuming_AddRef(newRawPtr);
+  }
+
+template <class T>
+void
+nsCOMPtr<T>::assign_from_gs_contractid_with_error( const nsGetServiceByContractIDWithError& gs, const nsIID& aIID )
+  {
+    T* newRawPtr;
+    if ( NS_FAILED( gs(aIID, NS_REINTERPRET_CAST(void**, &newRawPtr)) ) )
       newRawPtr = 0;
     assign_assuming_AddRef(newRawPtr);
   }
@@ -1278,7 +1520,9 @@ operator!=( const U* lhs, const nsCOMPtr<T>& rhs )
 // prevents us from using these.  (It also, fortunately, has the bug
 // that we don't need them either.)
 #if defined(_MSC_VER) && (_MSC_VER < 1310)
+#ifndef NSCAP_DONT_PROVIDE_NONCONST_OPEQ
 #define NSCAP_DONT_PROVIDE_NONCONST_OPEQ
+#endif
 #endif
 
 #ifndef NSCAP_DONT_PROVIDE_NONCONST_OPEQ

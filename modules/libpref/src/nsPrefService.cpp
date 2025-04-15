@@ -37,7 +37,6 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsPrefService.h"
-#include "jsapi.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsICategoryManager.h"
@@ -50,6 +49,7 @@
 #include "nsXPIDLString.h"
 #include "nsCRT.h"
 #include "nsCOMArray.h"
+#include "nsXPCOMCID.h"
 
 #include "nsQuickSort.h"
 #include "prmem.h"
@@ -58,9 +58,6 @@
 #include "prefapi.h"
 #include "prefread.h"
 #include "prefapi_private_data.h"
-
-// supporting PREF_Init()
-#include "nsIJSRuntimeService.h"
 
 #include "nsITimelineService.h"
 
@@ -81,9 +78,6 @@ static PRBool isSharingEnabled();
 static nsresult openPrefFile(nsIFile* aFile);
 static nsresult pref_InitInitialObjects(void);
 
-  // needed so we can still get the JS Runtime Service during XPCOM shutdown
-static nsIJSRuntimeService* gJSRuntimeService = nsnull; // owning reference
-
 //-----------------------------------------------------------------------------
 
 /*
@@ -101,7 +95,6 @@ nsPrefService::nsPrefService()
 nsPrefService::~nsPrefService()
 {
   PREF_Cleanup();
-  NS_IF_RELEASE(gJSRuntimeService);
 
 #ifdef MOZ_PROFILESHARING
   NS_IF_RELEASE(gSharedPrefHandler);
@@ -121,6 +114,7 @@ NS_INTERFACE_MAP_BEGIN(nsPrefService)
     NS_INTERFACE_MAP_ENTRY(nsIPrefService)
     NS_INTERFACE_MAP_ENTRY(nsIObserver)
     NS_INTERFACE_MAP_ENTRY(nsIPrefBranch)
+    NS_INTERFACE_MAP_ENTRY(nsIPrefBranch2)
     NS_INTERFACE_MAP_ENTRY(nsIPrefBranchInternal)
     NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
 NS_INTERFACE_MAP_END
@@ -136,7 +130,7 @@ nsresult nsPrefService::Init()
   if (!rootBranch)
     return NS_ERROR_OUT_OF_MEMORY;
 
-  mRootBranch = (nsIPrefBranchInternal *)rootBranch;
+  mRootBranch = (nsIPrefBranch2 *)rootBranch;
   
   nsXPIDLCString lockFileName;
   nsresult rv;
@@ -452,9 +446,9 @@ nsresult nsPrefService::WritePrefFile(nsIFile* aFile)
     NS_LINEBREAK
     " *"
     NS_LINEBREAK
-    " * If you make changes to this file while the browser is running,"
+    " * If you make changes to this file while the application is running,"
     NS_LINEBREAK
-    " * the changes will be overwritten when the browser exits."
+    " * the changes will be overwritten when the application exits."
     NS_LINEBREAK
     " *"
     NS_LINEBREAK
@@ -621,7 +615,13 @@ pref_LoadPrefsInDir(nsIFile* aDir, char const *const *aSpecialFiles, PRUint32 aS
 
   // this may fail in some normal cases, such as embedders who do not use a GRE
   rv = aDir->GetDirectoryEntries(getter_AddRefs(dirIterator));
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    // If the directory doesn't exist, then we have no reason to complain.  We
+    // loaded everything (and nothing) successfully.
+    if (rv == NS_ERROR_FILE_NOT_FOUND)
+      rv = NS_OK;
+    return rv;
+  }
 
   rv = dirIterator->HasMoreElements(&hasMoreElements);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -642,7 +642,8 @@ pref_LoadPrefsInDir(nsIFile* aDir, char const *const *aSpecialFiles, PRUint32 aS
     NS_ASSERTION(!leafName.IsEmpty(), "Failure in default prefs: directory enumerator returned empty file?");
 
     // Skip non-js files
-    if (StringEndsWith(leafName, NS_LITERAL_CSTRING(".js"))) {
+    if (StringEndsWith(leafName, NS_LITERAL_CSTRING(".js"),
+                       nsCaseInsensitiveCStringComparator())) {
       PRBool shouldParse = PR_TRUE;
       // separate out special files
       for (PRUint32 i = 0; i < aSpecialFilesCount; ++i) {
@@ -757,8 +758,7 @@ static nsresult pref_InitInitialObjects()
   // xxxbsmedberg: TODO load default prefs from a category
   // but the architecture is not quite there yet
 
-  static NS_DEFINE_CID(kDirectoryServiceCID, NS_DIRECTORY_SERVICE_CID);
-  nsCOMPtr<nsIProperties> dirSvc(do_GetService(kDirectoryServiceCID, &rv));
+  nsCOMPtr<nsIProperties> dirSvc(do_GetService(NS_DIRECTORY_SERVICE_CONTRACTID, &rv));
   if (NS_FAILED(rv)) return rv;
 
   nsCOMPtr<nsISimpleEnumerator> dirList;

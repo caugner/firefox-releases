@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Patrick C. Beard <beard@netscape.com>
+ *   Patrick C. Beard <beard@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -49,22 +49,18 @@
 #include "nsRegionMac.h"
 #include "nsScriptableRegion.h"
 #include "nsNativeThemeMac.h"
-#if TARGET_CARBON
 #include "nsDeviceContextSpecX.h"
 #include "nsPrintOptionsX.h"
 #include "nsPrintSessionX.h"
-#else
-#include "nsDeviceContextSpecMac.h"
-#include "nsPrintOptionsMac.h"
-#include "nsPrintSession.h"
-#endif
 #include "nsDeviceContextSpecFactoryM.h"
 #include "nsScreenManagerMac.h"
 #include "nsBlender.h"
 #include "nsCOMPtr.h"
-#include "nsPrintOptionsMac.h"
 #include "nsUnicodeMappingUtil.h"
 #include "gfxImageFrame.h"
+#ifdef MOZ_WIDGET_COCOA
+#include "nsQDFlushManager.h"
+#endif
 
 #include "nsIGenericFactory.h"
 
@@ -76,21 +72,18 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsImageMac)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsRegionMac)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsBlender)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDrawingSurfaceMac)
-#if TARGET_CARBON
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDeviceContextSpecX)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsPrintOptionsX)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsPrintOptionsX, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsPrintSessionX, Init)
-#else
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsDeviceContextSpecMac)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsPrintOptionsMac)
-NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsPrintSession, Init)
-#endif
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDeviceContextSpecFactoryMac)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsFontEnumeratorMac)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsFontList)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsScreenManagerMac)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsNativeThemeMac)
 NS_GENERIC_FACTORY_CONSTRUCTOR(gfxImageFrame)
+#ifdef MOZ_WIDGET_COCOA
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsQDFlushManager)
+#endif
 
 static NS_IMETHODIMP
 nsScriptableRegionConstructor(nsISupports* aOuter, REFNSIID aIID, void** aResult)
@@ -139,22 +132,14 @@ static const nsModuleComponentInfo components[] =
     NS_DRAWING_SURFACE_CID,
     "@mozilla.org/gfx/drawing-surface;1",
     nsDrawingSurfaceMacConstructor },
-#if TARGET_CARBON
   { "nsDeviceContextSpec",
     NS_DEVICE_CONTEXT_SPEC_CID,
     "@mozilla.org/gfx/devicecontextspec;1",
     nsDeviceContextSpecXConstructor },
-#else
-  { "nsDeviceContextSpec",
-    NS_DEVICE_CONTEXT_SPEC_CID,
-    "@mozilla.org/gfx/devicecontextspec;1",
-    nsDeviceContextSpecMacConstructor },
-#endif
   { "nsDeviceContextSpecFactory",
     NS_DEVICE_CONTEXT_SPEC_FACTORY_CID,
     "@mozilla.org/gfx/devicecontextspecfactory;1",
     nsDeviceContextSpecFactoryMacConstructor },
-#if TARGET_CARBON
   { "PrintSettings Service",
     NS_PRINTSETTINGSSERVICE_CID,
     "@mozilla.org/gfx/printsettings-service;1",
@@ -163,16 +148,6 @@ static const nsModuleComponentInfo components[] =
     NS_PRINTSESSION_CID,
     "@mozilla.org/gfx/printsession;1",
     nsPrintSessionXConstructor },
-#else
-  { "PrintSettings Service",
-    NS_PRINTSETTINGSSERVICE_CID,
-    "@mozilla.org/gfx/printsettings-service;1",
-    nsPrintOptionsMacConstructor },
-  { "Print Session",
-    NS_PRINTSESSION_CID,
-    "@mozilla.org/gfx/printsession;1",
-    nsPrintSessionConstructor },
-#endif
   { "nsFontEnumerator",
     NS_FONT_ENUMERATOR_CID,
     "@mozilla.org/gfx/fontenumerator;1",
@@ -192,7 +167,13 @@ static const nsModuleComponentInfo components[] =
   { "Native Theme Renderer", 
     NS_THEMERENDERER_CID,
     "@mozilla.org/chrome/chrome-native-theme;1", 
-    nsNativeThemeMacConstructor }
+    nsNativeThemeMacConstructor },
+#ifdef MOZ_WIDGET_COCOA
+  { NS_QDFLUSHMANAGER_CLASSNAME,
+    NS_QDFLUSHMANAGER_CID,
+    NS_QDFLUSHMANAGER_CONTRACTID,
+    nsQDFlushManagerConstructor },
+#endif
 };
 
 PR_STATIC_CALLBACK(void)

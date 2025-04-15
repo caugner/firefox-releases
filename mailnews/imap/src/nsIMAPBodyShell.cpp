@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -749,7 +749,7 @@ PRBool nsIMAPBodypartLeaf::ParseIntoObjects()
   // No children for a leaf - just parse this
   
   // Eat the buffer into the parser
-  fNextToken = GetNextToken();
+  AdvanceToNextToken();
   
   // body type  ("application", "text", "image", etc.)
   if (ContinueParse())
@@ -757,7 +757,7 @@ PRBool nsIMAPBodypartLeaf::ParseIntoObjects()
     fNextToken++;	// eat the first '('
     m_bodyType = CreateNilString();
     if (ContinueParse())
-      fNextToken = GetNextToken();
+      AdvanceToNextToken();
     else
       SetIsValid(PR_FALSE);
   }
@@ -769,7 +769,7 @@ PRBool nsIMAPBodypartLeaf::ParseIntoObjects()
   {
     m_bodySubType = CreateNilString();
     if (ContinueParse())
-      fNextToken = GetNextToken();
+      AdvanceToNextToken();
     else
       SetIsValid(PR_FALSE);
   }
@@ -794,12 +794,12 @@ PRBool nsIMAPBodypartLeaf::ParseIntoObjects()
         }
         else
         {
-          fNextToken = GetNextToken();
+          AdvanceToNextToken();
         }
       }
     }
     else if (!PL_strcasecmp(fNextToken, "NIL"))
-      fNextToken = GetNextToken();
+      AdvanceToNextToken();
   }
   else
     SetIsValid(PR_FALSE);
@@ -809,7 +809,7 @@ PRBool nsIMAPBodypartLeaf::ParseIntoObjects()
   {
     m_bodyID = CreateNilString();
     if (ContinueParse())
-      fNextToken = GetNextToken();
+      AdvanceToNextToken();
     else
       SetIsValid(PR_FALSE);
   }
@@ -821,7 +821,7 @@ PRBool nsIMAPBodypartLeaf::ParseIntoObjects()
   {
     m_bodyDescription = CreateNilString();
     if (ContinueParse())
-      fNextToken = GetNextToken();
+      AdvanceToNextToken();
     else
       SetIsValid(PR_FALSE);
   }
@@ -833,7 +833,7 @@ PRBool nsIMAPBodypartLeaf::ParseIntoObjects()
   {
     m_bodyEncoding = CreateNilString();
     if (ContinueParse())
-      fNextToken = GetNextToken();
+      AdvanceToNextToken();
     else
       SetIsValid(PR_FALSE);
   }
@@ -854,7 +854,7 @@ PRBool nsIMAPBodypartLeaf::ParseIntoObjects()
       SetIsValid(PR_FALSE);
     
     if (ContinueParse())
-      fNextToken = GetNextToken();
+      AdvanceToNextToken();
     else
       SetIsValid(PR_FALSE);
   }
@@ -1386,14 +1386,14 @@ PRBool nsIMAPBodypartMultipart::ParseIntoObjects()
     // Parse what's left of this.
     
     // Eat the buffer into the parser
-    fNextToken = GetNextToken();
+    AdvanceToNextToken();
     if (ContinueParse())
     {
       // multipart subtype (mixed, alternative, etc.)
       fNextToken++;
       m_bodySubType = CreateNilString();
       if (ContinueParse())
-        fNextToken = GetNextToken();
+        AdvanceToNextToken();
       else
         SetIsValid(PR_FALSE);
     }
@@ -1407,7 +1407,7 @@ PRBool nsIMAPBodypartMultipart::ParseIntoObjects()
       {
         char *attribute = CreateNilString();
         if (ContinueParse())
-          fNextToken = GetNextToken();
+          AdvanceToNextToken();
         else
           SetIsValid(PR_FALSE);
         
@@ -1422,7 +1422,7 @@ PRBool nsIMAPBodypartMultipart::ParseIntoObjects()
           }
           
           if (ContinueParse())
-            fNextToken = GetNextToken();
+            AdvanceToNextToken();
           else
             SetIsValid(PR_FALSE);
           PR_Free(attribute);
@@ -1432,14 +1432,10 @@ PRBool nsIMAPBodypartMultipart::ParseIntoObjects()
           PR_FREEIF(attribute);
           if (ContinueParse())
           {
-            // removed because parser was advancing one too many tokens
-            //fNextToken = GetNextToken();
             char *value = CreateNilString();
             PR_FREEIF(value);
             if (ContinueParse())
-              fNextToken = GetNextToken();
-            //if (ContinueParse())
-            //	fNextToken = GetNextToken();
+              AdvanceToNextToken();
           }
         }
       }

@@ -1,7 +1,7 @@
-/.cvsignore/1.1/Sat Mar 27 00:06:24 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.5/Sun Dec  9 07:04:40 2001//TFIREFOX_1_0_RELEASE
-/genstubs.pl/1.8/Tue Mar 16 08:07:25 2004//TFIREFOX_1_0_RELEASE
-/xptcall.h/1.24/Tue Mar 16 08:07:25 2004//TFIREFOX_1_0_RELEASE
-/xptcstubsdecl.inc/1.7/Tue Mar 16 08:07:25 2004//TFIREFOX_1_0_RELEASE
-/xptcstubsdef.inc/1.4/Sat May 19 00:03:01 2001//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Sat Mar 27 00:06:24 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.6/Sun Apr 18 14:18:17 2004//TFIREFOX_1_5_RELEASE
+/genstubs.pl/1.9/Tue May 24 15:30:54 2005//TFIREFOX_1_5_RELEASE
+/xptcall.h/1.26/Wed Feb 16 14:26:12 2005//TFIREFOX_1_5_RELEASE
+/xptcstubsdecl.inc/1.8/Thu Jun 16 16:31:53 2005//TFIREFOX_1_5_RELEASE
+/xptcstubsdef.inc/1.4/Sat May 19 00:03:01 2001//TFIREFOX_1_5_RELEASE
 D

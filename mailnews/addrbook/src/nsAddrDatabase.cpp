@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -40,11 +40,11 @@
 
 #include "nsAddrDatabase.h"
 #include "nsIEnumerator.h"
-#include "nsFileStream.h"
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsRDFCID.h"
 #include "nsUnicharUtils.h"
+#include "nsMsgUtils.h"
 #include "nsAbBaseCID.h"
 #include "nsIAbCard.h"
 #include "nsIAbMDBCard.h"
@@ -55,7 +55,6 @@
 #include "nsIServiceManager.h"
 #include "nsRDFCID.h"
 
-#include "nsIPref.h"
 #include "nsMorkCID.h"
 #include "nsIMdbFactoryFactory.h"
 #include "nsXPIDLString.h"
@@ -70,6 +69,8 @@
 #include "nsIFileSpec.h"
 
 #include "nsAddressBook.h" // for the map
+
+#include "nsEmbedCID.h"
 
 #define ID_PAB_TABLE            1
 #define ID_DELETEDCARDS_TABLE           2
@@ -164,6 +165,7 @@ nsAddrDatabase::nsAddrDatabase()
       m_NotesColumnToken(0),
       m_LastModDateColumnToken(0),
       m_MailFormatColumnToken(0),
+      m_PopularityIndexColumnToken(0),
       m_AddressCharSetColumnToken(0),
       m_LastRecordKey(0),
       m_dbDirectory(nsnull)
@@ -268,7 +270,7 @@ NS_IMETHODIMP nsAddrDatabase::RemoveListener(nsIAddrDBListener *listener)
     return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP nsAddrDatabase::NotifyCardAttribChange(PRUint32 abCode, nsIAddrDBListener *instigator)
+NS_IMETHODIMP nsAddrDatabase::NotifyCardAttribChange(PRUint32 abCode)
 {
   if (!m_ChangeListeners)
       return NS_OK;
@@ -278,13 +280,13 @@ NS_IMETHODIMP nsAddrDatabase::NotifyCardAttribChange(PRUint32 abCode, nsIAddrDBL
         nsIAddrDBListener *changeListener =
             (nsIAddrDBListener *) m_ChangeListeners->ElementAt(i);
 
-        nsresult rv = changeListener->OnCardAttribChange(abCode, instigator); 
+        nsresult rv = changeListener->OnCardAttribChange(abCode);
     NS_ENSURE_SUCCESS(rv, rv);
     }
     return NS_OK;
 }
 
-NS_IMETHODIMP nsAddrDatabase::NotifyCardEntryChange(PRUint32 abCode, nsIAbCard *card, nsIAddrDBListener *instigator)
+NS_IMETHODIMP nsAddrDatabase::NotifyCardEntryChange(PRUint32 abCode, nsIAbCard *card)
 {
   if (!m_ChangeListeners)
       return NS_OK;
@@ -297,7 +299,7 @@ NS_IMETHODIMP nsAddrDatabase::NotifyCardEntryChange(PRUint32 abCode, nsIAbCard *
 
     if (changeListener)
     {
-      nsresult rv = changeListener->OnCardEntryChange(abCode, card, instigator); 
+      nsresult rv = changeListener->OnCardEntryChange(abCode, card);
       NS_ENSURE_SUCCESS(rv, rv);
     }
     else
@@ -307,7 +309,7 @@ NS_IMETHODIMP nsAddrDatabase::NotifyCardEntryChange(PRUint32 abCode, nsIAbCard *
   return NS_OK;
 }
 
-nsresult nsAddrDatabase::NotifyListEntryChange(PRUint32 abCode, nsIAbDirectory *dir, nsIAddrDBListener *instigator)
+nsresult nsAddrDatabase::NotifyListEntryChange(PRUint32 abCode, nsIAbDirectory *dir)
 {
   if (!m_ChangeListeners)
         return NS_OK;
@@ -319,7 +321,7 @@ nsresult nsAddrDatabase::NotifyListEntryChange(PRUint32 abCode, nsIAbDirectory *
         nsIAddrDBListener *changeListener = 
             (nsIAddrDBListener *) m_ChangeListeners->ElementAt(i);
 
-        nsresult rv = changeListener->OnListEntryChange(abCode, dir, instigator); 
+        nsresult rv = changeListener->OnListEntryChange(abCode, dir); 
     NS_ENSURE_SUCCESS(rv, rv);
     }
     return NS_OK;
@@ -338,7 +340,7 @@ NS_IMETHODIMP nsAddrDatabase::NotifyAnnouncerGoingAway(void)
         nsIAddrDBListener *changeListener =
             (nsIAddrDBListener *) m_ChangeListeners->ElementAt(i);
 
-        nsresult rv = changeListener->OnAnnouncerGoingAway(this); 
+        nsresult rv = changeListener->OnAnnouncerGoingAway(); 
     NS_ENSURE_SUCCESS(rv, rv);
     }
   return NS_OK;
@@ -546,82 +548,124 @@ NS_IMETHODIMP nsAddrDatabase::SetDbPath(nsFileSpec * aDbPath)
     return NS_OK;
 }
 
-NS_IMETHODIMP nsAddrDatabase::OpenWithIFile(nsIFile *aFile, PRBool aCreate, PRBool aUpgrading, nsIAddrDatabase **aDB)
-{
-  NS_ENSURE_ARG_POINTER(aDB);
-  nsCOMPtr<nsIFileSpec> dbSpec;
-  nsFileSpec addrDBFileSpec;
-  // Convert the nsILocalFile into an nsIFileSpec
-  // TODO: convert users of nsIFileSpec to nsILocalFile
-  // and avoid this step.
-  nsresult rv = NS_NewFileSpecFromIFile(aFile, getter_AddRefs(dbSpec));
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = dbSpec->GetFileSpec(&addrDBFileSpec);
-  NS_ENSURE_SUCCESS(rv, rv);
-  return Open(&addrDBFileSpec, aCreate, aDB, aUpgrading);
-}
-
 NS_IMETHODIMP nsAddrDatabase::Open
-(nsFileSpec *aMabFile, PRBool aCreate, nsIAddrDatabase** pAddrDB, PRBool upgrading /* unused */)
+(nsIFile *aMabFile, PRBool aCreate, PRBool upgrading /* unused */, nsIAddrDatabase** pAddrDB)
 { 
   *pAddrDB = nsnull;
   
-  nsAddrDatabase *pAddressBookDB = (nsAddrDatabase *) FindInCache(aMabFile);
+  nsCOMPtr<nsIFileSpec> mabIFileSpec;
+  nsFileSpec mabFileSpec;
+  // Convert the nsILocalFile into an nsIFileSpec
+  // TODO: convert users of nsIFileSpec to nsILocalFile
+  // and avoid this step.
+  nsresult rv = NS_NewFileSpecFromIFile(aMabFile, getter_AddRefs(mabIFileSpec));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = mabIFileSpec->GetFileSpec(&mabFileSpec);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsAddrDatabase *pAddressBookDB = (nsAddrDatabase *) FindInCache(&mabFileSpec);
   if (pAddressBookDB) {
     *pAddrDB = pAddressBookDB;
     return NS_OK;
   }
   
-  nsresult rv = OpenInternal(aMabFile, aCreate, pAddrDB);
+  rv = OpenInternal(&mabFileSpec, aCreate, pAddrDB);
   if (NS_SUCCEEDED(rv))
     return NS_OK;
   
+  if (rv == NS_ERROR_FILE_ACCESS_DENIED)
+  {
+    static PRBool gAlreadyAlerted;
+     // only do this once per session to avoid annoying the user
+    if (!gAlreadyAlerted)
+    {
+      gAlreadyAlerted = PR_TRUE;
+      nsXPIDLCString mabFileName;
+      mabFileName.Adopt(mabFileSpec.GetLeafName());
+      AlertAboutLockedMabFile(NS_ConvertASCIItoUCS2(mabFileName).get());
+    }
+  }
   // try one more time
   // but first rename corrupt mab file
   // and prompt the user
-  if (aCreate) 
+  else if (aCreate) 
   {
-    nsFileSpec *newMabFile = new nsFileSpec(*aMabFile);
-    if (!newMabFile)
-      return NS_ERROR_OUT_OF_MEMORY;
-    
-    // save off the name of the corrupt mab file, example abook.mab
-    nsXPIDLCString originalMabFileName;
-    originalMabFileName.Adopt(aMabFile->GetLeafName());
+    nsCOMPtr<nsIFile> dummyBackupMabFile;
+    nsCOMPtr<nsIFile> actualBackupMabFile;
 
-    // the suggest new name for the backup will be abook.mab.bak
-    nsCAutoString backupMabFileName(originalMabFileName);
-    backupMabFileName += ".bak";
+    // First create a clone of the corrupt mab file that we'll
+    // use to generate the name for the backup file that we are
+    // going to move it to.
+    rv = aMabFile->Clone(getter_AddRefs(dummyBackupMabFile));
+    NS_ENSURE_SUCCESS(rv, rv);
 
-    // get a unique file name, using the suggested name
-    // if abook.mab.bak exists, abook.mab-1.bak will come back
-    // store that name
-    newMabFile->MakeUnique(backupMabFileName.get());
-    backupMabFileName.Adopt(newMabFile->GetLeafName());
+    // Now create a second clone that we'll use to do the move
+    // (this allows us to leave the original name intact)
+    rv = aMabFile->Clone(getter_AddRefs(actualBackupMabFile));
+    NS_ENSURE_SUCCESS(rv, rv);
 
-    // rename abook.mab to abook.mab.bak
-    rv = aMabFile->Rename(backupMabFileName.get());
+    // Now we try and generate a new name for the corrupt mab
+    // file using the dummy backup mab file
+
+    // First append .bak - we have to do this the long way as
+    // AppendNative is to the path, not the LeafName.
+    nsCAutoString dummyBackupMabFileName;
+    rv = dummyBackupMabFile->GetNativeLeafName(dummyBackupMabFileName);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    dummyBackupMabFileName.Append(NS_LITERAL_CSTRING(".bak"));
+
+    rv = dummyBackupMabFile->SetNativeLeafName(dummyBackupMabFileName);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Now see if we can create it unique
+    rv = dummyBackupMabFile->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Now get the new name
+    nsCAutoString backupMabFileName;
+    rv = dummyBackupMabFile->GetNativeLeafName(backupMabFileName);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // And the parent directory
+    nsCOMPtr<nsIFile> parentDir;
+    rv = dummyBackupMabFile->GetParent(getter_AddRefs(parentDir));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Now move the corrupt file to its backup location
+    rv = actualBackupMabFile->MoveToNative(parentDir, backupMabFileName);
     NS_ASSERTION(NS_SUCCEEDED(rv), "failed to rename corrupt mab file");
- 
-    if (NS_SUCCEEDED(rv)) {
-      // the new mab file should be name of the old one: abook.mab
-      newMabFile->SetLeafName(originalMabFileName);
 
-      rv = OpenInternal(newMabFile, aCreate, pAddrDB);
+    if (NS_SUCCEEDED(rv)) {
+      nsCOMPtr<nsIFileSpec> newMabIFileSpec;
+      nsFileSpec newMabFileSpec;
+      // Convert the nsILocalFile into an nsIFileSpec
+      // TODO: convert users of nsIFileSpec to nsILocalFile
+      // and avoid this step.
+      nsresult rv = NS_NewFileSpecFromIFile(aMabFile, getter_AddRefs(newMabIFileSpec));
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      rv = newMabIFileSpec->GetFileSpec(&newMabFileSpec);
+      NS_ENSURE_SUCCESS(rv, rv);
+      
+      rv = OpenInternal(&newMabFileSpec, aCreate, pAddrDB);
       NS_ASSERTION(NS_SUCCEEDED(rv), "failed to create .mab file, after rename");
 
       if (NS_SUCCEEDED(rv)) {
+        nsCAutoString originalMabFileName;
+        rv = aMabFile->GetNativeLeafName(originalMabFileName);
+        NS_ENSURE_SUCCESS(rv, rv);
+
         // if this fails, we don't care
         (void)AlertAboutCorruptMabFile(NS_ConvertASCIItoUCS2(originalMabFileName).get(), 
           NS_ConvertASCIItoUCS2(backupMabFileName).get());
       }
     }
-    delete newMabFile;
   }
   return rv;
 }
 
-nsresult nsAddrDatabase::AlertAboutCorruptMabFile(const PRUnichar *aOldFileName, const PRUnichar *aNewFileName)
+nsresult nsAddrDatabase::DisplayAlert(const PRUnichar *titleName, const PRUnichar *alertStringName, const PRUnichar **formatStrings, PRInt32 numFormatStrings)
 {
   nsresult rv;
   nsCOMPtr<nsIStringBundleService> bundleService = do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
@@ -630,25 +674,35 @@ nsresult nsAddrDatabase::AlertAboutCorruptMabFile(const PRUnichar *aOldFileName,
   nsCOMPtr<nsIStringBundle> bundle;
   rv = bundleService->CreateBundle("chrome://messenger/locale/addressbook/addressBook.properties", getter_AddRefs(bundle));
   NS_ENSURE_SUCCESS(rv, rv);
-
-  const PRUnichar *formatStrings[] = { aOldFileName, aOldFileName, aNewFileName };
   
   nsXPIDLString alertMessage;
-  rv = bundle->FormatStringFromName(NS_LITERAL_STRING("corruptMabFileAlert").get(),
-    formatStrings, 3,
+  rv = bundle->FormatStringFromName(alertStringName, formatStrings, numFormatStrings,
     getter_Copies(alertMessage));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsXPIDLString alertTitle;
-  rv = bundle->GetStringFromName(NS_LITERAL_STRING("corruptMabFileTitle").get(), getter_Copies(alertTitle));
+  rv = bundle->GetStringFromName(titleName, getter_Copies(alertTitle));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIPromptService> prompter = do_GetService("@mozilla.org/embedcomp/prompt-service;1", &rv);
+  nsCOMPtr<nsIPromptService> prompter =
+      do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = prompter->Alert(nsnull /* we don't know the parent window */, alertTitle.get(), alertMessage.get());
-  NS_ENSURE_SUCCESS(rv, rv);
-  return NS_OK;
+  return prompter->Alert(nsnull /* we don't know the parent window */, alertTitle.get(), alertMessage.get());
+}
+
+nsresult nsAddrDatabase::AlertAboutCorruptMabFile(const PRUnichar *aOldFileName, const PRUnichar *aNewFileName)
+{
+  const PRUnichar *formatStrings[] = { aOldFileName, aOldFileName, aNewFileName };
+  return DisplayAlert(NS_LITERAL_STRING("corruptMabFileTitle").get(),
+    NS_LITERAL_STRING("corruptMabFileAlert").get(), formatStrings, 3);
+}
+
+nsresult nsAddrDatabase::AlertAboutLockedMabFile(const PRUnichar *aFileName)
+{
+  const PRUnichar *formatStrings[] = { aFileName };
+  return DisplayAlert(NS_LITERAL_STRING("lockedMabFileTitle").get(),
+    NS_LITERAL_STRING("lockedMabFileAlert").get(), formatStrings, 1);
 }
 
 nsresult
@@ -706,13 +760,14 @@ NS_IMETHODIMP nsAddrDatabase::OpenMDB(nsFileSpec *dbName, PRBool create)
       UnixToNative(nativeFileName);
 #endif
       if (!dbName->Exists()) 
-        ret = NS_ERROR_FAILURE;  // check: use the right error code later
+        ret = NS_ERROR_FILE_NOT_FOUND;
       else
       {
         mdbOpenPolicy inOpenPolicy;
         mdb_bool    canOpen;
         mdbYarn        outFormatVersion;
         nsIMdbFile* oldFile = 0;
+        PRBool isEmptyFile = !dbName->GetFileSize();
         
         ret = myMDBFactory->OpenOldFile(m_mdbEnv, dbHeap, nativeFileName,
           dbFrozen, &oldFile);
@@ -731,11 +786,13 @@ NS_IMETHODIMP nsAddrDatabase::OpenMDB(nsFileSpec *dbName, PRBool create)
               ret = myMDBFactory->OpenFileStore(m_mdbEnv, dbHeap,
                 oldFile, &inOpenPolicy, &thumb); 
             }
-            else
-              ret = NS_ERROR_FAILURE;  //check: use the right error code
+            else if (!isEmptyFile)
+              ret = NS_ERROR_FILE_ACCESS_DENIED;
           }
           NS_RELEASE(oldFile); // always release our file ref, store has own
         }
+        if (NS_FAILED(ret))
+          ret = NS_ERROR_FILE_ACCESS_DENIED;
       }
       
       nsCRT::free(nativeFileName);
@@ -766,7 +823,7 @@ NS_IMETHODIMP nsAddrDatabase::OpenMDB(nsFileSpec *dbName, PRBool create)
           }
         }
       }
-      else if (create)    // ### need error code saying why open file store failed
+      else if (create && ret != NS_ERROR_FILE_ACCESS_DENIED)
       {
         nsIMdbFile* newFile = 0;
         ret = myMDBFactory->CreateNewFile(m_mdbEnv, dbHeap, dbName->GetCString(), &newFile);
@@ -1086,11 +1143,13 @@ nsresult nsAddrDatabase::InitExistingDB()
     if (err == NS_OK)
     {
         err = GetStore()->GetTable(GetEnv(), &gAddressBookTableOID, &m_mdbPabTable);
-
-        err = GetLastRecordKey();
-        if (err == NS_ERROR_NOT_AVAILABLE)
-            CheckAndUpdateRecordKey();
-        UpdateLowercaseEmailListName();
+        if (NS_SUCCEEDED(err) && m_mdbPabTable)
+        {
+            err = GetLastRecordKey();
+            if (err == NS_ERROR_NOT_AVAILABLE)
+                CheckAndUpdateRecordKey();
+            UpdateLowercaseEmailListName();
+        }
     }
     return err;
 }
@@ -1248,6 +1307,7 @@ nsresult nsAddrDatabase::InitMDBInfo()
             GetStore()->StringToToken(GetEnv(),  kDefaultEmailColumn, &m_DefaultEmailColumnToken);
             GetStore()->StringToToken(GetEnv(),  kCardTypeColumn, &m_CardTypeColumnToken);
             GetStore()->StringToToken(GetEnv(),  kPreferMailFormatColumn, &m_MailFormatColumnToken);
+            GetStore()->StringToToken(GetEnv(),  kPopularityIndexColumn, &m_PopularityIndexColumnToken);
             GetStore()->StringToToken(GetEnv(),  kWorkPhoneColumn, &m_WorkPhoneColumnToken);
             GetStore()->StringToToken(GetEnv(),  kHomePhoneColumn, &m_HomePhoneColumnToken);
             GetStore()->StringToToken(GetEnv(),  kFaxColumn, &m_FaxColumnToken);
@@ -1381,6 +1441,10 @@ nsresult nsAddrDatabase::AddAttributeColumnsToRow(nsIAbCard *card, nsIMdbRow *ca
     PRUint32 format = nsIAbPreferMailFormat::unknown;
     card->GetPreferMailFormat(&format);
     AddPreferMailFormat(cardRow, format);
+
+    PRUint32 popularityIndex = 0;
+    card->GetPopularityIndex(&popularityIndex);
+    AddPopularityIndex(cardRow, popularityIndex);
     
     card->GetWorkPhone(getter_Copies(unicodeStr));
     AddWorkPhone(cardRow, NS_ConvertUCS2toUTF8(unicodeStr).get());
@@ -1552,7 +1616,7 @@ NS_IMETHODIMP nsAddrDatabase::CreateNewCardAndAddToDB(nsIAbCard *newCard, PRBool
   //  do notification
   if (notify)
   {
-    NotifyCardEntryChange(AB_NotifyInserted, newCard, NULL);
+    NotifyCardEntryChange(AB_NotifyInserted, newCard);
   }
   return rv;
 }
@@ -1571,7 +1635,7 @@ NS_IMETHODIMP nsAddrDatabase::CreateNewCardAndAddToDBWithKey(nsIAbCard *newCard,
 
 NS_IMETHODIMP nsAddrDatabase::CreateNewListCardAndAddToDB(nsIAbDirectory *aList, PRUint32 listRowID, nsIAbCard *newCard, PRBool notify /* = FALSE */)
 {
-    if (!newCard || !m_mdbPabTable)
+     if (!newCard || !m_mdbPabTable)
         return NS_ERROR_NULL_POINTER;
 
     nsIMdbRow* pListRow = nsnull;
@@ -1632,7 +1696,7 @@ NS_IMETHODIMP nsAddrDatabase::CreateNewListCardAndAddToDB(nsIAbDirectory *aList,
   addressList->AppendElement(newCard);
 
   if (notify)
-    NotifyCardEntryChange(AB_NotifyInserted, newCard, nsnull); 
+    NotifyCardEntryChange(AB_NotifyInserted, newCard); 
 
     return rv;
 }
@@ -1684,13 +1748,13 @@ NS_IMETHODIMP nsAddrDatabase::AddListCardColumnsToRow
     NS_IF_ADDREF(*pNewCard = newCard);
     
     if (cardWasAdded) {
-      NotifyCardEntryChange(AB_NotifyInserted, newCard, nsnull);
+      NotifyCardEntryChange(AB_NotifyInserted, newCard);
     }
     else if (!aInMailingList) {
-      NotifyCardEntryChange(AB_NotifyInserted, pCard, nsnull);
+      NotifyCardEntryChange(AB_NotifyInserted, pCard);
     }
     else {
-      NotifyCardEntryChange(AB_NotifyPropertyChanged, pCard, nsnull);
+      NotifyCardEntryChange(AB_NotifyPropertyChanged, pCard);
     }
     
     //add a column with address row id to the list row
@@ -1854,7 +1918,7 @@ NS_IMETHODIMP nsAddrDatabase::CreateMailListAndAddToDB(nsIAbDirectory *newList, 
 
         nsCOMPtr<nsIAbCard> listCard;
         CreateABListCard(listRow, getter_AddRefs(listCard));
-        NotifyCardEntryChange(AB_NotifyInserted, listCard, NULL);
+        NotifyCardEntryChange(AB_NotifyInserted, listCard);
 
                 NS_RELEASE(listRow);
         return NS_OK;
@@ -1866,16 +1930,16 @@ NS_IMETHODIMP nsAddrDatabase::CreateMailListAndAddToDB(nsIAbDirectory *newList, 
 
 void nsAddrDatabase::DeleteCardFromAllMailLists(mdb_id cardRowID)
 {
-    nsIMdbTableRowCursor* rowCursor;
-    m_mdbPabTable->GetTableRowCursor(GetEnv(), -1, &rowCursor);
+    nsCOMPtr <nsIMdbTableRowCursor> rowCursor;
+    m_mdbPabTable->GetTableRowCursor(GetEnv(), -1, getter_AddRefs(rowCursor));
 
     if (rowCursor)
     {
-        nsIMdbRow* pListRow = nsnull;
+        nsCOMPtr <nsIMdbRow> pListRow;
         mdb_pos rowPos;
         do 
         {
-            mdb_err err = rowCursor->NextRow(GetEnv(), &pListRow, &rowPos);
+            mdb_err err = rowCursor->NextRow(GetEnv(), getter_AddRefs(pListRow), &rowPos);
 
             if (err == NS_OK && pListRow)
             {
@@ -1886,11 +1950,8 @@ void nsAddrDatabase::DeleteCardFromAllMailLists(mdb_id cardRowID)
                     if (IsListRowScopeToken(rowOid.mOid_Scope))
                         DeleteCardFromListRow(pListRow, cardRowID);
                 }
-                                NS_RELEASE(pListRow);
             }
         } while (pListRow);
-
-        rowCursor->Release();
     }
 }
 
@@ -1932,7 +1993,7 @@ NS_IMETHODIMP nsAddrDatabase::DeleteCard(nsIAbCard *card, PRBool notify)
     
   if (NS_SUCCEEDED(err)) {
     if (notify) 
-      NotifyCardEntryChange(AB_NotifyDeleted, card, NULL);
+      NotifyCardEntryChange(AB_NotifyDeleted, card);
   }
   else
     DeleteRowFromDeletedCardsTable(cardRow);
@@ -1947,10 +2008,6 @@ nsresult nsAddrDatabase::DeleteCardFromListRow(nsIMdbRow* pListRow, mdb_id cardR
     
     nsresult err = NS_OK;
 
-//    PRUint32 cardRowID;
-//    card->GetDbRowID(&cardRowID);
-
-    //todo: cut the card column and total column
     PRUint32 totalAddress = GetListAddressTotal(pListRow);
     
     PRUint32 pos;
@@ -2021,7 +2078,7 @@ NS_IMETHODIMP nsAddrDatabase::DeleteCardFromMailList(nsIAbDirectory *mailList, n
     
   err = DeleteCardFromListRow(pListRow, cardRowID);
   if (NS_SUCCEEDED(err) && aNotify) {            
-    NotifyCardEntryChange(AB_NotifyDeleted, card, NULL);
+    NotifyCardEntryChange(AB_NotifyDeleted, card);
   }
   NS_RELEASE(pListRow);
   return NS_OK;
@@ -2222,7 +2279,7 @@ NS_IMETHODIMP nsAddrDatabase::EditCard(nsIAbCard *card, PRBool notify)
   NS_ENSURE_SUCCESS(err, err);
   
   if (notify) 
-    NotifyCardEntryChange(AB_NotifyPropertyChanged, card, nsnull);
+    NotifyCardEntryChange(AB_NotifyPropertyChanged, card);
   
   return NS_OK;
 }
@@ -2310,10 +2367,10 @@ NS_IMETHODIMP nsAddrDatabase::EditMailList(nsIAbDirectory *mailList, nsIAbCard *
 
     if (notify)
     {
-        NotifyListEntryChange(AB_NotifyPropertyChanged, mailList, nsnull);
+        NotifyListEntryChange(AB_NotifyPropertyChanged, mailList);
 
     if (listCard) {
-            NotifyCardEntryChange(AB_NotifyPropertyChanged, listCard, nsnull);
+            NotifyCardEntryChange(AB_NotifyPropertyChanged, listCard);
         }
     }
 
@@ -2707,6 +2764,11 @@ NS_IMETHODIMP nsAddrDatabase::InitCardFromRow(nsIAbCard *newCard, nsIMdbRow* car
     err = GetIntColumn(cardRow, m_MailFormatColumnToken, &format, 0);
     if (NS_SUCCEEDED(err))
         newCard->SetPreferMailFormat(format);
+
+    PRUint32 popularityIndex = 0;
+    err = GetIntColumn(cardRow, m_PopularityIndexColumnToken, &popularityIndex, 0);
+    if (NS_SUCCEEDED(err))
+        newCard->SetPopularityIndex(popularityIndex);
 
     err = GetStringColumn(cardRow, m_WorkPhoneColumnToken, tempString);
     if (NS_SUCCEEDED(err) && !tempString.IsEmpty())
@@ -3106,7 +3168,7 @@ NS_IMETHODIMP nsAddrDBEnumerator::Next(void)
         mDone = PR_TRUE;
         return NS_ERROR_FAILURE;
     }
-        NS_IF_RELEASE(mCurrentRow);
+    NS_IF_RELEASE(mCurrentRow);
     nsresult rv = mRowCursor->NextRow(mDB->GetEnv(), &mCurrentRow, &mRowPos);
     if (mCurrentRow && NS_SUCCEEDED(rv))
     {
@@ -3272,16 +3334,6 @@ NS_IMETHODIMP nsListAddressEnumerator::IsDone(void)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-
-void nsAddrDatabase::PRTime2Seconds(PRTime prTime, PRUint32 *seconds)
-{
-  PRInt64 microSecondsPerSecond, intermediateResult;
-  
-  LL_I2L(microSecondsPerSecond, PR_USEC_PER_SEC);
-  LL_DIV(intermediateResult, prTime, microSecondsPerSecond);
-  LL_L2UI((*seconds), intermediateResult);
-}
-
 
 NS_IMETHODIMP nsAddrDatabase::EnumerateCards(nsIAbDirectory *directory, nsIEnumerator **result)
 {
@@ -3712,7 +3764,7 @@ nsAddrDatabase::HasRowButDeletedForCharColumn(const PRUnichar *unicodeStr, mdb_c
     
     // if still no deleted cards table, there are no deleted cards
     if (!m_mdbDeletedCardsTable)
-      return PR_TRUE;
+      return PR_FALSE;
     
     mdb_bool hasRow = PR_FALSE;
     rv = m_mdbDeletedCardsTable->HasRow(env, *aFindRow, &hasRow);

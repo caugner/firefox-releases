@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -43,84 +43,6 @@
 #include "nsString.h"
 #include "nsReadableUtils.h"
 
-/*************************************************
-   The following functions are used to implement
-   a thread safe strtok
- *************************************************/
-/*
- * Get next token from string *stringp, where tokens are (possibly empty)
- * strings separated by characters from delim.  Tokens are separated
- * by exactly one delimiter iff the skip parameter is false; otherwise
- * they are separated by runs of characters from delim, because we
- * skip over any initial `delim' characters.
- *
- * Writes NULs into the string at *stringp to end tokens.
- * delim will usually, but need not, remain CONSTant from call to call.
- * On return, *stringp points past the last NUL written (if there might
- * be further tokens), or is NULL (if there are definitely no more tokens).
- *
- * If *stringp is NULL, strtoken returns NULL.
- */
-static 
-char *strtoken_r(char ** stringp, const char *delim, int skip)
-{
-  char *s;
-  const char *spanp;
-  int c, sc;
-  char *tok;
-  
-  if ((s = *stringp) == NULL)
-    return (NULL);
-  
-  if (skip) {
-		/*
-                * Skip (span) leading delimiters (s += strspn(s, delim)).
-    */
-cont:
-		c = *s;
-                for (spanp = delim; (sc = *spanp++) != 0;) {
-                  if (c == sc) {
-                    s++;
-                    goto cont;
-                  }
-                }
-                if (c == 0) {		/* no token found */
-                  *stringp = NULL;
-                  return (NULL);
-                }
-  }
-  
-  /*
-	 * Scan token (scan for delimiters: s += strcspn(s, delim), sort of).
-         * Note that delim must have one NUL; we stop if we see that, too.
-	 */
-  for (tok = s;;) {
-    c = *s++;
-    spanp = delim;
-    do {
-      if ((sc = *spanp++) == c) {
-        if (c == 0)
-          s = NULL;
-        else
-          s[-1] = 0;
-        *stringp = s;
-        return( (char *) tok );
-      }
-    } while (sc != 0);
-  }
-  /* NOTREACHED */
-  return (NULL);
-}
-
-
-/* static */ char *nsIMAPGenericParser::Imapstrtok_r(char *s1, const char *s2, char **lasts)
-{
-  if (s1)
-    *lasts = s1;
-  return (strtoken_r(lasts, s2, 1));
-}
-
-
 ////////////////// nsIMAPGenericParser /////////////////////////
 
 
@@ -131,7 +53,6 @@ fLineOfTokens(nsnull),
 fStartOfLineOfTokens(nsnull),
 fCurrentTokenPlaceHolder(nsnull),
 fAtEndOfLine(PR_FALSE),
-fTokenizerAdvanced(PR_FALSE),
 fSyntaxErrorLine(nsnull),
 fSyntaxError(PR_FALSE),
 fDisconnected(PR_FALSE)
@@ -154,7 +75,6 @@ void nsIMAPGenericParser::ResetLexAnalyzer()
 {
   PR_FREEIF( fCurrentLine );
   PR_FREEIF( fStartOfLineOfTokens );
-  fTokenizerAdvanced = PR_FALSE;
   
   fCurrentLine = fNextToken = fLineOfTokens = fStartOfLineOfTokens = fCurrentTokenPlaceHolder = nsnull;
   fAtEndOfLine = PR_FALSE;
@@ -213,14 +133,14 @@ PRBool nsIMAPGenericParser::at_end_of_line()
 void nsIMAPGenericParser::skip_to_CRLF()
 {
   while (Connected() && !at_end_of_line())
-    fNextToken = GetNextToken();
+    AdvanceToNextToken();
 }
 
 // fNextToken initially should point to
 // a string after the initial open paren ("(")
 // After this call, fNextToken points to the
 // first character after the matching close
-// paren.  Only call GetNextToken to get the NEXT
+// paren.  Only call AdvanceToNextToken() to get the NEXT
 // token after the one returned in fNextToken.
 void nsIMAPGenericParser::skip_to_close_paren()
 {
@@ -230,7 +150,7 @@ void nsIMAPGenericParser::skip_to_close_paren()
     numberOfCloseParensNeeded--;
     fNextToken++;
     if (!fNextToken || !*fNextToken)
-      fNextToken = GetNextToken();
+      AdvanceToNextToken();
   }
   
   while (ContinueParse() && numberOfCloseParensNeeded > 0)
@@ -250,46 +170,35 @@ void nsIMAPGenericParser::skip_to_close_paren()
       {
         fNextToken = loc + 1;
         if (!fNextToken || !*fNextToken)
-          fNextToken = GetNextToken();
+          AdvanceToNextToken();
         break;	// exit the loop
       }
     }
     
     if (numberOfCloseParensNeeded > 0)
-      fNextToken = GetNextToken();
+      AdvanceToNextToken();
   }
 }
 
-char *nsIMAPGenericParser::GetNextToken()
+void nsIMAPGenericParser::AdvanceToNextToken()
 {
   if (!fCurrentLine || fAtEndOfLine)
     AdvanceToNextLine();
   else if (Connected())
   {
-    if (fTokenizerAdvanced)
-    {
-      fNextToken = Imapstrtok_r(fLineOfTokens, WHITESPACE, &fCurrentTokenPlaceHolder);
-      fTokenizerAdvanced = PR_FALSE;
-    }
-    else
-    {
-      fNextToken = Imapstrtok_r(nsnull, WHITESPACE, &fCurrentTokenPlaceHolder);
-    }
+    fNextToken = nsCRT::strtok(fCurrentTokenPlaceHolder, WHITESPACE, &fCurrentTokenPlaceHolder);
     if (!fNextToken)
     {
       fAtEndOfLine = PR_TRUE;
       fNextToken = CRLF;
     }
   }
-  
-  return fNextToken;
 }
 
 void nsIMAPGenericParser::AdvanceToNextLine()
 {
   PR_FREEIF( fCurrentLine );
   PR_FREEIF( fStartOfLineOfTokens);
-  fTokenizerAdvanced = PR_FALSE;
   
   PRBool ok = GetNextLineForParser(&fCurrentLine);
   if (!ok)
@@ -306,7 +215,7 @@ void nsIMAPGenericParser::AdvanceToNextLine()
     if (fStartOfLineOfTokens)
     {
       fLineOfTokens = fStartOfLineOfTokens;
-      fNextToken = Imapstrtok_r(fLineOfTokens, WHITESPACE, &fCurrentTokenPlaceHolder);
+      fNextToken = nsCRT::strtok(fLineOfTokens, WHITESPACE, &fCurrentTokenPlaceHolder);
       if (!fNextToken)
       {
         fAtEndOfLine = PR_TRUE;
@@ -322,33 +231,25 @@ void nsIMAPGenericParser::AdvanceToNextLine()
     HandleMemoryFailure();
 }
 
+// advances |fLineOfTokens| by |bytesToAdvance| bytes
 void nsIMAPGenericParser::AdvanceTokenizerStartingPoint(int32 bytesToAdvance)
 {
-  PRInt32 startingDiff = fLineOfTokens - fStartOfLineOfTokens;
-  PRInt32 nextTokenOffset;
-  
-  // save off offset into fStartOfLineOfTokens of fNextToken so we can set it appropriately
-  // when we destroy the current line and create a new one. I'm pretty sure fNextToken must
-  // point somewhere in the current line.
-  nextTokenOffset = fNextToken - fStartOfLineOfTokens;
-  
-  PR_FREEIF(fStartOfLineOfTokens);
-  if (fCurrentLine)
+  NS_PRECONDITION(bytesToAdvance>=0, "bytesToAdvance must not be negative");
+  if(!fStartOfLineOfTokens)
+      return;
+  // The last call to AdvanceToNextToken() cleared the token separator to '\0'
+  // iff |fCurrentTokenPlaceHolder|.  We must recover this token separator now.
+  if (fCurrentTokenPlaceHolder)
   {
-    fStartOfLineOfTokens = PL_strdup(fCurrentLine);
-    fNextToken = fStartOfLineOfTokens + nextTokenOffset;
-    
-    if (fStartOfLineOfTokens && ((int32) strlen(fStartOfLineOfTokens) >= bytesToAdvance))
-    {
-      fLineOfTokens = fStartOfLineOfTokens + bytesToAdvance  + startingDiff;
-      fCurrentTokenPlaceHolder = fLineOfTokens;
-      fTokenizerAdvanced = PR_TRUE;
-    }
-    else
-      HandleMemoryFailure();
+    int endTokenOffset = fCurrentTokenPlaceHolder - fStartOfLineOfTokens - 1;
+    if (endTokenOffset >= 0)
+      fStartOfLineOfTokens[endTokenOffset] = fCurrentLine[endTokenOffset];
   }
-  else
-    HandleMemoryFailure();
+
+  NS_ASSERTION(bytesToAdvance + (fLineOfTokens-fStartOfLineOfTokens) <=
+    (int32)strlen(fCurrentLine), "cannot advance beyond end of fLineOfTokens");
+  fLineOfTokens += bytesToAdvance;
+  fCurrentTokenPlaceHolder = fLineOfTokens;
 }
 
 // Lots of things in the IMAP protocol are defined as an "astring."
@@ -358,7 +259,7 @@ void nsIMAPGenericParser::AdvanceTokenizerStartingPoint(int32 bytesToAdvance)
 // Quoted:  "Test Folder 1"
 // Literal: {13}Test Folder 1
 // This function leaves us off with fCurrentTokenPlaceHolder immediately after
-// the end of the Astring.  Call GetNextToken() to get the token after it.
+// the end of the Astring.  Call AdvanceToNextToken() to get the token after it.
 char *nsIMAPGenericParser::CreateAstring()
 {
   if (*fNextToken == '{')
@@ -378,11 +279,10 @@ char *nsIMAPGenericParser::CreateAstring()
 
 // Create an atom
 // This function does not advance the parser.
-// Call GetNextToken() to get the next token after the atom.
+// Call AdvanceToNextToken() to get the next token after the atom.
 char *nsIMAPGenericParser::CreateAtom()
 {
   char *rv = PL_strdup(fNextToken);
-  //fNextToken = GetNextToken();
   return (rv);
 }
 
@@ -390,14 +290,13 @@ char *nsIMAPGenericParser::CreateAtom()
 // Call with fNextToken pointing to the thing which we think is the nilstring.
 // This function leaves us off with fCurrentTokenPlaceHolder immediately after
 // the end of the string, if it is a string, or at the NIL.
-// Regardless of type, call GetNextToken() to get the token after it.
+// Regardless of type, call AdvanceToNextToken() to get the token after it.
 char *nsIMAPGenericParser::CreateNilString()
 {
   if (!PL_strncasecmp(fNextToken, "NIL", 3))
   {
     if (strlen(fNextToken) != 3)
       fNextToken += 3;
-    //fNextToken = GetNextToken();
     return NULL;
   }
   else
@@ -408,7 +307,7 @@ char *nsIMAPGenericParser::CreateNilString()
 // Create a string, which can either be quoted or literal,
 // but not an atom.
 // This function leaves us off with fCurrentTokenPlaceHolder immediately after
-// the end of the String.  Call GetNextToken() to get the token after it.
+// the end of the String.  Call AdvanceToNextToken() to get the token after it.
 char *nsIMAPGenericParser::CreateString()
 {
   if (*fNextToken == '{')
@@ -419,7 +318,6 @@ char *nsIMAPGenericParser::CreateString()
   else if (*fNextToken == '"')
   {
     char *rv = CreateQuoted();		// quoted
-    //fNextToken = GetNextToken();
     return (rv);
   }
   else
@@ -429,12 +327,14 @@ char *nsIMAPGenericParser::CreateString()
   }
 }
 
-
-// This function leaves us off with fCurrentTokenPlaceHolder immediately after
-// the end of the closing quote.  Call GetNextToken() to get the token after it.
-// Note that if the current line ends without the
-// closed quote then we have to fetch another line from the server, until
-// we find the close quote.
+// This function sets fCurrentTokenPlaceHolder immediately after the end of the
+// closing quote.  Call AdvanceToNextToken() to get the token after it.
+// QUOTED_CHAR     ::= <any TEXT_CHAR except quoted_specials> /
+//                     "\" quoted_specials
+// TEXT_CHAR       ::= <any CHAR except CR and LF>
+// quoted_specials ::= <"> / "\"
+// Note that according to RFC 1064 and RFC 2060, CRs and LFs are not allowed 
+// inside a quoted string.  It is sufficient to read from the current line only.
 char *nsIMAPGenericParser::CreateQuoted(PRBool /*skipToEnd*/)
 {
   char *currentChar = fCurrentLine + 
@@ -446,19 +346,14 @@ char *nsIMAPGenericParser::CreateQuoted(PRBool /*skipToEnd*/)
   PRBool closeQuoteFound = PR_FALSE;
   nsCString returnString(currentChar);
   
-  while (!closeQuoteFound && ContinueParse())
+  while (returnString.CharAt(charIndex))
   {
-    if (!returnString.CharAt(charIndex))
-    {
-      AdvanceToNextLine();
-      returnString += fCurrentLine;
-      charIndex++;
-    }
-    else if (returnString.CharAt(charIndex) == '"')
+    if (returnString.CharAt(charIndex) == '"')
     {
       // don't check to see if it was escaped, 
       // that was handled in the next clause
       closeQuoteFound = PR_TRUE;
+      break;
     }
     else if (returnString.CharAt(charIndex) == '\\')
     {
@@ -492,8 +387,6 @@ char *nsIMAPGenericParser::CreateQuoted(PRBool /*skipToEnd*/)
       //			if (!nsCRT::strcmp(fCurrentTokenPlaceHolder, CRLF))
       //				fAtEndOfLine = PR_TRUE;
       AdvanceTokenizerStartingPoint ((fNextToken - fLineOfTokens) + returnString.Length() + escapeCharsCut + 2);
-      if (!nsCRT::strcmp(fLineOfTokens, CRLF))
-        fAtEndOfLine = PR_TRUE;
     }
     else
     {
@@ -506,15 +399,15 @@ char *nsIMAPGenericParser::CreateQuoted(PRBool /*skipToEnd*/)
     }
   }
   else
-    NS_ASSERTION(PR_FALSE, "didn't find close quote");
+    SetSyntaxError(PR_TRUE);
   
   return ToNewCString(returnString);
 }
 
 
 // This function leaves us off with fCurrentTokenPlaceHolder immediately after
-// the end of the literal string.  Call GetNextToken() to get the token after it
-// the literal string.
+// the end of the literal string.  Call AdvanceToNextToken() to get the token
+// after the literal string.
 char *nsIMAPGenericParser::CreateLiteral()
 {
   int32 numberOfCharsInMessage = atoi(fNextToken + 1);
@@ -527,16 +420,12 @@ char *nsIMAPGenericParser::CreateLiteral()
     return nsnull;
   
   char *returnString = (char *) PR_Malloc(numBytes);
-  
-  if (returnString)
-  {
+    if (!returnString)
+        return nsnull;
+ 
     *(returnString + numberOfCharsInMessage) = 0; // Null terminate it first
     
     PRBool terminatedLine = PR_FALSE;
-    while (ContinueParse() && (charsReadSoFar < numberOfCharsInMessage))
-    {
-      if (!terminatedLine)
-      {
         if (fCurrentTokenPlaceHolder &&
           *fCurrentTokenPlaceHolder == nsCRT::LF &&
           *(fCurrentTokenPlaceHolder+1))
@@ -549,11 +438,12 @@ char *nsIMAPGenericParser::CreateLiteral()
         {
           // We have to read the next line from AdvanceToNextLine().
           terminatedLine = PR_TRUE;
-          AdvanceToNextLine();
         }
-      }
-      else
+    while (ContinueParse() && (charsReadSoFar < numberOfCharsInMessage))
+    {
+      if(terminatedLine)
         AdvanceToNextLine();
+
       if (ContinueParse())
       {
         currentLineLength = strlen(terminatedLine ? fCurrentLine : fCurrentTokenPlaceHolder);
@@ -564,18 +454,36 @@ char *nsIMAPGenericParser::CreateLiteral()
         memcpy(returnString + charsReadSoFar, terminatedLine ? fCurrentLine : fCurrentTokenPlaceHolder, bytesToCopy); 
         charsReadSoFar += bytesToCopy;
       }
+      if (charsReadSoFar < numberOfCharsInMessage) // read the next line
+          terminatedLine = PR_TRUE;
     }
     
     if (ContinueParse())
     {
       if (bytesToCopy == 0)
       {
-        skip_to_CRLF();
-        fAtEndOfLine = PR_TRUE;
+          // the loop above was never executed, we just move to the next line
+          if(terminatedLine) {
+              AdvanceToNextLine();
+              AdvanceTokenizerStartingPoint(0);
+          }
       }
       else if (currentLineLength == bytesToCopy)
       {
-        fAtEndOfLine = PR_TRUE;
+          // We have consumed the entire line.
+          // Consider the input  "A1 {4}\r\nL2\r\n A3\r\n" which is read
+          // line-by-line.  Reading 3 Astrings, this should result in 
+          // "A1", "L2\r\n", and "A3".  Note that this confuses the parser, 
+          // since the second line is "L2\r\n" where the "\r\n" is part of the
+          // literal.  Hence, the 'full' imap line was not read in yet after the
+          // second line of input (which is where we are now).  We now read the
+          // next line to ensure that the next call to AdvanceToNextToken()
+          // would lead to fNextToken=="A3" in our example.
+          // Note that setting fAtEndOfLine=PR_TRUE is wrong here, since the "\r\n"
+          // were just some characters from the literal; at_end_of_line() would
+          // give a misleading result.
+          AdvanceToNextLine();
+          AdvanceTokenizerStartingPoint(0);
       }
       else
       {
@@ -588,13 +496,8 @@ char *nsIMAPGenericParser::CreateLiteral()
           2 /* CRLF */ +
           (fNextToken - fLineOfTokens)
           );
-        if (!*fCurrentTokenPlaceHolder)	// landed on a token boundary
-          fCurrentTokenPlaceHolder++;
-        if (!nsCRT::strcmp(fCurrentTokenPlaceHolder, CRLF))
-          fAtEndOfLine = PR_TRUE;
       }	
     }
-  }
   
   return returnString;
 }
@@ -647,7 +550,7 @@ char *nsIMAPGenericParser::CreateParenGroup()
       {
         if (*fCurrentTokenPlaceHolder == '{')
         {
-          fNextToken = GetNextToken();
+          AdvanceToNextToken();
           NS_ASSERTION(fNextToken, "out of memory?or invalid syntax");
           if (fNextToken)
           {
@@ -668,14 +571,13 @@ char *nsIMAPGenericParser::CreateParenGroup()
               returnString.Append(fNextToken);	// append the {xx} to the buffer
               returnString.Append(CRLF);			// append a CRLF to the buffer
               char *lit = CreateLiteral();
-              fTokenizerAdvanced = PR_FALSE;	// force it to use fCurrentTokenPlaceHolder
               NS_ASSERTION(lit, "syntax error or out of memory");
               if (lit)
               {
                 returnString.Append(lit);
                 //fCurrentTokenPlaceHolder += nsCRT::strlen(lit);
                 //AdvanceTokenizerStartingPoint(nsCRT::strlen(lit));
-                //fNextToken = GetNextToken();
+                //AdvanceToNextToken();
                 extractReset = PR_TRUE;
                 PR_Free(lit);
               }
@@ -702,12 +604,11 @@ char *nsIMAPGenericParser::CreateParenGroup()
             bytesUsed = 0;
           }
           
-          fNextToken = GetNextToken();
+          AdvanceToNextToken();
           NS_ASSERTION(fNextToken, "syntax error or out of memory creating paren group");
           if (fNextToken)
           {
             char *q = CreateQuoted();
-            fTokenizerAdvanced = PR_FALSE;	// force it to use fCurrentTokenPlaceHolder
             NS_ASSERTION(q, "syntax error or out of memory creating paren group");
             if (q)
             {
@@ -758,7 +659,7 @@ char *nsIMAPGenericParser::CreateParenGroup()
       returnString.Append(buf);
       buf.Truncate();
     }
-    fNextToken = GetNextToken();
+    AdvanceToNextToken();
   }
   
   return ToNewCString(returnString);

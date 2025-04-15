@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -57,6 +57,7 @@
 #include "nsIDBChangeListener.h"
 #include "nsIWeakReference.h"
 #include "nsIMsgWindow.h"
+#include "nsImapMoveCoalescer.h"
 
 #include "nsIMsgFilterList.h"
 #include "nsIMsgFilterHitNotify.h"
@@ -126,6 +127,7 @@ public:
   struct message_header m_mozstatus;
   struct message_header m_mozstatus2;
   struct message_header m_in_reply_to;
+  struct message_header m_replyTo;
   struct message_header m_content_type;
   
   // Support for having multiple To or Cc header lines in a message
@@ -200,23 +202,22 @@ protected:
   nsCOMPtr<nsIMsgStatusFeedback> m_statusFeedback;
 
   virtual PRInt32     PublishMsgHeader(nsIMsgWindow *msgWindow);
-  virtual void        FolderTypeSpecificTweakMsgHeader(nsIMsgDBHdr *tweakMe);
   void                FreeBuffers();
 
   // data
-  nsXPIDLString        m_folderName;
-  nsXPIDLCString		m_inboxUri;
-  nsByteArray		m_inputStream;
-  PRInt32			m_obuffer_size;
-  char			*m_obuffer;
-  PRInt32			m_graph_progress_total;
-  PRInt32			m_graph_progress_received;
-  PRBool			m_parsingDone;
-  nsTime			m_startTime;
+  nsXPIDLString   m_folderName;
+  nsXPIDLCString  m_inboxUri;
+  nsByteArray     m_inputStream;
+  PRInt32         m_obuffer_size;
+  char            *m_obuffer;
+  PRUint32        m_graph_progress_total;
+  PRUint32        m_graph_progress_received;
+  PRBool          m_parsingDone;
+  nsTime          m_startTime;
 private:
   // the following flag is used to determine when a url is currently being run. It is cleared on calls
   // to ::StopBinding and it is set whenever we call Load on a url
-  PRBool	m_urlInProgress;
+  PRBool    m_urlInProgress;
   nsWeakPtr m_folder; 
   void Init();
   void ReleaseFolderLock();
@@ -241,29 +242,51 @@ public:
   nsOutputFileStream *GetLogFile();
   virtual PRInt32 PublishMsgHeader(nsIMsgWindow *msgWindow);
   void            GetMsgWindow(nsIMsgWindow **aMsgWindow);
-          nsresult EndMsgDownload();
+  nsresult EndMsgDownload();
+
+  nsresult AppendMsgFromFile(nsIOFileStream *fileStream, PRInt32 offset, 
+                             PRUint32 length, nsFileSpec &destFileSpec);
+
+  virtual void	ApplyFilters(PRBool *pMoved, nsIMsgWindow *msgWindow, PRUint32 msgOffset);
+  nsresult    ApplyForwardAndReplyFilter(nsIMsgWindow *msgWindow);
+
 protected:
-  virtual void	ApplyFilters(PRBool *pMoved, nsIMsgWindow *msgWindow);
   virtual nsresult GetTrashFolder(nsIMsgFolder **pTrashFolder);
   virtual nsresult  MoveIncorporatedMessage(nsIMsgDBHdr *mailHdr, 
                                           nsIMsgDatabase *sourceDB, 
-                                          const nsACString& destFolder,
+                                          nsIMsgFolder *destIFolder,
                                           nsIMsgFilter *filter,
                                           nsIMsgWindow *msgWindow);
   virtual int   MarkFilteredMessageRead(nsIMsgDBHdr *msgHdr);
   void          LogRuleHit(nsIMsgFilter *filter, nsIMsgDBHdr *msgHdr);
+
   nsCOMPtr <nsIMsgFilterList> m_filterList;
+  nsCOMPtr <nsIMsgFilterList> m_deferredToServerFilterList;
   nsCOMPtr <nsIMsgFolder> m_rootFolder;
   nsCOMPtr <nsIMsgWindow> m_msgWindow;
   nsCOMPtr <nsIMsgFolder> m_downloadFolder;
   nsCOMArray <nsIMsgFolder> m_filterTargetFolders;
+
+  nsImapMoveCoalescer *m_moveCoalescer; // strictly owned by nsParseNewMailState;
+
+  PRBool        m_msgMovedByFilter;
   nsIOFileStream  *m_inboxFileStream;
   nsFileSpec    m_inboxFileSpec;
   PRBool        m_disableFilters;
-  PRBool        m_msgMovedByFilter;
   PRUint32      m_ibuffer_fp;
   char          *m_ibuffer;
   PRUint32      m_ibuffer_size;
+  // used for applying move filters, because in the case of using a temporary
+  // download file, the offset/key in the msg hdr is not right.
+  PRUint32      m_curHdrOffset; 
+
+  // we have to apply the reply/forward filters in a second pass, after 
+  // msg quarantining and moving to other local folders, so we remember the 
+  // info we'll need to apply them with these vars.
+  // these need to be arrays in case we have multiple reply/forward filters.
+  nsCStringArray     m_forwardTo;
+  nsCStringArray     m_replyTemplateUri;
+  nsCOMPtr <nsIMsgDBHdr> m_msgToForwardOrReply;
 };
 
 #endif

@@ -1,36 +1,39 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* 
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape Portable Runtime (NSPR).
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1998-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef nspr_pth_defs_h_
 #define nspr_pth_defs_h_
@@ -90,7 +93,11 @@
 #define _PT_PTHREAD_MUTEXATTR_INIT        pthread_mutexattr_init
 #define _PT_PTHREAD_MUTEXATTR_DESTROY     pthread_mutexattr_destroy
 #define _PT_PTHREAD_MUTEX_INIT(m, a)      pthread_mutex_init(&(m), &(a))
+#if defined(FREEBSD)
+#define _PT_PTHREAD_MUTEX_IS_LOCKED(m)    pt_pthread_mutex_is_locked(&(m))
+#else
 #define _PT_PTHREAD_MUTEX_IS_LOCKED(m)    (EBUSY == pthread_mutex_trylock(&(m)))
+#endif
 #if defined(DARWIN)
 #define _PT_PTHREAD_CONDATTR_INIT(x)      0
 #else
@@ -139,7 +146,7 @@
 	|| defined(HPUX) || defined(LINUX) || defined(FREEBSD) \
 	|| defined(NETBSD) || defined(OPENBSD) || defined(BSDI) \
 	|| defined(VMS) || defined(NTO) || defined(DARWIN) \
-	|| defined(UNIXWARE)
+	|| defined(UNIXWARE) || defined(RISCOS)
 #define _PT_PTHREAD_INVALIDATE_THR_HANDLE(t)  (t) = 0
 #define _PT_PTHREAD_THR_HANDLE_IS_INVALID(t)  (t) == 0
 #define _PT_PTHREAD_COPY_THR_HANDLE(st, dt)   (dt) = (st)
@@ -252,7 +259,8 @@
 #define PT_PRIO_MIN            0
 #define PT_PRIO_MAX            31
 #elif defined(NETBSD) \
-	|| defined(BSDI) || defined(DARWIN) || defined(UNIXWARE) /* XXX */
+	|| defined(BSDI) || defined(DARWIN) || defined(UNIXWARE) \
+	|| defined(RISCOS) /* XXX */
 #define PT_PRIO_MIN            0
 #define PT_PRIO_MAX            126
 #else
@@ -286,7 +294,7 @@ extern int (*_PT_aix_yield_fcn)();
 #elif defined(HPUX) || defined(LINUX) || defined(SOLARIS) \
 	|| defined(FREEBSD) || defined(NETBSD) || defined(OPENBSD) \
 	|| defined(BSDI) || defined(NTO) || defined(DARWIN) \
-	|| defined(UNIXWARE)
+	|| defined(UNIXWARE) || defined(RISCOS)
 #define _PT_PTHREAD_YIELD()            	sched_yield()
 #else
 #error "Need to define _PT_PTHREAD_YIELD for this platform"

@@ -13,6 +13,9 @@
   /* and make the width adjust to screen layout for the device */
   max-width: 100% ! important;
 
+  /* max-heights should not apply to small screens */
+  max-height: none ! important;
+
   /* remove all positioning */
   position: static ! important;
 
@@ -52,3 +55,30 @@ li {
   /* we need to make anchors more visible */
   text-decoration: underline !important;
 }
+
+
+ul,ol {
+  display: block ! important;
+}
+li {
+  display: list-item ! important;
+}
+a {
+  background-image: none ! important;
+}
+img[src*="spacer"] {
+  display: none ! important;
+} 
+
+
+ /* google maps hack */ 
+ @-moz-document domain(maps.google.com)
+ {
+ div#rhs { display: none ! important;}
+  
+ div#map { height: 80%; 
+           width: 100%;
+           overflow: hidden;
+           position: inherit;
+         }
+ }

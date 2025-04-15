@@ -1,28 +1,44 @@
 /* -*- Mode: C; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Ben Goodger (03/01/00)
  *   Seth Spitzer (28/10/99)
  *   Dan Veditz <dveditz@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 var gDialogParams;
 var gStartupMode; // TRUE if we're being shown at app startup, FALSE if from menu.
@@ -43,26 +59,24 @@ function StartUp()
   gProfileManagerBundle = document.getElementById("bundle_profileManager");
   gBrandBundle = document.getElementById("bundle_brand");
 
-  SetUpOKCancelButtons();
-  centerWindowOnScreen();
+  if (gStartupMode) {
+    document.documentElement.setAttribute("buttonlabelcancel",
+      document.documentElement.getAttribute("buttonlabelexit"));
+    document.documentElement.setAttribute("buttonlabelaccept",
+      document.documentElement.getAttribute("buttonlabelstart"));
+  }
+
   if(window.location && window.location.search && window.location.search == "?manage=true" )
     SwitchProfileManagerMode();
-    
-  // Set up the intro text, depending on our context
-  var introTextItem = document.getElementById("intro");
-  var introText, insertText;
-  if (gStartupMode) {
-    insertText = gProfileManagerBundle.getFormattedString("startButton",
-                                    [gBrandBundle.getString("brandShortName")]);
-    introText = gProfileManagerBundle.getFormattedString("intro_start",
-                    [insertText]);
+  else {  
+    // Set up the intro text, depending on our context
+    var introTextItem = document.getElementById("intro");
+    var insertText = document.documentElement.getAttribute("buttonlabelaccept");
+    var introText = gProfileManagerBundle.getFormattedString(
+                      gStartupMode ? "intro_start" : "intro_switch",
+                      [insertText]);
+    introTextItem.textContent = introText;
   }
-  else {
-    insertText = gProfileManagerBundle.getString("selectButton");
-    introText = gProfileManagerBundle.getFormattedString("intro_switch",
-                    [insertText]);
-  }
-  introTextItem.childNodes[0].nodeValue = introText;
 
   var dirServ = Components.classes['@mozilla.org/file/directory_service;1']
                           .getService(Components.interfaces.nsIProperties);
@@ -77,8 +91,7 @@ function StartUp()
   Registry.open(regFile);
 
   loadElements();
-  setTimeout(highlightCurrentProfile, 0);
-  setTimeout(highlightCurrentProfile, 500);
+  highlightCurrentProfile();
 
   var offlineState = document.getElementById("offlineState");
   if (gStartupMode) {
@@ -113,11 +126,12 @@ function highlightCurrentProfile()
     var currentProfile = profile.currentProfile;
     if( !currentProfile )
       return;
-    var currentProfileItem = document.getElementById( ( "profileName_" + currentProfile ) );
     var profileList = document.getElementById( "profiles" );
+    var currentProfileItem = profileList.getElementsByAttribute("profile_name", currentProfile).item(0);
     if( currentProfileItem ) {
-      profileList.ensureElementIsVisible( currentProfileItem );
-      profileList.selectItem( currentProfileItem );
+      var currentProfileIndex = profileList.view.getIndexOfItem(currentProfileItem);
+      profileList.view.selection.select( currentProfileIndex );
+      profileList.treeBoxObject.ensureRowIsVisible( currentProfileIndex );
     }
   }
   catch(e) {
@@ -126,32 +140,24 @@ function highlightCurrentProfile()
 }
 
 // function : <profileSelection.js>::AddItem();
-// purpose  : utility function for adding items to a listbox.
-function AddItem( aChildren, aProfileObject )
+// purpose  : utility function for adding items to a tree.
+function AddItem(aName, aMigrated)
 {
-  var kids    = document.getElementById(aChildren);
-  var listitem = document.createElement("listitem");
-  listitem.setAttribute("label", aProfileObject.mName );
-  listitem.setAttribute("rowMigrate",  aProfileObject.mMigrated );
-  listitem.setAttribute("class", "listitem-iconic");
-  listitem.setAttribute("profile_name", aProfileObject.mName );
-  listitem.setAttribute("rowName", aProfileObject.mName );
-  listitem.setAttribute("id", ( "profileName_" + aProfileObject.mName ) );
-  // 23/10/99 - no roaming access yet!
-  //  var roaming = document.getElementById("roamingitem");
-  //  kids.insertBefore(item,roaming);
-  kids.appendChild(listitem);
-  return listitem;
-}
-
-function Profile ( aName, aMigrated )
-{
-  this.mName       = aName ? aName : null;
-  this.mMigrated   = aMigrated ? aMigrated : null;
+  var tree = document.getElementById("profiles");
+  var treeitem = document.createElement("treeitem");
+  var treerow = document.createElement("treerow");
+  var treecell = document.createElement("treecell");
+  treecell.setAttribute("label", aName);
+  treecell.setAttribute("properties", "rowMigrate-" + aMigrated);
+  treeitem.setAttribute("profile_name", aName);
+  treeitem.setAttribute("rowMigrate", aMigrated);
+  treerow.appendChild(treecell);
+  treeitem.appendChild(treerow);
+  tree.lastChild.appendChild(treeitem);
 }
 
 // function : <profileSelection.js>::loadElements();
-// purpose  : load profiles into listbox
+// purpose  : load profiles into tree
 function loadElements()
 {
   try {
@@ -172,7 +178,7 @@ function loadElements()
 
       var migrated = Registry.getString( node.key, "migrated" );
 
-      AddItem( "profiles", new Profile( node.name, migrated ) );
+      AddItem(node.name, migrated);
 
       regEnum.next();
     }
@@ -186,7 +192,7 @@ function loadElements()
 function onStart()
 {
   var profileList = document.getElementById("profiles");
-  var selected = profileList.selectedItems[0];
+  var selected = profileList.view.getItemAtIndex(profileList.currentIndex);
   var promptService = Components.classes["@mozilla.org/embedcomp/prompt-service;1"].
     getService(Components.interfaces.nsIPromptService);
 
@@ -259,9 +265,9 @@ function onStart()
 
       if (fatalError)
       {
-        var appShellService = Components.classes["@mozilla.org/appshell/appShellService;1"]
-                              .getService(Components.interfaces.nsIAppShellService);
-        appShellService.quit(Components.interfaces.nsIAppShellService.eForceQuit);
+        var appStartup = Components.classes["@mozilla.org/seamonkey/app-startup;1"]
+                                   .getService(Components.interfaces.nsIAppStartup);
+        appStartup.quit(Components.interfaces.nsIAppStartup.eForceQuit);
       }
 
       return false;
@@ -278,33 +284,4 @@ function onExit()
 {
   gDialogParams.SetInt(0, 0); // 0 == cancel
   return true;
-}
-
-function SetUpOKCancelButtons()
-{
-  doSetOKCancel( onStart, onExit, null, null );
-  var okButton = document.getElementById("ok");
-  var cancelButton = document.getElementById("cancel");
-
-  var okButtonString;
-  var cancelButtonString;
-  
-  try {    
-    if (gStartupMode) {
-      okButtonString = gProfileManagerBundle.getFormattedString("startButton",
-                                    [gBrandBundle.getString("brandShortName")]);
-      cancelButtonString = gProfileManagerBundle.getString("exitButton");
-    }
-    else {
-      okButtonString = gProfileManagerBundle.getString("selectButton");
-      cancelButtonString = gProfileManagerBundle.getString("cancel");
-    }
-  } catch (e) {
-    okButtonString = "Start Yah";
-    cancelButtonString = "Exit Yah";
-  }
-
-  okButton.setAttribute( "label", okButtonString );
-  okButton.setAttribute( "class", ( okButton.getAttribute("class") + " padded" ) );
-  cancelButton.setAttribute( "label", cancelButtonString );
 }

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Peter Annema <disttsc@bart.nl>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -159,6 +159,8 @@ struct nsKeyConverter nsKeycodes[] = {
   { NS_VK_DECIMAL,    GDK_KP_Decimal },
   { NS_VK_DIVIDE,     GDK_KP_Divide },
   { NS_VK_RETURN,     GDK_KP_Enter },
+  { NS_VK_NUM_LOCK,   GDK_Num_Lock },
+  { NS_VK_SCROLL_LOCK,GDK_Scroll_Lock },
 
   { NS_VK_COMMA,      GDK_comma },
   { NS_VK_PERIOD,     GDK_period },
@@ -292,7 +294,7 @@ PRUint32 nsConvertCharCodeToUnicode(GdkEventKey* aGEK)
       case GDK_KP_Add:
         return '+';
       case GDK_KP_Separator:
-        return '|';
+        return ',';
       case GDK_KP_Subtract:
         return '-';
       case GDK_KP_Decimal:
@@ -450,7 +452,7 @@ void InitKeyPressEvent(GdkEventKey *aGEK,
 void handle_size_allocate(GtkWidget *w, GtkAllocation *alloc, gpointer p)
 {
   nsWindow *widget = (nsWindow *)p;
-  nsSizeEvent event(NS_SIZE, widget);
+  nsSizeEvent event(PR_TRUE, NS_SIZE, widget);
 
   InitAllocationEvent(alloc, event);
   NS_ADDREF(widget);
@@ -472,28 +474,34 @@ gint handle_key_press_event_for_text(GtkObject *w, GdkEventKey* event,
       if (event->state & GDK_MOD1_MASK)
         return PR_FALSE;
 
-  // Don't pass shift, control and alt as key press events
+  NS_ADDREF(win);
+  nsKeyEvent keyDownEvent(PR_TRUE, NS_KEY_DOWN, win);
+  InitKeyEvent(event, keyDownEvent);
+  PRBool noDefault = win->OnKey(keyDownEvent);
+
+  // Don't pass Shift, Control, Alt and Meta as NS_KEY_PRESS events.
   if (event->keyval == GDK_Shift_L
       || event->keyval == GDK_Shift_R
       || event->keyval == GDK_Control_L
       || event->keyval == GDK_Control_R
       || event->keyval == GDK_Alt_L
       || event->keyval == GDK_Alt_R
+      || event->keyval == GDK_Meta_L
+      || event->keyval == GDK_Meta_R
      )
     return PR_TRUE;
-
-  NS_ADDREF(win);
-  nsKeyEvent keyDownEvent(NS_KEY_DOWN, win);
-  InitKeyEvent(event, keyDownEvent);
-  win->OnKey(keyDownEvent);
 
   //
   // Second, dispatch the Key event as a key press event w/ a Unicode
   //  character code.  Note we have to check for modifier keys, since
   // gtk returns a character value for them
   //
-  nsKeyEvent keyPressEvent(NS_KEY_PRESS, win);
+  nsKeyEvent keyPressEvent(PR_TRUE, NS_KEY_PRESS, win);
   InitKeyPressEvent(event, keyPressEvent);
+  if (noDefault) {  // If prevent default set for onkeydown, do the same for onkeypress
+   keyPressEvent.flags |= NS_EVENT_FLAG_NO_DEFAULT;
+  }
+
   win->OnKey(keyPressEvent);
 
   NS_RELEASE(win);
@@ -510,18 +518,7 @@ gint handle_key_release_event_for_text(GtkObject *w, GdkEventKey* event,
                                        gpointer p)
 {
   nsTextWidget* win = (nsTextWidget*)p;
-  nsKeyEvent kevent(NS_KEY_UP, win);
-
-  // Don't pass shift, control and alt as key release events
-  if (event->keyval == GDK_Shift_L
-      || event->keyval == GDK_Shift_R
-      || event->keyval == GDK_Control_L
-      || event->keyval == GDK_Control_R
-      || event->keyval == GDK_Alt_L
-      || event->keyval == GDK_Alt_R
-     )
-    return PR_TRUE;
-
+  nsKeyEvent kevent(PR_TRUE, NS_KEY_UP, win);
   InitKeyEvent(event, kevent);
   NS_ADDREF(win);
   win->OnKey(kevent);
@@ -551,12 +548,6 @@ gint handle_key_press_event(GtkObject *w, GdkEventKey* event, gpointer p)
       if (event->state & GDK_MOD1_MASK)
         return PR_FALSE;
 
-  // Don't pass shift and control as key press events
-  if (event->keyval == GDK_Shift_L
-      || event->keyval == GDK_Shift_R
-      || event->keyval == GDK_Control_L
-      || event->keyval == GDK_Control_R)
-    return PR_TRUE;
 
   NS_ADDREF(win);
 
@@ -565,14 +556,25 @@ gint handle_key_press_event(GtkObject *w, GdkEventKey* event, gpointer p)
   //   but lie about where it came from and say it is from the
   //   window that currently has focus inside our app...
   //
-  nsKeyEvent keyDownEvent(NS_KEY_DOWN, win);
+  PRBool noDefault = PR_FALSE;
+  nsKeyEvent keyDownEvent(PR_TRUE, NS_KEY_DOWN, win);
   InitKeyEvent(event, keyDownEvent);
   // if we need to suppress this NS_KEY_DOWN event, reset the flag
   if (suppressNextKeyDown == PR_TRUE)
     suppressNextKeyDown = PR_FALSE;
   else
-    win->OnKey(keyDownEvent);
+    noDefault = win->OnKey(keyDownEvent);
 
+  // Don't pass Shift, Alt, Control and Meta as NS_KEY_PRESS events.
+  if (event->keyval == GDK_Shift_L
+      || event->keyval == GDK_Shift_R
+      || event->keyval == GDK_Control_L
+      || event->keyval == GDK_Control_R
+      || event->keyval == GDK_Alt_L
+      || event->keyval == GDK_Alt_R
+      || event->keyval == GDK_Meta_L
+      || event->keyval == GDK_Meta_R)
+    return PR_TRUE;
 
   //
   // Second, dispatch the Key event as a key press event w/ a Unicode
@@ -581,8 +583,11 @@ gint handle_key_press_event(GtkObject *w, GdkEventKey* event, gpointer p)
   //
 
   // Call nsConvertCharCodeToUnicode() here to get kevent.charCode 
-  nsKeyEvent keyPressEvent(NS_KEY_PRESS, win);
+  nsKeyEvent keyPressEvent(PR_TRUE, NS_KEY_PRESS, win);
   InitKeyPressEvent(event, keyPressEvent);
+  if (noDefault) {  // If prevent default set for onkeydown, do the same for onkeypress
+    keyPressEvent.flags |= NS_EVENT_FLAG_NO_DEFAULT;
+  }
 
   if (event->length) {
     if (keyPressEvent.charCode || keyPressEvent.keyCode) {
@@ -643,18 +648,11 @@ gint handle_key_release_event(GtkObject *w, GdkEventKey* event, gpointer p)
   if (shouldDrop)
     return PR_TRUE;
 
-  // Don't pass shift, control and alt as key release events
-  if (event->keyval == GDK_Shift_L
-      || event->keyval == GDK_Shift_R
-      || event->keyval == GDK_Control_L
-      || event->keyval == GDK_Control_R)
-    return PR_TRUE;
-
   nsWidget *win = (nsWidget *)p;
   if (nsWidget::sFocusWindow)
     win = nsWidget::sFocusWindow;
 
-  nsKeyEvent kevent(NS_KEY_UP, win);
+  nsKeyEvent kevent(PR_TRUE, NS_KEY_UP, win);
   InitKeyEvent(event, kevent);
 
   NS_ADDREF(win);

@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,11 +27,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 /* 
@@ -41,7 +40,7 @@
  */
 #include "nscore.h" 
 
-static PRUint8 gGenCatIdx1[224] = {
+static const PRUint8 gGenCatIdx1[224] = {
       0,  // U+0000 - U+0007 : 0x44444444
       0,  // U+0008 - U+000F : 0x44444444
       0,  // U+0010 - U+0017 : 0x44444444
@@ -268,7 +267,7 @@ static PRUint8 gGenCatIdx1[224] = {
      62,  // U+06F8 - U+06FF : 0x00000022
 };
 
-static PRUint8 gGenCatIdx2[288] = {
+static const PRUint8 gGenCatIdx2[288] = {
      63,  // U+0900 - U+0907 : 0x55501110
       6,  // U+0908 - U+090F : 0x55555555
       6,  // U+0910 - U+0917 : 0x55555555
@@ -559,7 +558,7 @@ static PRUint8 gGenCatIdx2[288] = {
      43,  // U+11F8 - U+11FF : 0x00000055
 };
 
-static PRUint8 gGenCatIdx3[320] = {
+static const PRUint8 gGenCatIdx3[320] = {
       6,  // U+1E00 - U+1E07 : 0x55555555
       6,  // U+1E08 - U+1E0F : 0x55555555
       6,  // U+1E10 - U+1E17 : 0x55555555
@@ -882,7 +881,7 @@ static PRUint8 gGenCatIdx3[320] = {
      17,  // U+27F8 - U+27FF : 0x00000000
 };
 
-static PRUint8 gGenCatIdx4[128] = {
+static const PRUint8 gGenCatIdx4[128] = {
     171,  // U+3000 - U+3007 : 0x25576663
     125,  // U+3008 - U+300F : 0x66666666
     172,  // U+3010 - U+3017 : 0x66667766
@@ -1013,7 +1012,7 @@ static PRUint8 gGenCatIdx4[128] = {
      22,  // U+33F8 - U+33FF : 0x07777777
 };
 
-static PRUint8 gGenCatIdx5[224] = {
+static const PRUint8 gGenCatIdx5[224] = {
       6,  // U+F900 - U+F907 : 0x55555555
       6,  // U+F908 - U+F90F : 0x55555555
       6,  // U+F910 - U+F917 : 0x55555555
@@ -1452,31 +1451,31 @@ static PRUint8 GetCat(PRUnichar u)
     //
     // Handle U+0000 to U+06FF
     if( (u<=((PRUnichar)0x06FF))) {
-        pat = gGenCatPat[gGenCatIdx1 [( u -(PRUnichar) 0x0000 )/8]];
+        pat = gGenCatPat[gGenCatIdx1 [( u -(PRUnichar) 0x0000 ) / 8]];
         return (pat  >> ((u % 8) * 4)) & 0x0F;
     }
 
     // Handle U+0900 to U+11FF
     if((((PRUnichar)0x0900)<=u)&&(u<=((PRUnichar)0x11FF))) {
-        pat = gGenCatPat[gGenCatIdx2 [( u -(PRUnichar) 0x0900 )/8]];
+        pat = gGenCatPat[gGenCatIdx2 [( u -(PRUnichar) 0x0900 ) / 8]];
         return (pat  >> ((u % 8) * 4)) & 0x0F;
     }
 
     // Handle U+1E00 to U+27FF
     if((((PRUnichar)0x1E00)<=u)&&(u<=((PRUnichar)0x27FF))) {
-        pat = gGenCatPat[gGenCatIdx3 [( u -(PRUnichar) 0x1E00 )/8]];
+        pat = gGenCatPat[gGenCatIdx3 [( u -(PRUnichar) 0x1E00 ) / 8]];
         return (pat  >> ((u % 8) * 4)) & 0x0F;
     }
 
     // Handle U+3000 to U+33FF
     if((((PRUnichar)0x3000)<=u)&&(u<=((PRUnichar)0x33FF))) {
-        pat = gGenCatPat[gGenCatIdx4 [( u -(PRUnichar) 0x3000 )/8]];
+        pat = gGenCatPat[gGenCatIdx4 [( u -(PRUnichar) 0x3000 ) / 8]];
         return (pat  >> ((u % 8) * 4)) & 0x0F;
     }
 
     // Handle U+F900 to U+FFFF
     if((((PRUnichar)0xF900)<=u)&&(u<=((PRUnichar)0xFFFF))) {
-        pat = gGenCatPat[gGenCatIdx5 [( u -(PRUnichar) 0xF900 )/8]];
+        pat = gGenCatPat[gGenCatIdx5 [( u -(PRUnichar) 0xF900 ) / 8]];
         return (pat  >> ((u % 8) * 4)) & 0x0F;
     }
 

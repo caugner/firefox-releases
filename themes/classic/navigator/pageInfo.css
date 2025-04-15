@@ -14,7 +14,7 @@
  * The Original Code is Mozilla Communicator client code.
  *
  * The Initial Developer of the Original Code is Daniel Brooks.
- * Portions created by the Initial Developer are Copyright (C) 2001
+ * Portions created by the Initial Developer are Copyright (C) 2001-2004
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
@@ -49,6 +49,7 @@ textbox > .textarea-internal-box {
   -moz-appearance: none;
 }
 
+label.header,
 textbox.header {
   margin-left: 0;
 }
@@ -65,4 +66,8 @@ textbox.header {
 
 .fixedsize {
   height: 8.5em;
+}
+
+textbox[disabled] {
+  font-style: italic;
 }

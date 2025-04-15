@@ -35,38 +35,39 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#ifndef nsMutationEvent_h__
+#define nsMutationEvent_h__
+
 #include "nsGUIEvent.h"
 #include "nsIDOMNode.h"
 #include "nsIAtom.h"
 #include "nsIDOMEventTarget.h"
 #include "nsIContent.h"
 
-#define NS_MUTATION_EVENT     20
-
-struct nsMutationEvent : public nsEvent
-{             
-  nsMutationEvent(PRUint32 msg = 0, PRUint8 structType = NS_MUTATION_EVENT)
-    : nsEvent(msg, structType),
+class nsMutationEvent : public nsEvent
+{
+public:
+  nsMutationEvent(PRBool isTrusted, PRUint32 msg)
+    : nsEvent(isTrusted, msg, NS_MUTATION_EVENT),
       mAttrChange(0)
   {
+    flags |= NS_EVENT_FLAG_CANT_CANCEL;
   }
 
-  nsMutationEvent(PRUint32 msg,
-                  nsIDOMEventTarget *target,
-                  PRUint8 structType = NS_MUTATION_EVENT)
-    : nsEvent(msg, structType),
+  nsMutationEvent(PRBool isTrusted, PRUint32 msg, nsIDOMEventTarget *target)
+    : nsEvent(isTrusted, msg, NS_MUTATION_EVENT),
       mTarget(target),
       mAttrChange(0)
   {
+    flags |= NS_EVENT_FLAG_CANT_CANCEL;
   }
 
-  nsMutationEvent(PRUint32 msg,
-                  nsIContent *target,
-                  PRUint8 structType = NS_MUTATION_EVENT)
-    : nsEvent(msg, structType),
+  nsMutationEvent(PRBool isTrusted, PRUint32 msg, nsIContent *target)
+    : nsEvent(isTrusted, msg, NS_MUTATION_EVENT),
       mTarget(do_QueryInterface(target)),
       mAttrChange(0)
   {
+    flags |= NS_EVENT_FLAG_CANT_CANCEL;
   }
 
   nsCOMPtr<nsIDOMNode> mRelatedNode;
@@ -98,3 +99,5 @@ struct nsMutationEvent : public nsEvent
 #define NS_EVENT_BITS_MUTATION_NODEINSERTEDINTODOCUMENT       0x10
 #define NS_EVENT_BITS_MUTATION_ATTRMODIFIED                   0x20
 #define NS_EVENT_BITS_MUTATION_CHARACTERDATAMODIFIED          0x40
+
+#endif // nsMutationEvent_h__

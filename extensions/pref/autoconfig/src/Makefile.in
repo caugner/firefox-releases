@@ -48,10 +48,22 @@ endif
 EXPORT_LIBRARY   = 1
 IS_COMPONENT     = 1
 MODULE_NAME      = nsAutoConfigModule
+MOZILLA_INTERNAL_API = 1
 
 PACKAGE_FILE     = autoconfig.pkg
 
-REQUIRES         = xpcom string intl js xpconnect necko profile pref appshell embedcomponents windowwatcher
+REQUIRES         = xpcom \
+                   string \
+                   intl \
+                   js \
+                   xpconnect \
+                   necko \
+                   profile \
+                   pref \
+                   appcomps \
+                   embedcomponents \
+                   windowwatcher \
+                   $(NULL)
 
 include $(topsrcdir)/config/config.mk
 

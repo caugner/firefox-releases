@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,22 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
+ * Contributor(s):
+ *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -280,9 +282,7 @@ FileSystemDataSource::FileSystemDataSource(void)
 #ifdef DEBUG
         nsresult rv =
 #endif
-        nsServiceManager::GetService(kRDFServiceCID,
-                                     NS_GET_IID(nsIRDFService),
-                                     (nsISupports**) &gRDFService);
+        CallGetService(kRDFServiceCID, &gRDFService);
 
         PR_ASSERT(NS_SUCCEEDED(rv));
 
@@ -407,8 +407,7 @@ FileSystemDataSource::~FileSystemDataSource (void)
         NS_RELEASE(kLiteralFalse);
 
         gFileSystemDataSource = nsnull;
-        nsServiceManager::ReleaseService(kRDFServiceCID, gRDFService);
-        gRDFService = nsnull;
+        NS_RELEASE(gRDFService);
     }
 }
 
@@ -574,38 +573,36 @@ FileSystemDataSource::GetTarget(nsIRDFResource *source,
         }
         else if (property == kRDF_type)
         {
-            const char  *type;
-            rv = kNC_FileSystemObject->GetValueConst(&type);
+            nsCString type;
+            rv = kNC_FileSystemObject->GetValueUTF8(type);
             if (NS_FAILED(rv)) return(rv);
 
 #ifdef  XP_WIN
             // under Windows, if its an IE favorite, return that type
             if (ieFavoritesDir)
             {
-                const char      *uri;
-                rv = source->GetValueConst(&uri);
+                nsCString uri;
+                rv = source->GetValueUTF8(uri);
                 if (NS_FAILED(rv)) return(rv);
 
-                nsAutoString        theURI;
-                theURI.AssignWithConversion(uri);
+                NS_ConvertUTF8toUTF16 theURI(uri);
 
                 if (theURI.Find(ieFavoritesDir) == 0)
                 {
                     if (theURI[theURI.Length() - 1] == '/')
                     {
-                        rv = kNC_IEFavoriteFolder->GetValueConst(&type);
+                        rv = kNC_IEFavoriteFolder->GetValueUTF8(type);
                     }
                     else
                     {
-                        rv = kNC_IEFavoriteObject->GetValueConst(&type);
+                        rv = kNC_IEFavoriteObject->GetValueUTF8(type);
                     }
                     if (NS_FAILED(rv)) return(rv);
                 }
             }
 #endif
 
-            nsAutoString    url;
-            url.AssignWithConversion(type);
+            NS_ConvertUTF8toUTF16 url(type);
             nsCOMPtr<nsIRDFLiteral> literal;
             gRDFService->GetLiteral(url.get(), getter_AddRefs(literal));
             rv = literal->QueryInterface(NS_GET_IID(nsIRDFNode), (void**) target);
@@ -738,12 +735,11 @@ FileSystemDataSource::GetTargets(nsIRDFResource *source,
         }
         else if (property == kRDF_type)
         {
-            const char      *uri = nsnull;
-            rv = kNC_FileSystemObject->GetValueConst( &uri );
+            nsCString uri;
+            rv = kNC_FileSystemObject->GetValueUTF8(uri);
             if (NS_FAILED(rv)) return rv;
 
-            nsAutoString    url;
-            url.AssignWithConversion(uri);
+            NS_ConvertUTF8toUTF16 url(uri);
 
             nsCOMPtr<nsIRDFLiteral> literal;
             rv = gRDFService->GetLiteral(url.get(), getter_AddRefs(literal));
@@ -1173,7 +1169,8 @@ FileSystemDataSource::GetVolumeList(nsISimpleEnumerator** aResult)
     }
 #endif
 
-#ifdef  XP_WIN
+#if defined (XP_WIN) && !defined (WINCE)
+
     PRInt32         driveType;
     char            drive[32];
     PRInt32         volNum;
@@ -1249,11 +1246,11 @@ FileSystemDataSource::isValidFolder(nsIRDFResource *source)
     if (!ieFavoritesDir)    return(isValid);
 
     nsresult        rv;
-    const char      *uri;
-    rv = source->GetValueConst(&uri);
+    nsCString       uri;
+    rv = source->GetValueUTF8(uri);
     if (NS_FAILED(rv)) return(isValid);
 
-    nsAutoString        theURI; theURI.AssignWithConversion(uri);
+    NS_ConvertUTF8toUTF16 theURI(uri);
     if (theURI.Find(ieFavoritesDir) == 0)
     {
         isValid = PR_FALSE;
@@ -1284,7 +1281,7 @@ FileSystemDataSource::isValidFolder(nsIRDFResource *source)
 
                 // An empty folder, or a folder that contains just "desktop.ini",
                 // is considered to be a IE Favorite; otherwise, its a folder
-                if (!name.EqualsIgnoreCase("desktop.ini"))
+                if (!name.LowerCaseEqualsLiteral("desktop.ini"))
                 {
                     isValid = PR_TRUE;
                     break;
@@ -1601,8 +1598,8 @@ FileSystemDataSource::GetName(nsIRDFResource *source, nsIRDFLiteral **aResult)
     {
         nsAutoString extension;
         name.Right(extension, 4);
-        if (extension.EqualsIgnoreCase(".url") ||
-            extension.EqualsIgnoreCase(".lnk"))
+        if (extension.LowerCaseEqualsLiteral(".url") ||
+            extension.LowerCaseEqualsLiteral(".lnk"))
         {
             name.Truncate(nameLen - 4);
         }
@@ -1706,14 +1703,14 @@ FileSystemDataSource::getIEFavoriteURL(nsIRDFResource *source, nsString aFileURL
     {
         if (isValidFolder(source))
             return(NS_RDF_NO_VALUE);
-        aFileURL += NS_LITERAL_STRING("desktop.ini");
+        aFileURL.AppendLiteral("desktop.ini");
     }
     else if (aFileURL.Length() > 4)
     {
         nsAutoString    extension;
 
         aFileURL.Right(extension, 4);
-        if (!extension.EqualsIgnoreCase(".url"))
+        if (!extension.LowerCaseEqualsLiteral(".url"))
         {
             return(NS_RDF_NO_VALUE);
         }
@@ -1761,14 +1758,13 @@ FileSystemDataSource::GetURL(nsIRDFResource *source, PRBool *isFavorite, nsIRDFL
     if (isFavorite) *isFavorite = PR_FALSE;
 
     nsresult        rv;
-    const char      *uri;
+    nsCString       uri;
 	
-    rv = source->GetValueConst(&uri);
+    rv = source->GetValueUTF8(uri);
     if (NS_FAILED(rv))
         return(rv);
 
-    nsAutoString        url;
-    url.AssignWithConversion(uri);
+    NS_ConvertUTF8toUTF16 url(uri);
 
 #ifdef  XP_WIN
     // under Windows, if its an IE favorite, munge the URL
@@ -1787,7 +1783,7 @@ FileSystemDataSource::GetURL(nsIRDFResource *source, PRBool *isFavorite, nsIRDFL
     // under BEOS, try and get the "META:url" attribute
     if (netPositiveDir)
     {
-        if (strstr(uri, netPositiveDir) != 0)
+        if (strstr(uri.get(), netPositiveDir) != 0)
         {
             if (isFavorite) *isFavorite = PR_TRUE;
             rv = getNetPositiveURL(source, url, aResult);
@@ -1840,7 +1836,7 @@ FileSystemDataSource::getNetPositiveURL(nsIRDFResource *source, nsString aFileUR
                 {
                     beURLattr[len] = '\0';
                     nsAutoString    bookmarkURL;
-                                        bookmarkURL.AssignWithConversion(beURLattr);
+                    CopyUTF8toUTF16(beURLattr, bookmarkURL);
                     rv = gRDFService->GetLiteral(bookmarkURL.get(),
                         urlLiteral);
                 }

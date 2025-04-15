@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -41,7 +41,7 @@
 #include "nsStringBuf.h"
 #include "nsDocument.h"
 #include "nsIPresShell.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIContentDelegate.h"
 #include "nsIViewManager.h"
 #include "nsIView.h"
@@ -49,7 +49,6 @@
 #include "nsIFrame.h"
 #include "nsIStyleSet.h"
 #include "nsHTMLParts.h"
-#include "nsIHTMLContent.h"
 #include "..\..\..\src\nsTablePart.h"
 
 #include "nsContentCID.h"
@@ -83,9 +82,9 @@ public:
 
   virtual ~GeometryTest() {};
 
-  void CreateGeometry(BasicTest *aDoc, nsIPresContext *aPC);
+  void CreateGeometry(BasicTest *aDoc, nsPresContext *aPC);
 
-  void VerifyGeometry(BasicTest *aDoc, nsIPresContext *aPC);
+  void VerifyGeometry(BasicTest *aDoc, nsPresContext *aPC);
 
   nsIPresShell * mShell;
   nsIViewManager * mViewManager;
@@ -158,8 +157,8 @@ BasicTest::BasicTest()
 
 nsresult BasicTest::AppendSimpleSpan(nsIContent* aContainer, const char* aTag, const char* aText)
 {
-  nsIHTMLContent* span;
-  nsIHTMLContent* text;
+  nsIContent* span;
+  nsIContent* text;
   nsIAtom* atom = NS_NewAtom(aTag);
   nsresult rv = NS_NewHTMLContainer(&span, atom);
   if (NS_OK == rv) {
@@ -180,14 +179,14 @@ nsresult BasicTest::AppendSimpleSpan(nsIContent* aContainer, const char* aTag, c
 void BasicTest::CreateCorrectContent(int aRows, int aCols)
 {
   fprintf(out, "CreateCorrectContent %d %d\n", aRows, aCols);
-  nsIHTMLContent* root;
+  nsIContent* root;
   nsresult rv = NS_NewRootPart(&root, this);  // does a SetRootPart on the returned root object
   if (NS_OK != rv) {
     fprintf(out, "NS_NewRootPart failed\n");
     NS_ASSERTION(PR_FALSE, "NS_NewRootPart failed");
   }
 
-  nsIHTMLContent* body;
+  nsIContent* body;
   nsIAtom* atom = NS_NewAtom("body");
   rv = NS_NewBodyPart(&body, atom);
   if (NS_OK != rv) {
@@ -196,9 +195,9 @@ void BasicTest::CreateCorrectContent(int aRows, int aCols)
   }
   NS_RELEASE(atom);
 
-  nsIHTMLContent* table;
-  nsIHTMLContent* row;
-  nsIHTMLContent* cell;
+  nsIContent* table;
+  nsIContent* row;
+  nsIContent* cell;
 
   nsIAtom* tatom = NS_NewAtom("table");
   rv = NS_NewTablePart(&table, tatom);
@@ -236,14 +235,14 @@ void BasicTest::CreateCorrectContent(int aRows, int aCols)
 void BasicTest::CreateCorrectFullContent(int aRows, int aCols)
 {
   fprintf(out, "CreateCorrectFullContent %d %d, 1 caption\n", aRows, aCols);
-  nsIHTMLContent* root;
+  nsIContent* root;
   nsresult rv = NS_NewRootPart(&root, this);  // does a SetRootPart on the returned root object
   if (NS_OK != rv) {
     fprintf(out, "NS_NewRootPart failed\n");
     NS_ASSERTION(PR_FALSE, "NS_NewRootPart failed\n");
   }
 
-  nsIHTMLContent* body;
+  nsIContent* body;
   nsIAtom* atom = NS_NewAtom("body");
   rv = NS_NewBodyPart(&body, atom);
   if (NS_OK != rv) {
@@ -252,12 +251,12 @@ void BasicTest::CreateCorrectFullContent(int aRows, int aCols)
   }
   NS_RELEASE(atom);
 
-  nsIHTMLContent* table;
-  nsIHTMLContent* caption;
-  nsIHTMLContent* colGroup;
-  nsIHTMLContent* col;
-  nsIHTMLContent* row;
-  nsIHTMLContent* cell;
+  nsIContent* table;
+  nsIContent* caption;
+  nsIContent* colGroup;
+  nsIContent* col;
+  nsIContent* row;
+  nsIContent* cell;
 
   nsIAtom* tatom = NS_NewAtom("table");
   rv = NS_NewTablePart(&table, tatom);
@@ -317,14 +316,14 @@ void BasicTest::CreateCorrectFullContent(int aRows, int aCols)
 void BasicTest::CreateOutOfOrderContent(int aRows, int aCols)
 {
   fprintf(out, "CreateOutOfOrderContent %d %d, 2 captions\n", aRows, aCols);
-  nsIHTMLContent* root;
+  nsIContent* root;
   nsresult rv = NS_NewRootPart(&root, this);  // does a SetRootPart on the returned root object
   if (NS_OK != rv) {
     fprintf(out, "NS_NewRootPart failed\n");
     NS_ASSERTION(PR_FALSE, "NS_NewRootPart failed\n");
   }
 
-  nsIHTMLContent* body;
+  nsIContent* body;
   nsIAtom* atom = NS_NewAtom("body");
   rv = NS_NewBodyPart(&body, atom);
   if (NS_OK != rv) {
@@ -333,12 +332,12 @@ void BasicTest::CreateOutOfOrderContent(int aRows, int aCols)
   }
   NS_RELEASE(atom);
 
-  nsIHTMLContent* table;
-  nsIHTMLContent* caption;
-  nsIHTMLContent* colGroup;
-  nsIHTMLContent* col;
-  nsIHTMLContent* row;
-  nsIHTMLContent* cell;
+  nsIContent* table;
+  nsIContent* caption;
+  nsIContent* colGroup;
+  nsIContent* col;
+  nsIContent* row;
+  nsIContent* cell;
 
   nsIAtom* tatom = NS_NewAtom("table");
   rv = NS_NewTablePart(&table, tatom);
@@ -445,7 +444,7 @@ GeometryTest::GeometryTest(BasicTest *aDoc)
   
   static NS_DEFINE_IID(kDeviceContextCID, NS_DEVICE_CONTEXT_CID);
 
-  nsresult rv = nsComponentManager::CreateInstance(kDeviceContextCID, nsnull, NS_GET_IID(nsIDeviceContext), (void **)&dx);
+  nsresult rv = CallCreateInstance(kDeviceContextCID, &dx);
 
   if (NS_OK == rv) {
     dx->Init(nsnull);
@@ -453,7 +452,7 @@ GeometryTest::GeometryTest(BasicTest *aDoc)
     dx->SetAppUnitsToDevUnits(dx->TwipsToDevUnits());
   }
 
-  nsIPresContext * pc = nsnull;
+  nsPresContext * pc = nsnull;
   nsresult status = NS_NewGalleyContext(&pc);
   if ((NS_FAILED(status)) ||  nsnull==pc)
   {
@@ -468,10 +467,7 @@ GeometryTest::GeometryTest(BasicTest *aDoc)
 
   static NS_DEFINE_IID(kViewManagerCID, NS_VIEW_MANAGER_CID);
 
-  status = nsComponentManager::CreateInstance(kViewManagerCID, 
-                                        nsnull, 
-                                        NS_GET_IID(nsIViewManager), 
-                                        (void **)&vm);
+  status = CallCreateInstance(kViewManagerCID, &vm);
 
   if ((NS_FAILED(status)) ||  nsnull==vm)
   {
@@ -480,25 +476,15 @@ GeometryTest::GeometryTest(BasicTest *aDoc)
   }
   vm->Init(pc);
 
-  nsIView * rootView = nsnull;
-
-  // Create a view
-  static NS_DEFINE_IID(kScrollingViewCID, NS_SCROLL_PORT_VIEW_CID);
-
-  status = nsComponentManager::CreateInstance(kScrollingViewCID, 
-                                        nsnull, 
-                                        NS_GET_IID(nsIView), 
-                                        (void **)&rootView);
+  nsRect bounds(0, 0, 10000, 10000);
+  nsIScrollableView * rootView = vm->CreateScrollableView(bounds, nsnull);
 
   if ((NS_FAILED(status)) ||  nsnull==rootView)
   {
     fprintf(out, "bad view");
     NS_ASSERTION(PR_FALSE, "bad view");
   }
-  nsRect bounds(0, 0, 10000, 10000);
-  rootView->Init(vm, bounds, nsnull);
-
-  vm->SetRootView(rootView);
+  vm->SetRootView(rootView->View());
 
   nsCOMPtr<nsIStyleSet> ss(do_CreateInstance(kStyleSetCID,&status));
   if ((NS_FAILED(status)))
@@ -545,7 +531,7 @@ GeometryTest::GeometryTest(BasicTest *aDoc)
 }
 
 /** given a content model, create a geometry model */
-void GeometryTest::CreateGeometry(BasicTest * aDoc, nsIPresContext *aPC)
+void GeometryTest::CreateGeometry(BasicTest * aDoc, nsPresContext *aPC)
 {
   nsIContent *root;
   aDoc->GetRootContent(&root);
@@ -587,7 +573,7 @@ void GeometryTest::CreateGeometry(BasicTest * aDoc, nsIPresContext *aPC)
   
 }
 
-void GeometryTest::VerifyGeometry(BasicTest *aDoc, nsIPresContext *aPC)
+void GeometryTest::VerifyGeometry(BasicTest *aDoc, nsPresContext *aPC)
 {
   mRootFrame->List(out);
 }

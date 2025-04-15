@@ -1,10 +1,10 @@
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -13,24 +13,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Ian Neal <bugzilla@arlen.demon.co.uk>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -57,6 +58,7 @@ var gMimeHeaderParser = null;
  */
 
 var test_addresses_sequence = false;
+
 try {
   if (sPrefs)
     test_addresses_sequence = sPrefs.getBoolPref("mail.debug.test_addresses_sequence");
@@ -95,6 +97,8 @@ function awSelectElementName()
         selectElementType = document.getElementById("addressCol1#1").localName;
     return selectElementType;
 }
+
+// TODO: replace awGetSelectItemIndex with recipient type index constants
 
 function awGetSelectItemIndex(itemData)
 {
@@ -236,6 +240,10 @@ function CompFields2Recipients(msgCompFields, msgType)
     parent.replaceChild(newListBoxNode, listbox);
     awFitDummyRows(2);
 
+    // CompFields2Recipients is called whenever a user replies or edits an existing message.
+    // We want to add all of the recipients for this message to the ignore list for spell check 
+    addRecipientsToIgnoreList((gCurrentIdentity ? gCurrentIdentity.identityName + ', ' : '') + msgTo + ', ' + msgCC + ', ' + msgBCC);
+
     gMimeHeaderParser = null; //Release the mime parser
   }
 }
@@ -363,6 +371,9 @@ function awAddRecipient(recipientType, address)
     awAppendNewRow(true);
     awSetInputAndPopupValue(awGetInputElement(top.MAX_RECIPIENTS), "", awGetPopupElement(top.MAX_RECIPIENTS), "addr_to", top.MAX_RECIPIENTS);
   }
+
+  // add the recipient to our spell check ignore list
+  addRecipientsToIgnoreList(address);
 }
 
 function awTestRowSequence()
@@ -489,6 +500,10 @@ function awReturnHit(inputElement)
     nextInput.select();
     awSetFocus(row+1, nextInput);
   }
+
+  // be sure to add the recipient to our ignore list
+  // when the user hits enter in an autocomplete widget...
+  addRecipientsToIgnoreList(inputElement.value);
 }
 
 function awDeleteHit(inputElement)
@@ -573,7 +588,26 @@ function awAppendNewRow(setFocus)
     var select = newNode.getElementsByTagName(awSelectElementName());
     if ( select && select.length == 1 )
     {
-      select[0].selectedItem = select[0].childNodes[0].childNodes[awGetSelectItemIndex(lastRecipientType)];
+      // It only makes sense to clone some field types; others 
+      // should not be cloned, since it just makes the user have
+      // to go to the trouble of selecting something else. In such
+      // cases let's default to 'To' (a reasonable default since
+      // we already default to 'To' on the first dummy field of
+      // a new message).
+      switch (lastRecipientType)
+      {
+        case  "addr_reply":
+        case  "addr_other":
+          select[0].selectedIndex = awGetSelectItemIndex("addr_to");
+          break;       
+        case "addr_followup":
+          select[0].selectedIndex = awGetSelectItemIndex("addr_newsgroups");
+          break;
+        default:
+        // e.g. "addr_to","addr_cc","addr_bcc","addr_newsgroups":
+          select[0].selectedIndex = awGetSelectItemIndex(lastRecipientType);
+      }
+    
       select[0].setAttribute("id", "addressCol1#" + top.MAX_RECIPIENTS);
       if (input)
         _awSetAutoComplete(select[0], input[0]);
@@ -704,7 +738,7 @@ function _awSetFocus()
 
 function awTabFromRecipient(element, event)
 {
-  //If we are le last element in the listbox, we don't want to create a new row.
+  //If we are the last element in the listbox, we don't want to create a new row.
   if (element == awGetInputElement(top.MAX_RECIPIENTS))
     top.doNotCreateANewRow = true;
 
@@ -714,6 +748,10 @@ function awTabFromRecipient(element, event)
     var listBox = document.getElementById("addressingWidget");
     listBox.listBoxObject.ensureIndexIsVisible(listBoxRow + 1);
   }
+
+  // be sure to add the recipient to our ignore list
+  // when the user tabs out of an autocomplete line...
+  addRecipientsToIgnoreList(element.value);
 }
 
 function awTabFromMenulist(element, event)
@@ -731,47 +769,7 @@ function awGetNumberOfRecipients()
     return top.MAX_RECIPIENTS;
 }
 
-function DragOverAddressingWidget(event)
-{
-  var validFlavor = false;
-  var dragSession = dragSession = gDragService.getCurrentSession();
-
-  if (dragSession.isDataFlavorSupported("text/x-moz-address")) 
-    validFlavor = true;
-
-  if (validFlavor)
-    dragSession.canDrop = true;
-}
-
-function DropOnAddressingWidget(event)
-{
-  var dragSession = gDragService.getCurrentSession();
-  
-  var trans = Components.classes["@mozilla.org/widget/transferable;1"].createInstance(Components.interfaces.nsITransferable);
-  trans.addDataFlavor("text/x-moz-address");
-
-  for ( var i = 0; i < dragSession.numDropItems; ++i )
-  {
-    dragSession.getData ( trans, i );
-    var dataObj = new Object();
-    var bestFlavor = new Object();
-    var len = new Object();
-    trans.getAnyTransferData ( bestFlavor, dataObj, len );
-    if ( dataObj )  
-      dataObj = dataObj.value.QueryInterface(Components.interfaces.nsISupportsString);
-    if ( !dataObj ) 
-      continue;
-
-    // pull the address out of the data object
-    var address = dataObj.data.substring(0, len.value);
-    if (!address)
-      continue;
-
-    DropRecipient(event.target, address);
-  }
-}
-
-function DropRecipient(target, recipient)
+function DropRecipient(recipient)
 {
   // break down and add each address
   return parseAndAddAddresses(recipient, awGetPopupElement(top.MAX_RECIPIENTS).selectedItem.getAttribute("value"));

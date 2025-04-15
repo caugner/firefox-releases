@@ -14,6 +14,7 @@
 	description="Find photos, movies, music, and text to rip, sample, mash, and share"
 	action="http://search.creativecommons.org/"
 	searchForm="http://search.creativecommons.org/"
+	queryCharset="utf-8"
 	method="GET"
 >
 
@@ -22,16 +23,16 @@
 
 <interpret
 	browserResultType="result"
+	charset="utf-8"
 	resultListStart="<!-- start results -->"
 	resultListEnd="<!-- end results -->"
 	resultItemStart='<p class="resultitem">'
 	resultItemEnd="</p>"
-<
-</search>
-
+>
 <browser
-	update="http://mycroft.mozdev.org/plugins/creativecommons.src"
-	updateIcon="http://mycroft.mozdev.org/plugins/creativecommons.png"
+	update="https://addons.mozilla.org/searchplugins/updates/creativecommons.src"
+	updateIcon="https://addons.mozilla.org/searchplugins/updates/creativecommons.png"
 	updateCheckDays="3"
 >
+</search>
 

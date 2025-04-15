@@ -1,23 +1,39 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla MathML Project.
- * 
- * The Initial Developer of the Original Code is The University Of 
- * Queensland.  Portions created by The University Of Queensland are
- * Copyright (C) 1999 The University Of Queensland.  All Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * The University Of Queensland.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Roger B. Sidje <rbs@maths.uq.edu.au>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 //#define SHOW_BOUNDING_BOX 1
 #ifndef nsIMathMLFrame_h___
 #define nsIMathMLFrame_h___
@@ -87,8 +103,7 @@ public:
   *        of the frame, on output the size after stretching.
   */
   NS_IMETHOD 
-  Stretch(nsIPresContext*      aPresContext,
-          nsIRenderingContext& aRenderingContext,
+  Stretch(nsIRenderingContext& aRenderingContext,
           nsStretchDirection   aStretchDirection,
           nsBoundingMetrics&   aContainerSize,
           nsHTMLReflowMetrics& aDesiredStretchSize) = 0;
@@ -124,8 +139,7 @@ public:
   *        space you want for border/padding in the desired size you return.  
   */
   NS_IMETHOD
-  Place(nsIPresContext*      aPresContext,
-        nsIRenderingContext& aRenderingContext,
+  Place(nsIRenderingContext& aRenderingContext,
         PRBool               aPlaceOrigin,
         nsHTMLReflowMetrics& aDesiredSize) = 0;
 
@@ -191,11 +205,10 @@ public:
    */
 
   NS_IMETHOD
-  InheritAutomaticData(nsIPresContext* aPresContext,
-                       nsIFrame*       aParent) = 0;
+  InheritAutomaticData(nsIFrame* aParent) = 0;
 
   NS_IMETHOD
-  TransmitAutomaticData(nsIPresContext* aPresContext) = 0;
+  TransmitAutomaticData() = 0;
 
  /* UpdatePresentationData :
   * Increments the scriptlevel of the frame, and updates its displaystyle and
@@ -227,8 +240,7 @@ public:
   *        update some flags in the frame, leaving the other flags unchanged.
   */
   NS_IMETHOD
-  UpdatePresentationData(nsIPresContext* aPresContext,
-                         PRInt32         aScriptLevelIncrement,
+  UpdatePresentationData(PRInt32         aScriptLevelIncrement,
                          PRUint32        aFlagsValues,
                          PRUint32        aFlagsToUpdate) = 0;
 
@@ -263,8 +275,7 @@ public:
   *        for more details about this parameter.
   */
   NS_IMETHOD
-  UpdatePresentationDataFromChildAt(nsIPresContext* aPresContext,
-                                    PRInt32         aFirstIndex,
+  UpdatePresentationDataFromChildAt(PRInt32         aFirstIndex,
                                     PRInt32         aLastIndex,
                                     PRInt32         aScriptLevelIncrement,
                                     PRUint32        aFlagsValues,
@@ -299,8 +310,7 @@ public:
   * http://groups.google.com/groups?selm=3A9192B5.D22B6C38%40maths.uq.edu.au
   */
   NS_IMETHOD
-  ReResolveScriptStyle(nsIPresContext* aPresContext,
-                       PRInt32         aParentScriptLevel) = 0;
+  ReResolveScriptStyle(PRInt32 aParentScriptLevel) = 0;
 };
 
 // struct used by a container frame to keep track of its embellishments.
@@ -311,9 +321,6 @@ public:
 struct nsEmbellishData {
   // bits used to mark certain properties of our embellishments 
   PRUint32 flags;
-
-  // handy pointer on our embellished child to descend the embellished hierarchy
-  nsIFrame* nextFrame;
 
   // pointer on the <mo> frame at the core of the embellished hierarchy
   nsIFrame* coreFrame;
@@ -330,7 +337,6 @@ struct nsEmbellishData {
 
   nsEmbellishData() {
     flags = 0;
-    nextFrame = nsnull;
     coreFrame = nsnull;
     direction = NS_STRETCH_DIRECTION_UNSUPPORTED;
     leftSpace = 0;
@@ -350,6 +356,11 @@ struct nsPresentationData {
   // bits for: displaystyle, compressed, etc
   PRUint32 flags;
 
+  // handy pointer on our base child (the 'nucleus' in TeX), but it may be
+  // null here (e.g., tags like <mrow>, <mfrac>, <mtable>, etc, won't
+  // pick a particular child in their child list to be the base)
+  nsIFrame* baseFrame;
+
   // up-pointer on the mstyle frame, if any, that defines the scope
   nsIFrame* mstyle;
 
@@ -359,6 +370,7 @@ struct nsPresentationData {
 
   nsPresentationData() {
     flags = 0;
+    baseFrame = nsnull;
     mstyle = nsnull;
     scriptLevel = 0;
   }

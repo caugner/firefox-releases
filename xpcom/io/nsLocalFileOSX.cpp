@@ -1,4 +1,4 @@
-/* -*- Mode: C; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */ 
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -22,6 +22,7 @@
  * Contributor(s):
  *  Conrad Carlen <ccarlen@netscape.com>
  *  Jungshik Shin <jshin@mailaps.org>
+ *  Asaf Romano <mozilla.mano@sent.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -38,9 +39,11 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsLocalFile.h"
+#include "nsDirectoryServiceDefs.h"
 
 #include "nsString.h"
 #include "nsReadableUtils.h"
+#include "nsIDirectoryEnumerator.h"
 #include "nsISimpleEnumerator.h"
 #include "nsITimelineService.h"
 #include "nsVoidArray.h"
@@ -54,15 +57,16 @@
 #include "nsAutoBuffer.h"
 
 // Mac Includes
-#include <Aliases.h>
-#include <Gestalt.h>
-#include <AppleEvents.h>
-#include <AEDataModel.h>
-#include <Processes.h>
 #include <Carbon/Carbon.h>
 
 // Unix Includes
 #include <sys/stat.h>
+
+#if !defined(MAC_OS_X_VERSION_10_4) || MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_4
+#define GetAliasSizeFromRecord(aliasRecord) aliasRecord.aliasSize
+#else
+#define GetAliasSizeFromRecord(aliasRecord) GetAliasSizeFromPtr(&aliasRecord)
+#endif
 
 //*****************************************************************************
 //  Static Function Prototypes
@@ -116,7 +120,8 @@ class StFollowLinksState
 #pragma mark -
 #pragma mark [nsDirEnumerator]
 
-class nsDirEnumerator : public nsISimpleEnumerator
+class nsDirEnumerator : public nsISimpleEnumerator,
+                        public nsIDirectoryEnumerator
 {
     public:
 
@@ -185,6 +190,8 @@ class nsDirEnumerator : public nsISimpleEnumerator
             } 
           }
           *result = mNext != nsnull;
+          if (!*result)
+            Close();
           return NS_OK;
         }
 
@@ -205,13 +212,36 @@ class nsDirEnumerator : public nsISimpleEnumerator
             return NS_OK;
         }
 
+        NS_IMETHOD GetNextFile(nsIFile **result)
+        {
+            *result = nsnull;
+            PRBool hasMore = PR_FALSE;
+            nsresult rv = HasMoreElements(&hasMore);
+            if (NS_FAILED(rv) || !hasMore)
+                return rv;
+            *result = mNext;
+            NS_IF_ADDREF(*result);
+            mNext = nsnull;
+            return NS_OK;
+        }
+
+        NS_IMETHOD Close()
+        {
+          if (mIterator) {
+            ::FSCloseIterator(mIterator);
+            mIterator = nsnull;
+          }
+          if (mFSRefsArray) {
+            nsMemory::Free(mFSRefsArray);
+            mFSRefsArray = nsnull;
+          }
+          return NS_OK;
+        }
+
     private:
         ~nsDirEnumerator() 
         {
-          if (mIterator)
-            ::FSCloseIterator(mIterator);
-          if (mFSRefsArray)
-            nsMemory::Free(mFSRefsArray);
+          Close();
         }
 
     protected:
@@ -228,7 +258,7 @@ class nsDirEnumerator : public nsISimpleEnumerator
         PRInt32                 mArrayCnt, mArrayIndex;
 };
 
-NS_IMPL_ISUPPORTS1(nsDirEnumerator, nsISimpleEnumerator)
+NS_IMPL_ISUPPORTS2(nsDirEnumerator, nsISimpleEnumerator, nsIDirectoryEnumerator)
 
 #pragma mark -
 #pragma mark [StAEDesc]
@@ -1086,18 +1116,32 @@ NS_IMETHODIMP nsLocalFile::InitWithPath(const nsAString& filePath)
 /* [noscript] void initWithNativePath (in ACString filePath); */
 NS_IMETHODIMP nsLocalFile::InitWithNativePath(const nsACString& filePath)
 {
-  if (filePath.IsEmpty() || filePath.First() != '/')
+  nsCAutoString fixedPath;
+  if (Substring(filePath, 0, 2).EqualsLiteral("~/")) {
+    nsCOMPtr<nsIFile> homeDir;
+    nsCAutoString homePath;
+    nsresult rv = NS_GetSpecialDirectory(NS_OS_HOME_DIR,
+                                        getter_AddRefs(homeDir));
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = homeDir->GetNativePath(homePath);
+    NS_ENSURE_SUCCESS(rv, rv);
+    
+    fixedPath = homePath + Substring(filePath, 1, filePath.Length() - 1);
+  }
+  else if (filePath.IsEmpty() || filePath.First() != '/')
     return NS_ERROR_FILE_UNRECOGNIZED_PATH;
-  // On 10.2, huge paths crash CFURLGetFSRef()
-  if (filePath.Length() > PATH_MAX)
-    return NS_ERROR_FILE_NAME_TOO_LONG;
-  // And, a path with consecutive '/'s which are not between
-  // nodes also crashes CFURLGetFSRef(). Consecutive '/'s which
+  else
+    fixedPath.Assign(filePath);
+
+  // A path with consecutive '/'s which are not between
+  // nodes crashes CFURLGetFSRef(). Consecutive '/'s which
   // are between actual nodes are OK. So, convert consecutive
   // '/'s to a single one.
-  nsCAutoString fixedPath;
-  fixedPath.Assign(filePath);
   fixedPath.ReplaceSubstring("//", "/");
+
+  // On 10.2, huge paths also crash CFURLGetFSRef()
+  if (fixedPath.Length() > PATH_MAX)
+    return NS_ERROR_FILE_NAME_TOO_LONG;
 
   CFStringRef pathAsCFString;
   CFURLRef pathAsCFURL;
@@ -1112,6 +1156,7 @@ NS_IMETHODIMP nsLocalFile::InitWithNativePath(const nsACString& filePath)
   }
   SetBaseRef(pathAsCFURL);
   ::CFRelease(pathAsCFURL);
+  ::CFRelease(pathAsCFString);
   return NS_OK;
 }
 
@@ -1308,14 +1353,12 @@ NS_IMETHODIMP nsLocalFile::SetPersistentDescriptor(const nsACString& aPersistent
   }
   
   // Cast to an alias record and resolve.
-  PRInt32		aliasSize = (dataSize * 3) / 4;
-  AliasRecord	aliasHeader = *(AliasPtr)decodedData;
-  if (aliasHeader.aliasSize > aliasSize) {		// be paranoid about having too few data
+  AliasRecord aliasHeader = *(AliasPtr)decodedData;
+  PRInt32 aliasSize = GetAliasSizeFromRecord(aliasHeader);
+  if (aliasSize > (dataSize * 3) / 4) { // be paranoid about having too few data
     PR_Free(decodedData);
     return NS_ERROR_FAILURE;
   }
-  
-  aliasSize = aliasHeader.aliasSize;
   
   // Move the now-decoded data into the Handle.
   // The size of the decoded data is 3/4 the size of the encoded data. See plbase64.h

@@ -1,6 +1,9 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
  * The contents of this file are subject to the Mozilla Public License Version
  * 1.1 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -13,16 +16,17 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation. Portions created by the Initial Developer are
- * Copyright (C) 2001 the Initial Developer. All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Stuart Parmenter <pavlov@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -31,7 +35,8 @@
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
- */
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsTimerImpl.h"
 #include "TimerThread.h"
@@ -41,13 +46,12 @@
 
 #include "nsIEventQueue.h"
 
+#include "prmem.h"
+
 static PRInt32          gGenerator = 0;
 static TimerThread*     gThread = nsnull;
 static PRBool           gFireOnIdle = PR_FALSE;
 static nsTimerManager*  gManager = nsnull;
-
-#include "prmem.h"
-#include "prinit.h"
 
 #ifdef DEBUG_TIMERS
 #include <math.h>
@@ -134,23 +138,6 @@ NS_IMETHODIMP_(nsrefcnt) nsTimerImpl::Release(void)
   return count;
 }
 
-PR_STATIC_CALLBACK(PRStatus) InitThread(void)
-{
-  gThread = new TimerThread();
-  if (!gThread)
-    return PR_FAILURE;
-
-  NS_ADDREF(gThread);
-
-  nsresult rv = gThread->Init();
-  if (NS_FAILED(rv)) {
-    NS_RELEASE(gThread);
-    return PR_FAILURE;
-  }
-
-  return PR_SUCCESS;
-}
-
 nsTimerImpl::nsTimerImpl() :
   mClosure(nsnull),
   mCallbackType(CALLBACK_TYPE_UNKNOWN),
@@ -162,10 +149,8 @@ nsTimerImpl::nsTimerImpl() :
   mDelay(0),
   mTimeout(0)
 {
+  // XXXbsmedberg: shouldn't this be in Init()?
   nsIThread::GetCurrent(getter_AddRefs(mCallingThread));
-
-  static PRCallOnceType once;
-  PR_CallOnce(&once, InitThread);
 
   mCallback.c = nsnull;
 
@@ -180,6 +165,24 @@ nsTimerImpl::~nsTimerImpl()
   ReleaseCallback();
 }
 
+//static
+nsresult
+nsTimerImpl::Startup()
+{
+  nsresult rv;
+
+  gThread = new TimerThread();
+  if (!gThread) return NS_ERROR_OUT_OF_MEMORY;
+
+  NS_ADDREF(gThread);
+  rv = gThread->InitLocks();
+
+  if (NS_FAILED(rv)) {
+    NS_RELEASE(gThread);
+  }
+
+  return rv;
+}
 
 void nsTimerImpl::Shutdown()
 {
@@ -205,6 +208,13 @@ void nsTimerImpl::Shutdown()
 
 nsresult nsTimerImpl::InitCommon(PRUint32 aType, PRUint32 aDelay)
 {
+  nsresult rv;
+
+  NS_ENSURE_TRUE(gThread, NS_ERROR_NOT_INITIALIZED);
+
+  rv = gThread->Init();
+  NS_ENSURE_SUCCESS(rv, rv);
+
   /**
    * In case of re-Init, both with and without a preceding Cancel, clear the
    * mCanceled flag and assign a new mGeneration.  But first, remove any armed
@@ -235,9 +245,6 @@ NS_IMETHODIMP nsTimerImpl::InitWithFuncCallback(nsTimerCallbackFunc aFunc,
                                                 PRUint32 aDelay,
                                                 PRUint32 aType)
 {
-  if (!gThread)
-    return NS_ERROR_FAILURE;
-
   ReleaseCallback();
   mCallbackType = CALLBACK_TYPE_FUNC;
   mCallback.c = aFunc;
@@ -250,9 +257,6 @@ NS_IMETHODIMP nsTimerImpl::InitWithCallback(nsITimerCallback *aCallback,
                                             PRUint32 aDelay,
                                             PRUint32 aType)
 {
-  if (!gThread)
-    return NS_ERROR_FAILURE;
-
   ReleaseCallback();
   mCallbackType = CALLBACK_TYPE_INTERFACE;
   mCallback.i = aCallback;
@@ -265,9 +269,6 @@ NS_IMETHODIMP nsTimerImpl::Init(nsIObserver *aObserver,
                                 PRUint32 aDelay,
                                 PRUint32 aType)
 {
-  if (!gThread)
-    return NS_ERROR_FAILURE;
-
   ReleaseCallback();
   mCallbackType = CALLBACK_TYPE_OBSERVER;
   mCallback.o = aObserver;
@@ -326,6 +327,17 @@ NS_IMETHODIMP nsTimerImpl::GetType(PRUint32* aType)
 NS_IMETHODIMP nsTimerImpl::GetClosure(void** aClosure)
 {
   *aClosure = mClosure;
+  return NS_OK;
+}
+
+
+NS_IMETHODIMP nsTimerImpl::GetCallback(nsITimerCallback **aCallback)
+{
+  if (mCallbackType == CALLBACK_TYPE_INTERFACE)
+    NS_IF_ADDREF(*aCallback = mCallback.i);
+  else
+    *aCallback = nsnull;
+
   return NS_OK;
 }
 

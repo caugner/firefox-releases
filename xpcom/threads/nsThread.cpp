@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -122,10 +122,10 @@ nsThread::Main(void* arg)
     // Because a thread can die after gMainThread dies and takes nsIThreadLog with it,
     // we need to check for it being null so that we don't crash on shutdown.
     if (nsIThreadLog) {
-      PRThreadState state;
-      rv = self->GetState(&state);
-      PR_LOG(nsIThreadLog, PR_LOG_DEBUG,
-             ("nsIThread %p end run %p\n", self, self->mRunnable.get()));
+        PRThreadState state;
+        rv = self->GetState(&state);
+        PR_LOG(nsIThreadLog, PR_LOG_DEBUG,
+               ("nsIThread %p end run %p\n", self, self->mRunnable.get()));
     }
 #endif
 
@@ -148,8 +148,8 @@ nsThread::Exit(void* arg)
 
 #if defined(PR_LOGGING)
     if (nsIThreadLog) {
-      PR_LOG(nsIThreadLog, PR_LOG_DEBUG,
-             ("nsIThread %p exited\n", self));
+        PR_LOG(nsIThreadLog, PR_LOG_DEBUG,
+               ("nsIThread %p exited\n", self));
     }
 #endif
     NS_RELEASE(self);
@@ -175,17 +175,18 @@ nsThread::Join()
 
     PR_LOG(nsIThreadLog, PR_LOG_DEBUG,
            ("nsIThread %p start join\n", this));
+    if (!mThread)
+        return NS_ERROR_NOT_INITIALIZED;
     PRStatus status = PR_JoinThread(mThread);
     // XXX can't use NS_RELEASE here because the macro wants to set
     // this to null (bad c++)
     PR_LOG(nsIThreadLog, PR_LOG_DEBUG,
            ("nsIThread %p end join\n", this));
-    if (status == PR_SUCCESS) {
-        NS_RELEASE_THIS();   // most likely the final release of this thread 
-        return NS_OK;
-    }
-    else
+    if (status != PR_SUCCESS)
         return NS_ERROR_FAILURE;
+
+    NS_RELEASE_THIS();   // most likely the final release of this thread 
+    return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -193,6 +194,8 @@ nsThread::GetPriority(PRThreadPriority *result)
 {
     if (mDead)
         return NS_ERROR_FAILURE;
+    if (!mThread)
+        return NS_ERROR_NOT_INITIALIZED;
     *result = PR_GetThreadPriority(mThread);
     return NS_OK;
 }
@@ -202,6 +205,8 @@ nsThread::SetPriority(PRThreadPriority value)
 {
     if (mDead)
         return NS_ERROR_FAILURE;
+    if (!mThread)
+        return NS_ERROR_NOT_INITIALIZED;
     PR_SetThreadPriority(mThread, value);
     return NS_OK;
 }
@@ -211,6 +216,8 @@ nsThread::Interrupt()
 {
     if (mDead)
         return NS_ERROR_FAILURE;
+    if (!mThread)
+        return NS_ERROR_NOT_INITIALIZED;
     PRStatus status = PR_Interrupt(mThread);
     return status == PR_SUCCESS ? NS_OK : NS_ERROR_FAILURE;
 }
@@ -220,6 +227,8 @@ nsThread::GetScope(PRThreadScope *result)
 {
     if (mDead)
         return NS_ERROR_FAILURE;
+    if (!mThread)
+        return NS_ERROR_NOT_INITIALIZED;
     *result = PR_GetThreadScope(mThread);
     return NS_OK;
 }
@@ -229,6 +238,8 @@ nsThread::GetState(PRThreadState *result)
 {
     if (mDead)
         return NS_ERROR_FAILURE;
+    if (!mThread)
+        return NS_ERROR_NOT_INITIALIZED;
     *result = PR_GetThreadState(mThread);
     return NS_OK;
 }
@@ -251,23 +262,53 @@ nsThread::Init(nsIRunnable* runnable,
                PRThreadScope scope,
                PRThreadState state)
 {
+    NS_ENSURE_ARG_POINTER(runnable);
+    if (mRunnable)
+        return NS_ERROR_ALREADY_INITIALIZED;
+
     mRunnable = runnable;
 
-    NS_ADDREF_THIS();   // released in nsThread::Exit
+    if (mStartLock)
+        return NS_ERROR_ALREADY_INITIALIZED;
+
+    mStartLock = PR_NewLock();
+    if (mStartLock == nsnull) {
+        mRunnable = nsnull;
+        return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    NS_ADDREF_THIS();       // released in nsThread::Exit
     if (state == PR_JOINABLE_THREAD)
         NS_ADDREF_THIS();   // released in nsThread::Join
-    mStartLock = PR_NewLock();
-    if (mStartLock == nsnull)
-        return NS_ERROR_OUT_OF_MEMORY;
+
     PR_Lock(mStartLock);
+    mDead = PR_FALSE;
     mThread = PR_CreateThread(PR_USER_THREAD, Main, this,
                               priority, scope, state, stackSize);
+    /* As soon as we PR_Unlock(mStartLock), if mThread was successfully 
+     * created, it could run and exit very quickly. In which case, it 
+     * would null mThread and therefore if we check if (mThread) we could 
+     * confuse a successfully created, yet already exited thread with
+     * OOM - failure to create the thread. So instead we store a local thr 
+     * which we check to see if we really failed to create the thread.
+     */
+    PRThread *thr = mThread;
     PR_Unlock(mStartLock);
+
+    if (thr == nsnull) {
+        mDead = PR_TRUE;         // otherwise cleared in nsThread::Exit
+        mRunnable = nsnull;      // otherwise cleared in nsThread::Main(when done)
+        PR_DestroyLock(mStartLock);
+        mStartLock = nsnull;
+        NS_RELEASE_THIS();       // otherwise released in nsThread::Exit
+        if (state == PR_JOINABLE_THREAD)
+            NS_RELEASE_THIS();   // otherwise released in nsThread::Join
+        return NS_ERROR_OUT_OF_MEMORY;
+    }
+
     PR_LOG(nsIThreadLog, PR_LOG_DEBUG,
            ("nsIThread %p created\n", this));
 
-    if (mThread == nsnull)
-        return NS_ERROR_OUT_OF_MEMORY;
     return NS_OK;
 }
 
@@ -340,7 +381,6 @@ nsThread::RegisterThreadSelf()
     if (kIThreadSelfIndex == 0) {
         status = PR_NewThreadPrivateIndex(&kIThreadSelfIndex, Exit);
         if (status != PR_SUCCESS) return NS_ERROR_FAILURE;
-        NS_ASSERTION(kIThreadSelfIndex != 0, "couldn't get thread private index");
     }
 
     status = PR_SetThreadPrivate(kIThreadSelfIndex, this);
@@ -373,7 +413,6 @@ nsIThread::GetIThread(PRThread* prthread, nsIThread* *result)
     if (nsThread::kIThreadSelfIndex == 0) {
         status = PR_NewThreadPrivateIndex(&nsThread::kIThreadSelfIndex, nsThread::Exit);
         if (status != PR_SUCCESS) return NS_ERROR_FAILURE;
-        NS_ASSERTION(nsThread::kIThreadSelfIndex != 0, "couldn't get thread private index");
     }
 
     thread = (nsThread*)PR_GetThreadPrivate(nsThread::kIThreadSelfIndex);
@@ -437,6 +476,7 @@ nsThread::Shutdown()
         nsrefcnt cnt;
         NS_RELEASE2(gMainThread, cnt);
         NS_WARN_IF_FALSE(cnt == 0, "Main thread being held past XPCOM shutdown.");
+        gMainThread = nsnull;
         
         kIThreadSelfIndex = 0;
     }

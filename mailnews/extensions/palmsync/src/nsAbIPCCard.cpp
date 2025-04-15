@@ -1,10 +1,10 @@
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -13,25 +13,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Created by: Rajiv Dayal <rdayal@netscape.com> 
+ *   Created by: Rajiv Dayal <rdayal@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -40,15 +40,14 @@
 
 #include "nsAbIPCCard.h"
 #include "nsUnicharUtils.h"
-#include "nsAbMDBCard.h"
-#include "nsAddrDatabase.h"
+#include "nsIAbMDBCard.h"
 #include "prdtoa.h"
 #include "PalmSyncImp.h"
 
 extern PRLogModuleInfo *PALMSYNC;
 
-#define CONVERT_ASSIGNTO_UNICODE(d, s, convertCRLF)  d.SetLength(0);\
-                                        if((char*) s) d=NS_ConvertASCIItoUCS2((const char*)s);\
+#define CONVERT_ASSIGNTO_UNICODE(d, s, convertCRLF)  d.Truncate();\
+                                        if((char*) s) d.AppendASCII((char*)s);\
                                         if (convertCRLF) \
                                           d.ReplaceSubstring(NS_LITERAL_STRING("\x0D\x0A").get(),NS_LITERAL_STRING(" ").get());
 
@@ -819,8 +818,7 @@ void nsAbIPCCard::CopyValue(PRBool isUnicode, nsString & attribValue, LPTSTR * r
             *result = Str;
         } 
         else { 
-            nsCAutoString cStr; 
-            cStr = NS_LossyConvertUCS2toASCII(attribValue);
+            NS_LossyConvertUTF16toASCII cStr(attribValue);
             // These strings are defined as wide in the idl, so we need to add up to 3
             // bytes of 0 byte padding at the end (if the string is an odd number of 
             // bytes long, we need one null byte to pad out the last char to a wide char
@@ -947,15 +945,14 @@ void nsAbIPCCard::JoinAddress(PRBool isUnicode, LPTSTR *ptrAddress, nsString &ad
   else
   { 
     char * str = (char *) CoTaskMemAlloc(strLength);
-    nsCAutoString cStr;
     if(address1.Length())
     {
-      cStr = NS_LossyConvertUCS2toASCII(address1); 
+      NS_LossyConvertUTF16toASCII cStr(address1);
       strncpy(str, cStr.get(), strLength-1);
       str[strLength-1] = '\0';
       if(address2.Length())
       {
-        cStr = NS_LossyConvertUCS2toASCII(address2);
+        LossyCopyUTF16toASCII(address2, cStr);
         strncat(str, "\x0A", strLength-1);
         strncat(str, cStr.get(), strLength-1);
         str[strLength-1] = '\0';
@@ -963,7 +960,7 @@ void nsAbIPCCard::JoinAddress(PRBool isUnicode, LPTSTR *ptrAddress, nsString &ad
     }
     else
     {
-      cStr = NS_LossyConvertUCS2toASCII(address2);
+      NS_LossyConvertUTF16toASCII cStr(address2);
       strncpy(str, cStr.get(), strLength-1);
       str[strLength-1] = '\0';
     }

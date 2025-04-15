@@ -164,7 +164,7 @@ nsLDAPSyncQuery::OnLDAPInit(nsILDAPConnection *aConn, nsresult aStatus)
 
     // kick off a bind operation 
     // 
-    rv = mOperation->SimpleBind(nsCString()); 
+    rv = mOperation->SimpleBind(EmptyCString()); 
     if (NS_FAILED(rv)) {
         FinishLDAPQuery();
         return NS_ERROR_FAILURE;
@@ -232,12 +232,10 @@ nsLDAPSyncQuery::OnLDAPSearchEntry(nsILDAPMessage *aMessage)
         // store  all values of this attribute in the mResults.
         //
         for (PRUint32 j = 0; j < valueCount; j++) {
-        
-            mResults += NS_LITERAL_STRING("\n") +
-                        NS_ConvertASCIItoUCS2(mAttrs[i]) +
-                        NS_LITERAL_STRING("= ") + 
-                        nsDependentString(vals[j]);
-            
+            mResults.Append(PRUnichar('\n'));
+            mResults.AppendASCII(mAttrs[i]);
+            mResults.Append(PRUnichar('='));
+            mResults.Append(vals[j]);
         }
         
         NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(valueCount, vals);
@@ -423,7 +421,7 @@ nsresult nsLDAPSyncQuery::InitConnection()
 
     rv = mConnection->Init(host.get(), port, 
                            (options & nsILDAPURL::OPT_SECURE) 
-                           ? PR_TRUE : PR_FALSE, nsCString(), selfProxy,
+                           ? PR_TRUE : PR_FALSE, EmptyCString(), selfProxy,
                            nsnull, mProtocolVersion);
     if (NS_FAILED(rv)) {
         FinishLDAPQuery();
@@ -524,9 +522,12 @@ NS_IMETHODIMP nsLDAPSyncQuery::GetQueryResults(nsILDAPURL *aServerURL,
 
     // Return results
     //
-    if (!mResults.IsEmpty())
+    if (!mResults.IsEmpty()) {
         *_retval = ToNewUnicode(mResults);
-    return NS_OK;
+        if (!_retval)
+          rv = NS_ERROR_OUT_OF_MEMORY;
+    }
+    return rv;
 
 }
 #endif

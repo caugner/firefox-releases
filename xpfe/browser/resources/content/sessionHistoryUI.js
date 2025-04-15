@@ -1,11 +1,11 @@
 /* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,28 +14,28 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Jason Eager <jce2@po.cwru.edu>
- *  Blake Ross <BlakeR1234@aol.com>
- *  Peter Annema <disttsc@bart.nl>
- *  Dean Tessman <dean_tessman@hotmail.com>
+ *   Jason Eager <jce2@po.cwru.edu>
+ *   Blake Ross <BlakeR1234@aol.com>
+ *   Peter Annema <disttsc@bart.nl>
+ *   Dean Tessman <dean_tessman@hotmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 const MAX_HISTORY_MENU_ITEMS = 15;
@@ -73,9 +73,9 @@ function FillHistoryMenu(aParent, aMenu)
             }
           break;
         case "forward":
-          end  = ((count-index) > MAX_HISTORY_MENU_ITEMS) ? index + MAX_HISTORY_MENU_ITEMS : count;
-          if ((index + 1) >= end) return false;
-          for (j = index + 1; j < end; j++)
+          end  = ((count-index) > MAX_HISTORY_MENU_ITEMS) ? index + MAX_HISTORY_MENU_ITEMS : count - 1;
+          if ((index + 1) > end) return false;
+          for (j = index + 1; j <= end; j++)
             {
               entry = sessionHistory.getEntryAtIndex(j, false);
               if (entry)
@@ -102,14 +102,14 @@ function executeUrlBarHistoryCommand( aTarget )
     var label = aTarget.getAttribute("label");
     if (index != "nothing_available" && label)
       {
-        var uri = getShortcutOrURI(label);
         if (gURLBar) {
-          gURLBar.value = uri;
-          addToUrlbarHistory();
+          gURLBar.value = label;
+          addToUrlbarHistory(gURLBar.value);
           BrowserLoadURL();
-        }
-        else
+        } else {
+          var uri = getShortcutOrURI(label);
           loadURI(uri);
+        }
       }
   }
 
@@ -157,131 +157,6 @@ function createUBHistoryMenu( aParent )
     }
   }
 
-function addToUrlbarHistory()
-{
-  var urlToAdd = gURLBar.value;
-  if (!urlToAdd)
-     return;
-  if (urlToAdd.search(/[\x00-\x1F]/) != -1) // don't store bad URLs
-     return;
-
-  if (!gRDF)
-     gRDF = Components.classes["@mozilla.org/rdf/rdf-service;1"]
-                      .getService(Components.interfaces.nsIRDFService);
- 
-  if (!gGlobalHistory)
-    gGlobalHistory = Components.classes["@mozilla.org/browser/global-history;2"]
-                               .getService(Components.interfaces.nsIBrowserHistory);
-
-  if (!gURIFixup)
-    gURIFixup = Components.classes["@mozilla.org/docshell/urifixup;1"]
-                          .getService(Components.interfaces.nsIURIFixup);
-  if (!gLocalStore)
-     gLocalStore = gRDF.GetDataSource("rdf:local-store");
-
-  if (gLocalStore) {
-     if (!gRDFC)
-        gRDFC = Components.classes["@mozilla.org/rdf/container-utils;1"]
-                          .getService(Components.interfaces.nsIRDFContainerUtils);
-
-       var entries = gRDFC.MakeSeq(gLocalStore, gRDF.GetResource("nc:urlbar-history"));
-       if (!entries)
-          return;
-       var elements = entries.GetElements();
-       if (!elements)
-          return;
-       var index = 0;
-       // create the nsIURI objects for comparing the 2 urls
-       var ioService = Components.classes["@mozilla.org/network/io-service;1"]
-                     .getService(Components.interfaces.nsIIOService);
-       
-       var entryToAdd = gRDF.GetLiteral(urlToAdd);
-
-       try {
-         ioService.extractScheme(urlToAdd, {}, {});
-       } catch(e) {
-         urlToAdd = "http://" + urlToAdd;
-       }
-       
-       try {
-         var uriToAdd  = ioService.newURI(urlToAdd, null, null);
-       }
-       catch(e) {
-         // it isn't a valid url
-         // we'll leave uriToAdd as "undefined" and handle that later
-       }
-
-       while(elements.hasMoreElements()) {
-          var entry = elements.getNext();
-          if (!entry) continue;
-
-          index ++;
-          try {
-            entry = entry.QueryInterface(Components.interfaces.nsIRDFLiteral);
-          } catch(ex) {
-            // XXXbar not an nsIRDFLiteral for some reason. see 90337.
-            continue;
-          }
-          var rdfValue = entry.Value;
-
-          try {
-            ioService.extractScheme(rdfValue, {}, {});
-          } catch(e) {
-            rdfValue = "http://" + rdfValue;
-          }
-
-          if (uriToAdd) {
-            try {
-              var rdfUri = ioService.newURI(rdfValue, null, null);
-                 
-              if (rdfUri.equals(uriToAdd)) {
-                // URI already present in the database
-                // Remove it from its current position.
-                // It is inserted to the top after the while loop.
-                entries.RemoveElementAt(index, true);
-                break;
-              }
-            }
-               
-            // the uri is still not recognized by the ioservice
-            catch(ex) {
-              // no problem, we'll handle this below
-            }
-          }
-
-          // if we got this far, then something is funky with the URIs,
-          // so we need to do a straight string compare of the raw strings
-          if (urlToAdd == rdfValue) {
-            entries.RemoveElementAt(index, true);
-            break;
-          }
-       }   // while
-
-       // Otherwise, we've got a new URL in town. Add it!
-
-       try {
-         var url = entryToAdd.Value;
-         if (url.indexOf(" ") == -1) {
-           var fixedUpURI = gURIFixup.createFixupURI(url, 0);
-           if (!fixedUpURI.schemeIs("data"))
-             gGlobalHistory.markPageAsTyped(fixedUpURI);
-         }
-       }
-       catch(ex) {
-       }
-
-       // Put the value as it was typed by the user in to RDF
-       // Insert it to the beginning of the list.
-       entries.InsertElementAt(entryToAdd, 1, true);
-
-       // Remove any expired history items so that we don't let
-       // this grow without bound.
-       for (index = entries.GetCount(); index > MAX_URLBAR_HISTORY_ITEMS; --index) {
-           entries.RemoveElementAt(index, true);
-       }  // for
-   }  // localstore
-}
-
 function createMenuItem( aParent, aIndex, aLabel)
   {
     var menuitem = document.createElement( "menuitem" );
@@ -304,7 +179,7 @@ function createRadioMenuItem( aParent, aIndex, aLabel, aChecked)
 function deleteHistoryItems(aParent)
   {
     var children = aParent.childNodes;
-    for (var i = 0; i < children.length; i++ )
+    for (var i = children.length - 1; i >= 0; --i )
       {
         var index = children[i].getAttribute( "index" );
         if (index)
@@ -316,4 +191,3 @@ function updateGoMenu(event)
   {
     FillHistoryMenu(event.target, "go");
   }
-

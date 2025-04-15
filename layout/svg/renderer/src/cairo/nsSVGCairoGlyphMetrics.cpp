@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -21,29 +21,29 @@
  * Parts of this file contain code derived from the following files(s)
  * of the Mozilla SVG project (these parts are Copyright (C) by their
  * respective copyright-holders):
- *    layout/svg/renderer/src/gdiplus/nsSVGGDIPlusGlyphMetrics.h
+ *    layout/svg/renderer/src/gdiplus/nsSVGGDIPlusGlyphMetrics.cpp
  *
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsCOMPtr.h"
 #include "nsISVGGlyphMetricsSource.h"
 #include "nsPromiseFlatString.h"
 #include "nsFont.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsISVGCairoGlyphMetrics.h"
 #include "nsSVGCairoGlyphMetrics.h"
 #include "nsIDOMSVGMatrix.h"
@@ -51,6 +51,8 @@
 #include "nsSVGTypeCIDs.h"
 #include "nsIComponentManager.h"
 #include <cairo.h>
+
+extern cairo_surface_t *gSVGCairoDummySurface;
 
 /**
  * \addtogroup gdiplus_renderer Cairo Rendering Engine
@@ -82,11 +84,10 @@ public:
   NS_IMETHOD_(void) GetSubBoundingBox(PRUint32 charoffset, PRUint32 count,
                                       nsIDOMSVGRect * *aBoundingBox);
 
-  NS_IMETHOD_(cairo_font_t*)GetFont() { return mFont; }
+  NS_IMETHOD_(void) SelectFont(cairo_t *ctx);
 
 private:
   cairo_t *mCT;
-  cairo_font_t *mFont;
   cairo_text_extents_t mExtents;
   nsCOMPtr<nsISVGGlyphMetricsSource> mSource;
 };
@@ -97,14 +98,14 @@ private:
 // implementation:
 
 nsSVGCairoGlyphMetrics::nsSVGCairoGlyphMetrics(nsISVGGlyphMetricsSource *src)
-  : mFont(NULL), mSource(src)
+  : mSource(src)
 {
-  mCT = cairo_create();
+  memset(&mExtents, 0, sizeof(cairo_text_extents_t));
+  mCT = cairo_create(gSVGCairoDummySurface);
 }
 
 nsSVGCairoGlyphMetrics::~nsSVGCairoGlyphMetrics()
 {
-  // don't delete mFont because the cairo_destroy takes it down
   cairo_destroy(mCT);
 }
 
@@ -139,35 +140,29 @@ NS_INTERFACE_MAP_END
 NS_IMETHODIMP
 nsSVGCairoGlyphMetrics::GetBaselineOffset(PRUint16 baselineIdentifier, float *_retval)
 {
+  cairo_font_extents_t extents;
+
+  SelectFont(mCT);
+  cairo_font_extents(mCT, &extents);
+
   switch (baselineIdentifier) {
+  case BASELINE_HANGING:
+    // not really right, but the best we can do with the information provided
+    // FALLTHROUGH
   case BASELINE_TEXT_BEFORE_EDGE:
-    *_retval = mExtents.y_bearing;
+    *_retval = -extents.ascent;
     break;
   case BASELINE_TEXT_AFTER_EDGE:
-    *_retval = (float)(PRUint16)(mExtents.y_bearing + mExtents.height + 0.5);
+    *_retval = extents.descent;
     break;
   case BASELINE_CENTRAL:
   case BASELINE_MIDDLE:
-    *_retval = (float)(PRUint16)(mExtents.y_bearing + mExtents.height/2.0 + 0.5);
+    *_retval = - (extents.ascent - extents.descent) / 2.0;
     break;
   case BASELINE_ALPHABETIC:
   default:
-  {
-    // xxxx
     *_retval = 0.0;
-#if 0
-    FontFamily family;
-    GetFont()->GetFamily(&family);
-    INT style = GetFont()->GetStyle();
-    // alternatively to rounding here, we could set the
-    // pixeloffsetmode to 'PixelOffsetModeHalf' on painting
-    *_retval = (float)(UINT16)(GetBoundingRect()->Y
-                               + GetFont()->GetSize()
-                               *family.GetCellAscent(style)/family.GetEmHeight(style)
-                               + 0.5);
-#endif
-  }
-  break;
+    break;
   }
   
   return NS_OK;
@@ -199,14 +194,17 @@ nsSVGCairoGlyphMetrics::GetSubBoundingBox(PRUint32 charoffset, PRUint32 count,
   }
 
   cairo_text_extents_t extents;
+  memset(&mExtents, 0, sizeof(cairo_text_extents_t));
+
   nsAutoString text;
   mSource->GetCharacterData(text);
-  cairo_text_extents(mCT,
-                     (unsigned char *)NS_ConvertUCS2toUTF8(Substring(text,
-                                                                     charoffset,
-                                                                     count)).get(),
-                     &extents);
-
+  if (text.Length()) {
+    cairo_text_extents(mCT,
+                       NS_ConvertUCS2toUTF8(Substring(text,
+                                                      charoffset,
+                                                      count)).get(),
+                       &extents);
+  }
   
   rect->SetX(extents.x_bearing);
   rect->SetY(extents.y_bearing);
@@ -246,16 +244,15 @@ nsSVGCairoGlyphMetrics::GetExtentOfChar(PRUint32 charnum, nsIDOMSVGRect **_retva
 {
   *_retval = nsnull;
 
-  cairo_glyph_t glyph;
   cairo_text_extents_t extent;
-  glyph.x = glyph.y = 0;
 
   nsAutoString text;
   mSource->GetCharacterData(text);
-  glyph.index = text[charnum];
 
-  cairo_set_font(mCT, mFont);
-  cairo_glyph_extents(mCT, &glyph, 1, &extent);
+  SelectFont(mCT);
+  cairo_text_extents(mCT,
+                     NS_ConvertUCS2toUTF8(Substring(text, charnum, 1)).get(),
+                     &extent);
 
   nsCOMPtr<nsIDOMSVGRect> rect = do_CreateInstance(NS_SVGRECT_CONTRACTID);
 
@@ -284,14 +281,28 @@ nsSVGCairoGlyphMetrics::Update(PRUint32 updatemask, PRBool *_retval)
   }
 
   if (updatemask & nsISVGGlyphMetricsSource::UPDATEMASK_FONT) {
-    if (mFont) {
-      // don't delete mFont because we're just pointing at the ctx copy
-      mFont = NULL;
-    }
     *_retval = PR_TRUE;
   }
 
-  if (!mFont) {
+  SelectFont(mCT);
+
+  nsAutoString text;
+  mSource->GetCharacterData(text);
+
+  if (!text.Length()) {
+    memset(&mExtents, 0, sizeof(cairo_text_extents_t));
+  } else {
+    cairo_text_extents(mCT, 
+                       NS_ConvertUCS2toUTF8(text).get(),
+                       &mExtents);
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP_(void)
+nsSVGCairoGlyphMetrics::SelectFont(cairo_t *ctx)
+{
     nsFont font;
     mSource->GetFont(&font);
       
@@ -320,22 +331,12 @@ nsSVGCairoGlyphMetrics::Update(PRUint32 updatemask, PRBool *_retval)
     nsString family;
     font.GetFirstFamily(family);
     char *f = ToNewCString(family);
-    cairo_select_font(mCT, f, slant, weight);
-    free(f);
-    mFont = cairo_current_font(mCT);
+    cairo_select_font_face(ctx, f, slant, weight);
+    nsMemory::Free(f);
 
-    nsCOMPtr<nsIPresContext> presContext;
+    nsCOMPtr<nsPresContext> presContext;
     mSource->GetPresContext(getter_AddRefs(presContext));
     float pxPerTwips;
     pxPerTwips = presContext->TwipsToPixels();
-    cairo_scale_font(mCT, font.size*pxPerTwips);
- 
-    nsAutoString text;
-    mSource->GetCharacterData(text);
-    cairo_text_extents(mCT, 
-                       (unsigned char*)NS_ConvertUCS2toUTF8(text).get(),
-                       &mExtents);
-  }
-  
-  return NS_OK;
+    cairo_set_font_size(ctx, font.size*pxPerTwips);
 }

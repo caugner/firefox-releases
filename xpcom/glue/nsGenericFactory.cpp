@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -48,9 +48,6 @@
 #ifdef XPCOM_GLUE
 #include "nsXPCOMGlue.h"
 #include "nsXPCOMPrivate.h"
-#else
-#include "nsIInterfaceRequestorUtils.h"
-#include "nsINativeComponentLoader.h"
 #endif
 
 nsGenericFactory::nsGenericFactory(const nsModuleComponentInfo *info)
@@ -200,7 +197,7 @@ NS_METHOD nsGenericFactory::Create(nsISupports* outer, const nsIID& aIID, void* 
     return res;
 }
 
-NS_COM nsresult
+NS_COM_GLUE nsresult
 NS_NewGenericFactory(nsIGenericFactory* *result,
                      const nsModuleComponentInfo *info)
 {
@@ -223,16 +220,14 @@ NS_NewGenericFactory(nsIGenericFactory* *result,
 nsGenericModule::nsGenericModule(const char* moduleName, PRUint32 componentCount,
                                  const nsModuleComponentInfo* components,
                                  nsModuleConstructorProc ctor,
-                                 nsModuleDestructorProc dtor,
-                                 const char** aLibDepends)
+                                 nsModuleDestructorProc dtor)
     : mInitialized(PR_FALSE), 
       mModuleName(moduleName),
       mComponentCount(componentCount),
       mComponents(components),
       mFactoriesNotToBeRegistered(nsnull),
       mCtor(ctor),
-      mDtor(dtor),
-      mLibraryDependencies(aLibDepends)
+      mDtor(dtor)
 {
 }
 
@@ -382,14 +377,6 @@ nsGenericModule::GetClassObject(nsIComponentManager *aCompMgr,
         desc++;
     }
     // not found in descriptions
-#ifndef XPCOM_GLUE
-#ifdef DEBUG 
-    char* cs = aClass.ToString();
-    fprintf(stderr, "+++ nsGenericModule %s: unable to create factory for %s\n", mModuleName, cs);
-    // leak until we resolve the nsID Allocator. 
-    // nsCRT::free(cs);
-#endif        // XXX put in stop-gap so that we don't search for this one again
-#endif 
     return NS_ERROR_FACTORY_NOT_REGISTERED;
 }
 
@@ -441,25 +428,6 @@ nsGenericModule::RegisterSelf(nsIComponentManager *aCompMgr,
         cp++;
     }
 
-#ifndef XPCOM_GLUE
-     // We want to tell the component loader of any dependencies
-     // we have so that the loader can resolve them for us.
-
-     nsCOMPtr<nsINativeComponentLoader> loader = do_GetInterface(aCompMgr);
-     if (loader && mLibraryDependencies) 
-     {
-         for(int i=0; mLibraryDependencies[i] != nsnull && 
-                 mLibraryDependencies[i][0] != '\0'; i++)
-         {
-             loader->AddDependentLibrary(aPath, 
-                                         mLibraryDependencies[i]);
-         }
-         loader = nsnull;
-     }
-#endif
-
-
-
     return rv;
 }
 
@@ -506,15 +474,15 @@ nsGenericModule::CanUnload(nsIComponentManager *aCompMgr, PRBool *okToUnload)
     return NS_ERROR_FAILURE;
 }
 
-NS_COM nsresult
-NS_NewGenericModule2(nsModuleInfo* info, nsIModule* *result)
+NS_COM_GLUE nsresult
+NS_NewGenericModule2(nsModuleInfo const *info, nsIModule* *result)
 {
     nsresult rv = NS_OK;
 
     // Create and initialize the module instance
     nsGenericModule *m = 
         new nsGenericModule(info->mModuleName, info->mCount, info->mComponents,
-                            info->mCtor, info->mDtor, info->mLibraryDependencies);
+                            info->mCtor, info->mDtor);
 
     if (!m)
         return NS_ERROR_OUT_OF_MEMORY;
@@ -524,7 +492,7 @@ NS_NewGenericModule2(nsModuleInfo* info, nsIModule* *result)
     return rv;
 }
 
-NS_COM nsresult
+NS_COM_GLUE nsresult
 NS_NewGenericModule(const char* moduleName,
                     PRUint32 componentCount,
                     nsModuleComponentInfo* components,
@@ -539,7 +507,6 @@ NS_NewGenericModule(const char* moduleName,
     info.mComponents = components;
     info.mCount      = componentCount;
     info.mDtor       = dtor;
-    info.mLibraryDependencies = nsnull;
 
     return NS_NewGenericModule2(&info, result);
 }

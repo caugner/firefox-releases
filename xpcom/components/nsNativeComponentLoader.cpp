@@ -1,21 +1,39 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/*
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "NPL"); you may not use this file except in
- * compliance with the NPL.  You may obtain a copy of the NPL at
- * http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the NPL is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the NPL
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * NPL.
+ * License.
  *
- * The Initial Developer of this code under the NPL is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1999 Netscape Communications Corporation.  All Rights
- * Reserved.
+ * The Original Code is mozilla.org Code.
  *
- * Contributors:
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK *****
  * This Original Code has been modified by IBM Corporation.
  * Modifications made by IBM described herein are
  * Copyright (c) International Business Machines
@@ -61,15 +79,13 @@ DLLStore_Destroy(nsHashKey *aKey, void *aData, void* closure)
 
 nsNativeComponentLoader::nsNativeComponentLoader() :
     mCompMgr(nsnull),
-    mLoadedDependentLibs(16, PR_TRUE),
     mDllStore(nsnull, nsnull, DLLStore_Destroy, 
               nsnull, 256, PR_TRUE)
 {
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS2(nsNativeComponentLoader, 
-                              nsIComponentLoader,
-                              nsINativeComponentLoader)
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsNativeComponentLoader, 
+                              nsIComponentLoader)
 
 NS_IMETHODIMP
 nsNativeComponentLoader::GetFactory(const nsIID & aCID,
@@ -401,10 +417,6 @@ nsNativeComponentLoader::SelfRegisterDll(nsDll *dll,
          *************************************************************/
         nsresult res2 = dll->GetDllSpec(getter_AddRefs(fs));    // don't change 'res2' -- see warning, above
         if (NS_SUCCEEDED(res2)) {
-            // in the case of re-registering a component, we want to remove 
-            // any optional data that this file may have had.
-            AddDependentLibrary(fs, nsnull);
-
             res = mobj->RegisterSelf(mCompMgr, fs, registryLocation,
                                      nativeComponentType);
         }
@@ -908,7 +920,7 @@ nsNativeComponentLoader::RegisterDeferredComponents(PRInt32 aWhen,
                                                     PRBool *aRegistered)
 {
 #ifdef DEBUG 
-    fprintf(stderr, "nNCL: registering deferred (%d)\n",
+    fprintf(stderr, "nsNativeComponentLoader: registering deferred (%d)\n",
             mDeferredComponents.Count());
 #endif
     *aRegistered = PR_FALSE;
@@ -928,10 +940,13 @@ nsNativeComponentLoader::RegisterDeferredComponents(PRInt32 aWhen,
     }
 #ifdef DEBUG
     if (*aRegistered)
-        fprintf(stderr, "nNCL: registered deferred, %d left\n",
+        fprintf(stderr,
+                "nsNativeComponentLoader: registered deferred, %d left\n",
                 mDeferredComponents.Count());
     else
-        fprintf(stderr, "nNCL: didn't register any components, %d left\n",
+        fprintf(stderr,
+                "nsNativeComponentLoader: "
+                "didn't register any components, %d left\n",
                 mDeferredComponents.Count());
 #endif
     /* are there any fatal errors? */
@@ -1041,37 +1056,4 @@ nsNativeComponentLoader::GetFactoryFromModule(nsDll *aDll, const nsCID &aCID,
 
     return module->GetClassObject(mCompMgr, aCID, NS_GET_IID(nsIFactory),
                                   (void **)aFactory);
-}
-
-
-NS_IMETHODIMP
-nsNativeComponentLoader::AddDependentLibrary(nsIFile* aFile, const char* libName)
-{
-    nsCOMPtr<nsIComponentLoaderManager> manager = do_QueryInterface(mCompMgr);
-    if (!manager) 
-    {
-        NS_WARNING("Something is terribly wrong");
-        return NS_ERROR_FAILURE;
-    }
-
-    // the native component loader uses the optional data
-    // to store a space delimited list of dependent library 
-    // names
-
-    if (!libName) 
-    {
-        manager->SetOptionalData(aFile, nsnull, nsnull);
-        return NS_OK;
-    }
-
-    nsXPIDLCString data;
-    manager->GetOptionalData(aFile, nsnull, getter_Copies(data));
-
-    if (!data.IsEmpty())
-        data.Append(NS_LITERAL_CSTRING(" "));
-
-    data.Append(nsDependentCString(libName));
-    
-    manager->SetOptionalData(aFile, nsnull, data);
-    return NS_OK;
 }

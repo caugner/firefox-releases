@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,22 +22,24 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nscore.h" 
 #include "nsProfile.h"
+#ifdef MOZ_PROFILELOCKING
 #include "nsProfileLock.h"
+#endif
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 
@@ -52,6 +54,7 @@
 #include "nsXPIDLString.h"
 #include "nsEscape.h"
 #include "nsIURL.h"
+#include "nsNativeCharsetUtils.h"
 
 #include "prprf.h"
 
@@ -74,7 +77,7 @@
 #include "nsIDirectoryService.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsAppDirectoryServiceDefs.h"
-#include "nsIChromeRegistry.h" // chromeReg
+#include "nsIChromeRegistrySea.h"
 #include "nsIStringBundle.h"
 #include "nsIObserverService.h"
 #include "nsHashtable.h"
@@ -94,7 +97,7 @@
 #include "nsIWindowWatcher.h"
 #include "jsapi.h"
 #include "nsIJSContextStack.h"
-
+#include "nsEmbedCID.h"
 
 #if defined(XP_MAC) || defined(XP_MACOSX)
 #define OLD_REGISTRY_FILE_NAME "Netscape Registry"
@@ -132,7 +135,7 @@
 
 const char* kDefaultOpenWindowParams = "centerscreen,chrome,modal,titlebar";
 
-const char* kBrandBundleURL = "chrome://global/locale/brand.properties";
+const char* kBrandBundleURL = "chrome://branding/locale/brand.properties";
 const char* kMigrationBundleURL = "chrome://communicator/locale/profile/migration.properties";
 
 // we want everyone to have the debugging info to the console for now
@@ -215,7 +218,7 @@ nsresult RecursiveCopy(nsIFile* srcDir, nsIFile* destDir)
 		            }
 		        }
 		        else
-		            rv = dirEntry->CopyToNative(destDir, nsCString());
+		            rv = dirEntry->CopyToNative(destDir, EmptyCString());
 		    }
 		
 		}
@@ -394,7 +397,7 @@ nsProfile::StartupWithArgs(nsICmdLineService *cmdLineArgs, PRBool canInteract)
     }
     gLocaleProfiles->Remove(&key);
 
-    nsCOMPtr<nsIXULChromeRegistry> chromeRegistry =
+    nsCOMPtr<nsIChromeRegistrySea> chromeRegistry =
         do_GetService(NS_CHROMEREGISTRY_CONTRACTID, &rv);
     if (NS_FAILED(rv)) return rv;
 
@@ -499,13 +502,15 @@ nsProfile::LoadDefaultProfileDir(nsCString & profileURLStr, PRBool canInteract)
                 profileURLStr = PROFILE_MANAGER_URL; 
             if (exists)
             {
+#ifdef MOZ_PROFILELOCKING
                 // If the profile is locked, we need the UI
                 nsCOMPtr<nsILocalFile> localFile(do_QueryInterface(curProfileDir));
                 nsProfileLock tempLock;
-                rv = tempLock.Lock(localFile);
+                rv = tempLock.Lock(localFile, nsnull);
                 if (NS_FAILED(rv))
                     profileURLStr = PROFILE_MANAGER_URL;
-            } 
+#endif
+            }
         }
         else
             profileURLStr = PROFILE_SELECTION_URL;
@@ -643,7 +648,7 @@ nsProfile::ConfirmAutoMigration(PRBool canInteract, PRBool *confirmed)
     rv = migrationBundle->GetStringFromName(NS_LITERAL_STRING("manage").get(), getter_Copies(button1Title));
     if (NS_FAILED(rv)) return rv;
     
-    nsCOMPtr<nsIPromptService> promptService(do_GetService("@mozilla.org/embedcomp/prompt-service;1", &rv));
+    nsCOMPtr<nsIPromptService> promptService(do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
     if (NS_FAILED(rv)) return rv;
     PRInt32 buttonPressed;
     rv = promptService->ConfirmEx(nsnull, dialogTitle.get(), msgString.get(),
@@ -733,19 +738,8 @@ nsProfile::ProcessArgs(nsICmdLineService *cmdLineArgs,
         if (cmdResult) {
             foundProfileCommandArg = PR_TRUE;
             nsAutoString currProfileName; 
-            if (nsCRT::IsAscii(cmdResult))  {
-                currProfileName.AssignWithConversion(cmdResult);
-            }
-            else {
-                // get a platform charset
-                nsCAutoString charSet;
-                rv = GetPlatformCharset(charSet);
-                NS_ASSERTION(NS_SUCCEEDED(rv), "failed to get a platform charset");
-
-                // convert the profile name to Unicode
-                rv = ConvertStringToUnicode(charSet, cmdResult, currProfileName);
-                NS_ASSERTION(NS_SUCCEEDED(rv), "failed to convert ProfileName to unicode");
-            }
+            rv = NS_CopyNativeToUnicode(cmdResult, currProfileName); 
+            NS_ASSERTION(NS_SUCCEEDED(rv), "failed to convert ProfileName to unicode");
  
 #ifdef DEBUG_profile
             printf("ProfileName : %s\n", (const char*)cmdResult);
@@ -802,24 +796,16 @@ nsProfile::ProcessArgs(nsICmdLineService *cmdLineArgs,
             foundProfileCommandArg = PR_TRUE;
             nsAutoString currProfileName; 
  
-            if (nsCRT::IsAscii(cmdResult))  {
-                currProfileName.AssignWithConversion(strtok(cmdResult.BeginWriting(), " "));
-            }
-            else {
-                // get a platform charset
-                nsCAutoString charSet;
-                rv = GetPlatformCharset(charSet);
-                NS_ASSERTION(NS_SUCCEEDED(rv), "failed to get a platform charset");
+            char *tmpStr;
+            rv = NS_CopyNativeToUnicode(
+                 nsDependentCString(nsCRT::strtok(cmdResult.BeginWriting(), " ", &tmpStr)),
+                                    currProfileName);
+            NS_ASSERTION(NS_SUCCEEDED(rv), "failed to convert ProfileName to unicode");
 
-                // convert the profile name to Unicode
-                nsCAutoString profileName(strtok(cmdResult.BeginWriting(), " "));
-                rv = ConvertStringToUnicode(charSet, profileName.get(), currProfileName);
-                NS_ASSERTION(NS_SUCCEEDED(rv), "failed to convert ProfileName to unicode");
-            }
-            nsAutoString currProfileDirString; currProfileDirString.AssignWithConversion(strtok(NULL, " "));
-        
-            if (!currProfileDirString.IsEmpty()) {
-                rv = NS_NewLocalFile(currProfileDirString, PR_TRUE, getter_AddRefs(currProfileDir));
+            char *currProfileDirString = nsCRT::strtok(tmpStr, " ", &tmpStr); 
+            if (currProfileDirString && *currProfileDirString) {
+                rv = NS_NewNativeLocalFile(nsDependentCString(currProfileDirString), 
+                     PR_TRUE, getter_AddRefs(currProfileDir));
                 NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
             }
             else {
@@ -843,8 +829,11 @@ nsProfile::ProcessArgs(nsICmdLineService *cmdLineArgs,
                 // which assume prefs.js exists after -CreateProfile.
                 nsCOMPtr<nsIFile> newProfileDir;
                 GetProfileDir(currProfileName.get(), getter_AddRefs(newProfileDir));
-                if (newProfileDir) 
-                  gDirServiceProvider->SetProfileDir(newProfileDir);
+                if (newProfileDir) {
+                  nsCOMPtr<nsIFile> localDir;
+                  GetLocalProfileDir(currProfileName.get(), getter_AddRefs(localDir));
+                  gDirServiceProvider->SetProfileDir(newProfileDir, localDir);
+                }
                 rv = LoadNewProfilePrefs();
                 gProfileDataAccess->mProfileDataChanged = PR_TRUE;
                 gProfileDataAccess->UpdateRegistry(nsnull);
@@ -1138,7 +1127,10 @@ nsProfile::GetCurrentProfile(PRUnichar **profileName)
     NS_ENSURE_ARG_POINTER(profileName);
     *profileName = nsnull;
 
-    gProfileDataAccess->GetCurrentProfile(profileName);
+    if (!mCurrentProfileName.IsEmpty()) 
+      *profileName = ToNewUnicode(mCurrentProfileName);
+    else 
+      gProfileDataAccess->GetCurrentProfile(profileName);
     return (*profileName == nsnull) ? NS_ERROR_FAILURE : NS_OK;
 }
 
@@ -1173,17 +1165,17 @@ nsProfile::SetCurrentProfile(const PRUnichar * aCurrentProfile)
     }
     else
         isSwitch = PR_FALSE;
-    
+#ifdef MOZ_PROFILELOCKING    
     nsProfileLock localLock;
     nsCOMPtr<nsILocalFile> localProfileDir(do_QueryInterface(profileDir, &rv));
     if (NS_FAILED(rv)) return rv;
-    rv = localLock.Lock(localProfileDir);
+    rv = localLock.Lock(localProfileDir, nsnull);
     if (NS_FAILED(rv))
     {
         NS_ERROR("Could not get profile directory lock.");
         return rv;
     }
-
+#endif
     nsCOMPtr<nsIObserverService> observerService = 
              do_GetService("@mozilla.org/observer-service;1", &rv);
     NS_ENSURE_TRUE(observerService, NS_ERROR_FAILURE);
@@ -1237,9 +1229,13 @@ nsProfile::SetCurrentProfile(const PRUnichar * aCurrentProfile)
         UpdateCurrentProfileModTime(PR_FALSE);        
     }
 
+#ifdef MOZ_PROFILELOCKING    
     // Do the profile switch
     localLock.Unlock(); // gDirServiceProvider will get and hold its own lock
-    gDirServiceProvider->SetProfileDir(profileDir);  
+#endif
+    nsCOMPtr<nsIFile> localDir;
+    GetLocalProfileDir(aCurrentProfile, getter_AddRefs(localDir));
+    gDirServiceProvider->SetProfileDir(profileDir, localDir);
     mCurrentProfileName.Assign(aCurrentProfile);    
     gProfileDataAccess->SetCurrentProfile(aCurrentProfile);
     gProfileDataAccess->mProfileDataChanged = PR_TRUE;
@@ -1623,8 +1619,9 @@ nsProfile::CreateNewProfileWithLocales(const PRUnichar* profileName,
     else {
     
         rv = NS_NewLocalFile(nsDependentString(nativeProfileDir), PR_TRUE, (nsILocalFile **)((nsIFile **)getter_AddRefs(profileDir)));
+        if (NS_FAILED(rv)) return rv;
 
-        // this prevents people from choosing there profile directory
+        // this prevents people from choosing their profile directory
         // or another directory, and remove it when they delete the profile.
         // append profile name
         profileDir->Append(nsDependentString(profileName));
@@ -1667,12 +1664,13 @@ nsProfile::CreateNewProfileWithLocales(const PRUnichar* profileName,
     rv = NS_GetSpecialDirectory(NS_APP_PROFILE_DEFAULTS_NLOC_50_DIR, getter_AddRefs(profDefaultsDir));
     if (NS_FAILED(rv)) return rv;
 
-    nsCOMPtr<nsIXULChromeRegistry> chromeRegistry =
+    nsCOMPtr<nsIChromeRegistrySea> chromeRegistry =
         do_GetService(NS_CHROMEREGISTRY_CONTRACTID, &rv);
     if (NS_SUCCEEDED(rv)) {
 
-        nsCAutoString uiLocale; uiLocale.AssignWithConversion(aUILocale);
-        nsCAutoString contentLocale; contentLocale.AssignWithConversion(aContentLocale);
+        nsCAutoString uiLocale, contentLocale;
+        LossyCopyUTF16toASCII(aUILocale, uiLocale);
+        LossyCopyUTF16toASCII(aContentLocale, contentLocale);
 
         // When aUILocale == null or aContentLocale == null, set those
         // from default values which are from default or from command
@@ -1688,8 +1686,8 @@ nsProfile::CreateNewProfileWithLocales(const PRUnichar* profileName,
         // -UILocale and -contentLocale) by GetSelectedLocale() which
         // is done in nsAppRunner.cpp::InstallGlobalLocale()
 
-        nsCOMPtr<nsIXULChromeRegistry> packageRegistry = do_QueryInterface(chromeRegistry);
-        if ((!aUILocale || !aUILocale[0]) && packageRegistry) {
+        nsCOMPtr<nsIChromeRegistrySea> packageRegistry = do_QueryInterface(chromeRegistry);
+        if (uiLocale.IsEmpty() && packageRegistry) {
             nsCAutoString currentUILocaleName;
             rv = packageRegistry->GetSelectedLocale(NS_LITERAL_CSTRING("global"),
                                                     currentUILocaleName);
@@ -1698,7 +1696,7 @@ nsProfile::CreateNewProfileWithLocales(const PRUnichar* profileName,
             }
         }
 
-        if (!aContentLocale || !aContentLocale[0]) {
+        if (contentLocale.IsEmpty()) {
             nsCAutoString currentContentLocaleName;
             rv = packageRegistry->GetSelectedLocale(NS_LITERAL_CSTRING("global-region"),
                                                     currentContentLocaleName);
@@ -1831,12 +1829,24 @@ nsProfile::RenameProfile(const PRUnichar* oldName, const PRUnichar* newName)
         return NS_ERROR_FAILURE;
     }
 
+    PRBool renamedIsCurrent = mCurrentProfileName.Equals(oldName);
+
     // Copy reg keys
     rv = CopyRegKey(oldName, newName);
     if (NS_FAILED(rv)) return rv;
      
     // Delete old profile entry
     rv = DeleteProfile(oldName, PR_FALSE /* don't delete files */);
+
+    // If the profile being renamed is the current profile,
+    // change the current profile name.
+    if (renamedIsCurrent) {
+        gProfileDataAccess->SetCurrentProfile(newName);
+        gProfileDataAccess->mForgetProfileCalled = PR_FALSE;
+        mCurrentProfileName.Assign(newName);    
+        mCurrentProfileAvailable = PR_TRUE;
+    }
+
     if (NS_FAILED(rv)) return rv;
      
 	/* note, we do not rename the directory on disk to the new name
@@ -1854,9 +1864,6 @@ nsProfile::RenameProfile(const PRUnichar* oldName, const PRUnichar* newName)
 	 *
 	 * bad things would happen if we tried to rename the directory
 	 */
-    
-    rv = ForgetCurrentProfile();
-    if (NS_FAILED(rv)) return rv;
 
     gProfileDataAccess->mProfileDataChanged = PR_TRUE;
     gProfileDataAccess->UpdateRegistry(nsnull);
@@ -2113,7 +2120,7 @@ nsProfile::DefineLocaleDefaultsDir()
     rv = directoryService->Get(NS_APP_PROFILE_DEFAULTS_NLOC_50_DIR, NS_GET_IID(nsIFile), getter_AddRefs(localeDefaults));
     if (NS_SUCCEEDED(rv))
     {
-        nsCOMPtr<nsIXULChromeRegistry> packageRegistry = 
+        nsCOMPtr<nsIChromeRegistrySea> packageRegistry = 
                  do_GetService(NS_CHROMEREGISTRY_CONTRACTID, &rv);
         if (NS_SUCCEEDED(rv))
         {
@@ -2143,15 +2150,11 @@ nsProfile::MigrateProfileInternal(const PRUnichar* profileName,
 #endif
 
     // Call migration service to do the work.
-    nsCOMPtr <nsIPrefMigration> pPrefMigrator;
 
-
-    nsresult rv = nsComponentManager::CreateInstance(kPrefMigrationCID, 
-                                            nsnull,
-                                            NS_GET_IID(nsIPrefMigration),
-                                            getter_AddRefs(pPrefMigrator));
+    nsresult rv;
+    nsCOMPtr <nsIPrefMigration> pPrefMigrator =
+            do_CreateInstance(kPrefMigrationCID, &rv);
     if (NS_FAILED(rv)) return rv;
-    if (!pPrefMigrator) return NS_ERROR_FAILURE;
         
     nsCOMPtr<nsILocalFile> oldProfDirLocal(do_QueryInterface(oldProfDir, &rv));
     if (NS_FAILED(rv)) return rv;    
@@ -2602,4 +2605,26 @@ nsProfile::GetRegStrings(const PRUnichar *aProfileName,
      delete profileVal;
 
      return NS_OK;
+}
+
+nsresult nsProfile::GetLocalProfileDir(const PRUnichar* aProfileName,
+                                       nsIFile** aLocalDir)
+{
+  *aLocalDir = nsnull;
+  nsresult rv;
+  nsCOMPtr<nsIProperties> directoryService = 
+    do_GetService(NS_DIRECTORY_SERVICE_CONTRACTID, &rv);
+  if (NS_FAILED(rv))
+    return rv;
+  nsCOMPtr<nsIFile> localDir;
+  rv = directoryService->Get(NS_APP_USER_PROFILES_LOCAL_ROOT_DIR,
+                             NS_GET_IID(nsIFile),
+                             getter_AddRefs(localDir));
+  if (NS_FAILED(rv))
+    return rv;
+  rv = localDir->Append(nsDependentString(aProfileName));
+  if (NS_FAILED(rv))
+    return rv;
+  localDir.swap(*aLocalDir);
+  return NS_OK;
 }

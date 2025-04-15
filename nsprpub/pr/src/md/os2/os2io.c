@@ -1,36 +1,39 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* 
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape Portable Runtime (NSPR).
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1998-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 
 /*
@@ -72,6 +75,55 @@
 #endif
 
 struct _MDLock               _pr_ioq_lock;
+
+static PRBool isWSEB = PR_FALSE; /* whether we are using an OS/2 kernel that supports large files */
+
+typedef APIRET (*DosOpenLType)(PSZ pszFileName, PHFILE pHf, PULONG pulAction,
+                            LONGLONG cbFile, ULONG ulAttribute,
+                            ULONG fsOpenFlags, ULONG fsOpenMode,
+                            PEAOP2 peaop2);
+
+typedef APIRET (*DosSetFileLocksLType)(HFILE hFile, PFILELOCKL pflUnlock,
+                                    PFILELOCKL pflLock, ULONG timeout,
+                                    ULONG flags);
+
+typedef APIRET (*DosSetFilePtrLType)(HFILE hFile, LONGLONG ib, ULONG method,
+                                  PLONGLONG ibActual);
+
+DosOpenLType myDosOpenL;
+DosSetFileLocksLType myDosSetFileLocksL;
+DosSetFilePtrLType myDosSetFilePtrL;
+
+void
+_PR_MD_INIT_IO()
+{
+    APIRET rc;
+    HMODULE module;
+
+    sock_init();
+    
+    rc = DosLoadModule(NULL, 0, "DOSCALL1", &module);
+    if (rc != NO_ERROR)
+    {
+        return;
+    }
+    rc = DosQueryProcAddr(module, 981, NULL, (PFN*) &myDosOpenL);
+    if (rc != NO_ERROR)
+    {
+        return;
+    }
+    rc = DosQueryProcAddr(module, 986, NULL, (PFN*) &myDosSetFileLocksL);
+    if (rc != NO_ERROR)
+    {
+        return;
+    }
+    rc = DosQueryProcAddr(module, 988, NULL, (PFN*) &myDosSetFilePtrL);
+    if (rc != NO_ERROR)
+    {
+        return;
+    }
+    isWSEB = PR_TRUE;
+}
 
 PRStatus
 _PR_MD_WAIT(PRThread *thread, PRIntervalTime ticks)
@@ -148,8 +200,6 @@ _PR_MD_OPEN(const char *name, PRIntn osflags, int mode)
     APIRET rc = 0;
     PRUword actionTaken;
 
-    ULONG fattr;
-
     if (osflags & PR_SYNC) access |= OPEN_FLAGS_WRITE_THROUGH;
 
     if (osflags & PR_RDONLY)
@@ -178,19 +228,29 @@ _PR_MD_OPEN(const char *name, PRIntn osflags, int mode)
             flags = OPEN_ACTION_FAIL_IF_NEW | OPEN_ACTION_OPEN_IF_EXISTS;
     }
 
-    if (isxdigit(mode) == 0) /* file attribs are hex, UNIX modes octal */
-        fattr = ((ULONG)mode == FILE_HIDDEN) ? FILE_HIDDEN : FILE_NORMAL;
-    else fattr = FILE_NORMAL;
-
     do {
-        rc = DosOpen((char*)name,
+        if (isWSEB)
+        {
+                rc = myDosOpenL((char*)name,
                      &file,            /* file handle if successful */
                      &actionTaken,     /* reason for failure        */
                      0,                /* initial size of new file  */
-                     fattr,            /* file system attributes    */
+                     FILE_NORMAL,      /* file system attributes    */
                      flags,            /* Open flags                */
                      access,           /* Open mode and rights      */
                      0);               /* OS/2 Extended Attributes  */
+        }
+        else
+        {
+                rc = DosOpen((char*)name,
+                     &file,            /* file handle if successful */
+                     &actionTaken,     /* reason for failure        */
+                     0,                /* initial size of new file  */
+                     FILE_NORMAL,      /* file system attributes    */
+                     flags,            /* Open flags                */
+                     access,           /* Open mode and rights      */
+                     0);               /* OS/2 Extended Attributes  */
+        };
         if (rc == ERROR_TOO_MANY_OPEN_FILES) {
             ULONG CurMaxFH = 0;
             LONG ReqCount = 20;
@@ -300,6 +360,7 @@ _PR_MD_LSEEK64(PRFileDesc *fd, PRInt64 offset, PRSeekWhence whence)
     PRInt32 where, rc, lo = (PRInt32)offset, hi = (PRInt32)(offset >> 32);
     PRUint64 rv;
     PRUint32 newLocation, uhi;
+    PRUint64 newLocationL;
 
     switch (whence)
       {
@@ -315,15 +376,26 @@ _PR_MD_LSEEK64(PRFileDesc *fd, PRInt64 offset, PRSeekWhence whence)
       default:
         PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);
         return -1;
-}
-
-    rc = DosSetFilePtr((HFILE)fd->secret->md.osfd, lo, where, (PULONG)&newLocation);
+    }
+    if (isWSEB)
+    {
+        rc = myDosSetFilePtrL((HFILE)fd->secret->md.osfd, offset, where, (PLONGLONG)&newLocationL);
+    }
+    else
+    {
+        rc = DosSetFilePtr((HFILE)fd->secret->md.osfd, lo, where, (PULONG)&newLocation);
+    }
      
     if (rc != NO_ERROR) {
       _PR_MD_MAP_LSEEK_ERROR(rc);
       return -1;
     }
     
+    if (isWSEB)
+    {
+        return newLocationL;
+    }
+
     uhi = (PRUint32)hi;
     PR_ASSERT((PRInt32)uhi >= 0);
     rv = uhi;
@@ -363,8 +435,8 @@ _MD_CloseFile(PRInt32 osfd)
 
 
 /* --- DIR IO ------------------------------------------------------------ */
-#define GetFileFromDIR(d)       (d)->d_entry.achName
-#define GetFileAttr(d)          (d)->d_entry.attrFile
+#define GetFileFromDIR(d)       (isWSEB?(d)->d_entry.large.achName:(d)->d_entry.small.achName)
+#define GetFileAttr(d)          (isWSEB?(d)->d_entry.large.attrFile:(d)->d_entry.small.attrFile)
 
 void FlipSlashes(char *cp, int len)
 {
@@ -417,13 +489,26 @@ _PR_MD_OPEN_DIR(_MDDir *d, const char *name)
 
     d->d_hdl = HDIR_CREATE;
 
-    rc = DosFindFirst( filename,
-                       &d->d_hdl,
-                       FILE_DIRECTORY | FILE_HIDDEN,
-                       &(d->d_entry),
-                       sizeof(d->d_entry),
-                       &numEntries,
-                       FIL_STANDARD);
+    if (isWSEB)
+    {
+        rc = DosFindFirst( filename,
+                           &d->d_hdl,
+                           FILE_DIRECTORY | FILE_HIDDEN,
+                           &(d->d_entry.large),
+                           sizeof(d->d_entry.large),
+                           &numEntries,
+                           FIL_STANDARDL);
+    }
+    else
+    {
+        rc = DosFindFirst( filename,
+                           &d->d_hdl,
+                           FILE_DIRECTORY | FILE_HIDDEN,
+                           &(d->d_entry.small),
+                           sizeof(d->d_entry.small),
+                           &numEntries,
+                           FIL_STANDARD);
+    }
     if ( rc != NO_ERROR ) {
 		_PR_MD_MAP_OPENDIR_ERROR(rc);
         return PR_FAILURE;
@@ -570,13 +655,34 @@ _PR_MD_GETFILEINFO64(const char *fn, PRFileInfo64 *info)
 {
     PRFileInfo info32;
     PRInt32 rv = _PR_MD_GETFILEINFO(fn, &info32);
-    if (0 == rv)
+    if (rv != 0)
     {
-        info->type = info32.type;
-        LL_UI2L(info->size,info32.size);
-        info->modifyTime = info32.modifyTime;
-        info->creationTime = info32.creationTime;
+        return rv;
     }
+    info->type = info32.type;
+    LL_UI2L(info->size,info32.size);
+    info->modifyTime = info32.modifyTime;
+    info->creationTime = info32.creationTime;
+    
+    if (isWSEB)
+    {
+        APIRET rc ;
+        FILESTATUS3L fstatus;
+
+        rc = DosQueryPathInfo(fn, FIL_STANDARDL, &fstatus, sizeof(fstatus));
+
+        if (NO_ERROR != rc)
+        {
+            _PR_MD_MAP_OPEN_ERROR(rc);
+            return -1;
+        }
+
+        if (! (fstatus.attrFile & FILE_DIRECTORY))
+        {
+            info->size = fstatus.cbFile;
+        }
+    }
+
     return rv;
 }
 
@@ -626,17 +732,37 @@ _PR_MD_GETOPENFILEINFO(const PRFileDesc *fd, PRFileInfo *info)
 PRInt32
 _PR_MD_GETOPENFILEINFO64(const PRFileDesc *fd, PRFileInfo64 *info)
 {
-   PRFileInfo info32;
-   PRInt32 rv = _PR_MD_GETOPENFILEINFO(fd, &info32);
-   if (0 == rv)
-   {
+    PRFileInfo info32;
+    PRInt32 rv = _PR_MD_GETOPENFILEINFO(fd, &info32);
+    if (0 == rv)
+    {
        info->type = info32.type;
        LL_UI2L(info->size,info32.size);
-
+    
        info->modifyTime = info32.modifyTime;
        info->creationTime = info32.creationTime;
-   }
-   return rv;
+    }
+    
+    if (isWSEB)
+    {
+        APIRET rc ;
+        FILESTATUS3L fstatus;
+
+        rc = DosQueryFileInfo(fd->secret->md.osfd, FIL_STANDARDL, &fstatus, sizeof(fstatus));
+
+        if (NO_ERROR != rc)
+        {
+            _PR_MD_MAP_OPEN_ERROR(rc);
+            return -1;
+        }
+
+        if (! (fstatus.attrFile & FILE_DIRECTORY))
+        {
+            info->size = fstatus.cbFile;
+        }
+    }
+
+    return rv;
 }
 
 
@@ -704,25 +830,38 @@ _PR_MD_RMDIR(const char *name)
 PRStatus
 _PR_MD_LOCKFILE(PRInt32 f)
 {
-	PRInt32   rv;
-   FILELOCK lock, unlock;
+    PRInt32   rv;
+    FILELOCK lock, unlock;
+    FILELOCKL lockL, unlockL;
+    
+    lock.lOffset = 0;
+    lockL.lOffset = 0;
+    lock.lRange = 0xffffffff;
+    lockL.lRange =  0xffffffffffffffff;
+    unlock.lOffset = 0;
+    unlock.lRange = 0;
+    unlockL.lOffset = 0;
+    unlockL.lRange = 0;
 
-   lock.lOffset = 0;
-   lock.lRange = 0xffffffff;
-   unlock.lOffset = 0;
-   unlock.lRange = 0;
-
-	/*
+    /*
      * loop trying to DosSetFileLocks(),
      * pause for a few miliseconds when can't get the lock
      * and try again
      */
     for( rv = FALSE; rv == FALSE; /* do nothing */ )
     {
-    
+        if (isWSEB)
+        {
+	    rv = myDosSetFileLocksL( (HFILE) f,
+			                    &unlockL, &lockL,
+			                    0, 0);
+        }
+        else
+        {
 	    rv = DosSetFileLocks( (HFILE) f,
 			                    &unlock, &lock,
-			                    0, 0); 
+			                    0, 0);
+        }
 		if ( rv != NO_ERROR )
         {
             DosSleep( 50 );  /* Sleep() a few milisecs and try again. */
@@ -741,25 +880,39 @@ _PR_MD_TLOCKFILE(PRInt32 f)
 PRStatus
 _PR_MD_UNLOCKFILE(PRInt32 f)
 {
-	PRInt32   rv;
-   FILELOCK lock, unlock;
-
-   lock.lOffset = 0;
-   lock.lRange = 0;
-   unlock.lOffset = 0;
-   unlock.lRange = 0xffffffff;
+    PRInt32   rv;
+    FILELOCK lock, unlock;
+    FILELOCKL lockL, unlockL;
     
-   rv = DosSetFileLocks( (HFILE) f,
-                          &unlock, &lock,
-                          0, 0); 
-            
-    if ( rv != NO_ERROR )
+    lock.lOffset = 0;
+    lockL.lOffset = 0;
+    lock.lRange = 0;
+    lockL.lRange = 0;
+    unlock.lOffset = 0;
+    unlockL.lOffset = 0;
+    unlock.lRange = 0xffffffff;
+    unlockL.lRange = 0xffffffffffffffff;
+    
+    if (isWSEB)
     {
-    	return PR_SUCCESS;
+        rv = myDosSetFileLocksL( (HFILE) f,
+                                        &unlockL, &lockL,
+                                        0, 0);
     }
     else
     {
-		return PR_FAILURE;
+        rv = DosSetFileLocks( (HFILE) f,
+                                    &unlock, &lock,
+                                    0, 0);
+    }
+            
+    if ( rv != NO_ERROR )
+    {
+        return PR_SUCCESS;
+    }
+    else
+    {
+        return PR_FAILURE;
     }
 } /* end _PR_MD_UNLOCKFILE() */
 

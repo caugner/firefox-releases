@@ -1,24 +1,42 @@
 /* -*- Mode: C++; tab-width: 3; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+ * vim:set ts=2 sts=2 sw=2 et cin:
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla browser.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications, Inc.  Portions created by Netscape are
- * Copyright (C) 1999, Mozilla.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Scott MacGregor <mscott@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsOSHelperAppService.h"
 #include "nsISupports.h"
@@ -28,11 +46,12 @@
 #include "nsIMIMEInfo.h"
 #include "nsMIMEInfoWin.h"
 #include "nsMimeTypes.h"
-#include "nsILocalFile.h"
+#include "nsILocalFileWin.h"
 #include "nsIProcess.h"
 #include "plstr.h"
 #include "nsAutoPtr.h"
 #include "nsNativeCharsetUtils.h"
+#include "nsIWindowsRegKey.h"
 
 // we need windows.h to read out registry information...
 #include <windows.h>
@@ -43,12 +62,13 @@
 #define LOG(args) PR_LOG(mLog, PR_LOG_DEBUG, args)
 
 // helper methods: forward declarations...
-static BYTE * GetValueBytes( HKEY hKey, const char *pValueName, DWORD *pLen=0);
-static nsresult GetExtensionFrom4xRegistryInfo(const char * aMimeType, nsCString& aFileExtension);
-static nsresult GetExtensionFromWindowsMimeDatabase(const char * aMimeType, nsCString& aFileExtension);
+static nsresult GetExtensionFrom4xRegistryInfo(const nsACString& aMimeType, 
+                                               nsString& aFileExtension);
+static nsresult GetExtensionFromWindowsMimeDatabase(const nsACString& aMimeType,
+                                                    nsString& aFileExtension);
 
 // static member
-PRBool nsOSHelperAppService::mIsNT = PR_FALSE;
+PRBool nsOSHelperAppService::sIsNT = PR_FALSE;
 
 nsOSHelperAppService::nsOSHelperAppService() : nsExternalHelperAppService()
 {
@@ -56,12 +76,15 @@ nsOSHelperAppService::nsOSHelperAppService() : nsExternalHelperAppService()
   ::ZeroMemory(&osversion, sizeof(OSVERSIONINFO));
   osversion.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
 
+  // We'd better make sure that sIsNT is init'd only once, but we can
+  // get away without doing that explicitly because nsOSHelperAppService
+  // is a singleton.
   if (!GetVersionEx(&osversion)) {
     // If the call failed, better be safe and assume *W functions don't work
-    mIsNT = PR_FALSE;
+    sIsNT = PR_FALSE;
   }
   else {
-    mIsNT = (osversion.dwPlatformId == VER_PLATFORM_WIN32_NT);
+    sIsNT = (osversion.dwPlatformId == VER_PLATFORM_WIN32_NT);
   }
 }
 
@@ -70,135 +93,88 @@ nsOSHelperAppService::~nsOSHelperAppService()
 
 // The windows registry provides a mime database key which lists a set of mime types and corresponding "Extension" values. 
 // we can use this to look up our mime type to see if there is a preferred extension for the mime type.
-static nsresult GetExtensionFromWindowsMimeDatabase(const char * aMimeType, nsCString& aFileExtension)
+static nsresult GetExtensionFromWindowsMimeDatabase(const nsACString& aMimeType,
+                                                    nsString& aFileExtension)
 {
-   HKEY hKey;
-   nsCAutoString mimeDatabaseKey ("MIME\\Database\\Content Type\\");
+#ifdef WINCE  // WinCE doesn't support helper applications yet
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
+  nsAutoString mimeDatabaseKey;
+  mimeDatabaseKey.AssignLiteral("MIME\\Database\\Content Type\\");
 
-   mimeDatabaseKey += aMimeType;
-   
-   LONG err = ::RegOpenKeyEx( HKEY_CLASSES_ROOT, mimeDatabaseKey.get(), 0, KEY_QUERY_VALUE, &hKey);
-   if (err == ERROR_SUCCESS)
-   {
-      LPBYTE pBytes = GetValueBytes( hKey, "Extension");
-      if (pBytes)
-      { 
-        aFileExtension = (char * )pBytes;
-      }
+  AppendASCIItoUTF16(aMimeType, mimeDatabaseKey);
 
-      delete[] pBytes;
+  nsCOMPtr<nsIWindowsRegKey> regKey = 
+    do_CreateInstance("@mozilla.org/windows-registry-key;1");
+  if (!regKey) 
+    return NS_ERROR_NOT_AVAILABLE;
 
-      ::RegCloseKey(hKey);
-   }
+  nsresult rv = regKey->Open(nsIWindowsRegKey::ROOT_KEY_CLASSES_ROOT,
+                             mimeDatabaseKey,
+                             nsIWindowsRegKey::ACCESS_QUERY_VALUE);
+  
+  if (NS_SUCCEEDED(rv))
+     regKey->ReadStringValue(NS_LITERAL_STRING("Extension"), aFileExtension);
 
-   return NS_OK;
+  return NS_OK;
+#endif
 }
 
 // We have a serious problem!! I have this content type and the windows registry only gives me
 // helper apps based on extension. Right now, we really don't have a good place to go for 
 // trying to figure out the extension for a particular mime type....One short term hack is to look
 // this information in 4.x (it's stored in the windows regsitry). 
-static nsresult GetExtensionFrom4xRegistryInfo(const char * aMimeType, nsCString& aFileExtension)
+static nsresult GetExtensionFrom4xRegistryInfo(const nsACString& aMimeType,
+                                               nsString& aFileExtension)
 {
-   nsCAutoString command ("Software\\Netscape\\Netscape Navigator\\Suffixes");
-   nsresult rv = NS_OK;
-   HKEY hKey;
-   LONG err = ::RegOpenKeyEx( HKEY_CURRENT_USER, command.get(), 0, KEY_QUERY_VALUE, &hKey);
-   if (err == ERROR_SUCCESS)
-   {
-      LPBYTE pBytes = GetValueBytes( hKey, aMimeType);
-      if (pBytes) // only try to get the extension if we have a value!
-      {
-        aFileExtension = ".";
-        aFileExtension.Append( (char *) pBytes);
-      
-        // this may be a comma separate list of extensions...just take the first one
-        // for now...
+#ifdef WINCE   // WinCE doesn't support helper applications yet.
+  return NS_ERROR_FAILURE;
+#else
+  nsCOMPtr<nsIWindowsRegKey> regKey = 
+    do_CreateInstance("@mozilla.org/windows-registry-key;1");
+  if (!regKey) 
+    return NS_ERROR_NOT_AVAILABLE;
 
-        PRInt32 pos = aFileExtension.FindChar(',');
-        if (pos > 0) // we have a comma separated list of languages...
-          aFileExtension.Truncate(pos); // truncate everything after the first comma (including the comma)
-      }
+  nsresult rv = regKey->
+    Open(nsIWindowsRegKey::ROOT_KEY_CURRENT_USER,
+         NS_LITERAL_STRING("Software\\Netscape\\Netscape Navigator\\Suffixes"),
+         nsIWindowsRegKey::ACCESS_QUERY_VALUE);
+  if (NS_FAILED(rv))
+    return NS_ERROR_NOT_AVAILABLE;
    
-      delete [] pBytes;
-      // close the key
-      ::RegCloseKey(hKey);
-   }
-   else
-     rv = NS_ERROR_FAILURE; // no 4.x extension mapping found!
+  rv = regKey->ReadStringValue(NS_ConvertASCIItoUTF16(aMimeType),
+                               aFileExtension);
+  if (NS_FAILED(rv))
+    return NS_OK;
 
-   return rv;
-}
+  aFileExtension.Insert(PRUnichar('.'), 0);
+      
+  // this may be a comma separated list of extensions...just take the 
+  // first one for now...
 
-static BYTE * GetValueBytes( HKEY hKey, const char *pValueName, DWORD *pLen)
-{
-  LONG err;
-  DWORD bufSz;
-  LPBYTE pBytes = NULL;
-
-  err = ::RegQueryValueEx( hKey, pValueName, NULL, NULL, NULL, &bufSz); 
-  if (err == ERROR_SUCCESS) {
-    pBytes = new BYTE[bufSz];
-    err = ::RegQueryValueEx( hKey, pValueName, NULL, NULL, pBytes, &bufSz);
-    if (err != ERROR_SUCCESS) {
-      delete [] pBytes;
-      pBytes = NULL;
-    } else {
-      // Return length if caller wanted it.
-      if ( pLen ) {
-        *pLen = bufSz;
-      }
-    }
+  PRInt32 pos = aFileExtension.FindChar(PRUnichar(','));
+  if (pos > 0) {
+    // we have a comma separated list of types...
+    // truncate everything after the first comma (including the comma)
+    aFileExtension.Truncate(pos); 
   }
-
-  return( pBytes);
-}
-
-/* static */
-PRBool nsOSHelperAppService::GetValueString(HKEY hKey, PRUnichar* pValueName, nsAString& result)
-{
-  if (!mIsNT) {
-    nsCAutoString cValueName;
-    if (pValueName)
-      NS_CopyUnicodeToNative(nsDependentString(pValueName), cValueName);
-    char* pBytes = (char*)GetValueBytes(hKey, cValueName.get());
-    if (pBytes) {
-      nsresult rv = NS_CopyNativeToUnicode(nsDependentCString(pBytes), result);
-      delete[] pBytes;
-      return NS_SUCCEEDED(rv);
-    }
-    return PR_FALSE;
-  }
-
-  DWORD bufSz;
-  LONG err = ::RegQueryValueExW( hKey, pValueName, NULL, NULL, NULL, &bufSz); 
-  if (err == ERROR_SUCCESS) {
-    PRUnichar* pBytes = new PRUnichar[bufSz];
-    if (!pBytes)
-      return PR_FALSE;
-
-    err = ::RegQueryValueExW( hKey, pValueName, NULL, NULL, (BYTE*)pBytes, &bufSz);
-    if (err != ERROR_SUCCESS) {
-      delete [] pBytes;
-      return PR_FALSE;
-    } else {
-      result.Assign(pBytes);
-      delete [] pBytes;
-      return PR_TRUE;
-    }
-  }
-
-  return PR_FALSE;
+   
+  return NS_OK;
+#endif
 }
 
 NS_IMETHODIMP nsOSHelperAppService::ExternalProtocolHandlerExists(const char * aProtocolScheme, PRBool * aHandlerExists)
 {
+#ifdef WINCE // WinCE doesn't support helper applications yet.
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
   // look up the protocol scheme in the windows registry....if we find a match then we have a handler for it...
   *aHandlerExists = PR_FALSE;
   if (aProtocolScheme && *aProtocolScheme)
   {
      HKEY hKey;
-     LONG err = ::RegOpenKeyEx( HKEY_CLASSES_ROOT, aProtocolScheme, 0, KEY_QUERY_VALUE, &hKey);
+     LONG err = ::RegOpenKeyEx(HKEY_CLASSES_ROOT, aProtocolScheme, 0,
+                               KEY_QUERY_VALUE, &hKey);
      if (err == ERROR_SUCCESS)
      {
        *aHandlerExists = PR_TRUE;
@@ -208,12 +184,17 @@ NS_IMETHODIMP nsOSHelperAppService::ExternalProtocolHandlerExists(const char * a
   }
 
   return NS_OK;
+#endif
 }
 
-// this implementation was pretty much copied verbatime from Tony Robinson's code in nsExternalProtocolWin.cpp
+// this implementation was pretty much copied verbatime from 
+// Tony Robinson's code in nsExternalProtocolWin.cpp
 
 nsresult nsOSHelperAppService::LoadUriInternal(nsIURI * aURL)
 {
+#ifdef WINCE // WinCE doesn't support helper applications yet.
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
   nsresult rv = NS_OK;
 
   // 1. Find the default app for this protocol
@@ -236,11 +217,42 @@ nsresult nsOSHelperAppService::LoadUriInternal(nsIURI * aURL)
     if (urlSpec.Length() > maxSafeURL)
       return NS_ERROR_FAILURE;
 
-    LONG r = (LONG) ::ShellExecute( NULL, "open", urlSpec.get(), NULL, NULL, SW_SHOWNORMAL);
-    rv = NS_OK;
+    LONG r = (LONG) ::ShellExecute(NULL, "open", urlSpec.get(), NULL, NULL, 
+                                   SW_SHOWNORMAL);
+    if (r < 32) 
+      rv = NS_ERROR_FAILURE;
   }
 
   return rv;
+#endif
+}
+
+NS_IMETHODIMP nsOSHelperAppService::GetApplicationDescription(const nsACString& aScheme, nsAString& _retval)
+{
+  nsCOMPtr<nsIWindowsRegKey> regKey = 
+    do_CreateInstance("@mozilla.org/windows-registry-key;1");
+  if (!regKey) 
+    return NS_ERROR_NOT_AVAILABLE;
+
+  NS_ConvertASCIItoUTF16 buf(aScheme);
+
+  nsCOMPtr<nsIFile> app;
+  GetDefaultAppInfo(buf, _retval, getter_AddRefs(app));
+
+  if (!_retval.Equals(buf))
+    return NS_OK;
+
+  // Fall back to full path
+  buf.AppendLiteral("\\shell\\open\\command");
+  nsresult rv = regKey->Open(nsIWindowsRegKey::ROOT_KEY_CLASSES_ROOT,
+                             buf,
+                             nsIWindowsRegKey::ACCESS_QUERY_VALUE);
+  if (NS_FAILED(rv))
+    return NS_ERROR_NOT_AVAILABLE;   
+   
+  rv = regKey->ReadStringValue(EmptyString(), _retval); 
+
+  return NS_SUCCEEDED(rv) ? NS_OK : NS_ERROR_NOT_AVAILABLE;
 }
 
 // GetMIMEInfoFromRegistry: This function obtains the values of some of the nsIMIMEInfo
@@ -252,37 +264,32 @@ nsresult nsOSHelperAppService::LoadUriInternal(nsIURI * aURL)
 //
 // This function sets only the Description attribute of the input nsIMIMEInfo.
 /* static */
-nsresult nsOSHelperAppService::GetMIMEInfoFromRegistry( const nsAFlatString& fileType, nsIMIMEInfo *pInfo )
+nsresult nsOSHelperAppService::GetMIMEInfoFromRegistry(const nsAFlatString& fileType, nsIMIMEInfo *pInfo)
 {
-    nsresult rv = NS_OK;
+#ifdef WINCE  // WinCE doesn't support helper applications yet.
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
+  nsresult rv = NS_OK;
 
-    NS_ENSURE_ARG( pInfo );
+  NS_ENSURE_ARG(pInfo);
+  nsCOMPtr<nsIWindowsRegKey> regKey = 
+    do_CreateInstance("@mozilla.org/windows-registry-key;1");
+  if (!regKey) 
+    return NS_ERROR_NOT_AVAILABLE;
 
-    // Get registry key for the pointed-to "file type."
-    HKEY fileTypeKey = 0;
-    LONG rc;
-    if (mIsNT) {
-      rc = ::RegOpenKeyExW( HKEY_CLASSES_ROOT, fileType.get(), 0, KEY_QUERY_VALUE, &fileTypeKey );
-    }
-    else {
-      nsCAutoString ansiKey;
-      rv = NS_CopyUnicodeToNative(fileType, ansiKey);
-      if (NS_FAILED(rv))
-        return rv;
+  rv = regKey->Open(nsIWindowsRegKey::ROOT_KEY_CLASSES_ROOT,
+                    fileType, nsIWindowsRegKey::ACCESS_QUERY_VALUE);
+  if (NS_FAILED(rv))
+    return NS_ERROR_FAILURE;
+ 
+  // OK, the default value here is the description of the type.
+  nsAutoString description;
+  rv = regKey->ReadStringValue(EmptyString(), description);
+  if (NS_SUCCEEDED(rv))
+    pInfo->SetDescription(description);
 
-      rc = ::RegOpenKeyEx( HKEY_CLASSES_ROOT, ansiKey.get(), 0, KEY_QUERY_VALUE, &fileTypeKey );
-    }
-    if ( rc != ERROR_SUCCESS )
-        return NS_ERROR_FAILURE;
-
-    // OK, the default value here is the description of the type.
-    nsAutoString description;
-    PRBool found = GetValueString(fileTypeKey, NULL, description);
-    if (found)
-        pInfo->SetDescription(description.get());
-    ::RegCloseKey(fileTypeKey);
-
-    return NS_OK;
+  return NS_OK;
+#endif
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -291,108 +298,293 @@ nsresult nsOSHelperAppService::GetMIMEInfoFromRegistry( const nsAFlatString& fil
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Looks up the type for the extension aExt and compares it to aType
-static PRBool typeFromExtEquals(const char *aExt, const char *aType)
+/* static */ PRBool
+nsOSHelperAppService::typeFromExtEquals(const PRUnichar* aExt, const char *aType)
 {
+#ifdef WINCE  // WinCE doesn't support helper applications yet.
+  return PR_FALSE;
+#else
   if (!aType)
     return PR_FALSE;
-  nsCAutoString fileExtToUse;
-  if (aExt[0] != '.')
-    fileExtToUse = '.';
+  nsAutoString fileExtToUse;
+  if (aExt[0] != PRUnichar('.'))
+    fileExtToUse = PRUnichar('.');
 
   fileExtToUse.Append(aExt);
 
-  HKEY hKey;
   PRBool eq = PR_FALSE;
-  LONG err = ::RegOpenKeyEx( HKEY_CLASSES_ROOT, fileExtToUse.get(), 0, KEY_QUERY_VALUE, &hKey);
-  if (err == ERROR_SUCCESS)
-  {
-     LPBYTE pBytes = GetValueBytes(hKey, "Content Type");
-     if (pBytes)
-     {
-       eq = strcmp((const char *)pBytes, aType) == 0;
-       delete[] pBytes;
-     }
-     ::RegCloseKey(hKey);
-  }
+  nsCOMPtr<nsIWindowsRegKey> regKey = 
+    do_CreateInstance("@mozilla.org/windows-registry-key;1");
+  if (!regKey) 
+    return eq;
+
+  nsresult rv = regKey->Open(nsIWindowsRegKey::ROOT_KEY_CLASSES_ROOT,
+                             fileExtToUse,
+                             nsIWindowsRegKey::ACCESS_QUERY_VALUE);
+  if (NS_FAILED(rv))
+      return eq;
+   
+  nsAutoString type;
+  rv = regKey->ReadStringValue(NS_LITERAL_STRING("Content Type"), type);
+  if (NS_SUCCEEDED(rv))
+     eq = type.EqualsASCII(aType);
+
   return eq;
+#endif
 }
 
-already_AddRefed<nsMIMEInfoWin> nsOSHelperAppService::GetByExtension(const char *aFileExt, const char *aTypeHint)
+static void RemoveParameters(nsString& aPath)
 {
-  if (!aFileExt || !*aFileExt)
+  // Command Strings stored in the Windows registry with parameters look like 
+  // this:
+  //
+  // 1) "C:\Program Files\Company Name\product.exe" -foo -bar  (long version)
+  //                      -- OR --
+  // 2) C:\PROGRA~1\COMPAN~2\product.exe -foo -bar             (short version)
+  //
+  // For 1), the path is the first "" quoted string. (quotes are used to 
+  //         prevent parameter parsers from choking)
+  // For 2), the path is the string up until the first space (spaces are 
+  //         illegal in short DOS-style paths)
+  //
+  if (aPath.First() == PRUnichar('"')) {
+    aPath = Substring(aPath, 1, aPath.Length() - 1);
+    PRInt32 nextQuote = aPath.FindChar(PRUnichar('"'));
+    if (nextQuote != kNotFound)
+      aPath.Truncate(nextQuote);
+  }
+  else {
+    PRInt32 firstSpace = aPath.FindChar(PRUnichar(' '));
+    if (firstSpace != kNotFound) 
+      aPath.Truncate(firstSpace);
+  }
+}
+
+//
+// The "real" name of a given helper app (as specified by the path to the 
+// executable file held in various registry keys) is stored n the VERSIONINFO
+// block in the file's resources. We need to find the path to the executable
+// and then retrieve the "FileDescription" field value from the file. 
+//
+// For a given extension, we find the file handler like so:
+//
+// HKCR
+//     \.ext\                           <type key>     <-- default value
+//     \<type key>\   
+//                \shell\open\command\  <path+params>  <-- default value
+//
+// We need to do some parsing on the <path+params> to strip off params and
+// deal with some Windows quirks (like the fact that many Shell "applications"
+// are actually DLLs invoked via rundll32.exe) 
+//
+nsresult
+nsOSHelperAppService::GetDefaultAppInfo(const nsAString& aTypeName,
+                                        nsAString& aDefaultDescription, 
+                                        nsIFile** aDefaultApplication)
+{
+#ifdef WINCE
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
+  // If all else fails, use the file type key name, which will be 
+  // something like "pngfile" for .pngs, "WMVFile" for .wmvs, etc. 
+  aDefaultDescription = aTypeName;
+  *aDefaultApplication = nsnull;
+
+  nsAutoString handlerKeyName(aTypeName);
+  handlerKeyName.AppendLiteral("\\shell\\open\\command");
+  nsCOMPtr<nsIWindowsRegKey> regKey = 
+    do_CreateInstance("@mozilla.org/windows-registry-key;1");
+  if (!regKey) 
+    return NS_OK;
+
+  nsresult rv = regKey->Open(nsIWindowsRegKey::ROOT_KEY_CLASSES_ROOT,
+                             handlerKeyName, 
+                             nsIWindowsRegKey::ACCESS_QUERY_VALUE);
+  if (NS_FAILED(rv))
+    return NS_OK;
+   
+  // OK, the default value here is the description of the type.
+  nsAutoString handlerCommand;
+  rv = regKey->ReadStringValue(EmptyString(), handlerCommand);
+  if (NS_FAILED(rv))
+    return NS_OK;
+
+  nsAutoString handlerFilePath;
+  // First look to see if we're invoking a Windows shell service, such as 
+  // the Picture & Fax Viewer, which are invoked through rundll32.exe, and
+  // so we need to extract the DLL path because that's where the version
+  // info is held - not in rundll32.exe
+  //
+  // The format of rundll32.exe calls is:
+  //
+  // rundll32.exe c:\path\to.dll,Function %args
+  //
+  // What we want is the DLL - since that's where the real application name
+  // is stored, e.g. zipfldr.dll, shimgvw.dll, etc. 
+  // 
+  // Working from the end of the registry value, the path begins at the last
+  // comma in the string (stripping off Function and args) to the position
+  // just after the first space (the space after rundll32.exe).
+  // 
+  NS_NAMED_LITERAL_STRING(rundllSegment, "rundll32.exe ");
+  if (StringBeginsWith(handlerCommand, rundllSegment)) {
+    PRInt32 lastCommaPos = handlerCommand.RFindChar(',');
+    PRUint32 rundllSegmentLength = rundllSegment.Length();
+    PRUint32 len;
+    if (lastCommaPos != kNotFound)
+      len = lastCommaPos - rundllSegmentLength;
+    else
+      len = handlerCommand.Length() - rundllSegmentLength;
+    handlerFilePath = Substring(handlerCommand, rundllSegmentLength, len);
+  }
+  else
+    handlerFilePath = handlerCommand;
+
+  // Trim any command parameters so that we have a native path we can 
+  // initialize a local file with...
+  RemoveParameters(handlerFilePath);
+
+  // Similarly replace embedded environment variables... (this must be done
+  // AFTER |RemoveParameters| since it may introduce spaces into the path
+  // string)
+
+  if (sIsNT) {
+    DWORD required = ::ExpandEnvironmentStringsW(handlerFilePath.get(),
+                                                 L"", 0);
+    if (!required) 
+      return NS_ERROR_FAILURE;
+
+    nsAutoArrayPtr<WCHAR> destination(new WCHAR[required]); 
+    if (!destination)
+      return NS_ERROR_OUT_OF_MEMORY;
+    if (!::ExpandEnvironmentStringsW(handlerFilePath.get(), destination,
+                                     required))
+      return NS_ERROR_FAILURE;
+
+    handlerFilePath = destination;
+  }
+  else {
+    nsCAutoString nativeHandlerFilePath; 
+    NS_CopyUnicodeToNative(handlerFilePath, nativeHandlerFilePath);
+    DWORD required = ::ExpandEnvironmentStringsA(nativeHandlerFilePath.get(),
+                                                 "", 0);
+    if (!required) 
+      return NS_ERROR_FAILURE;
+
+    nsAutoArrayPtr<char> destination(new char[required]); 
+    if (!destination)
+      return NS_ERROR_OUT_OF_MEMORY;
+    if (!::ExpandEnvironmentStringsA(nativeHandlerFilePath.get(), 
+                                     destination, required))
+      return NS_ERROR_FAILURE;
+
+    NS_CopyNativeToUnicode(nsDependentCString(destination), handlerFilePath);
+  }
+
+  nsCOMPtr<nsILocalFile> lf;
+  NS_NewLocalFile(handlerFilePath, PR_TRUE, getter_AddRefs(lf));
+  if (!lf)
+    return NS_ERROR_OUT_OF_MEMORY;
+
+  nsILocalFileWin* lfw = nsnull;
+  CallQueryInterface(lf, &lfw);
+  if (lfw) {
+    // The "FileDescription" field contains the actual name of the application.
+    lfw->GetVersionInfoField("FileDescription", aDefaultDescription);
+    // QI addref'ed for us.
+    *aDefaultApplication = lfw;
+  }
+
+  return NS_OK;
+#endif
+}
+
+already_AddRefed<nsMIMEInfoWin> nsOSHelperAppService::GetByExtension(const nsAFlatString& aFileExt, const char *aTypeHint)
+{
+#ifdef WINCE  // WinCE doesn't support helper applications yet
+  return nsnull;
+#else
+  if (aFileExt.IsEmpty())
     return nsnull;
 
   // windows registry assumes your file extension is going to include the '.'.
   // so make sure it's there...
-  nsCAutoString fileExtToUse;
-  if (*aFileExt != '.')
-    fileExtToUse = '.';
+  nsAutoString fileExtToUse;
+  if (aFileExt.First() != PRUnichar('.'))
+    fileExtToUse = PRUnichar('.');
 
   fileExtToUse.Append(aFileExt);
 
   // o.t. try to get an entry from the windows registry.
-  HKEY hKey;
-  LONG err = ::RegOpenKeyEx( HKEY_CLASSES_ROOT, fileExtToUse.get(), 0, KEY_QUERY_VALUE, &hKey);
-  if (err == ERROR_SUCCESS)
-  {
-    nsCAutoString typeToUse;
-    if (aTypeHint) {
-      typeToUse.Assign(aTypeHint);
+  nsCOMPtr<nsIWindowsRegKey> regKey = 
+    do_CreateInstance("@mozilla.org/windows-registry-key;1");
+  if (!regKey) 
+    return nsnull; 
+
+  nsresult rv = regKey->Open(nsIWindowsRegKey::ROOT_KEY_CLASSES_ROOT,
+                             fileExtToUse,
+                             nsIWindowsRegKey::ACCESS_QUERY_VALUE);
+  if (NS_FAILED(rv))
+    return nsnull; 
+
+  nsCAutoString typeToUse;
+  if (aTypeHint && *aTypeHint) {
+    typeToUse.Assign(aTypeHint);
+  }
+  else {
+    nsAutoString temp;
+    if (NS_FAILED(regKey->ReadStringValue(NS_LITERAL_STRING("Content Type"), 
+                  temp))) {
+      return nsnull; 
     }
-    else {
-      LPBYTE pBytes = GetValueBytes( hKey, "Content Type");
-      if (pBytes)
-        typeToUse.Assign((const char*)pBytes);
-      delete [] pBytes;
-    }
-    nsAutoString description;
-    PRBool found = GetValueString(hKey, NULL, description);
-
-    nsMIMEInfoWin* mimeInfo = new nsMIMEInfoWin();
-    if (mimeInfo)
-    {
-      NS_ADDREF(mimeInfo);
-      if (!typeToUse.IsEmpty())
-        mimeInfo->SetMIMEType(typeToUse.get());
-      // don't append the '.'
-      mimeInfo->AppendExtension(fileExtToUse.get() + 1);
-
-      mimeInfo->SetPreferredAction(nsIMIMEInfo::useSystemDefault);
-
-      nsAutoString visibleDesc(description);
-      PRInt32 pos = visibleDesc.FindChar('.');
-      if (pos > 0) 
-        visibleDesc.Truncate(pos); 
-      // the format of the description usually looks like appname.version.something.
-      // for now, let's try to make it pretty and just show you the appname.
-
-      mimeInfo->SetDefaultDescription(visibleDesc.get());
-
-      // Get other nsIMIMEInfo fields from registry, if possible.
-      if ( found )
-      {
-          GetMIMEInfoFromRegistry( description, mimeInfo );
-      }
-    }
-    else {
-      NS_IF_RELEASE(mimeInfo); // we failed to really find an entry in the registry
-    }
-
-    // close the key
-    ::RegCloseKey(hKey);
-
-    return mimeInfo;
+    // Content-Type is always in ASCII
+    LossyAppendUTF16toASCII(temp, typeToUse);
   }
 
-  // we failed to find a mime type.
-  return nsnull;
+  nsMIMEInfoWin* mimeInfo = new nsMIMEInfoWin(typeToUse);
+  if (!mimeInfo)
+    return nsnull; // out of memory
+
+  NS_ADDREF(mimeInfo);
+  // don't append the '.'
+  mimeInfo->AppendExtension(NS_ConvertUTF16toUTF8(Substring(fileExtToUse, 1)));
+
+  mimeInfo->SetPreferredAction(nsIMIMEInfo::useSystemDefault);
+
+  nsAutoString description;
+  PRBool found = NS_SUCCEEDED(regKey->ReadStringValue(EmptyString(), 
+                                                      description));
+
+  nsAutoString defaultDescription;
+  nsCOMPtr<nsIFile> defaultApplication;
+  GetDefaultAppInfo(description, defaultDescription,
+                    getter_AddRefs(defaultApplication));
+
+  mimeInfo->SetDefaultDescription(defaultDescription);
+  mimeInfo->SetDefaultApplicationHandler(defaultApplication);
+
+  // Get other nsIMIMEInfo fields from registry, if possible.
+  if (found)
+  {
+      GetMIMEInfoFromRegistry(description, mimeInfo);
+  }
+  else {
+    NS_IF_RELEASE(mimeInfo); // we failed to really find an entry in the registry
+  }
+
+  return mimeInfo;
+#endif
 }
 
-already_AddRefed<nsIMIMEInfo> nsOSHelperAppService::GetMIMEInfoFromOS(const char *aMIMEType, const char *aFileExt, PRBool *aFound)
+already_AddRefed<nsIMIMEInfo> nsOSHelperAppService::GetMIMEInfoFromOS(const nsACString& aMIMEType, const nsACString& aFileExt, PRBool *aFound)
 {
   *aFound = PR_TRUE;
-  nsCAutoString fileExtension;
-  /* XXX The strcasecmp is a gross hack to wallpaper over the most common Win32
+
+  const nsCString& flatType = PromiseFlatCString(aMIMEType);
+  const nsCString& flatExt = PromiseFlatCString(aFileExt);
+
+  nsAutoString fileExtension;
+  /* XXX The Equals is a gross hack to wallpaper over the most common Win32
    * extension issues caused by the fix for bug 116938.  See bug
    * 120327, comment 271 for why this is needed.  Not even sure we
    * want to remove this once we have fixed all this stuff to work
@@ -400,7 +592,7 @@ already_AddRefed<nsIMIMEInfo> nsOSHelperAppService::GetMIMEInfoFromOS(const char
    * useless....
    * We'll do extension-based lookup for this type later in this function.
    */
-  if (aMIMEType && *aMIMEType && PL_strcasecmp(aMIMEType, APPLICATION_OCTET_STREAM) != 0) {
+  if (!aMIMEType.LowerCaseEqualsLiteral(APPLICATION_OCTET_STREAM)) {
     // (1) try to use the windows mime database to see if there is a mapping to a file extension
     // (2) try to see if we have some left over 4.x registry info we can peek at...
     GetExtensionFromWindowsMimeDatabase(aMIMEType, fileExtension);
@@ -413,7 +605,7 @@ already_AddRefed<nsIMIMEInfo> nsOSHelperAppService::GetMIMEInfoFromOS(const char
   // If we found an extension for the type, do the lookup
   nsMIMEInfoWin* mi = nsnull;
   if (!fileExtension.IsEmpty())
-    mi = GetByExtension(fileExtension.get(), aMIMEType).get();
+    mi = GetByExtension(fileExtension, flatType.get()).get();
   LOG(("Extension lookup on '%s' found: 0x%p\n", fileExtension.get(), mi));
 
   PRBool hasDefault = PR_FALSE;
@@ -424,9 +616,9 @@ already_AddRefed<nsIMIMEInfo> nsOSHelperAppService::GetMIMEInfoFromOS(const char
     // to the mimeinfo that we have. (E.g.: We are asked for video/mpeg and
     // .mpg, but the primary extension for video/mpeg is .mpeg. But because
     // .mpg is an extension for video/mpeg content, we want to append it)
-    if (aFileExt && *aFileExt && typeFromExtEquals(aFileExt, aMIMEType)) {
+    if (!aFileExt.IsEmpty() && typeFromExtEquals(NS_ConvertUTF8toUTF16(flatExt).get(), flatType.get())) {
       LOG(("Appending extension '%s' to mimeinfo, because its mimetype is '%s'\n",
-           aFileExt, aMIMEType));
+           flatExt.get(), flatType.get()));
       PRBool extExist = PR_FALSE;
       mi->ExtensionExists(aFileExt, &extExist);
       if (!extExist)
@@ -434,8 +626,9 @@ already_AddRefed<nsIMIMEInfo> nsOSHelperAppService::GetMIMEInfoFromOS(const char
     }
   }
   if (!mi || !hasDefault) {
-    nsRefPtr<nsMIMEInfoWin> miByExt = GetByExtension(aFileExt, aMIMEType);
-    LOG(("Ext. lookup for '%s' found 0x%p\n", aFileExt, miByExt.get()));
+    nsRefPtr<nsMIMEInfoWin> miByExt =
+      GetByExtension(NS_ConvertUTF8toUTF16(aFileExt), flatType.get());
+    LOG(("Ext. lookup for '%s' found 0x%p\n", flatExt.get(), miByExt.get()));
     if (!miByExt && mi)
       return mi;
     if (miByExt && !mi) {
@@ -444,12 +637,10 @@ already_AddRefed<nsIMIMEInfo> nsOSHelperAppService::GetMIMEInfoFromOS(const char
     }
     if (!miByExt && !mi) {
       *aFound = PR_FALSE;
-      mi = new nsMIMEInfoWin();
+      mi = new nsMIMEInfoWin(flatType);
       if (mi) {
         NS_ADDREF(mi);
-        if (aMIMEType && *aMIMEType)
-          mi->SetMIMEType(aMIMEType);
-        if (aFileExt && *aFileExt)
+        if (!aFileExt.IsEmpty())
           mi->AppendExtension(aFileExt);
       }
       
@@ -458,10 +649,10 @@ already_AddRefed<nsIMIMEInfo> nsOSHelperAppService::GetMIMEInfoFromOS(const char
 
     // if we get here, mi has no default app. copy from extension lookup.
     nsCOMPtr<nsIFile> defaultApp;
-    nsXPIDLString desc;
-    miByExt->GetDefaultDescription(getter_Copies(desc));
+    nsAutoString desc;
+    miByExt->GetDefaultDescription(desc);
 
-    mi->SetDefaultDescription(desc.get());
+    mi->SetDefaultDescription(desc);
   }
   return mi;
 }

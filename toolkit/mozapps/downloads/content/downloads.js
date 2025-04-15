@@ -1,27 +1,30 @@
 # -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+# ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
-# 
+#
 # The contents of this file are subject to the Mozilla Public License Version
 # 1.1 (the "License"); you may not use this file except in compliance with
 # the License. You may obtain a copy of the License at
 # http://www.mozilla.org/MPL/
-# 
+#
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
 # for the specific language governing rights and limitations under the
 # License.
-# 
+#
 # The Original Code is Mozilla.org Code.
-# 
-# The Initial Developer of the Original Code is.
+#
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
 # Portions created by the Initial Developer are Copyright (C) 2001
 # the Initial Developer. All Rights Reserved.
-# 
+#
 # Contributor(s):
-#   Blake Ross <blakeross@telocity.com> (Original Author) 
-#   Ben Goodger <ben@bengoodger.com> (v2.0) 
+#   Blake Ross <blakeross@telocity.com> (Original Author)
+#   Ben Goodger <ben@bengoodger.com> (v2.0)
 #   Dan Mosedale <dmose@mozilla.org>
-# 
+#   Fredrik Holmqvist <thesuckiestemail@yahoo.se>
+#
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -33,7 +36,7 @@
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
 # the terms of any one of the MPL, the GPL or the LGPL.
-# 
+#
 # ***** END LICENSE BLOCK *****
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -127,16 +130,20 @@ function downloadCompleted(aDownload)
 
     var id = aDownload.targetFile.path;
     
-    // Refresh the icon, so that executable icons are shown.
-    var mimeService = Components.classes["@mozilla.org/uriloader/external-helper-app-service;1"].getService(Components.interfaces.nsIMIMEService);
-    var contentType = mimeService.getTypeFromFile(aDownload.targetFile);
-    
-    var listItem = document.getElementById(id);
-    var oldImage = listItem.getAttribute("image");
-    // I tack on the content-type here as a hack to bypass the cache which seems
-    // to be interfering despite the fact the image has 'validate="always"' set
-    // on it. 
-    listItem.setAttribute("image", oldImage + "&contentType=" + contentType);
+    // getTypeFromFile fails if it can't find a type for this file. Handle this gracefully.
+    try {
+      // Refresh the icon, so that executable icons are shown.
+      var mimeService = Components.classes["@mozilla.org/uriloader/external-helper-app-service;1"].getService(Components.interfaces.nsIMIMEService);
+      var contentType = mimeService.getTypeFromFile(aDownload.targetFile);
+
+      var listItem = document.getElementById(id);
+      var oldImage = listItem.getAttribute("image");
+      // I tack on the content-type here as a hack to bypass the cache which seems
+      // to be interfering despite the fact the image has 'validate="always"' set
+      // on it. 
+      listItem.setAttribute("image", oldImage + "&contentType=" + contentType);
+    } catch (e) {
+    }
     
     var dlRes = rdf.GetUnicodeResource(id);
   
@@ -163,7 +170,7 @@ function downloadCompleted(aDownload)
     gDownloadViewController.onCommandUpdate();
 
     if (gActiveDownloads.length == 0)
-      window.title = document.documentElement.getAttribute("statictitle");    
+      document.title = document.documentElement.getAttribute("statictitle");
   }
   catch (e) {
   }
@@ -210,9 +217,14 @@ var gDownloadObserver = {
       downloadCompleted(dl);
       break;
     case "dl-start":
+      // whenever a new download starts, it is added to the top, so switch the
+      // view to it
+      gDownloadsView.selectedIndex = 0;
+
       // Add this download to the percentage average tally
       var dl = aSubject.QueryInterface(Components.interfaces.nsIDownload);
       gActiveDownloads.push(dl);
+
       break;
     case "xpinstall-download-started":
       var windowArgs = aSubject.QueryInterface(Components.interfaces.nsISupportsArray);
@@ -238,6 +250,8 @@ var gDownloadObserver = {
 
 function onDownloadCancel(aEvent)
 {
+  var selectedIndex = gDownloadsView.selectedIndex;
+
   gDownloadManager.cancelDownload(aEvent.target.id);
 
   setRDFProperty(aEvent.target.id, "DownloadAnimated", "false");
@@ -254,26 +268,54 @@ function onDownloadCancel(aEvent)
     f.remove(false);
 
   gDownloadViewController.onCommandUpdate();
+
+  // now reset the richlistbox
+  gDownloadsView.clearSelection();
+  var rowCount = gDownloadsView.getRowCount();
+  if (selectedIndex >= rowCount)
+    gDownloadsView.selectedIndex = rowCount - 1;
+  else
+    gDownloadsView.selectedIndex = selectedIndex;
 }
 
 function onDownloadPause(aEvent)
 {
+  var selectedIndex = gDownloadsView.selectedIndex;
+
   var uri = aEvent.target.id;
   gDownloadManager.pauseDownload(uri);
   setRDFProperty(uri, "DownloadStatus", aEvent.target.getAttribute("status-internal"));
   setRDFProperty(uri, "ProgressPercent", aEvent.target.getAttribute("progress"));
+
+  // now reset the richlistbox
+  gDownloadsView.clearSelection();
+  var rowCount = gDownloadsView.getRowCount();
+  if (selectedIndex >= rowCount)
+    gDownloadsView.selectedIndex = rowCount - 1;
+  else
+    gDownloadsView.selectedIndex = selectedIndex;
 }
 
 function onDownloadResume(aEvent)
 {
+  var selectedIndex = gDownloadsView.selectedIndex;
+
   gDownloadManager.resumeDownload(aEvent.target.id);
+
+  // now reset the richlistbox
+  gDownloadsView.clearSelection();
+  var rowCount = gDownloadsView.getRowCount();
+  if (selectedIndex >= rowCount)
+    gDownloadsView.selectedIndex = rowCount - 1;
+  else
+    gDownloadsView.selectedIndex = selectedIndex;
 }
 
 function onDownloadRemove(aEvent)
 {
   if (aEvent.target.removable) {
+    var selectedIndex = gDownloadsView.selectedIndex;
     gDownloadManager.removeDownload(aEvent.target.id);
-    
     gDownloadViewController.onCommandUpdate();
   }
 }
@@ -287,11 +329,11 @@ function onDownloadShow(aEvent)
       f.reveal();
     } catch (ex) {
       // if reveal failed for some reason (eg on unix it's not currently
-      // implemented), send the file: URL  window rooted at the parent to 
+      // implemented), send the file: URL window rooted at the parent to 
       // the OS handler for that protocol
       var parent = f.parent;
       if (parent) {
-        openExternal(parent.path);
+        openExternal(parent);
       }
     }
   }
@@ -350,7 +392,7 @@ function onDownloadOpen(aEvent)
         } catch (ex) {
           // if launch fails, try sending it through the system's external
           // file: URL handler
-          openExternal(f.path);
+          openExternal(f);
         }
       }
       else {
@@ -399,42 +441,54 @@ function onDownloadRetry(aEvent)
     var f = getLocalFileFromNativePathOrUrl(aEvent.target.id);
     saveURL(src, f, null, true, true);
   }
-  
+
   gDownloadViewController.onCommandUpdate();
+
+  // retry always places the item in the first spot
+  gDownloadsView.selectedIndex = 0;
 }
 
 // This is called by the progress listener. We don't actually use the event
 // system here to minimize time wastage. 
-var gLastComputedMean = 0;
+var gLastComputedMean = -1;
+var gLastActiveDownloads = 0;
 function onUpdateProgress()
 {
   var numActiveDownloads = gActiveDownloads.length;
   if (numActiveDownloads == 0) {
-    window.title = document.documentElement.getAttribute("statictitle");
-    gLastComputedMean = 0;
+    document.title = document.documentElement.getAttribute("statictitle");
+    gLastComputedMean = -1;
     return;
   }
     
   var mean = 0;
+  var base = 0;
+  var dl = null;
   for (var i = 0; i < numActiveDownloads; ++i) {
-    var dl = gActiveDownloads[i];
-    var progress = dl.percentComplete;
-    if (progress < 100)
-      mean += progress;
+    dl = gActiveDownloads[i];
+
+    // gActiveDownloads is screwed so it's possible 
+    // to have more files than we're really downloading.
+    // The good news is that those files have size==0.
+    // Same with files with unknown size. Their size==0.
+    if (dl.percentComplete < 100 && dl.size > 0) {
+      mean += dl.amountTransferred;
+      base += dl.size;
+    }
   }
 
-  mean = Math.round(mean / numActiveDownloads);
-  
-  // At the end of a download, progress is set from 100% to 0% for 
-  // some reason. We can identify this case because at this point the
-  // mean progress will be zero but the last computed mean will be
-  // greater than zero. 
-  if (mean == 0 && gLastComputedMean > 0) {
-    window.title = document.documentElement.getAttribute("statictitle");
-    return;
+  // we're not downloading anything at the moment,
+  // but we already downloaded something.
+  if (base == 0) {
+    mean = 100;
+  } else {
+    mean = Math.floor((mean / base) * 100);
   }
-  if (mean != gLastComputedMean) {
+
+  if (mean != gLastComputedMean || gLastActiveDownloads != numActiveDownloads) {
     gLastComputedMean = mean;
+    gLastActiveDownloads = numActiveDownloads;
+    
     var strings = document.getElementById("downloadStrings");
     
     var title;
@@ -443,7 +497,7 @@ function onUpdateProgress()
     else
       title = strings.getFormattedString("downloadsTitle", [mean]);
 
-    window.title = title;
+    document.title = title;
   }
 }
 
@@ -485,7 +539,7 @@ function Startup()
   // Set up AutoDownload display area
   initAutoDownloadDisplay();
   var pbi = Components.classes["@mozilla.org/preferences-service;1"]
-                      .getService(Components.interfaces.nsIPrefBranchInternal);
+                      .getService(Components.interfaces.nsIPrefBranch2);
   pbi.addObserver("browser.download.", gDownloadPrefObserver, false);
   
   // Handlers for events generated by the Download Manager (download events)
@@ -517,8 +571,9 @@ function Startup()
   // Finally, update the UI. 
   gDownloadsView.database.AddDataSource(gDownloadManager.datasource);
   gDownloadsView.builder.rebuild();
-  
-  gDownloadsView.focus();
+
+  // downloads can finish before Startup() does, so check if the window should close
+  autoClose();
 }
 
 function Shutdown() 
@@ -529,7 +584,7 @@ function Shutdown()
   gDownloadManager.saveState();
 
   var pbi = Components.classes["@mozilla.org/preferences-service;1"]
-                      .getService(Components.interfaces.nsIPrefBranchInternal);
+                      .getService(Components.interfaces.nsIPrefBranch2);
   pbi.removeObserver("browser.download.", gDownloadPrefObserver);
 
   var observerService = Components.classes[kObserverServiceProgID]
@@ -539,6 +594,7 @@ function Shutdown()
   observerService.removeObserver(gDownloadObserver, "dl-failed");  
   observerService.removeObserver(gDownloadObserver, "dl-start");  
   observerService.removeObserver(gDownloadObserver, "xpinstall-download-started");  
+  observerService.removeObserver(gDownloadObserver, "xpinstall-dialog-close");
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -553,18 +609,21 @@ var XPInstallDownloadManager = {
     var tempDir = fileLocator.get("TmpD", Components.interfaces.nsIFile);
 
     var mimeService = Components.classes["@mozilla.org/uriloader/external-helper-app-service;1"].getService(Components.interfaces.nsIMIMEService);
-    
+
+    var IOService = Components.classes["@mozilla.org/network/io-service;1"]
+                              .getService(Components.interfaces.nsIIOService);
+
     var xpinstallManager = gDownloadManager.QueryInterface(Components.interfaces.nsIXPInstallManagerUI);
 
     var xpiString = "";
+
     for (var i = 0; i < numXPInstallItems;) {
       // Pretty Name
       var displayName = aParams.GetString(i++);
       
       // URI
-      var uri = Components.classes["@mozilla.org/network/standard-url;1"].createInstance(Components.interfaces.nsIURI);
-      uri.spec = aParams.GetString(i++);
-      
+      var uri = IOService.newURI(aParams.GetString(i++), null, null);
+
       var iconURL = aParams.GetString(i++);
       
       // Local File Target
@@ -584,7 +643,7 @@ var XPInstallDownloadManager = {
       if (!iconURL) 
         iconURL = "chrome://mozapps/skin/xpinstall/xpinstallItemGeneric.png";
       
-      var targetUrl = makeFileURL(localTarget);
+      var targetUrl = makeFileURI(localTarget);
       var download = gDownloadManager.addDownload(Components.interfaces.nsIXPInstallManagerUI.DOWNLOAD_TYPE_INSTALL, 
                                                   uri, targetUrl, displayName, iconURL, mimeInfo, 0, null);
       
@@ -611,14 +670,14 @@ var gContextMenus = [
 function buildContextMenu(aEvent)
 {
   if (aEvent.target.id != "downloadContextMenu")
-    return;
+    return false;
     
   var popup = document.getElementById("downloadContextMenu");
   while (popup.hasChildNodes())
     popup.removeChild(popup.firstChild);
   
-  if (gDownloadsView.selected) {
-    var idx = parseInt(gDownloadsView.selected.getAttribute("state"));
+  if (gDownloadsView.selectedItem) {
+    var idx = parseInt(gDownloadsView.selectedItem.getAttribute("state"));
     if (idx < 0)
       idx = 0;
     
@@ -711,8 +770,8 @@ function onDownloadShowOptions()
 
 function onDownloadShowInfo()
 {
-  if (gDownloadsView.selected)
-    fireEventForElement(gDownloadsView.selected, "properties");
+  if (gDownloadsView.selectedItem)
+    fireEventForElement(gDownloadsView.selectedItem, "properties");
 }
 
 function initAutoDownloadDisplay()
@@ -730,12 +789,15 @@ function initAutoDownloadDisplay()
     function getSpecialFolderKey(aFolderType) 
     {
 #ifdef XP_WIN
-      return aFolderType == "Desktop" ? "DeskV" : "Pers";
+      return aFolderType == "Desktop" ? "DeskP" : "Pers";
 #endif
 #ifdef XP_MACOSX
       return aFolderType == "Desktop" ? "UsrDsk" : "UsrDocs";
 #endif
 #ifdef XP_OS2
+      return aFolderType == "Desktop" ? "Desk" : "Home";
+#endif
+#ifdef XP_BEOS
       return aFolderType == "Desktop" ? "Desk" : "Home";
 #endif
       return "Home";
@@ -759,11 +821,11 @@ function initAutoDownloadDisplay()
     }
 
     var displayName = null;
+    var folder;
     switch (pref.getIntPref("browser.download.folderList")) {
     case 0:
       folder = getDownloadsFolder("Desktop");
-      var strings = document.getElementById("downloadStrings");
-      displayName = strings.getString("displayNameDesktop");
+      displayName = document.getElementById("downloadStrings").getString("displayNameDesktop");
       break;
     case 1:
       folder = getDownloadsFolder("Downloads");
@@ -820,19 +882,20 @@ function onDownloadShowFolder()
   } catch (ex) {
     // if nsILocalFile::Reveal failed (eg it currently just returns an
     // error on unix), just open the folder in a browser window
-    openExternal(dir.path);
+    openExternal(dir);
   }
 }
 
-function openExternal(aPath)
+function openExternal(aFile)
 {
-  var uri = Components.classes["@mozilla.org/network/standard-url;1"]
-    .createInstance(Components.interfaces.nsIURI);
-  uri.spec = "file:///" + aPath;
+  var uri = Components.classes["@mozilla.org/network/io-service;1"]
+                      .getService(Components.interfaces.nsIIOService)
+                      .newFileURI(aFile);
 
-  var protocolSvc = Components.classes
-    ["@mozilla.org/uriloader/external-protocol-service;1"]
-    .getService(Components.interfaces.nsIExternalProtocolService);
+  var protocolSvc = 
+      Components.classes["@mozilla.org/uriloader/external-protocol-service;1"]
+                .getService(Components.interfaces.nsIExternalProtocolService);
+
   protocolSvc.loadUrl(uri);
 
   return;
@@ -857,7 +920,7 @@ function getLocalFileFromNativePathOrUrl(aPathOrUrl)
   } else {
 
     // if it's a pathname, create the nsILocalFile directly
-    f = Components.classes["@mozilla.org/file/local;1"].
+    var f = Components.classes["@mozilla.org/file/local;1"].
       createInstance(Components.interfaces.nsILocalFile);
     f.initWithPath(aPathOrUrl);
 

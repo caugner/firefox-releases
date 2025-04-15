@@ -72,9 +72,7 @@ nsHTMLEditor::ShowInlineTableEditingUI(nsIDOMElement * aCell)
     return NS_OK;
 
   // the resizers and the shadow will be anonymous children of the body
-  nsCOMPtr<nsIDOMElement> bodyElement;
-  nsresult res = nsEditor::GetRootElement(getter_AddRefs(bodyElement));
-  if (NS_FAILED(res)) return res;
+  nsIDOMElement *bodyElement = GetRoot();
   if (!bodyElement)   return NS_ERROR_NULL_POINTER;
 
   CreateAnonymousElement(NS_LITERAL_STRING("a"), bodyElement,
@@ -129,9 +127,7 @@ nsHTMLEditor::HideInlineTableEditingUI()
 
   // get the root content node.
 
-  nsCOMPtr<nsIDOMElement> bodyElement;
-  nsresult res = nsEditor::GetRootElement(getter_AddRefs(bodyElement));
-  if (NS_FAILED(res)) return res;
+  nsIDOMElement *bodyElement = GetRoot();
 
   nsCOMPtr<nsIContent> bodyContent( do_QueryInterface(bodyElement) );
   if (!bodyContent) return NS_ERROR_FAILURE;
@@ -176,21 +172,21 @@ nsHTMLEditor::DoInlineTableEditingAction(nsIDOMElement * aElement)
     PRBool hideUI = PR_FALSE;
     PRBool hideResizersWithInlineTableUI = (mResizedObject == tableElement);
 
-    if (anonclass.Equals(NS_LITERAL_STRING("mozTableAddColumnBefore")))
+    if (anonclass.EqualsLiteral("mozTableAddColumnBefore"))
       InsertTableColumn(1, PR_FALSE);
-    else if (anonclass.Equals(NS_LITERAL_STRING("mozTableAddColumnAfter")))
+    else if (anonclass.EqualsLiteral("mozTableAddColumnAfter"))
       InsertTableColumn(1, PR_TRUE);
-    else if (anonclass.Equals(NS_LITERAL_STRING("mozTableAddRowBefore")))
+    else if (anonclass.EqualsLiteral("mozTableAddRowBefore"))
       InsertTableRow(1, PR_FALSE);
-    else if (anonclass.Equals(NS_LITERAL_STRING("mozTableAddRowAfter")))
+    else if (anonclass.EqualsLiteral("mozTableAddRowAfter"))
       InsertTableRow(1, PR_TRUE);
-    else if (anonclass.Equals(NS_LITERAL_STRING("mozTableRemoveColumn"))) {
+    else if (anonclass.EqualsLiteral("mozTableRemoveColumn")) {
       DeleteTableColumn(1);
 #ifndef DISABLE_TABLE_DELETION
       hideUI = (colCount == 1);
 #endif
     }
-    else if (anonclass.Equals(NS_LITERAL_STRING("mozTableRemoveRow"))) {
+    else if (anonclass.EqualsLiteral("mozTableRemoveRow")) {
       DeleteTableRow(1);
 #ifndef DISABLE_TABLE_DELETION
       hideUI = (rowCount == 1);

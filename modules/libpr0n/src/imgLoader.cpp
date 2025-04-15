@@ -1,25 +1,41 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 2001 Netscape Communications Corporation.
- * All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Stuart Parmenter <pavlov@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "imgLoader.h"
 
@@ -159,7 +175,8 @@ static nsresult NewImageChannel(nsIChannel **aResult,
                                 nsIURI *aURI,
                                 nsIURI *aInitialDocumentURI,
                                 nsIURI *aReferringURI,
-                                nsILoadGroup *aLoadGroup, nsLoadFlags aLoadFlags)
+                                nsILoadGroup *aLoadGroup,
+                                nsLoadFlags aLoadFlags)
 {
   nsresult rv;
   nsCOMPtr<nsIChannel> newChannel;
@@ -204,6 +221,17 @@ static nsresult NewImageChannel(nsIChannel **aResult,
     NS_ENSURE_TRUE(httpChannelInternal, NS_ERROR_UNEXPECTED);
     httpChannelInternal->SetDocumentURI(aInitialDocumentURI);
     newHttpChannel->SetReferrer(aReferringURI);
+  }
+
+  // Image channels are loaded by default with reduced priority.
+  nsCOMPtr<nsISupportsPriority> p = do_QueryInterface(*aResult);
+  if (p) {
+    PRUint32 priority = nsISupportsPriority::PRIORITY_LOW;
+
+    if (aLoadFlags & nsIRequest::LOAD_BACKGROUND)
+      ++priority; // further reduce priority for background loads
+
+    p->AdjustPriority(priority);
   }
 
   return NS_OK;
@@ -274,8 +302,6 @@ NS_IMETHODIMP imgLoader::LoadImage(nsIURI *aURI,
   PRBool bCanCacheRequest = PR_TRUE;
   PRBool bHasExpired      = PR_FALSE;
   PRBool bValidateRequest = PR_FALSE;
-
-  PRBool addToLoadGroup   = PR_TRUE;
 
   // XXX For now ignore the cache key. We will need it in the future
   // for correctly dealing with image load requests that are a result
@@ -481,6 +507,7 @@ NS_IMETHODIMP imgLoader::LoadImage(nsIURI *aURI,
     // create the proxy listener
     ProxyListener *pl = new ProxyListener(NS_STATIC_CAST(nsIStreamListener *, request));
     if (!pl) {
+      request->Cancel(NS_ERROR_OUT_OF_MEMORY);
       NS_RELEASE(request);
       return NS_ERROR_OUT_OF_MEMORY;
     }
@@ -496,6 +523,10 @@ NS_IMETHODIMP imgLoader::LoadImage(nsIURI *aURI,
     NS_RELEASE(pl);
 
     if (NS_FAILED(openRes)) {
+      PR_LOG(gImgLog, PR_LOG_DEBUG,
+             ("[this=%p] imgLoader::LoadImage -- AsyncOpen() failed: 0x%x\n",
+              this, openRes));
+      request->Cancel(openRes);
       NS_RELEASE(request);
       return openRes;
     }
@@ -508,10 +539,6 @@ NS_IMETHODIMP imgLoader::LoadImage(nsIURI *aURI,
 
     // Update the request's LoadId
     request->SetLoadId(aCX);
-
-    // request is already loaded, no need to add anything to the
-    // loadgroup.
-    addToLoadGroup = PR_FALSE;
   }
 
   LOG_MSG(gImgLog, "imgLoader::LoadImage", "creating proxy request.");
@@ -521,9 +548,10 @@ NS_IMETHODIMP imgLoader::LoadImage(nsIURI *aURI,
 
   imgRequestProxy *proxy = (imgRequestProxy *)*_retval;
 
-  if (addToLoadGroup) {
-    proxy->AddToLoadGroup();
-  }
+  // Note that it's OK to add here even if the request is done.  If it is,
+  // it'll send a OnStopRequest() to the proxy in NotifyProxyListener and the
+  // proxy will be removed from the loadgroup.
+  proxy->AddToLoadGroup();
 
   // if we have to validate the request, then we will send the
   // notifications later.
@@ -721,7 +749,7 @@ nsresult imgLoader::GetMimeTypeFromContent(const char* aContents, PRUint32 aLeng
 {
   /* Is it a GIF? */
   if (aLength >= 4 && !nsCRT::strncmp(aContents, "GIF8", 4))  {
-    aContentType.Assign(NS_LITERAL_CSTRING("image/gif"));
+    aContentType.AssignLiteral("image/gif");
   }
 
   /* or a PNG? */
@@ -730,7 +758,7 @@ nsresult imgLoader::GetMimeTypeFromContent(const char* aContents, PRUint32 aLeng
                    (unsigned char)aContents[2]==0x4E &&
                    (unsigned char)aContents[3]==0x47))
   { 
-    aContentType.Assign(NS_LITERAL_CSTRING("image/png"));
+    aContentType.AssignLiteral("image/png");
   }
 
   /* maybe a JPEG (JFIF)? */
@@ -745,7 +773,7 @@ nsresult imgLoader::GetMimeTypeFromContent(const char* aContents, PRUint32 aLeng
      ((unsigned char)aContents[1])==0xD8 &&
      ((unsigned char)aContents[2])==0xFF)
   {
-    aContentType.Assign(NS_LITERAL_CSTRING("image/jpeg"));
+    aContentType.AssignLiteral("image/jpeg");
   }
 
   /* or how about ART? */
@@ -757,20 +785,22 @@ nsresult imgLoader::GetMimeTypeFromContent(const char* aContents, PRUint32 aLeng
    ((unsigned char) aContents[1])==0x47 &&
    ((unsigned char) aContents[4])==0x00 )
   {
-    aContentType.Assign(NS_LITERAL_CSTRING("image/x-jg"));
+    aContentType.AssignLiteral("image/x-jg");
   }
 
   else if (aLength >= 2 && !nsCRT::strncmp(aContents, "BM", 2)) {
-    aContentType.Assign(NS_LITERAL_CSTRING("image/bmp"));
+    aContentType.AssignLiteral("image/bmp");
   }
 
   // ICOs always begin with a 2-byte 0 followed by a 2-byte 1.
-  else if (aLength >= 4 && !memcmp(aContents, "\000\000\001\000", 4)) {
-    aContentType.Assign(NS_LITERAL_CSTRING("image/x-icon"));
+  // CURs begin with 2-byte 0 followed by 2-byte 2.
+  else if (aLength >= 4 && (!memcmp(aContents, "\000\000\001\000", 4) ||
+                            !memcmp(aContents, "\000\000\002\000", 4))) {
+    aContentType.AssignLiteral("image/x-icon");
   }
 
   else if (aLength >= 8 && !nsCRT::strncmp(aContents, "#define ", 8)) {
-    aContentType.Assign(NS_LITERAL_CSTRING("image/x-xbitmap"));
+    aContentType.AssignLiteral("image/x-xbitmap");
   }
   else {
     /* none of the above?  I give up */
@@ -827,8 +857,8 @@ NS_IMETHODIMP ProxyListener::OnStartRequest(nsIRequest *aRequest, nsISupports *c
           nsCOMPtr<nsIStreamListener> toListener(mDestListener);
           nsCOMPtr<nsIStreamListener> fromListener;
 
-          rv = convServ->AsyncConvertData(NS_LITERAL_STRING("multipart/x-mixed-replace").get(),
-                                          NS_LITERAL_STRING("*/*").get(),
+          rv = convServ->AsyncConvertData("multipart/x-mixed-replace",
+                                          "*/*",
                                           toListener,
                                           nsnull,
                                           getter_AddRefs(fromListener));
@@ -896,7 +926,7 @@ void imgCacheValidator::AddProxy(imgRequestProxy *aProxy)
   // the network.
   aProxy->AddToLoadGroup();
 
-  mProxies.AppendElement(aProxy);
+  mProxies.AppendObject(aProxy);
 }
 
 /** nsIRequestObserver methods **/
@@ -909,13 +939,10 @@ NS_IMETHODIMP imgCacheValidator::OnStartRequest(nsIRequest *aRequest, nsISupport
     PRBool isFromCache;
     if (NS_SUCCEEDED(cacheChan->IsFromCache(&isFromCache)) && isFromCache) {
 
-      PRUint32 count;
-      mProxies.Count(&count);
+      PRUint32 count = mProxies.Count();
       for (PRInt32 i = count-1; i>=0; i--) {
-        imgRequestProxy *proxy;
-        mProxies.GetElementAt(i, (nsISupports**)&proxy);
+        imgRequestProxy *proxy = NS_STATIC_CAST(imgRequestProxy *, mProxies[i]);
         mRequest->NotifyProxyListener(proxy);
-        NS_RELEASE(proxy);
       }
 
       mRequest->SetLoadId(mContext);
@@ -964,14 +991,11 @@ NS_IMETHODIMP imgCacheValidator::OnStartRequest(nsIRequest *aRequest, nsISupport
 
   mDestListener = NS_STATIC_CAST(nsIStreamListener*, pl);
 
-  PRUint32 count;
-  mProxies.Count(&count);
+  PRUint32 count = mProxies.Count();
   for (PRInt32 i = count-1; i>=0; i--) {
-    imgRequestProxy *proxy;
-    mProxies.GetElementAt(i, (nsISupports**)&proxy);
+    imgRequestProxy *proxy = NS_STATIC_CAST(imgRequestProxy *, mProxies[i]);
     proxy->ChangeOwner(request);
     request->NotifyProxyListener(proxy);
-    NS_RELEASE(proxy);
   }
 
   NS_RELEASE(request);

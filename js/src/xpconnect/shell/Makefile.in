@@ -45,9 +45,12 @@ include $(DEPTH)/config/autoconf.mk
 
 MODULE		= xpcshell
 SIMPLE_PROGRAMS	= xpcshell$(BIN_SUFFIX)
+MOZILLA_INTERNAL_API = 1
+
 REQUIRES	= xpconnect \
 		  xpcom \
 		  js \
+		  caps \
 		  $(NULL)
 
 CPPSRCS		= xpcshell.cpp
@@ -73,5 +76,5 @@ DEFINES		+= -DJS_THREADSAFE
 #
 ifdef JS_READLINE
 DEFINES += -DEDITLINE
-LIBS += -lreadline
+LIBS += -lreadline $(JS_READLINE_EXTRA_LIBS)
 endif

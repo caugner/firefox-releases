@@ -184,13 +184,16 @@ CanUseSysNTLM(nsIHttpChannel *channel, PRBool isProxyAuth)
     if (isProxyAuth) {
         if (NS_FAILED(prefs->GetBoolPref(kAllowProxies, &val)))
             val = PR_FALSE;
+        LOG(("sys-ntlm allowed for proxy: %d\n", val));
         return val;
     }
     else {
         nsCOMPtr<nsIURI> uri;
         channel->GetURI(getter_AddRefs(uri));
-        if (uri && TestPref(uri, kTrustedURIs))
+        if (uri && TestPref(uri, kTrustedURIs)) {
+            LOG(("sys-ntlm allowed for host\n"));
             return PR_TRUE;
+        }
     }
 
     return PR_FALSE;
@@ -219,7 +222,8 @@ nsHttpNTLMAuth::ChallengeReceived(nsIHttpChannel *channel,
                                   nsISupports   **continuationState,
                                   PRBool         *identityInvalid)
 {
-    LOG(("nsHttpNTLMAuth::ChallengeReceived\n"));
+    LOG(("nsHttpNTLMAuth::ChallengeReceived [ss=%p cs=%p]\n",
+         *sessionState, *continuationState));
 
     // NOTE: we don't define any session state
 
@@ -244,8 +248,13 @@ nsHttpNTLMAuth::ChallengeReceived(nsIHttpChannel *channel,
         // may send a weak LMv1 hash of the user's password, we cannot just
         // send it to any server.
         //
-        if (trySysNTLM && !*continuationState && CanUseSysNTLM(channel, isProxyAuth))
+        if (trySysNTLM && !*continuationState && CanUseSysNTLM(channel, isProxyAuth)) {
             module = do_CreateInstance(NS_AUTH_MODULE_CONTRACTID_PREFIX "sys-ntlm");
+#ifdef PR_LOGGING
+            if (!module)
+                LOG(("failed to load sys-ntlm module\n"));
+#endif
+        }
 
         // it's possible that there is no ntlm-sspi auth module...
         if (!module) {
@@ -324,6 +333,10 @@ nsHttpNTLMAuth::GenerateCredentials(nsIHttpChannel  *httpChannel,
         inBuf = nsMemory::Alloc(inBufLen);
         if (!inBuf)
             return NS_ERROR_OUT_OF_MEMORY;
+
+        // strip off any padding (see bug 230351)
+        while (challenge[len - 1] == '=')
+          len--;
 
         if (PL_Base64Decode(challenge, len, (char *) inBuf) == nsnull) {
             nsMemory::Free(inBuf);

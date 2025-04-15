@@ -9,15 +9,7 @@
 <?xul-overlay href="chrome://navigator/content/platformNavigationBindings.xul"?>
 <?xul-overlay href="chrome://communicator/content/viewZoomOverlay.xul"?>
 
-<!DOCTYPE window [
-<!ENTITY % brandDTD SYSTEM "chrome://global/locale/brand.dtd" >
-%brandDTD;
-<!ENTITY % helpDTD SYSTEM "chrome://help/locale/help.dtd" >
-%helpDTD;
-<!ENTITY % navigatorDTD SYSTEM "chrome://navigator/locale/navigator.dtd" >
-%navigatorDTD;
-]>
-
+<!DOCTYPE window SYSTEM "chrome://help/locale/help.dtd">
 
 <window id="help"
    windowtype="mozilla:help"
@@ -55,8 +47,6 @@
     <command id="Browser:Back"    oncommand="goBack();"    observes="canGoBack"/>
     <command id="Browser:Forward" oncommand="goForward();" observes="canGoForward"/>
     <command id="cmd_copyLink"/>
-    <command id="cmd_copyImageLocation"/>
-    <command id="cmd_copyImageContents"/>
   </commandset>
   <commandset id="clipboardEditMenuItems"/>
   <commandset id="viewZoomCommands"/>
@@ -64,19 +54,19 @@
     <key id="key_close"/>
     <key id="printKb" key="&printCmd.commandkey;" oncommand="print();" modifiers="accel"/>
     <keyset id="viewZoomKeys"/>
-    <keyset id="navigationKeys"/>
+    <keyset id="navigationKeys">
+      <!-- The stop keybindings are navigator-only -->
+      <key id="key_stop" disabled="true"/>
+      <key id="key_stop2" disabled="true"/>
+    </keyset>
     <key id="key_find"
         key="&findOnCmd.commandkey;" oncommand="find(false, false);" modifiers="accel"/>
     <key id="key_findAgain"
         key="&findAgainCmd.commandkey;" oncommand="find(true, false);" modifiers="accel"/>
     <key id="key_findPrev"
         key="&findPrevCmd.commandkey;" oncommand="find(true, true);" modifiers="accel, shift"/>
-    <key id="key_findAgain2" keycode="&findAgainCmd.commandkey2;" oncommand="find(true, false);" />
+    <key id="key_findAgain2" keycode="&findAgainCmd.commandkey2;" oncommand="find(true, false);"/>
     <key id="key_findPrev2"  keycode="&findPrevCmd.commandkey2;"  oncommand="find(true, true);"  modifiers="shift"/>
-    <key id="key_viewSource" key="&pageSourceCmd.commandkey;"
-        oncommand="BrowserViewSource();" modifiers="accel"/>
-    <key id="key_viewInfo" key="&pageInfoCmd.commandkey;"
-        oncommand="BrowserPageInfo();"   modifiers="accel"/>
     <key id="key_viewNextHelpPanel" keycode="VK_TAB" oncommand="showRelativePanel(true);" modifiers="control"/>
     <key id="key_viewPrevHelpPanel" keycode="VK_TAB" oncommand="showRelativePanel(false);" modifiers="control,shift"/>
   </keyset>
@@ -87,31 +77,31 @@
 
   <!-- button bar -->
   <toolbox id="help-toolbox" class="toolbox-top" deferattached="true">
-    <toolbar id="helpToolbar" class="toolbar-primary"
+    <toolbar id="helpToolbar" class="toolbar-primary chromeclass-toolbar"
         grippytooltiptext="&toolbar.tooltip;"
         tbalign="stretch" persist="collapsed">
 
         <toolbarbutton id="helpBackButton" type="menu-button" class="toolbarbutton-1"
-          label="&backBtn.label;" 
+          label="&backButton.label;" 
           oncommand="if (event.target==this) goBack(); else gotoHistoryIndex(event);"
           observes="canGoBack" context="backMenu"
           tooltiptext="&backButton.tooltip;">
           <menupopup context="" onpopupshowing="createBackMenu(event);"/>
         </toolbarbutton>
         <toolbarbutton id="helpForwardButton" type="menu-button" class="toolbarbutton-1"
-          label="&fwdBtn.label;" 
+          label="&forwardButton.label;" 
           tooltiptext="&forwardButton.tooltip;"
           oncommand="if (event.target==this) goForward(); else gotoHistoryIndex(event);"
           observes="canGoForward" context="forwardMenu">
           <menupopup context="" onpopupshowing="createForwardMenu(event);"/>
         </toolbarbutton>
         <toolbarbutton id="helpHomeButton" class="toolbarbutton-1"
-          label="&homeBtn.label;" oncommand="goHome();"
-          tooltiptext="&homeBtn.tooltip;"/>
+          label="&homeButton.label;" oncommand="goHome();"
+          tooltiptext="&homeButton.tooltip;"/>
 
         <spacer flex="1"/>
 
-        <toolbarbutton id="print" class="toolbarbutton-1"
+        <toolbarbutton id="helpPrintButton" class="toolbarbutton-1"
           label="&printButton.label;" oncommand="print();"
           tooltiptext="&printButton.tooltip;"/>
 
@@ -126,40 +116,35 @@
       <vbox id="helpsidebar-box" persist="width">
 
          <!-- glossary panel -->
-         <button id="help-glossary-btn" class="box-texttab"
+         <toolbarbutton id="help-glossary-btn" class="box-texttab"
             label="&glossarytab.label;" oncommand="showPanel('help-glossary')"
             accesskey="&glossarytab.accesskey;"/>
-         <tree id="help-glossary-panel" flex="1" hidecolumnpicker="true" hidden="true"
-               datasources="rdf:null"
+         <tree id="help-glossary-panel" class="focusring"
+               flex="1" hidecolumnpicker="true" hidden="true"
+               datasources="rdf:null" ref="urn:root"
                containment="http://home.netscape.com/NC-rdf#subheadings"
-               ref="urn:root"
                flags="dont-build-content"
-               onselect="onselect_loadURI(this, 'GlossaryNameColumn')">
+               onselect="onselect_loadURI(this);">
         <template>
           <rule>
           <conditions>
             <content uri="?uri"/>
             <triple subject="?uri"
               predicate="http://home.netscape.com/NC-rdf#subheadings"
-              object="?subheadings" />
+              object="?subheadings"/>
             <member container="?subheadings" child="?subheading"/>
           </conditions>
           <bindings>
             <binding subject="?subheading"
               predicate="http://home.netscape.com/NC-rdf#name"
-              object="?name" />
-
-            <binding subject="?subheading"
-              predicate="http://home.netscape.com/NC-rdf#link"
-              object="?link" />
+              object="?name"/>
           </bindings>
 
           <action>
             <treechildren>
               <treeitem uri="?subheading">
                 <treerow>
-                  <treecell label="?name"
-                    properties="link-?link"/>
+                  <treecell label="?name"/>
                 </treerow>
               </treeitem>
             </treechildren>
@@ -168,47 +153,41 @@
         </template>
             <treecols>
                <treecol id="GlossaryNameColumn" flex="1"
-                  hideheader="true"
-                  primary="true"/>
+                  hideheader="true"/>
             </treecols>
          </tree>
 
 	 <!-- index panel -->
-         <button id="help-index-btn" class="box-texttab"
+         <toolbarbutton id="help-index-btn" class="box-texttab"
             label="&indextab.label;"  oncommand="showPanel('help-index');displayIndex();"
             accesskey="&indextab.accesskey;"/>
 
-         <tree id="help-index-panel" flex="1"
-               datasources="rdf:null" hidecolumnpicker="true" hidden="true"
+         <tree id="help-index-panel" class="focusring"
+               flex="1" hidecolumnpicker="true" hidden="true"
+               datasources="rdf:null" ref="urn:root"
                containment="http://home.netscape.com/NC-rdf#subheadings"
-               ref="urn:root"
                flags="dont-build-content dont-test-empty"
-               onselect="onselect_loadURI(this, 'IndexNameColumn')">
+               onselect="onselect_loadURI(this);">
         <template>
           <rule>
           <conditions>
             <content uri="?uri"/>
             <triple subject="?uri"
               predicate="http://home.netscape.com/NC-rdf#subheadings"
-              object="?subheadings" />
+              object="?subheadings"/>
             <member container="?subheadings" child="?subheading"/>
           </conditions>
           <bindings>
             <binding subject="?subheading"
               predicate="http://home.netscape.com/NC-rdf#name"
-              object="?name" />
-
-            <binding subject="?subheading"
-              predicate="http://home.netscape.com/NC-rdf#link"
-              object="?link" />
+              object="?name"/>
           </bindings>
 
           <action>
             <treechildren>
               <treeitem uri="?subheading">
                 <treerow>
-                  <treecell ref="IndexNameColumn" label="?name"
-                      properties="link-?link"/>
+                  <treecell label="?name"/>
                 </treerow>
               </treeitem>
             </treechildren>
@@ -226,49 +205,38 @@
          </tree>
 
      <!-- search panel -->
-     <button id="help-search-btn" class="box-texttab"
+     <toolbarbutton id="help-search-btn" class="box-texttab"
              label="&searchtab.label;" oncommand="showPanel('help-search')"
              accesskey="&searchtab.accesskey;"/>
 
              <vbox id="help-search-panel" hidden="true" flex="1">
-                <hbox align="center">
-                  <textbox id="findText" 
-                     flex="1" 
-                     oninput="doEnabling();"
-                     onkeypress="if (event.keyCode == KeyEvent.DOM_VK_ENTER || event.keyCode == KeyEvent.DOM_VK_RETURN) doFind();"/>
-
-                  <button id="findButton" default="true" disabled="true" label="&gobtn.label;" oncommand="doFind()" flex="0"/>
-                </hbox>
-                <tree id="help-search-tree"
+                <textbox id="findText" type="timed" timeout="500"
+                         oncommand="doFind();"/>
+                <tree id="help-search-tree" class="focusring"
                       flex="1" hidecolumnpicker="true"
-                      datasources="rdf:null"
+                      datasources="rdf:null" ref="urn:root"
                       containment="http://home.netscape.com/NC-rdf#child"
-                      ref="urn:root"
                       flags="dont-build-content"
-                      onselect="onselect_loadURI(this, 'ResultsColumn')">
+                      onselect="onselect_loadURI(this);">
             <template>
               <rule>
                 <conditions>
                   <content uri="?uri"/>
-                  <member container="?uri" child="?subheading" />
+                  <member container="?uri" child="?subheading"/>
                 </conditions>
 
                 <bindings>
                   <binding subject="?subheading"
                    predicate="http://home.netscape.com/NC-rdf#name"
-                   object="?name" />
-                  <binding subject="?subheading"
-                   predicate="http://home.netscape.com/NC-rdf#link"
-                   object="?link" />
+                   object="?name"/>
                 </bindings>
 
                 <action>
                   <treechildren>
                     <treeitem uri="?subheading">
-                     <treerow>
-                      <treecell label="?name"
-                         properties="link-?link"/>
-                     </treerow>
+                      <treerow>
+                        <treecell label="?name"/>
+                      </treerow>
                     </treeitem>
                   </treechildren>
                 </action>
@@ -277,7 +245,7 @@
 
                  <treecols>
                     <treecol id="ResultsColumn" flex="1"
-                             hideheader="true" primary="true"
+                             hideheader="true"
                              sortActive="true"
                              sortDirection="ascending"
                              sort="?name"/>
@@ -286,40 +254,36 @@
        </vbox>
 
        <!-- table of contents panel -->
-       <button id="help-toc-btn" class="box-texttab"
+       <toolbarbutton id="help-toc-btn" class="box-texttab"
           label="&toctab.label;" oncommand="showPanel('help-toc')"
           accesskey="&toctab.accesskey;"/>
-          <tree id="help-toc-panel" flex="1"  hidecolumnpicker="true"
-                datasources="rdf:null"
+          <tree id="help-toc-panel" class="focusring"
+                flex="1" hidecolumnpicker="true"
+                datasources="rdf:null" ref="urn:root"
                 containment="http://home.netscape.com/NC-rdf#subheadings"
-                ref="urn:root"
                 flags="dont-build-content"
-                onselect="onselect_loadURI(this, 'NameColumn')">
+                onselect="onselect_loadURI(this);">
           <template>
             <rule>
               <conditions>
                <content uri="?uri"/>
                <triple subject="?uri"
                  predicate="http://home.netscape.com/NC-rdf#subheadings"
-                 object="?subheadings" />
+                 object="?subheadings"/>
                <member container="?subheadings" child="?subheading"/>
               </conditions>
 
               <bindings>
                <binding subject="?subheading"
                  predicate="http://home.netscape.com/NC-rdf#name"
-                 object="?name" />
-               <binding subject="?subheading"
-                 predicate="http://home.netscape.com/NC-rdf#link"
-                 object="?link" />
+                 object="?name"/>
               </bindings>
 
               <action>
                 <treechildren>
                   <treeitem uri="?subheading">
                     <treerow>
-                      <treecell label="?name"
-                          properties="link-?link"/>
+                      <treecell label="?name"/>
                     </treerow>
                   </treeitem>
               </treechildren>
@@ -339,7 +303,6 @@
       <splitter id="helpsidebar-splitter"
           collapse="before"
           persist="state hidden"
-          autostretch="never"
           state="open">
           <grippy/>
       </splitter>
@@ -351,7 +314,8 @@
           <!-- type attribute is used by frame construction to locate iframes
                intended to hold (html) content -->
           <browser context="helpContextMenu" type="content-primary" id="help-content"
-              src="about:blank" flex="1"/>
+              src="about:blank" flex="1" onclick="return contentClick(event);"/>
+          <browser type="content" id="help-external" collapsed="true"/>
         </hbox>
       </vbox>
     </hbox>

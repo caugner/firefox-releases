@@ -31,17 +31,13 @@ mySample.prototype = {
     },
     poke: function (aValue) { this.val = aValue; },
 
-    /*
-     * Note that until bug 14460 is resolved, you need to name the method
-     * QueryInterface, not queryInterface as you might expect given the
-     * interCaps naming convention used in most XPIDL.
-     */
     QueryInterface: function (iid) {
-        if (!iid.equals(Components.interfaces.nsISample) &&
-            !iid.equals(Components.interfaces.nsISupports)) {
-            throw Components.results.NS_ERROR_NO_INTERFACE;
-        }
-        return this;
+        if (iid.equals(Components.interfaces.nsISample) ||
+            iid.equals(Components.interfaces.nsISupports))
+            return this;
+
+        Components.returnCode = Components.results.NS_ERROR_NO_INTERFACE;
+        return null;
     },
 
     val: "<default value>"
@@ -68,15 +64,14 @@ var myModule = {
         compMgr = compMgr.QueryInterface(Components.interfaces.nsIComponentRegistrar);
         compMgr.registerFactoryLocation(this.myCID,
                                         "Sample JS Component",
-                                        this.myProgID, 
+                                        this.myProgID,
                                         fileSpec,
                                         location,
                                         type);
     },
 
     /*
-     * The GetClassObject method is responsible for producing Factory and
-     * SingletonFactory objects (the latter are specialized for services).
+     * The GetClassObject method is responsible for producing Factory objects
      */
     getClassObject: function (compMgr, cid, iid) {
         if (!cid.equals(this.myCID))

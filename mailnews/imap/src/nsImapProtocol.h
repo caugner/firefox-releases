@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Lorenzo Colitti <lorenzo@colitti.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -86,6 +86,7 @@
 #include "nsIImapHeaderXferInfo.h"
 #include "nsMsgLineBuffer.h"
 #include "nsIAsyncInputStream.h"
+#include "nsITimer.h"
 class nsIMAPMessagePartIDArray;
 class nsIMsgIncomingServer;
 
@@ -93,7 +94,7 @@ class nsIMsgIncomingServer;
 
 
 typedef struct _msg_line_info {
-    char   *adoptedMessageLine;
+    const char   *adoptedMessageLine;
     PRUint32 uidOfMessage;
 } msg_line_info;
 
@@ -150,7 +151,8 @@ public:
 #define IMAP_CLEAN_UP_URL_STATE       0x00000010 // processing clean up url state
 #define IMAP_ISSUED_LANGUAGE_REQUEST  0x00000020 // make sure we only issue the language request once per connection...
 
-class nsImapProtocol : public nsIImapProtocol, public nsIRunnable, public nsIInputStreamCallback, public nsMsgProtocol
+class nsImapProtocol : public nsIImapProtocol, public nsIRunnable, public nsIInputStreamCallback,
+ public nsSupportsWeakReference, public nsMsgProtocol
 {
 public:
   
@@ -168,46 +170,10 @@ public:
   //////////////////////////////////////////////////////////////////////////////////
   // we support the nsIImapProtocol interface
   //////////////////////////////////////////////////////////////////////////////////
-  NS_IMETHOD LoadImapUrl(nsIURI * aURL, nsISupports * aConsumer);
-  NS_IMETHOD IsBusy(PRBool * aIsConnectionBusy, PRBool *isInboxConnection);
-  NS_IMETHOD CanHandleUrl(nsIImapUrl * aImapUrl, PRBool * aCanRunUrl,
-                          PRBool * hasToWait);
-  NS_IMETHOD Initialize(nsIImapHostSessionList * aHostSessionList, nsIImapIncomingServer *aServer, nsIEventQueue * aSinkEventQueue);
-  // Notify FE Event has been completed
-  NS_IMETHOD NotifyFEEventCompletion();
-  
-  NS_IMETHOD GetRunningImapURL(nsIImapUrl **aImapUrl);
-  ////////////////////////////////////////////////////////////////////////////////////////
-  // we suppport the nsIStreamListener interface 
-  ////////////////////////////////////////////////////////////////////////////////////////
-    
-    
-  // This is evil, I guess, but this is used by libmsg to tell a running imap url
-  // about headers it should download to update a local database.
-  NS_IMETHOD NotifyHdrsToDownload(PRUint32 *keys, PRUint32 keyCount);
-  NS_IMETHOD NotifyBodysToDownload(PRUint32 *keys, PRUint32 keyCount);
-  
-  NS_IMETHOD GetFlagsForUID(PRUint32 uid, PRBool *foundIt, imapMessageFlagsType *flags, char **customFlags);
-  NS_IMETHOD GetSupportedUserFlags(PRUint16 *flags);
-  
-  NS_IMETHOD GetRunningUrl(nsIURI **aUrl);
-  
-  // Tell thread to die. This can only be called by imap service
-  // 
-  NS_IMETHOD TellThreadToDie(PRBool isSafeToClose);
-  
-  // Get last active time stamp
-  NS_IMETHOD GetLastActiveTimeStamp(PRTime *aTimeStamp);
-  
-  NS_IMETHOD PseudoInterruptMsgLoad(nsIMsgFolder *aImapFolder, nsIMsgWindow *aMsgWindow, 
-                                    PRBool *interrupted);
-  NS_IMETHOD GetSelectedMailboxName(char ** folderName);
-  NS_IMETHOD ResetToAuthenticatedState();
-  NS_IMETHOD OverrideConnectionInfo(const PRUnichar *pHost, PRUint16 pPort, const char *pCookieData);
-  //////////////////////////////////////////////////////////////////////////////////////
-  // End of nsIStreamListenerSupport
-  ////////////////////////////////////////////////////////////////////////////////////////
-  
+  NS_DECL_NSIIMAPPROTOCOL
+
+  void CloseStreams();
+
   // message id string utilities.
   PRUint32		CountMessagesInIdString(const char *idString);
   static	PRBool	HandlingMultipleMessages(const char *messageIdString);
@@ -236,7 +202,7 @@ public:
   // used when streaming a message fetch
   virtual nsresult BeginMessageDownLoad(PRUint32 totalSize, // for user, headers and body
     const char *contentType);     // some downloads are header only
-  virtual void HandleMessageDownLoadLine(const char *line, PRBool chunkEnd);
+  virtual void HandleMessageDownLoadLine(const char *line, PRBool isPartialLine, char *lineCopy=nsnull);
   virtual void NormalMessageEndDownload();
   virtual void AbortMessageDownLoad();
   virtual void PostLineDownLoadEvent(msg_line_info *downloadLineDontDelete);
@@ -296,8 +262,6 @@ public:
   
   // utility function calls made by the server
   
-  static PRUnichar * CreatePRUnicharStringFromUTF7(const char * aSourceString);
-  
   void Copy(const char * messageList, const char *destinationMailbox, 
     PRBool idsAreUid);
   void Search(const char * searchCriteria,  PRBool useUID, 
@@ -313,11 +277,11 @@ public:
   void FetchMsgAttribute(const char * messageIds, const char *attribute);
   void Expunge();
   void UidExpunge(const char* messageSet);
-  void Close();
+  void Close(PRBool shuttingDown = PR_FALSE, PRBool waitForResponse = PR_TRUE);
   void Check();
   void SelectMailbox(const char *mailboxName);
   // more imap commands
-  void Logout();
+  void Logout(PRBool shuttingDown = PR_FALSE, PRBool waitForResponse = PR_TRUE);
   void Noop();
   void XServerInfo();
   void Netscape();
@@ -353,13 +317,11 @@ public:
   void RefreshFolderACLView(const char *mailboxName, nsIMAPNamespace *nsForMailbox);
   
   nsresult SetFolderAdminUrl(const char *mailboxName);
-  void WaitForFEEventCompletion();
   void HandleMemoryFailure();
   void HandleCurrentUrlError();
   
   // UIDPLUS extension
-  void SetCopyResponseUid(nsMsgKeyArray* aKeyArray,
-    const char* msgIdString);
+  void SetCopyResponseUid(const char* msgIdString);
   
   // Quota support
   void UpdateFolderQuotaData(nsCString& aQuotaRoot, PRUint32 aUsed, PRUint32 aMax);
@@ -368,7 +330,6 @@ private:
   // the following flag is used to determine when a url is currently being run. It is cleared when we 
   // finish processng a url and it is set whenever we call Load on a url
   PRBool                        m_urlInProgress;	
-  PRBool                        m_gotFEEventCompletion;
   nsCOMPtr<nsIImapUrl>		m_runningUrl; // the nsIImapURL that is currently running
   nsImapAction	m_imapAction;  // current imap action associated with this connnection...
   
@@ -400,7 +361,6 @@ private:
   PRMonitor    *m_pseudoInterruptMonitor;
   PRMonitor    *m_dataMemberMonitor;
   PRMonitor    *m_threadDeathMonitor;
-  PRMonitor    *m_eventCompletionMonitor;
   PRMonitor    *m_waitForBodyIdsMonitor;
   PRMonitor    *m_fetchMsgListMonitor;
   PRMonitor   *m_fetchBodyListMonitor;
@@ -493,12 +453,13 @@ private:
   void IncrementCommandTagNumber();
   char *GetServerCommandTag();  
   
+  void StartTLS();
   // login related methods. All of these methods actually issue protocol
   void Capability(); // query host for capabilities.
   void Language(); // set the language on the server if it supports it
   void Namespace();
   void InsecureLogin(const char *userName, const char *password);
-  void AuthLogin(const char *userName, const char *password, eIMAPCapabilityFlag flag);
+  nsresult AuthLogin(const char *userName, const char *password, eIMAPCapabilityFlag flag);
   void ProcessAuthenticatedStateURL();
   void ProcessAfterAuthenticated();
   void ProcessSelectedStateURL();
@@ -592,6 +553,7 @@ private:
   PRBool  m_fetchByChunks;
   PRBool  m_ignoreExpunges;
   PRBool  m_useSecAuth;
+  PRInt32 m_socketType;
   PRInt32 m_chunkSize;
   PRInt32 m_chunkThreshold;
   nsMsgImapLineDownloadCache m_downloadLineCache;
@@ -599,7 +561,7 @@ private:
   nsCOMPtr <nsIImapHeaderInfo> m_curHdrInfo;
   
   nsIImapHostSessionList * m_hostSessionList;
-  
+
   PRBool m_fromHeaderSeen;
   
   // these settings allow clients to override various pieces of the connection info from the url
@@ -699,6 +661,7 @@ protected:
   nsCOMPtr<nsISupports> mSecurityInfo;
   nsCOMPtr<nsIRequest> mCacheRequest; // the request associated with a read from the cache
   nsCString m_ContentType;
+  nsWeakPtr   m_protocol;
 
   PRBool mChannelClosed;
   PRBool mReadingFromCache;

@@ -1,44 +1,46 @@
 /* vim:set tw=80 expandtab softtabstop=4 ts=4 sw=4: */
-/* ----- BEGIN LICENSE BLOCK -----
- * Version: MPL 1.1/LGPL 2.1/GPL 2.0
- * 
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla ICO Decoder.
- * 
- * The Initial Developer of the Original Code is Netscape.
- * Portions created by Netscape are
- * Copyright (C) 2001 Netscape.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   David Hyatt <hyatt@netscape.com> (Original Author)
  *   Christian Biesinger <cbiesinger@web.de>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
  * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the LGPL or the GPL. If you do not delete
+ * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
- * 
- * ----- END LICENSE BLOCK ----- */
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* This is a Cross-Platform ICO Decoder, which should work everywhere, including
  * Big-Endian machines like the PowerPC. */
+
+#include <stdlib.h>
 
 #include "nsICODecoder.h"
 
@@ -47,6 +49,9 @@
 #include "imgIContainerObserver.h"
 
 #include "imgILoad.h"
+
+#include "nsIProperties.h"
+#include "nsISupportsPrimitives.h"
 
 #include "nsAutoPtr.h"
 
@@ -83,7 +88,7 @@ nsresult nsICODecoder::SetImageData()
     mFrame->SetImageData(decodeBufferPos, decodedLineLen, frameOffset);
   }
 
-  nsRect r(0, 0, 0, 0);
+  nsIntRect r(0, 0, 0, 0);
   mFrame->GetWidth(&r.width);
   mFrame->GetHeight(&r.height);
   mObserver->OnDataAvailable(nsnull, mFrame, &r);
@@ -102,7 +107,7 @@ nsresult nsICODecoder::SetAlphaData()
   // In case the decoder and frame have different sized alpha buffers, we
   // take the smaller of the two row length values as the row length to copy.
   PRUint32 rowCopyLen = PR_MIN(bpr, mDirEntry.mWidth);
-  PRUint8* alphaRow = new PRUint8[rowCopyLen];
+  PRUint8* alphaRow = (PRUint8*)malloc(rowCopyLen);
   if (!alphaRow)
     return NS_ERROR_OUT_OF_MEMORY;
 
@@ -123,7 +128,7 @@ nsresult nsICODecoder::SetAlphaData()
     frameOffset += bpr;
     alphaBufferPos += decoderRowSize;
   }
-  delete[] alphaRow;
+  free(alphaRow);
   return NS_OK;
 }
 
@@ -139,6 +144,7 @@ nsICODecoder::nsICODecoder()
 {
   mPos = mNumColors = mRowBytes = mImageOffset = mCurrIcon = mNumIcons = 0;
   mCurLine = 1; // Otherwise decoder will never start
+  mStatus = NS_OK;
   mColors = nsnull;
   mRow = nsnull;
   mHaveAlphaData = 0;
@@ -186,12 +192,12 @@ NS_IMETHODIMP nsICODecoder::Close()
   mCurrIcon = 0;
   mNumIcons = 0;
 
-  delete[] mRow;
+  free(mRow);
   mRow = nsnull;
 
   mDecodingAndMask = PR_FALSE;
-  delete[] mDecodedBuffer;
-  delete[] mAlphaBuffer;
+  free(mDecodedBuffer);
+  free(mAlphaBuffer);
 
   return NS_OK;
 }
@@ -212,14 +218,17 @@ NS_IMETHODIMP nsICODecoder::Flush()
 NS_METHOD nsICODecoder::ReadSegCb(nsIInputStream* aIn, void* aClosure,
                              const char* aFromRawSegment, PRUint32 aToOffset,
                              PRUint32 aCount, PRUint32 *aWriteCount) {
-    nsICODecoder *decoder = NS_REINTERPRET_CAST(nsICODecoder*, aClosure);
-    *aWriteCount = aCount;
-    return decoder->ProcessData(aFromRawSegment, aCount);
+  nsICODecoder *decoder = NS_REINTERPRET_CAST(nsICODecoder*, aClosure);
+  *aWriteCount = aCount;
+  decoder->mStatus = decoder->ProcessData(aFromRawSegment, aCount);
+  return decoder->mStatus;
 }
 
 NS_IMETHODIMP nsICODecoder::WriteFrom(nsIInputStream *aInStr, PRUint32 aCount, PRUint32 *aRetval)
 {
-    return aInStr->ReadSegments(ReadSegCb, this, aCount, aRetval);
+  nsresult rv = aInStr->ReadSegments(ReadSegCb, this, aCount, aRetval);
+  NS_ENSURE_SUCCESS(rv, rv);
+  return mStatus;
 }
 
 nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
@@ -227,6 +236,12 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
     return NS_OK;
 
   while (aCount && (mPos < ICONCOUNTOFFSET)) { // Skip to the # of icons.
+    if (mPos == 2) { // if the third byte is 1: This is an icon, 2: a cursor
+      if ((*aBuffer != 1) && (*aBuffer != 2)) {
+        return NS_ERROR_FAILURE;
+      }
+      mIsCursor = (*aBuffer == 2);
+    }
     mPos++; aBuffer++; aCount--;
   }
 
@@ -262,6 +277,12 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
       if ((e.mWidth == PREFICONSIZE && e.mHeight == PREFICONSIZE && e.mBitCount >= colorDepth)
            || (mCurrIcon == mNumIcons && mImageOffset == 0)) {
         mImageOffset = e.mImageOffset;
+
+        // ensure mImageOffset is >= the size of the direntry headers (bug #245631)
+        PRUint32 minImageOffset = DIRENTRYOFFSET + mNumIcons*sizeof(mDirEntryArray);
+        if (mImageOffset < minImageOffset)
+          return NS_ERROR_FAILURE;
+
         colorDepth = e.mBitCount;
         memcpy(&mDirEntry, &e, sizeof(IconDirEntry));
       }
@@ -308,11 +329,28 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
 
     nsresult rv = mImage->Init(mDirEntry.mWidth, mDirEntry.mHeight, mObserver);
     NS_ENSURE_SUCCESS(rv, rv);
+
+    if (mIsCursor) {
+      nsCOMPtr<nsIProperties> props(do_QueryInterface(mImage));
+      if (props) {
+        nsCOMPtr<nsISupportsPRUint32> intwrapx = do_CreateInstance("@mozilla.org/supports-PRUint32;1");
+        nsCOMPtr<nsISupportsPRUint32> intwrapy = do_CreateInstance("@mozilla.org/supports-PRUint32;1");
+
+        if (intwrapx && intwrapy) {
+          intwrapx->SetData(mDirEntry.mXHotspot);
+          intwrapy->SetData(mDirEntry.mYHotspot);
+
+          props->Set("hotspotX", intwrapx);
+          props->Set("hotspotY", intwrapy);
+        }
+      }
+    }
+
     rv = mObserver->OnStartContainer(nsnull, mImage);
     NS_ENSURE_SUCCESS(rv, rv);
 
     mCurLine = mDirEntry.mHeight;
-    mRow = new PRUint8[(mDirEntry.mWidth * mBIH.bpp)/8 + 4];
+    mRow = (PRUint8*)malloc((mDirEntry.mWidth * mBIH.bpp)/8 + 4);
     // +4 because the line is padded to a 4 bit boundary, but I don't want
     // to make exact calculations here, that's unnecessary.
     // Also, it compensates rounding error.
@@ -358,9 +396,9 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
       // Increment mPos to avoid reprocessing the info header.
       mPos++;
 #if defined(XP_MAC) || defined(XP_MACOSX)
-      mDecodedBuffer = new PRUint8[mDirEntry.mHeight*mDirEntry.mWidth*4];
+      mDecodedBuffer = (PRUint8*)malloc(mDirEntry.mHeight*mDirEntry.mWidth*4);
 #else
-      mDecodedBuffer = new PRUint8[mDirEntry.mHeight*mDirEntry.mWidth*3];
+      mDecodedBuffer = (PRUint8*)malloc(mDirEntry.mHeight*mDirEntry.mWidth*3);
 #endif
       if (!mDecodedBuffer)
         return NS_ERROR_OUT_OF_MEMORY;
@@ -373,6 +411,13 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
       if (!alphaRow)
         return NS_ERROR_OUT_OF_MEMORY;
     }
+
+    // Ensure memory has been allocated before decoding. If we get this far 
+    // without allocated memory, the file is most likely invalid.
+    NS_ASSERTION(mRow, "mRow is null");
+    NS_ASSERTION(mDecodedBuffer, "mDecodedBuffer is null");
+    if (!mRow || !mDecodedBuffer)
+      return NS_ERROR_FAILURE;
 
     PRUint32 rowSize = (mBIH.bpp * mDirEntry.mWidth + 7) / 8; // +7 to round up
     if (rowSize % 4)
@@ -467,11 +512,21 @@ nsresult nsICODecoder::ProcessData(const char* aBuffer, PRUint32 aCount) {
       mPos++;
       mRowBytes = 0;
       mCurLine = mDirEntry.mHeight;
-      delete []mRow;
-      mRow = new PRUint8[rowSize];
-      mAlphaBuffer = new PRUint8[mDirEntry.mHeight*rowSize];
+      free(mRow);
+      mRow = (PRUint8*)malloc(rowSize);
+      if (!mRow)
+        return NS_ERROR_OUT_OF_MEMORY;
+      mAlphaBuffer = (PRUint8*)malloc(mDirEntry.mHeight*rowSize);
+      if (!mAlphaBuffer)
+        return NS_ERROR_OUT_OF_MEMORY;
       memset(mAlphaBuffer, 0xff, mDirEntry.mHeight*rowSize);
     }
+
+    // Ensure memory has been allocated before decoding.
+    NS_ASSERTION(mRow, "mRow is null");
+    NS_ASSERTION(mAlphaBuffer, "mAlphaBuffer is null");
+    if (!mRow || !mAlphaBuffer)
+      return NS_ERROR_FAILURE;
 
     PRUint32 toCopy;
     do {

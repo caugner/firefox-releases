@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,17 +27,19 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #ifdef MOZ_REQUIRE_CURRENT_SDK
 #undef WINVER
 #define WINVER 0x0500
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x500
 #endif
 
 /* -------------------------------------------------------------------
@@ -79,6 +80,9 @@ WIN_LIBS=                                       \
 static NS_DEFINE_IID(kPrinterEnumeratorCID, NS_PRINTER_ENUMERATOR_CID);
 
 #include "nsRect.h"
+
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 
 #include "nsCRT.h"
 #include "prenv.h" /* for PR_GetEnv */
@@ -839,6 +843,23 @@ static PRUnichar * GetDefaultPrinterNameFromGlobalPrinters()
   return printerName;
 }
 
+// Determine whether we have a completely native dialog
+// or whether we cshould extend it
+static PRBool ShouldExtendPrintDialog()
+{
+  nsresult rv;
+  nsCOMPtr<nsIPrefService> prefs =
+    do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, PR_TRUE);
+  nsCOMPtr<nsIPrefBranch> prefBranch;
+  rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
+  NS_ENSURE_SUCCESS(rv, PR_TRUE);
+
+  PRBool result;
+  rv = prefBranch->GetBoolPref("print.extend_native_print_dialog", &result);
+  NS_ENSURE_SUCCESS(rv, PR_TRUE);
+  return result;
+}
 
 //------------------------------------------------------------------
 // Displays the native Print Dialog
@@ -862,6 +883,17 @@ ShowNativePrintDialog(HWND              aHWnd,
   // If there is no name then use the default printer
   if (!printerName || (printerName && !*printerName)) {
     printerName = GetDefaultPrinterNameFromGlobalPrinters();
+  } else {
+    HANDLE hPrinter = NULL;
+    nsCAutoString printerNameNative;
+    NS_CopyUnicodeToNative(nsDependentString(printerName), printerNameNative);
+    LPTSTR tempPrinterName = NS_CONST_CAST(char*, printerNameNative.get());
+    if(!::OpenPrinter(tempPrinterName, &hPrinter, NULL)) {
+      // If the last used printer is not found, we should use default printer.
+      printerName = GetDefaultPrinterNameFromGlobalPrinters();
+    } else {
+      ::ClosePrinter(hPrinter);
+    }
   }
 
   NS_ASSERTION(printerName, "We have to have a printer name");
@@ -912,19 +944,6 @@ ShowNativePrintDialog(HWND              aHWnd,
   }
   aPrintSettings->GetHowToEnableFrameUI(&howToEnableFrameUI);
 
-  // Determine whether we have a completely native dialog
-  // or whether we cshould extend it
-  // true  - do only the native
-  // false - extend the dialog
-  PRPackedBool doExtend = PR_FALSE;
-  nsCOMPtr<nsIStringBundle> strBundle;
-  if (NS_SUCCEEDED(GetLocalizedBundle(PRINTDLG_PROPERTIES, getter_AddRefs(strBundle)))) {
-    nsAutoString doExtendStr;
-    if (NS_SUCCEEDED(GetLocalizedString(strBundle, "extend", doExtendStr))) {
-      doExtend = doExtendStr.Equals(NS_LITERAL_STRING("true"));
-    }
-  }
-
   PRInt32 pg = 1;
   aPrintSettings->GetStartPageRange(&pg);
   prntdlg.nFromPage           = pg;
@@ -943,7 +962,7 @@ ShowNativePrintDialog(HWND              aHWnd,
   prntdlg.hInstance           = NULL;
   prntdlg.lpPrintTemplateName = NULL;
 
-  if (!doExtend) {
+  if (!ShouldExtendPrintDialog()) {
     prntdlg.lCustData         = NULL;
     prntdlg.lpfnPrintHook     = NULL;
   } else {
@@ -1259,19 +1278,6 @@ ShowNativePrintDialogEx(HWND              aHWnd,
     aPrintSettings->GetHowToEnableFrameUI(&howToEnableFrameUI);
   }
 
-  // Determine whether we have a completely native dialog
-  // or whether we cshould extend it
-  // true  - do only the native
-  // false - extend the dialog
-  PRPackedBool doExtend = PR_FALSE;
-  nsCOMPtr<nsIStringBundle> strBundle;
-  if (NS_SUCCEEDED(GetLocalizedBundle(PRINTDLG_PROPERTIES, getter_AddRefs(strBundle)))) {
-    nsAutoString doExtendStr;
-    if (NS_SUCCEEDED(GetLocalizedString(strBundle, "extend", doExtendStr))) {
-      doExtend = doExtendStr.EqualsIgnoreCase("true");
-    }
-  }
-
   // At the moment we can only support one page range
   // from all the documentation I can find, it appears that this 
   // will get cleanup automatically when the struct goes away
@@ -1287,7 +1293,7 @@ ShowNativePrintDialogEx(HWND              aHWnd,
   prntdlg.nMaxPage       = 0xFFFF;
   prntdlg.nCopies        = 1;
 
-  if (doExtend) {
+  if (ShouldExtendPrintDialog()) {
     // lLcalize the Property Sheet (Tab) title
     nsCAutoString title;
     nsString optionsStr;

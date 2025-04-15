@@ -1,9 +1,9 @@
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -13,7 +13,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * IBM Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,7 +22,7 @@
  *   Rich Walsh <dragtext@e-vertise.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
@@ -94,6 +94,7 @@ nsresult GetTempFileName(char** outText);
 void     WriteTypeEA(PCSZ filename, PCSZ type);
 int      UnicodeToCodepage( const nsAString& inString, char **outText);
 int      CodepageToUnicode( const nsACString& inString, PRUnichar **outText);
+void     RemoveCarriageReturns(char * pszText);
 
 // --------------------------------------------------------------------------
 // Global data
@@ -137,6 +138,9 @@ NS_IMETHODIMP nsDragService::InvokeDragSession(nsIDOMNode *aDOMNode,
                                             nsIScriptableRegion *aRegion,
                                             PRUint32 aActionType)
 {
+  if (mDoingDrag)
+    return NS_ERROR_UNEXPECTED;
+
   nsBaseDragService::InvokeDragSession ( aDOMNode, aTransferables,
                                          aRegion, aActionType );
   mSourceDataItems = aTransferables;
@@ -261,6 +265,7 @@ MRESULT EXPENTRY nsDragWindowProc(HWND hWnd, ULONG msg, MPARAM mp1, MPARAM mp2)
       nsDragService* dragservice = (nsDragService*)pdxfer->pditem->ulItemID;
   
       if (pdxfer->usOperation == DO_COPY &&
+          (WinGetKeyState(HWND_DESKTOP, VK_CTRL) & 0x8000) &&
           !strcmp(dragservice->mMimeType, kURLMime)) {
           // QI'ing nsIURL will fail for mailto: and the like
         nsCOMPtr<nsIURL> urlObject(do_QueryInterface(dragservice->mSourceData));
@@ -292,7 +297,8 @@ MRESULT EXPENTRY nsDragWindowProc(HWND hWnd, ULONG msg, MPARAM mp1, MPARAM mp2)
         // the code that uses nsIURI to render a URL object
 
       if (!strcmp(dragservice->mMimeType, kURLMime)) {
-        if (pdxfer->usOperation == DO_COPY) {
+        if (pdxfer->usOperation == DO_COPY &&
+            (WinGetKeyState(HWND_DESKTOP, VK_CTRL) & 0x8000)) {
           nsCOMPtr<nsIURL> urlObject(do_QueryInterface(dragservice->mSourceData));
           if (urlObject)
             rv = dragservice->SaveAsContents(chPath, urlObject);
@@ -329,6 +335,24 @@ MRESULT EXPENTRY nsDragWindowProc(HWND hWnd, ULONG msg, MPARAM mp1, MPARAM mp2)
   }
 
   return ::WinDefWindowProc(hWnd, msg, mp1, mp2);
+}
+
+//-------------------------------------------------------------------------
+
+// if the versions of Start & EndDragSession in nsBaseDragService
+// were called (and they shouldn't be), they'd break nsIDragSessionOS2;
+// they're overridden here and turned into no-ops to prevent this
+
+NS_IMETHODIMP nsDragService::StartDragSession()
+{
+  NS_ASSERTION(0, "OS/2 version of StartDragSession() should never be called!");
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsDragService::EndDragSession()
+{
+  NS_ASSERTION(0, "OS/2 version of EndDragSession() should never be called!");
+  return NS_OK;
 }
 
 // --------------------------------------------------------------------------
@@ -600,7 +624,7 @@ nsresult  nsDragService::GetUrlAndTitle(nsISupports *aGenericData,
     urlObj->GetHost(strTitle);
     urlObj->GetFileName(strFile);
     if (!strFile.IsEmpty()) {
-      strTitle.Append(NS_LITERAL_CSTRING("/"));
+      strTitle.AppendLiteral("/");
       strTitle.Append(strFile);
     }
     else {
@@ -739,7 +763,7 @@ NS_IMETHODIMP nsDragService::DragOverMsg(PDRAGINFO pdinfo, MRESULT &mr,
 
     // if we're in a drag, set it up to be dispatched
   if (mDoingDrag) {
-    SetCanDrop(PR_TRUE);
+    SetCanDrop(PR_FALSE);
     switch (pdinfo->usOperation) {
       case DO_COPY:
         SetDragAction(DRAGDROP_ACTION_COPY);
@@ -772,6 +796,7 @@ NS_IMETHODIMP nsDragService::NativeDragEnter(PDRAGINFO pdinfo)
 {
   nsresult  rv = NS_ERROR_FAILURE;
   PRBool    isFQFile = FALSE;
+  PRBool    isAtom = FALSE;
   PDRAGITEM pditem = 0;
 
   if (pdinfo->cditem != 1)
@@ -780,10 +805,13 @@ NS_IMETHODIMP nsDragService::NativeDragEnter(PDRAGINFO pdinfo)
   pditem = DrgQueryDragitemPtr(pdinfo, 0);
 
   if (pditem) {
-    if (DrgVerifyRMF(pditem, "DRM_ATOM", 0) ||
-        DrgVerifyRMF(pditem, "DRM_DTSHARE", 0)) {
+    if (DrgVerifyRMF(pditem, "DRM_ATOM", 0)) {
+      isAtom = TRUE;
       rv = NS_OK;
     }
+    else
+    if (DrgVerifyRMF(pditem, "DRM_DTSHARE", 0))
+      rv = NS_OK;
     else
     if (DrgVerifyRMF(pditem, "DRM_OS2FILE", 0)) {
       rv = NS_OK;
@@ -798,9 +826,12 @@ NS_IMETHODIMP nsDragService::NativeDragEnter(PDRAGINFO pdinfo)
             do_CreateInstance("@mozilla.org/widget/transferable;1", &rv));
     if (trans) {
 
+      PRBool isUrl = DrgVerifyType(pditem, "UniformResourceLocator");
+      PRBool isAlt = (WinGetKeyState(HWND_DESKTOP, VK_ALT) & 0x8000);
+
         // if this is a fully-qualified file or the item claims to be
         // a Url, identify it as a Url & also offer it as html
-      if (isFQFile || DrgVerifyType(pditem, "UniformResourceLocator")) {
+      if ((isFQFile && !isAlt) || isUrl) {
         trans->AddDataFlavor(kURLMime);
         trans->AddDataFlavor(kHTMLMime);
       }
@@ -814,6 +845,30 @@ NS_IMETHODIMP nsDragService::NativeDragEnter(PDRAGINFO pdinfo)
       if (transArray) {
         transArray->InsertElementAt(trans, 0);
         mSourceDataItems = transArray;
+
+        // add the dragged data to the transferable if we have easy access
+        // to it (i.e. no need to read a file or request rendering);  for
+        // URLs, we'll skip creating a title until the drop occurs
+        nsXPIDLCString someText;
+        if (isAtom) {
+          if (NS_SUCCEEDED(GetAtom(pditem->ulItemID, getter_Copies(someText))))
+            NativeDataToTransferable( someText.get(), 0, isUrl);
+        }
+        else
+        if (isFQFile && !isAlt &&
+            NS_SUCCEEDED(GetFileName(pditem, getter_Copies(someText)))) {
+          nsCOMPtr<nsILocalFile> file;
+          if (NS_SUCCEEDED(NS_NewNativeLocalFile(someText, PR_TRUE,
+                                                 getter_AddRefs(file)))) {
+            nsCAutoString textStr;
+            NS_GetURLSpecFromFile(file, textStr);
+            if (!textStr.IsEmpty()) {
+              someText.Assign(ToNewCString(textStr));
+              NativeDataToTransferable( someText.get(), 0, TRUE);
+            }
+          }
+        }
+
         mSourceNode = 0;
         mSourceDocument = 0;
         mDoingDrag = TRUE;
@@ -1265,15 +1320,43 @@ NS_IMETHODIMP nsDragService::NativeDataToTransferable( PCSZ pszText,
       rv = NS_OK;
     }
 
-      // construct the HTML flavor
+      // construct the HTML flavor - for supported graphics,
+      // use an IMG tag, for all others create a link
     nsCOMPtr<nsISupportsString> htmlPrimitive(
                             do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID));
     if (htmlPrimitive ) {
-      nsString htmlStr(NS_LITERAL_STRING("<a href=\"") +
+      nsString htmlStr;
+      nsCOMPtr<nsIURI> uri;
+
+      rv = NS_ERROR_FAILURE;
+      if (NS_SUCCEEDED(NS_NewURI(getter_AddRefs(uri), pszText))) {
+        nsCOMPtr<nsIURL> url (do_QueryInterface(uri));
+        if (url) {
+          nsCAutoString extension;
+          url->GetFileExtension(extension);
+          if (!extension.IsEmpty()) {
+            if (extension.LowerCaseEqualsLiteral("gif") ||
+                extension.LowerCaseEqualsLiteral("jpg") ||
+                extension.LowerCaseEqualsLiteral("png") ||
+                extension.LowerCaseEqualsLiteral("jpeg"))
+              rv = NS_OK;
+          }
+        }
+      }
+
+      if (NS_SUCCEEDED(rv))
+        htmlStr.Assign(NS_LITERAL_STRING("<img src=\"") +
+                       outText +
+                       NS_LITERAL_STRING("\" alt=\"") +
+                       outTitle +
+                       NS_LITERAL_STRING("\"/>") );
+      else
+        htmlStr.Assign(NS_LITERAL_STRING("<a href=\"") +
                        outText +
                        NS_LITERAL_STRING("\">") +
                        (outTitle.IsEmpty() ? outText : outTitle) +
                        NS_LITERAL_STRING("</a>") );
+
       htmlPrimitive->SetData(htmlStr);
       trans->SetTransferData(kHTMLMime, htmlPrimitive, 2*htmlStr.Length());
       rv = NS_OK;
@@ -1394,6 +1477,7 @@ nsresult RenderToDTShareComplete(PDRAGTRANSFER pdxfer, USHORT usResult,
       pszText = (char*)nsMemory::Alloc( ((ULONG*)pMem)[0] + 1);
       if (pszText) {
         strcpy(pszText, &((char*)pMem)[sizeof(ULONG)] );
+        RemoveCarriageReturns(pszText);
         *outText = pszText;
         rv = NS_OK;
       }
@@ -1457,6 +1541,7 @@ nsresult GetAtom( ATOM aAtom, char** outText)
     char* pszText = (char*)nsMemory::Alloc(++ulInLength);
     if (pszText) {
       DrgQueryStrName(aAtom, ulInLength, pszText);
+      RemoveCarriageReturns(pszText);
       *outText = pszText;
       rv = NS_OK;
     }
@@ -1509,6 +1594,7 @@ nsresult GetFileContents(PCSZ pszPath, char** outText)
           readsize = fread((void *)pszText, 1, readsize, fp);
           if (readsize) {
             pszText[readsize] = '\0';
+            RemoveCarriageReturns(pszText);
             *outText = pszText;
             rv = NS_OK;
           }
@@ -1625,11 +1711,41 @@ int CodepageToUnicode(const nsACString& aString, PRUnichar **aResult)
 {
   nsAutoChar16Buffer buffer;
   PRInt32 bufLength;
-  nsresult rv = MultiByteToWideChar(0, PromiseFlatCString(aString).get(),
-                                    aString.Length(), buffer, bufLength);
+  MultiByteToWideChar(0, PromiseFlatCString(aString).get(),
+                      aString.Length(), buffer, bufLength);
   *aResult = ToNewUnicode(nsDependentString(buffer.get()));
   return bufLength;
 }
 
 // --------------------------------------------------------------------------
 
+// removes carriage returns in-place;  it should only be used on
+// raw text buffers that haven't been assigned to a string object
+
+void RemoveCarriageReturns(char * pszText)
+{
+  ULONG  cnt;
+  char * next;
+  char * source;
+  char * target;
+
+  target = strchr(pszText, 0x0d);
+  if (!target)
+    return;
+
+  source = target + 1;
+
+  while ((next = strchr(source, 0x0d)) != 0) {
+
+    cnt = next - source;
+    memcpy(target, source, cnt);
+    target += cnt;
+    source = next + 1;
+
+  }
+
+  strcpy(target, source);
+  return;
+}
+
+// --------------------------------------------------------------------------

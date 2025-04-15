@@ -21,6 +21,8 @@
  * Contributor(s):
  *   Srilatha Moturi <srilatha@netscape.com>
  *   Jungshik Shin <jshin@mailaps.org>
+ *   Scott MacGregor <mscott@mozilla.org>
+ *   David Bienvenu < bienvenu@mozilla.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -52,9 +54,10 @@
 #include "nsDirectoryServiceDefs.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsNativeCharsetUtils.h"
+#include "nsEmbedCID.h"
 #include <mbstring.h>
 
-#define EXE_EXTENSION ".exe" 
+#define EXE_EXTENSION ".EXE" 
 #define MOZ_HWND_BROADCAST_MSG_TIMEOUT 5000
 #define MOZ_CLIENT_MAIL_KEY "Software\\Clients\\Mail"
 #define MOZ_CLIENT_NEWS_KEY "Software\\Clients\\News"
@@ -89,7 +92,7 @@ void nsMapiRegistryUtils::getVarValue(const PRUnichar * varName, nsAutoString & 
     if (NS_SUCCEEDED(rv) && bundleService) {
         nsCOMPtr<nsIStringBundle> brandBundle;
         rv = bundleService->CreateBundle(
-                    "chrome://global/locale/brand.properties",
+                    "chrome://branding/locale/brand.properties",
                     getter_AddRefs(brandBundle));
         if (NS_SUCCEEDED(rv)) {
             nsXPIDLString value;
@@ -105,7 +108,7 @@ void nsMapiRegistryUtils::getVarValue(const PRUnichar * varName, nsAutoString & 
 const PRUnichar * nsMapiRegistryUtils::brandName() 
 {
     if (m_brand.IsEmpty())
-        getVarValue(NS_LITERAL_STRING("brandShortName").get(), m_brand);
+        getVarValue(NS_LITERAL_STRING("brandFullName").get(), m_brand);
     return m_brand.get();
 }
 
@@ -239,93 +242,36 @@ nsresult nsMapiRegistryUtils::recursiveDeleteKey(HKEY hKeyParent, const char* lp
     return rv;
 }
 
-nsresult nsMapiRegistryUtils::RegCopyKey(HKEY SrcKey, HKEY TrgKey, const char* TrgSubKeyName)
+/* static */
+void nsMapiRegistryUtils::RegCopyKey(HKEY aSrcKey, HKEY aDestKey, const char* aSubKeyName)
 {
-	  HKEY	SrcSubKey;
-	  HKEY	TrgSubKey;
-	  int	ValEnumIndx=0;
-	  int	KeyEnumIndx=0;
+  HKEY srcSubKey, destSubKey;
+  char valueName[MAX_PATH + 1], keyName[MAX_PATH + 1];
+  BYTE valueData[MAX_PATH + 1];
+  DWORD nameSize, dataSize, keySize, valueType;
 
-	  char	ValName[MAX_PATH+1];
-	  char	KeyName[MAX_PATH+1];
+  // open source key
+  if (::RegOpenKeyEx(aSrcKey, aSubKeyName, NULL, KEY_ALL_ACCESS, &srcSubKey) != ERROR_SUCCESS)
+    return;
 
-	  DWORD	VarType;
-    DWORD dwSize = MAX_PATH + 1;
-    DWORD dwBufferSize = dwSize;
-	  unsigned char szBuffer[MAX_PATH+1];
+  // create target key
+  if (::RegCreateKeyEx(aDestKey, aSubKeyName, NULL, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &destSubKey, NULL) == ERROR_SUCCESS) {
+    for (DWORD valueIndex = 0;
+         nameSize = MAX_PATH + 1,
+         dataSize = MAX_PATH + 1,
+         ::RegEnumValue(srcSubKey, valueIndex, valueName, &nameSize, NULL, &valueType, valueData, &dataSize) == ERROR_SUCCESS;
+         valueIndex++)
+      ::RegSetValueEx(destSubKey, valueName, NULL, valueType, valueData, dataSize);
 
-	  LONG	Err;
-	  DWORD	KeyDisposition;
-	  FILETIME LastWriteTime; 
+    for (DWORD keyIndex = 0;
+         keySize = MAX_PATH + 1,
+         ::RegEnumKeyEx(srcSubKey, keyIndex, keyName, &keySize, NULL, NULL, NULL, NULL) == ERROR_SUCCESS;
+         keyIndex++)
+      RegCopyKey(srcSubKey, destSubKey, keyName);
 
-	  // create target key
-    if (::RegCreateKeyEx(TrgKey,TrgSubKeyName,NULL,NULL,REG_OPTION_NON_VOLATILE,KEY_ALL_ACCESS,NULL,&TrgSubKey,&KeyDisposition) == ERROR_SUCCESS)
-    {
-	      do {
-		        do {
-			          // read value from source key
-			          Err = ERROR_NOT_ENOUGH_MEMORY;
-			          do {						 
-				            dwSize=MAX_PATH+1;
-                    Err = ::RegEnumValue(SrcKey,ValEnumIndx,ValName,&dwSize,NULL,&VarType,szBuffer,&dwBufferSize);
-                } while (Err == ERROR_NOT_ENOUGH_MEMORY);
-
-			          // done copying this key
-			          if (Err == ERROR_NO_MORE_ITEMS)
-				            break;
-
-			          // unknown error return
-			          if (Err != ERROR_SUCCESS)
-				            goto quit_err;
-
-			          // write value to target key
-                if (::RegSetValueEx(TrgSubKey,ValName,NULL,VarType,szBuffer,dwBufferSize) != ERROR_SUCCESS)
-				            goto quit_get_err;
-
-			          // read next value
-			          ValEnumIndx++;
-            } while (true);
-		        
-            // if copying under the same key avoid endless recursions
-		        do {
-			          // enum sub keys
-			          dwSize =MAX_PATH+1; // reset dwSize
-                Err = ::RegEnumKeyEx(SrcKey,KeyEnumIndx++,KeyName,&dwSize,NULL,NULL,NULL,&LastWriteTime);
-            } while ((SrcKey == TrgKey) && !strnicmp(KeyName,TrgSubKeyName,strlen(KeyName)) && (Err == ERROR_SUCCESS));
-
-		        // done copying this key		
-		       if (Err == ERROR_NO_MORE_ITEMS)
-			         break;
-
-		       // unknown error return
-		       if (Err != ERROR_SUCCESS)
-			         goto quit_get_err;
-
-		       // open the source subkey
-           if (::RegOpenKeyEx(SrcKey,KeyName,NULL,KEY_ALL_ACCESS,&SrcSubKey) != ERROR_SUCCESS)
-			         goto quit_get_err;
-
-		        // recurs with the subkey
-		        if ((Err = RegCopyKey(SrcSubKey, TrgSubKey, KeyName)) != ERROR_SUCCESS)
-			          break;
-
-            if (::RegCloseKey(SrcSubKey) != ERROR_SUCCESS)
-			          goto quit_get_err;
-        } while (true);
-    }
-
-// normal quit
-quit_err:
-    ::RegCloseKey(TrgSubKey);
-	if (Err == ERROR_NO_MORE_ITEMS)
-		return NS_OK;	
-	else
-		return NS_ERROR_FAILURE;
-
-// abnormal quit
-quit_get_err:
-  ::RegCloseKey(TrgSubKey);
-	return NS_ERROR_FAILURE;
+    ::RegCloseKey(destSubKey);
+  }
+  ::RegCloseKey(srcSubKey);
 }
 
 PRBool nsMapiRegistryUtils::IsDefaultMailClient()
@@ -354,7 +300,6 @@ PRBool nsMapiRegistryUtils::IsDefaultMailClient()
              nsCAutoString strExtension;
              strExtension.Assign(EXE_EXTENSION);
              ToUpperCase(result);
-             ToUpperCase(strExtension);
              PRInt32 index = result.RFind(strExtension.get());
              if (index != kNotFound) {
                  result.Truncate(index + strExtension.Length());
@@ -372,7 +317,6 @@ PRBool nsMapiRegistryUtils::IsDefaultMailClient()
                   nsCAutoString strExtension;
                   strExtension.Assign(EXE_EXTENSION);
                   ToUpperCase(result);
-                  ToUpperCase(strExtension);
                   PRInt32 index = result.RFind(strExtension.get());
                   if (index != kNotFound)
                     result.Truncate(index + strExtension.Length());    
@@ -408,7 +352,6 @@ PRBool nsMapiRegistryUtils::IsDefaultNewsClient()
              nsCAutoString strExtension;
              strExtension.Assign(EXE_EXTENSION);
              ToUpperCase(result);
-             ToUpperCase(strExtension);
              PRInt32 index = result.RFind(strExtension.get());
              if (index != kNotFound) {
                  result.Truncate(index + strExtension.Length());
@@ -423,79 +366,42 @@ PRBool nsMapiRegistryUtils::IsDefaultNewsClient()
 
 nsresult nsMapiRegistryUtils::saveDefaultNewsClient()
 {
-    nsresult rv;
     nsCAutoString name ;
     GetRegistryKey(HKEY_LOCAL_MACHINE,"Software\\Clients\\News", "", name);
-    if (!name.IsEmpty())
-        rv = SetRegistryKey(HKEY_LOCAL_MACHINE, 
+    return SetRegistryKey(HKEY_LOCAL_MACHINE, 
                             kAppDesktopKey, 
                             "HKEY_LOCAL_MACHINE\\Software\\Clients\\News", 
-                            (char *)name.get());
-    else
-        rv = SetRegistryKey(HKEY_LOCAL_MACHINE, 
-                            kAppDesktopKey, 
-                            "HKEY_LOCAL_MACHINE\\Software\\Clients\\News", 
-                            "");
-    return rv;
+                            name.IsEmpty() ? "" : (char *)name.get());
 }
 
 nsresult nsMapiRegistryUtils::saveDefaultMailClient()
 {
-    nsresult rv;
     nsCAutoString name ;
     GetRegistryKey(HKEY_LOCAL_MACHINE,"Software\\Clients\\Mail", "", name);
-    if (!name.IsEmpty()) {
-        rv = SetRegistryKey(HKEY_LOCAL_MACHINE, 
+    return SetRegistryKey(HKEY_LOCAL_MACHINE, 
                             kAppDesktopKey, 
                             "HKEY_LOCAL_MACHINE\\Software\\Clients\\Mail", 
-                            (char *)name.get());
-    }
-    else
-        rv = SetRegistryKey(HKEY_LOCAL_MACHINE, 
-                            kAppDesktopKey, 
-                            "HKEY_LOCAL_MACHINE\\Software\\Clients\\Mail", 
-                            "");
-    return rv;
+                            name.IsEmpty() ? "" : (char *)name.get());
 } 
 
 nsresult nsMapiRegistryUtils::saveUserDefaultNewsClient()
 {
-    nsresult rv;
     nsCAutoString name ;
     GetRegistryKey(HKEY_CURRENT_USER,"Software\\Clients\\News", "", name);
-    if (!name.IsEmpty()) {
-        rv = SetRegistryKey(HKEY_LOCAL_MACHINE, 
+    return SetRegistryKey(HKEY_LOCAL_MACHINE, 
                             kAppDesktopKey, 
                             "HKEY_CURRENT_USER\\Software\\Clients\\News", 
-                            (char *)name.get());
-    }
-    else {
-        rv = SetRegistryKey(HKEY_LOCAL_MACHINE, 
-                            kAppDesktopKey, 
-                            "HKEY_CURRENT_USER\\Software\\Clients\\News", 
-                            "");
-   }
-   return rv;
+                            name.IsEmpty() ? "" : (char *)name.get());
 }
 
 nsresult nsMapiRegistryUtils::saveUserDefaultMailClient()
 {
-    nsresult rv;
     nsCAutoString name ;
     GetRegistryKey(HKEY_CURRENT_USER,"Software\\Clients\\Mail", "", name);
-    if (!name.IsEmpty()) {
-        rv = SetRegistryKey(HKEY_LOCAL_MACHINE, 
+    return SetRegistryKey(HKEY_LOCAL_MACHINE, 
                             kAppDesktopKey, 
                             "HKEY_CURRENT_USER\\Software\\Clients\\Mail", 
-                            (char *)name.get());
-    }
-    else {
-        rv = SetRegistryKey(HKEY_LOCAL_MACHINE, 
-                            kAppDesktopKey, 
-                            "HKEY_CURRENT_USER\\Software\\Clients\\Mail", 
-                            "");
-   }
-   return rv;
+                            name.IsEmpty() ? "" : (char *)name.get());
 }
 
 /**
@@ -560,7 +466,7 @@ nsresult nsMapiRegistryUtils::CopyMozMapiToWinSysDir()
         return NS_ERROR_FAILURE;
 
     nsCAutoString filePath(buffer);
-    filePath.Append("\\Mapi32_moz_bak.dll");
+    filePath.AppendLiteral("\\Mapi32_moz_bak.dll");
 
     nsCOMPtr<nsILocalFile> pCurrentMapiFile = do_CreateInstance (NS_LOCAL_FILE_CONTRACTID, &rv);
     if (NS_FAILED(rv) || !pCurrentMapiFile) return rv;        
@@ -588,7 +494,7 @@ nsresult nsMapiRegistryUtils::CopyMozMapiToWinSysDir()
     }
     if (NS_FAILED(rv)) return rv;
     filePath.Assign(buffer);
-    filePath.Append("\\Mapi32.dll");
+    filePath.AppendLiteral("\\Mapi32.dll");
     pCurrentMapiFile->InitWithNativePath(filePath);
     rv = pCurrentMapiFile->Exists(&bExist);
     if (NS_SUCCEEDED(rv) && bExist)
@@ -596,7 +502,7 @@ nsresult nsMapiRegistryUtils::CopyMozMapiToWinSysDir()
         rv = pCurrentMapiFile->MoveToNative(nsnull, NS_LITERAL_CSTRING("Mapi32_moz_bak.dll"));
         if (NS_FAILED(rv)) return rv;
         nsCAutoString fullFilePath(buffer);
-        fullFilePath.Append("\\Mapi32_moz_bak.dll");
+        fullFilePath.AppendLiteral("\\Mapi32_moz_bak.dll");
         rv = SetRegistryKey(HKEY_LOCAL_MACHINE, 
                             kAppDesktopKey, 
                             "Mapi_backup_dll", 
@@ -628,8 +534,8 @@ nsresult nsMapiRegistryUtils::RestoreBackedUpMapiDll()
 
     nsCAutoString filePath(buffer);
     nsCAutoString previousFileName(buffer);
-    filePath.Append("\\Mapi32.dll");
-    previousFileName.Append("\\Mapi32_moz_bak.dll");
+    filePath.AppendLiteral("\\Mapi32.dll");
+    previousFileName.AppendLiteral("\\Mapi32_moz_bak.dll");
 
     nsCOMPtr <nsILocalFile> pCurrentMapiFile = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
     if (NS_FAILED(rv) || !pCurrentMapiFile) return NS_ERROR_FAILURE;        
@@ -660,14 +566,10 @@ nsresult nsMapiRegistryUtils::RestoreBackedUpMapiDll()
 // we will copy the keys into Software\Clases
 nsresult nsMapiRegistryUtils::setProtocolHandler(const char * aDefaultAppRegKey, const char * protocolName)
 {
-    nsCAutoString srcKeyName;
-    srcKeyName = aDefaultAppRegKey;
-    srcKeyName.Append(protocolName);
-
     HKEY srcKey;
     HKEY trgKey;
 
-    ::RegOpenKeyEx(HKEY_LOCAL_MACHINE, srcKeyName.get(), 0, KEY_READ, &srcKey);
+    ::RegOpenKeyEx(HKEY_LOCAL_MACHINE, aDefaultAppRegKey, 0, KEY_READ, &srcKey);
     ::RegOpenKeyEx(HKEY_LOCAL_MACHINE,"Software\\Classes", 0, KEY_READ, &trgKey);
 
     RegCopyKey(srcKey, trgKey, protocolName);
@@ -677,11 +579,94 @@ nsresult nsMapiRegistryUtils::setProtocolHandler(const char * aDefaultAppRegKey,
     return NS_OK;
 }
 
+nsresult nsMapiRegistryUtils::setupFileExtension(const char * aDefaultAppRegKey, const char * aExtension)
+{
+
+  // aDefaultAppRegKey is "Software\\Classes\\"
+    nsCAutoString keyName;
+    keyName = aDefaultAppRegKey;
+    keyName.Append(aExtension);
+   
+
+    nsCAutoString appName;
+    appName.AssignWithConversion(brandName());
+
+    // save the current file extension settings to HKEY_LOCAL_MACHINE\Software\Clients\Thunderbird\<extension>
+
+    nsCAutoString saveKeyName("Software\\Clients\\Mail\\");
+    saveKeyName.Append(appName);
+    saveKeyName.AppendLiteral("\\");
+
+    HKEY srcKey;
+    HKEY trgKey;
+    ::RegOpenKeyEx(HKEY_LOCAL_MACHINE, aDefaultAppRegKey, 0, KEY_READ, &srcKey);
+    ::RegOpenKeyEx(HKEY_LOCAL_MACHINE,saveKeyName.get(), 0, KEY_READ, &trgKey);
+
+    RegCopyKey(srcKey, trgKey, aExtension);
+
+    nsresult rv = SetRegistryKey(HKEY_LOCAL_MACHINE, keyName.get(), "", "");
+
+
+    if (NS_SUCCEEDED(rv)) 
+    {
+      // Classes\<extension>\shell\open\command value
+      nsCAutoString appPath (thisApplication());
+
+      appPath += " ";
+      
+      appPath += "\"%1\"";
+      nsCAutoString shellOpenKey (keyName);
+      shellOpenKey.AppendLiteral("\\shell\\open\\command");
+
+      rv = SetRegistryKey(HKEY_LOCAL_MACHINE, shellOpenKey.get(), "", (char *)appPath.get());
+
+      // Classes\<extension>\DefaultIcon value
+      nsCAutoString iconPath(thisApplication());
+      iconPath += ",0";
+      nsCAutoString iconKey (keyName);
+      iconKey.AppendLiteral("\\DefaultIcon");
+      rv = SetRegistryKey(HKEY_LOCAL_MACHINE, iconKey.get(), "", (char *)iconPath.get());
+    }
+
+    return rv;
+}
+
+nsresult nsMapiRegistryUtils::restoreFileExtension(const char * aDefaultAppRegKey, const char * aExtension)
+{
+
+  // aDefaultAppRegKey is "Software\\Classes\\"
+  nsCAutoString keyName;
+  keyName = aDefaultAppRegKey;
+  keyName.Append(aExtension);
+ 
+
+  nsCAutoString appName;
+  appName.AssignWithConversion(brandName());
+
+  // restore the file extension settings from HKEY_LOCAL_MACHINE\Software\Clients\Mail\Mail & News\<extension>
+
+  nsCAutoString saveKeyName("Software\\Clients\\Mail\\");
+  saveKeyName.Append(appName);
+  saveKeyName.AppendLiteral("\\");
+
+  recursiveDeleteKey(HKEY_LOCAL_MACHINE, keyName.get()); 
+  nsresult rv = SetRegistryKey(HKEY_LOCAL_MACHINE, keyName.get(), "", "");
+
+  HKEY srcKey;
+  HKEY trgKey;
+  ::RegOpenKeyEx(HKEY_LOCAL_MACHINE, saveKeyName.get(), 0, KEY_READ, &srcKey);
+  ::RegOpenKeyEx(HKEY_LOCAL_MACHINE, aDefaultAppRegKey, 0, KEY_READ, &trgKey);
+
+  RegCopyKey(srcKey, trgKey, aExtension);
+
+  return rv;
+}
+
+
 nsresult nsMapiRegistryUtils::setupDefaultProtocolKey(const char * aDefaultAppRegKey, const char * aProtocol, const char * aProtocolEntryValue, const char * aCmdLineText)
 {
     nsCAutoString keyName;
     keyName = aDefaultAppRegKey;
-    keyName.Append("\\Protocols\\");
     keyName.Append(aProtocol);
 
     nsCAutoString temp; 
@@ -693,29 +678,30 @@ nsresult nsMapiRegistryUtils::setupDefaultProtocolKey(const char * aDefaultAppRe
     SetRegistryKey(HKEY_LOCAL_MACHINE, keyName.get(), "URL Protocol", "");
 
 
-    if (NS_SUCCEEDED(rv)) {
+    if (NS_SUCCEEDED(rv)) 
+    {
+      // Protocols\<protocol scheme>\shell\open\command value
+      nsCAutoString appPath (thisApplication());
 
-        // Protocols\<protocol scheme>\shell\open\command value
-        nsCAutoString appPath (thisApplication());
-
+      appPath += " ";
+      if (aCmdLineText) 
+      {
+        appPath += aCmdLineText;
         appPath += " ";
-        if (aCmdLineText) {
-            appPath += aCmdLineText;
-            appPath += " ";
-        }
-        appPath += "%1";
+      }
+      
+      appPath += "%1";
+      nsCAutoString shellOpenKey (keyName);
+      shellOpenKey.AppendLiteral("\\shell\\open\\command");
 
-        nsCAutoString shellOpenKey (keyName);
-        shellOpenKey.Append("\\shell\\open\\command");
+      rv = SetRegistryKey(HKEY_LOCAL_MACHINE, shellOpenKey.get(), "", (char *)appPath.get());
 
-        rv = SetRegistryKey(HKEY_LOCAL_MACHINE, shellOpenKey.get(), "", (char *)appPath.get());
-
-        // Protocols\<protocol scheme>\DefaultIcon value
-    nsCAutoString iconPath(thisApplication());
-    iconPath += ",0";
-        nsCAutoString iconKey (keyName);
-        iconKey.Append("\\DefaultIcon");
-        rv = SetRegistryKey(HKEY_LOCAL_MACHINE, iconKey.get(),"", (char *)iconPath.get());
+      // Protocols\<protocol scheme>\DefaultIcon value
+      nsCAutoString iconPath(thisApplication());
+      iconPath += ",0";
+      nsCAutoString iconKey (keyName);
+      iconKey.AppendLiteral("\\DefaultIcon");
+      rv = SetRegistryKey(HKEY_LOCAL_MACHINE, iconKey.get(),"", (char *)iconPath.get());
     }
 
     return rv;
@@ -774,12 +760,15 @@ nsresult nsMapiRegistryUtils::registerMailApp(PRBool aForceRegistration)
         SetRegistryKey(HKEY_LOCAL_MACHINE, keyName.get(), "DLLPath", (char *)dllPath.get());
         
         // (3) now that we have added Software\\Clients\\Mail\\<app name> add subkeys for each protocol mail supports
-        setupDefaultProtocolKey(keyName.get(), "mailto", "URL:MailTo Protocol", "-compose");
+        setupDefaultProtocolKey(nsCString(keyName + NS_LITERAL_CSTRING("\\Protocols\\")).get(), "mailto", "URL:MailTo Protocol", "-compose");
+
+
+        setupFileExtension("Software\\Classes\\", ".eml");
 
         // (4) Software\Clients\News\<app name>\shell\open\command value 
         nsCAutoString appKeyName;
         appKeyName.Assign(keyName);
-        appKeyName.Append("\\shell\\open\\command");
+        appKeyName.AppendLiteral("\\shell\\open\\command");
         nsCAutoString mailAppPath(thisApp);
         mailAppPath += " -mail";
         SetRegistryKey(HKEY_LOCAL_MACHINE, appKeyName.get(), "", (char *)mailAppPath.get());
@@ -787,7 +776,7 @@ nsresult nsMapiRegistryUtils::registerMailApp(PRBool aForceRegistration)
         // (5) Add a properties key that launches our options chrome
 #ifdef MOZ_THUNDERBIRD
         appKeyName.Assign(keyName);
-        appKeyName.Append("\\shell\\properties\\command");
+        appKeyName.AppendLiteral("\\shell\\properties\\command");
         nsCAutoString optionsPath(thisApp);
         optionsPath += " -options";
         SetRegistryKey(HKEY_LOCAL_MACHINE, appKeyName.get(), "", (char *)optionsPath.get());
@@ -797,10 +786,10 @@ nsresult nsMapiRegistryUtils::registerMailApp(PRBool aForceRegistration)
         if (bundle)
         {
           appKeyName.Assign(keyName);
-          appKeyName.Append("\\shell\\properties");
+          appKeyName.AppendLiteral("\\shell\\properties");
 
           nsAutoString brandShortName;
-          getVarValue(NS_LITERAL_STRING("brandRealShortName").get(), brandShortName);
+          getVarValue(NS_LITERAL_STRING("brandShortName").get(), brandShortName);
 
           const PRUnichar* brandNameStrings[] = { brandShortName.get() };
 
@@ -817,7 +806,7 @@ nsresult nsMapiRegistryUtils::registerMailApp(PRBool aForceRegistration)
         nsCAutoString iconPath(thisApp);
         iconPath += ",0";
         nsCAutoString iconKeyName (keyName);
-        iconKeyName.Append("\\DefaultIcon");
+        iconKeyName.AppendLiteral("\\DefaultIcon");
         SetRegistryKey(HKEY_LOCAL_MACHINE, iconKeyName.get(),"", (char *)iconPath.get());
 
         // if we got this far, set a flag in the registry so we know we have registered ourself as a default mail application
@@ -873,14 +862,15 @@ nsresult nsMapiRegistryUtils::registerNewsApp(PRBool aForceRegistration)
 
             // (3) now that we have added Software\\Clients\\News\\<app name>
             //     add subkeys for each protocol news supports
-            setupDefaultProtocolKey(keyName.get(), "news", "URL:News Protocol", "-mail");
-            setupDefaultProtocolKey(keyName.get(), "nntp", "URL:NNTP Protocol", "-mail");
-            setupDefaultProtocolKey(keyName.get(), "snews", "URL:Snews Protocol", "-mail");
+            nsCString protocolKeyName(keyName + NS_LITERAL_CSTRING("\\Protocols\\"));
+            setupDefaultProtocolKey(protocolKeyName.get(), "news", "URL:News Protocol", "-mail");
+            setupDefaultProtocolKey(protocolKeyName.get(), "nntp", "URL:NNTP Protocol", "-mail");
+            setupDefaultProtocolKey(protocolKeyName.get(), "snews", "URL:Snews Protocol", "-mail");
 
             // (4) Software\Clients\News\<app name>\shell\open\command value 
             nsCAutoString appKeyName;
             appKeyName.Assign(keyName);
-            appKeyName.Append("\\shell\\open\\command");
+            appKeyName.AppendLiteral("\\shell\\open\\command");
             rv = SetRegistryKey(HKEY_LOCAL_MACHINE, appKeyName.get(), "", (char *)thisApp.get());
                         
             // (5) add a default icon entry to Software\\Clients\\News\\<app name>
@@ -888,7 +878,7 @@ nsresult nsMapiRegistryUtils::registerNewsApp(PRBool aForceRegistration)
                     nsCAutoString iconPath(thisApp);
                     iconPath += ",0";
                  nsCAutoString iconKeyName (keyName);
-                    iconKeyName.Append("\\DefaultIcon");
+                    iconKeyName.AppendLiteral("\\DefaultIcon");
                  rv = SetRegistryKey(HKEY_LOCAL_MACHINE, iconKeyName.get(),"", (char *)iconPath.get());
                 }
             }            
@@ -898,7 +888,7 @@ nsresult nsMapiRegistryUtils::registerNewsApp(PRBool aForceRegistration)
                 }
 
     return rv;
-            }            
+}            
 
 /** Sets Mozilla as the default News Client 
  */
@@ -932,7 +922,7 @@ nsresult nsMapiRegistryUtils::setDefaultNewsClient()
     // copy our protocol handlers out to HKEY_LOCAL_MACHINE\Classes\<protocol>
     nsCAutoString keyName("Software\\Clients\\News\\");
     keyName.Append(appName);
-    keyName.Append("\\Protocols\\");
+    keyName.AppendLiteral("\\Protocols\\");
 
     rv = setProtocolHandler(keyName.get(), "news"); 
     rv = setProtocolHandler(keyName.get(), "snews"); 
@@ -949,7 +939,39 @@ nsresult nsMapiRegistryUtils::setDefaultNewsClient()
                           MOZ_HWND_BROADCAST_MSG_TIMEOUT,
                           NULL);
     return rv;
-        }
+}
+
+nsresult nsMapiRegistryUtils::setDefaultFeedClient()
+{
+    return setupDefaultProtocolKey("Software\\Classes\\", "feed", "URL:Feed Protocol", "-mail");
+}
+
+nsresult nsMapiRegistryUtils::unsetDefaultFeedClient()
+{
+    // delete the existing mail related protocol keys from HKEY_LOCAL_MACHINE\Software\Classes
+    return recursiveDeleteKey(HKEY_LOCAL_MACHINE, "Software\\Classes\\feed"); 
+}
+
+PRBool nsMapiRegistryUtils::IsDefaultFeedClient()
+{  
+    //first try to get the users default news client
+    nsCAutoString result; 
+    GetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Classes\\feed\\shell\\open\\command", "", result);     
+
+    if (!result.IsEmpty()) {
+       nsCAutoString strExtension;
+       strExtension.Assign(EXE_EXTENSION);
+       ToUpperCase(result);
+       PRInt32 index = result.RFind(strExtension.get());
+       if (index != kNotFound) 
+           result.Truncate(index + strExtension.Length());
+
+       nsCAutoString thisApp (thisApplication()) ;
+       return (result == thisApp);
+    }
+
+    return PR_FALSE;
+}
 
 /** Sets Mozilla as default Mail Client
  */
@@ -965,9 +987,10 @@ nsresult nsMapiRegistryUtils::setDefaultMailClient()
     }
 
     rv = saveDefaultMailClient();
+    if (NS_SUCCEEDED(rv))
+      rv = saveUserDefaultMailClient();
     
-    if (NS_FAILED(saveUserDefaultMailClient()) || NS_FAILED(rv)) 
-      return NS_ERROR_FAILURE;
+    NS_ENSURE_SUCCESS(rv, rv);
     
     // make sure we have already registered ourself as a potential mail application with the OS:
     registerMailApp(PR_TRUE);
@@ -977,19 +1000,15 @@ nsresult nsMapiRegistryUtils::setDefaultMailClient()
     NS_CopyUnicodeToNative(vendorName(), appName);
     SetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Clients\\Mail", "", (char *)appName.get());
 
-#ifdef MOZ_THUNDERBIRD
-        // XXX: Test this out in thunderbird first. Hopefully we can just remove this ifdef and let seamonkey
-        // register the same keys if the feedback is good. 
-        // if we succeeded in setting ourselves as the default mapi client, then 
-        // make sure we also set ourselves as the mailto protocol handler for the user...
+    // if we succeeded in setting ourselves as the default mapi client, then 
+     // make sure we also set ourselves as the mailto protocol handler for the user...
      nsCAutoString keyName("Software\\Clients\\Mail\\");
      keyName.Append(appName);
-     keyName.Append("\\Protocols\\");
+     keyName.AppendLiteral("\\Protocols\\");
         
     // delete the existing mail related protocol keys from HKEY_LOCAL_MACHINE\Software\Classes
     recursiveDeleteKey(HKEY_LOCAL_MACHINE, "Software\\Classes\\mailto"); 
     rv = setProtocolHandler(keyName.get(), "mailto");
-#endif
 
     rv = SetRegistryKey(HKEY_CURRENT_USER, "Software\\Clients\\Mail", "", (char *)appName.get());
 
@@ -1007,7 +1026,7 @@ nsresult nsMapiRegistryUtils::setDefaultMailClient()
                               NULL);
 
     // register the new mapi server
-        RegisterServer(CLSID_CMapiImp, "Mozilla MAPI", "MozillaMapi", "MozillaMapi.1");
+    RegisterServer(CLSID_CMapiImp, "Mozilla MAPI", "MozillaMapi", "MozillaMapi.1");
     return rv;
 }
 
@@ -1029,7 +1048,8 @@ nsresult nsMapiRegistryUtils::unsetDefaultNewsClient() {
     NS_CopyUnicodeToNative(vendorName(), appName);
     
     // if we are the current default client....
-    if (!name.IsEmpty() && !appName.IsEmpty() && name.Equals(appName))  {
+    if (!name.IsEmpty() && !appName.IsEmpty() && name.Equals(appName))  
+    {
       // XXX Do we need to do anything here? Maybe we want to clear out name. If we were the previous default news client
       // and the user is trying to unset us as the current default news client, we probably don't want to re-store ourselves
       // again?
@@ -1044,13 +1064,14 @@ nsresult nsMapiRegistryUtils::unsetDefaultNewsClient() {
     recursiveDeleteKey(HKEY_LOCAL_MACHINE, "Software\\Classes\\snews"); 
 
     // set HKEY_LOCAL_MACHINE\Software\Clients\News
-    if (!name.IsEmpty()) {
+    if (!name.IsEmpty()) 
+    {
       mailKeySet = SetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Clients\\News", "", (char *)name.get());
 
       // copy the protocol handlers for the original default news app out to HKEY_LOCAL_MACHINE\Classes\<protocol>
       nsCAutoString keyName("Software\\Clients\\News\\");
       keyName.Append(name);
-      keyName.Append("\\Protocols\\");
+      keyName.AppendLiteral("\\Protocols\\");
 
       rv = setProtocolHandler(keyName.get(), "news"); 
       rv = setProtocolHandler(keyName.get(), "snews"); 
@@ -1090,9 +1111,10 @@ nsresult nsMapiRegistryUtils::unsetDefaultMailClient() {
     if (mRestrictedRegAccess) 
       return NS_ERROR_FAILURE;
 
-    if (!isSmartDll()) {
-        if (NS_FAILED(RestoreBackedUpMapiDll())) 
-          return NS_ERROR_FAILURE;
+    if (!isSmartDll()) 
+    {
+      result = RestoreBackedUpMapiDll();
+      NS_ENSURE_SUCCESS(result, result);
     }
 
     nsCAutoString name ;
@@ -1106,13 +1128,13 @@ nsresult nsMapiRegistryUtils::unsetDefaultMailClient() {
     if (!name.IsEmpty() && !appName.IsEmpty() && name.Equals(appName)) {
         nsCAutoString keyName("HKEY_LOCAL_MACHINE\\Software\\Clients\\Mail\\");
         keyName.Append(appName.get());
-        keyName.Append("\\Protocols\\mailto\\shell\\open\\command");
+        keyName.AppendLiteral("\\Protocols\\mailto\\shell\\open\\command");
         nsCAutoString appPath ;
         GetRegistryKey(HKEY_LOCAL_MACHINE, kAppDesktopKey, keyName.get(), appPath);
         if (!appPath.IsEmpty()) {
             keyName.Assign("Software\\Clients\\Mail\\");
             keyName.Append(appName.get());
-            keyName.Append("\\Protocols\\mailto\\shell\\open\\command");
+            keyName.AppendLiteral("\\Protocols\\mailto\\shell\\open\\command");
             result = SetRegistryKey(HKEY_LOCAL_MACHINE, 
                        keyName.get(), 
                        "", (char *)appPath.get());
@@ -1131,20 +1153,16 @@ nsresult nsMapiRegistryUtils::unsetDefaultMailClient() {
         }
     }
 
-#ifdef MOZ_THUNDERBIRD
     recursiveDeleteKey(HKEY_LOCAL_MACHINE, "Software\\Classes\\mailto"); 
-#endif
-
 
     if (!name.IsEmpty())  // Restore the previous default app for Software\Clients\Mail
     {
-        // copy the protocol handlers for the original default news app out to HKEY_LOCAL_MACHINE\Classes\<protocol>
-#ifdef MOZ_THUNDERBIRD        
+        // copy the protocol handlers for the original default mail app out to HKEY_LOCAL_MACHINE\Classes\<protocol>
+
         nsCAutoString keyName("Software\\Clients\\Mail\\");
         keyName.Append(name);
-        keyName.Append("\\Protocols\\");
+        keyName.AppendLiteral("\\Protocols\\");
         setProtocolHandler(keyName.get(), "mailto"); 
-#endif
 
         mailKeySet = SetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Clients\\Mail", "", (char *)name.get());
     }
@@ -1152,25 +1170,27 @@ nsresult nsMapiRegistryUtils::unsetDefaultMailClient() {
         mailKeySet = SetRegistryKey(HKEY_LOCAL_MACHINE, "Software\\Clients\\Mail", "", "");
 
     // change HKEY_CURRENT_USER\\Software\\Clients\\Mail 
-        nsCAutoString userAppName ;
+    nsCAutoString userAppName ;
     GetRegistryKey(HKEY_LOCAL_MACHINE, kAppDesktopKey, "HKEY_CURRENT_USER\\Software\\Clients\\Mail", userAppName);
     
+    restoreFileExtension("Software\\Classes\\", ".eml");
+
     if (!userAppName.IsEmpty()) 
         SetRegistryKey(HKEY_CURRENT_USER, "Software\\Clients\\Mail", "", (char *)userAppName.get());
     else 
-            DeleteRegistryValue(HKEY_CURRENT_USER, "Software\\Clients\\Mail", "");
+        DeleteRegistryValue(HKEY_CURRENT_USER, "Software\\Clients\\Mail", "");
 
     SetRegistryKey(HKEY_LOCAL_MACHINE, kAppDesktopKey,"defaultMailHasBeenSet", "0");
 
-        ::SendMessageTimeout( HWND_BROADCAST,
-                              WM_SETTINGCHANGE,
-                              0,
-                              (LPARAM)MOZ_CLIENT_MAIL_KEY,
-                              SMTO_NORMAL|SMTO_ABORTIFHUNG,
-                              MOZ_HWND_BROADCAST_MSG_TIMEOUT,
-                              NULL);
+    ::SendMessageTimeout( HWND_BROADCAST,
+                          WM_SETTINGCHANGE,
+                          0,
+                          (LPARAM)MOZ_CLIENT_MAIL_KEY,
+                          SMTO_NORMAL|SMTO_ABORTIFHUNG,
+                          MOZ_HWND_BROADCAST_MSG_TIMEOUT,
+                          NULL);
 
-        UnregisterServer(CLSID_CMapiImp, "MozillaMapi", "MozillaMapi.1");
+    UnregisterServer(CLSID_CMapiImp, "MozillaMapi", "MozillaMapi.1");
     return mailKeySet;
 }
 
@@ -1188,16 +1208,18 @@ PRBool nsMapiRegistryUtils::getShowDialog() {
                                         "showMapiDialog", showDialog);
     // if the user has not selected the checkbox, show dialog 
     if (showDialog.IsEmpty() || showDialog.Equals("1"))
-            rv = PR_TRUE;
+      rv = PR_TRUE;
 
-    if (!rv) {
+    if (!rv) 
+    {
         // even if the user has selected the checkbox
         // show it if some other application has changed the 
         // default setting.
         nsCAutoString setMailDefault ;
         GetRegistryKey(HKEY_LOCAL_MACHINE,kAppDesktopKey, 
                                        "defaultMailHasBeenSet", setMailDefault);
-        if (setMailDefault.Equals("1")) {
+        if (setMailDefault.Equals("1")) 
+        {
             // need to reset the defaultMailHasBeenSet to "0"
             // so that after the dialog is displayed once,
             // we do not keep displaying this dialog after the user has
@@ -1229,7 +1251,7 @@ nsresult nsMapiRegistryUtils::MakeMapiStringBundle(nsIStringBundle ** aMapiStrin
     rv = bundleService->CreateBundle(
                     MAPI_PROPERTIES_CHROME,
                     getter_AddRefs(m_mapiStringBundle));
-    if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
+    NS_ENSURE_SUCCESS(rv, rv);
 
     NS_ADDREF(*aMapiStringBundle = m_mapiStringBundle) ;
 
@@ -1240,12 +1262,12 @@ nsresult nsMapiRegistryUtils::ShowMapiErrorDialog(PRBool aForMail)
 {
     nsresult rv;
     nsCOMPtr<nsIPromptService> promptService(do_GetService(
-                  "@mozilla.org/embedcomp/prompt-service;1", &rv));
+                  NS_PROMPTSERVICE_CONTRACTID, &rv));
     if (NS_SUCCEEDED(rv) && promptService)
     {
         nsCOMPtr<nsIStringBundle> bundle;
         rv = MakeMapiStringBundle (getter_AddRefs (bundle)) ;
-        if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
+        NS_ENSURE_SUCCESS(rv, rv);
 
         nsXPIDLString dialogTitle;
         const PRUnichar *brandStrings[] = { brandName() };
@@ -1253,7 +1275,7 @@ nsresult nsMapiRegistryUtils::ShowMapiErrorDialog(PRBool aForMail)
         rv = bundle->FormatStringFromName(dialogTitlePropertyTag.get(),
                                           brandStrings, 1,
                                           getter_Copies(dialogTitle));
-        if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
+        NS_ENSURE_SUCCESS(rv, rv);
 
         nsXPIDLString dialogText;
 
@@ -1264,10 +1286,9 @@ nsresult nsMapiRegistryUtils::ShowMapiErrorDialog(PRBool aForMail)
         rv = bundle->FormatStringFromName(aForMail ? dialogTextPropertyTag.get() : dialogTextPropertyTagForNews.get(),
                                           brandStrings, 1,
                                           getter_Copies(dialogText));
-        if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
+        NS_ENSURE_SUCCESS(rv, rv);
 
-        rv = promptService->Alert(nsnull, dialogTitle,
-                                  dialogText);
+        rv = promptService->Alert(nsnull, dialogTitle, dialogText);
     }
     return rv;
 }

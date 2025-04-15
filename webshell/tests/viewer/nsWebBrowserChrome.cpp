@@ -1,25 +1,42 @@
 /* -*- Mode: C++; tab-width: 3; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla browser.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications, Inc.  Portions created by Netscape are
- * Copyright (C) 1999, Mozilla.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Travis Bogard <travis@netscape.com>
  *   Brian Ryner <bryner@brianryner.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 // Local Includes
 #include "nsWebBrowserChrome.h"
@@ -156,38 +173,6 @@ NS_IMETHODIMP nsWebBrowserChrome::DestroyBrowserWindow()
    ExitModalEventLoop(NS_OK);
    return mBrowserWindow->Destroy();
 }
-
-#if 0
-/* Just commenting out for now because it looks like somebody went to
-   a lot of work here. This method has been removed from nsIWebBrowserChrome
-   per the 5 Feb 01 API review, to be handled one level further down
-   in nsDocShellTreeOwner.
-*/
-NS_IMETHODIMP nsWebBrowserChrome::FindNamedBrowserItem(const PRUnichar* aName,
-   nsIDocShellTreeItem** aBrowserItem)
-{
-   NS_ENSURE_ARG_POINTER(aBrowserItem);
-   *aBrowserItem = nsnull;
-
-   PRInt32 i = 0;
-   PRInt32 n = mBrowserWindow->gBrowsers.Count();
-
-   nsString aNameStr(aName);
-
-   for (i = 0; i < n; i++)
-      {
-      nsBrowserWindow* bw = (nsBrowserWindow*)mBrowserWindow->gBrowsers.ElementAt(i);
-      nsCOMPtr<nsIDocShellTreeItem> docShellAsItem(do_QueryInterface(bw->mWebBrowser));
-      NS_ENSURE_TRUE(docShellAsItem, NS_ERROR_FAILURE);
-
-      docShellAsItem->FindItemWithName(aName, NS_STATIC_CAST(nsIWebBrowserChrome*, this), aBrowserItem);
-
-      if(!*aBrowserItem)
-         return NS_OK;
-      }
-   return NS_OK;
-}
-#endif
 
 NS_IMETHODIMP nsWebBrowserChrome::SizeBrowserTo(PRInt32 aCX, PRInt32 aCY)
 {
@@ -360,7 +345,7 @@ NS_IMETHODIMP nsWebBrowserChrome::SetTitle(const PRUnichar* aTitle)
 
    nsAutoString newTitle(aTitle);
 
-   newTitle.Append(NS_LITERAL_STRING(" - Raptor"));
+   newTitle.AppendLiteral(" - Raptor");
    
    mBrowserWindow->SetTitle(newTitle.get());
    return NS_OK;
@@ -384,13 +369,13 @@ nsWebBrowserChrome::OnProgressChange(nsIWebProgress* aProgress,
     nsAutoString buf;
     PRUint32 size;
 
-    buf.Append(NS_LITERAL_STRING("Loaded "));
+    buf.AppendLiteral("Loaded ");
     buf.AppendInt(mCurrent);
-    buf.Append(NS_LITERAL_STRING(" of "));
+    buf.AppendLiteral(" of ");
     buf.AppendInt(mTotal);
-    buf.Append(NS_LITERAL_STRING(" items.  ("));
+    buf.AppendLiteral(" items.  (");
     buf.AppendInt(mProgress);
-    buf.Append(NS_LITERAL_STRING(" bytes of "));
+    buf.AppendLiteral(" bytes of ");
     buf.AppendInt(mMaxProgress);
     buf.Append(NS_LITERAL_STRING(" bytes)"));
 
@@ -423,13 +408,13 @@ nsWebBrowserChrome::OnStateChange(nsIWebProgress* aProgress,
         nsAutoString buf;
         PRUint32 size;
 
-        buf.Append(NS_LITERAL_STRING("Loaded "));
+        buf.AppendLiteral("Loaded ");
         buf.AppendInt(mCurrent);
-        buf.Append(NS_LITERAL_STRING(" of "));
+        buf.AppendLiteral(" of ");
         buf.AppendInt(mTotal);
-        buf.Append(NS_LITERAL_STRING(" items.  ("));
+        buf.AppendLiteral(" items.  (");
         buf.AppendInt(mProgress);
-        buf.Append(NS_LITERAL_STRING(" bytes of "));
+        buf.AppendLiteral(" bytes of ");
         buf.AppendInt(mMaxProgress);
         buf.Append(NS_LITERAL_STRING(" bytes)"));
 
@@ -559,7 +544,7 @@ mCurrent=mTotal=mProgress=mMaxProgress=0;
         uri->GetSpec(uriString);
 
         NS_ConvertUTF8toUCS2 url(uriString);
-        url.Append(NS_LITERAL_STRING(": start"));
+        url.AppendLiteral(": start");
         PRUint32 size;
         mBrowserWindow->mStatus->SetText(url,size);
       }
@@ -611,7 +596,7 @@ void nsWebBrowserChrome::OnLoadFinished(nsIRequest* aRequest,
      {
 //     PRUint32 size;
 
-     msg.Append(NS_LITERAL_STRING(" done."));
+     msg.AppendLiteral(" done.");
 
 ///      mBrowserWindow->mStatus->SetText(msg, size);
       }

@@ -1,12 +1,12 @@
 // vim:ts=2:sw=2:et:
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -15,7 +15,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2003
  * the Initial Developer. All Rights Reserved.
@@ -30,11 +30,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -43,7 +43,7 @@
 
 #include "nsIIOService.h"
 #include "nsIPrefBranch.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "nsIPrefService.h"
 #include "nsICookieConsent.h"
 #include "nsICookiePermission.h"
@@ -63,7 +63,6 @@
 #include "nsAutoPtr.h"
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
-#include "nsInt64.h"
 #include "prtime.h"
 #include "prprf.h"
 #include "prnetdb.h"
@@ -397,7 +396,7 @@ nsCookieService::Init()
   }
 
   // init our pref and observer
-  nsCOMPtr<nsIPrefBranchInternal> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID);
+  nsCOMPtr<nsIPrefBranch2> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID);
   if (prefBranch) {
     prefBranch->AddObserver(kPrefCookiesPermissions, this, PR_TRUE);
     prefBranch->AddObserver(kPrefMaxNumberOfCookies, this, PR_TRUE);
@@ -620,7 +619,7 @@ nsCookieService::GetCookieStringFromHttp(nsIURI     *aHostURI,
       // if we've already added a cookie to the return list, append a "; " so
       // that subsequent cookies are delimited in the final list.
       if (!cookieData.IsEmpty()) {
-        cookieData += NS_LITERAL_CSTRING("; ");
+        cookieData.AppendLiteral("; ");
       }
 
       if (!cookie->Name().IsEmpty()) {
@@ -736,13 +735,8 @@ nsCookieService::DoLazyWrite(nsITimer *aTimer,
 void
 nsCookieService::NotifyRejected(nsIURI *aHostURI)
 {
-  if (mObserverService) {
+  if (mObserverService)
     mObserverService->NotifyObservers(aHostURI, "cookie-rejected", nsnull);
-    // the cookieIcon notification is now deprecated, in favor of cookie-rejected.
-    // we still need this until consumers can be switched over.
-    mObserverService->NotifyObservers(nsnull, "cookieIcon", NS_LITERAL_STRING("on").get());
-  }
-  mCookieIconVisible = PR_TRUE;
 }
 
 // notify observers that the cookie list changed. there are four possible
@@ -757,17 +751,16 @@ nsCookieService::NotifyChanged(nsICookie2      *aCookie,
 {
   mCookieChanged = PR_TRUE;
 
-  if (mObserverService) {
+  if (mObserverService)
     mObserverService->NotifyObservers(aCookie, "cookie-changed", aData);
-    // the cookieChanged notification is now deprecated. use cookie-changed instead.
-    mObserverService->NotifyObservers(nsnull, "cookieChanged", NS_LITERAL_STRING("cookies").get());
-  }
 
-  // the cookieIcon notification is now deprecated, but we still need
+  // fire a cookieIcon notification if the cookie was downgraded or flagged
+  // by p3p. the cookieIcon notification is now deprecated, but we still need
   // this until consumers can be fixed. to see if cookies have been
   // downgraded or flagged, listen to cookie-changed directly.
-  if (!nsCRT::strcmp(aData, NS_LITERAL_STRING("added").get()) ||
-      !nsCRT::strcmp(aData, NS_LITERAL_STRING("changed").get())) {
+  if (mCookiesPermissions == BEHAVIOR_P3P &&
+      (!nsCRT::strcmp(aData, NS_LITERAL_STRING("added").get()) ||
+       !nsCRT::strcmp(aData, NS_LITERAL_STRING("changed").get()))) {
     nsCookieStatus status;
     aCookie->GetStatus(&status);
     if (status == nsICookie::STATUS_DOWNGRADED ||
@@ -918,7 +911,7 @@ nsCookieService::Read()
     return rv;
   }
 
-  static NS_NAMED_LITERAL_CSTRING(kTrue, "TRUE");
+  static const char kTrue[] = "TRUE";
 
   nsCAutoString buffer;
   PRBool isMore = PR_TRUE;
@@ -973,7 +966,8 @@ nsCookieService::Read()
       continue;
     }
 
-    isDomain = Substring(buffer, isDomainIndex, pathIndex - isDomainIndex - 1).Equals(kTrue);
+    isDomain = Substring(buffer, isDomainIndex, pathIndex - isDomainIndex - 1)
+               .EqualsLiteral(kTrue);
     const nsASingleFragmentCString &host = Substring(buffer, hostIndex, isDomainIndex - hostIndex - 1);
     // check for bad legacy cookies (domain not starting with a dot, or containing a port),
     // and discard
@@ -991,7 +985,7 @@ nsCookieService::Read()
                        nsInt64(expires),
                        lastAccessedCounter,
                        PR_FALSE,
-                       Substring(buffer, secureIndex, expiresIndex - secureIndex - 1).Equals(kTrue),
+                       Substring(buffer, secureIndex, expiresIndex - secureIndex - 1).EqualsLiteral(kTrue),
                        nsICookie::STATUS_UNKNOWN,
                        nsICookie::POLICY_UNKNOWN);
     if (!newCookie) {
@@ -1478,11 +1472,11 @@ PRBool
 nsCookieService::ParseAttributes(nsDependentCString &aCookieHeader,
                                  nsCookieAttributes &aCookieAttributes)
 {
-  static NS_NAMED_LITERAL_CSTRING(kPath,    "path"   );
-  static NS_NAMED_LITERAL_CSTRING(kDomain,  "domain" );
-  static NS_NAMED_LITERAL_CSTRING(kExpires, "expires");
-  static NS_NAMED_LITERAL_CSTRING(kMaxage,  "max-age");
-  static NS_NAMED_LITERAL_CSTRING(kSecure,  "secure" );
+  static const char kPath[]    = "path";
+  static const char kDomain[]  = "domain";
+  static const char kExpires[] = "expires";
+  static const char kMaxage[]  = "max-age";
+  static const char kSecure[]  = "secure";
 
   nsASingleFragmentCString::const_char_iterator tempBegin, tempEnd;
   nsASingleFragmentCString::const_char_iterator cookieStart, cookieEnd;
@@ -1512,27 +1506,30 @@ nsCookieService::ParseAttributes(nsDependentCString &aCookieHeader,
   while (cookieStart != cookieEnd && !newCookie) {
     newCookie = GetTokenValue(cookieStart, cookieEnd, tokenString, tokenValue, equalsFound);
 
-    if (!tokenValue.IsEmpty() && *tokenValue.BeginReading(tempBegin) == '"'
-                              && *tokenValue.EndReading(tempEnd) == '"') {
-      // our parameter is a quoted-string; remove quotes for later parsing
-      tokenValue.Rebind(++tempBegin, --tempEnd);
+    if (!tokenValue.IsEmpty()) {
+      tokenValue.BeginReading(tempBegin);
+      tokenValue.EndReading(tempEnd);
+      if (*tempBegin == '"' && *--tempEnd == '"') {
+        // our parameter is a quoted-string; remove quotes for later parsing
+        tokenValue.Rebind(++tempBegin, tempEnd);
+      }
     }
 
     // decide which attribute we have, and copy the string
-    if (tokenString.Equals(kPath, nsCaseInsensitiveCStringComparator()))
+    if (tokenString.LowerCaseEqualsLiteral(kPath))
       aCookieAttributes.path = tokenValue;
 
-    else if (tokenString.Equals(kDomain, nsCaseInsensitiveCStringComparator()))
+    else if (tokenString.LowerCaseEqualsLiteral(kDomain))
       aCookieAttributes.host = tokenValue;
 
-    else if (tokenString.Equals(kExpires, nsCaseInsensitiveCStringComparator()))
+    else if (tokenString.LowerCaseEqualsLiteral(kExpires))
       aCookieAttributes.expires = tokenValue;
 
-    else if (tokenString.Equals(kMaxage, nsCaseInsensitiveCStringComparator()))
+    else if (tokenString.LowerCaseEqualsLiteral(kMaxage))
       aCookieAttributes.maxage = tokenValue;
 
     // ignore any tokenValue for isSecure; just set the boolean
-    else if (tokenString.Equals(kSecure, nsCaseInsensitiveCStringComparator()))
+    else if (tokenString.LowerCaseEqualsLiteral(kSecure))
       aCookieAttributes.isSecure = PR_TRUE;
   }
 
@@ -1696,7 +1693,7 @@ nsCookieService::CheckPrefs(nsIURI         *aHostURI,
   }
 
   // don't let ftp sites get/set cookies (could be a security issue)
-  if (currentURIScheme.Equals(NS_LITERAL_CSTRING("ftp"))) {
+  if (currentURIScheme.EqualsLiteral("ftp")) {
     COOKIE_LOGFAILURE(aCookieHeader ? SET_COOKIE : GET_COOKIE, aHostURI, aCookieHeader, "ftp sites cannot read cookies");
     return STATUS_REJECTED_WITH_ERROR;
   }
@@ -1822,6 +1819,13 @@ nsCookieService::CheckDomain(nsCookieAttributes &aCookieAttributes,
 
   // no domain specified, use hostFromURI
   } else {
+    // block any URIs without a host that aren't file:/// URIs
+    if (hostFromURI.IsEmpty()) {
+      PRBool isFileURI = PR_FALSE;
+      aHostURI->SchemeIs("file", &isFileURI);
+      if (!isFileURI)
+        return PR_FALSE;
+    }
     aCookieAttributes.host = hostFromURI;
   }
 

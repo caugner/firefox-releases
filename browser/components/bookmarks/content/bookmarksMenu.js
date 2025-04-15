@@ -1,38 +1,40 @@
 # -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 # ***** BEGIN LICENSE BLOCK *****
-# Version: NPL 1.1/GPL 2.0/LGPL 2.1
-# 
-# The contents of this file are subject to the Netscape Public License
-# Version 1.1 (the "License"); you may not use this file except in
-# compliance with the License. You may obtain a copy of the License at
-# http://www.mozilla.org/NPL/
-# 
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
+#
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
 # for the specific language governing rights and limitations under the
 # License.
-# 
+#
 # The Original Code is mozilla.org code.
-# 
-# The Initial Developer of the Original Code is 
-#   Pierre Chanial <chanial@noos.fr>
+#
+# The Initial Developer of the Original Code is
+# Pierre Chanial <chanial@noos.fr>.
 # Portions created by the Initial Developer are Copyright (C) 1998
 # the Initial Developer. All Rights Reserved.
-# 
+#
 # Contributor(s):
 #   David Hyatt <hyatt@apple.com>
-# 
+#
 # Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or 
+# either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
 # in which case the provisions of the GPL or the LGPL are applicable instead
 # of those above. If you wish to allow use of your version of this file only
 # under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the NPL, indicate your
+# use your version of this file under the terms of the MPL, indicate your
 # decision by deleting the provisions above and replace them with the notice
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
-# the terms of any one of the NPL, the GPL or the LGPL.
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
 var BookmarksMenu = {
   _selection:null,
@@ -62,10 +64,10 @@ var BookmarksMenu = {
     if (!this.validOpenInTabsMenuItem(aTarget) ||
         aTarget.lastChild.getAttribute("class") == "openintabs-menuitem")
       return;
-    var element = document.createElementNS(XUL_NS, "menuseparator");
+    var element = document.createElementNS(gXUL_NS, "menuseparator");
     element.setAttribute("class", "openintabs-menuseparator");
     aTarget.appendChild(element);
-    element = document.createElementNS(XUL_NS, "menuitem");
+    element = document.createElementNS(gXUL_NS, "menuitem");
     element.setAttribute("class", "openintabs-menuitem");
     element.setAttribute("label", BookmarksUtils.getLocaleString("cmd_bm_openfolder"));
     element.setAttribute("accesskey", BookmarksUtils.getLocaleString("cmd_bm_openfolder_accesskey"));
@@ -76,7 +78,7 @@ var BookmarksMenu = {
   {
     if (!aParent.hasChildNodes())
       return;
-    child = aParent.lastChild;
+    var child = aParent.lastChild;
     var removed = 0;
     while (child) {
       var cclass = child.getAttribute("class");
@@ -141,7 +143,7 @@ var BookmarksMenu = {
       return;
 
     var EmptyMsg = BookmarksUtils.getLocaleString("emptyFolder");
-    var emptyElement = document.createElementNS(XUL_NS, "menuitem");
+    var emptyElement = document.createElementNS(gXUL_NS, "menuitem");
     emptyElement.setAttribute("id", "empty-menuitem");
     emptyElement.setAttribute("label", EmptyMsg);
     emptyElement.setAttribute("disabled", "true");
@@ -186,8 +188,8 @@ var BookmarksMenu = {
       return false;
     }
 
-    var bt = document.getElementById("bookmarks-ptf");
-    bt.focus(); // buttons in the bt have -moz-user-focus: ignore
+    // -moz-user-focus: ignore; is set on toolbars
+    document.getElementById("PersonalToolbar").focus();
 
     this._selection   = this.getBTSelection(target);
     this._orientation = this.getBTOrientation(aEvent, target);
@@ -211,19 +213,22 @@ var BookmarksMenu = {
   // Clean up after closing the context menu popup
   destroyContextMenu: function (aEvent)
   {
-#   note that this method is called after doCommand.
-#   let''s focus the content and dismiss the popup chain (needed when the user
-#   type escape or if he/she clicks outside the context menu)
+    // note that this method is called after doCommand.
+    // let's focus the content and dismiss the popup chain (needed when the user
+    // type escape or if he/she clicks outside the context menu)
     if (content)
       content.focus();
     // XXXpch: see bug 210910, it should be done properly in the backend
     BookmarksMenuDNDObserver.mCurrentDragOverTarget = null;
     BookmarksMenuDNDObserver.onDragCloseTarget();
 
-#   if the user types escape, we need to remove the feedback
+    // if the user types escape, we need to remove the feedback
     BookmarksMenuDNDObserver.onDragRemoveFeedBack(document.popupNode);
 
-    aEvent.target.removeEventListener("mousemove", BookmarksMenuController.onMouseMove, false)
+    aEvent.target.removeEventListener("mousemove", BookmarksMenuController.onMouseMove, false);
+
+    this._target = null;
+    this._selection = null;
   },
 
   /////////////////////////////////////////////////////////////////////////////
@@ -320,7 +325,7 @@ var BookmarksMenu = {
   // returns true if the node is a bookmark, a folder or a bookmark separator
   isBTBookmark: function (aURI)
   {
-    if (!aURI)
+    if (!aURI || aURI == "bookmarkAllCmd")
       return false;
     var type = BookmarksUtils.resolveType(aURI);
     return (type == "BookmarkSeparator"     ||
@@ -475,16 +480,16 @@ var BookmarksMenuController = {
 
   doCommand: function (aCommand)
   {
-#   we needed to focus the element that has the bm command controller
-#   to get here. Now, let''s focus the content before performing the command:
-#   if a modal dialog is called from now, the content will be focused again
-#   automatically after dismissing the dialog
+    // we needed to focus the element that has the bm command controller
+    // to get here. Now, let's focus the content before performing the command:
+    // if a modal dialog is called from now, the content will be focused again
+    // automatically after dismissing the dialog
     if (content)
       content.focus();
     BookmarksMenuDNDObserver.onDragRemoveFeedBack(document.popupNode);
 
-#   if a dialog opens, the "open" attribute of a menuitem-container
-#   rclicked on won''t be removed. We do it manually.
+    // if a dialog opens, the "open" attribute of a menuitem-container
+    // clicked on won't be removed. We do it manually.
     var element = document.popupNode.firstChild;
     if (element && element.localName == "menupopup")
       element.hidePopup();
@@ -540,20 +545,21 @@ var BookmarksMenuDNDObserver = {
     // c) on Windows, there is no hang or crash associated with this, so we'll leave 
     // the functionality there. 
     if (navigator.platform != "Win32" && target.localName != "toolbarbutton")
-      return;
+      return false;
 
     // a drag start is fired when leaving an open toolbarbutton(type=menu) 
     // (see bug 143031)
     if (this.isContainer(target)) {
       if (this.isPlatformNotSupported) 
-        return;
+        return false;
       if (!aEvent.shiftKey && !aEvent.altKey && !aEvent.ctrlKey)
-        return;
+        return false;
       // menus open on mouse down
       target.firstChild.hidePopup();
     }
     var selection  = BookmarksMenu.getBTSelection(target);
     aXferData.data = BookmarksUtils.getXferDataFromSelection(selection);
+    return true;
   },
 
   onDragOver: function(aEvent, aFlavour, aDragSession) 
@@ -708,7 +714,7 @@ var BookmarksMenuDNDObserver = {
     if (!this._observers) {
       this._observers = [
         document.getElementById("bookmarks-ptf"),
-#       menubar menus haven''t an "open" attribute: we can take the child
+        // menubar menus haven't an "open" attribute: we can take the child
         document.getElementById("bookmarks-menu").firstChild,
         document.getElementById("bookmarks-chevron").parentNode
       ]
@@ -967,11 +973,17 @@ var BookmarksToolbar =
 
   resizeFunc: function(event) 
   { 
+    if (event && event.type == 'focus') 
+      window.removeEventListener('focus', BookmarksToolbar.resizeFunc, false); // hack for bug 266737
     var buttons = document.getElementById("bookmarks-ptf");
     if (!buttons)
       return;
     var chevron = document.getElementById("bookmarks-chevron");
     var width = window.innerWidth;
+    if (width == 0) {  // hack for bug 266737
+      window.addEventListener('focus', BookmarksToolbar.resizeFunc, false);
+      return;
+    }
     var myToolbar = buttons.parentNode.parentNode.parentNode;
     for (var i = myToolbar.childNodes.length-1; i >= 0; i--){
       var anItem = myToolbar.childNodes[i];
@@ -1049,7 +1061,7 @@ var BookmarksToolbarRDFObserver =
 {
   onAssert: function (aDataSource, aSource, aProperty, aTarget)
   {
-    if (aProperty.Value == NC_NS+"BookmarksToolbarFolder") {
+    if (aProperty.Value == gNC_NS+"BookmarksToolbarFolder") {
       var bt = document.getElementById("bookmarks-ptf");
       if (bt) {
         bt.ref = aSource.Value;
@@ -1062,23 +1074,25 @@ var BookmarksToolbarRDFObserver =
   {
     this.setOverflowTimeout(aSource, aProperty);
   },
-  onChange: function (aDataSource, aSource, aProperty, aOldTarget, aNewTarget) {},
+  onChange: function (aDataSource, aSource, aProperty, aOldTarget, aNewTarget)
+  {
+    this.setOverflowTimeout(aSource, aProperty);
+  },
   onMove: function (aDataSource, aOldSource, aNewSource, aProperty, aTarget) {},
   onBeginUpdateBatch: function (aDataSource) {},
   onEndUpdateBatch: function (aDataSource)
   {
     this._overflowTimerInEffect = true;
-    setTimeout(BookmarksToolbar.resizeFunc, 0);
+    setTimeout(BookmarksToolbar.resizeFunc, 0, null);
   },
   _overflowTimerInEffect: false,
   setOverflowTimeout: function (aSource, aProperty)
   {
     if (this._overflowTimerInEffect)
       return;
-    if (aSource != BMSVC.getBookmarksToolbarFolder()
-        || aProperty.Value == NC_NS+"LastModifiedDate")
+    if (aProperty.Value == gWEB_NS+"LastModifiedDate")
       return;
     this._overflowTimerInEffect = true;
-    setTimeout(BookmarksToolbar.resizeFunc, 0);
+    setTimeout(BookmarksToolbar.resizeFunc, 0, null);
   }
 }

@@ -1,3 +1,7 @@
+mk_add_options MOZ_CO_PROJECT=suite
+ac_add_options --enable-application=suite
+
+
 # build minimo
 MINIMO=1
 mk_add_options MINIMO=1
@@ -31,11 +35,13 @@ ac_add_options --disable-xpinstall
 ac_add_options --disable-xpfe-components
 ac_add_options --disable-xprint
 ac_add_options --disable-necko-disk-cache
+ac_add_options --disable-plugins
 
 # configure necko to allocate smaller network buffers
 ac_add_options --enable-necko-small-buffers
 
 # disable debug logging and tests
+ac_add_options --disable-dtd-debug
 ac_add_options --disable-logging
 ac_add_options --disable-tests
 

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Jan Varga (varga@nixcorp.com)
- * Håkan Waara (hwaara@chello.se)
+ *   Jan Varga (varga@ku.sk)
+ *   Håkan Waara (hwaara@chello.se)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -58,13 +58,15 @@
 #include "nsMsgMimeCID.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "nsIPrefLocalizedString.h"
 #include "nsIMsgSearchSession.h"
 #include "nsIMsgCopyService.h"
 #include "nsMsgBaseCID.h"
 #include "nsISpamSettings.h"
 #include "nsIMsgAccountManager.h"
+#include "nsITreeColumns.h"
+#include "nsTextFormatter.h"
 
 static NS_DEFINE_CID(kDateTimeFormatCID,    NS_DATETIMEFORMAT_CID);
 
@@ -110,6 +112,8 @@ PRUnichar * nsMsgDBView::kRepliedString = nsnull;
 PRUnichar * nsMsgDBView::kForwardedString = nsnull;
 PRUnichar * nsMsgDBView::kNewString = nsnull;
 
+PRUnichar * nsMsgDBView::kKiloByteString = nsnull;
+
 nsDateFormatSelector  nsMsgDBView::m_dateFormatDefault = kDateFormatShort;
 nsDateFormatSelector  nsMsgDBView::m_dateFormatThisWeek = kDateFormatShort;
 nsDateFormatSelector  nsMsgDBView::m_dateFormatToday = kDateFormatNone;
@@ -142,8 +146,9 @@ nsMsgDBView::nsMsgDBView()
   mIsNews = PR_FALSE;
   mDeleteModel = nsMsgImapDeleteModels::MoveToTrash;
   m_deletingRows = PR_FALSE;
-  mOutstandingJunkBatches = 0;
-
+  mJunkIndices = nsnull;
+  mNumJunkIndices = 0;
+  mNumMessagesRemainingInBatch = 0;
   mShowSizeInLines = PR_FALSE;
 
   /* mCommandsNeedDisablingBecauseOfSelection - A boolean that tell us if we needed to disable commands because of what's selected.
@@ -203,6 +208,8 @@ void nsMsgDBView::InitializeAtomsAndLiterals()
   kRepliedString = GetString(NS_LITERAL_STRING("replied").get());
   kForwardedString = GetString(NS_LITERAL_STRING("forwarded").get());
   kNewString = GetString(NS_LITERAL_STRING("new").get());
+  
+  kKiloByteString = GetString(NS_LITERAL_STRING("kiloByteAbbreviation").get());
 }
 
 nsMsgDBView::~nsMsgDBView()
@@ -253,6 +260,8 @@ nsMsgDBView::~nsMsgDBView()
     nsCRT::free(kRepliedString);
     nsCRT::free(kForwardedString);
     nsCRT::free(kNewString);
+
+    nsCRT::free(kKiloByteString);
   }
 }
 
@@ -278,17 +287,10 @@ nsresult nsMsgDBView::InitLabelPrefs()
 
 nsresult nsMsgDBView::AddLabelPrefObservers()
 {
-  nsresult rv = NS_OK;
+  nsresult rv;
   nsCString prefString;
 
-  nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  nsCOMPtr<nsIPrefBranch> prefBranch;
-  rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  nsCOMPtr<nsIPrefBranchInternal> pbi = do_QueryInterface(prefBranch, &rv);
+  nsCOMPtr<nsIPrefBranch2> pbi(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv,rv);
 
   InitLabelPrefs();
@@ -310,17 +312,10 @@ nsresult nsMsgDBView::AddLabelPrefObservers()
 
 nsresult nsMsgDBView::RemoveLabelPrefObservers()
 {
-  nsresult rv = NS_OK;
+  nsresult rv;
   nsCString prefString;
 
-  nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  nsCOMPtr<nsIPrefBranch> prefBranch;
-  rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  nsCOMPtr<nsIPrefBranchInternal> pbi = do_QueryInterface(prefBranch, &rv);
+  nsCOMPtr<nsIPrefBranch2> pbi(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv,rv);
 
   for(PRInt32 i = 0; i < PREF_LABELS_MAX; i++)
@@ -413,15 +408,11 @@ PRUnichar * nsMsgDBView::GetString(const PRUnichar *aStringName)
 nsresult nsMsgDBView::GetPrefLocalizedString(const char *aPrefName, nsString& aResult)
 {
   nsresult rv = NS_OK;
-  nsCOMPtr<nsIPrefService> prefService;
   nsCOMPtr<nsIPrefBranch> prefBranch;
   nsCOMPtr<nsIPrefLocalizedString> pls;
   nsXPIDLString ucsval;
 
-  prefService = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = prefService->GetBranch(nsnull, getter_AddRefs(prefBranch));
+  prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = prefBranch->GetComplexValue(aPrefName, NS_GET_IID(nsIPrefLocalizedString), getter_AddRefs(pls));
@@ -435,15 +426,11 @@ nsresult nsMsgDBView::GetPrefLocalizedString(const char *aPrefName, nsString& aR
 nsresult nsMsgDBView::GetLabelPrefStringAndAtom(const char *aPrefName, nsString& aColor, nsIAtom** aColorAtom)
 {
   nsresult rv = NS_OK;
-  nsCOMPtr<nsIPrefService> prefService;
   nsCOMPtr<nsIPrefBranch> prefBranch;
   nsXPIDLCString csval;
   nsCAutoString prefColorTree(LABEL_COLOR_STRING);
 
-  prefService = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = prefService->GetBranch(nsnull, getter_AddRefs(prefBranch));
+  prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = prefBranch->GetCharPref(aPrefName, getter_Copies(csval));
@@ -488,7 +475,7 @@ nsresult nsMsgDBView::AppendSelectedTextColorProperties(nsMsgLabelValue label, n
   // means the highlight color will be black.
   //
   // We need to subtract 1 because mLabelPrefColors is 0 based.
-  if(mLabelPrefColors[label - 1].Equals(NS_LITERAL_STRING(LABEL_COLOR_WHITE_STRING)))
+  if(mLabelPrefColors[label - 1].EqualsLiteral(LABEL_COLOR_WHITE_STRING))
     aProperties->AppendElement(kLabelColorBlackAtom);  
   else
     aProperties->AppendElement(kLabelColorWhiteAtom);  
@@ -500,7 +487,7 @@ nsresult nsMsgDBView::AppendSelectedTextColorProperties(nsMsgLabelValue label, n
 // nsITreeView Implementation Methods (and helper methods)
 ///////////////////////////////////////////////////////////////////////////
 
-nsresult nsMsgDBView::FetchAuthor(nsIMsgHdr * aHdr, PRUnichar ** aSenderString)
+nsresult nsMsgDBView::FetchAuthor(nsIMsgDBHdr * aHdr, PRUnichar ** aSenderString)
 {
   nsXPIDLString unparsedAuthor;
   if (!mHeaderParser)
@@ -526,7 +513,7 @@ nsresult nsMsgDBView::FetchAuthor(nsIMsgHdr * aHdr, PRUnichar ** aSenderString)
   return NS_OK;
 }
 
-nsresult nsMsgDBView::FetchAccount(nsIMsgHdr * aHdr, PRUnichar ** aAccount)
+nsresult nsMsgDBView::FetchAccount(nsIMsgDBHdr * aHdr, PRUnichar ** aAccount)
 {
   nsXPIDLCString accountKey;
 
@@ -550,11 +537,18 @@ nsresult nsMsgDBView::FetchAccount(nsIMsgHdr * aHdr, PRUnichar ** aAccount)
     if (server)
       server->GetPrettyName(aAccount);
   }
+  else
+  {
+    *aAccount = ToNewUnicode(accountKey);
+  }
+  
+  if (!*aAccount)
+    *aAccount = nsCRT::strdup(NS_LITERAL_STRING("").get());
   return NS_OK;
 }
 
 
-nsresult nsMsgDBView::FetchRecipients(nsIMsgHdr * aHdr, PRUnichar ** aRecipientsString)
+nsresult nsMsgDBView::FetchRecipients(nsIMsgDBHdr * aHdr, PRUnichar ** aRecipientsString)
 {
   nsXPIDLString unparsedRecipients;
   if (!mHeaderParser)
@@ -580,14 +574,14 @@ nsresult nsMsgDBView::FetchRecipients(nsIMsgHdr * aHdr, PRUnichar ** aRecipients
   return NS_OK;
 }
 
-nsresult nsMsgDBView::FetchSubject(nsIMsgHdr * aMsgHdr, PRUint32 aFlags, PRUnichar ** aValue)
+nsresult nsMsgDBView::FetchSubject(nsIMsgDBHdr * aMsgHdr, PRUint32 aFlags, PRUnichar ** aValue)
 {
   if (aFlags & MSG_FLAG_HAS_RE)
   {
     nsXPIDLString subject;
     aMsgHdr->GetMime2DecodedSubject(getter_Copies(subject));
     nsAutoString reSubject;
-    reSubject.Assign(NS_LITERAL_STRING("Re: "));
+    reSubject.AssignLiteral("Re: ");
     reSubject.Append(subject);
     *aValue = ToNewUnicode(reSubject);
   }
@@ -599,9 +593,10 @@ nsresult nsMsgDBView::FetchSubject(nsIMsgHdr * aMsgHdr, PRUint32 aFlags, PRUnich
 
 // in case we want to play around with the date string, I've broken it out into
 // a separate routine. 
-nsresult nsMsgDBView::FetchDate(nsIMsgHdr * aHdr, PRUnichar ** aDateString)
+nsresult nsMsgDBView::FetchDate(nsIMsgDBHdr * aHdr, PRUnichar ** aDateString)
 {
   PRTime dateOfMsg;
+  PRTime dateOfMsgLocal;
   nsAutoString formattedDateString;
 
   if (!mDateFormater)
@@ -654,6 +649,13 @@ nsresult nsMsgDBView::FetchDate(nsIMsgHdr * aHdr, PRUnichar ** aDateString)
       bGotConstants = PR_TRUE;
     }
 
+    // setting the time variables to local time
+    PRInt64 GMTLocalTimeShift;
+    LL_ADD( GMTLocalTimeShift, explodedCurrentTime.tm_params.tp_gmt_offset, explodedCurrentTime.tm_params.tp_dst_offset );
+    LL_MUL( GMTLocalTimeShift, GMTLocalTimeShift, microSecondsPerSecond );
+    LL_ADD( currentTime, currentTime, GMTLocalTimeShift );
+    LL_ADD( dateOfMsgLocal, dateOfMsg, GMTLocalTimeShift );
+	    
     // the most recent midnight, counting from current time
     PRInt64 todaysMicroSeconds, mostRecentMidnight;
     LL_MOD( todaysMicroSeconds, currentTime, microSecondsPerDay );
@@ -664,7 +666,7 @@ nsresult nsMsgDBView::FetchDate(nsIMsgHdr * aHdr, PRUnichar ** aDateString)
     LL_SUB( mostRecentWeek, mostRecentMidnight, microSecondsPer6Days );
 
     // was the message sent during the last week?
-    if ( LL_CMP( dateOfMsg, >=, mostRecentWeek ) )
+    if ( LL_CMP( dateOfMsgLocal, >=, mostRecentWeek ) )
     { // yes ....
       dateFormat = m_dateFormatThisWeek;
     }
@@ -704,7 +706,7 @@ nsresult nsMsgDBView::FetchStatus(PRUint32 aFlags, PRUnichar ** aStatusString)
   return NS_OK;
 }
 
-nsresult nsMsgDBView::FetchSize(nsIMsgHdr * aHdr, PRUnichar ** aSizeString)
+nsresult nsMsgDBView::FetchSize(nsIMsgDBHdr * aHdr, PRUnichar ** aSizeString)
 {
   nsAutoString formattedSizeString;
   PRUint32 msgSize = 0;
@@ -731,16 +733,18 @@ nsresult nsMsgDBView::FetchSize(nsIMsgHdr * aHdr, PRUnichar ** aSizeString)
     
     PRUint32 sizeInKB = msgSize/1024;
     
-    formattedSizeString.AppendInt(sizeInKB);
-    // XXX todo, fix this hard coded string?
-    formattedSizeString.Append(NS_LITERAL_STRING("KB"));
+    // kKiloByteString is a localized string that we use to get the right
+    // format to add on the "KB" or equivalent
+    nsTextFormatter::ssprintf(formattedSizeString,
+                              kKiloByteString,
+                              sizeInKB);
   }
   
   *aSizeString = ToNewUnicode(formattedSizeString);
-  return NS_OK;
+  return (*aSizeString) ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
-nsresult nsMsgDBView::FetchPriority(nsIMsgHdr *aHdr, PRUnichar ** aPriorityString)
+nsresult nsMsgDBView::FetchPriority(nsIMsgDBHdr *aHdr, PRUnichar ** aPriorityString)
 {
   nsMsgPriorityValue priority = nsMsgPriority::notSet;
   const PRUnichar * priorityString = nsnull;
@@ -775,7 +779,7 @@ nsresult nsMsgDBView::FetchPriority(nsIMsgHdr *aHdr, PRUnichar ** aPriorityStrin
   return NS_OK;
 }
 
-nsresult nsMsgDBView::FetchLabel(nsIMsgHdr *aHdr, PRUnichar ** aLabelString)
+nsresult nsMsgDBView::FetchLabel(nsIMsgDBHdr *aHdr, PRUnichar ** aLabelString)
 {
   nsresult rv = NS_OK;
   nsMsgLabelValue label = 0;
@@ -807,20 +811,30 @@ nsresult nsMsgDBView::FetchLabel(nsIMsgHdr *aHdr, PRUnichar ** aLabelString)
 /*if you call SaveAndClearSelection make sure to call RestoreSelection otherwise
 m_saveRestoreSelectionDepth will be incorrect and will lead to selection msg problems*/
 
-nsresult nsMsgDBView::SaveAndClearSelection(nsMsgKeyArray *aMsgKeyArray)
+nsresult nsMsgDBView::SaveAndClearSelection(nsMsgKey *aCurrentMsgKey, nsMsgKeyArray *aMsgKeyArray)
 {
   // we don't do anything on nested Save / Restore calls.
   m_saveRestoreSelectionDepth++;
   if (m_saveRestoreSelectionDepth != 1)
     return NS_OK;
   
-  if (!mTreeSelection)
+  if (!mTreeSelection || !mTree)
     return NS_OK;
 
   // first, freeze selection.
   mTreeSelection->SetSelectEventsSuppressed(PR_TRUE);
 
-  // second, get an array of view indices for the selection..
+  // second, save the current index.
+  if (aCurrentMsgKey)
+  {
+    PRInt32 currentIndex;
+    if (NS_SUCCEEDED(mTreeSelection->GetCurrentIndex(&currentIndex)) && currentIndex >= 0 && currentIndex < GetSize())
+      *aCurrentMsgKey = m_keys.GetAt(currentIndex);
+    else
+      *aCurrentMsgKey = nsMsgKey_None;
+  }
+  
+  // third, get an array of view indices for the selection.
   nsUInt32Array selection;
   GetSelectedIndices(&selection);
   PRInt32 numIndices = selection.GetSize();
@@ -840,7 +854,7 @@ nsresult nsMsgDBView::SaveAndClearSelection(nsMsgKeyArray *aMsgKeyArray)
   return NS_OK;
 }
 
-nsresult nsMsgDBView::RestoreSelection(nsMsgKeyArray * aMsgKeyArray)
+nsresult nsMsgDBView::RestoreSelection(nsMsgKey aCurrentMsgKey, nsMsgKeyArray *aMsgKeyArray)
 {
   // we don't do anything on nested Save / Restore calls.
   m_saveRestoreSelectionDepth--;
@@ -866,29 +880,24 @@ nsresult nsMsgDBView::RestoreSelection(nsMsgKeyArray * aMsgKeyArray)
     }
   }
 
-  // make sure the currentView was preserved....
-  if (m_currentlyDisplayedMsgKey != nsMsgKey_None)
-  {
-    currentViewPosition = FindKey(m_currentlyDisplayedMsgKey, PR_FALSE);
-    if (currentViewPosition != nsMsgViewIndex_None)
-    {
-      mTreeSelection->SetCurrentIndex(currentViewPosition);
-      mTreeSelection->RangedSelect(currentViewPosition, currentViewPosition, PR_TRUE /* augment */);
-        
-      // make sure the current message is once again visible in the thread pane
-      // so we don't have to go search for it in the thread pane
-      if (mTree) mTree->EnsureRowIsVisible(currentViewPosition);
-    }
-  }
-
   for (PRInt32 index = 0; index < arraySize; index ++)
   {
     newViewPosition = FindKey(aMsgKeyArray->GetAt(index), PR_FALSE);  
-    // check to make sure newViewPosition is valid.
     // add the index back to the selection.
-    if (newViewPosition != currentViewPosition) // don't re-add the current view
-      mTreeSelection->RangedSelect(newViewPosition, newViewPosition, PR_TRUE /* augment */);
+    mTreeSelection->ToggleSelect(newViewPosition);
   }
+
+  // make sure the currentView was preserved....
+  if (aCurrentMsgKey != nsMsgKey_None)
+    currentViewPosition = FindKey(aCurrentMsgKey, PR_TRUE);
+
+  if (mTree)
+    mTreeSelection->SetCurrentIndex(currentViewPosition);
+      
+  // make sure the current message is once again visible in the thread pane
+  // so we don't have to go search for it in the thread pane
+  if (mTree && currentViewPosition != nsMsgViewIndex_None)
+    mTree->EnsureRowIsVisible(currentViewPosition);
 
   // unfreeze selection.
   mTreeSelection->SetSelectEventsSuppressed(PR_FALSE);
@@ -907,7 +916,7 @@ nsresult nsMsgDBView::CycleThreadedColumn(nsIDOMElement * aElement)
 
   // toggle threaded/unthreaded mode
   aElement->GetAttribute(NS_LITERAL_STRING("currentView"), currentView);
-  if (currentView.Equals(NS_LITERAL_STRING("threaded")))
+  if (currentView.EqualsLiteral("threaded"))
   {
     aElement->SetAttribute(NS_LITERAL_STRING("currentView"), NS_LITERAL_STRING("unthreaded"));
 
@@ -926,13 +935,18 @@ nsresult nsMsgDBView::CycleThreadedColumn(nsIDOMElement * aElement)
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBView::IsEditable(PRInt32 index, const PRUnichar *colID, PRBool * aReturnValue)
+NS_IMETHODIMP nsMsgDBView::IsEditable(PRInt32 row, nsITreeColumn* col, PRBool* _retval)
 {
-  * aReturnValue = PR_FALSE;
+  *_retval = PR_FALSE;
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBView::SetCellText(PRInt32 row, const PRUnichar *colID, const PRUnichar * value)
+NS_IMETHODIMP nsMsgDBView::SetCellValue(PRInt32 row, nsITreeColumn* col, const nsAString& value)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgDBView::SetCellText(PRInt32 row, nsITreeColumn* col, const nsAString& value)
 {
   return NS_OK;
 }
@@ -958,25 +972,26 @@ NS_IMETHODIMP nsMsgDBView::SetSelection(nsITreeSelection * aSelection)
 
 NS_IMETHODIMP nsMsgDBView::ReloadMessageWithAllParts()
 {
-  return ReloadMessageHelper(PR_TRUE);
+  if (m_currentlyDisplayedMsgUri.IsEmpty())
+    return NS_ERROR_FAILURE;
+
+  if (mSuppressMsgDisplay)
+    return NS_OK;
+
+  nsCAutoString forceAllParts(m_currentlyDisplayedMsgUri);
+  forceAllParts.AppendLiteral("?fetchCompleteMessage=true");
+  return mMessengerInstance->OpenURL(forceAllParts.get());
 }
 
 NS_IMETHODIMP nsMsgDBView::ReloadMessage()
 {
-  return ReloadMessageHelper(PR_FALSE);
-}
+  if (m_currentlyDisplayedMsgUri.IsEmpty())
+    return NS_ERROR_FAILURE;
 
-nsresult nsMsgDBView::ReloadMessageHelper(PRBool forceAllParts)
-{
-  if (!mSuppressMsgDisplay && m_currentlyDisplayedViewIndex != nsMsgViewIndex_None)
-  {
-    nsMsgViewIndex msgToReload = m_currentlyDisplayedViewIndex;
-    m_currentlyDisplayedMsgKey = nsMsgKey_None;
-    m_currentlyDisplayedViewIndex = nsMsgViewIndex_None;
-    LoadMessageByViewIndexHelper(msgToReload, forceAllParts);
-  }
+  if (mSuppressMsgDisplay)
+    return NS_OK;
 
-  return NS_OK;
+  return mMessengerInstance->OpenURL(m_currentlyDisplayedMsgUri.get());
 }
 
 nsresult nsMsgDBView::UpdateDisplayMessage(nsMsgViewIndex viewPosition)
@@ -991,6 +1006,7 @@ nsresult nsMsgDBView::UpdateDisplayMessage(nsMsgViewIndex viewPosition)
       nsCOMPtr <nsIMsgDBHdr> msgHdr;
       rv = GetMsgHdrForViewIndex(viewPosition, getter_AddRefs(msgHdr));
       NS_ENSURE_SUCCESS(rv,rv);
+
       nsXPIDLString subject;
       FetchSubject(msgHdr, m_flags[viewPosition], getter_Copies(subject));
       
@@ -1015,7 +1031,7 @@ nsresult nsMsgDBView::UpdateDisplayMessage(nsMsgViewIndex viewPosition)
 // given a msg key, we will load the message for it.
 NS_IMETHODIMP nsMsgDBView::LoadMessageByMsgKey(nsMsgKey aMsgKey)
 {
-  return LoadMessageByViewIndexHelper(FindViewIndex(aMsgKey), PR_FALSE);
+  return LoadMessageByViewIndex(FindKey(aMsgKey, PR_FALSE));
 }
 
 NS_IMETHODIMP nsMsgDBView::LoadMessageByViewIndex(nsMsgViewIndex aViewIndex)
@@ -1038,28 +1054,6 @@ NS_IMETHODIMP nsMsgDBView::LoadMessageByViewIndex(nsMsgViewIndex aViewIndex)
   return NS_OK;
 }
 
-nsresult nsMsgDBView::LoadMessageByViewIndexHelper(nsMsgViewIndex aViewIndex, PRBool forceAllParts)
-{
-  NS_ASSERTION(aViewIndex != nsMsgViewIndex_None,"trying to load nsMsgViewIndex_None");
-  if (aViewIndex == nsMsgViewIndex_None) return NS_ERROR_UNEXPECTED;
-
-  if (!mSuppressMsgDisplay && (m_currentlyDisplayedViewIndex != aViewIndex))
-  {
-    nsXPIDLCString uri;
-    nsresult rv = GetURIForViewIndex(aViewIndex, getter_Copies(uri));
-    NS_ENSURE_SUCCESS(rv,rv);
-    if (forceAllParts)
-      uri.Append("?fetchCompleteMessage=true");
-
-    mMessengerInstance->OpenURL(uri);
-    m_currentlyDisplayedMsgKey = m_keys[aViewIndex];
-    m_currentlyDisplayedViewIndex = aViewIndex;
-    UpdateDisplayMessage(aViewIndex);
-  }
-
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgDBView::LoadMessageByUrl(const char *aUrl)
 {
   NS_ASSERTION(aUrl, "trying to load a null url");
@@ -1067,6 +1061,8 @@ NS_IMETHODIMP nsMsgDBView::LoadMessageByUrl(const char *aUrl)
   {
     mMessengerInstance->LoadURL(NULL, aUrl);
     m_currentlyDisplayedMsgKey = nsMsgKey_None;
+    m_currentlyDisplayedMsgUri.Truncate();
+    m_currentlyDisplayedViewIndex = nsMsgViewIndex_None;
   }
   return NS_OK;
 }
@@ -1118,6 +1114,8 @@ NS_IMETHODIMP nsMsgDBView::SelectionChanged()
   else {
     // if we have zero or multiple items selected, we shouldn't be displaying any message
     m_currentlyDisplayedMsgKey = nsMsgKey_None;
+    m_currentlyDisplayedMsgUri.Truncate();
+    m_currentlyDisplayedViewIndex = nsMsgViewIndex_None;
 
     // if we used to have one item selected, and now we have more than one, we should clear the message pane.
     nsCOMPtr <nsIMsgMessagePaneController> controller;
@@ -1211,17 +1209,13 @@ NS_IMETHODIMP nsMsgDBView::GetRowProperties(PRInt32 index, nsISupportsArray *pro
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBView::GetColumnProperties(const PRUnichar *colID, nsIDOMElement * aElement, nsISupportsArray *properties)
+NS_IMETHODIMP nsMsgDBView::GetColumnProperties(nsITreeColumn* col, nsISupportsArray *properties)
 {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBView::GetCellProperties(PRInt32 aRow, const PRUnichar *colID, nsISupportsArray *properties)
+NS_IMETHODIMP nsMsgDBView::GetCellProperties(PRInt32 aRow, nsITreeColumn *col, nsISupportsArray *properties)
 {
-  // remove once #116341 is fixed
-  if (!colID[0])
-    return NS_OK;
-
   nsMsgLabelValue label;
 
   if (!IsValidIndex(aRow))
@@ -1265,12 +1259,6 @@ NS_IMETHODIMP nsMsgDBView::GetCellProperties(PRInt32 aRow, const PRUnichar *colI
   
   if (flags & MSG_FLAG_ATTACHMENT) 
     properties->AppendElement(kAttachMsgAtom);
-
-  if (flags & MSG_FLAG_WATCHED) 
-    properties->AppendElement(kWatchThreadAtom);
-
-  if (flags & MSG_FLAG_IGNORED) 
-    properties->AppendElement(kIgnoreThreadAtom);
 
   if ((mDeleteModel == nsMsgImapDeleteModels::IMAPDelete) && (flags & MSG_FLAG_IMAP_DELETED)) 
     properties->AppendElement(kImapDeletedMsgAtom);
@@ -1361,6 +1349,8 @@ NS_IMETHODIMP nsMsgDBView::GetCellProperties(PRInt32 aRow, const PRUnichar *colI
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
+  const PRUnichar* colID;
+  col->GetIdConst(&colID);
   if (colID[0] == 'f')  
   {
     if (m_flags[aRow] & MSG_FLAG_MARKED) 
@@ -1380,9 +1370,12 @@ NS_IMETHODIMP nsMsgDBView::GetCellProperties(PRInt32 aRow, const PRUnichar *colI
         PRUint32 numUnreadChildren;
         thread->GetNumUnreadChildren(&numUnreadChildren);
         if (numUnreadChildren > 0)
-        {
-            properties->AppendElement(kHasUnreadAtom);
-        }   
+          properties->AppendElement(kHasUnreadAtom);
+        thread->GetFlags(&flags);
+        if (flags & MSG_FLAG_WATCHED) 
+          properties->AppendElement(kWatchThreadAtom);
+        if (flags & MSG_FLAG_IGNORED) 
+          properties->AppendElement(kIgnoreThreadAtom);
       }
     }
   }     
@@ -1540,28 +1533,24 @@ nsresult nsMsgDBView::GetDBForViewIndex(nsMsgViewIndex index, nsIMsgDatabase **d
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBView::GetImageSrc(PRInt32 aRow, const PRUnichar * aColID, nsAString& aValue)
+NS_IMETHODIMP nsMsgDBView::GetImageSrc(PRInt32 aRow, nsITreeColumn* aCol, nsAString& aValue)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMsgDBView::GetProgressMode(PRInt32 aRow, const PRUnichar * aColID, PRInt32* _retval)
+nsMsgDBView::GetProgressMode(PRInt32 aRow, nsITreeColumn* aCol, PRInt32* _retval)
 {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBView::GetCellValue(PRInt32 aRow, const PRUnichar * aColID, nsAString& aValue)
+NS_IMETHODIMP nsMsgDBView::GetCellValue(PRInt32 aRow, nsITreeColumn* aCol, nsAString& aValue)
 {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBView::GetCellText(PRInt32 aRow, const PRUnichar * aColID, nsAString& aValue)
+NS_IMETHODIMP nsMsgDBView::GetCellText(PRInt32 aRow, nsITreeColumn* aCol, nsAString& aValue)
 {
-  // remove once #116341 is fixed
-  if (!aColID[0])
-    return NS_OK;
-
   nsresult rv = NS_OK;
 
   if (!IsValidIndex(aRow))
@@ -1580,16 +1569,18 @@ NS_IMETHODIMP nsMsgDBView::GetCellText(PRInt32 aRow, const PRUnichar * aColID, n
   nsXPIDLString valueText;
   nsCOMPtr <nsIMsgThread> thread;
 
-  switch (aColID[0])
+  const PRUnichar* colID;
+  aCol->GetIdConst(&colID);
+  switch (colID[0])
   {
   case 's':
-    if (aColID[1] == 'u') // subject
+    if (colID[1] == 'u') // subject
       rv = FetchSubject(msgHdr, m_flags[aRow], getter_Copies(valueText));
-    else if (aColID[1] == 'e') // sender
+    else if (colID[1] == 'e') // sender
       rv = FetchAuthor(msgHdr, getter_Copies(valueText));
-    else if (aColID[1] == 'i') // size
+    else if (colID[1] == 'i') // size
       rv = FetchSize(msgHdr, getter_Copies(valueText));
-    else if (aColID[1] == 't') // status
+    else if (colID[1] == 't') // status
     {
       PRUint32 flags;
       msgHdr->GetFlags(&flags);
@@ -1614,7 +1605,7 @@ NS_IMETHODIMP nsMsgDBView::GetCellText(PRInt32 aRow, const PRUnichar * aColID, n
     aValue.Assign(valueText);
     break;
   case 'a': // account
-    if (aColID[1] == 'c') // account
+    if (colID[1] == 'c') // account
     {
       rv = FetchAccount(msgHdr, getter_Copies(valueText));
       aValue.Assign(valueText);
@@ -1622,7 +1613,7 @@ NS_IMETHODIMP nsMsgDBView::GetCellText(PRInt32 aRow, const PRUnichar * aColID, n
     break;
   case 't':   
     // total msgs in thread column
-    if (aColID[1] == 'o' && (m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay))
+    if (colID[1] == 'o' && (m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay))
     {
       if (m_flags[aRow] & MSG_VIEW_FLAG_ISTHREAD)
       {
@@ -1640,7 +1631,7 @@ NS_IMETHODIMP nsMsgDBView::GetCellText(PRInt32 aRow, const PRUnichar * aColID, n
     break;
   case 'u':
     // unread msgs in thread col
-    if (aColID[6] == 'C' && (m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay))
+    if (colID[6] == 'C' && (m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay))
     {
       if (m_flags[aRow] & MSG_VIEW_FLAG_ISTHREAD)
       {
@@ -1695,22 +1686,20 @@ NS_IMETHODIMP nsMsgDBView::ToggleOpenState(PRInt32 index)
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBView::CycleHeader(const PRUnichar * aColID, nsIDOMElement * aElement)
+NS_IMETHODIMP nsMsgDBView::CycleHeader(nsITreeColumn* aCol)
 {
     // let HandleColumnClick() in threadPane.js handle it
     // since it will set / clear the sort indicators.
     return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBView::CycleCell(PRInt32 row, const PRUnichar *colID)
+NS_IMETHODIMP nsMsgDBView::CycleCell(PRInt32 row, nsITreeColumn* col)
 {
-  // remove once #116341 is fixed
-  if (!colID[0])
-    return NS_OK;
-
   if (!IsValidIndex(row))
     return NS_MSG_INVALID_DBVIEW_INDEX;
 
+  const PRUnichar* colID;
+  col->GetIdConst(&colID);
   switch (colID[0])
   {
   case 'u': // unreadButtonColHeader
@@ -1787,7 +1776,7 @@ NS_IMETHODIMP nsMsgDBView::PerformActionOnRow(const PRUnichar *action, PRInt32 r
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBView::PerformActionOnCell(const PRUnichar *action, PRInt32 row, const PRUnichar *colID)
+NS_IMETHODIMP nsMsgDBView::PerformActionOnCell(const PRUnichar *action, PRInt32 row, nsITreeColumn* col)
 {
   return NS_OK;
 }
@@ -1919,7 +1908,6 @@ NS_IMETHODIMP nsMsgDBView::GetSuppressCommandUpdating(PRBool * aSuppressCommandU
 
 NS_IMETHODIMP nsMsgDBView::SetSuppressMsgDisplay(PRBool aSuppressDisplay)
 {
-  nsresult rv = NS_OK;
   PRBool forceDisplay = PR_FALSE;
   if (mSuppressMsgDisplay && (mSuppressMsgDisplay != aSuppressDisplay))
     forceDisplay = PR_TRUE;
@@ -1929,12 +1917,12 @@ NS_IMETHODIMP nsMsgDBView::SetSuppressMsgDisplay(PRBool aSuppressDisplay)
   {
     // get the view indexfor the currently selected message
     nsMsgViewIndex viewIndex;
-    rv = GetViewIndexForFirstSelectedMsg(&viewIndex);
+    nsresult rv = GetViewIndexForFirstSelectedMsg(&viewIndex);
     if (NS_SUCCEEDED(rv) && viewIndex != nsMsgViewIndex_None)
        LoadMessageByViewIndex(viewIndex);
   }
 
-  return rv;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgDBView::GetSuppressMsgDisplay(PRBool * aSuppressDisplay)
@@ -1981,9 +1969,6 @@ NS_IMETHODIMP nsMsgDBView::GetURIsForSelection(char ***uris, PRUint32 *length)
 {
   nsresult rv = NS_OK;
 
-#ifdef DEBUG_mscott
-  printf("inside GetURIsForSelection\n");
-#endif
   NS_ENSURE_ARG_POINTER(length);
   *length = 0;
   NS_ENSURE_ARG_POINTER(uris);
@@ -2120,9 +2105,21 @@ NS_IMETHODIMP nsMsgDBView::DoCommand(nsMsgViewCommandTypeValue command)
     rv = ExpandAndSelectThread();
     break;
   case nsMsgViewCommandType::selectFlagged:
-#ifdef DEBUG_seth
-    printf("clear current selection, and then select all flagged messages, we may have to expand all first to look for them\n");
-#endif
+    if (!mTreeSelection)
+      rv = NS_ERROR_UNEXPECTED;
+    else
+    {
+      mTreeSelection->SetSelectEventsSuppressed(PR_TRUE);
+      mTreeSelection->ClearSelection();
+      // XXX ExpandAll?
+      nsMsgViewIndex numIndices = GetSize();
+      for (nsMsgViewIndex curIndex = 0; curIndex < numIndices; curIndex++)
+      {
+        if (m_flags.GetAt(curIndex) & MSG_FLAG_MARKED)
+          mTreeSelection->ToggleSelect(curIndex);
+      }
+      mTreeSelection->SetSelectEventsSuppressed(PR_FALSE);
+    }
     break;
   case nsMsgViewCommandType::markAllRead:
     if (m_folder)
@@ -2332,187 +2329,199 @@ nsresult
 nsMsgDBView::ApplyCommandToIndices(nsMsgViewCommandTypeValue command, nsMsgViewIndex* indices,
 					PRInt32 numIndices)
 {
-  nsMsgKeyArray imapUids;
-
-  // if numIndices == 0, return quietly, just in case
-  if (numIndices == 0) 
-      return NS_OK;
-
   NS_ASSERTION(numIndices >= 0, "nsMsgDBView::ApplyCommandToIndices(): "
                "numIndices is negative!");
+
+  if (numIndices == 0) 
+      return NS_OK; // return quietly, just in case
 
   nsCOMPtr<nsIMsgFolder> folder;
   nsresult rv = GetFolderForViewIndex(indices[0], getter_AddRefs(folder));
 
+  if (command == nsMsgViewCommandType::deleteMsg)
+    return DeleteMessages(mMsgWindow, indices, numIndices, PR_FALSE);
+  if (command == nsMsgViewCommandType::deleteNoTrash)
+    return DeleteMessages(mMsgWindow, indices, numIndices, PR_TRUE);
+
+  nsMsgKeyArray imapUids;
   nsCOMPtr <nsIMsgImapMailFolder> imapFolder = do_QueryInterface(folder);
   PRBool thisIsImapFolder = (imapFolder != nsnull);
+  nsCOMPtr<nsIJunkMailPlugin> junkPlugin;
 
-  if (command == nsMsgViewCommandType::deleteMsg)
-    rv = DeleteMessages(mMsgWindow, indices, numIndices, PR_FALSE);
-  else if (command == nsMsgViewCommandType::deleteNoTrash)
-    rv = DeleteMessages(mMsgWindow, indices, numIndices, PR_TRUE);
-  else
+  // if this is a junk command, start a batch or add to an existing one. 
+  //  
+  if (    command == nsMsgViewCommandType::junk
+       || command == nsMsgViewCommandType::unjunk ) 
   {
-    nsCOMPtr<nsIJunkMailPlugin> junkPlugin;
+    // get the folder from the first item; we assume that
+    // all messages in the view are from the same folder (no
+    // more junk status column in the 'search messages' dialog
+    // like in earlier versions...)
+     //
+     NS_ENSURE_SUCCESS(rv, rv);
 
-    // if this is a junk command, start a batch.  The batch will be ended
-    // in the last callback.
-    //  
-    if ( command == nsMsgViewCommandType::junk
-         || command == nsMsgViewCommandType::unjunk ) 
+     nsCOMPtr<nsIMsgIncomingServer> server;
+     rv = folder->GetServer(getter_AddRefs(server));
+     NS_ENSURE_SUCCESS(rv, rv);
+
+    if (command == nsMsgViewCommandType::junk)
     {
-
-        // get the folder from the first item (if it's the search view, 
-        // only one item can be touched at a time; if a regular folder view,
-        // all items will have the same folder).
-        //
-        nsCOMPtr<nsIMsgFolder> folder;
-        rv = GetFolderForViewIndex(indices[0], getter_AddRefs(folder));
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        nsCOMPtr<nsIMsgIncomingServer> server;
-        rv = folder->GetServer(getter_AddRefs(server));
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        nsCOMPtr<nsIMsgFilterPlugin> filterPlugin;
-        rv = server->GetSpamFilterPlugin(getter_AddRefs(filterPlugin));
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        junkPlugin = do_QueryInterface(filterPlugin, &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        rv = junkPlugin->StartBatch();
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        mOutstandingJunkBatches++;
+      // append this batch of junk message indices to the
+      // array of junk message indices to be acted upon
+      // once OnMessageClassified() is run for the last message
+      //
+      // note: although message classification is done
+      // asynchronously, it is not done in a different thread,
+      // so the manipulations of mJunkIndices here and in
+      // OnMessageClassified() cannot interrupt each other
+      //
+      mNumJunkIndices += numIndices;
+      mJunkIndices = (nsMsgViewIndex *)nsMemory::Realloc(mJunkIndices, mNumJunkIndices * sizeof(nsMsgViewIndex));
+      memcpy(mJunkIndices + (mNumJunkIndices - numIndices), indices, numIndices * sizeof(nsMsgViewIndex));
     }
-           
-    folder->EnableNotifications(nsIMsgFolder::allMessageCountNotifications, PR_FALSE, PR_TRUE /*dbBatching*/);
+   
+    nsCOMPtr<nsIMsgFilterPlugin> filterPlugin;
+    rv = server->GetSpamFilterPlugin(getter_AddRefs(filterPlugin));
+    NS_ENSURE_SUCCESS(rv, rv);
 
-    for (int32 i = 0; i < numIndices; i++)
+    junkPlugin = do_QueryInterface(filterPlugin, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // note that if we aren't starting a batch we are
+    // actually coalescing the batch of messages this
+    // function was called for with the previous
+    // batch(es)
+    mNumMessagesRemainingInBatch += numIndices;
+  }
+         
+  folder->EnableNotifications(nsIMsgFolder::allMessageCountNotifications, PR_FALSE, PR_TRUE /*dbBatching*/);
+
+  for (int32 i = 0; i < numIndices; i++)
+  {
+    if (thisIsImapFolder && command != nsMsgViewCommandType::markThreadRead)
+      imapUids.Add(GetAt(indices[i]));
+    
+    switch (command)
     {
-      if (thisIsImapFolder && command != nsMsgViewCommandType::markThreadRead)
-        imapUids.Add(GetAt(indices[i]));
-      
-      switch (command)
-      {
-      case nsMsgViewCommandType::markMessagesRead:
-        rv = SetReadByIndex(indices[i], PR_TRUE);
-        break;
-      case nsMsgViewCommandType::markMessagesUnread:
-        rv = SetReadByIndex(indices[i], PR_FALSE);
-        break;
-      case nsMsgViewCommandType::toggleMessageRead:
-        rv = ToggleReadByIndex(indices[i]);
-        break;
-      case nsMsgViewCommandType::flagMessages:
-        rv = SetFlaggedByIndex(indices[i], PR_TRUE);
-        break;
-      case nsMsgViewCommandType::unflagMessages:
-        rv = SetFlaggedByIndex(indices[i], PR_FALSE);
-        break;
-      case nsMsgViewCommandType::markThreadRead:
-        rv = SetThreadOfMsgReadByIndex(indices[i], imapUids, PR_TRUE);
-        break;
-      case nsMsgViewCommandType::label0:
-      case nsMsgViewCommandType::label1:
-      case nsMsgViewCommandType::label2:
-      case nsMsgViewCommandType::label3:
-      case nsMsgViewCommandType::label4:
-      case nsMsgViewCommandType::label5:
-        rv = SetLabelByIndex(indices[i], (command - nsMsgViewCommandType::label0));
-        break;
-      case nsMsgViewCommandType::junk:
-        rv = SetJunkScoreByIndex(junkPlugin.get(), indices[i],
-                                 nsIJunkMailPlugin::JUNK, (i == numIndices-1));
-        break;
-      case nsMsgViewCommandType::unjunk:
-        rv = SetJunkScoreByIndex(junkPlugin.get(), indices[i], 
-                                 nsIJunkMailPlugin::GOOD, (i == numIndices-1));
-        break;
-      case nsMsgViewCommandType::undeleteMsg:
-        break; // this is completely handled in the imap code below.
-      default:
-        NS_ASSERTION(PR_FALSE, "unhandled command");
-        break;
-      }
-    }
-    folder->EnableNotifications(nsIMsgFolder::allMessageCountNotifications, PR_TRUE, PR_TRUE /*dbBatching*/);
-
-    if (thisIsImapFolder)
-    {
-      imapMessageFlagsType flags = kNoImapMsgFlag;
-      PRBool commandIsLabelSet = PR_FALSE;
-      PRBool addFlags = PR_FALSE;
-      PRBool isRead = PR_FALSE;
-      
-      switch (command)
-      {
-      case nsMsgViewCommandType::markThreadRead:
-      case nsMsgViewCommandType::markMessagesRead:
-        flags |= kImapMsgSeenFlag;
-        addFlags = PR_TRUE;
-        break;
-      case nsMsgViewCommandType::markMessagesUnread:
-        flags |= kImapMsgSeenFlag;
-        addFlags = PR_FALSE;
-        break;
-      case nsMsgViewCommandType::toggleMessageRead:
-        {
-          flags |= kImapMsgSeenFlag;
-          m_db->IsRead(GetAt(indices[0]), &isRead);
-          if (isRead)
-            addFlags = PR_TRUE;
-          else
-            addFlags = PR_FALSE;
-        }
-        break;
-      case nsMsgViewCommandType::flagMessages:
-        flags |= kImapMsgFlaggedFlag;
-        addFlags = PR_TRUE;
-        break;
-      case nsMsgViewCommandType::unflagMessages:
-        flags |= kImapMsgFlaggedFlag;
-        addFlags = PR_FALSE;
-        break;
-      case nsMsgViewCommandType::label0:
-      case nsMsgViewCommandType::label1:
-      case nsMsgViewCommandType::label2:
-      case nsMsgViewCommandType::label3:
-      case nsMsgViewCommandType::label4:
-      case nsMsgViewCommandType::label5:
-        flags |= ((command - nsMsgViewCommandType::label0) << 9);
-        addFlags = (command != nsMsgViewCommandType::label0);
-        commandIsLabelSet = PR_TRUE;
-        break;
-      case nsMsgViewCommandType::undeleteMsg:
-        flags = kImapMsgDeletedFlag;
-        addFlags = PR_FALSE;
-        break;
-      case nsMsgViewCommandType::junk:
-          return imapFolder->StoreCustomKeywords(mMsgWindow,
-                      "Junk",
-                      "NonJunk",
-                      imapUids.GetArray(), imapUids.GetSize(),
-                      nsnull);
-      case nsMsgViewCommandType::unjunk:
-          return imapFolder->StoreCustomKeywords(mMsgWindow,
-                      "NonJunk",
-                      "Junk",
-                      imapUids.GetArray(), imapUids.GetSize(),
-                      nsnull);
-
-      default:
-        break;
-      }
-      
-      if (flags != kNoImapMsgFlag || commandIsLabelSet)	// can't get here without thisIsImapThreadPane == TRUE
-        imapFolder->StoreImapFlags(flags, addFlags, imapUids.GetArray(), imapUids.GetSize());
-      
+    case nsMsgViewCommandType::markMessagesRead:
+      rv = SetReadByIndex(indices[i], PR_TRUE);
+      break;
+    case nsMsgViewCommandType::markMessagesUnread:
+      rv = SetReadByIndex(indices[i], PR_FALSE);
+      break;
+    case nsMsgViewCommandType::toggleMessageRead:
+      rv = ToggleReadByIndex(indices[i]);
+      break;
+    case nsMsgViewCommandType::flagMessages:
+      rv = SetFlaggedByIndex(indices[i], PR_TRUE);
+      break;
+    case nsMsgViewCommandType::unflagMessages:
+      rv = SetFlaggedByIndex(indices[i], PR_FALSE);
+      break;
+    case nsMsgViewCommandType::markThreadRead:
+      rv = SetThreadOfMsgReadByIndex(indices[i], imapUids, PR_TRUE);
+      break;
+    case nsMsgViewCommandType::label0:
+    case nsMsgViewCommandType::label1:
+    case nsMsgViewCommandType::label2:
+    case nsMsgViewCommandType::label3:
+    case nsMsgViewCommandType::label4:
+    case nsMsgViewCommandType::label5:
+      rv = SetLabelByIndex(indices[i], (command - nsMsgViewCommandType::label0));
+      break;
+    case nsMsgViewCommandType::junk:
+      rv = SetAsJunkByIndex(junkPlugin.get(), indices[i],
+                             nsIJunkMailPlugin::JUNK);
+      break;
+    case nsMsgViewCommandType::unjunk:
+    rv = SetAsJunkByIndex(junkPlugin.get(), indices[i], 
+                             nsIJunkMailPlugin::GOOD);
+      break;
+    case nsMsgViewCommandType::undeleteMsg:
+      break; // this is completely handled in the imap code below.
+    default:
+      NS_ASSERTION(PR_FALSE, "unhandled command");
+      break;
     }
   }
+
+  folder->EnableNotifications(nsIMsgFolder::allMessageCountNotifications, PR_TRUE, PR_TRUE /*dbBatching*/);
+
+  if (thisIsImapFolder)
+  {
+    imapMessageFlagsType flags = kNoImapMsgFlag;
+    PRBool commandIsLabelSet = PR_FALSE;
+    PRBool addFlags = PR_FALSE;
+    PRBool isRead = PR_FALSE;
+    
+    switch (command)
+    {
+    case nsMsgViewCommandType::markThreadRead:
+    case nsMsgViewCommandType::markMessagesRead:
+      flags |= kImapMsgSeenFlag;
+      addFlags = PR_TRUE;
+      break;
+    case nsMsgViewCommandType::markMessagesUnread:
+      flags |= kImapMsgSeenFlag;
+      addFlags = PR_FALSE;
+      break;
+    case nsMsgViewCommandType::toggleMessageRead:
+      {
+        flags |= kImapMsgSeenFlag;
+        m_db->IsRead(GetAt(indices[0]), &isRead);
+        if (isRead)
+          addFlags = PR_TRUE;
+        else
+          addFlags = PR_FALSE;
+      }
+      break;
+    case nsMsgViewCommandType::flagMessages:
+      flags |= kImapMsgFlaggedFlag;
+      addFlags = PR_TRUE;
+      break;
+    case nsMsgViewCommandType::unflagMessages:
+      flags |= kImapMsgFlaggedFlag;
+      addFlags = PR_FALSE;
+      break;
+    case nsMsgViewCommandType::label0:
+    case nsMsgViewCommandType::label1:
+    case nsMsgViewCommandType::label2:
+    case nsMsgViewCommandType::label3:
+    case nsMsgViewCommandType::label4:
+    case nsMsgViewCommandType::label5:
+      flags |= ((command - nsMsgViewCommandType::label0) << 9);
+      addFlags = (command != nsMsgViewCommandType::label0);
+      commandIsLabelSet = PR_TRUE;
+      break;
+    case nsMsgViewCommandType::undeleteMsg:
+      flags = kImapMsgDeletedFlag;
+      addFlags = PR_FALSE;
+      break;
+    case nsMsgViewCommandType::junk:
+        return imapFolder->StoreCustomKeywords(mMsgWindow,
+                    "Junk",
+                    "NonJunk",
+                    imapUids.GetArray(), imapUids.GetSize(),
+                    nsnull);
+    case nsMsgViewCommandType::unjunk:
+        return imapFolder->StoreCustomKeywords(mMsgWindow,
+                    "NonJunk",
+                    "Junk",
+                    imapUids.GetArray(), imapUids.GetSize(),
+                    nsnull);
+
+    default:
+      break;
+    }
+    
+    if (flags != kNoImapMsgFlag || commandIsLabelSet)	// can't get here without thisIsImapThreadPane == TRUE
+      imapFolder->StoreImapFlags(flags, addFlags, imapUids.GetArray(), imapUids.GetSize(), nsnull);
+    
+  }
+   
   return rv;
 }
+
 // view modifications methods by index
 
 // This method just removes the specified line from the view. It does
@@ -2549,6 +2558,8 @@ nsresult nsMsgDBView::DeleteMessages(nsIMsgWindow *window, nsMsgViewIndex *indic
   NS_NewISupportsArray(getter_AddRefs(messageArray));
   for (nsMsgViewIndex index = 0; index < (nsMsgViewIndex) numIndices; index++)
   {
+    if (m_flags[indices[index]] & MSG_VIEW_FLAG_DUMMY)
+      continue;
     nsMsgKey key = m_keys.GetAt(indices[index]);
     nsCOMPtr <nsIMsgDBHdr> msgHdr;
     rv = m_db->GetMsgHdrForKey(key, getter_AddRefs(msgHdr));
@@ -2574,8 +2585,6 @@ nsresult nsMsgDBView::DownloadForOffline(nsIMsgWindow *window, nsMsgViewIndex *i
   NS_NewISupportsArray(getter_AddRefs(messageArray));
   for (nsMsgViewIndex index = 0; index < (nsMsgViewIndex) numIndices; index++)
   {
-    if (m_flags[indices[index]] & MSG_VIEW_FLAG_DUMMY)
-      continue;
     nsMsgKey key = m_keys.GetAt(indices[index]);
     nsCOMPtr <nsIMsgDBHdr> msgHdr;
     rv = m_db->GetMsgHdrForKey(key, getter_AddRefs(msgHdr));
@@ -2728,12 +2737,10 @@ nsresult nsMsgDBView::SetStringPropertyByIndex(nsMsgViewIndex index, const char 
   return rv;
 }
 
-nsresult nsMsgDBView::SetJunkScoreByIndex(nsIJunkMailPlugin *aJunkPlugin,
+nsresult nsMsgDBView::SetAsJunkByIndex(nsIJunkMailPlugin *aJunkPlugin,
                                           nsMsgViewIndex aIndex,
-                                          nsMsgJunkStatus aNewClassification, 
-                                          PRBool aIsLastInBatch)
+                                          nsMsgJunkStatus aNewClassification)
 {
-
     // get the message header (need this to get string properties)
     //
     nsCOMPtr <nsIMsgDBHdr> msgHdr;
@@ -2774,13 +2781,6 @@ nsresult nsMsgDBView::SetJunkScoreByIndex(nsIJunkMailPlugin *aJunkPlugin,
     rv = GetURIForViewIndex(aIndex, getter_Copies(uri));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    if ( aIsLastInBatch ) {
-        // if there's already a batch in progress, just replace the URI,
-        // thus causing the batches to be coalesced
-        //
-        mLastJunkUriInBatch = uri;
-    }
-
     // tell the plugin about this change, so that it can (potentially)
     // adjust its database appropriately
     //
@@ -2816,106 +2816,146 @@ NS_IMETHODIMP
 nsMsgDBView::OnMessageClassified(const char *aMsgURI,
                                  nsMsgJunkStatus aClassification)
 {
-  // we can't just use m_folder
-  // as this might be from a cross folder search
-  // see bug #180477
-  nsCOMPtr <nsIMsgFolder> folder;
-  nsresult rv = GetFolderFromMsgURI(aMsgURI, getter_AddRefs(folder));
-  NS_ENSURE_SUCCESS(rv,rv);
+  // Note: we know all messages in a batch have the same
+  // classification, since unlike OnMessageClassified
+  // methods in other classes (such as nsLocalMailFolder
+  // and nsImapMailFolder), this class, nsMsgDBView, currently
+  // only triggers message classifications due to a command to
+  // mark some of the messages in the view as junk, or as not
+  // junk - so the classification is dictated to the filter,
+  // not suggested by it.
+  //
+  // for this reason the only thing we (may) have to do is
+  // perform the action on all of the junk messages
+  //
+
+  NS_ASSERTION( (aClassification == nsIJunkMailPlugin::GOOD) || (mJunkIndices != nsnull), "the classification of a manually-marked junk message has been classified as junk, yet there seem to be no such outstanding messages");
   
-  nsCOMPtr<nsIMsgIncomingServer> server;
-  rv = folder->GetServer(getter_AddRefs(server));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // save off the msg hdr, if we need to
-  rv = SaveJunkMsgForAction(server, aMsgURI, aClassification);
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  // is this the last url in the batch?
-  if (mLastJunkUriInBatch.Equals(aMsgURI))
-  {    
-    // get the filter, and QI to the interface we want
-    nsCOMPtr<nsIMsgFilterPlugin> filterPlugin;
-    rv = server->GetSpamFilterPlugin(getter_AddRefs(filterPlugin));
-    NS_ENSURE_SUCCESS(rv, rv);
-    
-    nsCOMPtr<nsIJunkMailPlugin> junkPlugin = do_QueryInterface(filterPlugin, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    
-    // close out existing coalesced junk batches 
-    for ( ; mOutstandingJunkBatches > 0 ; --mOutstandingJunkBatches ) 
-    {    
-      // tell the plugin that all outstanding batches from us
-      // have finished.
-      rv = junkPlugin->EndBatch();
-      NS_ENSURE_SUCCESS(rv, rv);
+  // is this the last message in the batch?
+  
+  if (--mNumMessagesRemainingInBatch == 0)
+  {
+    if ( mNumJunkIndices > 0 )
+    {
+      PerformActionsOnJunkMsgs();
+      nsMemory::Free(mJunkIndices);
+      mJunkIndices = nsnull;
+      mNumJunkIndices = 0;
     }
-    
-    rv = PerformActionOnJunkMsgs();
-    NS_ENSURE_SUCCESS(rv,rv);
   }
   return NS_OK;
 }
 
 nsresult
-nsMsgDBView::PerformActionOnJunkMsgs()
+nsMsgDBView::PerformActionsOnJunkMsgs()
 {
-  PRUint32 numIndices = mJunkKeys.GetSize();
-  // nothing to do, bail out
-  if (!numIndices) 
-  {
-    mJunkTargetFolder = nsnull; // just to be safe
-    return NS_OK;
-  }
+  PRBool movingJunkMessages,markingJunkMessagesRead;
+  nsCOMPtr <nsIMsgFolder> junkTargetFolder;
 
-  nsMsgViewIndex *indices = (nsMsgViewIndex *)nsMemory::Alloc(numIndices * sizeof(nsMsgViewIndex));
-  if (!indices) 
-    return NS_ERROR_OUT_OF_MEMORY;
-
-  for (PRUint32 i=0;i<numIndices;i++)
-    indices[i] = FindKey(mJunkKeys.GetAt(i), PR_TRUE /* expand */); // what if we don't find the index?
-
-  // tell the FE to call SetNextMessageAfterDelete() because a delete is coming
-  nsresult rv = mCommandUpdater->UpdateNextMessageAfterDelete();
-  NS_ENSURE_SUCCESS(rv,rv);
+  // question: is it possible for the junk mail move/mark as read
+  // options to change after we've handled some of the batches but
+  // before we've handled the last one? if so, we can decide when
+  // handling each batch whether to save its indices or forget
+  // them, and then perform the known action when handling the 
+  // last batch; however if the options can change between batches
+  // we may have to remember in separate arrays the indices to
+  // mark as read and the indices to move
+  //
+  // for now, we assume the options do not change between batches
+  //
   
-  if (numIndices > 1)
-    NS_QuickSort(indices, numIndices, sizeof(nsMsgViewIndex), CompareViewIndices, nsnull);
-  NoteStartChange(nsMsgViewNotificationCode::none, 0, 0);
-  if (mJunkTargetFolder) 
-    rv = ApplyCommandToIndicesWithFolder(nsMsgViewCommandType::moveMessages, indices, numIndices, mJunkTargetFolder);
-  else
-    rv = ApplyCommandToIndices(nsMsgViewCommandType::deleteMsg, indices, numIndices);
-  NoteEndChange(nsMsgViewNotificationCode::none, 0, 0);
+  nsresult rv = DetermineActionsForJunkMsgs(&movingJunkMessages, &markingJunkMessagesRead, getter_AddRefs(junkTargetFolder));
+  NS_ENSURE_SUCCESS(rv,rv);
+	
+  // nothing to do, bail out
+  if (!(movingJunkMessages || markingJunkMessagesRead))
+    return NS_OK;
 
-  mJunkKeys.RemoveAll();
-  mJunkTargetFolder = nsnull;
-  nsMemory::Free(indices);
+  NS_ASSERTION( (mNumJunkIndices > 0), "no indices of marked-as-junk messages to act on");
 
-  NS_ASSERTION(NS_SUCCEEDED(rv), "move or delete failed");
+  if (mNumJunkIndices > 1)
+    NS_QuickSort(mJunkIndices, mNumJunkIndices, sizeof(nsMsgViewIndex), CompareViewIndices, nsnull);
+
+  if (markingJunkMessagesRead)
+  {
+    // notes on marking junk as read:
+    // 1. there are 2 occasions on which junk messages are marked as 
+    //    read: after a manual marking (here and in the front end) and after
+    //    automatic classification by the bayesian filter (see code for local
+    //    mail folders and for imap mail folders). The markAsReadOnSpam pref
+    //    only applies to the latter, the former does not have a pref and is
+    //    default behaviour (see bug 220933).
+    // 2. even though move/delete on manual mark may be
+    //    turned off, we might still need to mark as read
+
+    NoteStartChange(nsMsgViewNotificationCode::none, 0, 0);
+    rv = ApplyCommandToIndices(nsMsgViewCommandType::markMessagesRead, mJunkIndices, mNumJunkIndices);
+    NoteEndChange(nsMsgViewNotificationCode::none, 0, 0);
+    NS_ASSERTION(NS_SUCCEEDED(rv), "marking marked-as-junk messages as read failed");
+  }
+  if (movingJunkMessages) 
+  {
+    // tell the FE to call SetNextMessageAfterDelete() because a delete is coming
+    rv = mCommandUpdater->UpdateNextMessageAfterDelete();
+    NS_ENSURE_SUCCESS(rv,rv);
+  
+    NoteStartChange(nsMsgViewNotificationCode::none, 0, 0);
+    if (junkTargetFolder) 
+      rv = ApplyCommandToIndicesWithFolder(nsMsgViewCommandType::moveMessages, mJunkIndices, mNumJunkIndices, junkTargetFolder);
+    else
+      rv = ApplyCommandToIndices(nsMsgViewCommandType::deleteMsg, mJunkIndices, mNumJunkIndices);
+    NoteEndChange(nsMsgViewNotificationCode::none, 0, 0);
+
+    NS_ASSERTION(NS_SUCCEEDED(rv), "move or deletion of marked-as-junk messages failed");
+  }
   return rv;
 }
 
 nsresult
-nsMsgDBView::SaveJunkMsgForAction(nsIMsgIncomingServer *aServer, const char *aMsgURI, nsMsgJunkStatus aClassification)
+nsMsgDBView::DetermineActionsForJunkMsgs(PRBool* movingJunkMessages, PRBool* markingJunkMessagesRead, nsIMsgFolder** junkTargetFolder)
 {
-  // we only care when the message gets marked as junk
-  if (aClassification == nsIJunkMailPlugin::GOOD)
-    return NS_OK;
+  // there are two possible actions which may be performed
+  // on messages marked as spam: marking as read and moving
+  // somewhere...
+
+  *movingJunkMessages = false;
+  *markingJunkMessagesRead = false;
+  
+  // ... the 'somewhere', junkTargetFolder, can be a folder,
+  // but if it remains null we'll delete the messages
+  
+  *junkTargetFolder = nsnull;
+
+  nsCOMPtr<nsIMsgFolder> folder;
+  nsresult rv = GetFolderForViewIndex(mJunkIndices[0], getter_AddRefs(folder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIMsgIncomingServer> server;
+  rv = folder->GetServer(getter_AddRefs(server));
+  NS_ENSURE_SUCCESS(rv, rv);
     
   nsCOMPtr <nsISpamSettings> spamSettings;
-  nsresult rv = aServer->GetSpamSettings(getter_AddRefs(spamSettings));
+  rv = server->GetSpamSettings(getter_AddRefs(spamSettings));
   NS_ENSURE_SUCCESS(rv, rv);
   
-  // if the spam feature is disabled, do nothing
-  // the user could still manually mark spam if the feature is disabled
-  // but let's not move or delete in that scenario
+  // if the spam system is completely disabled we won't do anything
+  // question: is this a valid choice?
   PRInt32 spamLevel;
   (void)spamSettings->GetLevel(&spamLevel);
   if (!spamLevel)
     return NS_OK;
     
-  // if the manual mark functionality is turned off, bail out.
+  // When the user explicitly marks a message as junk, he doesn't want it to
+  // stay unread (even if he does want that for automatically-classified ones),
+  // so we always mark as read here (pref-independent, see bug 220933).
+  // Note that this behaviour should match the one in the front end for marking
+  // as junk via toolbar/context menu.
+  *markingJunkMessagesRead = true;
+
+
+  // now let's determine whether we'll be taking the second action,
+  // the move / deletion (and also determine which of these two)
+   
   PRBool manualMark; 
   (void)spamSettings->GetManualMark(&manualMark);
   if (!manualMark)
@@ -2923,28 +2963,14 @@ nsMsgDBView::SaveJunkMsgForAction(nsIMsgIncomingServer *aServer, const char *aMs
   
   PRInt32 manualMarkMode;
   (void)spamSettings->GetManualMarkMode(&manualMarkMode);
+  NS_ASSERTION(manualMarkMode == nsISpamSettings::MANUAL_MARK_MODE_MOVE
+            || manualMarkMode == nsISpamSettings::MANUAL_MARK_MODE_DELETE,
+            "bad manual mark mode");
   
-  nsCOMPtr <nsIMsgMessageService> msgMessageService;
-  rv = GetMessageServiceFromURI(aMsgURI, getter_AddRefs(msgMessageService));
-  NS_ENSURE_SUCCESS(rv,rv);
-  
-  nsCOMPtr <nsIMsgDBHdr> msgHdr;
-  rv = msgMessageService->MessageURIToMsgHdr(aMsgURI, getter_AddRefs(msgHdr));
-  NS_ENSURE_SUCCESS(rv,rv);
-  
-  nsCOMPtr <nsIMsgFolder> srcFolder;
-  rv = msgHdr->GetFolder(getter_AddRefs(srcFolder));
-  NS_ENSURE_SUCCESS(rv,rv);
-  
-  nsMsgKey msgKey;
-  rv = msgHdr->GetMessageKey(&msgKey);
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  // we can execute the move or delete
+  // the folder must allow us to execute the move (or the deletion)
   PRUint32 folderFlags;
-  srcFolder->GetFlags(&folderFlags);
+  folder->GetFlags(&folderFlags);
   
-  NS_ASSERTION(manualMarkMode == nsISpamSettings::MANUAL_MARK_MODE_MOVE || manualMarkMode == nsISpamSettings::MANUAL_MARK_MODE_DELETE, "bad mode");
   if (manualMarkMode == nsISpamSettings::MANUAL_MARK_MODE_MOVE) 
   {
     PRBool moveOnSpam;
@@ -2963,48 +2989,25 @@ nsMsgDBView::SaveJunkMsgForAction(nsIMsgIncomingServer *aServer, const char *aMs
     rv = spamSettings->GetSpamFolderURI(getter_Copies(spamFolderURI));
     NS_ENSURE_SUCCESS(rv,rv);
     
-    NS_ASSERTION(!spamFolderURI.IsEmpty(), "spam folder is empty, can't move");
+    NS_ASSERTION(!spamFolderURI.IsEmpty(), "spam folder URI is empty, can't move");
     if (!spamFolderURI.IsEmpty()) 
     {
-      nsCOMPtr<nsIMsgFolder> destFolder;
-      rv = GetExistingFolder(spamFolderURI.get(), getter_AddRefs(destFolder));
-      if (NS_SUCCEEDED(rv) && destFolder)
-      {
-#ifdef DEBUG
-        // double check the assumptions
-        if (mJunkKeys.GetSize())
-        {
-          NS_ASSERTION(mJunkTargetFolder, "should have a junk folder at this point");
-          NS_ASSERTION(mJunkTargetFolder.get() == destFolder.get(), "junk folder doesn't match");
-        }
-        else
-          NS_ASSERTION(mJunkTargetFolder == nsnull, "junk folder should be null, no keys yet");
-#endif
-        // save off msg key and folder
-        mJunkKeys.Add(msgKey);
-        if (!mJunkTargetFolder)
-          mJunkTargetFolder = destFolder;
-      }
+      //nsCOMPtr<nsIMsgFolder> destFolder;
+      rv = GetExistingFolder(spamFolderURI.get(), junkTargetFolder);
+      NS_ENSURE_SUCCESS(rv,rv);
+
+      *movingJunkMessages = true;
     }
+    return NS_OK;
   }
-  else // manualMarkMode == nsISpamSettings::MANUAL_MARK_MODE_DELETE)
-  {
-    // if this is in the trash, don't delete?
-    if (folderFlags & MSG_FOLDER_FLAG_TRASH)
-      return NS_OK;
-    
-    // we can't delete, bail out
-    PRBool canDelete;
-    (void)srcFolder->GetCanDeleteMessages(&canDelete);
-    if (!canDelete)
-      return NS_OK;
-    
-    // save off msg key
-    mJunkKeys.Add(msgKey);
-    NS_ASSERTION(mJunkTargetFolder == nsnull, "should be null");
-    mJunkTargetFolder = nsnull;  // should already be null
-  }
-  return NS_OK;
+  
+  // at this point manualMarkMode == nsISpamSettings::MANUAL_MARK_MODE_DELETE)
+
+  // if this is in the trash, let's not delete
+  if (folderFlags & MSG_FOLDER_FLAG_TRASH)
+    return NS_OK;
+
+  return folder->GetCanDeleteMessages(movingJunkMessages);
 }
 
 // reversing threads involves reversing the threads but leaving the
@@ -3208,7 +3211,7 @@ FnSortIdDWord(const void *pItem1, const void *pItem2, void *privateData)
 const int kMaxSubjectKey = 160;
 const int kMaxLocationKey = 160;  // also used for account
 const int kMaxAuthorKey = 160;
-const int kMaxRecipientKey = 80;
+const int kMaxRecipientKey = 80; 
 
 nsresult nsMsgDBView::GetFieldTypeAndLenForSort(nsMsgViewSortTypeValue sortType, PRUint16 *pMaxLen, eFieldType *pFieldType)
 {
@@ -3256,7 +3259,7 @@ nsresult nsMsgDBView::GetFieldTypeAndLenForSort(nsMsgViewSortTypeValue sortType,
 
 #define MSG_STATUS_MASK (MSG_FLAG_REPLIED | MSG_FLAG_FORWARDED)
 
-nsresult nsMsgDBView::GetStatusSortValue(nsIMsgHdr *msgHdr, PRUint32 *result)
+nsresult nsMsgDBView::GetStatusSortValue(nsIMsgDBHdr *msgHdr, PRUint32 *result)
 {
   NS_ENSURE_ARG_POINTER(msgHdr);
   NS_ENSURE_ARG_POINTER(result);
@@ -3380,7 +3383,7 @@ nsresult nsMsgDBView::GetLongField(nsIMsgDBHdr *msgHdr, nsMsgViewSortTypeValue s
 
 
 nsresult 
-nsMsgDBView::GetCollationKey(nsIMsgHdr *msgHdr, nsMsgViewSortTypeValue sortType, PRUint8 **result, PRUint32 *len)
+nsMsgDBView::GetCollationKey(nsIMsgDBHdr *msgHdr, nsMsgViewSortTypeValue sortType, PRUint8 **result, PRUint32 *len)
 {
   nsresult rv;
   NS_ENSURE_ARG_POINTER(msgHdr);
@@ -3432,7 +3435,7 @@ nsMsgDBView::GetCollationKey(nsIMsgHdr *msgHdr, nsMsgViewSortTypeValue sortType,
 // As the location collation key is created getting folder from the msgHdr,
 // it is defined in this file and not from the db.
 nsresult 
-nsMsgDBView::GetLocationCollationKey(nsIMsgHdr *msgHdr, PRUint8 **result, PRUint32 *len)
+nsMsgDBView::GetLocationCollationKey(nsIMsgDBHdr *msgHdr, PRUint8 **result, PRUint32 *len)
 {
     nsCOMPtr <nsIMsgFolder> folder;
 
@@ -3703,22 +3706,22 @@ void nsMsgDBView::FreeAll(nsVoidArray *ptrs)
 
 nsMsgViewIndex nsMsgDBView::GetIndexOfFirstDisplayedKeyInThread(nsIMsgThread *threadHdr)
 {
-	nsMsgViewIndex	retIndex = nsMsgViewIndex_None;
-	PRUint32	childIndex = 0;
-	// We could speed up the unreadOnly view by starting our search with the first
-	// unread message in the thread. Sometimes, that will be wrong, however, so
-	// let's skip it until we're sure it's neccessary.
-//	(m_viewFlags & nsMsgViewFlagsType::kUnreadOnly) 
-//		? threadHdr->GetFirstUnreadKey(m_db) : threadHdr->GetChildAt(0);
+  nsMsgViewIndex  retIndex = nsMsgViewIndex_None;
+  PRUint32        childIndex = 0;
+  // We could speed up the unreadOnly view by starting our search with the first
+  // unread message in the thread. Sometimes, that will be wrong, however, so
+  // let's skip it until we're sure it's necessary.
+  //	(m_viewFlags & nsMsgViewFlagsType::kUnreadOnly) 
+  //		? threadHdr->GetFirstUnreadKey(m_db) : threadHdr->GetChildAt(0);
   PRUint32 numThreadChildren;
   threadHdr->GetNumChildren(&numThreadChildren);
-	while (retIndex == nsMsgViewIndex_None && childIndex < numThreadChildren)
-	{
-		nsMsgKey childKey;
+  while (retIndex == nsMsgViewIndex_None && childIndex < numThreadChildren)
+  {
+    nsMsgKey childKey;
     threadHdr->GetChildKeyAt(childIndex++, &childKey);
-		retIndex = FindViewIndex(childKey);
-	}
-	return retIndex;
+    retIndex = FindViewIndex(childKey);
+  }
+  return retIndex;
 }
 
 nsresult nsMsgDBView::GetFirstMessageHdrToDisplayInThread(nsIMsgThread *threadHdr, nsIMsgDBHdr **result)
@@ -3831,7 +3834,7 @@ nsMsgViewIndex	nsMsgDBView::FindKey(nsMsgKey key, PRBool expand)
   retIndex = (nsMsgViewIndex) (m_keys.FindIndex(key));
   // for dummy headers, try to expand if the caller says so. And if the thread is
   // expanded, ignore the dummy header and return the real header index.
-  if (retIndex != nsMsgViewIndex_None && m_flags[retIndex] & MSG_VIEW_FLAG_DUMMY && !expand && !(m_flags[retIndex] & MSG_FLAG_ELIDED))
+  if (retIndex != nsMsgViewIndex_None && m_flags[retIndex] & MSG_VIEW_FLAG_DUMMY &&  !(m_flags[retIndex] & MSG_FLAG_ELIDED))
     return (nsMsgViewIndex) m_keys.FindIndex(key, retIndex + 1);
   if (key != nsMsgKey_None && (retIndex == nsMsgViewIndex_None || m_flags[retIndex] & MSG_VIEW_FLAG_DUMMY)
     && expand && m_db)
@@ -3934,7 +3937,7 @@ nsresult nsMsgDBView::ToggleExpansion(nsMsgViewIndex index, PRUint32 *numChanged
 
 	// if not a thread, or doesn't have children, no expand/collapse
 	// If we add sub-thread expand collapse, this will need to be relaxed
-	if (!(flags & MSG_VIEW_FLAG_ISTHREAD) || !(flags && MSG_VIEW_FLAG_HASCHILDREN))
+	if (!(flags & MSG_VIEW_FLAG_ISTHREAD) || !(flags & MSG_VIEW_FLAG_HASCHILDREN))
 		return NS_MSG_MESSAGE_NOT_FOUND;
 	if (flags & MSG_FLAG_ELIDED)
 		return ExpandByIndex(threadIndex, numChanged);
@@ -3966,23 +3969,28 @@ nsresult nsMsgDBView::ExpandAndSelectThreadByIndex(nsMsgViewIndex index, PRBool 
   nsMsgViewIndex threadIndex;
   PRBool inThreadedMode = (m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay);
   
-  if (inThreadedMode) {
+  if (inThreadedMode) 
+  {
     threadIndex = ThreadIndexOfMsg(GetAt(index), index);
-    if (threadIndex == nsMsgViewIndex_None) {
+    if (threadIndex == nsMsgViewIndex_None) 
+    {
       NS_ASSERTION(PR_FALSE, "couldn't find thread");
       return NS_MSG_MESSAGE_NOT_FOUND;
     }
   }
-  else {
+  else 
+  {
     threadIndex = index;
   }
 
   PRInt32 flags = m_flags[threadIndex];
   PRInt32 count = 0;
 
-  if (inThreadedMode && (flags & MSG_VIEW_FLAG_ISTHREAD) && (flags && MSG_VIEW_FLAG_HASCHILDREN)) {
+  if (inThreadedMode && (flags & MSG_VIEW_FLAG_ISTHREAD) && (flags & MSG_VIEW_FLAG_HASCHILDREN)) 
+  {
     // if closed, expand this thread.
-    if (flags & MSG_FLAG_ELIDED) {
+    if (flags & MSG_FLAG_ELIDED) 
+    {
       PRUint32 numExpanded;
       rv = ExpandByIndex(threadIndex, &numExpanded);
       NS_ENSURE_SUCCESS(rv,rv);
@@ -3992,7 +4000,8 @@ nsresult nsMsgDBView::ExpandAndSelectThreadByIndex(nsMsgViewIndex index, PRBool 
     // so we know how many to select
     count = CountExpandedThread(threadIndex); 
   }
-  else {
+  else 
+  {
     count = 1;
   }
   NS_ASSERTION(count > 0, "bad count");
@@ -4063,13 +4072,7 @@ nsresult nsMsgDBView::ExpandByIndex(nsMsgViewIndex index, PRUint32 *pNumExpanded
   }
   else
     rv = ListIdsInThread(pThread,  index, &numExpanded);
- 
-  // make sure that the has children flag is set appropriately. This is useful
-  // when switching to a threaded view from a flat view, when new headers
-  // have been added to the threaded view.
-  if (numExpanded > 0)
-    m_flags[index] = flags | MSG_VIEW_FLAG_HASCHILDREN;
-
+  
   NoteStartChange(index + 1, numExpanded, nsMsgViewNotificationCode::insertOrDelete);
   
   NoteEndChange(index + 1, numExpanded, nsMsgViewNotificationCode::insertOrDelete);
@@ -4214,20 +4217,10 @@ nsMsgViewIndex nsMsgDBView::GetIndexForThread(nsIMsgDBHdr *hdr)
   return retIndex;
 }
 
-
-nsMsgViewIndex nsMsgDBView::GetInsertIndex(nsIMsgDBHdr *msgHdr)
+nsMsgViewIndex nsMsgDBView::GetInsertIndexHelper(nsIMsgDBHdr *msgHdr, nsMsgKeyArray *keys, 
+                                                 nsMsgViewSortOrderValue sortOrder, nsMsgViewSortTypeValue sortType)
 {
-  nsMsgViewIndex highIndex = GetSize();
-  if (highIndex == 0)
-    return highIndex;
-
-  if ((m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay) != 0
-    && !(m_viewFlags & nsMsgViewFlagsType::kGroupBySort)
-    && m_sortOrder != nsMsgViewSortType::byId)
-  {
-    return GetIndexForThread(msgHdr);
-  }
-
+  nsMsgViewIndex highIndex = keys->GetSize();
   nsMsgViewIndex lowIndex = 0;
   IdKeyPtr EntryInfo1, EntryInfo2;
   EntryInfo1.key = nsnull;
@@ -4237,7 +4230,7 @@ nsMsgViewIndex nsMsgDBView::GetInsertIndex(nsIMsgDBHdr *msgHdr)
   nsresult rv;
   PRUint16	maxLen;
   eFieldType fieldType;
-  rv = GetFieldTypeAndLenForSort(m_sortType, &maxLen, &fieldType);
+  rv = GetFieldTypeAndLenForSort(sortType, &maxLen, &fieldType);
   const void *pValue1 = &EntryInfo1, *pValue2 = &EntryInfo2;
   
   int (* PR_CALLBACK comparisonFun) (const void *pItem1, const void *pItem2, void *privateData)=nsnull;
@@ -4246,18 +4239,16 @@ nsMsgViewIndex nsMsgDBView::GetInsertIndex(nsIMsgDBHdr *msgHdr)
   switch (fieldType)
   {
     case kCollationKey:
-      rv = GetCollationKey(msgHdr, m_sortType, &EntryInfo1.key, &EntryInfo1.dword);
+      rv = GetCollationKey(msgHdr, sortType, &EntryInfo1.key, &EntryInfo1.dword);
       NS_ASSERTION(NS_SUCCEEDED(rv),"failed to create collation key");
       comparisonFun = FnSortIdKeyPtr;
       comparisonContext = m_db.get();
       break;
     case kU32:
-      if (m_sortType == nsMsgViewSortType::byId) {
+      if (sortType == nsMsgViewSortType::byId) 
         EntryInfo1.dword = EntryInfo1.id;
-      }
-      else {
-        GetLongField(msgHdr, m_sortType, &EntryInfo1.dword);
-      }
+      else
+        GetLongField(msgHdr, sortType, &EntryInfo1.dword);
       comparisonFun = FnSortIdDWord;
       break;
     default:
@@ -4266,7 +4257,7 @@ nsMsgViewIndex nsMsgDBView::GetInsertIndex(nsIMsgDBHdr *msgHdr)
   while (highIndex > lowIndex)
   {
     nsMsgViewIndex tryIndex = (lowIndex + highIndex - 1) / 2;
-    EntryInfo2.id = GetAt(tryIndex);
+    EntryInfo2.id = keys->GetAt(tryIndex);
     nsCOMPtr <nsIMsgDBHdr> tryHdr;
     rv = m_db->GetMsgHdrForKey(EntryInfo2.id, getter_AddRefs(tryHdr));
     if (!tryHdr)
@@ -4274,16 +4265,16 @@ nsMsgViewIndex nsMsgDBView::GetInsertIndex(nsIMsgDBHdr *msgHdr)
     if (fieldType == kCollationKey)
     {
       PR_FREEIF(EntryInfo2.key);
-      rv = GetCollationKey(tryHdr, m_sortType, &EntryInfo2.key, &EntryInfo2.dword);
+      rv = GetCollationKey(tryHdr, sortType, &EntryInfo2.key, &EntryInfo2.dword);
       NS_ASSERTION(NS_SUCCEEDED(rv),"failed to create collation key");
     }
     else if (fieldType == kU32)
     {
-      if (m_sortType == nsMsgViewSortType::byId) {
+      if (sortType == nsMsgViewSortType::byId) {
         EntryInfo2.dword = EntryInfo2.id;
       }
       else {
-        GetLongField(tryHdr, m_sortType, &EntryInfo2.dword);
+        GetLongField(tryHdr, sortType, &EntryInfo2.dword);
       }
     }
     retStatus = (*comparisonFun)(&pValue1, &pValue2, comparisonContext);
@@ -4292,7 +4283,7 @@ nsMsgViewIndex nsMsgDBView::GetInsertIndex(nsIMsgDBHdr *msgHdr)
       highIndex = tryIndex;
       break;
     }
-    if (m_sortOrder == nsMsgViewSortOrder::descending)	//switch retStatus based on sort order
+    if (sortOrder == nsMsgViewSortOrder::descending)	//switch retStatus based on sort order
       retStatus = ~retStatus;
     
     if (retStatus < 0)
@@ -4310,30 +4301,45 @@ nsMsgViewIndex nsMsgDBView::GetInsertIndex(nsIMsgDBHdr *msgHdr)
   return highIndex;
 }
 
+nsMsgViewIndex nsMsgDBView::GetInsertIndex(nsIMsgDBHdr *msgHdr)
+{
+  if (!GetSize())
+    return 0;
+
+  if ((m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay) != 0
+        && !(m_viewFlags & nsMsgViewFlagsType::kGroupBySort)
+        && m_sortOrder != nsMsgViewSortType::byId)
+    return GetIndexForThread(msgHdr);
+
+  return GetInsertIndexHelper(msgHdr, &m_keys, m_sortOrder, m_sortType);
+}
+
 nsresult	nsMsgDBView::AddHdr(nsIMsgDBHdr *msgHdr)
 {
   PRUint32	flags = 0;
 #ifdef DEBUG_bienvenu
   NS_ASSERTION((int) m_keys.GetSize() == m_flags.GetSize() && (int) m_keys.GetSize() == m_levels.GetSize(), "view arrays out of sync!");
 #endif
-  msgHdr->GetFlags(&flags);
-  if (flags & MSG_FLAG_IGNORED && !GetShowingIgnored())
-    return NS_OK;
-  
+
+  if (!GetShowingIgnored()) 
+  {
+    nsCOMPtr <nsIMsgThread> thread;
+    m_db->GetThreadContainingMsgHdr(msgHdr, getter_AddRefs(thread));
+    if (thread)
+    {
+      thread->GetFlags(&flags);
+      if (flags & MSG_FLAG_IGNORED)
+        return NS_OK;
+    }
+  }
+
   nsMsgKey msgKey, threadId;
   nsMsgKey threadParent;
   msgHdr->GetMessageKey(&msgKey);
   msgHdr->GetThreadId(&threadId);
   msgHdr->GetThreadParent(&threadParent);
-  
-  nsCOMPtr <nsIMsgThread> thread;
-  m_db->GetThreadContainingMsgHdr(msgHdr, getter_AddRefs(thread));
-  if (thread)
-  {
-    PRUint32 threadFlags;
-    thread->GetFlags(&threadFlags);
-    flags |= threadFlags;
-  }
+
+  msgHdr->GetFlags(&flags);
   // ### this isn't quite right, is it? Should be checking that our thread parent key is none?
   if (threadParent == nsMsgKey_None) 
     flags |= MSG_VIEW_FLAG_ISTHREAD;
@@ -4539,6 +4545,12 @@ PRInt32 nsMsgDBView::FindLevelInThread(nsIMsgDBHdr *msgHdr, nsMsgViewIndex start
       NS_ERROR("msgKey == parentKey, or GetMsgHdrForKey failed, this used to be an infinte loop condition");
       curMsgHdr = nsnull;
     }
+    else
+    {
+      // need to update msgKey so the check for a msgHdr with matching 
+      // key+parentKey will work after first time through loop
+      curMsgHdr->GetMessageKey(&msgKey);
+    }
   }
   return 1;
 }
@@ -4619,7 +4631,7 @@ NS_IMETHODIMP nsMsgDBView::OnHdrChange(nsIMsgDBHdr *aHdrChanged, PRUint32 aOldFl
       if (threadIndex != nsMsgViewIndex_None && threadIndex != index)
         NoteChange(threadIndex, 1, nsMsgViewNotificationCode::changed);
     }
-  }
+ }
   // don't need to propagate notifications, right?
   return NS_OK;
 }
@@ -4794,10 +4806,11 @@ NS_IMETHODIMP nsMsgDBView::SetViewFlags(nsMsgViewFlagsTypeValue aViewFlags)
   }
   m_viewFlags = aViewFlags;
   
-  if (m_folder)
+  if (m_viewFolder)
   {
+    nsCOMPtr <nsIMsgDatabase> db;
     nsCOMPtr <nsIDBFolderInfo> folderInfo;
-    nsresult rv = m_folder->GetDBFolderInfoAndDB(getter_AddRefs(folderInfo), getter_AddRefs(m_db));
+    nsresult rv = m_viewFolder->GetDBFolderInfoAndDB(getter_AddRefs(folderInfo), getter_AddRefs(db));
     NS_ENSURE_SUCCESS(rv,rv);
     return folderInfo->SetViewFlags(aViewFlags);
   }
@@ -5074,24 +5087,17 @@ nsresult nsMsgDBView::NavigateFromPos(nsMsgNavigationTypeValue motion, nsMsgView
         case nsMsgNavigationType::toggleThreadKilled:
             {
                 PRBool resultKilled;
-
-                if (startIndex == nsMsgViewIndex_None) 
-                {
-                    NS_ASSERTION(0,"startIndex == nsMsgViewIndex_None");
-                    break;
-                }
-                threadIndex = ThreadIndexOfMsg(GetAt(startIndex), startIndex);
-                ToggleIgnored(&startIndex, 1, &resultKilled);
+                nsUInt32Array selection;
+                GetSelectedIndices(&selection);
+                ToggleIgnored(selection.GetData(), selection.GetSize(), &threadIndex, &resultKilled);
                 if (resultKilled) 
                 {
-                    if (threadIndex != nsMsgViewIndex_None)
-                        CollapseByIndex(threadIndex, nsnull);
                     return NavigateFromPos(nsMsgNavigationType::nextUnreadThread, threadIndex, pResultKey, pResultIndex, pThreadIndex, PR_TRUE);
                 }
                 else 
                 {
-                    *pResultIndex = startIndex;
-                    *pResultKey = m_keys.GetAt(*pResultIndex);
+                    *pResultIndex = nsMsgViewIndex_None;
+                    *pResultKey = nsMsgKey_None;
                     return NS_OK;
                 }
             }
@@ -5375,44 +5381,46 @@ nsresult nsMsgDBView::SetExtraFlag(nsMsgViewIndex index, PRUint32 extraflag)
 }
 
 
-nsresult nsMsgDBView::ToggleIgnored(nsMsgViewIndex * indices, PRInt32 numIndices, PRBool *resultToggleState)
+nsresult nsMsgDBView::ToggleIgnored(nsMsgViewIndex * indices, PRInt32 numIndices, nsMsgViewIndex *resultIndex, PRBool *resultToggleState)
 {
-  nsresult rv = NS_OK;
   nsCOMPtr <nsIMsgThread> thread;
-  
-  if (numIndices == 1)
+
+  // Ignored state is toggled based on the first selected thread
+  if (numIndices > 1)
+    NS_QuickSort(indices, numIndices, sizeof(nsMsgViewIndex), CompareViewIndices, nsnull);
+  nsMsgViewIndex threadIndex = GetThreadFromMsgIndex(indices[0], getter_AddRefs(thread));
+  PRUint32 threadFlags;
+  thread->GetFlags(&threadFlags);
+  PRUint32 ignored = threadFlags & MSG_FLAG_IGNORED;
+
+  // Process threads in reverse order
+  // Otherwise collapsing the threads will invalidate the indices
+  threadIndex = nsMsgViewIndex_None;
+  while (numIndices)
   {
-    nsMsgViewIndex    threadIndex = GetThreadFromMsgIndex(*indices, getter_AddRefs(thread));
-    if (thread)
+    numIndices--;
+    if (indices[numIndices] < threadIndex)
     {
-      rv = ToggleThreadIgnored(thread, threadIndex);
-      if (resultToggleState)
-      {
-        PRUint32 threadFlags;
-        thread->GetFlags(&threadFlags);
-        *resultToggleState = (threadFlags & MSG_FLAG_IGNORED) ? PR_TRUE : PR_FALSE;
-      }
+      threadIndex = GetThreadFromMsgIndex(indices[numIndices], getter_AddRefs(thread));
+      thread->GetFlags(&threadFlags);
+      if ((threadFlags & MSG_FLAG_IGNORED) == ignored)
+        SetThreadIgnored(thread, threadIndex, !ignored);
     }
   }
-  else
-  {
-    if (numIndices > 1)
-      NS_QuickSort(indices, numIndices, sizeof(nsMsgViewIndex), CompareViewIndices, nsnull);
-    for (int curIndex = numIndices - 1; curIndex >= 0; curIndex--)
-    {
-      // here we need to build up the unique threads, and mark them ignored.
-      nsMsgViewIndex threadIndex;
-      threadIndex = GetThreadFromMsgIndex(*indices, getter_AddRefs(thread));
-    }
-  }
-  return rv;
+
+  if (resultIndex)
+    *resultIndex = threadIndex;
+  if (resultToggleState)
+    *resultToggleState = !ignored;
+
+  return NS_OK;
 }
 
 nsMsgViewIndex	nsMsgDBView::GetThreadFromMsgIndex(nsMsgViewIndex index, 
                                                    nsIMsgThread **threadHdr)
 {
-  nsMsgKey			msgKey = GetAt(index);
-  nsMsgViewIndex		threadIndex;
+  nsMsgKey        msgKey = GetAt(index);
+  nsMsgViewIndex  threadIndex;
   
   NS_ENSURE_ARG(threadHdr);
   nsresult rv = GetThreadContainingIndex(index, threadHdr);
@@ -5430,67 +5438,40 @@ nsMsgViewIndex	nsMsgDBView::GetThreadFromMsgIndex(nsMsgViewIndex index,
   return threadIndex;
 }
 
-// ignore handling.
-nsresult nsMsgDBView::ToggleThreadIgnored(nsIMsgThread *thread, nsMsgViewIndex threadIndex)
-
-{
-  nsresult		rv;
-  if (!IsValidIndex(threadIndex))
-    return NS_MSG_INVALID_DBVIEW_INDEX;
-  PRUint32 threadFlags;
-  thread->GetFlags(&threadFlags);
-  NS_ASSERTION((threadFlags & MSG_FLAG_IGNORED) == (m_flags[threadIndex] & MSG_FLAG_IGNORED), "thread flags and view flags out of sync");
-  rv = SetThreadIgnored(thread, threadIndex, !((threadFlags & MSG_FLAG_IGNORED) != 0));
-  return rv;
-}
-
-nsresult nsMsgDBView::ToggleThreadWatched(nsIMsgThread *thread, nsMsgViewIndex index)
-{
-  nsresult		rv;
-  if (!IsValidIndex(index))
-    return NS_MSG_INVALID_DBVIEW_INDEX;
-  PRUint32 threadFlags;
-  thread->GetFlags(&threadFlags);
-  rv = SetThreadWatched(thread, index, !((threadFlags & MSG_FLAG_WATCHED) != 0));
-  return rv;
-}
-
 nsresult nsMsgDBView::ToggleWatched( nsMsgViewIndex* indices,	PRInt32 numIndices)
 {
-  nsresult rv;
   nsCOMPtr <nsIMsgThread> thread;
-  
-  if (numIndices == 1)
+
+  // Watched state is toggled based on the first selected thread
+  if (numIndices > 1)
+    NS_QuickSort(indices, numIndices, sizeof(nsMsgViewIndex), CompareViewIndices, nsnull);
+  nsMsgViewIndex threadIndex = GetThreadFromMsgIndex(indices[0], getter_AddRefs(thread));
+  PRUint32 threadFlags;
+  thread->GetFlags(&threadFlags);
+  PRUint32 watched = threadFlags & MSG_FLAG_WATCHED;
+
+  // Process threads in reverse order
+  // for consistency with ToggleIgnored
+  threadIndex = nsMsgViewIndex_None;
+  while (numIndices)
   {
-    nsMsgViewIndex	threadIndex = GetThreadFromMsgIndex(*indices, getter_AddRefs(thread));
-    if (threadIndex != nsMsgViewIndex_None)
-      rv = ToggleThreadWatched(thread, threadIndex);
-  }
-  else
-  {
-    if (numIndices > 1)
-      NS_QuickSort(indices, numIndices, sizeof(nsMsgViewIndex), CompareViewIndices, nsnull);
-    for (int curIndex = numIndices - 1; curIndex >= 0; curIndex--)
+    numIndices--;
+    if (indices[numIndices] < threadIndex)
     {
-      nsMsgViewIndex	threadIndex;    
-      threadIndex = GetThreadFromMsgIndex(*indices, getter_AddRefs(thread));
-      // here we need to build up the unique threads, and mark them watched.
+      threadIndex = GetThreadFromMsgIndex(indices[numIndices], getter_AddRefs(thread));
+      thread->GetFlags(&threadFlags);
+      if ((threadFlags & MSG_FLAG_WATCHED) == watched)
+        SetThreadWatched(thread, threadIndex, !watched);
     }
   }
+
   return NS_OK;
 }
 
 nsresult nsMsgDBView::SetThreadIgnored(nsIMsgThread *thread, nsMsgViewIndex threadIndex, PRBool ignored)
 {
-  nsresult rv;
-  
   if (!IsValidIndex(threadIndex))
     return NS_MSG_INVALID_DBVIEW_INDEX;
-  rv = m_db->MarkThreadIgnored(thread, m_keys[threadIndex], ignored, this);
-  if (ignored)
-    OrExtraFlag(threadIndex, MSG_FLAG_IGNORED);
-  else
-    AndExtraFlag(threadIndex, ~MSG_FLAG_IGNORED);
 
   NoteChange(threadIndex, 1, nsMsgViewNotificationCode::changed);
   if (ignored)
@@ -5498,24 +5479,18 @@ nsresult nsMsgDBView::SetThreadIgnored(nsIMsgThread *thread, nsMsgViewIndex thre
     nsMsgKeyArray	idsMarkedRead;
     
     MarkThreadRead(thread, threadIndex, idsMarkedRead, PR_TRUE);
+    CollapseByIndex(threadIndex, nsnull);
   }
-  return rv;
+  return m_db->MarkThreadIgnored(thread, m_keys[threadIndex], ignored, this);
 }
+
 nsresult nsMsgDBView::SetThreadWatched(nsIMsgThread *thread, nsMsgViewIndex index, PRBool watched)
 {
-  nsresult rv;
-  
   if (!IsValidIndex(index))
     return NS_MSG_INVALID_DBVIEW_INDEX;
-  rv = m_db->MarkThreadWatched(thread, m_keys[index], watched, this);
-
-  if (watched)
-    OrExtraFlag(index, MSG_FLAG_WATCHED);
-  else
-    AndExtraFlag(index, ~MSG_FLAG_WATCHED);
 
   NoteChange(index, 1, nsMsgViewNotificationCode::changed);
-  return rv;
+  return m_db->MarkThreadWatched(thread, m_keys[index], watched, this);
 }
 
 NS_IMETHODIMP nsMsgDBView::GetMsgFolder(nsIMsgFolder **aMsgFolder)
@@ -5645,15 +5620,12 @@ nsMsgDBView::GetURIForFirstSelectedMessage(char **uri)
 {
   NS_ENSURE_ARG_POINTER(uri);
 
-#ifdef DEBUG_mscott
-  printf("inside GetURIForFirstSelectedMessage\n");
-#endif
   nsresult rv;
   nsMsgViewIndex viewIndex;
   rv = GetViewIndexForFirstSelectedMsg(&viewIndex);
   // don't assert, it is legal for nothing to be selected
   if (NS_FAILED(rv)) return rv;
-
+ 
   return GetURIForViewIndex(viewIndex, uri);
 }
 
@@ -5821,24 +5793,11 @@ nsresult nsMsgDBView::GetImapDeleteModel(nsIMsgFolder *folder)
 
 
 //
-// CanDropOn
+// CanDrop
 //
 // Can't drop on the thread pane.
 //
-NS_IMETHODIMP nsMsgDBView::CanDropOn(PRInt32 index, PRBool *_retval)
-{
-  NS_ENSURE_ARG_POINTER(_retval);
-  *_retval = PR_FALSE;
-  
-  return NS_OK;
-}
-
-//
-// CanDropBeforeAfter
-//
-// Can't drop on the thread pane.
-//
-NS_IMETHODIMP nsMsgDBView::CanDropBeforeAfter(PRInt32 index, PRBool before, PRBool *_retval)
+NS_IMETHODIMP nsMsgDBView::CanDrop(PRInt32 index, PRInt32 orient, PRBool *_retval)
 {
   NS_ENSURE_ARG_POINTER(_retval);
   *_retval = PR_FALSE;
@@ -5881,7 +5840,7 @@ NS_IMETHODIMP nsMsgDBView::SelectMsgByKey(nsMsgKey aKey)
   // select (and load) the desired message
   
   nsMsgKeyArray preservedSelection;
-  nsresult rv = SaveAndClearSelection(&preservedSelection);
+  nsresult rv = SaveAndClearSelection(nsnull, &preservedSelection);
   NS_ENSURE_SUCCESS(rv,rv);
 
   // now, restore our desired selection
@@ -5891,7 +5850,7 @@ NS_IMETHODIMP nsMsgDBView::SelectMsgByKey(nsMsgKey aKey)
   // if the key was not found
   // (this can happen with "remember last selected message")
   // nothing will be selected
-  rv = RestoreSelection(&keyArray);
+  rv = RestoreSelection(aKey, &keyArray);
   NS_ENSURE_SUCCESS(rv,rv);
   return NS_OK;
 }
@@ -5969,7 +5928,7 @@ nsMsgDBView::FindIndexFromKey(nsMsgKey aMsgKey, PRBool aExpand, nsMsgViewIndex *
   return NS_OK;
 }
  
-static void getDateFormatPref( const nsCOMPtr<nsIPrefBranch>& _prefBranch, const char* _prefLocalName, nsDateFormatSelector& _format )
+static void getDateFormatPref( nsIPrefBranch* _prefBranch, const char* _prefLocalName, nsDateFormatSelector& _format )
 {
   // read
   PRInt32 nFormatSetting( 0 );

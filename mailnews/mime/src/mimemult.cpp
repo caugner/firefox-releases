@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -111,7 +111,7 @@ MimeMultipart_initialize (MimeObject *object)
   MimeMultipart *mult = (MimeMultipart *) object;
   char *ct;
 
-  /* This is an abstract class; it shouldn't be directly instanciated. */
+  /* This is an abstract class; it shouldn't be directly instantiated. */
   PR_ASSERT(object->clazz != (MimeObjectClass *) &mimeMultipartClass);
 
   ct = MimeHeaders_get (object->headers, HEADER_CONTENT_TYPE, PR_FALSE, PR_FALSE);
@@ -138,6 +138,11 @@ MimeMultipart_finalize (MimeObject *object)
   ((MimeObjectClass*)&MIME_SUPERCLASS)->finalize(object);
 }
 
+int MimeWriteAString(MimeObject *obj, const nsACString &string)
+{
+  const nsCString &flatString = PromiseFlatCString(string);
+  return MimeObject_write(obj, flatString.get(), flatString.Length(), PR_TRUE);
+}
 
 static int
 MimeMultipart_parse_line (char *line, PRInt32 length, MimeObject *obj)
@@ -153,61 +158,93 @@ MimeMultipart_parse_line (char *line, PRInt32 length, MimeObject *obj)
   if (obj->closed_p) return -1;
 
   /* If we're supposed to write this object, but aren't supposed to convert
-	 it to HTML, simply pass it through unaltered. */
+     it to HTML, simply pass it through unaltered. */
   if (obj->output_p &&
 	  obj->options &&
 	  !obj->options->write_html_p &&
-	  obj->options->output_fn)
+	  obj->options->output_fn
+          && obj->options->format_out != nsMimeOutput::nsMimeMessageAttach)
 	return MimeObject_write(obj, line, length, PR_TRUE);
 
 
   if (mult->state == MimeMultipartEpilogue)  /* already done */
-	boundary = MimeMultipartBoundaryTypeNone;
+    boundary = MimeMultipartBoundaryTypeNone;
   else
-	boundary = ((MimeMultipartClass *)obj->clazz)->check_boundary(obj, line,
-																  length);
+    boundary = ((MimeMultipartClass *)obj->clazz)->check_boundary(obj, line,
+                                                                  length);
 
   if (boundary == MimeMultipartBoundaryTypeTerminator ||
-	  boundary == MimeMultipartBoundaryTypeSeparator)
-	{
-	  /* Match!  Close the currently-open part, move on to the next
-		 state, and discard this line.
-	   */
-	  if (mult->state != MimeMultipartPreamble)
-		status = ((MimeMultipartClass *)obj->clazz)->close_child(obj);
-	  if (status < 0) return status;
+    boundary == MimeMultipartBoundaryTypeSeparator)
+  {
+  /* Match!  Close the currently-open part, move on to the next
+     state, and discard this line.
+   */
+    PRBool endOfPart = (mult->state != MimeMultipartPreamble);
+    if (endOfPart)
+      status = ((MimeMultipartClass *)obj->clazz)->close_child(obj);
+    if (status < 0) return status;
+    
+    if (boundary == MimeMultipartBoundaryTypeTerminator)
+      mult->state = MimeMultipartEpilogue;
+    else
+    {
+      mult->state = MimeMultipartHeaders;
+      
+      /* Reset the header parser for this upcoming part. */
+      PR_ASSERT(!mult->hdrs);
+      if (mult->hdrs)
+        MimeHeaders_free(mult->hdrs);
+      mult->hdrs = MimeHeaders_new();
+      if (!mult->hdrs)
+        return MIME_OUT_OF_MEMORY;
+      if (obj->options->state->partsToStrip.Count() > 0)
+      {
+        nsCAutoString newPart(mime_part_address(obj));
+        MimeContainer *container = (MimeContainer*) obj; 
+        newPart.Append('.');
+        newPart.AppendInt(container->nchildren + 1);
+        obj->options->state->strippingPart = PR_FALSE;
+        // check if this is a sub-part of a part we're stripping.
+        for (PRInt32 partIndex = 0; partIndex < obj->options->state->partsToStrip.Count(); partIndex++)
+        {
+          if (newPart.Find(*obj->options->state->partsToStrip.CStringAt(partIndex)) == 0)
+          {
+            obj->options->state->strippingPart = PR_TRUE;
+            if (partIndex < obj->options->state->detachToFiles.Count())
+              obj->options->state->detachedFilePath = *obj->options->state->detachToFiles.CStringAt(partIndex);
+            break;
+          }
+        }
+      }
+    }
+    
+    // if stripping out attachments, write the boundary line. Otherwise, return
+    // to ignore it.
+    if (obj->options->format_out == nsMimeOutput::nsMimeMessageAttach)
+    {
+      // Because MimeMultipart_parse_child_line strips out the 
+      // the CRLF of the last line before the end of a part, we need to add that
+      // back in here.
+      if (endOfPart)
+        MimeWriteAString(obj, NS_LITERAL_CSTRING(MSG_LINEBREAK));
 
-	  if (boundary == MimeMultipartBoundaryTypeTerminator)
-		mult->state = MimeMultipartEpilogue;
-	  else
-		{
-		  mult->state = MimeMultipartHeaders;
-
-		  /* Reset the header parser for this upcoming part. */
-		  PR_ASSERT(!mult->hdrs);
-		  if (mult->hdrs)
-			MimeHeaders_free(mult->hdrs);
-		  mult->hdrs = MimeHeaders_new();
-		  if (!mult->hdrs)
-			return MIME_OUT_OF_MEMORY;
-		}
-
-	  /* Now return, to ignore the boundary line itself. */
-	  return 0;
-	}
+      status = MimeObject_write(obj, line, length, PR_TRUE);
+    }
+    return 0;
+  }
 
   /* Otherwise, this isn't a boundary string.  So do whatever it is we
 	 should do with this line (parse it as a header, feed it to the
 	 child part, ignore it, etc.) */
 
   switch (mult->state)
-	{
-	case MimeMultipartPreamble:
-	case MimeMultipartEpilogue:
-	  /* Ignore this line. */
-	  break;
+  {
+    case MimeMultipartPreamble:
+    case MimeMultipartEpilogue:
+      /* Ignore this line. */
+      break;
 
-	case MimeMultipartHeaders:
+    case MimeMultipartHeaders:
     /* Parse this line as a header for the sub-part. */
     {
       status = MimeHeaders_parse_line(line, length, mult->hdrs);
@@ -218,6 +255,54 @@ MimeMultipart_parse_line (char *line, PRInt32 length, MimeObject *obj)
       //
       if (*line == nsCRT::CR || *line == nsCRT::LF)
       {
+        if (obj->options->state->strippingPart)
+        {
+          PRBool detachingPart = obj->options->state->detachedFilePath.Length() > 0;
+
+          nsCAutoString fileName;
+          fileName.Adopt(MimeHeaders_get_name(mult->hdrs, obj->options));
+          if (detachingPart)
+          {
+            char *contentType = MimeHeaders_get(mult->hdrs, "Content-Type", PR_FALSE, PR_FALSE);
+            if (contentType)
+            {
+              MimeWriteAString(obj, NS_LITERAL_CSTRING("Content-Type: "));
+              MimeWriteAString(obj, nsDependentCString(contentType));
+              PR_Free(contentType);
+            }
+            MimeWriteAString(obj, NS_LITERAL_CSTRING(MSG_LINEBREAK));
+            MimeWriteAString(obj, NS_LITERAL_CSTRING("Content-Disposition: attachment; filename=\""));
+            MimeWriteAString(obj, fileName);
+            MimeWriteAString(obj, NS_LITERAL_CSTRING("\""MSG_LINEBREAK));
+            MimeWriteAString(obj, NS_LITERAL_CSTRING("X-Mozilla-External-Attachment-URL: "));
+            MimeWriteAString(obj, obj->options->state->detachedFilePath);
+            MimeWriteAString(obj, NS_LITERAL_CSTRING(MSG_LINEBREAK));
+            MimeWriteAString(obj, NS_LITERAL_CSTRING("X-Mozilla-Altered: AttachmentDetached; date=\""));
+          }
+          else
+          {
+            nsCAutoString header("Content-Type: text/x-moz-deleted; name=\"Deleted: ");
+            header.Append(fileName);
+            status = MimeWriteAString(obj, header);
+            if (status < 0) 
+              return status;
+            status = MimeWriteAString(obj, NS_LITERAL_CSTRING("\""MSG_LINEBREAK"Content-Transfer-Encoding: 8bit"MSG_LINEBREAK));
+            MimeWriteAString(obj, NS_LITERAL_CSTRING("Content-Disposition: inline; filename=\"Deleted:"));
+            MimeWriteAString(obj, fileName);
+            MimeWriteAString(obj, NS_LITERAL_CSTRING("\""MSG_LINEBREAK"X-Mozilla-Altered: AttachmentDeleted; date=\""));
+          }
+          nsCString result;
+          char timeBuffer[128];
+          PRExplodedTime now;
+          PR_ExplodeTime(PR_Now(), PR_LocalTimeParameters, &now);
+          PR_FormatTimeUSEnglish(timeBuffer, sizeof(timeBuffer),
+                                 "%a %b %d %H:%M:%S %Y",
+                                 &now);
+          MimeWriteAString(obj, nsDependentCString(timeBuffer));
+          MimeWriteAString(obj, NS_LITERAL_CSTRING("\""MSG_LINEBREAK));
+          MimeWriteAString(obj, NS_LITERAL_CSTRING(MSG_LINEBREAK"The original MIME headers for this attachment are:"MSG_LINEBREAK));
+          MimeHeaders_write_raw_headers(mult->hdrs, obj->options, PR_FALSE);
+        }
         status = ((MimeMultipartClass *) obj->clazz)->create_child(obj);
         if (status < 0) return status;
         PR_ASSERT(mult->state != MimeMultipartHeaders);
@@ -231,6 +316,13 @@ MimeMultipart_parse_line (char *line, PRInt32 length, MimeObject *obj)
         PRBool isAlternative = PR_FALSE;
 
         MimeContainer *container = (MimeContainer*) obj; 
+        // check if we're stripping the part of this newly created child.
+        if (container->children && container->nchildren > 0)
+        {
+          MimeObject *kid = container->children[container->nchildren-1];
+          if (kid->output_p)
+            kid->output_p = !obj->options->state->strippingPart;
+        }
         if (container->children && container->nchildren == 1)
         {
           PRBool isAlternativeOrRelated = PR_FALSE;
@@ -292,34 +384,33 @@ MimeMultipart_parse_line (char *line, PRInt32 length, MimeObject *obj)
       break;
     }
 
-	case MimeMultipartPartFirstLine:
-	  /* Hand this line off to the sub-part. */
-	  status = (((MimeMultipartClass *) obj->clazz)->parse_child_line(obj,
-																	  line,
-																	  length,
-																	  PR_TRUE));
-	  if (status < 0) return status;
-	  mult->state = MimeMultipartPartLine;
-	  break;
+    case MimeMultipartPartFirstLine:
+      /* Hand this line off to the sub-part. */
+      status = (((MimeMultipartClass *) obj->clazz)->parse_child_line(obj,
+                                                  line, length, PR_TRUE));
+      if (status < 0) return status;
+      mult->state = MimeMultipartPartLine;
+      break;
 
-	case MimeMultipartPartLine:
-	  /* Hand this line off to the sub-part. */
-	  status = (((MimeMultipartClass *) obj->clazz)->parse_child_line(obj,
-																	  line,
-																	  length,
-																	  PR_FALSE));
-	  if (status < 0) return status;
-	  break;
+    case MimeMultipartPartLine:
+      /* Hand this line off to the sub-part. */
+      status = (((MimeMultipartClass *) obj->clazz)->parse_child_line(obj,
+                  line, length, PR_FALSE));
+      if (status < 0) return status;
+      break;
 
-  case MimeMultipartSkipPartLine:
-    /* we are skipping that part, therefore just ignore the line */
-    break;
+    case MimeMultipartSkipPartLine:
+      /* we are skipping that part, therefore just ignore the line */
+      break;
 
-	default:
-	  PR_ASSERT(0);
-	  return -1;
-	}
+    default:
+      PR_ASSERT(0);
+      return -1;
+  }
 
+  if (obj->options->format_out == nsMimeOutput::nsMimeMessageAttach && 
+      (!obj->options->state->strippingPart && mult->state != MimeMultipartPartLine))
+      return MimeObject_write(obj, line, length, PR_FALSE);
   return 0;
 }
 
@@ -372,11 +463,11 @@ MimeMultipart_check_boundary(MimeObject *obj, const char *line, PRInt32 length)
     length -= 2;
 
   if (blen == length-2 && !strncmp(line+2, mult->boundary, length-2))
-	  return (term_p
-			? MimeMultipartBoundaryTypeTerminator
-			: MimeMultipartBoundaryTypeSeparator);
+    return (term_p
+      ? MimeMultipartBoundaryTypeTerminator
+      : MimeMultipartBoundaryTypeSeparator);
   else
-	  return MimeMultipartBoundaryTypeNone;
+    return MimeMultipartBoundaryTypeNone;
 }
 
 
@@ -490,7 +581,7 @@ MimeMultipart_close_child(MimeObject *object)
   MimeHeaders_free(mult->hdrs);
   mult->hdrs = 0;
 
-  PR_ASSERT(cont->nchildren > 0);
+  NS_ASSERTION(cont->nchildren > 0, "badly formed mime message");
   if (cont->nchildren > 0)
 	{
 	  MimeObject *kid = cont->children[cont->nchildren-1];

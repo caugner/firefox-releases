@@ -19,10 +19,10 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Ben Goodger    <ben@mozilla.org>     (Clients, Mail, New Default Browser)
- *  Joe Hewitt     <hewitt@netscape.com> (Set Background)
- *  Blake Ross     <blake@cs.stanford.edu (Desktop Color, DDE support)
- *  Jungshik Shin  <jshin@mailaps.org>   (I18N)
+ *  Ben Goodger    <ben@mozilla.org>       (Clients, Mail, New Default Browser)
+ *  Joe Hewitt     <hewitt@netscape.com>   (Set Background)
+ *  Blake Ross     <blake@cs.stanford.edu  (Desktop Color, DDE support)
+ *  Jungshik Shin  <jshin@mailaps.org>     (I18N)
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -41,17 +41,13 @@
 #include "gfxIImageFrame.h"
 #include "imgIContainer.h"
 #include "imgIRequest.h"
-#include "nsIContent.h"
-#include "nsIDocument.h"
+#include "nsCRT.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMHTMLImageElement.h"
-#include "nsIFrame.h"
 #include "nsIImageLoadingContent.h"
-#include "nsIOutputStream.h"
 #include "nsIPrefService.h"
 #include "nsIPrefLocalizedString.h"
-#include "nsIPresShell.h"
 #include "nsIServiceManager.h"
 #include "nsIStringBundle.h"
 #include "nsNetUtil.h"
@@ -61,6 +57,8 @@
 #include "nsICategoryManager.h"
 #include "nsBrowserCompsCID.h"
 #include "nsNativeCharsetUtils.h"
+#include "nsDirectoryServiceUtils.h"
+#include "nsAppDirectoryServiceDefs.h"
 
 #include <mbstring.h>
 
@@ -145,12 +143,13 @@ OpenKeyForWriting(const char* aKeyName, HKEY* aKey, PRBool aForAllUsers, PRBool 
 //    HTTP, HTTPS, FTP, GOPHER, CHROME
 //   are mapped like so:
 //
-//   HKCU\SOFTWARE\Classes\<protocol>\
-//     DefaultIcon                      (default)   REG_SZ  <appname>,1
-//     shell\open\command               (default)   REG_SZ  <appname> -url "%1"
-//     shell\open\ddeexec               (default)   REG_SZ  "%1",,-1,0,,,,
-//                       \application   (default)   REG_SZ  Firefox
-//                       \topic         (default)   REG_SZ  WWW_OpenURL
+// HKCU\SOFTWARE\Classes\<protocol>\
+//   DefaultIcon                    (default)         REG_SZ  <appname>,1
+//   shell\open\command             (default)         REG_SZ <appname> -url "%1"
+//   shell\open\ddeexec             (default)         REG_SZ  "%1",,-1,0,,,,
+//   shell\open\ddeexec             NoActivateHandler REG_SZ
+//                     \application (default)         REG_SZ  Firefox
+//                     \topic       (default)         REG_SZ  WWW_OpenURL
 //                    
 //
 // - Windows XP Start Menu Browser
@@ -162,7 +161,7 @@ OpenKeyForWriting(const char* aKeyName, HKEY* aKey, PRBool aForAllUsers, PRBool 
 //     firefox.exe\DefaultIcon             (default)   REG_SZ  <appname>,0
 //     firefox.exe\shell\open\command      (default)   REG_SZ  <appname>
 //     firefox.exe\shell\properties        (default)   REG_SZ  Firefox &Options
-//     firefox.exe\shell\properties\command(default)   REG_SZ  <appname> -chrome "chrome://browser/content/pref.xul"
+//     firefox.exe\shell\properties\command(default)   REG_SZ  <appname> -preferences
 //
 // - Uninstall Information
 //   ---------------------
@@ -249,7 +248,7 @@ static SETTING gSettings[] = {
     PATH_SUBSTITUTION | EXE_SUBSTITUTION | NON_ESSENTIAL },
   { MAKE_KEY_NAME1(SMI, "%APPEXE%\\shell\\properties\\command"),
     "", 
-    "%APPPATH% -chrome \"chrome://browser/content/pref/pref.xul\"",   
+    "%APPPATH% -preferences",   
     PATH_SUBSTITUTION | EXE_SUBSTITUTION | NON_ESSENTIAL }
 
   // The value of the menu must be set by hand, since it contains a localized
@@ -259,18 +258,23 @@ static SETTING gSettings[] = {
 
 static SETTING gDDESettings[] = {
   { MAKE_KEY_NAME2(CLS, "HTTP", DDE), "", DDE_COMMAND, NO_SUBSTITUTION },
+  { MAKE_KEY_NAME2(CLS, "HTTP", DDE), "NoActivateHandler", "", NO_SUBSTITUTION },
   { MAKE_KEY_NAME3(CLS, "HTTP", DDE, "Application"), "", DDE_NAME, NO_SUBSTITUTION },
   { MAKE_KEY_NAME3(CLS, "HTTP", DDE, "Topic"), "", "WWW_OpenURL", NO_SUBSTITUTION },
   { MAKE_KEY_NAME2(CLS, "HTTPS", DDE), "", DDE_COMMAND, NO_SUBSTITUTION },
+  { MAKE_KEY_NAME2(CLS, "HTTPS", DDE), "NoActivateHandler", "", NO_SUBSTITUTION },
   { MAKE_KEY_NAME3(CLS, "HTTPS", DDE, "Application"), "", DDE_NAME, NO_SUBSTITUTION },
   { MAKE_KEY_NAME3(CLS, "HTTPS", DDE, "Topic"), "", "WWW_OpenURL", NO_SUBSTITUTION },
   { MAKE_KEY_NAME2(CLS, "FTP", DDE), "", DDE_COMMAND, NO_SUBSTITUTION },
+  { MAKE_KEY_NAME2(CLS, "FTP", DDE), "NoActivateHandler", "", NO_SUBSTITUTION },
   { MAKE_KEY_NAME3(CLS, "FTP", DDE, "Application"), "", DDE_NAME, NO_SUBSTITUTION },
   { MAKE_KEY_NAME3(CLS, "FTP", DDE, "Topic"), "", "WWW_OpenURL", NO_SUBSTITUTION },
   { MAKE_KEY_NAME2(CLS, "GOPHER", DDE), "", DDE_COMMAND, NO_SUBSTITUTION  },
+  { MAKE_KEY_NAME2(CLS, "GOPHER", DDE), "NoActivateHandler", "", NO_SUBSTITUTION },
   { MAKE_KEY_NAME3(CLS, "GOPHER", DDE, "Application"), "", DDE_NAME, NO_SUBSTITUTION },
   { MAKE_KEY_NAME3(CLS, "GOPHER", DDE, "Topic"), "", "WWW_OpenURL", NO_SUBSTITUTION  },
   { MAKE_KEY_NAME2(CLS, "CHROME", DDE), "", DDE_COMMAND, NO_SUBSTITUTION  },
+  { MAKE_KEY_NAME2(CLS, "CHROME", DDE), "NoActivateHandler", "", NO_SUBSTITUTION },
   { MAKE_KEY_NAME3(CLS, "CHROME", DDE, "Application"), "", DDE_NAME, NO_SUBSTITUTION  },
   { MAKE_KEY_NAME3(CLS, "CHROME", DDE, "Topic"), "", "WWW_OpenURL", NO_SUBSTITUTION  }
 };
@@ -291,7 +295,6 @@ nsWindowsShellService::nsWindowsShellService()
 {
   nsCOMPtr<nsIObserverService> obsServ (do_GetService("@mozilla.org/observer-service;1"));
   obsServ->AddObserver(this, "quit-application", PR_FALSE);
-  obsServ->AddObserver(this, "profile-after-change", PR_FALSE);
 }
 
 nsresult
@@ -366,6 +369,8 @@ nsWindowsShellService::IsDefaultBrowser(PRBool aStartupCheck, PRBool* aIsDefault
     if (NS_SUCCEEDED(rv)) {
       DWORD len = sizeof currValue;
       DWORD result = ::RegQueryValueEx(theKey, settings->valueName, NULL, NULL, (LPBYTE)currValue, &len);
+      // Close the key we opened.
+      ::RegCloseKey(theKey);
       if (REG_FAILED(result) || strcmp(data.get(), currValue) != 0) {
         // Key wasn't set, or was set to something else (something else became the default browser)
         *aIsDefaultBrowser = PR_FALSE;
@@ -432,9 +437,14 @@ nsWindowsShellService::SetDefaultBrowser(PRBool aClaimAllTypes, PRBool aForAllUs
             backupKey, aClaimAllTypes, aForAllUsers);
 
   nsCOMPtr<nsIStringBundleService> bundleService(do_GetService("@mozilla.org/intl/stringbundle;1"));
+  if (!bundleService)
+    return NS_ERROR_FAILURE;
+
   nsCOMPtr<nsIStringBundle> bundle, brandBundle;
-  bundleService->CreateBundle(SHELLSERVICE_PROPERTIES, getter_AddRefs(bundle));
-  bundleService->CreateBundle(BRAND_PROPERTIES, getter_AddRefs(brandBundle));
+  rv = bundleService->CreateBundle(SHELLSERVICE_PROPERTIES, getter_AddRefs(bundle));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = bundleService->CreateBundle(BRAND_PROPERTIES, getter_AddRefs(brandBundle));
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // Set the Start Menu item subtitle
   nsXPIDLString brandFullName;
@@ -469,6 +479,9 @@ nsWindowsShellService::SetDefaultBrowser(PRBool aClaimAllTypes, PRBool aForAllUs
   SetRegKey(key2.get(), "", nativeTitle.get(), PR_TRUE, backupKey,
             aClaimAllTypes, aForAllUsers);
 
+  // Close the key we opened.
+  ::RegCloseKey(backupKey);
+
   // We need to reregister DDE support
   RegisterDDESupport();
 
@@ -501,13 +514,20 @@ nsWindowsShellService::RestoreFileSettings(PRBool aForAllUsers)
         HKEY origKey;
         result = ::RegOpenKeyEx(NULL, origKeyName, 0, KEY_READ, &origKey);
         if (REG_SUCCEEDED(result))
-          result = ::RegSetValueEx(origKey, "", 0, REG_SZ, (LPBYTE)origValue, len);
+        {
+		result = ::RegSetValueEx(origKey, "", 0, REG_SZ, (LPBYTE)origValue, len);
+		// Close the key we opened.
+		::RegCloseKey(origKey);
+        }
       }
     }
     else
       break;
   }
   while (1);
+  
+  // Close the key we opened.
+  ::RegCloseKey(backupKey);
 
   // Refresh the Shell
   ::SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, NULL,
@@ -583,6 +603,9 @@ nsWindowsShellService::SetRegKey(const char* aKeyName, const char* aValueName,
   if (REG_FAILED(result) || strcmp(buf, aValue) != 0)
     ::RegSetValueEx(theKey, aValueName, 0, REG_SZ, 
                     (LPBYTE)aValue, nsDependentCString(aValue).Length());
+  
+  // Close the key we opened.
+  ::RegCloseKey(theKey);
 }
 
 NS_IMETHODIMP
@@ -618,8 +641,8 @@ nsWindowsShellService::SetShouldCheckDefaultBrowser(PRBool aShouldCheck)
   return NS_OK;
 }
 
-nsresult
-WriteBitmap(nsString& aPath, gfxIImageFrame* aImage)
+static nsresult
+WriteBitmap(nsIFile* aFile, gfxIImageFrame* aImage)
 {
   PRInt32 width, height;
   aImage->GetWidth(&width);
@@ -658,14 +681,10 @@ WriteBitmap(nsString& aPath, gfxIImageFrame* aImage)
 
   // get a file output stream
   nsresult rv;
-  nsCOMPtr<nsILocalFile> path;
-  rv = NS_NewLocalFile(aPath, PR_TRUE, getter_AddRefs(path));
-
-  if (NS_FAILED(rv))
-    return rv;
 
   nsCOMPtr<nsIOutputStream> stream;
-  NS_NewLocalFileOutputStream(getter_AddRefs(stream), path);
+  rv = NS_NewLocalFileOutputStream(getter_AddRefs(stream), aFile);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // write the bitmap headers and rgb pixel data to the file
   rv = NS_ERROR_FAILURE;
@@ -720,34 +739,39 @@ nsWindowsShellService::SetDesktopBackground(nsIDOMElement* aElement,
   if (!gfxFrame)
     return NS_ERROR_FAILURE;
 
-  // get the windows directory ('c:\windows' usually)
-  char winDir[256];
-  ::GetWindowsDirectory(winDir, sizeof(winDir));
-  nsAutoString winPath;
-  NS_CopyNativeToUnicode(nsDependentCString(winDir), winPath);
+  // get the file name from localized strings
+  nsCOMPtr<nsIStringBundleService>
+    bundleService(do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // get the product brand name from localized strings
-  nsXPIDLString brandName;
-  nsCID bundleCID = NS_STRINGBUNDLESERVICE_CID;
-  nsCOMPtr<nsIStringBundleService> bundleService(do_GetService(bundleCID));
-  if (bundleService) {
-    nsCOMPtr<nsIStringBundle> brandBundle;
-    rv = bundleService->CreateBundle("chrome://global/locale/brand.properties",
-                                     getter_AddRefs(brandBundle));
-    if (NS_SUCCEEDED(rv) && brandBundle) {
-      if (NS_FAILED(rv = brandBundle->GetStringFromName(NS_LITERAL_STRING("brandShortName").get(),
-                            getter_Copies(brandName))))
-        return rv;
-    }
-  }
+  nsCOMPtr<nsIStringBundle> shellBundle;
+  rv = bundleService->CreateBundle(SHELLSERVICE_PROPERTIES,
+                                   getter_AddRefs(shellBundle));
+  NS_ENSURE_SUCCESS(rv, rv);
+ 
+  // e.g. "Desktop Background.bmp"
+  nsXPIDLString fileLeafName;
+  rv = shellBundle->GetStringFromName
+                      (NS_LITERAL_STRING("desktopBackgroundLeafNameWin").get(),
+                       getter_Copies(fileLeafName));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // build the file name
-  winPath.Append(NS_LITERAL_STRING("\\").get());
-  winPath.Append(brandName);
-  winPath.Append(NS_LITERAL_STRING(" Wallpaper.bmp").get());
+  // get the profile root directory
+  nsCOMPtr<nsIFile> file;
+  rv = NS_GetSpecialDirectory(NS_APP_APPLICATION_REGISTRY_DIR,
+                              getter_AddRefs(file));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // write the bitmap to a file in the windows dir
-  rv = WriteBitmap(winPath, gfxFrame);
+  // eventually, the path is "%APPDATA%\Mozilla\Firefox\Desktop Background.bmp"
+  rv = file->Append(fileLeafName);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCAutoString nativePath;
+  rv = file->GetNativePath(nativePath);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // write the bitmap to a file in the profile directory
+  rv = WriteBitmap(file, gfxFrame);
 
   // if the file was written successfully, set it as the system wallpaper
   if (NS_SUCCEEDED(rv)) {
@@ -784,18 +808,17 @@ nsWindowsShellService::SetDesktopBackground(nsIDOMElement* aElement,
       style[1] = '\0';
       ::RegSetValueEx(key, "TileWallpaper", 0, REG_SZ, tile, sizeof(tile));
       ::RegSetValueEx(key, "WallpaperStyle", 0, REG_SZ, style, sizeof(style));
-      nsCAutoString nativePath;
-      NS_CopyUnicodeToNative(winPath, nativePath);
-      char *pathCStr = ToNewCString(nativePath);
-      ::SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, pathCStr, SPIF_UPDATEINIFILE | SPIF_SENDWININICHANGE);
-      nsMemory::Free(pathCStr);
+      ::SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, (PVOID) nativePath.get(),
+                             SPIF_UPDATEINIFILE | SPIF_SENDWININICHANGE);
+      // Close the key we opened.
+      ::RegCloseKey(key);
     }
   }
   return rv;
 }
 
 NS_IMETHODIMP
-nsWindowsShellService::OpenPreferredApplication(PRInt32 aApplication)
+nsWindowsShellService::OpenApplication(PRInt32 aApplication)
 {
   nsCAutoString application;
   switch (aApplication) {
@@ -830,6 +853,9 @@ nsWindowsShellService::OpenPreferredApplication(PRInt32 aApplication)
   if (REG_FAILED(result) || nsDependentCString(buf).IsEmpty()) 
     return NS_OK;
 
+  // Close the key we opened.
+  ::RegCloseKey(theKey);
+
   // Find the "open" command
   clientKey.Append("\\");
   clientKey.Append(buf);
@@ -843,6 +869,9 @@ nsWindowsShellService::OpenPreferredApplication(PRInt32 aApplication)
   result = ::RegQueryValueEx(theKey, "", 0, &type, (LPBYTE)&buf, &len);
   if (REG_FAILED(result) || nsDependentCString(buf).IsEmpty()) 
     return NS_ERROR_FAILURE;
+
+  // Close the key we opened.
+  ::RegCloseKey(theKey);
 
   nsCAutoString path(buf);
 
@@ -921,6 +950,9 @@ nsWindowsShellService::SetDesktopBackgroundColor(PRUint32 aColor)
     sprintf((char*)rgb, "%u %u %u\0", r, g, b);
     ::RegSetValueEx(key, "Background", 0, REG_SZ, (const unsigned char*)rgb, strlen((char*)rgb));
   }
+  
+  // Close the key we opened.
+  ::RegCloseKey(key);
   return NS_OK;
 }
 
@@ -938,6 +970,9 @@ nsWindowsShellService::GetUnreadMailCount(PRUint32* aCount)
     if (REG_SUCCEEDED(result)) {
       *aCount = unreadCount;
     }
+
+  // Close the key we opened.
+  ::RegCloseKey(accountKey);
   }
 
   return NS_OK;
@@ -961,6 +996,10 @@ nsWindowsShellService::GetMailAccountKey(HKEY* aResult)
       result = ::RegOpenKeyEx(mailKey, subkeyName, 0, KEY_READ, &accountKey);
       if (REG_SUCCEEDED(result)) {
         *aResult = accountKey;
+		
+	 // Close the key we opened.
+        ::RegCloseKey(mailKey);
+	 
         return PR_TRUE;
       }
     }
@@ -969,105 +1008,9 @@ nsWindowsShellService::GetMailAccountKey(HKEY* aResult)
   }
   while (1);
 
+  // Close the key we opened.
+  ::RegCloseKey(mailKey);
   return PR_FALSE;
-}
-
-NS_IMETHODIMP
-nsWindowsShellService::GetRegistryEntry(PRInt32 aHKEYConstant,
-                                        const char *aSubKeyName,
-                                        const char *aValueName,
-                                        char **aResult)
-{
-  HKEY hKey, fullKey;
-
-  *aResult = 0;
-  // Calculate HKEY_* base key
-  switch (aHKEYConstant) {
-  case HKCR:
-    hKey = HKEY_CLASSES_ROOT;
-    break;
-  case HKCC:
-    hKey = HKEY_CURRENT_CONFIG;
-    break;
-  case HKCU:
-    hKey = HKEY_CURRENT_USER;
-    break;
-  case HKLM:
-    hKey = HKEY_LOCAL_MACHINE;
-    break;
-  case HKU:
-    hKey = HKEY_USERS;
-    break;
-  default:
-    return NS_ERROR_INVALID_ARG;
-  }
-  
-  // Open Key
-  LONG rv = ::RegOpenKeyEx(hKey, aSubKeyName, 0, KEY_READ, &fullKey);
-
-  if (rv == ERROR_SUCCESS) {
-    char buffer[4096] = { 0 };
-    DWORD len = sizeof buffer;
-    rv = ::RegQueryValueEx(fullKey, aValueName, NULL, NULL,
-                           (LPBYTE)buffer, &len);
-
-    if (rv == ERROR_SUCCESS)
-      *aResult = PL_strdup(buffer);
-  }
-
-  ::RegCloseKey(fullKey);
-
-  return *aResult ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
-}
-
-static nsresult ResetHomepage()
-{
-  // Reset the homepage to the default value if the user requested the installer do so.
-  HKEY theKey;
-  nsresult rv = OpenKeyForWriting("Software\\Mozilla\\Mozilla Firefox", &theKey, PR_FALSE, PR_FALSE);
-  if (NS_FAILED(rv)) return rv;
-
-  nsCOMPtr<nsIPrefBranch> prefs;
-  nsCOMPtr<nsIPrefService> pserve(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  if (NS_FAILED(rv)) return rv;
-
-  rv = pserve->GetBranch("", getter_AddRefs(prefs));
-  if (NS_FAILED(rv)) return rv;
-
-  char buf[MAX_BUF];
-  DWORD type, len = sizeof buf;
-  DWORD result = ::RegQueryValueEx(theKey, "Reset Home Page", 0, &type, (LPBYTE)&buf, &len);
-
-  PRBool resetHomepage = PR_FALSE;
-  prefs->GetBoolPref("browser.update.resetHomepage", &resetHomepage);
-
-  if ((REG_SUCCEEDED(result) && (PRBool)(*buf) == PR_TRUE) || resetHomepage) {
-    prefs->ResetBranch("browser.startup.homepage.");
-
-    PRBool hasUserValue;
-    prefs->PrefHasUserValue("browser.startup.homepage", &hasUserValue);
-    if (hasUserValue)
-      prefs->ClearUserPref("browser.startup.homepage");
-
-    nsCOMPtr<nsIPrefLocalizedString> pls;
-    prefs->GetComplexValue("browser.startup.homepage_reset", 
-                           NS_GET_IID(nsIPrefLocalizedString),
-                           getter_AddRefs(pls));
-    if (pls) {
-      prefs->SetComplexValue("browser.startup.homepage", 
-                             NS_GET_IID(nsIPrefLocalizedString),
-                             pls);
-    }
-
-    // Clear all traces of this activity so we don't keep resetting the homepage. 
-    DWORD val = 0;
-    ::RegSetValueEx(theKey, "Reset Home Page", 0, REG_DWORD, (LPBYTE)&val, len);
-
-    prefs->PrefHasUserValue("browser.update.resetHomepage", &hasUserValue);
-    if (hasUserValue)
-      prefs->ClearUserPref("browser.update.resetHomepage");
-  }
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1091,12 +1034,6 @@ nsWindowsShellService::Observe(nsISupports* aObject, const char* aTopic, const P
     os->RemoveObserver(this, "quit-application");
    
     return UnregisterDDESupport();
-  }
-  else if (!nsCRT::strcmp("profile-after-change", aTopic)) {
-    nsCOMPtr<nsIObserverService> os(do_GetService("@mozilla.org/observer-service;1"));
-    os->RemoveObserver(this, "profile-after-change");
-
-    return ResetHomepage();
   }
 
   return NS_OK;

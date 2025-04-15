@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,23 +23,24 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "msgCore.h"    // precompiled header...
 #include "nsXPIDLString.h"
 #include "nsReadableUtils.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "nsIIOService.h"
 #include "nsIPipe.h"
 #include "nsNetCID.h"
@@ -68,6 +69,7 @@
 #define MAIL_ROOT_PREF "mail."
 #define PREF_MAIL_SMTPSERVERS "mail.smtpservers"
 #define PREF_MAIL_SMTPSERVERS_APPEND_SERVERS "mail.smtpservers.appendsmtpservers"
+#define PREF_MAIL_SMTP_DEFAULTSERVER "mail.smtp.defaultserver"
 
 typedef struct _findServerByKeyEntry {
     const char *key;
@@ -317,11 +319,8 @@ NS_IMETHODIMP nsSmtpService::NewURI(const nsACString &aSpec,
 {
   // get a new smtp url 
 
-  nsresult rv = NS_OK;
-  nsCOMPtr <nsIURI> mailtoUrl;
-
-  rv = nsComponentManager::CreateInstance(kCMailtoUrlCID, NULL, NS_GET_IID(nsIURI), getter_AddRefs(mailtoUrl));
-
+  nsresult rv;
+  nsCOMPtr <nsIURI> mailtoUrl = do_CreateInstance(kCMailtoUrlCID, &rv);
   if (NS_SUCCEEDED(rv))
   {
     nsCAutoString utf8Spec;
@@ -356,7 +355,7 @@ NS_IMETHODIMP nsSmtpService::NewChannel(nsIURI *aURI, nsIChannel **_retval)
   pipeOut->Close();
 
   return NS_NewInputStreamChannel(_retval, aURI, pipeIn,
-                                  NS_LITERAL_CSTRING("x-application-mailto"));
+                                  NS_LITERAL_CSTRING("application/x-mailto"));
 }
 
 
@@ -386,12 +385,15 @@ nsSmtpService::loadSmtpServers()
     if (mSmtpServersLoaded) return NS_OK;
     
     nsresult rv;
-    nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &rv));
+    nsCOMPtr<nsIPrefService> prefService(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
+    if (NS_FAILED(rv)) return rv;
+    nsCOMPtr<nsIPrefBranch> prefRootBranch;
+    prefService->GetBranch(nsnull, getter_AddRefs(prefRootBranch));
     if (NS_FAILED(rv)) return rv;
 
     nsXPIDLCString tempServerList;
     nsXPIDLCString serverList;
-    rv = prefs->CopyCharPref(PREF_MAIL_SMTPSERVERS, getter_Copies(tempServerList));
+    rv = prefRootBranch->GetCharPref(PREF_MAIL_SMTPSERVERS, getter_Copies(tempServerList));
 
     //Get the pref in a tempServerList and then parse it to see if it has dupes.
     //if so remove the dupes and then create the serverList.
@@ -425,8 +427,7 @@ nsSmtpService::loadSmtpServers()
     // We need to check if we have any pre-configured smtp servers so that
     // those servers can be appended to the list. 
     nsXPIDLCString appendServerList;
-    rv = prefs->CopyCharPref(PREF_MAIL_SMTPSERVERS_APPEND_SERVERS,
-					    getter_Copies(appendServerList));
+    rv = prefRootBranch->GetCharPref(PREF_MAIL_SMTPSERVERS_APPEND_SERVERS, getter_Copies(appendServerList));
 
     // Get the list of smtp servers (either from regular pref i.e, mail.smtpservers or
     // from preconfigured pref mail.smtpservers.appendsmtpservers) and create a keyed 
@@ -441,18 +442,18 @@ nsSmtpService::loadSmtpServers()
        * is stored in mailnews.js file. If a given vendor needs to add more preconfigured 
        * smtp servers, the default version number can be increased. Comparing version 
        * number from user's prefs file and the default one from mailnews.js, we
-       * can add new smp servers and any other version level changes that need to be done.
+       * can add new smtp servers and any other version level changes that need to be done.
        *
        * 2. pref("mail.smtpservers.appendsmtpservers", <comma separated servers list>);
        * This pref contains the list of pre-configured smp servers that ISP/Vendor wants to
        * to add to the existing servers list. 
        */
       nsCOMPtr<nsIPrefBranch> defaultsPrefBranch;
-      rv = prefs->GetDefaultBranch(MAIL_ROOT_PREF, getter_AddRefs(defaultsPrefBranch));
+      rv = prefService->GetDefaultBranch(MAIL_ROOT_PREF, getter_AddRefs(defaultsPrefBranch));
       NS_ENSURE_SUCCESS(rv,rv);
 
       nsCOMPtr<nsIPrefBranch> prefBranch;
-      rv = prefs->GetBranch(MAIL_ROOT_PREF, getter_AddRefs(prefBranch));
+      rv = prefService->GetBranch(MAIL_ROOT_PREF, getter_AddRefs(prefBranch));
       NS_ENSURE_SUCCESS(rv,rv);
 
       PRInt32 appendSmtpServersCurrentVersion=0;
@@ -530,10 +531,10 @@ nsresult
 nsSmtpService::saveKeyList()
 {
     nsresult rv;
-    nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &rv));
+    nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
     if (NS_FAILED(rv)) return rv;
     
-    return prefs->SetCharPref(PREF_MAIL_SMTPSERVERS, mServerKeyList.get());
+    return prefBranch->SetCharPref(PREF_MAIL_SMTPSERVERS, mServerKeyList.get());
 }
 
 nsresult
@@ -541,26 +542,18 @@ nsSmtpService::createKeyedServer(const char *key, nsISmtpServer** aResult)
 {
     if (!key) return NS_ERROR_NULL_POINTER;
     
-    nsCOMPtr<nsISmtpServer> server;
-    
     nsresult rv;
-    rv = nsComponentManager::CreateInstance(NS_SMTPSERVER_CONTRACTID,
-                                            nsnull,
-                                            NS_GET_IID(nsISmtpServer),
-                                            (void **)getter_AddRefs(server));
+    nsCOMPtr<nsISmtpServer> server = do_CreateInstance(NS_SMTPSERVER_CONTRACTID, &rv);
     if (NS_FAILED(rv)) return rv;
     
     server->SetKey(key);
     mSmtpServers->AppendElement(server);
 
-    nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &rv));
-    if (NS_SUCCEEDED(rv)) {
-        if (mServerKeyList.IsEmpty())
-            mServerKeyList = key;
-        else {
-            mServerKeyList += ",";
-            mServerKeyList += key;
-        }
+    if (mServerKeyList.IsEmpty())
+        mServerKeyList = key;
+    else {
+        mServerKeyList.Append(',');
+        mServerKeyList += key;
     }
 
     if (aResult) {
@@ -602,13 +595,12 @@ nsSmtpService::GetDefaultServer(nsISmtpServer **aServer)
   *aServer = nsnull;
   // always returns NS_OK, just leaving *aServer at nsnull
   if (!mDefaultSmtpServer) {
-      nsCOMPtr<nsIPref> pref(do_GetService(NS_PREF_CONTRACTID, &rv));
+      nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
       if (NS_FAILED(rv)) return rv;
 
       // try to get it from the prefs
       nsXPIDLCString defaultServerKey;
-      rv = pref->CopyCharPref("mail.smtp.defaultserver",
-                             getter_Copies(defaultServerKey));
+      rv = prefBranch->GetCharPref(PREF_MAIL_SMTP_DEFAULTSERVER, getter_Copies(defaultServerKey));
       if (NS_SUCCEEDED(rv) &&
           !defaultServerKey.IsEmpty()) {
 
@@ -638,7 +630,7 @@ nsSmtpService::GetDefaultServer(nsISmtpServer **aServer)
           nsXPIDLCString serverKey;
           mDefaultSmtpServer->GetKey(getter_Copies(serverKey));
           if (NS_SUCCEEDED(rv))
-              pref->SetCharPref("mail.smtp.defaultserver", serverKey);
+              prefBranch->SetCharPref(PREF_MAIL_SMTP_DEFAULTSERVER, serverKey);
       }
   }
 
@@ -663,8 +655,9 @@ nsSmtpService::SetDefaultServer(nsISmtpServer *aServer)
     nsresult rv = aServer->GetKey(getter_Copies(serverKey));
     NS_ENSURE_SUCCESS(rv,rv);
     
-    nsCOMPtr<nsIPref> pref(do_GetService(NS_PREF_CONTRACTID, &rv));
-    pref->SetCharPref("mail.smtp.defaultserver", serverKey);
+    nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
+    NS_ENSURE_SUCCESS(rv,rv);
+    prefBranch->SetCharPref(PREF_MAIL_SMTP_DEFAULTSERVER, serverKey);
     return NS_OK;
 }
 

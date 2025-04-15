@@ -58,6 +58,7 @@ private :
     nsCAutoString m_thisApp ;
     nsAutoString m_brand ;
     nsAutoString m_vendor ;
+    nsAutoString m_versionNo ;
 
     nsCOMPtr<nsIStringBundle> m_mapiStringBundle ;
 
@@ -70,7 +71,7 @@ private :
 
     PRBool mRestrictedRegAccess; // cannot write to HKLM in the registry
 
-    nsresult RegCopyKey(HKEY SrcKey, HKEY TrgKey, const char* TrgSubKeyName); // copies a key and all sub keys to TrgKey.
+    static void RegCopyKey(HKEY aSrcKey, HKEY aDestKey, const char* aSubKeyName); // recursively copies the given sub key from the src key to the dest key
     nsresult recursiveDeleteKey(HKEY hKeyParent, const char* lpszKeyChild);
 
 public :
@@ -105,6 +106,9 @@ public :
     nsresult unsetDefaultMailClient(); // Removes Mozilla as the default Mail client and restores the previous setting
     nsresult saveDefaultMailClient(); // Save default mail client settings in HKEY_LOCAL_MACHINE\\Software\\Mozilla\\Desktop   
     nsresult saveUserDefaultMailClient(); // save default 
+    PRBool IsDefaultFeedClient();
+    nsresult setDefaultFeedClient();
+    nsresult unsetDefaultFeedClient();
        
     PRBool IsDefaultNewsClient();      // Returns TRUE if the current application is default news client.  
     nsresult setDefaultNewsClient();   // Sets Mozilla as the default News Client    
@@ -114,6 +118,9 @@ public :
 
     nsresult setupDefaultProtocolKey(const char * aDefaultAppRegKey, const char * aProtocol, const char * aProtocolEntryValue, const char * aCmdLineParam); 
     nsresult setProtocolHandler(const char * aDefaultAppRegKey, const char * protocolName); // installs protocol handler on Software\Classes\<protocolName>
+
+    nsresult setupFileExtension(const char * aDefaultAppRegKey, const char * aExtension);
+    nsresult restoreFileExtension(const char * aDefaultAppRegKey, const char * aExtension);
 
     nsresult registerNewsApp(PRBool aForceRegistration); // aForceRegistration set to TRUE if we want to force the keys to be set again
     nsresult registerMailApp(PRBool aForceRegistration);

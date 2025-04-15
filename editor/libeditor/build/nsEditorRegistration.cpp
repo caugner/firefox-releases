@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,39 +14,42 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Michael Judge   <mjudge@netscape.com>
- *    Charles Manske  <cmanske@netscape.com>
- *
+ *   Michael Judge   <mjudge@netscape.com>
+ *   Charles Manske  <cmanske@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsIGenericFactory.h"
 #include "nsEditorCID.h"
-#include "nsEditor.h"				// for gInstanceCount
+#include "nsEditor.h"
 #include "nsPlaintextEditor.h"
 #include "nsEditorController.h" //CID
 #include "nsIController.h"
 #include "nsIControllerContext.h"
 #include "nsIControllerCommandTable.h"
 #include "nsIServiceManager.h"
+#include "nsIObserver.h"
+#include "nsIObserverService.h"
+#include "nsCOMPtr.h"
+#include "nsIParserService.h"
 
 #ifndef MOZILLA_PLAINTEXT_EDITOR_ONLY
 #include "nsHTMLEditor.h"
@@ -55,19 +58,95 @@
 #endif
 
 #define NS_EDITORCOMMANDTABLE_CID \
-{ 0x8b975b0a, 0x6ae5, 0x11d7, { 0xa44c, 0x00, 0x03, 0x93, 0x63, 0x65, 0x92 } }
+{ 0x4f5e62b8, 0xd659, 0x4156, { 0x84, 0xfc, 0x2f, 0x60, 0x99, 0x40, 0x03, 0x69 }}
 
 static NS_DEFINE_CID(kEditorCommandTableCID, NS_EDITORCOMMANDTABLE_CID);
+
+PR_STATIC_CALLBACK(nsresult) Initialize(nsIModule* self);
+static void Shutdown();
+
+class EditorShutdownObserver : public nsIObserver
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIOBSERVER
+};
+
+NS_IMPL_ISUPPORTS1(EditorShutdownObserver, nsIObserver)
+
+NS_IMETHODIMP
+EditorShutdownObserver::Observe(nsISupports *aSubject,
+                                const char *aTopic,
+                                const PRUnichar *someData)
+{
+  if (!strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID))
+    Shutdown();
+  return NS_OK;
+}
+
+static PRBool gInitialized = PR_FALSE;
+
+nsIParserService *sParserService;
 
 PR_STATIC_CALLBACK(nsresult)
 Initialize(nsIModule* self)
 {
-#ifndef MOZILLA_PLAINTEXT_EDITOR_ONLY
-    nsEditProperty::RegisterAtoms();
-#endif
+  NS_PRECONDITION(!gInitialized, "module already initialized");
+  if (gInitialized) {
     return NS_OK;
+  }
+
+  gInitialized = PR_TRUE;
+
+  nsresult rv = CallGetService("@mozilla.org/parser/parser-service;1",
+                               &sParserService);
+  if (NS_FAILED(rv)) {
+    gInitialized = PR_FALSE;
+
+    return rv;
+  }
+#ifndef MOZILLA_PLAINTEXT_EDITOR_ONLY
+  nsEditProperty::RegisterAtoms();
+  nsTextServicesDocument::RegisterAtoms();
+#endif
+
+  // Add our shutdown observer.
+  nsCOMPtr<nsIObserverService> observerService =
+    do_GetService("@mozilla.org/observer-service;1");
+
+  if (observerService) {
+    nsCOMPtr<EditorShutdownObserver> observer =
+      new EditorShutdownObserver();
+
+    if (!observer) {
+      Shutdown();
+
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    observerService->AddObserver(observer, NS_XPCOM_SHUTDOWN_OBSERVER_ID, PR_FALSE);
+  } else {
+    NS_WARNING("Could not get an observer service.  We will leak on shutdown.");
+  }
+
+  return NS_OK;
 }
 
+// static
+void
+Shutdown()
+{
+  NS_PRECONDITION(gInitialized, "module not initialized");
+  if (!gInitialized)
+    return;
+
+  NS_IF_RELEASE(sParserService);
+
+#ifndef MOZILLA_PLAINTEXT_EDITOR_ONLY
+  nsHTMLEditor::Shutdown();
+  nsTextServicesDocument::Shutdown();
+#endif
+}
 
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsPlaintextEditor)
 

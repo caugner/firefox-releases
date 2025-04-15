@@ -1,11 +1,12 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim:set ts=4 sw=4 sts=4 et cin: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,24 +15,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): Bradley Baetz <bbaetz@student.usyd.edu.au>
+ * Contributor(s):
+ *   Bradley Baetz <bbaetz@student.usyd.edu.au>
+ *   Malcolm Smith <malsmith@cs.rmit.edu.au>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -65,7 +68,6 @@
 #include "nsIStreamTransportService.h"
 #include "nsIHttpChannel.h"
 #include "nsIDownloader.h"
-#include "nsIResumableEntityID.h"
 #include "nsIStreamLoader.h"
 #include "nsIUnicharStreamLoader.h"
 #include "nsIPipe.h"
@@ -82,13 +84,16 @@
 #include "nsIAsyncStreamCopier.h"
 #include "nsIPersistentProperties2.h"
 #include "nsISyncStreamListener.h"
+#include "nsInterfaceRequestorAgg.h"
+#include "nsInt64.h"
+#include "nsINetUtil.h"
 
 // Helper, to simplify getting the I/O service.
-inline const nsGetServiceByCID
+inline const nsGetServiceByCIDWithError
 do_GetIOService(nsresult* error = 0)
 {
     static NS_DEFINE_CID(kIOServiceCID, NS_IOSERVICE_CID);
-    return nsGetServiceByCID(kIOServiceCID, 0, error);
+    return nsGetServiceByCIDWithError(kIOServiceCID, error);
 }
 
 // private little helper function... don't call this directly!
@@ -180,12 +185,10 @@ NS_NewChannel(nsIChannel           **result,
     return rv;
 }
 
-// Use this function with CAUTION. And do not use it on 
-// the UI thread. It creates a stream that blocks when
-// you Read() from it and blocking the UI thread is
-// illegal. If you don't want to implement a full
-// blown asyncrhonous consumer (via nsIStreamListener)
-// look at nsIStreamLoader instead.
+// Use this function with CAUTION. It creates a stream that blocks when you
+// Read() from it and blocking the UI thread is a bad idea. If you don't want
+// to implement a full blown asynchronous consumer (via nsIStreamListener) look
+// at nsIStreamLoader instead.
 inline nsresult
 NS_OpenURI(nsIInputStream       **result,
            nsIURI                *uri,
@@ -289,8 +292,8 @@ inline nsresult
 NS_NewInputStreamChannel(nsIChannel      **result,
                          nsIURI           *uri,
                          nsIInputStream   *stream,
-                         const nsACString &contentType    = EmptyCString(),
-                         const nsACString &contentCharset = EmptyCString())
+                         const nsACString &contentType,
+                         const nsACString *contentCharset)
 {
     nsresult rv;
     static NS_DEFINE_CID(kInputStreamChannelCID, NS_INPUTSTREAMCHANNEL_CID);
@@ -300,7 +303,9 @@ NS_NewInputStreamChannel(nsIChannel      **result,
         rv |= channel->SetURI(uri);
         rv |= channel->SetContentStream(stream);
         rv |= channel->SetContentType(contentType);
-        rv |= channel->SetContentCharset(contentCharset);
+        if (contentCharset && !contentCharset->IsEmpty()) {
+            rv |= channel->SetContentCharset(*contentCharset);
+        }
         if (NS_SUCCEEDED(rv))
             NS_ADDREF(*result = channel);
     }
@@ -308,10 +313,30 @@ NS_NewInputStreamChannel(nsIChannel      **result,
 }
 
 inline nsresult
+NS_NewInputStreamChannel(nsIChannel      **result,
+                         nsIURI           *uri,
+                         nsIInputStream   *stream,
+                         const nsACString &contentType    = EmptyCString())
+{
+    return NS_NewInputStreamChannel(result, uri, stream, contentType, nsnull);
+}
+
+inline nsresult
+NS_NewInputStreamChannel(nsIChannel      **result,
+                         nsIURI           *uri,
+                         nsIInputStream   *stream,
+                         const nsACString &contentType,
+                         const nsACString &contentCharset)
+{
+    return NS_NewInputStreamChannel(result, uri, stream, contentType,
+                                    &contentCharset);
+}
+
+inline nsresult
 NS_NewInputStreamPump(nsIInputStreamPump **result,
                       nsIInputStream      *stream,
-                      PRInt32              streamPos = -1,
-                      PRInt32              streamLen = -1,
+                      PRInt64              streamPos = nsInt64(-1),
+                      PRInt64              streamLen = nsInt64(-1),
                       PRUint32             segsize = 0,
                       PRUint32             segcount = 0,
                       PRBool               closeWhenDone = PR_FALSE)
@@ -563,16 +588,18 @@ NS_CheckPortSafety(PRInt32       port,
 }
 
 inline nsresult
-NS_NewProxyInfo(const char    *type,
-                const char    *host,
-                PRInt32        port,
-                nsIProxyInfo **result)
+NS_NewProxyInfo(const nsACString &type,
+                const nsACString &host,
+                PRInt32           port,
+                PRUint32          flags,
+                nsIProxyInfo    **result)
 {
     nsresult rv;
     static NS_DEFINE_CID(kPPSServiceCID, NS_PROTOCOLPROXYSERVICE_CID);
     nsCOMPtr<nsIProtocolProxyService> pps = do_GetService(kPPSServiceCID, &rv);
     if (NS_SUCCEEDED(rv))
-        rv = pps->NewProxyInfo(type, host, port, result);
+        rv = pps->NewProxyInfo(type, host, port, flags, PR_UINT32_MAX, nsnull,
+                               result);
     return rv; 
 }
 
@@ -619,22 +646,6 @@ NS_GetURLSpecFromFile(nsIFile      *aFile,
 }
 
 inline nsresult
-NS_NewResumableEntityID(nsIResumableEntityID **aRes,
-                        PRUint32               size,
-                        PRTime                 lastModified)
-{
-    nsresult rv;
-    nsCOMPtr<nsIResumableEntityID> ent =
-        do_CreateInstance(NS_RESUMABLEENTITYID_CONTRACTID,&rv);
-    if (NS_SUCCEEDED(rv)) {
-        ent->SetSize(size);
-        ent->SetLastModified(lastModified);
-        NS_ADDREF(*aRes = ent);
-    }
-    return rv;
-}
-
-inline nsresult
 NS_ExamineForProxy(const char    *scheme,
                    const char    *host,
                    PRInt32        port, 
@@ -660,7 +671,7 @@ NS_ExamineForProxy(const char    *scheme,
         if (NS_SUCCEEDED(rv)) {
             rv = uri->SetSpec(spec);
             if (NS_SUCCEEDED(rv))
-                rv = pps->ExamineForProxy(uri, proxyInfo);
+                rv = pps->Resolve(uri, 0, proxyInfo);
         }
     }
     return rv;
@@ -672,24 +683,16 @@ NS_ParseContentType(const nsACString &rawContentType,
                     nsCString        &contentCharset)
 {
     // contentCharset is left untouched if not present in rawContentType
-    nsACString::const_iterator begin, it, end;
-    it = rawContentType.BeginReading(begin);
-    rawContentType.EndReading(end);
-    if (FindCharInReadable(';', it, end)) {
-        contentType = Substring(begin, it);
-        // now look for "charset=FOO" and extract "FOO"
-        begin = ++it;
-        if (FindInReadable(NS_LITERAL_CSTRING("charset="), begin, it = end,
-                           nsCaseInsensitiveCStringComparator())) {
-            contentCharset = Substring(it, end);
-            contentCharset.StripWhitespace();
-        }
-    }
-    else
-        contentType = rawContentType;
-    ToLowerCase(contentType);
-    contentType.StripWhitespace();
-    return NS_OK;
+    nsresult rv;
+    nsCOMPtr<nsINetUtil> util = do_GetIOService(&rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsCString charset;
+    PRBool hadCharset;
+    rv = util->ParseContentType(rawContentType, charset, &hadCharset,
+                                contentType);
+    if (NS_SUCCEEDED(rv) && hadCharset)
+        contentCharset = charset;
+    return rv;
 }
 
 inline nsresult
@@ -764,7 +767,7 @@ NS_BackgroundInputStream(nsIInputStream **aResult,
         do_GetService(NS_STREAMTRANSPORTSERVICE_CONTRACTID, &rv);
     if (NS_SUCCEEDED(rv)) {
         nsCOMPtr<nsITransport> inTransport;
-        rv = sts->CreateInputTransport(aStream, -1, -1, PR_TRUE,
+        rv = sts->CreateInputTransport(aStream, nsInt64(-1), nsInt64(-1), PR_TRUE,
                                        getter_AddRefs(inTransport));
         if (NS_SUCCEEDED(rv))
             rv = inTransport->OpenInputStream(nsITransport::OPEN_BLOCKING,
@@ -788,7 +791,7 @@ NS_BackgroundOutputStream(nsIOutputStream **aResult,
         do_GetService(NS_STREAMTRANSPORTSERVICE_CONTRACTID, &rv);
     if (NS_SUCCEEDED(rv)) {
         nsCOMPtr<nsITransport> inTransport;
-        rv = sts->CreateOutputTransport(aStream, -1, -1, PR_TRUE,
+        rv = sts->CreateOutputTransport(aStream, nsInt64(-1), nsInt64(-1), PR_TRUE,
                                         getter_AddRefs(inTransport));
         if (NS_SUCCEEDED(rv))
             rv = inTransport->OpenOutputStream(nsITransport::OPEN_BLOCKING,
@@ -896,6 +899,98 @@ NS_LoadPersistentPropertiesFromURISpec(nsIPersistentProperties **result,
         rv = NS_LoadPersistentPropertiesFromURI(result, uri, ioService);
 
     return rv;
+}
+
+/**
+ * NS_QueryNotificationCallbacks implements the canonical algorithm for
+ * querying interfaces from a channel's notification callbacks.  It first
+ * searches the channel's notificationCallbacks attribute, and if the interface
+ * is not found there, then it inspects the notificationCallbacks attribute of
+ * the channel's loadGroup.
+ */
+inline void
+NS_QueryNotificationCallbacks(nsIChannel   *aChannel,
+                              const nsIID  &aIID,
+                              void        **aResult)
+{
+    NS_PRECONDITION(aChannel, "null channel");
+    *aResult = nsnull;
+
+    nsCOMPtr<nsIInterfaceRequestor> cbs;
+    aChannel->GetNotificationCallbacks(getter_AddRefs(cbs));
+    if (cbs)
+        cbs->GetInterface(aIID, aResult);
+    if (!*aResult) {
+        // try load group's notification callbacks...
+        nsCOMPtr<nsILoadGroup> loadGroup;
+        aChannel->GetLoadGroup(getter_AddRefs(loadGroup));
+        if (loadGroup) {
+            loadGroup->GetNotificationCallbacks(getter_AddRefs(cbs));
+            if (cbs)
+                cbs->GetInterface(aIID, aResult);
+        }
+    }
+}
+
+/* template helper */
+template <class T> inline void
+NS_QueryNotificationCallbacks(nsIChannel  *aChannel,
+                              nsCOMPtr<T> &aResult)
+{
+    NS_QueryNotificationCallbacks(aChannel, NS_GET_IID(T),
+                                  getter_AddRefs(aResult));
+}
+
+/**
+ * Alternate form of NS_QueryNotificationCallbacks designed for use by
+ * nsIChannel implementations.
+ */
+inline void
+NS_QueryNotificationCallbacks(nsIInterfaceRequestor  *aCallbacks,
+                              nsILoadGroup           *aLoadGroup,
+                              const nsIID            &aIID,
+                              void                  **aResult)
+{
+    *aResult = nsnull;
+
+    if (aCallbacks)
+        aCallbacks->GetInterface(aIID, aResult);
+    if (!*aResult) {
+        // try load group's notification callbacks...
+        if (aLoadGroup) {
+            nsCOMPtr<nsIInterfaceRequestor> cbs;
+            aLoadGroup->GetNotificationCallbacks(getter_AddRefs(cbs));
+            if (cbs)
+                cbs->GetInterface(aIID, aResult);
+        }
+    }
+}
+
+/* template helper */
+template <class T> inline void
+NS_QueryNotificationCallbacks(nsIInterfaceRequestor *aCallbacks,
+                              nsILoadGroup          *aLoadGroup,
+                              nsCOMPtr<T>           &aResult)
+{
+    NS_QueryNotificationCallbacks(aCallbacks, aLoadGroup,
+                                  NS_GET_IID(T),
+                                  getter_AddRefs(aResult));
+}
+
+/**
+ * This function returns a nsIInterfaceRequestor instance that returns the
+ * same result as NS_QueryNotificationCallbacks when queried.  It is useful
+ * as the value for nsISocketTransport::securityCallbacks.
+ */
+inline nsresult
+NS_NewNotificationCallbacksAggregation(nsIInterfaceRequestor  *aCallbacks,
+                                       nsILoadGroup           *aLoadGroup,
+                                       nsIInterfaceRequestor **aResult)
+{
+    nsCOMPtr<nsIInterfaceRequestor> cbs;
+    if (aLoadGroup)
+        aLoadGroup->GetNotificationCallbacks(getter_AddRefs(cbs));
+    return NS_NewInterfaceRequestorAggregation(aCallbacks, cbs, aResult);
 }
 
 #endif // !nsNetUtil_h__

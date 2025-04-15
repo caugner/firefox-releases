@@ -1,23 +1,39 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "MPL"); you may not use this file
- * except in compliance with the MPL. You may obtain a copy of
- * the MPL at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the MPL is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the MPL for the specific language governing
- * rights and limitations under the MPL.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is XMLterm.
- * 
- * The Initial Developer of the Original Code is Ramalingam Saravanan.
- * Portions created by Ramalingam Saravanan <svn@xmlterm.org> are
- * Copyright (C) 1999 Ramalingam Saravanan. All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Ramalingam Saravanan.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 // mozXMLTerminal.cpp: implementation of mozIXMLTerminal interface
 // to manage all XMLTerm operations.
@@ -38,10 +54,11 @@
 #include "nsIObserver.h"
 #include "nsISelectionController.h"
 
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsICaret.h"
 #include "nsRect.h"
 #include "nsIURI.h"
+#include "nsNetUtil.h"
 
 #include "nsIDOMEventReceiver.h"
 #include "nsIDOMEventListener.h"
@@ -86,12 +103,12 @@ NS_IMPL_THREADSAFE_ISUPPORTS4(mozXMLTerminal,
 mozXMLTerminal::mozXMLTerminal() :
   mInitialized(PR_FALSE),
 
-  mCookie(nsAutoString()),
+  mCookie(EmptyString()),
 
-  mCommand(nsAutoString()),
-  mPromptExpr(nsAutoString()),
+  mCommand(EmptyString()),
+  mPromptExpr(EmptyString()),
 
-  mInitInput(nsAutoString()),
+  mInitInput(EmptyString()),
 
   mXMLTermShell(nsnull),
   mDocShell(nsnull),
@@ -232,11 +249,8 @@ NS_IMETHODIMP mozXMLTerminal::Init(nsIDocShell* aDocShell,
     XMLT_LOG(mozXMLTerminal::Init,22,("done setting DocLoaderObs\n"));
 
     // Load initial XMLterm background document
-    nsCAutoString urlCString;
-    urlCString.AssignWithConversion(aURL);
-
     nsCOMPtr<nsIURI> uri;
-    result = uri->SetSpec(urlCString);
+    result = NS_NewURI(getter_AddRefs(uri), nsDependentString(aURL));
     if (NS_FAILED(result))
       return NS_ERROR_FAILURE;
 
@@ -401,7 +415,7 @@ NS_IMETHODIMP mozXMLTerminal::Activate(void)
     return NS_ERROR_FAILURE;
 
   // Get reference to presentation shell
-  nsCOMPtr<nsIPresContext> presContext;
+  nsCOMPtr<nsPresContext> presContext;
   result = docShell->GetPresContext(getter_AddRefs(presContext));
   if (NS_FAILED(result) || !presContext)
     return NS_ERROR_FAILURE;
@@ -412,10 +426,8 @@ NS_IMETHODIMP mozXMLTerminal::Activate(void)
     return NS_ERROR_FAILURE;
 
   // Get reference to DOMDocument
-  nsCOMPtr<nsIDocument> document;
-  result = presShell->GetDocument(getter_AddRefs(document));
-
-  if (NS_FAILED(result) || !document)
+  nsIDocument *document = presShell->GetDocument();
+  if (!document)
     return NS_ERROR_FAILURE;
 
   nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(document);
@@ -583,21 +595,17 @@ NS_IMETHODIMP mozXMLTerminal::ScreenSize(PRInt32* rows, PRInt32* cols,
     return NS_ERROR_FAILURE;
 
   // Get presentation context
-  nsCOMPtr<nsIPresContext> presContext;
-  result = presShell->GetPresContext( getter_AddRefs(presContext) );
-  if (NS_FAILED(result))
-    return result;
+  nsPresContext *presContext = presShell->GetPresContext();
 
   // Get the default fixed pitch font
   const nsFont* defaultFixedFont =
     presContext->GetDefaultFont(kPresContext_DefaultFixedFont_ID);
 
   // Get metrics for fixed font
-  nsCOMPtr<nsIFontMetrics> fontMetrics;
-  result = presContext->GetMetricsFor(*defaultFixedFont,
-                                      getter_AddRefs(fontMetrics));
-  if (NS_FAILED(result) || !fontMetrics)
-    return result;
+  nsCOMPtr<nsIFontMetrics> fontMetrics =
+    presContext->GetMetricsFor(*defaultFixedFont);
+  if (!fontMetrics)
+    return NS_ERROR_FAILURE;
 
   // Get font height (includes leading?)
   nscoord fontHeight, fontWidth;
@@ -670,7 +678,7 @@ NS_IMETHODIMP mozXMLTerminal::SendText(const PRUnichar* aString,
     if (NS_FAILED(result)) {
       // Abort XMLterm session
       nsAutoString abortCode;
-      abortCode.Assign(NS_LITERAL_STRING("SendText"));
+      abortCode.AssignLiteral("SendText");
       mXMLTermSession->Abort(mLineTermAux, abortCode);
       return NS_ERROR_FAILURE;
     }
@@ -703,17 +711,6 @@ NS_IMETHODIMP mozXMLTerminal::ShowCaret(void)
   if (!selCon) {
     XMLT_WARNING("mozXMLTerminal::ShowCaret: Warning - Failed to get SelectionController\n");
     return NS_ERROR_FAILURE;
-  }
-
-  PRInt32 pixelWidth;
-  nsresult result;
-
-  nsCOMPtr<nsILookAndFeel> look(do_GetService(kLookAndFeelCID, &result));
-
-  if (NS_SUCCEEDED(result) && look) {
-    look->GetMetric(nsILookAndFeel::eMetric_SingleLineCaretWidth, pixelWidth);
-
-    selCon->SetCaretWidth(pixelWidth);
   }
 
   selCon->SetCaretEnabled(PR_TRUE);
@@ -752,11 +749,7 @@ NS_IMETHODIMP mozXMLTerminal::Paste()
     return result;
     
   // Generic transferable for getting clipboard data
-  nsCOMPtr<nsITransferable> trans;
-  result = nsComponentManager::CreateInstance(kCTransferableCID, nsnull, 
-                                              NS_GET_IID(nsITransferable), 
-                                              (void**) getter_AddRefs(trans));
-
+  nsCOMPtr<nsITransferable> trans = do_CreateInstance(kCTransferableCID, &result);
   if (NS_FAILED(result) || !trans)
     return NS_ERROR_FAILURE;
 
@@ -777,14 +770,9 @@ NS_IMETHODIMP mozXMLTerminal::Paste()
   if (NS_FAILED(result))
     return result;
 
-  nsAutoString flavor;
-  flavor.AssignWithConversion(bestFlavor);
+  XMLT_LOG(mozXMLTerminal::Paste,20,("flavour=%s\n", bestFlavor));
 
-  char* temCStr = ToNewCString(flavor);
-  XMLT_LOG(mozXMLTerminal::Paste,20,("flavour=%s\n", temCStr));
-  nsMemory::Free(temCStr);
-
-  if (flavor.EqualsWithConversion(kHTMLMime) || flavor.EqualsWithConversion(kUnicodeMime)) {
+  if (strcmp(bestFlavor, kHTMLMime) == 0 || strcmp(bestFlavor, kUnicodeMime) == 0) {
     nsCOMPtr<nsISupportsString> textDataObj ( do_QueryInterface(genericDataObj) );
     if (textDataObj && objLen > 0) {
       PRUnichar* text = nsnull;

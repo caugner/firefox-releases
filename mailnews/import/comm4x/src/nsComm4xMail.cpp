@@ -19,11 +19,11 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Srilatha Moturi <srilatha@netscape.com>
+ *   Srilatha Moturi <srilatha@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -48,6 +48,7 @@
 #include "nsUnicharUtils.h"
 #include "Comm4xMailDebugLog.h"
 #include "prmem.h"
+#include "nsNativeCharsetUtils.h"
 
 #define	kCopyBufferSize		8192
 #define	kMailReadBufferSize	16384
@@ -77,17 +78,17 @@ nsShouldIgnoreFile(nsString& name)
     if (firstChar == '.' || firstChar == '#' || name.CharAt(name.Length() - 1) == '~')
       return PR_TRUE;
  
-    if (name.EqualsIgnoreCase("rules.dat") || name.EqualsIgnoreCase("rulesbackup.dat"))
+    if (name.LowerCaseEqualsLiteral("rules.dat") || name.LowerCaseEqualsLiteral("rulesbackup.dat"))
         return PR_TRUE;
  
  
     // don't add summary files to the list of folders;
     // don't add popstate files to the list either, or rules (sort.dat). 
     if (nsStringEndsWith(name, ".snm") ||
-        name.EqualsIgnoreCase("popstate.dat") ||
-        name.EqualsIgnoreCase("sort.dat") ||
-        name.EqualsIgnoreCase("mailfilt.log") ||
-        name.EqualsIgnoreCase("filters.js") ||
+        name.LowerCaseEqualsLiteral("popstate.dat") ||
+        name.LowerCaseEqualsLiteral("sort.dat") ||
+        name.LowerCaseEqualsLiteral("mailfilt.log") ||
+        name.LowerCaseEqualsLiteral("filters.js") ||
         nsStringEndsWith(name, ".toc")||
         nsStringEndsWith(name,".sbd"))
         return PR_TRUE;
@@ -168,7 +169,7 @@ nsresult nsComm4xMail::IterateMailDir(nsIFileSpec *pFolder, nsISupportsArray *pA
         rv = dir->GetCurrentSpec(getter_AddRefs(entry));
         if (NS_SUCCEEDED(rv)) {
             rv = entry->GetLeafName(getter_Copies(pName));
-            nsMsgGetNativePathString(pName.get(), currentFolderNameStr);
+            NS_CopyNativeToUnicode(pName, currentFolderNameStr);
             isFile = PR_FALSE;
             entry->IsFile(&isFile);
             if (isFile) {
@@ -211,7 +212,7 @@ nsresult nsComm4xMail::FoundMailbox(nsIFileSpec *mailFile, nsAutoString *pName, 
     if (!pPath.IsEmpty())
       IMPORT_LOG2("Found comm4x mailbox: %s, m_depth = %d\n", pPath.get(), m_depth);
     else
-      IMPORT_LOG2("Can't get native path but found comm4x mailbox: %s, m_depth = %d\n", NS_ConvertUCS2toUTF8(*pName).get(), m_depth);
+      IMPORT_LOG2("Can't get native path but found comm4x mailbox: %s, m_depth = %d\n", NS_ConvertUTF16toUTF8(*pName).get(), m_depth);
 
     nsresult rv = pImport->CreateNewMailboxDescriptor(getter_AddRefs(desc));
     if (NS_SUCCEEDED(rv)) {

@@ -1,6 +1,6 @@
-/.cvsignore/1.1/Mon Jun 21 03:23:03 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.24/Wed Jan  7 13:36:26 2004//TFIREFOX_1_0_RELEASE
-/nsWalletViewerFactory.cpp/1.15/Wed Jan 30 21:12:50 2002//TFIREFOX_1_0_RELEASE
-/walletviewer.pkg/1.2/Wed Jan  7 01:21:32 2004//TFIREFOX_1_0_RELEASE
-/win32.order/1.1/Tue Feb 13 02:37:01 2001//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Mon Jun 21 03:23:03 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.26/Mon Apr  4 18:38:14 2005//TFIREFOX_1_5_RELEASE
+/nsWalletViewerFactory.cpp/1.16/Sun Apr 18 22:14:04 2004//TFIREFOX_1_5_RELEASE
+/walletviewer.pkg/1.2/Wed Jan  7 01:21:32 2004//TFIREFOX_1_5_RELEASE
+/win32.order/1.1/Tue Feb 13 02:37:01 2001//TFIREFOX_1_5_RELEASE
 D

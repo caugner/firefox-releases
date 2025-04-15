@@ -42,10 +42,14 @@ include $(DEPTH)/config/autoconf.mk
 
 MODULE		= sql
 LIBRARY_NAME	= sqlpgsql_s
+MOZILLA_INTERNAL_API = 1
+
 REQUIRES	= xpcom \
 		  string \
 		  locale \
 		  rdf \
+		  dom \
+		  layout \
 		  $(NULL)
 
 CPPSRCS		= \

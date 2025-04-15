@@ -562,7 +562,7 @@
   <binding id="descriptionitem">
     <content>
       <xul:hbox class="attachmentBox" xbl:inherits="orient" align="start">
-        <xul:label class="descriptioncell-label" xbl:inherits="value=label,flex=flexlabel,crop,disabled,context" flex="1" crop="right"/>
+        <xul:label class="descriptioncell-label" xbl:inherits="value=label,flex=flexlabel,crop,disabled,context" flex="1" dir="ltr" crop="center"/>
       </xul:hbox>
     </content>
   </binding>
@@ -571,7 +571,7 @@
     <content>
       <xul:hbox class="attachmentBox" xbl:inherits="orient" align="center">
         <xul:image class="descriptioncell-icon" xbl:inherits="src=image"/>
-        <xul:label class="descriptioncell-label" xbl:inherits="value=label,flex=flexlabel,crop,contextdisabled" flex="1" crop="right"/>
+        <xul:label class="descriptioncell-label" xbl:inherits="value=label,flex=flexlabel,crop,disabled,context" flex="1" dir="ltr" crop="center"/>
       </xul:hbox>
     </content>
   </binding>
@@ -619,7 +619,7 @@
       </xul:hbox>
       <xul:label originalclass="headerValue plain headerValueUrl" onclick="if (!event.button) messenger.launchExternalURL(event.target.value);" 
                  appendoriginalclass="true" keywordrelated="true" class="headerValue plain headerValueUrl" 
-                 anonid="headerValue" flex="1" readonly="true"/> 
+                 anonid="headerValue" flex="1" readonly="true" context="copyUrlPopup"/> 
     </content>
   </binding>
 
@@ -901,7 +901,7 @@
       <xul:label anonid="emailValue" class="emailDisplayButton plain"                 
                  xbl:inherits="value=label,crop"/>
       <xul:image class="emailDisplayImage" anonid="emailImage"
-                 context="emailAddressPopup" xbl:inherits="src=image"/>
+                 xbl:inherits="src=image"/>
     </content>
     
     <implementation>  
@@ -1057,7 +1057,7 @@
           <![CDATA[
             var menulist = document.getAnonymousNodes(this)[0];
             var dataItems = menulist.getElementsByAttribute("value", val);
-            if (dataItems.length > 0)
+            if (dataItems.item(0))
                 menulist.selectedItem = dataItems[0];
 
             // now notify targets of new parent's value
@@ -1246,6 +1246,7 @@
           <xul:menuitem value="1" stringTag="read" class="search-value-menuitem"/>
           <xul:menuitem value="65536" stringTag="new" class="search-value-menuitem"/>
           <xul:menuitem value="4096" stringTag="forwarded" class="search-value-menuitem"/>
+          <xul:menuitem value="4" stringTag="flagged" class="search-value-menuitem"/>
         </xul:menupopup>
       </xul:menulist>
       <xul:textbox flex="1" class="search-value-textbox"/>
@@ -1314,7 +1315,7 @@
               if (this.internalOperator != Components.interfaces.nsMsgSearchOp.IsntInAB &&
                   this.internalOperator != Components.interfaces.nsMsgSearchOp.IsInAB) {
                 var abs = children[4].getElementsByAttribute("value", "moz-abmdbdirectory://abook.mab");
-                if (abs.length > 0) 
+                if (abs.item(0)) 
                   children[4].selectedItem = abs[0];   
                 this.setAttribute("selectedIndex", "4");
               }
@@ -1369,7 +1370,7 @@
             {
               var children = document.getAnonymousNodes(this);
               var abs = children[5].getElementsByAttribute("value", "1");
-              if (abs.length > 0) 
+              if (abs.item(0)) 
                 children[5].selectedItem = abs[0];                 
               this.setAttribute("selectedIndex", "5");
             }
@@ -1399,13 +1400,13 @@
           if (attrib == nsMsgSearchAttrib.Priority) {
             var matchingPriority =
               children[1].getElementsByAttribute("value", val.priority);
-            if (matchingPriority.length > 0)
+            if (matchingPriority.item(0))
               children[1].selectedItem = matchingPriority[0];
           }
           else if (attrib == nsMsgSearchAttrib.MsgStatus) {
             var matchingStatus =
               children[2].getElementsByAttribute("value", val.status);
-            if (matchingStatus.length > 0) 
+            if (matchingStatus.item(0)) 
               children[2].selectedItem = matchingStatus[0];
           }
           else if (attrib == nsMsgSearchAttrib.AgeInDays)
@@ -1417,7 +1418,7 @@
             if (this.internalOperator == Components.interfaces.nsMsgSearchOp.IsntInAB ||
                 this.internalOperator == Components.interfaces.nsMsgSearchOp.IsInAB) {
               var abs = children[4].getElementsByAttribute("value", val.str);
-              if (abs.length > 0) 
+              if (abs.item(0)) 
                 children[4].selectedItem = abs[0];    
             }
             else
@@ -1426,20 +1427,23 @@
           else if (attrib == nsMsgSearchAttrib.Label)
           {
             var labelVal = children[5].getElementsByAttribute("value", val.label);
-            if (labelVal.length > 0)
+            if (labelVal.item(0))
               children[5].selectedItem = labelVal[0];
           }
           else if (attrib == nsMsgSearchAttrib.JunkStatus) {
             var junkStatus =
               children[6].getElementsByAttribute("value", val.junkStatus);
-            if (junkStatus.length > 0) 
+            if (junkStatus.item(0)) 
               children[6].selectedItem = junkStatus[0];
           }
           else if (attrib == nsMsgSearchAttrib.HasAttachmentStatus) {
             var hasAttachmentStatus =
               children[7].getElementsByAttribute("value", val.hasAttachmentStatus);
-            if (hasAttachmentStatus.length > 0) 
+            if (hasAttachmentStatus.item(0)) 
               children[7].selectedItem = hasAttachmentStatus[0];
+          }
+          else if (attrib == nsMsgSearchAttrib.Size) {
+            children[0].value = val.size;
           }
           else 
             children[0].value = val.str;
@@ -1568,11 +1572,7 @@
       </constructor>
     </implementation>
     <handlers>
-	<handler event="keypress"><![CDATA[
-	  if (event.keyCode == 13) {
-	    onEnterInSearchTerm(); 
-          }
-        ]]></handler>
+	<handler event="keypress" keycode="VK_RETURN" action="onEnterInSearchTerm();"/>
     </handlers>
   </binding>
   <binding id="searchterm" name="searchTerm" extends="xul:box">
@@ -1695,4 +1695,283 @@
       </method>
     </implementation>
   </binding>
+
+  <!-- Folder picker helper widgets -->
+  <binding id="popup-base" extends="chrome://global/content/bindings/popup.xml#popup">
+    <implementation>
+      <field name="tree" readonly="true">
+        document.getAnonymousNodes(this)[0];
+      </field>
+      <method name="updateHover">
+        <parameter name="event"/>
+        <body>
+          <![CDATA[
+            var box = this.tree.boxObject;
+            if (event.originalTarget == box.treeBody) {
+              // XXXbz We really want client*, but event.client* is bogus inside a popup!
+              var eventX = event.screenX - document.documentElement.boxObject.screenX;
+              var eventY = event.screenY - document.documentElement.boxObject.screenY;
+              box.view.selection.select(box.getRowAt(eventX, eventY));
+            }
+          ]]>
+        </body>
+      </method>
+      <method name="fire">
+        <body>
+          <![CDATA[
+            this.hidePopup();
+            if (this.tree.currentIndex >= 0) {
+              this.setAttribute("uri", this.tree.builderView.getResourceAtIndex(this.tree.currentIndex).Value);
+              this.doCommand();
+            }
+          ]]>
+        </body>
+      </method>
+      <method name="onBlurMenuList">
+        <parameter name="event"/>
+        <body>
+          <![CDATA[
+            this.boxObject.QueryInterface(Components.interfaces.nsIMenuBoxObject).openMenu(false);
+          ]]>
+        </body>
+      </method>
+      <field name="onKeyDownMenuList" readonly="true">
+        <![CDATA[
+          ({
+            parentNode: this.parentNode,
+            handleEvent: function handleEvent(event) {
+              if (this.parentNode.hasAttribute("open"))
+                event.stopPropagation();
+            }
+          })
+        ]]>
+      </field>
+      <field name="onKeyPressMenuList" readonly="true">
+        <![CDATA[
+          ({
+            self: this,
+            tree: this.tree,
+            parentNode: this.parentNode,
+            getLastVisibleRow: function getLastVisibleRow(box) {
+              var f = box.getFirstVisibleRow();
+              var p = box.getPageCount();
+              var l = box.view.rowCount;
+              return (l < f + p ? l : f + p) - 1;
+            },
+            handleEvent: function handleEvent(event) {
+              if (event.altKey)
+                return;
+              var index;
+              var box = this.tree.treeBoxObject;
+              if (this.parentNode.hasAttribute("open")) {
+                event.stopPropagation();
+                switch (event.keyCode) {
+                  case event.DOM_VK_ESCAPE:
+                    this.self.hidePopup();
+                    return;
+                  case event.DOM_VK_ENTER:
+                  case event.DOM_VK_RETURN:
+                    this.self.fire();
+                    return;
+                }
+                index = this.tree.currentIndex;
+              } else {
+                switch (event.keyCode) {
+                  case event.DOM_VK_PAGE_UP:
+                  case event.DOM_VK_PAGE_DOWN:
+                    return;
+                }
+                index = this.self.setInitialSelection();
+              }
+              switch (event.keyCode) {
+                case event.DOM_VK_UP:
+                  if (index <= 0)
+                    return;
+                  index--;
+                  break;
+                case event.DOM_VK_DOWN:
+                  index++;
+                  if (index == box.view.rowCount)
+                    return;
+                  break;
+                case event.DOM_VK_PAGE_UP:
+                  if (index == box.getFirstVisibleRow())
+                    box.scrollByPages(-1);
+                  index = box.getFirstVisibleRow();
+                  break;
+                case event.DOM_VK_PAGE_DOWN:
+                  if (index == this.getLastVisibleRow(box))
+                    box.scrollByPages(1);
+                  index = this.getLastVisibleRow(box);
+                  break;
+                case event.DOM_VK_HOME:
+                  index = 0;
+                  break;
+                case event.DOM_VK_END:
+                  index = box.view.rowCount - 1;
+                  break;
+                default:
+                  return;
+              }
+              box.view.selection.select(index);
+              if (this.parentNode.hasAttribute("open"))
+                box.ensureRowIsVisible(index);
+              else
+                this.self.fire();
+            }
+          })
+        ]]>
+      </field>
+      <method name="setInitialSelection">
+        <body>
+          <![CDATA[
+            var view = this.tree.view;
+            view.selection.selectEventsSuppressed = true;
+            for (var i = 0; i < view.rowCount; i++) {
+              if (view.isContainer(i)) {
+                if (view.isContainerEmpty(i) == view.isContainerOpen(i))
+                  view.toggleOpenState(i);
+                if (view.isContainerOpen(i)) {
+                  if (i + 1 == view.rowCount ||
+                      view.getLevel(i + 1) <= view.getLevel(i)) {
+                    view.toggleOpenState(i);
+                  }
+                }
+              }
+            }
+            var RDF = Components.classes["@mozilla.org/rdf/rdf-service;1"].getService(Components.interfaces.nsIRDFService);
+            var index = this.tree.builderView.getIndexOfResource(RDF.GetResource(this.parentNode.getAttribute("uri")));
+            view.selection.select(index);
+            return index;
+          ]]>
+        </body>
+      </method>
+      <constructor>
+        <![CDATA[
+          this.parentNode.addEventListener("keypress", this.onKeyPressMenuList, true);
+        ]]>
+      </constructor>
+      <destructor>
+        <![CDATA[
+          this.parentNode.removeEventListener("keypress", this.onKeyPressMenuList, true);
+        ]]>
+      </destructor>
+    </implementation>
+    <handlers>
+      <handler event="mousemove" action="this.updateHover(event);"/>
+      <handler event="click" action="this.updateHover(event);this.fire();"/>
+      <handler event="popupshowing">
+        <![CDATA[
+          this.parentNode.addEventListener("blur", this.onBlurMenuList, false);
+          window.top.document.addEventListener("keydown", this.onKeyDownMenuList, true);
+          window.top.document.addEventListener("keypress", this.onKeyPressMenuList, true);
+          var box = this.tree.treeBoxObject;
+          box.focused = true;
+          var index = this.setInitialSelection();
+          var height = box.view.rowCount * box.rowHeight;
+          height += this.boxObject.height - box.treeBody.boxObject.height;
+          this.height = height;
+          if (index >= 0)
+            setTimeout(function() { box.ensureRowIsVisible(index); }, 0);
+        ]]>
+      </handler>
+      <handler event="popuphiding">
+        <![CDATA[
+          this.parentNode.removeEventListener("blur", this.onBlurMenuList, false);
+          window.top.document.removeEventListener("keydown", this.onKeyDownMenuList, true);
+          window.top.document.removeEventListener("keypress", this.onKeyPressMenuList, true);
+        ]]>
+      </handler>
+    </handlers>
+  </binding>
+
+  <binding id="folderTargetPopup" extends="chrome://messenger/content/mailWidgets.xml#popup-base">
+    <xbl:content xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
+      <tree class="foldersTree" flex="1" datasources="rdf:msgaccountmanager rdf:mailnewsfolders" ref="msgaccounts:/" flags="dont-build-content" selstyle="primary" hidecolumnpicker="true">
+        <treecols>
+          <treecol flex="1" primary="true" sort="rdf:http://home.netscape.com/NC-rdf#FolderTreeName?sort=true" sortActive="true" sortDirection="ascending" crop="center" hideheader="true"/>
+        </treecols>
+        <treechildren class="foldersTreeChildren"/>
+        <template>
+          <rule nc:CanFileMessagesOnServer="true" nc:CanFileMessages="true" nc:CanSearchMessages="true">
+            <treechildren>
+              <treeitem uri="rdf:*">
+                <treerow sort="rdf:http://home.netscape.com/NC-rdf#FolderTreeName?sort=true">
+                  <treecell label="rdf:http://home.netscape.com/NC-rdf#FolderTreeSimpleName"
+                    properties="folderNameCol specialFolder-rdf:http://home.netscape.com/NC-rdf#SpecialFolder isServer-rdf:http://home.netscape.com/NC-rdf#IsServer isSecure-rdf:http://home.netscape.com/NC-rdf#IsSecure serverType-rdf:http://home.netscape.com/NC-rdf#ServerType noSelect-rdf:http://home.netscape.com/NC-rdf#NoSelect"/>
+                </treerow>
+              </treeitem>
+            </treechildren>
+          </rule>
+          <rule nc:CanFileMessagesOnServer="true" nc:CanFileMessages="false" nc:CanSearchMessages="true" nc:Virtual="false">
+            <treechildren>
+              <treeitem uri="rdf:*">
+                <treerow sort="rdf:http://home.netscape.com/NC-rdf#FolderTreeName?sort=true">
+                  <treecell label="rdf:http://home.netscape.com/NC-rdf#FolderTreeSimpleName"
+                    properties="folderNameCol specialFolder-rdf:http://home.netscape.com/NC-rdf#SpecialFolder isServer-rdf:http://home.netscape.com/NC-rdf#IsServer isSecure-rdf:http://home.netscape.com/NC-rdf#IsSecure serverType-rdf:http://home.netscape.com/NC-rdf#ServerType noSelect-rdf:http://home.netscape.com/NC-rdf#NoSelect"/>
+                </treerow>
+              </treeitem>
+            </treechildren>
+          </rule>
+          <rule nc:CanFileMessagesOnServer="true" nc:CanFileMessages="true" nc:Virtual="false">
+            <treechildren>
+              <treeitem uri="rdf:*">
+                <treerow sort="rdf:http://home.netscape.com/NC-rdf#FolderTreeName?sort=true">
+                  <treecell label="rdf:http://home.netscape.com/NC-rdf#FolderTreeSimpleName"
+                    properties="folderNameCol specialFolder-rdf:http://home.netscape.com/NC-rdf#SpecialFolder isServer-rdf:http://home.netscape.com/NC-rdf#IsServer isSecure-rdf:http://home.netscape.com/NC-rdf#IsSecure serverType-rdf:http://home.netscape.com/NC-rdf#ServerType noSelect-rdf:http://home.netscape.com/NC-rdf#NoSelect"/>
+                </treerow>
+              </treeitem>
+            </treechildren>
+          </rule>
+        </template>
+      </tree>
+    </xbl:content>
+  </binding>
+
+  <binding id="locationpopup" extends="chrome://messenger/content/mailWidgets.xml#popup-base">
+    <xbl:content xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
+      <tree class="foldersTree" flex="1" datasources="rdf:null" flags="dont-build-content" selstyle="primary" hidecolumnpicker="true">
+        <treecols>
+          <treecol flex="1" primary="true" sort="rdf:http://home.netscape.com/NC-rdf#FolderTreeName?sort=true" sortActive="true" sortDirection="ascending" crop="center" hideheader="true"/>
+        </treecols>
+        <treechildren class="foldersTreeChildren"/>
+        <template>
+          <rule>
+            <treechildren>
+              <treeitem uri="rdf:*">
+                <treerow sort="rdf:http://home.netscape.com/NC-rdf#FolderTreeName?sort=true">
+                  <treecell label="rdf:http://home.netscape.com/NC-rdf#FolderTreeName"
+                    properties="folderNameCol specialFolder-rdf:http://home.netscape.com/NC-rdf#SpecialFolder biffState-rdf:http://home.netscape.com/NC-rdf#BiffState isServer-rdf:http://home.netscape.com/NC-rdf#IsServer newMessages-rdf:http://home.netscape.com/NC-rdf#NewMessages hasUnreadMessages-rdf:http://home.netscape.com/NC-rdf#HasUnreadMessages isSecure-rdf:http://home.netscape.com/NC-rdf#IsSecure serverType-rdf:http://home.netscape.com/NC-rdf#ServerType noSelect-rdf:http://home.netscape.com/NC-rdf#NoSelect"/>
+                </treerow>
+              </treeitem>
+            </treechildren>
+          </rule>
+        </template>
+      </tree>
+    </xbl:content>
+  </binding>
+
+  <binding id="searchpopup" extends="chrome://messenger/content/mailWidgets.xml#popup-base">
+    <xbl:content xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
+      <tree class="foldersTree" flex="1" datasources="rdf:msgaccountmanager rdf:mailnewsfolders" ref="msgaccounts:/" flags="dont-build-content" selstyle="primary" hidecolumnpicker="true">
+        <treecols>
+          <treecol flex="1" primary="true" sort="rdf:http://home.netscape.com/NC-rdf#FolderTreeName?sort=true" sortActive="true" sortDirection="ascending" crop="center" hideheader="true"/>
+        </treecols>
+        <treechildren class="foldersTreeChildren"/>
+        <template>
+          <rule nc:CanSearchMessages="true" nc:Virtual="false">
+            <treechildren>
+              <treeitem uri="rdf:*">
+                <treerow sort="rdf:http://home.netscape.com/NC-rdf#FolderTreeName?sort=true">
+                  <treecell label="rdf:http://home.netscape.com/NC-rdf#FolderTreeSimpleName"
+                    properties="folderNameCol specialFolder-rdf:http://home.netscape.com/NC-rdf#SpecialFolder isServer-rdf:http://home.netscape.com/NC-rdf#IsServer isSecure-rdf:http://home.netscape.com/NC-rdf#IsSecure serverType-rdf:http://home.netscape.com/NC-rdf#ServerType noSelect-rdf:http://home.netscape.com/NC-rdf#NoSelect"/>
+                </treerow>
+              </treeitem>
+            </treechildren>
+          </rule>
+        </template>
+      </tree>
+    </xbl:content>
+  </binding>
+
 </bindings>

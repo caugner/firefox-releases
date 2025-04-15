@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,38 +14,41 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *          John Gaunt (jgaunt@netscape.com)
- *
+ *   John Gaunt (jgaunt@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsBaseWidgetAccessible.h"
+#include "nsAccessibilityAtoms.h"
 #include "nsIAccessibilityService.h"
 #include "nsIAccessibleDocument.h"
 #include "nsAccessibleWrap.h"
 #include "nsGUIEvent.h"
 #include "nsILink.h"
-#include "nsIPresContext.h"
+#include "nsIFrame.h"
+#include "nsINameSpaceManager.h"
+#include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsIServiceManager.h"
+#include "nsIURI.h"
 
 // ------------
 // nsBlockAccessible
@@ -58,8 +61,12 @@ nsBlockAccessible::nsBlockAccessible(nsIDOMNode* aNode, nsIWeakReference* aShell
 NS_IMPL_ISUPPORTS_INHERITED0(nsBlockAccessible, nsAccessible)
 
 /* nsIAccessible accGetAt (in long x, in long y); */
-NS_IMETHODIMP nsBlockAccessible::GetChildAtPoint(PRInt32 tx, PRInt32 ty, nsIAccessible **_retval)
+NS_IMETHODIMP nsBlockAccessible::GetChildAtPoint(PRInt32 tx, PRInt32 ty,
+                                                 nsIAccessible **aChildAtPoint)
 {
+  *aChildAtPoint = nsnull;
+  nsCOMPtr<nsIAccessible> childAtPoint;
+
   // We're going to find the child that contains coordinates (tx,ty)
   PRInt32 x,y,w,h;
   GetBounds(&x,&y,&w,&h);  // Get bounds for this accessible
@@ -67,8 +74,6 @@ NS_IMETHODIMP nsBlockAccessible::GetChildAtPoint(PRInt32 tx, PRInt32 ty, nsIAcce
   {
     // It's within this nsIAccessible, let's drill down
     nsCOMPtr<nsIAccessible> child;
-    nsCOMPtr<nsIAccessible> smallestChild;
-    PRInt32 smallestArea = -1;
     nsCOMPtr<nsIAccessible> next;
     GetFirstChild(getter_AddRefs(child));
     PRInt32 cx,cy,cw,ch;  // Child bounds
@@ -76,39 +81,42 @@ NS_IMETHODIMP nsBlockAccessible::GetChildAtPoint(PRInt32 tx, PRInt32 ty, nsIAcce
     while(child) {
       child->GetBounds(&cx,&cy,&cw,&ch);
       
-      // ok if there are multiple frames the contain the point 
-      // and they overlap then pick the smallest. We need to do this
-      // for text frames.
+      // if there are multiple accessibles the contain the point 
+      // and they overlap then pick the one with a frame that contans the point
       
       // For example, A point that's in block #2 is also in block #1, but we want to return #2:
-      //
       // [[block #1 is long wrapped text that continues to
       // another line]]  [[here is a shorter block #2]]
 
       if (tx >= cx && tx < cx + cw && ty >= cy && ty < cy + ch) 
       {
-        if (smallestArea == -1 || cw*ch < smallestArea) {
-          smallestArea = cw*ch;
-          smallestChild = child;
+        // See whether one of the frames for this accessible
+        // contains this screen point
+        if (!childAtPoint) {
+          // Default in case accessible doesn't have a frame such as
+          // tree items or combo box dropdown markers
+          childAtPoint = child;
+        }
+        nsCOMPtr<nsPIAccessNode> accessNode(do_QueryInterface(child));
+        if (accessNode) {
+          nsIFrame *frame = accessNode->GetFrame();
+          while (frame) {
+            if (frame->GetScreenRectExternal().Contains(tx, ty)) {
+              childAtPoint = child;
+              break; // Definitely in this accessible, since one of its frame matches the point
+            }
+            frame = frame->GetNextInFlow();
+          }
         }
       }
       child->GetNextSibling(getter_AddRefs(next));
       child = next;
     }
 
-    if (smallestChild != nsnull)
-    {
-      *_retval = smallestChild;
-      NS_ADDREF(*_retval);
-      return NS_OK;
-    }
-
-    *_retval = this;
-    NS_ADDREF(this);
-    return NS_OK;
+    *aChildAtPoint = childAtPoint ? childAtPoint : this;
+    NS_ADDREF(*aChildAtPoint);
   }
 
-  *_retval = nsnull;
   return NS_OK;
 }
 
@@ -152,18 +160,19 @@ NS_IMETHODIMP nsLeafAccessible::GetChildCount(PRInt32 *_retval)
 
 nsLinkableAccessible::nsLinkableAccessible(nsIDOMNode* aNode, nsIWeakReference* aShell) :
   nsAccessibleWrap(aNode, aShell),
-  mLinkContent(nsnull),
-  mIsALinkCached(PR_FALSE),
-  mIsLinkVisited(PR_FALSE)
-{ 
+  mActionContent(nsnull),
+  mIsLink(PR_FALSE),
+  mIsOnclick(PR_FALSE)
+{
+  CacheActionContent();
 }
 
 NS_IMPL_ISUPPORTS_INHERITED0(nsLinkableAccessible, nsAccessible)
 
 NS_IMETHODIMP nsLinkableAccessible::TakeFocus()
 { 
-  if (IsALink()) {
-    mLinkContent->SetFocus(nsCOMPtr<nsIPresContext>(GetPresContext()));
+  if (mActionContent && mActionContent->IsFocusable()) {
+    mActionContent->SetFocus(nsCOMPtr<nsPresContext>(GetPresContext()));
   }
   
   return NS_OK;
@@ -173,13 +182,16 @@ NS_IMETHODIMP nsLinkableAccessible::TakeFocus()
 NS_IMETHODIMP nsLinkableAccessible::GetState(PRUint32 *aState)
 {
   nsAccessible::GetState(aState);
-  if (IsALink()) {
+  if (mIsLink) {
     *aState |= STATE_LINKED;
-    if (mIsLinkVisited)
-      *aState |= STATE_TRAVERSED;
-  }
-  
-  if (IsALink()) {
+    nsCOMPtr<nsILink> link = do_QueryInterface(mActionContent);
+    if (link) {
+      nsLinkState linkState;
+      link->GetLinkState(linkState);
+      if (linkState == eLinkState_Visited) {
+        *aState |= STATE_TRAVERSED;
+      }
+    }
     // Make sure we also include all the states of the parent link, such as focusable, focused, etc.
     PRUint32 role;
     GetRole(&role);
@@ -188,10 +200,13 @@ NS_IMETHODIMP nsLinkableAccessible::GetState(PRUint32 *aState)
       GetParent(getter_AddRefs(parentAccessible));
       if (parentAccessible) {
         PRUint32 orState = 0;
-        parentAccessible->GetState(&orState);
+        parentAccessible->GetFinalState(&orState);
         *aState |= orState;
       }
     }
+  }
+  if (mActionContent && !mActionContent->IsFocusable()) {
+    *aState &= ~STATE_FOCUSABLE; // Links must have href or tabindex
   }
 
   nsCOMPtr<nsIAccessibleDocument> docAccessible(GetDocAccessible());
@@ -208,8 +223,8 @@ NS_IMETHODIMP nsLinkableAccessible::GetState(PRUint32 *aState)
 
 NS_IMETHODIMP nsLinkableAccessible::GetValue(nsAString& _retval)
 {
-  if (IsALink()) {
-    nsCOMPtr<nsIDOMNode> linkNode(do_QueryInterface(mLinkContent));
+  if (mIsLink) {
+    nsCOMPtr<nsIDOMNode> linkNode(do_QueryInterface(mActionContent));
     nsCOMPtr<nsIPresShell> presShell(do_QueryReferent(mWeakShell));
     if (linkNode && presShell)
       return presShell->GetLinkLocation(linkNode, _retval);
@@ -219,20 +234,23 @@ NS_IMETHODIMP nsLinkableAccessible::GetValue(nsAString& _retval)
 
 
 /* PRUint8 getAccNumActions (); */
-NS_IMETHODIMP nsLinkableAccessible::GetNumActions(PRUint8 *_retval)
+NS_IMETHODIMP nsLinkableAccessible::GetNumActions(PRUint8 *aNumActions)
 {
-  *_retval = eSingle_Action;
+  *aNumActions = mActionContent ? 1 : 0;
   return NS_OK;
 }
 
 /* wstring getAccActionName (in PRUint8 index); */
-NS_IMETHODIMP nsLinkableAccessible::GetActionName(PRUint8 index, nsAString& _retval)
+NS_IMETHODIMP nsLinkableAccessible::GetActionName(PRUint8 index, nsAString& aActionName)
 {
   // Action 0 (default action): Jump to link
+  aActionName.Truncate();
   if (index == eAction_Jump) {   
-    if (IsALink()) {
-      nsAccessible::GetTranslatedString(NS_LITERAL_STRING("jump"), _retval); 
-      return NS_OK;
+    if (mIsLink) {
+      return nsAccessible::GetTranslatedString(NS_LITERAL_STRING("jump"), aActionName); 
+    }
+    else if (mIsOnclick) {
+      return nsAccessible::GetTranslatedString(NS_LITERAL_STRING("click"), aActionName); 
     }
     return NS_ERROR_NOT_IMPLEMENTED;
   }
@@ -244,69 +262,73 @@ NS_IMETHODIMP nsLinkableAccessible::DoAction(PRUint8 index)
 {
   // Action 0 (default action): Jump to link
   if (index == eAction_Jump) {
-    if (IsALink()) {
-      nsCOMPtr<nsIPresContext> presContext(GetPresContext());
-      if (presContext) {
-        nsMouseEvent linkClickEvent(NS_MOUSE_LEFT_CLICK);
-
-        nsEventStatus eventStatus =  nsEventStatus_eIgnore;
-        mLinkContent->HandleDOMEvent(presContext, 
-                                     &linkClickEvent, 
-                                     nsnull, 
-                                     NS_EVENT_FLAG_INIT, 
-                                     &eventStatus);
-        return NS_OK;
-      }
+    if (mActionContent) {
+      return DoCommand(mActionContent);
     }
   }
   return NS_ERROR_INVALID_ARG;
 }
 
-NS_IMETHODIMP nsLinkableAccessible::GetKeyboardShortcut(nsAString& _retval)
+NS_IMETHODIMP nsLinkableAccessible::GetKeyboardShortcut(nsAString& aKeyboardShortcut)
 {
-  if (IsALink()) {
-    nsresult rv;
-    nsCOMPtr<nsIDOMNode> linkNode(do_QueryInterface(mLinkContent));
-    if (linkNode && mDOMNode != linkNode) {
-      nsCOMPtr<nsIAccessible> linkAccessible;
+  if (mActionContent) {
+    nsCOMPtr<nsIDOMNode> actionNode(do_QueryInterface(mActionContent));
+    if (actionNode && mDOMNode != actionNode) {
+      nsCOMPtr<nsIAccessible> accessible;
       nsCOMPtr<nsIAccessibilityService> accService = 
         do_GetService("@mozilla.org/accessibilityService;1");
-      rv = accService->GetAccessibleInWeakShell(linkNode, mWeakShell,
-                                                getter_AddRefs(linkAccessible));
-      if (NS_SUCCEEDED(rv) && linkAccessible)
-        return linkAccessible->GetKeyboardShortcut(_retval);
-      else
-        return rv;
+      accService->GetAccessibleInWeakShell(actionNode, mWeakShell,
+                                           getter_AddRefs(accessible));
+      if (accessible) {
+        accessible->GetKeyboardShortcut(aKeyboardShortcut);
+      }
+      return NS_OK;
     }
   }
-  return nsAccessible::GetKeyboardShortcut(_retval);;
+  return nsAccessible::GetKeyboardShortcut(aKeyboardShortcut);
 }
 
-PRBool nsLinkableAccessible::IsALink()
+void nsLinkableAccessible::CacheActionContent()
 {
-  if (mIsALinkCached)  // Cached answer?
-    return mLinkContent? PR_TRUE: PR_FALSE;
-
   for (nsCOMPtr<nsIContent> walkUpContent(do_QueryInterface(mDOMNode));
        walkUpContent;
        walkUpContent = walkUpContent->GetParent()) {
-    nsCOMPtr<nsILink> link(do_QueryInterface(walkUpContent));
-    if (link) {
-      mLinkContent = walkUpContent;
-      mIsALinkCached = PR_TRUE;
-      nsLinkState linkState;
-      link->GetLinkState(linkState);
-      if (linkState == eLinkState_Visited)
-        mIsLinkVisited = PR_TRUE;
-      return PR_TRUE;
+    nsIAtom *tag = walkUpContent->Tag();
+    if ((tag == nsAccessibilityAtoms::a || tag == nsAccessibilityAtoms::area)) {
+      // Currently we do not expose <link> tags, because they are not typically
+      // in <body> and rendered.
+      // We do not yet support xlinks
+      nsCOMPtr<nsILink> link = do_QueryInterface(walkUpContent);
+      NS_ASSERTION(link, "No nsILink for area or a");
+      nsCOMPtr<nsIURI> uri;
+      link->GetHrefURI(getter_AddRefs(uri));
+      if (uri) {
+        mActionContent = walkUpContent;
+        mIsLink = PR_TRUE;
+      }
+    }
+    if (walkUpContent->HasAttr(kNameSpaceID_None,
+                            nsAccessibilityAtoms::onclick)) {
+      mActionContent = walkUpContent;
+      mIsOnclick = PR_TRUE;
     }
   }
-  mIsALinkCached = PR_TRUE;  // Cached that there is no link
-  return PR_FALSE;
 }
 
 NS_IMETHODIMP nsLinkableAccessible::Shutdown()
 {
-  mLinkContent = nsnull;
+  mActionContent = nsnull;
   return nsAccessibleWrap::Shutdown();
 }
+
+//---------------------
+// nsEnumRoleAccessible
+//---------------------
+
+nsEnumRoleAccessible::nsEnumRoleAccessible(nsIDOMNode* aNode, nsIWeakReference* aShell, PRUint32 aRole) :
+  nsAccessibleWrap(aNode, aShell),
+  mRole(aRole)
+{
+}
+
+NS_IMPL_ISUPPORTS_INHERITED0(nsEnumRoleAccessible, nsAccessible)

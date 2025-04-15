@@ -1,11 +1,11 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,33 +14,34 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Gervase Markham <gerv@gerv.net>
- *    Tuukka Tolvanen <tt@lament.cjb.net>
+ *   Gervase Markham <gerv@gerv.net>
+ *   Tuukka Tolvanen <tt@lament.cjb.net>
+ *   Stefan Borggraefe <Stefan.Borggraefe@gmx.de>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 var fontEnumerator = null;
 var globalFonts = null;
 var fontTypes   = ["serif", "sans-serif", "cursive", "fantasy", "monospace"];
-var variableSize, fixedSize, minSize, languageList;
+var defaultFont, variableSize, fixedSize, minSize, languageList;
 var languageData = [];
 var currentLanguage;
 var gPrefutilitiesBundle;
@@ -51,18 +52,13 @@ function GetFields()
     var dataObject = parent.hPrefWindow.wsm.dataManager.pageData["chrome://communicator/content/pref/pref-fonts.xul"];
 
     // store data for language independent widgets
-    var lists = ["selectLangs", "proportionalFont"];
-    for( var i = 0; i < lists.length; i++ )
-      {
-        if( !( "dataEls" in dataObject ) )
-          dataObject.dataEls = [];
-        dataObject.dataEls[ lists[i] ] = [];
-        dataObject.dataEls[ lists[i] ].value = document.getElementById( lists[i] ).value;
-      }
+    if( !( "dataEls" in dataObject ) )
+      dataObject.dataEls = [];
+    dataObject.dataEls[ "selectLangs" ] = [];
+    dataObject.dataEls[ "selectLangs" ].value = document.getElementById( "selectLangs" ).value;
 
-   dataObject.defaultFont = document.getElementById( "proportionalFont" ).value;
-   dataObject.fontDPI = document.getElementById( "screenResolution" ).value;
-   dataObject.useDocFonts = document.getElementById( "browserUseDocumentFonts" ).checked ? 1 : 0;
+    dataObject.fontDPI = document.getElementById( "screenResolution" ).value;
+    dataObject.useDocFonts = document.getElementById( "browserUseDocumentFonts" ).checked ? 1 : 0;
 
     // save current state for language dependent fields and store
     saveState();
@@ -77,25 +73,19 @@ function SetFields( aDataObject )
     languageData = "languageData" in aDataObject ? aDataObject.languageData : languageData ;
     currentLanguage = "currentLanguage" in aDataObject ? aDataObject.currentLanguage : null ;
 
-    var lists = ["selectLangs", "proportionalFont"];
-    var prefvalue;
-    
-    for( var i = 0; i < lists.length; i++ )
+    var element = document.getElementById( "selectLangs" );
+    if( "dataEls" in aDataObject )
       {
-        var element = document.getElementById( lists[i] );
-        if( "dataEls" in aDataObject )
+        element.selectedItem = element.getElementsByAttribute( "value", aDataObject.dataEls[ "selectLangs" ].value )[0];
+      }
+    else
+      {
+        var prefstring = element.getAttribute( "prefstring" );
+        var preftype = element.getAttribute( "preftype" );
+        if( prefstring && preftype )
           {
-            element.selectedItem = element.getElementsByAttribute( "value", aDataObject.dataEls[ lists[i] ].value )[0];
-          }
-        else
-          {
-            var prefstring = element.getAttribute( "prefstring" );
-            var preftype = element.getAttribute( "preftype" );
-            if( prefstring && preftype )
-              {
-                prefvalue = parent.hPrefWindow.getPref( preftype, prefstring );
-                element.selectedItem = element.getElementsByAttribute( "value", prefvalue )[0];
-              }
+            var prefvalue = parent.hPrefWindow.getPref( preftype, prefstring );
+            element.selectedItem = element.getElementsByAttribute( "value", prefvalue )[0];
           }
       }
 
@@ -137,6 +127,7 @@ function SetFields( aDataObject )
 
 function Startup()
   {
+    defaultFont  = document.getElementById( "proportionalFont" );
     variableSize = document.getElementById( "sizeVar" );
     fixedSize    = document.getElementById( "sizeMono" );
     minSize      = document.getElementById( "minSize" );
@@ -331,7 +322,7 @@ function lazyAppendFontNames( i )
        }
 
      // now build and populate the fonts for the requested font type
-     var defaultItem = null;
+     var defaultItem;
      var selectElement = new listElement( fontTypes[i] );
      selectElement.clearList();
      try
@@ -350,19 +341,13 @@ function lazyAppendFontNames( i )
 
      // the item returned by default is our last resort fall-back
      var selectedItem = defaultItem;
+     var dataEls;
      if( languageList.value in languageData )
        {
          // data exists for this language, pre-select items based on this information
          var dataVal = languageData[languageList.value].types[fontTypes[i]];
-         if (!dataVal.length) // special blank means the default
-           {
-             selectedItem = defaultItem;
-           }
-         else
-           {
-             var dataEls = selectElement.listElement.getElementsByAttribute( "value", dataVal );
-             selectedItem = dataEls.length ? dataEls[0] : defaultItem;
-           }
+         if (dataVal.length) // else: special blank means the default
+           dataEls = selectElement.listElement.getElementsByAttribute("value", dataVal);
        }
      else
        {
@@ -370,28 +355,27 @@ function lazyAppendFontNames( i )
            {
              var fontPrefString = "font.name." + fontTypes[i] + "." + languageList.value;
              var selectVal = parent.hPrefWindow.pref.getComplexValue( fontPrefString, Components.interfaces.nsISupportsString ).data;
-             var dataEls = selectElement.listElement.getElementsByAttribute( "value", selectVal );
+             dataEls = selectElement.listElement.getElementsByAttribute("value", selectVal);
 
              // we need to honor name-list in case name is unavailable 
-             if (!dataEls.length) {
+             if (!dataEls.item(0)) {
                  var fontListPrefString = "font.name-list." + fontTypes[i] + "." + languageList.value;
                  var nameList = parent.hPrefWindow.pref.getComplexValue( fontListPrefString, Components.interfaces.nsISupportsString ).data;
                  var fontNames = nameList.split(",");
-                 var stripWhitespace = /^\s*(.*)\s*$/;
 
                  for (j = 0; j < fontNames.length; j++) {
-                   selectVal = fontNames[j].replace(stripWhitespace, "$1");
+                   selectVal = fontNames[j].replace(/^\s+|\s+$/, "");
                    dataEls = selectElement.listElement.getElementsByAttribute("value", selectVal);
-                   if (dataEls.length)  
+                   if (dataEls.item(0))  
                      break;  // exit loop if we find one
                  }
              }
-             selectedItem = dataEls.length ? dataEls[0] : defaultItem;
            }
          catch(e) {
-             selectedItem = defaultItem;
            }
        }
+     if (dataEls && dataEls.item(0))
+       selectedItem = dataEls[0];
 
      selectElement.listElement.selectedItem = selectedItem;
      selectElement.listElement.removeAttribute( "disabled" );
@@ -440,12 +424,14 @@ function saveFontPrefs()
                   }
               }
           }
+        var defaultFontPref = "font.default." + language;
         var variableSizePref = "font.size.variable." + language;
         var fixedSizePref = "font.size.fixed." + language;
         var minSizePref = "font.minimum-size." + language;
-        var currVariableSize = 12, currFixedSize = 12, minSizeVal = 0;
+        var currDefaultFont = "serif", currVariableSize = 12, currFixedSize = 12, minSizeVal = 0;
         try
           {
+            currDefaultFont = parent.hPrefWindow.getPref( "string", defaultFontPref );
             currVariableSize = pref.getIntPref( variableSizePref );
             currFixedSize = pref.getIntPref( fixedSizePref );
             minSizeVal = pref.getIntPref( minSizePref );
@@ -453,11 +439,13 @@ function saveFontPrefs()
         catch(e)
           {
           }
+        if( currDefaultFont != dataObject.languageData[language].defaultFont )
+          parent.hPrefWindow.setPref( "string", defaultFontPref, dataObject.languageData[language].defaultFont );
         if( currVariableSize != dataObject.languageData[language].variableSize )
           pref.setIntPref( variableSizePref, dataObject.languageData[language].variableSize );
         if( currFixedSize != dataObject.languageData[language].fixedSize )
           pref.setIntPref( fixedSizePref, dataObject.languageData[language].fixedSize );
-        if ( minSizeVal != dataObject.languageData[language].minSize ) {
+        if( minSizeVal != dataObject.languageData[language].minSize ) {
           pref.setIntPref ( minSizePref, dataObject.languageData[language].minSize );
         }
       }
@@ -471,7 +459,6 @@ function saveFontPrefs()
       {
         var currDPI = pref.getIntPref( "browser.display.screen_resolution" );
         var currFonts = pref.getIntPref( "browser.display.use_document_fonts" );
-        var currDefault = pref.getComplexValue( "font.default", Components.interfaces.nsISupportsString ).data;
       }
     catch(e)
       {
@@ -480,10 +467,6 @@ function saveFontPrefs()
       pref.setIntPref( "browser.display.screen_resolution", fontDPI );
     if( currFonts != documentFonts )
       pref.setIntPref( "browser.display.use_document_fonts", documentFonts );
-    if( currDefault != defaultFont )
-      {
-        parent.hPrefWindow.setPref( "string", "font.default", defaultFont );
-      }
   }
 
 function saveState()
@@ -504,6 +487,7 @@ function saveState()
     if( currentLanguage && currentLanguage in languageData &&
         "types" in languageData[currentLanguage] )
       {
+        languageData[currentLanguage].defaultFont = defaultFont.value;
         languageData[currentLanguage].variableSize = parseInt( variableSize.value );
         languageData[currentLanguage].fixedSize = parseInt( fixedSize.value );
         languageData[currentLanguage].minSize = parseInt( minSize.value );
@@ -515,7 +499,7 @@ function saveState()
 function minSizeSelect(size)
   {
     var items = minSize.getElementsByAttribute( "value", size );
-    if (items.length > 0)
+    if (items.item(0))
       minSize.selectedItem = items[0];
     else if (size < 6)
       minSizeSelect(6);
@@ -549,9 +533,11 @@ function selectLanguage()
         listElement.setAttribute( "disabled", "true" );
       }
 
-    // and set the font sizes
+    // and set the default font type and the font sizes
     try
       {
+        defaultFont.value = parent.hPrefWindow.getPref("string", "font.default." + languageList.value);
+
         var variableSizePref = "font.size.variable." + languageList.value;
         var sizeVarVal = parent.hPrefWindow.pref.getIntPref( variableSizePref );
         variableSize.selectedItem = variableSize.getElementsByAttribute( "value", sizeVarVal )[0];
@@ -584,7 +570,7 @@ function changeScreenResolution()
     if (screenResolution.value == "other")
       {
         // If the user selects "Other..." we bring up the calibrate screen dialog
-        var rv = { newdpi : 0 };
+        var rv = { newdpi : -1 };
         var calscreen = window.openDialog("chrome://communicator/content/pref/pref-calibrate-screen.xul", 
                                       "_blank", 
                                       "modal,chrome,centerscreen,resizable=no,titlebar",
@@ -623,7 +609,7 @@ function setResolution( resolution )
     var userResolution = document.getElementById( "userResolution" );
 
     var items = screenResolution.getElementsByAttribute( "value", resolution );
-    if (items.length)
+    if (items.item(0))
       {
         // If it's one of the hard-coded values, we'll select it directly 
         screenResolution.selectedItem = items[0];
@@ -642,32 +628,19 @@ function setResolution( resolution )
   
 // "Calibrate screen" dialog code
 
-function Init()
-  {
-      sizeToContent();
-      doSetOKCancel(onOK, onCancel);
-      document.getElementById("horizSize").focus();
-  }
-  
 function onOK()
   {
     // Get value from the dialog to work out dpi
     var horizSize = parseFloat(document.getElementById("horizSize").value);
-    var units = document.getElementById("units").value;
   
+    // We can't calculate anything without a proper value
     if (!horizSize || horizSize < 0)
-      {
-        // We can't calculate anything without a proper value
-        window.arguments[0].newdpi = -1;
-        return true;
-      }
+      return true;
       
     // Convert centimetres to inches.
     // The magic number is allowed because it's a fundamental constant :-)
-    if (units === "centimetres")
-      {
-        horizSize /= 2.54;
-      }
+    if (document.getElementById("units").value === "centimetres")
+      horizSize /= 2.54;
   
     // These shouldn't change, but you can't be too careful.
     var horizBarLengthPx = document.getElementById("horizRuler").boxObject.width;
@@ -678,13 +651,6 @@ function onOK()
     window.arguments[0].newdpi = Math.round(horizDPI);
   
     return true;
-  }
-
-function onCancel()
-  {
-      // We return -1 to show that no value has been given.
-      window.arguments[0].newdpi = -1;
-      return true;
   }
 
 // disable font items, but not the browserUseDocumentFonts checkbox nor the resolution

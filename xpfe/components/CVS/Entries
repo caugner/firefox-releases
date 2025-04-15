@@ -1,28 +1,33 @@
-/.cvsignore/1.1/Thu Apr 22 00:49:00 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.53.6.1/Sun May 16 18:16:47 2004//TFIREFOX_1_0_RELEASE
-/jar.mn/1.65.6.5/Wed Oct  6 12:50:40 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Thu Apr 22 00:49:00 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.74/Sat Apr  9 17:35:58 2005//TFIREFOX_1_5_RELEASE
+/jar.mn/1.76/Wed Apr 13 21:56:42 2005//TFIREFOX_1_5_RELEASE
+/nsXPFEComponentsCID.h/1.1/Fri Oct 29 19:28:31 2004//TFIREFOX_1_5_RELEASE
 D/alerts////
 D/autocomplete////
 D/bookmarks////
 D/build////
 D/build2////
 D/console////
+D/cookie////
 D/directory////
 D/download-manager////
+D/extensions////
 D/filepicker////
 D/find////
 D/history////
 D/intl////
 D/killAll////
+D/permissions////
 D/prefwindow////
 D/related////
 D/resetPref////
 D/search////
 D/shistory////
 D/sidebar////
+D/startup////
 D/updates////
-D/urlbarhistory////
 D/urlwidget////
 D/windowds////
 D/winhooks////
+D/xfer////
 D/xremote////

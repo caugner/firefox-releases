@@ -1,43 +1,43 @@
 /*
  * loader.c - load platform dependent DSO containing freebl implementation.
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Portions created by Sun Microsystems, Inc. are Copyright (C) 2003
- * Sun Microsystems, Inc. All Rights Reserved.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *	Dr Vipul Gupta <vipul.gupta@sun.com>, Sun Microsystems Laboratories
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
+ *   Dr Vipul Gupta <vipul.gupta@sun.com>, Sun Microsystems Laboratories
  *
- * $Id: loader.c,v 1.16 2003/05/30 23:31:19 wtc%netscape.com Exp $
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
+/* $Id: loader.c,v 1.18.18.1 2005/10/10 23:22:50 wtchang%redhat.com Exp $ */
 
 #include "loader.h"
 #include "prmem.h"
@@ -123,12 +123,38 @@ bl_LoadLibrary(const char *name)
 {
     BLLibrary *lib;
     const char *error;
+    Dl_info dli;
 
     lib = PR_NEWZAP(BLLibrary);
     if (NULL == lib) {
         PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
         return NULL;
     }
+
+    /*
+     * In setuid applications, Solaris is unwilling to load freebl unless
+     * we specify an absolute path.  We construct one from the path of the
+     * library that contains this function.
+     */
+    if (dladdr((void *)bl_LoadLibrary, &dli) != 0) {
+        const char *slash = strrchr(dli.dli_fname, '/');
+        if (slash) {
+            size_t dirsize = slash - dli.dli_fname + 1;
+            char *pathname = PR_Malloc(dirsize + strlen(name) + 1);
+            if (NULL == pathname) {
+                PR_Free(lib);
+                PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+                return NULL;
+            }
+            memcpy(pathname, dli.dli_fname, dirsize);
+            strcpy(pathname + dirsize, name);
+            lib->dlh = dlopen(pathname, RTLD_NOW | RTLD_LOCAL);
+            PR_Free(pathname);
+            if (NULL != lib->dlh)
+                return lib;
+        }
+    }
+
     lib->dlh = dlopen(name, RTLD_NOW | RTLD_LOCAL);
     if (NULL == lib->dlh) {
         PR_SetError(PR_LOAD_LIBRARY_ERROR, 0);

@@ -1,15 +1,15 @@
-/.cvsignore/1.1/Sat Dec 29 03:42:47 2001//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.10/Wed Jan  7 13:36:25 2004//TFIREFOX_1_0_RELEASE
-/autoconfig.pkg/1.2/Wed Jan  7 01:21:28 2004//TFIREFOX_1_0_RELEASE
-/nsAutoConfig.cpp/1.15/Thu Jan 29 22:04:28 2004//TFIREFOX_1_0_RELEASE
-/nsAutoConfig.h/1.4/Wed Jan 14 00:55:04 2004//TFIREFOX_1_0_RELEASE
-/nsConfigFactory.cpp/1.4/Sun Sep  7 22:05:11 2003//TFIREFOX_1_0_RELEASE
-/nsJSConfigTriggers.cpp/1.7/Sun Jan 25 01:11:11 2004//TFIREFOX_1_0_RELEASE
-/nsLDAPSyncQuery.cpp/1.7/Sat Feb 14 02:34:50 2004//TFIREFOX_1_0_RELEASE
-/nsLDAPSyncQuery.h/1.3/Sat Feb 14 02:34:50 2004//TFIREFOX_1_0_RELEASE
-/nsReadConfig.cpp/1.13/Sun Jan 25 01:11:11 2004//TFIREFOX_1_0_RELEASE
-/nsReadConfig.h/1.2/Fri Dec 19 15:52:42 2003//TFIREFOX_1_0_RELEASE
-/prefcalls.js/1.6.2.1/Mon Apr 26 20:07:34 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Sat Dec 29 03:42:47 2001//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.12/Mon Apr  4 18:37:58 2005//TFIREFOX_1_5_RELEASE
+/autoconfig.pkg/1.2/Wed Jan  7 01:21:28 2004//TFIREFOX_1_5_RELEASE
+/nsAutoConfig.cpp/1.18/Wed Jun  1 16:25:13 2005//TFIREFOX_1_5_RELEASE
+/nsAutoConfig.h/1.4/Wed Jan 14 00:55:04 2004//TFIREFOX_1_5_RELEASE
+/nsConfigFactory.cpp/1.4/Sun Sep  7 22:05:11 2003//TFIREFOX_1_5_RELEASE
+/nsJSConfigTriggers.cpp/1.7/Sun Jan 25 01:11:11 2004//TFIREFOX_1_5_RELEASE
+/nsLDAPSyncQuery.cpp/1.13/Wed Dec  1 10:32:53 2004//TFIREFOX_1_5_RELEASE
+/nsLDAPSyncQuery.h/1.4/Tue Jul 26 19:47:24 2005//TFIREFOX_1_5_RELEASE
+/nsReadConfig.cpp/1.16/Wed Jul 13 18:05:49 2005//TFIREFOX_1_5_RELEASE
+/nsReadConfig.h/1.2/Fri Dec 19 15:52:42 2003//TFIREFOX_1_5_RELEASE
+/prefcalls.js/1.8/Tue Jun  7 16:22:08 2005//TFIREFOX_1_5_RELEASE
 D/beos////
 D/mac////
 D/os2////

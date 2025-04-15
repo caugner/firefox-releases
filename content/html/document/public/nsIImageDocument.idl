@@ -20,7 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Jan Varga <varga@nixcorp.com>
+ *   Jan Varga <varga@ku.sk>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -42,7 +42,9 @@
  * @status UNDER_DEVELOPMENT
  */
 
-[scriptable, uuid(b482f6d8-40a9-4f20-89f3-772d417a4c81)]
+interface imgIRequest;
+
+[scriptable, uuid(7b80eebc-c98e-4461-8bdb-6e3b6e828890)]
 interface nsIImageDocument : nsISupports {
 
   /* Whether the pref for image resizing has been set. */
@@ -54,11 +56,19 @@ interface nsIImageDocument : nsISupports {
   /* Whether the image has been resized to fit visible area. */
   readonly attribute boolean imageIsResized;
 
+  /* The image request being displayed in the content area */
+  readonly attribute imgIRequest imageRequest;
+
   /* Resize the image to fit visible area. */
   void shrinkToFit();
 
   /* Restore image original size. */
   void restoreImage();
+
+  /* Restore the image, trying to keep a certain pixel in the same position.
+   * The coordinate system is that of the shrunken image.
+   */
+  void restoreImageTo(in long x, in long y);
 
   /* A helper method for switching between states.
    * The switching logic is as follows. If the image has been resized

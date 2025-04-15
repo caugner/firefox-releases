@@ -35,8 +35,9 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include "TestCommon.h"
 #include "nsIComponentRegistrar.h"
-#include "nsISocketTransportService.h"
+#include "nsPISocketTransportService.h"
 #include "nsISocketTransport.h"
 #include "nsIAsyncInputStream.h"
 #include "nsIAsyncOutputStream.h"
@@ -280,6 +281,9 @@ RunTest(nsISocketTransportService *sts,
 int
 main(int argc, char* argv[])
 {
+    if (test_common_init(&argc, &argv) != 0)
+        return -1;
+
     nsresult rv;
 
     if (argc < 4) {
@@ -309,7 +313,7 @@ main(int argc, char* argv[])
         rv = eventQService->GetThreadEventQueue(NS_CURRENT_THREAD, &gEventQ);
         if (NS_FAILED(rv)) return rv;
 
-        nsCOMPtr<nsISocketTransportService> sts =
+        nsCOMPtr<nsPISocketTransportService> sts =
             do_GetService(kSocketTransportServiceCID, &rv);
         if (NS_FAILED(rv)) return rv;
 

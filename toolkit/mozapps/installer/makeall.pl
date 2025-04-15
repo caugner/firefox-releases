@@ -1,30 +1,44 @@
 #!/usr/bin/perl
 # 
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
-#  
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
-#  
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
+#
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
+#
 # The Original Code is Mozilla Communicator client code, released
 # March 31, 1998.
-# 
-# The Initial Developer of the Original Code is Netscape
-# Communications Corporation. Portions created by Netscape are
-# Copyright (C) 1998-1999 Netscape Communications Corporation. All
-# Rights Reserved.
-# 
-# Contributor(s): 
-# Sean Su <ssu@netscape.com>
-# 
 #
-#  Next Generation Apps Version:
-#     Ben Goodger <ben@mozilla.org>
-#     Brian Ryner <bryner@brianryner.com>
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1998-1999
+# the Initial Developer. All Rights Reserved.
+#
+# Contributor(s):
+#   Sean Su <ssu@netscape.com>
+#   Ben Goodger <ben@mozilla.org>
+#   Brian Ryner <bryner@brianryner.com>
+#
+# Alternatively, the contents of this file may be used under the terms of
+# either the GNU General Public License Version 2 or later (the "GPL"), or
+# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
 #
 # This perl script builds the xpi, config.ini, and js files.
@@ -89,45 +103,11 @@ if(defined($ENV{DEBUG_INSTALLER_BUILD}))
 }
 
 $gDefaultProductVersion = $ENV{WIZ_versionProduct};
-#$y2kDate = StageUtils::GetProductBuildId("$inDistPath/include/nsBuildID.h", "NS_BUILD_ID");
-#$gDefaultProductVersion = "$ENV{WIZ_versionProduct}.$y2kDate";
 
 print "\n";
 print " Building $ENV{WIZ_nameProduct} installer\n";
 print "  Raw version id   : $gDefaultProductVersion\n";
-
-# $gDefaultProductVersion has the form maj.min.release.bld where maj, min, release
-#   and bld are numerics representing version information.
-# Other variables need to use parts of the version info also so we'll
-#   split out the dot separated values into the array @versionParts
-#   such that:
-#
-#   $versionParts[0] = maj
-#   $versionParts[1] = min
-#   $versionParts[2] = release
-#   $versionParts[3] = bld
-@versionParts = split /\./, $gDefaultProductVersion;
-
-# We allow non-numeric characters to be included as the last 
-#   characters in fields of $gDefaultProductVersion for display purposes (mostly to
-#   show that we have moved past a certain version by adding a '+'
-#   character).  Non-numerics must be stripped out of $gDefaultProductVersion,
-#   however, since this variable is used to identify the the product 
-#   for comparison with other installations, so the values in each field 
-#   must be numeric only:
-$gDefaultProductVersion =~ s/[^0-9.][^.]*//g;
-
-# set environment vars for use by other .pl scripts called from this script.
-if($versionParts[2] eq "0" || $versionParts[2] eq "")
-{
-  $versionMain = "$versionParts[0].$versionParts[1]";
-}
-else
-{
-  $versionMain = "$versionParts[0].$versionParts[1].$versionParts[2]";
-}
-
-print "  Display version  : $versionMain\n";
+print "  Display version  : $ENV{WIZ_userAgentShort}\n";
 print "  Xpinstall version: $gDefaultProductVersion\n";
 print "\n";
 
@@ -139,8 +119,6 @@ $gNGAppsPlatformDir   = "$topsrcdir/toolkit/mozapps/installer/$platform_dir";
 
 # The following variables are for displaying version info in the 
 # the installer.
-$ENV{WIZ_userAgent}            = "$versionMain ($versionLanguage)";
-$ENV{WIZ_userAgentShort}       = "$versionMain";
 $ENV{WIZ_xpinstallVersion}     = "$gDefaultProductVersion";
 $ENV{WIZ_distInstallPath}      = "$gDirDistInstall";
 
@@ -324,6 +302,8 @@ sub ParseArgv
 
 sub MakeConfigFile
 {
+  $ENV{WIZ_userAgent} = "$ENV{WIZ_userAgentShort} ({AB_CD})";
+
   # Make config.ini and other ini files
   chdir($gDirDistInstall);
   foreach $_ ("config.ini", "install.ini") {
@@ -331,9 +311,9 @@ sub MakeConfigFile
       $itFile =~ s/\.ini$/\.it/;
       copy("$inConfigFiles/$itFile", "$gDirDistInstall/$itFile") || die "copy $inConfigFiles/$itFile $gDirDistInstall/$itFile";
 
-      if(system("perl $gNGAppsScriptsDir/makecfgini.pl $itFile $versionMain $gDirStageProduct $gDirDistInstall/xpi $inRedirIniURL $inXpiURL"))
+      if(system("perl $gNGAppsScriptsDir/makecfgini.pl $itFile $ENV{WIZ_userAgentShort} $gDirStageProduct $gDirDistInstall/xpi $inRedirIniURL $inXpiURL"))
       {
-        print "\n Error: perl $gNGAppsScriptsDir/makecfgini.pl $itFile $versionMain $gDirStageProduct $gDirDistInstall/xpi $inRedirIniURL $inXpiURL\n";
+        print "\n Error: perl $gNGAppsScriptsDir/makecfgini.pl $itFile $ENV{WIZ_userAgentShort} $gDirStageProduct $gDirDistInstall/xpi $inRedirIniURL $inXpiURL\n";
         return(1);
       }
 
@@ -345,6 +325,8 @@ sub MakeConfigFile
 sub MakeJsFile
 {
   my($mComponent) = @_;
+
+  $ENV{WIZ_userAgent} = "$ENV{WIZ_userAgentShort} ($versionLanguage)";
 
   # Make .js file
   chdir($inConfigFiles);

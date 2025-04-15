@@ -69,6 +69,7 @@ int err;
 		/*
 		 * XXX: readdir() is not MT-safe
 		 */
+		_MD_ERRNO() = 0;
 		de = readdir(md->d);
 
 		if (!de) {
@@ -173,16 +174,18 @@ _MD_open (const char *name, PRIntn flags, PRIntn mode)
 		osflags = O_RDONLY;
 	}
 
-        if (flags & PR_APPEND)
-                osflags |= O_APPEND;
-        if (flags & PR_TRUNCATE)
-                osflags |= O_TRUNC;
-        if (flags & PR_SYNC) {
+	if (flags & PR_EXCL)
+		osflags |= O_EXCL;
+	if (flags & PR_APPEND)
+		osflags |= O_APPEND;
+	if (flags & PR_TRUNCATE)
+		osflags |= O_TRUNC;
+	if (flags & PR_SYNC) {
 /* Ummmm.  BeOS doesn't appear to
    support sync in any way shape or
    form. */
 		return PR_NOT_IMPLEMENTED_ERROR;
-        }
+	}
 
 	/*
 	** On creations we hold the 'create' lock in order to enforce
@@ -482,31 +485,38 @@ PRInt32
 _MD_access (const char *name, PRIntn how)
 {
 PRInt32 rv, err;
-int amode;
+int checkFlags;
+struct stat buf;
 
 	switch (how) {
 		case PR_ACCESS_WRITE_OK:
-			amode = W_OK;
+			checkFlags = S_IWUSR | S_IWGRP | S_IWOTH;
 			break;
+		
 		case PR_ACCESS_READ_OK:
-			amode = R_OK;
+			checkFlags = S_IRUSR | S_IRGRP | S_IROTH;
 			break;
+		
 		case PR_ACCESS_EXISTS:
-			amode = F_OK;
+			/* we don't need to examine st_mode. */
 			break;
+		
 		default:
 			PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);
-			rv = -1;
-			goto done;
+			return -1;
 	}
-	rv = access(name, amode);
+
+	rv = stat(name, &buf);
+	if (rv == 0 && how != PR_ACCESS_EXISTS && (!(buf.st_mode & checkFlags))) {
+		PR_SetError(PR_NO_ACCESS_RIGHTS_ERROR, 0);
+		return -1;
+	}
 
 	if (rv < 0) {
 		err = _MD_ERRNO();
-		_PR_MD_MAP_ACCESS_ERROR(err);
+		_PR_MD_MAP_STAT_ERROR(err);
 	}
 
-done:
 	return(rv);
 }
 

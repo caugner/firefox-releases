@@ -1,9 +1,11 @@
 Summary: Netscape Portable Runtime
 Name: %{name}
-Vendor: Sun Microsystems
+Vendor: Sun Microsystems, Inc.
 Version: %{version}
 Release: %{release}
-Copyright: MPL/GPL
+Copyright: Copyright 2005 Sun Microsystems, Inc.  All rights reserved.  Use is subject to license terms.  Also under other license(s) as shown at the Description field.
+Distribution: Sun Java(TM) Enterprise System
+URL: http://www.sun.com
 Group: System Environment/Base
 Source: %{name}-%{version}.tar.gz
 ExclusiveOS: Linux
@@ -18,6 +20,42 @@ memory management (malloc and free) and shared library linking.
 
 See: http://www.mozilla.org/projects/nspr/about-nspr.html
 
+***** BEGIN LICENSE BLOCK *****
+Version: MPL 1.1/GPL 2.0/LGPL 2.1
+
+The contents of this file are subject to the Mozilla Public License Version
+1.1 (the "License"); you may not use this file except in compliance with
+the License. You may obtain a copy of the License at
+http://www.mozilla.org/MPL/
+
+Software distributed under the License is distributed on an "AS IS" basis,
+WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+for the specific language governing rights and limitations under the
+License.
+
+The Original Code is the Netscape security libraries.
+
+The Initial Developer of the Original Code is
+Netscape Communications Corporation.
+Portions created by the Initial Developer are Copyright (C) 1994-2000
+the Initial Developer. All Rights Reserved.
+
+Contributor(s):
+
+Alternatively, the contents of this file may be used under the terms of
+either the GNU General Public License Version 2 or later (the "GPL"), or
+the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+in which case the provisions of the GPL or the LGPL are applicable instead
+of those above. If you wish to allow use of your version of this file only
+under the terms of either the GPL or the LGPL, and not to allow others to
+use your version of this file under the terms of the MPL, indicate your
+decision by deleting the provisions above and replace them with the notice
+and other provisions required by the GPL or the LGPL. If you do not delete
+the provisions above, a recipient may use your version of this file under
+the terms of any one of the MPL, the GPL or the LGPL.
+
+***** END LICENSE BLOCK *****
+
 %package devel
 Summary: Development Libraries for the Netscape Portable Runtime
 Group: Development/Libraries
@@ -25,6 +63,8 @@ Requires: %{name} = %{version}-%{release}
 
 %description devel
 Header files for doing development with the Netscape Portable Runtime.
+
+Under "MPL/GPL" license.
 
 %prep
 %setup -c
@@ -39,84 +79,3 @@ tar xvzf $RPM_SOURCE_DIR/%{name}-%{version}.tar.gz
 
 %clean
 rm -rf $RPM_BUILD_ROOT
-
-%files
-%defattr(-,root,root)
-%dir /usr
-%dir /usr/lib
-%dir /usr/lib/mps
-/usr/lib/mps/libnspr4.so
-/usr/lib/mps/libplc4.so
-/usr/lib/mps/libplds4.so
-
-%files devel
-%defattr(-,root,root)
-/usr/lib/mps/libnspr4.a
-/usr/lib/mps/libplc4.a
-/usr/lib/mps/libplds4.a
-%dir /usr
-%dir /usr/include
-%dir /usr/include/mps
-%dir /usr/include/mps/nspr
-%dir /usr/include/mps/nspr/obsolete
-%dir /usr/include/mps/nspr/private
-/usr/include/mps/nspr/private/pprio.h
-/usr/include/mps/nspr/private/pprthred.h
-/usr/include/mps/nspr/private/prpriv.h
-/usr/include/mps/nspr/prcpucfg.h
-/usr/include/mps/nspr/obsolete/pralarm.h
-/usr/include/mps/nspr/obsolete/probslet.h
-/usr/include/mps/nspr/obsolete/protypes.h
-/usr/include/mps/nspr/obsolete/prsem.h
-/usr/include/mps/nspr/nspr.h
-/usr/include/mps/nspr/pratom.h
-/usr/include/mps/nspr/prbit.h
-/usr/include/mps/nspr/prclist.h
-/usr/include/mps/nspr/prcmon.h
-/usr/include/mps/nspr/prcountr.h
-/usr/include/mps/nspr/prcvar.h
-/usr/include/mps/nspr/prdtoa.h
-/usr/include/mps/nspr/prenv.h
-/usr/include/mps/nspr/prerr.h
-/usr/include/mps/nspr/prerror.h
-/usr/include/mps/nspr/prinet.h
-/usr/include/mps/nspr/prinit.h
-/usr/include/mps/nspr/prinrval.h
-/usr/include/mps/nspr/prio.h
-/usr/include/mps/nspr/pripcsem.h
-/usr/include/mps/nspr/prlink.h
-/usr/include/mps/nspr/prlock.h
-/usr/include/mps/nspr/prlog.h
-/usr/include/mps/nspr/prlong.h
-/usr/include/mps/nspr/prmem.h
-/usr/include/mps/nspr/prmon.h
-/usr/include/mps/nspr/prmwait.h
-/usr/include/mps/nspr/prnetdb.h
-/usr/include/mps/nspr/prolock.h
-/usr/include/mps/nspr/prpdce.h
-/usr/include/mps/nspr/prprf.h
-/usr/include/mps/nspr/prproces.h
-/usr/include/mps/nspr/prrng.h
-/usr/include/mps/nspr/prrwlock.h
-/usr/include/mps/nspr/prshma.h
-/usr/include/mps/nspr/prshm.h
-/usr/include/mps/nspr/prsystem.h
-/usr/include/mps/nspr/prthread.h
-/usr/include/mps/nspr/prtime.h
-/usr/include/mps/nspr/prtpool.h
-/usr/include/mps/nspr/prtrace.h
-/usr/include/mps/nspr/prtypes.h
-/usr/include/mps/nspr/prvrsion.h
-/usr/include/mps/nspr/prwin16.h
-/usr/include/mps/nspr/plarenas.h
-/usr/include/mps/nspr/plarena.h
-/usr/include/mps/nspr/plhash.h
-/usr/include/mps/nspr/plbase64.h
-/usr/include/mps/nspr/plerror.h
-/usr/include/mps/nspr/plgetopt.h
-/usr/include/mps/nspr/plresolv.h
-/usr/include/mps/nspr/plstr.h
-
-%changelog
-* Sat Jan 18 2003 Kirk Erickson <kirk.erickson@sun.com>
-- http://bugzilla.mozilla.org/show_bug.cgi?id=189501 

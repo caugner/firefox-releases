@@ -1,11 +1,11 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Alec Flett <alecf@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -57,6 +57,7 @@ const kProxyManual = ["network.proxy.ftp",
                       "network.proxy.http",
                       "network.proxy.socks",
                       "network.proxy.ssl"];
+var gShowBiDi = false;
 
 function toggleOfflineStatus()
 {
@@ -95,20 +96,19 @@ function InitProxyMenu()
   var networkProxyNo = document.getElementById("network-proxy-no");
   var networkProxyManual = document.getElementById("network-proxy-manual");
   var networkProxyPac = document.getElementById("network-proxy-pac");
-  if (!networkProxyNo || !networkProxyManual || !networkProxyPac)
-    return;
-
-  var networkProxyStatus = [networkProxyNo, networkProxyManual, networkProxyPac];
+  var networkProxyWpad = document.getElementById("network-proxy-wpad");
   var prefService = Components.classes["@mozilla.org/preferences-service;1"];
   prefService = prefService.getService(Components.interfaces.nsIPrefService);
   var prefBranch = prefService.getBranch(null);
 
   var proxyLocked = prefBranch.prefIsLocked("network.proxy.type");
   if (proxyLocked) {
-        networkProxyNo.setAttribute("disabled", "true");
+    networkProxyNo.setAttribute("disabled", "true");
+    networkProxyWpad.setAttribute("disabled", "true");
   }
   else {
-        networkProxyNo.removeAttribute("disabled");
+    networkProxyNo.removeAttribute("disabled");
+    networkProxyWpad.removeAttribute("disabled");
   }
 
   // If no proxy is configured, disable the menuitems.
@@ -145,6 +145,10 @@ function InitProxyMenu()
     networkProxyType = prefBranch.getIntPref("network.proxy.type");
   } catch(e) {}
 
+  // The pref value 3 for network.proxy.type is unused to maintain
+  // backwards compatibility. Treat 3 equally to 0. See bug 115720.
+  var networkProxyStatus = [networkProxyNo, networkProxyManual, networkProxyPac,
+                            networkProxyNo, networkProxyWpad];
   networkProxyStatus[networkProxyType].setAttribute("checked", "true");
 }
 
@@ -382,6 +386,8 @@ function goUpdateGlobalEditMenuItems()
   goUpdateCommand('cmd_paste');
   goUpdateCommand('cmd_selectAll');
   goUpdateCommand('cmd_delete');
+  if (gShowBiDi)
+    goUpdateCommand('cmd_switchTextDirection');
 }
 
 // update menu items that rely on the current selection
@@ -414,8 +420,7 @@ function goUpdateFindTypeMenuItems()
 }
 
 // function that extracts the filename from a url
-function extractFileNameFromUrl(urlstr)
-{
+function extractFileNameFromUrl(urlstr) {
   if (!urlstr) return null;
 
   // For "http://foo/bar/cheese.jpg", return "cheese.jpg".
@@ -441,11 +446,10 @@ function gatherTextUnder ( root )
   var depth = 1;
   while ( node && depth > 0 ) {
     // See if this node is text.
-    if ( node.nodeName == "#text" ) {
+    if ( node.nodeType == Node.TEXT_NODE ) {
       // Add this text to our collection.
       text += " " + node.data;
-    } else if ( node.nodeType == Node.ELEMENT_NODE 
-                && node.localName.toUpperCase() == "IMG" ) {
+    } else if ( node instanceof HTMLImageElement ) {
       // If it has an alt= attribute, use that.
       var altText = node.getAttribute( "alt" );
       if ( altText && altText != "" ) {
@@ -509,7 +513,7 @@ function utilityOnLoad(aEvent)
   var prefService = Components.classes["@mozilla.org/preferences-service;1"];
   prefService = prefService.getService(Components.interfaces.nsIPrefService);
   var prefBranch = prefService.getBranch(null);
-  prefBranch = prefBranch.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+  prefBranch = prefBranch.QueryInterface(Components.interfaces.nsIPrefBranch2);
 
   prefBranch.addObserver("network.proxy.type", proxyTypeObserver, false);
 
@@ -529,7 +533,7 @@ function utilityOnUnload(aEvent)
   var prefService = Components.classes["@mozilla.org/preferences-service;1"];
   prefService = prefService.getService(Components.interfaces.nsIPrefService);
   var prefBranch = prefService.getBranch(null);
-  prefBranch = prefBranch.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+  prefBranch = prefBranch.QueryInterface(Components.interfaces.nsIPrefBranch2);
   
   prefBranch.removeObserver("network.proxy.type", proxyTypeObserver);
 }
@@ -563,4 +567,104 @@ function validateFileName(aFileName)
     re = /[\:\/]+/g;
   
   return aFileName.replace(re, "_");
+}
+
+// autoscroll
+var gStartX;
+var gStartY;
+var gCurrX;
+var gCurrY;
+var gScrollingView;
+var gAutoScrollTimer;
+var gIgnoreMouseEvents;
+var gAutoScrollPopup = null;
+
+function startScrolling(event)
+{
+  var pref = Components.classes["@mozilla.org/preferences-service;1"]
+                       .getService(Components.interfaces.nsIPrefBranch);
+
+  if (gScrollingView || event.button != 1)
+    return;
+
+  if (!pref.getBoolPref("general.autoScroll"))
+    return;
+
+  if (gScrollingView || event.button != 1)
+    return;
+
+  if (event.originalTarget instanceof XULElement &&
+      ((event.originalTarget.localName == "thumb")
+        || (event.originalTarget.localName == "slider")
+        || (event.originalTarget.localName == "scrollbarbutton")))
+    return;
+
+  if (!gAutoScrollPopup) {
+    const XUL_NS
+          = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
+    gAutoScrollPopup = document.createElementNS(XUL_NS, "popup");
+    gAutoScrollPopup.id = "autoscroller";
+    gAutoScrollPopup.addEventListener("popuphidden", stopScrolling, true);
+    document.documentElement.appendChild(gAutoScrollPopup);
+  }
+
+  gScrollingView = event.originalTarget.ownerDocument.defaultView;
+  var scrollingDir;
+  if (gScrollingView.scrollMaxX > 0) {
+    gAutoScrollPopup.setAttribute("scrolldir", gScrollingView.scrollMaxY > 0 ? "NSEW" : "EW");
+  }
+  else if (gScrollingView.scrollMaxY > 0) {
+    gAutoScrollPopup.setAttribute("scrolldir", "NS");
+  }
+  else {
+    gScrollingView = null; // abort scrolling
+    return;
+  }
+
+  document.popupNode = null;
+  gAutoScrollPopup.showPopup(document.documentElement, event.screenX, event.screenY,
+                             "popup", null, null);
+  gIgnoreMouseEvents = true;
+  gStartX = event.screenX;
+  gStartY = event.screenY;
+  gCurrX = event.screenX;
+  gCurrY = event.screenY;
+  addEventListener('mousemove', handleMouseMove, true);
+  addEventListener('mouseup', handleMouseUpDown, true);
+  addEventListener('mousedown', handleMouseUpDown, true);
+  gAutoScrollTimer = setInterval(autoScrollLoop, 10);
+}
+
+function handleMouseMove(event)
+{
+  gCurrX = event.screenX;
+  gCurrY = event.screenY;
+}
+
+function autoScrollLoop()
+{
+  var x = gCurrX - gStartX;
+  var y = gCurrY - gStartY;
+  const speed = 4;
+  if (Math.abs(x) >= speed || Math.abs(y) >= speed)
+    gIgnoreMouseEvents = false;
+  gScrollingView.scrollBy(x / speed, y / speed);
+}
+
+function handleMouseUpDown(event)
+{
+  if (!gIgnoreMouseEvents)
+    gAutoScrollPopup.hidePopup();
+  gIgnoreMouseEvents = false;
+}
+
+function stopScrolling()
+{
+  if (gScrollingView) {
+    gScrollingView = null;
+    removeEventListener('mousemove', handleMouseMove, true);
+    removeEventListener('mousedown', handleMouseUpDown, true);
+    removeEventListener('mouseup', handleMouseUpDown, true);
+    clearInterval(gAutoScrollTimer);
+  }
 }

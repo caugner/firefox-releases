@@ -383,14 +383,14 @@ WebBrowserChrome::SendHistoryStatusMessage(nsIURI * aURI, char * operation, PRIn
     if(!(nsCRT::strcmp(operation, "back")))
     {
         // Going back. XXX Get string from a resource file
-        uriAStr.Append(NS_LITERAL_STRING("Going back to url:"));
-        uriAStr.Append(NS_ConvertUTF8toUCS2(uriCStr));
+        uriAStr.AppendLiteral("Going back to url:");
+        AppendUTF8toUTF16(uriCStr, uriAStr);
     }
     else if (!(nsCRT::strcmp(operation, "forward")))
     {
         // Going forward. XXX Get string from a resource file
-        uriAStr.Append(NS_LITERAL_STRING("Going forward to url:"));
-        uriAStr.Append(NS_ConvertUTF8toUCS2(uriCStr));
+        uriAStr.AppendLiteral("Going forward to url:");
+        AppendUTF8toUTF16(uriCStr, uriAStr);
     }
     else if (!(nsCRT::strcmp(operation, "reload")))
     {
@@ -412,27 +412,27 @@ WebBrowserChrome::SendHistoryStatusMessage(nsIURI * aURI, char * operation, PRIn
         {
             uriAStr.Append(NS_LITERAL_STRING("Reloading url, (normal):"));
         }
-        uriAStr.Append(NS_ConvertASCIItoUCS2(uriCStr));
+        AppendUTF8toUTF16(uriCStr, uriAStr);
     }
     else if (!(nsCRT::strcmp(operation, "add")))
     {
         // Adding new entry. XXX Get string from a resource file
-        uriAStr.Append(NS_ConvertASCIItoUCS2(uriCStr));
-        uriAStr.Append(NS_LITERAL_STRING(" added to session History"));
+        AppendUTF8toUTF16(uriCStr, uriAStr);
+        uriAStr.AppendLiteral(" added to session History");
     }
     else if (!(nsCRT::strcmp(operation, "goto")))
     {
         // Goto. XXX Get string from a resource file
-        uriAStr.Append(NS_LITERAL_STRING("Going to HistoryIndex:"));
+        uriAStr.AppendLiteral("Going to HistoryIndex:");
         uriAStr.AppendInt(info1);
-        uriAStr.Append(NS_LITERAL_STRING(" Url:"));
-        uriAStr.Append(NS_ConvertASCIItoUCS2(uriCStr));
+        uriAStr.AppendLiteral(" Url:");
+        AppendUTF8toUTF16(uriCStr, uriAStr);
     }
     else if (!(nsCRT::strcmp(operation, "purge")))
     {
         // Purging old entries
         uriAStr.AppendInt(info1);
-        uriAStr.Append(NS_LITERAL_STRING(" purged from Session History"));
+        uriAStr.AppendLiteral(" purged from Session History");
     }
 
     WebBrowserChromeUI::UpdateStatusBarText(this, uriAStr.get());

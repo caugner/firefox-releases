@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsIDOMHTMLObjectElement.h"
@@ -46,18 +45,26 @@
 #include "nsIPresShell.h"
 #include "nsIDOMDocument.h"
 #include "nsIWebNavigation.h"
-#include "nsIFormControl.h"
+#include "nsIFormSubmission.h"
+#include "nsIObjectFrame.h"
+#include "nsIPluginInstance.h"
+#include "nsIPluginInstanceInternal.h"
+#include "nsIPluginElement.h"
 
 class nsHTMLObjectElement : public nsGenericHTMLFormElement,
                             public nsImageLoadingContent,
+                            public nsIPluginElement,
                             public nsIDOMHTMLObjectElement
 {
 public:
-  nsHTMLObjectElement(PRBool aFromParser = PR_FALSE);
+  nsHTMLObjectElement(nsINodeInfo *aNodeInfo, PRBool aFromParser = PR_FALSE);
   virtual ~nsHTMLObjectElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
+
+  // nsIPluginElement
+  NS_DECL_NSIPLUGINELEMENT
 
   // nsIDOMNode
   NS_FORWARD_NSIDOMNODE_NO_CLONENODE(nsGenericHTMLFormElement::)
@@ -71,13 +78,16 @@ public:
   // nsIDOMHTMLObjectElement
   NS_DECL_NSIDOMHTMLOBJECTELEMENT
 
+  // nsIContent
+  virtual PRBool IsFocusable(PRInt32 *aTabIndex = nsnull);
+
   // Overriden nsIFormControl methods
-  NS_IMETHOD_(PRInt32) GetType() { return NS_FORM_OBJECT; }
+  NS_IMETHOD_(PRInt32) GetType() const { return NS_FORM_OBJECT; }
   NS_IMETHOD Reset();
   NS_IMETHOD SubmitNamesValues(nsIFormSubmission* aFormSubmission,
                                nsIContent* aSubmitElement);
   NS_IMETHOD SaveState();
-  NS_IMETHOD RestoreState(nsIPresState* aState);
+  virtual PRBool RestoreState(nsPresState* aState);
 
   virtual void DoneAddingChildren();
   virtual PRBool IsDoneAddingChildren();
@@ -85,47 +95,22 @@ public:
   virtual PRBool ParseAttribute(nsIAtom* aAttribute,
                                 const nsAString& aValue,
                                 nsAttrValue& aResult);
-  NS_IMETHOD AttributeToString(nsIAtom* aAttribute,
-                               const nsHTMLValue& aValue,
-                               nsAString& aResult) const;
-  NS_IMETHOD GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const;
+  virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction() const;
   NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
 
 protected:
   PRPackedBool mIsDoneAddingChildren;
-  nsCString mType;
+  nsCString mActualType;
 };
 
-nsresult
-NS_NewHTMLObjectElement(nsIHTMLContent** aInstancePtrResult,
-                        nsINodeInfo *aNodeInfo, PRBool aFromParser)
+
+NS_IMPL_NS_NEW_HTML_ELEMENT_CHECK_PARSER(Object)
+
+
+nsHTMLObjectElement::nsHTMLObjectElement(nsINodeInfo *aNodeInfo,
+                                         PRBool aFromParser)
+  : nsGenericHTMLFormElement(aNodeInfo), mIsDoneAddingChildren(!aFromParser)
 {
-  NS_ENSURE_ARG_POINTER(aInstancePtrResult);
-
-  nsHTMLObjectElement* it = new nsHTMLObjectElement(aFromParser);
-
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsresult rv = it->Init(aNodeInfo);
-
-  if (NS_FAILED(rv)) {
-    delete it;
-
-    return rv;
-  }
-
-  *aInstancePtrResult = NS_STATIC_CAST(nsIHTMLContent *, it);
-  NS_ADDREF(*aInstancePtrResult);
-
-  return NS_OK;
-}
-
-
-nsHTMLObjectElement::nsHTMLObjectElement(PRBool aFromParser)
-{
-  mIsDoneAddingChildren = !aFromParser;
 }
 
 nsHTMLObjectElement::~nsHTMLObjectElement()
@@ -154,43 +139,66 @@ NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLObjectElement,
   NS_INTERFACE_MAP_ENTRY(nsIDOMHTMLObjectElement)
   NS_INTERFACE_MAP_ENTRY(imgIDecoderObserver)
   NS_INTERFACE_MAP_ENTRY(nsIImageLoadingContent)
+  NS_INTERFACE_MAP_ENTRY(nsIPluginElement)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(HTMLObjectElement)
 NS_HTML_CONTENT_INTERFACE_MAP_END
 
-// nsIDOMHTMLObjectElement
-nsresult
-nsHTMLObjectElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
+
+NS_IMETHODIMP
+nsHTMLObjectElement::SetActualType(const nsACString& aActualType)
 {
-  NS_ENSURE_ARG_POINTER(aReturn);
-  *aReturn = nsnull;
-
-  nsHTMLObjectElement* it = new nsHTMLObjectElement();
-
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsCOMPtr<nsIDOMNode> kungFuDeathGrip(it);
-
-  nsresult rv = it->Init(mNodeInfo);
-
-  if (NS_FAILED(rv))
-    return rv;
-
-  CopyInnerTo(it, aDeep);
-
-  *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
-
-  NS_ADDREF(*aReturn);
+  mActualType = aActualType;
 
   return NS_OK;
 }
+
+NS_IMETHODIMP
+nsHTMLObjectElement::GetActualType(nsACString& aActualType)
+{
+  aActualType = mActualType;
+
+  return NS_OK;
+}
+
+// nsIDOMHTMLObjectElement
+
+
+NS_IMPL_DOM_CLONENODE(nsHTMLObjectElement)
+
 
 NS_IMETHODIMP
 nsHTMLObjectElement::GetForm(nsIDOMHTMLFormElement** aForm)
 {
   return nsGenericHTMLFormElement::GetForm(aForm);
 }
+
+// nsIContent
+
+PRBool
+nsHTMLObjectElement::IsFocusable(PRInt32 *aTabIndex)
+{
+  nsIFrame* frame = GetPrimaryFrame(PR_FALSE);
+  if (frame) {
+    nsIObjectFrame *objFrame = nsnull;
+    CallQueryInterface(frame, &objFrame);
+    if (objFrame) {
+      nsCOMPtr<nsIPluginInstance> pluginInstance;
+      objFrame->GetPluginInstance(*getter_AddRefs(pluginInstance));
+      if (pluginInstance) {
+        // Has a plugin: let the plugin decide what to do in terms of
+        // internal focus from mouse clicks
+        if (aTabIndex) {
+          GetTabIndex(aTabIndex);
+         }
+  
+        return PR_TRUE;
+      }
+    }
+  }
+
+  return nsGenericHTMLFormElement::IsFocusable(aTabIndex);
+}
+
 
 // nsIFormControl
 
@@ -204,7 +212,47 @@ NS_IMETHODIMP
 nsHTMLObjectElement::SubmitNamesValues(nsIFormSubmission* aFormSubmission,
                                        nsIContent* aSubmitElement)
 {
-  return NS_OK;
+  nsAutoString name;
+  nsresult rv = GetAttr(kNameSpaceID_None, nsHTMLAtoms::name, name);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  if (rv == NS_CONTENT_ATTR_NOT_THERE) {
+    // No name, don't submit.
+
+    return NS_OK;
+  }
+
+  nsIFrame* frame = GetPrimaryFrame(PR_FALSE);
+
+  nsIObjectFrame *objFrame = nsnull;
+  if (frame) {
+    CallQueryInterface(frame, &objFrame);
+  }
+
+  if (!objFrame) {
+    // No frame, nothing to submit.
+
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIPluginInstance> pi;
+  objFrame->GetPluginInstance(*getter_AddRefs(pi));
+
+  nsCOMPtr<nsIPluginInstanceInternal> pi_internal(do_QueryInterface(pi));
+
+  if (!pi_internal) {
+    // No plugin, nothing to submit.
+
+    return NS_OK;
+  }
+
+  nsAutoString value;
+  rv = pi_internal->GetFormValue(value);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return aFormSubmission->AddNameValuePair(this, name, value);
 }
 
 NS_IMETHODIMP
@@ -213,10 +261,10 @@ nsHTMLObjectElement::SaveState()
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsHTMLObjectElement::RestoreState(nsIPresState* aState)
+PRBool
+nsHTMLObjectElement::RestoreState(nsPresState* aState)
 {
-  return NS_OK;
+  return PR_FALSE;
 }
 
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Code, code)
@@ -232,31 +280,10 @@ NS_IMPL_INT_ATTR(nsHTMLObjectElement, Hspace, hspace)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Name, name)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Standby, standby)
 NS_IMPL_INT_ATTR(nsHTMLObjectElement, TabIndex, tabindex)
-//NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Type, type)
+NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Type, type)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, UseMap, usemap)
 NS_IMPL_INT_ATTR(nsHTMLObjectElement, Vspace, vspace)
 NS_IMPL_STRING_ATTR(nsHTMLObjectElement, Width, width)
-
-NS_IMETHODIMP
-nsHTMLObjectElement::GetType(nsAString& aType)
-{
-  if (mType.IsEmpty()) {
-    GetAttr(kNameSpaceID_None, nsHTMLAtoms::type, aType);
-  } else {
-    CopyUTF8toUTF16(mType, aType);
-  }
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHTMLObjectElement::SetType(const nsAString& aType)
-{
-  CopyUTF16toUTF8(aType, mType);
-
-  return NS_OK;
-}
-
 
 NS_IMETHODIMP
 nsHTMLObjectElement::GetContentDocument(nsIDOMDocument** aContentDocument)
@@ -265,11 +292,12 @@ nsHTMLObjectElement::GetContentDocument(nsIDOMDocument** aContentDocument)
 
   *aContentDocument = nsnull;
 
-  if (!mDocument) {
+  if (!IsInDoc()) {
     return NS_OK;
   }
 
-  nsIDocument *sub_doc = mDocument->GetSubDocumentFor(this);
+  // XXXbz should this use GetCurrentDoc()?  sXBL/XBL2 issue!
+  nsIDocument *sub_doc = GetOwnerDoc()->GetSubDocumentFor(this);
 
   if (!sub_doc) {
     return NS_OK;
@@ -286,30 +314,11 @@ nsHTMLObjectElement::ParseAttribute(nsIAtom* aAttribute,
   if (aAttribute == nsHTMLAtoms::align) {
     return ParseAlignValue(aValue, aResult);
   }
-  if (aAttribute == nsHTMLAtoms::tabindex) {
-    return aResult.ParseIntWithBounds(aValue, 0, 32767);
-  }
   if (ParseImageAttribute(aAttribute, aValue, aResult)) {
     return PR_TRUE;
   }
 
   return nsGenericHTMLElement::ParseAttribute(aAttribute, aValue, aResult);
-}
-
-NS_IMETHODIMP
-nsHTMLObjectElement::AttributeToString(nsIAtom* aAttribute,
-                                       const nsHTMLValue& aValue,
-                                       nsAString& aResult) const
-{
-  if (aAttribute == nsHTMLAtoms::align) {
-    if (eHTMLUnit_Enumerated == aValue.GetUnit()) {
-      VAlignValueToString(aValue, aResult);
-      return NS_CONTENT_ATTR_HAS_VALUE;
-    }
-  }
-
-  return nsGenericHTMLFormElement::AttributeToString(aAttribute, aValue,
-                                                     aResult);
 }
 
 static void
@@ -337,9 +346,8 @@ nsHTMLObjectElement::IsAttributeMapped(const nsIAtom* aAttribute) const
 }
 
 
-NS_IMETHODIMP
-nsHTMLObjectElement::GetAttributeMappingFunction(nsMapRuleToAttributesFunc& aMapRuleFunc) const
+nsMapRuleToAttributesFunc
+nsHTMLObjectElement::GetAttributeMappingFunction() const
 {
-  aMapRuleFunc = &MapAttributesIntoRule;
-  return NS_OK;
+  return &MapAttributesIntoRule;
 }

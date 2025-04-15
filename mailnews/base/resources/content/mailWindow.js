@@ -1,26 +1,42 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributors(s):
- *   Jan Varga <varga@nixcorp.com>
+ * Contributor(s):
+ *   Jan Varga <varga@ku.sk>
  *   Håkan Waara (hwaara@chello.se)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
  //This file stores variables common to mail windows
 var messengerContractID        = "@mozilla.org/messenger;1";
@@ -57,12 +73,10 @@ var folderDSContractID         = datasourceContractIDPrefix + "mailnewsfolders";
 var accountManagerDataSource;
 var folderDataSource;
 
-var messagesBox = null;
 var accountCentralBox = null;
 var gSearchBox = null;
 var gAccountCentralLoaded = false;
 var gFakeAccountPageLoaded = false;
-var gPaneConfig = null;
 //End progress and Status variables
 
 // for checking if the folder loaded is Draft or Unsent which msg is editable
@@ -111,7 +125,6 @@ function OnMailWindowUnload()
 
 
   msgWindow.closeWindow();
-
 }
 
 function CreateMessenger()
@@ -157,7 +170,7 @@ function CreateMailWindowGlobals()
         secureUI = Components.classes[secureUIContractID].createInstance();
         if (secureUI) {
           secureUI = secureUI.QueryInterface(Components.interfaces.nsISecureBrowserUI);
-          secureUI.init(_content, securityIcon);
+          secureUI.init(content, securityIcon);
         }
       }
     }
@@ -188,13 +201,13 @@ function CreateMailWindowGlobals()
   gBrandBundle = document.getElementById("bundle_brand");
 
   //Create datasources
-  accountManagerDataSource = Components.classes[accountManagerDSContractID].createInstance();
-  folderDataSource         = Components.classes[folderDSContractID].createInstance();
+  accountManagerDataSource = Components.classes[accountManagerDSContractID].getService();
+  folderDataSource         = Components.classes[folderDSContractID].getService();
 
-  messagesBox       = document.getElementById("messagesBox");
   accountCentralBox = document.getElementById("accountCentralBox");
   gSearchBox = document.getElementById("searchBox");
-  gPaneConfig = pref.getIntPref("mail.pane_config");
+  if (gSearchBox)
+    gSearchBox.collapsed = false;
 }
 
 function InitMsgWindow()
@@ -207,6 +220,7 @@ function InitMsgWindow()
 
   var messagepane = document.getElementById("messagepane");
   messagepane.docShell.allowAuth = false;
+  msgWindow.rootDocShell.allowAuth = true; 
 }
 
 function messagePaneOnClick(event)
@@ -214,16 +228,14 @@ function messagePaneOnClick(event)
   // if this is stand alone mail (no browser)
   // or this isn't a simple left click, do nothing, and let the normal code execute
   if (event.button != 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
-  {
-    contentAreaClick(event);
-    return;
-  }
+    return contentAreaClick(event);
 
   // try to determine the href for what you are clicking on.  
   // for example, it might be "" if you aren't left clicking on a link
-  var href = hrefForClickEvent(event);
-  if (!href) 
-    return;
+  var ceParams = hrefAndLinkNodeForClickEvent(event);
+  if (!ceParams)
+    return true;
+  var href = ceParams.href;
 
   // we know that http://, https://, ftp://, file://, chrome://, 
   // resource://, about:, and gopher:// (as if), 
@@ -234,7 +246,7 @@ function messagePaneOnClick(event)
   // and let the normal code handle it
   var needABrowser = /(^http(s)?:|^ftp:|^file:|^gopher:|^chrome:|^resource:|^about:)/i;
   if (href.search(needABrowser) == -1) 
-    return;
+    return true;
 
   // however, if the protocol should not be loaded internally, then we should
   // not put up a new browser window.  we should just let the usual processing
@@ -244,7 +256,7 @@ function messagePaneOnClick(event)
     extProtService = extProtService.QueryInterface(Components.interfaces.nsIExternalProtocolService);
     var scheme = href.substring(0, href.indexOf(":"));
     if (!extProtService.isExposedProtocol(scheme))
-      return;
+      return true;
   } 
   catch (ex) {} // ignore errors, and just assume that we can proceed.
 
@@ -256,7 +268,11 @@ function messagePaneOnClick(event)
   // we want to preventDefault, so that in
   // nsGenericHTMLElement::HandleDOMEventForAnchors(), we don't try to handle the click again
   event.preventDefault();
+  if (isPhishingURL(ceParams.linkNode, false, href))
+    return false;
+
   openTopBrowserWith(href);
+  return true;
 }
 
 function AddDataSources()
@@ -297,13 +313,6 @@ function SetupMoveCopyMenus(menuid, accountManagerDataSource, folderDataSource)
     menu.setAttribute('ref', 'msgaccounts:/');
   }
 }
-function dumpProgress() {
-    var broadcaster = document.getElementById("Messenger:LoadingProgress");
-    dump( "broadcaster mode=" + broadcaster.getAttribute("mode") + "\n" );
-    dump( "broadcaster value=" + broadcaster.getAttribute("value") + "\n" );
-    dump( "meter mode=" + meter.getAttribute("mode") + "\n" );
-    dump( "meter value=" + meter.getAttribute("value") + "\n" );
-}
 
 // We're going to implement our status feedback for the mail window in JS now.
 // the following contains the implementation of our status feedback object
@@ -317,17 +326,20 @@ nsMsgStatusFeedback.prototype =
   // global variables for status / feedback information....
   statusTextFld : null,
   statusBar     : null,
+  statusPanel   : null,
   throbber      : null,
   stopCmd       : null,
   startTimeoutID : null,
   stopTimeoutID  : null,
   pendingStartRequests : 0,
   meteorsSpinning : false,
+  myDefaultStatus : null,
 
   ensureStatusFields : function()
     {
       if (!this.statusTextFld ) this.statusTextFld = document.getElementById("statusText");
       if (!this.statusBar) this.statusBar = document.getElementById("statusbar-icon");
+      if (!this.statusPanel) this.statusPanel = document.getElementById("progress-panel");
       if (!this.throbber)   this.throbber = document.getElementById("navigator-throbber");
       if (!this.stopCmd)   this.stopCmd = document.getElementById("cmd_stop");
     },
@@ -335,13 +347,21 @@ nsMsgStatusFeedback.prototype =
   // nsIXULBrowserWindow implementation
   setJSStatus : function(status)
     {
+      if (status.length > 0)
+        this.showStatusString(status);
     },
   setJSDefaultStatus : function(status)
     {
+      if (status.length > 0)
+      {
+        this.myDefaultStatus = status;
+        this.statusTextFld.label = status;
+      }
     },
   setOverLink : function(link)
     {
-      this.showStatusString(link);
+      this.ensureStatusFields();
+      this.statusTextFld.label = link;
     },
   QueryInterface : function(iid)
     {
@@ -356,8 +376,10 @@ nsMsgStatusFeedback.prototype =
   showStatusString : function(statusText)
     {
       this.ensureStatusFields();
-      if ( statusText == "" )
-        statusText = defaultStatus;
+      if ( !statusText.length )
+        statusText = this.myDefaultStatus;
+      else
+        this.myDefaultStatus = "";
       this.statusTextFld.label = statusText;
   },
   _startMeteors : function()
@@ -366,6 +388,9 @@ nsMsgStatusFeedback.prototype =
 
       this.meteorsSpinning = true;
       this.startTimeoutID = null;
+
+      // Show progress meter
+      this.statusPanel.hidden = false;
 
       // Turn progress meter on.
       this.statusBar.setAttribute("mode","undetermined");
@@ -402,15 +427,14 @@ nsMsgStatusFeedback.prototype =
         gTimelineService.resetTimer("FolderLoading");
       }
       this.ensureStatusFields();
-      var msg = gMessengerBundle.getString("documentDone");
-      this.showStatusString(msg);
-      defaultStatus = msg;
+      this.showStatusString(defaultStatus);
 
       // stop the throbber
       if (this.throbber)
         this.throbber.setAttribute("busy", false);
 
       // Turn progress meter off.
+      this.statusPanel.hidden = true;
       this.statusBar.setAttribute("mode","normal");
       this.statusBar.value = 0;  // be sure to clear the progress bar
       this.statusBar.label = "";
@@ -507,30 +531,32 @@ function StopUrls()
   msgWindow.StopUrls();
 }
 
-function loadStartPage() {
-    try {
-        // collapse the junk bar
-        SetUpJunkBar(null);
+function loadStartPage()
+{
+  try
+  {
+    gMessageNotificationBar.clearMsgNotifications();
 
-        var startpageenabled = pref.getBoolPref("mailnews.start_page.enabled");
-
-        if (startpageenabled) {
-            var startpage = pref.getComplexValue("mailnews.start_page.url",
-                                                 Components.interfaces.nsIPrefLocalizedString).data;
-            if (startpage != "") {
-                // first, clear out the charset setting.
-                messenger.setDisplayCharset("");
-
-                GetMessagePaneFrame().location = startpage;
-                //dump("start message pane with: " + startpage + "\n");
-                ClearMessageSelection();
-            }
-        }
+    var startpageenabled = pref.getBoolPref("mailnews.start_page.enabled");
+    if (startpageenabled)
+    {
+      var startpage = pref.getComplexValue("mailnews.start_page.url",
+                                           Components.interfaces.nsIPrefLocalizedString).data;
+      if (startpage)
+      {
+        // first, clear out the charset setting.
+        messenger.setDisplayCharset("");
+        GetMessagePaneFrame().location.href = startpage;
+        //dump("start message pane with: " + startpage + "\n");
+        ClearMessageSelection();
+      }
     }
-    catch (ex) {
-        dump("Error loading start page.\n");
-        return;
-    }
+  }
+  catch (ex)
+  {
+    dump("Error loading start page.\n");
+    return;
+  }
 }
 
 // Display AccountCentral page when users clicks on the Account Folder.
@@ -545,28 +571,15 @@ function ShowAccountCentral()
                                                    Components.interfaces.nsIPrefLocalizedString).data;
         GetUnreadCountElement().hidden = true;
         GetTotalCountElement().hidden = true;
-        switch (gPaneConfig)
-        {
-            case 0:
-                messagesBox.setAttribute("collapsed", "true");
-                gSearchBox.setAttribute("collapsed", "true");
-                accountCentralBox.removeAttribute("collapsed");
-                window.frames["accountCentralPane"].location = acctCentralPage;
-                gAccountCentralLoaded = true;
-                break;
-
-            case 1:
-                var messagePaneBox = document.getElementById("messagepanebox");
-                messagePaneBox.setAttribute("collapsed", "true");
-                var searchAndThreadPaneBox = document.getElementById("searchAndthreadpaneBox");
-                searchAndThreadPaneBox.setAttribute("collapsed", "true");
-                var threadPaneSplitter = document.getElementById("threadpane-splitter");
-                threadPaneSplitter.setAttribute("collapsed", "true");
-                accountCentralBox.removeAttribute("collapsed");
-                window.frames["accountCentralPane"].location = acctCentralPage;
-                gAccountCentralLoaded = true;
-                break;
-        }
+        GetMessagePane().collapsed = true;
+        document.getElementById("threadpane-splitter").collapsed = true;
+        gSearchBox.collapsed = true;
+        GetThreadTree().collapsed = true;
+        document.getElementById("accountCentralBox").collapsed = false;
+        window.frames["accountCentralPane"].location.href = acctCentralPage;
+        if (!IsFolderPaneCollapsed())
+            GetFolderTree().focus();
+        gAccountCentralLoaded = true;
     }
     catch (ex)
     {
@@ -582,32 +595,15 @@ function HideAccountCentral()
 {
     try
     {
-        switch (gPaneConfig)
-        {
-            case 0:
-                window.frames["accountCentralPane"].location = "about:blank";
-                accountCentralBox.setAttribute("collapsed", "true");
-                gSearchBox.removeAttribute("collapsed");
-                messagesBox.removeAttribute("collapsed");
-                gAccountCentralLoaded = false;
-                break;
-
-            case 1:
-                window.frames["accountCentralPane"].location = "about:blank";
-                accountCentralBox.setAttribute("collapsed", "true");
-                // XXX todo
-                // the code below that always removes the collapsed attribute
-                // makes it so in this pane config, you can't keep the message pane hidden
-                // see bug #188393
-                var messagePaneBox = document.getElementById("messagepanebox");
-                messagePaneBox.removeAttribute("collapsed");
-                var searchAndThreadPaneBox = document.getElementById("searchAndthreadpaneBox");
-                searchAndThreadPaneBox.removeAttribute("collapsed");
-                var threadPaneSplitter = document.getElementById("threadpane-splitter");
-                threadPaneSplitter.removeAttribute("collapsed");
-                gAccountCentralLoaded = false;
-                break;
-        }
+        window.frames["accountCentralPane"].location.href = "about:blank";
+        document.getElementById("accountCentralBox").collapsed = true;
+        GetThreadTree().collapsed = false;
+        gSearchBox.collapsed = false;
+        var threadPaneSplitter = document.getElementById("threadpane-splitter");
+        threadPaneSplitter.collapsed = false;
+        if (!threadPaneSplitter.hidden && threadPaneSplitter.getAttribute("state") != "collapsed")
+            GetMessagePane().collapsed = false;
+        gAccountCentralLoaded = false;
     }
     catch (ex)
     {
@@ -705,7 +701,7 @@ function ShowHideToolBarButtons()
 function AddToolBarPrefListener()
 {
   try {
-    var pbi = pref.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+    var pbi = pref.QueryInterface(Components.interfaces.nsIPrefBranch2);
     pbi.addObserver(gMailToolBarPrefListener.domain, gMailToolBarPrefListener, false);
   } catch(ex) {
     dump("Failed to observe prefs: " + ex + "\n");
@@ -715,7 +711,7 @@ function AddToolBarPrefListener()
 function RemoveToolBarPrefListener()
 {
   try {
-    var pbi = pref.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+    var pbi = pref.QueryInterface(Components.interfaces.nsIPrefBranch2);
     pbi.removeObserver(gMailToolBarPrefListener.domain, gMailToolBarPrefListener);
   } catch(ex) {
     dump("Failed to remove pref observer: " + ex + "\n");

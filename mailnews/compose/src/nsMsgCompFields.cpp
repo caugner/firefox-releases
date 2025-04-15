@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,27 +23,27 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsMsgCompFields.h"
 #include "nsCRT.h"
-#include "nsIPref.h"
 #include "nsMsgI18N.h"
 #include "nsMsgComposeStringBundle.h"
 #include "nsMsgRecipientArray.h"
 #include "nsIMsgHeaderParser.h"
 #include "nsMsgCompUtils.h"
+#include "nsMsgUtils.h"
 #include "prmem.h"
 #include "nsIFileChannel.h"
 #include "nsReadableUtils.h"
@@ -58,7 +58,7 @@ nsMsgCompFields::nsMsgCompFields()
   for (i = 0; i < MSG_MAX_HEADERS; i ++)
     m_headers[i] = nsnull;
 
-  m_body = nsnull;
+  m_body.Truncate();
 
   NS_NewISupportsArray(getter_AddRefs(m_attachments));
 
@@ -69,20 +69,16 @@ nsMsgCompFields::nsMsgCompFields()
   m_returnReceipt = PR_FALSE;
   m_receiptHeaderType = nsIMsgMdnGenerator::eDntType;
   m_bodyIsAsciiOnly = PR_FALSE;
+  m_forceMsgEncoding = PR_FALSE;
+  m_needToCheckCharset = PR_TRUE;
 
-  nsCOMPtr<nsIPref> prefs (do_GetService(NS_PREF_CONTRACTID));
-  if (prefs) 
-  {
-    // Get the default charset from pref, use this as a mail charset.
-    nsXPIDLString charset;
-    prefs->GetLocalizedUnicharPref("mailnews.send_default_charset", getter_Copies(charset));
-    if (charset.IsEmpty())
-      m_DefaultCharacterSet.Assign("ISO-8859-1");
-    else
-      m_DefaultCharacterSet.AssignWithConversion(charset);
-    SetCharacterSet(m_DefaultCharacterSet.get());
-  }
-  m_internalCharSet.Assign(msgCompHeaderInternalCharset());
+  // Get the default charset from pref, use this as a mail charset.
+  nsXPIDLString charset;
+  NS_GetLocalizedUnicharPreferenceWithDefault(nsnull, "mailnews.send_default_charset", 
+                                              NS_LITERAL_STRING("ISO-8859-1"), charset);
+
+  LossyCopyUTF16toASCII(charset, m_DefaultCharacterSet); // Charsets better be ASCII
+  SetCharacterSet(m_DefaultCharacterSet.get());
 }
 
 nsMsgCompFields::~nsMsgCompFields()
@@ -90,8 +86,6 @@ nsMsgCompFields::~nsMsgCompFields()
   PRInt16 i;
   for (i = 0; i < MSG_MAX_HEADERS; i ++)
     PR_FREEIF(m_headers[i]);
-
-  PR_FREEIF(m_body);
 }
 
 nsresult nsMsgCompFields::SetAsciiHeader(MsgHeaderID header, const char *value)
@@ -130,104 +124,96 @@ const char* nsMsgCompFields::GetAsciiHeader(MsgHeaderID header)
   return m_headers[header] ? m_headers[header] : "";
 }
 
-nsresult nsMsgCompFields::SetUnicodeHeader(MsgHeaderID header, const PRUnichar *value)
+nsresult nsMsgCompFields::SetUnicodeHeader(MsgHeaderID header, const nsAString& value)
 {
-  char* cString;
-  ConvertFromUnicode(m_internalCharSet.get(), nsAutoString(value), &cString);
-  nsresult rv = SetAsciiHeader(header, cString);
-  PR_Free(cString);
-  
-  return rv;
+  return SetAsciiHeader(header, NS_ConvertUTF16toUTF8(value).get());
 }
 
-nsresult nsMsgCompFields::GetUnicodeHeader(MsgHeaderID header, PRUnichar **_retval)
+nsresult nsMsgCompFields::GetUnicodeHeader(MsgHeaderID header, nsAString& aResult)
 {
-  nsString unicodeStr;
-  ConvertToUnicode(m_internalCharSet.get(), GetAsciiHeader(header), unicodeStr);
-  *_retval = ToNewUnicode(unicodeStr);
+  CopyUTF8toUTF16(GetAsciiHeader(header), aResult);
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetFrom(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetFrom(const nsAString &value)
 {
   return SetUnicodeHeader(MSG_FROM_HEADER_ID, value);
 }
 
 
-NS_IMETHODIMP nsMsgCompFields::GetFrom(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetFrom(nsAString &_retval)
 {
   return GetUnicodeHeader(MSG_FROM_HEADER_ID, _retval);
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetReplyTo(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetReplyTo(const nsAString &value)
 {
   return SetUnicodeHeader(MSG_REPLY_TO_HEADER_ID, value);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetReplyTo(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetReplyTo(nsAString &_retval)
 {
   return GetUnicodeHeader(MSG_REPLY_TO_HEADER_ID, _retval);
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetTo(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetTo(const nsAString &value)
 {
   return SetUnicodeHeader(MSG_TO_HEADER_ID, value);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetTo(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetTo(nsAString &_retval)
 {
   return GetUnicodeHeader(MSG_TO_HEADER_ID, _retval);
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetCc(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetCc(const nsAString &value)
 {
   return SetUnicodeHeader(MSG_CC_HEADER_ID, value);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetCc(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetCc(nsAString &_retval)
 {
   return GetUnicodeHeader(MSG_CC_HEADER_ID, _retval);
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetBcc(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetBcc(const nsAString &value)
 {
   return SetUnicodeHeader(MSG_BCC_HEADER_ID, value);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetBcc(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetBcc(nsAString &_retval)
 {
   return GetUnicodeHeader(MSG_BCC_HEADER_ID, _retval);
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetFcc(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetFcc(const nsAString &value)
 {
   return SetUnicodeHeader(MSG_FCC_HEADER_ID, value);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetFcc(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetFcc(nsAString &_retval)
 {
   return GetUnicodeHeader(MSG_FCC_HEADER_ID, _retval);
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetFcc2(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetFcc2(const nsAString &value)
 {
   return SetUnicodeHeader(MSG_FCC2_HEADER_ID, value);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetFcc2(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetFcc2(nsAString &_retval)
 {
   return GetUnicodeHeader(MSG_FCC2_HEADER_ID, _retval);
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetNewsgroups(const char *value)
+NS_IMETHODIMP nsMsgCompFields::SetNewsgroups(const nsAString &aValue)
 {
-  return SetAsciiHeader(MSG_NEWSGROUPS_HEADER_ID, value);
+  return SetUnicodeHeader(MSG_NEWSGROUPS_HEADER_ID, aValue);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetNewsgroups(char **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetNewsgroups(nsAString &aGroup)
 {
-  *_retval = nsCRT::strdup(GetAsciiHeader(MSG_NEWSGROUPS_HEADER_ID));
-  return *_retval ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+  return GetUnicodeHeader(MSG_NEWSGROUPS_HEADER_ID, aGroup);
 }
 
 NS_IMETHODIMP nsMsgCompFields::SetNewshost(const char *value)
@@ -252,12 +238,12 @@ NS_IMETHODIMP nsMsgCompFields::GetFollowupTo(char **_retval)
   return *_retval ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetSubject(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetSubject(const nsAString &value)
 {
   return SetUnicodeHeader(MSG_SUBJECT_HEADER_ID, value);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetSubject(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetSubject(nsAString &_retval)
 {
   return GetUnicodeHeader(MSG_SUBJECT_HEADER_ID, _retval);
 }
@@ -287,12 +273,12 @@ NS_IMETHODIMP nsMsgCompFields::GetTemporaryFiles(char **_retval)
   return *_retval ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetOrganization(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetOrganization(const nsAString &value)
 {
   return SetUnicodeHeader(MSG_ORGANIZATION_HEADER_ID, value);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetOrganization(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetOrganization(nsAString &_retval)
 {
   return GetUnicodeHeader(MSG_ORGANIZATION_HEADER_ID, _retval);
 }
@@ -308,12 +294,12 @@ NS_IMETHODIMP nsMsgCompFields::GetReferences(char **_retval)
   return *_retval ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetOtherRandomHeaders(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetOtherRandomHeaders(const nsAString &value)
 {
   return SetUnicodeHeader(MSG_OTHERRANDOMHEADERS_HEADER_ID, value);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetOtherRandomHeaders(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetOtherRandomHeaders(nsAString &_retval)
 {
   return GetUnicodeHeader(MSG_OTHERRANDOMHEADERS_HEADER_ID, _retval);
 }
@@ -362,12 +348,12 @@ NS_IMETHODIMP nsMsgCompFields::GetMessageId(char **_retval)
   return *_retval ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetTemplateName(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetTemplateName(const nsAString &value)
 {
   return SetUnicodeHeader(MSG_X_TEMPLATE_HEADER_ID, value);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetTemplateName(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetTemplateName(nsAString &_retval)
 {
   return GetUnicodeHeader(MSG_X_TEMPLATE_HEADER_ID, _retval);
 }
@@ -431,6 +417,19 @@ NS_IMETHODIMP nsMsgCompFields::GetForcePlainText(PRBool *_retval)
   return NS_OK;
 }
 
+NS_IMETHODIMP nsMsgCompFields::SetForceMsgEncoding(PRBool value)
+{
+  m_forceMsgEncoding = value;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgCompFields::GetForceMsgEncoding(PRBool *_retval)
+{
+  NS_ENSURE_ARG_POINTER(_retval);
+  *_retval = m_forceMsgEncoding;
+  return NS_OK;
+}
+
 NS_IMETHODIMP nsMsgCompFields::SetUseMultipartAlternative(PRBool value)
 {
   m_useMultipartAlternative = value;
@@ -469,45 +468,30 @@ NS_IMETHODIMP nsMsgCompFields::GetBodyIsAsciiOnly(PRBool *_retval)
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgCompFields::SetBody(const PRUnichar *value)
+NS_IMETHODIMP nsMsgCompFields::SetBody(const nsAString &value)
 {
-  PR_FREEIF(m_body);
-  if (value)
-  {
-    char* cString;
-    ConvertFromUnicode(m_internalCharSet.get(), nsAutoString(value), &cString);
-    m_body = cString;
-    if (!m_body)
-      return NS_ERROR_OUT_OF_MEMORY;
-  }
+  CopyUTF16toUTF8(value, m_body);
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetBody(PRUnichar **_retval)
+NS_IMETHODIMP nsMsgCompFields::GetBody(nsAString &_retval)
 {
-  nsString unicodeStr;
-  const char* cString = GetBody();
-  ConvertToUnicode(m_internalCharSet.get(), cString, unicodeStr);
-  *_retval = ToNewUnicode(unicodeStr);
-
+  CopyUTF8toUTF16(m_body, _retval);
   return NS_OK;
 }
 
 nsresult nsMsgCompFields::SetBody(const char *value)
 {
-  PR_FREEIF(m_body);
   if (value)
-  {
-    m_body = nsCRT::strdup(value);
-    if (!m_body)
-      return NS_ERROR_OUT_OF_MEMORY;
-  }
+    m_body = value;
+  else
+    m_body.Truncate();
   return NS_OK;
 }
 
 const char* nsMsgCompFields::GetBody()
 {
-    return m_body ? m_body : "";
+    return m_body.get();
 }
 
 /* readonly attribute nsISupportsArray attachmentsArray; */
@@ -604,46 +588,41 @@ NS_IMETHODIMP nsMsgCompFields::SplitRecipients(const PRUnichar *recipients, PRBo
 		nsCOMPtr<nsIMsgHeaderParser> parser = do_GetService(NS_MAILNEWS_MIME_HEADER_PARSER_CONTRACTID);
 		if (parser)
 		{
-			char * recipientsStr;
+			nsCAutoString recipientsStr;
 			char * names;
 			char * addresses;
 			PRUint32 numAddresses;
 
-			if (NS_FAILED(ConvertFromUnicode(msgCompHeaderInternalCharset(), nsAutoString(recipients), &recipientsStr)))
-			  {
-				  recipientsStr = ToNewCString(nsDependentString(recipients));
-				}
+			CopyUTF16toUTF8(recipients, recipientsStr);
 			
-			if (! recipientsStr)
-				return NS_ERROR_OUT_OF_MEMORY;
-
-			rv= parser->ParseHeaderAddresses(msgCompHeaderInternalCharset(), recipientsStr, &names, &addresses, &numAddresses);
+			rv= parser->ParseHeaderAddresses("UTF-8", recipientsStr.get(), &names, 
+                                        &addresses, &numAddresses);
 			if (NS_SUCCEEDED(rv))
 			{
 				PRUint32 i=0;
 				char * pNames = names;
 				char * pAddresses = addresses;
-				char * fullAddress;
-				nsString aRecipient;
 				PRBool aBool;
 				
-				for (i = 0; i < numAddresses; i ++)
-				{
-				    if (!emailAddressOnly)
-					    rv = parser->MakeFullAddress(msgCompHeaderInternalCharset(), pNames, pAddresses, &fullAddress);
-					if (NS_SUCCEEDED(rv) && !emailAddressOnly)
-					{
-						rv = ConvertToUnicode(msgCompHeaderInternalCharset(), fullAddress, aRecipient);
-						PR_FREEIF(fullAddress);
-					}
-					else
-						rv = ConvertToUnicode(msgCompHeaderInternalCharset(), pAddresses, aRecipient);
-					if (NS_FAILED(rv))
-						break;
+        for (i = 0; i < numAddresses; i ++)
+        {
+          nsXPIDLCString fullAddress;
+          nsAutoString recipient;
+          if (!emailAddressOnly)
+            rv = parser->MakeFullAddress("UTF-8", pNames,
+                                         pAddresses, getter_Copies(fullAddress));
+          if (NS_SUCCEEDED(rv) && !emailAddressOnly)
+          {
+            rv = ConvertToUnicode("UTF-8", fullAddress, recipient);
+          }
+          else
+            rv = ConvertToUnicode("UTF-8", nsDependentCString(pAddresses), recipient);
+          if (NS_FAILED(rv))
+            break;
 
-					rv = pAddrArray->AppendString(aRecipient.get(), &aBool);
-					if (NS_FAILED(rv))
-						break;
+          rv = pAddrArray->AppendString(recipient.get(), &aBool);
+          if (NS_FAILED(rv))
+            break;
 						
 					pNames += PL_strlen(pNames) + 1;
 					pAddresses += PL_strlen(pAddresses) + 1;
@@ -652,8 +631,6 @@ NS_IMETHODIMP nsMsgCompFields::SplitRecipients(const PRUnichar *recipients, PRBo
 				PR_FREEIF(names);
 				PR_FREEIF(addresses);
 			}
-			
-			PR_Free(recipientsStr);
 		}
 		else
 			rv = NS_ERROR_FAILURE;
@@ -699,55 +676,49 @@ nsresult nsMsgCompFields::SplitRecipientsEx(const PRUnichar *recipients, nsIMsgR
 		nsCOMPtr<nsIMsgHeaderParser> parser = do_GetService(NS_MAILNEWS_MIME_HEADER_PARSER_CONTRACTID);
 		if (parser)
 		{
-			char * recipientsStr;
+			nsCAutoString recipientsStr;
 			char * names;
-			char * addresses;
+			char *addresses;
 			PRUint32 numAddresses;
 
-			if (NS_FAILED(ConvertFromUnicode(msgCompHeaderInternalCharset(), nsAutoString(recipients), &recipientsStr)))
-			{
-				recipientsStr = ToNewCString(nsDependentString(recipients));
-			}
-			
-			if (! recipientsStr)
-				return NS_ERROR_OUT_OF_MEMORY;
-
-			rv= parser->ParseHeaderAddresses(msgCompHeaderInternalCharset(), recipientsStr, &names, &addresses, &numAddresses);
+                        CopyUTF16toUTF8(recipients, recipientsStr);
+			rv= parser->ParseHeaderAddresses("UTF-8", recipientsStr.get(), &names,
+                                       &addresses, &numAddresses);
 			if (NS_SUCCEEDED(rv))
 			{
 				PRUint32 i=0;
 				char * pNames = names;
 				char * pAddresses = addresses;
-				char * fullAddress;
-				nsString aRecipient;
+				nsAutoString recipient;
 				PRBool aBool;
 				
         for (i = 0; i < numAddresses; i ++)
         {
+          nsXPIDLCString fullAddress;
           if (pAddrsArray)
           {
-            rv = parser->MakeFullAddress(msgCompHeaderInternalCharset(), pNames, pAddresses, &fullAddress);
+            rv = parser->MakeFullAddress("UTF-8", pNames, pAddresses, 
+                                         getter_Copies(fullAddress));
             if (NS_SUCCEEDED(rv))
             {
-              rv = ConvertToUnicode(msgCompHeaderInternalCharset(), fullAddress, aRecipient);
-              PR_FREEIF(fullAddress);
+              rv = ConvertToUnicode("UTF-8", fullAddress, recipient);
             }
             else
-              rv = ConvertToUnicode(msgCompHeaderInternalCharset(), pAddresses, aRecipient);
+              rv = ConvertToUnicode("UTF-8", pAddresses, recipient);
             if (NS_FAILED(rv))
               return rv;
               
-            rv = pAddrsArray->AppendString(aRecipient.get(), &aBool);
+            rv = pAddrsArray->AppendString(recipient.get(), &aBool);
             if (NS_FAILED(rv))
               return rv;
           }
 
           if (pEmailsArray)
           {
-            rv = ConvertToUnicode(msgCompHeaderInternalCharset(), pAddresses, aRecipient);
+            rv = ConvertToUnicode("UTF-8", pAddresses, recipient);
             if (NS_FAILED(rv))
               return rv;
-            rv = pEmailsArray->AppendString(aRecipient.get(), &aBool);
+            rv = pEmailsArray->AppendString(recipient.get(), &aBool);
             if (NS_FAILED(rv))
               return rv;
           }
@@ -756,11 +727,9 @@ nsresult nsMsgCompFields::SplitRecipientsEx(const PRUnichar *recipients, nsIMsgR
           pAddresses += PL_strlen(pAddresses) + 1;
         }
       
-        PR_FREEIF(names);
-        PR_FREEIF(addresses);
+				PR_FREEIF(names);
+				PR_FREEIF(addresses);
       }
-      
-      PR_Free(recipientsStr);
     }
     else
       rv = NS_ERROR_FAILURE;
@@ -773,17 +742,15 @@ NS_IMETHODIMP nsMsgCompFields::ConvertBodyToPlainText()
 {
   nsresult rv = NS_OK;
   
-  if (m_body && *m_body != 0)
+  if (!m_body.IsEmpty())
   {
-    PRUnichar * ubody;
-    rv = GetBody(&ubody);
+    nsAutoString body;
+    rv = GetBody(body);
     if (NS_SUCCEEDED(rv))
     {
-      nsString body(ubody);
-      PR_Free(ubody);
       rv = ConvertBufToPlainText(body, UseFormatFlowed(GetCharacterSet()));
       if (NS_SUCCEEDED(rv))
-        rv = SetBody(body.get());
+        rv = SetBody(body);
     }
   }
   return rv;
@@ -822,5 +789,18 @@ NS_IMETHODIMP nsMsgCompFields::CheckCharsetConversion(char **fallbackCharset, PR
   *_retval = nsMsgI18Ncheck_data_in_charset_range(GetCharacterSet(), NS_ConvertUTF8toUCS2(headers.get()).get(),
                                                   fallbackCharset);
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgCompFields::GetNeedToCheckCharset(PRBool *_retval)
+{
+  NS_ENSURE_ARG_POINTER(_retval);
+  *_retval = m_needToCheckCharset;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgCompFields::SetNeedToCheckCharset(PRBool aCheck)
+{
+  m_needToCheckCharset = aCheck;
   return NS_OK;
 }

@@ -25,7 +25,7 @@
  * DEALINGS IN THE SOFTWARE.
  *
  * Contributor(s):
- *  Adam Lock <adamlock@netscape.com>
+ *   Adam Lock <adamlock@netscape.com>
  *
  * ***** END LICENSE BLOCK ***** */
 

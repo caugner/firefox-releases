@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -23,23 +23,23 @@
  *   Jungshik Shin <jshin@mailaps.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsMediaDocument.h"
 #include "nsHTMLAtoms.h"
 #include "nsRect.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsIScrollable.h"
 #include "nsIViewManager.h"
@@ -51,6 +51,7 @@
 #include "nsIDocShell.h"
 #include "nsIParser.h" // kCharsetFrom* macro definition
 #include "nsIDocumentCharsetInfo.h" 
+#include "nsNodeInfoManager.h"
 
 nsMediaDocumentStreamListener::nsMediaDocumentStreamListener(nsMediaDocument *aDocument)
 {
@@ -166,8 +167,6 @@ nsMediaDocument::StartDocumentLoad(const char*         aCommand,
     return rv;
   }
 
-  RetrieveRelevantHeaders(aChannel);
-
   // We try to set the charset of the current document to that of the 
   // 'genuine' (as opposed to an intervening 'chrome') parent document 
   // that may be in a different window/tab. Even if we fail here,
@@ -239,28 +238,26 @@ nsMediaDocument::CreateSyntheticDocument()
                                      getter_AddRefs(nodeInfo));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIHTMLContent> root;
-  rv = NS_NewHTMLHtmlElement(getter_AddRefs(root), nodeInfo);
-  if (NS_FAILED(rv)) {
-    return rv;
+  nsRefPtr<nsGenericHTMLElement> root = NS_NewHTMLHtmlElement(nodeInfo);
+  if (!root) {
+    return NS_ERROR_OUT_OF_MEMORY;
   }
-  root->SetDocument(this, PR_FALSE, PR_TRUE);
-  SetRootContent(root);
+
+  rv = SetRootContent(root);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   rv = mNodeInfoManager->GetNodeInfo(nsHTMLAtoms::body, nsnull,
                                      kNameSpaceID_None,
                                      getter_AddRefs(nodeInfo));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIHTMLContent> body;
-  rv = NS_NewHTMLBodyElement(getter_AddRefs(body), nodeInfo);
-  if (NS_FAILED(rv)) {
-    return rv;
+  nsRefPtr<nsGenericHTMLElement> body = NS_NewHTMLBodyElement(nodeInfo);
+  if (!body) {
+    return NS_ERROR_OUT_OF_MEMORY;
   }
-  body->SetDocument(this, PR_FALSE, PR_TRUE);
   mBodyContent = do_QueryInterface(body);
 
-  root->AppendChildTo(body, PR_FALSE, PR_FALSE);
+  root->AppendChildTo(body, PR_FALSE);
 
   return NS_OK;
 }
@@ -268,13 +265,6 @@ nsMediaDocument::CreateSyntheticDocument()
 nsresult
 nsMediaDocument::StartLayout()
 {
-  // Reset scrolling to default settings for this shell.
-  // This must happen before the initial reflow, when we create the root frame
-  nsCOMPtr<nsIScrollable> scrollableContainer(do_QueryReferent(mDocumentContainer));
-  if (scrollableContainer) {
-    scrollableContainer->ResetScrollbarPreferences();
-  }
-
   PRUint32 numberOfShells = GetNumberOfShells();
   for (PRUint32 i = 0; i < numberOfShells; i++) {
     nsIPresShell *shell = GetShellAt(i);
@@ -283,9 +273,7 @@ nsMediaDocument::StartLayout()
     shell->BeginObservingDocument();
 
     // Initial-reflow this time.
-    nsCOMPtr<nsIPresContext> context;
-    shell->GetPresContext(getter_AddRefs(context));
-    nsRect visibleArea = context->GetVisibleArea();
+    nsRect visibleArea = shell->GetPresContext()->GetVisibleArea();
     shell->InitialReflow(visibleArea.width, visibleArea.height);
 
     // Now trigger a refresh.
@@ -305,10 +293,9 @@ nsMediaDocument::UpdateTitleAndCharset(const nsACString& aTypeStr,
                                        const nsAString& aStatus)
 {
   nsXPIDLString fileStr;
-  nsCOMPtr<nsIURI> uri = do_QueryInterface(mDocumentURI);
-  if (uri) {
+  if (mDocumentURI) {
     nsCAutoString fileName;
-    nsCOMPtr<nsIURL> url = do_QueryInterface(uri);
+    nsCOMPtr<nsIURL> url = do_QueryInterface(mDocumentURI);
     if (url)
       url->GetFileName(fileName);
 
@@ -325,7 +312,7 @@ nsMediaDocument::UpdateTitleAndCharset(const nsACString& aTypeStr,
     }
     else {  
       // resort to |originCharset|
-      uri->GetOriginCharset(docCharset);
+      mDocumentURI->GetOriginCharset(docCharset);
       SetDocumentCharacterSet(docCharset);
     }
     if (!fileName.IsEmpty()) {
@@ -333,10 +320,11 @@ nsMediaDocument::UpdateTitleAndCharset(const nsACString& aTypeStr,
       nsCOMPtr<nsITextToSubURI> textToSubURI = 
         do_GetService(NS_ITEXTTOSUBURI_CONTRACTID, &rv);
       if (NS_SUCCEEDED(rv))
-        rv = textToSubURI->UnEscapeURIForUI(docCharset, fileName, fileStr);
+        // UnEscapeURIForUI always succeeds
+        textToSubURI->UnEscapeURIForUI(docCharset, fileName, fileStr);
+      else 
+        CopyUTF8toUTF16(fileName, fileStr);
     }
-    if (fileStr.IsEmpty())
-      CopyUTF8toUTF16(fileName, fileStr);
   }
 
 

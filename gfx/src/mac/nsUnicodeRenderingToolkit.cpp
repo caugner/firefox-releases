@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,27 +14,27 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+
 #include "nsUnicodeRenderingToolkit.h"
 #include "nsUnicodeFontMappingMac.h"
 #include "nsUnicodeFallbackCache.h"
@@ -54,10 +54,10 @@
 
 #include <FixMath.h>
 
-
 #define BAD_FONT_NUM -1
 #define BAD_SCRIPT 0x7F
 #define STACK_TRESHOLD 1000
+
 static NS_DEFINE_CID(kSaveAsCharsetCID, NS_SAVEASCHARSET_CID);
 
 //#define DISABLE_TEC_FALLBACK
@@ -433,43 +433,39 @@ nsUnicodeRenderingToolkit::ATSUIFallbackGetDimensions(
                                             aBold, aItalic, aColor);
     }
     if (NS_SUCCEEDED(res)) 
-    {
       return PR_TRUE;
-    }
   }
+
   if (IN_ARABIC_PRESENTATION_A_OR_B(*aCharPt))
   {      
     PRUnichar isolated;
     if (NS_SUCCEEDED( FormAorBIsolated(*aCharPt, info, &isolated))) 
     {
-      if(NS_SUCCEEDED(ATSUIFallbackGetDimensions(&isolated, oDim, origFontNum, 
-                                                 aSize, aBold, aItalic, aColor))) 
-      {
+      if (ATSUIFallbackGetDimensions(&isolated, oDim, origFontNum, 
+                                     aSize, aBold, aItalic, aColor))
          return PR_TRUE;
-      }
     }                                                 
   }
 
   // we know some ATSUI font do not have bold, turn it off and try again
   if (aBold) 
   {
-	  if (NS_SUCCEEDED(ATSUIFallbackGetDimensions(aCharPt, oDim, origFontNum, 
-	                                              aSize, PR_FALSE, aItalic, aColor))) 
-	  {
+	  if (ATSUIFallbackGetDimensions(aCharPt, oDim, origFontNum, 
+	                                 aSize, PR_FALSE, aItalic, aColor))
 	     return PR_TRUE;
-	  }
   }
+
   // we know some ATSUI font do not have italic, turn it off and try again
   if (aItalic) 
   {
-	  if (NS_SUCCEEDED(ATSUIFallbackGetDimensions(aCharPt, oDim, origFontNum, 
-	                                              aSize, PR_FALSE, PR_FALSE, aColor))) 
-	  {
+	  if (ATSUIFallbackGetDimensions(aCharPt, oDim, origFontNum, 
+	                                 aSize, PR_FALSE, PR_FALSE, aColor))
 	     return PR_TRUE;
-	  }
   }
+
   return PR_FALSE;
 }
+
 //------------------------------------------------------------------------
 
 #ifdef MOZ_MATHML
@@ -508,41 +504,36 @@ nsUnicodeRenderingToolkit::ATSUIFallbackGetBoundingMetrics(
                                              aBold, aItalic, aColor);
     }
     if (NS_SUCCEEDED(res))
-    {
       return PR_TRUE;
-    }
   }
+
   if (IN_ARABIC_PRESENTATION_A_OR_B(*aCharPt))
   {  
     PRUnichar isolated;
-    if (NS_SUCCEEDED( FormAorBIsolated(*aCharPt, info, &isolated))) 
+    if (NS_SUCCEEDED(FormAorBIsolated(*aCharPt, info, &isolated)))
     {
-      if(NS_SUCCEEDED(ATSUIFallbackGetBoundingMetrics(&isolated, oBoundingMetrics, origFontNum, 
-                                                      aSize, aBold, aItalic, aColor))) 
-      {
+      if (ATSUIFallbackGetBoundingMetrics(&isolated, oBoundingMetrics, origFontNum, 
+                                          aSize, aBold, aItalic, aColor))
         return PR_TRUE;
-      }
     }                                                 
   }
 
   // we know some ATSUI font do not have bold, turn it off and try again
   if (aBold)
   {
-    if (NS_SUCCEEDED(ATSUIFallbackGetBoundingMetrics(aCharPt, oBoundingMetrics, origFontNum, 
-                                                     aSize, PR_FALSE, aItalic, aColor))) 
-    {
+    if (ATSUIFallbackGetBoundingMetrics(aCharPt, oBoundingMetrics, origFontNum, 
+                                        aSize, PR_FALSE, aItalic, aColor))
       return PR_TRUE;
-    }
   }
+
   // we know some ATSUI font do not have italic, turn it off and try again
   if (aItalic) 
   {
-    if (NS_SUCCEEDED(ATSUIFallbackGetBoundingMetrics(aCharPt, oBoundingMetrics, origFontNum, 
-                                                     aSize, PR_FALSE, PR_FALSE, aColor))) 
-    {
+    if (ATSUIFallbackGetBoundingMetrics(aCharPt, oBoundingMetrics, origFontNum, 
+                                        aSize, PR_FALSE, PR_FALSE, aColor))
       return PR_TRUE;
-    }
   }
+
   return PR_FALSE;
 }
 #endif // MOZ_MATHML
@@ -583,35 +574,33 @@ PRBool nsUnicodeRenderingToolkit :: ATSUIFallbackDrawChar(
     if (NS_SUCCEEDED(res))
       return PR_TRUE;
   }
+
   if (IN_ARABIC_PRESENTATION_A_OR_B(*aCharPt))
   {      
     PRUnichar isolated;
-    if (NS_SUCCEEDED( FormAorBIsolated(*aCharPt, info, &isolated))) {
-      if (NS_SUCCEEDED(ATSUIFallbackDrawChar(&isolated, x, y, oWidth, origFontNum, 
-                                             aSize, aBold, aItalic, aColor))) 
-      {
+    if (NS_SUCCEEDED(FormAorBIsolated(*aCharPt, info, &isolated))) {
+      if (ATSUIFallbackDrawChar(&isolated, x, y, oWidth, origFontNum, 
+                                aSize, aBold, aItalic, aColor))
          return PR_TRUE;
-      }
     }                                                 
   }
+
   // we know some ATSUI font do not have bold, turn it off and try again
   if (aBold)
   {
-    if (NS_SUCCEEDED(ATSUIFallbackDrawChar(aCharPt, x, y, oWidth, origFontNum, 
-                                          aSize, PR_FALSE, aItalic, aColor))) 
-    {
+    if (ATSUIFallbackDrawChar(aCharPt, x, y, oWidth, origFontNum, 
+                              aSize, PR_FALSE, aItalic, aColor))
        return PR_TRUE;
-    }
   }
+
   // we know some ATSUI font do not have italic, turn it off and try again
   if (aItalic)
   {
-    if (NS_SUCCEEDED(ATSUIFallbackDrawChar(aCharPt, x, y, oWidth, origFontNum, 
-                                           aSize, PR_FALSE, PR_FALSE, aColor))) 
-    {
+    if (ATSUIFallbackDrawChar(aCharPt, x, y, oWidth, origFontNum, 
+                              aSize, PR_FALSE, PR_FALSE, aColor))
        return PR_TRUE;
-    }
   }
+
   return PR_FALSE;
 }
 
@@ -693,9 +682,8 @@ PRBool nsUnicodeRenderingToolkit :: LoadTransliterator()
 		return PR_TRUE;
 		
 	nsresult res;
-    if ( NS_SUCCEEDED(nsComponentManager::CreateInstance(
-    	kSaveAsCharsetCID, 0, NS_GET_IID(nsISaveAsCharset), 
-        getter_AddRefs(mTrans) ) ) )
+    mTrans = do_CreateInstance(kSaveAsCharsetCID, &res);
+    if ( NS_SUCCEEDED(res) )
     {
        res = mTrans->Init("x-mac-roman",
                nsISaveAsCharset::attr_FallbackQuestionMark +
@@ -835,12 +823,12 @@ PRBool nsUnicodeRenderingToolkit :: TransliterateFallbackDrawChar(
 #define NCount (VCount * TCount)
 static void UnicodePrecomposedHangulTo4EUCKR(PRUnichar in, char *out)
 {
-        static PRUint8 lMap[LCount] = {
+        static const PRUint8 lMap[LCount] = {
           0xa1, 0xa2, 0xa4, 0xa7, 0xa8, 0xa9, 0xb1, 0xb2, 0xb3, 0xb5,
           0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe
         };
 
-        static PRUint8 tMap[TCount] = {
+        static const PRUint8 tMap[TCount] = {
           0xd4, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa9, 0xaa, 
           0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb4, 0xb5, 
           0xb6, 0xb7, 0xb8, 0xba, 0xbb, 0xbc, 0xbd, 0xbe
@@ -1250,7 +1238,6 @@ nsUnicodeRenderingToolkit::GetTextSegmentDimensions(
   if(aLength == 0) 
     return NS_OK;
   NS_PRECONDITION(BAD_FONT_NUM != fontNum, "illegal font num");
-  short textWidth = 0;
   PRUint32 processLen = 0;
   char *heapBuf = nsnull;
   PRUint32 heapBufSize = 0;
@@ -1321,8 +1308,7 @@ nsUnicodeRenderingToolkit::GetTextSegmentDimensions(
           ((processLen+1) < aLength) &&
           IS_LOW_SURROGATE(*(aString+1)))
       {
-         const nsFont *font;
-         mGS->mFontMetrics->GetFont(font);
+         const nsFont *font = &mGS->mFontMetrics->Font();
          fallbackDone = SurrogateGetDimensions(aString, segDim, fontNum, 
                                                font->size, 
                                                (font->weight > NS_FONT_WEIGHT_NORMAL), 
@@ -1352,8 +1338,7 @@ nsUnicodeRenderingToolkit::GetTextSegmentDimensions(
       // Fallback by using ATSUI
       if (!fallbackDone)  
       {
-        const nsFont *font;
-        mGS->mFontMetrics->GetFont(font);
+        const nsFont *font = &mGS->mFontMetrics->Font();
         fallbackDone = ATSUIFallbackGetDimensions(aString, segDim, fontNum, 
                                                   font->size, 
                                                   (font->weight > NS_FONT_WEIGHT_NORMAL), 
@@ -1508,8 +1493,7 @@ nsUnicodeRenderingToolkit::GetTextSegmentBoundingMetrics(
           ((processLen+1) < aLength) &&
           IS_LOW_SURROGATE(*(aString+1)) )
       {
-         const nsFont *font;
-         mGS->mFontMetrics->GetFont(font);
+         const nsFont *font = &mGS->mFontMetrics->Font();
          fallbackDone = SurrogateGetBoundingMetrics(aString, segBoundingMetrics, fontNum, 
                                                     font->size, 
                                                     (font->weight > NS_FONT_WEIGHT_NORMAL), 
@@ -1538,8 +1522,7 @@ nsUnicodeRenderingToolkit::GetTextSegmentBoundingMetrics(
       // Fallback by using ATSUI
       if (!fallbackDone)  
       {
-        const nsFont *font;
-        mGS->mFontMetrics->GetFont(font);
+        const nsFont *font = &mGS->mFontMetrics->Font();
         fallbackDone = ATSUIFallbackGetBoundingMetrics(aString, segBoundingMetrics, fontNum, 
                                                   font->size, 
                                                   (font->weight > NS_FONT_WEIGHT_NORMAL), 
@@ -1650,8 +1633,7 @@ nsresult nsUnicodeRenderingToolkit :: DrawTextSegment(
           ((processLen+1) < aLength) &&
           IS_LOW_SURROGATE(*(aString+1)) )
       {
-         const nsFont *font;
-         mGS->mFontMetrics->GetFont(font);
+         const nsFont *font = &mGS->mFontMetrics->Font();
          fallbackDone = SurrogateDrawChar(aString, x, y, thisWidth, fontNum, 
                                           font->size, 
                                           (font->weight > NS_FONT_WEIGHT_NORMAL), 
@@ -1679,8 +1661,7 @@ nsresult nsUnicodeRenderingToolkit :: DrawTextSegment(
 #ifndef DISABLE_ATSUI_FALLBACK  
 		  // Fallback by using ATSUI
 		  if(! fallbackDone)  {
-		  	const nsFont *font;
-			  mGS->mFontMetrics->GetFont(font);
+		  	const nsFont *font = &mGS->mFontMetrics->Font();
 		  	fallbackDone = ATSUIFallbackDrawChar(aString, x, y, thisWidth, fontNum, 
 									  		font->size, 
 									  		(font->weight > NS_FONT_WEIGHT_NORMAL), 

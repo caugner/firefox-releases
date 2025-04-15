@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
  
@@ -896,47 +896,40 @@ nsFileSpec::nsFileSpec(const nsFileURL& inURL)
 }
 
 //----------------------------------------------------------------------------------------
-void nsFileSpec::MakeUnique(const char* inSuggestedLeafName)
+void nsFileSpec::MakeUnique(const char* inSuggestedLeafName, PRBool inCreateFile)
 //----------------------------------------------------------------------------------------
 {
     if (inSuggestedLeafName && *inSuggestedLeafName)
         SetLeafName(inSuggestedLeafName);
-
-    MakeUnique();
+    MakeUnique(inCreateFile);
 } // nsFileSpec::MakeUnique
 
 //----------------------------------------------------------------------------------------
-void nsFileSpec::MakeUnique()
+void nsFileSpec::MakeUnique(PRBool inCreateFile)
 //----------------------------------------------------------------------------------------
 {
-    if (!Exists())
-        return;
-
-    char* leafName = GetLeafName();
-    if (!leafName)
-        return;
-
-    char* lastDot = strrchr(leafName, '.');
-    char* suffix = "";
-    if (lastDot)
+    // XXX: updated path starts empty. In case of error this will cause
+    // any callers to fail badly, but that seems better than letting them
+    // re-use the default name which has failed to be unique.
+    nsCAutoString path;
+    nsCOMPtr<nsILocalFile> localFile;
+    NS_NewNativeLocalFile(nsDependentCString(*this), PR_TRUE, getter_AddRefs(localFile));
+    if (localFile)
     {
-        suffix = nsCRT::strdup(lastDot); // include '.'
-        *lastDot = '\0'; // strip suffix and dot.
+        nsresult rv;
+
+        if (inCreateFile)
+            rv = localFile->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
+        else
+            rv = localFile->CreateUnique(nsIFile::DIRECTORY_TYPE, 0700);
+
+        if (NS_SUCCEEDED(rv))
+            localFile->GetNativePath(path);
     }
-    const int kMaxRootLength
-        = nsFileSpecHelpers::kMaxCoreLeafNameLength - strlen(suffix) - 1;
-    if ((int)strlen(leafName) > (int)kMaxRootLength)
-        leafName[kMaxRootLength] = '\0';
-    for (short indx = 1; indx < 1000 && Exists(); indx++)
-    {
-        // start with "Picture-1.jpg" after "Picture.jpg" exists
-        char newName[nsFileSpecHelpers::kMaxFilenameLength + 1];
-        sprintf(newName, "%s-%d%s", leafName, indx, suffix);
-        SetLeafName(newName);
-    }
-    if (*suffix)
-        nsCRT::free(suffix);
-    nsCRT::free(leafName);
+
+    NS_WARN_IF_FALSE(!path.IsEmpty(), "MakeUnique() failed!");
+    *this = path.get(); // reset the filepath to point to the unique location
+
 } // nsFileSpec::MakeUnique
 
 //----------------------------------------------------------------------------------------

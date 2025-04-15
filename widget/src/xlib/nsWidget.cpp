@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -30,16 +30,16 @@
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -132,7 +132,7 @@ nsWidget::nsWidget() // : nsBaseWidget()
   mBackground = NS_RGB(192, 192, 192);
   mBorderPixel = xxlib_rgb_xpixel_from_rgb(mXlibRgbHandle, mBorderRGB);
   mParentWidget = nsnull;
-  mName.Assign(NS_LITERAL_STRING("unnamed"));
+  mName.AssignLiteral("unnamed");
   mIsShown = PR_FALSE;
   mIsToplevel = PR_FALSE;
   mVisibility = VisibilityFullyObscured; // this is an X constant.
@@ -1064,7 +1064,7 @@ PRBool nsWidget::OnDeleteWindow(void)
 PRBool nsWidget::DispatchDestroyEvent(void) {
   PRBool result = PR_FALSE;
   if (nsnull != mEventCallback) {
-    nsGUIEvent event(NS_DESTROY, this);
+    nsGUIEvent event(PR_TRUE, NS_DESTROY, this);
     AddRef();
     result = DispatchWindowEvent(event);
     Release();
@@ -1372,39 +1372,29 @@ Cursor nsWidget::XlibCreateCursor(nsCursor aCursorType)
     case eCursor_standard:
       xcursor = XCreateFontCursor(mDisplay, XC_left_ptr);
       break;
-    case eCursor_sizeWE:
-      xcursor = XCreateFontCursor(mDisplay, XC_sb_h_double_arrow);
-      break;
-    case eCursor_sizeNS:
-      xcursor = XCreateFontCursor(mDisplay, XC_sb_v_double_arrow);
-      break;
-    case eCursor_sizeNW:
-      xcursor = XCreateFontCursor(mDisplay, XC_top_left_corner);
-      break;
-    case eCursor_sizeSE:
-      xcursor = XCreateFontCursor(mDisplay, XC_bottom_right_corner);
-      break;
-    case eCursor_sizeNE:
-      xcursor = XCreateFontCursor(mDisplay, XC_top_right_corner);
-      break;
-    case eCursor_sizeSW:
-      xcursor = XCreateFontCursor(mDisplay, XC_bottom_left_corner);
-      break;
-    case eCursor_arrow_south:
-    case eCursor_arrow_south_plus:
-      xcursor = XCreateFontCursor(mDisplay, XC_bottom_side);
-      break;
-    case eCursor_arrow_north:
-    case eCursor_arrow_north_plus:
+    case eCursor_n_resize:
       xcursor = XCreateFontCursor(mDisplay, XC_top_side);
       break;
-    case eCursor_arrow_east:
-    case eCursor_arrow_east_plus:
+    case eCursor_s_resize:
+      xcursor = XCreateFontCursor(mDisplay, XC_bottom_side);
+      break;
+    case eCursor_w_resize:
+      xcursor = XCreateFontCursor(mDisplay, XC_left_side);
+      break;
+    case eCursor_e_resize:
       xcursor = XCreateFontCursor(mDisplay, XC_right_side);
       break;
-    case eCursor_arrow_west:
-    case eCursor_arrow_west_plus:
-      xcursor = XCreateFontCursor(mDisplay, XC_left_side);
+    case eCursor_nw_resize:
+      xcursor = XCreateFontCursor(mDisplay, XC_top_left_corner);
+      break;
+    case eCursor_se_resize:
+      xcursor = XCreateFontCursor(mDisplay, XC_bottom_right_corner);
+      break;
+    case eCursor_ne_resize:
+      xcursor = XCreateFontCursor(mDisplay, XC_top_right_corner);
+      break;
+    case eCursor_sw_resize:
+      xcursor = XCreateFontCursor(mDisplay, XC_bottom_left_corner);
       break;
     case eCursor_crosshair:
       xcursor = XCreateFontCursor(mDisplay, XC_crosshair);
@@ -1436,18 +1426,39 @@ Cursor nsWidget::XlibCreateCursor(nsCursor aCursorType)
     case eCursor_spinning:
       newType = XLIB_SPINNING;
       break;
-    case eCursor_count_up:
-    case eCursor_count_down:
-    case eCursor_count_up_down:
-      // XXX: these CSS3 cursors need to be implemented
-      // I simply have no idea how they should look like
-      xcursor = XCreateFontCursor(mDisplay, XC_left_ptr);
-      break;
     case eCursor_zoom_in:
       newType = XLIB_ZOOM_IN;
       break;
     case eCursor_zoom_out:
       newType = XLIB_ZOOM_OUT;
+      break;
+    case eCursor_not_allowed:
+    case eCursor_no_drop:
+      newType = XLIB_NOT_ALLOWED;
+      break;
+    case eCursor_col_resize:
+      newType = XLIB_COL_RESIZE;
+      break;
+    case eCursor_row_resize:
+      newType = XLIB_ROW_RESIZE;
+      break;
+    case eCursor_vertical_text:
+      newType = XLIB_VERTICAL_TEXT;
+      break;
+    case eCursor_all_scroll:
+      xcursor = XCreateFontCursor(mDisplay, XC_fleur);
+      break;
+    case eCursor_nesw_resize:
+      newType = XLIB_NESW_RESIZE;
+      break;
+    case eCursor_nwse_resize:
+      newType = XLIB_NWSE_RESIZE;
+      break;
+    case eCursor_ns_resize:
+      xcursor = XCreateFontCursor(mDisplay, XC_sb_v_double_arrow);
+      break;
+    case eCursor_ew_resize:
+      xcursor = XCreateFontCursor(mDisplay, XC_sb_h_double_arrow);
       break;
     default:
       break;
@@ -1514,7 +1525,7 @@ NS_METHOD nsWidget::GetRequestedBounds(nsRect &aRect)
 }
 
 NS_IMETHODIMP
-nsWidget::SetTitle(const nsString& title)
+nsWidget::SetTitle(const nsAString& title)
 {
   return NS_OK;
 }

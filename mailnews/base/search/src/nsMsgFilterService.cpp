@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Seth Spitzer <sspitzer@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -61,6 +61,8 @@
 #include "nsMsgBaseCID.h"
 #include "nsIMsgCopyService.h"
 #include "nsIOutputStream.h"
+#include "nsIMsgComposeService.h"
+#include "nsMsgCompCID.h"
 
 NS_IMPL_ISUPPORTS1(nsMsgFilterService, nsIMsgFilterService)
 
@@ -508,7 +510,8 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter()
         continue;
       
       nsXPIDLCString actionTargetFolderUri;
-      if (actionType == nsMsgFilterAction::MoveToFolder)
+      if (actionType == nsMsgFilterAction::MoveToFolder ||
+          actionType == nsMsgFilterAction::CopyToFolder)
       {
         filterAction->GetTargetFolderUri(getter_Copies(actionTargetFolderUri));
         if (actionTargetFolderUri.IsEmpty())
@@ -544,8 +547,9 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter()
         applyMoreActions = PR_FALSE;
         break;
       case nsMsgFilterAction::MoveToFolder:
+      case nsMsgFilterAction::CopyToFolder:
       {
-        // if moving to a different file, do it.
+        // if moving or copying to a different file, do it.
         nsXPIDLCString uri;
         rv = m_curFolder->GetURI(getter_Copies(uri));
 
@@ -569,6 +573,8 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter()
           {
             m_curFilter->SetEnabled(PR_FALSE);
             destIFolder->ThrowAlertMsg("filterDisabled",m_msgWindow);
+            // we need to explicitly save the filter file.
+            m_filters->SaveToDefaultFile();
             // In the case of applying multiple filters
             // we might want to remove the filter from the list, but 
             // that's a bit evil since we really don't know that we own
@@ -580,10 +586,11 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter()
           }
           nsCOMPtr<nsIMsgCopyService> copyService = do_GetService(NS_MSGCOPYSERVICE_CONTRACTID, &rv);
           if (copyService)
-            return copyService->CopyMessages(m_curFolder, m_searchHitHdrs, destIFolder, PR_TRUE, this, m_msgWindow, PR_FALSE);
+            return copyService->CopyMessages(m_curFolder, m_searchHitHdrs, destIFolder, actionType == nsMsgFilterAction::MoveToFolder, this, m_msgWindow, PR_FALSE);
         }
         //we have already moved the hdrs so we can't apply more actions
-        applyMoreActions = PR_FALSE;
+        if (actionType == nsMsgFilterAction::MoveToFolder)
+          applyMoreActions = PR_FALSE;
       }
         
         break;
@@ -639,6 +646,128 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter()
             filterAction->GetLabel(&filterLabel);
             m_curFolder->SetLabelForMessages(m_searchHitHdrs, filterLabel);
         }
+        break;
+      case nsMsgFilterAction::JunkScore:
+      {
+        nsCAutoString junkScoreStr;
+        PRInt32 junkScore;
+        filterAction->GetJunkScore(&junkScore);
+        junkScoreStr.AppendInt(junkScore);
+        m_curFolder->SetJunkScoreForMessages(m_searchHitHdrs, junkScoreStr.get());
+        break;
+      }
+      case nsMsgFilterAction::Forward:
+        {
+          nsXPIDLCString forwardTo;
+          filterAction->GetStrValue(getter_Copies(forwardTo));
+          nsCOMPtr <nsIMsgIncomingServer> server;
+          rv = m_curFolder->GetServer(getter_AddRefs(server));
+          NS_ENSURE_SUCCESS(rv, rv);
+          if (!forwardTo.IsEmpty())
+          {
+            nsCOMPtr <nsIMsgComposeService> compService = do_GetService (NS_MSGCOMPOSESERVICE_CONTRACTID) ;
+            if (compService)
+            {
+              for (PRUint32 msgIndex = 0; msgIndex < m_searchHits.GetSize(); msgIndex++)
+              {
+                nsCOMPtr <nsIMsgDBHdr> msgHdr;
+                m_searchHitHdrs->QueryElementAt(msgIndex, NS_GET_IID(nsIMsgDBHdr), getter_AddRefs(msgHdr));
+                if (msgHdr)
+                {
+                  nsAutoString forwardStr;
+                  forwardStr.AssignWithConversion(forwardTo.get());
+                  rv = compService->ForwardMessage(forwardStr, msgHdr, m_msgWindow, server);
+                }
+              }
+            }
+          }
+        }
+        break;
+      case nsMsgFilterAction::Reply:
+        {
+          nsXPIDLCString replyTemplateUri;
+          filterAction->GetStrValue(getter_Copies(replyTemplateUri));
+          nsCOMPtr <nsIMsgIncomingServer> server;
+          rv = m_curFolder->GetServer(getter_AddRefs(server));
+          NS_ENSURE_SUCCESS(rv, rv);
+          if (!replyTemplateUri.IsEmpty())
+          {
+            nsCOMPtr <nsIMsgComposeService> compService = do_GetService (NS_MSGCOMPOSESERVICE_CONTRACTID) ;
+            if (compService)
+            {
+              for (PRUint32 msgIndex = 0; msgIndex < m_searchHits.GetSize(); msgIndex++)
+              {
+                nsCOMPtr <nsIMsgDBHdr> msgHdr;
+                m_searchHitHdrs->QueryElementAt(msgIndex, NS_GET_IID(nsIMsgDBHdr), getter_AddRefs(msgHdr));
+                if (msgHdr)
+                  rv = compService->ReplyWithTemplate(msgHdr, replyTemplateUri, m_msgWindow, server);
+              }
+            }
+          }
+        }
+        break;
+      case nsMsgFilterAction::DeleteFromPop3Server:
+        {
+          nsCOMPtr <nsIMsgLocalMailFolder> localFolder = do_QueryInterface(m_curFolder);
+          if (localFolder)
+          {
+            // This action ignores the deleteMailLeftOnServer preference
+            localFolder->MarkMsgsOnPop3Server(m_searchHitHdrs, POP3_FORCE_DEL);
+
+            nsCOMPtr <nsISupportsArray> partialMsgs;
+            // Delete the partial headers. They're useless now
+            // that the server copy is being deleted.
+            for (PRUint32 msgIndex = 0; msgIndex < m_searchHits.GetSize(); msgIndex++)
+            {
+              nsCOMPtr <nsIMsgDBHdr> msgHdr;
+              m_searchHitHdrs->QueryElementAt(msgIndex, NS_GET_IID(nsIMsgDBHdr), getter_AddRefs(msgHdr));
+              if (msgHdr)
+              {
+                PRUint32 flags;
+                msgHdr->GetFlags(&flags);
+                if (flags & MSG_FLAG_PARTIAL)
+                {
+                  if (!partialMsgs)
+                    partialMsgs = do_CreateInstance(NS_SUPPORTSARRAY_CONTRACTID, &rv);
+                  NS_ENSURE_SUCCESS(rv, rv);
+                  partialMsgs->AppendElement(msgHdr);
+                }
+              }
+            }
+            if (partialMsgs)
+              m_curFolder->DeleteMessages(partialMsgs, m_msgWindow, PR_TRUE, PR_FALSE, nsnull, PR_FALSE);
+          }
+        }
+        break;
+      case nsMsgFilterAction::FetchBodyFromPop3Server:
+        {
+          nsCOMPtr <nsIMsgLocalMailFolder> localFolder = do_QueryInterface(m_curFolder);
+          if (localFolder)
+          {
+            nsCOMPtr<nsISupportsArray> messages = do_CreateInstance(NS_SUPPORTSARRAY_CONTRACTID, &rv);
+            NS_ENSURE_SUCCESS(rv, rv);
+            for (PRUint32 msgIndex = 0; msgIndex < m_searchHits.GetSize(); msgIndex++)
+            {
+              nsCOMPtr <nsIMsgDBHdr> msgHdr;
+              m_searchHitHdrs->QueryElementAt(msgIndex, NS_GET_IID(nsIMsgDBHdr), getter_AddRefs(msgHdr));
+              if (msgHdr)
+              {
+	        PRUint32 flags = 0;
+                msgHdr->GetFlags(&flags);
+                if (flags & MSG_FLAG_PARTIAL)
+                {
+                  nsCOMPtr<nsISupports> iSupports = do_QueryInterface(msgHdr);
+                  messages->AppendElement(iSupports);
+                }
+              }
+            }
+            PRUint32 msgsToFetch;
+            messages->Count(&msgsToFetch);
+            if (msgsToFetch > 0)
+              m_curFolder->DownloadMessagesForOffline(messages, m_msgWindow);
+          }
+        }
+        break;
       default:
         break;
       }
@@ -650,14 +779,12 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter()
 NS_IMETHODIMP nsMsgFilterService::GetTempFilterList(nsIMsgFolder *aFolder, nsIMsgFilterList **aFilterList)
 {
   NS_ENSURE_ARG_POINTER(aFilterList);
-  *aFilterList = new nsMsgFilterList;
-  if (*aFilterList)
-  {
-    (*aFilterList)->SetFolder(aFolder);
-    NS_ADDREF(*aFilterList);
-    return NS_OK;
-  }
-  return NS_ERROR_OUT_OF_MEMORY;
+  nsMsgFilterList *filterList = new nsMsgFilterList;
+  NS_ENSURE_TRUE(filterList, NS_ERROR_OUT_OF_MEMORY);
+  NS_ADDREF(*aFilterList = filterList);
+  (*aFilterList)->SetFolder(aFolder);
+  filterList->m_temporaryList = PR_TRUE;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgFilterService::ApplyFiltersToFolders(nsIMsgFilterList *aFilterList, nsISupportsArray *aFolders, nsIMsgWindow *aMsgWindow)

@@ -65,7 +65,7 @@
   </stringbundleset>
 
   <hbox align="center">
-    <label value="&account.label;" accesskey="&account.accesskey;"/>
+    <label value="&account.label;" accesskey="&account.accesskey;" control="server"/>
     <menulist oncommand="onServerClick(event);" id="server">
       <menupopup datasources="rdf:msgaccountmanager rdf:mailnewsfolders"
                  sortResource="http://home.netscape.com/NC-rdf#FolderTreeName"
@@ -149,6 +149,8 @@
       <label id="purgeLabel" value="&purge2.label;"/>
     </hbox>
   </vbox>
+
+  <checkbox id="markAsReadOnSpam" oncommand="conditionallyEnableUI('markAsReadOnSpam')" label="&markAsReadOnSpam.label;"/>
 
   <vbox align="start">
     <checkbox id="manualMark" oncommand="conditionallyEnableUI('manualMark')" label="&manualMark.label;"/>

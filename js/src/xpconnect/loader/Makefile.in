@@ -44,12 +44,13 @@ include $(DEPTH)/config/autoconf.mk
 MODULE		= jsloader
 LIBRARY_NAME	= jsloader_s
 FORCE_STATIC_LIB = 1
+LIBXUL_LIBRARY = 1
+
 REQUIRES	= xpcom \
 		  string \
 		  xpconnect \
 		  js \
 		  caps \
-		  dom \
 		  necko \
 		  $(NULL)
 

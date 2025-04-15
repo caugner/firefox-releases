@@ -1,24 +1,41 @@
 /* widget -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim:ts=2:et:sw=2
- * XlibXtBin Implementation
- * Peter Hartshorn
- * Based on GtkXtBin by Rusty Lynch - 02/27/2000
+ * vim:ts=2:et:sw=2 */
+
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * You should have received a copy of the GNU Library General Public
- * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
- */    
+ * The Original Code is mozilla.org code.
+ *
+ * The Initial Developer of the Original Code is Peter Hartshorn.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Based on GtkXtBin by Rusty Lynch - 02/27/2000
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "xlibxtbin.h"
 #include "xlibrgb.h"
@@ -54,7 +71,7 @@ void xtbin::xtbin_realize() {
   Arg args[2];
   int n;
   Widget top_widget;
-  Widget embeded;
+  Widget embedded;
   XSetWindowAttributes attr;
   unsigned long mask;
 
@@ -110,32 +127,32 @@ void xtbin::xtbin_realize() {
   XtSetArg(args[n], XtNwidth,  width);  n++;
   XtSetValues(top_widget, args, n);
 
-  embeded = XtVaCreateWidget("form", compositeWidgetClass, top_widget, NULL);
+  embedded = XtVaCreateWidget("form", compositeWidgetClass, top_widget, NULL);
 
   n = 0;
   XtSetArg(args[n], XtNheight, height); n++;
   XtSetArg(args[n], XtNwidth,  width);  n++;
-  XtSetValues(embeded, args, n);
+  XtSetValues(embedded, args, n);
 
   oldwindow = top_widget->core.window;
   top_widget->core.window = window;
 
   XtRegisterDrawable(xtdisplay, window, top_widget);
 
-  XtRealizeWidget(embeded);
+  XtRealizeWidget(embedded);
   XtRealizeWidget(top_widget);
-  XtManageChild(embeded);
+  XtManageChild(embedded);
 
   /* Now fill out the xtbin info */
-  xtwindow = XtWindow(embeded);
+  xtwindow = XtWindow(embedded);
 
   /* Suppress background refresh flashing */
   XSetWindowBackgroundPixmap(xtdisplay, XtWindow(top_widget), None);
-  XSetWindowBackgroundPixmap(xtdisplay, XtWindow(embeded),    None);
+  XSetWindowBackgroundPixmap(xtdisplay, XtWindow(embedded),   None);
 
   /* Listen to all Xt events */
   XSelectInput(xtdisplay, XtWindow(top_widget), 0x0fffff);
-  XSelectInput(xtdisplay, XtWindow(embeded),    0x0fffff);
+  XSelectInput(xtdisplay, XtWindow(embedded),   0x0fffff);
 
   sync();
 }

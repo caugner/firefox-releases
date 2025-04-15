@@ -37,6 +37,7 @@
 
 #include <stdio.h>
 #include "nsString.h"
+#include "nsStringBuffer.h"
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
 
@@ -270,7 +271,7 @@ PRBool test_replace_substr_2()
   {
     const char *oldName = nsnull;
     const char *newName = "user";
-    nsString acctName = NS_LITERAL_STRING("forums.foo.com");
+    nsString acctName; acctName.AssignLiteral("forums.foo.com");
     nsAutoString newAcctName, oldVal, newVal;
     oldVal.AssignWithConversion(oldName);
     newVal.AssignWithConversion(newName);
@@ -301,7 +302,7 @@ PRBool test_strip_ws()
 PRBool test_equals_ic()
   {
     nsCString s;
-    PRBool r = s.EqualsIgnoreCase("view-source");
+    PRBool r = s.LowerCaseEqualsLiteral("view-source");
     if (r)
       printf("[r=%d]\n", r);
     return !r;
@@ -424,9 +425,9 @@ PRBool test_xpidl_string()
 PRBool test_empty_assign()
   {
     nsCString a;
-    a = NS_LITERAL_CSTRING("");
+    a.AssignLiteral("");
 
-    a += NS_LITERAL_CSTRING("");
+    a.AppendLiteral("");
 
     nsCString b;
     b.SetCapacity(0);
@@ -515,6 +516,103 @@ PRBool test_appendint64()
     return PR_TRUE;
   }
 
+PRBool test_findcharinset()
+  {
+    nsCString buf("hello, how are you?");
+
+    PRInt32 index = buf.FindCharInSet(",?", 5);
+    if (index != 5)
+      return PR_FALSE;
+
+    index = buf.FindCharInSet("helo", 0);
+    if (index != 0)
+      return PR_FALSE;
+
+    index = buf.FindCharInSet("z?", 6);
+    if (index != (PRInt32) buf.Length()-1)
+      return PR_FALSE;
+
+    return PR_TRUE;
+  }
+
+PRBool test_rfindcharinset()
+  {
+    nsCString buf("hello, how are you?");
+
+    PRInt32 index = buf.RFindCharInSet(",?", 5);
+    if (index != 5)
+      return PR_FALSE;
+
+    index = buf.RFindCharInSet("helo", 0);
+    if (index != 0)
+      return PR_FALSE;
+
+    index = buf.RFindCharInSet("z?", 6);
+    if (index != kNotFound)
+      return PR_FALSE;
+
+    index = buf.RFindCharInSet("l", 5);
+    if (index != 3)
+      return PR_FALSE;
+
+    buf.Assign("abcdefghijkabc");
+
+    index = buf.RFindCharInSet("ab");
+    if (index != 12)
+      return PR_FALSE;
+
+    index = buf.RFindCharInSet("ab", 11);
+    if (index != 11)
+      return PR_FALSE;
+
+    index = buf.RFindCharInSet("ab", 10);
+    if (index != 1)
+      return PR_FALSE;
+
+    index = buf.RFindCharInSet("ab", 0);
+    if (index != 0)
+      return PR_FALSE;
+
+    index = buf.RFindCharInSet("cd", 1);
+    if (index != kNotFound)
+      return PR_FALSE;
+
+    index = buf.RFindCharInSet("h");
+    if (index != 7)
+      return PR_FALSE;
+
+    return PR_TRUE;
+  }
+
+PRBool test_stringbuffer()
+  {
+    const char kData[] = "hello world";
+
+    nsStringBuffer *buf;
+    
+    buf = nsStringBuffer::Alloc(sizeof(kData));
+    if (!buf)
+      return PR_FALSE;
+    buf->Release();
+ 
+    buf = nsStringBuffer::Alloc(sizeof(kData));
+    if (!buf)
+      return PR_FALSE;
+    char *data = (char *) buf->Data();
+    memcpy(data, kData, sizeof(kData));
+
+    nsCString str;
+    buf->ToString(sizeof(kData)-1, str);
+
+    nsStringBuffer *buf2;
+    buf2 = nsStringBuffer::FromString(str);
+
+    PRBool rv = (buf == buf2);
+
+    buf->Release();
+    return rv;
+  }
+
 //----
 
 typedef PRBool (*TestFunc)();
@@ -550,6 +648,9 @@ tests[] =
     { "test_set_length", test_set_length },
     { "test_substring", test_substring },
     { "test_appendint64", test_appendint64 },
+    { "test_findcharinset", test_findcharinset },
+    { "test_rfindcharinset", test_rfindcharinset },
+    { "test_stringbuffer", test_stringbuffer },
     { nsnull, nsnull }
   };
 
@@ -565,7 +666,7 @@ int main(int argc, char **argv)
       {
         for (const Test* t = tests; t->name != nsnull; ++t)
           {
-            printf("%25s : %s\n", t->name, t->func() ? "SUCCESS" : "FAILURE");
+            printf("%25s : %s\n", t->name, t->func() ? "SUCCESS" : "FAILURE <--");
           }
       }
     

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Mike Pinkerton (pinkerton@netscape.com)
- *  Dainis Jonitis (Dainis_Jonitis@swh-t.lv)
+ *   Mike Pinkerton (pinkerton@netscape.com)
+ *   Dainis Jonitis (Dainis_Jonitis@swh-t.lv)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -52,7 +52,6 @@ Notes to self:
 #include "nsReadableUtils.h"
 #include "nsVoidArray.h"
 #include "nsIFormatConverter.h"
-#include "nsVoidArray.h"
 #include "nsIComponentManager.h"
 #include "nsCOMPtr.h"
 #include "nsXPCOM.h"
@@ -247,10 +246,15 @@ DataStruct::ReadCache(nsISupports** aData, PRUint32* aDataLen)
   if ( cacheFile && NS_SUCCEEDED(cacheFile->Exists(&exists)) && exists ) {
     // get the size of the file
     PRInt64 fileSize;
+    PRInt64 max32(LL_INIT(0, 0xFFFFFFFF));
     cacheFile->GetFileSize(&fileSize);
+    if (LL_CMP(fileSize, >, max32))
+      return NS_ERROR_OUT_OF_MEMORY;
+    PRUint32 size;
+    LL_L2UI(size, fileSize);
 
     // create new memory for the large clipboard data
-    char * data = (char *)nsMemory::Alloc(fileSize);
+    char * data = (char *)nsMemory::Alloc(size);
     if ( !data )
       return NS_ERROR_OUT_OF_MEMORY;
       
@@ -264,8 +268,7 @@ DataStruct::ReadCache(nsISupports** aData, PRUint32* aDataLen)
     nsresult rv = inStr->Read(data, fileSize, aDataLen);
 
     // make sure we got all the data ok
-    if ( NS_SUCCEEDED(rv) && *aDataLen == (PRUint32)fileSize) {
-      *aDataLen = fileSize; 
+    if (NS_SUCCEEDED(rv) && *aDataLen == size) {
       nsPrimitiveHelpers::CreatePrimitiveForData ( mFlavor.get(), data, fileSize, aData );
       return *aData ? NS_OK : NS_ERROR_FAILURE;
     }

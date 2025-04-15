@@ -75,6 +75,8 @@ GtkPromptService::AlertCheck(nsIDOMWindow* aParent,
                              const PRUnichar* aDialogText,
                              const PRUnichar* aCheckMsg, PRBool* aCheckValue)
 {
+    NS_ENSURE_ARG_POINTER(aCheckValue);
+
     EmbedPrompter prompter;
     prompter.SetTitle(aDialogTitle ? aDialogTitle : NS_LITERAL_STRING("Alert").get());
     prompter.SetMessageText(aDialogText);
@@ -109,6 +111,8 @@ GtkPromptService::ConfirmCheck(nsIDOMWindow* aParent,
                                const PRUnichar* aCheckMsg,
                                PRBool* aCheckValue, PRBool* aConfirm)
 {
+    NS_ENSURE_ARG_POINTER(aCheckValue);
+
     EmbedPrompter prompter;
     prompter.SetTitle(aDialogTitle ? aDialogTitle : NS_LITERAL_STRING("Confirm").get());
     prompter.SetMessageText(aDialogText);
@@ -171,17 +175,18 @@ GtkPromptService::Prompt(nsIDOMWindow* aParent, const PRUnichar* aDialogTitle,
     prompter.SetTitle(aDialogTitle ? aDialogTitle : NS_LITERAL_STRING("Prompt").get());
     prompter.SetMessageText(aDialogText);
     prompter.SetTextValue(*aValue);
-    if (aCheckMsg) {
+    if (aCheckMsg)
         prompter.SetCheckMessage(aCheckMsg);
+    if (aCheckValue)
         prompter.SetCheckValue(*aCheckValue);
-    }
+
     prompter.Create(EmbedPrompter::TYPE_PROMPT,
                     GetGtkWindowForDOMWindow(aParent));
     prompter.Run();
     if (aCheckValue)
         prompter.GetCheckValue(aCheckValue);
     prompter.GetConfirmValue(aConfirm);
-    if (aConfirm) {
+    if (*aConfirm) {
         if (*aValue)
             nsMemory::Free(*aValue);
         prompter.GetTextValue(aValue);
@@ -204,10 +209,11 @@ GtkPromptService::PromptUsernameAndPassword(nsIDOMWindow* aParent,
     prompter.SetMessageText(aDialogText);
     prompter.SetUser(*aUsername);
     prompter.SetPassword(*aPassword);
-    if (aCheckMsg) {
+    if (aCheckMsg)
         prompter.SetCheckMessage(aCheckMsg);
+    if (aCheckValue)
         prompter.SetCheckValue(*aCheckValue);
-    }
+
     prompter.Create(EmbedPrompter::TYPE_PROMPT_USER_PASS,
                     GetGtkWindowForDOMWindow(aParent));
     prompter.Run();
@@ -238,10 +244,11 @@ GtkPromptService::PromptPassword(nsIDOMWindow* aParent,
     prompter.SetTitle(aDialogTitle ? aDialogTitle : NS_LITERAL_STRING("Prompt").get());
     prompter.SetMessageText(aDialogText);
     prompter.SetPassword(*aPassword);
-    if (aCheckMsg) {
+    if (aCheckMsg)
         prompter.SetCheckMessage(aCheckMsg);
+    if (aCheckValue)
         prompter.SetCheckValue(*aCheckValue);
-    }
+
     prompter.Create(EmbedPrompter::TYPE_PROMPT_PASS,
                     GetGtkWindowForDOMWindow(aParent));
     prompter.Run();
@@ -309,26 +316,28 @@ GtkPromptService::GetButtonLabel(PRUint32 aFlags, PRUint32 aPos,
 {
     PRUint32 posFlag = (aFlags & (255 * aPos)) / aPos;
     switch (posFlag) {
+    case 0:
+        break;
     case BUTTON_TITLE_OK:
-        aLabel = NS_LITERAL_STRING(GTK_STOCK_OK);
+        aLabel.AssignLiteral(GTK_STOCK_OK);
         break;
     case BUTTON_TITLE_CANCEL:
-        aLabel = NS_LITERAL_STRING(GTK_STOCK_CANCEL);
+        aLabel.AssignLiteral(GTK_STOCK_CANCEL);
         break;
     case BUTTON_TITLE_YES:
-        aLabel = NS_LITERAL_STRING(GTK_STOCK_YES);
+        aLabel.AssignLiteral(GTK_STOCK_YES);
         break;
     case BUTTON_TITLE_NO:
-        aLabel = NS_LITERAL_STRING(GTK_STOCK_NO);
+        aLabel.AssignLiteral(GTK_STOCK_NO);
         break;
     case BUTTON_TITLE_SAVE:
-        aLabel = NS_LITERAL_STRING(GTK_STOCK_SAVE);
+        aLabel.AssignLiteral(GTK_STOCK_SAVE);
         break;
     case BUTTON_TITLE_DONT_SAVE:
-        aLabel = NS_LITERAL_STRING("Don't Save");
+        aLabel.AssignLiteral("Don't Save");
         break;
     case BUTTON_TITLE_REVERT:
-        aLabel = NS_LITERAL_STRING("Revert");
+        aLabel.AssignLiteral("Revert");
         break;
     case BUTTON_TITLE_IS_STRING:
         aLabel = aStringValue;

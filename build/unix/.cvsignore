@@ -6,6 +6,7 @@ mozilla-gtkmozembed.pc
 mozilla-js.pc
 mozilla-nspr.pc
 mozilla-nss.pc
+mozilla-plugin.pc
 mozilla-xpcom.pc
 firefox-config
 firefox-gtkmozembed.pc

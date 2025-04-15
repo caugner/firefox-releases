@@ -26,6 +26,7 @@
 #   Jessica Blanco <jblanco@us.ibm.com>
 #   Asko Tontti <atontti@cc.hut.fi>
 #   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
+#   Peter Weilbacher <mozilla@weilbacher.org>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or 
@@ -48,6 +49,7 @@
   onload="onLoad();"
   ondialogaccept="return onAccept();"
   oncancel="return onCancel();"
+  buttoniconaccept="print"
   title="&printDialog.title;"
   persist="screenX screenY"
   screenX="24" screenY="24">
@@ -68,31 +70,20 @@
       <rows>
         <row align="center">
           <hbox align="center" pack="end">
-            <label value="&printTo.label;"/>
+            <label id="printerLabel" control="printerList" value="&printerInput.label;"/>
           </hbox>
-          <radiogroup id="destGroup" orient="horizontal">
-            <radio id="printerRadio" label="&printerRadio.label;" oncommand="if (!this.disabled) doEnablePrintToFile(false);"/>
-            <radio id="fileRadio" label="&fileRadio.label;" oncommand="if (!this.disabled) doEnablePrintToFile(true);"/>
-          </radiogroup>
+          <menulist id="printerList" flex="1" type="description" oncommand="setPrinterDefaultsForSelectedPrinter();"/>
+          <button id="properties" label="&propertiesButton.label;"
+                  icon="properties" oncommand="displayPropertiesDialog();"/>
         </row>
         <row align="center">
           <hbox align="center" pack="end">
-            <label id="printerLabel" value="&printerInput.label;"/>
+            <label id="descTextLabel" control="descText" value="&descText.label;"/>
           </hbox>
-          <menulist id="printerList" flex="1" oncommand="setPrinterDefaultsForSelectedPrinter();">
-            <menupopup/>
-          </menulist>
-          <button id="properties" label="&propertiesButton.label;" oncommand="displayPropertiesDialog();"/>
-        </row>
-        <row align="center">
-          <hbox align="center" pack="end">
-            <label id="fileLabel" control="fileInput" value="&fileInput.label;"/>
-          </hbox>
-          <textbox id="fileInput" flex="1" onblur="stripTrailingWhitespace(this)"/>
-          <button id="chooseFile" label="&chooseButton.label;" oncommand="onChooseFile()"/>
+          <label id="descText"/>
+          <checkbox id="fileCheck" checked="false" label="&fileCheck.label;" pack="end"/>
         </row>
       </rows>
-
     </grid>
   </groupbox>
 

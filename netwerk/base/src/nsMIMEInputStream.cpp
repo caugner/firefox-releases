@@ -146,9 +146,9 @@ nsMIMEInputStream::AddHeader(const char *aName, const char *aValue)
 {
     NS_ENSURE_FALSE(mStartedReading, NS_ERROR_FAILURE);
     mHeaders.Append(aName);
-    mHeaders.Append(": ");
+    mHeaders.AppendLiteral(": ");
     mHeaders.Append(aValue);
-    mHeaders.Append("\r\n");
+    mHeaders.AppendLiteral("\r\n");
 
     // Just in case someone somehow uses our stream, lets at least
     // let the stream have a valid pointer. The stream will be properly
@@ -187,12 +187,12 @@ void nsMIMEInputStream::InitStreams()
         if (mData) {
             mData->Available(&cl);
         }
-        mContentLength = "Content-Length: ";
+        mContentLength.AssignLiteral("Content-Length: ");
         mContentLength.AppendInt((PRInt32)cl);
-        mContentLength.Append("\r\n\r\n");
+        mContentLength.AppendLiteral("\r\n\r\n");
     }
     else {
-        mContentLength = "\r\n";
+        mContentLength.AssignLiteral("\r\n");
     }
     mCLStream->ShareData(mContentLength.get(), -1);
     mHeaderStream->ShareData(mHeaders.get(), -1);
@@ -207,11 +207,11 @@ if (!mStartedReading) {     \
 
 // Reset mStartedReading when Seek-ing to start
 NS_IMETHODIMP
-nsMIMEInputStream::Seek(PRInt32 whence, PRInt32 offset)
+nsMIMEInputStream::Seek(PRInt32 whence, PRInt64 offset)
 {
     nsresult rv;
     nsCOMPtr<nsISeekableStream> stream = do_QueryInterface(mStream);
-    if (whence == NS_SEEK_SET && offset == 0) {
+    if (whence == NS_SEEK_SET && LL_EQ(offset, LL_Zero())) {
         rv = stream->Seek(whence, offset);
         if (NS_SUCCEEDED(rv))
             mStartedReading = PR_FALSE;
@@ -263,7 +263,7 @@ NS_IMETHODIMP nsMIMEInputStream::Read(char * buf, PRUint32 count, PRUint32 *_ret
 NS_IMETHODIMP nsMIMEInputStream::IsNonBlocking(PRBool *aNonBlocking) { INITSTREAMS; return mStream->IsNonBlocking(aNonBlocking); }
 
 // nsISeekableStream
-NS_IMETHODIMP nsMIMEInputStream::Tell(PRUint32 *_retval)
+NS_IMETHODIMP nsMIMEInputStream::Tell(PRInt64 *_retval)
 {
     INITSTREAMS;
     nsCOMPtr<nsISeekableStream> stream = do_QueryInterface(mStream);

@@ -1,12 +1,12 @@
-/ecssl.sh/1.1.24.1/Mon Jun  7 17:23:32 2004//TFIREFOX_1_0_RELEASE
-/ecsslauth.txt/1.1/Fri Oct 17 14:10:18 2003//TFIREFOX_1_0_RELEASE
-/ecsslcov.txt/1.1/Fri Oct 17 14:10:18 2003//TFIREFOX_1_0_RELEASE
-/ecsslstress.txt/1.1/Fri Oct 17 14:10:18 2003//TFIREFOX_1_0_RELEASE
-/ssl.sh/1.55.22.1/Mon Jun  7 17:23:32 2004//TFIREFOX_1_0_RELEASE
-/ssl_dist_stress.sh/1.8/Mon Apr  8 23:39:39 2002//TFIREFOX_1_0_RELEASE
-/sslauth.txt/1.6/Fri May 30 05:40:40 2003//TFIREFOX_1_0_RELEASE
-/sslcov.txt/1.5/Fri Aug  9 22:09:18 2002//TFIREFOX_1_0_RELEASE
-/sslreq.dat/1.1/Fri Jul 11 03:55:55 2003/-kb/TFIREFOX_1_0_RELEASE
-/sslreq.txt/1.3/Fri Jul 11 04:14:24 2003//TFIREFOX_1_0_RELEASE
-/sslstress.txt/1.5/Fri May 30 05:38:12 2003//TFIREFOX_1_0_RELEASE
+/ecssl.sh/1.3/Sun Apr 25 15:03:25 2004//TFIREFOX_1_5_RELEASE
+/ecsslauth.txt/1.1/Fri Oct 17 14:10:18 2003//TFIREFOX_1_5_RELEASE
+/ecsslcov.txt/1.1/Fri Oct 17 14:10:18 2003//TFIREFOX_1_5_RELEASE
+/ecsslstress.txt/1.1/Fri Oct 17 14:10:18 2003//TFIREFOX_1_5_RELEASE
+/ssl.sh/1.60/Wed Apr 13 00:23:09 2005//TFIREFOX_1_5_RELEASE
+/ssl_dist_stress.sh/1.9/Sun Apr 25 15:03:25 2004//TFIREFOX_1_5_RELEASE
+/sslauth.txt/1.6/Fri May 30 05:40:40 2003//TFIREFOX_1_5_RELEASE
+/sslcov.txt/1.5/Fri Aug  9 22:09:18 2002//TFIREFOX_1_5_RELEASE
+/sslreq.dat/1.1/Fri Jul 11 03:55:55 2003/-kb/TFIREFOX_1_5_RELEASE
+/sslreq.txt/1.3/Fri Jul 11 04:14:24 2003//TFIREFOX_1_5_RELEASE
+/sslstress.txt/1.5/Fri May 30 05:38:12 2003//TFIREFOX_1_5_RELEASE
 D

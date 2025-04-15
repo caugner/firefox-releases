@@ -38,6 +38,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsHTMLFormControlAccessibleWrap.h"
+#include "nsIDOMHTMLInputElement.h"
 #include "nsIFrame.h"
 
 NS_IMPL_ISUPPORTS_INHERITED2(nsHTMLTextFieldAccessibleWrap, nsHTMLTextFieldAccessible, nsIAccessibleText, nsIAccessibleEditableText)
@@ -47,17 +48,48 @@ nsHTMLTextFieldAccessible(aNode, aShell), nsAccessibleEditableText(aNode)
 { 
   nsCOMPtr<nsIPresShell> shell(do_QueryReferent(mWeakShell));
   if (shell) {
-    nsCOMPtr<nsIContent> content(do_QueryInterface(mDOMNode));
-    nsIFrame *frame = nsnull;
-    shell->GetPrimaryFrameFor(content, &frame);
-    nsITextControlFrame *textFrame;
-    frame->QueryInterface(NS_GET_IID(nsITextControlFrame), (void**)&textFrame);
-    if (textFrame) {
-      nsCOMPtr<nsIEditor> editor;
-      textFrame->GetEditor(getter_AddRefs(editor));
-      SetEditor(editor);
+    nsIFrame *frame = GetFrame();
+    if (frame) {
+      nsITextControlFrame *textFrame;
+      frame->QueryInterface(NS_GET_IID(nsITextControlFrame), (void**)&textFrame);
+      if (textFrame) {
+        nsCOMPtr<nsIEditor> editor;
+        textFrame->GetEditor(getter_AddRefs(editor));
+        SetEditor(editor);
+      }
     }
   }
+}
+NS_IMETHODIMP nsHTMLTextFieldAccessibleWrap::GetRole(PRUint32 *_retval)
+{
+  PRUint32 state = 0;
+
+  nsresult rv = GetState(&state);
+  if (NS_SUCCEEDED(rv) && (state & STATE_PROTECTED))
+    *_retval = ROLE_PASSWORD_TEXT;
+  else
+    *_retval = ROLE_TEXT;
+
+  return NS_OK;
+}
+
+
+NS_IMETHODIMP nsHTMLTextFieldAccessibleWrap::GetExtState(PRUint32 *aState)
+{
+  nsresult rv;
+  nsCOMPtr<nsIDOMHTMLInputElement> htmlFormElement(do_QueryInterface(mDOMNode, &rv));
+  if (NS_SUCCEEDED(rv) && htmlFormElement) {
+    nsAutoString typeString;
+    htmlFormElement->GetType(typeString);
+    if (typeString.LowerCaseEqualsLiteral("text"))
+      *aState |= EXT_STATE_SINGLE_LINE;
+  }
+
+  PRUint32 state;
+  nsHTMLTextFieldAccessible::GetState(&state);
+  if (!(state & STATE_READONLY))
+    *aState |= EXT_STATE_EDITABLE;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsHTMLTextFieldAccessibleWrap::Shutdown()

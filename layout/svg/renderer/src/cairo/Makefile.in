@@ -45,8 +45,11 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE = layout
+MODULE = gksvgcairo
 LIBRARY_NAME = gksvgrenderercairo_s
+FORCE_STATIC_LIB = 1
+LIBXUL_LIBRARY = 1
+
 REQUIRES = \
 	xpcom   \
 	widget  \
@@ -60,6 +63,10 @@ REQUIRES = \
 	util \
 	uconv \
 	windowwatcher \
+	locale \
+	layout \
+	cairo \
+	libpixman \
 	$(NULL)
 
 CPPSRCS = \
@@ -70,10 +77,9 @@ CPPSRCS = \
 	nsSVGCairoRegion.cpp \
 	nsSVGCairoGlyphMetrics.cpp \
 	nsSVGCairoGlyphGeometry.cpp \
+	nsSVGCairoGradient.cpp \
+	nsSVGCairoSurface.cpp \
 	$(NULL)
-
-# we don't want the shared lib, but we want to force the creation of a static lib.
-FORCE_STATIC_LIB = 1
 
 # **********************************************************************
 
@@ -83,13 +89,52 @@ include $(topsrcdir)/config/rules.mk
 CFLAGS		+= $(MOZ_CAIRO_CFLAGS)
 CXXFLAGS	+= $(MOZ_CAIRO_CFLAGS)
 
-CFLAGS          += $(MOZ_GTK_CFLAGS) $(MOZ_GTK2_CFLAGS)
-CXXFLAGS        += $(MOZ_GTK_CFLAGS) $(MOZ_GTK2_CFLAGS)
-
 LOCAL_INCLUDES  = \
                 -I$(topsrcdir)/gfx/src \
-                -I$(topsrcdir)/gfx/src/gtk \
                 $(NULL)
 
+ifdef MOZ_ENABLE_GTK
+LOCAL_INCLUDES +=  -I$(topsrcdir)/gfx/src/gtk
+CFLAGS         += $(MOZ_GTK_CFLAGS) $(MOZ_GTK2_CFLAGS)
+CXXFLAGS       += $(MOZ_GTK_CFLAGS) $(MOZ_GTK2_CFLAGS)
+endif
 
+ifdef MOZ_ENABLE_GTK2
+LOCAL_INCLUDES +=  -I$(topsrcdir)/gfx/src/gtk
+CFLAGS         += $(MOZ_GTK_CFLAGS) $(MOZ_GTK2_CFLAGS)
+CXXFLAGS       += $(MOZ_GTK_CFLAGS) $(MOZ_GTK2_CFLAGS)
+endif
 
+ifdef MOZ_ENABLE_XLIB
+LOCAL_INCLUDES +=  -I$(topsrcdir)/gfx/src/xlib
+CFLAGS         += $(TK_CFLAGS)
+CXXFLAGS       += $(TK_CFLAGS)
+REQUIRES       += xlibrgb \
+                  $(NULL)
+endif
+
+ifdef MOZ_ENABLE_QT
+LOCAL_INCLUDES +=  -I$(topsrcdir)/gfx/src/qt
+CFLAGS         += $(TK_CFLAGS)
+CXXFLAGS       += $(TK_CFLAGS)
+endif
+
+ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
+LOCAL_INCLUDES +=  -I$(topsrcdir)/gfx/src/mac
+endif
+
+ifdef MOZ_ENABLE_CAIRO_GFX
+DEFINES += -DMOZ_ENABLE_CAIRO_GFX
+endif
+
+ifdef MOZ_ENABLE_GTK2
+DEFINES += -DMOZ_ENABLE_GTK2
+endif
+
+ifdef MOZ_ENABLE_GTK
+DEFINES += -DMOZ_ENABLE_GTK
+endif
+
+ifeq ($(MOZ_WIDGET_TOOLKIT), windows)
+LOCAL_INCLUDES += -I$(topsrcdir)/gfx/src/windows
+endif

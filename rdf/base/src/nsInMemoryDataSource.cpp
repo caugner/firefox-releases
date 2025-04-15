@@ -1,25 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *   Chris Waterson         <waterson@netscape.com>
- *   Robert John Churchill  <rjc@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK *****
  *
  *
  * This Original Code has been modified by IBM Corporation.
@@ -68,7 +84,6 @@
 #include "nsIServiceManager.h"
 #include "nsISupportsArray.h"
 #include "nsCOMArray.h"
-#include "nsAutoLock.h"
 #include "nsEnumeratorUtils.h"
 #include "nsVoidArray.h"  // XXX introduces dependency on raptorbase
 #include "nsCRT.h"
@@ -84,12 +99,8 @@
 #include "prlog.h"
 #include "rdf.h"
 
-
-#if defined(MOZ_THREADSAFE_RDF)
-#define NS_AUTOLOCK(_lock) nsAutoLock _autolock(_lock)
-#else
-#define NS_AUTOLOCK(_lock)
-#endif
+#include "rdfIDataSource.h"
+#include "rdfITripleVisitor.h"
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gLog = nsnull;
@@ -284,7 +295,8 @@ class InMemoryResourceEnumeratorImpl;
 class InMemoryDataSource : public nsIRDFDataSource,
                            public nsIRDFInMemoryDataSource,
                            public nsIRDFPropagatableDataSource,
-                           public nsIRDFPurgeableDataSource
+                           public nsIRDFPurgeableDataSource,
+                           public rdfIDataSource
 {
 protected:
     nsFixedSizeAllocator mAllocator;
@@ -299,6 +311,10 @@ protected:
 
     nsCOMArray<nsIRDFObserver> mObservers;  
     PRUint32                   mNumObservers;
+
+    // VisitFoo needs to block writes, [Un]Assert only allowed
+    // during mReadCount == 0
+    PRUint32 mReadCount;
 
     static PLDHashOperator PR_CALLBACK
     DeleteForwardArcsEntry(PLDHashTable* aTable, PLDHashEntryHdr* aHdr,
@@ -345,6 +361,9 @@ public:
 
     // nsIRDFPurgeableDataSource methods
     NS_DECL_NSIRDFPURGEABLEDATASOURCE
+
+    // rdfIDataSource methods
+    NS_DECL_RDFIDATASOURCE
 
 protected:
     static PLDHashOperator PR_CALLBACK
@@ -396,10 +415,6 @@ public:
                  PRBool aTruthValue = PR_TRUE);
 #endif
 
-#ifdef MOZ_THREADSAFE_RDF
-    // This datasource's monitor object.
-    PRLock* mLock;
-#endif
     PRBool  mPropagateChanges;
 };
 
@@ -538,8 +553,6 @@ NS_IMPL_QUERY_INTERFACE1(InMemoryAssertionEnumeratorImpl, nsISimpleEnumerator)
 NS_IMETHODIMP
 InMemoryAssertionEnumeratorImpl::HasMoreElements(PRBool* aResult)
 {
-    NS_AUTOLOCK(mDataSource->mLock);
-
     if (mValue) {
         *aResult = PR_TRUE;
         return NS_OK;
@@ -703,8 +716,6 @@ InMemoryArcsEnumeratorImpl::InMemoryArcsEnumeratorImpl(InMemoryDataSource* aData
             // its our magical HASH_ENTRY forward hash for assertions
             nsresult rv = NS_NewISupportsArray(getter_AddRefs(mHashArcs));
             if (NS_SUCCEEDED(rv)) {
-                NS_AUTOLOCK(mLock);
-
                 PL_DHashTableEnumerate(mAssertion->u.hash.mPropertyHash,
                     ArcEnumerator, mHashArcs.get());
             }
@@ -749,8 +760,6 @@ InMemoryArcsEnumeratorImpl::HasMoreElements(PRBool* aResult)
         *aResult = PR_TRUE;
         return NS_OK;
     }
-
-    NS_AUTOLOCK(mDataSource->mLock);
 
     if (mHashArcs) {
         PRUint32    itemCount;
@@ -868,7 +877,7 @@ NS_NewRDFInMemoryDataSource(nsISupports* aOuter, const nsIID& aIID, void** aResu
 
 
 InMemoryDataSource::InMemoryDataSource(nsISupports* aOuter)
-    : mNumObservers(0)
+    : mNumObservers(0), mReadCount(0)
 {
     NS_INIT_AGGREGATED(aOuter);
 
@@ -885,9 +894,6 @@ InMemoryDataSource::InMemoryDataSource(nsISupports* aOuter)
 
     mAllocator.Init("nsInMemoryDataSource", kBucketSizes, kNumBuckets, kInitialSize);
 
-#ifdef MOZ_THREADSAFE_RDF
-    mLock = nsnull;
-#endif
     mForwardArcs.ops = nsnull;
     mReverseArcs.ops = nsnull;
     mPropagateChanges = PR_TRUE;
@@ -913,12 +919,6 @@ InMemoryDataSource::Init()
         mReverseArcs.ops = nsnull;
         return NS_ERROR_OUT_OF_MEMORY;
     }
-
-#ifdef MOZ_THREADSAFE_RDF
-    mLock = PR_NewLock();
-    if (! mLock)
-        return NS_ERROR_OUT_OF_MEMORY;
-#endif
 
 #ifdef PR_LOGGING
     if (! gLog)
@@ -947,12 +947,9 @@ InMemoryDataSource::~InMemoryDataSource()
     if (mReverseArcs.ops)
         PL_DHashTableFinish(&mReverseArcs);
 
-    PR_LOG(gLog, PR_LOG_ALWAYS,
+    PR_LOG(gLog, PR_LOG_NOTICE,
            ("InMemoryDataSource(%p): destroyed.", this));
 
-#ifdef MOZ_THREADSAFE_RDF
-    PR_DestroyLock(mLock);
-#endif
 }
 
 PLDHashOperator PR_CALLBACK
@@ -1001,6 +998,9 @@ InMemoryDataSource::AggregatedQueryInterface(REFNSIID aIID, void** aResult)
     else if (aIID.Equals(NS_GET_IID(nsIRDFPurgeableDataSource))) {
         *aResult = NS_STATIC_CAST(nsIRDFPurgeableDataSource*, this);
     }
+    else if (aIID.Equals(NS_GET_IID(rdfIDataSource))) {
+        *aResult = NS_STATIC_CAST(rdfIDataSource*, this);
+    }
     else {
         *aResult = nsnull;
         return NS_NOINTERFACE;
@@ -1022,30 +1022,30 @@ InMemoryDataSource::LogOperation(const char* aOperation,
                                  nsIRDFNode* aTarget,
                                  PRBool aTruthValue)
 {
-    if (! PR_LOG_TEST(gLog, PR_LOG_ALWAYS))
+    if (! PR_LOG_TEST(gLog, PR_LOG_NOTICE))
         return;
 
     nsXPIDLCString uri;
     aSource->GetValue(getter_Copies(uri));
-    PR_LOG(gLog, PR_LOG_ALWAYS,
-           ("InMemoryDataSource(%p): %s", this, aOperation));
+    PR_LogPrint
+           ("InMemoryDataSource(%p): %s", this, aOperation);
 
-    PR_LOG(gLog, PR_LOG_ALWAYS,
-           ("  [(%p)%s]--", aSource, (const char*) uri));
+    PR_LogPrint
+           ("  [(%p)%s]--", aSource, (const char*) uri);
 
     aProperty->GetValue(getter_Copies(uri));
 
     char tv = (aTruthValue ? '-' : '!');
-    PR_LOG(gLog, PR_LOG_ALWAYS,
-           ("  --%c[(%p)%s]--", tv, aProperty, (const char*) uri));
+    PR_LogPrint
+           ("  --%c[(%p)%s]--", tv, aProperty, (const char*) uri);
 
     nsCOMPtr<nsIRDFResource> resource;
     nsCOMPtr<nsIRDFLiteral> literal;
 
     if ((resource = do_QueryInterface(aTarget)) != nsnull) {
         resource->GetValue(getter_Copies(uri));
-        PR_LOG(gLog, PR_LOG_ALWAYS,
-           ("  -->[(%p)%s]", aTarget, (const char*) uri));
+        PR_LogPrint
+           ("  -->[(%p)%s]", aTarget, (const char*) uri);
     }
     else if ((literal = do_QueryInterface(aTarget)) != nsnull) {
         nsXPIDLString value;
@@ -1053,14 +1053,14 @@ InMemoryDataSource::LogOperation(const char* aOperation,
         nsAutoString valueStr(value);
         char* valueCStr = ToNewCString(valueStr);
 
-        PR_LOG(gLog, PR_LOG_ALWAYS,
-           ("  -->(\"%s\")\n", valueCStr));
+        PR_LogPrint
+           ("  -->(\"%s\")\n", valueCStr);
 
         nsCRT::free(valueCStr);
     }
     else {
-        PR_LOG(gLog, PR_LOG_ALWAYS,
-           ("  -->(unknown-type)\n"));
+        PR_LogPrint
+           ("  -->(unknown-type)\n");
     }
 }
 #endif
@@ -1095,8 +1095,6 @@ InMemoryDataSource::GetSource(nsIRDFResource* property,
     if (! target)
         return NS_ERROR_NULL_POINTER;
 
-    NS_AUTOLOCK(mLock);
-
     for (Assertion* as = GetReverseArcs(target); as; as = as->u.as.mInvNext) {
         if ((property == as->u.as.mProperty) && (tv == as->u.as.mTruthValue)) {
             *source = as->mSource;
@@ -1125,8 +1123,6 @@ InMemoryDataSource::GetTarget(nsIRDFResource* source,
     NS_PRECONDITION(target != nsnull, "null ptr");
     if (! target)
         return NS_ERROR_NULL_POINTER;
-
-    NS_AUTOLOCK(mLock);
 
     Assertion *as = GetForwardArcs(source);
     if (as && as->mHashEntry) {
@@ -1173,8 +1169,6 @@ InMemoryDataSource::HasAssertion(nsIRDFResource* source,
 
     if (! target)
         return NS_ERROR_NULL_POINTER;
-
-    NS_AUTOLOCK(mLock);
 
     Assertion *as = GetForwardArcs(source);
     if (as && as->mHashEntry) {
@@ -1230,8 +1224,6 @@ InMemoryDataSource::GetSources(nsIRDFResource* aProperty,
     if (! aResult)
         return NS_ERROR_NULL_POINTER;
 
-    NS_AUTOLOCK(mLock);
-
     InMemoryAssertionEnumeratorImpl* result =
         InMemoryAssertionEnumeratorImpl::Create(this, nsnull, aProperty,
                                                   aTarget, aTruthValue);
@@ -1262,8 +1254,6 @@ InMemoryDataSource::GetTargets(nsIRDFResource* aSource,
     NS_PRECONDITION(aResult != nsnull, "null ptr");
     if (! aResult)
         return NS_ERROR_NULL_POINTER;
-
-    NS_AUTOLOCK(mLock);
 
     InMemoryAssertionEnumeratorImpl* result =
         InMemoryAssertionEnumeratorImpl::Create(this, aSource, aProperty,
@@ -1396,13 +1386,14 @@ InMemoryDataSource::Assert(nsIRDFResource* aSource,
     if (! aTarget)
         return NS_ERROR_NULL_POINTER;
 
-    nsresult rv;
-
-    {
-        NS_AUTOLOCK(mLock);
-        rv = LockedAssert(aSource, aProperty, aTarget, aTruthValue);
-        if (NS_FAILED(rv)) return rv;
+    if (mReadCount) {
+        NS_WARNING("Writing to InMemoryDataSource during read\n");
+        return NS_RDF_ASSERTION_REJECTED;
     }
+
+    nsresult rv;
+    rv = LockedAssert(aSource, aProperty, aTarget, aTruthValue);
+    if (NS_FAILED(rv)) return rv;
 
     // notify observers
     for (PRInt32 i = (PRInt32)mNumObservers - 1; mPropagateChanges && i >= 0; --i) {
@@ -1554,14 +1545,15 @@ InMemoryDataSource::Unassert(nsIRDFResource* aSource,
     if (! aTarget)
         return NS_ERROR_NULL_POINTER;
 
+    if (mReadCount) {
+        NS_WARNING("Writing to InMemoryDataSource during read\n");
+        return NS_RDF_ASSERTION_REJECTED;
+    }
+
     nsresult rv;
 
-    {
-        NS_AUTOLOCK(mLock);
-
-        rv = LockedUnassert(aSource, aProperty, aTarget);
-        if (NS_FAILED(rv)) return rv;
-    }
+    rv = LockedUnassert(aSource, aProperty, aTarget);
+    if (NS_FAILED(rv)) return rv;
 
     // Notify the world
     for (PRInt32 i = PRInt32(mNumObservers) - 1; mPropagateChanges && i >= 0; --i) {
@@ -1602,20 +1594,21 @@ InMemoryDataSource::Change(nsIRDFResource* aSource,
     if (! aNewTarget)
         return NS_ERROR_NULL_POINTER;
 
+    if (mReadCount) {
+        NS_WARNING("Writing to InMemoryDataSource during read\n");
+        return NS_RDF_ASSERTION_REJECTED;
+    }
+
     nsresult rv;
 
-    {
-        NS_AUTOLOCK(mLock);
+    // XXX We can implement LockedChange() if we decide that this
+    // is a performance bottleneck.
 
-        // XXX We can implement LockedChange() if we decide that this
-        // is a performance bottleneck.
+    rv = LockedUnassert(aSource, aProperty, aOldTarget);
+    if (NS_FAILED(rv)) return rv;
 
-        rv = LockedUnassert(aSource, aProperty, aOldTarget);
-        if (NS_FAILED(rv)) return rv;
-
-        rv = LockedAssert(aSource, aProperty, aNewTarget, PR_TRUE);
-        if (NS_FAILED(rv)) return rv;
-    }
+    rv = LockedAssert(aSource, aProperty, aNewTarget, PR_TRUE);
+    if (NS_FAILED(rv)) return rv;
 
     // Notify the world
     for (PRInt32 i = PRInt32(mNumObservers) - 1; mPropagateChanges && i >= 0; --i) {
@@ -1656,20 +1649,21 @@ InMemoryDataSource::Move(nsIRDFResource* aOldSource,
     if (! aTarget)
         return NS_ERROR_NULL_POINTER;
 
+    if (mReadCount) {
+        NS_WARNING("Writing to InMemoryDataSource during read\n");
+        return NS_RDF_ASSERTION_REJECTED;
+    }
+
     nsresult rv;
 
-    {
-        NS_AUTOLOCK(mLock);
+    // XXX We can implement LockedMove() if we decide that this
+    // is a performance bottleneck.
 
-        // XXX We can implement LockedMove() if we decide that this
-        // is a performance bottleneck.
+    rv = LockedUnassert(aOldSource, aProperty, aTarget);
+    if (NS_FAILED(rv)) return rv;
 
-        rv = LockedUnassert(aOldSource, aProperty, aTarget);
-        if (NS_FAILED(rv)) return rv;
-
-        rv = LockedAssert(aNewSource, aProperty, aTarget, PR_TRUE);
-        if (NS_FAILED(rv)) return rv;
-    }
+    rv = LockedAssert(aNewSource, aProperty, aTarget, PR_TRUE);
+    if (NS_FAILED(rv)) return rv;
 
     // Notify the world
     for (PRInt32 i = PRInt32(mNumObservers) - 1; mPropagateChanges && i >= 0; --i) {
@@ -1695,7 +1689,6 @@ InMemoryDataSource::AddObserver(nsIRDFObserver* aObserver)
     if (! aObserver)
         return NS_ERROR_NULL_POINTER;
 
-    NS_AUTOLOCK(mLock);
     mObservers.AppendObject(aObserver);
     mNumObservers = mObservers.Count();
 
@@ -1709,7 +1702,6 @@ InMemoryDataSource::RemoveObserver(nsIRDFObserver* aObserver)
     if (! aObserver)
         return NS_ERROR_NULL_POINTER;
 
-    NS_AUTOLOCK(mLock);
     mObservers.RemoveObject(aObserver);
     // note: use Count() instead of just decrementing
     // in case aObserver wasn't in list, for example
@@ -1721,8 +1713,6 @@ InMemoryDataSource::RemoveObserver(nsIRDFObserver* aObserver)
 NS_IMETHODIMP 
 InMemoryDataSource::HasArcIn(nsIRDFNode *aNode, nsIRDFResource *aArc, PRBool *result)
 {
-    NS_AUTOLOCK(mDataSource->mLock);
-
     Assertion* ass = GetReverseArcs(aNode);
     while (ass) {
         nsIRDFResource* elbow = ass->u.as.mProperty;
@@ -1739,8 +1729,6 @@ InMemoryDataSource::HasArcIn(nsIRDFNode *aNode, nsIRDFResource *aArc, PRBool *re
 NS_IMETHODIMP 
 InMemoryDataSource::HasArcOut(nsIRDFResource *aSource, nsIRDFResource *aArc, PRBool *result)
 {
-    NS_AUTOLOCK(mDataSource->mLock);
-
     Assertion* ass = GetForwardArcs(aSource);
     if (ass && ass->mHashEntry) {
         PLDHashEntryHdr* hdr = PL_DHashTableOperate(ass->u.hash.mPropertyHash,
@@ -1792,8 +1780,6 @@ InMemoryDataSource::ArcLabelsOut(nsIRDFResource* aSource, nsISimpleEnumerator** 
     if (! aSource)
         return NS_ERROR_NULL_POINTER;
 
-    NS_AUTOLOCK(mLock);
-
     InMemoryArcsEnumeratorImpl* result =
         InMemoryArcsEnumeratorImpl::Create(this, aSource, nsnull);
 
@@ -1827,8 +1813,6 @@ InMemoryDataSource::GetAllResources(nsISimpleEnumerator** aResult)
     nsCOMPtr<nsISupportsArray> values;
     rv = NS_NewISupportsArray(getter_AddRefs(values));
     if (NS_FAILED(rv)) return rv;
-
-    NS_AUTOLOCK(mLock);
 
     // Enumerate all of our entries into an nsISupportsArray.
     PL_DHashTableEnumerate(&mForwardArcs, ResourceEnumerator, values.get());
@@ -1982,8 +1966,6 @@ InMemoryDataSource::Mark(nsIRDFResource* aSource,
     if (! aTarget)
         return NS_ERROR_NULL_POINTER;
 
-    NS_AUTOLOCK(mLock);
-
     Assertion *as = GetForwardArcs(aSource);
     if (as && as->mHashEntry) {
         PLDHashEntryHdr* hdr = PL_DHashTableOperate(as->u.hash.mPropertyHash,
@@ -2047,13 +2029,10 @@ InMemoryDataSource::Sweep()
 {
     SweepInfo info = { nsnull, &mReverseArcs, &mAllocator};
 
-    {
-        // Remove all the assertions while holding the lock, but don't notify anyone.
-        NS_AUTOLOCK(mLock);
-        PL_DHashTableEnumerate(&mForwardArcs, SweepForwardArcsEntries, &info);
-    }
+    // Remove all the assertions, but don't notify anyone.
+    PL_DHashTableEnumerate(&mForwardArcs, SweepForwardArcsEntries, &info);
 
-    // Now we've left the autolock. Do the notification.
+    // Now do the notification.
     Assertion* as = info.mUnassertList;
     while (as) {
 #ifdef PR_LOGGING
@@ -2169,6 +2148,132 @@ InMemoryDataSource::SweepForwardArcsEntries(PLDHashTable* aTable,
 
     return result;
 }
+
+////////////////////////////////////////////////////////////////////////
+// rdfIDataSource methods
+
+class VisitorClosure
+{
+public:
+    VisitorClosure(rdfITripleVisitor* aVisitor) :
+        mVisitor(aVisitor),
+        mRv(NS_OK)
+    {};
+    rdfITripleVisitor* mVisitor;
+    nsresult mRv;
+};
+
+PLDHashOperator PR_CALLBACK
+SubjectEnumerator(PLDHashTable* aTable, PLDHashEntryHdr* aHdr,
+                  PRUint32 aNumber, void* aArg) {
+    Entry* entry = NS_REINTERPRET_CAST(Entry*, aHdr);
+    VisitorClosure* closure = NS_STATIC_CAST(VisitorClosure*, aArg);
+
+    nsresult rv;
+    nsCOMPtr<nsIRDFNode> subject = do_QueryInterface(entry->mNode, &rv);
+    NS_ENSURE_SUCCESS(rv, PL_DHASH_NEXT);
+
+    closure->mRv = closure->mVisitor->Visit(subject, nsnull, nsnull, PR_TRUE);
+    if (NS_FAILED(closure->mRv) || closure->mRv == NS_RDF_STOP_VISIT)
+        return PL_DHASH_STOP;
+
+    return PL_DHASH_NEXT;
+}
+
+NS_IMETHODIMP
+InMemoryDataSource::VisitAllSubjects(rdfITripleVisitor *aVisitor)
+{
+    // Lock datasource against writes
+    ++mReadCount;
+
+    // Enumerate all of our entries into an nsISupportsArray.
+    VisitorClosure cls(aVisitor);
+    PL_DHashTableEnumerate(&mForwardArcs, SubjectEnumerator, &cls);
+
+    // Unlock datasource
+    --mReadCount;
+
+    return cls.mRv;
+} 
+
+class TriplesInnerClosure
+{
+public:
+    TriplesInnerClosure(nsIRDFNode* aSubject, VisitorClosure* aClosure) :
+        mSubject(aSubject), mOuter(aClosure) {};
+    nsIRDFNode* mSubject;
+    VisitorClosure* mOuter;
+};
+
+PLDHashOperator PR_CALLBACK
+TriplesInnerEnumerator(PLDHashTable* aTable, PLDHashEntryHdr* aHdr,
+                  PRUint32 aNumber, void* aArg) {
+    Entry* entry = NS_REINTERPRET_CAST(Entry*, aHdr);
+    Assertion* assertion = entry->mAssertions;
+    TriplesInnerClosure* closure = 
+        NS_STATIC_CAST(TriplesInnerClosure*, aArg);
+    while (assertion) {
+        NS_ASSERTION(!assertion->mHashEntry, "shouldn't have to hashes");
+        VisitorClosure* cls = closure->mOuter;
+        cls->mRv = cls->mVisitor->Visit(closure->mSubject,
+                                        assertion->u.as.mProperty,
+                                        assertion->u.as.mTarget,
+                                        assertion->u.as.mTruthValue);
+        if (NS_FAILED(cls->mRv) || cls->mRv == NS_RDF_STOP_VISIT) {
+            return PL_DHASH_STOP;
+        }
+        assertion = assertion->mNext;
+    }
+    return PL_DHASH_NEXT;
+}
+PLDHashOperator PR_CALLBACK
+TriplesEnumerator(PLDHashTable* aTable, PLDHashEntryHdr* aHdr,
+                  PRUint32 aNumber, void* aArg) {
+    Entry* entry = NS_REINTERPRET_CAST(Entry*, aHdr);
+    VisitorClosure* closure = NS_STATIC_CAST(VisitorClosure*, aArg);
+
+    nsresult rv;
+    nsCOMPtr<nsIRDFNode> subject = do_QueryInterface(entry->mNode, &rv);
+    NS_ENSURE_SUCCESS(rv, PL_DHASH_NEXT);
+
+    if (entry->mAssertions->mHashEntry) {
+        TriplesInnerClosure cls(subject, closure);
+        PL_DHashTableEnumerate(entry->mAssertions->u.hash.mPropertyHash,
+                               TriplesInnerEnumerator, &cls);
+        if (NS_FAILED(closure->mRv)) {
+            return PL_DHASH_STOP;
+        }
+        return PL_DHASH_NEXT;
+    }
+    Assertion* assertion = entry->mAssertions;
+    while (assertion) {
+        NS_ASSERTION(!assertion->mHashEntry, "shouldn't have to hashes");
+        closure->mRv = closure->mVisitor->Visit(subject,
+                                                assertion->u.as.mProperty,
+                                                assertion->u.as.mTarget,
+                                                assertion->u.as.mTruthValue);
+        if (NS_FAILED(closure->mRv) || closure->mRv == NS_RDF_STOP_VISIT) {
+            return PL_DHASH_STOP;
+        }
+        assertion = assertion->mNext;
+    }
+    return PL_DHASH_NEXT;
+}
+NS_IMETHODIMP
+InMemoryDataSource::VisitAllTriples(rdfITripleVisitor *aVisitor)
+{
+    // Lock datasource against writes
+    ++mReadCount;
+
+    // Enumerate all of our entries into an nsISupportsArray.
+    VisitorClosure cls(aVisitor);
+    PL_DHashTableEnumerate(&mForwardArcs, TriplesEnumerator, &cls);
+
+    // Unlock datasource
+    --mReadCount;
+
+    return cls.mRv;
+} 
 
 ////////////////////////////////////////////////////////////////////////
 

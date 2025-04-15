@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,7 +43,7 @@
 #include "nsIXMLContent.h"
 #include "nsIXMLContentSink.h"
 #include "nsIPresShell.h"
-#include "nsIPresContext.h" 
+#include "nsPresContext.h" 
 #include "nsIContent.h"
 #include "nsIContentViewerContainer.h"
 #include "nsIContentViewer.h"
@@ -52,7 +51,7 @@
 #include "nsIMarkupDocumentViewer.h"
 #include "nsIDocumentLoader.h"
 #include "nsHTMLParts.h"
-#include "nsIHTMLStyleSheet.h"
+#include "nsHTMLStyleSheet.h"
 #include "nsIHTMLCSSStyleSheet.h"
 #include "nsIComponentManager.h"
 #include "nsIDOMComment.h"
@@ -62,7 +61,6 @@
 #include "nsIDOMWindow.h"
 #include "nsIDOMDocumentType.h"
 #include "nsINameSpaceManager.h"
-#include "nsICSSLoader.h"
 #include "nsCOMPtr.h"
 #include "nsXPIDLString.h"
 #include "nsIHttpChannel.h"
@@ -80,16 +78,18 @@
 #include "nsIFIXptr.h"
 #include "nsIXPointer.h"
 #include "nsCExternalHandlerService.h"
-#include "nsIMIMEService.h"
 #include "nsNetUtil.h"
 #include "nsMimeTypes.h"
 #include "nsIEventListenerManager.h"
 #include "nsContentUtils.h"
-#include "nsIElementFactory.h"
+#include "nsJSUtils.h"
 #include "nsCRT.h"
 #include "nsIWindowWatcher.h"
 #include "nsIAuthPrompt.h"
 #include "nsIScriptGlobalObjectOwner.h"
+#include "nsIJSContextStack.h"
+#include "nsNodeInfoManager.h"
+#include "nsContentCreatorFunctions.h"
 
 // XXX The XML world depends on the html atoms
 #include "nsHTMLAtoms.h"
@@ -116,19 +116,15 @@ NS_NewDOMDocument(nsIDOMDocument** aInstancePtrResult,
 
   *aInstancePtrResult = nsnull;
 
-  nsXMLDocument* doc = new nsXMLDocument();
+  nsRefPtr<nsXMLDocument> doc = new nsXMLDocument();
   if (!doc)
     return NS_ERROR_OUT_OF_MEMORY;
 
   rv = doc->Init();
 
   if (NS_FAILED(rv)) {
-    delete doc;
-
     return rv;
   }
-
-  nsCOMPtr<nsIDOMDocument> kungFuDeathGrip(doc);
 
   doc->nsIDocument::SetDocumentURI(aBaseURI);
   doc->SetBaseURI(aBaseURI);
@@ -164,18 +160,16 @@ NS_NewXMLDocument(nsIDocument** aInstancePtrResult)
   nsXMLDocument* doc = new nsXMLDocument();
   NS_ENSURE_TRUE(doc, NS_ERROR_OUT_OF_MEMORY);
 
+  NS_ADDREF(doc);
   nsresult rv = doc->Init();
 
   if (NS_FAILED(rv)) {
-    delete doc;
-
-    return rv;
+    NS_RELEASE(doc);
   }
 
   *aInstancePtrResult = doc;
-  NS_ADDREF(*aInstancePtrResult);
 
-  return NS_OK;
+  return rv;
 }
 
   // NOTE! nsDocument::operator new() zeroes out all members, so don't
@@ -199,7 +193,7 @@ nsXMLDocument::~nsXMLDocument()
 // QueryInterface implementation for nsXMLDocument
 NS_INTERFACE_MAP_BEGIN(nsXMLDocument)
   NS_INTERFACE_MAP_ENTRY(nsIInterfaceRequestor)
-  NS_INTERFACE_MAP_ENTRY(nsIHttpEventSink)
+  NS_INTERFACE_MAP_ENTRY(nsIChannelEventSink)
   NS_INTERFACE_MAP_ENTRY(nsIDOMXMLDocument)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(XMLDocument)
 NS_INTERFACE_MAP_END_INHERITING(nsDocument)
@@ -226,6 +220,18 @@ nsXMLDocument::Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup)
   nsDocument::Reset(aChannel, aLoadGroup);
 
   mScriptContext = nsnull;
+}
+
+void
+nsXMLDocument::ResetToURI(nsIURI *aURI, nsILoadGroup *aLoadGroup)
+{
+  if (mChannelIsPending) {
+    StopDocumentLoad();
+    mChannel->Cancel(NS_BINDING_ABORTED);
+    mChannelIsPending = nsnull;
+  }
+  
+  nsDocument::ResetToURI(aURI, aLoadGroup);
 }
 
 /////////////////////////////////////////////////////
@@ -258,11 +264,13 @@ nsXMLDocument::GetInterface(const nsIID& aIID, void** aSink)
   return QueryInterface(aIID, aSink);
 }
 
-// nsIHttpEventSink
+// nsIChannelEventSink
 NS_IMETHODIMP
-nsXMLDocument::OnRedirect(nsIHttpChannel *aHttpChannel, nsIChannel *aNewChannel)
+nsXMLDocument::OnChannelRedirect(nsIChannel *aOldChannel,
+                                 nsIChannel *aNewChannel,
+                                 PRUint32 aFlags)
 {
-  NS_ENSURE_ARG_POINTER(aNewChannel);
+  NS_PRECONDITION(aNewChannel, "Redirecting to null channel?");
 
   nsCOMPtr<nsIURI> newLocation;
   nsresult rv = aNewChannel->GetURI(getter_AddRefs(newLocation)); // The redirected URI
@@ -368,7 +376,7 @@ nsXMLDocument::Load(const nsAString& aUrl, PRBool *aReturn)
   if (stack) {
     JSContext *cx;
     if (NS_SUCCEEDED(stack->Peek(&cx)) && cx) {
-      callingContext = nsContentUtils::GetDynamicScriptContext(cx);
+      callingContext = nsJSUtils::GetDynamicScriptContext(cx);
     }
   }
 
@@ -497,9 +505,13 @@ nsXMLDocument::Load(const nsAString& aUrl, PRBool *aReturn)
     return rv;
   }
 
+  // After this point, if we error out of this method we should clear
+  // mChannelIsPending.
+
   // Start an asynchronous read of the XML document
   rv = channel->AsyncOpen(listener, nsnull);
   if (NS_FAILED(rv)) {
+    mChannelIsPending = PR_FALSE;
     if (modalEventQueue) {
       mEventQService->PopThreadEventQueue(modalEventQueue);
     }
@@ -520,9 +532,9 @@ nsXMLDocument::Load(const nsAString& aUrl, PRBool *aReturn)
     if (node) {
       nsAutoString name, ns;      
       if (NS_SUCCEEDED(node->GetLocalName(name)) &&
-          name.Equals(NS_LITERAL_STRING("parsererror")) &&
+          name.EqualsLiteral("parsererror") &&
           NS_SUCCEEDED(node->GetNamespaceURI(ns)) &&
-          ns.Equals(NS_LITERAL_STRING("http://www.mozilla.org/newlayout/xml/parsererror.xml"))) {
+          ns.EqualsLiteral("http://www.mozilla.org/newlayout/xml/parsererror.xml")) {
         //return is already false
       } else {
         *aReturn = PR_TRUE;
@@ -545,6 +557,7 @@ nsXMLDocument::StartDocumentLoad(const char* aCommand,
                                  nsIContentSink* aSink)
 {
   if (nsCRT::strcmp(kLoadAsData, aCommand) == 0) {
+    mLoadedAsData = PR_TRUE;
     // We need to disable script & style loading in this case.
     // We leave them disabled even in EndLoad(), and let anyone
     // who puts the document on display to worry about enabling.
@@ -556,18 +569,10 @@ nsXMLDocument::StartDocumentLoad(const char* aCommand,
     }
 
     // styles
-    nsICSSLoader* cssLoader = GetCSSLoader();
-    if (!cssLoader)
-      return NS_ERROR_OUT_OF_MEMORY;
-    if (cssLoader) {
-      cssLoader->SetEnabled(PR_FALSE); // Do not load/process styles when loading as data
-    }
+    CSSLoader()->SetEnabled(PR_FALSE); // Do not load/process styles when loading as data
   } else if (nsCRT::strcmp("loadAsInteractiveData", aCommand) == 0) {
+    mLoadedAsInteractiveData = PR_TRUE;
     aCommand = kLoadAsData; // XBL, for example, needs scripts and styles
-  }
-
-  if (nsCRT::strcmp(aCommand, kLoadAsData) == 0) {
-    mLoadedAsData = PR_TRUE;
   }
 
   nsresult rv = nsDocument::StartDocumentLoad(aCommand,
@@ -586,7 +591,7 @@ nsXMLDocument::StartDocumentLoad(const char* aCommand,
 
   static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID);
 
-  nsCOMPtr<nsIParser> parser = do_CreateInstance(kCParserCID, &rv);
+  mParser = do_CreateInstance(kCParserCID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIXMLContentSink> sink;
@@ -606,14 +611,17 @@ nsXMLDocument::StartDocumentLoad(const char* aCommand,
   }
 
   // Set the parser as the stream listener for the document loader...
-  rv = CallQueryInterface(parser, aDocListener);
+  rv = CallQueryInterface(mParser, aDocListener);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  NS_ASSERTION(mChannel, "How can we not have a channel here?");
+  mChannelIsPending = PR_TRUE;
+  
   SetDocumentCharacterSet(charset);
-  parser->SetDocumentCharset(charset, charsetSource);
-  parser->SetCommand(aCommand);
-  parser->SetContentSink(sink);
-  parser->Parse(aUrl, nsnull, PR_FALSE, (void *)this);
+  mParser->SetDocumentCharset(charset, charsetSource);
+  mParser->SetCommand(aCommand);
+  mParser->SetContentSink(sink);
+  mParser->Parse(aUrl, nsnull, PR_FALSE, (void *)this);
 
   return NS_OK;
 }
@@ -621,19 +629,21 @@ nsXMLDocument::StartDocumentLoad(const char* aCommand,
 void
 nsXMLDocument::EndLoad()
 {
+  mChannelIsPending = PR_FALSE;
   mLoopingForSyncLoad = PR_FALSE;
 
-  if (mLoadedAsData) {
-    // Generate a document load event for the case when an XML document was loaded
-    // as pure data without any presentation attached to it.
+  if (mLoadedAsData || mLoadedAsInteractiveData) {
+    // Generate a document load event for the case when an XML
+    // document was loaded as pure data without any presentation
+    // attached to it.
+    nsEvent event(PR_TRUE, NS_PAGE_LOAD);
     nsEventStatus status = nsEventStatus_eIgnore;
-    nsEvent event(NS_PAGE_LOAD);
 
-    nsCOMPtr<nsIScriptGlobalObject> sgo;
+    nsIScriptGlobalObject* sgo = nsnull;
     nsCOMPtr<nsIScriptGlobalObjectOwner> container =
       do_QueryReferent(mDocumentContainer);
     if (container) {
-      container->GetScriptGlobalObject(getter_AddRefs(sgo));
+      sgo = container->GetScriptGlobalObject();
     }
 
     nsCxPusher pusher(sgo);
@@ -643,92 +653,12 @@ nsXMLDocument::EndLoad()
   nsDocument::EndLoad();  
 }
 
-// subclass hook for sheet ordering
-void
-nsXMLDocument::InternalAddStyleSheet(nsIStyleSheet* aSheet, PRUint32 aFlags)
+PRBool
+nsXMLDocument::IsLoadedAsData()
 {
-  // XXXbz this catalog stuff should be in the UA level in the cascade!
-  if (aFlags & NS_STYLESHEET_FROM_CATALOG) {
-    // always after other catalog sheets
-    mStyleSheets.InsertObjectAt(aSheet, mCatalogSheetCount);
-    ++mCatalogSheetCount;
-  }
-  else if (aSheet == mAttrStyleSheet) {  // always after catalog sheets
-    NS_ASSERTION(mStyleSheets.Count() == 0 ||
-                 mAttrStyleSheet != mStyleSheets[0],
-                 "Adding attr sheet twice!");
-    mStyleSheets.InsertObjectAt(aSheet, mCatalogSheetCount);
-  }
-  else if (aSheet == mStyleAttrStyleSheet) {  // always last
-    NS_ASSERTION(mStyleSheets.Count() == 0 ||
-                 mStyleSheets[mStyleSheets.Count() - 1] != mStyleAttrStyleSheet,
-                 "Adding style attr sheet twice!");
-    mStyleSheets.AppendObject(aSheet);
-  }
-  else {
-    PRInt32 count = mStyleSheets.Count();
-    if (count != 0 && mStyleAttrStyleSheet == mStyleSheets[count - 1]) {
-      // keep attr sheet last
-      mStyleSheets.InsertObjectAt(aSheet, count - 1);
-    }
-    else {
-      mStyleSheets.AppendObject(aSheet);
-    }
-  }
+  return mLoadedAsData;
 }
-
-void
-nsXMLDocument::InternalInsertStyleSheetAt(nsIStyleSheet* aSheet, PRInt32 aIndex)
-{
-  NS_ASSERTION(0 <= aIndex &&
-               aIndex <= (
-                          mStyleSheets.Count()
-                          /* Don't count Attribute stylesheet */
-                          - 1
-                          /* Don't count catalog sheets */
-                          - mCatalogSheetCount
-                          /* No insertion allowed after StyleAttr stylesheet */
-                          - (mStyleAttrStyleSheet ? 1: 0)
-                          ),
-               "index out of bounds");
-  // offset w.r.t. catalog style sheets and the attr style sheet
-  mStyleSheets.InsertObjectAt(aSheet, aIndex + mCatalogSheetCount + 1);
-}
-
-nsIStyleSheet*
-nsXMLDocument::InternalGetStyleSheetAt(PRInt32 aIndex) const
-{
-  PRInt32 count = InternalGetNumberOfStyleSheets();
-
-  if (aIndex >= 0 && aIndex < count) {
-    return mStyleSheets[aIndex + mCatalogSheetCount + 1];
-  } else {
-    NS_ERROR("Index out of range");
-    return nsnull;
-  }
-}
-
-PRInt32
-nsXMLDocument::InternalGetNumberOfStyleSheets() const
-{
-  PRInt32 count = mStyleSheets.Count();
-
-  if (count != 0 && mStyleAttrStyleSheet == mStyleSheets[count - 1]) {
-    // subtract the inline style sheet
-    --count;
-  }
-
-  if (count != 0 && mAttrStyleSheet == mStyleSheets[mCatalogSheetCount]) {
-    // subtract the attr sheet
-    --count;
-  }
-
-  count -= mCatalogSheetCount;
-
-  NS_ASSERTION(count >= 0, "How did we get a negative count?");
-
-  return count;
-}
+  
 
 // nsIDOMNode interface
 
@@ -820,9 +750,8 @@ MatchElementId(nsIContent *aContent, const nsACString& aUTF8Id, const nsAString&
     nsCOMPtr<nsIXMLContent> xmlContent = do_QueryInterface(aContent);    
 
     if (xmlContent) {
-      nsCOMPtr<nsIAtom> value;
-      if (NS_SUCCEEDED(xmlContent->GetID(getter_AddRefs(value))) &&
-          value && value->EqualsUTF8(aUTF8Id)) {
+      nsIAtom* value = xmlContent->GetID();
+      if (value && value->EqualsUTF8(aUTF8Id)) {
         return aContent;
       }
     }
@@ -869,19 +798,4 @@ nsXMLDocument::GetElementById(const nsAString& aElementId,
   }
 
   return CallQueryInterface(content, aReturn);
-}
-
-nsICSSLoader*
-nsXMLDocument::GetCSSLoader()
-{
-  if (!mCSSLoader) {
-    NS_NewCSSLoader(this, getter_AddRefs(mCSSLoader));
-    if (mCSSLoader) {
-      mCSSLoader->SetCaseSensitive(PR_TRUE);
-      // no quirks in XML
-      mCSSLoader->SetCompatibilityMode(eCompatibility_FullStandards);
-    }
-  }
-
-  return mCSSLoader;
 }

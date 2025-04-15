@@ -20,11 +20,11 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: Aaron Leventhal (aaronl@netscape.com)
+ *   Original Author: Aaron Leventhal (aaronl@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -50,13 +50,6 @@ nsOuterDocAccessible::nsOuterDocAccessible(nsIDOMNode* aNode,
                                            nsIWeakReference* aShell):
   nsAccessibleWrap(aNode, aShell)
 {
-  mAccChildCount = 1;
-}
-
-NS_IMETHODIMP nsOuterDocAccessible::GetChildCount(PRInt32 *aAccChildCount) 
-{
-  *aAccChildCount = 1;
-  return NS_OK;  
 }
 
   /* attribute wstring accName; */
@@ -67,14 +60,13 @@ NS_IMETHODIMP nsOuterDocAccessible::GetName(nsAString& aName)
     return NS_ERROR_FAILURE;
   }
   nsresult rv = accDoc->GetTitle(aName);
-  if (NS_FAILED(rv) || aName.IsEmpty())
-    rv = accDoc->GetURL(aName);
+  if (NS_FAILED(rv) || aName.IsEmpty()) {
+    rv = nsAccessible::GetName(aName);
+    if (aName.IsEmpty()) {
+      rv = accDoc->GetURL(aName);
+    }
+  }
   return rv;
-}
-
-NS_IMETHODIMP nsOuterDocAccessible::GetValue(nsAString& aValue) 
-{ 
-  return NS_OK;
 }
 
 /* unsigned long getRole (); */
@@ -90,47 +82,59 @@ NS_IMETHODIMP nsOuterDocAccessible::GetRole(PRUint32 *_retval)
 
 NS_IMETHODIMP nsOuterDocAccessible::GetState(PRUint32 *aState)
 {
-  return nsAccessible::GetState(aState);
+  nsAccessible::GetState(aState);
+  *aState &= ~STATE_FOCUSABLE;
+  return NS_OK;
 }
 
-NS_IMETHODIMP nsOuterDocAccessible::GetBounds(PRInt32 *x, PRInt32 *y, 
-                                                 PRInt32 *width, PRInt32 *height)
-{
-  return mFirstChild? mFirstChild->GetBounds(x, y, width, height): NS_ERROR_FAILURE;
-}
+void nsOuterDocAccessible::CacheChildren(PRBool aWalkAnonContent)
+{  
+  // An outer doc accessible usually has 1 nsDocAccessible child,
+  // but could have none if we can't get to the inner documnet
+  if (!mWeakShell) {
+    mAccChildCount = eChildCountUninitialized;
+    return;   // This outer doc node has been shut down
+  }
+  if (mAccChildCount != eChildCountUninitialized) {
+    return;
+  }
 
-NS_IMETHODIMP nsOuterDocAccessible::Init()
-{
-  nsresult rv = nsAccessibleWrap::Init(); 
-  
-  // We're in the accessibility cache now
+  mAccChildCount = 0;
+  SetFirstChild(nsnull);
+
   // In these variable names, "outer" relates to the nsOuterDocAccessible
   // as opposed to the nsDocAccessibleWrap which is "inner".
-  // The outer node is a <browser>, <iframe> or <editor> tag, whereas the inner node
-  // corresponds to the inner document root.
+  // The outer node is a something like a <browser>, <frame>, <iframe>, <page> or
+  // <editor> tag, whereas the inner node corresponds to the inner document root.
 
   nsCOMPtr<nsIContent> content(do_QueryInterface(mDOMNode));
   NS_ASSERTION(content, "No nsIContent for <browser>/<iframe>/<editor> dom node");
 
   nsCOMPtr<nsIDocument> outerDoc = content->GetDocument();
-  NS_ENSURE_TRUE(outerDoc, NS_ERROR_FAILURE);
+  if (!outerDoc) {
+    return;
+  }
 
   nsIDocument *innerDoc = outerDoc->GetSubDocumentFor(content);
   nsCOMPtr<nsIDOMNode> innerNode(do_QueryInterface(innerDoc));
-  NS_ENSURE_TRUE(innerNode, NS_ERROR_FAILURE);
-
-  nsIPresShell *innerPresShell = innerDoc->GetShellAt(0);
-  NS_ENSURE_TRUE(innerPresShell, NS_ERROR_FAILURE);
+  if (!innerNode) {
+    return;
+  }
 
   nsCOMPtr<nsIAccessible> innerAccessible;
   nsCOMPtr<nsIAccessibilityService> accService = 
     do_GetService("@mozilla.org/accessibilityService;1");
-  accService->GetAccessibleInShell(innerNode, innerPresShell, 
-                                   getter_AddRefs(innerAccessible));
-  NS_ENSURE_TRUE(innerAccessible, NS_ERROR_FAILURE);
-
-  SetFirstChild(innerAccessible); // weak ref
+  accService->GetAccessibleFor(innerNode, getter_AddRefs(innerAccessible));
   nsCOMPtr<nsPIAccessible> privateInnerAccessible = 
     do_QueryInterface(innerAccessible);
-  return privateInnerAccessible->SetParent(this);
+  if (!privateInnerAccessible) {
+    return;
+  }
+
+  // Success getting inner document as first child -- now we cache it.
+  mAccChildCount = 1;
+  SetFirstChild(innerAccessible); // weak ref
+  privateInnerAccessible->SetParent(this);
+  privateInnerAccessible->SetNextSibling(nsnull);
 }
+

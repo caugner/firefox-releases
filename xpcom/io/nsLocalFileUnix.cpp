@@ -1,32 +1,48 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */ 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code,
- * released March 31, 1998.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation.    Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *     Mike Shaver            <shaver@mozilla.org>
- *     Christopher Blizzard   <blizzard@mozilla.org>
- *     Jason Eager            <jce2@po.cwru.edu>
- *     Stuart Parmenter       <pavlov@netscape.com>
- *     Brendan Eich           <brendan@mozilla.org>
- *     Pete Collins           <petejc@mozdev.org>
- *     Paul Ashford           <arougthopher@lizardland.net>
- */
+ *   Mike Shaver            <shaver@mozilla.org>
+ *   Christopher Blizzard   <blizzard@mozilla.org>
+ *   Jason Eager            <jce2@po.cwru.edu>
+ *   Stuart Parmenter       <pavlov@netscape.com>
+ *   Brendan Eich           <brendan@mozilla.org>
+ *   Pete Collins           <petejc@mozdev.org>
+ *   Paul Ashford           <arougthopher@lizardland.net>
+ *   Fredrik Holmqvist      <thesuckiestemail@yahoo.se>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /**
  * Implementation of nsIFile for ``Unixy'' systems.
@@ -62,6 +78,7 @@
 #include "nsIComponentManager.h"
 #include "nsXPIDLString.h"
 #include "prproces.h"
+#include "nsIDirectoryEnumerator.h"
 #include "nsISimpleEnumerator.h"
 #include "nsITimelineService.h"
 
@@ -94,7 +111,8 @@
 
 /* directory enumerator */
 class NS_COM
-nsDirEnumeratorUnix : public nsISimpleEnumerator
+nsDirEnumeratorUnix : public nsISimpleEnumerator,
+                      public nsIDirectoryEnumerator
 {
     public:
     nsDirEnumeratorUnix();
@@ -104,6 +122,9 @@ nsDirEnumeratorUnix : public nsISimpleEnumerator
 
     // nsISimpleEnumerator interface
     NS_DECL_NSISIMPLEENUMERATOR
+
+    // nsIDirectoryEnumerator interface
+    NS_DECL_NSIDIRECTORYENUMERATOR
 
     NS_IMETHOD Init(nsLocalFile *parent, PRBool ignored);
 
@@ -126,11 +147,10 @@ nsDirEnumeratorUnix::nsDirEnumeratorUnix() :
 
 nsDirEnumeratorUnix::~nsDirEnumeratorUnix()
 {
-    if (mDir)
-        closedir(mDir);
+    Close();
 }
 
-NS_IMPL_ISUPPORTS1(nsDirEnumeratorUnix, nsISimpleEnumerator)
+NS_IMPL_ISUPPORTS2(nsDirEnumeratorUnix, nsISimpleEnumerator, nsIDirectoryEnumerator)
 
 NS_IMETHODIMP
 nsDirEnumeratorUnix::Init(nsLocalFile *parent, PRBool resolveSymlinks /*ignored*/)
@@ -154,29 +174,20 @@ NS_IMETHODIMP
 nsDirEnumeratorUnix::HasMoreElements(PRBool *result)
 {
     *result = mDir && mEntry;
+    if (!*result)
+        Close();
     return NS_OK;
 }
 
 NS_IMETHODIMP
 nsDirEnumeratorUnix::GetNext(nsISupports **_retval)
 {
-    nsresult rv;
-    if (!mDir || !mEntry) {
-        *_retval = nsnull;
-        return NS_OK;
-    }
-
-    nsLocalFile* file = new nsLocalFile();
-    if (!file)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    if (NS_FAILED(rv = file->InitWithNativePath(mParentPath)) ||
-        NS_FAILED(rv = file->AppendNative(nsDependentCString(mEntry->d_name)))) {
+    nsCOMPtr<nsIFile> file;
+    nsresult rv = GetNextFile(getter_AddRefs(file));
+    if (NS_FAILED(rv))
         return rv;
-    }
-    *_retval = NS_STATIC_CAST(nsISupports *, file);
-    NS_ADDREF(*_retval);
-    return GetNextEntry();
+    NS_IF_ADDREF(*_retval = file);
+    return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -198,15 +209,46 @@ nsDirEnumeratorUnix::GetNextEntry()
     return NS_OK;
 }
 
+NS_IMETHODIMP
+nsDirEnumeratorUnix::GetNextFile(nsIFile **_retval)
+{
+    nsresult rv;
+    if (!mDir || !mEntry) {
+        *_retval = nsnull;
+        return NS_OK;
+    }
+
+    nsCOMPtr<nsILocalFile> file = new nsLocalFile();
+    if (!file)
+        return NS_ERROR_OUT_OF_MEMORY;
+
+    if (NS_FAILED(rv = file->InitWithNativePath(mParentPath)) ||
+        NS_FAILED(rv = file->AppendNative(nsDependentCString(mEntry->d_name))))
+        return rv;
+
+    *_retval = file;
+    NS_ADDREF(*_retval);
+    return GetNextEntry();
+}
+
+NS_IMETHODIMP 
+nsDirEnumeratorUnix::Close()
+{
+    if (mDir) {
+        closedir(mDir);
+        mDir = nsnull;
+    }
+    return NS_OK;
+}
+
 nsLocalFile::nsLocalFile() :
     mHaveCachedStat(PR_FALSE)
 {
 }
 
 nsLocalFile::nsLocalFile(const nsLocalFile& other)
-  : mCachedStat(other.mCachedStat)
-  , mPath(other.mPath)
-  , mHaveCachedStat(other.mHaveCachedStat)
+  : mPath(other.mPath)
+  , mHaveCachedStat(PR_FALSE)
 {
 }
 
@@ -258,7 +300,7 @@ nsLocalFile::Clone(nsIFile **file)
 NS_IMETHODIMP
 nsLocalFile::InitWithNativePath(const nsACString &filePath)
 {
-    if (Substring(filePath, 0, 2) == NS_LITERAL_CSTRING("~/")) {
+    if (Substring(filePath, 0, 2).EqualsLiteral("~/")) {
         nsCOMPtr<nsIFile> homeDir;
         nsCAutoString homePath;
         if (NS_FAILED(NS_GetSpecialDirectory(NS_OS_HOME_DIR,
@@ -268,10 +310,9 @@ nsLocalFile::InitWithNativePath(const nsACString &filePath)
         }
         
         mPath = homePath + Substring(filePath, 1, filePath.Length() - 1);
-    } else if (filePath.IsEmpty() || filePath.First() != '/') {
-      NS_ERROR("Relative paths not allowed");
-      return NS_ERROR_FILE_UNRECOGNIZED_PATH;
     } else {
+        if (filePath.IsEmpty() || filePath.First() != '/')
+            return NS_ERROR_FILE_UNRECOGNIZED_PATH;
         mPath = filePath;
     }
 
@@ -429,7 +470,6 @@ nsLocalFile::CreateAndKeepOpen(PRUint32 type, PRIntn flags,
 #endif
         result = createFunc(mPath.get(), flags, permissions, _retval);
     }
-
     return NSRESULT_FOR_RETURN(result);
 }
 
@@ -472,7 +512,7 @@ nsLocalFile::AppendRelativeNativePath(const nsACString &fragment)
     if (fragment.First() == '/')
         return NS_ERROR_FILE_UNRECOGNIZED_PATH;
 
-    if (mPath.Equals(NS_LITERAL_CSTRING("/")))
+    if (mPath.EqualsLiteral("/"))
         mPath.Append(fragment);
     else
         mPath.Append(NS_LITERAL_CSTRING("/") + fragment);
@@ -619,7 +659,7 @@ nsLocalFile::CopyDirectoryTo(nsIFile *newParent)
     if NS_FAILED((rv = IsDirectory(&dirCheck)))
         return rv;
     if (!dirCheck)
-        return CopyToNative(newParent, nsCString());
+        return CopyToNative(newParent, EmptyCString());
     
     if (NS_FAILED(rv = Equals(newParent, &dirCheck)))
         return rv;
@@ -669,7 +709,7 @@ nsLocalFile::CopyDirectoryTo(nsIFile *newParent)
             rv = newParent->Clone(getter_AddRefs(destClone));
             if (NS_SUCCEEDED(rv)) {
                 nsCOMPtr<nsILocalFile> newDir(do_QueryInterface(destClone));
-                if (NS_FAILED(rv = entry->CopyToNative(newDir, nsCString()))) {
+                if (NS_FAILED(rv = entry->CopyToNative(newDir, EmptyCString()))) {
 #ifdef DEBUG
                     nsresult rv2;
                     nsCAutoString pathName;
@@ -683,7 +723,7 @@ nsLocalFile::CopyDirectoryTo(nsIFile *newParent)
                 }
             }
         } else {
-            if (NS_FAILED(rv = entry->CopyToNative(newParent, nsCString()))) {
+            if (NS_FAILED(rv = entry->CopyToNative(newParent, EmptyCString()))) {
 #ifdef DEBUG
                 nsresult rv2;
                 nsCAutoString pathName;
@@ -1206,6 +1246,67 @@ nsLocalFile::GetParent(nsIFile **aParent)
  * The results of Exists, isWritable and isReadable are not cached.
  */
 
+
+#ifdef XP_BEOS
+// access() is buggy in BeOS POSIX implementation, at least for BFS, using stat() instead
+// see bug 169506, https://bugzilla.mozilla.org/show_bug.cgi?id=169506
+NS_IMETHODIMP
+nsLocalFile::Exists(PRBool *_retval)
+{
+    CHECK_mPath();
+    NS_ENSURE_ARG_POINTER(_retval);
+    struct stat buf;
+
+    *_retval = (stat(mPath.get(), &buf) == 0);
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsLocalFile::IsWritable(PRBool *_retval)
+{
+    CHECK_mPath();
+    NS_ENSURE_ARG_POINTER(_retval);
+    struct stat buf;
+
+    *_retval = (stat(mPath.get(), &buf) == 0);
+    if (*_retval || errno == EACCES) {
+        *_retval = *_retval && (buf.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH ));
+        return NS_OK;
+    }
+    return NSRESULT_FOR_ERRNO();
+}
+
+NS_IMETHODIMP
+nsLocalFile::IsReadable(PRBool *_retval)
+{
+    CHECK_mPath();
+    NS_ENSURE_ARG_POINTER(_retval);
+    struct stat buf;
+
+    *_retval = (stat(mPath.get(), &buf) == 0);
+    if (*_retval || errno == EACCES) {
+        *_retval = *_retval && (buf.st_mode & (S_IRUSR | S_IRGRP | S_IROTH ));
+        return NS_OK;
+    }
+    return NSRESULT_FOR_ERRNO();
+}
+
+NS_IMETHODIMP
+nsLocalFile::IsExecutable(PRBool *_retval)
+{
+    CHECK_mPath();
+    NS_ENSURE_ARG_POINTER(_retval);
+    struct stat buf;
+
+    *_retval = (stat(mPath.get(), &buf) == 0);
+    if (*_retval || errno == EACCES) {
+        *_retval = *_retval && (buf.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH ));
+        return NS_OK;
+    }
+    return NSRESULT_FOR_ERRNO();
+}
+#else
+
 NS_IMETHODIMP
 nsLocalFile::Exists(PRBool *_retval)
 {
@@ -1216,47 +1317,7 @@ nsLocalFile::Exists(PRBool *_retval)
     return NS_OK;
 }
 
-#ifdef XP_BEOS
-// access() is buggy in BeOS POSIX implementation, at least for BFS, using stat() instead
-NS_IMETHODIMP
-nsLocalFile::IsWritable(PRBool *_retval)
-{
-    CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
-    struct stat buf;
-    *_retval = (stat(mPath.get(), &buf) == 0);
-    *_retval = *_retval && (buf.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH ));
-    if (*_retval || errno == EACCES)
-        return NS_OK;
-    return NSRESULT_FOR_ERRNO();
-}
 
-NS_IMETHODIMP
-nsLocalFile::IsReadable(PRBool *_retval)
-{
-    CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
-    struct stat buf;
-    *_retval = (stat(mPath.get(), &buf) == 0);
-    *_retval = *_retval && (buf.st_mode & (S_IRUSR | S_IRGRP | S_IROTH ));
-    if (*_retval || errno == EACCES)
-        return NS_OK;
-    return NSRESULT_FOR_ERRNO();
-}
-
-NS_IMETHODIMP
-nsLocalFile::IsExecutable(PRBool *_retval)
-{
-    CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
-    struct stat buf;
-    *_retval = (stat(mPath.get(), &buf) == 0);
-    *_retval = *_retval && (buf.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH ));
-    if (*_retval || errno == EACCES)
-        return NS_OK;
-    return NSRESULT_FOR_ERRNO();
-}
-#else
 NS_IMETHODIMP
 nsLocalFile::IsWritable(PRBool *_retval)
 {
@@ -1550,25 +1611,30 @@ nsLocalFile::SetPersistentDescriptor(const nsACString &aPersistentDescriptor)
 NS_IMETHODIMP
 nsLocalFile::Reveal()
 {
-  BPath bPath(mPath.get());
-  bPath.GetParent(&bPath);
-  entry_ref ref;
-  get_ref_for_path(bPath.Path(),&ref);
-  BMessage message(B_REFS_RECEIVED);
-  message.AddRef("refs",&ref);
-  BMessenger messenger("application/x-vnd.Be-TRAK");
-  messenger.SendMessage(&message);
- return NS_OK;
+    BPath bPath(mPath.get());
+    PRBool isDirectory;
+    if (NS_FAILED(IsDirectory(&isDirectory)))
+        return NS_ERROR_FAILURE;
+  
+    if(!isDirectory)
+        bPath.GetParent(&bPath);
+    entry_ref ref;
+    get_ref_for_path(bPath.Path(),&ref);
+    BMessage message(B_REFS_RECEIVED);
+    message.AddRef("refs",&ref);
+    BMessenger messenger("application/x-vnd.Be-TRAK");
+    messenger.SendMessage(&message);
+    return NS_OK;
 }
 
 NS_IMETHODIMP
 nsLocalFile::Launch()
 {
-  entry_ref ref;
-  get_ref_for_path (mPath.get(), &ref);
-  be_roster->Launch (&ref);
+    entry_ref ref;
+    get_ref_for_path (mPath.get(), &ref);
+    be_roster->Launch (&ref);
 
-  return NS_OK;
+    return NS_OK;
 }
 #else
 NS_IMETHODIMP

@@ -89,7 +89,11 @@ class nsTString_CharT : public nsTSubstring_CharT
         }
 
       explicit
+#ifdef MOZ_V1_STRING_ABI
       nsTString_CharT( const abstract_string_type& readable )
+#else
+      nsTString_CharT( const substring_type& readable )
+#endif
         : substring_type()
         {
           Assign(readable);
@@ -102,7 +106,9 @@ class nsTString_CharT : public nsTSubstring_CharT
       self_type& operator=( const self_type& str )                                              { Assign(str);      return *this; }
       self_type& operator=( const substring_type& str )                                         { Assign(str);      return *this; }
       self_type& operator=( const substring_tuple_type& tuple )                                 { Assign(tuple);    return *this; }
+#ifdef MOZ_V1_STRING_ABI
       self_type& operator=( const abstract_string_type& readable )                              { Assign(readable); return *this; }
+#endif
 
 
         /**
@@ -182,7 +188,7 @@ class nsTString_CharT : public nsTSubstring_CharT
          *  Search for given char within this string
          *  
          *  @param   aChar is the character to search for
-         *  @param   aOffset tells us where in this strig to start searching
+         *  @param   aOffset tells us where in this string to start searching
          *  @param   aCount tells us how far from the offset we are to search.
          *           Use -1 to search the whole string.
          *  @return  offset in string, or kNotFound
@@ -241,8 +247,6 @@ class nsTString_CharT : public nsTSubstring_CharT
 
 #ifdef CharT_is_char
       NS_COM PRInt32 Compare( const char* aString, PRBool aIgnoreCase=PR_FALSE, PRInt32 aCount=-1 ) const;
-#else
-      NS_COM PRInt32 CompareWithConversion( const char* aString, PRBool aIgnoreCase=PR_FALSE, PRInt32 aCount=-1 ) const;
 #endif
 
 
@@ -254,36 +258,14 @@ class nsTString_CharT : public nsTSubstring_CharT
          * @param   aCount tells us how many chars to compare
          * @return  boolean
          */
-
-      NS_COM PRBool EqualsWithConversion( const char* aString, PRBool aIgnoreCase=PR_FALSE, PRInt32 aCount=-1 ) const;
-      PRBool EqualsIgnoreCase( const char* aString, PRInt32 aCount=-1 ) const
-        {
-          return EqualsWithConversion(aString, PR_TRUE, aCount);
-        }
-
-
-#ifdef CharT_is_PRUnichar
-
-        /**
-         *  Determine if given buffer is plain ascii
-         *  
-         *  @param   aBuffer -- if null, then we test *this, otherwise we test given buffer
-         *  @return  TRUE if is all ascii chars or if strlen==0
-         */
-
-      NS_COM PRBool IsASCII(const PRUnichar* aBuffer=0);
+#ifdef CharT_is_char
+      PRBool EqualsIgnoreCase( const char* aString, PRInt32 aCount=-1 ) const {
+        return Compare(aString, PR_TRUE, aCount) == 0;
+      }
+#else
+      NS_COM PRBool EqualsIgnoreCase( const char* aString, PRInt32 aCount=-1 ) const;
 
 
-        /**
-         *  Determine if given char is a valid space character
-         *  
-         *  @param   aChar is character to be tested
-         *  @return  TRUE if is valid space char
-         */
-
-      NS_COM static PRBool IsSpace(PRUnichar ch);
-
-      
         /**
          * Copies data from internal buffer onto given char* buffer
          *
@@ -368,17 +350,6 @@ class nsTString_CharT : public nsTSubstring_CharT
 
 
         /**
-         *  This method is used to remove all occurances of aChar from this
-         * string.
-         *  
-         *  @param  aChar -- char to be stripped
-         *  @param  aOffset -- where in this string to start stripping chars
-         */
-         
-      NS_COM void StripChar( char_type aChar, PRInt32 aOffset=0 );
-
-
-        /**
          *  This method strips whitespace throughout the string.
          */
       NS_COM void StripWhitespace();
@@ -427,10 +398,6 @@ class nsTString_CharT : public nsTSubstring_CharT
       NS_COM void AppendWithConversion( const nsTAString_IncompatibleCharT& aString );
       NS_COM void AppendWithConversion( const incompatible_char_type* aData, PRInt32 aLength=-1 );
 
-#ifdef CharT_is_PRUnichar
-      NS_COM void InsertWithConversion( const incompatible_char_type* aData, PRUint32 aOffset, PRInt32 aCount=-1 );
-#endif
-
         /**
          * Append the given integer to this string 
          */
@@ -456,7 +423,6 @@ class nsTString_CharT : public nsTSubstring_CharT
          */
 
       NS_COM void AppendFloat( double aFloat );
-
 
 #endif // !MOZ_STRING_WITH_OBSOLETE_API
 
@@ -512,7 +478,9 @@ class nsTFixedString_CharT : public nsTString_CharT
       self_type& operator=( const char_type* data )                                             { Assign(data);     return *this; }
       self_type& operator=( const substring_type& str )                                         { Assign(str);      return *this; }
       self_type& operator=( const substring_tuple_type& tuple )                                 { Assign(tuple);    return *this; }
+#ifdef MOZ_V1_STRING_ABI
       self_type& operator=( const abstract_string_type& readable )                              { Assign(readable); return *this; }
+#endif
 
     protected:
 
@@ -578,12 +546,14 @@ class nsTAutoString_CharT : public nsTFixedString_CharT
           Assign(tuple);
         }
 
+#ifdef MOZ_V1_STRING_ABI
       explicit
       nsTAutoString_CharT( const abstract_string_type& readable )
         : fixed_string_type(mStorage, kDefaultStorageSize, 0)
         {
           Assign(readable);
         }
+#endif
 
         // |operator=| does not inherit, so we must define our own
       self_type& operator=( char_type c )                                                       { Assign(c);        return *this; }
@@ -591,7 +561,9 @@ class nsTAutoString_CharT : public nsTFixedString_CharT
       self_type& operator=( const self_type& str )                                              { Assign(str);      return *this; }
       self_type& operator=( const substring_type& str )                                         { Assign(str);      return *this; }
       self_type& operator=( const substring_tuple_type& tuple )                                 { Assign(tuple);    return *this; }
+#ifdef MOZ_V1_STRING_ABI
       self_type& operator=( const abstract_string_type& readable )                              { Assign(readable); return *this; }
+#endif
 
       enum { kDefaultStorageSize = 64 };
 
@@ -651,7 +623,9 @@ class nsTXPIDLString_CharT : public nsTString_CharT
       self_type& operator=( const self_type& str )                                              { Assign(str);      return *this; }
       self_type& operator=( const substring_type& str )                                         { Assign(str);      return *this; }
       self_type& operator=( const substring_tuple_type& tuple )                                 { Assign(tuple);    return *this; }
+#ifdef MOZ_V1_STRING_ABI
       self_type& operator=( const abstract_string_type& readable )                              { Assign(readable); return *this; }
+#endif
   };
 
 
@@ -732,7 +706,9 @@ class nsTAdoptingString_CharT : public nsTXPIDLString_CharT
         // |operator=| does not inherit, so we must define our own
       self_type& operator=( const substring_type& str )                                         { Assign(str);      return *this; }
       self_type& operator=( const substring_tuple_type& tuple )                                 { Assign(tuple);    return *this; }
+#ifdef MOZ_V1_STRING_ABI
       self_type& operator=( const abstract_string_type& readable )                              { Assign(readable); return *this; }
+#endif
 
         // Adopt(), if possible, when assigning to a self_type&. Note
         // that this violates the constness of str, str is always

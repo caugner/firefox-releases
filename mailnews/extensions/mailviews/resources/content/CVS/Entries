@@ -1,12 +1,12 @@
-/.cvsignore/1.1/Wed Nov  6 21:21:03 2002//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.4/Wed Jan  7 13:36:36 2004//TFIREFOX_1_0_RELEASE
-/contents.rdf/1.11/Fri Feb 27 11:54:24 2004//TFIREFOX_1_0_RELEASE
-/mailViewList.js/1.5/Thu Oct 30 21:11:55 2003//TFIREFOX_1_0_RELEASE
-/mailViewList.xul/1.6/Wed Jul  2 14:30:35 2003//TFIREFOX_1_0_RELEASE
-/mailViewSetup.js/1.3.18.1/Tue Sep 28 06:40:32 2004//TFIREFOX_1_0_RELEASE
-/mailViewSetup.xul/1.4.18.1/Thu Nov  4 18:51:52 2004//TFIREFOX_1_0_RELEASE
-/mailViews.dat/1.3/Wed Dec 18 05:03:56 2002//TFIREFOX_1_0_RELEASE
-/mailviewdef.pkg/1.2/Wed Jan  7 01:21:51 2004//TFIREFOX_1_0_RELEASE
-/msgViewPickerOverlay.js/1.10.6.4/Thu Oct 28 22:49:51 2004//TFIREFOX_1_0_RELEASE
-/msgViewPickerOverlay.xul/1.5.32.1/Thu Sep 16 19:40:37 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Wed Nov  6 21:21:03 2002//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.5/Sat Apr 17 18:32:27 2004//TFIREFOX_1_5_RELEASE
+/contents.rdf/1.11/Fri Feb 27 11:54:24 2004//TFIREFOX_1_5_RELEASE
+/mailViewList.js/1.7/Tue Aug  9 00:34:29 2005//TFIREFOX_1_5_RELEASE
+/mailViewList.xul/1.8/Sat Jul 24 21:56:22 2004//TFIREFOX_1_5_RELEASE
+/mailViewSetup.js/1.7/Tue Aug  9 00:34:29 2005//TFIREFOX_1_5_RELEASE
+/mailViewSetup.xul/1.7/Thu Nov  4 18:52:29 2004//TFIREFOX_1_5_RELEASE
+/mailViews.dat/1.3/Wed Dec 18 05:03:56 2002//TFIREFOX_1_5_RELEASE
+/mailviewdef.pkg/1.2/Wed Jan  7 01:21:51 2004//TFIREFOX_1_5_RELEASE
+/msgViewPickerOverlay.js/1.17.2.1/Wed Aug 24 22:40:51 2005//TFIREFOX_1_5_RELEASE
+/msgViewPickerOverlay.xul/1.7.20.1/Wed Aug 24 22:40:51 2005//TFIREFOX_1_5_RELEASE
 D

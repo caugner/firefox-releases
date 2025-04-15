@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -109,11 +109,13 @@ enum Pop3CapabilityEnum {
     POP3_HAS_AUTH_NTLM          = 0x00008000,
     POP3_HAS_AUTH_MSN           = 0x00010000,
     POP3_HAS_RESP_CODES         = 0x00020000,
-    POP3_HAS_AUTH_RESP_CODE     = 0x00040000
+    POP3_HAS_AUTH_RESP_CODE     = 0x00040000,
+    POP3_HAS_STLS               = 0x00080000,
+    POP3_HAS_AUTH_GSSAPI        = 0x00100000
 };
 
 #define POP3_HAS_AUTH_ANY         0x00001C00
-#define POP3_HAS_AUTH_ANY_SEC     0x0001E000
+#define POP3_HAS_AUTH_ANY_SEC     0x0011E000
 
 enum Pop3StatesEnum {
     POP3_READ_PASSWORD,                         // 0
@@ -169,7 +171,12 @@ enum Pop3StatesEnum {
 
     POP3_GURL_RESPONSE,                         // 42
     POP3_QUIT_RESPONSE,                         // 43
-    POP3_INTERRUPTED                            // 44
+    POP3_INTERRUPTED,                           // 44
+    POP3_TLS_RESPONSE,                          // 45
+    
+    POP3_AUTH_GSSAPI,                           // 46
+    POP3_AUTH_GSSAPI_FIRST,                     // 47
+    POP3_AUTH_GSSAPI_STEP                       // 48
 };
 
 
@@ -213,6 +220,7 @@ typedef struct _Pop3ConData {
     PRBool pause_for_read;   		/* Pause now for next read? */
     
     PRBool command_succeeded;   /* did the last command succeed? */
+    PRBool list_done;		/* did we get the complete list of msgIDs? */
     PRInt32 first_msg;
 
     PRUint32 obuffer_size;
@@ -281,7 +289,7 @@ typedef struct _Pop3ConData {
 #define POP3_AUTH_FAILURE           0x00000008  /* extended code said authentication failed */
 
 
-class nsPop3Protocol : public nsMsgProtocol, public nsMsgLineBuffer, public nsIPop3Protocol
+class nsPop3Protocol : public nsMsgProtocol, public nsIPop3Protocol
 {
 public:
   nsPop3Protocol(nsIURI* aURL);  
@@ -301,8 +309,6 @@ public:
   NS_IMETHOD OnTransportStatus(nsITransport *transport, nsresult status, PRUint32 progress, PRUint32 progressMax);
   NS_IMETHOD OnStopRequest(nsIRequest *request, nsISupports * aContext, nsresult aStatus);
   NS_IMETHOD Cancel(nsresult status);
-  // for nsMsgLineBuffer
-  virtual PRInt32 HandleLine(char *line, PRUint32 line_length);
 
   static void MarkMsgInHashTable(PLHashTable *hashTable, const Pop3UidlEntry *uidl, 
                                   PRBool *changed);
@@ -318,6 +324,7 @@ private:
   nsCString m_senderInfo;
   nsCString m_commandResponse;
   nsCOMPtr<nsIMsgStatusFeedback> m_statusFeedback;
+  nsCString m_GSSAPICache;
 
   // progress state information
   void UpdateProgressPercent (PRUint32 totalDone, PRUint32 total);
@@ -347,6 +354,8 @@ private:
 
   PRBool m_parsingMultiLineMessageId;
 
+  PRBool m_tlsEnabled;
+  PRInt32 m_socketType;
   PRBool m_useSecAuth;
   PRBool m_password_already_sent;
 
@@ -359,11 +368,7 @@ private:
   PRInt32 m_origAuthFlags;
   PRInt32 m_listpos;
 
-  // Response timer to drop hung connections
-  nsCOMPtr<nsITimer> m_responseTimer;
-  PRInt32 m_responseTimeout; // in seconds
-  void SetResponseTimer();
-  void CancelResponseTimer();
+  nsresult HandleLine(char *line, PRUint32 line_length);
 
   //////////////////////////////////////////////////////////////////////////////////////////
       // Begin Pop3 protocol state handlers
@@ -377,12 +382,15 @@ private:
   PRInt32 AuthResponse(nsIInputStream* inputStream, PRUint32 length);
   PRInt32 SendCapa();
   PRInt32 CapaResponse(nsIInputStream* inputStream, PRUint32 length);
+  PRInt32 SendTLSResponse();
   PRInt32 ProcessAuth();
   PRInt32 AuthFallback();
   PRInt32 AuthLogin();
   PRInt32 AuthLoginResponse();
   PRInt32 AuthNtlm();
   PRInt32 AuthNtlmResponse();
+  PRInt32 AuthGSSAPI();
+  PRInt32 AuthGSSAPIResponse(PRBool first);
   PRInt32 SendUsername();
   PRInt32 SendPassword();
   PRInt32 SendStatOrGurl(PRBool sendStat);

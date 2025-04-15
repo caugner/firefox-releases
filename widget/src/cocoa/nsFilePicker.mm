@@ -1,28 +1,43 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
- * The Original Code is the Mozilla browser.
- * 
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is Mozilla browser.
+ *
  * The Initial Developer of the Original Code is Netscape
  * Communications Corporation. Portions created by Netscape are
  * Copyright (C) 1999 Netscape Communications Corporation. All
  * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * Contributor(s):
  *   Stuart Parmenter <pavlov@netscape.com>
  *   Steve Dagley <sdagley@netscape.com>
  *   David Haas <haasd@cae.wisc.edu>
  *   Simon Fraser <sfraser@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 // Arrgh.  Bitten by bug 154232 here.  
 // Need to undef DARWIN before including Cocoa & (by default) CoreFoundation
@@ -33,7 +48,6 @@
 #define DARWIN  
 
 #include "nsCOMPtr.h"
-#include "nsCRT.h"
 #include "nsReadableUtils.h"
 #include "nsNetUtil.h"
 #include "nsIComponentManager.h"
@@ -54,8 +68,7 @@ NS_IMPL_ISUPPORTS1(nsFilePicker, nsIFilePicker)
 //
 //-------------------------------------------------------------------------
 nsFilePicker::nsFilePicker()
-: mWasCancelled(PR_FALSE)
-, mAllFilesDisplayed(PR_TRUE)
+: mAllFilesDisplayed(PR_TRUE)
 , mMode(0)
 , mSelectedType(0)
 {
@@ -73,37 +86,14 @@ nsFilePicker::~nsFilePicker()
 }
 
 
-NS_IMETHODIMP
-nsFilePicker::InitNative(nsIWidget *aParent, const PRUnichar *aTitle, PRInt16 aMode)
+void
+nsFilePicker::InitNative(nsIWidget *aParent, const nsAString& aTitle,
+                         PRInt16 aMode)
 {
   mTitle = aTitle;
   mMode = aMode;
-
-  return NS_OK;
 }
 
-
-//-------------------------------------------------------------------------
-//
-// Ok's the dialog
-//
-//-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::OnOk()
-{
-  mWasCancelled  = PR_FALSE;
-  return NS_OK;
-}
-
-//-------------------------------------------------------------------------
-//
-// Cancel the dialog
-//
-//-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::OnCancel()
-{
-  mWasCancelled  = PR_TRUE;
-  return NS_OK;
-}
 
 //-------------------------------------------------------------------------
 //
@@ -206,7 +196,7 @@ nsFilePicker::GetLocalFiles(const nsString& inTitle, PRBool inAllowMultiple, nsC
     if (theURL)
     {
       nsCOMPtr<nsILocalFile> localFile;
-      NS_NewLocalFile(nsString(), PR_TRUE, getter_AddRefs(localFile));
+      NS_NewLocalFile(EmptyString(), PR_TRUE, getter_AddRefs(localFile));
       nsCOMPtr<nsILocalFileMac> macLocalFile = do_QueryInterface(localFile);
       if (macLocalFile && NS_SUCCEEDED(macLocalFile->InitWithCFURL((CFURLRef)theURL)))
         outFiles.AppendObject(localFile);
@@ -260,7 +250,7 @@ nsFilePicker::GetLocalFolder(const nsString& inTitle, nsILocalFile** outFile)
   if (theURL)
   {
     nsCOMPtr<nsILocalFile> localFile;
-    NS_NewLocalFile(nsString(), PR_TRUE, getter_AddRefs(localFile));
+    NS_NewLocalFile(EmptyString(), PR_TRUE, getter_AddRefs(localFile));
     nsCOMPtr<nsILocalFileMac> macLocalFile = do_QueryInterface(localFile);
     if (macLocalFile && NS_SUCCEEDED(macLocalFile->InitWithCFURL((CFURLRef)theURL)))
     {
@@ -314,7 +304,7 @@ nsFilePicker::PutLocalFile(const nsString& inTitle, const nsString& inDefaultNam
   if (fileURL)
   { 
     nsCOMPtr<nsILocalFile> localFile;
-    NS_NewLocalFile(nsString(), PR_TRUE, getter_AddRefs(localFile));
+    NS_NewLocalFile(EmptyString(), PR_TRUE, getter_AddRefs(localFile));
     nsCOMPtr<nsILocalFileMac> macLocalFile = do_QueryInterface(localFile);
     if (macLocalFile && NS_SUCCEEDED(macLocalFile->InitWithCFURL((CFURLRef)fileURL)))
     {
@@ -405,7 +395,7 @@ nsFilePicker::PanelDefaultDirectory()
   if (mDisplayDirectory) {
     nsAutoString pathStr;
     mDisplayDirectory->GetPath(pathStr);
-    directory = [[[NSString alloc] initWithCharacters:pathStr.get() length:nsCRT::strlen(pathStr.get())] autorelease];
+    directory = [[[NSString alloc] initWithCharacters:pathStr.get() length:pathStr.Length()] autorelease];
   }
   return directory;
 }
@@ -458,13 +448,13 @@ NS_IMETHODIMP nsFilePicker::GetFiles(nsISimpleEnumerator **aFiles)
 // Get the file + path
 //
 //-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::SetDefaultString(const PRUnichar *aString)
+NS_IMETHODIMP nsFilePicker::SetDefaultString(const nsAString& aString)
 {
   mDefault = aString;
   return NS_OK;
 }
 
-NS_IMETHODIMP nsFilePicker::GetDefaultString(PRUnichar **aString)
+NS_IMETHODIMP nsFilePicker::GetDefaultString(nsAString& aString)
 {
   return NS_ERROR_FAILURE;
 }
@@ -474,40 +464,16 @@ NS_IMETHODIMP nsFilePicker::GetDefaultString(PRUnichar **aString)
 // The default extension to use for files
 //
 //-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::GetDefaultExtension(PRUnichar **aExtension)
+NS_IMETHODIMP nsFilePicker::GetDefaultExtension(nsAString& aExtension)
 {
-  *aExtension = nsnull;
+  aExtension.Truncate();
   return NS_OK;
 }
 
-NS_IMETHODIMP nsFilePicker::SetDefaultExtension(const PRUnichar *aExtension)
+NS_IMETHODIMP nsFilePicker::SetDefaultExtension(const nsAString& aExtension)
 {
   return NS_OK;
 }
-
-//-------------------------------------------------------------------------
-//
-// Set the display directory
-//
-//-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::SetDisplayDirectory(nsILocalFile *aDirectory)
-{
-  mDisplayDirectory = aDirectory;
-  return NS_OK;
-}
-
-//-------------------------------------------------------------------------
-//
-// Get the display directory
-//
-//-------------------------------------------------------------------------
-NS_IMETHODIMP nsFilePicker::GetDisplayDirectory(nsILocalFile **aDirectory)
-{
-  *aDirectory = mDisplayDirectory;
-  NS_IF_ADDREF(*aDirectory);
-  return NS_OK;
-}
-
 
 //-------------------------------------------------------------------------
 //
@@ -515,12 +481,10 @@ NS_IMETHODIMP nsFilePicker::GetDisplayDirectory(nsILocalFile **aDirectory)
 //
 //-------------------------------------------------------------------------
 NS_IMETHODIMP
-nsFilePicker::AppendFilter(const PRUnichar *aTitle, const PRUnichar *aFilter)
+nsFilePicker::AppendFilter(const nsAString& aTitle, const nsAString& aFilter)
 {
-  // XXX this assumes that these buffers outlive us. Might want to copy
-  // the strings.
-  mFilters.AppendString(nsDependentString(aFilter));
-  mTitles.AppendString(nsDependentString(aTitle));
+  mFilters.AppendString(aFilter);
+  mTitles.AppendString(aTitle);
   
   return NS_OK;
 }

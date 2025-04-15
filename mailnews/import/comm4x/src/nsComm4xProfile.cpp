@@ -19,11 +19,11 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Srilatha Moturi <srilatha@netscape.com>
+ *   Srilatha Moturi <srilatha@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -58,6 +58,10 @@
 #else
 #define OLDREG_DIR                NS_OS2_DIR
 #endif
+#else
+/* this will cause a failure at run time, as it should, since we don't know
+   how to migrate platforms other than Mac, Windows and UNIX */
+#define PREF_FILE_NAME_IN_4x ""
 #endif
 
 #ifndef MAXPATHLEN
@@ -83,9 +87,9 @@ NS_IMPL_ISUPPORTS1(nsComm4xProfile, nsIComm4xProfile)
 NS_IMETHODIMP
 nsComm4xProfile::GetProfileList(PRUint32 *length, PRUnichar ***profileNames)
 {
-    nsresult rv;
 // on win/mac/os2, NS4x uses a registry to determine profile locations
 #if defined(XP_WIN) || defined(XP_MACOSX) || defined(XP_OS2)
+    nsresult rv;
 
     nsCOMPtr<nsIFile> regFile;
     rv = NS_GetSpecialDirectory(OLDREG_DIR, getter_AddRefs(regFile));
@@ -145,8 +149,8 @@ nsComm4xProfile::GetMailDir(const PRUnichar *aProfile, PRUnichar **_retval)
 {
     NS_ENSURE_ARG_POINTER(_retval);
     *_retval = nsnull;
-    nsresult rv = NS_OK;
 #if defined(XP_WIN) || defined(XP_OS2) || defined(XP_MACOSX)
+    nsresult rv;
     nsCOMPtr <nsILocalFile> resolvedLocation = do_CreateInstance("@mozilla.org/file/local;1");
     // on macos, registry entries are UTF8 encoded
     NS_ConvertUTF16toUTF8 profileName(aProfile);

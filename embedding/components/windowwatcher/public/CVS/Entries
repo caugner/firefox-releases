@@ -1,9 +1,9 @@
-/.cvsignore/1.1/Sat Feb 24 06:22:25 2001//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.6/Sat Dec 28 01:13:27 2002//TFIREFOX_1_0_RELEASE
-/nsIAuthPromptWrapper.idl/1.1/Thu Feb  7 15:56:35 2002//TFIREFOX_1_0_RELEASE
-/nsIDialogParamBlock.idl/1.6/Wed Jan 22 05:52:22 2003//TFIREFOX_1_0_RELEASE
-/nsIPromptService.idl/1.12.72.2/Sun Jun 20 20:48:29 2004//TFIREFOX_1_0_RELEASE
-/nsIWindowWatcher.idl/1.12/Tue Jul 23 02:27:16 2002//TFIREFOX_1_0_RELEASE
-/nsPIPromptService.idl/1.6.132.2/Sun Jun 20 20:48:29 2004//TFIREFOX_1_0_RELEASE
-/nsPIWindowWatcher.idl/1.7/Fri Nov 16 02:10:57 2001//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Sat Feb 24 06:22:25 2001//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.8/Tue Nov 16 20:36:26 2004//TFIREFOX_1_5_RELEASE
+/nsIAuthPromptWrapper.idl/1.1/Thu Feb  7 15:56:35 2002//TFIREFOX_1_5_RELEASE
+/nsIDialogParamBlock.idl/1.7/Sun Apr 18 22:00:50 2004//TFIREFOX_1_5_RELEASE
+/nsIPromptService.idl/1.16/Tue Nov 16 20:36:26 2004//TFIREFOX_1_5_RELEASE
+/nsIWindowWatcher.idl/1.14.12.1/Tue Sep 13 01:27:37 2005//TFIREFOX_1_5_RELEASE
+/nsPIPromptService.idl/1.9/Sat Jun  5 09:26:00 2004//TFIREFOX_1_5_RELEASE
+/nsPIWindowWatcher.idl/1.9.8.1/Tue Sep 13 01:27:37 2005//TFIREFOX_1_5_RELEASE
 D

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #ifndef nsIRadioGroupContainer_h___
@@ -75,12 +74,24 @@ public:
                                    nsIDOMHTMLInputElement* aRadio) = 0;
 
   /**
-   * Set the current radio button in a group
+   * Get the current radio button in a group
    * @param aName the group name
    * @param aRadio the currently selected radio button [OUT]
    */
   NS_IMETHOD GetCurrentRadioButton(const nsAString& aName,
                                    nsIDOMHTMLInputElement** aRadio) = 0;
+
+  /**
+   * Set the next/prev radio button in a group
+   * @param aName the group name
+   * @param aPrevious, true gets previous radio button, false gets next
+   * @param aFocusedRadio the currently focused radio button
+   * @param aRadio the currently selected radio button [OUT]
+   */
+  NS_IMETHOD GetNextRadioButton(const nsAString& aName,
+                                const PRBool aPrevious,
+                                nsIDOMHTMLInputElement*  aFocusedRadio,
+                                nsIDOMHTMLInputElement** aRadio) = 0;
 
   /**
    * Add radio button to radio group
@@ -105,6 +116,19 @@ public:
    */
   NS_IMETHOD RemoveFromRadioGroup(const nsAString& aName,
                                   nsIFormControl* aRadio) = 0;
+
+  /**
+   * Get the radio group position and the number of radio buttons in the group.
+   * that the radio button is in. If the radio button not grouped with any other
+   * radio buttons this method will treat it as being in a group of one.
+   * @param aRadio radio button's pointer
+   * @param aPositionIndex out indicates 0-indexed position in the radio group,
+   *                           or just 0 if a group cannot be found
+   * @param aItemsInGroup the number of radio buttons in the group
+   */
+  NS_IMETHOD GetPositionInGroup(nsIDOMHTMLInputElement *aRadio,
+                                PRInt32 *aPositionIndex,
+                                PRInt32 *aItemsInGroup) = 0;
 };
 
 #endif /* nsIRadioGroupContainer_h__ */

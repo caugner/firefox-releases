@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -125,7 +125,8 @@ nsresult nsExplainErrorDetails(nsISmtpUrl * aSmtpUrl, int code, ...)
       case NS_ERROR_SENDING_FROM_COMMAND:
       case NS_ERROR_SENDING_RCPT_COMMAND:
       case NS_ERROR_SENDING_DATA_COMMAND:
-      case NS_ERROR_SENDING_MESSAGE:   
+      case NS_ERROR_SENDING_MESSAGE:
+      case NS_ERROR_SMTP_GREETING:
            smtpBundle->GetStringByID(code, getter_Copies(eMsg));
            msg = nsTextFormatter::vsmprintf(eMsg, args);
            break;
@@ -325,6 +326,9 @@ void nsSmtpProtocol::Initialize(nsIURI * aURL)
     PR_LOG(SMTPLogModule, PR_LOG_ALWAYS, ("SMTP Connecting to: %s", hostName.get()));
 #endif
     
+    // When we are making a secure connection, we need to make sure that we
+    // pass an interface requestor down to the socket transport so that PSM can
+    // retrieve a nsIPrompt instance if needed.
     nsCOMPtr<nsIInterfaceRequestor> callbacks;
     nsCOMPtr<nsISmtpUrl> smtpUrl(do_QueryInterface(aURL));
     if (smtpUrl)
@@ -369,9 +373,9 @@ void nsSmtpProtocol::GetUserDomainName(nsACString& aResult)
         "unexpected IPv4-mapped IPv6 address");
 
       if (iaddr.raw.family == PR_AF_INET6)   // IPv6 style address?
-        aResult.Assign(NS_LITERAL_CSTRING("[IPv6:"));
+        aResult.AssignLiteral("[IPv6:");
       else
-        aResult.Assign(NS_LITERAL_CSTRING("["));
+        aResult.AssignLiteral("[");
 
       aResult.Append(nsDependentCString(ipAddressString) + NS_LITERAL_CSTRING("]"));
     }
@@ -446,7 +450,7 @@ PRInt32 nsSmtpProtocol::SmtpResponse(nsIInputStream * inputStream, PRUint32 leng
   
   line = m_lineStreamBuffer->ReadNextLine(inputStream, ln, pauseForMoreData);
   
-  if(pauseForMoreData || !line)
+  if (pauseForMoreData || !line)
   {
     SetFlag(SMTP_PAUSE_FOR_READ); /* pause */
     PR_Free(line);
@@ -457,25 +461,30 @@ PRInt32 nsSmtpProtocol::SmtpResponse(nsIInputStream * inputStream, PRUint32 leng
   
   PR_LOG(SMTPLogModule, PR_LOG_ALWAYS, ("SMTP Response: %s", line));
   cont_char = ' '; /* default */
-  sscanf(line, "%d%c", &m_responseCode, &cont_char);
+  // sscanf() doesn't update m_responseCode if line doesn't start
+  // with a number. That can be dangerous. So be sure to set
+  // m_responseCode to 0 if no items read.
+  if (PR_sscanf(line, "%d%c", &m_responseCode, &cont_char) <= 0)
+    m_responseCode = 0;
   
-  if(m_continuationResponse == -1)
+  if (m_continuationResponse == -1)
   {
     if (cont_char == '-')  /* begin continuation */
       m_continuationResponse = m_responseCode;
-    
-    if(PL_strlen(line) > 3)
-      m_responseText = line+4;
+
+    // display the whole message if no valid response code or
+    // message shorter than 4 chars
+    m_responseText = (m_responseCode >= 100 && PL_strlen(line) > 3) ? line + 4 : line;
   }
   else
-  {    /* have to continue */
+  { /* have to continue */
     if (m_continuationResponse == m_responseCode && cont_char == ' ')
       m_continuationResponse = -1;    /* ended */
     
     if (m_responseText.CharAt(m_responseText.Length() - 1) != '\n')
       m_responseText += "\n";
-    if(PL_strlen(line) > 3)
-      m_responseText += line+4;
+
+    m_responseText += (PL_strlen(line) > 3) ? line + 4 : line;
   }
   
   if (m_responseCode == 220 && m_responseText.Length() && !m_tlsInitiated)
@@ -483,7 +492,7 @@ PRInt32 nsSmtpProtocol::SmtpResponse(nsIInputStream * inputStream, PRUint32 leng
     m_nextStateAfterResponse = SMTP_EXTN_LOGIN_RESPONSE;
   }
   
-  if(m_continuationResponse == -1)  /* all done with this response? */
+  if (m_continuationResponse == -1)  /* all done with this response? */
   {
     m_nextState = m_nextStateAfterResponse;
     ClearFlag(SMTP_PAUSE_FOR_READ); /* don't pause */
@@ -498,9 +507,17 @@ PRInt32 nsSmtpProtocol::ExtensionLoginResponse(nsIInputStream * inputStream, PRU
   PRInt32 status = 0;
   nsCAutoString buffer("EHLO ");
   
-  if(m_responseCode != 220)
+  if (m_responseCode != 220)
   {
-    m_urlErrorState = NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER;
+#ifdef DEBUG
+    nsresult rv = 
+#endif
+    nsExplainErrorDetails(m_runningURL, NS_ERROR_SMTP_GREETING,
+                          m_responseText.get());
+
+    NS_ASSERTION(NS_SUCCEEDED(rv), "failed to explain SMTP error");
+
+    m_urlErrorState = NS_ERROR_BUT_DONT_SHOW_ALERT;
     return(NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER);
   }
   
@@ -637,7 +654,7 @@ PRInt32 nsSmtpProtocol::SendEhloResponse(nsIInputStream * inputStream, PRUint32 
             if (m_prefTrySSL == PREF_SECURE_ALWAYS_STARTTLS)
             {
                 m_nextState = SMTP_ERROR_DONE;
-                m_urlErrorState = NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER;
+                m_urlErrorState = NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER_WITH_STARTTLS1;
                 return(NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER);
             }
 
@@ -701,6 +718,10 @@ PRInt32 nsSmtpProtocol::SendEhloResponse(nsIInputStream * inputStream, PRUint32 
 
             if(m_prefTrySecAuth)
             {
+
+                if (responseLine.Find("GSSAPI", PR_TRUE, 5) >= 0)
+                    SetFlag(SMTP_AUTH_GSSAPI_ENABLED);
+
                 nsresult rv;
                 nsCOMPtr<nsISignatureVerifier> verifier = do_GetService(SIGNATURE_VERIFIER_CONTRACTID, &rv);
                 // this checks if psm is installed...
@@ -733,8 +754,11 @@ PRInt32 nsSmtpProtocol::SendEhloResponse(nsIInputStream * inputStream, PRUint32 
     if(TestFlag(SMTP_EHLO_SIZE_ENABLED) &&
        m_sizelimit > 0 && (PRInt32)m_totalMessageSize > m_sizelimit)
     {
-        nsresult rv = nsExplainErrorDetails(m_runningURL,
-                NS_ERROR_SMTP_PERM_SIZE_EXCEEDED_1, m_sizelimit);
+#ifdef DEBUG
+        nsresult rv = 
+#endif
+        nsExplainErrorDetails(m_runningURL,
+                      NS_ERROR_SMTP_PERM_SIZE_EXCEEDED_1, m_sizelimit);
         NS_ASSERTION(NS_SUCCEEDED(rv), "failed to explain SMTP error");
 
         m_urlErrorState = NS_ERROR_BUT_DONT_SHOW_ALERT;
@@ -818,7 +842,7 @@ PRInt32 nsSmtpProtocol::ProcessAuth()
         else if (m_prefTrySSL == PREF_SECURE_ALWAYS_STARTTLS)
         {
             m_nextState = SMTP_ERROR_DONE;
-            m_urlErrorState = NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER;
+            m_urlErrorState = NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER_WITH_STARTTLS2;
             return(NS_ERROR_COULD_NOT_LOGIN_TO_SMTP_SERVER);
         }
     }
@@ -836,7 +860,9 @@ PRInt32 nsSmtpProtocol::ProcessAuth()
     else
     if (m_prefAuthMethod == PREF_AUTH_ANY)
     {
-        if (TestFlag(SMTP_AUTH_CRAM_MD5_ENABLED) ||
+        if (TestFlag(SMTP_AUTH_GSSAPI_ENABLED)) 
+            m_nextState = SMTP_SEND_AUTH_GSSAPI_FIRST;
+        else if (TestFlag(SMTP_AUTH_CRAM_MD5_ENABLED) ||
             TestFlag(SMTP_AUTH_NTLM_ENABLED) ||
             TestFlag(SMTP_AUTH_PLAIN_ENABLED))
             m_nextState = SMTP_SEND_AUTH_LOGIN_STEP1;
@@ -884,7 +910,9 @@ PRInt32 nsSmtpProtocol::AuthLoginResponse(nsIInputStream * stream, PRUint32 leng
       {
         // If one authentication failed, we're going to
         // fall back on a less secure login method.
-        if(TestFlag(SMTP_AUTH_DIGEST_MD5_ENABLED))
+        if(TestFlag(SMTP_AUTH_GSSAPI_ENABLED))
+          ClearFlag(SMTP_AUTH_GSSAPI_ENABLED);
+        else if(TestFlag(SMTP_AUTH_DIGEST_MD5_ENABLED))
           // if DIGEST-MD5 enabled, clear it if we failed.
           ClearFlag(SMTP_AUTH_DIGEST_MD5_ENABLED);
         else if(TestFlag(SMTP_AUTH_CRAM_MD5_ENABLED))
@@ -914,6 +942,8 @@ PRInt32 nsSmtpProtocol::AuthLoginResponse(nsIInputStream * stream, PRUint32 leng
             // Let's restore the original auth flags from SendEhloResponse so we can
             // try them again with new password and username
             RestoreAuthFlags();
+            // except for gssapi, which doesn't care about the new password.
+            ClearFlag(SMTP_AUTH_GSSAPI_ENABLED);
         }
 
         m_nextState = SMTP_AUTH_PROCESS_STATE;
@@ -926,6 +956,68 @@ PRInt32 nsSmtpProtocol::AuthLoginResponse(nsIInputStream * stream, PRUint32 leng
   return (status);
 }
 
+// GSSAPI may consist of multiple round trips
+
+PRInt32 nsSmtpProtocol::AuthGSSAPIFirst()
+{
+  nsCAutoString command("AUTH GSSAPI ");
+  nsCAutoString resp;
+  nsCAutoString service("smtp@");
+  nsXPIDLCString hostName;
+  nsXPIDLCString userName;
+  nsresult rv;
+  nsCOMPtr<nsISmtpServer> smtpServer;
+  rv = m_runningURL->GetSmtpServer(getter_AddRefs(smtpServer));
+  if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
+
+  rv = smtpServer->GetUsername(getter_Copies(userName));
+  if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
+  rv = smtpServer->GetHostname(getter_Copies(hostName));
+  if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
+
+ service.Append(hostName);
+  rv = DoGSSAPIStep1(service.get(), userName, resp);
+  if (NS_FAILED(rv))
+  {
+    m_nextState = SMTP_AUTH_PROCESS_STATE;
+    ClearFlag(SMTP_AUTH_GSSAPI_ENABLED);
+    return 0;
+  }
+  else
+    command.Append(resp);
+  command.Append(CRLF);
+  m_nextState = SMTP_RESPONSE;
+  m_nextStateAfterResponse = SMTP_SEND_AUTH_GSSAPI_STEP;
+  SetFlag(SMTP_PAUSE_FOR_READ);
+  nsCOMPtr<nsIURI> url = do_QueryInterface(m_runningURL);
+  return SendData(url, command.get());
+}
+
+PRInt32 nsSmtpProtocol::AuthGSSAPIStep()
+{
+  nsresult rv;
+  nsCAutoString cmd;
+
+  // Check to see what the server said
+  if (m_responseCode / 100 != 3) {
+    m_nextState = SMTP_AUTH_LOGIN_RESPONSE;
+    return 0;
+  }
+
+  rv = DoGSSAPIStep2(m_responseText, cmd);
+  if (NS_FAILED(rv))
+    cmd = "*";
+  cmd += CRLF;
+
+  m_nextStateAfterResponse = (rv == NS_SUCCESS_AUTH_FINISHED)?SMTP_AUTH_LOGIN_RESPONSE:SMTP_SEND_AUTH_GSSAPI_STEP;
+  m_nextState = SMTP_RESPONSE;
+  SetFlag(SMTP_PAUSE_FOR_READ);
+
+  nsCOMPtr<nsIURI> url = do_QueryInterface(m_runningURL);
+  return SendData(url, cmd.get());
+}
+
+       
 // LOGIN and MSN consist of three steps (MSN not through the mechanism
 // but by non-RFC2821 compliant implementation in M$ servers) not two as
 // PLAIN or CRAM-MD5, so we've to start here and continue with AuthStep1
@@ -1272,44 +1364,6 @@ PRInt32 nsSmtpProtocol::SendDataResponse()
     m_urlErrorState = NS_ERROR_BUT_DONT_SHOW_ALERT;
     return(NS_ERROR_SENDING_DATA_COMMAND);
 	}
-#ifdef UNREADY_CODE
-#ifdef XP_UNIX
-	{
-	  const char * FE_UsersRealMailAddress(void); /* definition */
-	  const char *real_name;
-	  char *s = 0;
-	  PRBool suppress_sender_header = PR_FALSE;
-
-	  PREF_GetBoolPref ("mail.suppress_sender_header", &suppress_sender_header);
-	  if (!suppress_sender_header)
-	    {
-	      real_name =  FE_UsersRealMailAddress();
-	      s = (real_name ? MSG_MakeFullAddress (NULL, real_name) : 0);
-	      if (real_name && !s)
-		{
-               		m_urlErrorState = NS_ERROR_COULD_NOT_GET_UID;
-               		return(NS_ERROR_COULD_NOT_GET_UID);
-		}
-	      if(real_name)
-		{
-		  char buffer[512];
-		  PR_snprintf(buffer, sizeof(buffer), "Sender: %.256s" CRLF, real_name);
-		  NS_MsgSACat(command, buffer);
-		  if(!command)
-		    {
-		      m_urlErrorState = NS_ERROR_OUT_OF_MEMORY;
-		      return(NS_ERROR_OUT_OF_MEMORY);
-		    }
-	           
-	      status = (int) NET_BlockingWrite(CE_SOCK, command, PL_strlen(command));   
-	      if(status < 0)
-		{
-		}
-        }
-	    }
-	}
-#endif /* XP_UNIX */
-#endif /* UNREADY_CODE */
 
 	PR_FREEIF(command);
 
@@ -1318,19 +1372,6 @@ PRInt32 nsSmtpProtocol::SendDataResponse()
 
     UpdateStatus(SMTP_DELIV_MAIL);
 
-#ifdef UNREADY_CODE
-	/* get the size of the message */
-	if(CE_URL_S->post_data_is_file)
-	  {
-		XP_StatStruct stat_entry;
-
-		if(-1 != XP_Stat(CE_URL_S->post_data,
-                         &stat_entry,
-                         xpFileToPost))
-			m_totalMessageSize = stat_entry.st_size;
-	  }
-	else
-#endif /* UNREADY_CODE */
 	  {
 //		m_runningURL->GetBodySize(&m_totalMessageSize);
 	  }
@@ -1385,21 +1426,6 @@ PRInt32 nsSmtpProtocol::SendPostData()
 	   when all the data has arrived.  At the end, we want to show the
 	   "message sent; waiting for reply" status; FE_GraphProgress gets in
 	   the way of that.  See bug #23414. */
-
-#ifdef UNREADY_CODE
-	unsigned long curtime;
-	curtime = XP_TIME();
-	if (curtime != m_LastTime) {
-		FE_Progress(CE_WINDOW_ID, XP_ProgressText(m_totalMessageSize,
-												  m_totalAmountWritten,
-												  0, 0));
-		m_LastTime = curtime;
-	}
-
-	if(m_totalMessageSize)
-		FE_SetProgressBarPercent(CE_WINDOW_ID,
-						  	 m_totalAmountWritten*100/m_totalMessageSize);
-#endif /* UNREADY_CODE */
 
     return(status);
 }
@@ -1589,6 +1615,14 @@ nsresult nsSmtpProtocol::LoadUrl(nsIURI * aURL, nsISupports * aConsumer )
        status = ProcessAuth();
        break;
        
+      case SMTP_SEND_AUTH_GSSAPI_FIRST:
+        status = AuthGSSAPIFirst();
+        break;
+
+      case SMTP_SEND_AUTH_GSSAPI_STEP:
+        status = AuthGSSAPIStep();
+        break;
+      
       case SMTP_SEND_AUTH_LOGIN_STEP0:
         status = AuthLoginStep0();
         break;
@@ -1968,19 +2002,19 @@ NS_IMETHODIMP nsSmtpProtocol::OnLogonRedirectionReply(const PRUnichar * aHost, u
 
   // now that we have a host and port to connect to, 
   // open up the channel...
-  nsCAutoString hostCStr; hostCStr.AssignWithConversion(aHost);
-  PR_LOG(SMTPLogModule, PR_LOG_ALWAYS, ("SMTP Connecting to: %s on port %d.", hostCStr.get(), aPort));
+  NS_ConvertUTF16toUTF8 hostUTF8(aHost);
+  PR_LOG(SMTPLogModule, PR_LOG_ALWAYS, ("SMTP Connecting to: %s on port %d.", hostUTF8.get(), aPort));
   nsCOMPtr<nsIInterfaceRequestor> callbacks;
   nsCOMPtr<nsISmtpUrl> smtpUrl(do_QueryInterface(m_runningURL));
   if (smtpUrl)
       smtpUrl->GetNotificationCallbacks(getter_AddRefs(callbacks));
 
   nsCOMPtr<nsIProxyInfo> proxyInfo;
-  rv = NS_ExamineForProxy("mailto", hostCStr.get(), aPort, getter_AddRefs(proxyInfo));
+  rv = NS_ExamineForProxy("mailto", hostUTF8.get(), aPort, getter_AddRefs(proxyInfo));
   if (NS_FAILED(rv)) proxyInfo = nsnull;
 
   // pass in "ssl" for connectionType if you want this to be over SSL
-  rv = OpenNetworkSocketWithInfo(hostCStr.get(), aPort, nsnull /* connectionType */, proxyInfo, callbacks);
+  rv = OpenNetworkSocketWithInfo(hostUTF8.get(), aPort, nsnull /* connectionType */, proxyInfo, callbacks);
 
   // we are no longer waiting for a logon redirection reply
   ClearFlag(SMTP_WAIT_FOR_REDIRECTION);

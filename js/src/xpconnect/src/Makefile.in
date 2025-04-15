@@ -51,10 +51,11 @@ SHORT_LIBNAME	= xpconect
 IS_COMPONENT	= 1
 MODULE_NAME	= xpconnect
 GRE_MODULE	= 1
-ifeq ($(OS_ARCH),WINNT)
+ifeq ($(OS_ARCH)$(MOZ_ENABLE_LIBXUL),WINNT)
 LIBRARY_NAME	= xpc$(MOZ_BITS)$(VERSION_NUMBER)
 SHORT_LIBNAME	= xpc$(MOZ_BITS)$(VERSION_NUMBER)
 endif
+LIBXUL_LIBRARY = 1
 
 PACKAGE_FILE = xpconnect.pkg
 
@@ -62,6 +63,8 @@ REQUIRES	= xpcom \
 		  string \
 		  js \
 		  caps \
+		  necko \
+		  dom \
 		  $(NULL)
 
 CPPSRCS		= \
@@ -91,6 +94,7 @@ CPPSRCS		= \
 		xpcwrappednativejsops.cpp \
 		xpcwrappednativeproto.cpp \
 		xpcwrappednativescope.cpp \
+		XPCNativeWrapper.cpp \
 		$(NULL)
 ifdef XPC_IDISPATCH_SUPPORT
 CPPSRCS +=	XPCDispObject.cpp	\
@@ -142,10 +146,15 @@ endif
 
 ifeq ($(OS_ARCH),WINNT)
 ifndef GNU_CXX
+ifeq (,$(filter-out 1200 1300 1310,$(_MSC_VER)))
+# whole program optimization and precompiled headers are incompatible
+ifeq (,$(findstring GL,$(CXXFLAGS)))
 # use pre-compiled headers
 CXXFLAGS	+= -YX -Fp$(LIBRARY_NAME).pch
 # precompiled headers require write access to .pch which breaks -j builds
 .NOTPARALLEL::
+endif
+endif
 endif
 endif
 

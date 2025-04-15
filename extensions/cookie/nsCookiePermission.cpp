@@ -42,11 +42,11 @@
 #include "nsIServiceManager.h"
 #include "nsICookiePromptService.h"
 #include "nsICookieManager2.h"
-#include "nsNetCID.h"
+#include "nsNetUtil.h"
 #include "nsIURI.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIInterfaceRequestor.h"
@@ -108,31 +108,6 @@ IsFromMailNews(nsIURI *aURI)
 }
 #endif
 
-static void
-GetInterfaceFromChannel(nsIChannel   *aChannel,
-                        const nsIID  &aIID,
-                        void        **aResult)
-{
-  if (!aChannel)
-    return; // no context, no interface!
-  NS_ASSERTION(!*aResult, "result not initialized to null");
-
-  nsCOMPtr<nsIInterfaceRequestor> cbs;
-  aChannel->GetNotificationCallbacks(getter_AddRefs(cbs));
-  if (cbs)
-    cbs->GetInterface(aIID, aResult);
-  if (!*aResult) {
-    // try load group's notification callbacks...
-    nsCOMPtr<nsILoadGroup> loadGroup;
-    aChannel->GetLoadGroup(getter_AddRefs(loadGroup));
-    if (loadGroup) {
-      loadGroup->GetNotificationCallbacks(getter_AddRefs(cbs));
-      if (cbs)
-        cbs->GetInterface(aIID, aResult);
-    }
-  }
-}
-
 NS_IMPL_ISUPPORTS2(nsCookiePermission,
                    nsICookiePermission,
                    nsIObserver)
@@ -145,7 +120,7 @@ nsCookiePermission::Init()
   if (NS_FAILED(rv)) return rv;
 
   // failure to access the pref service is non-fatal...
-  nsCOMPtr<nsIPrefBranchInternal> prefBranch =
+  nsCOMPtr<nsIPrefBranch2> prefBranch =
       do_GetService(NS_PREFSERVICE_CONTRACTID);
   if (prefBranch) {
     prefBranch->AddObserver(kCookiesLifetimePolicy, this, PR_FALSE);
@@ -252,8 +227,7 @@ nsCookiePermission::CanAccess(nsIURI         *aURI,
     PRUint32 appType = nsIDocShell::APP_TYPE_UNKNOWN;
     if (aChannel) {
       nsCOMPtr<nsIDocShellTreeItem> item, parent;
-      GetInterfaceFromChannel(aChannel, NS_GET_IID(nsIDocShellTreeItem),
-                              getter_AddRefs(parent));
+      NS_QueryNotificationCallbacks(aChannel, parent);
       if (parent) {
         do {
             item = parent;
@@ -381,8 +355,8 @@ nsCookiePermission::CanSetCookie(nsIURI     *aURI,
 
       // try to get a nsIDOMWindow from the channel...
       nsCOMPtr<nsIDOMWindow> parent;
-      GetInterfaceFromChannel(aChannel, NS_GET_IID(nsIDOMWindow),
-                              getter_AddRefs(parent));
+      if (aChannel)
+        NS_QueryNotificationCallbacks(aChannel, parent);
 
       // get some useful information to present to the user:
       // whether a previous cookie already exists, and how many cookies this host

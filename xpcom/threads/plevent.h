@@ -1,20 +1,39 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "NPL"); you may not use this file except in
- * compliance with the NPL.  You may obtain a copy of the NPL at
- * http://www.mozilla.org/NPL/
- * 
- * Software distributed under the NPL is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the NPL
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * NPL.
- * 
- * The Initial Developer of this code under the NPL is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.  All Rights
- * Reserved.
- */
+ * License.
+ *
+ * The Original Code is mozilla.org Code.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /**********************************************************************
 NSPL Events
@@ -172,6 +191,8 @@ and to ensure that no more events will be delivered for that owner.
 #include "prcvar.h"
 #include "prmon.h"
 
+#include "nscore.h"
+
 /* For HWND */
 #if defined(XP_WIN32)
 #include <windef.h>
@@ -197,7 +218,7 @@ typedef struct PLEventQueue PLEventQueue;
 /*
 ** Creates a new event queue. Returns NULL on failure.
 */
-PR_EXTERN(PLEventQueue*)
+NS_COM PLEventQueue*
 PL_CreateEventQueue(const char* name, PRThread* handlerThread);
 
 
@@ -229,7 +250,7 @@ PL_CreateEventQueue(const char* name, PRThread* handlerThread);
 ** A pointer to a PLEventQueue structure or NULL.
 ** 
 */
-PR_EXTERN(PLEventQueue *) 
+NS_COM PLEventQueue * 
     PL_CreateNativeEventQueue(
         const char *name, 
         PRThread *handlerThread
@@ -258,7 +279,7 @@ PR_EXTERN(PLEventQueue *)
 ** A pointer to a PLEventQueue structure or NULL.
 ** 
 */
-PR_EXTERN(PLEventQueue *) 
+NS_COM PLEventQueue * 
     PL_CreateMonitoredEventQueue(
         const char *name,
         PRThread *handlerThread
@@ -267,7 +288,7 @@ PR_EXTERN(PLEventQueue *)
 /*
 ** Destroys an event queue.
 */
-PR_EXTERN(void)
+NS_COM void
 PL_DestroyEventQueue(PLEventQueue* self);
 
 /* 
@@ -276,7 +297,7 @@ PL_DestroyEventQueue(PLEventQueue* self);
 ** calling PL_RevokeEvents while the event is trying to be constructed
 ** and delivered.
 */
-PR_EXTERN(PRMonitor*)
+NS_COM PRMonitor*
 PL_GetEventQueueMonitor(PLEventQueue* self);
 
 #define PL_ENTER_EVENT_QUEUE_MONITOR(queue)	\
@@ -293,7 +314,7 @@ PL_GetEventQueueMonitor(PLEventQueue* self);
 ** Any events delivered by this routine will be destroyed by PL_HandleEvent
 ** when it is called (by the event-handling thread).
 */
-PR_EXTERN(PRStatus)
+NS_COM PRStatus
 PL_PostEvent(PLEventQueue* self, PLEvent* event);
 
 /*
@@ -305,20 +326,20 @@ PL_PostEvent(PLEventQueue* self, PLEvent* event);
 ** PL_HandleEvent, but instead will be destroyed just before the result is
 ** returned (by the current thread).
 */
-PR_EXTERN(void*)
+NS_COM void*
 PL_PostSynchronousEvent(PLEventQueue* self, PLEvent* event);
 
 /*
 ** Gets an event from an event queue. Returns NULL if no event is
 ** available.
 */
-PR_EXTERN(PLEvent*)
+NS_COM PLEvent*
 PL_GetEvent(PLEventQueue* self);
 
 /*
 ** Returns true if there is an event available for PL_GetEvent.
 */
-PR_EXTERN(PRBool)
+NS_COM PRBool
 PL_EventAvailable(PLEventQueue* self);
 
 /*
@@ -333,14 +354,14 @@ typedef void
 ** to selectively handle, filter, or remove events. The data pointer is
 ** passed to each invocation of the function fun.
 */
-PR_EXTERN(void)
+NS_COM void
 PL_MapEvents(PLEventQueue* self, PLEventFunProc fun, void* data);
 
 /*
 ** This routine walks an event queue and destroys any event whose owner is
 ** the owner specified. The == operation is used to compare owners.
 */
-PR_EXTERN(void)
+NS_COM void
 PL_RevokeEvents(PLEventQueue* self, void* owner);
 
 /*
@@ -348,7 +369,7 @@ PL_RevokeEvents(PLEventQueue* self, void* owner);
 ** called from the thread's main event-processing loop whenever the event
 ** queue's selectFD is ready (returned by PL_GetEventQueueSelectFD).
 */
-PR_EXTERN(void)
+NS_COM void
 PL_ProcessPendingEvents(PLEventQueue* self);
 
 /*******************************************************************************
@@ -362,7 +383,7 @@ PL_ProcessPendingEvents(PLEventQueue* self);
 ** Blocks until an event can be returned from the event queue. This routine
 ** may return NULL if the current thread is interrupted.
 */
-PR_EXTERN(PLEvent*)
+NS_COM PLEvent*
 PL_WaitForEvent(PLEventQueue* self);
 
 /*
@@ -370,7 +391,7 @@ PL_WaitForEvent(PLEventQueue* self);
 ** call this and it loops forever processing events as they arrive. It will
 ** terminate when your thread is interrupted or dies.
 */
-PR_EXTERN(void)
+NS_COM void
 PL_EventLoop(PLEventQueue* self);
 
 /*******************************************************************************
@@ -385,7 +406,7 @@ PL_EventLoop(PLEventQueue* self);
 ** event queue and use it in the readFD set of select. Useful for platforms
 ** that support select, and must wait on other things besides just PLEvents.
 */
-PR_EXTERN(PRInt32)
+NS_COM PRInt32
 PL_GetEventQueueSelectFD(PLEventQueue* self);
 
 /*
@@ -393,13 +414,13 @@ PL_GetEventQueueSelectFD(PLEventQueue* self);
 **  on the current thread.  It will return PR_TRUE if so, else it will return
 **  PR_FALSE
 */
-PR_EXTERN(PRBool)
+NS_COM PRBool
     PL_IsQueueOnCurrentThread( PLEventQueue *queue );
 
 /*
 ** Returns whether the queue is native (true) or monitored (false)
 */
-PR_EXTERN(PRBool)
+NS_COM PRBool
 PL_IsQueueNative(PLEventQueue *queue);
 
 /*******************************************************************************
@@ -428,7 +449,7 @@ typedef void
 ** structure which holds event-specific data, so this is an initializer
 ** for that embedded part of the structure.
 */
-PR_EXTERN(void)
+NS_COM void
 PL_InitEvent(PLEvent* self, void* owner,
 			 PLHandleEventProc handler,
 			 PLDestroyEventProc destructor);
@@ -436,25 +457,25 @@ PL_InitEvent(PLEvent* self, void* owner,
 /*
 ** Returns the owner of an event. 
 */
-PR_EXTERN(void*)
+NS_COM void*
 PL_GetEventOwner(PLEvent* self);
 
 /*
 ** Handles an event, calling the event's handler routine.
 */
-PR_EXTERN(void)
+NS_COM void
 PL_HandleEvent(PLEvent* self);
 
 /*
 ** Destroys an event, calling the event's destructor.
 */
-PR_EXTERN(void)
+NS_COM void
 PL_DestroyEvent(PLEvent* self);
 
 /*
 ** Removes an event from an event queue.
 */
-PR_EXTERN(void)
+NS_COM void
 PL_DequeueEvent(PLEvent* self, PLEventQueue* queue);
 
 
@@ -474,7 +495,7 @@ PL_DequeueEvent(PLEvent* self, PLEventQueue* queue);
  * amount of time in milliseconds to wait before the PR_FALSE actually 
  * takes effect.
  */
-PR_EXTERN(void)
+NS_COM void
 PL_FavorPerformanceHint(PRBool favorPerformanceOverEventStarvation, PRUint32 starvationDelay);
 
 
@@ -524,7 +545,7 @@ struct PLEvent {
 ** RESTRICTIONS: MS-Windows ONLY.
 ** 
 */
-PR_EXTERN(HWND) 
+NS_COM HWND 
     PL_GetNativeEventReceiverWindow( 
         PLEventQueue *eqp 
     );
@@ -548,7 +569,7 @@ PR_EXTERN(HWND)
 **
 ** RESTRICTIONS: Unix only (well, X based unix only)
 */
-PR_EXTERN(PRInt32)
+NS_COM PRInt32
 PL_ProcessEventsBeforeID(PLEventQueue *aSelf, unsigned long aID);
 
 /* This prototype is a function that can be called when an event is
@@ -575,7 +596,7 @@ typedef unsigned long
 **  void
 **
 ** RESTRICTIONS: Unix only (well, X based unix only) */
-PR_EXTERN(void)
+NS_COM void
 PL_RegisterEventIDFunc(PLEventQueue *aSelf, PLGetEventIDFunc aFunc,
                        void *aClosure);
 
@@ -594,7 +615,7 @@ PL_RegisterEventIDFunc(PLEventQueue *aSelf, PLGetEventIDFunc aFunc,
 **  void
 **
 ** RESTRICTIONS: Unix only (well, X based unix only) */
-PR_EXTERN(void)
+NS_COM void
 PL_UnregisterEventIDFunc(PLEventQueue *aSelf);
 
 #endif /* XP_UNIX */

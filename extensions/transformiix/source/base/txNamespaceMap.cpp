@@ -12,12 +12,12 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Jonas Sicking.
  * Portions created by the Initial Developer are Copyright (C) 2002
- * Jonas Sicking. All Rights Reserved.
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Jonas Sicking <jonas@sicking.cc>
@@ -60,12 +60,8 @@ txNamespaceMap::addNamespace(nsIAtom* aPrefix, const nsAString& aNamespaceURI)
         nsId = kNameSpaceID_None;
     }
     else {
-#ifdef TX_EXE
         nsId = txNamespaceManager::getNamespaceID(aNamespaceURI);
-#else
-        NS_ASSERTION(gTxNameSpaceManager, "No namespace manager");
-        gTxNameSpaceManager->RegisterNameSpace(aNamespaceURI, nsId);
-#endif
+        NS_ENSURE_FALSE(nsId == kNameSpaceID_Unknown, NS_ERROR_FAILURE);
     }
 
     // Check if the mapping already exists

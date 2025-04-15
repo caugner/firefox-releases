@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -110,8 +110,6 @@
       |     |     |     \--- MimeInlineTextEnriched
       |     |	  |
       |     |	  +--- MimeInlineTextVCard
-      |     |     |
-      |     |	  \--- MimeInlineTextCalendar
       |     |
       |     +--- MimeInlineImage
       |     |
@@ -231,6 +229,7 @@
  */
 
 #include "mimehdrs.h"
+#include "nsVoidArray.h"
 
 typedef struct MimeObject      MimeObject;
 typedef struct MimeObjectClass MimeObjectClass;
@@ -299,6 +298,8 @@ extern char *mime_part_address(MimeObject *obj);
    Return value must be freed by the caller.
  */
 extern char *mime_imap_part_address(MimeObject *obj);
+
+extern char *mime_external_attachment_url(MimeObject *obj);
 
 /* Puts a part-number into a URL.  If append_p is true, then the part number
    is appended to any existing part-number already in that URL; otherwise,
@@ -383,8 +384,14 @@ extern void mime_set_crypto_stamp(MimeObject *obj,
 								  PRBool signed_p, PRBool encrypted_p);
 #endif // ENABLE_SMIME
 
-struct MimeParseStateObject {
+class MimeParseStateObject {
+public:
 
+  MimeParseStateObject() 
+      {root = 0; separator_queued_p = PR_FALSE; separator_suppressed_p = PR_FALSE;
+        first_part_written_p = PR_FALSE; post_header_html_run_p = PR_FALSE; first_data_written_p = PR_FALSE; 
+        decrypted_p = PR_FALSE; strippingPart = PR_FALSE;
+      }
   MimeObject *root;				/* The outermost parser object. */
 
   PRBool separator_queued_p;	/* Whether a separator should be written out
@@ -407,10 +414,14 @@ struct MimeParseStateObject {
   PRBool first_data_written_p;	/* State used for Mozilla lazy-stream-
 								   creation evilness. */
 
-  PRBool decrypted_p;			/* If options->dexlate_p is true, then this
-								   will be set to indicate whether any
-								   dexlateion did in fact occur.
-								 */
+  PRBool decrypted_p; /* If options->dexlate_p is true, then this
+                        will be set to indicate whether any
+                        dexlateion did in fact occur.
+                      */
+  nsCStringArray partsToStrip;      /* if we're stripping parts, what parts to strip */
+  nsCStringArray detachToFiles;      /* if we're detaching parts, where each part was detached to */
+  PRBool strippingPart;
+  nsCString detachedFilePath;       /* if we've detached this part, filepath of detached part */
 };
 
 

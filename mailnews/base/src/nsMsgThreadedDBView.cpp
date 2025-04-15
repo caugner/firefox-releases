@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -166,63 +166,71 @@ nsresult nsMsgThreadedDBView::InitThreadedView(PRInt32 *pCount)
 
 nsresult nsMsgThreadedDBView::SortThreads(nsMsgViewSortTypeValue sortType, nsMsgViewSortOrderValue sortOrder)
 {
-  nsresult rv = NS_OK;
+  NS_PRECONDITION(m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay, "trying to sort unthreaded threads");
 
-  if (!(m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay))
-  {
-    InitThreadedView(nsnull);	// build up thread list.
-    m_sortType = nsMsgViewSortType::byNone; // need to pretend we're not sorted by thread so ::Sort won't expandAll
-    nsMsgDBView::Sort(sortType, sortOrder);
-    m_viewFlags |= nsMsgViewFlagsType::kThreadedDisplay;
-    SetViewFlags(m_viewFlags); // persist view flags
-
-  }
-  else
-  {
+  PRUint32 numThreads = 0;
   // the idea here is that copy the current view,  then build up an m_keys and m_flags array of just the top level
   // messages in the view, and then call nsMsgDBView::Sort(sortType, sortOrder).
   // Then, we expand the threads in the result array that were expanded in the original view (perhaps by copying
   // from the original view, but more likely just be calling expand).
-    nsMsgKeyArray saveKeys;
-    nsUInt32Array saveFlags;
-    saveKeys.CopyArray(m_keys);
-    saveFlags.CopyArray(m_flags);
-    m_keys.RemoveAll();
-    m_flags.RemoveAll();
-    m_levels.RemoveAll();
-    for (PRInt32 i = 0; i < saveKeys.GetSize(); i++)
+  for (PRUint32 i = 0; i < m_keys.GetSize(); i++)
+  {
+    if (m_flags[i] & MSG_VIEW_FLAG_ISTHREAD)
     {
-      if (saveFlags.GetAt(i) & MSG_VIEW_FLAG_ISTHREAD)
+      if (numThreads < i)
       {
-        m_keys.Add(saveKeys.GetAt(i));
-        m_flags.Add(saveFlags.GetAt(i) | MSG_FLAG_ELIDED);
-        m_levels.Add(0);
+        m_keys.SetAt(numThreads, m_keys[i]);
+        m_flags[numThreads] = m_flags[i];
+      }
+      m_levels[numThreads] = 0;
+      numThreads++;
+    }
+  }
+  m_keys.SetSize(numThreads);
+  m_flags.SetSize(numThreads);
+  m_levels.SetSize(numThreads);
+  //m_viewFlags &= ~nsMsgViewFlagsType::kThreadedDisplay;
+  m_sortType = nsMsgViewSortType::byNone; // sort from scratch
+  nsMsgDBView::Sort(sortType, sortOrder);
+  m_viewFlags |= nsMsgViewFlagsType::kThreadedDisplay;
+  DisableChangeUpdates();
+  // Loop through the original array, for each thread that's expanded, find it in the new array
+  // and expand the thread. We have to update MSG_VIEW_FLAG_HAS_CHILDREN because
+  // we may be going from a flat sort, which doesn't maintain that flag,
+  // to a threaded sort, which requires that flag.
+  for (PRUint32 j = 0; j < m_keys.GetSize(); j++)
+  {
+    PRUint32 flags = m_flags[j];
+    if ((flags & (MSG_VIEW_FLAG_HASCHILDREN | MSG_FLAG_ELIDED)) == MSG_VIEW_FLAG_HASCHILDREN)
+    {
+      PRUint32 numExpanded;
+      m_flags[j] = flags | MSG_FLAG_ELIDED;
+      ExpandByIndex(j, &numExpanded);
+      j += numExpanded;
+      if (numExpanded > 0)
+        m_flags[j - numExpanded] = flags | MSG_VIEW_FLAG_HASCHILDREN;
+    }
+    else if (flags & MSG_VIEW_FLAG_ISTHREAD && ! (flags & MSG_VIEW_FLAG_HASCHILDREN))
+    {
+      nsCOMPtr <nsIMsgDBHdr> msgHdr;
+      nsCOMPtr <nsIMsgThread> pThread;
+      m_db->GetMsgHdrForKey(m_keys[j], getter_AddRefs(msgHdr));
+      if (msgHdr)
+      {
+        m_db->GetThreadContainingMsgHdr(msgHdr, getter_AddRefs(pThread));
+        if (pThread)
+        {
+          PRUint32 numChildren;
+          pThread->GetNumChildren(&numChildren);
+          if (numChildren > 1)
+            m_flags[j] = flags | MSG_VIEW_FLAG_HASCHILDREN | MSG_FLAG_ELIDED;
+        }
       }
     }
-//    m_viewFlags &= ~nsMsgViewFlagsType::kThreadedDisplay;
-    m_sortType = nsMsgViewSortType::byNone; // sort from scratch
-    nsMsgDBView::Sort(sortType, sortOrder);
-    m_viewFlags |= nsMsgViewFlagsType::kThreadedDisplay;
-    DisableChangeUpdates();
-    // Loop through the original array, for each thread that's expanded, find it in the new array
-    // and expand the thread.
-    for (PRInt32 j = 0; j < saveKeys.GetSize(); j++)
-    {
-      PRUint32 flags = saveFlags.GetAt(j);
-      // this has the side effect of correcting the hasChildren view flag when 
-      // we expand the thread. Inserting into a flat view doesn't set that flag
-      // correctly because it's not relevant to a flat view.
-      // If we don't expand the threads here, we'll need to correct the 
-      // MSG_VIEW_FLAG_HASCHILDREN flag explicitly.
-
-      if (flags & (MSG_VIEW_FLAG_ISTHREAD | MSG_FLAG_ELIDED) == MSG_VIEW_FLAG_ISTHREAD | MSG_FLAG_ELIDED)
-        FindKey(saveKeys.GetAt(j), PR_TRUE /* expand */);
-    }
-    EnableChangeUpdates();
   }
+  EnableChangeUpdates();
 
-
-  return rv;
+  return NS_OK;
 }
 
 nsresult nsMsgThreadedDBView::AddKeys(nsMsgKey *pKeys, PRInt32 *pFlags, const char *pLevels, nsMsgViewSortTypeValue sortType, PRInt32 numKeysToAdd)
@@ -278,12 +286,13 @@ NS_IMETHODIMP nsMsgThreadedDBView::Sort(nsMsgViewSortTypeValue sortType, nsMsgVi
   // sort threads by sort order
   PRBool sortThreads = m_viewFlags & (nsMsgViewFlagsType::kThreadedDisplay | nsMsgViewFlagsType::kGroupBySort);
   
-  // if sort type is by thread, but we're not threaded, change sort type to byId
+  // if sort type is by thread, and we're already threaded, change sort type to byId
   if (sortType == nsMsgViewSortType::byThread && (m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay) != 0)
     sortType = nsMsgViewSortType::byId;
 
+  nsMsgKey preservedKey;
   nsMsgKeyArray preservedSelection;
-  SaveAndClearSelection(&preservedSelection);
+  SaveAndClearSelection(&preservedKey, &preservedSelection);
   // if the client wants us to forget our cached id arrays, they
   // should build a new view. If this isn't good enough, we
   // need a method to do that.
@@ -312,7 +321,7 @@ NS_IMETHODIMP nsMsgThreadedDBView::Sort(nsMsgViewSortTypeValue sortType, nsMsgVi
         // this is safe when there is no selection.
         rv = AdjustRowCount(rowCountBeforeSort, GetSize());
         
-        RestoreSelection(&preservedSelection);
+        RestoreSelection(preservedKey, &preservedSelection);
         if (mTree) mTree->Invalidate();
         return NS_OK;
       }
@@ -329,7 +338,7 @@ NS_IMETHODIMP nsMsgThreadedDBView::Sort(nsMsgViewSortTypeValue sortType, nsMsgVi
         // this is safe when there is no selection.
         rv = AdjustRowCount(rowCountBeforeSort, GetSize());
         
-        RestoreSelection(&preservedSelection);
+        RestoreSelection(preservedKey, &preservedSelection);
         if (mTree) mTree->Invalidate();
         return NS_OK;
       }
@@ -376,7 +385,7 @@ NS_IMETHODIMP nsMsgThreadedDBView::Sort(nsMsgViewSortTypeValue sortType, nsMsgVi
   // this is safe when there is no selection.
   rv = AdjustRowCount(rowCountBeforeSort, GetSize());
 
-  RestoreSelection(&preservedSelection);
+  RestoreSelection(preservedKey, &preservedSelection);
   if (mTree) mTree->Invalidate();
   NS_ENSURE_SUCCESS(rv,rv);
   return NS_OK;
@@ -480,6 +489,10 @@ nsresult nsMsgThreadedDBView::ListThreadIds(nsMsgKey *startMsg, PRBool unreadOnl
   else
   {
     *startMsg = nsMsgKey_None;
+    nsCOMPtr <nsIDBChangeListener> dbListener = do_QueryInterface(m_threadEnumerator);
+    // this is needed to make the thread enumerator release its reference to the db.
+    if (dbListener)
+      dbListener->OnAnnouncerGoingAway(nsnull);
     m_threadEnumerator = nsnull;
   }
   *pNumListed = numListed;
@@ -651,7 +664,7 @@ nsresult nsMsgThreadedDBView::OnNewHeader(nsIMsgDBHdr *newHdr, nsMsgKey aParentK
           AddMsgToThreadNotInView(threadHdr, newHdr, ensureListed);
         }
       }
-   }
+    }
   }
   else
     rv = NS_MSG_MESSAGE_NOT_FOUND;

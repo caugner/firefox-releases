@@ -1,12 +1,12 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* vim: set ts=2 sw=2 et cindent: */
+/* vim: set ts=4 sw=4 et cindent: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -15,7 +15,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,6 +44,9 @@
     -Gagan Saksena 04/29/99
 */
 
+#include "TestCommon.h"
+
+#define FORCE_PR_LOG
 #include <stdio.h>
 #ifdef WIN32 
 #include <windows.h>
@@ -63,22 +66,28 @@
 #include "nsCRT.h"
 #include "nsIChannel.h"
 #include "nsIResumableChannel.h"
-#include "nsIResumableEntityID.h"
 #include "nsIURL.h"
 #include "nsIHttpChannel.h"
+#include "nsIHttpChannelInternal.h"
 #include "nsIHttpHeaderVisitor.h"
-#include "nsIHttpEventSink.h" 
+#include "nsIChannelEventSink.h" 
 #include "nsIInterfaceRequestor.h" 
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIDNSService.h" 
 #include "nsIAuthPrompt.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
+#include "nsIPropertyBag2.h"
+#include "nsIWritablePropertyBag2.h"
+#include "nsChannelProperties.h"
 
 #include "nsISimpleEnumerator.h"
 #include "nsXPIDLString.h"
 #include "nsNetUtil.h"
 #include "prlog.h"
+#include "prtime.h"
+
+#include "nsInt64.h"
 
 #if defined(PR_LOGGING)
 //
@@ -97,7 +106,9 @@ static PRBool gVerbose = PR_FALSE;
 static nsIEventQueue* gEventQ = nsnull;
 static PRBool gAskUserForInput = PR_FALSE;
 static PRBool gResume = PR_FALSE;
-static PRUint32 gStartAt = 0;
+static PRUint64 gStartAt = 0;
+
+static const char* gEntityID;
 
 //-----------------------------------------------------------------------------
 // Set proxy preferences for testing
@@ -171,7 +182,7 @@ public:
   NS_DECL_ISUPPORTS
 
   const char* Name() { return mURLString.get(); }
-  PRInt32   mBytesRead;
+  nsInt64   mBytesRead;
   PRTime    mTotalTime;
   PRTime    mConnectTime;
   nsCString mURLString;
@@ -191,34 +202,37 @@ URLLoadInfo::~URLLoadInfo()
 NS_IMPL_THREADSAFE_ISUPPORTS0(URLLoadInfo)
 
 //-----------------------------------------------------------------------------
-// TestHttpEventSink
+// TestChannelEventSink
 //-----------------------------------------------------------------------------
 
-class TestHttpEventSink : public nsIHttpEventSink
+class TestChannelEventSink : public nsIChannelEventSink
 {
 public:
   NS_DECL_ISUPPORTS
-  NS_DECL_NSIHTTPEVENTSINK
+  NS_DECL_NSICHANNELEVENTSINK
 
-  TestHttpEventSink();
-  virtual ~TestHttpEventSink();
+  TestChannelEventSink();
+  virtual ~TestChannelEventSink();
 };
 
-TestHttpEventSink::TestHttpEventSink()
+TestChannelEventSink::TestChannelEventSink()
 {
 }
 
-TestHttpEventSink::~TestHttpEventSink()
+TestChannelEventSink::~TestChannelEventSink()
 {
 }
 
 
-NS_IMPL_ISUPPORTS1(TestHttpEventSink, nsIHttpEventSink)
+NS_IMPL_ISUPPORTS1(TestChannelEventSink, nsIChannelEventSink)
 
 NS_IMETHODIMP
-TestHttpEventSink::OnRedirect(nsIHttpChannel *channel, nsIChannel *newChannel)
+TestChannelEventSink::OnChannelRedirect(nsIChannel *channel,
+                                        nsIChannel *newChannel,
+                                        PRUint32 flags)
 {
-    LOG(("\n+++ TestHTTPEventSink::OnRedirect +++\n"));
+    LOG(("\n+++ TestChannelEventSink::OnChannelRedirect (with flags %x) +++\n",
+         flags));
     return NS_OK;
 }
 
@@ -357,6 +371,7 @@ InputTestConsumer::OnStartRequest(nsIRequest *request, nsISupports* context)
   if (channel) {
     nsresult status;
     channel->GetStatus(&status);
+    LOG(("Channel Status: %08x\n", status));
     if (NS_SUCCEEDED(status)) {
       LOG(("Channel Info:\n"));
 
@@ -381,10 +396,12 @@ InputTestConsumer::OnStartRequest(nsIRequest *request, nsISupports* context)
     LOG(("\tChannel Owner: %x\n", owner.get()));
   }
 
-  nsCOMPtr<nsIProperties> props = do_QueryInterface(request);
+  nsCOMPtr<nsIPropertyBag2> props = do_QueryInterface(request);
   if (props) {
       nsCOMPtr<nsIURI> foo;
-      props->Get("test.foo", NS_GET_IID(nsIURI), getter_AddRefs(foo));
+      props->GetPropertyAsInterface(NS_LITERAL_STRING("test.foo"),
+                                    NS_GET_IID(nsIURI),
+                                    getter_AddRefs(foo));
       if (foo) {
           nsCAutoString spec;
           foo->GetSpec(spec);
@@ -392,6 +409,22 @@ InputTestConsumer::OnStartRequest(nsIRequest *request, nsISupports* context)
       }
   }
 
+  nsCOMPtr<nsIPropertyBag2> propbag = do_QueryInterface(request);
+  if (propbag) {
+      PRInt64 len;
+      nsresult rv = propbag->GetPropertyAsInt64(NS_CHANNEL_PROP_CONTENT_LENGTH,
+                                                &len);
+      if (NS_SUCCEEDED(rv))
+          LOG(("\t64-bit length: %lli\n", len));
+  }
+
+  nsCOMPtr<nsIHttpChannelInternal> httpChannelInt(do_QueryInterface(request));
+  if (httpChannelInt) {
+      PRUint32 majorVer, minorVer;
+      nsresult rv = httpChannelInt->GetResponseVersion(&majorVer, &minorVer);
+      if (NS_SUCCEEDED(rv))
+          LOG(("HTTP Response version: %u.%u\n", majorVer, minorVer));
+  }
   nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(request));
   if (httpChannel) {
     HeaderVisitor *visitor = new HeaderVisitor();
@@ -411,27 +444,13 @@ InputTestConsumer::OnStartRequest(nsIRequest *request, nsISupports* context)
   nsCOMPtr<nsIResumableChannel> resChannel = do_QueryInterface(request);
   if (resChannel) {
       LOG(("Resumable entity identification:\n"));
-      nsCOMPtr<nsIResumableEntityID> entityID;
-      nsresult rv = resChannel->GetEntityID(getter_AddRefs(entityID));
-      if (NS_SUCCEEDED(rv) && entityID) {
-          PRUint32 size;
-          if (NS_SUCCEEDED(entityID->GetSize(&size)) &&
-              size != PRUint32(-1))
-              LOG(("\tSize: %d\n", size));
-          else
-              LOG(("\tSize: Unknown\n"));
-          PRTime lastModified;
-          if (NS_SUCCEEDED(entityID->GetLastModified(&lastModified)) &&
-              lastModified != -1) {
-              PRExplodedTime exploded;
-              PR_ExplodeTime(lastModified, PR_LocalTimeParameters, &exploded);
-
-              char buf[100];
-              PR_FormatTime(buf, 100, "%c", &exploded);
-
-              LOG(("\tLast Modified: %s\n", buf));
-          } else
-              LOG(("\tLast Modified: Unknown\n"));
+      nsCAutoString entityID;
+      nsresult rv = resChannel->GetEntityID(entityID);
+      if (NS_SUCCEEDED(rv)) {
+          LOG(("\t|%s|\n", entityID.get()));
+      }
+      else {
+          LOG(("\t<none>\n"));
       }
   }
 
@@ -474,7 +493,7 @@ InputTestConsumer::OnDataAvailable(nsIRequest *request,
 
 PR_STATIC_CALLBACK(void) DecrementDestroyHandler(PLEvent *self) 
 {
-    PR_DELETE(self);
+    PR_Free(self);
 }
 
 
@@ -529,10 +548,10 @@ InputTestConsumer::OnStopRequest(nsIRequest *request, nsISupports* context,
      }
     LOG(("\tTime to connect: %.3f seconds\n", connectTime));
     LOG(("\tTime to read: %.3f seconds.\n", readTime));
-    LOG(("\tRead: %d bytes.\n", info->mBytesRead));
-    if (!info->mBytesRead) {
+    LOG(("\tRead: %lld bytes.\n", info->mBytesRead.mValue));
+    if (info->mBytesRead == nsInt64(0)) {
     } else if (readTime > 0.0) {
-      LOG(("\tThroughput: %.0f bps.\n", (info->mBytesRead*8)/readTime));
+      LOG(("\tThroughput: %.0f bps.\n", (PRFloat64)(info->mBytesRead*nsInt64(8))/readTime));
     } else {
       LOG(("\tThroughput: REAL FAST!!\n"));
     }
@@ -558,10 +577,10 @@ public:
     NS_IMETHOD GetInterface(const nsIID& iid, void* *result) {
         nsresult rv = NS_ERROR_FAILURE;
 
-        if (iid.Equals(NS_GET_IID(nsIHttpEventSink))) {
-          TestHttpEventSink *sink;
+        if (iid.Equals(NS_GET_IID(nsIChannelEventSink))) {
+          TestChannelEventSink *sink;
 
-          sink = new TestHttpEventSink();
+          sink = new TestChannelEventSink();
           if (sink == nsnull)
             return NS_ERROR_OUT_OF_MEMORY;
           NS_ADDREF(sink);
@@ -621,9 +640,11 @@ nsresult StartLoadingURL(const char* aUrlString)
             return rv;
         }
 
-        nsCOMPtr<nsIProperties> props = do_QueryInterface(pChannel);
+        nsCOMPtr<nsIWritablePropertyBag2> props = do_QueryInterface(pChannel);
         if (props) {
-            if (NS_SUCCEEDED(props->Set("test.foo", pURL)))
+            rv = props->SetPropertyAsInterface(NS_LITERAL_STRING("test.foo"),
+                                               pURL);
+            if (NS_SUCCEEDED(rv))
                 LOG(("set prop 'test.foo'\n"));
         }
 
@@ -664,14 +685,14 @@ nsresult StartLoadingURL(const char* aUrlString)
                 NS_ERROR("Channel is not resumable!");
                 return NS_ERROR_UNEXPECTED;
             }
-            rv = res->AsyncOpenAt(listener,
-                                  info,
-                                  gStartAt,
-                                  nsnull);
-        } else {            
-            rv = pChannel->AsyncOpen(listener,  // IStreamListener consumer
-                                     info);
+            nsCAutoString id;
+            if (gEntityID)
+                id = gEntityID;
+            LOG(("* resuming at %llu bytes, with entity id |%s|\n", gStartAt, id.get()));
+            res->ResumeAt(gStartAt, id);
         }
+        rv = pChannel->AsyncOpen(listener,  // IStreamListener consumer
+                                 info);
 
         if (NS_SUCCEEDED(rv)) {
             gKeepRunning += 1;
@@ -747,9 +768,12 @@ nsresult LoadURLFromConsole()
 int
 main(int argc, char* argv[])
 {
+    if (test_common_init(&argc, &argv) != 0)
+        return -1;
+
     nsresult rv= (nsresult)-1;
     if (argc < 2) {
-        printf("usage: %s [-verbose] [-file <name>] <url> <url> ... \n", argv[0]);
+        printf("usage: %s [-verbose] [-file <name>] [-resume <startoffset> [-entityid <entityid>]] [-proxy <proxy>] [-console] <url> <url> ... \n", argv[0]);
         return -1;
     }
 
@@ -795,7 +819,12 @@ main(int argc, char* argv[])
 
             if (PL_strcasecmp(argv[i], "-resume") == 0) {
                 gResume = PR_TRUE;
-                gStartAt = atoi(argv[++i]);
+                PR_sscanf(argv[++i], "%llu", &gStartAt);
+                continue;
+            }
+
+            if (PL_strcasecmp(argv[i], "-entityid") == 0) {
+                gEntityID = argv[++i];
                 continue;
             }
 

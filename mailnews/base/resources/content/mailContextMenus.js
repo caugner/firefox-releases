@@ -1,27 +1,42 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code,
- * released March 31, 1998.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 2000 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
- * Contributors(s):
- *   Jan Varga <varga@nixcorp.com>
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Jan Varga <varga@ku.sk>
  *   Hakan Waara <hwaara@chello.se>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 //NOTE: gMessengerBundle must be defined and set or this Overlay won't work
 
@@ -41,8 +56,7 @@ function RestoreSelectionWithoutContentLoad(tree)
       return;
     }
 
-    var treeBoxObj = tree.treeBoxObject;
-    var treeSelection = treeBoxObj.selection;
+    var treeSelection = tree.view.selection;
 
     // make sure that currentIndex is valid so that we don't try to restore
     // a selection of an invalid row.
@@ -99,7 +113,6 @@ function fillThreadPaneContextMenu()
     isNewsgroup = IsNewsMessage(selectedMessage);
   }
 
-
   SetupNewMessageWindowMenuItem("threadPaneContext-openNewWindow", numSelected, false);
   SetupEditAsNewMenuItem("threadPaneContext-editAsNew", numSelected, false);
 
@@ -124,7 +137,6 @@ function fillThreadPaneContextMenu()
   SetupDeleteMenuItem("threadPaneContext-delete", numSelected, false);
   SetupAddSenderToABMenuItem("threadPaneContext-addSenderToAddressBook", numSelected, false);
   SetupAddAllToABMenuItem("threadPaneContext-addAllToAddressBook", numSelected, false);
-
 
   ShowMenuItem("threadPaneContext-sep-edit", (numSelected <= 1));
 
@@ -261,7 +273,7 @@ function fillFolderPaneContextMenu()
   var folderTree = GetFolderTree();
   var startIndex = {};
   var endIndex = {};
-  folderTree.treeBoxObject.selection.getRangeAt(0, startIndex, endIndex);
+  folderTree.view.selection.getRangeAt(0, startIndex, endIndex);
   if (startIndex.value < 0)
     return false;
   var numSelected = endIndex.value - startIndex.value + 1;
@@ -273,6 +285,7 @@ function fillFolderPaneContextMenu()
   var canSubscribeToFolder = (serverType == "nntp") || (serverType == "imap");
   var isNewsgroup = !isServer && serverType == 'nntp';
   var isMailFolder = !isServer && serverType != 'nntp';
+  var isVirtualFolder = (specialFolder == "Virtual");
   var canGetMessages =  (isServer && (serverType != "nntp") && (serverType !="none")) || isNewsgroup;
 
   EnableMenuItem("folderPaneContext-properties", true);
@@ -286,7 +299,7 @@ function fillFolderPaneContextMenu()
   SetupRemoveMenuItem(folderResource, numSelected, isServer, serverType, specialFolder);
   SetupCompactMenuItem(folderResource, numSelected);
 
-  ShowMenuItem("folderPaneContext-copy-location", !isServer);
+  ShowMenuItem("folderPaneContext-copy-location", !isServer && !isVirtualFolder);
   ShowMenuItem("folderPaneContext-emptyTrash", (numSelected <= 1) && (specialFolder == 'Trash'));
   EnableMenuItem("folderPaneContext-emptyTrash", true);
 
@@ -300,7 +313,7 @@ function fillFolderPaneContextMenu()
 
   SetupNewMenuItem(folderResource, numSelected, isServer, serverType, specialFolder);
 
-  ShowMenuItem("folderPaneContext-subscribe", (numSelected <= 1) && canSubscribeToFolder);
+  ShowMenuItem("folderPaneContext-subscribe", (numSelected <= 1) && canSubscribeToFolder && !isVirtualFolder);
   EnableMenuItem("folderPaneContext-subscribe", true);
 
   ShowMenuItem("folderPaneContext-sep1", (numSelected <= 1) && !isServer);
@@ -313,11 +326,11 @@ function fillFolderPaneContextMenu()
 
 // End of News folder context menu =======================================
 
-  ShowMenuItem("folderPaneContext-markMailFolderAllRead", (numSelected <= 1) && isMailFolder);
+  ShowMenuItem("folderPaneContext-markMailFolderAllRead", (numSelected <= 1) && isMailFolder && !isVirtualFolder);
   EnableMenuItem("folderPaneContext-markMailFolderAllRead", true);
 
-  ShowMenuItem("folderPaneContext-searchMessages", (numSelected<=1));
-  EnableMenuItem("folderPaneContext-searchMessages", IsCanSearchMessagesEnabled());
+  ShowMenuItem("folderPaneContext-searchMessages", (numSelected <= 1) && !isVirtualFolder);
+  goUpdateCommand('cmd_search');
 
   return(true);
 }
@@ -325,9 +338,9 @@ function fillFolderPaneContextMenu()
 function SetupRenameMenuItem(folderResource, numSelected, isServer, serverType, specialFolder)
 {
   var msgFolder = folderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
-  var isMail = serverType != 'nntp';
   var folderTree = GetFolderTree();
-  var isSpecialFolder = !(specialFolder == "none" || (specialFolder == "Junk" && CanRenameDeleteJunkMail(msgFolder.URI)));
+  var isSpecialFolder = !(specialFolder == "none" || (specialFolder == "Junk" && CanRenameDeleteJunkMail(msgFolder.URI))
+                                                  || (specialFolder == "Virtual"));
   var canRename = GetFolderAttribute(folderTree, folderResource, "CanRename") == "true";
 
   ShowMenuItem("folderPaneContext-rename", (numSelected <= 1) && !isServer && !isSpecialFolder && canRename);
@@ -344,10 +357,10 @@ function SetupRemoveMenuItem(folderResource, numSelected, isServer, serverType, 
 {
   var msgFolder = folderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
   var isMail = serverType != 'nntp';
-  var isSpecialFolder = !(specialFolder == "none" || (specialFolder == "Junk" && CanRenameDeleteJunkMail(msgFolder.URI)));
+  var isSpecialFolder = !(specialFolder == "none" || (specialFolder == "Junk" && CanRenameDeleteJunkMail(msgFolder.URI))
+                                                  || (specialFolder == "Virtual"));
   //Can't currently delete Accounts or special folders.
   var showRemove = (numSelected <=1) && (isMail && !isSpecialFolder) && !isServer;
-
 
   ShowMenuItem("folderPaneContext-remove", showRemove);
   if(showRemove)
@@ -424,7 +437,6 @@ function SetMenuItemLabel(id, label)
   var item = document.getElementById(id);
   if(item)
     item.setAttribute('label', label);
-
 }
 
 function SetMenuItemAccessKey(id, accessKey)
@@ -432,7 +444,6 @@ function SetMenuItemAccessKey(id, accessKey)
   var item = document.getElementById(id);
   if(item)
     item.setAttribute('accesskey', accessKey);
-
 }
 
 function fillMessagePaneContextMenu()
@@ -509,7 +520,6 @@ function ShowSeparator(aSeparatorID)
 
 function IsMenuItemShowing(menuID)
 {
-
   var item = document.getElementById(menuID);
   if (item)
     return item.hidden != "true";

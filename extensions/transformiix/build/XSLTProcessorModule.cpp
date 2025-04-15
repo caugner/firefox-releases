@@ -1,31 +1,47 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
- * The Original Code is TransforMiiX XSLT processor.
- * 
- * The Initial Developer of the Original Code is The MITRE Corporation.
- * Portions created by MITRE are Copyright (C) 1999 The MITRE Corporation.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * Portions created by Peter Van der Beken are Copyright (C) 2000
- * Peter Van der Beken. All Rights Reserved.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is TransforMiiX XSLT processor code.
+ *
+ * The Initial Developer of the Original Code is
+ * Peter Van der Beken.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Peter Van der Beken, peter.vanderbeken@pandora.be
- *    -- original author.
+ *   Peter Van der Beken <peterv@propagandism.org>
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsICategoryManager.h"
 #include "nsIDOMClassInfo.h"
+#include "nsIDOMNSXPathExpression.h"
+#include "nsIDOMXPathExpression.h"
+#include "nsIDOMXPathNSResolver.h"
+#include "nsIDOMXPathResult.h"
 #include "nsIErrorService.h"
 #include "nsIExceptionService.h"
 #include "nsIGenericFactory.h"
@@ -34,9 +50,6 @@
 #include "nsIServiceManager.h"
 #include "nsXPathEvaluator.h"
 #include "nsXPathException.h"
-#include "nsXPathExpression.h"
-#include "nsXPathNSResolver.h"
-#include "nsXPathResult.h"
 #include "nsXPIDLString.h"
 #include "txAtoms.h"
 #include "txMozillaXSLTProcessor.h"
@@ -46,6 +59,10 @@
 #include "txURIUtils.h"
 #include "txXSLTProcessor.h"
 #include "nsXPath1Scheme.h"
+
+#ifndef DISABLE_XFORMS_HOOKS
+#include "nsXFormsXPathEvaluator.h"
+#endif
 
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsXPath1SchemeProcessor)
 
@@ -82,6 +99,7 @@ NS_DOMCI_EXTENSION(Transformiix)
 
     NS_DOMCI_EXTENSION_ENTRY_BEGIN(XPathExpression)
         NS_DOMCI_EXTENSION_ENTRY_INTERFACE(nsIDOMXPathExpression)
+        NS_DOMCI_EXTENSION_ENTRY_INTERFACE(nsIDOMNSXPathExpression)
     NS_DOMCI_EXTENSION_ENTRY_END(XPathExpression, nsIDOMXPathExpression,
                                  PR_TRUE, nsnull)
 
@@ -99,6 +117,9 @@ NS_DOMCI_EXTENSION_END
 // Factory Constructor
 NS_GENERIC_FACTORY_CONSTRUCTOR(txMozillaXSLTProcessor)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsXPathEvaluator)
+#ifndef DISABLE_XFORMS_HOOKS
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsXFormsXPathEvaluator)
+#endif
 
 NS_DECL_DOM_CLASSINFO(XSLTProcessor)
 NS_DECL_DOM_CLASSINFO(XPathEvaluator)
@@ -283,6 +304,12 @@ static const nsModuleComponentInfo gComponents[] = {
       TRANSFORMIIX_XPATH_EVALUATOR_CID,
       NS_XPATH_EVALUATOR_CONTRACTID,
       nsXPathEvaluatorConstructor },
+#ifndef DISABLE_XFORMS_HOOKS
+    { "XFormsXPathEvaluator",
+      TRANSFORMIIX_XFORMS_XPATH_EVALUATOR_CID,
+      NS_XFORMS_XPATH_EVALUATOR_CONTRACTID,
+      nsXFormsXPathEvaluatorConstructor },
+#endif
     { "Transformiix DOMCI Extender",
       TRANSFORMIIX_DOMCI_EXTENSION_CID,
       TRANSFORMIIX_DOMCI_EXTENSION_CONTRACTID,

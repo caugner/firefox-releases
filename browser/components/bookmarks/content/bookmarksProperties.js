@@ -1,38 +1,38 @@
 # -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 # ***** BEGIN LICENSE BLOCK *****
-# Version: NPL 1.1/GPL 2.0/LGPL 2.1
-# 
-# The contents of this file are subject to the Netscape Public License
-# Version 1.1 (the "License"); you may not use this file except in
-# compliance with the License. You may obtain a copy of the License at
-# http://www.mozilla.org/NPL/
-# 
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
+#
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
 # for the specific language governing rights and limitations under the
 # License.
-# 
+#
 # The Original Code is mozilla.org code.
-# 
-# The Initial Developer of the Original Code is 
+#
+# The Initial Developer of the Original Code is
 # Netscape Communications Corporation.
 # Portions created by the Initial Developer are Copyright (C) 1998
 # the Initial Developer. All Rights Reserved.
-# 
+#
 # Contributor(s):
-# 
+#
 # Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or 
+# either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
 # in which case the provisions of the GPL or the LGPL are applicable instead
 # of those above. If you wish to allow use of your version of this file only
 # under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the NPL, indicate your
+# use your version of this file under the terms of the MPL, indicate your
 # decision by deleting the provisions above and replace them with the notice
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
-# the terms of any one of the NPL, the GPL or the LGPL.
-# 
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
 # ***** END LICENSE BLOCK *****
 
 // This is the RDF Resource we're dealing with.
@@ -70,12 +70,12 @@ function Init()
 
   // ...and this is a parallel array that contains the RDF properties
   // that they are associated with.
-  gProperties = [RDF.GetResource(NC_NS+"Name"),
-                 RDF.GetResource(NC_NS+"URL"),
-                 RDF.GetResource(NC_NS+"ShortcutURL"),
-                 RDF.GetResource(NC_NS+"Description"),
-                 RDF.GetResource(NC_NS+"WebPanel"),
-                 RDF.GetResource(NC_NS+"FeedURL")];
+  gProperties = [RDF.GetResource(gNC_NS+"Name"),
+                 RDF.GetResource(gNC_NS+"URL"),
+                 RDF.GetResource(gNC_NS+"ShortcutURL"),
+                 RDF.GetResource(gNC_NS+"Description"),
+                 RDF.GetResource(gNC_NS+"WebPanel"),
+                 RDF.GetResource(gNC_NS+"FeedURL")];
 
   var x;
   // Initialize the properties panel by copying the values from the
@@ -94,84 +94,8 @@ function Init()
       field.value = value;
   }
 
-  var propsWindow = document.getElementById("bmPropsWindow");
   var nameNode = document.getElementById("name");
-  var title = propsWindow.getAttribute("title");
-  title = title.replace(/\*\*bm_title\*\*/gi, nameNode.value);
-  propsWindow.setAttribute("title", title);
-
-  // check bookmark schedule
-  var scheduleArc = RDF.GetResource(WEB_NS+"Schedule");
-  value = BMDS.GetTarget(gResource, scheduleArc, true);
-
-  if (value) {
-    value = value.QueryInterface(Components.interfaces.nsIRDFLiteral).Value;
-
-    if (value) {
-      var values = value.split("|");
-      if (values.length == 4) {
-        // get day range
-        var days = values[0];
-        var dayNode = document.getElementById("dayRange");
-        var dayItems = dayNode.childNodes[0].childNodes;
-        for (x=0; x < dayItems.length; ++x) {
-          if (dayItems[x].getAttribute("value") == days) {
-            dayNode.selectedItem = dayItems[x];
-            break;
-          }
-        }
-
-        // get hour range
-        var hours = values[1].split("-");
-        var startHour = "";
-        var endHour = "";
-
-        if (hours.length == 2) {
-          startHour = hours[0];
-          endHour = hours[1];
-        }
-
-        // set start hour
-        var startHourNode = document.getElementById("startHourRange");
-        var startHourItems = startHourNode.childNodes[0].childNodes;
-        for (x=0; x < startHourItems.length; ++x) {
-          if (startHourItems[x].getAttribute("value") == startHour) {
-            startHourNode.selectedItem = startHourItems[x];
-            break;
-          }
-        }
-
-        // set end hour
-        var endHourNode = document.getElementById("endHourRange");
-        var endHourItems = endHourNode.childNodes[0].childNodes;
-        for (x=0; x < endHourItems.length; ++x) {
-          if (endHourItems[x].getAttribute("value") == endHour) {
-            endHourNode.selectedItem = endHourItems[x];
-            break;
-          }
-        }
-
-        // get duration
-        var duration = values[2];
-        var durationNode = document.getElementById("duration");
-        durationNode.value = duration;
-
-        // get notification method
-        var method = values[3];
-        if (method.indexOf("icon") >= 0)
-          document.getElementById("bookmarkIcon").checked = true;
-
-        if (method.indexOf("sound") >= 0)
-          document.getElementById("playSound").checked = true;
-
-        if (method.indexOf("alert") >= 0)
-          document.getElementById("showAlert").checked = true;
-
-        if (method.indexOf("open") >= 0)
-          document.getElementById("openWindow").checked = true;
-      }
-    }
-  }
+  document.title = document.title.replace(/\*\*bm_title\*\*/gi, nameNode.value);
 
   // if its a container, disable some things
   var isContainerFlag = RDFCU.IsContainer(BMDS, gResource);
@@ -205,29 +129,8 @@ function Init()
     document.getElementById("feedurlrow").hidden = true;
   }
 
-  var showScheduling = false;
-  var url = BMDS.GetTarget(gResource, gProperties[1], true);
-  if (url) {
-    url = url.QueryInterface(Components.interfaces.nsIRDFLiteral).Value;
-    if (!url                                       || 
-        url.substr(0,7).toLowerCase() == "http://" ||
-        url.substr(0,8).toLowerCase() == "https://")
-      showScheduling = true;
-  }
-
-  // always hide the scheduling/notification tabs;
-  // we're diabling scheduling for 1.0 (bug 253478)
-  //if (!showScheduling || isLivemark) {
-    // only allow scheduling of http/https URLs that are not livemarks
-    document.getElementById("ScheduleTab").setAttribute("hidden", "true");
-    document.getElementById("NotifyTab").setAttribute("hidden", "true");
-  //}
-
   sizeToContent();
   
-  // Set up the enabled of controls on the scheduling panels
-  dayRangeChange(document.getElementById("dayRange"));
-
   // set initial focus
   nameNode.focus();
   nameNode.select();
@@ -274,64 +177,9 @@ function Commit()
 
     if (gFields[i] == "url" && oldValue && oldValue.Value != newValue.Value) {
       // if the URL was updated, clear out the favicon
-      var icon = BMDS.GetTarget(gResource, RDF.GetResource(NC_NS+"Icon"), true);
-      if (icon) BMDS.Unassert(gResource, RDF.GetResource(NC_NS+"Icon"), icon);
+      var icon = BMDS.GetTarget(gResource, RDF.GetResource(gNC_NS+"Icon"), true);
+      if (icon) BMDS.Unassert(gResource, RDF.GetResource(gNC_NS+"Icon"), icon);
     }
-  }
-
-  // Update bookmark schedule if necessary;
-  // if the tab was removed, just skip it
-  var scheduleTab = document.getElementById("ScheduleTab");
-  if (scheduleTab) {
-    var scheduleArc = RDF.GetResource(WEB_NS+"Schedule");
-    oldValue = BMDS.GetTarget(gResource, scheduleArc, true);
-    newValue = null;
-    var dayRangeNode = document.getElementById("dayRange");
-    var dayRange = dayRangeNode.selectedItem.getAttribute("value");
-
-    if (dayRange) {
-      var startHourRangeNode = document.getElementById("startHourRange");
-      var startHourRange = startHourRangeNode.selectedItem.getAttribute("value");
-
-      var endHourRangeNode = document.getElementById("endHourRange");
-      var endHourRange = endHourRangeNode.selectedItem.getAttribute("value");
-
-      if (parseInt(startHourRange) > parseInt(endHourRange)) {
-        var temp = startHourRange;
-        startHourRange = endHourRange;
-        endHourRange = temp;
-      }
-
-      var duration = document.getElementById("duration").value;
-      if (!duration) {
-        alert(BookmarksUtils.getLocaleString("pleaseEnterADuration"));
-        return false;
-      }
-
-      var methods = [];
-      if (document.getElementById("bookmarkIcon").checked)
-        methods.push("icon");
-      if (document.getElementById("playSound").checked)
-        methods.push("sound");
-      if (document.getElementById("showAlert").checked)
-        methods.push("alert");
-      if (document.getElementById("openWindow").checked)
-        methods.push("open");
-
-      if (methods.length == 0) {
-        alert(BookmarksUtils.getLocaleString("pleaseSelectANotification"));
-        return false;
-      }
-
-      var method = methods.join(); // join string in array with ","
-
-      newValue = dayRange + "|" + startHourRange + "-" + endHourRange + "|" + duration + "|" + method;
-    }
-
-    if (newValue)
-      newValue = RDF.GetLiteral(newValue);
-
-    changed |= updateAttribute(scheduleArc, oldValue, newValue);   
   }
 
   if (changed) {
@@ -358,44 +206,3 @@ function updateAttribute(aProperty, aOldValue, aNewValue)
   }
   return false;
 }
-
-function setEndHourRange()
-{
-  // Get the values of the start-time and end-time as ints
-  var startHourRangeNode = document.getElementById("startHourRange");
-  var startHourRange = startHourRangeNode.selectedItem.getAttribute("value");
-  var startHourRangeInt = parseInt(startHourRange);
-
-  var endHourRangeNode = document.getElementById("endHourRange");
-  var endHourRange = endHourRangeNode.selectedItem.getAttribute("value");
-  var endHourRangeInt = parseInt(endHourRange);
-
-  var endHourItemNode = endHourRangeNode.firstChild.firstChild;
-
-  // disable all those end-times before the start-time
-  for (var index=0; index<startHourRangeInt; ++index) {
-    endHourItemNode.setAttribute("disabled", "true");
-    endHourItemNode = endHourItemNode.nextSibling;
-  }
-
-  // update the selected value if it's out of the allowed range
-  if (startHourRangeInt >= endHourRangeInt)
-    endHourRangeNode.selectedItem = endHourItemNode;
-
-  // make sure all the end-times after the start-time are enabled
-  for (; index < 24; ++index) {
-    endHourItemNode.removeAttribute("disabled");
-    endHourItemNode = endHourItemNode.nextSibling;
-  }
-}
-
-function dayRangeChange (aMenuList)
-{
-  var controls = ["startHourRange", "endHourRange", "duration", "bookmarkIcon", 
-                  "showAlert", "openWindow", "playSound", "durationSubLabel", 
-                  "durationLabel", "startHourRangeLabel", "endHourRangeLabel"];
-  for (var i=0; i<controls.length; ++i)
-    document.getElementById(controls[i]).disabled = !aMenuList.value;
-}
-
-

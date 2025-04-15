@@ -1,24 +1,40 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
- *   Pierre Phaneuf <pp@ludusdesign.com>
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK *****
  * This Original Code has been modified by IBM Corporation. Modifications made by IBM 
  * described herein are Copyright (c) International Business Machines Corporation, 2000.
  * Modifications to Mozilla code or documentation identified per MPL Section 3.3
@@ -40,7 +56,8 @@
 #include "plstr.h"
 #include "prprf.h"
 #include "prio.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "msgCore.h"
 #include "nsCRT.h"
 #include "nsEscape.h"
@@ -64,13 +81,12 @@
 #include "nsIMsgHeaderParser.h"
 #include "nsIMsgAccountManager.h"
 #include "nsMsgBaseCID.h"
-#include "nsNativeCharsetUtils.h"
 
 //
 // Header strings...
 //
 #define HEADER_NNTP_POSTING_HOST      "NNTP-Posting-Host"
-#define MIME_HEADER_TABLE             "<TABLE CELLPADDING=0 CELLSPACING=0 BORDER=0>"
+#define MIME_HEADER_TABLE             "<TABLE CELLPADDING=0 CELLSPACING=0 BORDER=0 class=\"moz-email-headers-table\">"
 #define HEADER_START_JUNK             "<TR><TH VALIGN=BASELINE ALIGN=RIGHT NOWRAP>"
 #define HEADER_MIDDLE_JUNK            ": </TH><TD>"
 #define HEADER_END_JUNK               "</TD></TR>"
@@ -92,8 +108,6 @@ static NS_DEFINE_CID(kCMsgComposeServiceCID,  NS_MSGCOMPOSESERVICE_CID);
 // THIS SHOULD ALL MOVE TO ANOTHER FILE AFTER LANDING!
 ////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////
-// Define CIDs...
-static NS_DEFINE_CID(kPrefCID,                NS_PREF_CID);
 
 // safe filename for all OSes
 #define SAFE_TMP_FILENAME "nsmime.tmp"
@@ -117,9 +131,8 @@ nsMsgCreateTempFileSpec(const char *tFileName)
     tempName = SAFE_TMP_FILENAME;
   }
   else {
-    nsAutoString tempNameUni;
-    if (NS_FAILED(NS_CopyNativeToUnicode(nsDependentCString(tFileName),
-                                         tempNameUni))) {
+    nsAutoString tempNameUni; 
+    if (NS_FAILED(nsMsgI18NCopyNativeToUTF16(tFileName, tempNameUni))) {
       tempName = SAFE_TMP_FILENAME;
       goto fallback;
     }
@@ -148,7 +161,7 @@ nsMsgCreateTempFileSpec(const char *tFileName)
         }
       }
     } 
-    rv = NS_CopyUnicodeToNative(tempNameUni, tempName);
+    rv = nsMsgI18NCopyUTF16ToNative(tempNameUni, tempName);
     NS_ASSERTION(NS_SUCCEEDED(rv), "UTF-16 to native filename failed"); 
   }
 
@@ -240,9 +253,9 @@ CreateTheComposeWindow(nsIMsgCompFields *   compFields,
         if (NS_SUCCEEDED(rv) && attachment)
         {
           nsAutoString nameStr;
-          rv = ConvertToUnicode(msgCompHeaderInternalCharset(), curAttachment->real_name, nameStr);
+          rv = ConvertToUnicode("UTF-8", curAttachment->real_name, nameStr);
           if (NS_FAILED(rv))
-            nameStr.AssignWithConversion(curAttachment->real_name);
+            CopyASCIItoUTF16(curAttachment->real_name, nameStr);
           attachment->SetName(nameStr);
           attachment->SetUrl(spec.get());
           attachment->SetTemporary(PR_TRUE);
@@ -329,49 +342,51 @@ CreateCompositionFields(const char        *from,
   
   if (from) {
     val = MIME_DecodeMimeHeader(from, charset, PR_FALSE, PR_TRUE);
-    cFields->SetFrom(NS_ConvertUTF8toUCS2(val ? val : from).get());
+    cFields->SetFrom(NS_ConvertUTF8toUTF16(val ? val : from));
     PR_FREEIF(val);
   }
   
   if (subject) {
     val = MIME_DecodeMimeHeader(subject, charset, PR_FALSE, PR_TRUE);
-    cFields->SetSubject(NS_ConvertUTF8toUCS2(val ? val : subject).get());
+    cFields->SetSubject(NS_ConvertUTF8toUTF16(val ? val : subject));
     PR_FREEIF(val);
   }
   
   if (reply_to) {
     val = MIME_DecodeMimeHeader(reply_to, charset, PR_FALSE, PR_TRUE);
-    cFields->SetReplyTo(NS_ConvertUTF8toUCS2(val ? val : reply_to).get());
+    cFields->SetReplyTo(NS_ConvertUTF8toUTF16(val ? val : reply_to));
     PR_FREEIF(val);
   }
   
   if (to) {
     val = MIME_DecodeMimeHeader(to, charset, PR_FALSE, PR_TRUE);
-    cFields->SetTo(NS_ConvertUTF8toUCS2(val ? val : to).get());
+    cFields->SetTo(NS_ConvertUTF8toUTF16(val ? val : to));
     PR_FREEIF(val);
   }
   
   if (cc) {
     val = MIME_DecodeMimeHeader(cc, charset, PR_FALSE, PR_TRUE);
-    cFields->SetCc(NS_ConvertUTF8toUCS2(val ? val : cc).get());
+    cFields->SetCc(NS_ConvertUTF8toUTF16(val ? val : cc));
     PR_FREEIF(val);
   }
   
   if (bcc) {
     val = MIME_DecodeMimeHeader(bcc, charset, PR_FALSE, PR_TRUE);
-    cFields->SetBcc(NS_ConvertUTF8toUCS2(val ? val : bcc).get());
+    cFields->SetBcc(NS_ConvertUTF8toUTF16(val ? val : bcc));
     PR_FREEIF(val);
   }
   
   if (fcc) {
     val = MIME_DecodeMimeHeader(fcc, charset, PR_FALSE, PR_TRUE);
-    cFields->SetFcc(NS_ConvertUTF8toUCS2(val ? val : fcc).get());
+    cFields->SetFcc(NS_ConvertUTF8toUTF16(val ? val : fcc));
     PR_FREEIF(val);
   }
   
   if (newsgroups) {
+    // fixme: the newsgroups header had better be decoded using the server-side
+    // character encoding,but this |charset| might be different from it.
     val = MIME_DecodeMimeHeader(newsgroups, charset, PR_FALSE, PR_TRUE);
-    cFields->SetNewsgroups(val ? val : newsgroups);
+    cFields->SetNewsgroups(NS_ConvertUTF8toUTF16(val ? val : newsgroups));
     PR_FREEIF(val);
   }
   
@@ -383,7 +398,7 @@ CreateCompositionFields(const char        *from,
   
   if (organization) {
     val = MIME_DecodeMimeHeader(organization, charset, PR_FALSE, PR_TRUE);
-    cFields->SetOrganization(NS_ConvertUTF8toUCS2(val ? val : organization).get());
+    cFields->SetOrganization(NS_ConvertUTF8toUTF16(val ? val : organization));
     PR_FREEIF(val);
   }
   
@@ -395,7 +410,7 @@ CreateCompositionFields(const char        *from,
   
   if (other_random_headers) {
     val = MIME_DecodeMimeHeader(other_random_headers, charset, PR_FALSE, PR_TRUE);
-    cFields->SetOtherRandomHeaders(NS_ConvertUTF8toUCS2(val ? val : other_random_headers).get());
+    cFields->SetOtherRandomHeaders(NS_ConvertUTF8toUTF16(val ? val : other_random_headers));
     PR_FREEIF(val);
   }
   
@@ -423,12 +438,12 @@ PRBool
 GetMailXlateionPreference(void)
 {
   nsresult res;
-  PRBool   xlate = PR_FALSE; 
+  PRBool   xlate = PR_FALSE;
 
-  nsCOMPtr<nsIPref> prefs(do_GetService(kPrefCID, &res)); 
-  if (NS_SUCCEEDED(res) && prefs)
-    res = prefs->GetBoolPref("mail.unknown", &xlate);
-  
+  nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &res));
+  if(NS_SUCCEEDED(res))
+    prefBranch->GetBoolPref("mail.unknown", &xlate);
+
   return xlate;
 }
 
@@ -440,9 +455,9 @@ GetMailSigningPreference(void)
   nsresult  res;
   PRBool    signit = PR_FALSE;
 
-  nsCOMPtr<nsIPref> prefs(do_GetService(kPrefCID, &res)); 
-  if (NS_SUCCEEDED(res) && prefs)
-    res = prefs->GetBoolPref("mail.unknown", &signit);
+  nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &res));
+  if(NS_SUCCEEDED(res))
+    prefBranch->GetBoolPref("mail.unknown", &signit);
 
   return signit;
 }
@@ -1196,9 +1211,9 @@ mime_insert_forwarded_message_headers(char            **body,
   PRInt32     show_headers = 0;
   nsresult    res;
 
-  nsCOMPtr<nsIPref> prefs(do_GetService(kPrefCID, &res)); 
-  if (NS_SUCCEEDED(res) && prefs)
-    res = prefs->GetIntPref("mail.show_headers", &show_headers);
+  nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &res));
+  if (NS_SUCCEEDED(res))
+    prefBranch->GetIntPref("mail.show_headers", &show_headers);
 
   switch (show_headers)
   {
@@ -1375,7 +1390,8 @@ mime_parse_stream_complete (nsMIMESession *stream)
       char *parm = 0;
       parm = MimeHeaders_get_parameter(draftInfo, "vcard", NULL, NULL);
       fields->SetAttachVCard(parm && !nsCRT::strcmp(parm, "1"));
-      
+   
+      fields->SetMessageId(id); // keep same message id for editing template.
       PR_FREEIF(parm);
       parm = MimeHeaders_get_parameter(draftInfo, "receipt", NULL, NULL);
       if (parm && !nsCRT::strcmp(parm, "0"))
@@ -1529,10 +1545,10 @@ mime_parse_stream_complete (nsMIMESession *stream)
       // setting the charset while we are creating the composition fields
       //fields->SetCharacterSet(NS_ConvertASCIItoUCS2(mdd->mailcharset));
 
-      // convert from UTF-8 to UCS2
+      // convert from UTF-8 to UTF-16
       if (body)
       {
-        fields->SetBody(NS_ConvertUTF8toUCS2(body).get());
+        fields->SetBody(NS_ConvertUTF8toUTF16(body));
         PR_Free(body);
       }
 
@@ -1546,6 +1562,7 @@ mime_parse_stream_complete (nsMIMESession *stream)
 #ifdef NS_DEBUG
         printf("RICHIE: Time to create the EDITOR with this template - HAS a body!!!!\n");
 #endif
+        fields->SetDraftId(mdd->url_name);
         CreateTheComposeWindow(fields, newAttachData, nsIMsgCompType::Template, composeFormat, mdd->identity, nsnull);
       }
       else
@@ -1637,11 +1654,6 @@ mime_parse_stream_complete (nsMIMESession *stream)
     mime_free_attachments( mdd->attachments, mdd->attachments_count );
   }
   PR_FREEIF(mdd->mailcharset);
-  
-  // Release the prefs service
-  MimeObject *obj = (mdd ? mdd->obj : 0);  
-  if ( (obj) && (obj->options) && (obj->options->prefs) )
-    nsServiceManager::ReleaseService(kPrefCID, obj->options->prefs);
   
   mdd->identity = nsnull;
   PR_Free(mdd->url_name);
@@ -1894,8 +1906,8 @@ mime_decompose_file_init_fn ( void *stream_closure, MimeHeaders *headers )
     nsCOMPtr<nsIMIMEService> mimeFinder (do_GetService(NS_MIMESERVICE_CONTRACTID, &rv));
     if (NS_SUCCEEDED(rv) && mimeFinder) 
     {
-      nsXPIDLCString fileExtension;
-      rv = mimeFinder->GetPrimaryExtension(contentType.get(), nsnull, getter_Copies(fileExtension));
+      nsCAutoString fileExtension;
+      rv = mimeFinder->GetPrimaryExtension(contentType, EmptyCString(), fileExtension);
 
       if (NS_SUCCEEDED(rv) && !fileExtension.IsEmpty())
       {
@@ -1984,10 +1996,10 @@ mime_decompose_file_output_fn (const char     *buf,
   
   NS_ASSERTION (mdd && buf, "missing mime draft data and/or buf");
   if (!mdd || !buf) return -1;
-  if (!size) return 0;
+  if (!size) return NS_OK;
   
   if ( !mdd->tmpFileStream ) 
-    return 0;
+    return NS_OK;
   
   if (mdd->decoder_data) {
     ret = MimeDecoderWrite(mdd->decoder_data, buf, size);
@@ -2000,7 +2012,7 @@ mime_decompose_file_output_fn (const char     *buf,
       return MIME_ERROR_WRITING_FILE;
   }
   
-  return 0;
+  return NS_OK;
 }
 
 nsresult
@@ -2093,8 +2105,8 @@ mime_bridge_create_draft_stream(
   mdd->options->decompose_file_output_fn = mime_decompose_file_output_fn;
   mdd->options->decompose_file_close_fn = mime_decompose_file_close_fn;
 
-  rv = nsServiceManager::GetService(kPrefCID, NS_GET_IID(nsIPref), (nsISupports**)&(mdd->options->prefs));
-  if (! (mdd->options->prefs && NS_SUCCEEDED(rv)))
+  mdd->options->m_prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+  if (NS_FAILED(rv))
     goto FAIL;
 
 #ifdef ENABLE_SMIME

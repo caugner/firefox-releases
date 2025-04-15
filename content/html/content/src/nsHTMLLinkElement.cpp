@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,36 +14,34 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsIDOMHTMLLinkElement.h"
 #include "nsIDOMLinkStyle.h"
 #include "nsIDOMEventReceiver.h"
-#include "nsIHTMLContent.h"
 #include "nsGenericHTMLElement.h"
 #include "nsILink.h"
 #include "nsHTMLAtoms.h"
 #include "nsStyleConsts.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIDOMStyleSheet.h"
 #include "nsIStyleSheet.h"
 #include "nsIStyleSheetLinkingElement.h"
@@ -54,9 +52,12 @@
 #include "nsNetUtil.h"
 #include "nsIDocument.h"
 #include "nsIDOMEvent.h"
+#include "nsIPrivateDOMEvent.h"
 #include "nsIDOMDocumentEvent.h"
 #include "nsIDOMEventTarget.h"
 #include "nsParserUtils.h"
+#include "nsPIDOMWindow.h"
+#include "nsIScriptGlobalObject.h"
 
 class nsHTMLLinkElement : public nsGenericHTMLElement,
                           public nsIDOMHTMLLinkElement,
@@ -64,7 +65,7 @@ class nsHTMLLinkElement : public nsGenericHTMLElement,
                           public nsStyleLinkElement
 {
 public:
-  nsHTMLLinkElement();
+  nsHTMLLinkElement(nsINodeInfo *aNodeInfo);
   virtual ~nsHTMLLinkElement();
 
   // nsISupports
@@ -86,12 +87,15 @@ public:
   NS_IMETHOD    GetLinkState(nsLinkState &aState);
   NS_IMETHOD    SetLinkState(nsLinkState aState);
   NS_IMETHOD    GetHrefURI(nsIURI** aURI);
+  NS_IMETHOD    LinkAdded();
+  NS_IMETHOD    LinkRemoved();
 
-  virtual void SetDocument(nsIDocument* aDocument, PRBool aDeep,
-                           PRBool aCompileEventHandlers);
-  void CreateAndDispatchEvent(nsIDocument* aDoc, const nsString& aRel,
-                              const nsString& aRev,
-                              const nsAString& aEventName);
+  virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
+                              nsIContent* aBindingParent,
+                              PRBool aCompileEventHandlers);
+  virtual void UnbindFromTree(PRBool aDeep = PR_TRUE,
+                              PRBool aNullParent = PR_TRUE);
+  void CreateAndDispatchEvent(nsIDocument* aDoc, const nsAString& aEventName);
   nsresult SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
                    const nsAString& aValue, PRBool aNotify)
   {
@@ -103,7 +107,7 @@ public:
   virtual nsresult UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
                              PRBool aNotify);
 
-  virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext,
+  virtual nsresult HandleDOMEvent(nsPresContext* aPresContext,
                                   nsEvent* aEvent, nsIDOMEvent** aDOMEvent,
                                   PRUint32 aFlags,
                                   nsEventStatus* aEventStatus);
@@ -120,35 +124,13 @@ protected:
   nsLinkState mLinkState;
 };
 
-nsresult
-NS_NewHTMLLinkElement(nsIHTMLContent** aInstancePtrResult,
-                      nsINodeInfo *aNodeInfo, PRBool aFromParser)
-{
-  NS_ENSURE_ARG_POINTER(aInstancePtrResult);
 
-  nsHTMLLinkElement* it = new nsHTMLLinkElement();
-
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsresult rv = it->Init(aNodeInfo);
-
-  if (NS_FAILED(rv)) {
-    delete it;
-
-    return rv;
-  }
-
-  *aInstancePtrResult = NS_STATIC_CAST(nsIHTMLContent *, it);
-  NS_ADDREF(*aInstancePtrResult);
-
-  return NS_OK;
-}
+NS_IMPL_NS_NEW_HTML_ELEMENT(Link)
 
 
-nsHTMLLinkElement::nsHTMLLinkElement()
-  : mLinkState(eLinkState_Unknown)
+nsHTMLLinkElement::nsHTMLLinkElement(nsINodeInfo *aNodeInfo)
+  : nsGenericHTMLElement(aNodeInfo),
+    mLinkState(eLinkState_Unknown)
 {
 }
 
@@ -171,33 +153,7 @@ NS_HTML_CONTENT_INTERFACE_MAP_BEGIN(nsHTMLLinkElement, nsGenericHTMLElement)
 NS_HTML_CONTENT_INTERFACE_MAP_END
 
 
-nsresult
-nsHTMLLinkElement::CloneNode(PRBool aDeep, nsIDOMNode** aReturn)
-{
-  NS_ENSURE_ARG_POINTER(aReturn);
-  *aReturn = nsnull;
-
-  nsHTMLLinkElement* it = new nsHTMLLinkElement();
-
-  if (!it) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsCOMPtr<nsIDOMNode> kungFuDeathGrip(it);
-
-  nsresult rv = it->Init(mNodeInfo);
-
-  if (NS_FAILED(rv))
-    return rv;
-
-  CopyInnerTo(it, aDeep);
-
-  *aReturn = NS_STATIC_CAST(nsIDOMNode *, it);
-
-  NS_ADDREF(*aReturn);
-
-  return NS_OK;
-}
+NS_IMPL_DOM_CLONENODE(nsHTMLLinkElement)
 
 
 NS_IMETHODIMP
@@ -238,36 +194,72 @@ NS_IMPL_STRING_ATTR(nsHTMLLinkElement, Rev, rev)
 NS_IMPL_STRING_ATTR(nsHTMLLinkElement, Target, target)
 NS_IMPL_STRING_ATTR(nsHTMLLinkElement, Type, type)
 
-void
-nsHTMLLinkElement::SetDocument(nsIDocument* aDocument, PRBool aDeep,
-                               PRBool aCompileEventHandlers)
+nsresult
+nsHTMLLinkElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
+                              nsIContent* aBindingParent,
+                              PRBool aCompileEventHandlers)
 {
-  nsCOMPtr<nsIDocument> oldDoc = mDocument;
+  nsresult rv = nsGenericHTMLElement::BindToTree(aDocument, aParent,
+                                                 aBindingParent,
+                                                 aCompileEventHandlers);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  UpdateStyleSheet(nsnull);
+
+  // XXXbz we really shouldn't fire the event until after we've finished with
+  // the outermost BindToTree...  In particular, this can effectively cause us
+  // to reenter this code, or for some part of the document to become unbound
+  // inside the event!
+  CreateAndDispatchEvent(aDocument, NS_LITERAL_STRING("DOMLinkAdded"));
+
+  return rv;  
+}
+
+NS_IMETHODIMP
+nsHTMLLinkElement::LinkAdded()
+{
+  CreateAndDispatchEvent(GetOwnerDoc(), NS_LITERAL_STRING("DOMLinkAdded"));
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsHTMLLinkElement::LinkRemoved()
+{
+  CreateAndDispatchEvent(GetOwnerDoc(), NS_LITERAL_STRING("DOMLinkRemoved"));
+  return NS_OK;
+}
+
+void
+nsHTMLLinkElement::UnbindFromTree(PRBool aDeep, PRBool aNullParent)
+{
+  nsCOMPtr<nsIDocument> oldDoc = GetCurrentDoc();
+  if (oldDoc) {
+    GetCurrentDoc()->ForgetLink(this);
+    // If this link is ever reinserted into a document, it might
+    // be under a different xml:base, so forget the cached state now
+    mLinkState = eLinkState_Unknown;
+  }
+
+  // XXXbz we really shouldn't fire the event until after we've finished with
+  // the outermost UnbindFromTree...  In particular, this can effectively cause
+  // us to reenter this code, or to be bound to a different tree inside the
+  // event!
+  CreateAndDispatchEvent(oldDoc, NS_LITERAL_STRING("DOMLinkRemoved"));
+  nsGenericHTMLElement::UnbindFromTree(aDeep, aNullParent);
+  UpdateStyleSheet(oldDoc);
+}
+
+void
+nsHTMLLinkElement::CreateAndDispatchEvent(nsIDocument* aDoc,
+                                          const nsAString& aEventName)
+{
+  if (!aDoc)
+    return;
 
   nsAutoString rel;
   nsAutoString rev;
   GetAttr(kNameSpaceID_None, nsHTMLAtoms::rel, rel);
   GetAttr(kNameSpaceID_None, nsHTMLAtoms::rev, rev);
-    
-  CreateAndDispatchEvent(oldDoc, rel, rev,
-                         NS_LITERAL_STRING("DOMLinkRemoved"));
-
-  // Do the removal and addition into the new doc.
-  nsGenericHTMLElement::SetDocument(aDocument, aDeep, aCompileEventHandlers);
-  UpdateStyleSheet(oldDoc);
-		
-  CreateAndDispatchEvent(mDocument, rel, rev,
-                         NS_LITERAL_STRING("DOMLinkAdded"));
-}
- 
-void
-nsHTMLLinkElement::CreateAndDispatchEvent(nsIDocument* aDoc,
-                                          const nsString& aRel,
-                                          const nsString& aRev, 
-                                          const nsAString& aEventName)
-{
-  if (!aDoc)
-    return;
 
   // In the unlikely case that both rev is specified *and* rel=stylesheet,
   // this code will cause the event to fire, on the principle that maybe the
@@ -275,8 +267,8 @@ nsHTMLLinkElement::CreateAndDispatchEvent(nsIDocument* aDoc,
   // this should never actually happen and the performance hit is minimal,
   // doing the "right" thing costs virtually nothing here, even if it doesn't
   // make much sense.
-  if (aRev.IsEmpty() &&
-      (aRel.IsEmpty() || aRel.EqualsIgnoreCase("stylesheet")))
+  if (rev.IsEmpty() &&
+      (rel.IsEmpty() || rel.LowerCaseEqualsLiteral("stylesheet")))
     return;
 
   nsCOMPtr<nsIDOMDocumentEvent> docEvent(do_QueryInterface(aDoc));
@@ -284,11 +276,16 @@ nsHTMLLinkElement::CreateAndDispatchEvent(nsIDocument* aDoc,
   docEvent->CreateEvent(NS_LITERAL_STRING("Events"), getter_AddRefs(event));
   if (event) {
     event->InitEvent(aEventName, PR_TRUE, PR_TRUE);
-    PRBool noDefault;
     nsCOMPtr<nsIDOMEventTarget> target =
       do_QueryInterface(NS_STATIC_CAST(nsIDOMNode*, this));
-    if (target)
-      target->DispatchEvent(event, &noDefault);
+    if (target) {
+      nsCOMPtr<nsIPrivateDOMEvent> privEvent(do_QueryInterface(event));
+      if (privEvent) {
+        privEvent->SetTrusted(PR_TRUE);
+      }
+      PRBool defaultActionEnabled;
+      target->DispatchEvent(event, &defaultActionEnabled);
+    }
   }
 }
 
@@ -298,6 +295,13 @@ nsHTMLLinkElement::SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
                            PRBool aNotify)
 {
   if (aName == nsHTMLAtoms::href && kNameSpaceID_None == aNameSpaceID) {
+    nsIDocument* doc = GetCurrentDoc();
+    if (doc) {
+      doc->ForgetLink(this);
+        // The change to 'href' will cause style reresolution which will
+        // eventually recompute the link state and re-add this element
+        // to the link map if necessary.
+    }
     SetLinkState(eLinkState_Unknown);
   }
 
@@ -324,7 +328,7 @@ nsHTMLLinkElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
 }
 
 nsresult
-nsHTMLLinkElement::HandleDOMEvent(nsIPresContext* aPresContext,
+nsHTMLLinkElement::HandleDOMEvent(nsPresContext* aPresContext,
                            nsEvent* aEvent,
                            nsIDOMEvent** aDOMEvent,
                            PRUint32 aFlags,
@@ -404,13 +408,13 @@ nsHTMLLinkElement::GetStyleSheetInfo(nsAString& aTitle,
   nsAutoString notUsed;
   GetAttr(kNameSpaceID_None, nsHTMLAtoms::type, aType);
   nsParserUtils::SplitMimeType(aType, mimeType, notUsed);
-  if (!mimeType.IsEmpty() && !mimeType.EqualsIgnoreCase("text/css")) {
+  if (!mimeType.IsEmpty() && !mimeType.LowerCaseEqualsLiteral("text/css")) {
     return;
   }
 
   // If we get here we assume that we're loading a css file, so set the
   // type to 'text/css'
-  aType.Assign(NS_LITERAL_STRING("text/css"));
+  aType.AssignLiteral("text/css");
 
   return;
 }

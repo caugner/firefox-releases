@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
  
@@ -188,10 +187,7 @@ static void TestCollation(nsILocale *locale)
    printf("Start nsICollation Test \n");
    printf("==============================\n");
    
-   res = nsComponentManager::CreateInstance(kCollationFactoryCID,
-                                            NULL,
-                                            NS_GET_IID(nsICollationFactory),
-                                            (void**) &f);
+   res = CallCreateInstance(kCollationFactoryCID, &f);
            
    printf("Test 1 - CreateInstance():\n");
    if(NS_FAILED(res) || ( f == NULL ) ) {
@@ -200,10 +196,7 @@ static void TestCollation(nsILocale *locale)
      f->Release();
    }
 
-   res = nsComponentManager::CreateInstance(kCollationFactoryCID,
-                                            NULL,
-                                            NS_GET_IID(nsICollationFactory),
-                                            (void**) &f);
+   res = CallCreateInstance(kCollationFactoryCID, &f);
    if(NS_FAILED(res) || ( f == NULL ) ) {
      printf("\t2nd CreateInstance failed\n");
    }
@@ -577,10 +570,7 @@ static void TestSort(nsILocale *locale, PRInt32 collationStrength, FILE *fp)
   printf("Start sort Test \n");
   printf("==============================\n");
 
-  res = nsComponentManager::CreateInstance(kCollationFactoryCID,
-                                           NULL,
-                                           NS_GET_IID(nsICollationFactory),
-                                           (void**) &factoryInst);
+  res = CallCreateInstance(kCollationFactoryCID, &factoryInst);
   if(NS_FAILED(res)) {
     printf("\tFailed!! return value != NS_OK\n");
   }
@@ -697,10 +687,7 @@ static void TestDateTimeFormat(nsILocale *locale)
   printf("==============================\n");
 
   nsIScriptableDateFormat *aScriptableDateFormat;
-  res = nsComponentManager::CreateInstance(kDateTimeFormatCID,
-                                           NULL,
-                                           NS_GET_IID(nsIScriptableDateFormat),
-                                           (void**) &aScriptableDateFormat);
+  res = CallCreateInstance(kDateTimeFormatCID, &aScriptableDateFormat);
   if(NS_FAILED(res) || ( aScriptableDateFormat == NULL ) ) {
     printf("\tnsIScriptableDateFormat CreateInstance failed\n");
   }
@@ -743,10 +730,7 @@ static void TestDateTimeFormat(nsILocale *locale)
   printf("==============================\n");
 
   nsIDateTimeFormat *t = NULL;
-  res = nsComponentManager::CreateInstance(kDateTimeFormatCID,
-                                           NULL,
-                                           NS_GET_IID(nsIDateTimeFormat),
-                                           (void**) &t);
+  res = CallCreateInstance(kDateTimeFormatCID, &t);
        
   printf("Test 1 - CreateInstance():\n");
   if(NS_FAILED(res) || ( t == NULL ) ) {
@@ -755,10 +739,7 @@ static void TestDateTimeFormat(nsILocale *locale)
     t->Release();
   }
 
-  res = nsComponentManager::CreateInstance(kDateTimeFormatCID,
-                                           NULL,
-                                           NS_GET_IID(nsIDateTimeFormat),
-                                           (void**) &t);
+  res = CallCreateInstance(kDateTimeFormatCID, &t);
        
   if(NS_FAILED(res) || ( t == NULL ) ) {
     printf("\t2nd CreateInstance failed\n");
@@ -842,10 +823,9 @@ static void TestDateTimeFormat(nsILocale *locale)
 
 static nsresult NewLocale(const nsString* localeName, nsILocale** locale)
 {
-  nsCOMPtr<nsILocaleFactory>	localeFactory;
   nsresult res;
 
-  res = nsComponentManager::FindFactory(kLocaleFactoryCID, getter_AddRefs(localeFactory)); 
+  nsCOMPtr<nsILocaleFactory> localeFactory = do_GetClassObject(kLocaleFactoryCID, &res);
   if (NS_FAILED(res) || localeFactory == nsnull) printf("FindFactory nsILocaleFactory failed\n");
 
   res = localeFactory->NewLocale(localeName, locale);
@@ -864,27 +844,27 @@ static void Test_nsLocale()
 
   nsCOMPtr<nsIMacLocale> win32Locale = do_CreateInstance(kMacLocaleFactoryCID);
   if (macLocale) {
-    localeName = NS_LITERAL_STRING("en-US");
+    localeName.AssignLiteral("en-US");
     res = macLocale->GetPlatformLocale(localeName, &script, &lang);
     printf("script for en-US is 0\n");
     printf("result: script = %d lang = %d\n", script, lang);
 
-    localeName = NS_LITERAL_STRING("en-GB");
+    localeName.AssignLiteral("en-GB");
     res = macLocale->GetPlatformLocale(localeName, &script, &lang);
     printf("script for en-GB is 0\n");
     printf("result: script = %d lang = %d\n", script, lang);
 
-    localeName = NS_LITERAL_STRING("fr-FR");
+    localeName.AssignLiteral("fr-FR");
     res = macLocale->GetPlatformLocale(localeName, &script, &lang);
     printf("script for fr-FR is 0\n");
     printf("result: script = %d lang = %d\n", script, lang);
 
-    localeName = NS_LITERAL_STRING("de-DE");
+    localeName.AssignLiteral("de-DE");
     res = macLocale->GetPlatformLocale(localeName, &script, &lang);
     printf("script for de-DE is 0\n");
     printf("result: script = %d lang = %d\n", script, lang);
 
-    localeName = NS_LITERAL_STRING("ja-JP");
+    localeName.AssignLiteral("ja-JP");
     res = macLocale->GetPlatformLocale(localeName, &script, &lang);
     printf("script for ja-JP is 1\n");
     printf("result: script = %d lang = %d\n", script, lang);
@@ -896,27 +876,27 @@ static void Test_nsLocale()
 
   nsCOMPtr<nsIWin32Locale> win32Locale = do_CreateInstance(kWin32LocaleFactoryCID);
   if (win32Locale) {
-    localeName = NS_LITERAL_STRING("en-US");
+    localeName.AssignLiteral("en-US");
     res = win32Locale->GetPlatformLocale(localeName, &lcid);
     printf("LCID for en-US is 1033\n");
     printf("result: locale = %s LCID = 0x%0.4x %d\n", NS_LossyConvertUCS2toASCII(localeName).get(), lcid, lcid);
 
-    localeName = NS_LITERAL_STRING("en-GB");
+    localeName.AssignLiteral("en-GB");
     res = win32Locale->GetPlatformLocale(localeName, &lcid);
     printf("LCID for en-GB is 2057\n");
     printf("result: locale = %s LCID = 0x%0.4x %d\n", NS_LossyConvertUCS2toASCII(localeName).get(), lcid, lcid);
 
-    localeName = NS_LITERAL_STRING("fr-FR");
+    localeName.AssignLiteral("fr-FR");
     res = win32Locale->GetPlatformLocale(localeName, &lcid);
     printf("LCID for fr-FR is 1036\n");
     printf("result: locale = %s LCID = 0x%0.4x %d\n", NS_LossyConvertUCS2toASCII(localeName).get(), lcid, lcid);
 
-    localeName = NS_LITERAL_STRING("de-DE");
+    localeName.AssignLiteral("de-DE");
     res = win32Locale->GetPlatformLocale(localeName, &lcid);
     printf("LCID for de-DE is 1031\n");
     printf("result: locale = %s LCID = 0x%0.4x %d\n", NS_LossyConvertUCS2toASCII(localeName).get(), lcid, lcid);
 
-    localeName = NS_LITERAL_STRING("ja-JP");
+    localeName.AssignLiteral("ja-JP");
     res = win32Locale->GetPlatformLocale(localeName, &lcid);
     printf("LCID for ja-JP is 1041\n");
     printf("result: locale = %s LCID = 0x%0.4x %d\n", NS_LossyConvertUCS2toASCII(localeName).get(), lcid, lcid);
@@ -930,23 +910,23 @@ static void Test_nsLocale()
 
   nsCOMPtr<nsIPosixLocale> posixLocale = do_CreateInstance(kPosixLocaleFactoryCID);
   if (posixLocale) {
-    localeName = NS_LITERAL_STRING("en-US");
+    localeName.AssignLiteral("en-US");
     res = posixLocale->GetPlatformLocale(localeName, locale, length);
     printf("result: locale = %s POSIX = %s\n", NS_LossyConvertUCS2toASCII(localeName).get(), locale);
 
-    localeName = NS_LITERAL_STRING("en-GB");
+    localeName.AssignLiteral("en-GB");
     res = posixLocale->GetPlatformLocale(localeName, locale, length);
     printf("result: locale = %s POSIX = %s\n", NS_LossyConvertUCS2toASCII(localeName).get(), locale);
 
-    localeName = NS_LITERAL_STRING("fr-FR");
+    localeName.AssignLiteral("fr-FR");
     res = posixLocale->GetPlatformLocale(localeName, locale, length);
     printf("result: locale = %s POSIX = %s\n", NS_LossyConvertUCS2toASCII(localeName).get(), locale);
 
-    localeName = NS_LITERAL_STRING("de-DE");
+    localeName.AssignLiteral("de-DE");
     res = posixLocale->GetPlatformLocale(localeName, locale, length);
     printf("result: locale = %s POSIX = %s\n", NS_LossyConvertUCS2toASCII(localeName).get(), locale);
 
-    localeName = NS_LITERAL_STRING("ja-JP");
+    localeName.AssignLiteral("ja-JP");
     res = posixLocale->GetPlatformLocale(localeName, locale, length);
     printf("result: locale = %s POSIX = %s\n", NS_LossyConvertUCS2toASCII(localeName).get(), locale);
 
@@ -1020,9 +1000,7 @@ int main(int argc, char** argv) {
   nsCOMPtr<nsILocale> locale;
   nsresult res; 
 
-	nsCOMPtr<nsILocaleFactory>	localeFactory;
-
-	res = nsComponentManager::FindFactory(kLocaleFactoryCID, getter_AddRefs(localeFactory)); 
+	nsCOMPtr<nsILocaleFactory>	localeFactory = do_GetClassObject(kLocaleFactoryCID, &res);
   if (NS_FAILED(res) || localeFactory == nsnull) printf("FindFactory nsILocaleFactory failed\n");
 
   res = localeFactory->GetApplicationLocale(getter_AddRefs(locale));
@@ -1097,11 +1075,5 @@ int main(int argc, char** argv) {
 
   printf("Finish All The Test Cases\n");
 
-  res = nsComponentManager::FreeLibraries();
-  if(NS_FAILED(res))
-    printf("nsComponentManager failed\n");
-  else
-    printf("nsComponentManager FreeLibraries Done\n");
-  
   return 0;
 }

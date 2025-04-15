@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -136,66 +135,53 @@ const PRUnichar kComma        = PRUnichar(',');
 
 PRBool nsFont::EnumerateFamilies(nsFontFamilyEnumFunc aFunc, void* aData) const
 {
-  PRBool    running = PR_TRUE;
+  const PRUnichar *p, *p_end;
+  name.BeginReading(p);
+  name.EndReading(p_end);
+  nsAutoString family;
 
-  nsAutoString  familyList; familyList.Assign(name); // copy to work buffer
-  nsAutoString  familyStr;
+  while (p < p_end) {
+    while (nsCRT::IsAsciiSpace(*p))
+      if (++p == p_end)
+        return PR_TRUE;
 
-  familyList.Append(kNullCh);  // put an extra null at the end
+    PRBool generic;
+    if (*p == kSingleQuote || *p == kDoubleQuote) {
+      // quoted font family
+      PRUnichar quoteMark = *p;
+      if (++p == p_end)
+        return PR_TRUE;
+      const PRUnichar *nameStart = p;
 
-  // XXX This code is evil...
-  PRUnichar* start = familyList.BeginWriting();
-  PRUnichar* end   = start;
+      // XXX What about CSS character escapes?
+      while (*p != quoteMark)
+        if (++p == p_end)
+          return PR_TRUE;
 
-  while (running && (kNullCh != *start)) {
-    PRBool  quoted = PR_FALSE;
-    PRBool  generic = PR_FALSE;
+      family = Substring(nameStart, p);
+      generic = PR_FALSE;
 
-    while ((kNullCh != *start) && nsCRT::IsAsciiSpace(*start)) {  // skip leading space
-      start++;
+      while (++p != p_end && *p != kComma)
+        /* nothing */ ;
+
+    } else {
+      // unquoted font family
+      const PRUnichar *nameStart = p;
+      while (++p != p_end && *p != kComma)
+        /* nothing */ ;
+
+      family = Substring(nameStart, p);
+      family.CompressWhitespace(PR_FALSE, PR_TRUE);
+      generic = IsGenericFontFamily(family);
     }
 
-    if ((kSingleQuote == *start) || (kDoubleQuote == *start)) { // quoted string
-      PRUnichar quote = *start++;
-      quoted = PR_TRUE;
-      end = start;
-      while (kNullCh != *end) {
-        if (quote == *end) {  // found closing quote
-          *end++ = kNullCh;     // end string here
-          while ((kNullCh != *end) && (kComma != *end)) { // keep going until comma
-            end++;
-          }
-          break;
-        }
-        end++;
-      }
-    }
-    else {  // non-quoted string or ended
-      end = start;
+    if (!family.IsEmpty() && !(*aFunc)(family, generic, aData))
+      return PR_FALSE;
 
-      while ((kNullCh != *end) && (kComma != *end)) { // look for comma
-        end++;
-      }
-      *end = kNullCh; // end string here
-    }
-
-    familyStr = start;
-
-    if (PR_FALSE == quoted) {
-      familyStr.CompressWhitespace(PR_FALSE, PR_TRUE);
-      if (!familyStr.IsEmpty()) {
-        generic = IsGenericFontFamily(familyStr);
-      }
-    }
-
-    if (!familyStr.IsEmpty()) {
-      running = (*aFunc)(familyStr, generic, aData);
-    }
-
-    start = ++end;
+    ++p; // may advance past p_end
   }
 
-  return running;
+  return PR_TRUE;
 }
 
 static PRBool FontEnumCallback(const nsString& aFamily, PRBool aGeneric, void *aData)
@@ -213,10 +199,10 @@ void nsFont::GetFirstFamily(nsString& aFamily) const
 void nsFont::GetGenericID(const nsString& aGeneric, PRUint8* aID)
 {
   *aID = kGenericFont_NONE;
-  if (aGeneric.EqualsIgnoreCase("-moz-fixed"))      *aID = kGenericFont_moz_fixed;
-  else if (aGeneric.EqualsIgnoreCase("serif"))      *aID = kGenericFont_serif;
-  else if (aGeneric.EqualsIgnoreCase("sans-serif")) *aID = kGenericFont_sans_serif;
-  else if (aGeneric.EqualsIgnoreCase("cursive"))    *aID = kGenericFont_cursive;
-  else if (aGeneric.EqualsIgnoreCase("fantasy"))    *aID = kGenericFont_fantasy;
-  else if (aGeneric.EqualsIgnoreCase("monospace"))  *aID = kGenericFont_monospace;
+  if (aGeneric.LowerCaseEqualsLiteral("-moz-fixed"))      *aID = kGenericFont_moz_fixed;
+  else if (aGeneric.LowerCaseEqualsLiteral("serif"))      *aID = kGenericFont_serif;
+  else if (aGeneric.LowerCaseEqualsLiteral("sans-serif")) *aID = kGenericFont_sans_serif;
+  else if (aGeneric.LowerCaseEqualsLiteral("cursive"))    *aID = kGenericFont_cursive;
+  else if (aGeneric.LowerCaseEqualsLiteral("fantasy"))    *aID = kGenericFont_fantasy;
+  else if (aGeneric.LowerCaseEqualsLiteral("monospace"))  *aID = kGenericFont_monospace;
 }

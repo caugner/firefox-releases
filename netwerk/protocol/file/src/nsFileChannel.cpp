@@ -1,11 +1,12 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim:set ts=4 sw=4 sts=4 et cin: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -27,11 +28,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -47,6 +48,9 @@
 #include "nsITransport.h"
 #include "nsIFileURL.h"
 #include "nsIMIMEService.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
+#include "nsURLHelper.h"
 
 static NS_DEFINE_CID(kStreamConverterServiceCID, NS_STREAMCONVERTERSERVICE_CID);
 static NS_DEFINE_CID(kStreamTransportServiceCID, NS_STREAMTRANSPORTSERVICE_CID);
@@ -58,18 +62,18 @@ nsFileChannel::nsFileChannel()
     , mUploadLength(-1)
     , mLoadFlags(LOAD_NORMAL)
     , mStatus(NS_OK)
-    , mConvertToHTML(PR_FALSE)
     , mIsDir(PR_FALSE)
     , mUploading(PR_FALSE)
 {
 }
 
 nsresult
-nsFileChannel::Init(nsIURI *uri, PRBool htmlDirs)
+nsFileChannel::Init(nsIURI *uri)
 {
-    nsresult rv;
+    nsresult rv = nsHashPropertyBag::Init();
+    if (NS_FAILED(rv))
+        return rv;
     mURL = do_QueryInterface(uri, &rv);
-    mConvertToHTML = htmlDirs;
     return rv;
 }
 
@@ -124,15 +128,17 @@ nsFileChannel::EnsureStream()
 // nsISupports
 //-----------------------------------------------------------------------------
 
-// XXX this only needs to be threadsafe because of bug 101252
-NS_IMPL_THREADSAFE_ISUPPORTS7(nsFileChannel,
-                              nsIRequest,
-                              nsIChannel,
-                              nsIStreamListener,
-                              nsIRequestObserver,
-                              nsIUploadChannel,
-                              nsIFileChannel,
-                              nsITransportEventSink)
+NS_IMPL_ADDREF_INHERITED(nsFileChannel, nsHashPropertyBag)
+NS_IMPL_RELEASE_INHERITED(nsFileChannel, nsHashPropertyBag)
+NS_INTERFACE_MAP_BEGIN(nsFileChannel)
+    NS_INTERFACE_MAP_ENTRY(nsIRequest)
+    NS_INTERFACE_MAP_ENTRY(nsIChannel)
+    NS_INTERFACE_MAP_ENTRY(nsIStreamListener)
+    NS_INTERFACE_MAP_ENTRY(nsIRequestObserver)
+    NS_INTERFACE_MAP_ENTRY(nsIUploadChannel)
+    NS_INTERFACE_MAP_ENTRY(nsIFileChannel)
+    NS_INTERFACE_MAP_ENTRY(nsITransportEventSink)
+NS_INTERFACE_MAP_END_INHERITING(nsHashPropertyBag)
 
 //-----------------------------------------------------------------------------
 // nsIRequest
@@ -208,6 +214,7 @@ NS_IMETHODIMP
 nsFileChannel::SetLoadGroup(nsILoadGroup *aLoadGroup)
 {
     mLoadGroup = aLoadGroup;
+    mProgressSink = nsnull;
     return NS_OK;
 }
 
@@ -265,7 +272,7 @@ NS_IMETHODIMP
 nsFileChannel::SetNotificationCallbacks(nsIInterfaceRequestor *aCallbacks)
 {
     mCallbacks = aCallbacks;
-    mProgressSink = do_GetInterface(mCallbacks);
+    mProgressSink = nsnull;
     return NS_OK;
 }
 
@@ -283,25 +290,19 @@ nsFileChannel::GetContentType(nsACString &aContentType)
     
     if (mContentType.IsEmpty()) {
         if (mIsDir) {
-            if (mConvertToHTML)
-                mContentType = NS_LITERAL_CSTRING(TEXT_HTML);
-            else
-                mContentType = NS_LITERAL_CSTRING(APPLICATION_HTTP_INDEX_FORMAT);
+            mContentType.AssignLiteral(APPLICATION_HTTP_INDEX_FORMAT);
         } else {
             // Get content type from file extension
             nsCOMPtr<nsIFile> file;
             nsresult rv = mURL->GetFile(getter_AddRefs(file));
             if (NS_FAILED(rv)) return rv;
             
-            nsXPIDLCString mimeType;
             nsCOMPtr<nsIMIMEService> mime = do_GetService("@mozilla.org/mime;1", &rv);
             if (NS_SUCCEEDED(rv))
-                mime->GetTypeFromFile(file, getter_Copies(mimeType));
+                mime->GetTypeFromFile(file, mContentType);
 
-            if (mimeType.IsEmpty())
-                mContentType = NS_LITERAL_CSTRING(UNKNOWN_CONTENT_TYPE);
-            else
-                mContentType = mimeType;
+            if (mContentType.IsEmpty())
+                mContentType.AssignLiteral(UNKNOWN_CONTENT_TYPE);
         }
     }
     
@@ -315,8 +316,8 @@ nsFileChannel::SetContentType(const nsACString &aContentType)
     // If someone gives us a type hint we should just use that type instead of
     // doing our guessing.  So we don't care when this is being called.
 
-    // mContentCharset is unchanged if not parsed
-    NS_ParseContentType(aContentType, mContentType, mContentCharset);
+    PRBool dummy;
+    net_ParseContentType(aContentType, mContentType, mContentCharset, &dummy);
     return NS_OK;
 }
 
@@ -362,23 +363,7 @@ nsFileChannel::Open(nsIInputStream **result)
     rv = EnsureStream();
     if (NS_FAILED(rv)) return rv;
 
-    if (mIsDir && mConvertToHTML) {
-        nsCOMPtr<nsIStreamConverterService> scs =
-            do_GetService(kStreamConverterServiceCID, &rv);
-        if (NS_FAILED(rv)) return rv;
-
-        nsCOMPtr<nsIInputStream> temp;
-
-        rv = scs->Convert(mStream,
-                          NS_LITERAL_STRING(APPLICATION_HTTP_INDEX_FORMAT).get(),
-                          NS_LITERAL_STRING(TEXT_HTML).get(),
-                          nsnull, getter_AddRefs(temp));
-        if (NS_FAILED(rv)) return rv;
-
-        NS_ADDREF(*result = temp);
-    }
-    else
-        NS_ADDREF(*result = mStream);
+    NS_ADDREF(*result = mStream);
 
     return NS_OK;
 }
@@ -418,8 +403,11 @@ nsFileChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
         //
         // create asynchronous output stream wrapping file output stream.
         //
+        // XXX 64-bit upload length would be nice; it would require a new
+        // nsIUploadChannel, though.
         nsCOMPtr<nsITransport> transport;
-        rv = sts->CreateOutputTransport(fileOut, -1, mUploadLength, PR_TRUE,
+        rv = sts->CreateOutputTransport(fileOut, nsInt64(-1),
+                                        nsInt64(mUploadLength), PR_TRUE,
                                         getter_AddRefs(transport));
         if (NS_FAILED(rv)) return rv;
 
@@ -456,27 +444,10 @@ nsFileChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
         if (NS_FAILED(rv)) return rv;
 
         //
-        // push stream converter if opening a directory.
-        //
-        if (mIsDir && mConvertToHTML) {
-            nsCOMPtr<nsIStreamConverterService> scs =
-                do_GetService(kStreamConverterServiceCID, &rv);
-            if (NS_FAILED(rv)) return rv;
-
-            rv = scs->AsyncConvertData(NS_LITERAL_STRING(APPLICATION_HTTP_INDEX_FORMAT).get(),
-                                       NS_LITERAL_STRING(TEXT_HTML).get(),
-                                       listener, nsnull,
-                                       getter_AddRefs(grip));
-            if (NS_FAILED(rv)) return rv;
-
-            listener = grip;
-        }
-
-        //
         // create asynchronous input stream wrapping file input stream.
         //
         nsCOMPtr<nsITransport> transport;
-        rv = sts->CreateInputTransport(mStream, -1, -1, PR_TRUE,
+        rv = sts->CreateInputTransport(mStream, nsInt64(-1), nsInt64(-1), PR_TRUE,
                                        getter_AddRefs(transport));
         if (NS_FAILED(rv)) return rv;
 
@@ -583,6 +554,11 @@ nsFileChannel::OnStopRequest(nsIRequest *req, nsISupports *ctx, nsresult status)
 
     mRequest = 0;
     mStream = 0;
+
+    // Drop notification callbacks to prevent cycles.
+    mCallbacks = 0;
+    mProgressSink = 0;
+
     return NS_OK;
 }
 
@@ -600,8 +576,11 @@ nsFileChannel::OnDataAvailable(nsIRequest *req, nsISupports *ctx,
 
 NS_IMETHODIMP
 nsFileChannel::OnTransportStatus(nsITransport *trans, nsresult status,
-                                 PRUint32 progress, PRUint32 progressMax)
+                                 PRUint64 progress, PRUint64 progressMax)
 {
+    if (!mProgressSink)
+        NS_QueryNotificationCallbacks(mCallbacks, mLoadGroup, mProgressSink);
+
     // suppress status notification if channel is no longer pending!
     if (mProgressSink && NS_SUCCEEDED(mStatus) && mRequest && !(mLoadFlags & LOAD_BACKGROUND)) {
         // file channel does not send OnStatus events!
@@ -612,4 +591,5 @@ nsFileChannel::OnTransportStatus(nsITransport *trans, nsresult status,
     }
     return NS_OK;
 }
+
 

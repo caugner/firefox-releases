@@ -1,8 +1,8 @@
-/.cvsignore/1.1/Sat Dec 29 04:19:36 2001//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.11/Thu Apr  8 14:01:17 2004//TFIREFOX_1_0_RELEASE
-/XRemoteContentListener.cpp/1.4/Thu Jan  9 00:08:49 2003//TFIREFOX_1_0_RELEASE
-/XRemoteContentListener.h/1.1/Thu Sep  6 06:43:54 2001//TFIREFOX_1_0_RELEASE
-/XRemoteService.cpp/1.35.6.7/Fri Oct 22 21:26:20 2004//TFIREFOX_1_0_RELEASE
-/XRemoteService.h/1.9/Thu Apr  8 14:01:17 2004//TFIREFOX_1_0_RELEASE
-/xremote.pkg/1.2/Wed Jan  7 01:22:28 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Sat Dec 29 04:19:36 2001//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.18/Tue Apr  5 14:50:16 2005//TFIREFOX_1_5_RELEASE
+/XRemoteContentListener.cpp/1.5/Sat Apr 17 16:51:35 2004//TFIREFOX_1_5_RELEASE
+/XRemoteContentListener.h/1.2/Sat Apr 17 16:51:35 2004//TFIREFOX_1_5_RELEASE
+/XRemoteService.cpp/1.49/Thu Jul 28 14:51:38 2005//TFIREFOX_1_5_RELEASE
+/XRemoteService.h/1.12/Mon Apr  4 19:08:54 2005//TFIREFOX_1_5_RELEASE
+/xremote.pkg/1.2/Wed Jan  7 01:22:28 2004//TFIREFOX_1_5_RELEASE
 D

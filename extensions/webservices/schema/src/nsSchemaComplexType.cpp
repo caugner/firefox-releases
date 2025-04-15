@@ -1,25 +1,40 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications.  Portions created by Netscape Communications are
- * Copyright (C) 2001 by Netscape Communications.  All
- * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Vidur Apparao <vidur@netscape.com> (original author)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsSchemaPrivate.h"
 
@@ -33,15 +48,12 @@ nsSchemaComplexType::nsSchemaComplexType(nsSchema* aSchema,
                                          PRBool aAbstract)
   : nsSchemaComponentBase(aSchema), mName(aName), mAbstract(aAbstract),
     mContentModel(CONTENT_MODEL_ELEMENT_ONLY), 
-    mDerivation(DERIVATION_SELF_CONTAINED), mArrayInfo(nsnull)
+    mDerivation(DERIVATION_SELF_CONTAINED)
 {
 }
 
 nsSchemaComplexType::~nsSchemaComplexType()
 {
-  if (mArrayInfo) {
-    delete mArrayInfo;
-  }
 }
 
 NS_IMPL_ISUPPORTS3_CI(nsSchemaComplexType, 
@@ -49,9 +61,9 @@ NS_IMPL_ISUPPORTS3_CI(nsSchemaComplexType,
                       nsISchemaType,
                       nsISchemaComplexType)
 
-/* void resolve (); */
-NS_IMETHODIMP 
-nsSchemaComplexType::Resolve()
+/* void resolve (in nsIWebServiceErrorHandler* aErrorHandler); */
+NS_IMETHODIMP
+nsSchemaComplexType::Resolve(nsIWebServiceErrorHandler* aErrorHandler)
 {
   if (mIsResolved) {
     return NS_OK;
@@ -61,17 +73,23 @@ nsSchemaComplexType::Resolve()
   nsresult rv;
   PRUint32 i, count;
 
-  mAttributes.Count(&count);
-  for (i = 0; i < count; i++) {
-    nsCOMPtr<nsISchemaAttributeComponent> attribute;
-    
-    rv = mAttributes.QueryElementAt(i, NS_GET_IID(nsISchemaAttributeComponent),
-                                    getter_AddRefs(attribute));
-    if (NS_SUCCEEDED(rv)) {
-      rv = attribute->Resolve();
-      if (NS_FAILED(rv)) {
-        return rv;
-      }
+  count = mAttributes.Count();
+  for (i = 0; i < count; ++i) {
+    rv = mAttributes.ObjectAt(i)->Resolve(aErrorHandler);
+    if (NS_FAILED(rv)) {
+      nsAutoString attrName;
+      nsresult rv1 = mAttributes.ObjectAt(i)->GetName(attrName);
+      NS_ENSURE_SUCCESS(rv1, rv1);
+
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure resolving schema complex type, ");
+      errorMsg.AppendLiteral("cannot resolve attribute \"");
+      errorMsg.Append(attrName);
+      errorMsg.AppendLiteral("\"");
+      
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
+      return rv;
     }
   }
 
@@ -81,19 +99,30 @@ nsSchemaComplexType::Resolve()
 
   nsCOMPtr<nsISchemaType> type;
   if (mBaseType) {
-    rv = mSchema->ResolveTypePlaceholder(mBaseType, getter_AddRefs(type));
+    rv = mSchema->ResolveTypePlaceholder(aErrorHandler, mBaseType, getter_AddRefs(type));
     if (NS_FAILED(rv)) {
       return NS_ERROR_FAILURE;
     }
     mBaseType = type;
-    rv = mBaseType->Resolve();
+    rv = mBaseType->Resolve(aErrorHandler);
     if (NS_FAILED(rv)) {
+      nsAutoString baseStr;
+      nsresult rv1 = type->GetName(baseStr);
+      NS_ENSURE_SUCCESS(rv1, rv1);
+
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure resolving schema complex type, ");
+      errorMsg.AppendLiteral("cannot resolve base type \"");
+      errorMsg.Append(baseStr);
+      errorMsg.AppendLiteral("\"");
+
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
       return NS_ERROR_FAILURE;
     }
   }
     
   if (mSimpleBaseType) {
-    rv = mSchema->ResolveTypePlaceholder(mSimpleBaseType, 
+    rv = mSchema->ResolveTypePlaceholder(aErrorHandler, mSimpleBaseType, 
                                          getter_AddRefs(type));
     if (NS_FAILED(rv)) {
       return NS_ERROR_FAILURE;
@@ -102,15 +131,27 @@ nsSchemaComplexType::Resolve()
     if (!mSimpleBaseType) {
       return NS_ERROR_FAILURE;
     }
-    rv = mSimpleBaseType->Resolve();
+    rv = mSimpleBaseType->Resolve(aErrorHandler);
     if (NS_FAILED(rv)) {
       return NS_ERROR_FAILURE;
     }
   }
 
   if (mModelGroup) {
-    rv = mModelGroup->Resolve();
+    rv = mModelGroup->Resolve(aErrorHandler);
     if (NS_FAILED(rv)) {
+      nsAutoString modelName;
+      nsresult rv1 = mModelGroup->GetName(modelName);
+      NS_ENSURE_SUCCESS(rv1, rv1);
+
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure resolving schema complex type, ");
+      errorMsg.AppendLiteral("cannot resolve model group \"");
+      errorMsg.Append(modelName);
+      errorMsg.AppendLiteral("\"");
+
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
       return NS_ERROR_FAILURE;
     }
   }
@@ -122,18 +163,18 @@ nsSchemaComplexType::Resolve()
       PRUint16 schemaType;
       placeHolder->GetSchemaType(&schemaType);
       if (schemaType == nsISchemaType::SCHEMA_TYPE_PLACEHOLDER) {
-        rv = mSchema->ResolveTypePlaceholder(placeHolder, getter_AddRefs(type));
+        rv = mSchema->ResolveTypePlaceholder(aErrorHandler, placeHolder, getter_AddRefs(type));
         if (NS_FAILED(rv)) {
           return NS_ERROR_FAILURE;
         }
-        rv = type->Resolve();
+        rv = type->Resolve(aErrorHandler);
         if (NS_FAILED(rv)) {
           return NS_ERROR_FAILURE;
         }
         SetArrayInfo(type, mArrayInfo->GetDimension());
       }
       else {
-         rv = placeHolder->Resolve();
+         rv = placeHolder->Resolve(aErrorHandler);
         if (NS_FAILED(rv)) {
           return NS_ERROR_FAILURE;
         }
@@ -145,7 +186,7 @@ nsSchemaComplexType::Resolve()
 }
 
 /* void clear (); */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::Clear()
 {
   if (mIsCleared) {
@@ -166,26 +207,19 @@ nsSchemaComplexType::Clear()
     mModelGroup = nsnull;
   }
 
-  nsresult rv;
   PRUint32 i, count;
-  mAttributes.Count(&count);
-  for (i = 0; i < count; i++) {
-    nsCOMPtr<nsISchemaAttributeComponent> attribute;
-    
-    rv = mAttributes.QueryElementAt(i, NS_GET_IID(nsISchemaAttributeComponent),
-                                    getter_AddRefs(attribute));
-    if (NS_SUCCEEDED(rv)) {
-      attribute->Clear();
-    }
+  count = mAttributes.Count();
+  for (i = 0; i < count; ++i) {
+    mAttributes.ObjectAt(i)->Clear();
   }
   mAttributes.Clear();
-  mAttributesHash.Reset();
+  mAttributesHash.Clear();
 
   return NS_OK;
 }
 
 /* readonly attribute wstring name; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::GetName(nsAString& aName)
 {
   aName.Assign(mName);
@@ -194,7 +228,7 @@ nsSchemaComplexType::GetName(nsAString& aName)
 }
 
 /* readonly attribute unsigned short schemaType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::GetSchemaType(PRUint16 *aSchemaType)
 {
   NS_ENSURE_ARG_POINTER(aSchemaType);
@@ -205,7 +239,7 @@ nsSchemaComplexType::GetSchemaType(PRUint16 *aSchemaType)
 }
 
 /* readonly attribute unsigned short contentModel; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::GetContentModel(PRUint16 *aContentModel)
 {
   NS_ENSURE_ARG_POINTER(aContentModel);
@@ -216,7 +250,7 @@ nsSchemaComplexType::GetContentModel(PRUint16 *aContentModel)
 }
 
 /* readonly attribute unsigned short derivation; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::GetDerivation(PRUint16 *aDerivation)
 {
   NS_ENSURE_ARG_POINTER(aDerivation);
@@ -227,81 +261,79 @@ nsSchemaComplexType::GetDerivation(PRUint16 *aDerivation)
 }
 
 /* readonly attribute nsISchemaType baseType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::GetBaseType(nsISchemaType * *aBaseType)
 {
   NS_ENSURE_ARG_POINTER(aBaseType);
 
-  *aBaseType = mBaseType;
-  NS_IF_ADDREF(*aBaseType);
+  NS_IF_ADDREF(*aBaseType = mBaseType);
 
   return NS_OK;
 }
 
 /* readonly attribute nsISchemaSimpleType simplBaseType; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::GetSimpleBaseType(nsISchemaSimpleType * *aSimpleBaseType)
 {
   NS_ENSURE_ARG_POINTER(aSimpleBaseType);
 
-  *aSimpleBaseType = mSimpleBaseType;
-  NS_IF_ADDREF(*aSimpleBaseType);
+  NS_IF_ADDREF(*aSimpleBaseType = mSimpleBaseType);
 
   return NS_OK;
 }
 
 /* readonly attribute nsISchemaModelGroup modelGroup; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::GetModelGroup(nsISchemaModelGroup * *aModelGroup)
 {
   NS_ENSURE_ARG_POINTER(aModelGroup);
 
-  *aModelGroup = mModelGroup;
-  NS_IF_ADDREF(*aModelGroup);
+  NS_IF_ADDREF(*aModelGroup = mModelGroup);
 
   return NS_OK;
 }
 
 /* readonly attribute PRUint32 attributeCount; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::GetAttributeCount(PRUint32 *aAttributeCount)
 {
   NS_ENSURE_ARG_POINTER(aAttributeCount);
 
-  return mAttributes.Count(aAttributeCount);
+  *aAttributeCount = mAttributes.Count();
+
+  return NS_OK;
 }
 
 /* nsISchemaAttributeComponent getAttributeByIndex (in PRUint32 index); */
-NS_IMETHODIMP 
-nsSchemaComplexType::GetAttributeByIndex(PRUint32 index, 
-                                         nsISchemaAttributeComponent **_retval)
+NS_IMETHODIMP
+nsSchemaComplexType::GetAttributeByIndex(PRUint32 aIndex, 
+                                         nsISchemaAttributeComponent** aResult)
 {
-  NS_ENSURE_ARG_POINTER(_retval);
+  NS_ENSURE_ARG_POINTER(aResult);
 
-  return mAttributes.QueryElementAt(index, 
-                                    NS_GET_IID(nsISchemaAttributeComponent),
-                                    (void**)_retval);
+  if (aIndex >= (PRUint32)mAttributes.Count()) {
+    return NS_ERROR_FAILURE;
+  }
+
+  NS_ADDREF(*aResult = mAttributes.ObjectAt(aIndex));
+
+  return NS_OK;
 }
 
 /* nsISchemaAttributeComponent getAttributeByName (in AString name); */
-NS_IMETHODIMP 
-nsSchemaComplexType::GetAttributeByName(const nsAString& name, 
-                                        nsISchemaAttributeComponent **_retval)
+NS_IMETHODIMP
+nsSchemaComplexType::GetAttributeByName(const nsAString& aName, 
+                                        nsISchemaAttributeComponent** aResult)
 {
-  NS_ENSURE_ARG_POINTER(_retval);
+  NS_ENSURE_ARG_POINTER(aResult);
 
-  nsStringKey key(name);
-  nsCOMPtr<nsISupports> sup = dont_AddRef(mAttributesHash.Get(&key));
-
-  if (sup) {
-    return CallQueryInterface(sup, _retval);
-  }
+  mAttributesHash.Get(aName, aResult);
 
   return NS_OK;
 }
 
 /* readonly attribute boolean abstract; */
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::GetAbstract(PRBool *aAbstract)
 {
   NS_ENSURE_ARG_POINTER(aAbstract);
@@ -375,7 +407,7 @@ nsSchemaComplexType::SetContentModel(PRUint16 aContentModel)
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::SetDerivation(PRUint16 aDerivation, 
                                    nsISchemaType* aBaseType)
 {
@@ -385,7 +417,7 @@ nsSchemaComplexType::SetDerivation(PRUint16 aDerivation,
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::SetSimpleBaseType(nsISchemaSimpleType* aSimpleBaseType)
 {
   mSimpleBaseType = aSimpleBaseType;
@@ -393,7 +425,7 @@ nsSchemaComplexType::SetSimpleBaseType(nsISchemaSimpleType* aSimpleBaseType)
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::SetModelGroup(nsISchemaModelGroup* aModelGroup)
 {
   mModelGroup = aModelGroup;
@@ -401,7 +433,7 @@ nsSchemaComplexType::SetModelGroup(nsISchemaModelGroup* aModelGroup)
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsSchemaComplexType::AddAttribute(nsISchemaAttributeComponent* aAttribute)
 {
   NS_ENSURE_ARG_POINTER(aAttribute);
@@ -409,9 +441,8 @@ nsSchemaComplexType::AddAttribute(nsISchemaAttributeComponent* aAttribute)
   nsAutoString name;
   aAttribute->GetName(name);
 
-  mAttributes.AppendElement(aAttribute);
-  nsStringKey key(name);
-  mAttributesHash.Put(&key, aAttribute);
+  mAttributes.AppendObject(aAttribute);
+  mAttributesHash.Put(name, aAttribute);
 
   return NS_OK;  
 }
@@ -419,14 +450,7 @@ nsSchemaComplexType::AddAttribute(nsISchemaAttributeComponent* aAttribute)
 NS_IMETHODIMP
 nsSchemaComplexType::SetArrayInfo(nsISchemaType* aType, PRUint32 aDimension)
 {
-  if (mArrayInfo) {
-    delete mArrayInfo;
-  }
-
   mArrayInfo = new nsComplexTypeArrayInfo(aType, aDimension);
-  if (!mArrayInfo) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
 
-  return NS_OK;
+  return mArrayInfo ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }

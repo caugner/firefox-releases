@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,38 +14,38 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Sun Microsystems, Inc.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
- * Original Author: 
- *   Paul Sandoz   <paul.sandoz@sun.com>
- *
  * Contributor(s):
  *   Seth Spitzer <sspitzer@netscape.com>
  *   Dan Mosedale <dmose@netscape.com>
+ *   Paul Sandoz <paul.sandoz@sun.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsAbLDAPDirectoryQuery.h"
 #include "nsAbBoolExprToLDAPFilter.h"
-#include "nsAbLDAPProperties.h"
+#include "nsILDAPMessage.h"
 #include "nsILDAPErrors.h"
 #include "nsILDAPOperation.h"
+#include "nsIAbLDAPAttributeMap.h"
 #include "nsAbUtils.h"
+#include "nsLDAP.h"
 
 #include "nsIAuthPrompt.h"
 #include "nsIStringBundle.h"
@@ -57,6 +57,7 @@
 #include "nsIDOMWindow.h"
 #include "nsICategoryManager.h"
 #include "nsCategoryManagerUtils.h"
+#include "nsAbLDAPDirectory.h"
 
 class nsAbQueryLDAPMessageListener : public nsILDAPMessageListener
 {
@@ -151,7 +152,7 @@ nsAbQueryLDAPMessageListener::~nsAbQueryLDAPMessageListener ()
 
 nsresult nsAbQueryLDAPMessageListener::Initiate ()
 {
-    if(mInitialized == PR_TRUE)
+    if (mInitialized)
         return NS_OK;
                 
     mLock = PR_NewLock ();
@@ -174,7 +175,7 @@ nsresult nsAbQueryLDAPMessageListener::Cancel ()
 
     nsAutoLock lock(mLock);
 
-    if (mFinished == PR_TRUE || mCanceled == PR_TRUE)
+    if (mFinished || mCanceled)
         return NS_OK;
 
     mCanceled = PR_TRUE;
@@ -201,7 +202,7 @@ NS_IMETHODIMP nsAbQueryLDAPMessageListener::OnLDAPMessage(nsILDAPMessage *aMessa
     {
         nsAutoLock lock (mLock);
 
-        if (mFinished == PR_TRUE)
+        if (mFinished)
             return NS_OK;
 
         if (messageType == nsILDAPMessage::RES_SEARCH_RESULT)
@@ -226,8 +227,8 @@ NS_IMETHODIMP nsAbQueryLDAPMessageListener::OnLDAPMessage(nsILDAPMessage *aMessa
         case nsILDAPMessage::RES_SEARCH_ENTRY:
             if (!mFinished && !mWaitingForPrevQueryToFinish)
             {
-            rv = OnLDAPMessageSearchEntry (aMessage, getter_AddRefs (queryResult));
-            NS_ENSURE_SUCCESS(rv, rv);
+                rv = OnLDAPMessageSearchEntry (aMessage, 
+                                               getter_AddRefs (queryResult));
             }
             break;
         case nsILDAPMessage::RES_SEARCH_RESULT:
@@ -241,7 +242,7 @@ NS_IMETHODIMP nsAbQueryLDAPMessageListener::OnLDAPMessage(nsILDAPMessage *aMessa
     else
     {
         if (mSearchOperation)
-            rv = mSearchOperation->Abandon ();
+            rv = mSearchOperation->AbandonExt ();
 
         rv = QueryResultStatus (nsnull, getter_AddRefs (queryResult), nsIAbDirectoryQueryResult::queryResultStopped);
         // reset because we might re-use this listener...except don't do this
@@ -391,7 +392,7 @@ NS_IMETHODIMP nsAbQueryLDAPMessageListener::OnLDAPInit(nsILDAPConnection *aConn,
             NS_ConvertUTF8toUCS2(spec).get(),
             nsIAuthPrompt::SAVE_PASSWORD_PERMANENTLY, getter_Copies(passwd),
             &status);
-        if (NS_FAILED(rv) || status == PR_FALSE) {
+        if (NS_FAILED(rv) || !status) {
             return NS_ERROR_FAILURE;
         }
     }
@@ -420,7 +421,7 @@ NS_IMETHODIMP nsAbQueryLDAPMessageListener::OnLDAPInit(nsILDAPConnection *aConn,
 
 nsresult nsAbQueryLDAPMessageListener::OnLDAPMessageBind (nsILDAPMessage *aMessage)
 {
-    if (mBound == PR_TRUE)
+    if (mBound)
         return NS_OK;
 
     // see whether the bind actually succeeded
@@ -499,6 +500,22 @@ nsresult nsAbQueryLDAPMessageListener::OnLDAPMessageBind (nsILDAPMessage *aMessa
     rv = mUrl->GetAttributes (attributes.GetSizeAddr (), attributes.GetArrayAddr ());
     NS_ENSURE_SUCCESS(rv, rv);
 
+    // I don't _think_ it's ever actually possible to get here without having
+    // an nsAbLDAPDirectory object, but, just in case, I'll do a QI instead
+    // of just static casts...
+    nsCOMPtr<nsIAbLDAPDirectory> nsIAbDir = 
+        do_QueryInterface(mDirectoryQuery, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsAbLDAPDirectory *dir = 
+        NS_STATIC_CAST(nsAbLDAPDirectory *,
+                       NS_STATIC_CAST(nsIAbLDAPDirectory *, nsIAbDir.get()));
+
+    rv = mSearchOperation->SetServerControls(dir->mSearchServerControls.get());
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = mSearchOperation->SetClientControls(dir->mSearchClientControls.get());
+    NS_ENSURE_SUCCESS(rv, rv);
+
     rv = mSearchOperation->SearchExt (dn, scope, filter,
             attributes.GetSize (), attributes.GetArray (),
             mTimeOut, mResultLimit);
@@ -509,106 +526,82 @@ nsresult nsAbQueryLDAPMessageListener::OnLDAPMessageSearchEntry (nsILDAPMessage 
         nsIAbDirectoryQueryResult** result)
 {
     nsresult rv;
-    nsCOMPtr<nsISupportsArray> propertyValues;
 
+    // the address book fields that we'll be asking for
     CharPtrArrayGuard properties;
     rv = mQueryArguments->GetReturnProperties (properties.GetSizeAddr(), properties.GetArrayAddr());
     NS_ENSURE_SUCCESS(rv, rv);
 
-    CharPtrArrayGuard attrs;
-    rv = aMessage->GetAttributes(attrs.GetSizeAddr(), attrs.GetArrayAddr());
+    // the map for translating between LDAP attrs <-> addrbook fields
+    nsCOMPtr<nsISupports> iSupportsMap;
+    rv = mQueryArguments->GetTypeSpecificArg(getter_AddRefs(iSupportsMap));
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIAbLDAPAttributeMap> map = do_QueryInterface(iSupportsMap, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCAutoString propertyName;
-    for (PRUint32 i = 0; i < properties.GetSize(); i++)
-    {
-        propertyName.Assign (properties[i]);
+    // set up variables for handling the property values to be returned
+    nsCOMPtr<nsISupportsArray> propertyValues;
+    nsCOMPtr<nsIAbDirectoryQueryPropertyValue> propertyValue;
+    rv = NS_NewISupportsArray(getter_AddRefs(propertyValues));
+    NS_ENSURE_SUCCESS(rv, rv);
+        
+    if (!strcmp(properties[0], "card:nsIAbCard")) {
+        // Meta property
+        nsCAutoString dn;
+        rv = aMessage->GetDn (dn);
+        NS_ENSURE_SUCCESS(rv, rv);
 
-        nsAbDirectoryQueryPropertyValue* _propertyValue = 0;
-        if (propertyName.Equals("card:nsIAbCard"))
-        {
-            // Meta property
-            nsCAutoString dn;
-            rv = aMessage->GetDn (dn);
-            NS_ENSURE_SUCCESS(rv, rv);
+        nsCOMPtr<nsIAbCard> card;
+        rv = mDirectoryQuery->CreateCard (mUrl, dn.get(), getter_AddRefs (card));
+        NS_ENSURE_SUCCESS(rv, rv);
 
-            nsCOMPtr<nsIAbCard> card;
-            rv = mDirectoryQuery->CreateCard (mUrl, dn.get(), getter_AddRefs (card));
-            NS_ENSURE_SUCCESS(rv, rv);
+        rv = map->SetCardPropertiesFromLDAPMessage(aMessage, card);
+        NS_ENSURE_SUCCESS(rv, rv);
 
-            PRBool hasSetCardProperty = PR_FALSE;
-            rv = MozillaLdapPropertyRelator::createCardPropertyFromLDAPMessage (aMessage,
-                    card,
-                    &hasSetCardProperty);
-            NS_ENSURE_SUCCESS(rv, rv);
+        propertyValue = new nsAbDirectoryQueryPropertyValue(properties[0], card);
+        if (!propertyValue) 
+            return NS_ERROR_OUT_OF_MEMORY;
 
-            if (hasSetCardProperty == PR_FALSE)
-                continue;
+        rv = propertyValues->AppendElement(propertyValue);
+        NS_ENSURE_SUCCESS(rv, rv);
+    } else {
 
-            _propertyValue = new nsAbDirectoryQueryPropertyValue(propertyName.get (), card);
-            if (_propertyValue == NULL)
-                return NS_ERROR_OUT_OF_MEMORY;
-
-        }
-        else
-        {
-            if (!MozillaLdapPropertyRelator::findLdapPropertyFromMozilla (propertyName.get ()))
-                continue;
-
-            const MozillaLdapPropertyRelation* relation ;
-
-            for (PRUint32 j = 0; j < attrs.GetSize(); j++)
+        for (PRUint32 i = 0; i < properties.GetSize(); i++)
             {
-                relation = MozillaLdapPropertyRelator::findMozillaPropertyFromLdap (attrs[j]);
-                if (!relation)
+                // this is the precedence order list of attrs for this property
+                CharPtrArrayGuard attrs;
+                rv = map->GetAttributes(nsDependentCString(properties[i]),
+                                        attrs.GetSizeAddr(),
+                                        attrs.GetArrayAddr());
+
+                // if there are no attrs for this property, just move on
+                if (NS_FAILED(rv) || !strlen(attrs[0])) {
                     continue;
-                /*
-                 * This change is necessary due to a side effect of #124022. The list of
-                 * requested attributes is created in reverse order than how they appear
-                 * in nsAbLDAPProperties.cpp. Thus while "surname" and "sn" both map to
-                 * LastName, "sn" will be returned by findLdapPropertyFromMozilla() as it
-                 * appears first in the hash table but "surname" will be returned by the 
-                 * request. 
-                 *
-                 * Rather than simply reversing the order, an alternative is to compare
-                 * the mapped Mozilla attributes where a one to one match exists.
-                */
+                }
 
-                if (nsCRT::strcasecmp (relation->mozillaProperty, propertyName.get()) == 0)
-                {
+                // iterate through list, until first property found
+                for (PRUint32 j=0; j < attrs.GetSize(); j++) {
+
+                    // try and get the values for this ldap attribute
                     PRUnicharPtrArrayGuard vals;
-                    rv = aMessage->GetValues (attrs[j], vals.GetSizeAddr(), vals.GetArrayAddr());
-                    NS_ENSURE_SUCCESS(rv, rv);
+                    rv = aMessage->GetValues(attrs[j], vals.GetSizeAddr(),
+                                             vals.GetArrayAddr());
 
-                    if (vals.GetSize() == 0)
+                    if (NS_SUCCEEDED(rv) && vals.GetSize()) {
+                        propertyValue = new nsAbDirectoryQueryPropertyValue(
+                            properties[i], vals[0]);
+                        if (!propertyValue) {
+                            return NS_ERROR_OUT_OF_MEMORY;
+                        }
+
+                        (void)propertyValues->AppendElement (propertyValue);
                         break;
-
-                    _propertyValue = new nsAbDirectoryQueryPropertyValue(propertyName.get (), vals[0]);
-                    if (_propertyValue == NULL)
-                        return NS_ERROR_OUT_OF_MEMORY;
-                    break;
+                    }
                 }
             }
-        }
-
-        if (_propertyValue)
-        {
-            nsCOMPtr<nsIAbDirectoryQueryPropertyValue> propertyValue;
-            propertyValue = _propertyValue;
-
-            if (!propertyValues)
-            {
-                NS_NewISupportsArray(getter_AddRefs(propertyValues));
-            }
-
-            propertyValues->AppendElement (propertyValue);
-        }
     }
 
-    if (!propertyValues)
-        return NS_OK;
-
-    return QueryResultStatus (propertyValues, result,nsIAbDirectoryQueryResult::queryResultMatch);
+    return QueryResultStatus (propertyValues, result, nsIAbDirectoryQueryResult::queryResultMatch);
 }
 nsresult nsAbQueryLDAPMessageListener::OnLDAPMessageSearchResult (nsILDAPMessage *aMessage,
         nsIAbDirectoryQueryResult** result)
@@ -661,7 +654,7 @@ nsAbLDAPDirectoryQuery::~nsAbLDAPDirectoryQuery()
 }
 nsresult nsAbLDAPDirectoryQuery::Initiate ()
 {
-    if(mInitialized == PR_TRUE)
+    if (mInitialized)
         return NS_OK;
 
     mLock = PR_NewLock ();
@@ -705,8 +698,18 @@ NS_IMETHODIMP nsAbLDAPDirectoryQuery::DoQuery(nsIAbDirectoryQueryArguments* argu
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIAbBooleanExpression> expression (do_QueryInterface (supportsExpression, &rv));
-    nsCString filter;
-    rv = nsAbBoolExprToLDAPFilter::Convert (expression, filter);
+    nsCAutoString filter;
+
+    // figure out how we map attribute names to addressbook fields for this
+    // query
+    nsCOMPtr<nsISupports> iSupportsMap;
+    rv = arguments->GetTypeSpecificArg(getter_AddRefs(iSupportsMap));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIAbLDAPAttributeMap> map = do_QueryInterface(iSupportsMap, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = nsAbBoolExprToLDAPFilter::Convert (map, expression, filter);
     NS_ENSURE_SUCCESS(rv, rv);
 
     /*
@@ -724,7 +727,7 @@ NS_IMETHODIMP nsAbLDAPDirectoryQuery::DoQuery(nsIAbDirectoryQueryArguments* argu
     */
     if(filter.IsEmpty())
     {
-        filter += NS_LITERAL_CSTRING("(objectclass=inetorgperson)");
+        filter.AssignLiteral("(objectclass=inetorgperson)");
     }
 
     // Set up the search ldap url
@@ -865,33 +868,51 @@ nsresult nsAbLDAPDirectoryQuery::getLdapReturnAttributes (
     nsresult rv;
 
     CharPtrArrayGuard properties;
-    rv = arguments->GetReturnProperties (properties.GetSizeAddr(), properties.GetArrayAddr());
+    rv = arguments->GetReturnProperties(properties.GetSizeAddr(),
+                                        properties.GetArrayAddr());
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCAutoString propertyName;
+    // figure out how we map attribute names to addressbook fields for this
+    // query
+    nsCOMPtr<nsISupports> iSupportsMap;
+    rv = arguments->GetTypeSpecificArg(getter_AddRefs(iSupportsMap));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIAbLDAPAttributeMap> map = do_QueryInterface(iSupportsMap, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (!strcmp(properties[0], "card:nsIAbCard")) {
+        // Meta property
+        // require all attributes
+        //
+        rv = map->GetAllCardAttributes(returnAttributes);
+        NS_ASSERTION(NS_SUCCEEDED(rv), "GetAllSupportedAttributes failed");
+        return rv;
+    }
+
+    PRBool needComma = PR_FALSE;
     for (PRUint32 i = 0; i < properties.GetSize(); i++)
     {
-        propertyName.Assign (properties[i]);
+        nsCAutoString attrs;
 
-        if (propertyName.Equals("card:nsIAbCard"))
-        {
-            // Meta property
-            // require all attributes
-            //
-            rv = MozillaLdapPropertyRelator::GetAllSupportedLDAPAttributes(returnAttributes);
-            NS_ASSERTION(NS_SUCCEEDED(rv), "GetAllSupportedLDAPAttributes failed");
-            break;
+        // get all the attributes for this property
+        rv = map->GetAttributeList(nsDependentCString(properties[i]), attrs);
+
+        // if there weren't any attrs, just keep going
+        if (NS_FAILED(rv) || attrs.IsEmpty()) {
+            continue;
         }
 
-        const MozillaLdapPropertyRelation* tableEntry=
-            MozillaLdapPropertyRelator::findLdapPropertyFromMozilla (propertyName.get ());
-        if (!tableEntry)
-            continue;
+        // add a comma, if necessary
+        if (needComma) {
+            returnAttributes.Append(PRUnichar (','));
+        }
 
-        if (i)
-            returnAttributes.Append (",");
+        returnAttributes.Append(attrs);
 
-        returnAttributes.Append (tableEntry->ldapProperty);
+        // since we've added attrs, we definitely need a comma next time
+        // we're here
+        needComma = PR_TRUE;
     }
 
     return rv;

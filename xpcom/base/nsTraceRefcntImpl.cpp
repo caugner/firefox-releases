@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   L. David Baron <dbaron@dbaron.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -69,10 +69,6 @@
 #include <dlfcn.h>
 #endif
 
-#if defined(XP_MAC) && !TARGET_CARBON
-#include "macstdlibextras.h"
-#endif
-
 ////////////////////////////////////////////////////////////////////////////////
 
 NS_COM void 
@@ -95,6 +91,10 @@ NS_MeanAndStdDev(double n, double sumOfValues, double sumOfSquaredValues,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+#ifdef WINCE
+#undef NS_BUILD_REFCNT_LOGGING
+#endif
 
 #ifdef NS_BUILD_REFCNT_LOGGING
 #include "plhash.h"
@@ -162,40 +162,24 @@ struct nsTraceRefcntStats {
 static void * PR_CALLBACK
 DefaultAllocTable(void *pool, PRSize size)
 {
-#if defined(XP_MAC)
-#pragma unused (pool)
-#endif
-
     return PR_MALLOC(size);
 }
 
 static void PR_CALLBACK
 DefaultFreeTable(void *pool, void *item)
 {
-#if defined(XP_MAC)
-#pragma unused (pool)
-#endif
-
     PR_Free(item);
 }
 
 static PLHashEntry * PR_CALLBACK
 DefaultAllocEntry(void *pool, const void *key)
 {
-#if defined(XP_MAC)
-#pragma unused (pool,key)
-#endif
-
     return PR_NEW(PLHashEntry);
 }
 
 static void PR_CALLBACK
 SerialNumberFreeEntry(void *pool, PLHashEntry *he, PRUintn flag)
 {
-#if defined(XP_MAC)
-#pragma unused (pool)
-#endif
-
     if (flag == HT_FREE_ENTRY) {
         PR_Free(NS_REINTERPRET_CAST(serialNumberRecord*,he->value));
         PR_Free(he);
@@ -205,10 +189,6 @@ SerialNumberFreeEntry(void *pool, PLHashEntry *he, PRUintn flag)
 static void PR_CALLBACK
 TypesToLogFreeEntry(void *pool, PLHashEntry *he, PRUintn flag)
 {
-#if defined(XP_MAC)
-#pragma unused (pool)
-#endif
-
     if (flag == HT_FREE_ENTRY) {
         nsCRT::free(NS_CONST_CAST(char*,
                      NS_REINTERPRET_CAST(const char*, he->key)));
@@ -413,10 +393,6 @@ protected:
 static void PR_CALLBACK
 BloatViewFreeEntry(void *pool, PLHashEntry *he, PRUintn flag)
 {
-#if defined(XP_MAC)
-#pragma unused (pool)
-#endif
-
     if (flag == HT_FREE_ENTRY) {
         BloatEntry* entry = NS_REINTERPRET_CAST(BloatEntry*,he->value);
         delete entry;
@@ -691,11 +667,6 @@ static void InitTraceLog(void)
   if (gInitialized) return;
   gInitialized = PR_TRUE;
 
-#if defined(XP_MAC) && !TARGET_CARBON
-  // this can get called before Toolbox has been initialized.
-  InitializeMacToolbox();
-#endif
-
   PRBool defined;
   defined = InitLog("XPCOM_MEM_BLOAT_LOG", "bloat/leaks", &gBloatLog);
   if (!defined)
@@ -848,7 +819,7 @@ static void InitTraceLog(void)
 
 #endif
 
-#if defined(_WIN32) && defined(_M_IX86) // WIN32 x86 stack walking code
+#if defined(_WIN32) && defined(_M_IX86) && !defined(WINCE) // WIN32 x86 stack walking code
 #include "nsStackFrameWin.h"
 void
 nsTraceRefcntImpl::WalkTheStack(FILE* aStream)
@@ -864,98 +835,6 @@ void
 nsTraceRefcntImpl::WalkTheStack(FILE* aStream)
 {
   DumpStackToFile(aStream);
-}
-
-#elif defined(XP_MAC)
-
-/**
- * Stack walking code for the Mac OS.
- */
-
-#include "gc_fragments.h"
-
-#include <typeinfo>
-
-extern "C" {
-void MWUnmangle(const char *mangled_name, char *unmangled_name, size_t buffersize);
-}
-
-struct traceback_table {
-	long zero;
-	long magic;
-	long reserved;
-	long codeSize;
-	short nameLength;
-	char name[2];
-};
-
-static char* pc2name(long* pc, char name[], long size)
-{
-	name[0] = '\0';
-	
-	// make sure pc is instruction aligned (at least).
-	if (UInt32(pc) == (UInt32(pc) & 0xFFFFFFFC)) {
-		long instructionsToLook = 4096;
-		long* instruction = (long*)pc;
-		
-		// look for the traceback table.
-		while (instructionsToLook--) {
-			if (instruction[0] == 0x4E800020 && instruction[1] == 0x00000000) {
-				traceback_table* tb = (traceback_table*)&instruction[1];
-				memcpy(name, tb->name + 1, --nameLength);
-				name[nameLength] = '\0';
-				break;
-			}
-			++instruction;
-		}
-	}
-	
-	return name;
-}
-
-struct stack_frame {
-	stack_frame*	next;				// savedSP
-	void*			savedCR;
-	void*			savedLR;
-	void*			reserved0;
-	void*			reserved1;
-	void*			savedTOC;
-};
-
-static asm stack_frame* getStackFrame() 
-{
-	mr		r3, sp
-	blr
-}
-
-NS_COM void
-nsTraceRefcntImpl::WalkTheStack(FILE* aStream)
-{
-  stack_frame* currentFrame = getStackFrame();    // WalkTheStack's frame.
-	currentFrame = currentFrame->next;	            // WalkTheStack's caller's frame.
-	currentFrame = currentFrame->next;              // WalkTheStack's caller's caller's frame.
-    
-	while (true) {
-		// LR saved at 8(SP) in each frame. subtract 4 to get address of calling instruction.
-		void* pc = currentFrame->savedLR;
-
-		// convert PC to name, unmangle it, and generate source location, if possible.
-		static char symbol_name[1024], unmangled_name[1024], file_name[256]; UInt32 file_offset;
-		
-     	if (GC_address_to_source((char*)pc, symbol_name, file_name, &file_offset)) {
-			MWUnmangle(symbol_name, unmangled_name, sizeof(unmangled_name));
-     		fprintf(aStream, "%s[%s,%ld]\n", unmangled_name, file_name, file_offset);
-     	} else {
- 		    pc2name((long*)pc, symbol_name, sizeof(symbol_name));
-			MWUnmangle(symbol_name, unmangled_name, sizeof(unmangled_name));
-    		fprintf(aStream, "%s(0x%08X)\n", unmangled_name, pc);
-     	}
-
-		currentFrame = currentFrame->next;
-		// the bottom-most frame is marked as pointing to NULL, or is ODD if a 68K transition frame.
-		if (currentFrame == NULL || UInt32(currentFrame) & 0x1)
-			break;
-	}
 }
 
 #else // unsupported platform.

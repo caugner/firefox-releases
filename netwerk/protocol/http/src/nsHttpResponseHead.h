@@ -1,25 +1,40 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications.  Portions created by Netscape Communications are
- * Copyright (C) 2001 by Netscape Communications.  All
- * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Darin Fisher <darin@netscape.com> (original author)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef nsHttpResponseHead_h__
 #define nsHttpResponseHead_h__
@@ -38,7 +53,7 @@ class nsHttpResponseHead
 public:
     nsHttpResponseHead() : mVersion(NS_HTTP_VERSION_1_1)
                          , mStatus(200)
-                         , mContentLength(-1)
+                         , mContentLength(LL_MaxUint())
                          , mCacheControlNoStore(PR_FALSE)
                          , mCacheControlNoCache(PR_FALSE)
                          , mPragmaNoCache(PR_FALSE) {}
@@ -51,11 +66,17 @@ public:
     nsHttpVersion         Version()        { return mVersion; }
     PRUint16              Status()         { return mStatus; }
     const nsAFlatCString &StatusText()     { return mStatusText; }
-    PRInt32               ContentLength()  { return mContentLength; }
+    PRInt64               ContentLength()  { return mContentLength; }
     const nsAFlatCString &ContentType()    { return mContentType; }
     const nsAFlatCString &ContentCharset() { return mContentCharset; }
     PRBool                NoStore()        { return mCacheControlNoStore; }
     PRBool                NoCache()        { return (mCacheControlNoCache || mPragmaNoCache); }
+    /**
+     * Full length of the entity. For byte-range requests, this may be larger
+     * than ContentLength(), which will only represent the requested part of the
+     * entity.
+     */
+    PRInt64               TotalEntitySize();
 
     const char *PeekHeader(nsHttpAtom h)            { return mHeaders.PeekHeader(h); }
     nsresult SetHeader(nsHttpAtom h, const nsACString &v, PRBool m=PR_FALSE);
@@ -65,7 +86,7 @@ public:
 
     void     SetContentType(const nsACString &s)    { mContentType = s; }
     void     SetContentCharset(const nsACString &s) { mContentCharset = s; }
-    void     SetContentLength(PRInt32);
+    void     SetContentLength(PRInt64);
 
     // write out the response status line and headers as a single text block,
     // optionally pruning out transient headers (ie. headers that only make
@@ -111,7 +132,6 @@ public:
 
 private:
     void     ParseVersion(const char *);
-    void     ParseContentType(char *);
     void     ParseCacheControl(const char *);
     void     ParsePragma(const char *);
 
@@ -120,7 +140,7 @@ private:
     nsHttpVersion     mVersion;
     PRUint16          mStatus;
     nsCString         mStatusText;
-    PRInt32           mContentLength;
+    PRInt64           mContentLength;
     nsCString         mContentType;
     nsCString         mContentCharset;
     PRPackedBool      mCacheControlNoStore;

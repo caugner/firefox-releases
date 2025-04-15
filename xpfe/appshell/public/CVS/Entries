@@ -1,18 +1,10 @@
-/.cvsignore/1.1/Mon Dec 14 16:27:10 1998//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.58/Sun Feb  1 03:35:16 2004//TFIREFOX_1_0_RELEASE
-/nsAppShellCIDs.h/1.7/Fri Sep 28 20:13:17 2001//TFIREFOX_1_0_RELEASE
-/nsAppleEvents.h/1.4/Fri Sep 28 20:13:18 2001//TFIREFOX_1_0_RELEASE
-/nsIAppShellService.idl/1.28.54.2/Thu Jun 10 07:55:42 2004//TFIREFOX_1_0_RELEASE
-/nsICloseAllWindows.idl/1.2/Tue Oct  2 14:47:33 2001//TFIREFOX_1_0_RELEASE
-/nsICmdLineHandler.idl/1.18/Sat Mar 15 01:04:15 2003//TFIREFOX_1_0_RELEASE
-/nsICmdLineService.idl/1.6/Tue Sep 24 00:56:12 2002//TFIREFOX_1_0_RELEASE
-/nsINativeAppSupport.idl/1.12.72.1/Tue May 18 01:26:39 2004//TFIREFOX_1_0_RELEASE
-/nsINativeAppSupportWin.idl/1.4/Wed Mar 17 23:21:25 2004//TFIREFOX_1_0_RELEASE
-/nsIPopupWindowManager.idl/1.4/Sat Mar 22 01:24:47 2003//TFIREFOX_1_0_RELEASE
-/nsISplashScreen.h/1.2/Fri Sep 28 20:13:18 2001//TFIREFOX_1_0_RELEASE
-/nsIUserInfo.idl/1.6/Fri Sep 28 20:13:18 2001//TFIREFOX_1_0_RELEASE
-/nsIWebShellWindow.h/1.21/Tue Jul  2 17:39:40 2002//TFIREFOX_1_0_RELEASE
-/nsIWindowMediator.idl/1.18/Tue Oct  7 01:19:16 2003//TFIREFOX_1_0_RELEASE
-/nsIWindowMediatorListener.idl/1.3/Mon Jun 17 23:41:42 2002//TFIREFOX_1_0_RELEASE
-/nsIXULWindow.idl/1.12.20.1/Mon Oct  4 18:21:21 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Mon Dec 14 16:27:10 1998//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.61/Sat Feb 19 22:42:00 2005//TFIREFOX_1_5_RELEASE
+/nsAppShellCID.h/1.1/Fri Oct 29 19:28:29 2004//TFIREFOX_1_5_RELEASE
+/nsIAppShellService.idl/1.31/Sat Feb 19 22:42:00 2005//TFIREFOX_1_5_RELEASE
+/nsIPopupWindowManager.idl/1.5/Sun Feb  6 08:25:40 2005//TFIREFOX_1_5_RELEASE
+/nsIWindowMediator.idl/1.19/Sat Apr 17 16:51:10 2004//TFIREFOX_1_5_RELEASE
+/nsIWindowMediatorListener.idl/1.4/Sat Apr 17 16:51:10 2004//TFIREFOX_1_5_RELEASE
+/nsIXULBrowserWindow.idl/1.11/Sat Apr 17 16:51:13 2004//TFIREFOX_1_5_RELEASE
+/nsIXULWindow.idl/1.16/Wed Feb  2 09:39:29 2005//TFIREFOX_1_5_RELEASE
 D

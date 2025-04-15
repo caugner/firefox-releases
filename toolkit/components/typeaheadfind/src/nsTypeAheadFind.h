@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,16 +14,15 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Authors: Aaron Leventhal (aaronl@netscape.com)
- *                   Blake Ross      (blake@cs.stanford.edu)
- * Contributors:    
- *
+ *   Aaron Leventhal (aaronl@netscape.com)
+ *   Blake Ross      (blake@cs.stanford.edu)
+ *   Masayuki Nakano (masayuki@d-toybox.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -31,11 +30,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -48,7 +47,7 @@
 #include "nsIWebBrowserFind.h"
 #include "nsWeakReference.h"
 #include "nsIPresShell.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsISelection.h"
 #include "nsIDOMRange.h"
 #include "nsIDocShellTreeItem.h"
@@ -95,7 +94,7 @@ protected:
 
   void GetSelection(nsIPresShell *aPresShell, nsISelectionController **aSelCon, 
                     nsISelection **aDomSel);
-  PRBool IsRangeVisible(nsIPresShell *aPresShell, nsIPresContext *aPresContext,
+  PRBool IsRangeVisible(nsIPresShell *aPresShell, nsPresContext *aPresContext,
                          nsIDOMRange *aRange, PRBool aMustBeVisible, 
                          PRBool aGetTopVisibleLeaf,
                          nsIDOMRange **aNewRange);
@@ -106,10 +105,14 @@ protected:
                                PRBool aIsFirstVisiblePreferred, 
                                PRBool aCanUseDocSelection,
                                nsIPresShell **aPresShell, 
-                               nsIPresContext **aPresContext);
+                               nsPresContext **aPresContext);
 
   nsresult Cancel();
-  
+
+  // Get the pres shell from mPresShell and return it only if it is still
+  // attached to the DOM window.
+  NS_HIDDEN_(already_AddRefed<nsIPresShell>) GetPresShell();
+
   // Current find state
   nsString mTypeAheadBuffer;
   nsCString mNotFoundSoundURL;
@@ -122,6 +125,8 @@ protected:
   PRPackedBool mLinksOnly;
   PRBool mCaretBrowsingOn;
   PRBool mFocusLinks;
+  nsCOMPtr<nsIDOMElement> mFoundLink;
+  nsCOMPtr<nsIDOMWindow> mCurrentWindow;
   PRPackedBool mLiteralTextSearchOnly;
   PRPackedBool mDontTryExactMatch;
   // mAllTheSame Char starts out PR_TRUE, becomes false when 

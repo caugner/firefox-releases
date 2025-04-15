@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2000
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "msgCore.h"
@@ -229,10 +229,10 @@ char *nsMsgSearchNews::EncodeTerm (nsIMsgSearchTerm *term)
 
     
 	if (leadingStar)
-      pattern.Append("*");
-    pattern.Append(NS_ConvertUCS2toUTF8(escapedValue));
+      pattern.Append('*');
+    AppendUTF16toUTF8(escapedValue, pattern);
 	if (trailingStar)
-      pattern.Append("*");
+      pattern.Append('*');
 
 	// Combine the XPAT command syntax with the attribute and the pattern to
 	// form the term encoding
@@ -600,96 +600,6 @@ nsresult nsMsgSearchNewsEx::SaveProfile (const char *profileName)
 	return err;
 }
 #endif // DOING_PROFILES
-#if OLDWAY
-// Callback from libnet
-SEARCH_API void MSG_AddNewsSearchHit (MWContext *context, const char *resultLine)
-{
-	MSG_SearchFrame *frame = MSG_SearchFrame::FromContext (context);
-	nsMsgSearchNewsEx *adapter = (nsMsgSearchNewsEx *) frame->GetRunningAdapter();
-	if (adapter)
-	{
-		MessageHdrStruct hdr;
-		XP_BZERO(&hdr, sizeof(hdr));
-
-		// Here we make the SEARCH result compatible with xover conventions. In SEARCH, the
-		// group name and a ':' precede the article number, so try to skip over this stuff
-		// before asking NeoMessageHdr to parse it
-		char *xoverCompatLine = XP_STRCHR(resultLine, ':');
-		if (xoverCompatLine)
-			xoverCompatLine++;
-		else
-			xoverCompatLine = (char*) resultLine; //### casting away const
-
-		if (NeoMessageHdr::ParseLine ((char*) xoverCompatLine, &hdr)) //### casting away const
-		{
-			if (hdr.m_flags & kHasRe) // hack around which kind of flag we actually got
-			{
-				hdr.m_flags &= !kHasRe;
-				hdr.m_flags |= MSG_FLAG_HAS_RE;
-			}
-			adapter->ReportHit (&hdr, XP_STRTOK((char*) resultLine, ":")); //### casting away const
-		}
-	}
-}
-
-
-SEARCH_API nsresult MSG_SaveProfileStatus (MSG_Pane *searchPane, PRBool *cmdEnabled)
-{
-	nsresult err = NS_OK;
-
-	NS_ABORT_IF_FALSE(cmdEnabled, "cmdEnabled cannot be NULL");
-	if (cmdEnabled)
-	{
-		*cmdEnabled = PR_FALSE;
-		MSG_SearchFrame *frame = MSG_SearchFrame::FromPane (searchPane);
-		if (frame)
-			*cmdEnabled = frame->GetSaveProfileStatus();
-	}
-	else
-		err = NS_ERROR_NULL_POINTER;
-
-	return err;
-}
-
-
-SEARCH_API nsresult MSG_SaveProfile (MSG_Pane *searchPane, const char * profileName)
-{
-	nsresult err = NS_OK;
-
-#ifdef _DEBUG
-	PRBool enabled = PR_FALSE;
-	MSG_SaveProfileStatus (searchPane, &enabled);
-	NS_ENSURE_TRUE(enabled, SearchError_ScopeAgreement);
-#endif
-
-	if (profileName)
-	{
-		MSG_SearchFrame *frame = MSG_SearchFrame::FromPane (searchPane);
-		NS_ASSERTION(frame, "frame cannot be NULL");
-		if (frame)
-		{
-			nsMsgSearchNewsEx *adapter = frame->GetProfileAdapter();
-			NS_ASSERTION(adapter, "adaptor cannot be NULL");
-			if (adapter)
-				err = adapter->SaveProfile (profileName);
-		}
-	}
-	else
-		err = NS_ERROR_NULL_POINTER;
-
-	return err;
-}
-
-
-SEARCH_API int MSG_AddProfileGroup (MSG_Pane *pane, MSG_NewsHost* host,
-									const char *groupName)
-{
-	MSG_FolderInfoNews *group =
-		pane->GetMaster()->AddProfileNewsgroup(host, groupName);
-	return group ? 0 : -1;
-}
-
-#endif
 
 nsresult nsMsgSearchValidityManager::InitNewsTable()
 {
@@ -812,49 +722,49 @@ nsresult nsMsgSearchValidityManager::InitNewsExTable (nsINntpIncomingServer *new
       newsHost->QuerySearchableHeader(":TEXT", &hasAttrib);
     else
       hasAttrib = PR_TRUE;
-		m_newsExTable->SetAvailable (nsMsgSearchAttrib::AnyText, nsMsgSearchOp::Contains, hasAttrib);
-		m_newsExTable->SetEnabled   (nsMsgSearchAttrib::AnyText, nsMsgSearchOp::Contains, hasAttrib);
-		m_newsExTable->SetAvailable (nsMsgSearchAttrib::AnyText, nsMsgSearchOp::DoesntContain, hasAttrib);
-		m_newsExTable->SetEnabled   (nsMsgSearchAttrib::AnyText, nsMsgSearchOp::DoesntContain, hasAttrib);
+    m_newsExTable->SetAvailable (nsMsgSearchAttrib::AnyText, nsMsgSearchOp::Contains, hasAttrib);
+    m_newsExTable->SetEnabled   (nsMsgSearchAttrib::AnyText, nsMsgSearchOp::Contains, hasAttrib);
+    m_newsExTable->SetAvailable (nsMsgSearchAttrib::AnyText, nsMsgSearchOp::DoesntContain, hasAttrib);
+    m_newsExTable->SetEnabled   (nsMsgSearchAttrib::AnyText, nsMsgSearchOp::DoesntContain, hasAttrib);
 
     if (newsHost)
       newsHost->QuerySearchableHeader("KEYWORDS", &hasAttrib);
     else
       hasAttrib = PR_TRUE;
-		m_newsExTable->SetAvailable (nsMsgSearchAttrib::Keywords, nsMsgSearchOp::Contains, hasAttrib);
-		m_newsExTable->SetEnabled   (nsMsgSearchAttrib::Keywords, nsMsgSearchOp::Contains, hasAttrib);
-		m_newsExTable->SetAvailable (nsMsgSearchAttrib::Keywords, nsMsgSearchOp::DoesntContain, hasAttrib);
-		m_newsExTable->SetEnabled   (nsMsgSearchAttrib::Keywords, nsMsgSearchOp::DoesntContain, hasAttrib);
+    m_newsExTable->SetAvailable (nsMsgSearchAttrib::Keywords, nsMsgSearchOp::Contains, hasAttrib);
+    m_newsExTable->SetEnabled   (nsMsgSearchAttrib::Keywords, nsMsgSearchOp::Contains, hasAttrib);
+    m_newsExTable->SetAvailable (nsMsgSearchAttrib::Keywords, nsMsgSearchOp::DoesntContain, hasAttrib);
+    m_newsExTable->SetEnabled   (nsMsgSearchAttrib::Keywords, nsMsgSearchOp::DoesntContain, hasAttrib);
 
 #ifdef LATER
-		// Not sure whether this would be useful or not. If so, can we specify more
-		// than one NEWSGROUPS term to the server? If not, it would be tricky to merge
-		// this with the NEWSGROUPS term we generate for the scope.
-		hasAttrib = newsHost ? newsHost->QuerySearchableHeader("NEWSGROUPS") : PR_TRUE;
-		m_newsExTable->SetAvailable (nsMsgSearchAttrib::Newsgroups, nsMsgSearchOp::IsBefore, hasAttrib);
-		m_newsExTable->SetEnabled   (nsMsgSearchAttrib::Newsgroups, nsMsgSearchOp::IsBefore, hasAttrib);
-		m_newsExTable->SetAvailable (nsMsgSearchAttrib::Newsgroups, nsMsgSearchOp::IsAfter, hasAttrib);
-		m_newsExTable->SetEnabled   (nsMsgSearchAttrib::Newsgroups, nsMsgSearchOp::IsAfter, hasAttrib);
+    // Not sure whether this would be useful or not. If so, can we specify more
+    // than one NEWSGROUPS term to the server? If not, it would be tricky to merge
+    // this with the NEWSGROUPS term we generate for the scope.
+    hasAttrib = newsHost ? newsHost->QuerySearchableHeader("NEWSGROUPS") : PR_TRUE;
+    m_newsExTable->SetAvailable (nsMsgSearchAttrib::Newsgroups, nsMsgSearchOp::IsBefore, hasAttrib);
+    m_newsExTable->SetEnabled   (nsMsgSearchAttrib::Newsgroups, nsMsgSearchOp::IsBefore, hasAttrib);
+    m_newsExTable->SetAvailable (nsMsgSearchAttrib::Newsgroups, nsMsgSearchOp::IsAfter, hasAttrib);
+    m_newsExTable->SetEnabled   (nsMsgSearchAttrib::Newsgroups, nsMsgSearchOp::IsAfter, hasAttrib);
 #endif
     if (newsHost)
       newsHost->QuerySearchableHeader("DATE", &hasAttrib);
     else
       hasAttrib = PR_TRUE;
-		m_newsExTable->SetAvailable (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::IsGreaterThan, hasAttrib);
-		m_newsExTable->SetEnabled   (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::IsGreaterThan, hasAttrib);
-		m_newsExTable->SetAvailable (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::IsLessThan,  hasAttrib);
-		m_newsExTable->SetEnabled   (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::IsLessThan, hasAttrib);
-		m_newsExTable->SetAvailable (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::Is,  hasAttrib);
-		m_newsExTable->SetEnabled   (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::Is, hasAttrib);
+    m_newsExTable->SetAvailable (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::IsGreaterThan, hasAttrib);
+    m_newsExTable->SetEnabled   (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::IsGreaterThan, hasAttrib);
+    m_newsExTable->SetAvailable (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::IsLessThan,  hasAttrib);
+    m_newsExTable->SetEnabled   (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::IsLessThan, hasAttrib);
+    m_newsExTable->SetAvailable (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::Is,  hasAttrib);
+    m_newsExTable->SetEnabled   (nsMsgSearchAttrib::AgeInDays, nsMsgSearchOp::Is, hasAttrib);
 
-		// it is possible that the user enters an arbitrary header that is not searchable using NNTP search extensions
-		m_newsExTable->SetAvailable (nsMsgSearchAttrib::OtherHeader, nsMsgSearchOp::Contains, 1);   // added for arbitrary headers
-		m_newsExTable->SetEnabled   (nsMsgSearchAttrib::OtherHeader, nsMsgSearchOp::Contains, 1);
-		m_newsExTable->SetAvailable (nsMsgSearchAttrib::OtherHeader, nsMsgSearchOp::DoesntContain, 1);
-		m_newsExTable->SetEnabled   (nsMsgSearchAttrib::OtherHeader, nsMsgSearchOp::DoesntContain, 1);
-	}
+    // it is possible that the user enters an arbitrary header that is not searchable using NNTP search extensions
+    m_newsExTable->SetAvailable (nsMsgSearchAttrib::OtherHeader, nsMsgSearchOp::Contains, 1);   // added for arbitrary headers
+    m_newsExTable->SetEnabled   (nsMsgSearchAttrib::OtherHeader, nsMsgSearchOp::Contains, 1);
+    m_newsExTable->SetAvailable (nsMsgSearchAttrib::OtherHeader, nsMsgSearchOp::DoesntContain, 1);
+    m_newsExTable->SetEnabled   (nsMsgSearchAttrib::OtherHeader, nsMsgSearchOp::DoesntContain, 1);
+  }
 
-	return err;
+  return err;
 }
 
 nsresult nsMsgSearchValidityManager::PostProcessValidityTable (nsINntpIncomingServer *host)

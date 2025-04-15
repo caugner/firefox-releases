@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -50,14 +50,13 @@
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
 #include "nsCOMPtr.h"
-#include "nsIPresContext.h"
-#include "nsButtonFrameRenderer.h"
+#include "nsPresContext.h"
 #include "nsBoxLayoutState.h"
 
 #include "nsHTMLParts.h"
 #include "nsString.h"
 #include "nsLeafFrame.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIRenderingContext.h"
 #include "nsIPresShell.h"
 #include "nsIImage.h"
@@ -66,7 +65,6 @@
 #include "nsLayoutAtoms.h"
 #include "nsIDocument.h"
 #include "nsIHTMLDocument.h"
-#include "nsContentUtils.h"
 #include "nsStyleConsts.h"
 #include "nsImageMap.h"
 #include "nsILinkHandler.h"
@@ -85,7 +83,7 @@
 #include "nsIDOMHTMLMapElement.h"
 #include "nsBoxLayoutState.h"
 #include "nsIDOMDocument.h"
-#include "nsEventQueueUtils.h"
+#include "nsIEventQueueService.h"
 #include "nsTransform2D.h"
 #include "nsITheme.h"
 
@@ -94,25 +92,20 @@
 #include "nsNetUtil.h"
 #include "nsGUIEvent.h"
 
-#include "nsFormControlHelper.h"
+#include "nsContentUtils.h"
 
 #define ONLOAD_CALLED_TOO_EARLY 1
 
 static void PR_CALLBACK
 HandleImagePLEvent(nsIContent *aContent, PRUint32 aMessage, PRUint32 aFlags)
 {
-  nsCOMPtr<nsIDOMNode> node(do_QueryInterface(aContent));
-
-  if (!node) {
-    NS_ERROR("null or non-DOM node passed to HandleImagePLEvent!");
+  if (!aContent) {
+    NS_ERROR("null node passed to HandleImagePLEvent!");
 
     return;
   }
 
-  nsCOMPtr<nsIDOMDocument> dom_doc;
-  node->GetOwnerDocument(getter_AddRefs(dom_doc));
-
-  nsCOMPtr<nsIDocument> doc(do_QueryInterface(dom_doc));
+  nsIDocument* doc = aContent->GetOwnerDoc();
 
   if (!doc) {
     return;
@@ -123,15 +116,13 @@ HandleImagePLEvent(nsIContent *aContent, PRUint32 aMessage, PRUint32 aFlags)
     return;
   }
 
-  nsCOMPtr<nsIPresContext> pres_context;
-  pres_shell->GetPresContext(getter_AddRefs(pres_context));
-
+  nsCOMPtr<nsPresContext> pres_context = pres_shell->GetPresContext();
   if (!pres_context) {
     return;
   }
 
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsEvent event(aMessage);
+  nsEvent event(PR_TRUE, aMessage);
 
   aContent->HandleDOMEvent(pres_context, &event, nsnull, aFlags, &status);
 }
@@ -171,11 +162,11 @@ DestroyImagePLEvent(PLEvent* aEvent)
 // is loaded from the netswork the notifications come back
 // asynchronously.
 
-static NS_DEFINE_CID(kEventQueueServiceCID,   NS_EVENTQUEUESERVICE_CID);
-
 void
 FireDOMEvent(nsIContent* aContent, PRUint32 aMessage)
 {
+  static NS_DEFINE_CID(kEventQueueServiceCID,   NS_EVENTQUEUESERVICE_CID);
+
   nsCOMPtr<nsIEventQueueService> event_service =
     do_GetService(kEventQueueServiceCID);
 
@@ -232,80 +223,6 @@ FireDOMEvent(nsIContent* aContent, PRUint32 aMessage)
   event_queue->PostEvent(event);
 }
 
-static void* HandleCancelEvent(PLEvent *aEvent);
-static void DestroyCancelEvent(PLEvent *aEvent);
-
-class CancelImageRequestEvent : public PLEvent {
-public:
-  static void PostCancelRequest(imgIRequest* aRequest,
-                                imgIDecoderObserver *aListener);
-
-  friend void* HandleCancelEvent(PLEvent *aEvent);
-  friend void DestroyCancelEvent(PLEvent *aEvent);
-
-private:
-  static CancelImageRequestEvent* gEvent;
-  nsCOMArray<imgIRequest> mRequests;
-  nsCOMArray<imgIDecoderObserver> mListeners;
-};
-
-/* static */ CancelImageRequestEvent* CancelImageRequestEvent::gEvent = nsnull;
-
-/* static */ void
-CancelImageRequestEvent::PostCancelRequest(imgIRequest* aRequest,
-                                           imgIDecoderObserver *aListener)
-{
-  if (!gEvent) {
-    nsCOMPtr<nsIEventQueue> eventQ;
-    NS_GetCurrentEventQ(getter_AddRefs(eventQ));
-    gEvent = new CancelImageRequestEvent();
-    if (!eventQ || !gEvent) {
-      // Cancel now since the listener is going to go away
-      aRequest->Cancel(NS_ERROR_FAILURE);
-      delete gEvent;
-      gEvent = nsnull;
-      return;
-    }
-    PL_InitEvent(gEvent, nsnull, HandleCancelEvent, DestroyCancelEvent);
-
-    nsresult rv = eventQ->PostEvent(gEvent);
-    if (NS_FAILED(rv)) {
-      // Cancel now since the listener is going to go away
-      aRequest->Cancel(NS_ERROR_FAILURE);
-      PL_DestroyEvent(gEvent);
-      gEvent = nsnull;
-      return;
-    }
-  }
-
-  gEvent->mRequests.AppendObject(aRequest);
-  gEvent->mListeners.AppendObject(aListener);
-}
-
-static void* HandleCancelEvent(PLEvent *aEvent)
-{
-  CancelImageRequestEvent *event =
-    NS_STATIC_CAST(CancelImageRequestEvent*, aEvent);
-
-  NS_ASSERTION(CancelImageRequestEvent::gEvent == event, "multiple events");
-  CancelImageRequestEvent::gEvent = nsnull;
-
-  for (PRInt32 i = event->mRequests.Count() - 1; i >= 0; --i) {
-    event->mRequests[i]->Cancel(NS_ERROR_FAILURE);
-  }
-  event->mRequests.Clear();
-  event->mListeners.Clear();
-
-  return nsnull;
-}
-
-static void DestroyCancelEvent(PLEvent *aEvent)
-{
-  CancelImageRequestEvent *event =
-    NS_STATIC_CAST(CancelImageRequestEvent*, aEvent);
-  delete event;
-}
-
 //
 // NS_NewImageBoxFrame
 //
@@ -328,20 +245,21 @@ NS_NewImageBoxFrame ( nsIPresShell* aPresShell, nsIFrame** aNewFrame )
 } // NS_NewTitledButtonFrame
 
 NS_IMETHODIMP
-nsImageBoxFrame::AttributeChanged(nsIPresContext* aPresContext,
-                               nsIContent* aChild,
-                               PRInt32 aNameSpaceID,
-                               nsIAtom* aAttribute,
-                               PRInt32 aModType)
+nsImageBoxFrame::AttributeChanged(nsIContent* aChild,
+                                  PRInt32 aNameSpaceID,
+                                  nsIAtom* aAttribute,
+                                  PRInt32 aModType)
 {
-  nsresult rv = nsLeafBoxFrame::AttributeChanged(aPresContext, aChild, aNameSpaceID, aAttribute, aModType);
+  nsresult rv = nsLeafBoxFrame::AttributeChanged(aChild, aNameSpaceID,
+		                                 aAttribute, aModType);
 
-  PRBool aResize = UpdateAttributes(aAttribute);
-
-  if (aResize) {
-    nsBoxLayoutState state(aPresContext);
+  if (aAttribute == nsHTMLAtoms::src) {
+    UpdateImage();
+    nsBoxLayoutState state(GetPresContext());
     MarkDirty(state);
   }
+  else if (aAttribute == nsXULAtoms::validate)
+    UpdateLoadFlags();
 
   return rv;
 }
@@ -349,8 +267,6 @@ nsImageBoxFrame::AttributeChanged(nsIPresContext* aPresContext,
 nsImageBoxFrame::nsImageBoxFrame(nsIPresShell* aShell) :
   nsLeafBoxFrame(aShell),
   mUseSrcAttr(PR_FALSE),
-  mSizeFrozen(PR_FALSE),
-  mHasImage(PR_FALSE),
   mSuppressStyleCheck(PR_FALSE),
   mIntrinsicSize(0,0),
   mLoadFlags(nsIRequest::LOAD_NORMAL)
@@ -370,77 +286,94 @@ nsImageBoxFrame::NeedsRecalc()
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsImageBoxFrame::Destroy(nsIPresContext* aPresContext)
+NS_METHOD
+nsImageBoxFrame::Destroy(nsPresContext* aPresContext)
 {
   // Release image loader first so that it's refcnt can go to zero
   if (mImageRequest)
     mImageRequest->Cancel(NS_ERROR_FAILURE);
 
   if (mListener)
-    mListener->SetFrame(nsnull);
+    NS_REINTERPRET_CAST(nsImageBoxListener*, mListener.get())->SetFrame(nsnull); // set the frame to null so we don't send messages to a dead object.
 
   return nsLeafBoxFrame::Destroy(aPresContext);
 }
 
 
 NS_IMETHODIMP
-nsImageBoxFrame::Init(nsIPresContext*  aPresContext,
+nsImageBoxFrame::Init(nsPresContext*  aPresContext,
                           nsIContent*      aContent,
                           nsIFrame*        aParent,
                           nsStyleContext*  aContext,
                           nsIFrame*        aPrevInFlow)
 {
+  if (!mListener) {
+    nsImageBoxListener *listener;
+    NS_NEWXPCOM(listener, nsImageBoxListener);
+    NS_ADDREF(listener);
+    listener->SetFrame(this);
+    listener->QueryInterface(NS_GET_IID(imgIDecoderObserver), getter_AddRefs(mListener));
+    NS_RELEASE(listener);
+  }
+
   mSuppressStyleCheck = PR_TRUE;
   nsresult  rv = nsLeafBoxFrame::Init(aPresContext, aContent, aParent, aContext, aPrevInFlow);
   mSuppressStyleCheck = PR_FALSE;
 
-  GetImageSource();
   UpdateLoadFlags();
-
   UpdateImage();
 
   return rv;
 }
 
 void
-nsImageBoxFrame::GetImageSource()
+nsImageBoxFrame::UpdateImage()
 {
+  if (mImageRequest) {
+    mImageRequest->Cancel(NS_ERROR_FAILURE);
+    mImageRequest = nsnull;
+  }
+
   // get the new image src
   nsAutoString src;
   mContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::src, src);
   mUseSrcAttr = !src.IsEmpty();
   if (mUseSrcAttr) {
-    nsCOMPtr<nsIURI> baseURI;
-    if (mContent) {
-      baseURI = mContent->GetBaseURI();
+    nsIDocument* doc = mContent->GetDocument();
+    if (!doc) {
+      // No need to do anything here...
+      return;
     }
-    // XXX origin charset needed
-    NS_NewURI(getter_AddRefs(mURI), src, nsnull, baseURI);
+    nsCOMPtr<nsIURI> baseURI = mContent->GetBaseURI();
+    nsCOMPtr<nsIURI> uri;
+    nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(uri),
+                                              src,
+                                              doc,
+                                              baseURI);
+
+    if (uri && nsContentUtils::CanLoadImage(uri, mContent, doc)) {
+      nsContentUtils::LoadImage(uri, doc, doc->GetDocumentURI(),
+                                mListener, mLoadFlags,
+                                getter_AddRefs(mImageRequest));
+    }
   } else {
     // Only get the list-style-image if we aren't being drawn
     // by a native theme.
-    const nsStyleDisplay* disp = GetStyleDisplay();
-    if (disp->mAppearance && nsBox::gTheme && 
-        nsBox::gTheme->ThemeSupportsWidget(nsnull, this, disp->mAppearance))
-      return;
-
-    // get the list-style-image
-    mURI = GetStyleList()->mListStyleImage;
+    PRUint8 appearance = GetStyleDisplay()->mAppearance;
+    if (!(appearance && nsBox::gTheme && 
+          nsBox::gTheme->ThemeSupportsWidget(nsnull, this, appearance))) {
+      // get the list-style-image
+      imgIRequest *styleRequest = GetStyleList()->mListStyleImage;
+      if (styleRequest) {
+        styleRequest->Clone(mListener, getter_AddRefs(mImageRequest));
+      }
+    }
   }
-}
 
-PRBool
-nsImageBoxFrame::UpdateAttributes(nsIAtom* aAttribute)
-{
-  if (aAttribute == nsnull || aAttribute == nsHTMLAtoms::src) {
-    GetImageSource();
-    return UpdateImage();
+  if (!mImageRequest) {
+    // We have no image, so size to 0
+    mIntrinsicSize.SizeTo(0, 0);
   }
-  else if (aAttribute == nsXULAtoms::validate)
-    UpdateLoadFlags();
-
-  return PR_FALSE;
 }
 
 void
@@ -448,78 +381,16 @@ nsImageBoxFrame::UpdateLoadFlags()
 {
   nsAutoString loadPolicy;
   mContent->GetAttr(kNameSpaceID_None, nsXULAtoms::validate, loadPolicy);
-  if (loadPolicy.Equals(NS_LITERAL_STRING("always")))
+  if (loadPolicy.EqualsLiteral("always"))
     mLoadFlags = nsIRequest::VALIDATE_ALWAYS;
-  else if (loadPolicy.Equals(NS_LITERAL_STRING("never")))
+  else if (loadPolicy.EqualsLiteral("never"))
     mLoadFlags = nsIRequest::VALIDATE_NEVER|nsIRequest::LOAD_FROM_CACHE; 
   else
     mLoadFlags = nsIRequest::LOAD_NORMAL;
 }
 
-void
-nsImageBoxFrame::StopCurrentLoad()
-{
-  if (mListener) {
-    if (mImageRequest) {
-      CancelImageRequestEvent::PostCancelRequest(mImageRequest, mListener);
-      mImageRequest = nsnull;
-    }
-    mListener->SetFrame(nsnull);
-    mListener = nsnull;
-  }
-}
-
-PRBool
-nsImageBoxFrame::UpdateImage()
-{
-  // get the new image src
-  if (!mURI) {
-    mSizeFrozen = PR_TRUE;
-    mHasImage = PR_FALSE;
-    StopCurrentLoad();
-    return PR_TRUE;
-  }
-
-  nsresult rv;
-  if (mImageRequest) {
-    nsCOMPtr<nsIURI> requestURI;
-    rv = mImageRequest->GetURI(getter_AddRefs(requestURI));
-    NS_ASSERTION(NS_SUCCEEDED(rv) && requestURI,"no request URI");
-    if (NS_FAILED(rv) || !requestURI) return PR_FALSE;
-
-    PRBool eq;
-    // if the source uri and the current one are the same, return
-    if (NS_SUCCEEDED(requestURI->Equals(mURI, &eq)) && eq)
-      return PR_FALSE;
-  }
-
-  mSizeFrozen = PR_FALSE;
-  mHasImage = PR_TRUE;
-
-  // otherwise, we need to load the new uri
-  StopCurrentLoad();
-
-  // Get the document URI for the referrer...
-  nsCOMPtr<nsIDocument> doc;
-  if (mContent) {
-    doc = mContent->GetDocument();
-  }
-
-  if (nsContentUtils::CanLoadImage(mURI, mContent, doc)) {
-    NS_ASSERTION(!mListener, "should not have listener");
-    NS_NEWXPCOM(mListener, nsImageBoxListener);
-    if (mListener) {
-      mListener->SetFrame(this);
-      nsContentUtils::LoadImage(mURI, doc, mListener, mLoadFlags,
-                                getter_AddRefs(mImageRequest));
-    }
-  }
-
-  return PR_TRUE;
-}
-
 NS_IMETHODIMP
-nsImageBoxFrame::Paint(nsIPresContext*      aPresContext,
+nsImageBoxFrame::Paint(nsPresContext*      aPresContext,
                        nsIRenderingContext& aRenderingContext,
                        const nsRect&        aDirtyRect,
                        nsFramePaintLayer    aWhichLayer,
@@ -558,7 +429,7 @@ nsImageBoxFrame::PaintImage(nsIRenderingContext& aRenderingContext,
     return;
 
   // don't draw if the image is not dirty
-  if (!mHasImage || !aDirtyRect.Intersects(rect))
+  if (!aDirtyRect.Intersects(rect))
     return;
 
   nsCOMPtr<imgIContainer> imgCon;
@@ -571,7 +442,7 @@ nsImageBoxFrame::PaintImage(nsIRenderingContext& aRenderingContext,
                        mImageSize.width == rect.width && mImageSize.height == rect.height;
 
     if (sizeMatch) {
-      nsPoint p(rect.x, rect.y);
+      nsRect dest(rect);
         
       if (hasSubRect)
         rect = mSubRect;
@@ -582,13 +453,13 @@ nsImageBoxFrame::PaintImage(nsIRenderingContext& aRenderingContext,
 
       // XXXdwh do dirty rect intersection like the HTML image frame does,
       // so that we don't always repaint the entire image!
-      aRenderingContext.DrawImage(imgCon, &rect, &p);
+      aRenderingContext.DrawImage(imgCon, rect, dest);
     }
     else {
       nsRect src(0, 0, mImageSize.width, mImageSize.height);
       if (hasSubRect)
         src = mSubRect;
-      aRenderingContext.DrawScaledImage(imgCon, &src, &rect);
+      aRenderingContext.DrawImage(imgCon, src, rect);
     }
   }
 }
@@ -600,7 +471,7 @@ nsImageBoxFrame::PaintImage(nsIRenderingContext& aRenderingContext,
 // When the style context changes, make sure that all of our image is up to date.
 //
 NS_IMETHODIMP
-nsImageBoxFrame::DidSetStyleContext( nsIPresContext* aPresContext )
+nsImageBoxFrame::DidSetStyleContext( nsPresContext* aPresContext )
 {
   // Fetch our subrect.
   const nsStyleList* myList = GetStyleList();
@@ -616,13 +487,16 @@ nsImageBoxFrame::DidSetStyleContext( nsIPresContext* aPresContext )
     return NS_OK;
 
   // If list-style-image changes, we have a new image.
-  nsIURI *newURI = myList->mListStyleImage;
+  nsCOMPtr<nsIURI> oldURI, newURI;
+  if (mImageRequest)
+    mImageRequest->GetURI(getter_AddRefs(oldURI));
+  if (myList->mListStyleImage)
+    myList->mListStyleImage->GetURI(getter_AddRefs(newURI));
   PRBool equal;
-  if (newURI == mURI ||   // handles null==null
-      (newURI && mURI && NS_SUCCEEDED(newURI->Equals(mURI, &equal)) && equal))
+  if (newURI == oldURI ||   // handles null==null
+      (newURI && oldURI &&
+       NS_SUCCEEDED(newURI->Equals(oldURI, &equal)) && equal))
     return NS_OK;
-
-  mURI = newURI;
 
   UpdateImage();
   return NS_OK;
@@ -631,37 +505,13 @@ nsImageBoxFrame::DidSetStyleContext( nsIPresContext* aPresContext )
 void
 nsImageBoxFrame::GetImageSize()
 {
-  nsHTMLReflowMetrics desiredSize(PR_TRUE);
-  const PRInt32 kDefaultSize = 0;
-  float p2t;
-  GetPresContext()->GetScaledPixelsToTwips(&p2t);
-  // XXX constant zero?
-  const PRInt32 kDefaultSizeInTwips = NSIntPixelsToTwips(kDefaultSize, p2t);
-
-// not calculated? Get the intrinsic size
-	if (mHasImage) {
-	  // get the size of the image and set the desired size
-	  if (mSizeFrozen) {
-			mImageSize.width = kDefaultSizeInTwips;
-			mImageSize.height = kDefaultSizeInTwips;
-      return;
-	  } else {
-      // Ask the image loader for the *intrinsic* image size
-      if (mIntrinsicSize.width > 0 && mIntrinsicSize.height > 0) {
-        mImageSize.width = mIntrinsicSize.width;
-        mImageSize.height = mIntrinsicSize.height;
-        return;
-      } else {
-        mImageSize.width = kDefaultSizeInTwips;
-        mImageSize.height = kDefaultSizeInTwips;
-        return;
-      }
-	  }
-	}
-
-  // XXX constant zero?
-  mImageSize.width = desiredSize.width;
-  mImageSize.height = desiredSize.height;
+  if (mIntrinsicSize.width > 0 && mIntrinsicSize.height > 0) {
+    mImageSize.width = mIntrinsicSize.width;
+    mImageSize.height = mIntrinsicSize.height;
+  } else {
+    mImageSize.width = 0;
+    mImageSize.height = 0;
+  }
 }
 
 
@@ -736,14 +586,11 @@ NS_IMETHODIMP nsImageBoxFrame::OnStartContainer(imgIRequest *request,
   // Ensure the animation (if any) is started
   image->StartAnimation();
 
-  mHasImage = PR_TRUE;
-  mSizeFrozen = PR_FALSE;
-
   nscoord w, h;
   image->GetWidth(&w);
   image->GetHeight(&h);
 
-  nsIPresContext* presContext = GetPresContext();
+  nsPresContext* presContext = GetPresContext();
   float p2t = presContext->PixelsToTwips();
 
   mIntrinsicSize.SizeTo(NSIntPixelsToTwips(w, p2t), NSIntPixelsToTwips(h, p2t));
@@ -768,10 +615,15 @@ NS_IMETHODIMP nsImageBoxFrame::OnStopDecode(imgIRequest *request,
                                             const PRUnichar *statusArg)
 {
   if (NS_SUCCEEDED(aStatus))
-    // Fire an onerror DOM event.
+    // Fire an onload DOM event.
     FireDOMEvent(mContent, NS_IMAGE_LOAD);
-  else // Fire an onload DOM event.
+  else {
+    // Fire an onerror DOM event.
+    mIntrinsicSize.SizeTo(0, 0);
+    nsBoxLayoutState state(GetPresContext());
+    MarkDirty(state);
     FireDOMEvent(mContent, NS_IMAGE_ERROR);
+  }
 
   return NS_OK;
 }

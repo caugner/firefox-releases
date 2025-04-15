@@ -1,11 +1,11 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -28,11 +28,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -42,6 +42,7 @@
 #include "nsNetUtil.h"
 #include "nsILineInputStream.h"
 #include "nsAppDirectoryServiceDefs.h"
+#include "nsVoidArray.h"
 #include "prprf.h"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -233,8 +234,9 @@ nsPermissionManager::Add(nsIURI     *aURI,
                          const char *aType,
                          PRUint32    aPermission)
 {
-  NS_ASSERTION(aURI, "could not get uri");
+  NS_ENSURE_ARG_POINTER(aURI);
   NS_ENSURE_ARG_POINTER(aType);
+
   nsresult rv;
 
   nsCAutoString host;
@@ -251,6 +253,7 @@ nsPermissionManager::Add(nsIURI     *aURI,
 
   mChangedList = PR_TRUE;
   LazyWrite();
+
   return NS_OK;
 }
 
@@ -284,6 +287,13 @@ nsPermissionManager::AddInternal(const nsAFlatCString &aHost,
 
   PRUint32 oldPermission = entry->GetPermission(aTypeIndex);
   entry->SetPermission(aTypeIndex, aPermission);
+
+  // If no more types are present, remove the entry
+  // Can happen if this add() is resetting the permission to default.
+  if (entry->PermissionsAreEmpty()) {
+    mHostTable.RawRemoveEntry(entry);
+    --mHostCount;
+  }
 
   // check whether we are deleting, adding, or changing a permission,
   // so we can notify observers. this would be neater to do in Add(),
@@ -366,8 +376,7 @@ nsPermissionManager::TestPermission(nsIURI     *aURI,
                                     const char *aType,
                                     PRUint32   *aPermission)
 {
-  NS_ASSERTION(aURI, "could not get uri");
-  NS_ASSERTION(aPermission, "no permission pointer");
+  NS_ENSURE_ARG_POINTER(aURI);
   NS_ENSURE_ARG_POINTER(aType);
 
   // set the default
@@ -657,14 +666,14 @@ nsPermissionManager::Read()
       // Split the line at tabs
       lineArray.ParseString(buffer.get(), "\t");
       
-      if (lineArray[0]->Equals(NS_LITERAL_CSTRING(kMatchTypeHost)) &&
+      if (lineArray[0]->EqualsLiteral(kMatchTypeHost) &&
           lineArray.Count() == 4) {
         
         PRInt32 error;
         PRUint32 permission = lineArray[2]->ToInteger(&error);
         if (error)
           continue;
-        PRUint32 type = GetTypeIndex(lineArray[1]->get(), PR_TRUE);
+        PRInt32 type = GetTypeIndex(lineArray[1]->get(), PR_TRUE);
         if (type < 0)
           continue;
 
@@ -760,7 +769,7 @@ nsPermissionManager::Read()
           continue;
 
         // Ignore @@@ as host. Old style checkbox status
-        if (!permissionString.IsEmpty() && !host.Equals(NS_LITERAL_CSTRING("@@@@"))) {
+        if (!permissionString.IsEmpty() && !host.EqualsLiteral("@@@@")) {
           rv = AddInternal(host, type, permission, PR_FALSE);
           if (NS_FAILED(rv)) return rv;
         }
@@ -954,8 +963,6 @@ nsPermissionManager::Write()
 nsresult
 nsPermissionManager::GetHost(nsIURI *aURI, nsACString &aResult)
 {
-  NS_ASSERTION(aURI, "could not get uri");
-
   aURI->GetHost(aResult);
 
   // If there is no host, use the scheme, and prepend "scheme:",
@@ -968,5 +975,6 @@ nsPermissionManager::GetHost(nsIURI *aURI, nsACString &aResult)
     }
     aResult = NS_LITERAL_CSTRING("scheme:") + aResult;
   }
+
   return NS_OK;
 }

@@ -14,7 +14,7 @@
  *
  * The Original Code is XPCOM Array implementation.
  *
- * The Initial Developer of the Original Code
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corp.
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
@@ -99,7 +99,7 @@ class NS_COM nsQueryArrayElementAt : public nsCOMPtr_helper
           // nothing else to do here
         }
 
-      virtual nsresult operator()(const nsIID& aIID, void**) const;
+      virtual nsresult NS_FASTCALL operator()(const nsIID& aIID, void**) const;
 
     private:
       nsIArray*  mArray;

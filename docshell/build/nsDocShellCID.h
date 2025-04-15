@@ -41,4 +41,48 @@
 #define NS_GLOBALHISTORY2_CONTRACTID \
     "@mozilla.org/browser/global-history;2"
 
+/**
+ * A contract that can be used to get a service that provides
+ * meta-information about nsIWebNavigation objects' capabilities.
+ * @implements nsIWebNavigationInfo
+ */
+#define NS_WEBNAVIGATION_INFO_CONTRACTID \
+    "@mozilla.org/webnavigation-info;1"
+
+/**
+ * An observer service topic that can be listened to to catch creation
+ * of content browsing areas (both toplevel ones and subframes).  The
+ * subject of the notification will be the nsIWebNavigation being
+ * created.  At this time the additional data wstring is not defined
+ * to be anything in particular.
+ */
+#define NS_WEBNAVIGATION_CREATE "webnavigation-create"
+
+/**
+ * An observer service topic that can be listened to to catch creation
+ * of chrome browsing areas (both toplevel ones and subframes).  The
+ * subject of the notification will be the nsIWebNavigation being
+ * created.  At this time the additional data wstring is not defined
+ * to be anything in particular.
+ */
+#define NS_CHROME_WEBNAVIGATION_CREATE "chrome-webnavigation-create"
+
+/**
+ * An observer service topic that can be listened to to catch destruction
+ * of content browsing areas (both toplevel ones and subframes).  The
+ * subject of the notification will be the nsIWebNavigation being
+ * destroyed.  At this time the additional data wstring is not defined
+ * to be anything in particular.
+ */
+#define NS_WEBNAVIGATION_DESTROY "webnavigation-destroy"
+
+/**
+ * An observer service topic that can be listened to to catch destruction
+ * of chrome browsing areas (both toplevel ones and subframes).  The
+ * subject of the notification will be the nsIWebNavigation being
+ * destroyed.  At this time the additional data wstring is not defined
+ * to be anything in particular.
+ */
+#define NS_CHROME_WEBNAVIGATION_DESTROY "chrome-webnavigation-destroy"
+
 #endif // nsDocShellCID_h__

@@ -1,31 +1,56 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.0 (the "NPL"); you may not use this file except in
- * compliance with the NPL.  You may obtain a copy of the NPL at
- * http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the NPL is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the NPL
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * NPL.
+ * License.
  *
- * The Initial Developer of this code under the NPL is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.  All Rights
- * Reserved.
- */
+ * The Original Code is mozilla.org Code.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsJARURI.h"
 #include "nsNetUtil.h"
 #include "nsIIOService.h"
+#include "nsIStandardURL.h"
 #include "nsCRT.h"
 #include "nsIComponentManager.h"
 #include "nsIServiceManager.h"
 #include "nsIZipReader.h"
 #include "nsReadableUtils.h"
-#include "nsURLHelper.h"
-#include "nsStandardURL.h"
+#include "nsAutoPtr.h"
+#include "nsNetCID.h"
+#include "nsIObjectInputStream.h"
+#include "nsIObjectOutputStream.h"
+
+static NS_DEFINE_CID(kJARURICID, NS_JARURI_CID);
 
 ////////////////////////////////////////////////////////////////////////////////
  
@@ -37,7 +62,21 @@ nsJARURI::~nsJARURI()
 {
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS4(nsJARURI, nsIJARURI, nsIURL, nsIURI, nsISerializable)
+// XXX Why is this threadsafe?
+NS_IMPL_THREADSAFE_ADDREF(nsJARURI)
+NS_IMPL_THREADSAFE_RELEASE(nsJARURI)
+NS_INTERFACE_MAP_BEGIN(nsJARURI)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIJARURI)
+  NS_INTERFACE_MAP_ENTRY(nsIURI)
+  NS_INTERFACE_MAP_ENTRY(nsIURL)
+  NS_INTERFACE_MAP_ENTRY(nsIJARURI)
+  NS_INTERFACE_MAP_ENTRY(nsISerializable)
+  NS_INTERFACE_MAP_ENTRY(nsIClassInfo)
+  // see nsJARURI::Equals
+  if (aIID.Equals(NS_GET_IID(nsJARURI)))
+      foundInterface = NS_REINTERPRET_CAST(nsISupports*, this);
+  else
+NS_INTERFACE_MAP_END
 
 nsresult
 nsJARURI::Init(const char *charsetHint)
@@ -80,8 +119,8 @@ nsJARURI::CreateEntryURL(const nsACString& entryFilename,
                          nsIURL** url)
 {
     *url = nsnull;
-    
-    nsStandardURL* stdURL = new nsStandardURL();
+
+    nsCOMPtr<nsIStandardURL> stdURL(do_CreateInstance(NS_STANDARDURL_CONTRACTID));
     if (!stdURL) {
         return NS_ERROR_OUT_OF_MEMORY;
     }
@@ -91,29 +130,108 @@ nsJARURI::CreateEntryURL(const nsACString& entryFilename,
     nsresult rv = stdURL->Init(nsIStandardURL::URLTYPE_NO_AUTHORITY, -1,
                                spec, charset, nsnull);
     if (NS_FAILED(rv)) {
-        delete stdURL;
         return rv;
     }
 
-    NS_ADDREF(*url = stdURL);
-    return NS_OK;
+    return CallQueryInterface(stdURL, url);
 }
     
 ////////////////////////////////////////////////////////////////////////////////
 // nsISerializable methods:
 
 NS_IMETHODIMP
-nsJARURI::Read(nsIObjectInputStream* aStream)
+nsJARURI::Read(nsIObjectInputStream* aInputStream)
 {
-    NS_NOTREACHED("nsJARURI::Read");
-    return NS_ERROR_NOT_IMPLEMENTED;
+    nsresult rv;
+
+    rv = aInputStream->ReadObject(PR_TRUE, getter_AddRefs(mJARFile));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = aInputStream->ReadObject(PR_TRUE, getter_AddRefs(mJAREntry));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = aInputStream->ReadCString(mCharsetHint);
+    return rv;
 }
 
 NS_IMETHODIMP
-nsJARURI::Write(nsIObjectOutputStream* aStream)
+nsJARURI::Write(nsIObjectOutputStream* aOutputStream)
 {
-    NS_NOTREACHED("nsJARURI::Write");
-    return NS_ERROR_NOT_IMPLEMENTED;
+    nsresult rv;
+    
+    rv = aOutputStream->WriteCompoundObject(mJARFile, NS_GET_IID(nsIURI),
+                                            PR_TRUE);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = aOutputStream->WriteCompoundObject(mJAREntry, NS_GET_IID(nsIURL),
+                                            PR_TRUE);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = aOutputStream->WriteStringZ(mCharsetHint.get());
+    return rv;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// nsIClassInfo methods:
+
+NS_IMETHODIMP 
+nsJARURI::GetInterfaces(PRUint32 *count, nsIID * **array)
+{
+    *count = 0;
+    *array = nsnull;
+    return NS_OK;
+}
+
+NS_IMETHODIMP 
+nsJARURI::GetHelperForLanguage(PRUint32 language, nsISupports **_retval)
+{
+    *_retval = nsnull;
+    return NS_OK;
+}
+
+NS_IMETHODIMP 
+nsJARURI::GetContractID(char * *aContractID)
+{
+    *aContractID = nsnull;
+    return NS_OK;
+}
+
+NS_IMETHODIMP 
+nsJARURI::GetClassDescription(char * *aClassDescription)
+{
+    *aClassDescription = nsnull;
+    return NS_OK;
+}
+
+NS_IMETHODIMP 
+nsJARURI::GetClassID(nsCID * *aClassID)
+{
+    *aClassID = (nsCID*) nsMemory::Alloc(sizeof(nsCID));
+    if (!*aClassID)
+        return NS_ERROR_OUT_OF_MEMORY;
+    return GetClassIDNoAlloc(*aClassID);
+}
+
+NS_IMETHODIMP 
+nsJARURI::GetImplementationLanguage(PRUint32 *aImplementationLanguage)
+{
+    *aImplementationLanguage = nsIProgrammingLanguage::CPLUSPLUS;
+    return NS_OK;
+}
+
+NS_IMETHODIMP 
+nsJARURI::GetFlags(PRUint32 *aFlags)
+{
+    // XXX We implement THREADSAFE addref/release, but probably shouldn't.
+    *aFlags = nsIClassInfo::MAIN_THREAD_ONLY;
+    return NS_OK;
+}
+
+NS_IMETHODIMP 
+nsJARURI::GetClassIDNoAlloc(nsCID *aClassIDNoAlloc)
+{
+    *aClassIDNoAlloc = kJARURICID;
+    return NS_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -128,38 +246,75 @@ nsJARURI::GetSpec(nsACString &aSpec)
 }
 
 NS_IMETHODIMP
-nsJARURI::SetSpec(const nsACString &aSpec)
+nsJARURI::SetSpec(const nsACString& aSpec)
+{
+    return SetSpecWithBase(aSpec, nsnull);
+}
+
+nsresult
+nsJARURI::SetSpecWithBase(const nsACString &aSpec, nsIURI* aBaseURL)
 {
     nsresult rv;
+
     nsCOMPtr<nsIIOService> ioServ(do_GetIOService(&rv));
-    if (NS_FAILED(rv)) return rv;
+    NS_ENSURE_SUCCESS(rv, rv);
 
     nsCAutoString scheme;
-    rv = net_ExtractURLScheme(aSpec, nsnull, nsnull, &scheme);
-    if (NS_FAILED(rv)) return rv;
+    rv = ioServ->ExtractScheme(aSpec, scheme);
+    if (NS_FAILED(rv)) {
+        // not an absolute URI
+        if (!aBaseURL)
+            return NS_ERROR_MALFORMED_URI;
 
-    if (strcmp("jar", scheme.get()) != 0)
-        return NS_ERROR_MALFORMED_URI;
+        nsRefPtr<nsJARURI> otherJAR;
+        aBaseURL->QueryInterface(NS_GET_IID(nsJARURI), getter_AddRefs(otherJAR));
+        NS_ENSURE_TRUE(otherJAR, NS_NOINTERFACE);
+
+        mJARFile = otherJAR->mJARFile;
+
+        nsCOMPtr<nsIStandardURL> entry(do_CreateInstance(NS_STANDARDURL_CONTRACTID));
+        if (!entry)
+            return NS_ERROR_OUT_OF_MEMORY;
+
+        rv = entry->Init(nsIStandardURL::URLTYPE_NO_AUTHORITY, -1,
+                         aSpec, mCharsetHint.get(), otherJAR->mJAREntry);
+        if (NS_FAILED(rv))
+            return rv;
+
+        mJAREntry = do_QueryInterface(entry);
+        if (!mJAREntry)
+            return NS_NOINTERFACE;
+
+        return NS_OK;
+    }
+
+    NS_ENSURE_TRUE(scheme.EqualsLiteral("jar"), NS_ERROR_MALFORMED_URI);
+
+    nsACString::const_iterator begin, end;
+    aSpec.BeginReading(begin);
+    aSpec.EndReading(end);
+
+    while (begin != end && *begin != ':')
+        ++begin;
+
+    ++begin; // now we're past the "jar:"
 
     // Search backward from the end for the "!/" delimiter. Remember, jar URLs
     // can nest, e.g.:
     //    jar:jar:http://www.foo.com/bar.jar!/a.jar!/b.html
     // This gets the b.html document from out of the a.jar file, that's 
     // contained within the bar.jar file.
+    // Also, the outermost "inner" URI may be a relative URI:
+    //   jar:../relative.jar!/a.html
 
-    nsACString::const_iterator begin, end, delim_begin, delim_end;
-    aSpec.BeginReading(begin);
-    aSpec.EndReading(end);
-
-    delim_begin = begin;
-    delim_end = end;
+    nsACString::const_iterator delim_begin (begin),
+                               delim_end   (end);
 
     if (!RFindInReadable(NS_JAR_DELIMITER, delim_begin, delim_end))
         return NS_ERROR_MALFORMED_URI;
 
-    begin.advance(4);
-
-    rv = ioServ->NewURI(Substring(begin, delim_begin), mCharsetHint.get(), nsnull, getter_AddRefs(mJARFile));
+    rv = ioServ->NewURI(Substring(begin, delim_begin), mCharsetHint.get(),
+                        aBaseURL, getter_AddRefs(mJARFile));
     if (NS_FAILED(rv)) return rv;
 
     // skip over any extra '/' chars
@@ -300,33 +455,24 @@ NS_IMETHODIMP
 nsJARURI::Equals(nsIURI *other, PRBool *result)
 {
     nsresult rv;
+
     *result = PR_FALSE;
 
     if (other == nsnull)
         return NS_OK;	// not equal
 
-    nsCOMPtr<nsIJARURI> otherJAR(do_QueryInterface(other, &rv));
-    if (NS_FAILED(rv))
+    nsRefPtr<nsJARURI> otherJAR;
+    other->QueryInterface(NS_GET_IID(nsJARURI), getter_AddRefs(otherJAR));
+    if (!otherJAR)
         return NS_OK;   // not equal
-
-    nsCOMPtr<nsIURI> otherJARFile;
-    rv = otherJAR->GetJARFile(getter_AddRefs(otherJARFile));
-    if (NS_FAILED(rv)) return rv;
 
     PRBool equal;
-    rv = mJARFile->Equals(otherJARFile, &equal);
-    if (NS_FAILED(rv)) return rv;
-    if (!equal)
-        return NS_OK;   // not equal
+    rv = mJARFile->Equals(otherJAR->mJARFile, &equal);
+    if (NS_FAILED(rv) || !equal) {
+        return rv;   // not equal
+    }
 
-    nsCAutoString otherJAREntry;
-    rv = otherJAR->GetJAREntry(otherJAREntry);
-    if (NS_FAILED(rv)) return rv;
-
-    nsCAutoString ourJAREntry;
-    rv = GetJAREntry(ourJAREntry);
-    if (NS_SUCCEEDED(rv))
-        *result = (strcmp(ourJAREntry.get(), otherJAREntry.get()) == 0);
+    rv = mJAREntry->Equals(otherJAR->mJAREntry, result);
     return rv;
 }
 
@@ -378,7 +524,12 @@ nsJARURI::Resolve(const nsACString &relativePath, nsACString &result)
 {
     nsresult rv;
 
-    rv = net_ExtractURLScheme(relativePath, nsnull, nsnull, nsnull);
+    nsCOMPtr<nsIIOService> ioServ(do_GetIOService(&rv));
+    if (NS_FAILED(rv))
+      return rv;
+
+    nsCAutoString scheme;
+    rv = ioServ->ExtractScheme(relativePath, scheme);
     if (NS_SUCCEEDED(rv)) {
         // then aSpec is absolute
         result = relativePath;

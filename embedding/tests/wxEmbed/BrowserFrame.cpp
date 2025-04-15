@@ -25,8 +25,6 @@
  *
  * Contributor(s):
  *
- *   Adam Lock <adamlock@netscape.com>
- *
  * ***** END LICENSE BLOCK ***** */
 
 #include "global.h"

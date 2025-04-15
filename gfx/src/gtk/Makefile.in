@@ -1,24 +1,40 @@
 #
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
 #
 # The Original Code is mozilla.org code.
 #
-# The Initial Developer of the Original Code is Netscape
-# Communications Corporation.  Portions created by Netscape are
-# Copyright (C) 1998 Netscape Communications Corporation. All
-# Rights Reserved.
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1998
+# the Initial Developer. All Rights Reserved.
 #
-# Contributor(s): 
+# Contributor(s):
 #   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
 #
+# Alternatively, the contents of this file may be used under the terms of
+# either of the GNU General Public License Version 2 or later (the "GPL"),
+# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
 DEPTH		= ../../..
 topsrcdir	= @top_srcdir@
@@ -33,6 +49,7 @@ EXPORT_LIBRARY = 1
 IS_COMPONENT	= 1
 MODULE_NAME	= nsGfxGTKModule
 GRE_MODULE	= 1
+LIBXUL_LIBRARY = 1
 
 REQUIRES	= xpcom \
 		  string \
@@ -45,9 +62,7 @@ REQUIRES	= xpcom \
 		  locale \
 		  necko \
 		  content \
-		  dom \
 		  layout \
-		  imglib2 \
 		  $(NULL)
 
 # Sun's Complex Text Layout support
@@ -66,13 +81,19 @@ CSRCS		= nsPrintdGTK.c
 # Code shared between GTK+, Xlib and Xprint gfx modules
 X11SHARED_LCPPSRCS = \
 		nsAntiAliasedGlyph.cpp \
-		nsFontFreeType.cpp \
-		nsFT2FontNode.cpp \
-		nsFT2FontCatalog.cpp \
 		nsX11AlphaBlend.cpp \
 		nsXFontAAScaledBitmap.cpp \
 		nsXFontNormal.cpp \
 		$(NULL)
+
+ifdef MOZ_ENABLE_FREETYPE2
+X11SHARED_LCPPSRCS += \
+		nsFontFreeType.cpp \
+		nsFT2FontNode.cpp \
+		nsFT2FontCatalog.cpp \
+		nsNameValuePairDB.cpp \
+		$(NULL)
+endif
                 
 CPPSRCS		= \
 		nsDeviceContextGTK.cpp \
@@ -100,6 +121,12 @@ endif
 ifdef MOZ_ENABLE_XFT
 CPPSRCS		+= \
 		nsFontMetricsXft.cpp
+endif
+
+ifdef MOZ_ENABLE_PANGO
+CPPSRCS		+= \
+		nsFontMetricsPango.cpp \
+		mozilla-decoder.cpp
 endif
 
 ifdef MOZ_ENABLE_GTK
@@ -135,6 +162,8 @@ ifdef MOZ_ENABLE_FREETYPE2
 SHARED_LIBRARY_LIBS += $(DIST)/lib/$(LIB_PREFIX)gfxft2_s.$(LIB_SUFFIX)
 endif
 
+EXTRA_DSO_LDOPTS = $(DIST)/lib/$(LIB_PREFIX)gfxshared_s.$(LIB_SUFFIX)
+
 include $(topsrcdir)/config/rules.mk
 
 ifdef MOZ_ENABLE_XINERAMA
@@ -145,7 +174,6 @@ ifdef MOZ_ENABLE_GTK
 EXTRA_DSO_LDOPTS += \
 		$(LIBS_DIR) \
 		-lgkgfx \
-		-lgfxshared_s \
 		$(GFX_XINERAMA_LIBS) \
 		-lgtksuperwin \
 		$(MOZ_COMPONENT_LIBS) \
@@ -155,24 +183,25 @@ EXTRA_DSO_LDOPTS += \
 endif
 
 ifdef MOZ_ENABLE_XFT
-libs:: fontEncoding.properties
+libs:: fontEncoding.properties pangoFontEncoding.properties
 	$(INSTALL) $^ $(DIST)/bin/res/fonts
  
-install:: fontEncoding.properties
+install:: fontEncoding.properties pangoFontEncoding.properties
 	$(SYSINSTALL) $(IFLAGS1) $^ $(DESTDIR)$(mozappdir)/res/fonts
 endif
 
 ifdef MOZ_ENABLE_GTK2
-EXTRA_DSO_LDOPTS += $(MOZ_COMPONENT_LIBS) \
+EXTRA_DSO_LDOPTS += \
+		$(LIBS_DIR) \
 		-lgkgfx \
-		-lgfxshared_s \
 		$(GFX_XINERAMA_LIBS) \
 		$(MOZ_JS_LIBS) \
 		$(MOZ_UNICHARUTIL_LIBS) \
+		$(MOZ_COMPONENT_LIBS) \
 		$(NULL)
 endif
 
-EXTRA_DSO_LDOPTS += $(MOZ_GTK_LDFLAGS) $(MOZ_XFT_LIBS) $(MOZ_GTK2_LIBS)
+EXTRA_DSO_LDOPTS += $(XLDFLAGS) $(XLIBS) $(MOZ_GTK_LDFLAGS) $(MOZ_XFT_LIBS) $(MOZ_GTK2_LIBS)
 CXXFLAGS	+= $(MOZ_GTK_CFLAGS) $(MOZ_GTK2_CFLAGS)
 CFLAGS		+= $(MOZ_GTK_CFLAGS) $(MOZ_GTK2_CFLAGS)
 
@@ -194,6 +223,7 @@ endif
 
 ifdef MOZ_ENABLE_POSTSCRIPT
 DEFINES         += -DUSE_POSTSCRIPT
+EXTRA_DSO_LDOPTS += -lgfxpsshar
 endif
 
 ifdef MOZ_ENABLE_XPRINT
@@ -208,13 +238,13 @@ LOCAL_INCLUDES	= \
 		-I$(srcdir)/. \
 		-I$(srcdir)/.. \
 		-I$(srcdir)/../shared \
-		-I$(srcdir)/../freetype \
 		-I$(srcdir)/../x11shared \
 		$(MOZ_XFT_CFLAGS) \
 		$(NULL)
 
 ifdef MOZ_ENABLE_FREETYPE2
 INCLUDES        += $(FT2_CFLAGS)
+LOCAL_INCLUDES        += -I$(srcdir)/../freetype
 endif
 
 ifdef MOZ_ENABLE_XPRINT

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
+ *   Allan Beaufour <allan@beaufour.dk>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -43,6 +43,7 @@
 #include "nsINameSpaceManager.h"
 #include "nsDOMError.h"
 #include "nsContentUtils.h"
+#include "nsNodeInfoManager.h"
 
 //----------------------------------------------------------------------
 
@@ -53,13 +54,34 @@ nsDOMAttributeMap::nsDOMAttributeMap(nsIContent* aContent)
   // we'll be told to drop our reference
 }
 
+PRBool
+nsDOMAttributeMap::Init()
+{
+  return mAttributeCache.Init();
+}
+
+/**
+ * Clear map pointer for attributes.
+ */
+PLDHashOperator
+RemoveMapRef(nsAttrHashKey::KeyType aKey, nsCOMPtr<nsIDOMNode>& aData, void* aUserArg)
+{
+  nsCOMPtr<nsIAttribute> attr(do_QueryInterface(aData));
+  NS_ASSERTION(attr, "non-nsIAttribute somehow made it into the hashmap?!");
+  attr->SetMap(nsnull);
+
+  return PL_DHASH_REMOVE;
+}
+
 nsDOMAttributeMap::~nsDOMAttributeMap()
 {
+  mAttributeCache.Enumerate(RemoveMapRef, nsnull);
 }
 
 void
 nsDOMAttributeMap::DropReference()
 {
+  mAttributeCache.Enumerate(RemoveMapRef, nsnull);
   mContent = nsnull;
 }
 
@@ -74,6 +96,67 @@ NS_INTERFACE_MAP_END
 NS_IMPL_ADDREF(nsDOMAttributeMap)
 NS_IMPL_RELEASE(nsDOMAttributeMap)
 
+
+void
+nsDOMAttributeMap::DropAttribute(PRInt32 aNamespaceID, nsIAtom* aLocalName)
+{
+  nsAttrKey attr(aNamespaceID, aLocalName);
+  nsIDOMNode *node = mAttributeCache.GetWeak(attr);
+  if (node) {
+    nsCOMPtr<nsIAttribute> iAttr(do_QueryInterface(node));
+    NS_ASSERTION(iAttr, "non-nsIAttribute somehow made it into the hashmap?!");
+
+    // Break link to map
+    iAttr->SetMap(nsnull);
+
+    // Remove from cache
+    mAttributeCache.Remove(attr);
+  }
+}
+
+nsresult
+nsDOMAttributeMap::GetAttribute(nsINodeInfo* aNodeInfo,
+                                nsIDOMNode** aReturn,
+                                PRBool aRemove)
+{
+  NS_ASSERTION(aNodeInfo, "GetAttribute() called with aNodeInfo == nsnull!");
+  NS_ASSERTION(aReturn, "GetAttribute() called with aReturn == nsnull");
+
+  *aReturn = nsnull;
+
+  nsAttrKey attr(aNodeInfo->NamespaceID(), aNodeInfo->NameAtom());
+
+  if (!mAttributeCache.Get(attr, aReturn)) {
+    nsAutoString value;
+    if (aRemove) {
+      // As we are removing the attribute we need to set the current value in
+      // the attribute node.
+      mContent->GetAttr(aNodeInfo->NamespaceID(), aNodeInfo->NameAtom(), value);
+    }
+    nsCOMPtr<nsIDOMNode> newAttr = new nsDOMAttribute(aRemove ? nsnull : this,
+                                                      aNodeInfo, value);
+    if (!newAttr) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+    if (!aRemove && !mAttributeCache.Put(attr, newAttr)) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+    newAttr.swap(*aReturn);
+  }
+  else if (aRemove) {
+    nsCOMPtr<nsIAttribute> iAttr(do_QueryInterface(*aReturn));
+    NS_ASSERTION(iAttr, "non-nsIAttribute somehow made it into the hashmap?!");
+
+    // Break link to map
+    iAttr->SetMap(nsnull);
+
+    // Remove from cache
+    mAttributeCache.Remove(attr);
+  }
+
+  return NS_OK;
+}
+
 NS_IMETHODIMP
 nsDOMAttributeMap::GetNamedItem(const nsAString& aAttrName,
                                 nsIDOMNode** aAttribute)
@@ -81,53 +164,53 @@ nsDOMAttributeMap::GetNamedItem(const nsAString& aAttrName,
   NS_ENSURE_ARG_POINTER(aAttribute);
   *aAttribute = nsnull;
 
+  nsresult rv = NS_OK;
   if (mContent) {
     nsCOMPtr<nsINodeInfo> ni =
       mContent->GetExistingAttrNameFromQName(aAttrName);
-    if (!ni) {
-      return NS_OK;
+    if (ni) {
+      rv = GetAttribute(ni, aAttribute);
     }
-
-    nsAutoString value;
-    // Eventually we shouldn't need to get the value here at all
-    nsresult rv = mContent->GetAttr(ni->NamespaceID(),
-                                    ni->NameAtom(), value);
-    NS_ASSERTION(rv != NS_CONTENT_ATTR_NOT_THERE, "unable to get attribute");
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsDOMAttribute* domAttribute = new nsDOMAttribute(mContent, ni, value);
-    if (!domAttribute) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    NS_ADDREF(*aAttribute = domAttribute);
   }
 
-  return NS_OK;
+  return rv;
 }
 
 NS_IMETHODIMP
 nsDOMAttributeMap::SetNamedItem(nsIDOMNode *aNode, nsIDOMNode **aReturn)
 {
-  NS_ENSURE_ARG_POINTER(aReturn);
+  return SetNamedItemInternal(aNode, aReturn, PR_FALSE);
+}
 
-  if (!aNode) {
-    return NS_ERROR_NULL_POINTER;
-  }
+NS_IMETHODIMP
+nsDOMAttributeMap::SetNamedItemNS(nsIDOMNode *aNode, nsIDOMNode **aReturn)
+{
+  return SetNamedItemInternal(aNode, aReturn, PR_TRUE);
+}
+
+nsresult
+nsDOMAttributeMap::SetNamedItemInternal(nsIDOMNode *aNode,
+                                        nsIDOMNode **aReturn,
+                                        PRBool aWithNS)
+{
+  NS_ENSURE_ARG_POINTER(aNode);
+  NS_ENSURE_ARG_POINTER(aReturn);
 
   nsresult rv = NS_OK;
   *aReturn = nsnull;
+  nsCOMPtr<nsIDOMNode> tmpReturn;
 
   if (mContent) {
     // XXX should check same-origin between mContent and aNode however
     // nsContentUtils::CheckSameOrigin can't deal with attributenodes yet
     
     nsCOMPtr<nsIDOMAttr> attribute(do_QueryInterface(aNode));
-
-    if (!attribute) {
+    nsCOMPtr<nsIAttribute> iAttribute(do_QueryInterface(aNode));
+    if (!attribute || !iAttribute) {
       return NS_ERROR_DOM_HIERARCHY_REQUEST_ERR;
     }
 
+    // Check that attribute is not owned by somebody else
     nsCOMPtr<nsIDOMElement> owner;
     attribute->GetOwnerElement(getter_AddRefs(owner));
     if (owner) {
@@ -138,47 +221,75 @@ nsDOMAttributeMap::SetNamedItem(nsIDOMNode *aNode, nsIDOMNode **aReturn)
       }
     }
 
-    // get node-info and value of old attribute
-    nsAutoString name, value;
+    nsCOMPtr<nsINodeInfo> ni;
+    nsAutoString name;
     attribute->GetName(name);
 
-    nsCOMPtr<nsINodeInfo> ni = mContent->GetExistingAttrNameFromQName(name);
-    if (ni) {
-      rv = mContent->GetAttr(ni->NamespaceID(), ni->NameAtom(), value);
-      NS_ASSERTION(rv != NS_CONTENT_ATTR_NOT_THERE, "unable to get attribute");
-      NS_ENSURE_SUCCESS(rv, rv);
+    // SetNamedItemNS()
+    if (aWithNS) {
+      // Return existing attribute, if present
+      nsAutoString nsURI;
+      attribute->GetNamespaceURI(nsURI);
 
-      // Create the attributenode to pass back. We pass a null content here
-      // since the attr node we return isn't tied to this content anymore.
-      nsDOMAttribute* domAttribute = new nsDOMAttribute(nsnull, ni, value);
-      if (!domAttribute) {
-        return NS_ERROR_OUT_OF_MEMORY;
-      }
-
-      NS_ADDREF(*aReturn = domAttribute);
-    }
-    else {
       nsINodeInfo *contentNi = mContent->GetNodeInfo();
       NS_ENSURE_TRUE(contentNi, NS_ERROR_FAILURE);
 
-      rv = contentNi->NodeInfoManager()->GetNodeInfo(name, nsnull,
-                                                     kNameSpaceID_None,
-                                                     getter_AddRefs(ni));
-      NS_ENSURE_SUCCESS(rv, rv);
-      // value is already empty
+      contentNi->NodeInfoManager()->GetNodeInfo(name, nsURI,
+                                                getter_AddRefs(ni));
+      NS_ENSURE_TRUE(ni, NS_ERROR_FAILURE);
+
+      if (mContent->HasAttr(ni->NamespaceID(), ni->NameAtom())) {
+        rv = GetAttribute(ni, getter_AddRefs(tmpReturn), PR_TRUE);
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+
     }
+    else { // SetNamedItem()
+      // get node-info of old attribute
+      ni = mContent->GetExistingAttrNameFromQName(name);
+      if (ni) {
+        rv = GetAttribute(ni, getter_AddRefs(tmpReturn), PR_TRUE);
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+      else {
+        nsINodeInfo *contentNi = mContent->GetNodeInfo();
+        NS_ENSURE_TRUE(contentNi, NS_ERROR_FAILURE);
 
-    // Set the new attributevalue
+        rv = contentNi->NodeInfoManager()->GetNodeInfo(name, nsnull,
+                                                       kNameSpaceID_None,
+                                                       getter_AddRefs(ni));
+        NS_ENSURE_SUCCESS(rv, rv);
+        // value is already empty
+      }
+    }
+    
+    // Set the new attribute value
+    nsAutoString value;
     attribute->GetValue(value);
-    rv = mContent->SetAttr(ni->NamespaceID(), ni->NameAtom(),
-                           ni->GetPrefixAtom(), value, PR_TRUE);
+    if (!aWithNS && ni->NamespaceID() == kNameSpaceID_None &&
+        mContent->IsContentOfType(nsIContent::eHTML)) {
+      // Set via setAttribute(), which may do normalization on the
+      // attribute name for HTML
+      nsCOMPtr<nsIDOMElement> ourElement(do_QueryInterface(mContent));
+      NS_ASSERTION(ourElement, "HTML content that's not an element?");
+      ourElement->SetAttribute(name, value);
+    }
+    else {
+      // It's OK to just use SetAttr
+      rv = mContent->SetAttr(ni->NamespaceID(), ni->NameAtom(),
+                             ni->GetPrefixAtom(), value, PR_TRUE);
+    }
+    
+    if (NS_SUCCEEDED(rv)) {
+      nsAttrKey attrkey(ni->NamespaceID(), ni->NameAtom());
+      rv = mAttributeCache.Put(attrkey, attribute);
+      NS_ENSURE_SUCCESS(rv, rv);
 
-    // Not all attributes implement nsIAttribute.
-    nsCOMPtr<nsIAttribute> attr = do_QueryInterface(aNode);
-    if (attr) {
-      attr->SetContent(mContent);
+      iAttribute->SetMap(this);
     }
   }
+
+  tmpReturn.swap(*aReturn); // transfers ref.
 
   return rv;
 }
@@ -198,22 +309,10 @@ nsDOMAttributeMap::RemoveNamedItem(const nsAString& aName,
       return NS_ERROR_DOM_NOT_FOUND_ERR;
     }
 
-    PRInt32 nsid = ni->NamespaceID();
-    nsIAtom *nameAtom = ni->NameAtom();
-
-    nsAutoString value;
-    rv = mContent->GetAttr(nsid, nameAtom, value);
-    NS_ASSERTION(rv != NS_CONTENT_ATTR_NOT_THERE, "unable to get attribute");
+    rv = GetAttribute(ni, aReturn, PR_TRUE);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsDOMAttribute* domAttribute = new nsDOMAttribute(nsnull, ni, value);
-    if (!domAttribute) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    NS_ADDREF(*aReturn = domAttribute);
-
-    rv = mContent->UnsetAttr(nsid, nameAtom, PR_TRUE);
+    rv = mContent->UnsetAttr(ni->NamespaceID(), ni->NameAtom(), PR_TRUE);
   }
 
   return rv;
@@ -233,9 +332,6 @@ nsDOMAttributeMap::Item(PRUint32 aIndex, nsIDOMNode** aReturn)
                                            &nameSpaceID,
                                            getter_AddRefs(nameAtom),
                                            getter_AddRefs(prefix)))) {
-    nsAutoString value;
-    mContent->GetAttr(nameSpaceID, nameAtom, value);
-
     nsINodeInfo *contentNi = mContent->GetNodeInfo();
     NS_ENSURE_TRUE(contentNi, NS_ERROR_FAILURE);
 
@@ -244,10 +340,7 @@ nsDOMAttributeMap::Item(PRUint32 aIndex, nsIDOMNode** aReturn)
                                               getter_AddRefs(ni));
     NS_ENSURE_TRUE(ni, NS_ERROR_FAILURE);
 
-    nsDOMAttribute* domAttribute = new nsDOMAttribute(mContent, ni, value);
-    NS_ENSURE_TRUE(domAttribute, NS_ERROR_OUT_OF_MEMORY);
-
-    rv = CallQueryInterface(domAttribute, aReturn);
+    rv = GetAttribute(ni, aReturn);
   }
   else {
     *aReturn = nsnull;
@@ -263,7 +356,8 @@ nsDOMAttributeMap::GetLength(PRUint32 *aLength)
 
   if (mContent) {
     *aLength = mContent->GetAttrCount();
-  } else {
+  }
+  else {
     *aLength = 0;
   }
 
@@ -274,6 +368,15 @@ NS_IMETHODIMP
 nsDOMAttributeMap::GetNamedItemNS(const nsAString& aNamespaceURI,
                                   const nsAString& aLocalName,
                                   nsIDOMNode** aReturn)
+{
+  return GetNamedItemNSInternal(aNamespaceURI, aLocalName, aReturn);
+}
+
+nsresult
+nsDOMAttributeMap::GetNamedItemNSInternal(const nsAString& aNamespaceURI,
+                                          const nsAString& aLocalName,
+                                          nsIDOMNode** aReturn,
+                                          PRBool aRemove)
 {
   NS_ENSURE_ARG_POINTER(aReturn);
   *aReturn = nsnull;
@@ -307,88 +410,11 @@ nsDOMAttributeMap::GetNamedItemNS(const nsAString& aNamespaceURI,
         GetNodeInfo(nameAtom, prefix, nameSpaceID, getter_AddRefs(ni));
       NS_ENSURE_TRUE(ni, NS_ERROR_FAILURE);
 
-      nsAutoString value;
-      mContent->GetAttr(nameSpaceID, nameAtom, value);
-
-      nsDOMAttribute* domAttribute = new nsDOMAttribute(mContent, ni, value);
-      NS_ENSURE_TRUE(domAttribute, NS_ERROR_OUT_OF_MEMORY);
-
-      NS_ADDREF(*aReturn = domAttribute);
-
-      return NS_OK;
+      return GetAttribute(ni, aReturn, aRemove);
     }
   }
 
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDOMAttributeMap::SetNamedItemNS(nsIDOMNode* aArg, nsIDOMNode** aReturn)
-{
-  NS_ENSURE_ARG_POINTER(aReturn);
-
-  nsresult rv = NS_OK;
-  *aReturn = nsnull;
-
-  if (mContent) {
-    // XXX should check same-origin between mContent and aNode however
-    // nsContentUtils::CheckSameOrigin can't deal with attributenodes yet
-
-    nsCOMPtr<nsIDOMAttr> attribute(do_QueryInterface(aArg));
-
-    if (!attribute) {
-      return NS_ERROR_DOM_HIERARCHY_REQUEST_ERR;
-    }
-
-    nsCOMPtr<nsIDOMElement> owner;
-    attribute->GetOwnerElement(getter_AddRefs(owner));
-    if (owner) {
-      nsCOMPtr<nsISupports> ownerSupports = do_QueryInterface(owner);
-      nsCOMPtr<nsISupports> thisSupports = do_QueryInterface(mContent);
-      if (ownerSupports != thisSupports) {
-        return NS_ERROR_DOM_INUSE_ATTRIBUTE_ERR;
-      }
-    }
-
-    nsAutoString name, nsURI, value;
-
-    attribute->GetName(name);
-    attribute->GetNamespaceURI(nsURI);
-
-    nsINodeInfo *contentNi = mContent->GetNodeInfo();
-    NS_ENSURE_TRUE(contentNi, NS_ERROR_FAILURE);
-
-    nsCOMPtr<nsINodeInfo> ni;
-    contentNi->NodeInfoManager()->GetNodeInfo(name, nsURI, getter_AddRefs(ni));
-    NS_ENSURE_TRUE(ni, NS_ERROR_FAILURE);
-
-    nsresult attrResult = mContent->GetAttr(ni->NamespaceID(),
-                                            ni->NameAtom(), value);
-
-    if (NS_CONTENT_ATTR_NOT_THERE != attrResult && NS_SUCCEEDED(attrResult)) {
-      // We pass a null content here since the attr node we return isn't
-      // tied to this content anymore.
-      nsDOMAttribute* domAttribute = new nsDOMAttribute(nsnull, ni, value);
-      if (!domAttribute) {
-        return NS_ERROR_OUT_OF_MEMORY;
-      }
-
-      NS_ADDREF(*aReturn = domAttribute);
-    }
-
-    attribute->GetValue(value);
-
-    rv = mContent->SetAttr(ni->NamespaceID(), ni->NameAtom(),
-                           ni->GetPrefixAtom(), value, PR_TRUE);
-
-    // Not all attributes implement nsIAttribute.
-    nsCOMPtr<nsIAttribute> attr = do_QueryInterface(aArg);
-    if (attr) {
-      attr->SetContent(mContent);
-    }
-  }
-
-  return rv;
 }
 
 NS_IMETHODIMP
@@ -399,7 +425,10 @@ nsDOMAttributeMap::RemoveNamedItemNS(const nsAString& aNamespaceURI,
   NS_ENSURE_ARG_POINTER(aReturn);
   *aReturn = nsnull;
 
-  nsresult rv = GetNamedItemNS(aNamespaceURI, aLocalName, aReturn);
+  nsresult rv = GetNamedItemNSInternal(aNamespaceURI,
+                                       aLocalName,
+                                       aReturn,
+                                       PR_TRUE);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!*aReturn) {

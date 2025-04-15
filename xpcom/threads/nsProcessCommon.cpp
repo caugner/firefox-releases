@@ -1,26 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code, 
- * released March 31, 1998. 
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications 
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
- * Contributor(s): 
- *     Don Bragg <dbragg@netscape.com>
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Don Bragg <dbragg@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*****************************************************************************
  * 
@@ -59,14 +74,16 @@
 NS_IMPL_ISUPPORTS1(nsProcess, nsIProcess)
 
 //Constructor
-nsProcess::nsProcess():mExitValue(-1),
-                       mProcess(nsnull)
+nsProcess::nsProcess()
+    : mExitValue(-1),
+      mProcess(nsnull)
 {
 }
 
 NS_IMETHODIMP
 nsProcess::Init(nsIFile* executable)
 {
+    NS_ENSURE_ARG_POINTER(executable);
     PRBool isFile;
 
     //First make sure the file exists
@@ -194,22 +211,17 @@ static int assembleCmdLine(char *const *argv, char **cmdLine)
 
 // XXXldb |args| has the wrong const-ness
 NS_IMETHODIMP  
-nsProcess::Run(PRBool blocking, const char **args, PRUint32 count, PRUint32 *pid)
+nsProcess::Run(PRBool blocking, const char **args, PRUint32 count,
+               PRUint32 *pid)
 {
-    nsresult rv = NS_OK;
+    NS_ENSURE_TRUE(mExecutable, NS_ERROR_NOT_INITIALIZED);
+    PRStatus status = PR_SUCCESS;
 
-#if defined(XP_MACOSX)
-    // You can't pass arguments to mac apps, tell the caller that it
-    // just aint going to work.
-    if (count) {
-        return NS_ERROR_INVALID_ARG;
-    }
-#else
     // make sure that when we allocate we have 1 greater than the
     // count since we need to null terminate the list for the argv to
     // pass into PR_CreateProcess
     char **my_argv = NULL;
-    my_argv = (char **)malloc(sizeof(char *) * (count + 2) );
+    my_argv = (char **)nsMemory::Alloc(sizeof(char *) * (count + 2) );
     if (!my_argv) {
         return NS_ERROR_OUT_OF_MEMORY;
     }
@@ -223,7 +235,6 @@ nsProcess::Run(PRBool blocking, const char **args, PRUint32 count, PRUint32 *pid
     my_argv[0] = mTargetPath.BeginWriting();
     // null terminate the array
     my_argv[count+1] = NULL;
-#endif
 
 #if defined(XP_WIN)
     STARTUPINFO startupInfo;
@@ -253,7 +264,7 @@ nsProcess::Run(PRBool blocking, const char **args, PRUint32 count, PRUint32 *pid
                            &startupInfo,
                            &procInfo
                           );
-    PR_FREEIF( cmdLine );
+    PR_Free( cmdLine );
     if (blocking) {
  
         // if success, wait for process termination. the early returns and such
@@ -267,96 +278,104 @@ nsProcess::Run(PRBool blocking, const char **args, PRUint32 count, PRUint32 *pid
             dwRetVal = WaitForSingleObject(procInfo.hProcess, INFINITE);
             if (dwRetVal == WAIT_FAILED) {
                 nsMemory::Free(my_argv);
-                return PR_FAILURE;
+                return NS_ERROR_FAILURE;
             }
             if (GetExitCodeProcess(procInfo.hProcess, &exitCode) == FALSE) {
                 mExitValue = exitCode;
                 nsMemory::Free(my_argv);
-               return PR_FAILURE;
+               return NS_ERROR_FAILURE;
             }
             mExitValue = exitCode;
             CloseHandle(procInfo.hProcess);
         }
         else
-            rv = PR_FAILURE;
+            status = PR_FAILURE;
     } 
     else {
 
         // map return value into success code
 
-        if ( retVal == TRUE ) 
-            rv = PR_SUCCESS;
+        if (retVal == TRUE) 
+            status = PR_SUCCESS;
         else
-            rv = PR_FAILURE;
+            status = PR_FAILURE;
     }
 
-#elif defined(XP_MACOSX)
-    FSSpec resolvedSpec;
-    OSErr err = noErr;
+#else // Note, this must not be an #elif ...!
 
-    nsCOMPtr<nsILocalFileMac> macExecutable = do_QueryInterface(mExecutable);
-    macExecutable->GetFSSpec(&resolvedSpec);
+#if defined(XP_MACOSX)
+    if (count == 0) {
+        FSSpec resolvedSpec;
+        OSErr err = noErr;
 
-    LaunchParamBlockRec launchPB;
-    launchPB.launchAppSpec = &resolvedSpec;
-    launchPB.launchAppParameters = NULL;
-    launchPB.launchBlockID = extendedBlock;
-    launchPB.launchEPBLength = extendedBlockLen;
-    launchPB.launchFileFlags = NULL;
-    launchPB.launchControlFlags =
-        launchContinue + launchNoFileFlags + launchUseMinimum;
-    if (!blocking)
-        launchPB.launchControlFlags += launchDontSwitch;
+        nsCOMPtr<nsILocalFileMac> macExecutable =
+            do_QueryInterface(mExecutable);
+        macExecutable->GetFSSpec(&resolvedSpec);
 
-    err = LaunchApplication(&launchPB);
+        LaunchParamBlockRec launchPB;
+        launchPB.launchAppSpec = &resolvedSpec;
+        launchPB.launchAppParameters = NULL;
+        launchPB.launchBlockID = extendedBlock;
+        launchPB.launchEPBLength = extendedBlockLen;
+        launchPB.launchFileFlags = NULL;
+        launchPB.launchControlFlags =
+            launchContinue + launchNoFileFlags + launchUseMinimum;
+        if (!blocking)
+            launchPB.launchControlFlags += launchDontSwitch;
 
-    // NOTE: blocking mode assumes you are running on a thread
-    //       other than the UI thread that has the main event loop
-    if (blocking && err == noErr) {
-        while (1) {
-            ProcessInfoRec info;
-            info.processInfoLength = sizeof(ProcessInfoRec);
-            info.processName = NULL;
-            info.processAppSpec = NULL;
+        err = LaunchApplication(&launchPB);
 
-            err = GetProcessInformation(&launchPB.launchProcessSN, &info);
+        // NOTE: blocking mode assumes you are running on a thread
+        //       other than the UI thread that has the main event loop
+        if (blocking && err == noErr) {
+            while (1) {
+                ProcessInfoRec info;
+                info.processInfoLength = sizeof(ProcessInfoRec);
+                info.processName = NULL;
+                info.processAppSpec = NULL;
 
-            if (err != noErr) {
-                // The process is no longer in the process manager's internal
-                // list, assume the process is done.
-                err = noErr;
+                err = GetProcessInformation(&launchPB.launchProcessSN, &info);
 
-                break;
+                if (err != noErr) {
+                    // The process is no longer in the process
+                    // manager's internal list, assume the process is
+                    // done.
+                    err = noErr;
+
+                    break;
+                }
+
+                // still running so sleep some more (200 msecs)
+                PR_Sleep(200);
             }
+        }
 
-            // still running so sleep some more (200 msecs)
-            PR_Sleep(200);
+        if (err != noErr) {
+            status = PR_FAILURE;
+        }
+
+        if (blocking) {
+            mExitValue = err;
+        }
+    } else
+#endif
+    {
+        if (blocking) {
+            mProcess = PR_CreateProcess(mTargetPath.get(), my_argv, NULL,
+                                        NULL);
+            if (mProcess)
+                status = PR_WaitProcess(mProcess, &mExitValue);
+        } else {
+            status = PR_CreateProcessDetached(mTargetPath.get(), my_argv, NULL,
+                                          NULL);
         }
     }
-
-    if (err != noErr) {
-        rv = PR_FAILURE;
-    }
-
-    mExitValue = err;
-
-#else
-    if ( blocking ) {
-        mProcess = PR_CreateProcess(mTargetPath.get(), my_argv, NULL, NULL);
-        if (mProcess)
-            rv = PR_WaitProcess(mProcess, &mExitValue);
-    }
-    else {
-        rv = PR_CreateProcessDetached(mTargetPath.get(), my_argv, NULL, NULL);
-    }
 #endif
 
-#if !defined(XP_MACOSX)
     // free up our argv
     nsMemory::Free(my_argv);
-#endif
 
-    if (rv != PR_SUCCESS)
+    if (status != PR_SUCCESS)
         return NS_ERROR_FILE_EXECUTION_FAILED;
 
     return NS_OK;
@@ -396,7 +415,7 @@ nsProcess::Kill()
 {
     nsresult rv = NS_OK;
     if (mProcess)
-        rv = PR_KillProcess(mProcess);
+        rv = PR_KillProcess(mProcess) == PR_SUCCESS ? NS_OK : NS_ERROR_FAILURE;
     
     return rv;
 }

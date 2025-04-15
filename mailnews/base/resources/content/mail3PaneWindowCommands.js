@@ -1,26 +1,42 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-2000 Netscape Communications Corporation. All
- * Rights Reserved.
  *
- * Contributors(s):
- *   Jan Varga <varga@nixcorp.com>
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Jan Varga <varga@ku.sk>
  *   Håkan Waara (hwaara@chello.se)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 var promptService = Components.classes["@mozilla.org/embedcomp/prompt-service;1"].getService(Components.interfaces.nsIPromptService);
 var gMessengerBundle = document.getElementById("bundle_messenger");
@@ -63,7 +79,7 @@ var FolderPaneController =
       var folderTree = GetFolderTree();
       var startIndex = {};
       var endIndex = {};
-      folderTree.treeBoxObject.selection.getRangeAt(0, startIndex, endIndex);
+      folderTree.view.selection.getRangeAt(0, startIndex, endIndex);
       if (startIndex.value >= 0) {
         var canDeleteThisFolder;
 				var specialFolder = null;
@@ -154,6 +170,7 @@ var DefaultController =
 			case "cmd_previousMsg":
 			case "cmd_previousUnreadMsg":
 			case "cmd_previousFlaggedMsg":
+      case "cmd_goStartPage":
 			case "cmd_viewAllMsgs":
 			case "cmd_viewUnreadMsgs":
       case "cmd_viewThreadsWithUnread":
@@ -193,6 +210,8 @@ var DefaultController =
 			case "cmd_markAsJunk":
 			case "cmd_markAsNotJunk":
       case "cmd_recalculateJunkScore":
+      case "cmd_markAsShowRemote":
+      case "cmd_markAsNotPhish":
       case "cmd_applyFilters":
       case "cmd_runJunkControls":
       case "cmd_deleteJunk":
@@ -210,6 +229,7 @@ var DefaultController =
       case "cmd_close":
       case "cmd_selectAll":
       case "cmd_selectThread":
+      case "cmd_selectFlagged":
 				return true;
       case "cmd_downloadFlagged":
       case "cmd_downloadSelected":
@@ -253,9 +273,9 @@ var DefaultController =
           gDBView.getCommandStatus(nsMsgViewCommandType.junk, enabled, checkStatus);
         return enabled.value;
       case "cmd_killThread":
-        return GetNumSelectedMessages() == 1;
+        return GetNumSelectedMessages() > 0;
       case "cmd_watchThread":
-        if ((GetNumSelectedMessages() == 1) && gDBView)
+        if (gDBView)
           gDBView.getCommandStatus(nsMsgViewCommandType.toggleThreadWatched, enabled, checkStatus);
         return enabled.value;
       case "cmd_createFilterFromPopup":
@@ -304,12 +324,16 @@ var DefaultController =
       case "cmd_markAsFlagged":
       case "button_file":
       case "cmd_file":
-        return (GetNumSelectedMessages() > 0 );
+        return (GetNumSelectedMessages() > 0);
       case "cmd_markAsJunk":
       case "cmd_markAsNotJunk":
       case "cmd_recalculateJunkScore":
         // can't do news on junk yet.
         return (GetNumSelectedMessages() > 0 && !isNewsURI(GetFirstSelectedMessage()));
+      case "cmd_markAsShowRemote":
+        return (GetNumSelectedMessages() > 0 && checkMsgHdrPropertyIsNot("remoteContentPolicy", kAllowRemoteContent));
+      case "cmd_markAsNotPhish":
+        return (GetNumSelectedMessages() > 0 && checkMsgHdrPropertyIsNot("notAPhishMessage", kNotAPhishMessage));
       case "cmd_applyFilters":
         if (gDBView)
           gDBView.getCommandStatus(nsMsgViewCommandType.applyFilters, enabled, checkStatus);
@@ -340,6 +364,8 @@ var DefaultController =
       case "cmd_previousMsg":
       case "cmd_previousUnreadMsg":
         return IsViewNavigationItemEnabled();
+      case "cmd_goStartPage":
+        return pref.getBoolPref("mailnews.start_page.enabled") && !IsMessagePaneCollapsed();
       case "cmd_markAllRead":
       case "cmd_markReadByDate":
         return IsFolderSelected();
@@ -351,6 +377,7 @@ var DefaultController =
       case "cmd_search":
         return IsCanSearchMessagesEnabled();
       case "cmd_selectAll":
+      case "cmd_selectFlagged":
         return gDBView != null;
       // these are enabled on when we are in threaded mode
       case "cmd_selectThread":
@@ -458,7 +485,8 @@ var DefaultController =
         MsgCreateFilter();
         break;   
       case "cmd_createFilterFromPopup":
-        break;// This does nothing because the createfilter is invoked from the popupnode oncommand.
+        CreateFilter(document.popupNode);
+        break;
 			case "button_delete":
 			case "cmd_delete":
         // if the user deletes a message before its mark as read timer goes off, we should mark it as read
@@ -509,6 +537,10 @@ var DefaultController =
 			case "cmd_previousFlaggedMsg":
 				MsgPreviousFlaggedMessage();
 				break;
+      case "cmd_goStartPage":
+        HideMessageHeaderPane();
+        loadStartPage();
+        break;
 			case "cmd_viewAllMsgs":
       case "cmd_viewThreadsWithUnread":
       case "cmd_viewWatchedThreadsWithUnread":
@@ -607,11 +639,17 @@ var DefaultController =
       case "cmd_recalculateJunkScore":
         analyzeMessagesForJunk();
         return;
+      case "cmd_markAsShowRemote":
+        LoadMsgWithRemoteContent();
+        return;
+      case "cmd_markAsNotPhish":
+        MsgIsNotAScam();
+        return;
       case "cmd_applyFilters":
         MsgApplyFilters(null);
         return;
       case "cmd_runJunkControls":
-        analyzeFolderForJunk();
+        filterFolderForJunk();
         return;
       case "cmd_deleteJunk":
         deleteJunkInFolder();
@@ -665,6 +703,9 @@ var DefaultController =
             case "cmd_selectThread":
                 gDBView.doCommand(nsMsgViewCommandType.selectThread);
                 break;
+      case "cmd_selectFlagged":
+        gDBView.doCommand(nsMsgViewCommandType.selectFlagged);
+        break;
 		}
 	},
 	
@@ -701,11 +742,10 @@ function FocusRingUpdate_Mail()
   // we really only care about nsFocusController::Focus() happens, 
   // which calls nsFocusController::SetFocusedElement(element)
   var currentFocusedElement = WhichPaneHasFocus();
-  if (!currentFocusedElement)
-    return;
       
 	if (currentFocusedElement != gLastFocusedElement) {
-    currentFocusedElement.setAttribute("focusring", "true");
+    if (currentFocusedElement)
+      currentFocusedElement.setAttribute("focusring", "true");
     
     if (gLastFocusedElement)
       gLastFocusedElement.removeAttribute("focusring");
@@ -723,7 +763,6 @@ function FocusRingUpdate_Mail()
 function WhichPaneHasFocus()
 {
   var threadTree = GetThreadTree();
-  var searchInput = GetSearchInput();
   var folderTree = GetFolderTree();
   var messagePane = GetMessagePane();
     
@@ -733,7 +772,6 @@ function WhichPaneHasFocus()
 	var currentNode = top.document.commandDispatcher.focusedElement;	
 	while (currentNode) {
     if (currentNode === threadTree ||
-        currentNode === searchInput || 
         currentNode === folderTree ||
         currentNode === messagePane)
       return currentNode;
@@ -802,7 +840,7 @@ function IsSendUnsentMsgsEnabled(folderResource)
 function IsRenameFolderEnabled()
 {
     var folderTree = GetFolderTree();
-    var selection = folderTree.treeBoxObject.selection;
+    var selection = folderTree.view.selection;
     if (selection.count == 1)
     {
         var startIndex = {};
@@ -818,10 +856,11 @@ function IsRenameFolderEnabled()
 
 function IsCanSearchMessagesEnabled()
 {
-  var folderURI = GetSelectedFolderURI();
-  var server = GetServer(folderURI);
-  return server.canSearchMessages;
+  var folder = GetMsgFolderFromUri(GetSelectedFolderURI(), false);
+  var isVirtualFolder = folder.flags & MSG_FOLDER_FLAG_VIRTUAL;
+  return folder.server.canSearchMessages && !isVirtualFolder;
 }
+
 function IsFolderCharsetEnabled()
 {
   return IsFolderSelected();
@@ -851,7 +890,7 @@ function IsPropertiesEnabled(command)
    if (IsFakeAccount())
      return false;
 
-   var selection = folderTree.treeBoxObject.selection;
+   var selection = folderTree.view.selection;
    return (selection.count == 1);
 }
 
@@ -863,7 +902,7 @@ function IsViewNavigationItemEnabled()
 function IsFolderSelected()
 {
     var folderTree = GetFolderTree();
-    var selection = folderTree.treeBoxObject.selection;
+    var selection = folderTree.view.selection;
     if (selection.count == 1)
     {
         var startIndex = {};
@@ -878,7 +917,7 @@ function IsFolderSelected()
 
 function IsMessageDisplayedInMessagePane()
 {
-	return (!IsThreadAndMessagePaneSplitterCollapsed() && (GetNumSelectedMessages() > 0));
+  return (!IsMessagePaneCollapsed() && (GetNumSelectedMessages() > 0));
 }
 
 function MsgDeleteFolder()
@@ -892,6 +931,17 @@ function MsgDeleteFolder()
         var specialFolder = GetFolderAttribute(folderTree, folderResource, "SpecialFolder");
         if (specialFolder != "Inbox" && specialFolder != "Trash")
         {
+          var parentResource;
+
+            var folder = selectedFolder.QueryInterface(Components.interfaces.nsIMsgFolder);
+            if (folder.flags & MSG_FOLDER_FLAG_VIRTUAL)
+            {
+                if (gCurrentVirtualFolderUri == folderResource.Value)
+                  gCurrentVirtualFolderUri = null;
+                parentResource = selectedFolder.parent.QueryInterface(Components.interfaces.nsIRDFResource);
+                messenger.DeleteFolders(GetFolderDatasource(), parentResource, folderResource);
+                continue;
+            }
             var protocolInfo = Components.classes["@mozilla.org/messenger/protocol/info;1?type=" + selectedFolder.server.type].getService(Components.interfaces.nsIMsgProtocolInfo);
 
             // do not allow deletion of special folders on imap accounts
@@ -915,7 +965,7 @@ function MsgDeleteFolder()
             }
             else
             {
-                var parentResource = selectedFolder.parent.QueryInterface(Components.interfaces.nsIRDFResource);
+                parentResource = selectedFolder.parent.QueryInterface(Components.interfaces.nsIRDFResource);
                 messenger.DeleteFolders(GetFolderDatasource(), parentResource, folderResource);
             }
         }
@@ -1010,7 +1060,8 @@ function SearchBarToggled()
   }
 
   for (var currentNode = top.document.commandDispatcher.focusedElement; currentNode; currentNode = currentNode.parentNode) {
-    if (currentNode.getAttribute("hidden") == "true") {
+    // But skip the last node, which is a XULDocument.
+    if ((currentNode instanceof XULElement) && currentNode.hidden) {
       SetFocusThreadPane();
       return;
     }
@@ -1019,33 +1070,35 @@ function SearchBarToggled()
 
 function SwitchPaneFocus(event)
 {
-  var focusedElement = WhichPaneHasFocus();
   var folderTree = GetFolderTree();
   var threadTree = GetThreadTree();
-  var searchInput = GetSearchInput();
   var messagePane = GetMessagePane();
+
+  // Although internally this is actually a four-pane window, it is presented as
+  // a three-pane -- the search pane is more of a toolbar.  So, shift among the
+  // three main panes.
+
+  var focusedElement = WhichPaneHasFocus();
+  if (focusedElement == null)       // focus not on one of the main three panes?
+    focusedElement = threadTree;    // treat as if on thread tree
 
   if (event && event.shiftKey)
   {
-    if (focusedElement == threadTree && searchInput.parentNode.getAttribute('hidden') != 'true')
-      searchInput.focus();
-    else if ((focusedElement == threadTree || focusedElement == searchInput) && !IsFolderPaneCollapsed())
+    // Reverse traversal: Message -> Thread -> Folder -> Message
+    if (focusedElement == threadTree && !IsFolderPaneCollapsed())
       folderTree.focus();
-    else if (focusedElement != messagePane && !IsThreadAndMessagePaneSplitterCollapsed())
+    else if (focusedElement != messagePane && !IsMessagePaneCollapsed())
       SetFocusMessagePane();
-    else 
+    else
       threadTree.focus();
   }
   else
   {
-    if (focusedElement == searchInput)
-      threadTree.focus();
-    else if (focusedElement == threadTree && !IsThreadAndMessagePaneSplitterCollapsed())
+    // Forward traversal: Folder -> Thread -> Message -> Folder
+    if (focusedElement == threadTree && !IsMessagePaneCollapsed())
       SetFocusMessagePane();
     else if (focusedElement != folderTree && !IsFolderPaneCollapsed())
       folderTree.focus();
-    else if (searchInput.parentNode.getAttribute('hidden') != 'true')
-      searchInput.focus();
     else
       threadTree.focus();
   }
@@ -1065,8 +1118,10 @@ function SetFocusThreadPane()
 
 function SetFocusMessagePane()
 {
-    var messagePaneFrame = GetMessagePaneFrame();
-    messagePaneFrame.focus();
+    // XXX hack: to clear the focus on the previous element first focus
+    // on the message pane element then focus on the main content window
+    GetMessagePane().focus();
+    GetMessagePaneFrame().focus();
 }
 
 function is_collapsed(element) 

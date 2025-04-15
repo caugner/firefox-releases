@@ -1,11 +1,11 @@
 /* -*- Mode: c++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsCOMPtr.h"
@@ -46,7 +45,6 @@
 #include "nsIDocumentLoaderFactory.h"
 #include "nsIDocument.h"
 #include "nsIDocumentViewer.h"
-#include "nsIHTMLContent.h"
 #include "nsIURL.h"
 #include "nsICSSStyleSheet.h"
 #include "nsNodeInfo.h"
@@ -61,7 +59,6 @@
 
 #include "nsRDFCID.h"
 #include "nsIRDFResource.h"
-#include "nsIDocStreamLoaderFactory.h"
 
 #include "imgILoader.h"
 
@@ -89,11 +86,16 @@ static NS_DEFINE_IID(kXULDocumentCID, NS_XULDOCUMENT_CID);
 nsresult
 NS_NewDocumentViewer(nsIDocumentViewer** aResult);
 
+// XXXbz if you change the MIME types here, be sure to update
+// nsIParser.h and DetermineParseMode in nsParser.cpp accordingly.
 static const char* const gHTMLTypes[] = {
   "text/html",
   "text/plain",
   "text/css",
   "text/javascript",
+  "text/ecmascript",
+  "application/javascript",
+  "application/ecmascript",
   "application/x-javascript",
 #ifdef MOZ_VIEW_SOURCE
   "application/x-view-source", //XXX I wish I could just use nsMimeTypes.h here
@@ -109,13 +111,16 @@ static const char* const gXMLTypes[] = {
 };
 
 #ifdef MOZ_SVG
-static char* gSVGTypes[] = {
+static const char* const gSVGTypes[] = {
   "image/svg+xml",
   0
 };
+
+#include "nsSVGUtils.h"
 #endif
 
 static const char* const gRDFTypes[] = {
+  "application/rdf+xml",
   "text/rdf",
   "application/vnd.mozilla.xul+xml",
   "mozilla.application/cached-xul",
@@ -147,9 +152,8 @@ nsContentDLF::~nsContentDLF()
 {
 }
 
-NS_IMPL_ISUPPORTS2(nsContentDLF,
-                   nsIDocumentLoaderFactory,
-                   nsIDocStreamLoaderFactory)
+NS_IMPL_ISUPPORTS1(nsContentDLF,
+                   nsIDocumentLoaderFactory)
 
 NS_IMETHODIMP
 nsContentDLF::CreateInstance(const char* aCommand,
@@ -180,7 +184,7 @@ nsContentDLF::CreateInstance(const char* aCommand,
     PRInt32 typeIndex;
     for (typeIndex = 0; gHTMLTypes[typeIndex] && !knownType; ++typeIndex) {
       if (type.Equals(gHTMLTypes[typeIndex]) &&
-          !type.Equals(NS_LITERAL_CSTRING("application/x-view-source"))) {
+          !type.EqualsLiteral("application/x-view-source")) {
         knownType = PR_TRUE;
       }
     }
@@ -192,9 +196,11 @@ nsContentDLF::CreateInstance(const char* aCommand,
     }
 
 #ifdef MOZ_SVG
-    for (typeIndex = 0; gSVGTypes[typeIndex] && !knownType; ++typeIndex) {
-      if (type.Equals(gSVGTypes[typeIndex])) {
-        knownType = PR_TRUE;
+    if (nsSVGUtils::SVGEnabled()) {
+      for (typeIndex = 0; gSVGTypes[typeIndex] && !knownType; ++typeIndex) {
+        if (type.Equals(gSVGTypes[typeIndex])) {
+          knownType = PR_TRUE;
+        }
       }
     }
 #endif // MOZ_SVG
@@ -238,14 +244,16 @@ nsContentDLF::CreateInstance(const char* aCommand,
   }
 
 #ifdef MOZ_SVG
-  // Try SVG
-  typeIndex = 0;
-  while(gSVGTypes[typeIndex]) {
-    if (!PL_strcmp(gSVGTypes[typeIndex++], aContentType)) {
-      return CreateDocument(aCommand,
-                            aChannel, aLoadGroup,
-                            aContainer, kSVGDocumentCID,
-                            aDocListener, aDocViewer);
+  if (nsSVGUtils::SVGEnabled()) {
+    // Try SVG
+    typeIndex = 0;
+    while(gSVGTypes[typeIndex]) {
+      if (!PL_strcmp(gSVGTypes[typeIndex++], aContentType)) {
+        return CreateDocument(aCommand,
+                              aChannel, aLoadGroup,
+                              aContainer, kSVGDocumentCID,
+                              aDocListener, aDocViewer);
+      }
     }
   }
 #endif
@@ -337,40 +345,36 @@ nsContentDLF::CreateBlankDocument(nsILoadGroup *aLoadGroup, nsIDocument **aDocum
   if (NS_SUCCEEDED(rv)) {
     rv = NS_ERROR_FAILURE;
 
-    nsINodeInfoManager *nim = blankDoc->GetNodeInfoManager();
+    nsNodeInfoManager *nim = blankDoc->NodeInfoManager();
 
-    if (nim) {
-      nsCOMPtr<nsINodeInfo> htmlNodeInfo;
+    nsCOMPtr<nsINodeInfo> htmlNodeInfo;
 
-      // generate an html html element
-      nsCOMPtr<nsIHTMLContent> htmlElement;
-      nim->GetNodeInfo(nsHTMLAtoms::html, 0, kNameSpaceID_None,
-                      getter_AddRefs(htmlNodeInfo));
-      NS_NewHTMLHtmlElement(getter_AddRefs(htmlElement), htmlNodeInfo);
+    // generate an html html element
+    nim->GetNodeInfo(nsHTMLAtoms::html, 0, kNameSpaceID_None,
+                     getter_AddRefs(htmlNodeInfo));
+    nsCOMPtr<nsIContent> htmlElement = NS_NewHTMLHtmlElement(htmlNodeInfo);
 
-      // generate an html head element
-      nsCOMPtr<nsIHTMLContent> headElement;
-      nim->GetNodeInfo(nsHTMLAtoms::head, 0, kNameSpaceID_None,
-                      getter_AddRefs(htmlNodeInfo));
-      NS_NewHTMLHeadElement(getter_AddRefs(headElement), htmlNodeInfo);
+    // generate an html head element
+    nim->GetNodeInfo(nsHTMLAtoms::head, 0, kNameSpaceID_None,
+                     getter_AddRefs(htmlNodeInfo));
+    nsCOMPtr<nsIContent> headElement = NS_NewHTMLHeadElement(htmlNodeInfo);
 
-      // generate an html body element
-      nsCOMPtr<nsIHTMLContent> bodyElement;
-      nim->GetNodeInfo(nsHTMLAtoms::body, 0, kNameSpaceID_None,
-                      getter_AddRefs(htmlNodeInfo));
-      NS_NewHTMLBodyElement(getter_AddRefs(bodyElement), htmlNodeInfo);
+    // generate an html body element
+    nim->GetNodeInfo(nsHTMLAtoms::body, 0, kNameSpaceID_None,
+                     getter_AddRefs(htmlNodeInfo));
+    nsCOMPtr<nsIContent> bodyElement = NS_NewHTMLBodyElement(htmlNodeInfo);
 
-      // blat in the structure
-      if (htmlElement && headElement && bodyElement) {
-        htmlElement->SetDocument(blankDoc, PR_FALSE, PR_TRUE);
-        blankDoc->SetRootContent(htmlElement);
+    // blat in the structure
+    if (htmlElement && headElement && bodyElement) {
+      rv = blankDoc->SetRootContent(htmlElement);
+      if (NS_SUCCEEDED(rv)) {
+        rv = htmlElement->AppendChildTo(headElement, PR_FALSE);
 
-        htmlElement->AppendChildTo(headElement, PR_FALSE, PR_FALSE);
-
-        bodyElement->SetContentID(blankDoc->GetAndIncrementContentID());
-        htmlElement->AppendChildTo(bodyElement, PR_FALSE, PR_FALSE);
-
-        rv = NS_OK;
+        if (NS_SUCCEEDED(rv)) {
+          bodyElement->SetContentID(blankDoc->GetAndIncrementContentID());
+          // XXXbz Why not notifying here?
+          htmlElement->AppendChildTo(bodyElement, PR_FALSE);
+        }
       }
     }
   }
@@ -440,34 +444,6 @@ nsContentDLF::CreateDocument(const char* aCommand,
   return rv;
 }
 
-NS_IMETHODIMP
-nsContentDLF::CreateInstance(nsIInputStream& aInputStream,
-                             const char* aContentType,
-                             const char* aCommand,
-                             nsISupports* aContainer,
-                             nsISupports* aExtraInfo,
-                             nsIContentViewer** aDocViewer)
-
-{
-  nsresult status = NS_ERROR_FAILURE;
-
-  EnsureUAStyleSheet();
-
-  // Try RDF
-  int typeIndex = 0;
-  while (gRDFTypes[typeIndex]) {
-    if (0 == PL_strcmp(gRDFTypes[typeIndex++], aContentType)) {
-      return CreateXULDocumentFromStream(aInputStream,
-                                         aCommand,
-                                         aContainer,
-                                         aExtraInfo,
-                                         aDocViewer);
-    }
-  }
-
-  return status;
-}
-
 // ...common work for |CreateRDFDocument| and |CreateXULDocumentFromStream|
 nsresult
 nsContentDLF::CreateRDFDocument(nsISupports* aExtraInfo,
@@ -534,44 +510,10 @@ nsContentDLF::CreateRDFDocument(const char* aCommand,
   return rv;
 }
 
-nsresult
-nsContentDLF::CreateXULDocumentFromStream(nsIInputStream& aXULStream,
-                                          const char* aCommand,
-                                          nsISupports* aContainer,
-                                          nsISupports* aExtraInfo,
-                                          nsIContentViewer** aDocViewer)
-{
-  nsresult status = NS_OK;
-
-#if 0 // XXX dead code; remove
-  do
-  {
-    nsCOMPtr<nsIDocument> doc;
-    nsCOMPtr<nsIDocumentViewer> docv;
-    if ( NS_FAILED(status = CreateRDFDocument(aExtraInfo, address_of(doc), address_of(docv))) )
-      break;
-
-    if ( NS_FAILED(status = docv->LoadStart(doc)) )
-      break;
-
-    *aDocViewer = docv;
-    NS_IF_ADDREF(*aDocViewer);
-
-    nsCOMPtr<nsIStreamLoadableDocument> loader = do_QueryInterface(doc, &status);
-    if ( NS_FAILED(status) )
-      break;
-
-    status = loader->LoadFromStream(aXULStream, aContainer, aCommand);
-  }
-  while (0);
-#endif
-
-  return status;
-}
-
 static nsresult
 RegisterTypes(nsICategoryManager* aCatMgr,
-              const char* const* aTypes)
+              const char* const* aTypes,
+              PRBool aPersist = PR_TRUE)
 {
   nsresult rv = NS_OK;
   while (*aTypes) {
@@ -584,7 +526,7 @@ RegisterTypes(nsICategoryManager* aCatMgr,
     // to query the types of viewers layout can create.
     rv = aCatMgr->AddCategoryEntry("Gecko-Content-Viewers", contentType,
                                    "@mozilla.org/content/document-loader-factory;1",
-                                   PR_TRUE, PR_TRUE, nsnull);
+                                   aPersist, PR_TRUE, nsnull);
     if (NS_FAILED(rv)) break;
   }
   return rv;
@@ -603,6 +545,27 @@ static nsresult UnregisterTypes(nsICategoryManager* aCatMgr,
 
 }
 
+#ifdef MOZ_SVG
+NS_IMETHODIMP
+nsContentDLF::RegisterSVG()
+{
+  nsresult rv;
+  nsCOMPtr<nsICategoryManager> catmgr(do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv));
+  if (NS_FAILED(rv)) return rv;
+
+  return RegisterTypes(catmgr, gSVGTypes, PR_FALSE);
+}
+
+NS_IMETHODIMP
+nsContentDLF::UnregisterSVG()
+{
+  nsresult rv;
+  nsCOMPtr<nsICategoryManager> catmgr(do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv));
+  if (NS_FAILED(rv)) return rv;
+
+  return UnregisterTypes(catmgr, gSVGTypes);
+}
+#endif
 
 NS_IMETHODIMP
 nsContentDLF::RegisterDocumentFactories(nsIComponentManager* aCompMgr,
@@ -623,11 +586,6 @@ nsContentDLF::RegisterDocumentFactories(nsIComponentManager* aCompMgr,
     rv = RegisterTypes(catmgr, gXMLTypes);
     if (NS_FAILED(rv))
       break;
-#ifdef MOZ_SVG
-    rv = RegisterTypes(catmgr, gSVGTypes);
-    if (NS_FAILED(rv))
-      break;
-#endif
     rv = RegisterTypes(catmgr, gRDFTypes);
     if (NS_FAILED(rv))
       break;

@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,17 +27,17 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 
 /*
- *  npupp.h $Revision: 3.15.38.2 $
+ *  npupp.h $Revision: 3.20 $
  *  function call mecahnics needed by platform specific glue code.
  */
 
@@ -1586,6 +1585,58 @@ typedef void (* NP_LOADDS NPN_SetExceptionUPP)(NPObject *obj, const NPUTF8 *mess
 
 #endif
 
+/* NPN_PushPopupsEnabledStateUPP */
+
+#if _NPUPP_USE_UPP_
+
+typedef UniversalProcPtr NPN_PushPopupsEnabledStateUPP;
+enum {
+	uppNPN_PushPopupsEnabledStateProcInfo = kThinkCStackBased
+		| STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(NPP)))
+        | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(NPBool)))
+		| RESULT_SIZE(SIZE_CODE(0))
+};
+
+#define NewNPN_PushPopupsEnabledStateProc(FUNC)		\
+		(NPN_PushPopupsEnabledStateUPP) NewRoutineDescriptor((ProcPtr)(FUNC), uppNPN_PushPopupsEnabledStateProcInfo, GetCurrentArchitecture())
+#define CallNPN_PushPopupsEnabledStateProc(FUNC, ARG1, ARG2)		\
+		(jref)CallUniversalProc((UniversalProcPtr)(FUNC), uppNPN_PushPopupsEnabledStateProcInfo, (ARG1), (ARG2))
+
+#else
+
+typedef bool (* NP_LOADDS NPN_PushPopupsEnabledStateUPP)(NPP npp, NPBool enabled);
+#define NewNPN_PushPopupsEnabledStateProc(FUNC)		\
+		((NPN_PushPopupsEnabledStateUPP) (FUNC))
+#define CallNPN_PushPopupsEnabledStateProc(FUNC, ARG1, ARG2)		\
+		(*(FUNC))((ARG1), (ARG2))
+
+#endif
+
+/* NPN_PopPopupsEnabledState */
+
+#if _NPUPP_USE_UPP_
+
+typedef UniversalProcPtr NPN_PopPopupsEnabledStateUPP;
+enum {
+	uppNPN_PopPopupsEnabledStateProcInfo = kThinkCStackBased
+		| STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(NPP)))
+		| RESULT_SIZE(SIZE_CODE(0))
+};
+
+#define NewNPN_PopPopupsEnabledStateProc(FUNC)		\
+		(NPN_PopPopupsEnabledStateUPP) NewRoutineDescriptor((ProcPtr)(FUNC), uppNPN_PopPopupsEnabledStateProcInfo, GetCurrentArchitecture())
+#define CallNPN_PopPopupsEnabledStateProc(FUNC, ARG1)		\
+		(jref)CallUniversalProc((UniversalProcPtr)(FUNC), uppNPN_PopPopupsEnabledStateProcInfo, (ARG1))
+
+#else
+
+typedef bool (* NP_LOADDS NPN_PopPopupsEnabledStateUPP)(NPP npp);
+#define NewNPN_PopPopupsEnabledStateProc(FUNC)		\
+		((NPN_PopPopupsEnabledStateUPP) (FUNC))
+#define CallNPN_PopPopupsEnabledStateProc(FUNC, ARG1)		\
+		(*(FUNC))((ARG1))
+
+#endif
 
 
 
@@ -1661,6 +1712,8 @@ typedef struct _NPNetscapeFuncs {
     NPN_HasMethodUPP hasmethod;
     NPN_ReleaseVariantValueUPP releasevariantvalue;
     NPN_SetExceptionUPP setexception;
+    NPN_PushPopupsEnabledStateUPP pushpopupsenabledstate;
+    NPN_PopPopupsEnabledStateUPP poppopupsenabledstate;
 } NPNetscapeFuncs;
 
 #ifdef XP_MAC

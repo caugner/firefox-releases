@@ -1,36 +1,40 @@
 /* arcfour.c - the arc four algorithm.
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.	Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.	If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* See NOTES ON UMRs, Unititialized Memory Reads, below. */
 
@@ -47,8 +51,11 @@
 #define CONVERT_TO_WORDS
 #endif
 
-#if defined(AIX) || defined(OSF1)
-/* Treat array variables as longs, not bytes */
+#if defined(AIX) || defined(OSF1) || defined(NSS_BEVAND_ARCFOUR)
+/* Treat array variables as longs, not bytes, on CPUs that take 
+ * much longer to write bytes than to write longs, or when using 
+ * assembler code that required it.
+ */
 #define USE_LONG
 #endif
 
@@ -84,9 +91,15 @@ typedef PRUint8 Stype;
  */
 struct RC4ContextStr
 {
+#if defined(NSS_ARCFOUR_IJ_B4_S) || defined(NSS_BEVAND_ARCFOUR)
+	Stype i;
+	Stype j;
 	Stype S[ARCFOUR_STATE_SIZE];
-	PRUint8 i;
-	PRUint8 j;
+#else
+	Stype S[ARCFOUR_STATE_SIZE];
+	Stype i;
+	Stype j;
+#endif
 };
 
 /*
@@ -182,6 +195,10 @@ RC4_DestroyContext(RC4Context *cx, PRBool freeit)
 		PORT_ZFree(cx, sizeof(*cx));
 }
 
+#if defined(NSS_BEVAND_ARCFOUR)
+extern void ARCFOUR(RC4Context *cx, unsigned long inputLen, 
+	const unsigned char *input, unsigned char *output);
+#else
 /*
  * Generate the next byte in the stream.
  */
@@ -195,7 +212,7 @@ RC4_DestroyContext(RC4Context *cx, PRBool freeit)
 
 #ifdef CONVERT_TO_WORDS
 /*
- * Straight RC4 op.  No optimization.
+ * Straight ARCFOUR op.  No optimization.
  */
 static SECStatus 
 rc4_no_opt(RC4Context *cx, unsigned char *output,
@@ -227,7 +244,7 @@ rc4_no_opt(RC4Context *cx, unsigned char *output,
 
 #ifndef CONVERT_TO_WORDS
 /*
- * Byte-at-a-time RC4, unrolling the loop into 8 pieces.
+ * Byte-at-a-time ARCFOUR, unrolling the loop into 8 pieces.
  */
 static SECStatus 
 rc4_unrolled(RC4Context *cx, unsigned char *output,
@@ -550,6 +567,7 @@ rc4_wordconv(RC4Context *cx, unsigned char *output,
 	return SECSuccess;
 }
 #endif
+#endif /* NSS_BEVAND_ARCFOUR */
 
 SECStatus 
 RC4_Encrypt(RC4Context *cx, unsigned char *output,
@@ -561,7 +579,11 @@ RC4_Encrypt(RC4Context *cx, unsigned char *output,
 		PORT_SetError(SEC_ERROR_INVALID_ARGS);
 		return SECFailure;
 	}
-#ifdef CONVERT_TO_WORDS
+#if defined(NSS_BEVAND_ARCFOUR)
+	ARCFOUR(cx, inputLen, input, output);
+        *outputLen = inputLen;
+	return SECSuccess;
+#elif defined( CONVERT_TO_WORDS )
 	/* Convert the byte-stream to a word-stream */
 	return rc4_wordconv(cx, output, outputLen, maxOutputLen, input, inputLen);
 #else
@@ -580,7 +602,11 @@ SECStatus RC4_Decrypt(RC4Context *cx, unsigned char *output,
 		return SECFailure;
 	}
 	/* decrypt and encrypt are same operation. */
-#ifdef CONVERT_TO_WORDS
+#if defined(NSS_BEVAND_ARCFOUR)
+	ARCFOUR(cx, inputLen, input, output);
+        *outputLen = inputLen;
+	return SECSuccess;
+#elif defined( CONVERT_TO_WORDS )
 	/* Convert the byte-stream to a word-stream */
 	return rc4_wordconv(cx, output, outputLen, maxOutputLen, input, inputLen);
 #else

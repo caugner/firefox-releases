@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,37 +14,41 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Original Author: John Gaunt (jgaunt@netscape.com)
  * Contributor(s):
  *   Aaron Leventhal (aaronl@netscape.com)
  *   Kyle Yuan (kyle.yuan@sun.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 // NOTE: alphabetically ordered
 #include "nsXULFormControlAccessible.h"
+#include "nsHTMLFormControlAccessible.h"
+#include "nsAccessibilityAtoms.h"
+#include "nsAccessibleTreeWalker.h"
+#include "nsIDOMHTMLInputElement.h"
 #include "nsIDOMXULButtonElement.h"
 #include "nsIDOMXULCheckboxElement.h"
 #include "nsIDOMXULMenuListElement.h"
 #include "nsIDOMXULSelectCntrlItemEl.h"
-#include "nsAccessibleTreeWalker.h"
+#include "nsIDOMXULTextboxElement.h"
+#include "nsINameSpaceManager.h"
 
 /**
   * XUL Button: can contain arbitrary HTML content
@@ -58,11 +62,6 @@
 nsXULButtonAccessible::nsXULButtonAccessible(nsIDOMNode* aNode, nsIWeakReference* aShell):
 nsAccessibleWrap(aNode, aShell)
 { 
-}
-
-NS_IMETHODIMP nsXULButtonAccessible::GetName(nsAString& aResult)
-{
-  return GetXULName(aResult);
 }
 
 /**
@@ -92,13 +91,7 @@ NS_IMETHODIMP nsXULButtonAccessible::GetActionName(PRUint8 index, nsAString& _re
 NS_IMETHODIMP nsXULButtonAccessible::DoAction(PRUint8 index)
 {
   if (index == 0) {
-    nsCOMPtr<nsIDOMXULElement> buttonElement(do_QueryInterface(mDOMNode));
-    if ( buttonElement )
-    {
-      buttonElement->Click();
-      return NS_OK;
-    }
-    return NS_ERROR_FAILURE;
+    return DoCommand();
   }
   return NS_ERROR_INVALID_ARG;
 }
@@ -115,19 +108,19 @@ NS_IMETHODIMP nsXULButtonAccessible::GetRole(PRUint32 *_retval)
 /**
   * Possible states: focused, focusable, unavailable(disabled)
   */
-NS_IMETHODIMP nsXULButtonAccessible::GetState(PRUint32 *_retval)
+NS_IMETHODIMP nsXULButtonAccessible::GetState(PRUint32 *aState)
 {
   // get focus and disable status from base class
-  nsAccessible::GetState(_retval);
+  nsAccessible::GetState(aState);
 
   PRBool disabled = PR_FALSE;
   nsCOMPtr<nsIDOMXULControlElement> xulFormElement(do_QueryInterface(mDOMNode));  
   if (xulFormElement) {
     xulFormElement->GetDisabled(&disabled);
     if (disabled)
-      *_retval |= STATE_UNAVAILABLE;
+      *aState |= STATE_UNAVAILABLE;
     else 
-      *_retval |= STATE_FOCUSABLE;
+      *aState |= STATE_FOCUSABLE;
   }
 
   // Buttons can be checked -- they simply appear pressed in rather than checked
@@ -137,63 +130,64 @@ NS_IMETHODIMP nsXULButtonAccessible::GetState(PRUint32 *_retval)
     PRInt32 checkState = 0;
     xulButtonElement->GetChecked(&checked);
     if (checked) {
-      *_retval |= STATE_PRESSED;
+      *aState |= STATE_PRESSED;
       xulButtonElement->GetCheckState(&checkState);
       if (checkState == nsIDOMXULButtonElement::CHECKSTATE_MIXED)  
-        *_retval |= STATE_MIXED;
+        *aState |= STATE_MIXED;
     }
   }
 
   nsCOMPtr<nsIDOMElement> element(do_QueryInterface(mDOMNode));
   NS_ASSERTION(element, "No nsIDOMElement for button node!");
-  PRBool isDefault = PR_FALSE;
-  element->HasAttribute(NS_LITERAL_STRING("default"), &isDefault) ;
-  if (isDefault)
-    *_retval |= STATE_DEFAULT;
+  if (element) {
+    PRBool isDefault = PR_FALSE;
+    element->HasAttribute(NS_LITERAL_STRING("default"), &isDefault) ;
+    if (isDefault)
+      *aState |= STATE_DEFAULT;
+  }
+
+  nsAutoString type;
+  element->GetAttribute(NS_LITERAL_STRING("type"), type);
+  if (type.EqualsLiteral("menu") || type.EqualsLiteral("menu-button")) {
+    *aState |= STATE_HASPOPUP;
+  }
 
   return NS_OK;
 }
 
-/**
-  * Perhaps 1 child - if there's a <dropmarker>
-  */
-NS_IMETHODIMP nsXULButtonAccessible::GetFirstChild(nsIAccessible **aResult)
+void nsXULButtonAccessible::CacheChildren(PRBool aWalkAnonContent)
 {
-  if (!mFirstChild) {
+  // An XUL button accessible may have 1 child dropmarker accessible
+  if (!mWeakShell) {
+    mAccChildCount = eChildCountUninitialized;
+    return;   // This outer doc node has been shut down
+  }
+  if (mAccChildCount == eChildCountUninitialized) {
+    mAccChildCount = 0;
+    SetFirstChild(nsnull);
     nsAccessibleTreeWalker walker(mWeakShell, mDOMNode, PR_TRUE);
-    walker.GetLastChild();
+    walker.GetFirstChild();
+    nsCOMPtr<nsIAccessible> dropMarkerAccessible;
+    while (walker.mState.accessible) {
+      dropMarkerAccessible = walker.mState.accessible;
+      walker.GetNextSibling();
+    }
 
     // If the anonymous tree walker can find accessible children, 
     // and the last one is a push button, then use it as the only accessible 
     // child -- because this is the scenario where we have a dropmarker child
 
-    if (walker.mState.accessible) {    
+    if (dropMarkerAccessible) {    
       PRUint32 role;
-      if (NS_SUCCEEDED(walker.mState.accessible->GetRole(&role)) && role == ROLE_PUSHBUTTON) {
-        mFirstChild = walker.mState.accessible;
-        nsCOMPtr<nsPIAccessible> privChildAcc = do_QueryInterface(mFirstChild);
+      if (NS_SUCCEEDED(dropMarkerAccessible->GetRole(&role)) && role == ROLE_PUSHBUTTON) {
+        SetFirstChild(dropMarkerAccessible);
+        nsCOMPtr<nsPIAccessible> privChildAcc = do_QueryInterface(dropMarkerAccessible);
         privChildAcc->SetNextSibling(nsnull);
+        privChildAcc->SetParent(this);
+        mAccChildCount = 1;
       }
     }
   }
-
-  mAccChildCount = (mFirstChild != nsnull);
-  NS_IF_ADDREF(*aResult = mFirstChild);
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsXULButtonAccessible::GetLastChild(nsIAccessible **aResult)
-{
-  return GetFirstChild(aResult);
-}
-
-NS_IMETHODIMP nsXULButtonAccessible::GetChildCount(PRInt32 *aResult)
-{
-  nsCOMPtr<nsIAccessible> accessible;
-  GetFirstChild(getter_AddRefs(accessible));
-  *aResult = mAccChildCount;
-
-  return NS_OK;
 }
 
 /**
@@ -249,9 +243,9 @@ NS_IMETHODIMP nsXULDropmarkerAccessible::GetActionName(PRUint8 index, nsAString&
 {
   if (index == eAction_Click) {
     if (DropmarkerOpen(PR_FALSE))
-      aResult = NS_LITERAL_STRING("close");
+      aResult.AssignLiteral("close");
     else
-      aResult = NS_LITERAL_STRING("open");
+      aResult.AssignLiteral("open");
     return NS_OK;
   }
 
@@ -330,9 +324,9 @@ NS_IMETHODIMP nsXULCheckboxAccessible::GetActionName(PRUint8 index, nsAString& _
     GetState(&state);
 
     if (state & STATE_CHECKED)
-      _retval = NS_LITERAL_STRING("uncheck");
+      _retval.AssignLiteral("uncheck");
     else
-      _retval = NS_LITERAL_STRING("check");
+      _retval.AssignLiteral("check");
 
     return NS_OK;
   }
@@ -345,12 +339,7 @@ NS_IMETHODIMP nsXULCheckboxAccessible::GetActionName(PRUint8 index, nsAString& _
 NS_IMETHODIMP nsXULCheckboxAccessible::DoAction(PRUint8 index)
 {
   if (index == eAction_Click) {
-    nsCOMPtr<nsIDOMXULElement> xulCheckboxElement(do_QueryInterface(mDOMNode));
-    if (xulCheckboxElement) {
-      xulCheckboxElement->Click();
-      return NS_OK;
-    }
-    return NS_ERROR_FAILURE;
+   return DoCommand();
   }
   return NS_ERROR_INVALID_ARG;
 }
@@ -397,27 +386,37 @@ NS_IMETHODIMP nsXULGroupboxAccessible::GetRole(PRUint32 *_retval)
 
 NS_IMETHODIMP nsXULGroupboxAccessible::GetState(PRUint32 *_retval)
 {
-  // Groupbox doesn't support any states!
-  *_retval = 0;
+  // Groupbox doesn't support focusable state!
+  nsAccessible::GetState(_retval);
+  *_retval &= ~STATE_FOCUSABLE;
 
   return NS_OK;
 }
 
-NS_IMETHODIMP nsXULGroupboxAccessible::GetName(nsAString& _retval)
+NS_IMETHODIMP nsXULGroupboxAccessible::GetName(nsAString& aName)
 {
-  _retval.Assign(NS_LITERAL_STRING(""));  // Default name is blank 
+  aName.Truncate();  // Default name is blank 
 
+  if (mRoleMapEntry) {
+    nsAccessible::GetName(aName);
+    if (!aName.IsEmpty()) {
+      return NS_OK;
+    }
+  }
   nsCOMPtr<nsIDOMElement> element(do_QueryInterface(mDOMNode));
   if (element) {
     nsCOMPtr<nsIDOMNodeList> captions;
-    element->GetElementsByTagName(NS_LITERAL_STRING("caption"), getter_AddRefs(captions));
+    nsAutoString nameSpaceURI;
+    element->GetNamespaceURI(nameSpaceURI);
+    element->GetElementsByTagNameNS(nameSpaceURI, NS_LITERAL_STRING("caption"), 
+                                    getter_AddRefs(captions));
     if (captions) {
       nsCOMPtr<nsIDOMNode> captionNode;
       captions->Item(0, getter_AddRefs(captionNode));
       if (captionNode) {
         element = do_QueryInterface(captionNode);
         NS_ASSERTION(element, "No nsIDOMElement for caption node!");
-        element->GetAttribute(NS_LITERAL_STRING("label"), _retval) ;
+        element->GetAttribute(NS_LITERAL_STRING("label"), aName) ;
       }
     }
   }
@@ -443,10 +442,11 @@ NS_IMETHODIMP nsXULProgressMeterAccessible::GetRole(PRUint32 *_retval)
 /**
   * No states supported for progressmeter
   */
-NS_IMETHODIMP nsXULProgressMeterAccessible::GetState(PRUint32 *_retval)
+NS_IMETHODIMP nsXULProgressMeterAccessible::GetState(PRUint32 *aState)
 {
-  *_retval =0;
-  return NS_OK;
+  nsresult rv = nsAccessible::GetState(aState);
+  *aState &= ~STATE_FOCUSABLE;
+  return rv;
 }
 
 NS_IMETHODIMP nsXULProgressMeterAccessible::GetValue(nsAString& _retval)
@@ -455,7 +455,7 @@ NS_IMETHODIMP nsXULProgressMeterAccessible::GetValue(nsAString& _retval)
   NS_ASSERTION(element, "No element for DOM node!");
   element->GetAttribute(NS_LITERAL_STRING("value"), _retval);
   if (!_retval.IsEmpty() && _retval.Last() != '%')
-    _retval.Append(NS_LITERAL_STRING("%"));
+    _retval.AppendLiteral("%");
   return NS_OK;
 }
 
@@ -473,11 +473,7 @@ nsRadioButtonAccessible(aNode, aShell)
 NS_IMETHODIMP nsXULRadioButtonAccessible::DoAction(PRUint8 index)
 {
   if (index == eAction_Click) {
-    nsCOMPtr<nsIDOMXULElement> radioButton(do_QueryInterface(mDOMNode));
-    if (radioButton) {
-      radioButton->Click();
-      return NS_OK;
-    }
+    return DoCommand();
   }
   return NS_ERROR_INVALID_ARG;
 }
@@ -489,40 +485,13 @@ NS_IMETHODIMP nsXULRadioButtonAccessible::GetState(PRUint32 *_retval)
   PRBool selected = PR_FALSE;   // Radio buttons can be selected
 
   nsCOMPtr<nsIDOMXULSelectControlItemElement> radioButton(do_QueryInterface(mDOMNode));
-  if (radioButton) 
+  if (radioButton) {
     radioButton->GetSelected(&selected);
-
-  if (selected) {
-    *_retval |= STATE_CHECKED;
-    // If our parent radio group is focused, then consider this radio button focused
-    nsCOMPtr<nsIDOMNode> parentNode;
-    mDOMNode->GetParentNode(getter_AddRefs(parentNode));
-    if (parentNode) {
-      nsCOMPtr<nsIDOMNode> focusedNode;
-      GetFocusedNode(mDOMNode, getter_AddRefs(focusedNode));
-      if (focusedNode == parentNode)
-        *_retval |= STATE_FOCUSED;
+    if (selected) {
+      *_retval |= STATE_CHECKED;
     }
   }
 
-  return NS_OK;
-}
-
-/**
-  * This gets the parent of the RadioGroup (our grandparent) and sets it 
-  *  as our parent, for future calls. 
-  */
-NS_IMETHODIMP nsXULRadioButtonAccessible::GetParent(nsIAccessible **  aParent)
-{
-  if (! mParent) {
-    nsCOMPtr<nsIAccessible> tempParent;
-    nsAccessible::GetParent(getter_AddRefs(tempParent));
-    if (tempParent)
-      tempParent->GetParent(getter_AddRefs(mParent));
-  }
-  NS_ASSERTION(mParent,"Whoa! This RadioButtonAcc doesn't have a parent! Better find out why.");
-  *aParent = mParent;
-  NS_ADDREF(*aParent);
   return NS_OK;
 }
 
@@ -579,8 +548,7 @@ NS_IMETHODIMP nsXULStatusBarAccessible::GetRole(PRUint32 *_retval)
 
 NS_IMETHODIMP nsXULStatusBarAccessible::GetState(PRUint32 *_retval)
 {
-  *_retval = 0;  // no special state flags for status bar
-  return NS_OK;
+  return nsAccessible::GetState(_retval);
 }
 
 /**
@@ -624,4 +592,103 @@ NS_IMETHODIMP nsXULToolbarSeparatorAccessible::GetState(PRUint32 *_retval)
 {
   *_retval = 0;  // no special state flags for toolbar separator
   return NS_OK;
+}
+
+/**
+  * XUL Textfield
+  */
+
+nsXULTextFieldAccessible::nsXULTextFieldAccessible(nsIDOMNode* aNode, nsIWeakReference* aShell) :
+ nsLeafAccessible(aNode, aShell)
+{
+}
+
+NS_IMETHODIMP nsXULTextFieldAccessible::GetValue(nsAString& aValue)
+{
+  PRUint32 state;
+  GetState(&state);
+  if (state & STATE_PROTECTED)    // Don't return password text!
+    return NS_ERROR_FAILURE;
+
+  nsCOMPtr<nsIDOMXULTextBoxElement> textBox(do_QueryInterface(mDOMNode));
+  if (textBox) {
+    return textBox->GetValue(aValue);
+  }
+  return NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP nsXULTextFieldAccessible::GetExtState(PRUint32 *aExtState)
+{
+  nsresult rv = nsAccessible::GetExtState(aExtState);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+  nsCOMPtr<nsIContent> content(do_QueryInterface(mDOMNode));
+  NS_ASSERTION(content, "Should not have gotten past nsAccessible::GetExtState() without node");
+
+  PRBool isMultiLine = content->HasAttr(kNameSpaceID_None, nsAccessibilityAtoms::multiline);
+  *aExtState |= (isMultiLine ? EXT_STATE_MULTI_LINE : EXT_STATE_SINGLE_LINE);
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsXULTextFieldAccessible::GetState(PRUint32 *aState)
+{
+  *aState = 0;
+  nsCOMPtr<nsIDOMXULTextBoxElement> textBox(do_QueryInterface(mDOMNode));
+  if (!textBox) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIDOMNode> inputField;
+  textBox->GetInputField(getter_AddRefs(inputField));
+  if (!inputField) {
+    return NS_ERROR_FAILURE;
+  }
+  // Create a temporary accessible from the HTML text field
+  // to get the accessible state from. Doesn't add to cache
+  // because Init() is not called.
+  nsHTMLTextFieldAccessible tempAccessible(inputField, mWeakShell);
+  nsresult rv = tempAccessible.GetState(aState);
+  if (gLastFocusedNode == mDOMNode) {
+    *aState |= STATE_FOCUSED;
+  }
+  return rv;
+}
+
+/**
+  * Only one actions available
+  */
+NS_IMETHODIMP nsXULTextFieldAccessible::GetNumActions(PRUint8 *_retval)
+{
+  *_retval = eSingle_Action;
+  return NS_OK;;
+}
+
+/**
+  * Return the name of our only action
+  */
+NS_IMETHODIMP nsXULTextFieldAccessible::GetActionName(PRUint8 index, nsAString& _retval)
+{
+  if (index == eAction_Click) {
+    nsAccessible::GetTranslatedString(NS_LITERAL_STRING("activate"), _retval); 
+    return NS_OK;
+  }
+  return NS_ERROR_INVALID_ARG;
+}
+
+/**
+  * Tell the button to do it's action
+  */
+NS_IMETHODIMP nsXULTextFieldAccessible::DoAction(PRUint8 index)
+{
+  if (index == 0) {
+    nsCOMPtr<nsIDOMXULElement> element(do_QueryInterface(mDOMNode));
+    if (element)
+    {
+      element->Focus();
+      return NS_OK;
+    }
+    return NS_ERROR_FAILURE;
+  }
+  return NS_ERROR_INVALID_ARG;
 }

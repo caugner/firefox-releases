@@ -9,6 +9,11 @@ function onLoad()
 
 function onInit() 
 {
+  onInitCompositionAndAddressing();
+}
+
+function onInitCompositionAndAddressing()
+{
   setupDirectoriesList();
   enabling();
   quoteEnabling();
@@ -29,7 +34,7 @@ function enabling()
   // this is the hidden text element that assigned a value from the prefs
   var overrideGlobalPref = document.getElementById("identity.overrideGlobalPref");
 
-  switch(autocomplete.selectedItem.value)
+  switch(autocomplete.value)
   {
     case "0":
       directoriesList.setAttribute("disabled", true);
@@ -70,6 +75,11 @@ function enabling()
 
 function onSave()
 {
+  onSaveCompositionAndAddressing();
+}
+
+function onSaveCompositionAndAddressing()
+{
   var override = document.getElementById("identity.overrideGlobalPref");
   var autocomplete = document.getElementById("ldapAutocomplete");
   var directoryServer = document.getElementById("identity.directoryServer");
@@ -84,7 +94,7 @@ function onSave()
   // So, we need the two elements overrideGlobalPref and directoryServer
   // to save the state when the directory is 
   // set to none and the first radio button is selected.
-  switch(autocomplete.selectedItem.value)
+  switch(autocomplete.value)
   {
     case "0":
       override.setAttribute('value', "");

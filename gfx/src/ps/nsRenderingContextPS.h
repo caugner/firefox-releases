@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -72,7 +71,7 @@ public:
   // nsIRenderingContext
   NS_IMETHOD Init(nsIDeviceContext* aContext);
   NS_IMETHOD Init(nsIDeviceContext* aContext, nsIWidget *aWidget) {return NS_ERROR_NOT_IMPLEMENTED;}
-  NS_IMETHOD Init(nsIDeviceContext* aContext, nsDrawingSurface aSurface) {return NS_ERROR_NOT_IMPLEMENTED;}
+  NS_IMETHOD Init(nsIDeviceContext* aContext, nsIDrawingSurface* aSurface) {return NS_ERROR_NOT_IMPLEMENTED;}
 
   NS_IMETHOD Reset(void);
 
@@ -83,18 +82,18 @@ public:
                                 PRUint32 aFlags);
   NS_IMETHOD UnlockDrawingSurface(void);
 
-  NS_IMETHOD SelectOffScreenDrawingSurface(nsDrawingSurface aSurface);
-  NS_IMETHOD GetDrawingSurface(nsDrawingSurface *aSurface);
+  NS_IMETHOD SelectOffScreenDrawingSurface(nsIDrawingSurface* aSurface);
+  NS_IMETHOD GetDrawingSurface(nsIDrawingSurface* *aSurface);
   NS_IMETHOD GetHints(PRUint32& aResult);
 
   NS_IMETHOD PushState(void);
-  NS_IMETHOD PopState(PRBool &aClipState);
+  NS_IMETHOD PopState(void);
 
   NS_IMETHOD IsVisibleRect(const nsRect& aRect, PRBool &aClipState);
 
-  NS_IMETHOD SetClipRect(const nsRect& aRect, nsClipCombine aCombine, PRBool &aCilpState);
+  NS_IMETHOD SetClipRect(const nsRect& aRect, nsClipCombine aCombine);
   NS_IMETHOD GetClipRect(nsRect &aRect, PRBool &aClipState);
-  NS_IMETHOD SetClipRegion(const nsIRegion& aRegion, nsClipCombine aCombine, PRBool &aClipState);
+  NS_IMETHOD SetClipRegion(const nsIRegion& aRegion, nsClipCombine aCombine);
   NS_IMETHOD CopyClipRegion(nsIRegion &aRegion);
   NS_IMETHOD GetClipRegion(nsIRegion **aRegion);
 
@@ -113,8 +112,8 @@ public:
   NS_IMETHOD Scale(float aSx, float aSy);
   NS_IMETHOD GetCurrentTransform(nsTransform2D *&aTransform);
 
-  NS_IMETHOD CreateDrawingSurface(const nsRect& aBounds, PRUint32 aSurfFlags, nsDrawingSurface &aSurface);
-  NS_IMETHOD DestroyDrawingSurface(nsDrawingSurface aDS);
+  NS_IMETHOD CreateDrawingSurface(const nsRect& aBounds, PRUint32 aSurfFlags, nsIDrawingSurface* &aSurface);
+  NS_IMETHOD DestroyDrawingSurface(nsIDrawingSurface* aDS);
 
   NS_IMETHOD DrawLine(nscoord aX0, nscoord aY0, nscoord aX1, nscoord aY1);
   NS_IMETHOD DrawPolyline(const nsPoint aPoints[], PRInt32 aNumPoints);
@@ -197,30 +196,30 @@ public:
                                nsTextDimensions& aLastWordDimensions,
                                PRInt32*          aFontID = nsnull);
 
-  
-  /** ---------------------------------------------------
-   *  Draw an image
-   *    @param aImage     The image to draw
-   *           aSrcRect   The portion of the image to draw. [x,y] denotes
-   *                      the top left corner of the region.
-   *           aDestPoint The location of the image on the page. [x,y] denotes
-   *                      the top left corner.
+  /**
+   *  Draw a portion of an image, scaling it to fit a specified rect.
+   *  @param aImage     The image to draw
+   *  @param aSrcRect   The rect (in twips) of the image to draw.
+   *                    [x,y] denotes the top left corner of the region.
+   *  @param aDestRect  The device context rect (in twips) that the image
+   *                    portion should occupy. [x,y] denotes the top left corner.
+   *                    [height,width] denotes the desired image size.
    */
   NS_IMETHOD DrawImage(imgIContainer *aImage,
-    const nsRect * aSrcRect, const nsPoint * aDestPoint);
+    const nsRect & aSrcRect, const nsRect & aDestRect);
 
-  /** ---------------------------------------------------
-   *  Draw an image, scaling it to fit a specified rectangle.
-   *    @param aImage     The image to draw
-   *           aSrcRect   The portion of the image to draw. [x,y] denotes
-   *                      the top left corner of the region.
-   *           aDestPoint The region of the page that the image should
-   *                      occupy. [x,y] denotes the top left corner.
+  /*
+   *    Tiles an image over an area
+   *    @param aImage Image to tile
+   *    @param aXImageStart x location where the origin (0,0) of the image starts
+   *    @param aYImageStart y location where the origin (0,0) of the image starts
+   *    @param aTargetRect  area to draw to
+   *
    */
-  NS_IMETHOD DrawScaledImage(imgIContainer *aImage,
-    const nsRect * aSrcRect, const nsRect * aDestRect);
+  NS_IMETHOD DrawTile(imgIContainer *aImage,
+    nscoord aXImageStart, nscoord aYImageStart, const nsRect *aTargetRect);
 
-  NS_IMETHOD CopyOffScreenBits(nsDrawingSurface aSrcSurf, PRInt32 aSrcX, PRInt32 aSrcY,
+  NS_IMETHOD CopyOffScreenBits(nsIDrawingSurface* aSrcSurf, PRInt32 aSrcX, PRInt32 aSrcY,
                                const nsRect &aDestBounds, PRUint32 aCopyFlags);
   NS_IMETHOD RetrieveCurrentNativeGraphicData(PRUint32 * ngd);
 
@@ -274,6 +273,16 @@ public:
                                 nsBoundingMetrics& aBoundingMetrics,
                                 PRInt32*           aFontID = nsnull);
 #endif /* MOZ_MATHML */
+
+  /** ---------------------------------------------------
+   *  Output an encapsulated postscript file to the print job. See
+   *  documentation in gfx/public/nsIRenderingContext.h.
+   *    @update  3/6/2004 kherron
+   *    @param   aRect  Rectangle in which to render the EPS
+   *    @param   aDataFile - data stored in a file
+   *    @return  NS_OK or a suitable error code.
+   */
+  NS_IMETHOD RenderEPS(const nsRect& aRect, FILE *aDataFile);
 
 private:
   nsresult CommonInit(void);

@@ -1,11 +1,11 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Seth Spitzer <sspitzer@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -55,7 +55,7 @@
 #include "nsMsgSearchValue.h"
 #include "nsReadableUtils.h"
 #include "nsEscape.h"
-#include "nsMsgUtf7Utils.h"
+#include "nsMsgI18N.h"
 #include "nsIImportService.h"
 #include "nsISupportsObsolete.h"
 #include "nsIOutputStream.h"
@@ -116,7 +116,8 @@ NS_IMETHODIMP
 nsMsgRuleAction::SetTargetFolderUri(const char *aUri)
 {
   NS_ENSURE_ARG_POINTER(aUri);
-  NS_ENSURE_TRUE(m_type == nsMsgFilterAction::MoveToFolder,
+  NS_ENSURE_TRUE(m_type == nsMsgFilterAction::MoveToFolder ||
+                 m_type == nsMsgFilterAction::CopyToFolder,
                  NS_ERROR_ILLEGAL_VALUE);
   m_folderUri = aUri;
   return NS_OK;
@@ -126,7 +127,8 @@ NS_IMETHODIMP
 nsMsgRuleAction::GetTargetFolderUri(char** aResult)
 {
   NS_ENSURE_ARG_POINTER(aResult);
-  NS_ENSURE_TRUE(m_type == nsMsgFilterAction::MoveToFolder,
+  NS_ENSURE_TRUE(m_type == nsMsgFilterAction::MoveToFolder ||
+                 m_type == nsMsgFilterAction::CopyToFolder,
                  NS_ERROR_ILLEGAL_VALUE);
   *aResult = ToNewCString(m_folderUri);
   return NS_OK;
@@ -147,6 +149,21 @@ nsMsgRuleAction::GetJunkScore(PRInt32 *aResult)
   NS_ENSURE_ARG_POINTER(aResult);
   NS_ENSURE_TRUE(m_type == nsMsgFilterAction::JunkScore, NS_ERROR_ILLEGAL_VALUE);
   *aResult = m_junkScore;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMsgRuleAction::SetStrValue(const char *aStrValue)
+{
+  m_strValue = aStrValue;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMsgRuleAction::GetStrValue(char **aStrValue)
+{
+  NS_ENSURE_ARG_POINTER(aStrValue);
+  *aStrValue = ToNewCString(m_strValue);
   return NS_OK;
 }
 
@@ -260,6 +277,7 @@ nsMsgFilter::GetSortedActionList(nsISupportsArray *actionList)
   PRUint32 numActions;
   nsresult err = m_actionList->Count(&numActions);
   NS_ENSURE_SUCCESS(err, err);
+  PRBool insertedFinalAction = PR_FALSE;
   PRUint32 front = 0;
 
   for (PRUint32 index =0; index < numActions; index++)
@@ -271,8 +289,32 @@ nsMsgFilter::GetSortedActionList(nsISupportsArray *actionList)
  
     nsMsgRuleActionType actionType;
     action->GetType(&actionType);
-    if (actionType == nsMsgFilterAction::MoveToFolder)  //we always want MoveToFolder action to be last
-      actionList->AppendElement(action);
+    
+    //we always want MoveToFolder action to be last (or delete to trash)
+    if (actionType == nsMsgFilterAction::MoveToFolder || actionType == nsMsgFilterAction::Delete)
+    {
+      err = actionList->AppendElement(action);
+      NS_ENSURE_SUCCESS(err, err);
+      insertedFinalAction = PR_TRUE;
+    }
+    // Copy is always last, except for move/delete
+    else if (actionType == nsMsgFilterAction::CopyToFolder)
+    {
+      if (!insertedFinalAction)
+      {
+        err = actionList->AppendElement(action);
+        NS_ENSURE_SUCCESS(err, err);
+      }
+      else
+      {
+        // If we already have a move/delete action in place, we want to
+        // place ourselves just before that final action.
+        PRUint32 count;
+        actionList->Count(&count);
+        err = actionList->InsertElementAt(action, count - 2);
+        NS_ENSURE_SUCCESS(err, err);
+      }
+    }
     else
     {
       actionList->InsertElementAt(action,front);
@@ -373,6 +415,7 @@ NS_IMETHODIMP nsMsgFilter::GetScope(nsIMsgSearchScopeTerm **aResult)
 
 NS_IMETHODIMP nsMsgFilter::LogRuleHit(nsIMsgRuleAction *aFilterAction, nsIMsgDBHdr *aMsgHdr)
 {
+    NS_ENSURE_TRUE(m_filterList, NS_OK);
     nsCOMPtr <nsIOutputStream> logStream;
     nsresult rv = m_filterList->GetLogStream(getter_AddRefs(logStream));
     NS_ENSURE_SUCCESS(rv,rv);
@@ -402,7 +445,7 @@ NS_IMETHODIMP nsMsgFilter::LogRuleHit(nsIMsgRuleAction *aFilterAction, nsIMsgDBH
     buffer.SetCapacity(512);  
     
     buffer = "Applied filter \"";
-    buffer +=  NS_ConvertUCS2toUTF8(filterName).get();
+    AppendUTF16toUTF8(filterName, buffer);
     buffer +=  "\" to message from ";
     buffer +=  (const char*)author;
     buffer +=  " - ";
@@ -415,14 +458,16 @@ NS_IMETHODIMP nsMsgFilter::LogRuleHit(nsIMsgRuleAction *aFilterAction, nsIMsgDBH
     buffer +=  actionStr;
     buffer +=  " ";
         
-    if (actionType == nsMsgFilterAction::MoveToFolder) {
+    if (actionType == nsMsgFilterAction::MoveToFolder ||
+        actionType == nsMsgFilterAction::CopyToFolder) {
       nsXPIDLCString actionFolderUri;
       aFilterAction->GetTargetFolderUri(getter_Copies(actionFolderUri));
       buffer += actionFolderUri.get();
     } 
          
     buffer += "\n";
-    if (actionType == nsMsgFilterAction::MoveToFolder) {
+    if (actionType == nsMsgFilterAction::MoveToFolder ||
+        actionType == nsMsgFilterAction::CopyToFolder) {
       nsXPIDLCString msgId;
       aMsgHdr->GetMessageId(getter_Copies(msgId));
       buffer += " id = ";
@@ -491,7 +536,7 @@ void nsMsgFilter::SetFilterScript(nsCString *fileName)
   m_scriptFileName = *fileName;
 }
 
-nsresult nsMsgFilter::ConvertMoveToFolderValue(nsIMsgRuleAction *filterAction, nsCString &moveValue)
+nsresult nsMsgFilter::ConvertMoveOrCopyToFolderValue(nsIMsgRuleAction *filterAction, nsCString &moveValue)
 {
   NS_ENSURE_ARG_POINTER(filterAction);
   PRInt16 filterVersion = kFileVersion;
@@ -516,15 +561,14 @@ nsresult nsMsgFilter::ConvertMoveToFolderValue(nsIMsgRuleAction *filterAction, n
       {
         nsAutoString unicodeStr;
         impSvc->SystemStringToUnicode(originalServerPath.get(), unicodeStr);
-        char *utfNewName = CreateUtf7ConvertedStringFromUnicode(unicodeStr.get());
-        originalServerPath.Assign(utfNewName);
-        nsCRT::free(utfNewName);
+        nsresult rv = CopyUTF16toMUTF7(unicodeStr, originalServerPath);
+        NS_ENSURE_SUCCESS(rv, rv); 
       }
 
       nsCOMPtr <nsIMsgFolder> destIFolder;
       if (rootFolder)
       {
-        rootFolder->FindSubFolder(originalServerPath.get(), getter_AddRefs(destIFolder));
+        rootFolder->FindSubFolder(originalServerPath, getter_AddRefs(destIFolder));
         if (destIFolder)
         {
           destIFolder->GetURI(getter_Copies(folderUri));
@@ -582,10 +626,7 @@ nsresult nsMsgFilter::ConvertMoveToFolderValue(nsIMsgRuleAction *filterAction, n
         {
           nsAutoString unicodeStr;
           impSvc->SystemStringToUnicode(moveValue.get(), unicodeStr);
-          nsCAutoString escapedName;
-          rv = NS_MsgEscapeEncodeURLPath(unicodeStr, escapedName);
-          if (NS_SUCCEEDED(rv) && !escapedName.IsEmpty())
-            moveValue.Assign(escapedName.get());
+          rv = NS_MsgEscapeEncodeURLPath(unicodeStr, moveValue);
         }
         destFolderUri.Append(moveValue);
         localMailRootMsgFolder->GetChildWithURI (destFolderUri.get(), PR_TRUE, PR_FALSE /*caseInsensitive*/, getter_AddRefs(destIMsgFolder));
@@ -655,6 +696,7 @@ nsresult nsMsgFilter::SaveRule(nsIOFileStream *aStream)
     switch(actionType)
     {
       case nsMsgFilterAction::MoveToFolder:
+      case nsMsgFilterAction::CopyToFolder:
       {
         nsXPIDLCString imapTargetString;
         action->GetTargetFolderUri(getter_Copies(imapTargetString));
@@ -685,6 +727,16 @@ nsresult nsMsgFilter::SaveRule(nsIOFileStream *aStream)
         action->GetJunkScore(&junkScore);
         err = filterList->WriteIntAttr(nsIMsgFilterList::attribActionValue, junkScore, aStream);
       }
+      break;
+      case nsMsgFilterAction::Reply:
+      case nsMsgFilterAction::Forward:
+      {
+        nsXPIDLCString strValue;
+        action->GetStrValue(getter_Copies(strValue));
+        // strValue is e-mail address
+        err = filterList->WriteStrAttr(nsIMsgFilterList::attribActionValue, strValue.get(), aStream);
+      }
+      break;
       default:
         break;
     }
@@ -742,6 +794,7 @@ struct RuleActionsTableEntry
 static struct RuleActionsTableEntry ruleActionsTable[] =
 {
   { nsMsgFilterAction::MoveToFolder,    nsMsgFilterType::Inbox, 0,  "Move to folder"},
+  { nsMsgFilterAction::CopyToFolder,    nsMsgFilterType::Inbox, 0,  "Copy to folder"},
   { nsMsgFilterAction::ChangePriority,  nsMsgFilterType::Inbox, 0,  "Change priority"},
   { nsMsgFilterAction::Delete,          nsMsgFilterType::All,   0,  "Delete"},
   { nsMsgFilterAction::MarkRead,        nsMsgFilterType::All,   0,  "Mark read"},

@@ -1,25 +1,39 @@
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* ===== primaryToolbar.css =============================================
   == Images for the Mail primary toolbar.
@@ -37,11 +51,11 @@
   -moz-image-region: rect(105px 23px 126px 0px);
 }
 
-#button-getmsg[buttonover] {
+#button-getmsg:hover {
   -moz-image-region: rect(105px 46px 126px 23px);
 } 
 
-#button-getmsg[buttondown] {
+#button-getmsg:hover:active {
   -moz-image-region: rect(105px 69px 126px 46px);
 } 
 
@@ -166,11 +180,11 @@
   -moz-image-region: rect(336px 23px 357px 0);
 }
 
-#button-mark[buttonover] {
+#button-mark:hover {
   -moz-image-region: rect(336px 46px 357px 23px);
 } 
 
-#button-mark[buttondown] {
+#button-mark:hover:active {
   -moz-image-region: rect(336px 69px 357px 46px);
 } 
 
@@ -199,11 +213,11 @@
   -moz-image-region: rect(0px 23px 21px 0px);
 }
 
-#button-print[buttonover] {
+#button-print:hover {
   -moz-image-region: rect(0px 46px 21px 23px);
 }
 
-#button-print[buttondown] {
+#button-print:hover:active {
   -moz-image-region: rect(0px 69px 21px 46px);
 }
 
@@ -228,21 +242,30 @@
   -moz-image-region: rect(21px 88px 42px 66px) !important;
 }
 
-#junkBarImage {
-  list-style-image: url("chrome://messenger/skin/icons/junkBar.gif");
+/* ::::: message notification bar style rules ::::: */
+
+.msgNotificationBar {
+  border-bottom: 1px solid;
+  -moz-border-bottom-colors: #000000;
+  -moz-appearance: toolbox;
+  background-color: #C7BC8F;
+  color: black;
 }
 
-#junkBarMessage {
+.msgNotificationBarText {
   font-weight: bold;
 }
 
-#junkBar {
-  border-bottom: 1px solid;
-  -moz-border-bottom-colors: #000000;
-  background-color: #C7BC8F;
+#junkBarImage {
+  list-style-image: url("chrome://messenger/skin/icons/junkBar.gif");
 }
 
 #junkIcon {
   margin-left: 0.5ex;
   list-style-image: url("chrome://messenger/skin/icons/folder-junk.gif");
+}
+
+#remoteContentImage {
+  list-style-image: url("chrome://messenger/skin/icons/remote-blocked.png"); 
+  padding: 3px;
 }

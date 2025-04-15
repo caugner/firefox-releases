@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): Bradley Baetz <bbaetz@cs.mcgill.ca>
- *                 Christopher A. Aillon <christopher@aillon.com>
+ * Contributor(s):
+ *   Bradley Baetz <bbaetz@cs.mcgill.ca>
+ *   Christopher A. Aillon <christopher@aillon.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -70,7 +71,7 @@ static void ConvertNonAsciiToNCR(const nsAString& in, nsAFlatString& out)
     if (*start < 128) {
       out.Append(*start++);
     } else {
-      out.Append(NS_LITERAL_STRING("&#x"));
+      out.AppendLiteral("&#x");
       nsAutoString hex;
       hex.AppendInt(*start++, 16);
       out.Append(hex);
@@ -115,16 +116,16 @@ nsIndexedToHTML::Init(nsIStreamListener* aListener) {
 
 NS_IMETHODIMP
 nsIndexedToHTML::Convert(nsIInputStream* aFromStream,
-                         const PRUnichar* aFromType,
-                         const PRUnichar* aToType,
+                         const char* aFromType,
+                         const char* aToType,
                          nsISupports* aCtxt,
                          nsIInputStream** res) {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
-nsIndexedToHTML::AsyncConvertData(const PRUnichar *aFromType,
-                                  const PRUnichar *aToType,
+nsIndexedToHTML::AsyncConvertData(const char *aFromType,
+                                  const char *aToType,
                                   nsIStreamListener *aListener,
                                   nsISupports *aCtxt) {
     return Init(aListener);
@@ -174,7 +175,7 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
         nsCAutoString path;
         rv = uri->GetPath(path);
         if (NS_FAILED(rv)) return rv;
-        if (baseUri.Last() != '/' && !path.EqualsIgnoreCase("/%2F")) {
+        if (baseUri.Last() != '/' && !path.LowerCaseEqualsLiteral("/%2f")) {
             baseUri.Append('/');
             path.Append('/');
             uri->SetPath(path);
@@ -195,11 +196,11 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
              if (NS_FAILED(rv)) return rv;
              rv = newUri->GetAsciiSpec(titleUri);
              if (NS_FAILED(rv)) return rv;
-             if (titleUri.Last() != '/' && !path.EqualsIgnoreCase("/%2F"))
+             if (titleUri.Last() != '/' && !path.LowerCaseEqualsLiteral("/%2f"))
                  titleUri.Append('/');
         }
 
-        if (!path.Equals("//") && !path.EqualsIgnoreCase("/%2F")) {
+        if (!path.EqualsLiteral("//") && !path.LowerCaseEqualsLiteral("/%2f")) {
             rv = uri->Resolve(NS_LITERAL_CSTRING(".."),parentStr);
             if (NS_FAILED(rv)) return rv;
         }
@@ -249,14 +250,14 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
             path.Append('/');
             uri->SetPath(path);
         }
-        if (!path.Equals("/")) {
+        if (!path.EqualsLiteral("/")) {
             rv = uri->Resolve(NS_LITERAL_CSTRING(".."), parentStr);
             if (NS_FAILED(rv)) return rv;
         }
     }
 
     nsString buffer;
-    buffer.Assign(NS_LITERAL_STRING("<?xml version=\"1.0\" encoding=\""));
+    buffer.AssignLiteral("<?xml version=\"1.0\" encoding=\"");
     
     // Get the encoding from the parser
     // XXX - this won't work for any encoding set via a 301: line in the
@@ -270,14 +271,14 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
 
     AppendASCIItoUTF16(encoding, buffer);
 
-    buffer.Append(NS_LITERAL_STRING("\"?>\n") +
-                  NS_LITERAL_STRING("<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" ") +
-                  NS_LITERAL_STRING("\"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd\">\n"));
+    buffer.AppendLiteral("\"?>\n"
+                         "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" "
+                         "\"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd\">\n");
 
     // Anything but a gopher url needs to end in a /,
     // otherwise we end up linking to file:///foo/dirfile
 
-    buffer.Append(NS_LITERAL_STRING("<html xmlns=\"http://www.w3.org/1999/xhtml\">\n<head><title>"));
+    buffer.AppendLiteral("<html xmlns=\"http://www.w3.org/1999/xhtml\">\n<head><title>");
 
     nsXPIDLString title;
 
@@ -311,19 +312,17 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
     ConvertNonAsciiToNCR(title, strNCR);
     buffer.Append(strNCR);
 
-    buffer.Append(NS_LITERAL_STRING("</title><base href=\""));    
+    buffer.AppendLiteral("</title><base href=\"");    
     AppendASCIItoUTF16(baseUri, buffer);
-    buffer.Append(NS_LITERAL_STRING("\"/>\n"));
-
-    buffer.Append(NS_LITERAL_STRING("<style type=\"text/css\">\n") +
-                  NS_LITERAL_STRING("img { border: 0; padding: 0 2px; vertical-align: text-bottom; }\n") +
-                  NS_LITERAL_STRING("td  { font-family: monospace; padding: 2px 3px; text-align: right; vertical-align: bottom; white-space: pre; }\n") +
-                  NS_LITERAL_STRING("td:first-child { text-align: left; padding: 2px 10px 2px 3px; }\n") +
-                  NS_LITERAL_STRING("table { border: 0; }\n") +
-                  NS_LITERAL_STRING("a.symlink { font-style: italic; }\n") +
-                  NS_LITERAL_STRING("</style>\n"));
-
-    buffer.Append(NS_LITERAL_STRING("</head>\n<body>\n<h1>"));
+    buffer.AppendLiteral("\"/>\n"
+                         "<style type=\"text/css\">\n"
+                         "img { border: 0; padding: 0 2px; vertical-align: text-bottom; }\n"
+                         "td  { font-family: monospace; padding: 2px 3px; text-align: right; vertical-align: bottom; white-space: pre; }\n"
+                         "td:first-child { text-align: left; padding: 2px 10px 2px 3px; }\n"
+                         "table { border: 0; }\n"
+                         "a.symlink { font-style: italic; }\n"
+                         "</style>\n"
+                         "</head>\n<body>\n<h1>");
     
     const PRUnichar* formatHeading[] = {
         htmlEscSpec.get()
@@ -337,9 +336,9 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
     
     ConvertNonAsciiToNCR(title, strNCR);
     buffer.Append(strNCR);
-    buffer.Append(NS_LITERAL_STRING("</h1>\n<hr/><table>\n"));
+    buffer.AppendLiteral("</h1>\n<hr/><table>\n");
 
-    //buffer.Append(NS_LITERAL_STRING("<tr><th>Name</th><th>Size</th><th>Last modified</th></tr>\n"));
+    //buffer.AppendLiteral("<tr><th>Name</th><th>Size</th><th>Last modified</th></tr>\n");
 
     if (!parentStr.IsEmpty()) {
         nsXPIDLString parentText;
@@ -348,11 +347,11 @@ nsIndexedToHTML::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
         if (NS_FAILED(rv)) return rv;
         
         ConvertNonAsciiToNCR(parentText, strNCR);
-        buffer.Append(NS_LITERAL_STRING("<tr><td colspan=\"3\"><a href=\""));
+        buffer.AppendLiteral("<tr><td colspan=\"3\"><a href=\"");
         AppendASCIItoUTF16(parentStr, buffer);
-        buffer.Append(NS_LITERAL_STRING("\">") +
-                      strNCR +
-                      NS_LITERAL_STRING("</a></td></tr>\n"));
+        buffer.AppendLiteral("\">");
+        buffer.Append(strNCR);
+        buffer.AppendLiteral("</a></td></tr>\n");
     }
 
     // Push buffer to the listener now, so the initial HTML will not
@@ -371,7 +370,7 @@ nsIndexedToHTML::OnStopRequest(nsIRequest* request, nsISupports *aContext,
                                nsresult aStatus) {
     nsresult rv = NS_OK;
     nsString buffer;
-    buffer.Assign(NS_LITERAL_STRING("</table><hr/></body></html>\n"));
+    buffer.AssignLiteral("</table><hr/></body></html>\n");
 
     rv = FormatInputStream(request, aContext, buffer);
     if (NS_FAILED(rv)) return rv;
@@ -475,15 +474,15 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
         return NS_ERROR_NULL_POINTER;
 
     nsString pushBuffer;
-    pushBuffer.Append(NS_LITERAL_STRING("<tr>\n <td><a"));
+    pushBuffer.AppendLiteral("<tr>\n <td><a");
 
     PRUint32 type;
     aIndex->GetType(&type);
     if (type == nsIDirIndex::TYPE_SYMLINK) {
-        pushBuffer.Append(NS_LITERAL_STRING(" class=\"symlink\""));
+        pushBuffer.AppendLiteral(" class=\"symlink\"");
     }
 
-    pushBuffer.Append(NS_LITERAL_STRING(" href=\""));
+    pushBuffer.AppendLiteral(" href=\"");
 
     nsXPIDLCString loc;
     aIndex->GetLocation(getter_Copies(loc));
@@ -525,19 +524,19 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
   
     AppendUTF8toUTF16(escapeBuf, pushBuffer);
     
-    pushBuffer.Append(NS_LITERAL_STRING("\"><img src=\""));
+    pushBuffer.AppendLiteral("\"><img src=\"");
 
     switch (type) {
     case nsIDirIndex::TYPE_DIRECTORY:
     case nsIDirIndex::TYPE_SYMLINK:
-        pushBuffer.Append(NS_LITERAL_STRING("resource://gre/res/html/gopher-menu.gif\" alt=\"Directory: "));
+        pushBuffer.AppendLiteral("resource://gre/res/html/gopher-menu.gif\" alt=\"Directory: ");
         break;
     case nsIDirIndex::TYPE_FILE:
     case nsIDirIndex::TYPE_UNKNOWN:
-        pushBuffer.Append(NS_LITERAL_STRING("resource://gre/res/html/gopher-unknown.gif\" alt=\"File: "));
+        pushBuffer.AppendLiteral("resource://gre/res/html/gopher-unknown.gif\" alt=\"File: ");
         break;
     }
-    pushBuffer.Append(NS_LITERAL_STRING("\"/>"));
+    pushBuffer.AppendLiteral("\"/>");
 
     nsXPIDLString tmp;
     aIndex->GetDescription(getter_Copies(tmp));
@@ -545,12 +544,12 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
     pushBuffer.Append(escaped);
     nsMemory::Free(escaped);
 
-    pushBuffer.Append(NS_LITERAL_STRING("</a></td>\n <td>"));
+    pushBuffer.AppendLiteral("</a></td>\n <td>");
 
     PRInt64 size;
     aIndex->GetSize(&size);
     
-    if (LL_NE(size, LL_INIT(0, -1)) &&
+    if (nsUint64(PRUint64(size)) != nsUint64(LL_MAXUINT) &&
         type != nsIDirIndex::TYPE_DIRECTORY &&
         type != nsIDirIndex::TYPE_SYMLINK) {
         nsAutoString  sizeString;
@@ -558,13 +557,13 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
         pushBuffer.Append(sizeString);
     }
 
-    pushBuffer.Append(NS_LITERAL_STRING("</td>\n <td>"));
+    pushBuffer.AppendLiteral("</td>\n <td>");
 
     PRTime t;
     aIndex->GetLastModified(&t);
 
     if (t == -1) {
-        pushBuffer.Append(NS_LITERAL_STRING("</td>\n <td>"));
+        pushBuffer.AppendLiteral("</td>\n <td>");
     } else {
         nsAutoString formatted;
         nsAutoString strNCR;    // use NCR to show date in any doc charset
@@ -575,7 +574,7 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
                                 formatted);
         ConvertNonAsciiToNCR(formatted, strNCR);
         pushBuffer.Append(strNCR);
-        pushBuffer.Append(NS_LITERAL_STRING("</td>\n <td>"));
+        pushBuffer.AppendLiteral("</td>\n <td>");
         mDateTime->FormatPRTime(nsnull,
                                 kDateFormatNone,
                                 kTimeFormatSeconds,
@@ -585,15 +584,37 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
         pushBuffer.Append(strNCR);
     }
 
-    pushBuffer.Append(NS_LITERAL_STRING("</td>\n</tr>\n"));
+    pushBuffer.AppendLiteral("</td>\n</tr>\n");
 
     // Split this up to avoid slow layout performance with large tables
     // - bug 85381
     if (++mRowCount > ROWS_PER_TABLE) {
-        pushBuffer.Append(NS_LITERAL_STRING("</table>\n<table>\n"));
+        pushBuffer.AppendLiteral("</table>\n<table>\n");
         mRowCount = 0;
     }
     
+    return FormatInputStream(aRequest, aCtxt, pushBuffer);
+}
+
+NS_IMETHODIMP
+nsIndexedToHTML::OnInformationAvailable(nsIRequest *aRequest,
+                                        nsISupports *aCtxt,
+                                        const nsAString& aInfo) {
+    nsAutoString pushBuffer;
+    PRUnichar* escaped = nsEscapeHTML2(PromiseFlatString(aInfo).get());
+    if (!escaped)
+        return NS_ERROR_OUT_OF_MEMORY;
+    pushBuffer.AppendLiteral("<tr>\n <td>");
+    pushBuffer.Append(escaped);
+    nsMemory::Free(escaped);
+    pushBuffer.AppendLiteral("</td>\n <td></td>\n <td></td>\n <td></td>\n</tr>\n");
+    
+    // Split this up to avoid slow layout performance with large tables
+    // - bug 85381
+    if (++mRowCount > ROWS_PER_TABLE) {
+        pushBuffer.AppendLiteral("</table>\n<table>\n");
+        mRowCount = 0;
+    }   
     return FormatInputStream(aRequest, aCtxt, pushBuffer);
 }
 
@@ -605,7 +626,7 @@ void nsIndexedToHTML::FormatSizeString(PRInt64 inSize, nsString& outSizeString)
         // round up to the nearest Kilobyte
         PRInt64  upperSize = (size + nsInt64(1023)) / nsInt64(1024);
         outSizeString.AppendInt(upperSize);
-        outSizeString.Append(NS_LITERAL_STRING(" KB"));
+        outSizeString.AppendLiteral(" KB");
     }
 }
 

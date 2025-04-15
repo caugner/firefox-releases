@@ -1,29 +1,45 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla MathML Project.
  *
- * The Initial Developer of the Original Code is The University Of
- * Queensland.  Portions created by The University Of Queensland are
- * Copyright (C) 1999 The University Of Queensland.  All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * The University Of Queensland.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Roger B. Sidje <rbs@maths.uq.edu.au>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsCOMPtr.h"
 #include "nsFrame.h"
 #include "nsAreaFrame.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsUnitConversion.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
@@ -100,26 +116,27 @@ struct nsValueList
 // The code doesn't include hooks for AttributeChanged() notifications.
 
 static void
-DestroyValueListFunc(nsIPresContext* aPresContext,
-                     nsIFrame*       aFrame,
+DestroyValueListFunc(void*           aFrame,
                      nsIAtom*        aPropertyName,
-                     void*           aPropertyValue)
+                     void*           aPropertyValue,
+                     void*           aDtorData)
 {
   delete NS_STATIC_CAST(nsValueList*, aPropertyValue);
 }
 
 static PRUnichar*
-GetValueAt(nsIPresContext* aPresContext,
+GetValueAt(nsPresContext*  aPresContext,
            nsIFrame*       aTableOrRowFrame,
            nsIAtom*        aAttributeAtom,
            PRInt32         aRowOrColIndex)
 {
   PRUnichar* result = nsnull;
+  nsPropertyTable *propTable = aPresContext->PropertyTable();
   nsValueList* valueList;
 
-  nsFrameManager *frameManager = aPresContext->FrameManager();
   valueList = NS_STATIC_CAST(nsValueList*,
-          frameManager->GetFrameProperty(aTableOrRowFrame, aAttributeAtom, 0));
+                             propTable->GetProperty(aTableOrRowFrame,
+                                                    aAttributeAtom));
 
   if (!valueList) {
     // The property isn't there yet, so set it
@@ -128,8 +145,8 @@ GetValueAt(nsIPresContext* aPresContext,
         aTableOrRowFrame->GetContent()->GetAttr(kNameSpaceID_None, aAttributeAtom, values)) {
       valueList = new nsValueList(values);
       if (valueList) {
-        frameManager->SetFrameProperty(aTableOrRowFrame, aAttributeAtom,
-                                       valueList, DestroyValueListFunc);
+        propTable->SetProperty(aTableOrRowFrame, aAttributeAtom,
+                               valueList, DestroyValueListFunc, nsnull);
       }
     }
   }
@@ -151,7 +168,7 @@ GetValueAt(nsIPresContext* aPresContext,
 #endif
 
 static void
-MapAttributesInto(nsIPresContext* aPresContext,
+MapAttributesInto(nsPresContext* aPresContext,
                   nsIContent*     aCellContent,
                   nsIFrame*       aCellFrame,
                   nsIFrame*       aCellInnerFrame)
@@ -212,20 +229,20 @@ MapAttributesInto(nsIPresContext* aPresContext,
     // set the special -moz-math-rowline without notifying that we want a reflow
     if (attr) {
       hasChanged = PR_TRUE;
-      aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::rowline, nsDependentString(attr), PR_FALSE);
+      aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::MOZrowline, nsDependentString(attr), PR_FALSE);
     }
   }
   else {
     // set the special -moz-math-firstrow to annotate that we are on the first row
     hasChanged = PR_TRUE;
-    aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::firstrow, trueStr, PR_FALSE);
+    aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::MOZfirstrow, trueStr, PR_FALSE);
   }
   // if we are on the last row, set the special -moz-math-lastrow
   PRInt32 rowSpan = ((nsTableFrame*)tableFrame)->GetEffectiveRowSpan(*cellFrame);
   sibling = ((nsTableFrame*)tableFrame)->GetCellFrameAt(rowIndex+rowSpan, colIndex);
   if (!sibling) {
     hasChanged = PR_TRUE;
-    aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::lastrow, trueStr, PR_FALSE);
+    aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::MOZlastrow, trueStr, PR_FALSE);
   }
 
   //////////////////////////////////////
@@ -257,20 +274,20 @@ MapAttributesInto(nsIPresContext* aPresContext,
     // set the special -moz-math-columnline without notifying that we want a reflow
     if (attr) {
       hasChanged = PR_TRUE;
-      aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::columnline, nsDependentString(attr), PR_FALSE);
+      aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::MOZcolumnline, nsDependentString(attr), PR_FALSE);
     }
   }
   else {
     // set the special -moz-math-firstcolumn to annotate that we are on the first column
     hasChanged = PR_TRUE;
-    aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::firstcolumn, trueStr, PR_FALSE);
+    aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::MOZfirstcolumn, trueStr, PR_FALSE);
   }
   // if we are on the last column, set the special -moz-math-lastcolumn
   PRInt32 colSpan = ((nsTableFrame*)tableFrame)->GetEffectiveColSpan(*cellFrame);
   sibling = ((nsTableFrame*)tableFrame)->GetCellFrameAt(rowIndex, colIndex+colSpan);
   if (!sibling) {
     hasChanged = PR_TRUE;
-    aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::lastcolumn, trueStr, PR_FALSE);
+    aCellContent->SetAttr(kNameSpaceID_None, nsMathMLAtoms::MOZlastcolumn, trueStr, PR_FALSE);
   }
 
   // now, re-resolve the style contexts in our subtree to pick up any changes
@@ -369,22 +386,21 @@ nsMathMLmtableOuterFrame::~nsMathMLmtableOuterFrame()
 }
 
 NS_IMETHODIMP
-nsMathMLmtableOuterFrame::InheritAutomaticData(nsIPresContext* aPresContext,
-                                               nsIFrame*       aParent)
+nsMathMLmtableOuterFrame::InheritAutomaticData(nsIFrame* aParent)
 {
   // XXX the REC says that by default, displaystyle=false in <mtable>
 
   // let the base class inherit the scriptlevel and displaystyle from our parent
-  nsMathMLFrame::InheritAutomaticData(aPresContext, aParent);
+  nsMathMLFrame::InheritAutomaticData(aParent);
 
   // see if the displaystyle attribute is there and let it override what we inherited
   nsAutoString value;
   if (NS_CONTENT_ATTR_HAS_VALUE ==
       GetAttribute(mContent, nsnull, nsMathMLAtoms::displaystyle_, value)) {
-    if (value.Equals(NS_LITERAL_STRING("true"))) {
+    if (value.EqualsLiteral("true")) {
       mPresentationData.flags |= NS_MATHML_DISPLAYSTYLE;
     }
-    else if (value.Equals(NS_LITERAL_STRING("false"))) {
+    else if (value.EqualsLiteral("false")) {
       mPresentationData.flags &= ~NS_MATHML_DISPLAYSTYLE;
     }
   }
@@ -393,7 +409,7 @@ nsMathMLmtableOuterFrame::InheritAutomaticData(nsIPresContext* aPresContext,
 }
 
 NS_IMETHODIMP
-nsMathMLmtableOuterFrame::Init(nsIPresContext*  aPresContext,
+nsMathMLmtableOuterFrame::Init(nsPresContext*  aPresContext,
                                nsIContent*      aContent,
                                nsIFrame*        aParent,
                                nsStyleContext*  aContext,
@@ -405,7 +421,7 @@ nsMathMLmtableOuterFrame::Init(nsIPresContext*  aPresContext,
 }
 
 nsIFrame*
-nsMathMLmtableOuterFrame::GetRowFrameAt(nsIPresContext* aPresContext,
+nsMathMLmtableOuterFrame::GetRowFrameAt(nsPresContext* aPresContext,
                                         PRInt32         aRowIndex)
 {
   // To find the row at the given index, we will iterate downwards or
@@ -439,7 +455,7 @@ nsMathMLmtableOuterFrame::GetRowFrameAt(nsIPresContext* aPresContext,
 }
 
 NS_IMETHODIMP
-nsMathMLmtableOuterFrame::Reflow(nsIPresContext*          aPresContext,
+nsMathMLmtableOuterFrame::Reflow(nsPresContext*          aPresContext,
                                  nsHTMLReflowMetrics&     aDesiredSize,
                                  const nsHTMLReflowState& aReflowState,
                                  nsReflowStatus&          aStatus)
@@ -659,7 +675,7 @@ nsMathMLmtdInnerFrame::~nsMathMLmtdInnerFrame()
 }
 
 NS_IMETHODIMP
-nsMathMLmtdInnerFrame::Init(nsIPresContext*  aPresContext,
+nsMathMLmtdInnerFrame::Init(nsPresContext*  aPresContext,
                             nsIContent*      aContent,
                             nsIFrame*        aParent,
                             nsStyleContext*  aContext,
@@ -674,7 +690,7 @@ nsMathMLmtdInnerFrame::Init(nsIPresContext*  aPresContext,
 }
 
 NS_IMETHODIMP
-nsMathMLmtdInnerFrame::Reflow(nsIPresContext*          aPresContext,
+nsMathMLmtdInnerFrame::Reflow(nsPresContext*          aPresContext,
                               nsHTMLReflowMetrics&     aDesiredSize,
                               const nsHTMLReflowState& aReflowState,
                               nsReflowStatus&          aStatus)

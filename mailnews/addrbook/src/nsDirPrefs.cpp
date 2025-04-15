@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Seth Spitzer <sspitzer@netscape.com>
- *  Dan Mosedale <dmose@mozilla.org>
+ *   Seth Spitzer <sspitzer@netscape.com>
+ *   Dan Mosedale <dmose@mozilla.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -109,84 +109,6 @@ typedef enum
 #define XP_FILE_NATIVE_PATH char *
 
 XP_FILE_URL_PATH	XP_PlatformFileToURL (const XP_FILE_NATIVE_PATH ) {return NULL;}
-
-/*************************************************
-   The following functions are used to implement
-   a thread safe strtok
- *************************************************/
-/*
- * Get next token from string *stringp, where tokens are (possibly empty)
- * strings separated by characters from delim.  Tokens are separated
- * by exactly one delimiter iff the skip parameter is false; otherwise
- * they are separated by runs of characters from delim, because we
- * skip over any initial `delim' characters.
- *
- * Writes NULs into the string at *stringp to end tokens.
- * delim will usually, but need not, remain CONSTant from call to call.
- * On return, *stringp points past the last NUL written (if there might
- * be further tokens), or is NULL (if there are definitely no more tokens).
- *
- * If *stringp is NULL, strtoken returns NULL.
- */
-static 
-char *strtoken_r(char ** stringp, const char *delim, PRInt32 skip)
-{
-	char *s;
-	const char *spanp;
-	PRInt32 c, sc;
-	char *tok;
-
-	if ((s = *stringp) == NULL)
-		return (NULL);
-
-	if (skip) {
-		/*
-		 * Skip (span) leading delimiters (s += strspn(s, delim)).
-		 */
-	cont:
-		c = *s;
-		for (spanp = delim; (sc = *spanp++) != 0;) {
-			if (c == sc) {
-				s++;
-				goto cont;
-			}
-		}
-		if (c == 0) {		/* no token found */
-			*stringp = NULL;
-			return (NULL);
-		}
-	}
-
-	/*
-	 * Scan token (scan for delimiters: s += strcspn(s, delim), sort of).
-	 * Note that delim must have one NUL; we stop if we see that, too.
-	 */
-	for (tok = s;;) {
-		c = *s++;
-		spanp = delim;
-		do {
-			if ((sc = *spanp++) == c) {
-				if (c == 0)
-					s = NULL;
-				else
-					s[-1] = 0;
-				*stringp = s;
-				return( (char *) tok );
-			}
-		} while (sc != 0);
-	}
-	/* NOTREACHED */
-	return (NULL);
-}
-
-
-
-char *AB_pstrtok_r(char *s1, const char *s2, char **lasts)
-{
-	if (s1)
-		*lasts = s1;
-	return (strtoken_r(lasts, s2, 1));
-}
 
 /*****************************************************************************
  * Private structs and stuff
@@ -434,8 +356,6 @@ nsresult DIR_AddNewAddressBook(const PRUnichar *dirName, const char *fileName, P
     DIR_GetDirServers();
   if (dir_ServerList)
   {
-    PRInt32 count = dir_ServerList->Count();
-    
     NS_ConvertUCS2toUTF8 utf8str(dirName);
     server->description = ToNewCString(utf8str);
     server->position = kDefaultPosition; // don't set position so alphabetic sort will happen.
@@ -457,8 +377,8 @@ nsresult DIR_AddNewAddressBook(const PRUnichar *dirName, const char *fileName, P
         server->uri = nsCRT::strdup(uri);
       if (authDn)
         server->authDn = nsCRT::strdup(authDn);
-      // force new LDAP directories to be treated as v3 this includes the case when
-	// we are migrating directories.
+      // force new LDAP directories to be treated as v3 this includes the case when 
+      // we are migrating directories.
       DIR_ForceFlag(server, DIR_LDAP_VERSION3, PR_TRUE);
     }
     if (maxHits)
@@ -1605,7 +1525,8 @@ static PRBool dir_AreServersSame (DIR_Server *first, DIR_Server *second, PRBool 
 		/* assume for right now one personal address book type where offline is PR_FALSE */
 		if ((first->dirType == PABDirectory) && (second->dirType == PABDirectory))
 		{
-			if ((first->isOffline == PR_FALSE) && (second->isOffline == PR_FALSE))  /* are they both really address books? */
+      /* are they both really address books? */
+      if (!first->isOffline && !second->isOffline)
 			{
 				PR_ASSERT(first->fileName && second->fileName);
 				if (first->fileName && second->fileName)
@@ -1804,14 +1725,14 @@ nsresult DIR_DeleteServerFromList(DIR_Server *server)
 		return NS_ERROR_NULL_POINTER;
 
 	nsresult rv = NS_OK;
-	nsFileSpec* dbPath = nsnull;
+	nsCOMPtr<nsILocalFile> dbPath;
 
 	nsCOMPtr<nsIAddrBookSession> abSession = 
 	         do_GetService(NS_ADDRBOOKSESSION_CONTRACTID, &rv); 
 	if(NS_SUCCEEDED(rv))
-		abSession->GetUserProfileDirectory(&dbPath);
+	  rv = abSession->GetUserProfileDirectory(getter_AddRefs(dbPath));
 	
-	if (dbPath)
+	if (NS_SUCCEEDED(rv))
 	{
     // close the database, as long as it isn't the special ones 
     // (personal addressbook and collected addressbook)
@@ -1822,21 +1743,21 @@ nsresult DIR_DeleteServerFromList(DIR_Server *server)
         strcmp(server->fileName, kCollectedAddressbook)) {
 		nsCOMPtr<nsIAddrDatabase> database;
 
-		(*dbPath) += server->fileName;
+		rv = dbPath->AppendNative(nsDependentCString(server->fileName));
+		NS_ENSURE_SUCCESS(rv, rv);
 
 		// close file before delete it
 		nsCOMPtr<nsIAddrDatabase> addrDBFactory = 
 		         do_GetService(NS_ADDRDATABASE_CONTRACTID, &rv);
 
 		if (NS_SUCCEEDED(rv) && addrDBFactory)
-			rv = addrDBFactory->Open(dbPath, PR_FALSE, getter_AddRefs(database), PR_TRUE);
+			rv = addrDBFactory->Open(dbPath, PR_FALSE, PR_TRUE, getter_AddRefs(database));
 		if (database)  /* database exists */
 		{
 			database->ForceClosed();
-			dbPath->Delete(PR_FALSE);
+			rv = dbPath->Remove(PR_FALSE);
+			NS_ENSURE_SUCCESS(rv, rv);
 		}
-
-    delete dbPath;
     }
 
 		nsVoidArray *dirList = DIR_GetDirectories();
@@ -2383,81 +2304,6 @@ static nsresult DIR_AddCustomAttribute(DIR_Server *server, const char *attrName,
 	return status;
 }
 
-PRInt32 DIR_GetNumAttributeIDsForColumns(DIR_Server * server)
-{
-	PRInt32 count = 0;
-	char * buffer = nsnull;
-	char * marker = nsnull;
-	if (server && server->columnAttributes)
-	{
-        buffer = nsCRT::strdup(server->columnAttributes);
-		if (buffer)
-		{
-			marker = buffer;
-			while (AB_pstrtok_r(0, ", ", &buffer))
-				count++;
-			PR_FREEIF(marker);
-		}
-	}
-
-	return count;
-}
-
-/* caller must free returned list of ids */
-nsresult DIR_GetAttributeIDsForColumns(DIR_Server *server, DIR_AttributeId ** ids, PRInt32 * numIds)
-{
-	DIR_AttributeId * idArray = nsnull;
-	nsresult status = NS_OK; 
-	PRInt32 numAdded = 0;  /* number of ids we actually added to the array...*/
-	PRInt32 indx = 0;
-	PRInt32 numItems = 0; 
-	char * idName = nsnull;
-	char * marker = nsnull;
-	char * columnIDs = nsnull;
-
-	if (server && numIds && ids)
-	{
-		if (server->columnAttributes) 
-		{
-            columnIDs = nsCRT::strdup(server->columnAttributes);
-			numItems = DIR_GetNumAttributeIDsForColumns(server);
-		}
-
-		if (columnIDs && numItems)
-		{
-			marker = columnIDs;
-			idArray = (DIR_AttributeId *) PR_Malloc(sizeof(DIR_AttributeId) * numItems);
-			if (idArray)
-			{
-				for (indx = 0; indx < numItems; indx++)
-				{
-					idName = AB_pstrtok_r(0,", ",&marker);
-					if (idName)
-					{
-						status = DIR_AttributeNameToId(server, idName, &idArray[numAdded]);
-						if (NS_SUCCEEDED(status))
-							numAdded++;
-					}
-					else
-						break;
-				}
-
-			}
-			else
-				status = NS_ERROR_OUT_OF_MEMORY;
-		}
-
-		PR_FREEIF(columnIDs); 
-	}
-
-	if (ids)
-		*ids = idArray;
-	if (numIds)
-		*numIds = numAdded;
-
-	return status;
-}
-
 static nsresult dir_CreateTokenListFromWholePref(const char *pref, char ***outList, PRInt32 *outCount)
 {
     nsresult result = NS_OK;
@@ -2716,27 +2562,35 @@ static void DIR_ConvertServerFileName(DIR_Server* pServer)
 	if (leafName) PR_Free(leafName);
 }
 
-/* This will generate a correct filename and then remove the path */
+/* This will generate a correct filename and then remove the path.
+ * Note: we are assuming that the default name is in the native
+ * filesystem charset. The filename will be returned as a UTF8
+ * string.
+ */
 void DIR_SetFileName(char** fileName, const char* defaultName)
 {
 	nsresult rv = NS_OK;
-	nsFileSpec* dbPath = nsnull;
+	nsCOMPtr<nsILocalFile> dbPath;
+
+	*fileName = nsnull;
 
 	nsCOMPtr<nsIAddrBookSession> abSession = 
 	         do_GetService(NS_ADDRBOOKSESSION_CONTRACTID, &rv); 
 	if(NS_SUCCEEDED(rv))
-		abSession->GetUserProfileDirectory(&dbPath);
-	if (dbPath)
+		rv = abSession->GetUserProfileDirectory(getter_AddRefs(dbPath));
+	if (NS_SUCCEEDED(rv))
 	{
-		(*dbPath) += defaultName;
-		dbPath->MakeUnique(defaultName);
-		char* file = nsnull;
-		file = dbPath->GetLeafName();
-        *fileName = nsCRT::strdup(file);
-		if (file)
-			nsCRT::free(file);
+		rv = dbPath->AppendNative(nsDependentCString(defaultName));
+		if (NS_SUCCEEDED(rv))
+		{
+		  rv = dbPath->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0664);
 
-      delete dbPath;
+		  nsAutoString realFileName;
+		  rv = dbPath->GetLeafName(realFileName);
+
+		  if (NS_SUCCEEDED(rv))
+		    *fileName = ToNewUTF8String(realFileName);
+		}
 	}
 }
 
@@ -3248,11 +3102,9 @@ nsresult DIR_GetServerPreferences(nsVoidArray** list)
           /* Don't add servers which are in the old list and don't add a
           * second personal address book.
             */
-            if (   dir_AreServersSame(newServer, oldServer, PR_FALSE)
-              || (   oldServer->dirType == PABDirectory
-              && newServer->dirType == PABDirectory
-              && oldServer->isOffline == PR_FALSE
-              && newServer->isOffline == PR_FALSE))
+            if (dir_AreServersSame(newServer, oldServer, PR_FALSE) ||
+                (oldServer->dirType == PABDirectory && !oldServer->isOffline &&
+                 newServer->dirType == PABDirectory && !newServer->isOffline))
             {
             /* Copy any new prefs out of the new server.
               */

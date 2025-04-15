@@ -1,28 +1,43 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code,
- * released March 31, 1998.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *     William A. ("PowerGUI") Law <law@netscape.com>
- *     Blake Ross <blakeross@telocity.com>
- *     Gervase Markham <gerv@gerv.net>
- */
+ *   William A. ("PowerGUI") Law <law@netscape.com>
+ *   Blake Ross <blakeross@telocity.com>
+ *   Gervase Markham <gerv@gerv.net>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*------------------------------ nsContextMenu ---------------------------------
 |   This JavaScript "class" is used to implement the browser's content-area    |
@@ -33,12 +48,14 @@
 |   Currently, this code is relatively useless for any other purpose.  In the  |
 |   longer term, this code will be restructured to make it more reusable.      |
 ------------------------------------------------------------------------------*/
+
 function nsContextMenu( xulMenu ) {
     this.target         = null;
     this.menu           = null;
     this.popupURL       = null;
     this.onTextInput    = false;
     this.onImage        = false;
+    this.onLoadedImage  = false;
     this.onLink         = false;
     this.onMailtoLink   = false;
     this.onSaveableLink = false;
@@ -50,6 +67,7 @@ function nsContextMenu( xulMenu ) {
     this.isTextSelected = false;
     this.inDirList      = false;
     this.shouldDisplay  = true;
+    this.autoDownload   = false;
 
     // Initialize new menu.
     this.initMenu( xulMenu );
@@ -118,17 +136,23 @@ nsContextMenu.prototype = {
         //this.setItemAttrFromNode( "context-stop", "disabled", "canStop" );
     },
     initSaveItems : function () {
-        this.showItem( "context-savepage", 
-                       !( this.inDirList || this.isTextSelected || this.onTextInput || this.onStandaloneImage ||
-                         (this.onLink && this.onImage)));
+        var showSave = !( this.inDirList || this.isTextSelected || this.onTextInput || this.onStandaloneImage ||
+                       ( this.onLink && this.onImage ) );
+        if (showSave)
+          goSetMenuValue( "context-savepage", this.autoDownload ? "valueSave" : "valueSaveAs" );
+        this.showItem( "context-savepage", showSave );
 
         // Save link depends on whether we're in a link.
+        if (this.onSaveableLink)
+          goSetMenuValue( "context-savelink", this.autoDownload ? "valueSave" : "valueSaveAs" );
         this.showItem( "context-savelink", this.onSaveableLink );
 
-        // Save image depends on whether there is one.
-        this.showItem( "context-saveimage", this.onImage || this.onStandaloneImage);
-        
-        this.showItem( "context-sendimage", this.onImage || this.onStandaloneImage);
+        // Save/Send image depends on whether there is one.
+        showSave = this.onLoadedImage || this.onStandaloneImage;
+        if (showSave)
+          goSetMenuValue( "context-saveimage", this.autoDownload ? "valueSave" : "valueSaveAs" );
+        this.showItem( "context-saveimage", showSave );
+        this.showItem( "context-sendimage", showSave );
     },
     initViewItems : function () {
         // View source is always OK, unless in directory listing.
@@ -143,18 +167,18 @@ nsContextMenu.prototype = {
         this.showItem( "context-sep-properties", !( this.inDirList || this.isTextSelected || this.onTextInput ) );
         // Set As Wallpaper depends on whether an image was clicked on, and only works on Windows.
         var isWin = navigator.appVersion.indexOf("Windows") != -1;
-        this.showItem( "context-setWallpaper", isWin && (this.onImage || this.onStandaloneImage));
+        this.showItem( "context-setWallpaper", isWin && (this.onLoadedImage || this.onStandaloneImage));
 
-        this.showItem( "context-sep-image", this.onImage || this.onStandaloneImage);
+        this.showItem( "context-sep-image", this.onLoadedImage || this.onStandaloneImage);
 
-        if( isWin && this.onImage )
+        if( isWin && this.onLoadedImage )
             // Disable the Set As Wallpaper menu item if we're still trying to load the image
           this.setItemAttr( "context-setWallpaper", "disabled", (("complete" in this.target) && !this.target.complete) ? "true" : null );
 
-        this.showItem( "context-fitimage", this.onStandaloneImage && _content.document.imageResizingEnabled );
-        if ( this.onStandaloneImage && _content.document.imageResizingEnabled ) {
-          this.setItemAttr( "context-fitimage", "disabled", _content.document.imageIsOverflowing ? null : "true");
-          this.setItemAttr( "context-fitimage", "checked", _content.document.imageIsResized ? "true" : null);
+        this.showItem( "context-fitimage", this.onStandaloneImage && content.document.imageResizingEnabled );
+        if ( this.onStandaloneImage && content.document.imageResizingEnabled ) {
+          this.setItemAttr( "context-fitimage", "disabled", content.document.imageIsOverflowing ? null : "true");
+          this.setItemAttr( "context-fitimage", "checked", content.document.imageIsResized ? "true" : null);
         }
 
         // View Image depends on whether an image was clicked on.
@@ -172,6 +196,8 @@ nsContextMenu.prototype = {
         this.showItem( "context-searchselect", this.isTextSelected && !this.onTextInput );
         this.showItem( "frame", this.inFrame );
         this.showItem( "frame-sep", this.inFrame );
+        if (this.inFrame)
+          goSetMenuValue( "saveframeas", this.autoDownload ? "valueSave" : "valueSaveAs" );
         var blocking = true;
         if (this.popupURL)
           try {
@@ -185,6 +211,11 @@ nsContextMenu.prototype = {
         this.showItem( "popupwindow-reject", this.popupURL && !blocking);
         this.showItem( "popupwindow-allow", this.popupURL && blocking);
         this.showItem( "context-sep-popup", this.popupURL);
+
+        // BiDi UI
+        this.showItem( "context-sep-bidi", gShowBiDi);
+        this.showItem( "context-bidi-text-direction-toggle", this.onTextInput && gShowBiDi);
+        this.showItem( "context-bidi-page-direction-toggle", !this.onTextInput && gShowBiDi);
     },
     initClipboardItems : function () {
 
@@ -233,6 +264,7 @@ nsContextMenu.prototype = {
     setTarget : function ( node ) {
         // Initialize contextual info.
         this.onImage    = false;
+        this.onLoadedImage = false;
         this.onStandaloneImage = false;
         this.onMetaDataItem = false;
         this.onTextInput = false;
@@ -246,76 +278,27 @@ nsContextMenu.prototype = {
         // Remember the node that was clicked.
         this.target = node;
 
+        this.autoDownload = Components.classes["@mozilla.org/preferences-service;1"]
+                                      .getService(Components.interfaces.nsIPrefService)
+                                      .getBoolPref("browser.download.autoDownload");
+
         // See if the user clicked on an image.
         if ( this.target.nodeType == Node.ELEMENT_NODE ) {
-             if ( this.target.localName.toUpperCase() == "IMG" ) {
+            if ( this.target instanceof Components.interfaces.nsIImageLoadingContent && this.target.currentURI  ) {
                 this.onImage = true;
-                this.imageURL = this.target.src;
+                var request = this.target.getRequest( Components.interfaces.nsIImageLoadingContent.CURRENT_REQUEST );
+                if (request && (request.imageStatus & request.STATUS_SIZE_AVAILABLE))
+                    this.onLoadedImage = true;
+                this.imageURL = this.target.currentURI.spec;
 
-                var documentType = window._content.document.contentType;
-                if ( documentType.substr(0,6) == "image/" )
-                    this.onStandaloneImage = true;
-
-                // Look for image map.
-                var mapName = this.target.getAttribute( "usemap" );
-                if ( mapName ) {
-                    // Find map.
-                    var map = this.target.ownerDocument.getElementById( mapName.substr(1) );
-                    if ( map ) {
-                        // Search child <area>s for a match.
-                        var areas = map.childNodes;
-                        //XXX Client side image maps are too hard for now!
-                        areas.length = 0;
-                        for ( var i = 0; i < areas.length && !this.onLink; i++ ) {
-                            var area = areas[i];
-                            if ( area.nodeType == Node.ELEMENT_NODE
-                                 &&
-                                 area.localName.toUpperCase() == "AREA" ) {
-                                // Get type (rect/circle/polygon/default).
-                                var type = area.getAttribute( "type" );
-                                var coords = this.parseCoords( area );
-                                switch ( type.toUpperCase() ) {
-                                    case "RECT":
-                                    case "RECTANGLE":
-                                        break;
-                                    case "CIRC":
-                                    case "CIRCLE":
-                                        break;
-                                    case "POLY":
-                                    case "POLYGON":
-                                        break;
-                                    case "DEFAULT":
-                                        // Default matches entire image.
-                                        this.onLink = true;
-                                        this.link = area;
-                                        this.onSaveableLink = this.isLinkSaveable( this.link );
-                                        break;
-                                }
-                            }
-                        }
-                    }
-                }
-             } else if ( this.target.localName.toUpperCase() == "OBJECT"
-                         &&
-                         // See if object tag is for an image.
-                         this.objectIsImage( this.target ) ) {
-                // This is an image.
-                this.onImage = true;
-                // URL must be constructed.
-                this.imageURL = this.objectImageURL( this.target );
-             } else if ( this.target.localName.toUpperCase() == "INPUT") {
+                if ( this.target.ownerDocument instanceof ImageDocument )
+                   this.onStandaloneImage = true;
+            } else if ( this.target instanceof HTMLInputElement ) {
                type = this.target.getAttribute("type");
-               if(type && type.toUpperCase() == "IMAGE") {
-                 this.onImage = true;
-                 // Convert src attribute to absolute URL.
-                 this.imageURL = this.makeURLAbsolute( this.target.baseURI,
-                                                       this.target.src );
-               } else /* if (this.target.getAttribute( "type" ).toUpperCase() == "TEXT") */ {
-                 this.onTextInput = this.isTargetATextBox(this.target);
-               }
-            } else if ( this.target.localName.toUpperCase() == "TEXTAREA" ) {
+               this.onTextInput = this.isTargetATextBox(this.target);
+            } else if ( this.target instanceof HTMLTextAreaElement ) {
                  this.onTextInput = true;
-            } else if ( this.target.localName.toUpperCase() == "HTML" ) {
+            } else if ( this.target instanceof HTMLHtmlElement ) {
                // pages with multiple <body>s are lame. we'll teach them a lesson.
                var bodyElt = this.target.ownerDocument.getElementsByTagName("body")[0];
                if ( bodyElt ) {
@@ -326,8 +309,8 @@ nsContextMenu.prototype = {
                                                            computedURL );
                  }
                }
-            } else if ( "HTTPIndex" in _content &&
-                        _content.HTTPIndex instanceof Components.interfaces.nsIHTTPIndex ) {
+            } else if ( "HTTPIndex" in content &&
+                        content.HTTPIndex instanceof Components.interfaces.nsIHTTPIndex ) {
                 this.inDirList = true;
                 // Bubble outward till we get to an element with URL attribute
                 // (which should be the href).
@@ -374,21 +357,20 @@ nsContextMenu.prototype = {
           this.onMathML = true;
 
         // See if the user clicked in a frame.
-        if ( this.target.ownerDocument != window._content.document ) {
+        if ( this.target.ownerDocument != window.content.document ) {
             this.inFrame = true;
         }
         
         // Bubble out, looking for items of interest
+        const XMLNS = "http://www.w3.org/XML/1998/namespace";
         var elem = this.target;
         while ( elem ) {
             if ( elem.nodeType == Node.ELEMENT_NODE ) {
-                var localname = elem.localName.toUpperCase();
-                
                 // Link?
                 if ( !this.onLink && 
-                    ( (localname === "A" && elem.href) ||
-                      localname === "AREA" ||
-                      localname === "LINK" ||
+                    ( (elem instanceof HTMLAnchorElement && elem.href) ||
+                      elem instanceof HTMLAreaElement ||
+                      elem instanceof HTMLLinkElement ||
                       elem.getAttributeNS( "http://www.w3.org/1999/xlink", "type") == "simple" ) ) {
                     // Clicked on a link.
                     this.onLink = true;
@@ -410,14 +392,13 @@ nsContextMenu.prototype = {
                 if ( !this.onMetaDataItem ) {
                     // We currently display metadata on anything which fits
                     // the below test.
-                    if ( ( localname === "BLOCKQUOTE" && 'cite' in elem && elem.cite)  ||
-                         ( localname === "Q" && 'cite' in elem && elem.cite)           ||
-                         ( localname === "TABLE" && 'summary' in elem && elem.summary) ||
-                         ( ( localname === "INS" || localname === "DEL" ) &&
-                           ( ( 'cite' in elem && elem.cite ) ||
-                             ( 'dateTime' in elem && elem.dateTime ) ) )               ||
-                         ( 'title' in elem && elem.title )                             ||
-                         ( 'lang' in elem && elem.lang ) ) {
+                    if ( ( elem instanceof HTMLQuoteElement && elem.cite)    ||
+                         ( elem instanceof HTMLTableElement && elem.summary) ||
+                         ( elem instanceof HTMLModElement &&
+                             ( elem.cite || elem.dateTime ) )                ||
+                         ( elem instanceof HTMLElement &&
+                             ( elem.title || elem.lang ) )                   ||
+                         elem.getAttributeNS(XMLNS, "lang") ) {
                         dump("On metadata item.\n");
                         this.onMetaDataItem = true;
                     }
@@ -464,9 +445,7 @@ nsContextMenu.prototype = {
           // initialize popupURL
           const IOS = Components.classes["@mozilla.org/network/io-service;1"]
                       .getService(CI.nsIIOService);
-          var spec = Components.lookupMethod(window.content.opener, "location")
-                     .call();
-          this.popupURL = IOS.newURI(spec, null, null);
+          this.popupURL = IOS.newURI(window.content.opener.location.href, null, null);
 
           // but cancel if it's an unsuitable URL
           const PM = Components.classes["@mozilla.org/PopupWindowManager;1"]
@@ -567,7 +546,7 @@ nsContextMenu.prototype = {
     viewPartialSource : function ( context ) {
         var focusedWindow = document.commandDispatcher.focusedWindow;
         if (focusedWindow == window)
-          focusedWindow = _content;
+          focusedWindow = content;
         var docCharset = null;
         if (focusedWindow)
           docCharset = "charset=" + focusedWindow.document.characterSet;
@@ -577,7 +556,7 @@ nsContextMenu.prototype = {
         // when there is one
         var reference = null;
         if (context == "selection")
-          reference = focusedWindow.__proto__.getSelection.call(focusedWindow);
+          reference = focusedWindow.getSelection();
         else if (context == "mathml")
           reference = this.target;
         else
@@ -599,14 +578,16 @@ nsContextMenu.prototype = {
         BrowserPageInfo(this.target.ownerDocument);
     },
     toggleImageSize : function () {
-        _content.document.toggleImageSize();
+        content.document.toggleImageSize();
     },
     // Change current window to the URL of the image.
     viewImage : function () {
+        urlSecurityCheck( this.imageURL, document );
         openTopWin( this.imageURL );
     },
     // Change current window to the URL of the background image.
     viewBGImage : function () {
+        urlSecurityCheck( this.bgImageURL, document );
         openTopWin( this.bgImageURL );
     },
     setWallpaper: function() {
@@ -636,11 +617,15 @@ nsContextMenu.prototype = {
     },
     // Save URL of clicked-on link.
     saveLink : function () {
-        saveURL( this.linkURL(), this.linkText(), null, true );
+        saveURL( this.linkURL(), this.linkText(), null, true,
+                 getReferrer(document) );
     },
     // Save URL of clicked-on image.
     saveImage : function () {
-        saveURL( this.imageURL, null, "SaveImageTitle", false );
+        // Note: getReferrer wants our chrome document, not the actual
+        // target document; it handles getting that itself.
+        saveImageURL( this.imageURL, null, "SaveImageTitle", false,
+                      getReferrer(document) );
     },
     // Generate email address and put it on clipboard.
     copyEmail : function () {
@@ -658,13 +643,11 @@ nsContextMenu.prototype = {
         }
 
         // Let's try to unescape it using a character set
-        // in case the address is not ASCII.
         try {
-          var characterSet = Components.lookupMethod(this.target.ownerDocument, "characterSet")
-                                       .call(this.target.ownerDocument);
+          var characterSet = this.target.ownerDocument.characterSet;
           const textToSubURI = Components.classes["@mozilla.org/intl/texttosuburi;1"]
                                          .getService(Components.interfaces.nsITextToSubURI);
-          addresses = textToSubURI.unEscapeNonAsciiURI(characterSet, addresses);
+          addresses = textToSubURI.unEscapeURIForUI(characterSet, addresses);
         }
         catch(ex) {
           // Do nothing.
@@ -678,7 +661,7 @@ nsContextMenu.prototype = {
       var docshell = document.getElementById( "content" ).webNavigation;
       BookmarksUtils.addBookmark( docshell.currentURI.spec,
                                   docshell.document.title,
-                                  docshell.document.charset,
+                                  docshell.document.characterSet,
                                   false );
     },
     addBookmarkForFrame : function() {
@@ -689,7 +672,7 @@ nsContextMenu.prototype = {
         title = uri;
       BookmarksUtils.addBookmark( uri,
                                   title,
-                                  doc.charset,
+                                  doc.characterSet,
                                   false );
     },
     // Open Metadata window for node
@@ -820,7 +803,7 @@ nsContextMenu.prototype = {
     
     searchSelected : function( charlen ) {
         var focusedWindow = document.commandDispatcher.focusedWindow;
-        var searchStr = focusedWindow.__proto__.getSelection.call(focusedWindow);
+        var searchStr = focusedWindow.getSelection();
         searchStr = searchStr.toString();
         // searching for more than 150 chars makes no sense
         if (!charlen)
@@ -831,31 +814,12 @@ nsContextMenu.prototype = {
             pattern.test(searchStr);
             searchStr = RegExp.lastMatch;
         }
-        searchStr = searchStr.replace(/\s*(.*?)\s*$/, "$1");
+        searchStr = searchStr.replace(/^\s+/, "");
+        searchStr = searchStr.replace(/\s+$/, "");
         searchStr = searchStr.replace(/\s+/g, " ");
         return searchStr;
     },
     
-    // Determine if target <object> is an image.
-    objectIsImage : function ( objElem ) {
-        var result = false;
-        // Get type and data attributes.
-        var type = objElem.getAttribute( "type" );
-        var data = objElem.getAttribute( "data" );
-        // Presume any mime type of the form "image/..." is an image.
-        // There must be a data= attribute with an URL, also.
-        if ( type.substring( 0, 6 ) == "image/" && data && data != "" ) {
-            result = true;
-        }
-        return result;
-    },
-    // Extract image URL from <object> tag.
-    objectImageURL : function ( objElem ) {
-        // Extract url from data= attribute.
-        var data = objElem.getAttribute( "data" );
-        // Make it absolute.
-        return this.makeURLAbsolute( objElem.baseURI, data );
-    },
     // Convert relative URL to absolute, using document's <base>.
     makeURLAbsolute : function ( base, url ) {
         // Construct nsIURL.
@@ -864,10 +828,6 @@ nsContextMenu.prototype = {
         var baseURI  = ioService.newURI(base, null, null);
         
         return ioService.newURI(baseURI.resolve(url), null, null).spec;
-    },
-    // Parse coords= attribute and return array.
-    parseCoords : function ( area ) {
-        return [];
     },
     toString : function () {
         return "contextMenu.target     = " + this.target + "\n" +
@@ -879,29 +839,12 @@ nsContextMenu.prototype = {
     },
     isTargetATextBox : function ( node )
     {
-      if (node.nodeType != Node.ELEMENT_NODE)
-        return false;
+      if (node instanceof HTMLInputElement)
+        return (node.type == "text" || node.type == "password")
 
-      if (node.localName.toUpperCase() == "INPUT") {
-        var attrib = "";
-        var type = node.getAttribute("type");
-
-        if (type)
-          attrib = type.toUpperCase();
-
-        return( (attrib != "IMAGE") &&
-                (attrib != "CHECKBOX") &&
-                (attrib != "RADIO") &&
-                (attrib != "SUBMIT") &&
-                (attrib != "RESET") &&
-                (attrib != "HIDDEN") &&
-                (attrib != "RESET") &&
-                (attrib != "BUTTON") );
-      } else  {
-        return(node.localName.toUpperCase() == "TEXTAREA");
-      }
+      return (node instanceof HTMLTextAreaElement);
     },
-    
+
     // Determines whether or not the separator with the specified ID should be 
     // shown or not by determining if there are any non-hidden items between it
     // and the previous separator. 
@@ -932,7 +875,7 @@ function nsDefaultEngine()
         var pb = Components.classes["@mozilla.org/preferences-service;1"].
                    getService(Components.interfaces.nsIPrefBranch);
         var pbi = pb.QueryInterface(
-                    Components.interfaces.nsIPrefBranchInternal);
+                    Components.interfaces.nsIPrefBranch2);
         pbi.addObserver(this.domain, this, false);
 
         // reuse code by explicitly invoking initial |observe| call

@@ -45,8 +45,20 @@
 #include "nsISupportsBase.h"
 #endif
 
+#if defined(XPCOM_GLUE) && !defined(XPCOM_GLUE_USE_NSPR)
+// If we're being linked as standalone glue, we don't want a dynamic dependency
+// on NSPR libs, so we skip the debug thread-safety checks, and we cannot use
+// the THREADSAFE_ISUPPORTS macros.
+
+#define XPCOM_GLUE_AVOID_NSPR
+
+#endif
+
+
+#if !defined(XPCOM_GLUE_AVOID_NSPR)
 #include "prthread.h" /* needed for thread-safety checks */
 #include "pratom.h"   /* needed for PR_AtomicIncrement and PR_AtomicDecrement */
+#endif
 
 #include "nsDebug.h"
 #include "nsTraceRefcnt.h" 
@@ -54,7 +66,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 // Macros to help detect thread-safety:
 
-#if defined(NS_DEBUG)
+#if defined(NS_DEBUG) && !defined(XPCOM_GLUE_AVOID_NSPR)
 
 class nsAutoOwningThread {
 public:
@@ -69,12 +81,12 @@ private:
 #define NS_ASSERT_OWNINGTHREAD(_class) \
   NS_CheckThreadSafe(_mOwningThread.GetThread(), #_class " not thread-safe")
 
-#else // !(defined(NS_DEBUG))
+#else // !NS_DEBUG
 
 #define NS_DECL_OWNINGTHREAD            /* nothing */
 #define NS_ASSERT_OWNINGTHREAD(_class)  ((void)0)
 
-#endif // !(defined(NS_DEBUG))
+#endif // NS_DEBUG
 
 class nsAutoRefCnt {
 
@@ -675,9 +687,13 @@ NS_IMETHODIMP_(nsrefcnt) Class::Release(void)                                 \
 ///////////////////////////////////////////////////////////////////////////////
 /**
  *
- * Threadsafe implementations of the ISupports convenience macros
+ * Threadsafe implementations of the ISupports convenience macros.
  *
+ * @note  These are not available when linking against the standalone glue,
+ *        because the implementation requires PR_ symbols.
  */
+
+#if !defined(XPCOM_GLUE_AVOID_NSPR)
 
 /**
  * Use this macro to implement the AddRef method for a given <i>_class</i>
@@ -715,6 +731,16 @@ NS_IMETHODIMP_(nsrefcnt) _class::Release(void)                                \
   }                                                                           \
   return count;                                                               \
 }
+
+#else // XPCOM_GLUE_AVOID_NSPR
+
+#define NS_IMPL_THREADSAFE_ADDREF(_class)                                     \
+  THREADSAFE_ISUPPORTS_NOT_AVAILABLE_IN_STANDALONE_GLUE;
+
+#define NS_IMPL_THREADSAFE_RELEASE(_class)                                    \
+  THREADSAFE_ISUPPORTS_NOT_AVAILABLE_IN_STANDALONE_GLUE;
+
+#endif
 
 #define NS_IMPL_THREADSAFE_ISUPPORTS0(_class)                                 \
   NS_IMPL_THREADSAFE_ADDREF(_class)                                           \
@@ -1085,7 +1111,7 @@ NS_CI_INTERFACE_GETTER_NAME(_class)(PRUint32 *count, nsIID ***array)          \
 
 #define NS_IMPL_CI_INTERFACE_GETTER11(_class, _i1, _i2, _i3, _i4, _i5, _i6,   \
                                       _i7, _i8, _i9, _i10, _i11)              \
-   NS_CLASSINFO_HELPER_BEGIN(_class, 10)                                      \
+   NS_CLASSINFO_HELPER_BEGIN(_class, 11)                                      \
      NS_CLASSINFO_HELPER_ENTRY(0, _i1)                                        \
      NS_CLASSINFO_HELPER_ENTRY(1, _i2)                                        \
      NS_CLASSINFO_HELPER_ENTRY(2, _i3)                                        \

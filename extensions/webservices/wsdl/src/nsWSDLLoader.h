@@ -1,28 +1,45 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications.  Portions created by Netscape Communications are
- * Copyright (C) 2001 by Netscape Communications.  All
- * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Vidur Apparao <vidur@netscape.com> (original author)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef __nsWSDLLoader_h__
 #define __nsWSDLLoader_h__
+
+#include "nsIWebServiceErrorHandler.h"
 
 #include "nsIWSDLLoader.h"
 #include "nsWSDLPrivate.h"
@@ -49,33 +66,14 @@
 
 #define NS_ERROR_WSDL_LOADPENDING NS_ERROR_GENERATE_SUCCESS(NS_ERROR_MODULE_GENERAL, 1)
 
-class nsWSDLAtoms
+class nsWSDLAtoms 
 {
 public:
-  static nsresult CreateWSDLAtoms();
-  static void DestroyWSDLAtoms();
+  static nsresult AddRefAtoms();
 
-  static nsIAtom* sDefinitions_atom;
-  static nsIAtom* sTypes_atom;
-  static nsIAtom* sMessage_atom;
-  static nsIAtom* sPortType_atom;
-  static nsIAtom* sBinding_atom;
-  static nsIAtom* sService_atom;
-  static nsIAtom* sPort_atom;
-  static nsIAtom* sOperation_atom;
-  static nsIAtom* sPart_atom;
-  static nsIAtom* sDocumentation_atom;
-  static nsIAtom* sImport_atom;
-  static nsIAtom* sInput_atom;
-  static nsIAtom* sOutput_atom;
-  static nsIAtom* sFault_atom;
-
-  static nsIAtom* sBody_atom;
-  static nsIAtom* sHeader_atom;
-  static nsIAtom* sHeaderFault_atom;
-  static nsIAtom* sAddress_atom;
-
-  static nsIAtom* sSchema_atom;
+#define WSDL_ATOM(_name, _value) static nsIAtom* _name;
+#include "nsWSDLAtomList.h"
+#undef WSDL_ATOM
 };
 
 class nsWSDLLoader : public nsIWSDLLoader
@@ -206,6 +204,7 @@ protected:
   nsCOMPtr<nsISchemaLoader> mSchemaLoader;
   nsCOMPtr<nsIWSDLPort> mPort;
   nsCOMArray<nsIURI> mImportList;
+  nsCOMPtr<nsIWebServiceErrorHandler> mErrorHandler;
   
   PRPackedBool mIsSync;
 

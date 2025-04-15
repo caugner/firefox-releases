@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,28 +22,23 @@
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsDeviceContextMac.h"
 #include "nsRenderingContextMac.h"
-#if TARGET_CARBON
 #include "nsDeviceContextSpecX.h"
-#else
-#include "nsDeviceContextSpecMac.h"
-#endif
 #include "nsIPrintingContext.h"
 #include "nsString.h"
 #include "nsHashtable.h"
@@ -79,7 +74,6 @@ PRUint32 nsDeviceContextMac::sNumberOfScreens = 0;
  */
 nsDeviceContextMac :: nsDeviceContextMac()
   : DeviceContextImpl(),
-    mSurface(nsnull),
     mOldPort(nsnull)
 {
 }
@@ -284,7 +278,7 @@ NS_IMETHODIMP nsDeviceContextMac :: GetSystemFont(nsSystemFontID aID, nsFont *aF
       if (aID == eSystemFont_Window ||
           aID == eSystemFont_Document ||
           aID == eSystemFont_PullDownMenu) {
-            aFont->name.Assign(NS_LITERAL_STRING("sans-serif"));
+            aFont->name.AssignLiteral("sans-serif");
             aFont->size = NSToCoordRound(aFont->size * 0.875f); // quick hack
       }
       else if (HasAppearanceManager())
@@ -389,7 +383,7 @@ NS_IMETHODIMP nsDeviceContextMac :: GetSystemFont(nsSystemFontID aID, nsFont *aF
       }
       else
       {
-        aFont->name.Assign(NS_LITERAL_STRING("geneva"));
+        aFont->name.AssignLiteral("geneva");
       }
       break;
 
@@ -650,11 +644,6 @@ NS_IMETHODIMP nsDeviceContextMac::GetDeviceContextFor(nsIDeviceContextSpec *aDev
 	
 	::GetPort(&curPort);
 
-#if !TARGET_CARBON
-	THPrint thePrintRecord = ((nsDeviceContextSpecMac*)aDevice)->mPrtRec;
-	pix_Inch = (**thePrintRecord).prInfo.iHRes;
-	macDC->mPageRect = (**thePrintRecord).prInfo.rPage;	
-#else
     nsCOMPtr<nsIPrintingContext> printingContext = do_QueryInterface(aDevice);
     if (printingContext) {
         if (NS_FAILED(printingContext->GetPrinterResolution(&pix_Inch)))
@@ -665,7 +654,7 @@ NS_IMETHODIMP nsDeviceContextMac::GetDeviceContextFor(nsIDeviceContextSpec *aDev
         pageRect.top = top, pageRect.left = left;
         pageRect.bottom = bottom, pageRect.right = right;
     }
-#endif
+
 
 	((nsDeviceContextMac*)aContext)->Init(curPort);
 
@@ -690,24 +679,11 @@ NS_IMETHODIMP nsDeviceContextMac::BeginDocument(PRUnichar * aTitle,
                                                 PRInt32     aStartPage, 
                                                 PRInt32     aEndPage)
 {
-#if !TARGET_CARBON
-GrafPtr	thePort;
- 
- 	if(((nsDeviceContextSpecMac*)(this->mSpec).get())->mPrintManagerOpen) {
- 		::GetPort(&mOldPort);
- 		thePort = (GrafPtr)::PrOpenDoc(((nsDeviceContextSpecMac*)(this->mSpec).get())->mPrtRec,nsnull,nsnull);
-  	((nsDeviceContextSpecMac*)(this->mSpec).get())->mPrinterPort = (TPrPort*)thePort;
-  	SetDrawingSurface(((nsDeviceContextSpecMac*)(this->mSpec).get())->mPrtRec);
-  	SetPort(thePort);
-  }
-  return NS_OK;
-#else
     nsresult rv = NS_ERROR_FAILURE;
     nsCOMPtr<nsIPrintingContext> printingContext = do_QueryInterface(mSpec);
     if (printingContext)
-        rv = printingContext->BeginDocument(aStartPage, aEndPage);
+        rv = printingContext->BeginDocument(aTitle, aPrintToFileName, aStartPage, aEndPage);
     return rv;
-#endif
 }
 
 
@@ -717,19 +693,11 @@ GrafPtr	thePort;
  */
 NS_IMETHODIMP nsDeviceContextMac::EndDocument(void)
 {
-#if !TARGET_CARBON
- 	if(((nsDeviceContextSpecMac*)(this->mSpec).get())->mPrintManagerOpen){
- 		::SetPort(mOldPort);
-		::PrCloseDoc(((nsDeviceContextSpecMac*)(this->mSpec).get())->mPrinterPort);
-	}
-    return NS_OK;
-#else
     nsresult rv = NS_ERROR_FAILURE;
     nsCOMPtr<nsIPrintingContext> printingContext = do_QueryInterface(mSpec);
     if (printingContext)
         rv = printingContext->EndDocument();
     return rv;
-#endif
 }
 
 /** ---------------------------------------------------
@@ -748,17 +716,11 @@ NS_IMETHODIMP nsDeviceContextMac::AbortDocument(void)
  */
 NS_IMETHODIMP nsDeviceContextMac::BeginPage(void)
 {
-#if !TARGET_CARBON
- 	if(((nsDeviceContextSpecMac*)(this->mSpec).get())->mPrintManagerOpen) 
-		::PrOpenPage(((nsDeviceContextSpecMac*)(this->mSpec).get())->mPrinterPort,nsnull);
-  return NS_OK;
-#else
     nsresult rv = NS_ERROR_FAILURE;
     nsCOMPtr<nsIPrintingContext> printingContext = do_QueryInterface(mSpec);
     if (printingContext)
         rv = printingContext->BeginPage();
     return rv;
-#endif
 }
 
 
@@ -953,7 +915,7 @@ bool nsDeviceContextMac :: GetMacFontNumber(const nsString& aFontName, short &aF
 	//				fontNum, nsFontMetricsMac::SetFont() wouldn't need to call this at all.
 	InitFontInfoList();
     FontNameKey key(aFontName);
-	aFontNum = (short)gFontInfoList->Get(&key);
+	aFontNum = (short) NS_PTR_TO_INT32(gFontInfoList->Get(&key));
 	return (aFontNum != 0);
 }
 
@@ -968,15 +930,15 @@ nsresult nsDeviceContextMac::CreateFontAliasTable()
     mFontAliasTable = new nsHashtable();
     if (nsnull != mFontAliasTable)
     {
-			nsAutoString  fontTimes;              fontTimes.Assign(NS_LITERAL_STRING("Times"));
-			nsAutoString  fontTimesNewRoman;      fontTimesNewRoman.Assign(NS_LITERAL_STRING("Times New Roman"));
-			nsAutoString  fontTimesRoman;         fontTimesRoman.Assign(NS_LITERAL_STRING("Times Roman"));
-			nsAutoString  fontArial;              fontArial.Assign(NS_LITERAL_STRING("Arial"));
-			nsAutoString  fontHelvetica;          fontHelvetica.Assign(NS_LITERAL_STRING("Helvetica"));
-			nsAutoString  fontCourier;            fontCourier.Assign(NS_LITERAL_STRING("Courier"));
-			nsAutoString  fontCourierNew;         fontCourierNew.Assign(NS_LITERAL_STRING("Courier New"));
-			nsAutoString  fontUnicode;            fontUnicode.Assign(NS_LITERAL_STRING("Unicode"));
-			nsAutoString  fontBitstreamCyberbit;  fontBitstreamCyberbit.Assign(NS_LITERAL_STRING("Bitstream Cyberbit"));
+			nsAutoString  fontTimes;              fontTimes.AssignLiteral("Times");
+			nsAutoString  fontTimesNewRoman;      fontTimesNewRoman.AssignLiteral("Times New Roman");
+			nsAutoString  fontTimesRoman;         fontTimesRoman.AssignLiteral("Times Roman");
+			nsAutoString  fontArial;              fontArial.AssignLiteral("Arial");
+			nsAutoString  fontHelvetica;          fontHelvetica.AssignLiteral("Helvetica");
+			nsAutoString  fontCourier;            fontCourier.AssignLiteral("Courier");
+			nsAutoString  fontCourierNew;         fontCourierNew.AssignLiteral("Courier New");
+			nsAutoString  fontUnicode;            fontUnicode.AssignLiteral("Unicode");
+			nsAutoString  fontBitstreamCyberbit;  fontBitstreamCyberbit.AssignLiteral("Bitstream Cyberbit");
 			nsAutoString  fontNullStr;
 
       AliasFont(fontTimes, fontTimesNewRoman, fontTimesRoman, PR_FALSE);
@@ -1154,7 +1116,7 @@ EnumerateFont(nsHashKey *aKey, void *aData, void* closure)
   PRBool match = PR_FALSE;
 #if TARGET_CARBON
   // we need to match the cast of FMFontFamily in nsDeviceContextMac :: InitFontInfoList()
-  FMFontFamily fontFamily = (FMFontFamily) aData;
+  FMFontFamily fontFamily = (FMFontFamily) NS_PTR_TO_INT32(aData);
   TextEncoding fontEncoding;
   OSStatus status = ::FMGetFontFamilyTextEncoding(fontFamily, &fontEncoding);
   if (noErr == status) {

@@ -1,6 +1,7 @@
-/.cvsignore/1.2/Wed May 21 20:13:24 2003//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.53/Tue Mar 23 04:15:56 2004//TFIREFOX_1_0_RELEASE
-/psm.pkg/1.2/Wed Jan  7 01:22:15 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.2/Wed May 21 20:13:24 2003//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.57/Thu Jun  2 02:03:05 2005//TFIREFOX_1_5_RELEASE
+/psm.pkg/1.2/Wed Jan  7 01:22:15 2004//TFIREFOX_1_5_RELEASE
 D/boot////
+D/locales////
 D/pki////
 D/ssl////

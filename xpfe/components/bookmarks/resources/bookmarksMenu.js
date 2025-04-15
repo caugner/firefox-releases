@@ -1,11 +1,11 @@
 /* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,24 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
- *   Pierre Chanial <chanial@noos.fr>
+ * The Initial Developer of the Original Code is
+ * Pierre Chanial <chanial@noos.fr>.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -219,8 +219,8 @@ var BookmarksMenu = {
       case "menu":
       case "menuitem":
         size = overButtonBoxObject.height;
-        coordValue = overButtonBoxObject.y-overParentBoxObject.y;
-        clientCoordValue = aEvent.clientY;
+        coordValue = overButtonBoxObject.screenY;
+        clientCoordValue = aEvent.screenY;
         break;
       default: return BookmarksUtils.DROP_ON;
     }
@@ -271,14 +271,23 @@ var BookmarksMenu = {
     }
   },
 
-  loadBookmark: function (aTarget, aDS)
+  loadBookmark: function (aEvent, aDS)
   {
-    // Check for invalid bookmarks (most likely a static menu item like "Manage Bookmarks")
-    if (!this.isBTBookmark(aTarget.id))
+    if (this.isBTBookmark(aEvent.target.id))
+      BookmarksUtils.loadBookmarkBrowser(aEvent, aDS);
+  },
+
+  loadBookmarkMiddleClick: function (aEvent, aDS)
+  {
+    if (aEvent.type != "click" || aEvent.button != 1)
       return;
-    var rSource   = RDF.GetResource(aTarget.id);
-    var selection = BookmarksUtils.getSelectionFromResource(rSource);
-    BookmarksCommand.openBookmark(selection, "current", aDS)
+    // unlike for command events, we have to close the menus manually
+    for (var node = aEvent.target; node != aEvent.currentTarget;
+         node = node.parentNode) {
+      if (node.nodeType == node.ELEMENT_NODE && node.tagName == "menupopup")
+        node.hidePopup();
+    }
+    this.loadBookmark(aEvent, aDS);
   }
 }
 
@@ -303,7 +312,7 @@ var BookmarksMenuController = {
     var target    = BookmarksMenu._target;
     switch (aCommand) {
     case "cmd_bm_expandfolder":
-      BookmarksMenu.expandBTFolder();
+      setTimeout(BookmarksMenu.expandBTFolder, 0);
       break;
     default:
       BookmarksController.doCommand(aCommand, selection, target);
@@ -414,6 +423,16 @@ var BookmarksMenuDNDObserver = {
     var selection = BookmarksUtils.getSelectionFromXferData(aDragSession);
 
     var orientation = BookmarksMenu.getBTOrientation(aEvent);
+
+    // For RTL PersonalBar bookmarks buttons, orientation should be inverted (only in drop case)
+    // because "before" (to the left) on the screen translates to "after" in the collection of items.
+    if (target.localName == "toolbarbutton")
+      if (window.getComputedStyle(document.getElementById("PersonalToolbar"),'').direction == 'rtl')
+        if (orientation == BookmarksUtils.DROP_AFTER)
+          orientation = BookmarksUtils.DROP_BEFORE;
+        else if (orientation == BookmarksUtils.DROP_BEFORE)
+          orientation = BookmarksUtils.DROP_AFTER;
+
     var selTarget   = BookmarksMenu.getBTTarget(target, orientation);
 
     const kDSIID      = Components.interfaces.nsIDragService;
@@ -691,18 +710,6 @@ var BookmarksMenuDNDObserver = {
 
 var BookmarksToolbar = 
 {
-  ////////////////////////////////////////////////
-  // loads a bookmark with the mouse middle button
-  loadBookmarkMiddleClick: function (aEvent, aDS)
-  {
-    if (aEvent.button != 1)
-      return;
-    // unlike for command events, we have to close the menus manually
-    BookmarksMenuDNDObserver.mCurrentDragOverTarget = null;
-    BookmarksMenuDNDObserver.onDragCloseTarget();
-    BookmarksUtils.loadBookmarkBrowser(aEvent, aEvent.target, aDS);
-  },
-
   /////////////////////////////////////////////////////////////////////////////
   // returns the node of the last visible bookmark on the toolbar -->
   getLastVisibleBookmark: function ()

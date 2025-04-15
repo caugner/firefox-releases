@@ -1,11 +1,12 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim:set ts=4 sw=4 sts=4 et cin: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +15,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +23,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -42,9 +43,11 @@
 */
 
 #include "nsChromeProtocolHandler.h"
+#include "nsChromeRegistry.h"
 #include "nsCOMPtr.h"
 #include "nsContentCID.h"
 #include "nsCRT.h"
+#include "nsEventQueueUtils.h"
 #include "nsIChannel.h"
 #include "nsIChromeRegistry.h"
 #include "nsIComponentManager.h"
@@ -63,26 +66,16 @@
 #include "nsIServiceManager.h"
 #include "nsIStandardURL.h"
 #include "nsIStreamListener.h"
-#ifdef MOZ_XUL
 #include "nsIXULPrototypeCache.h"
 #include "nsIXULPrototypeDocument.h"
-#endif
-#include "nsNetCID.h"
+#include "nsNetUtil.h"
 #include "nsXPIDLString.h"
 #include "nsString.h"
 #include "prlog.h"
 
 //----------------------------------------------------------------------
 
-static NS_DEFINE_CID(kEventQueueServiceCID,      NS_EVENTQUEUESERVICE_CID);
-static NS_DEFINE_CID(kIOServiceCID,              NS_IOSERVICE_CID);
-static NS_DEFINE_CID(kStandardURLCID,            NS_STANDARDURL_CID);
-#ifdef MOZ_XUL
 static NS_DEFINE_CID(kXULPrototypeCacheCID,      NS_XULPROTOTYPECACHE_CID);
-#endif
-
-// This comes from nsChromeRegistry.cpp
-extern nsIChromeRegistry* gChromeRegistry;
 
 //----------------------------------------------------------------------
 //
@@ -105,12 +98,12 @@ extern nsIChromeRegistry* gChromeRegistry;
 //
 //  For logging information, NSPR_LOG_MODULES=nsCachedChromeChannel:5
 //
+#define LOG(args) PR_LOG(gLog, PR_LOG_DEBUG, args)
 
 class nsCachedChromeChannel : public nsIChannel
 {
 protected:
-    nsCachedChromeChannel(nsIURI* aURI);
-    virtual ~nsCachedChromeChannel();
+    ~nsCachedChromeChannel();
 
     nsCOMPtr<nsIURI>            mURI;
     nsCOMPtr<nsILoadGroup>      mLoadGroup;
@@ -120,16 +113,10 @@ protected:
     nsCOMPtr<nsISupports>       mOwner;
     nsresult                    mStatus;
 
-    struct LoadEvent {
-        PLEvent                mEvent;
-        nsCachedChromeChannel* mChannel;
-    };
-
-    static nsresult
+    static NS_HIDDEN_(nsresult)
     PostLoadEvent(nsCachedChromeChannel* aChannel, PLHandleEventProc aHandler);
 
-    static void* PR_CALLBACK HandleStartLoadEvent(PLEvent* aEvent);
-    static void* PR_CALLBACK HandleStopLoadEvent(PLEvent* aEvent);
+    static void* PR_CALLBACK HandleLoadEvent(PLEvent* aEvent);
     static void PR_CALLBACK DestroyLoadEvent(PLEvent* aEvent);
 
 #ifdef PR_LOGGING
@@ -137,18 +124,17 @@ protected:
 #endif
 
 public:
-    static nsresult
-    Create(nsIURI* aURI, nsIChannel** aResult);
-	
+    nsCachedChromeChannel(nsIURI* aURI);
+
     NS_DECL_ISUPPORTS
 
     // nsIRequest
-    NS_IMETHOD GetName(nsACString &result) { return NS_ERROR_NOT_IMPLEMENTED; }
-    NS_IMETHOD IsPending(PRBool *_retval) { *_retval = PR_TRUE; return NS_OK; }
+    NS_IMETHOD GetName(nsACString &result) { return mURI->GetSpec(result); }
+    NS_IMETHOD IsPending(PRBool *_retval) { *_retval = (mListener != nsnull); return NS_OK; }
     NS_IMETHOD GetStatus(nsresult *status) { *status = mStatus; return NS_OK; }
     NS_IMETHOD Cancel(nsresult status)  { mStatus = status; return NS_OK; }
-    NS_IMETHOD Suspend(void) { return NS_OK; }
-    NS_IMETHOD Resume(void)  { return NS_OK; }
+    NS_IMETHOD Suspend(void) { return NS_OK; } // XXX technically wrong
+    NS_IMETHOD Resume(void)  { return NS_OK; } // XXX technically wrong
     NS_IMETHOD GetLoadGroup(nsILoadGroup **);
     NS_IMETHOD SetLoadGroup(nsILoadGroup *);
     NS_IMETHOD GetLoadFlags(nsLoadFlags *);
@@ -167,40 +153,24 @@ NS_IMPL_ISUPPORTS2(nsCachedChromeChannel,
                    nsIChannel,
                    nsIRequest)
 
-nsresult
-nsCachedChromeChannel::Create(nsIURI* aURI, nsIChannel** aResult)
-{
-    NS_PRECONDITION(aURI != nsnull, "null ptr");
-    if (! aURI)
-        return NS_ERROR_NULL_POINTER;
-
-    nsCachedChromeChannel* channel = new nsCachedChromeChannel(aURI);
-    if (! channel)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    *aResult = channel;
-    NS_ADDREF(*aResult);
-    return NS_OK;
-}
-
-
 nsCachedChromeChannel::nsCachedChromeChannel(nsIURI* aURI)
-    : mURI(aURI), mLoadGroup(nsnull), mLoadFlags (nsIRequest::LOAD_NORMAL), mStatus(NS_OK)
+    : mURI(aURI)
+    , mLoadGroup(nsnull)
+    , mLoadFlags(nsIRequest::LOAD_NORMAL)
+    , mStatus(NS_OK)
 {
 #ifdef PR_LOGGING
     if (! gLog)
         gLog = PR_NewLogModule("nsCachedChromeChannel");
 #endif
 
-    PR_LOG(gLog, PR_LOG_DEBUG,
-           ("nsCachedChromeChannel[%p]: created", this));
+    LOG(("nsCachedChromeChannel[%p]: created", this));
 }
 
 
 nsCachedChromeChannel::~nsCachedChromeChannel()
 {
-    PR_LOG(gLog, PR_LOG_DEBUG,
-           ("nsCachedChromeChannel[%p]: destroyed", this));
+    LOG(("nsCachedChromeChannel[%p]: destroyed", this));
 }
 
 
@@ -215,11 +185,11 @@ nsCachedChromeChannel::GetOriginalURI(nsIURI* *aOriginalURI)
 NS_IMETHODIMP
 nsCachedChromeChannel::SetOriginalURI(nsIURI* aOriginalURI)
 {
-  // don't stp on a uri if we already have one there...this is a work around fix
-  // for Bug #34769.
-  if (!mURI)
-    mURI = aOriginalURI;
-  return NS_OK;
+    // don't stp on a uri if we already have one there...this is a work around fix
+    // for Bug #34769.
+    if (!mURI)
+        mURI = aOriginalURI;
+    return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -241,44 +211,31 @@ nsCachedChromeChannel::Open(nsIInputStream **_retval)
 NS_IMETHODIMP
 nsCachedChromeChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctxt)
 {
-    if (listener) {
-        nsresult rv;
+    NS_ENSURE_ARG_POINTER(listener);
 
-        if (mLoadGroup) {
-            PR_LOG(gLog, PR_LOG_DEBUG,
-                   ("nsCachedChromeChannel[%p]: adding self to load group %p",
-                    this, mLoadGroup.get()));
+    nsresult rv;
 
-            rv = mLoadGroup->AddRequest(this, nsnull);
-            if (NS_FAILED(rv)) return rv;
-        }
+    // Fire OnStartRequest and OnStopRequest, which will cause the XUL
+    // document to get embedded.
+    LOG(("nsCachedChromeChannel[%p]: posting load event for %p",
+        this, listener));
 
-        // Fire the OnStartRequest(), which will cause the XUL
-        // document to get embedded.
-        PR_LOG(gLog, PR_LOG_DEBUG,
-               ("nsCachedChromeChannel[%p]: firing OnStartRequest for %p",
-                this, listener));
+    // Queue an event to ourselves to let the stack unwind before
+    // calling OnStartRequest(). This allows embedding to occur
+    // before we fire OnStopRequest().
+    rv = PostLoadEvent(this, HandleLoadEvent);
+    if (NS_FAILED(rv))
+        return rv;
 
-        // Queue an event to ourselves to let the stack unwind before
-        // calling OnStartRequest(). This allows embedding to occur
-        // before we fire OnStopRequest().
-        rv = PostLoadEvent(this, HandleStartLoadEvent);
-        if (NS_FAILED(rv)) {
-            if (mLoadGroup) {
-                PR_LOG(gLog, PR_LOG_DEBUG,
-                       ("nsCachedChromeChannel[%p]: removing self from load group %p",
-                        this, mLoadGroup.get()));
+    mContext  = ctxt;
+    mListener = listener;
 
-                (void) mLoadGroup->RemoveRequest(this, nsnull, NS_OK);
-            }
+    if (mLoadGroup) {
+        LOG(("nsCachedChromeChannel[%p]: adding self to load group %p",
+            this, mLoadGroup.get()));
 
-            return rv;
-        }
-
-        mContext  = ctxt;
-        mListener = listener;
+        (void) mLoadGroup->AddRequest(this, nsnull);
     }
-
     return NS_OK;
 }
 
@@ -305,7 +262,7 @@ nsCachedChromeChannel::SetLoadFlags(nsLoadFlags aLoadFlags)
 NS_IMETHODIMP
 nsCachedChromeChannel::GetOwner(nsISupports * *aOwner)
 {
-    *aOwner = mOwner.get();
+    *aOwner = mOwner;
     NS_IF_ADDREF(*aOwner);
     return NS_OK;
 }
@@ -348,7 +305,7 @@ nsCachedChromeChannel::SetNotificationCallbacks(nsIInterfaceRequestor * aNotific
 NS_IMETHODIMP
 nsCachedChromeChannel::GetContentType(nsACString &aContentType)
 {
-    aContentType = NS_LITERAL_CSTRING("mozilla.application/cached-xul");
+    aContentType.AssignLiteral("mozilla.application/cached-xul");
     return NS_OK;
 }
 
@@ -394,92 +351,55 @@ nsresult
 nsCachedChromeChannel::PostLoadEvent(nsCachedChromeChannel* aChannel,
                                      PLHandleEventProc aHandler)
 {
-    nsresult rv;
-
-    nsCOMPtr<nsIEventQueueService> svc = do_GetService(kEventQueueServiceCID, &rv);
-    if (NS_FAILED(rv)) return rv;
-
-    if (! svc)
-        return NS_ERROR_UNEXPECTED;
-
     nsCOMPtr<nsIEventQueue> queue;
-    rv = svc->GetThreadEventQueue(NS_CURRENT_THREAD, getter_AddRefs(queue));
-    if (NS_FAILED(rv)) return rv;
+    nsresult rv = NS_GetCurrentEventQ(getter_AddRefs(queue));
+    if (NS_FAILED(rv))
+        return rv;
 
-    if (! queue)
-        return NS_ERROR_UNEXPECTED;
-
-    LoadEvent* event = new LoadEvent;
+    PLEvent* event = new PLEvent;
     if (! event)
         return NS_ERROR_OUT_OF_MEMORY;
 
-    PL_InitEvent(NS_REINTERPRET_CAST(PLEvent*, event),
-                 nsnull,
+    PL_InitEvent(event,
+                 aChannel,
                  aHandler,
                  DestroyLoadEvent);
+    NS_ADDREF(aChannel);
 
-    event->mChannel = aChannel;
-    NS_ADDREF(event->mChannel);
-
-    rv = queue->EnterMonitor();
-    if (NS_SUCCEEDED(rv)) {
-        (void) queue->PostEvent(NS_REINTERPRET_CAST(PLEvent*, event));
-        (void) queue->ExitMonitor();
-        return NS_OK;
-    }
-
-    // If we get here, something bad happened. Clean up.
-    NS_RELEASE(event->mChannel);
-    delete event;
+    rv = queue->PostEvent(event);
+    if (NS_FAILED(rv))
+        PL_DestroyEvent(event);
     return rv;
 }
 
 void* PR_CALLBACK
-nsCachedChromeChannel::HandleStartLoadEvent(PLEvent* aEvent)
+nsCachedChromeChannel::HandleLoadEvent(PLEvent* aEvent)
 {
     // Fire the OnStartRequest() for the cached chrome channel, then
     // queue another event to trigger the OnStopRequest()...
-    LoadEvent* event = NS_REINTERPRET_CAST(LoadEvent*, aEvent);
-    nsCachedChromeChannel* channel = event->mChannel;
+    nsCachedChromeChannel* channel = (nsCachedChromeChannel*) aEvent->owner;
 
     // If the load has been cancelled, then just bail now. We won't
     // send On[Start|Stop]Request().
     if (NS_FAILED(channel->mStatus))
-      return nsnull;
+        return nsnull;
 
-    PR_LOG(gLog, PR_LOG_DEBUG,
-              ("nsCachedChromeChannel[%p]: firing OnStartRequest for %p",
-               channel, channel->mListener.get()));
+    LOG(("nsCachedChromeChannel[%p]: firing OnStartRequest for %p",
+        channel, channel->mListener.get()));
 
     (void) channel->mListener->OnStartRequest(channel, channel->mContext);
-    (void) PostLoadEvent(channel, HandleStopLoadEvent);
-    return nsnull;
-}
 
+    LOG(("nsCachedChromeChannel[%p]: firing OnStopRequest for %p",
+        channel, channel->mListener.get()));
 
-void* PR_CALLBACK
-nsCachedChromeChannel::HandleStopLoadEvent(PLEvent* aEvent)
-{
-    // Fire the OnStopRequest() for the cached chrome channel, and
-    // remove it from the load group.
-    LoadEvent* event = NS_REINTERPRET_CAST(LoadEvent*, aEvent);
-    nsCachedChromeChannel* channel = event->mChannel;
-    nsIRequest* request = NS_REINTERPRET_CAST(nsIRequest*, channel);
-
-
-    PR_LOG(gLog, PR_LOG_DEBUG,
-           ("nsCachedChromeChannel[%p]: firing OnStopRequest for %p",
-            channel, channel->mListener.get()));
-
-    (void) channel->mListener->OnStopRequest(request, channel->mContext,
+    (void) channel->mListener->OnStopRequest(channel, channel->mContext,
                                              channel->mStatus);
 
     if (channel->mLoadGroup) {
-        PR_LOG(gLog, PR_LOG_DEBUG,
-               ("nsCachedChromeChannel[%p]: removing self from load group %p",
-                channel, channel->mLoadGroup.get()));
+        LOG(("nsCachedChromeChannel[%p]: removing self from load group %p",
+            channel, channel->mLoadGroup.get()));
 
-        (void) channel->mLoadGroup->RemoveRequest(request, nsnull, NS_OK);
+        (void) channel->mLoadGroup->RemoveRequest(channel, nsnull, channel->mStatus);
     }
 
     channel->mListener = nsnull;
@@ -491,46 +411,14 @@ nsCachedChromeChannel::HandleStopLoadEvent(PLEvent* aEvent)
 void PR_CALLBACK
 nsCachedChromeChannel::DestroyLoadEvent(PLEvent* aEvent)
 {
-    LoadEvent* event = NS_REINTERPRET_CAST(LoadEvent*, aEvent);
-    NS_RELEASE(event->mChannel);
-    delete event;
+    nsCachedChromeChannel* channel = (nsCachedChromeChannel*) aEvent->owner;
+    NS_RELEASE(channel);
+    delete aEvent;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-nsChromeProtocolHandler::nsChromeProtocolHandler()
-{
-}
-
-nsresult
-nsChromeProtocolHandler::Init()
-{
-    return NS_OK;
-}
-
-nsChromeProtocolHandler::~nsChromeProtocolHandler()
-{
-}
-
 NS_IMPL_THREADSAFE_ISUPPORTS2(nsChromeProtocolHandler, nsIProtocolHandler, nsISupportsWeakReference)
-
-NS_METHOD
-nsChromeProtocolHandler::Create(nsISupports *aOuter, REFNSIID aIID, void **aResult)
-{
-    if (aOuter)
-        return NS_ERROR_NO_AGGREGATION;
-
-    nsChromeProtocolHandler* ph = new nsChromeProtocolHandler();
-    if (ph == nsnull)
-        return NS_ERROR_OUT_OF_MEMORY;
-    NS_ADDREF(ph);
-    nsresult rv = ph->Init();
-    if (NS_SUCCEEDED(rv)) {
-        rv = ph->QueryInterface(aIID, aResult);
-    }
-    NS_RELEASE(ph);
-    return rv;
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 // nsIProtocolHandler methods:
@@ -538,7 +426,7 @@ nsChromeProtocolHandler::Create(nsISupports *aOuter, REFNSIID aIID, void **aResu
 NS_IMETHODIMP
 nsChromeProtocolHandler::GetScheme(nsACString &result)
 {
-    result = "chrome";
+    result.AssignLiteral("chrome");
     return NS_OK;
 }
 
@@ -570,50 +458,32 @@ nsChromeProtocolHandler::NewURI(const nsACString &aSpec,
                                 nsIURI *aBaseURI,
                                 nsIURI **result)
 {
-    NS_PRECONDITION(result, "Null out param");
-    
     nsresult rv;
-
-    *result = nsnull;
 
     // Chrome: URLs (currently) have no additional structure beyond that provided
     // by standard URLs, so there is no "outer" given to CreateInstance
 
-    nsCOMPtr<nsIStandardURL> url(do_CreateInstance(kStandardURLCID, &rv));
+    nsCOMPtr<nsIStandardURL> surl(do_CreateInstance(NS_STANDARDURL_CONTRACTID, &rv));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = surl->Init(nsIStandardURL::URLTYPE_STANDARD, -1, aSpec, aCharset, aBaseURI);
     if (NS_FAILED(rv))
         return rv;
 
-    rv = url->Init(nsIStandardURL::URLTYPE_STANDARD, -1, aSpec, aCharset, aBaseURI);
-    if (NS_FAILED(rv))
-        return rv;
+    nsCOMPtr<nsIURL> url(do_QueryInterface(surl, &rv));
+    NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIURI> uri(do_QueryInterface(url, &rv));
-    if (NS_FAILED(rv))
-        return rv;
-    
     // Canonify the "chrome:" URL; e.g., so that we collapse
     // "chrome://navigator/content/" and "chrome://navigator/content"
     // and "chrome://navigator/content/navigator.xul".
 
-    // Try the global cache first.
-    nsCOMPtr<nsIChromeRegistry> reg = gChromeRegistry;
-
-    // If that fails, the service has not been instantiated yet; let's
-    // do that now.
-    if (!reg) {
-        reg = do_GetService(NS_CHROMEREGISTRY_CONTRACTID, &rv);
-        if (NS_FAILED(rv))
-            return rv;
-    }
-
-    NS_ASSERTION(reg, "Must have a chrome registry by now");
-    
-    rv = reg->Canonify(uri);
+    rv = nsChromeRegistry::Canonify(url);
     if (NS_FAILED(rv))
         return rv;
 
-    *result = uri;
-    NS_ADDREF(*result);
+    surl->SetMutable(PR_FALSE);
+
+    NS_ADDREF(*result = url);
     return NS_OK;
 }
 
@@ -627,20 +497,17 @@ nsChromeProtocolHandler::NewChannel(nsIURI* aURI,
 #ifdef DEBUG
     // Check that the uri we got is already canonified
     nsresult debug_rv;
-    nsCOMPtr<nsIChromeRegistry> debugReg(do_GetService(NS_CHROMEREGISTRY_CONTRACTID, &debug_rv));
+    nsCOMPtr<nsIURI> debugClone;
+    debug_rv = aURI->Clone(getter_AddRefs(debugClone));
     if (NS_SUCCEEDED(debug_rv)) {
-        nsCOMPtr<nsIURI> debugClone;
-        debug_rv = aURI->Clone(getter_AddRefs(debugClone));
+        nsCOMPtr<nsIURL> debugURL (do_QueryInterface(debugClone));
+        debug_rv = nsChromeRegistry::Canonify(debugURL);
         if (NS_SUCCEEDED(debug_rv)) {
-            debug_rv = debugReg->Canonify(debugClone);
+            PRBool same;
+            debug_rv = aURI->Equals(debugURL, &same);
             if (NS_SUCCEEDED(debug_rv)) {
-                PRBool same;
-                debug_rv = aURI->Equals(debugClone, &same);
-                if (NS_SUCCEEDED(debug_rv)) {
-                    NS_ASSERTION(same, "Non-canonified chrome uri passed to nsChromeProtocolHandler::NewChannel!");
-                }
+                NS_ASSERTION(same, "Non-canonified chrome uri passed to nsChromeProtocolHandler::NewChannel!");
             }
-                
         }
     }
 #endif
@@ -648,15 +515,16 @@ nsChromeProtocolHandler::NewChannel(nsIURI* aURI,
     nsresult rv;
     nsCOMPtr<nsIChannel> result;
 
-#ifdef MOZ_XUL
     // Check the prototype cache to see if we've already got the
     // document in the cache.
-    nsCOMPtr<nsIXULPrototypeCache> cache =
-             do_GetService(kXULPrototypeCacheCID, &rv);
-    if (NS_FAILED(rv)) return rv;
-
+    nsCOMPtr<nsIXULPrototypeCache> cache
+        (do_GetService(kXULPrototypeCacheCID));
     nsCOMPtr<nsIXULPrototypeDocument> proto;
-    cache->GetPrototype(aURI, getter_AddRefs(proto));
+
+    if (cache)
+        cache->GetPrototype(aURI, getter_AddRefs(proto));
+    else
+        NS_WARNING("Unable to obtain the XUL prototype cache!");
 
     // Same comment as nsXULDocument::StartDocumentLoad and
     // nsXULDocument::ResumeWalk
@@ -677,42 +545,40 @@ nsChromeProtocolHandler::NewChannel(nsIURI* aURI,
     if (proto) {
         // ...in which case, we'll create a dummy stream that'll just
         // load the thing.
-        rv = nsCachedChromeChannel::Create(aURI, getter_AddRefs(result));
-        if (NS_FAILED(rv)) return rv;
+        result = new nsCachedChromeChannel(aURI);
+        if (! result)
+            return NS_ERROR_OUT_OF_MEMORY;
     }
-    else
-#endif
-        {
+    else {
         // Miss. Resolve the chrome URL using the registry and do a
         // normal necko load.
         //nsXPIDLCString oldSpec;
         //aURI->GetSpec(getter_Copies(oldSpec));
         //printf("*************************** %s\n", (const char*)oldSpec);
 
-        nsCOMPtr<nsIChromeRegistry> reg = gChromeRegistry;
-        if (!reg) {
-            reg = do_GetService(NS_CHROMEREGISTRY_CONTRACTID, &rv);
-            if (NS_FAILED(rv)) return rv;
+        if (!nsChromeRegistry::gChromeRegistry) {
+            // We don't actually want this ref, we just want the service to
+            // initialize if it hasn't already.
+            nsCOMPtr<nsIChromeRegistry> reg (do_GetService(NS_CHROMEREGISTRY_CONTRACTID));
         }
 
-        nsCAutoString spec;
-        rv = reg->ConvertChromeURL(aURI, spec);
+        NS_ENSURE_TRUE(nsChromeRegistry::gChromeRegistry, NS_ERROR_FAILURE);
+
+        nsCOMPtr<nsIURI> resolvedURI;
+        rv = nsChromeRegistry::gChromeRegistry->ConvertChromeURL(aURI, getter_AddRefs(resolvedURI));
         if (NS_FAILED(rv)) {
 #ifdef DEBUG
+            nsCAutoString spec;
             aURI->GetSpec(spec);
             printf("Couldn't convert chrome URL: %s\n", spec.get());
 #endif
             return rv;
         }
 
-        nsCOMPtr<nsIIOService> ioServ(do_GetService(kIOServiceCID, &rv));
-        if (NS_FAILED(rv)) return rv;
+        nsCOMPtr<nsIIOService> ioServ (do_GetIOService(&rv));
+        NS_ENSURE_SUCCESS(rv, rv);
 
-        nsCOMPtr<nsIURI> chromeURI;
-        rv = ioServ->NewURI(spec, nsnull, nsnull, getter_AddRefs(chromeURI));
-        if (NS_FAILED(rv)) return rv;
-
-        rv = ioServ->NewChannelFromURI(chromeURI, getter_AddRefs(result));
+        rv = ioServ->NewChannelFromURI(resolvedURI, getter_AddRefs(result));
         if (NS_FAILED(rv)) return rv;
 
         // XXX Will be removed someday when we handle remote chrome.
@@ -747,14 +613,12 @@ nsChromeProtocolHandler::NewChannel(nsIURI* aURI,
         rv = result->SetOriginalURI(aURI);
         if (NS_FAILED(rv)) return rv;
 
-        // Get a system principal for xul files and set the owner
+        // Get a system principal for content files and set the owner
         // property of the result
         nsCOMPtr<nsIURL> url = do_QueryInterface(aURI);
-        nsCAutoString fileExtension;
-        rv = url->GetFileExtension(fileExtension);
-        if (PL_strcasecmp(fileExtension.get(), "xul") == 0 ||
-            PL_strcasecmp(fileExtension.get(), "html") == 0 ||
-            PL_strcasecmp(fileExtension.get(), "xml") == 0)
+        nsCAutoString path;
+        rv = url->GetPath(path);
+        if (StringBeginsWith(path, NS_LITERAL_CSTRING("/content/")))
         {
             nsCOMPtr<nsIScriptSecurityManager> securityManager =
                      do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
@@ -805,10 +669,8 @@ nsChromeProtocolHandler::NewChannel(nsIURI* aURI,
 
                 if (file) {
                     rv = fastLoadServ->AddDependency(file);
-#ifdef MOZ_XUL
                     if (NS_FAILED(rv))
                         cache->AbortFastLoads();
-#endif
                 }
             }
         }

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Darin Fisher <darin@netscape.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -57,6 +57,7 @@ class nsIBinaryInputStream;
 class nsIBinaryOutputStream;
 class nsIIDNService;
 class nsICharsetConverterManager;
+class nsIPrefBranch;
 
 //-----------------------------------------------------------------------------
 // standard URL implementation
@@ -123,7 +124,8 @@ public: /* internal -- HPUX compiler can't handle this being private */
         PRInt32 EncodeSegmentCount(const char *str,
                                    const URLSegment &segment,
                                    PRInt16 mask,
-                                   nsAFlatCString &buf);
+                                   nsAFlatCString &buf,
+                                   PRBool& appended);
          
         // Encode the given string if necessary, and return a reference to
         // the encoded string.  Returns a reference to |buf| if encoding
@@ -140,21 +142,28 @@ public: /* internal -- HPUX compiler can't handle this being private */
     };
     friend class nsSegmentEncoder;
 
+protected:
+    virtual nsStandardURL* StartClone();
+
+    // Helper for subclass implementation of GetFile().  Subclasses that map
+    // URIs to files in a special way should implement this method.  It should
+    // ensure that our mFile is initialized, if it's possible.
+    virtual nsresult EnsureFile();
+
 private:
     PRInt32  Port() { return mPort == -1 ? mDefaultPort : mPort; }
 
     void     Clear();
     void     InvalidateCache(PRBool invalidateCachedFile = PR_TRUE);
 
-    PRBool   EncodeHost(const char *host, nsCString &result);
+    PRBool   EscapeIPv6(const char *host, nsCString &result);
+    PRBool   NormalizeIDN(const nsCSubstring &host, nsCString &result);
     void     CoalescePath(netCoalesceFlags coalesceFlag, char *path);
 
-    PRUint32 AppendSegmentToBuf(char *, PRUint32, const char *, URLSegment &, const nsCString *esc=nsnull);
+    PRUint32 AppendSegmentToBuf(char *, PRUint32, const char *, URLSegment &, const nsCString *esc=nsnull, PRBool useEsc = PR_FALSE);
     PRUint32 AppendToBuf(char *, PRUint32, const char *, PRUint32);
 
     nsresult BuildNormalizedSpec(const char *spec);
-
-    PRBool   HostsAreEquivalent(nsStandardURL *other);
 
     PRBool   SegmentIs(const URLSegment &s1, const char *val);
     PRBool   SegmentIs(const char* spec, const URLSegment &s1, const char *val);
@@ -163,7 +172,7 @@ private:
     PRInt32  ReplaceSegment(PRUint32 pos, PRUint32 len, const char *val, PRUint32 valLen);
     PRInt32  ReplaceSegment(PRUint32 pos, PRUint32 len, const nsACString &val);
 
-    nsresult ParseURL(const char *spec);
+    nsresult ParseURL(const char *spec, PRInt32 specLen);
     nsresult ParsePath(const char *spec, PRUint32 pathPos, PRInt32 pathLen = -1);
 
     char    *AppendToSubstring(PRUint32 pos, PRInt32 len, const char *tail, PRInt32 tailLen = -1);
@@ -208,6 +217,13 @@ private:
     nsresult ReadSegment(nsIBinaryInputStream *, URLSegment &);
     nsresult WriteSegment(nsIBinaryOutputStream *, const URLSegment &);
 
+    static void PrefsChanged(nsIPrefBranch *prefs, const char *pref);
+
+    // IDN routines
+    static nsresult ACEtoDisplayIDN(const nsCSubstring &in, nsCString &out);
+    static nsresult UTF8toDisplayIDN(const nsCSubstring &in, nsCString &out);
+    static PRBool IsInWhitelist(const nsCSubstring &host);
+
     // mSpec contains the normalized version of the URL spec (UTF-8 encoded).
     nsCString mSpec;
     PRInt32   mDefaultPort;
@@ -229,29 +245,36 @@ private:
     URLSegment mRef;
 
     nsCString              mOriginCharset;
-    PRUint32               mURLType;
     nsCOMPtr<nsIURLParser> mParser;
+
+    // mFile is protected so subclasses can access it directly
+protected:
     nsCOMPtr<nsIFile>      mFile;  // cached result for nsIFileURL::GetFile
+    
+private:
     char                  *mHostA; // cached result for nsIURI::GetHostA
 
-    enum nsEncodingType {
+    enum {
         eEncoding_Unknown,
         eEncoding_ASCII,
         eEncoding_UTF8
     };
-    nsEncodingType mHostEncoding;
-    nsEncodingType mSpecEncoding;
 
-    PRPackedBool mMutable;         // nsIStandardURL::mutable
-    PRPackedBool mSupportsFileURL; // QI to nsIFileURL?
+    PRUint32 mHostEncoding    : 2; // eEncoding_xxx
+    PRUint32 mSpecEncoding    : 2; // eEncoding_xxx
+    PRUint32 mURLType         : 2; // nsIStandardURL::URLTYPE_xxx
+    PRUint32 mMutable         : 1; // nsIStandardURL::mutable
+    PRUint32 mSupportsFileURL : 1; // QI to nsIFileURL?
 
     // global objects.  don't use COMPtr as its destructor will cause a
     // coredump if we leak it.
-    static nsIIDNService               *gIDNService;
+    static nsIIDNService               *gIDN;
     static nsICharsetConverterManager  *gCharsetMgr;
     static PRBool                       gInitialized;
     static PRBool                       gEscapeUTF8;
     static PRBool                       gAlwaysEncodeInUTF8;
+    static PRBool                       gShowPunycode;
+    static nsIPrefBranch               *gIDNWhitelistPrefBranch;
 };
 
 #define NS_THIS_STANDARDURL_IMPL_CID                 \

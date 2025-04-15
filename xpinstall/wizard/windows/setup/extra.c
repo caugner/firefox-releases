@@ -1,27 +1,42 @@
 /* -*- Mode: C; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code,
- * released March 31, 1998.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
- * Contributor(s): 
- *     Sean Su <ssu@netscape.com>
- *     Curt Patrick <curt@netscape.com>
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Sean Su <ssu@netscape.com>
+ *   Curt Patrick <curt@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "extern.h"
 #include "extra.h"
@@ -143,8 +158,10 @@ BOOL InitInstance(HINSTANCE hInstance, DWORD dwCmdShow)
   gSystemInfo.dwScreenX = GetSystemMetrics(SM_CXSCREEN);
   gSystemInfo.dwScreenY = GetSystemMetrics(SM_CYSCREEN);
 
-  gSystemInfo.lastWindowPosCenterX = gSystemInfo.dwScreenX / 2;
-  gSystemInfo.lastWindowPosCenterY = gSystemInfo.dwScreenY / 2;
+  gSystemInfo.lastWindowPosCenterX  = gSystemInfo.dwScreenX / 2;
+  gSystemInfo.lastWindowPosCenterY  = gSystemInfo.dwScreenY / 2;
+  gSystemInfo.lastWindowMinimized   = FALSE;
+  gSystemInfo.lastWindowIsTopWindow = TRUE;
 
   hInst = hInstance;
 
@@ -189,13 +206,14 @@ void PrintError(LPSTR szMsg, DWORD dwErrorCodeSH)
 
   if((sgProduct.mode != SILENT) && (sgProduct.mode != AUTO))
   {
+    ShowMessage(NULL, FALSE);
     MessageBox(hWndMain, szErrorString, NULL, MB_ICONEXCLAMATION);
   }
   else if(sgProduct.mode == AUTO)
   {
     ShowMessage(szErrorString, TRUE);
     Delay(5);
-    ShowMessage(szErrorString, FALSE);
+    ShowMessage(NULL, FALSE);
   }
 }
 
@@ -281,7 +299,12 @@ HRESULT NS_LoadString(HANDLE hInstance, DWORD dwID, LPSTR szStringBuf, DWORD dwS
 
 void Delay(DWORD dwSeconds)
 {
-  SleepEx(dwSeconds * 1000, FALSE);
+  DWORD i;
+  for(i = 0; i < dwSeconds * 10; i++)
+  {
+    SleepEx(100, FALSE);
+    ProcessWindowsMessages();
+  }
 }
 
 BOOL VerifyRestrictedAccess(void)
@@ -592,18 +615,18 @@ void RemoveDelayedDeleteFileEntries(const char *aPathToMatch)
               {
                   CharLower(lcName);
                   if (strstr(lcName, pathToMatch))
-                  {
-                      // It's a match--
-                      // delete this pair by moving the remainder on top
-                      memmove(pName, pRename + renameLen, lenToEnd);
+              {
+                  // It's a match--
+                  // delete this pair by moving the remainder on top
+                  memmove(pName, pRename + renameLen, lenToEnd);
 
-                      // update the total length to reflect the missing pair
-                      newMaxValueLen -= (nameLen + renameLen);
+                  // update the total length to reflect the missing pair
+                  newMaxValueLen -= (nameLen + renameLen);
 
-                      // next pair is in place, continue w/out moving pName
+                  // next pair is in place, continue w/out moving pName
                       free(lcName);
-                      continue;
-                  }
+                  continue;
+              }
                   free(lcName);
               }
           }
@@ -1750,7 +1773,6 @@ int CRCCheckDownloadedArchives(char *szCorruptedArchiveList,
     ++dwIndex0;
     siCObject = SiCNodeGetObject(dwIndex0, TRUE, AC_ALL);
   }
-  ShowMessage(szMsgCRCCheck, FALSE);
   return(iResult);
 }
 
@@ -2427,7 +2449,7 @@ HRESULT CleanupOrphanedGREs()
   }
 
   // Show message that orphaned GREs are being cleaned up
-  if(*sgProduct.greCleanupOrphansMessage != '\0');
+  if(*sgProduct.greCleanupOrphansMessage != '\0')
     ShowMessage(sgProduct.greCleanupOrphansMessage, TRUE);
 
   if(rv == WIZ_OK)
@@ -2572,10 +2594,6 @@ HRESULT CleanupOrphanedGREs()
   if(greIDListToClean)
     GlobalFree(greIDListToClean);
 
-  // Hide message that orphaned GREs are being cleaned up
-  if(*sgProduct.greCleanupOrphansMessage != '\0');
-    ShowMessage(sgProduct.greCleanupOrphansMessage, FALSE);
-
   return(rv);
 }
 
@@ -2642,11 +2660,7 @@ void LaunchOneComponent(siC *siCObject, greInfo *aGre)
 
         LogISLaunchAppsComponentUncompress(siCObject->szDescriptionShort, dwErr);
         if(dwErr != FO_SUCCESS)
-        {
-          if(*szMessageString != '\0')
-            ShowMessage(szMessageString, FALSE);
           return;
-        }
       }
 
       if(aGre)
@@ -2660,9 +2674,6 @@ void LaunchOneComponent(siC *siCObject, greInfo *aGre)
 
       if(siCObject->dwAttributes & SIC_UNCOMPRESS)
         FileDelete(szSpawnFile);
-
-      if(*szMessageString != '\0')
-        ShowMessage(szMessageString, FALSE);
     }
   }
 }
@@ -2691,8 +2702,6 @@ void LaunchExistingGreInstaller(greInfo *aGre)
   UpdateGreInstallerCmdLine(NULL, szParameterBuf, sizeof(szParameterBuf), FOR_EXISTING_GRE);
   LogISLaunchAppsComponent(siCObject->szDescriptionShort);
   WinSpawn(aGre->installerAppPath, szParameterBuf, szTempDir, SW_SHOWNORMAL, WS_WAIT);
-  if(*szMessageString != '\0')
-    ShowMessage(szMessageString, FALSE);
 }
 
 HRESULT LaunchApps()
@@ -3204,9 +3213,6 @@ HRESULT ProcessXpinstallEngine()
 
   if((WIZ_OK == rv) && (siCFXpcomFile.bStatus == STATUS_ENABLED))
     rv = ProcessXpcomFile();
-
-  if(*siCFXpcomFile.szMessage != '\0')
-    ShowMessage(siCFXpcomFile.szMessage, FALSE);
 
   return(rv);
 }
@@ -4989,13 +4995,13 @@ HRESULT ErrorMsgDiskSpace(ULONGLONG ullDSAvailable, ULONGLONG ullDSRequired, LPS
 
   if((sgProduct.mode != SILENT) && (sgProduct.mode != AUTO))
   {
+    ShowMessage(NULL, FALSE);
     return(MessageBox(hWndMain, szBufMsg, szDlgDiskSpaceCheckTitle, dwDlgType | MB_ICONEXCLAMATION | MB_DEFBUTTON2 | MB_APPLMODAL | MB_SETFOREGROUND));
   }
   else if(sgProduct.mode == AUTO)
   {
     ShowMessage(szBufMsg, TRUE);
     Delay(5);
-    ShowMessage(szBufMsg, FALSE);
     exit(1);
   }
 
@@ -6293,6 +6299,7 @@ void PrintUsage(void)
     _snprintf(szUsageMsg, sizeof(szUsageMsg), szBuf, szProcessFilename);
     szUsageMsg[sizeof(szUsageMsg) - 1] = '\0';
     GetPrivateProfileString("Messages", "DLG_USAGE_TITLE", "", strUsage, sizeof(strUsage), szFileIniInstall);
+    ShowMessage(NULL, FALSE);
     MessageBox(hWndMain, szUsageMsg, strUsage, MB_ICONEXCLAMATION);
   }
 }
@@ -6355,7 +6362,7 @@ DWORD ParseForStartupOptions(LPSTR aCmdLine)
   return(WIZ_OK);
 }
 
-DWORD ParseCommandLine(LPSTR aMessageToClose, LPSTR lpszCmdLine)
+DWORD ParseCommandLine(LPSTR lpszCmdLine)
 {
   char  szArgVBuf[MAX_BUF];
   int   i;
@@ -6379,7 +6386,7 @@ DWORD ParseCommandLine(LPSTR aMessageToClose, LPSTR lpszCmdLine)
 
     if(!lstrcmpi(szArgVBuf, "-h") || !lstrcmpi(szArgVBuf, "/h"))
     {
-      ShowMessage(aMessageToClose, FALSE);
+      ShowMessage(NULL, FALSE);
       PrintUsage();
       return(WIZ_ERROR_UNDEFINED);
     }
@@ -6631,6 +6638,7 @@ HRESULT ShowMessageAndQuitProcess(HWND aHwndFW, char *aMsgQuitProcess, char *aMs
     {
       char msgTitleStr[MAX_BUF];
       GetPrivateProfileString("Messages", "MB_ATTENTION_STR", "", msgTitleStr, sizeof(msgTitleStr), szFileIniInstall);
+      ShowMessage(NULL, TRUE);
       MessageBox(hWndMain, aMsgQuitProcess, msgTitleStr, MB_ICONEXCLAMATION | MB_SETFOREGROUND);
       break;
     }
@@ -6641,7 +6649,6 @@ HRESULT ShowMessageAndQuitProcess(HWND aHwndFW, char *aMsgQuitProcess, char *aMs
        * all the windows associated with the process */
       ShowMessage(aMsgQuitProcess, TRUE);
       Delay(5);
-      ShowMessage(aMsgQuitProcess, FALSE);
       break;
     }
 
@@ -6743,6 +6750,7 @@ HRESULT CheckInstances()
         switch(sgProduct.mode)
         {
           case NORMAL:
+            ShowMessage(NULL, FALSE);
             MessageBox(hWndMain, buf, msgTitleStr, MB_ICONEXCLAMATION | MB_SETFOREGROUND);
             break;
 
@@ -6751,7 +6759,6 @@ HRESULT CheckInstances()
              * all the windows associated with the process */
             ShowMessage(buf, TRUE);
             Delay(5);
-            ShowMessage(buf, FALSE);
             break;
 
           default:
@@ -6966,7 +6973,6 @@ int CRCCheckArchivesStartup(char *szCorruptedArchiveList, DWORD dwCorruptedArchi
     ++dwIndex0;
     siCObject = SiCNodeGetObject(dwIndex0, TRUE, AC_ALL);
   }
-  ShowMessage(szMsgCRCCheck, FALSE);
   return(iResult);
 }
 
@@ -7007,7 +7013,6 @@ int StartupCheckArchives(void)
           GetPrivateProfileString("Strings", "Error Corrupted Archives Detected AUTO mode", "", szBuf, sizeof(szBuf), szFileIniConfig);
           ShowMessage(szBuf, TRUE);
           Delay(5);
-          ShowMessage(szBuf, FALSE);
           break;
       }
 
@@ -7217,7 +7222,7 @@ HRESULT ParseConfigIni(LPSTR lpszCmdLine)
   if(lstrcmpi(szBuf, "FALSE") == 0)
     gShowBannerImage = FALSE;
 
-  iRv = ParseCommandLine(szMsgInitSetup, lpszCmdLine);
+  iRv = ParseCommandLine(lpszCmdLine);
   if(iRv)
     return(iRv);
 
@@ -7244,11 +7249,9 @@ HRESULT ParseConfigIni(LPSTR lpszCmdLine)
         break;
 
       case AUTO:
-        ShowMessage(szMsgInitSetup, FALSE);
         GetPrivateProfileString("Strings", "Message AUTO Restricted Access", "", szBuf, sizeof(szBuf), szFileIniConfig);
         ShowMessage(szBuf, TRUE);
         Delay(5);
-        ShowMessage(szBuf, FALSE);
         iRvMB = IDNO;
         break;
 
@@ -7596,7 +7599,6 @@ HRESULT ParseConfigIni(LPSTR lpszCmdLine)
   LogISProductInfo();
   LogMSProductInfo();
   CleanupXpcomFile();
-  ShowMessage(szMsgInitSetup, FALSE);
 
   /* check the windows registry to see if a previous instance of setup finished downloading
    * all the required archives. */
@@ -7989,11 +7991,31 @@ HRESULT DecryptVariable(LPSTR szVariable, DWORD dwVariableSize)
   {
     /* parse for the "c:\Program Files" directory */
     GetWinReg(HKEY_LOCAL_MACHINE, szWRMSCurrentVersion, "ProgramFilesDir", szVariable, dwVariableSize);
+    /* see if that failed */
+    if (*szVariable == 0)
+    {
+      char* backslash;
+      /* Use the parent of the windows directory */
+      GetWindowsDirectory(szVariable, dwVariableSize);
+      backslash = strrchr(szVariable, '\\');
+      if (backslash)
+        *backslash = 0;
+    }
   }
   else if(lstrcmpi(szVariable, "PROGRAMFILESPATH") == 0)
   {
     /* parse for the "\Program Files" directory -- NOTE does not include the drive letter */
     GetWinReg(HKEY_LOCAL_MACHINE, szWRMSCurrentVersion, "ProgramFilesDir", szBuf, sizeof(szBuf));
+    /* see if that failed */
+    if (*szBuf == 0)
+    {
+      char* backslash;
+      /* Use the parent of the windows directory */
+      GetWindowsDirectory(szBuf, sizeof(szBuf));
+      backslash = strrchr(szBuf, '\\');
+      if (backslash)
+        *backslash = 0;
+    }
     lstrcpy(szVariable, szBuf+2);
   }
   else if(lstrcmpi(szVariable, "INSTALLDRIVE") == 0)
@@ -8987,6 +9009,12 @@ void DeInitialize()
   if(gErrorMessageStream.bEnabled && gErrorMessageStream.bSendMessage)
     SendErrorMessage();
 
+  if(hDlgMessage)
+  {
+    DestroyWindow(hDlgMessage);
+    hDlgMessage = NULL;
+  }
+
   DeInitSiComponents(&siComponents);
   DeInitGre(&gGre);
   DeInitSXpcomFile();
@@ -9105,6 +9133,7 @@ void SaveInstallerFiles()
     i = 0;
     while(TRUE)
     {
+      ProcessWindowsMessages();
       if(*SetupFileList[i] == '\0')
         break;
 

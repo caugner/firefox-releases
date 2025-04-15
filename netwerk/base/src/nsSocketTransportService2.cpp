@@ -1,3 +1,4 @@
+// vim:set sw=4 sts=4 et cin:
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -79,6 +80,7 @@ nsSocketTransportService::nsSocketTransportService()
     , mThread(nsnull)
     , mThreadEvent(nsnull)
     , mAutodialEnabled(PR_FALSE)
+    , mShuttingDown(PR_FALSE)
     , mEventQLock(PR_NewLock())
     , mActiveCount(0)
     , mIdleCount(0)
@@ -120,8 +122,15 @@ nsSocketTransportService::PostEvent(PLEvent *event)
     NS_ASSERTION(event, "null event");
 
     nsAutoLock lock(mEventQLock);
-    if (!mInitialized)
-        return NS_ERROR_OFFLINE;
+    if (!mInitialized) {
+        // Allow socket detach handlers to post events
+        if (!mShuttingDown || (PR_GetCurrentThread() != gSocketThread)) {
+            NS_WARN_IF_FALSE(PR_GetCurrentThread() != gSocketThread,
+                            "Rejecting event posted to uninitialized sts");
+            return NS_ERROR_OFFLINE;
+        }
+
+    }
 
     PR_APPEND_LINK(&event->link, &mEventQ);
 
@@ -167,6 +176,7 @@ nsSocketTransportService::AttachSocket(PRFileDesc *fd, nsASocketHandler *handler
     SocketContext sock;
     sock.mFD = fd;
     sock.mHandler = handler;
+    sock.mElapsedTime = 0;
 
     nsresult rv = AddToIdleList(&sock);
     if (NS_SUCCEEDED(rv))
@@ -299,8 +309,30 @@ nsSocketTransportService::MoveToPollList(SocketContext *sock)
         RemoveFromIdleList(sock);
 }
 
+PRIntervalTime
+nsSocketTransportService::PollTimeout()
+{
+    if (mActiveCount == 0)
+        return NS_SOCKET_POLL_TIMEOUT;
+
+    // compute minimum time before any socket timeout expires.
+    PRUint32 minR = PR_UINT16_MAX;
+    for (PRUint32 i=0; i<mActiveCount; ++i) {
+        const SocketContext &s = mActiveList[i];
+        // mPollTimeout could be less than mElapsedTime if setTimeout
+        // was called with a value smaller than mElapsedTime.
+        PRUint32 r = (s.mElapsedTime < s.mHandler->mPollTimeout)
+          ? s.mHandler->mPollTimeout - s.mElapsedTime
+          : 0;
+        if (r < minR)
+            minR = r;
+    }
+    LOG(("poll timeout: %lu\n", minR));
+    return PR_SecondsToInterval(minR);
+}
+
 PRInt32
-nsSocketTransportService::Poll()
+nsSocketTransportService::Poll(PRUint32 *interval)
 {
     PRPollDesc *pollList;
     PRUint32 pollCount;
@@ -310,7 +342,7 @@ nsSocketTransportService::Poll()
         mPollList[0].out_flags = 0;
         pollList = mPollList;
         pollCount = mActiveCount + 1;
-        pollTimeout = NS_SOCKET_POLL_TIMEOUT;
+        pollTimeout = PollTimeout();
     }
     else {
         // no pollable event, so busy wait...
@@ -322,7 +354,12 @@ nsSocketTransportService::Poll()
         pollTimeout = PR_MillisecondsToInterval(25);
     }
 
-    return PR_Poll(pollList, pollCount, pollTimeout);
+    PRIntervalTime ts = PR_IntervalNow();
+
+    PRInt32 rv = PR_Poll(pollList, pollCount, pollTimeout);
+
+    *interval = PR_IntervalToSeconds(PR_IntervalNow() - ts);
+    return rv;
 }
 
 PRBool
@@ -356,10 +393,11 @@ nsSocketTransportService::ServiceEventQ()
 //-----------------------------------------------------------------------------
 // xpcom api
 
-NS_IMPL_THREADSAFE_ISUPPORTS3(nsSocketTransportService,
+NS_IMPL_THREADSAFE_ISUPPORTS4(nsSocketTransportService,
                               nsISocketTransportService,
                               nsIEventTarget,
-                              nsIRunnable)
+                              nsIRunnable,
+                              nsPISocketTransportService)
 
 // called from main thread only
 NS_IMETHODIMP
@@ -524,20 +562,37 @@ nsSocketTransportService::Run()
 
         LOG(("  calling PR_Poll [active=%u idle=%u]\n", mActiveCount, mIdleCount));
 
-        PRInt32 n = Poll();
+        // Measures seconds spent while blocked on PR_Poll
+        PRUint32 pollInterval;
+
+        PRInt32 n = Poll(&pollInterval);
         if (n < 0) {
             LOG(("  PR_Poll error [%d]\n", PR_GetError()));
             active = PR_FALSE;
         }
-        else if (n > 0) {
+        else {
             //
             // service "active" sockets...
             //
             for (i=0; i<PRInt32(mActiveCount); ++i) {
                 PRPollDesc &desc = mPollList[i+1];
-                if (desc.out_flags != 0) {
-                    nsASocketHandler *handler = mActiveList[i].mHandler;
-                    handler->OnSocketReady(desc.fd, desc.out_flags);
+                SocketContext &s = mActiveList[i];
+                if (n > 0 && desc.out_flags != 0) {
+                    s.mElapsedTime = 0;
+                    s.mHandler->OnSocketReady(desc.fd, desc.out_flags);
+                }
+                // check for timeout errors unless disabled...
+                else if (s.mHandler->mPollTimeout != PR_UINT16_MAX) {
+                    // update elapsed time counter
+                    if (NS_UNLIKELY(pollInterval > (PR_UINT16_MAX - s.mElapsedTime)))
+                        s.mElapsedTime = PR_UINT16_MAX;
+                    else
+                        s.mElapsedTime += PRUint16(pollInterval);
+                    // check for timeout expiration 
+                    if (s.mElapsedTime >= s.mHandler->mPollTimeout) {
+                        s.mElapsedTime = 0;
+                        s.mHandler->OnSocketReady(desc.fd, -1);
+                    }
                 }
             }
 
@@ -553,18 +608,13 @@ nsSocketTransportService::Run()
             //
             // service the event queue (mPollList[0].fd == mThreadEvent)
             //
-            if (mPollList[0].out_flags == PR_POLL_READ) {
+            if (n == 0)
+                active = ServiceEventQ();
+            else if (mPollList[0].out_flags == PR_POLL_READ) {
                 // acknowledge pollable event (wait should not block)
                 PR_WaitForPollableEvent(mThreadEvent);
                 active = ServiceEventQ();
             }
-        }
-        else {
-            LOG(("  PR_Poll timed out\n"));
-            //
-            // service event queue whenever PR_Poll times out.
-            //
-            active = ServiceEventQ();
         }
     }
 
@@ -574,11 +624,19 @@ nsSocketTransportService::Run()
     
     LOG(("shutting down socket transport thread...\n"));
 
+    mShuttingDown = PR_TRUE;
+
     // detach any sockets
     for (i=mActiveCount-1; i>=0; --i)
         DetachSocket(&mActiveList[i]);
     for (i=mIdleCount-1; i>=0; --i)
         DetachSocket(&mIdleList[i]);
+
+    mShuttingDown = PR_FALSE;
+
+    // Final pass over the event queue. This makes sure that events posted by
+    // socket detach handlers get processed.
+    ServiceEventQ();
 
     gSocketThread = nsnull;
     return NS_OK;

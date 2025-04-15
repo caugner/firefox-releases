@@ -1,24 +1,41 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): Radha Kulkarni(radha@netscape.com)
- */
+ * Contributor(s):
+ *   Radha Kulkarni(radha@netscape.com)
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsWyciwygChannel.h"
 #include "nsIServiceManager.h"
@@ -37,10 +54,10 @@ PRLogModuleInfo * gWyciwygLog = nsnull;
 
 // nsWyciwygChannel methods 
 nsWyciwygChannel::nsWyciwygChannel()
-  : mContentLength(-1)
-  , mLoadFlags(LOAD_NORMAL)
-  , mStatus(NS_OK)
-  , mIsPending(PR_FALSE)
+  : mStatus(NS_OK),
+    mIsPending(PR_FALSE),
+    mContentLength(-1),
+    mLoadFlags(LOAD_NORMAL)
 {
 }
 
@@ -122,7 +139,6 @@ nsWyciwygChannel::Resume()
 NS_IMETHODIMP
 nsWyciwygChannel::GetLoadGroup(nsILoadGroup* *aLoadGroup)
 {
-  NS_ENSURE_ARG_POINTER(aLoadGroup);
   *aLoadGroup = mLoadGroup;
   NS_IF_ADDREF(*aLoadGroup);
   return NS_OK;
@@ -145,7 +161,6 @@ nsWyciwygChannel::SetLoadFlags(PRUint32 aLoadFlags)
 NS_IMETHODIMP
 nsWyciwygChannel::GetLoadFlags(PRUint32 * aLoadFlags)
 {
-  NS_ENSURE_ARG_POINTER(aLoadFlags);
   *aLoadFlags = mLoadFlags;
   return NS_OK;
 }
@@ -176,7 +191,6 @@ nsWyciwygChannel::SetOriginalURI(nsIURI* aURI)
 NS_IMETHODIMP
 nsWyciwygChannel::GetURI(nsIURI* *aURI)
 {
-  NS_ENSURE_ARG_POINTER(aURI);
   *aURI = mURI;
   NS_IF_ADDREF(*aURI);
   return NS_OK;
@@ -189,7 +203,9 @@ nsWyciwygChannel::GetOwner(nsISupports **aOwner)
 
   if (!mOwner) {
     // Create codebase principal with URI of original document, not our URI
-    NS_ENSURE_TRUE(mOriginalURI, NS_ERROR_FAILURE); // without an owner or an original URI!
+
+    // without an owner or an original URI!
+    NS_ENSURE_TRUE(mOriginalURI, NS_ERROR_FAILURE);
 
     nsCOMPtr<nsIPrincipal> principal;
     nsIScriptSecurityManager *secMan = nsContentUtils::GetSecurityManager();
@@ -237,7 +253,7 @@ nsWyciwygChannel::GetSecurityInfo(nsISupports * *aSecurityInfo)
 NS_IMETHODIMP
 nsWyciwygChannel::GetContentType(nsACString &aContentType)
 {
-  aContentType = NS_LITERAL_CSTRING(wyciwyg_TYPE);
+  aContentType.AssignLiteral(wyciwyg_TYPE);
   return NS_OK;
 }
 
@@ -250,7 +266,7 @@ nsWyciwygChannel::SetContentType(const nsACString &aContentType)
 NS_IMETHODIMP
 nsWyciwygChannel::GetContentCharset(nsACString &aContentCharset)
 {
-  aContentCharset.Truncate();
+  aContentCharset.Assign("UTF-16");
   return NS_OK;
 }
 
@@ -269,7 +285,9 @@ nsWyciwygChannel::GetContentLength(PRInt32 *aContentLength)
 NS_IMETHODIMP
 nsWyciwygChannel::SetContentLength(PRInt32 aContentLength)
 {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  mContentLength = aContentLength;
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -291,7 +309,7 @@ nsWyciwygChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
 
   // open a cache entry for this channel...
   PRBool delayed = PR_FALSE;
-  nsresult rv = OpenCacheEntry(spec.get(), nsICache::ACCESS_READ, &delayed);        
+  nsresult rv = OpenCacheEntry(spec, nsICache::ACCESS_READ, &delayed);        
   if (NS_FAILED(rv)) {
     LOG(("nsWyciwygChannel::OpenCacheEntry failed [rv=%x]\n", rv));
     return rv;
@@ -320,7 +338,7 @@ nsWyciwygChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
 //////////////////////////////////////////////////////////////////////////////
 
 NS_IMETHODIMP
-nsWyciwygChannel::WriteToCacheEntry(const nsACString &aScript)
+nsWyciwygChannel::WriteToCacheEntry(const nsAString &aData)
 {
   nsresult rv;
 
@@ -328,7 +346,7 @@ nsWyciwygChannel::WriteToCacheEntry(const nsACString &aScript)
     nsCAutoString spec;
     rv = mURI->GetAsciiSpec(spec);
     if (NS_FAILED(rv)) return rv;
-    rv = OpenCacheEntry(spec.get(), nsICache::ACCESS_WRITE);
+    rv = OpenCacheEntry(spec, nsICache::ACCESS_WRITE);
     if (NS_FAILED(rv)) return rv;
   }
 
@@ -336,14 +354,21 @@ nsWyciwygChannel::WriteToCacheEntry(const nsACString &aScript)
     mCacheEntry->SetSecurityInfo(mSecurityInfo);
   }
 
+  PRUint32 out;
   if (!mCacheOutputStream) {
     // Get the outputstream from the cache entry.
     rv = mCacheEntry->OpenOutputStream(0, getter_AddRefs(mCacheOutputStream));    
     if (NS_FAILED(rv)) return rv;
+
+    // Write out a Byte Order Mark, so that we'll know if the data is
+    // BE or LE when we go to read it.
+    PRUnichar bom = 0xFEFF;
+    rv = mCacheOutputStream->Write((char *)&bom, sizeof(bom), &out);
+    if (NS_FAILED(rv)) return rv;
   }
 
-  PRUint32 out;
-  return mCacheOutputStream->Write(PromiseFlatCString(aScript).get(), aScript.Length(), &out);
+  return mCacheOutputStream->Write((char *)PromiseFlatString(aData).get(),
+                                   aData.Length() * sizeof(PRUnichar), &out);
 }
 
 
@@ -427,8 +452,8 @@ nsWyciwygChannel::OnCacheEntryAvailable(nsICacheEntryDescriptor * aCacheEntry, n
 
 NS_IMETHODIMP
 nsWyciwygChannel::OnDataAvailable(nsIRequest *request, nsISupports *ctx,
-                               nsIInputStream *input,
-                               PRUint32 offset, PRUint32 count)
+                                  nsIInputStream *input,
+                                  PRUint32 offset, PRUint32 count)
 {
   LOG(("nsWyciwygChannel::OnDataAvailable [this=%x request=%x offset=%u count=%u]\n",
       this, request, offset, count));
@@ -437,8 +462,10 @@ nsWyciwygChannel::OnDataAvailable(nsIRequest *request, nsISupports *ctx,
   
   rv = mListener->OnDataAvailable(this, mListenerContext, input, offset, count);
 
+  // XXX handle 64-bit stuff for real
   if (mProgressSink && NS_SUCCEEDED(rv) && !(mLoadFlags & LOAD_BACKGROUND))
-    mProgressSink->OnProgress(this, nsnull, offset + count, mContentLength);
+    mProgressSink->OnProgress(this, nsnull, nsUint64(offset + count),
+                              nsUint64(mContentLength));
 
   return rv; // let the pump cancel on failure
 }
@@ -476,6 +503,11 @@ nsWyciwygChannel::OnStopRequest(nsIRequest *request, nsISupports *ctx, nsresult 
   CloseCacheEntry(mStatus);
   mPump = 0;
   mIsPending = PR_FALSE;
+
+  // Drop notification callbacks to prevent cycles.
+  mCallbacks = 0;
+  mProgressSink = 0;
+
   return NS_OK;
 }
 
@@ -484,50 +516,54 @@ nsWyciwygChannel::OnStopRequest(nsIRequest *request, nsISupports *ctx, nsresult 
 //////////////////////////////////////////////////////////////////////////////
 
 nsresult
-nsWyciwygChannel::OpenCacheEntry(const char * aCacheKey, nsCacheAccessMode aAccessMode, PRBool * aDelayFlag )
+nsWyciwygChannel::OpenCacheEntry(const nsACString & aCacheKey,
+                                 nsCacheAccessMode aAccessMode,
+                                 PRBool * aDelayFlag)
 {
   nsresult rv = NS_ERROR_FAILURE;
   // Get cache service
-  nsCOMPtr<nsICacheService>  cacheService(do_GetService(NS_CACHESERVICE_CONTRACTID, &rv));
+  nsCOMPtr<nsICacheService> cacheService =
+    do_GetService(NS_CACHESERVICE_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  if (NS_SUCCEEDED(rv) && cacheService) {
-    nsXPIDLCString spec;    
-    nsAutoString newURIString;    
-    nsCOMPtr<nsICacheSession> cacheSession;
+  nsXPIDLCString spec;    
+  nsAutoString newURIString;    
+  nsCOMPtr<nsICacheSession> cacheSession;
 
-    // honor security settings
-    nsCacheStoragePolicy storagePolicy;
-    if (mLoadFlags & INHIBIT_PERSISTENT_CACHING)
-      storagePolicy = nsICache::STORE_IN_MEMORY;
-    else
-      storagePolicy = nsICache::STORE_ANYWHERE;
+  // honor security settings
+  nsCacheStoragePolicy storagePolicy;
+  if (mLoadFlags & INHIBIT_PERSISTENT_CACHING)
+    storagePolicy = nsICache::STORE_IN_MEMORY;
+  else
+    storagePolicy = nsICache::STORE_ANYWHERE;
  
-    // Open a stream based cache session.
-    rv = cacheService->CreateSession("wyciwyg", storagePolicy, PR_TRUE, getter_AddRefs(cacheSession));
-    if (!cacheSession) 
-      return NS_ERROR_FAILURE;
+  // Open a stream based cache session.
+  rv = cacheService->CreateSession("wyciwyg", storagePolicy, PR_TRUE,
+                                   getter_AddRefs(cacheSession));
+  if (!cacheSession) 
+    return NS_ERROR_FAILURE;
 
-    /* we'll try to synchronously open the cache entry... however, it may be
-     * in use and not yet validated, in which case we'll try asynchronously
-     * opening the cache entry.
-     */
+  /* we'll try to synchronously open the cache entry... however, it
+   * may be in use and not yet validated, in which case we'll try
+   * asynchronously opening the cache entry.
+   */
     
-    rv = cacheSession->OpenCacheEntry(aCacheKey, aAccessMode, PR_FALSE,
-                                 getter_AddRefs(mCacheEntry));
+  rv = cacheSession->OpenCacheEntry(aCacheKey, aAccessMode, PR_FALSE,
+                                    getter_AddRefs(mCacheEntry));
 
-    if (rv == NS_ERROR_CACHE_WAIT_FOR_VALIDATION) {
-      // access to the cache entry has been denied. Let's try
-      // opening it async. 
-      rv = cacheSession->AsyncOpenCacheEntry(aCacheKey, aAccessMode, this);
-      if (NS_FAILED(rv)) 
-        return rv;
-      if (aDelayFlag)
-        *aDelayFlag = PR_TRUE;
-    }
-    else if (rv == NS_OK) {
-      LOG(("nsWyciwygChannel::OpenCacheEntry got cache entry \n"));
-    }
-  } 
+  if (rv == NS_ERROR_CACHE_WAIT_FOR_VALIDATION) {
+    // access to the cache entry has been denied. Let's try opening it
+    // async.
+    rv = cacheSession->AsyncOpenCacheEntry(aCacheKey, aAccessMode, this);
+    if (NS_FAILED(rv)) 
+      return rv;
+    if (aDelayFlag)
+      *aDelayFlag = PR_TRUE;
+  }
+  else if (rv == NS_OK) {
+    LOG(("nsWyciwygChannel::OpenCacheEntry got cache entry \n"));
+  }
+
   return rv;
 }
 
@@ -548,7 +584,7 @@ nsWyciwygChannel::ReadFromCache()
     return rv;
   NS_ENSURE_TRUE(mCacheInputStream, NS_ERROR_UNEXPECTED);
 
-  rv = NS_NewInputStreamPump(getter_AddRefs(mPump), mCacheInputStream, -1);
+  rv = NS_NewInputStreamPump(getter_AddRefs(mPump), mCacheInputStream);
   if (NS_FAILED(rv)) return rv;
 
   // Pump the cache data downstream

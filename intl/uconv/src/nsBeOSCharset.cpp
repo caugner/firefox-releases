@@ -11,11 +11,15 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
+ * The Original Code is mozilla.org code.
  *
- * Original code by:
- * Sergei Dolgov (sergei_d@fi.tartu.ee)
- * Tartu University
- * (C) 2002
+ * The Initial Developer of the Original Code is
+ * Sergei Dolgov (sergei_d@fi.tartu.ee); Tartu University
+ * Portions created by the Initial Developer are Copyright (C) 2002
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -44,7 +48,7 @@ NS_IMPL_THREADSAFE_ISUPPORTS1(nsPlatformCharset, nsIPlatformCharset)
 
 nsPlatformCharset::nsPlatformCharset()
 {
-  mCharset = NS_LITERAL_CSTRING("UTF-8");
+  mCharset.AssignLiteral("UTF-8");
 }
 
 nsPlatformCharset::~nsPlatformCharset()

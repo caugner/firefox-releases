@@ -1,25 +1,40 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications.  Portions created by Netscape Communications are
- * Copyright (C) 2001 by Netscape Communications.  All
- * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Darin Fisher <darin@netscape.com> (original author)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef nsHttpTransaction_h__
 #define nsHttpTransaction_h__
@@ -29,6 +44,7 @@
 #include "nsAHttpTransaction.h"
 #include "nsAHttpConnection.h"
 #include "nsCOMPtr.h"
+#include "nsInt64.h"
 
 #include "nsIPipe.h"
 #include "nsIInputStream.h"
@@ -116,6 +132,10 @@ public:
     void   SetSSLConnectFailed() { mSSLConnectFailed = PR_TRUE; }
     PRBool    SSLConnectFailed() { return mSSLConnectFailed; }
 
+    // These methods may only be used by the connection manager.
+    void    SetPriority(PRInt32 priority) { mPriority = priority; }
+    PRInt32    Priority()                 { return mPriority; }
+
 private:
     nsresult Restart();
     void     ParseLine(char *line);
@@ -158,12 +178,14 @@ private:
 
     nsCString                       mLineBuf;         // may contain a partial line
 
-    PRInt32                         mContentLength;   // equals -1 if unknown
-    PRUint32                        mContentRead;     // count of consumed content bytes
+    nsInt64                         mContentLength;   // equals -1 if unknown
+    nsInt64                         mContentRead;     // count of consumed content bytes
 
     nsHttpChunkedDecoder           *mChunkedDecoder;
 
     nsresult                        mStatus;
+
+    PRInt16                         mPriority;
 
     PRUint16                        mRestartCount;        // the number of times this transaction has been restarted
     PRUint8                         mCaps;

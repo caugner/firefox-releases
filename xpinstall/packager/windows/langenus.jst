@@ -57,10 +57,10 @@ if(verifyDiskSpace(fProgram, srDest))
 
     registerChrome(chromeType, cf, localeName + "global/");
     registerChrome(chromeType, cf, localeName + "communicator/");
+    registerChrome(chromeType, cf, localeName + "branding/");
 
     registerChrome(chromeType, cf, localeName + "messenger/");
     registerChrome(chromeType, cf, localeName + "messenger-smime/");
-    registerChrome(chromeType, cf, localeName + "messenger-mdn/");
 
     registerChrome(chromeType, cf, localeName + "editor/");
     registerChrome(chromeType, cf, localeName + "navigator/");
@@ -81,7 +81,7 @@ if(verifyDiskSpace(fProgram, srDest))
     // mesenger-mapi package exists only on windows.
     // Register this package only for windows.
     if (platformNode == "win")
-      registerChrome(chromeType, pf, localeName + "messenger-mapi/");
+      registerChrome(chromeType, cf, localeName + "messenger-mapi/");
  
     err = performInstall(); 
     logComment("performInstall() returned: " + err);

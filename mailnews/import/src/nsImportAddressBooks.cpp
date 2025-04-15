@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -295,8 +295,7 @@ NS_IMETHODIMP nsImportGenericAddressBooks::GetData(const char *dataId, nsISuppor
 		}
 		IMPORT_LOG1( "Requesting sample data #: %ld\n", (long)rNum);
 		if (m_pInterface) {
-			nsCOMPtr<nsISupportsString>	data;
-			rv = nsComponentManager::CreateInstance( kSupportsWStringCID, nsnull, NS_GET_IID(nsISupportsString), getter_AddRefs( data));
+			nsCOMPtr<nsISupportsString>	data = do_CreateInstance( kSupportsWStringCID, &rv);
 			if (NS_FAILED( rv))
 				return( rv);
 			PRUnichar *	pData = nsnull;
@@ -351,7 +350,7 @@ NS_IMETHODIMP nsImportGenericAddressBooks::SetData( const char *dataId, nsISuppo
 	}
 
 	if (!nsCRT::strcasecmp( dataId, "addressDestination")) {
-		if (item) {      
+		if (item) {
 			nsCOMPtr<nsISupportsCString> abString;
 			item->QueryInterface( NS_GET_IID(nsISupportsCString), getter_AddRefs( abString));
 			if (abString) {
@@ -778,29 +777,31 @@ nsIAddrDatabase *GetAddressBook( const PRUnichar *name, PRBool makeNew)
 	nsIAddrDatabase *	pDatabase = nsnull;
 
 	/* Get the profile directory */
-	// Note to Candice: This should return an nsIFileSpec, not a nsFileSpec
-	nsFileSpec *					dbPath = nsnull;
+	nsCOMPtr<nsILocalFile> dbPath;
 
 	NS_WITH_PROXIED_SERVICE(nsIAddrBookSession, abSession, NS_ADDRBOOKSESSION_CONTRACTID, NS_UI_THREAD_EVENTQ, &rv); 
 	
 	if (NS_SUCCEEDED(rv))
-		abSession->GetUserProfileDirectory(&dbPath);
-	if (dbPath) {
+		rv = abSession->GetUserProfileDirectory(getter_AddRefs(dbPath));
+	if (NS_SUCCEEDED(rv)) {
 		// Create a new address book file - we don't care what the file
 		// name is, as long as it's unique
-		(*dbPath) += "impab.mab";
-		(*dbPath).MakeUnique();
+		rv = dbPath->Append(NS_LITERAL_STRING("impab.mab"));
+        if (NS_SUCCEEDED(rv)) {
+          rv = dbPath->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
 		
-		IMPORT_LOG0( "Getting the address database factory\n");
+          if (NS_SUCCEEDED(rv)) {
+            IMPORT_LOG0( "Getting the address database factory\n");
 
-		NS_WITH_PROXIED_SERVICE(nsIAddrDatabase, addrDBFactory, NS_ADDRDATABASE_CONTRACTID, NS_UI_THREAD_EVENTQ, &rv);
-		if (NS_SUCCEEDED(rv) && addrDBFactory) {
-			
-			IMPORT_LOG0( "Opening the new address book\n");
-			rv = addrDBFactory->Open( dbPath, PR_TRUE, &pDatabase, PR_TRUE);
-		}
+            NS_WITH_PROXIED_SERVICE(nsIAddrDatabase, addrDBFactory, NS_ADDRDATABASE_CONTRACTID, NS_UI_THREAD_EVENTQ, &rv);
+            if (NS_SUCCEEDED(rv) && addrDBFactory) {
+		  	  IMPORT_LOG0( "Opening the new address book\n");
+			  rv = addrDBFactory->Open( dbPath, PR_TRUE, PR_TRUE, &pDatabase);
+            }
+          }
+        }
 	}
-	else {
+	if (NS_FAILED(rv)) {
 		IMPORT_LOG0( "Failed to get the user profile directory from the address book session\n");
 	}
 
@@ -830,15 +831,25 @@ nsIAddrDatabase *GetAddressBook( const PRUnichar *name, PRBool makeNew)
 			rv = proxyMgr->GetProxyForObject( NS_UI_THREAD_EVENTQ, NS_GET_IID( nsIAbDirectory),
 				parentResource, PROXY_SYNC | PROXY_ALWAYS, getter_AddRefs( parentDir));
 			if (parentDir)
-		       	{
+			{
 				nsCAutoString URI("moz-abmdbdirectory://");
-				URI.Append((*dbPath).GetLeafName());
-				parentDir->CreateDirectoryByURI(name, URI.get (), PR_FALSE);
-
-          delete dbPath;
+				nsCAutoString leafName;
+				rv = dbPath->GetNativeLeafName(leafName);
+				if (NS_FAILED(rv)) {
+				  IMPORT_LOG0( "*** Error: Unable to get name of database file\n");
+				}
+				else {
+				  URI.Append(leafName);
+				  rv = parentDir->CreateDirectoryByURI(name, URI.get (), PR_FALSE);
+				  if (NS_FAILED(rv))
+				    IMPORT_LOG0( "*** Error: Unable to create address book directory\n");
+				}
 			}
 
-			IMPORT_LOG0( "Added new address book to the UI\n");
+			if (NS_SUCCEEDED(rv))
+			  IMPORT_LOG0( "Added new address book to the UI\n");
+			else
+			  IMPORT_LOG0( "*** Error: An error occurred while adding the address book to the UI\n");
 		}
 	}
 	

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,27 +14,27 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Navin Gupta <naving@netscape.com> (Original Developer)
- *  Seth Spitzer <sspitzer@netscape.com>
- *
+ *   Navin Gupta <naving@netscape.com> (Original Developer)
+ *   Seth Spitzer <sspitzer@netscape.com>
+ *   David Bienvenu <bienvenu@mozilla.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -60,6 +60,7 @@
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
 #include "prlog.h"
+#include "nsMsgFolderFlags.h"
 
 static PRLogModuleInfo *MsgPurgeLogModule = nsnull;
 
@@ -74,20 +75,17 @@ void OnPurgeTimer(nsITimer *timer, void *aPurgeService)
 nsMsgPurgeService::nsMsgPurgeService()
 {
   mHaveShutdown = PR_FALSE;
-  mMinDelayBetweenPurges = 480;  // never purge a junk folder more than once every 8 hours (60 min/hour * 8 hours)
+  mMinDelayBetweenPurges = 480;  // never purge a folder more than once every 8 hours (60 min/hour * 8 hours)
   mPurgeTimerInterval = 5;  // fire the purge timer every 5 minutes, starting 5 minutes after the service is created (when we load accounts)
 }
 
 nsMsgPurgeService::~nsMsgPurgeService()
 {
-  if (mPurgeTimer) {
+  if (mPurgeTimer)
     mPurgeTimer->Cancel();
-  }
   
   if(!mHaveShutdown)
-  {
     Shutdown();
-  }
 }
 
 NS_IMETHODIMP nsMsgPurgeService::Init()
@@ -103,15 +101,13 @@ NS_IMETHODIMP nsMsgPurgeService::Init()
   {
     PRInt32 min_delay;
     rv = prefBranch->GetIntPref("mail.purge.min_delay", &min_delay);
-    if (NS_SUCCEEDED(rv) &&  min_delay) {
+    if (NS_SUCCEEDED(rv) &&  min_delay) 
       mMinDelayBetweenPurges = min_delay;
-    }    
     
     PRInt32 purge_timer_interval;
     rv = prefBranch->GetIntPref("mail.purge.timer_interval", &purge_timer_interval);
-    if (NS_SUCCEEDED(rv) &&  purge_timer_interval) {
+    if (NS_SUCCEEDED(rv) &&  purge_timer_interval) 
       mPurgeTimerInterval = purge_timer_interval;
-    }    
   }
   
   PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("mail.purge.min_delay=%d minutes",mMinDelayBetweenPurges));
@@ -157,7 +153,15 @@ nsresult nsMsgPurgeService::SetupNextPurge()
   return NS_OK;
 }
 
-// This is the function that looks for the first folder to purge
+// This is the function that looks for the first folder to purge. It also 
+// applies retention settings to any folder that hasn't had retention settings
+// applied in mMinDelayBetweenPurges minutes (default, 8 hours).
+// However, if we've spent more than .5 seconds in this loop, don't
+// apply any more retention settings because it might lock up the UI.
+// This might starve folders later on in the hierarchy, since we always
+// start at the top, but since we also apply retention settings when you
+// open a folder, or when you compact all folders, I think this will do
+// for now, until we have a cleanup on shutdown architecture.
 nsresult nsMsgPurgeService::PerformPurge()
 {
   PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("performing purge"));
@@ -166,6 +170,7 @@ nsresult nsMsgPurgeService::PerformPurge()
   
   nsCOMPtr <nsIMsgAccountManager> accountManager = do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv,rv);
+  PRBool keepApplyingRetentionSettings = PR_TRUE;
 
   nsCOMPtr<nsISupportsArray> allServers;
   rv = accountManager->GetAllServers(getter_AddRefs(allServers));
@@ -175,14 +180,87 @@ nsresult nsMsgPurgeService::PerformPurge()
     rv = allServers->Count(&numServers);
     PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("%d servers", numServers));
     nsCOMPtr<nsIMsgFolder> folderToPurge;
+    PRIntervalTime startTime = PR_IntervalNow();
     PRInt32 purgeIntervalToUse;
-    PRInt64 oldestPurgeTime = 0; // we're going to pick the least-recently purged folder
+    nsTime oldestPurgeTime = 0; // we're going to pick the least-recently purged folder
+
+    // apply retention settings to folders that haven't had retention settings
+    // applied in mMinDelayBetweenPurges minutes (default 8 hours)
+    // Because we get last purge time from the folder cache,
+    // this code won't open db's for folders until it decides it needs
+    // to apply retention settings, and since nsIMsgFolder::ApplyRetentionSettings
+    // will close any db's it opens, this code won't leave db's open.
     for (PRUint32 serverIndex=0; serverIndex < numServers; serverIndex++)
     {
       nsCOMPtr <nsIMsgIncomingServer> server =
         do_QueryElementAt(allServers, serverIndex, &rv);
       if (NS_SUCCEEDED(rv) && server)
       {
+        if (keepApplyingRetentionSettings)
+        {
+          nsCOMPtr <nsIMsgFolder> rootFolder;
+          rv = server->GetRootFolder(getter_AddRefs(rootFolder));
+          NS_ENSURE_SUCCESS(rv, rv);
+
+          nsCOMPtr <nsISupportsArray> childFolders = do_CreateInstance(NS_SUPPORTSARRAY_CONTRACTID, &rv);
+          NS_ENSURE_SUCCESS(rv, rv);
+          rv = rootFolder->ListDescendents(childFolders);
+
+          PRUint32 cnt =0;  
+          childFolders->Count(&cnt);
+
+          nsCOMPtr<nsISupports> supports;
+          nsCOMPtr<nsIUrlListener> urlListener;
+          nsCOMPtr<nsIMsgFolder> childFolder;
+
+          for (PRUint32 index = 0; index < cnt; index++)
+          {
+            childFolder = do_QueryElementAt(childFolders, index);
+            if (childFolder)
+            {
+              PRUint32 folderFlags;
+              (void) childFolder->GetFlags(&folderFlags);
+              if (folderFlags & MSG_FOLDER_FLAG_VIRTUAL)
+                continue;
+              nsTime curFolderLastPurgeTime=0;
+              nsXPIDLCString curFolderLastPurgeTimeString, curFolderUri;
+              rv = childFolder->GetStringProperty("LastPurgeTime", getter_Copies(curFolderLastPurgeTimeString));
+              if (NS_FAILED(rv))  
+                continue; // it is ok to fail, go on to next folder
+                
+              if (!curFolderLastPurgeTimeString.IsEmpty())
+              {
+                PRInt64 theTime;
+                PR_ParseTimeString(curFolderLastPurgeTimeString.get(), PR_FALSE, &theTime);
+                curFolderLastPurgeTime = theTime;
+              }
+  
+              childFolder->GetURI(getter_Copies(curFolderUri));
+              PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("%s curFolderLastPurgeTime=%s (if blank, then never)", curFolderUri.get(), curFolderLastPurgeTimeString.get()));
+
+              // check if this folder is due to purge
+              // has to have been purged at least mMinDelayBetweenPurges minutes ago
+              // we don't want to purge the folders all the time - once a day is good enough
+              nsInt64 minDelayBetweenPurges(mMinDelayBetweenPurges);
+              nsInt64 microSecondsPerMinute(60000000);
+              nsTime nextPurgeTime = curFolderLastPurgeTime + (minDelayBetweenPurges * microSecondsPerMinute);
+              nsTime currentTime; // nsTime defaults to PR_Now
+              if (nextPurgeTime < currentTime)
+              {
+                PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("purging %s", curFolderUri.get()));
+                childFolder->ApplyRetentionSettings();
+              }
+              PRIntervalTime elapsedTime;
+              LL_SUB(elapsedTime, PR_IntervalNow(), startTime);
+              // check if more than 500 milliseconds have elapsed in this purge process
+              if (PR_IntervalToMilliseconds(elapsedTime) > 500)
+              {
+                keepApplyingRetentionSettings = PR_FALSE;
+                break;
+              }
+            }
+          }
+        }
         nsXPIDLCString type;
         nsresult rv = server->GetType(getter_Copies(type));
         NS_ENSURE_SUCCESS(rv, rv);
@@ -193,20 +271,10 @@ nsresult nsMsgPurgeService::PerformPurge()
         nsCOMPtr<nsIMsgProtocolInfo> protocolInfo =
           do_GetService(contractid.get(), &rv);
         NS_ENSURE_SUCCESS(rv, PR_FALSE);
-        
-        PRBool canGetIncomingMessages = PR_FALSE;
-        protocolInfo->GetCanGetIncomingMessages(&canGetIncomingMessages);
 
         nsXPIDLCString realHostName;
         server->GetRealHostName(getter_Copies(realHostName));
         PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("[%d] %s (%s)", serverIndex, realHostName.get(), type.get()));
-        PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("[%d] canGetIncomingMessages=%s (if false, don't purge)", serverIndex, canGetIncomingMessages ? "true" : "false"));
-
-        // if this server can get incoming messages
-        // if not skip it.
-        // (as we don't do junk on it, see junkMail.xul)
-        if (!canGetIncomingMessages)
-          continue;
 
         nsCOMPtr <nsISpamSettings> spamSettings;
         rv = server->GetSpamSettings(getter_AddRefs(spamSettings));
@@ -247,25 +315,25 @@ nsresult nsMsgPurgeService::PerformPurge()
         if (!junkFolder)
           continue;  
     
-        nsTime lastPurgeTime=0;
-        nsXPIDLCString lastPurgeTimeString;
-        rv = junkFolder->GetStringProperty("lastPurgeTime", getter_Copies(lastPurgeTimeString));
+        nsTime curJunkFolderLastPurgeTime=0;
+        nsXPIDLCString curJunkFolderLastPurgeTimeString;
+        rv = junkFolder->GetStringProperty("curJunkFolderLastPurgeTime", getter_Copies(curJunkFolderLastPurgeTimeString));
         if (NS_FAILED(rv))  
           continue; // it is ok to fail, junk folder may not exist
                 
-        if (!lastPurgeTimeString.IsEmpty())
+        if (!curJunkFolderLastPurgeTimeString.IsEmpty())
         {
           PRInt64 theTime;
-          PR_ParseTimeString(lastPurgeTimeString.get(), PR_FALSE, &theTime);
-          lastPurgeTime = theTime;
+          PR_ParseTimeString(curJunkFolderLastPurgeTimeString.get(), PR_FALSE, &theTime);
+          curJunkFolderLastPurgeTime = theTime;
         }
   
-        PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("[%d] %s lastPurgeTime=%s (if blank, then never)", serverIndex, junkFolderURI.get(), lastPurgeTimeString.get()));
+        PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("[%d] %s curJunkFolderLastPurgeTime=%s (if blank, then never)", serverIndex, junkFolderURI.get(), curJunkFolderLastPurgeTimeString.get()));
 
         // check if this account is due to purge
         // has to have been purged at least mMinDelayBetweenPurges minutes ago
         // we don't want to purge the folders all the time
-        nsTime nextPurgeTime = lastPurgeTime + nsInt64(mMinDelayBetweenPurges * 60000000 /* convert mMinDelayBetweenPurges to into microseconds */);
+        nsTime nextPurgeTime = curJunkFolderLastPurgeTime + nsInt64(mMinDelayBetweenPurges * 60000000 /* convert mMinDelayBetweenPurges to into microseconds */);
         nsTime currentTime;
         if (nextPurgeTime < currentTime) 
         {
@@ -294,13 +362,16 @@ nsresult nsMsgPurgeService::PerformPurge()
           {
             PRInt32 purgeInterval;
             spamSettings->GetPurgeInterval(&purgeInterval);
-            PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("[%d] purging! searching for messages older than %d days", serverIndex, purgeInterval));
 
-            if (!oldestPurgeTime || LL_CMP(oldestPurgeTime, >, lastPurgeTime))
+            if ((oldestPurgeTime == nsInt64(0)) || (curJunkFolderLastPurgeTime < oldestPurgeTime))
             {
-              oldestPurgeTime = lastPurgeTime;
+              PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("[%d] purging! searching for messages older than %d days", serverIndex, purgeInterval));
+              oldestPurgeTime = curJunkFolderLastPurgeTime;
               purgeIntervalToUse = purgeInterval;
               folderToPurge = junkFolder;
+              // if we've never purged this folder, do it...
+              if (curJunkFolderLastPurgeTime == nsInt64(0))
+                break;
             }
           }
           else {
@@ -335,8 +406,8 @@ nsresult nsMsgPurgeService::SearchFolderToPurge(nsIMsgFolder *folder, PRInt32 pu
   PRExplodedTime exploded;
   PR_ExplodeTime(PR_Now(), PR_LocalTimeParameters, &exploded);
   PR_FormatTimeUSEnglish(dateBuf, sizeof(dateBuf), "%a %b %d %H:%M:%S %Y", &exploded);
-  folder->SetStringProperty("lastPurgeTime", dateBuf);
-  PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("lastPurgeTime is now %s", dateBuf));
+  folder->SetStringProperty("curJunkFolderLastPurgeTime", dateBuf);
+  PR_LOG(MsgPurgeLogModule, PR_LOG_ALWAYS, ("curJunkFolderLastPurgeTime is now %s", dateBuf));
 
   nsCOMPtr<nsIMsgIncomingServer> server;
   rv = folder->GetServer(getter_AddRefs(server)); //we need to get the folder's server scope because imap can have local junk folder

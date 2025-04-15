@@ -1,28 +1,45 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *   Masaki Katakai <katakai@japan.sun.com>
  *   Jessica Blanco <jblanco@us.ibm.com>
  *   Asko Tontti <atontti@cc.hut.fi>
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
- */
+ *   Peter Weilbacher <mozilla@weilbacher.org>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 var dialog;
 var printService       = null;
@@ -33,10 +50,8 @@ var paramBlock;
 var gPrefs             = null;
 var gPrintSettings     = null;
 var gWebBrowserPrint   = null;
-var default_file       = "mozilla.ps";
 var gPrintSetInterface = Components.interfaces.nsIPrintSettings;
 var doDebug            = false;
-var gFileFromPicker    = "";
 
 //---------------------------------------------------
 function initDialog()
@@ -44,10 +59,7 @@ function initDialog()
   dialog = new Object;
 
   dialog.propertiesButton = document.getElementById("properties");
-
-  dialog.destGroup       = document.getElementById("destGroup");
-  dialog.fileRadio       = document.getElementById("fileRadio");
-  dialog.printerRadio    = document.getElementById("printerRadio");
+  dialog.descText         = document.getElementById("descText");
 
   dialog.printrangeGroup = document.getElementById("printrangeGroup");
   dialog.allpagesRadio   = document.getElementById("allpagesRadio");
@@ -66,16 +78,13 @@ function initDialog()
   dialog.eachframesepRadio    = document.getElementById("eachframesepRadio");
   dialog.printframeGroupLabel = document.getElementById("printframeGroupLabel");
 
-  dialog.fileInput       = document.getElementById("fileInput");
-  dialog.fileLabel       = document.getElementById("fileLabel");
+  dialog.fileCheck       = document.getElementById("fileCheck");
   dialog.printerLabel    = document.getElementById("printerLabel");
-  dialog.chooseButton    = document.getElementById("chooseFile");
   dialog.printerList     = document.getElementById("printerList");
 
   dialog.printButton     = document.documentElement.getButton("accept");
 
-  // <data> elements
-  dialog.printName       = document.getElementById("printButton");
+  // <data> element
   dialog.fpDialog        = document.getElementById("fpDialog");
 
   dialog.enabled         = false;
@@ -105,17 +114,17 @@ function stripTrailingWhitespace(element)
 }
 
 //---------------------------------------------------
-function doEnablePrintToFile(value)
+function getPrinterDescription(printerName)
 {
-  if (value) {
-    dialog.fileLabel.removeAttribute("disabled");
-    dialog.fileInput.removeAttribute("disabled");
-    dialog.chooseButton.removeAttribute("disabled");
-  } else {
-    dialog.fileLabel.setAttribute("disabled","true");
-    dialog.fileInput.setAttribute("disabled","true");
-    dialog.chooseButton.setAttribute("disabled","true");
+  var s = "";
+
+  try {
+    /* This may not work with non-ASCII test (see bug 235763 comment #16) */
+    s = gPrefs.getCharPref("print.printer_" + printerName + ".printer_description")
+  } catch(e) {
   }
+    
+  return s;
 }
 
 //---------------------------------------------------
@@ -130,13 +139,16 @@ listElement.prototype =
       function ()
         {
           // remove the menupopup node child of the menulist.
-          this.listElement.removeChild(this.listElement.firstChild);
+          var popup = this.listElement.firstChild;
+          if (popup) {
+            this.listElement.removeChild(popup);
+          }
         },
 
     appendPrinterNames: 
       function (aDataObject) 
         { 
-          var popupNode = document.createElement("menupopup"); 
+          var list = document.getElementById("printerList"); 
           var strDefaultPrinterName = "";
           var printerName;
 
@@ -147,10 +159,8 @@ listElement.prototype =
             var printerNameStr = printerName.toString();
             if (strDefaultPrinterName == "")
                strDefaultPrinterName = printerNameStr;
-            var itemNode = document.createElement("menuitem");
-            itemNode.setAttribute("value", printerNameStr);
-            itemNode.setAttribute("label", printerNameStr);
-            popupNode.appendChild(itemNode);
+
+            list.appendItem(printerNameStr, printerNameStr, getPrinterDescription(printerNameStr));
           }
           if (strDefaultPrinterName != "") {
             this.listElement.removeAttribute("disabled");
@@ -161,16 +171,12 @@ listElement.prototype =
 
             // disable dialog
             this.listElement.setAttribute("disabled", "true");
-            dialog.destGroup.setAttribute("disabled","true");
-            dialog.printerRadio.setAttribute("disabled","true");
             dialog.printerLabel.setAttribute("disabled","true");
             dialog.propertiesButton.setAttribute("disabled","true");
-            dialog.fileRadio.setAttribute("disabled","true");
+            dialog.fileCheck.setAttribute("disabled","true");
             dialog.printButton.setAttribute("disabled","true");
-            doEnablePrintToFile(false);
           }
 
-          this.listElement.appendChild(popupNode); 
           return strDefaultPrinterName;
         } 
   };
@@ -196,6 +202,8 @@ function getPrinters()
 function setPrinterDefaultsForSelectedPrinter()
 {
   gPrintSettings.printerName = dialog.printerList.value;
+  
+  dialog.descText.value = getPrinterDescription(gPrintSettings.printerName);
   
   // First get any defaults from the printer 
   printService.initPrintSettingsFromPrinter(gPrintSettings.printerName, gPrintSettings);
@@ -244,7 +252,6 @@ function doPrintRange(inx)
 function loadDialog()
 {
   var print_copies        = 1;
-  var print_file          = default_file;
   var print_selection_radio_enabled = false;
   var print_frametype     = gPrintSetInterface.kSelectedFrame;
   var print_howToEnableUI = gPrintSetInterface.kFrameEnableNone;
@@ -271,31 +278,17 @@ function loadDialog()
     gOriginalNumCopies  = gPrintSettings.numCopies;
 
     print_copies        = gPrintSettings.numCopies;
-    print_file          = gPrintSettings.toFileName;
     print_frametype     = gPrintSettings.printFrameType;
     print_howToEnableUI = gPrintSettings.howToEnableFrameUI;
     print_selection_radio_enabled = gPrintSettings.GetPrintOptions(gPrintSetInterface.kEnableSelectionRB);
   }
 
-  if (print_tofile) {
-    dialog.destGroup.selectedItem = dialog.fileRadio;
-    doEnablePrintToFile(true);
-  } else {
-    dialog.destGroup.selectedItem = dialog.printerRadio;
-    doEnablePrintToFile(false);
-  }
-
   if (doDebug) {
     dump("loadDialog*********************************************\n");
-    dump("toFileName              ["+print_file+"]\n");
     dump("print_tofile            "+print_tofile+"\n");
     dump("print_frame             "+print_frametype+"\n");
     dump("print_howToEnableUI     "+print_howToEnableUI+"\n");
     dump("selection_radio_enabled "+print_selection_radio_enabled+"\n");
-  }
-
-  if (print_file == "") {
-    print_file = default_file;
   }
 
   dialog.printrangeGroup.selectedItem = dialog.allpagesRadio;
@@ -308,12 +301,6 @@ function loadDialog()
   dialog.frompageInput.value  = 1;
   dialog.topageInput.value    = 1;
   dialog.numCopiesInput.value = print_copies;
-
-  dialog.fileInput.value   = print_file;
-
-  if (gPrintSettings.toFileName != "") {
-    dialog.fileInput.value = gPrintSettings.toFileName;
-  }
 
   if (doDebug) {
     dump("print_howToEnableUI: "+print_howToEnableUI+"\n");
@@ -346,8 +333,6 @@ function loadDialog()
     dialog.eachframesepRadio.setAttribute("disabled","true");
     dialog.printframeGroupLabel.setAttribute("disabled","true");
   }
-
-  dialog.printButton.label = dialog.printName.getAttribute("label");
 }
 
 //---------------------------------------------------
@@ -372,44 +357,17 @@ function onLoad()
 //---------------------------------------------------
 function onAccept()
 {
-
   if (gPrintSettings != null) {
     var print_howToEnableUI = gPrintSetInterface.kFrameEnableNone;
-    var stringBundle = srGetStrBundle("chrome://global/locale/printing.properties");
-    var promptService = Components.classes["@mozilla.org/embedcomp/prompt-service;1"]
-                        .getService(Components.interfaces.nsIPromptService);
-
-    if (dialog.fileRadio.selected && dialog.fileInput.value == "") {
-      var titleText = stringBundle.GetStringFromName("noPrintFilename.title");
-      var alertText = stringBundle.GetStringFromName("noPrintFilename.alert");
-      promptService.alert(this.window, titleText, alertText);
-      return false;
-    }
 
     // save these out so they can be picked up by the device spec
-    gPrintSettings.printToFile = dialog.fileRadio.selected;
+    gPrintSettings.printerName = dialog.printerList.value;
     print_howToEnableUI        = gPrintSettings.howToEnableFrameUI;
+    gPrintSettings.printToFile = dialog.fileCheck.checked;
 
-    // save these out so they can be picked up by the device spec
-    gPrintSettings.toFileName   = dialog.fileInput.value;
-    gPrintSettings.printerName  = dialog.printerList.value;
-
-    if (gPrintSettings.printToFile) {
-      if (gPrintSettings.toFileName == "")
+    if (gPrintSettings.printToFile)
+      if (!chooseFile())
         return false;
-      var sfile = Components.classes["@mozilla.org/file/local;1"]
-                  .createInstance(Components.interfaces.nsILocalFile);
-      sfile.initWithPath(gPrintSettings.toFileName);
-      if (sfile.exists() &&
-        gPrintSettings.toFileName != gFileFromPicker) {
-        var desc = stringBundle.formatStringFromName("fileConfirm.exists",
-                                                     [gPrintSettings.toFileName],
-                                                     1);
-        if (!promptService.confirm(this.window, null, desc)) {
-          return false;
-        }
-      }
-    }
 
     if (dialog.allpagesRadio.selected) {
       gPrintSettings.printRange = gPrintSetInterface.kRangeAllPages;
@@ -452,14 +410,17 @@ function onAccept()
   saveToPrefs = gPrefs.getBoolPref("print.save_print_settings");
 
   if (saveToPrefs && printService != null) {
-    var flags = gPrintSetInterface.kInitSavePaperSizeType | 
-                gPrintSetInterface.kInitSavePaperSizeUnit |
-                gPrintSetInterface.kInitSavePaperWidth    | 
-                gPrintSetInterface.kInitSavePaperHeight   |
-                gPrintSetInterface.kInitSavePaperName     | 
-                gPrintSetInterface.kInitSaveInColor       |
-                gPrintSetInterface.kInitSavePrintCommand  |
-                gPrintSetInterface.kInitSaveShrinkToFit   |
+    var flags = gPrintSetInterface.kInitSavePaperSizeType  | 
+                gPrintSetInterface.kInitSavePaperSizeUnit  |
+                gPrintSetInterface.kInitSavePaperWidth     | 
+                gPrintSetInterface.kInitSavePaperHeight    |
+                gPrintSetInterface.kInitSavePaperName      | 
+                gPrintSetInterface.kInitSaveColorSpace     |
+                gPrintSetInterface.kInitSaveInColor        |
+                gPrintSetInterface.kInitSaveResolutionName |
+                gPrintSetInterface.kInitSaveDownloadFonts  |
+                gPrintSetInterface.kInitSavePrintCommand   |
+                gPrintSetInterface.kInitSaveShrinkToFit    |
                 gPrintSetInterface.kInitSaveScaling;
     printService.savePrintSettingsToPrefs(gPrintSettings, true, flags);
   }
@@ -472,7 +433,6 @@ function onAccept()
   }
 
   return true;
-
 }
 
 //---------------------------------------------------
@@ -490,22 +450,22 @@ function onCancel()
 
 //---------------------------------------------------
 const nsIFilePicker = Components.interfaces.nsIFilePicker;
-function onChooseFile()
+function chooseFile()
 {
-  if (dialog.fileRadio.selected == false)
-    return;
-
   try {
-    var fp = Components.classes["@mozilla.org/filepicker;1"].createInstance(nsIFilePicker);
+    var fp = Components.classes["@mozilla.org/filepicker;1"]
+             .createInstance(nsIFilePicker);
     fp.init(window, dialog.fpDialog.getAttribute("label"), nsIFilePicker.modeSave);
     fp.appendFilters(nsIFilePicker.filterAll);
-    fp.show();
-    if (fp.file && fp.file.path.length > 0) {
-      dialog.fileInput.value = fp.file.path;
-      gFileFromPicker = dialog.fileInput.value;
+    if (fp.show() != Components.interfaces.nsIFilePicker.returnCancel &&
+        fp.file && fp.file.path) {
+      gPrintSettings.toFileName = fp.file.path;
+      return true;
     }
   } catch(ex) {
     dump(ex);
   }
+
+  return false;
 }
 

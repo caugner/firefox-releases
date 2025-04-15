@@ -47,6 +47,7 @@
 #include "nsICategoryManager.h"
 #include "nsIComponentLoader.h"
 #include "nsIComponentManager.h"
+#include "nsIComponentManagerObsolete.h"
 #include "nsIGenericFactory.h"
 #include "nsILocalFile.h"
 #include "nsIModule.h"
@@ -64,8 +65,6 @@
 #include "nsString.h"
 #ifndef XPCONNECT_STANDALONE
 #include "nsIScriptSecurityManager.h"
-#include "nsIScriptObjectPrincipal.h"
-#include "nsIPrincipalObsolete.h"
 #include "nsIURL.h"
 #include "nsIStandardURL.h"
 #include "nsNetUtil.h"
@@ -166,11 +165,6 @@ Dump(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
     char *bytes = JS_GetStringBytes(str);
     bytes = nsCRT::strdup(bytes);
 
-#ifdef XP_MAC
-    for (char *c = bytes; *c; c++)
-        if (*c == '\r')
-            *c = '\n';
-#endif
     fputs(bytes, stderr);
     nsMemory::Free(bytes);
     return JS_TRUE;
@@ -186,224 +180,15 @@ Debug(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
 #endif
 }
 
-#ifndef XPCONNECT_STANDALONE
-
-static JSFunctionSpec gSandboxFun[] = {
-    {"dump", Dump, 1 },
-    {"debug", Debug, 1 },
-    {0}
-};
-
-JS_STATIC_DLL_CALLBACK(JSBool)
-sandbox_enumerate(JSContext *cx, JSObject *obj)
-{
-    return JS_EnumerateStandardClasses(cx, obj);
-}
-
-JS_STATIC_DLL_CALLBACK(JSBool)
-sandbox_resolve(JSContext *cx, JSObject *obj, jsval id)
-{
-    JSBool resolved;
-    return JS_ResolveStandardClass(cx, obj, id, &resolved);
-}
-
-static JSClass js_SandboxClass = {
-    "Sandbox", 0,
-    JS_PropertyStub,   JS_PropertyStub, JS_PropertyStub, JS_PropertyStub,
-    sandbox_enumerate, sandbox_resolve, JS_ConvertStub,  JS_FinalizeStub,
-    JSCLASS_NO_OPTIONAL_MEMBERS
-};
-
-JS_STATIC_DLL_CALLBACK(JSBool)
-NewSandbox(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval)
-{
-    nsresult rv;
-    nsCOMPtr<nsIXPConnect> xpc = do_GetService(kXPConnectServiceContractID,
-                                               &rv);
-    if (!xpc) {
-        JS_ReportError(cx, "Unable to get XPConnect service: %08lx", rv);
-        return JS_FALSE;
-    }
-    
-    /*
-     * We're not likely to see much action on this context, so keep stack-arena
-     * chunk size small to reduce bloat.
-     */
-    JSContext *sandcx = JS_NewContext(JS_GetRuntime(cx), 1024);
-    if (!sandcx) {
-        JS_ReportOutOfMemory(cx);
-        return JS_FALSE;
-    }
-
-    JSBool ok = JS_FALSE;
-    JSObject *sandbox = JS_NewObject(sandcx, &js_SandboxClass, nsnull, nsnull);
-    if (!sandbox)
-        goto out;
-
-    JS_SetGlobalObject(sandcx, sandbox);
-
-    ok = JS_DefineFunctions(sandcx, sandbox, gSandboxFun) &&
-        NS_SUCCEEDED(xpc->InitClasses(sandcx, sandbox));
-    
-    *rval = OBJECT_TO_JSVAL(sandbox);
- out:
-    JS_DestroyContext(sandcx);
-    return ok;
-}        
-
-JS_STATIC_DLL_CALLBACK(JSBool)
-EvalInSandbox(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, 
-              jsval *rval)
-{
-    JSPrincipals* jsPrincipals;
-    JSString* source;
-    const jschar * URL;
-    JSObject* sandbox;
-    
-    if (!JS_ConvertArguments(cx, argc, argv, "SoW", &source, &sandbox, &URL))
-        return JS_FALSE;
-
-    if (!JS_InstanceOf(cx, sandbox, &js_SandboxClass, NULL)) {
-        JSClass *clasp = JS_GetClass(cx, sandbox);
-        const char *className = clasp ? clasp->name : "<unknown!>";
-        JS_ReportError(cx,
-      "evalInSandbox passed object of class %s instead of Sandbox", className);
-        return JS_FALSE;
-    }
-
-    NS_ConvertUCS2toUTF8 URL8((const PRUnichar *)URL);
-    nsCOMPtr<nsIURL> iURL;
-    nsCOMPtr<nsIStandardURL> stdUrl =
-        do_CreateInstance(kStandardURLContractID);
-    if (!stdUrl ||
-        NS_FAILED(stdUrl->Init(nsIStandardURL::URLTYPE_STANDARD, 80,
-                               URL8, nsnull, nsnull)) ||
-        !(iURL = do_QueryInterface(stdUrl))) {
-        JS_ReportError(cx, "Can't create URL for evalInSandbox");
-        return JS_FALSE;
-    }
-    
-    nsCOMPtr<nsIPrincipal> principal;
-    nsCOMPtr<nsIScriptSecurityManager> secman = 
-        do_GetService(kScriptSecurityManagerContractID);
-    if (!secman ||
-        NS_FAILED(secman->GetCodebasePrincipal(iURL,
-                                               getter_AddRefs(principal))) ||
-        !principal ||
-        NS_FAILED(principal->GetJSPrincipals(cx, &jsPrincipals)) ||
-        !jsPrincipals) {
-        JS_ReportError(cx, "Can't get principals for evalInSandbox");
-        return JS_FALSE;
-    }
-    
-    JSBool ok;
-    JSContext *sandcx = JS_NewContext(JS_GetRuntime(cx), 8192);
-    if (!sandcx) {
-        JS_ReportError(cx, "Can't prepare context for evalInSandbox");
-        ok = JS_FALSE;
-    } else {
-        JS_SetGlobalObject(sandcx, sandbox);
-        JS_SetErrorReporter(sandcx, Reporter);
-
-        ok = JS_EvaluateUCScriptForPrincipals(sandcx, sandbox, jsPrincipals,
-                                              JS_GetStringChars(source),
-                                              JS_GetStringLength(source),
-                                              URL8.get(), 1, rval);
-        JS_DestroyContext(sandcx);
-    }
-    JSPRINCIPALS_DROP(cx, jsPrincipals);
-    return ok;
-}        
-
-#endif /* XPCONNECT_STANDALONE */
-
 static JSFunctionSpec gGlobalFun[] = {
     {"dump", Dump, 1 },
     {"debug", Debug, 1 },
-#ifndef XPCONNECT_STANDALONE
-    {"Sandbox", NewSandbox, 0 },
-    {"evalInSandbox", EvalInSandbox, 3 },
-#endif
     {0}
 };
 
-#ifndef XPCONNECT_STANDALONE
-class BackstagePass : public nsIScriptObjectPrincipal, public nsIXPCScriptable
-{
-public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIXPCSCRIPTABLE
-  
-  NS_IMETHOD GetPrincipalObsolete(nsIPrincipalObsolete **aPrincipal) {
-    return CallQueryInterface(mPrincipal, aPrincipal);
-  }
-
-  NS_IMETHOD GetPrincipal(nsIPrincipal **aPrincipal) {
-    NS_ADDREF(*aPrincipal = mPrincipal);
-    return NS_OK;
-  }
-
-  BackstagePass(nsIPrincipal *prin) :
-    mPrincipal(prin)
-  {
-  }
-
-  virtual ~BackstagePass() { }
-
-private:
-  nsCOMPtr<nsIPrincipal> mPrincipal;
-};
-
-NS_IMPL_THREADSAFE_ISUPPORTS2(BackstagePass, nsIScriptObjectPrincipal, nsIXPCScriptable)
-
-#else
-
-class BackstagePass : public nsIXPCScriptable
-{
-public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIXPCSCRIPTABLE
-
-  BackstagePass()
-  {
-  }
-
-  virtual ~BackstagePass() { }
-};
-
-NS_IMPL_THREADSAFE_ISUPPORTS1(BackstagePass, nsIXPCScriptable)
-
-#endif
-
-// The nsIXPCScriptable map declaration that will generate stubs for us...
-#define XPC_MAP_CLASSNAME           BackstagePass
-#define XPC_MAP_QUOTED_CLASSNAME   "BackstagePass"
-#define                             XPC_MAP_WANT_NEWRESOLVE
-#define XPC_MAP_FLAGS       nsIXPCScriptable::USE_JSSTUB_FOR_ADDPROPERTY   | \
-                            nsIXPCScriptable::USE_JSSTUB_FOR_DELPROPERTY   | \
-                            nsIXPCScriptable::USE_JSSTUB_FOR_SETPROPERTY   | \
-                            nsIXPCScriptable::DONT_ENUM_STATIC_PROPS       | \
-                            nsIXPCScriptable::DONT_ENUM_QUERY_INTERFACE    | \
-                            nsIXPCScriptable::DONT_REFLECT_INTERFACE_NAMES
-#include "xpc_map_end.h" /* This will #undef the above */
-
-/* PRBool newResolve (in nsIXPConnectWrappedNative wrapper, in JSContextPtr cx, in JSObjectPtr obj, in JSVal id, in PRUint32 flags, out JSObjectPtr objp); */
-NS_IMETHODIMP
-BackstagePass::NewResolve(nsIXPConnectWrappedNative *wrapper,
-                          JSContext * cx, JSObject * obj,
-                          jsval id, PRUint32 flags, 
-                          JSObject * *objp, PRBool *_retval)
-{
-    JSBool resolved;
-
-    *_retval = JS_ResolveStandardClass(cx, obj, id, &resolved);
-    if (*_retval && resolved)
-        *objp = obj;
-    return NS_OK;
-}
-
 mozJSComponentLoader::mozJSComponentLoader()
     : mRuntime(nsnull),
+      mContext(nsnull),
       mModules(nsnull),
       mGlobals(nsnull),
       mInitialized(PR_FALSE)
@@ -413,8 +198,10 @@ mozJSComponentLoader::mozJSComponentLoader()
 static PRIntn PR_CALLBACK
 UnrootGlobals(PLHashEntry *he, PRIntn i, void *arg)
 {
-    JSRuntime *rt = (JSRuntime *)arg;
-    JS_RemoveRootRT(rt, &he->value);
+    JSContext *cx = (JSContext *)arg;
+    JSObject *global = (JSObject *)he->value;
+    JS_ClearScope(cx, global);
+    JS_RemoveRoot(cx, &he->value);
     nsCRT::free((char *)he->key);
     return HT_ENUMERATE_REMOVE;
 }
@@ -478,7 +265,7 @@ NS_IMETHODIMP
 mozJSComponentLoader::Init(nsIComponentManager *aCompMgr, nsISupports *aReg)
 {
     mCompMgr = aCompMgr;
-         
+
     nsresult rv;
     mLoaderManager = do_QueryInterface(mCompMgr, &rv);
     if (NS_FAILED(rv))
@@ -502,6 +289,14 @@ mozJSComponentLoader::ReallyInit()
     if (NS_FAILED(rv) ||
         NS_FAILED(rv = mRuntimeService->GetRuntime(&mRuntime)))
         return rv;
+
+    // Create our compilation context.
+    mContext = JS_NewContext(mRuntime, 256);
+    if (!mContext)
+        return NS_ERROR_OUT_OF_MEMORY;
+
+    uint32 options = JS_GetOptions(mContext);
+    JS_SetOptions(mContext, options | JSOPTION_XML);
 
 #ifndef XPCONNECT_STANDALONE
     nsCOMPtr<nsIScriptSecurityManager> secman = 
@@ -922,9 +717,7 @@ mozJSComponentLoader::ModuleForLocation(const char *registryLocation,
     if (!xpc)
         return nsnull;
 
-    JSCLAutoContext cx(mRuntime);
-    if(NS_FAILED(cx.GetError()))
-        return nsnull;
+    JSCLContextHelper cx(mContext);
 
     JSObject* cm_jsobj;
     nsCOMPtr<nsIXPConnectJSObjectHolder> cm_holder;
@@ -950,17 +743,23 @@ mozJSComponentLoader::ModuleForLocation(const char *registryLocation,
 
     JSCLAutoErrorReporterSetter aers(cx, Reporter);
 
-    jsval argv[2], retval;
-    argv[0] = OBJECT_TO_JSVAL(cm_jsobj);
-    argv[1] = STRING_TO_JSVAL(JS_NewStringCopyZ(cx, registryLocation));
-    if (!JS_CallFunctionName(cx, global, "NSGetModule", 2, argv,
-                             &retval)) {
-#ifdef DEBUG_shaver_off
-        fprintf(stderr, "mJCL: NSGetModule failed for %s\n",
-                registryLocation);
-#endif
+    jsval argv[2], retval, NSGetModule_val;
+
+    if (!JS_GetProperty(cx, global, "NSGetModule", &NSGetModule_val) ||
+        JSVAL_IS_VOID(NSGetModule_val)) {
         return nsnull;
     }
+
+    if (JS_TypeOfValue(cx, NSGetModule_val) != JSTYPE_FUNCTION) {
+        JS_ReportError(cx, "%s has NSGetModule property that is not a function",
+                       registryLocation);
+        return nsnull;
+    }
+    
+    argv[0] = OBJECT_TO_JSVAL(cm_jsobj);
+    argv[1] = STRING_TO_JSVAL(JS_NewStringCopyZ(cx, registryLocation));
+    if (!JS_CallFunctionValue(cx, global, NSGetModule_val, 2, argv, &retval))
+        return nsnull;
 
 #ifdef DEBUG_shaver_off
     JSString *s = JS_ValueToString(cx, retval);
@@ -1014,21 +813,18 @@ mozJSComponentLoader::GlobalForLocation(const char *aLocation,
     nsresult rv;
     JSPrincipals* jsPrincipals = nsnull;
 
-    JSCLAutoContext cx(mRuntime);
-    if (NS_FAILED(cx.GetError()))
-        return nsnull;
+    JSCLContextHelper cx(mContext);
 
 #ifndef XPCONNECT_STANDALONE
-    nsCOMPtr<nsIScriptObjectPrincipal> backstagePass =
-      new BackstagePass(mSystemPrincipal);
-
     rv = mSystemPrincipal->GetJSPrincipals(cx, &jsPrincipals);
     if (NS_FAILED(rv) || !jsPrincipals)
         return nsnull;
-
-#else
-    nsCOMPtr<nsISupports> backstagePass = new BackstagePass();
 #endif
+
+    nsCOMPtr<nsIXPCScriptable> backstagePass;
+    rv = mRuntimeService->GetBackstagePass(getter_AddRefs(backstagePass));
+    if (NS_FAILED(rv))
+        return nsnull;
 
     JSCLAutoErrorReporterSetter aers(cx, Reporter);
     nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
@@ -1037,9 +833,14 @@ mozJSComponentLoader::GlobalForLocation(const char *aLocation,
     if (!xpc)
         goto out;
 
+    // Make sure InitClassesWithNewWrappedGlobal() installs the
+    // backstage pass as the global in our compilation context.
+    JS_SetGlobalObject(cx, nsnull);
+
     rv = xpc->InitClassesWithNewWrappedGlobal(cx, backstagePass,
                                               NS_GET_IID(nsISupports),
-                                              PR_FALSE,
+                                              nsIXPConnect::
+                                                  FLAG_SYSTEM_GLOBAL_OBJECT,
                                               getter_AddRefs(holder));
     if (NS_FAILED(rv))
         goto out;
@@ -1092,6 +893,29 @@ mozJSComponentLoader::GlobalForLocation(const char *aLocation,
 #endif
             rv = localFile->OpenANSIFileDesc("r", &fileHandle);
             if (NS_FAILED(rv)) {
+                global = nsnull;
+                goto out;
+            }
+
+            nsCOMPtr<nsIXPConnectJSObjectHolder> locationHolder;
+            rv = xpc->WrapNative(cx, global, localFile,
+                                 NS_GET_IID(nsILocalFile),
+                                 getter_AddRefs(locationHolder));
+            if (NS_FAILED(rv)) {
+                global = nsnull;
+                goto out;
+            }
+
+            JSObject *locationObj;
+            rv = locationHolder->GetJSObject(&locationObj);
+            if (NS_FAILED(rv)) {
+                global = nsnull;
+                goto out;
+            }
+            
+            if (!JS_DefineProperty(cx, global, "__LOCATION__",
+                                   OBJECT_TO_JSVAL(locationObj), NULL,
+                                   NULL, 0)) {
                 global = nsnull;
                 goto out;
             }
@@ -1175,15 +999,13 @@ mozJSComponentLoader::UnloadAll(PRInt32 aWhen)
         PL_HashTableDestroy(mModules);
         mModules = nsnull;
 
-        PL_HashTableEnumerateEntries(mGlobals, UnrootGlobals, mRuntime);
+        PL_HashTableEnumerateEntries(mGlobals, UnrootGlobals, mContext);
         PL_HashTableDestroy(mGlobals);
         mGlobals = nsnull;
 
-        JSContext* cx = JS_NewContext(mRuntime, 256);
-        if (cx) {
-            JS_GC(cx);
-            JS_DestroyContext(cx);
-        }
+        // Destroying our context will force a GC.
+        JS_DestroyContext(mContext);
+        mContext = nsnull;
 
         mRuntimeService = nsnull;
     }
@@ -1197,50 +1019,20 @@ mozJSComponentLoader::UnloadAll(PRInt32 aWhen)
 
 //----------------------------------------------------------------------
 
-JSCLAutoContext::JSCLAutoContext(JSRuntime* rt)
-    : mContext(nsnull), mError(NS_OK), mPopNeeded(JS_FALSE), mContextThread(0)
+JSCLContextHelper::JSCLContextHelper(JSContext *cx)
+    : mContext(cx), mContextThread(0)
 {
-    nsCOMPtr<nsIThreadJSContextStack> cxstack = 
-        do_GetService(kJSContextStackContractID, &mError);
-    
-    if (NS_SUCCEEDED(mError)) {
-        mError = cxstack->GetSafeJSContext(&mContext);
-        if (NS_SUCCEEDED(mError) && mContext) {
-            mError = cxstack->Push(mContext);
-            if (NS_SUCCEEDED(mError)) {
-                mPopNeeded = JS_TRUE;   
-            } 
-        } 
-    }
-    
-    if (mContext) {
-        mContextThread = JS_GetContextThread(mContext);
-        if (mContextThread) {
-            JS_BeginRequest(mContext);
-        } 
-    } else {
-        if (NS_SUCCEEDED(mError)) {
-            mError = NS_ERROR_FAILURE;
-        }
-    }
+    mContextThread = JS_GetContextThread(mContext);
+    if (mContextThread) {
+        JS_BeginRequest(mContext);
+    } 
 }
 
-JSCLAutoContext::~JSCLAutoContext()
+JSCLContextHelper::~JSCLContextHelper()
 {
-    if (mContext && mContextThread) {
-        JS_ClearNewbornRoots(mContext);
+    JS_ClearNewbornRoots(mContext);
+    if (mContextThread)
         JS_EndRequest(mContext);
-    }
-
-    if (mPopNeeded) {
-        nsCOMPtr<nsIThreadJSContextStack> cxstack = 
-            do_GetService(kJSContextStackContractID);
-        if (cxstack) {
-            JSContext* cx;
-            nsresult rv = cxstack->Pop(&cx);
-            NS_ASSERTION(NS_SUCCEEDED(rv) && cx == mContext, "push/pop mismatch");
-        }        
-    }        
 }        
 
 //----------------------------------------------------------------------

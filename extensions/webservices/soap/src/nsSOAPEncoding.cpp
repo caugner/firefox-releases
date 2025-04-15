@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,11 +27,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -50,6 +49,7 @@
 #include "nsISchema.h"
 #include "nsISchemaLoader.h"
 #include "nsSOAPUtils.h"
+#include "nsReadableUtils.h"
 
 //
 // callback for deleting the encodings from the nsObjectHashtable, mEncodings,
@@ -91,13 +91,12 @@ nsSOAPEncodingRegistry::GetAssociatedEncoding(const nsAString & aStyleURI,
   nsStringKey styleKey(aStyleURI);
   *aEncoding = (nsISOAPEncoding *) mEncodings.Get(&styleKey);
   if (!*aEncoding) {
-    nsCOMPtr < nsISOAPEncoding > defaultEncoding;
-    nsCAutoString encodingContractid;
-    encodingContractid.Assign(NS_SOAPENCODING_CONTRACTID_PREFIX);
-    encodingContractid.Append(NS_ConvertUCS2toUTF8(aStyleURI));
+    nsCOMPtr<nsISOAPEncoding> defaultEncoding;
+    nsCAutoString encodingContractid(NS_SOAPENCODING_CONTRACTID_PREFIX);
+    AppendUTF16toUTF8(aStyleURI, encodingContractid);
     defaultEncoding = do_GetService(encodingContractid.get());
     if (defaultEncoding || aCreateIf) {
-      nsCOMPtr < nsISOAPEncoding > encoding = new nsSOAPEncoding(aStyleURI,this,defaultEncoding);
+      nsCOMPtr<nsISOAPEncoding> encoding = new nsSOAPEncoding(aStyleURI,this,defaultEncoding);
       *aEncoding = encoding;
       if (encoding) {
         NS_ADDREF(*aEncoding);
@@ -131,8 +130,8 @@ nsresult
   NS_ENSURE_ARG_POINTER(aSchemaCollection);
   if (!mSchemaCollection) {
     nsresult rv;
-    nsCOMPtr < nsISchemaLoader > loader =
-        do_CreateInstance(NS_SCHEMALOADER_CONTRACTID, &rv);
+    nsCOMPtr<nsISchemaLoader> loader =
+        do_GetService(NS_SCHEMALOADER_CONTRACTID, &rv);
     if (NS_FAILED(rv))
       return rv;
     mSchemaCollection = do_QueryInterface(loader);
@@ -215,7 +214,6 @@ nsresult
 /* readonly attribute AString styleURI; */
 NS_IMETHODIMP nsSOAPEncoding::GetStyleURI(nsAString & aStyleURI)
 {
-  NS_ENSURE_ARG_POINTER(&aStyleURI);
   aStyleURI.Assign(mStyleURI);
   return NS_OK;
 }
@@ -308,7 +306,7 @@ NS_IMETHODIMP
   NS_ENSURE_ARG(aSource);
   NS_ENSURE_ARG_POINTER(_retval);
 
-  nsCOMPtr < nsISOAPEncoder > encoder;
+  nsCOMPtr<nsISOAPEncoder> encoder;
   nsresult rv = GetDefaultEncoder(getter_AddRefs(encoder));
   if (NS_FAILED(rv))
     return rv;
@@ -330,7 +328,7 @@ NS_IMETHODIMP
 {
   NS_ENSURE_ARG(aSource);
   NS_ENSURE_ARG_POINTER(_retval);
-  nsCOMPtr < nsISOAPDecoder > decoder;
+  nsCOMPtr<nsISOAPDecoder> decoder;
   nsresult rv = GetDefaultDecoder(getter_AddRefs(decoder));
   if (NS_FAILED(rv))
     return rv;
@@ -388,8 +386,6 @@ nsSOAPEncoding::MapSchemaURI(const nsAString & aExternalURI,
                              PRBool aOutput, 
                              PRBool *_retval)
 {
-  NS_ENSURE_ARG_POINTER(&aExternalURI);
-  NS_ENSURE_ARG_POINTER(&aInternalURI);
   if (aExternalURI.IsEmpty() || aInternalURI.IsEmpty())  //  Permit no empty URIs.
     return SOAP_EXCEPTION(NS_ERROR_ILLEGAL_VALUE,"SOAP_SCHEMA_URI_MAPPING", "No schema URI mapping possible of empty strings.");
   nsStringKey externalKey(aExternalURI);
@@ -404,21 +400,21 @@ nsSOAPEncoding::MapSchemaURI(const nsAString & aExternalURI,
       return NS_OK;
     }
     nsresult rc;
-    nsCOMPtr < nsIWritableVariant > p =
+    nsCOMPtr<nsIWritableVariant> p =
         do_CreateInstance(NS_VARIANT_CONTRACTID, &rc);
     if (NS_FAILED(rc))
       return rc;
-    p->SetAsAString(aExternalURI);
+    rc = p->SetAsAString(aExternalURI);
     if (NS_FAILED(rc))
       return rc;
     mMappedInternal.Put(&internalKey, p);
   }
   nsresult rc;
-  nsCOMPtr < nsIWritableVariant > p =
+  nsCOMPtr<nsIWritableVariant> p =
       do_CreateInstance(NS_VARIANT_CONTRACTID, &rc);
   if (NS_FAILED(rc))
     return rc;
-  p->SetAsAString(aInternalURI);
+  rc = p->SetAsAString(aInternalURI);
   if (NS_FAILED(rc))
     return rc;
   mMappedExternal.Put(&externalKey, p);
@@ -430,7 +426,6 @@ nsSOAPEncoding::MapSchemaURI(const nsAString & aExternalURI,
 /* boolean unmapSchemaURI (in AString aExternalURI); */
 NS_IMETHODIMP nsSOAPEncoding::UnmapSchemaURI(const nsAString & aExternalURI, PRBool *_retval)
 {
-  NS_ENSURE_ARG_POINTER(&aExternalURI);
   nsStringKey externalKey(aExternalURI);
   nsCOMPtr<nsIVariant> internal = dont_AddRef(NS_STATIC_CAST(nsIVariant*,mMappedExternal.Get(&externalKey)));
   if (internal) {
@@ -454,8 +449,6 @@ NS_IMETHODIMP nsSOAPEncoding::UnmapSchemaURI(const nsAString & aExternalURI, PRB
 /* AString getInternalSchemaURI (in AString aExternalURI); */
 NS_IMETHODIMP nsSOAPEncoding::GetInternalSchemaURI(const nsAString & aExternalURI, nsAString & _retval)
 {
-  NS_ENSURE_ARG_POINTER(&aExternalURI);
-  NS_ENSURE_ARG_POINTER(&_retval);
   if (mMappedExternal.Count()) {
     nsStringKey externalKey(aExternalURI);
     nsCOMPtr<nsIVariant> internal = dont_AddRef(NS_STATIC_CAST(nsIVariant*,mMappedExternal.Get(&externalKey)));
@@ -473,8 +466,6 @@ NS_IMETHODIMP nsSOAPEncoding::GetInternalSchemaURI(const nsAString & aExternalUR
 /* AString getExternalSchemaURI (in AString aInternalURI); */
 NS_IMETHODIMP nsSOAPEncoding::GetExternalSchemaURI(const nsAString & aInternalURI, nsAString & _retval)
 {
-  NS_ENSURE_ARG_POINTER(&aInternalURI);
-  NS_ENSURE_ARG_POINTER(&_retval);
   if (mMappedInternal.Count()) {
     nsStringKey internalKey(aInternalURI);
     nsCOMPtr<nsIVariant> external = dont_AddRef(NS_STATIC_CAST(nsIVariant*,mMappedInternal.Get(&internalKey)));

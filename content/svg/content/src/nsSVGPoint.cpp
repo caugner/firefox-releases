@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,38 +14,67 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Crocodile Clips Ltd..
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Jonathan Watt <jonathan.watt@strath.ac.uk>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsSVGPoint.h"
 #include "nsIDOMSVGMatrix.h"
+#include "nsSVGValue.h"
+#include "nsContentUtils.h"
+#include "nsDOMError.h"
+
+class nsSVGPoint : public nsIDOMSVGPoint,
+                   public nsSVGValue
+{
+public:
+  nsSVGPoint(float x, float y);
+
+  // nsISupports interface:
+  NS_DECL_ISUPPORTS
+
+  // nsIDOMSVGPoint interface:
+  NS_DECL_NSIDOMSVGPOINT
+
+  // nsISVGValue interface:
+  NS_IMETHOD SetValueString(const nsAString& aValue);
+  NS_IMETHOD GetValueString(nsAString& aValue);
+  
+protected:
+  float mX;
+  float mY;
+};
+
+
+//----------------------------------------------------------------------
+// Implementation
 
 nsresult
-nsSVGPoint::Create(float x, float y, nsIDOMSVGPoint** aResult)
+NS_NewSVGPoint(nsIDOMSVGPoint** result, float x, float y)
 {
-  *aResult = (nsIDOMSVGPoint*) new nsSVGPoint(x, y);
-  if(!*aResult) return NS_ERROR_OUT_OF_MEMORY;
-  
-  NS_ADDREF(*aResult);
+  *result = new nsSVGPoint(x, y);
+  if (!*result)
+    return NS_ERROR_OUT_OF_MEMORY;
+  NS_ADDREF(*result);
   return NS_OK;
 }
 
@@ -101,10 +130,12 @@ NS_IMETHODIMP nsSVGPoint::SetY(float aY)
 }
 
 /* nsIDOMSVGPoint matrixTransform (in nsIDOMSVGMatrix matrix); */
-NS_IMETHODIMP nsSVGPoint::MatrixTransform(nsIDOMSVGMatrix *matrix, nsIDOMSVGPoint **_retval)
+NS_IMETHODIMP nsSVGPoint::MatrixTransform(nsIDOMSVGMatrix *matrix,
+                                          nsIDOMSVGPoint **_retval)
 {
-  if (!matrix) return NS_ERROR_FAILURE;
-  
+  if (!matrix)
+    return NS_ERROR_DOM_SVG_WRONG_TYPE_ERR;
+
   float a, b, c, d, e, f;
   matrix->GetA(&a);
   matrix->GetB(&b);
@@ -113,7 +144,7 @@ NS_IMETHODIMP nsSVGPoint::MatrixTransform(nsIDOMSVGMatrix *matrix, nsIDOMSVGPoin
   matrix->GetE(&e);
   matrix->GetF(&f);
   
-  return Create( a*mX + c*mY + e, b*mX + d*mY + f, _retval);
+  return NS_NewSVGPoint(_retval, a*mX + c*mY + e, b*mX + d*mY + f);
 }
 
 //----------------------------------------------------------------------
@@ -121,13 +152,45 @@ NS_IMETHODIMP nsSVGPoint::MatrixTransform(nsIDOMSVGMatrix *matrix, nsIDOMSVGPoin
 NS_IMETHODIMP
 nsSVGPoint::SetValueString(const nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
+  NS_NOTYETIMPLEMENTED("nsSVGPoint::SetValueString");
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
 nsSVGPoint::GetValueString(nsAString& aValue)
 {
-  NS_NOTYETIMPLEMENTED("write me!");
+  NS_NOTYETIMPLEMENTED("nsSVGPoint::GetValueString");
   return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+
+
+////////////////////////////////////////////////////////////////////////
+// Implement a readonly version of SVGPoint
+//
+// We need this because attributes of some SVG interfaces *and* the objects the
+// attributes refer to (including SVGPoints) are supposed to be readonly
+
+class nsSVGReadonlyPoint : public nsSVGPoint
+{
+public:
+  nsSVGReadonlyPoint(float x, float y)
+    : nsSVGPoint(x, y)
+  {
+  };
+
+  // override setters to make the whole object readonly
+  NS_IMETHODIMP SetX(float) { return NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR; }
+  NS_IMETHODIMP SetY(float) { return NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR; }
+  NS_IMETHODIMP SetValueString(const nsAString&) { return NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR; }
+};
+
+nsresult
+NS_NewSVGReadonlyPoint(nsIDOMSVGPoint** result, float x, float y)
+{
+  *result = new nsSVGReadonlyPoint(x, y);
+  if (!*result)
+    return NS_ERROR_OUT_OF_MEMORY;
+  NS_ADDREF(*result);
+  return NS_OK;
 }

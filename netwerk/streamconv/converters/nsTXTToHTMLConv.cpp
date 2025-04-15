@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,22 +22,23 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsTXTToHTMLConv.h"
 #include "nsNetUtil.h"
 #include "nsIStringStream.h"
+#include "nsAutoPtr.h"
 
 #define TOKEN_DELIMITERS NS_LITERAL_STRING("\t\r\n ").get()
 
@@ -52,16 +53,18 @@ NS_IMPL_THREADSAFE_ISUPPORTS4(nsTXTToHTMLConv,
 // nsIStreamConverter methods
 NS_IMETHODIMP
 nsTXTToHTMLConv::Convert(nsIInputStream *aFromStream,
-                         const PRUnichar *aFromType, const PRUnichar *aToType,
-                         nsISupports *aCtxt, nsIInputStream * *_retval) {
+                         const char *aFromType, const char *aToType,
+                         nsISupports *aCtxt, nsIInputStream * *_retval)
+{
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
-nsTXTToHTMLConv::AsyncConvertData(const PRUnichar *aFromType,
-                                  const PRUnichar *aToType,
+nsTXTToHTMLConv::AsyncConvertData(const char *aFromType,
+                                  const char *aToType,
                                   nsIStreamListener *aListener,
-                                  nsISupports *aCtxt) {
+                                  nsISupports *aCtxt)
+{
     NS_ASSERTION(aListener, "null pointer");
     mListener = aListener;
     return NS_OK;
@@ -70,12 +73,13 @@ nsTXTToHTMLConv::AsyncConvertData(const PRUnichar *aFromType,
 
 // nsIRequestObserver methods
 NS_IMETHODIMP
-nsTXTToHTMLConv::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
-    mBuffer.Assign(NS_LITERAL_STRING("<html>\n<head><title>"));
+nsTXTToHTMLConv::OnStartRequest(nsIRequest* request, nsISupports *aContext)
+{
+    mBuffer.AssignLiteral("<html>\n<head><title>");
     mBuffer.Append(mPageTitle);
-    mBuffer.Append(NS_LITERAL_STRING("</title></head>\n<body>\n"));
+    mBuffer.AppendLiteral("</title></head>\n<body>\n");
     if (mPreFormatHTML) {     // Use <pre> tags
-      mBuffer.Append(NS_LITERAL_STRING("<pre>\n"));
+        mBuffer.AppendLiteral("<pre>\n");
     }
 
     // Push mBuffer to the listener now, so the initial HTML will not
@@ -102,19 +106,22 @@ nsTXTToHTMLConv::OnStartRequest(nsIRequest* request, nsISupports *aContext) {
 
 NS_IMETHODIMP
 nsTXTToHTMLConv::OnStopRequest(nsIRequest* request, nsISupports *aContext,
-                               nsresult aStatus) {
+                               nsresult aStatus)
+{
     nsresult rv = NS_OK;
     if (mToken) {
         // we still have an outstanding token
-        PRInt32 back = mBuffer.FindCharInSet(TOKEN_DELIMITERS);
-        if (back == -1) back = mBuffer.Length();
+        NS_ASSERTION(mToken->prepend,
+                     "Non prepending tokens should be handled in "
+                     "OnDataAvailable. There should only be a single "
+                     "prepending token left to be processed.");
         (void)CatHTML(0, mBuffer.Length());
     }
     if (mPreFormatHTML) {
-      mBuffer.Append(NS_LITERAL_STRING("</pre>\n"));
+        mBuffer.AppendLiteral("</pre>\n");
     }
-    mBuffer.Append(NS_LITERAL_STRING("\n</body></html>"));    
-    
+    mBuffer.AppendLiteral("\n</body></html>");
+
     nsCOMPtr<nsIInputStream> inputData;
 
     rv = NS_NewStringInputStream(getter_AddRefs(inputData), mBuffer);
@@ -129,53 +136,61 @@ nsTXTToHTMLConv::OnStopRequest(nsIRequest* request, nsISupports *aContext,
 
 // nsITXTToHTMLConv methods
 NS_IMETHODIMP
-nsTXTToHTMLConv::SetTitle(const PRUnichar *aTitle) {
-  mPageTitle.Assign(aTitle);
-  return NS_OK;
+nsTXTToHTMLConv::SetTitle(const PRUnichar *aTitle)
+{
+    mPageTitle.Assign(aTitle);
+    return NS_OK;
 }
 
 NS_IMETHODIMP
-nsTXTToHTMLConv::PreFormatHTML(PRBool value) {
-  mPreFormatHTML = value;
-  return NS_OK;
+nsTXTToHTMLConv::PreFormatHTML(PRBool value)
+{
+    mPreFormatHTML = value;
+    return NS_OK;
 }
 
 // nsIStreamListener method
 NS_IMETHODIMP
 nsTXTToHTMLConv::OnDataAvailable(nsIRequest* request, nsISupports *aContext,
                                  nsIInputStream *aInStream,
-                                 PRUint32 aOffset, PRUint32 aCount) {
+                                 PRUint32 aOffset, PRUint32 aCount)
+{
     nsresult rv = NS_OK;
     nsString pushBuffer;
     PRUint32 amtRead = 0;
-    char *buffer = (char*)nsMemory::Alloc(aCount+1);
+    nsAutoArrayPtr<char> buffer(new char[aCount+1]);
     if (!buffer) return NS_ERROR_OUT_OF_MEMORY;
-    
+
     do {
         PRUint32 read = 0;
+        // XXX readSegments, to avoid the first copy?
         rv = aInStream->Read(buffer, aCount-amtRead, &read);
         if (NS_FAILED(rv)) return rv;
 
         buffer[read] = '\0';
-        mBuffer.AppendWithConversion(buffer);
+        // XXX charsets?? non-latin1 characters?? utf-16??
+        AppendASCIItoUTF16(buffer, mBuffer);
         amtRead += read;
 
-        PRInt32 front = -1, back = -1, tokenLoc = -1, cursor = 0; 
+        PRInt32 front = -1, back = -1, tokenLoc = -1, cursor = 0;
 
         while ( (tokenLoc = FindToken(cursor, &mToken)) > -1) {
-            front = mBuffer.RFindCharInSet(TOKEN_DELIMITERS, tokenLoc);
-            front++;
-    
-            back = mBuffer.FindCharInSet(TOKEN_DELIMITERS, tokenLoc);
+            if (mToken->prepend) {
+                front = mBuffer.RFindCharInSet(TOKEN_DELIMITERS, tokenLoc);
+                front++;
+                back = mBuffer.FindCharInSet(TOKEN_DELIMITERS, tokenLoc);
+            } else {
+                front = tokenLoc;
+                back = front + mToken->token.Length();
+            }
             if (back == -1) {
                 // didn't find an ending, buffer up.
                 mBuffer.Left(pushBuffer, front);
                 cursor = front;
                 break;
-            } else {
-                // found the end of the token.
-                cursor = CatHTML(front, back);
             }
+            // found the end of the token.
+            cursor = CatHTML(front, back);
         }
 
         PRInt32 end = mBuffer.RFind(TOKEN_DELIMITERS, mBuffer.Length());
@@ -187,61 +202,83 @@ nsTXTToHTMLConv::OnDataAvailable(nsIRequest* request, nsISupports *aContext,
             nsCOMPtr<nsIInputStream> inputData;
 
             rv = NS_NewStringInputStream(getter_AddRefs(inputData), pushBuffer);
-            if (NS_FAILED(rv)) {
-                nsMemory::Free(buffer);
+            if (NS_FAILED(rv))
                 return rv;
-            }
 
             rv = mListener->OnDataAvailable(request, aContext,
                                             inputData, 0, pushBuffer.Length());
-            if (NS_FAILED(rv)) {
-                nsMemory::Free(buffer);
+            if (NS_FAILED(rv))
                 return rv;
-            }
         }
     } while (amtRead < aCount);
 
-    nsMemory::Free(buffer);
-    return rv; 
-} 
+    return rv;
+}
+
 // nsTXTToHTMLConv methods
-nsTXTToHTMLConv::nsTXTToHTMLConv() {
+nsTXTToHTMLConv::nsTXTToHTMLConv()
+{
     mToken = nsnull;
     mPreFormatHTML = PR_FALSE;
 }
 
-static PRBool CleanupTokens(void *aElement, void *aData) {
+static PRBool CleanupTokens(void *aElement, void *aData)
+{
     if (aElement) delete (convToken*)aElement;
     return PR_TRUE;
 }
 
-nsTXTToHTMLConv::~nsTXTToHTMLConv() {
+nsTXTToHTMLConv::~nsTXTToHTMLConv()
+{
     mTokens.EnumerateForwards((nsVoidArrayEnumFunc)CleanupTokens, nsnull);
 }
 
 nsresult
-nsTXTToHTMLConv::Init() {
+nsTXTToHTMLConv::Init()
+{
     nsresult rv = NS_OK;
 
     // build up the list of tokens to handle
     convToken *token = new convToken;
     if (!token) return NS_ERROR_OUT_OF_MEMORY;
+    token->prepend = PR_FALSE;
+    token->token.Assign(PRUnichar('<'));
+    token->modText.AssignLiteral("&lt;");
+    mTokens.AppendElement(token);
+
+    token = new convToken;
+    if (!token) return NS_ERROR_OUT_OF_MEMORY;
+    token->prepend = PR_FALSE;
+    token->token.Assign(PRUnichar('>'));
+    token->modText.AssignLiteral("&gt;");
+    mTokens.AppendElement(token);
+
+    token = new convToken;
+    if (!token) return NS_ERROR_OUT_OF_MEMORY;
+    token->prepend = PR_FALSE;
+    token->token.Assign(PRUnichar('&'));
+    token->modText.AssignLiteral("&amp;");
+    mTokens.AppendElement(token);
+
+    token = new convToken;
+    if (!token) return NS_ERROR_OUT_OF_MEMORY;
     token->prepend = PR_TRUE;
-    token->token.Assign(NS_LITERAL_STRING("http://")); // XXX need to iterate through all protos
+    token->token.AssignLiteral("http://"); // XXX need to iterate through all protos
     mTokens.AppendElement(token);
 
     token = new convToken;
     if (!token) return NS_ERROR_OUT_OF_MEMORY;
     token->prepend = PR_TRUE;
     token->token.Assign(PRUnichar('@'));
-    token->modText.Assign(NS_LITERAL_STRING("mailto:"));
+    token->modText.AssignLiteral("mailto:");
     mTokens.AppendElement(token);
-  
+
     return rv;
 }
 
 PRInt32
-nsTXTToHTMLConv::FindToken(PRInt32 cursor, convToken* *_retval) {
+nsTXTToHTMLConv::FindToken(PRInt32 cursor, convToken* *_retval)
+{
     PRInt32 loc = -1, firstToken = mBuffer.Length();
     PRInt8 token = -1;
     for (PRInt8 i=0; i < mTokens.Count(); i++) {
@@ -252,25 +289,26 @@ nsTXTToHTMLConv::FindToken(PRInt32 cursor, convToken* *_retval) {
                 token = i;
             }
     }
-    if (token != -1) {
-        *_retval = (convToken*)mTokens[token];   
-        return firstToken;
-    } else {
+    if (token == -1)
         return -1;
-    }
+
+    *_retval = (convToken*)mTokens[token];
+    return firstToken;
 }
 
 PRInt32
-nsTXTToHTMLConv::CatHTML(PRInt32 front, PRInt32 back) {
+nsTXTToHTMLConv::CatHTML(PRInt32 front, PRInt32 back)
+{
     PRInt32 cursor = 0;
+    PRInt32 modLen = mToken->modText.Length();
     if (!mToken->prepend) {
         // replace the entire token (from delimiter to delimiter)
-        mBuffer.Cut(front, back);
+        mBuffer.Cut(front, back - front);
         mBuffer.Insert(mToken->modText, front);
+        cursor = front+modLen;
     } else {
         nsString linkText;
         // href is implied
-        PRInt32 modLen = mToken->modText.Length();
         mBuffer.Mid(linkText, front, back-front);
         mBuffer.Insert(NS_LITERAL_STRING("<a href=\""), front);
         cursor += front+9;
@@ -287,4 +325,3 @@ nsTXTToHTMLConv::CatHTML(PRInt32 front, PRInt32 back) {
     mToken = nsnull; // indicates completeness
     return cursor;
 }
-

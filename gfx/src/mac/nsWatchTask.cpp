@@ -1,11 +1,11 @@
 /* -*- Mode: c++; tab-width: 2; indent-tabs-mode: nil; -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,28 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-
 
 #include "nsWatchTask.h"
 #include <LowMem.h>
@@ -68,10 +66,6 @@ nsWatchTask :: nsWatchTask ( )
 
 nsWatchTask :: ~nsWatchTask ( ) 
 {
-#if !TARGET_CARBON
-  if ( mInstallSucceeded )
-    ::VRemove ( (QElemPtr)&mTask );
-#endif
   InitCursor();
 }
 
@@ -86,23 +80,6 @@ nsWatchTask :: ~nsWatchTask ( )
 void
 nsWatchTask :: Start ( )
 {
-#if !TARGET_CARBON
-  // get the watch cursor and lock it high
-  CursHandle watch = ::GetCursor ( watchCursor );
-  if ( !watch )
-    return;
-  mWatchCursor = **watch;
-  
-  // setup the task
-  mTask.qType = vType;
-  mTask.vblAddr = NewVBLProc((VBLProcPtr)DoWatchTask);
-  mTask.vblCount = kRepeatInterval;
-  mTask.vblPhase = 0;
-  
-  // install it
-  mInstallSucceeded = ::VInstall((QElemPtr)&mTask) == noErr;
-#endif
-
 } // Start
 
 
@@ -122,11 +99,7 @@ nsWatchTask :: DoWatchTask ( nsWatchTask* inSelf )
 {
   if ( inSelf->mChecksum == 'mozz' ) {
     if ( !inSelf->mSuspended  ) {
-#if TARGET_CARBON
- 	  PRBool busy = inSelf->mBusy;
-#else
- 	  PRBool busy = inSelf->mBusy && LMGetCrsrBusy();
-#endif   
+ 	  PRBool busy = inSelf->mBusy;  
       if ( !busy ) {
         if ( ::TickCount() - inSelf->mTicks > kTicksToShowWatch ) {
           ::SetCursor ( &(inSelf->mWatchCursor) );
@@ -138,12 +111,7 @@ nsWatchTask :: DoWatchTask ( nsWatchTask* inSelf )
       
       // next frame in cursor animation    
       ++inSelf->mAnimation;
-    }
-    
-#if !TARGET_CARBON
-    // reset the task to fire again
-    inSelf->mTask.vblCount = kRepeatInterval;
-#endif    
+    }    
   } // if valid checksum
   
 } // DoWatchTask

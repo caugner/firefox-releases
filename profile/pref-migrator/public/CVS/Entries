@@ -1,6 +1,6 @@
-/.cvsignore/1.1/Sat Sep 11 16:10:22 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.8/Tue Dec 18 09:13:12 2001//TFIREFOX_1_0_RELEASE
-/nsIPrefMigration.idl/1.20/Fri Apr 18 14:28:13 2003//TFIREFOX_1_0_RELEASE
-/nsIPrefMigrationProgress.idl/1.4/Fri Sep 28 20:09:59 2001//TFIREFOX_1_0_RELEASE
-/nsPrefMigrationCIDs.h/1.5/Fri Sep 28 20:09:59 2001//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Sat Sep 11 16:10:22 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.9/Sat Apr 17 18:29:42 2004//TFIREFOX_1_5_RELEASE
+/nsIPrefMigration.idl/1.21/Sat Apr 17 18:29:42 2004//TFIREFOX_1_5_RELEASE
+/nsIPrefMigrationProgress.idl/1.5/Sat Apr 17 18:29:42 2004//TFIREFOX_1_5_RELEASE
+/nsPrefMigrationCIDs.h/1.6/Sat Apr 17 18:29:42 2004//TFIREFOX_1_5_RELEASE
 D/idl////

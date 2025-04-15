@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,11 +27,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -48,9 +47,11 @@
 #include "prtypes.h"
 #include "nsIPresShell.h"
 #include "nsString.h"
-#include "nsFileSpec.h"
 #include "nsIPrompt.h"
 
+class nsIInputStream;
+class nsIOutputStream;
+class nsIFile;
 class nsIDOMWindowInternal;
 class nsIDOMNode;
 
@@ -78,32 +79,32 @@ extern void
 WLLT_DeletePersistentUserData();
 
 extern void
-WLLT_PreEdit(nsString& walletList);
+WLLT_PreEdit(nsAString& walletList);
 
 extern void
-WLLT_PostEdit(const nsString& walletList);
+WLLT_PostEdit(const nsAString& walletList);
 
 extern void
-WLLT_PrefillReturn(const nsString& results);
+WLLT_PrefillReturn(const nsAString& results);
 
 extern void
 WLLT_RequestToCapture(nsIPresShell* shell, nsIDOMWindowInternal * win, PRUint32* status);
 
 extern nsresult
 WLLT_PrefillOneElement
-  (nsIDOMWindowInternal* win, nsIDOMNode* elementNode, nsString& compositeValue);
+  (nsIDOMWindowInternal* win, nsIDOMNode* elementNode, nsAString& compositeValue);
 
 extern nsresult
 WLLT_Prefill(nsIPresShell* shell, PRBool quick, nsIDOMWindowInternal* win);
 
 extern void
-WLLT_GetNopreviewListForViewer(nsString& aNopreviewList);
+WLLT_GetNopreviewListForViewer(nsAString& aNopreviewList);
 
 extern void
-WLLT_GetNocaptureListForViewer(nsString& aNocaptureList);
+WLLT_GetNocaptureListForViewer(nsAString& aNocaptureList);
 
 extern void
-WLLT_GetPrefillListForViewer(nsString& aPrefillList);
+WLLT_GetPrefillListForViewer(nsAString& aPrefillList);
 
 extern void
 WLLT_OnSubmit(nsIContent* formNode, nsIDOMWindowInternal* window);
@@ -118,12 +119,25 @@ extern void
 WLLT_InitReencryptCallback(nsIDOMWindowInternal* window);
 
 extern nsresult
-Wallet_Encrypt(const nsString& text, nsString& crypt);
+Wallet_Encrypt(const nsAString& text, nsAString& crypt);
 
 extern nsresult
-Wallet_Decrypt(const nsString& crypt, nsString& text);
+Wallet_Decrypt(const nsAString& crypt, nsAString& text);
 
-extern nsresult Wallet_ProfileDirectory(nsFileSpec& dirSpec);
+extern nsresult
+wallet_GetLine(nsIInputStream* strm, nsACString& line);
+
+/**
+ * Writes a line to a stream, including a newline character.
+ * parameter should not include '\n'
+ */
+extern void
+wallet_PutLine(nsIOutputStream* strm, const char* line);
+
+/**
+ * Gets the current profile directory
+ */
+extern nsresult Wallet_ProfileDirectory(nsIFile** aFile);
 
 extern PRUnichar * Wallet_Localize(const char * genericString);
 
@@ -135,20 +149,8 @@ extern PRInt32 Wallet_3ButtonConfirm(PRUnichar * szMessage, nsIDOMWindowInternal
 
 extern void Wallet_GiveCaveat(nsIDOMWindowInternal* window, nsIPrompt* dialog);
 
-extern nsresult
-Wallet_Encrypt2(const nsString& text, nsString& crypt);
-
-extern nsresult
-Wallet_Decrypt2(const nsString& crypt, nsString& text);
-
 extern void
-Wallet_UTF8Put(nsOutputFileStream& strm, PRUnichar c);
-
-extern PRUnichar
-Wallet_UTF8Get(nsInputFileStream& strm);
-
-extern void
-Wallet_SignonViewerReturn(const nsString& results);
+Wallet_SignonViewerReturn(const nsAString& results);
 
 extern void
 Wallet_ReleaseAllLists();

@@ -1,24 +1,26 @@
 # -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+# ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
-# 
+#
 # The contents of this file are subject to the Mozilla Public License Version
 # 1.1 (the "License"); you may not use this file except in compliance with
 # the License. You may obtain a copy of the License at
 # http://www.mozilla.org/MPL/
-# 
+#
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
 # for the specific language governing rights and limitations under the
 # License.
-# 
+#
 # The Original Code is Mozilla.org Code.
-# 
-# The Initial Developer of the Original Code is.
+#
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
 # Portions created by the Initial Developer are Copyright (C) 2001
 # the Initial Developer. All Rights Reserved.
-# 
+#
 # Contributor(s):
-# 
+#
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -30,7 +32,7 @@
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
 # the terms of any one of the MPL, the GPL or the LGPL.
-# 
+#
 # ***** END LICENSE BLOCK *****
 
     <popup id="contentAreaContextMenu"
@@ -48,7 +50,7 @@
       <menuitem id="context-bookmarklink"
                 label="&bookmarkLinkCmd.label;"
                 accesskey="&bookmarkLinkCmd.accesskey;"
-                oncommand="BookmarksUtils.addBookmark(gContextMenu.linkURL(),
+                oncommand="BookmarksUtils.addBookmark(gContextMenu.linkURL,
                                                       gContextMenu.linkText());"/>
       <menuitem id="context-savelink"
                 label="&saveLinkCmd.label;"
@@ -72,13 +74,11 @@
                 accesskey="&viewImageCmd.accesskey;"
                 oncommand="gContextMenu.viewImage(event);"
                 onclick="checkForMiddleClick(this, event);"/>
-#ifndef XP_UNIX
-#ifndef XP_OS2
+#ifdef CONTEXT_COPY_IMAGE_CONTENTS
       <menuitem id="context-copyimage-contents"
                 label="&copyImageContentsCmd.label;"
                 accesskey="&copyImageContentsCmd.accesskey;"
                 command="cmd_copyImageContents"/>
-#endif
 #endif
       <menuitem id="context-copyimage"
                 label="&copyImageCmd.label;"
@@ -93,10 +93,10 @@
                 label="&sendImageCmd.label;" 
                 accesskey="&sendImageCmd.accesskey;" 
                 oncommand="gContextMenu.sendImage();"/>
-      <menuitem id="context-setWallpaper"
-                label="&setWallpaperCmd.label;"
-                accesskey="&setWallpaperCmd.accesskey;"
-                oncommand="gContextMenu.setWallpaper();"/>
+      <menuitem id="context-setDesktopBackground"
+                label="&setDesktopBackgroundCmd.label;"
+                accesskey="&setDesktopBackgroundCmd.accesskey;"
+                oncommand="gContextMenu.setDesktopBackground();"/>
 
 <!--XXXBlake XUL sucks! We need autocheck for menuitems. -->
       <menuitem id="context-blockimage" class="menuitem-iconic"
@@ -113,7 +113,7 @@
       <menuitem id="context-reload"
                 label="&reloadCmd.label;"
                 accesskey="&reloadCmd.accesskey;"
-                oncommand="BrowserReload();"/>
+                command="Browser:Reload"/>
       <menuitem id="context-stop"
                 label="&stopCmd.label;"
                 accesskey="&stopCmd.accesskey;"
@@ -126,7 +126,7 @@
       <menuitem id="context-savepage"
                 label="&savePageCmd.label;"
                 accesskey="&savePageCmd.accesskey;"
-                oncommand="saveDocument(window._content.document);"/>
+                oncommand="saveDocument(window.content.document);"/>
       <menuitem id="context-sendpage"  
                 label="&sendPageCmd.label;" 
                 accesskey="&sendPageCmd.accesskey;" 
@@ -215,7 +215,7 @@
       <menuitem id="context-viewsource"
                 label="&viewPageSourceCmd.label;"
                 accesskey="&viewPageSourceCmd.accesskey;"
-                oncommand="BrowserViewSourceOfDocument(_content.document);"/>
+                oncommand="BrowserViewSourceOfDocument(content.document);"/>
       <menuitem id="context-viewinfo"
                 label="&viewPageInfoCmd.label;"
                 accesskey="&viewPageInfoCmd.accesskey;"
@@ -228,10 +228,10 @@
       <menuitem hidden="true" id="context-bidi-text-direction-toggle"
                 label="&bidiSwitchTextDirectionItem.label;"
                 accesskey="&bidiSwitchTextDirectionItem.accesskey;"
-                oncommand="SwitchTextEntryDirection(gContextMenu.target)"/>
+                command="cmd_switchTextDirection"/>
       <menuitem hidden="true" id="context-bidi-page-direction-toggle"
                 label="&bidiSwitchPageDirectionItem.label;"
                 accesskey="&bidiSwitchPageDirectionItem.accesskey;"
-                oncommand="SwitchDocumentDirection();"/>
+                oncommand="SwitchDocumentDirection(window.content);"/>
     </popup>
 

@@ -1,34 +1,49 @@
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Editor Image Properties Overlay.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Pete Collins
  *   Brian King
  *   Ben Goodger
  *   Neil Rashbrook <neil@parkwaycc.co.uk> (Separated from EdImageProps.js)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  Note: We encourage non-empty alt text for images inserted into a page. 
  When there's no alt text, we always write 'alt=""' as the attribute, since "alt" is a required attribute.
  We allow users to not have alt text by checking a "Don't use alterate text" radio button,
  and we don't accept spaces as valid alt text. A space used to be required to avoid the error message
- if user didn't enter alt text, but is uneccessary now that we no longer annoy the user 
+ if user didn't enter alt text, but is unnecessary now that we no longer annoy the user 
  with the error dialog if alt="" is present on an img element.
  We trim all spaces at the beginning and end of user's alt text
 */
@@ -317,6 +332,8 @@ function PreviewImageLoaded()
 function LoadPreviewImage()
 {
   gDialog.PreviewSize.collapsed = true;
+  // XXXbz workaround for bug 265416 / bug 266284
+  gDialog.ImageHolder.collapsed = true;
 
   var imageSrc = TrimString(gDialog.srcInput.value);
   if (!imageSrc)
@@ -359,6 +376,7 @@ function LoadPreviewImage()
   {
     // set the src before appending to the document -- see bug 198435 for why
     // this is needed.
+    // XXXbz that bug is long-since fixed.  Is this still needed?
     gDialog.PreviewImage.addEventListener("load", PreviewImageLoaded, true);
     gDialog.PreviewImage.src = imageSrc;
     gDialog.ImageHolder.appendChild(gDialog.PreviewImage);
@@ -519,9 +537,19 @@ function ValidateImage()
     return false;
   }
 
-  //TODO: WE NEED TO DO SOME URL VALIDATION HERE, E.G.:
   // We must convert to "file:///" or "http://" format else image doesn't load!
   var src = TrimString(gDialog.srcInput.value);
+  var checkbox = document.getElementById("MakeRelativeCheckbox");
+  try
+  {
+    if (checkbox && !checkbox.checked)
+    {
+      var URIFixup = Components.classes["@mozilla.org/docshell/urifixup;1"]
+                               .getService(Components.interfaces.nsIURIFixup);
+      src = URIFixup.createFixupURI(src, Components.interfaces.nsIURIFixup.FIXUP_FLAG_NONE).spec;
+    }
+  } catch (e) { }
+
   globalElement.setAttribute("src", src);
 
   var title = TrimString(gDialog.titleInput.value);
@@ -575,12 +603,12 @@ function ValidateImage()
   //  and we couldn't obtain actual dimensions
   var srcChanged = (src != gOriginalSrc);
   if (width)
-    globalElement.setAttribute("width", width);
+    editor.setAttributeOrEquivalent(globalElement, "width", width, true);
   else if (srcChanged)
     editor.removeAttributeOrEquivalent(globalElement, "width", true);
 
   if (height)
-    globalElement.setAttribute("height", height);
+    editor.setAttributeOrEquivalent(globalElement, "height", height, true);
   else if (srcChanged) 
     editor.removeAttributeOrEquivalent(globalElement, "height", true);
 
@@ -612,7 +640,8 @@ function ValidateImage()
     case "middle":
     case "right":
     case "left":
-      globalElement.setAttribute( "align", gDialog.alignTypeSelect.value );
+      editor.setAttributeOrEquivalent( globalElement, "align",
+                                       gDialog.alignTypeSelect.value , true);
       break;
     default:
       try {

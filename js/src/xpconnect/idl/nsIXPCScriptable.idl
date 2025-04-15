@@ -41,7 +41,19 @@
 #include "nsISupports.idl"
 #include "nsIXPConnect.idl"
 
-[uuid(fa2c3b80-0e9d-11d5-9092-0010a4e73d9a)]
+%{ C++
+#define NS_SUCCESS_I_DID_SOMETHING \
+   (NS_ERROR_GENERATE_SUCCESS(NS_ERROR_MODULE_XPCONNECT,1))
+%}
+
+/**
+ * Note: This is not really an XPCOM interface.  For example, callers must
+ * guarantee that they set the *_retval of the various methods that return a
+ * boolean to PR_TRUE before making the call.  Implementations may skip writing
+ * to *_retval unless they want to return PR_FALSE.
+ */
+
+[uuid(9cc0c2e0-f769-4f14-8cd6-2d2d40466f6c)]
 interface nsIXPCScriptable : nsISupports
 {
     /* bitflags used for 'flags' (only 32 bits available!) */
@@ -74,6 +86,9 @@ interface nsIXPCScriptable : nsISupports
     const PRUint32 ALLOW_PROP_MODS_TO_PROTOTYPE     = 1 << 25;
     const PRUint32 DONT_SHARE_PROTOTYPE             = 1 << 26;
     const PRUint32 DONT_REFLECT_INTERFACE_NAMES     = 1 << 27;
+    const PRUint32 WANT_EQUALITY                    = 1 << 28;
+    const PRUint32 WANT_OUTER_OBJECT                = 1 << 29;
+    const PRUint32 WANT_INNER_OBJECT                = 1 << 30;
 
     // The high order bit is RESERVED for consumers of these flags. 
     // No implementor of this interface should ever return flags 
@@ -100,10 +115,14 @@ interface nsIXPCScriptable : nsISupports
                        in JSContextPtr cx, in JSObjectPtr obj, in JSVal id,
                        in JSValPtr vp);
 
+    // The returnCode should be set to NS_SUCCESS_I_DID_SOMETHING if
+    // this method does something.
     PRBool getProperty(in nsIXPConnectWrappedNative wrapper,
                        in JSContextPtr cx, in JSObjectPtr obj, in JSVal id,
                        in JSValPtr vp);
 
+    // The returnCode should be set to NS_SUCCESS_I_DID_SOMETHING if
+    // this method does something.
     PRBool setProperty(in nsIXPConnectWrappedNative wrapper,
                        in JSContextPtr cx, in JSObjectPtr obj, in JSVal id,
                        in JSValPtr vp);
@@ -144,4 +163,13 @@ interface nsIXPCScriptable : nsISupports
 
     PRUint32 mark(in nsIXPConnectWrappedNative wrapper,
                   in JSContextPtr cx, in JSObjectPtr obj, in voidPtr arg);
+
+    PRBool equality(in nsIXPConnectWrappedNative wrapper,
+                    in JSContextPtr cx, in JSObjectPtr obj, in JSVal val);
+
+    JSObjectPtr outerObject(in nsIXPConnectWrappedNative wrapper,
+                            in JSContextPtr cx, in JSObjectPtr obj);
+
+    JSObjectPtr innerObject(in nsIXPConnectWrappedNative wrapper,
+                            in JSContextPtr cx, in JSObjectPtr obj);
 };

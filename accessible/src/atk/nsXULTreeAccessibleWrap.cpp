@@ -39,6 +39,7 @@
 
 #include "nsIDOMElement.h"
 #include "nsITreeSelection.h"
+#include "nsITreeColumns.h"
 #include "nsXULTreeAccessibleWrap.h"
 
 // --------------------------------------------------------
@@ -50,6 +51,27 @@ nsXULTreeAccessibleWrap::nsXULTreeAccessibleWrap(nsIDOMNode *aDOMNode, nsIWeakRe
 nsXULTreeAccessible(aDOMNode, aShell)
 {
   mCaption = nsnull;
+}
+
+// tree's children count is row count * col count + treecols count
+// override "children count = row count + treecols count" defined in
+// nsXULTreeAccessible
+NS_IMETHODIMP nsXULTreeAccessibleWrap::GetChildCount(PRInt32 *aAccChildCount)
+{
+  NS_ENSURE_TRUE(mTree && mTreeView, NS_ERROR_FAILURE);
+
+  // get treecols count, which is cached by nsAccessibleTreeWalker
+  // by going through DOM structure of XUL tree
+  nsAccessible::GetChildCount(aAccChildCount);
+
+  // add the count of table cell (or tree item) accessibles, which are
+  // created and appended by XUL tree accessible implementation
+  PRInt32 rowCount, colCount = 1;
+  mTreeView->GetRowCount(&rowCount);
+  GetColumnCount(mTree, &colCount);
+  *aAccChildCount += rowCount * colCount;
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsXULTreeAccessibleWrap::GetCaption(nsIAccessible **aCaption)
@@ -170,8 +192,12 @@ NS_IMETHODIMP nsXULTreeAccessibleWrap::GetSelectedRows(PRUint32 *aNumRows, PRInt
   PRInt32 *outArray = (PRInt32 *)nsMemory::Alloc((*aNumRows) * sizeof(PRInt32));
   NS_ENSURE_TRUE(outArray, NS_ERROR_OUT_OF_MEMORY);
 
+  nsCOMPtr<nsITreeView> view;
+  rv = mTree->GetView(getter_AddRefs(view));
+  NS_ENSURE_SUCCESS(rv, rv);
+
   nsCOMPtr<nsITreeSelection> selection;
-  rv = mTree->GetSelection(getter_AddRefs(selection));
+  rv = view->GetSelection(getter_AddRefs(selection));
   NS_ENSURE_SUCCESS(rv, rv);
 
   PRInt32 rowCount;
@@ -205,27 +231,24 @@ NS_IMETHODIMP nsXULTreeAccessibleWrap::CellRefAt(PRInt32 aRow, PRInt32 aColumn, 
   rv = header->CellRefAt(0, aColumn, getter_AddRefs(column));
   NS_ENSURE_SUCCESS(rv, rv);
 
+  nsCOMPtr<nsIAccessNode> accessNode(do_QueryInterface(column));
+  NS_ASSERTION(accessNode, "Unable to QI to nsIAccessNode");
   nsCOMPtr<nsIDOMNode> columnNode;
-  rv = column->GetDOMNode(getter_AddRefs(columnNode));
+  rv = accessNode->GetDOMNode(getter_AddRefs(columnNode));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIDOMElement> columnElement(do_QueryInterface(columnNode, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsAutoString id;
-  rv = columnElement->GetAttribute(NS_LITERAL_STRING("id"), id);
+  nsCOMPtr<nsITreeColumns> treeColumns;
+  rv = mTree->GetColumns(getter_AddRefs(treeColumns));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  PRInt32 realColumn;
-  rv = mTree->GetColumnIndex(id.get(), &realColumn);
+  nsCOMPtr<nsITreeColumn> treeColumn;
+  rv = treeColumns->GetColumnFor(columnElement, getter_AddRefs(treeColumn));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *_retval = new nsXULTreeitemAccessible(this, mDOMNode, mWeakShell, aRow, realColumn);
-  NS_ENSURE_TRUE(*_retval, NS_ERROR_OUT_OF_MEMORY);
-
-  NS_IF_ADDREF(*_retval);
-
-  return NS_OK;
+  return GetCachedTreeitemAccessible(aRow, treeColumn, _retval);
 }
 
 NS_IMETHODIMP nsXULTreeAccessibleWrap::GetIndexAt(PRInt32 aRow, PRInt32 aColumn, PRInt32 *_retval)
@@ -252,7 +275,11 @@ NS_IMETHODIMP nsXULTreeAccessibleWrap::GetColumnAtIndex(PRInt32 aIndex, PRInt32 
   rv = GetColumns(&columns);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *_retval = aIndex % columns;
+  PRInt32 treeCols;
+  nsAccessible::GetChildCount(&treeCols);
+
+  *_retval = (aIndex - treeCols) % columns;
+  
   return NS_OK;
 }
 
@@ -266,7 +293,11 @@ NS_IMETHODIMP nsXULTreeAccessibleWrap::GetRowAtIndex(PRInt32 aIndex, PRInt32 *_r
   rv = GetColumns(&columns);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *_retval = aIndex / columns;
+  PRInt32 treeCols;
+  nsAccessible::GetChildCount(&treeCols);
+
+  *_retval = (aIndex - treeCols) / columns;
+
   return NS_OK;
 }
 
@@ -288,7 +319,12 @@ NS_IMETHODIMP nsXULTreeAccessibleWrap::GetRowExtentAt(PRInt32 aRow, PRInt32 aCol
 
 NS_IMETHODIMP nsXULTreeAccessibleWrap::GetColumnDescription(PRInt32 aColumn, nsAString & _retval)
 {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  nsCOMPtr<nsIAccessibleTable> columnHeader;
+  nsresult rv = GetColumnHeader(getter_AddRefs(columnHeader));
+  if (NS_SUCCEEDED(rv) && columnHeader) {
+    return columnHeader->GetColumnDescription(aColumn, _retval);
+  }
+  return NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP nsXULTreeAccessibleWrap::GetRowDescription(PRInt32 aRow, nsAString & _retval)
@@ -323,8 +359,12 @@ NS_IMETHODIMP nsXULTreeAccessibleWrap::IsRowSelected(PRInt32 aRow, PRBool *_retv
 
   nsresult rv = NS_OK;
 
+  nsCOMPtr<nsITreeView> view;
+  rv = mTree->GetView(getter_AddRefs(view));
+  NS_ENSURE_SUCCESS(rv, rv);
+
   nsCOMPtr<nsITreeSelection> selection;
-  rv = mTree->GetSelection(getter_AddRefs(selection));
+  rv = view->GetSelection(getter_AddRefs(selection));
   NS_ENSURE_SUCCESS(rv, rv);
 
   return selection->IsSelected(aRow, _retval);
@@ -333,6 +373,34 @@ NS_IMETHODIMP nsXULTreeAccessibleWrap::IsRowSelected(PRInt32 aRow, PRBool *_retv
 NS_IMETHODIMP nsXULTreeAccessibleWrap::IsCellSelected(PRInt32 aRow, PRInt32 aColumn, PRBool *_retval)
 {
   return IsRowSelected(aRow, _retval);
+}
+
+NS_IMETHODIMP nsXULTreeAccessibleWrap::ChangeSelection(PRInt32 aIndex, PRUint8 aMethod, PRBool *aSelState)
+{
+  NS_ENSURE_TRUE(mTree && mTreeView, NS_ERROR_FAILURE);
+
+  PRInt32 rowIndex;
+  nsresult rv = GetRowAtIndex(aIndex, &rowIndex);
+
+  nsCOMPtr<nsITreeSelection> selection;
+  rv = mTreeView->GetSelection(getter_AddRefs(selection));
+  NS_ASSERTION(selection, "Can't get selection from mTreeView");
+
+  if (selection) {
+    selection->IsSelected(rowIndex, aSelState);
+    // XXX: Can move to nsXULTreeAccessible if this can be applied to cross-platform
+    if ((!(*aSelState) && eSelection_Add == aMethod)) {
+      nsresult rv = selection->Select(rowIndex);
+      mTree->EnsureRowIsVisible(aIndex);
+      return rv;
+    }
+    // XXX: Will eSelection_Remove happen for XULTree? Leave the original implementation here
+    if ((*aSelState) && eSelection_Remove == aMethod) {
+      return selection->ToggleSelect(rowIndex);
+    }
+  }
+
+  return NS_OK;
 }
 
 // --------------------------------------------------------
@@ -470,7 +538,12 @@ NS_IMETHODIMP nsXULTreeColumnsAccessibleWrap::GetRowExtentAt(PRInt32 aRow, PRInt
 
 NS_IMETHODIMP nsXULTreeColumnsAccessibleWrap::GetColumnDescription(PRInt32 aColumn, nsAString & _retval)
 {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  nsCOMPtr<nsIAccessible> column;  
+  nsresult rv = CellRefAt(0, aColumn, getter_AddRefs(column));
+  if (NS_SUCCEEDED(rv) && column) {
+    return column->GetName(_retval);
+  }
+  return NS_ERROR_FAILURE;
 }
 
 NS_IMETHODIMP nsXULTreeColumnsAccessibleWrap::GetRowDescription(PRInt32 aRow, nsAString & _retval)

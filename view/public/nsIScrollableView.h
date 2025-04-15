@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,23 +22,22 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #ifndef nsIScrollableView_h___
 #define nsIScrollableView_h___
 
-#include "nsISupports.h"
 #include "nsCoord.h"
 #include "nsIViewManager.h"
 #include "nsIView.h"
@@ -46,22 +45,12 @@
 class nsIView;
 class nsIScrollPositionListener;
 struct nsMargin;
-
-typedef enum {
-  nsScrollPreference_kAuto = 0,
-  nsScrollPreference_kNeverScroll,
-  nsScrollPreference_kAlwaysScroll,
-  nsScrollPreference_kAlwaysScrollHorizontal,
-  nsScrollPreference_kAlwaysScrollVertical
-} nsScrollPreference;
-
-// the percentage of the page that is scrolled on a page up or down
-#define PAGE_SCROLL_PERCENT 0.9
+struct nsSize;
 
 // IID for the nsIScrollableView interface
 #define NS_ISCROLLABLEVIEW_IID    \
-{ 0xc95f1830, 0xc376, 0x11d1, \
-{ 0xb7, 0x21, 0x0, 0x60, 0x8, 0x91, 0xd8, 0xc9 } }
+{ 0x36083bcf, 0x61d7, 0x4c24, \
+{ 0xa6, 0xd4, 0x2f, 0x05, 0xba, 0x2c, 0x1b, 0x51 } }
 
 /**
  * A scrolling view allows an arbitrary view that you supply to be scrolled
@@ -73,7 +62,7 @@ typedef enum {
  * child view created by the scrolling view).
  *
  */
-class nsIScrollableView : public nsISupports {
+class nsIScrollableView {
 public:
   NS_DEFINE_STATIC_IID_ACCESSOR(NS_ISCROLLABLEVIEW_IID)
 
@@ -84,18 +73,6 @@ public:
    * @return error status
    */
   NS_IMETHOD  CreateScrollControls(nsNativeWidget aNative = nsnull) = 0;
-
-  /**
-   * Compute the values for the scroll bars and adjust the position
-   * of the scrolled view as necessary.
-   * @param aAdjustWidgets if any widgets that are children of the
-   *        scrolled view should be repositioned after rethinking
-   *        the scroll parameters, set this ot PR_TRUE. in general
-   *        this should be true unless you intended to vists the
-   *        child widgets manually.
-   * @return error status
-   */
-  NS_IMETHOD  ComputeScrollOffsets(PRBool aAdjustWidgets = PR_TRUE) = 0;
 
   /**
    * Get the dimensions of the container
@@ -116,20 +93,6 @@ public:
   NS_IMETHOD  GetScrolledView(nsIView *&aScrolledView) const = 0;
 
   /**
-   * Select whether scroll bars should be displayed all the time, never or
-   * only when necessary.
-   * @param aPref desired scrollbar selection
-   */
-  NS_IMETHOD  SetScrollPreference(nsScrollPreference aPref) = 0;
-
-  /**
-   * Query whether scroll bars should be displayed all the time, never or
-   * only when necessary.
-   * @return current scrollbar selection
-   */
-  NS_IMETHOD  GetScrollPreference(nsScrollPreference& aScrollPreference) const = 0;
-
-  /**
    * Get the position of the scrolled view.
    */
   NS_IMETHOD  GetScrollPosition(nscoord &aX, nscoord& aY) const = 0;
@@ -144,23 +107,6 @@ public:
    * @return error status
    */
   NS_IMETHOD ScrollTo(nscoord aX, nscoord aY, PRUint32 aUpdateFlags) = 0;
-
-  /**
-   * Set the amount to inset when positioning the scrollbars and clip view
-   */
-  NS_IMETHOD SetControlInsets(const nsMargin &aInsets) = 0;
-
-  /**
-   * Get the amount to inset when positioning the scrollbars and clip view
-   */
-  NS_IMETHOD GetControlInsets(nsMargin &aInsets) const = 0;
-
-  /**
-   * Get information about whether the vertical and horizontal scrollbars
-   * are currently visible
-   */
-  NS_IMETHOD GetScrollbarVisibility(PRBool *aVerticalVisible,
-                                    PRBool *aHorizontalVisible) const = 0;
 
   /**
    * Set the properties describing how scrolling can be performed
@@ -204,6 +150,13 @@ public:
   NS_IMETHOD ScrollByLines(PRInt32 aNumLinesX, PRInt32 aNumLinexY) = 0;
 
   /**
+   * Get the desired size of a page scroll in each dimension.
+   * ScrollByPages will scroll by independent multiples of these amounts
+   * unless it hits the edge of the view.
+   */
+  NS_IMETHOD GetPageScrollDistances(nsSize *aDistances) = 0;
+
+  /**
    * Scroll the view left or right by aNumPagesX pages. Positive values move right. 
    * Scroll the view up or down by aNumPagesY pages. Positive values move down. 
    * A page is considered to be the amount displayed by the clip view.
@@ -223,10 +176,18 @@ public:
   NS_IMETHOD ScrollByWhole(PRBool aTop) = 0;
 
   /**
-   * Returns the clip view
-   * XXX Obsolete; with nsScrollingView gone, this always returns 'this'
+   * Check the view can scroll from current offset.
+   * @param aHorizontal If checking to Left or to Right, true. Otherwise, false.
+   * @param aForward    If checking to Right or Bottom, true. Otherwise, false.
+   * @param aResult     If the view can scroll, true. Otherwise, false.
+   * @return            error status
    */
-  NS_IMETHOD GetClipView(const nsIView** aClipView) const = 0;
+  NS_IMETHOD CanScroll(PRBool aHorizontal, PRBool aForward, PRBool &aResult) = 0;
+
+  /**
+   * Returns the view as an nsIView*
+   */
+  NS_IMETHOD_(nsIView*) View() = 0;
 
   /**
    * Adds a scroll position listener.

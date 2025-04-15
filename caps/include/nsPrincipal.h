@@ -21,6 +21,7 @@
  *
  * Contributor(s):
  *   Christopher A. Aillon <christopher@aillon.com>
+ *   Giorgio Maone <g.maone@informaction.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -44,13 +45,11 @@
 #include "nsVoidArray.h"
 #include "nsHashtable.h"
 #include "nsJSPrincipals.h"
-#include "nsIPrincipalObsolete.h"
 
 class nsIObjectInputStream;
 class nsIObjectOutputStream;
 
-class nsPrincipal : public nsIPrincipal,
-                    public nsIPrincipalObsolete
+class nsPrincipal : public nsIPrincipal
 {
 public:
   nsPrincipal();
@@ -67,24 +66,29 @@ public:
   NS_DECL_NSIPRINCIPAL
   NS_DECL_NSISERIALIZABLE
 
-  // nsIPrincipalObsolete declarations, written out because some of them
-  // overlap with nsIPrincipal.
-
-  NS_IMETHOD ToString(char **aResult);
-  NS_IMETHOD ToUserVisibleString(char **aResult);
-  NS_IMETHOD Equals(nsIPrincipalObsolete *aOther, PRBool *aResult);
-  NS_IMETHOD HashValue(PRUint32 *aResult);
-  NS_IMETHOD GetJSPrincipals(JSPrincipals **aResult);
-
   // Either Init() or InitFromPersistent() must be called before
   // the principal is in a usable state.
-  nsresult Init(const char *aCertID, nsIURI *aCodebase);
+  nsresult Init(const nsACString& aCertFingerprint,
+                const nsACString& aSubjectName,
+                const nsACString& aPrettyName,
+                nsISupports* aCert,
+                nsIURI *aCodebase);
   nsresult InitFromPersistent(const char* aPrefName,
-                              const char* aToken,
+                              const nsCString& aFingerprint,
+                              const nsCString& aSubjectName,
+                              const nsACString& aPrettyName,
                               const char* aGrantedList,
                               const char* aDeniedList,
+                              nsISupports* aCert,
                               PRBool aIsCert,
                               PRBool aTrusted);
+
+  // Call this to ensure that this principal has a subject name, a pretty name,
+  // and a cert pointer.  This method will throw if there is already a
+  // different subject name or if this principal has no certificate.
+  nsresult EnsureCertData(const nsACString& aSubjectName,
+                          const nsACString& aPrettyName,
+                          nsISupports* aCert);
 
   enum AnnotationValue { AnnotationEnabled=1, AnnotationDisabled };
 
@@ -106,23 +110,31 @@ protected:
   // that we can use yet.
   struct Certificate
   {
-    Certificate(const char* aCertID, const char* aName)
-      : certificateID(aCertID),
-        commonName(aName)
+    Certificate(const nsACString& aFingerprint, const nsACString& aSubjectName,
+                const nsACString& aPrettyName, nsISupports* aCert)
+      : fingerprint(aFingerprint),
+        subjectName(aSubjectName),
+        prettyName(aPrettyName),
+        cert(aCert)
     {
     };
-    nsCString certificateID;
-    nsCString commonName;
+    nsCString fingerprint;
+    nsCString subjectName;
+    nsCString prettyName;
+    nsCOMPtr<nsISupports> cert;
   };
 
-  nsresult SetCertificate(const char* aCertID, const char* aName);
+  nsresult SetCertificate(const nsACString& aFingerprint,
+                          const nsACString& aSubjectName,
+                          const nsACString& aPrettyName,
+                          nsISupports* aCert);
 
   // Keep this is a pointer, even though it may slightly increase the
   // cost of keeping a certificate, this is a good tradeoff though since
   // it is very rare that we actually have a certificate.
   nsAutoPtr<Certificate> mCert;
 
-  void* mSecurityPolicy;
+  DomainPolicy* mSecurityPolicy;
 
   nsCOMPtr<nsIURI> mCodebase;
   nsCOMPtr<nsIURI> mDomain;

@@ -1,23 +1,39 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "MPL"); you may not use this file
- * except in compliance with the MPL. You may obtain a copy of
- * the MPL at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the MPL is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the MPL for the specific language governing
- * rights and limitations under the MPL.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is XMLterm.
- * 
- * The Initial Developer of the Original Code is Ramalingam Saravanan.
- * Portions created by Ramalingam Saravanan <svn@xmlterm.org> are
- * Copyright (C) 1999 Ramalingam Saravanan. All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Ramalingam Saravanan.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 // mozXMLTermListeners.cpp: implementation of classes in mozXMLTermListeners.h
 
@@ -256,7 +272,7 @@ mozXMLTermKeyListener::KeyPress(nsIDOMEvent* aKeyEvent)
           if (NS_SUCCEEDED(result) && parentNode) {
             result = parentNode->GetNodeName(nodeName);
             if (NS_SUCCEEDED(result)) {
-              nsCAutoString CNodeName; CNodeName.AssignWithConversion(nodeName);
+              NS_ConvertUTF16toUTF8 CNodeName(nodeName);
               XMLT_LOG(mozXMLTermKeyListener::KeyPress,58,("nodeName=%s\n",
                                               CNodeName.get()));
             }
@@ -330,43 +346,43 @@ mozXMLTermKeyListener::KeyPress(nsIDOMEvent* aKeyEvent)
         keyChar = U_ESCAPE;
         break;
       case nsIDOMKeyEvent::DOM_VK_HOME:
-        JSCommand.Assign(NS_LITERAL_STRING("ScrollHomeKey"));
+        JSCommand.AssignLiteral("ScrollHomeKey");
         break;
       case nsIDOMKeyEvent::DOM_VK_END:
-        JSCommand.Assign(NS_LITERAL_STRING("ScrollEndKey"));
+        JSCommand.AssignLiteral("ScrollEndKey");
         break;
       case nsIDOMKeyEvent::DOM_VK_PAGE_UP:
-        JSCommand.Assign(NS_LITERAL_STRING("ScrollPageUpKey"));
+        JSCommand.AssignLiteral("ScrollPageUpKey");
         break;
       case nsIDOMKeyEvent::DOM_VK_PAGE_DOWN:
-        JSCommand.Assign(NS_LITERAL_STRING("ScrollPageDownKey"));
+        JSCommand.AssignLiteral("ScrollPageDownKey");
         break;
       case nsIDOMKeyEvent::DOM_VK_F1:
-        JSCommand.Assign(NS_LITERAL_STRING("F1Key"));
+        JSCommand.AssignLiteral("F1Key");
         break;
       case nsIDOMKeyEvent::DOM_VK_F2:
-        JSCommand.Assign(NS_LITERAL_STRING("F2Key"));
+        JSCommand.AssignLiteral("F2Key");
         break;
       case nsIDOMKeyEvent::DOM_VK_F3:
-        JSCommand.Assign(NS_LITERAL_STRING("F3Key"));
+        JSCommand.AssignLiteral("F3Key");
         break;
       case nsIDOMKeyEvent::DOM_VK_F4:
-        JSCommand.Assign(NS_LITERAL_STRING("F4Key"));
+        JSCommand.AssignLiteral("F4Key");
         break;
       case nsIDOMKeyEvent::DOM_VK_F5:
-        JSCommand.Assign(NS_LITERAL_STRING("F5Key"));
+        JSCommand.AssignLiteral("F5Key");
         break;
       case nsIDOMKeyEvent::DOM_VK_F6:
-        JSCommand.Assign(NS_LITERAL_STRING("F6Key"));
+        JSCommand.AssignLiteral("F6Key");
         break;
       case nsIDOMKeyEvent::DOM_VK_F7:
-        JSCommand.Assign(NS_LITERAL_STRING("F7Key"));
+        JSCommand.AssignLiteral("F7Key");
         break;
       case nsIDOMKeyEvent::DOM_VK_F8:
-        JSCommand.Assign(NS_LITERAL_STRING("F8Key"));
+        JSCommand.AssignLiteral("F8Key");
         break;
       case nsIDOMKeyEvent::DOM_VK_F9:
-        JSCommand.Assign(NS_LITERAL_STRING("F9Key"));
+        JSCommand.AssignLiteral("F9Key");
         break;
       default: 
         if ( (ctrlKey && (keyCode ==nsIDOMKeyEvent::DOM_VK_SPACE)) ||
@@ -398,9 +414,9 @@ mozXMLTermKeyListener::KeyPress(nsIDOMEvent* aKeyEvent)
       if (NS_SUCCEEDED(result) && domDocument) {
         nsAutoString JSInput = JSCommand;
         nsAutoString JSOutput; JSOutput.SetLength(0);
-        JSInput.Append(NS_LITERAL_STRING("("));
+        JSInput.AppendLiteral("(");
         JSInput.AppendInt(shiftKey,10);
-        JSInput.Append(NS_LITERAL_STRING(","));
+        JSInput.AppendLiteral(",");
         JSInput.AppendInt(ctrlKey,10);
         JSInput.Append(NS_LITERAL_STRING(");"));
         result = mozXMLTermUtils::ExecuteScript(domDocument,

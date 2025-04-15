@@ -30,14 +30,20 @@ include $(srcdir)/objs.mk
 MODULE		= zlib
 LIBRARY_NAME	= mozz
 GRE_MODULE	= 1
+LIBXUL_LIBRARY = 1
 
 PACKAGE_FILE = zlib.pkg
 
-ifeq ($(OS_ARCH),WINNT)
+ifndef MOZ_ENABLE_LIBXUL
+ifeq (,$(filter-out WINNT WINCE,$(OS_ARCH)))
 ifndef GNU_CC
 MAPFILE	= $(LIBRARY_NAME).map
-DEFFILE	= $(srcdir)/zlib.def
+DEFFILE	= $(win_srcdir)/zlib.def
 endif
+endif
+endif
+
+ifeq (,$(filter-out WINNT WINCE,$(OS_ARCH)))
 DEFINES	+= -DZLIB_DLL=1
 endif
 
@@ -49,5 +55,3 @@ EXPORTS		= $(MODULES_ZLIB_SRC_LEXPORTS)
 FORCE_USE_PIC = 1
 
 include $(topsrcdir)/config/rules.mk
-
-

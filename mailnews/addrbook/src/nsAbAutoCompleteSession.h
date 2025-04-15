@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -45,7 +45,7 @@
 #include "nsIAbDirectory.h"
 #include "nsIAbAutoCompleteSession.h"
 
-class nsIPref;
+class nsIPrefBranch;
 
 typedef struct
 {
@@ -84,35 +84,21 @@ public:
   nsAbAutoCompleteSession();
   virtual ~nsAbAutoCompleteSession(); 
 
-    typedef enum
-    {
-        DEFAULT_MATCH           = 0,
-        NICKNAME_EXACT_MATCH,
-        NAME_EXACT_MATCH,
-        EMAIL_EXACT_MATCH,
-        NICKNAME_MATCH,
-        NAME_MATCH,
-        EMAIL_MATCH,
-        LAST_MATCH_TYPE
-    } MatchType;
-
 protected:    
-    void ResetMatchTypeConters();
-    PRBool ItsADuplicate(PRUnichar* fullAddrStr, nsIAutoCompleteResults* results);
+    PRBool ItsADuplicate(PRUnichar* fullAddrStr, PRInt32 aPopularityIndex, nsIAutoCompleteResults* results);
     void AddToResult(const PRUnichar* pNickNameStr, 
                      const PRUnichar* pDisplayNameStr, 
                      const PRUnichar* pFirstNameStr,
                      const PRUnichar* pLastNameStr, 
                      const PRUnichar* pEmailStr, const PRUnichar* pNotes,
-                     const PRUnichar* pDirName, PRBool bIsMailList, 
-                     MatchType type, nsIAutoCompleteResults* results);
+                     const PRUnichar* pDirName, 
+                     PRUint32 aPopularityIndex, PRBool bIsMailList, 
+                     PRBool pDefaultMatch, nsIAutoCompleteResults* results);
     PRBool CheckEntry(nsAbAutoCompleteSearchString* searchStr, const PRUnichar* nickName,const PRUnichar* displayName, 
-      const PRUnichar* firstName, const PRUnichar* lastName, const PRUnichar* emailAddress, MatchType* matchType);
+                      const PRUnichar* firstName, const PRUnichar* lastName, const PRUnichar* emailAddress);
         
     nsCOMPtr<nsIMsgHeaderParser> mParser;
     nsString mDefaultDomain;
-    PRUint32 mMatchTypeConters[LAST_MATCH_TYPE];
-    PRUint32 mDefaultDomainMatchTypeCounters[LAST_MATCH_TYPE];
 
     // how to process the comment column, if at all.  this value
     // comes from "mail.autoComplete.commentColumn", or, if that
@@ -131,9 +117,7 @@ private:
     nsresult SearchDirectory(const nsACString& aURI, nsAbAutoCompleteSearchString* searchStr, PRBool searchSubDirectory, nsIAutoCompleteResults* results);
     nsresult SearchPreviousResults(nsAbAutoCompleteSearchString *uSearchString, nsIAutoCompleteResults *previousSearchResult, nsIAutoCompleteResults* results);
 
-    nsresult SearchReplicatedLDAPDirectories(nsIPref *aPrefs, nsAbAutoCompleteSearchString* searchStr, PRBool searchSubDirectory, nsIAutoCompleteResults* results);
-    nsresult NeedToSearchReplicatedLDAPDirectories(nsIPref *aPrefs, PRBool *aNeedToSearch);
-    nsresult NeedToSearchLocalDirectories(nsIPref *aPrefs, PRBool *aNeedToSearch);
+    nsresult SearchReplicatedLDAPDirectories(nsIPrefBranch *aPrefs, nsAbAutoCompleteSearchString* searchStr, PRBool searchSubDirectory, nsIAutoCompleteResults* results);
 };
 
 
@@ -154,8 +138,8 @@ public:
                           const PRUnichar* emailAddress,
                           const PRUnichar* notes,
                           const PRUnichar* dirName,
-                          PRBool isMailList, 
-                          nsAbAutoCompleteSession::MatchType type)
+                          PRUint32 aPopularityIndex,
+                          PRBool isMailList)
   {
     const PRUnichar *empty = EmptyString().get();
 
@@ -167,7 +151,7 @@ public:
     mNotes = nsCRT::strdup(notes ? notes : empty);
     mDirName = nsCRT::strdup(dirName ? dirName : empty);
     mIsMailList = isMailList;
-    mType = type;
+    mPopularityIndex = aPopularityIndex;
   }
   
   virtual ~nsAbAutoCompleteParam()
@@ -189,8 +173,8 @@ protected:
     PRUnichar* mEmailAddress;
     PRUnichar* mNotes;
     PRUnichar* mDirName;
+    PRUint32 mPopularityIndex;
     PRBool mIsMailList;
-    nsAbAutoCompleteSession::MatchType  mType;
 
 public:
     friend class nsAbAutoCompleteSession;

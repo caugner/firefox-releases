@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #ifndef nsIDocument_h___
@@ -41,22 +40,24 @@
 #include "nsISupports.h"
 #include "nsEvent.h"
 #include "nsString.h"
-#include "nsChangeHint.h"
 #include "nsCOMArray.h"
 #include "nsIDocumentObserver.h"
 #include "nsCOMPtr.h"
 #include "nsIURI.h"
 #include "nsIBindingManager.h"
-#include "nsINodeInfo.h"
 #include "nsWeakPtr.h"
 #include "nsIWeakReferenceUtils.h"
 #include "nsILoadGroup.h"
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
+#include "mozFlushType.h"
+#include "nsPropertyTable.h"
+#include "nsHashSets.h"
+#include "nsAutoPtr.h"
 
 class nsIAtom;
 class nsIContent;
-class nsIPresContext;
+class nsPresContext;
 class nsIPresShell;
 
 class nsIStreamListener;
@@ -66,6 +67,7 @@ class nsIStyleSheet;
 class nsIStyleRule;
 class nsIViewManager;
 class nsIScriptGlobalObject;
+class nsPIDOMWindow;
 class nsIDOMEvent;
 class nsIDeviceContext;
 class nsIParser;
@@ -83,14 +85,16 @@ class nsISupportsArray;
 class nsIScriptLoader;
 class nsIContentSink;
 class nsIScriptEventManager;
+class nsNodeInfoManager;
 class nsICSSLoader;
-class nsIHTMLStyleSheet;
+class nsHTMLStyleSheet;
 class nsIHTMLCSSStyleSheet;
+class nsILayoutHistoryState;
 
 // IID for the nsIDocument interface
 #define NS_IDOCUMENT_IID      \
-{ 0x3000c2a4, 0xf7f1, 0x4636, \
-  {0x9c, 0x6e, 0xd5, 0x38, 0x1b, 0xf0, 0x18, 0x8a} }
+{ 0xd7c47f55, 0x480b, 0x4a60, \
+  { 0x9a, 0xdf, 0xca, 0x49, 0x87, 0x3c, 0x71, 0xe2 } }
 
 // The base value for the content ID counter.
 // This counter is used by the document to 
@@ -101,7 +105,6 @@ class nsIHTMLCSSStyleSheet;
 
 // Flag for AddStyleSheet().
 #define NS_STYLESHEET_FROM_CATALOG                (1 << 0)
-
 
 //----------------------------------------------------------------------
 
@@ -114,9 +117,11 @@ public:
 
   nsIDocument()
     : mCharacterSet(NS_LITERAL_CSTRING("ISO-8859-1")),
-      mNextContentID(NS_CONTENT_ID_COUNTER_BASE) { }
-
-  virtual ~nsIDocument() { }
+      mNextContentID(NS_CONTENT_ID_COUNTER_BASE),
+      mNodeInfoManager(nsnull),
+      mPartID(0)
+  {
+  }
 
   virtual nsresult StartDocumentLoad(const char* aCommand,
                                      nsIChannel* aChannel,
@@ -286,7 +291,7 @@ public:
    * presentation context (presentation contexts <b>must not</b> be
    * shared among multiple presentation shells).
    */
-  virtual nsresult CreateShell(nsIPresContext* aContext,
+  virtual nsresult CreateShell(nsPresContext* aContext,
                                nsIViewManager* aViewManager,
                                nsStyleSet* aStyleSet,
                                nsIPresShell** aInstancePtrResult) = 0;
@@ -335,7 +340,18 @@ public:
   {
     return mRootContent;
   }
-  virtual void SetRootContent(nsIContent* aRoot) = 0;
+
+  /**
+   * Set aRoot as the root content object for this document.  If aRoot is
+   * non-null, this should not be called on documents that currently have a
+   * root content without first clearing out the document's children.  Passing
+   * in null to unbind the existing root content is allowed.  This method will
+   * bind aRoot to the document; the caller need not call BindToTree on aRoot.
+   *
+   * Note that this method never sends out nsIDocumentObserver notifications;
+   * doing that is the caller's responsibility.
+   */
+  virtual nsresult SetRootContent(nsIContent* aRoot) = 0;
 
   /** 
    * Get the direct children of the document - content in
@@ -353,25 +369,18 @@ public:
   /**
    * Get the number of stylesheets
    *
-   * @param aIncludeSpecialSheets if this is set to true, all sheets
-   *   that are document sheets (including "special" sheets like
-   *   attribute sheets and inline style sheets) will be returned.  If
-   *   false, only "normal" stylesheets will be returned   
    * @return the number of stylesheets
    * @throws no exceptions
    */
-  virtual PRInt32 GetNumberOfStyleSheets(PRBool aIncludeSpecialSheets) const = 0;
+  virtual PRInt32 GetNumberOfStyleSheets() const = 0;
   
   /**
    * Get a particular stylesheet
    * @param aIndex the index the stylesheet lives at.  This is zero-based
-   * @param aIncludeSpecialSheets see GetNumberOfStyleSheets.  If this
-   *   is false, not all sheets will be returnable
    * @return the stylesheet at aIndex.  Null if aIndex is out of range.
    * @throws no exceptions
    */
-  virtual nsIStyleSheet* GetStyleSheetAt(PRInt32 aIndex,
-                                         PRBool aIncludeSpecialSheets) const = 0;
+  virtual nsIStyleSheet* GetStyleSheetAt(PRInt32 aIndex) const = 0;
   
   /**
    * Insert a sheet at a particular spot in the stylesheet list (zero-based)
@@ -404,7 +413,7 @@ public:
   /**
    * Add a stylesheet to the document
    */
-  virtual void AddStyleSheet(nsIStyleSheet* aSheet, PRUint32 aFlags) = 0;
+  virtual void AddStyleSheet(nsIStyleSheet* aSheet) = 0;
 
   /**
    * Remove a stylesheet from the document
@@ -419,16 +428,33 @@ public:
                                             PRBool aApplicable) = 0;  
 
   /**
-   * Get this document's CSSLoader.  May return null in error
-   * conditions (OOM)
+   * Just like the style sheet API, but for "catalog" sheets,
+   * extra sheets inserted at the UA level.
    */
-  virtual nsICSSLoader* GetCSSLoader() = 0;
+  virtual PRInt32 GetNumberOfCatalogStyleSheets() const = 0;
+  virtual nsIStyleSheet* GetCatalogStyleSheetAt(PRInt32 aIndex) const = 0;
+  virtual void AddCatalogStyleSheet(nsIStyleSheet* aSheet) = 0;
+  virtual void EnsureCatalogStyleSheet(const char *aStyleSheetURI) = 0;
+
+  /**
+   * Get this document's CSSLoader.  This is guaranteed to not return null.
+   */
+  nsICSSLoader* CSSLoader() const {
+    return mCSSLoader;
+  }
+
+  /**
+   * Get the channel that was passed to StartDocumentLoad for this
+   * document.  Note that this may be null in some cases (eg if
+   * StartDocumentLoad was never called)
+   */
+  virtual nsIChannel* GetChannel() const = 0;
 
   /**
    * Get this document's attribute stylesheet.  May return null if
    * there isn't one.
    */
-  virtual nsIHTMLStyleSheet* GetAttributeStyleSheet() const = 0;
+  virtual nsHTMLStyleSheet* GetAttributeStyleSheet() const = 0;
 
   /**
    * Get this document's inline style sheet.  May return null if there
@@ -437,12 +463,18 @@ public:
   virtual nsIHTMLCSSStyleSheet* GetInlineStyleSheet() const = 0;
   
   /**
-   * Set the object from which a document can get a script context.
-   * This is the context within which all scripts (during document 
-   * creation and during event handling) will run.
+   * Get/set the object from which a document can get a script context
+   * and scope. This is the context within which all scripts (during
+   * document creation and during event handling) will run. Note that
+   * this is the *inner* window object.
    */
   virtual nsIScriptGlobalObject* GetScriptGlobalObject() const = 0;
   virtual void SetScriptGlobalObject(nsIScriptGlobalObject* aGlobalObject) = 0;
+
+  /**
+   * Return the window containing the document (the outer window).
+   */
+  virtual nsPIDOMWindow *GetWindow() = 0;
 
   /**
    * Get the script loader for this document
@@ -492,10 +524,6 @@ public:
   virtual void ContentInserted(nsIContent* aContainer,
                                nsIContent* aChild,
                                PRInt32 aIndexInContainer) = 0;
-  virtual void ContentReplaced(nsIContent* aContainer,
-                               nsIContent* aOldChild,
-                               nsIContent* aNewChild,
-                               PRInt32 aIndexInContainer) = 0;
   virtual void ContentRemoved(nsIContent* aContainer,
                               nsIContent* aChild,
                               PRInt32 aIndexInContainer) = 0;
@@ -510,25 +538,32 @@ public:
   virtual void StyleRuleRemoved(nsIStyleSheet* aStyleSheet,
                                 nsIStyleRule* aStyleRule) = 0;
 
-  virtual nsresult HandleDOMEvent(nsIPresContext* aPresContext,
+  virtual nsresult HandleDOMEvent(nsPresContext* aPresContext,
                                   nsEvent* aEvent, nsIDOMEvent** aDOMEvent,
                                   PRUint32 aFlags,
                                   nsEventStatus* aEventStatus) = 0;
 
-  virtual void FlushPendingNotifications(PRBool aFlushReflows=PR_TRUE,
-                                         PRBool aUpdateViews=PR_FALSE) = 0;
+  /**
+   * Flush notifications for this document and its parent documents
+   * (since those may affect the layout of this one).
+   */
+  virtual void FlushPendingNotifications(mozFlushType aType) = 0;
 
   PRInt32 GetAndIncrementContentID()
   {
     return mNextContentID++;
   }
 
-  nsIBindingManager* GetBindingManager() const
+  nsIBindingManager* BindingManager() const
   {
     return mBindingManager;
   }
 
-  nsINodeInfoManager* GetNodeInfoManager() const
+  /**
+   * Only to be used inside Gecko, you can't really do anything with the
+   * pointer outside Gecko anyway.
+   */
+  nsNodeInfoManager* NodeInfoManager() const
   {
     return mNodeInfoManager;
   }
@@ -538,9 +573,6 @@ public:
    * Reset this document to aURI and aLoadGroup.  aURI must not be null.
    */
   virtual void ResetToURI(nsIURI *aURI, nsILoadGroup* aLoadGroup) = 0;
-
-  virtual void AddReference(void *aKey, nsISupports *aReference) = 0;
-  virtual already_AddRefed<nsISupports> RemoveReference(void *aKey) = 0;
 
   /**
    * Set the container (docshell) for this document.
@@ -565,12 +597,14 @@ public:
   virtual nsIScriptEventManager* GetScriptEventManager() = 0;
 
   /**
-   * Set and get XML declaration. Notice that if version is empty,
-   * there can be no XML declaration (it is a required part).
+   * Set and get XML declaration. If aVersion is null there is no declaration.
+   * aStandalone takes values -1, 0 and 1 indicating respectively that there
+   * was no standalone parameter in the declaration, that it was given as no,
+   * or that it was given as yes.
    */
-  virtual void SetXMLDeclaration(const nsAString& aVersion,
-                                 const nsAString& aEncoding,
-                                 const nsAString& Standalone) = 0;
+  virtual void SetXMLDeclaration(const PRUnichar *aVersion,
+                                 const PRUnichar *aEncoding,
+                                 const PRInt32 aStandalone) = 0;
   virtual void GetXMLDeclaration(nsAString& aVersion,
                                  nsAString& aEncoding,
                                  nsAString& Standalone) = 0;
@@ -582,17 +616,180 @@ public:
 
   virtual PRBool IsScriptEnabled() = 0;
 
-  // Get the security info (i.e. SSL state etc) that the document got
-  // from the channel/document that created the content of the
-  // document.
-  //
-  // @see nsIChannel
+  virtual nsresult AddXMLEventsContent(nsIContent * aXMLEventsElement) = 0;
+
+  virtual PRBool IsLoadedAsData()
+  {
+    return PR_FALSE;
+  }
+
+  /**
+   * Create an element with the specified name, prefix and namespace ID.
+   * If aDocumentDefaultType is true we create an element of the default type
+   * for that document (currently XHTML in HTML documents and XUL in XUL
+   * documents), otherwise we use the type specified by the namespace ID.
+   */
+  virtual nsresult CreateElem(nsIAtom *aName, nsIAtom *aPrefix,
+                              PRInt32 aNamespaceID,
+                              PRBool aDocumentDefaultType,
+                              nsIContent** aResult) = 0;
+
+  /**
+   * Get the security info (i.e. SSL state etc) that the document got
+   * from the channel/document that created the content of the
+   * document.
+   *
+   * @see nsIChannel
+   */
   nsISupports *GetSecurityInfo()
   {
     return mSecurityInfo;
   }
 
+  /**
+   * Returns the default namespace ID used for elements created in this
+   * document.
+   */
+  virtual PRInt32 GetDefaultNamespaceID() const = 0;
+
+  virtual void* GetProperty(nsIAtom *aPropertyName,
+                            nsresult *aStatus = nsnull) const = 0;
+
+  virtual nsresult SetProperty(nsIAtom            *aPropertyName,
+                               void               *aValue,
+                               NSPropertyDtorFunc  aDtor = nsnull) = 0;
+
+  virtual nsresult DeleteProperty(nsIAtom *aPropertyName) = 0;
+
+  virtual void* UnsetProperty(nsIAtom  *aPropertyName,
+                              nsresult *aStatus = nsnull) = 0;
+
+  nsPropertyTable* PropertyTable() { return &mPropertyTable; }
+
+  /**
+   * Sets the ID used to identify this part of the multipart document
+   */
+  void SetPartID(PRUint32 aID) {
+    mPartID = aID;
+  }
+
+  /**
+   * Return the ID used to identify this part of the multipart document
+   */
+  PRUint32 GetPartID() const {
+    return mPartID;
+  }
+
+  /**
+   * Sanitize the document by resetting all input elements and forms that have
+   * autocomplete=off to their default values.
+   */
+  virtual nsresult Sanitize() = 0;
+
+  /**
+   * Enumerate all subdocuments.
+   * The enumerator callback should return PR_TRUE to continue enumerating, or
+   * PR_FALSE to stop.
+   */
+  typedef PRBool (*nsSubDocEnumFunc)(nsIDocument *aDocument, void *aData);
+  virtual void EnumerateSubDocuments(nsSubDocEnumFunc aCallback,
+                                     void *aData) = 0;
+
+  /**
+   * Check whether it is safe to cache the presentation of this document
+   * and all of its subdocuments. This method checks the following conditions
+   * recursively:
+   *  - Some document types, such as plugin documents, cannot be safely cached.
+   *  - If there are any pending requests, we don't allow the presentation
+   *    to be cached.  Ideally these requests would be suspended and resumed,
+   *    but that is difficult in some cases, such as XMLHttpRequest.
+   *  - If there are any beforeunload or unload listeners, we must fire them
+   *    for correctness, but this likely puts the document into a state where
+   *    it would not function correctly if restored.
+   *
+   * |aNewRequest| should be the request for a new document which will
+   * replace this document in the docshell.  The new document's request
+   * will be ignored when checking for active requests.  If there is no
+   * request associated with the new document, this parameter may be null.
+   */
+  virtual PRBool CanSavePresentation(nsIRequest *aNewRequest) = 0;
+
+  /**
+   * Notify the document that its associated ContentViewer is being destroyed.
+   * This releases circular references so that the document can go away.
+   * Destroy() is only called on documents that have a content viewer.
+   */
+  virtual void Destroy() = 0;
+
+  /**
+   * Get the layout history state that should be used to save and restore state
+   * for nodes in this document.  This may return null; if that happens state
+   * saving and restoration is not possible.
+   */
+  virtual already_AddRefed<nsILayoutHistoryState> GetLayoutHistoryState() const = 0;
+
+  /**
+   * Methods that can be used to prevent onload firing while an event that
+   * should block onload is posted.  onload is guaranteed to not fire until
+   * either all calls to BlockOnload() have been matched by calls to
+   * UnblockOnload() or the load has been stopped altogether (by the user
+   * pressing the Stop button, say).  onload may fire synchronously from inside
+   * the UnblockOnload() call.
+   */
+  virtual void BlockOnload() = 0;
+  virtual void UnblockOnload() = 0;
+
+  /**
+   * Notification that the page has been shown, for documents which are loaded
+   * into a DOM window.  This corresponds to the completion of document load,
+   * or to the page's presentation being restored into an existing DOM window.
+   * This notification fires applicable DOM events to the content window.  See
+   * nsIDOMPageTransitionEvent.idl for a description of the |aPersisted|
+   * parameter.
+   */
+  virtual void OnPageShow(PRBool aPersisted) = 0;
+
+  /**
+   * Notification that the page has been hidden, for documents which are loaded
+   * into a DOM window.  This corresponds to the unloading of the document, or
+   * to the document's presentation being saved but removed from an existing
+   * DOM window.  This notification fires applicable DOM events to the content
+   * window.  See nsIDOMPageTransitionEvent.idl for a description of the
+   * |aPersisted| parameter.
+   */
+  virtual void OnPageHide(PRBool aPersisted) = 0;
+  
+  /*
+   * We record the set of links in the document that are relevant to
+   * style.
+   */
+  /**
+   * Notification that an element is a link with a given URI that is
+   * relevant to style.
+   */
+  virtual void AddStyleRelevantLink(nsIContent* aContent, nsIURI* aURI) = 0;
+  /**
+   * Notification that an element is a link and its URI might have been
+   * changed or the element removed. If the element is still a link relevant
+   * to style, then someone must ensure that AddStyleRelevantLink is
+   * (eventually) called on it again.
+   */
+  virtual void ForgetLink(nsIContent* aContent) = 0;
+  /**
+   * Notification that the visitedness state of a URI has been changed
+   * and style related to elements linking to that URI should be updated.
+   */
+  virtual void NotifyURIVisitednessChanged(nsIURI* aURI) = 0;
+
 protected:
+  ~nsIDocument()
+  {
+    // XXX The cleanup of mNodeInfoManager (calling DropDocumentReference and
+    //     releasing it) happens in the nsDocument destructor. We'd prefer to
+    //     do it here but nsNodeInfoManager is a concrete class that we don't
+    //     want to expose to users of the nsIDocument API outside of Gecko.
+  }
+
   nsString mDocumentTitle;
   nsCOMPtr<nsIURI> mDocumentURI;
   nsCOMPtr<nsIURI> mDocumentBaseURI;
@@ -616,7 +813,14 @@ protected:
   PRInt32 mNextContentID;
 
   nsCOMPtr<nsIBindingManager> mBindingManager;
-  nsCOMPtr<nsINodeInfoManager> mNodeInfoManager;
+  nsNodeInfoManager* mNodeInfoManager; // [STRONG]
+
+  nsICSSLoader* mCSSLoader; // [STRONG; not a COMPtr to avoid
+                            // including nsICSSLoader.h; the ownership
+                            // is managed by nsDocument]
+
+  // Table of element properties for this document.
+  nsPropertyTable mPropertyTable;
 
   // True if BIDI is enabled.
   PRBool mBidiEnabled;
@@ -626,6 +830,10 @@ protected:
 
   // The document's security info
   nsCOMPtr<nsISupports> mSecurityInfo;
+
+  // if this document is part of a multipart document,
+  // the ID can be used to distinguish it from the other parts.
+  PRUint32 mPartID;
 };
 
 

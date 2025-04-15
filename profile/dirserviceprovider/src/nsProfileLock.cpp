@@ -24,6 +24,7 @@
  *   Brendan Eich <brendan@mozilla.org>
  *   Colin Blake <colin@theblakes.com>
  *   Javier Pedemonte <pedemont@us.ibm.com>
+ *   Mats Palmgren <mats.palmgren@bredband.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -39,9 +40,9 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include "nsProfileStringTypes.h"
 #include "nsProfileLock.h"
-#include "nsLiteralString.h"
-#include "nsString.h"
+#include "nsCOMPtr.h"
 
 #if defined(XP_MAC) || defined(XP_MACOSX)
 #include <Processes.h>
@@ -227,7 +228,18 @@ nsresult nsProfileLock::LockWithFcntl(const nsACString& lockFilePath)
         lock.l_len = 0; // len = 0 means entire file
         lock.l_type = F_WRLCK;
         lock.l_whence = SEEK_SET;
-        if (fcntl(mLockFileDesc, F_SETLK, &lock) == -1)
+
+        // If fcntl(F_GETLK) fails then the server does not support/allow fcntl(),
+        // return failure rather than access denied in this case so we fallback
+        // to using a symlink lock, bug 303633.
+        struct flock testlock = lock;
+        if (fcntl(mLockFileDesc, F_GETLK, &testlock) == -1)
+        {
+            close(mLockFileDesc);
+            mLockFileDesc = -1;
+            rv = NS_ERROR_FAILURE;
+        }
+        else if (fcntl(mLockFileDesc, F_SETLK, &lock) == -1)
         {
             close(mLockFileDesc);
             mLockFileDesc = -1;
@@ -253,7 +265,58 @@ nsresult nsProfileLock::LockWithFcntl(const nsACString& lockFilePath)
     return rv;
 }
 
-nsresult nsProfileLock::LockWithSymlink(const nsACString& lockFilePath)
+static PRBool IsSymlinkStaleLock(struct in_addr* aAddr, const char* aFileName,
+                                 PRBool aHaveFcntlLock)
+{
+    // the link exists; see if it's from this machine, and if
+    // so if the process is still active
+    char buf[1024];
+    int len = readlink(aFileName, buf, sizeof buf - 1);
+    if (len > 0)
+    {
+        buf[len] = '\0';
+        char *colon = strchr(buf, ':');
+        if (colon)
+        {
+            *colon++ = '\0';
+            unsigned long addr = inet_addr(buf);
+            if (addr != (unsigned long) -1)
+            {
+                if (colon[0] == '+' && aHaveFcntlLock) {
+                    // This lock was placed by a Firefox build which would have
+                    // taken the fnctl lock, and we've already taken the fcntl lock,
+                    // so the process that created this obsolete lock must be gone
+                    return PR_TRUE;
+                }
+                    
+                char *after = nsnull;
+                pid_t pid = strtol(colon, &after, 0);
+                if (pid != 0 && *after == '\0')
+                {
+                    if (addr != aAddr->s_addr)
+                    {
+                        // Remote lock: give up even if stuck.
+                        return PR_FALSE;
+                    }
+    
+                    // kill(pid,0) is a neat trick to check if a
+                    // process exists
+                    if (kill(pid, 0) == 0 || errno != ESRCH)
+                    {
+                        // Local process appears to be alive, ass-u-me it
+                        // is another Mozilla instance, or a compatible
+                        // derivative, that's currently using the profile.
+                        // XXX need an "are you Mozilla?" protocol
+                        return PR_FALSE;
+                    }
+                }
+            }
+        }
+    }
+    return PR_TRUE;
+}
+
+nsresult nsProfileLock::LockWithSymlink(const nsACString& lockFilePath, PRBool aHaveFcntlLock)
 {
     nsresult rv;
 
@@ -272,10 +335,11 @@ nsresult nsProfileLock::LockWithSymlink(const nsACString& lockFilePath)
     }
 
     char *signature =
-        PR_smprintf("%s:%lu", inet_ntoa(inaddr), (unsigned long)getpid());
+        PR_smprintf("%s:%s%lu", inet_ntoa(inaddr), aHaveFcntlLock ? "+" : "",
+                    (unsigned long)getpid());
     const nsPromiseFlatCString& flat = PromiseFlatCString(lockFilePath);
     const char *fileName = flat.get();
-    int symlink_rv, symlink_errno, tries = 0;
+    int symlink_rv, symlink_errno = 0, tries = 0;
 
     // use ns4.x-compatible symlinks if the FS supports them
     while ((symlink_rv = symlink(signature, fileName)) < 0)
@@ -284,44 +348,8 @@ nsresult nsProfileLock::LockWithSymlink(const nsACString& lockFilePath)
         if (symlink_errno != EEXIST)
             break;
 
-        // the link exists; see if it's from this machine, and if
-        // so if the process is still active
-        char buf[1024];
-        int len = readlink(fileName, buf, sizeof buf - 1);
-        if (len > 0)
-        {
-            buf[len] = '\0';
-            char *colon = strchr(buf, ':');
-            if (colon)
-            {
-                *colon++ = '\0';
-                unsigned long addr = inet_addr(buf);
-                if (addr != (unsigned long) -1)
-                {
-                    char *after = nsnull;
-                    pid_t pid = strtol(colon, &after, 0);
-                    if (pid != 0 && *after == '\0')
-                    {
-                        if (addr != inaddr.s_addr)
-                        {
-                            // Remote lock: give up even if stuck.
-                            break;
-                        }
-
-                        // kill(pid,0) is a neat trick to check if a
-                        // process exists
-                        if (kill(pid, 0) == 0 || errno != ESRCH)
-                        {
-                            // Local process appears to be alive, ass-u-me it
-                            // is another Mozilla instance, or a compatible
-                            // derivative, that's currently using the profile.
-                            // XXX need an "are you Mozilla?" protocol
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+        if (!IsSymlinkStaleLock(&inaddr, fileName, aHaveFcntlLock))
+            break;
 
         // Lock seems to be bogus: try to claim it.  Give up after a large
         // number of attempts (100 comes from the 4.x codebase).
@@ -390,7 +418,8 @@ PR_BEGIN_MACRO                                                          \
 }
 #endif /* XP_UNIX */
 
-nsresult nsProfileLock::Lock(nsILocalFile* aFile)
+nsresult nsProfileLock::Lock(nsILocalFile* aProfileDir,
+                             nsIProfileUnlocker* *aUnlocker)
 {
 #if defined (XP_MACOSX)
     NS_NAMED_LITERAL_STRING(LOCKFILE_NAME, ".parentlock");
@@ -403,24 +432,27 @@ nsresult nsProfileLock::Lock(nsILocalFile* aFile)
 #endif
 
     nsresult rv;
+    if (aUnlocker)
+        *aUnlocker = nsnull;
+
     NS_ENSURE_STATE(!mHaveLock);
 
     PRBool isDir;
-    rv = aFile->IsDirectory(&isDir);
+    rv = aProfileDir->IsDirectory(&isDir);
     if (NS_FAILED(rv))
         return rv;
     if (!isDir)
         return NS_ERROR_FILE_NOT_DIRECTORY;
 
     nsCOMPtr<nsILocalFile> lockFile;
-    rv = aFile->Clone((nsIFile **)((void **)getter_AddRefs(lockFile)));
+    rv = aProfileDir->Clone((nsIFile **)((void **)getter_AddRefs(lockFile)));
     if (NS_FAILED(rv))
         return rv;
 
     rv = lockFile->Append(LOCKFILE_NAME);
     if (NS_FAILED(rv))
         return rv;
-
+        
 #if defined(XP_MACOSX)
     // First, try locking using fcntl. It is more reliable on
     // a local machine, but may not be supported by an NFS server.
@@ -428,13 +460,15 @@ nsresult nsProfileLock::Lock(nsILocalFile* aFile)
     rv = lockFile->GetNativePath(filePath);
     if (NS_FAILED(rv))
         return rv;
+
     rv = LockWithFcntl(filePath);
     if (NS_FAILED(rv) && (rv != NS_ERROR_FILE_ACCESS_DENIED))
     {
         // If that failed for any reason other than NS_ERROR_FILE_ACCESS_DENIED,
         // assume we tried an NFS that does not support it. Now, try with symlink.
-        rv = LockWithSymlink(filePath);
+        rv = LockWithSymlink(filePath, PR_FALSE);
     }
+    
     if (NS_SUCCEEDED(rv))
     {
         // Check for the old-style lock used by pre-mozilla 1.3 builds.
@@ -479,6 +513,53 @@ nsresult nsProfileLock::Lock(nsILocalFile* aFile)
         }
         rv = NS_OK; // Don't propagate error from OpenNSPRFileDesc.
     }
+#elif defined(XP_UNIX)
+    nsCAutoString filePath;
+    rv = lockFile->GetNativePath(filePath);
+    if (NS_FAILED(rv))
+        return rv;
+
+    // Get the old lockfile name
+    nsCOMPtr<nsIFile> oldLockFile;
+    rv = aProfileDir->Clone(getter_AddRefs(oldLockFile));
+    if (NS_FAILED(rv))
+        return rv;
+    rv = oldLockFile->Append(OLD_LOCKFILE_NAME);
+    if (NS_FAILED(rv))
+        return rv;
+    nsCAutoString oldFilePath;
+    rv = oldLockFile->GetNativePath(oldFilePath);
+    if (NS_FAILED(rv))
+        return rv;
+
+    // First, try locking using fcntl. It is more reliable on
+    // a local machine, but may not be supported by an NFS server.
+    rv = LockWithFcntl(filePath);
+    if (NS_SUCCEEDED(rv)) {
+        // Check to see whether there is a symlink lock held by an older
+        // Firefox build, and also place our own symlink lock --- but
+        // mark it "obsolete" so that other newer builds can break the lock
+        // if they obtain the fcntl lock
+        rv = LockWithSymlink(oldFilePath, PR_TRUE);
+
+        // If the symlink failed for some reason other than it already
+        // exists, then something went wrong e.g. the file system
+        // doesn't support symlinks, or we don't have permission to
+        // create a symlink there.  In such cases we should just
+        // continue because it's unlikely there is an old build
+        // running with a symlink there and we've already successfully
+        // placed a fcntl lock.
+        if (rv != NS_ERROR_FILE_ACCESS_DENIED)
+            rv = NS_OK;
+    }
+    else if (rv != NS_ERROR_FILE_ACCESS_DENIED)
+    {
+        // If that failed for any reason other than NS_ERROR_FILE_ACCESS_DENIED,
+        // assume we tried an NFS that does not support it. Now, try with symlink
+        // using the old symlink path
+        rv = LockWithSymlink(oldFilePath, PR_FALSE);
+    }
+
 #elif defined(XP_WIN)
     nsCAutoString filePath;
     rv = lockFile->GetNativePath(filePath);
@@ -491,8 +572,10 @@ nsresult nsProfileLock::Lock(nsILocalFile* aFile)
                                  OPEN_ALWAYS,
                                  FILE_FLAG_DELETE_ON_CLOSE,
                                  nsnull);
-    if (mLockFileHandle == INVALID_HANDLE_VALUE)
+    if (mLockFileHandle == INVALID_HANDLE_VALUE) {
+        // XXXbsmedberg: provide a profile-unlocker here!
         return NS_ERROR_FILE_ACCESS_DENIED;
+    }
 #elif defined(XP_OS2)
     nsCAutoString filePath;
     rv = lockFile->GetNativePath(filePath);
@@ -533,38 +616,7 @@ nsresult nsProfileLock::Lock(nsILocalFile* aFile)
 	    return NS_ERROR_FAILURE;
 	}
     }
-#elif defined(XP_UNIX)
-    nsCOMPtr<nsIFile> oldLockFile;
-    rv = aFile->Clone(getter_AddRefs(oldLockFile));
-    if (NS_SUCCEEDED(rv))
-    {
-        rv = oldLockFile->Append(OLD_LOCKFILE_NAME);
-        if (NS_SUCCEEDED(rv))
-        {
-            nsCAutoString filePath;
-            rv = oldLockFile->GetNativePath(filePath);
-            if (NS_SUCCEEDED(rv))
-            {
-                // First, try the 4.x-compatible symlink technique, which works
-                // with NFS without depending on (broken or missing, too often)
-                // lockd.
-                rv = LockWithSymlink(filePath);
-                if (NS_FAILED(rv) && rv != NS_ERROR_FILE_ACCESS_DENIED)
-                {
-                    // If that failed with an error other than
-                    // NS_ERROR_FILE_ACCESS_DENIED, symlinks aren't
-                    // supported (for example, on Win32 SAMBA servers).
-                    // Try locking with fcntl.
-                    rv = lockFile->GetNativePath(filePath);
-                    if (NS_SUCCEEDED(rv))
-                        rv = LockWithFcntl(filePath);
-                }
-            }
-        }
-    }
-    if (NS_FAILED(rv))
-        return rv;
-#endif /* XP_UNIX */
+#endif
 
     mHaveLock = PR_TRUE;
 

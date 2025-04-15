@@ -39,7 +39,12 @@
 
 # this file depends on printUtils.js
 
-<!DOCTYPE window SYSTEM "chrome://global/locale/printPreview.dtd">
+<!DOCTYPE window [
+<!ENTITY % printPreviewDTD SYSTEM "chrome://global/locale/printPreview.dtd" >
+%printPreviewDTD;
+<!ENTITY % globalDTD SYSTEM "chrome://global/locale/global.dtd">
+%globalDTD;
+]>
 
 <bindings id="printPreviewBindings"
    xmlns="http://www.mozilla.org/xbl"
@@ -53,37 +58,36 @@
 
     <content>
       <xul:button label="&print.label;" accesskey="&print.accesskey;"
-        oncommand="PrintUtils.print();"/>
+        oncommand="PrintUtils.print();" icon="print"/>
 
       <xul:button label="&pageSetup.label;" accesskey="&pageSetup.accesskey;"
         oncommand="this.parentNode.doPageSetup();"/>
 
       <xul:vbox align="center" pack="center">
-        <xul:label value="&page.label;"/>
+        <xul:label value="&page.label;" accesskey="&page.accesskey;" control="pageNumber"/>
       </xul:vbox>
-      <xul:toolbarbutton class="home-arrow"
-        oncommand="parentNode.navigate(0, 0, 'home');"/>
-      <xul:toolbarbutton class="left-arrow" 
-        oncommand="parentNode.navigate(-1, 0, 0);"/>
+      <xul:toolbarbutton class="home-arrow tabbable" chromedir="&locale.dir;"
+        oncommand="parentNode.navigate(0, 0, 'home');" tooltiptext="&homearrow.tooltip;"/>
+      <xul:toolbarbutton class="left-arrow tabbable" chromedir="&locale.dir;"
+        oncommand="parentNode.navigate(-1, 0, 0);" tooltiptext="&leftarrow.tooltip;"/>
       <xul:hbox align="center" pack="center">
-        <xul:textbox size="3" value="1" lastvalid="1"
-          onblur="navigate(0, this.value, 0);"
-          onkeypress="if (event.keyCode==13) navigate(0, this.value, 0);"/>
+        <xul:textbox id="pageNumber" size="3" value="1" lastvalid="1"
+          onchange="navigate(0, this.value, 0);"/>
         <xul:label value="&of.label;"/>
         <xul:label value="1"/>
       </xul:hbox>
-      <xul:toolbarbutton class="right-arrow" 
-        oncommand="parentNode.navigate(1, 0, 0);"/>
-      <xul:toolbarbutton class="end-arrow"
-        oncommand="parentNode.navigate(0, 0, 'end');"/>
+      <xul:toolbarbutton class="right-arrow tabbable" chromedir="&locale.dir;"
+        oncommand="parentNode.navigate(1, 0, 0);" tooltiptext="&rightarrow.tooltip;"/>
+      <xul:toolbarbutton class="end-arrow tabbable" chromedir="&locale.dir;"
+        oncommand="parentNode.navigate(0, 0, 'end');" tooltiptext="&endarrow.tooltip;"/>
 
       <xul:toolbarseparator class="toolbarseparator-primary"/>
       <xul:vbox align="center" pack="center">
-        <xul:label value="&scale.label;"/>
+        <xul:label value="&scale.label;" accesskey="&scale.accesskey;" control="scale"/>
       </xul:vbox>
 
       <xul:hbox align="center" pack="center">
-        <xul:menulist crop="none" 
+        <xul:menulist id="scale" crop="none" 
           oncommand="parentNode.parentNode.scale(this.selectedItem.value);">
           <xul:menupopup>
             <xul:menuitem value="0.3" label="&p30.label;"/>
@@ -109,16 +113,18 @@
       <xul:toolbarseparator class="toolbarseparator-primary"/>
       <xul:hbox align="center" pack="center">
         <xul:toolbarbutton label="&portrait.label;" checked="true"
-          type="radio" group="orient" class="toolbar-portrait-page"
+          accesskey="&portrait.accesskey;"
+          type="radio" group="orient" class="toolbar-portrait-page tabbable"
           oncommand="parentNode.parentNode.orient('portrait');"/>
         <xul:toolbarbutton label="&landscape.label;" 
-          type="radio" group="orient" class="toolbar-landscape-page"
+          accesskey="&landscape.accesskey;"
+          type="radio" group="orient" class="toolbar-landscape-page tabbable"
           oncommand="parentNode.parentNode.orient('landscape');"/>
       </xul:hbox>
 
       <xul:toolbarseparator class="toolbarseparator-primary"/>
       <xul:button label="&close.label;" accesskey="&close.accesskey;"
-        oncommand="PrintUtils.exitPrintPreview();"/>
+        oncommand="PrintUtils.exitPrintPreview();" icon="close"/>
       <xul:data value="&customPrompt.title;"/>
     </content>
 
@@ -342,11 +348,11 @@
         <body>
         <![CDATA[
           var print = PrintUtils.getWebBrowserPrint();
-          var settings = print.currentPrintSettings;
+          var settings = PrintUtils.getPrintSettings();
           if (aValue == "ShrinkToFit") {
             if (!settings.shrinkToFit) {
               settings.shrinkToFit = true;
-              PrintUtils.savePrintSettings(settings);
+              this.savePrintSettings(settings, settings.kInitSaveShrinkToFit | settings.kInitSaveScaling);
               PrintUtils.printPreview();
             }
             return;
@@ -367,7 +373,7 @@
 
           settings.shrinkToFit = false;
           settings.scaling = aValue;
-          PrintUtils.savePrintSettings(settings);
+          this.savePrintSettings(settings, settings.kInitSaveShrinkToFit | settings.kInitSaveScaling);
           PrintUtils.printPreview();
         ]]>
         </body>
@@ -393,9 +399,9 @@
           }
 
           var print = PrintUtils.getWebBrowserPrint();
-          var settings = print.currentPrintSettings;
+          var settings = PrintUtils.getPrintSettings();
           settings.orientation = orientValue;
-          PrintUtils.savePrintSettings(settings);
+          this.savePrintSettings(settings, settings.kInitSaveOrientation);
           PrintUtils.printPreview();
         ]]>
         </body>
@@ -405,7 +411,7 @@
         <body>
         <![CDATA[
           var print = PrintUtils.getWebBrowserPrint();
-          var settings = print.currentPrintSettings;
+          var settings = PrintUtils.getPrintSettings();
 
           var isPortrait = settings.orientation == Components.interfaces.nsIPrintSettings.kPortraitOrientation;
 
@@ -419,6 +425,16 @@
           }
         ]]>
         </body>
+      </method>
+
+      <method name="savePrintSettings">
+        <parameter name="settings"/>
+        <parameter name="flags"/>
+        <body><![CDATA[
+          var PSSVC = Components.classes["@mozilla.org/gfx/printsettings-service;1"]
+                                .getService(Components.interfaces.nsIPrintSettingsService);
+          PSSVC.savePrintSettingsToPrefs(settings, true, flags);
+        ]]></body>
       </method>
     </implementation>
   </binding>

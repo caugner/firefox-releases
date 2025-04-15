@@ -1,26 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code,
- * released March 31, 1998.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 2000 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *     Conrad Carlen <conrad@ingress.com>
- */
+ *   Conrad Carlen <conrad@ingress.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsAppFileLocationProvider.h"
 #include "nsAppDirectoryServiceDefs.h"
@@ -70,7 +85,7 @@
 #endif
 
 // define default product directory
-#ifdef XP_MAC
+#if defined (XP_MAC) || defined (WINCE)
 #define DEFAULT_PRODUCT_DIR NS_LITERAL_CSTRING("Mozilla")
 #else
 #define DEFAULT_PRODUCT_DIR NS_LITERAL_CSTRING(MOZ_USER_DIR)
@@ -178,6 +193,10 @@ nsAppFileLocationProvider::GetFile(const char *prop, PRBool *persistant, nsIFile
     {
         rv = GetDefaultUserProfileRoot(getter_AddRefs(localFile));
     }
+    else if (nsCRT::strcmp(prop, NS_APP_USER_PROFILES_LOCAL_ROOT_DIR) == 0)
+    {
+        rv = GetDefaultUserProfileRoot(getter_AddRefs(localFile), PR_TRUE);
+    }
     else if (nsCRT::strcmp(prop, NS_APP_RES_DIR) == 0)
     {
         rv = CloneMozBinDirectory(getter_AddRefs(localFile));
@@ -252,6 +271,12 @@ nsAppFileLocationProvider::GetFile(const char *prop, PRBool *persistant, nsIFile
         if (NS_SUCCEEDED(rv))
             rv = localFile->AppendRelativeNativePath(SEARCH_DIR_NAME);
     }
+    else if (nsCRT::strcmp(prop, NS_APP_USER_SEARCH_DIR) == 0)
+    {
+        rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, _retval);
+        if (NS_SUCCEEDED(rv))
+            rv = (*_retval)->AppendNative(SEARCH_DIR_NAME);
+    }
     else if (nsCRT::strcmp(prop, NS_APP_INSTALL_CLEANUP_DIR) == 0)
     {   
         // This is cloned so that embeddors will have a hook to override
@@ -316,7 +341,7 @@ NS_METHOD nsAppFileLocationProvider::CloneMozBinDirectory(nsILocalFile **aLocalF
 // WIN    : <Application Data folder on user's machine>\Mozilla
 // Mac    : :Documents:Mozilla:
 //----------------------------------------------------------------------------------------
-NS_METHOD nsAppFileLocationProvider::GetProductDirectory(nsILocalFile **aLocalFile)
+NS_METHOD nsAppFileLocationProvider::GetProductDirectory(nsILocalFile **aLocalFile, PRBool aLocal)
 {
     NS_ENSURE_ARG_POINTER(aLocalFile);
 
@@ -336,9 +361,10 @@ NS_METHOD nsAppFileLocationProvider::GetProductDirectory(nsILocalFile **aLocalFi
     if (NS_FAILED(rv)) return rv;
 #elif defined(XP_MACOSX)
     FSRef fsRef;
-    OSErr err = ::FSFindFolder(kUserDomain, kDomainLibraryFolderType, kCreateFolder, &fsRef);
+    OSType folderType = aLocal ? kCachedDataFolderType : kDomainLibraryFolderType;
+    OSErr err = ::FSFindFolder(kUserDomain, folderType, kCreateFolder, &fsRef);
     if (err) return NS_ERROR_FAILURE;
-    NS_NewLocalFile(nsString(), PR_TRUE, getter_AddRefs(localDir));
+    NS_NewLocalFile(EmptyString(), PR_TRUE, getter_AddRefs(localDir));
     if (!localDir) return NS_ERROR_FAILURE;
     nsCOMPtr<nsILocalFileMac> localDirMac(do_QueryInterface(localDir));
     rv = localDirMac->InitWithFSRef(&fsRef);
@@ -349,11 +375,15 @@ NS_METHOD nsAppFileLocationProvider::GetProductDirectory(nsILocalFile **aLocalFi
     if (NS_FAILED(rv)) return rv;
     rv = directoryService->Get(NS_OS2_HOME_DIR, NS_GET_IID(nsILocalFile), getter_AddRefs(localDir));
     if (NS_FAILED(rv)) return rv;
+#elif defined(WINCE)
+    rv = NS_NewNativeLocalFile(nsDependentCString("\\Windows"), PR_TRUE, getter_AddRefs(localDir));
+    if (NS_FAILED(rv)) return rv;
 #elif defined(XP_WIN)
     nsCOMPtr<nsIProperties> directoryService = 
              do_GetService(NS_DIRECTORY_SERVICE_CONTRACTID, &rv);
     if (NS_FAILED(rv)) return rv;
-    rv = directoryService->Get(NS_WIN_APPDATA_DIR, NS_GET_IID(nsILocalFile), getter_AddRefs(localDir));
+    const char* prop = aLocal ? NS_WIN_LOCAL_APPDATA_DIR : NS_WIN_APPDATA_DIR;
+    rv = directoryService->Get(prop, NS_GET_IID(nsILocalFile), getter_AddRefs(localDir));
     if (NS_SUCCEEDED(rv))
         rv = localDir->Exists(&exists);
     if (NS_FAILED(rv) || !exists)
@@ -384,8 +414,10 @@ NS_METHOD nsAppFileLocationProvider::GetProductDirectory(nsILocalFile **aLocalFi
     rv = localDir->AppendRelativeNativePath(DEFAULT_PRODUCT_DIR);
     if (NS_FAILED(rv)) return rv;
     rv = localDir->Exists(&exists);
+
     if (NS_SUCCEEDED(rv) && !exists)
         rv = localDir->Create(nsIFile::DIRECTORY_TYPE, 0700);
+
     if (NS_FAILED(rv)) return rv;
 
     *aLocalFile = localDir;
@@ -402,14 +434,14 @@ NS_METHOD nsAppFileLocationProvider::GetProductDirectory(nsILocalFile **aLocalFi
 // WIN    : <Application Data folder on user's machine>\Mozilla\Profiles
 // Mac    : :Documents:Mozilla:Profiles:
 //----------------------------------------------------------------------------------------
-NS_METHOD nsAppFileLocationProvider::GetDefaultUserProfileRoot(nsILocalFile **aLocalFile)
+NS_METHOD nsAppFileLocationProvider::GetDefaultUserProfileRoot(nsILocalFile **aLocalFile, PRBool aLocal)
 {
     NS_ENSURE_ARG_POINTER(aLocalFile);
 
     nsresult rv;
     nsCOMPtr<nsILocalFile> localDir;
 
-    rv = GetProductDirectory(getter_AddRefs(localDir));
+    rv = GetProductDirectory(getter_AddRefs(localDir), aLocal);
     if (NS_FAILED(rv)) return rv;
 
 #if defined(XP_MAC) || defined(XP_MACOSX) || defined(XP_OS2) || defined(XP_WIN)
@@ -586,6 +618,17 @@ nsAppFileLocationProvider::GetFiles(const char *prop, nsISimpleEnumerator **_ret
         }
         *_retval = new nsPathsDirectoryEnumerator(this, keys);
 #endif
+        NS_IF_ADDREF(*_retval);
+        rv = *_retval ? NS_OK : NS_ERROR_OUT_OF_MEMORY;        
+    }
+    if (!nsCRT::strcmp(prop, NS_APP_SEARCH_DIR_LIST))
+    {
+        static const char* keys[] = { nsnull, NS_APP_SEARCH_DIR, NS_APP_USER_SEARCH_DIR, nsnull };
+        if (!keys[0] && !(keys[0] = PR_GetEnv("MOZ_SEARCH_ENGINE_PATH"))) {
+            static const char nullstr = 0;
+            keys[0] = &nullstr;
+        }
+        *_retval = new nsPathsDirectoryEnumerator(this, keys);
         NS_IF_ADDREF(*_retval);
         rv = *_retval ? NS_OK : NS_ERROR_OUT_OF_MEMORY;        
     }

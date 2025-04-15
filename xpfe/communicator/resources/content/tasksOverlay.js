@@ -1,11 +1,11 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Peter Annema <disttsc@bart.nl>
+ *   Peter Annema <disttsc@bart.nl>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -130,9 +130,9 @@ function OpenBrowserWindow()
   // if and only if the current window is a browser window and it has a document with a character
   // set, then extract the current charset menu setting from the current document and use it to
   // initialize the new browser window...
-  if (window && (wintype == "navigator:browser") && window._content && window._content.document)
+  if (window && (wintype == "navigator:browser") && window.content && window.content.document)
   {
-    var DocCharset = window._content.document.characterSet;
+    var DocCharset = window.content.document.characterSet;
     charsetArg = "charset="+DocCharset;
 
     //we should "inherit" the charset menu setting in a new window
@@ -224,20 +224,31 @@ function checkFocusedWindow()
 
 function toProfileManager()
 {
-  var ww = Components.classes["@mozilla.org/embedcomp/window-watcher;1"]
-             .getService(Components.interfaces.nsIWindowWatcher);
-  var params = Components.classes["@mozilla.org/embedcomp/dialogparam;1"]
+  const wm = Components.classes["@mozilla.org/appshell/window-mediator;1"]
+                         .getService(Components.interfaces.nsIWindowMediator);
+  var promgrWin = wm.getMostRecentWindow( "mozilla:profileSelection" );
+  if (promgrWin) {
+    promgrWin.focus();
+  } else {
+    var params = Components.classes["@mozilla.org/embedcomp/dialogparam;1"]
                  .createInstance(Components.interfaces.nsIDialogParamBlock);
   
-  params.SetNumberStrings(1);
-  params.SetString(0, "menu");
-  ww.openWindow(null, // no parent
-                "chrome://communicator/content/profile/profileSelection.xul",
-                null,
-                "centerscreen,chrome,modal,titlebar",
+    params.SetNumberStrings(1);
+    params.SetString(0, "menu");
+    window.openDialog("chrome://communicator/content/profile/profileSelection.xul",
+                "",
+                "centerscreen,chrome,titlebar",
                 params);
-  
+  }
   // Here, we don't care about the result code
   // that was returned in the param block.
 }
 
+// This function is used by mac's platformCommunicatorOverlay
+function ZoomCurrentWindow()
+{
+  if (window.windowState == STATE_NORMAL)
+    window.maximize();
+  else
+    window.restore();
+}

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -103,6 +103,7 @@ public:
 
   NS_IMETHOD MatchName(nsString *name, PRBool *matches);
 
+  nsresult CreateDirectoryForFolder(nsFileSpec &path);
 protected:
   
 	// this is a little helper function that is not part of the public interface. 
@@ -129,7 +130,7 @@ protected:
   virtual nsresult ReadDBFolderInfo(PRBool force);
   virtual nsresult FlushToFolderCache();
   virtual nsresult GetDatabase(nsIMsgWindow *aMsgWindow) = 0;
-  virtual nsresult SendFlagNotifications(nsISupports *item, PRUint32 oldFlags, PRUint32 newFlags);
+  virtual nsresult SendFlagNotifications(nsIMsgDBHdr *item, PRUint32 oldFlags, PRUint32 newFlags);
   nsresult CheckWithNewMessagesStatus(PRBool messageAdded);
   nsresult OnHdrAddedOrDeleted(nsIMsgDBHdr *hdrChanged, PRBool added);
   nsresult CreateFileSpecForDB(const char *userLeafName, nsFileSpec &baseDir, nsIFileSpec **dbFileSpec);
@@ -139,7 +140,6 @@ protected:
   nsresult AddDirectorySeparator(nsFileSpec &path);
   nsresult CheckIfFolderExists(const PRUnichar *newFolderName, nsIMsgFolder *parentFolder, nsIMsgWindow *msgWindow);
 
-  nsresult CreateDirectoryForFolder(nsFileSpec &path);
 
   nsresult PromptForCachePassword(nsIMsgIncomingServer *server, nsIMsgWindow *aWindow, PRBool &passwordCorrect);
   // offline support methods.
@@ -152,6 +152,7 @@ protected:
   nsresult MsgFitsDownloadCriteria(nsMsgKey msgKey, PRBool *result);
   nsresult GetPromptPurgeThreshold(PRBool *aPrompt);
   nsresult GetPurgeThreshold(PRInt32 *aThreshold);
+  nsresult ApplyRetentionSettings(PRBool deleteViaFolder);
 
   nsresult PerformBiffNotifications(void); // if there are new, non spam messages, do biff
   nsresult CloseDBIfFolderNotOpen();
@@ -159,9 +160,10 @@ protected:
   virtual nsresult SpamFilterClassifyMessage(const char *aURI, nsIMsgWindow *aMsgWindow, nsIJunkMailPlugin *aJunkMailPlugin);
   virtual nsresult SpamFilterClassifyMessages(const char **aURIArray, PRUint32 aURICount, nsIMsgWindow *aMsgWindow, nsIJunkMailPlugin *aJunkMailPlugin);
 
+
 protected:
   nsCOMPtr<nsIMsgDatabase> mDatabase;
-  nsString mCharset;
+  nsCString mCharset;
   PRBool mCharsetOverride;
   PRBool mAddListener;
   PRBool mNewMessages;
@@ -175,11 +177,11 @@ protected:
 
   nsCOMPtr <nsIMsgRetentionSettings> m_retentionSettings;
   nsCOMPtr <nsIMsgDownloadSettings> m_downloadSettings;
-  static nsIAtom* mFolderLoadedAtom;
-  static nsIAtom* mDeleteOrMoveMsgCompletedAtom;
-  static nsIAtom* mDeleteOrMoveMsgFailedAtom;
-  static nsIAtom* mJunkStatusChangedAtom;
-  static nsrefcnt mInstanceCount;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) mFolderLoadedAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) mDeleteOrMoveMsgCompletedAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) mDeleteOrMoveMsgFailedAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) mJunkStatusChangedAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsrefcnt) mInstanceCount;
 
 protected:
   PRUint32 mFlags;
@@ -234,41 +236,42 @@ protected:
   PRBool mInVFEditSearchScope ; // non persistant state used by the virtual folder UI
 
   // static stuff for cross-instance objects like atoms
-  static nsrefcnt gInstanceCount;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsrefcnt) gInstanceCount;
 
   static nsresult initializeStrings();
   static nsresult createCollationKeyGenerator();
 
-  static PRUnichar *kLocalizedInboxName;
-  static PRUnichar *kLocalizedTrashName;
-  static PRUnichar *kLocalizedSentName;
-  static PRUnichar *kLocalizedDraftsName;
-  static PRUnichar *kLocalizedTemplatesName;
-  static PRUnichar *kLocalizedUnsentName;
-  static PRUnichar *kLocalizedJunkName;
+  static NS_MSG_BASE_STATIC_MEMBER_(PRUnichar*) kLocalizedInboxName;
+  static NS_MSG_BASE_STATIC_MEMBER_(PRUnichar*) kLocalizedTrashName;
+  static NS_MSG_BASE_STATIC_MEMBER_(PRUnichar*) kLocalizedSentName;
+  static NS_MSG_BASE_STATIC_MEMBER_(PRUnichar*) kLocalizedDraftsName;
+  static NS_MSG_BASE_STATIC_MEMBER_(PRUnichar*) kLocalizedTemplatesName;
+  static NS_MSG_BASE_STATIC_MEMBER_(PRUnichar*) kLocalizedUnsentName;
+  static NS_MSG_BASE_STATIC_MEMBER_(PRUnichar*) kLocalizedJunkName;
+  static NS_MSG_BASE_STATIC_MEMBER_(PRUnichar*) kLocalizedBrandShortName;
   
-  static nsIAtom* kTotalUnreadMessagesAtom;
-  static nsIAtom* kBiffStateAtom;
-  static nsIAtom* kNewMessagesAtom;
-  static nsIAtom* kInVFEditSearchScopeAtom;
-  static nsIAtom* kNumNewBiffMessagesAtom;
-  static nsIAtom* kTotalMessagesAtom;
-  static nsIAtom* kFolderSizeAtom;
-  static nsIAtom* kStatusAtom;
-  static nsIAtom* kFlaggedAtom;
-  static nsIAtom* kNameAtom;
-  static nsIAtom* kSynchronizeAtom;
-  static nsIAtom* kOpenAtom;
-  static nsIAtom* kIsDeferred;
-  static nsICollation* gCollationKeyGenerator;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kTotalUnreadMessagesAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kBiffStateAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kNewMessagesAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kInVFEditSearchScopeAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kNumNewBiffMessagesAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kTotalMessagesAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kFolderSizeAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kStatusAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kFlaggedAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kNameAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kSynchronizeAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kOpenAtom;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsIAtom*) kIsDeferred;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsICollation*) gCollationKeyGenerator;
 
 #ifdef MSG_FASTER_URI_PARSING
   // cached parsing URL object
-  static nsCOMPtr<nsIURL> mParsingURL;
-  static PRBool mParsingURLInUse;
+  static NS_MSG_BASE_STATIC_MEMBER_(nsCOMPtr<nsIURL>) mParsingURL;
+  static NS_MSG_BASE_STATIC_MEMBER_(PRBool) mParsingURLInUse;
 #endif
 
-  static const nsStaticAtom folder_atoms[];
+  static const NS_MSG_BASE_STATIC_MEMBER_(nsStaticAtom) folder_atoms[];
 };
 
 #undef  IMETHOD_VISIBILITY

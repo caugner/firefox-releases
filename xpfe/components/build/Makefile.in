@@ -47,9 +47,15 @@ LIBRARY_NAME	= appcomps
 EXPORT_LIBRARY = 1
 IS_COMPONENT	= 1
 MODULE_NAME	= application
+LIBXUL_LIBRARY	= 1
 
 PACKAGE_FILE = appcomps.pkg
 PACKAGE_VARS += MOZ_PHOENIX
+
+ifneq (,$(filter $(MOZ_GFX_TOOLKIT),windows gtk gtk2))
+ALERTS_SERVICE=1
+DEFINES += -DALERTS_SERVICE
+endif
 
 REQUIRES	= xpcom \
 		  string \
@@ -64,6 +70,7 @@ REQUIRES	= xpcom \
 		  dom \
 		  uriloader \
 		  mimetype \
+		  embed_base \
 		  webbrowserpersist \
 		  progressDlg \
 		  pref \
@@ -76,7 +83,9 @@ REQUIRES	= xpcom \
 		  $(NULL)
 
 ifndef MOZ_PHOENIX
+ifndef MOZ_XULRUNNER
 REQUIRES += history downloadmanager
+endif
 endif
 
 CPPSRCS		= nsModule.cpp
@@ -91,69 +100,93 @@ EXTRA_DSO_LIBS	+= mozutil_s
 endif
 
 SHARED_LIBRARY_LIBS = \
-	$(DIST)/lib/$(LIB_PREFIX)appcompintl_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)directory_s.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)search_s.$(LIB_SUFFIX) \
+	$(NULL)
+
+ifneq ($(MOZ_BUILD_APP),macbrowser)
+SHARED_LIBRARY_LIBS += \
+	$(DIST)/lib/$(LIB_PREFIX)appcompintl_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)windowds_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)mozbrwsr_s.$(LIB_SUFFIX) \
 	$(NULL)
+endif
 
 ifndef MOZ_PHOENIX
+ifndef MOZ_XULRUNNER
 SHARED_LIBRARY_LIBS += \
 	$(DIST)/lib/$(LIB_PREFIX)autocomplete_s.$(LIB_SUFFIX) \
-  $(DIST)/lib/$(LIB_PREFIX)bookmarks_s.$(LIB_SUFFIX) \
+	$(NULL)
+
+ifneq ($(MOZ_BUILD_APP),macbrowser)
+SHARED_LIBRARY_LIBS += \
+	$(DIST)/lib/$(LIB_PREFIX)bookmarks_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)downloadmanager_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)history_s.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)related_s.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)urlbarhistory_s.$(LIB_SUFFIX) \
-  $(NULL)
-
-ifeq ($(OS_ARCH),WINNT)
-SHARED_LIBRARY_LIBS += \
-	$(DIST)/lib/$(LIB_PREFIX)alerts_s.$(LIB_SUFFIX) \
-	$(DIST)/lib/$(LIB_PREFIX)urlwidgt_s.$(LIB_SUFFIX) \
-  $(DIST)/lib/$(LIB_PREFIX)winhooks_s.$(LIB_SUFFIX) \
+	../startup/src/$(LIB_PREFIX)appstartup_s.$(LIB_SUFFIX) \
 	$(NULL)
 endif
 
-endif
+ifdef ALERTS_SERVICE
+SHARED_LIBRARY_LIBS += \
+	$(DIST)/lib/$(LIB_PREFIX)alerts_s.$(LIB_SUFFIX) \
+	$(NULL)
+endif # ALERTS_SERVICE
+
+ifeq ($(OS_ARCH),WINNT)
+SHARED_LIBRARY_LIBS += \
+	$(DIST)/lib/$(LIB_PREFIX)urlwidgt_s.$(LIB_SUFFIX) \
+	$(DIST)/lib/$(LIB_PREFIX)winhooks_s.$(LIB_SUFFIX) \
+	$(NULL)
+endif # WINNT
+
+endif # MOZ_XULRUNNER
+endif # MOZ_PHOENIX
 
 LOCAL_INCLUDES	= \
 	-I$(srcdir)/../../browser/src \
 	-I$(srcdir)/../directory         \
-	-I$(srcdir)/../search/src        \
 	-I$(srcdir)/../windowds \
 	$(NULL)
 
 ifndef MOZ_PHOENIX
+ifndef MOZ_XULRUNNER
 LOCAL_INCLUDES += \
   -I$(srcdir)/../autocomplete/src  \
   -I$(srcdir)/../bookmarks/src     \
   -I$(srcdir)/../download-manager/src \
   -I$(srcdir)/../history/src       \
 	-I$(srcdir)/../related/src       \
-	-I$(srcdir)/../urlbarhistory/src \
+	-I$(srcdir)/../startup/src \
+	-I$(srcdir)/../alerts/src \
   $(NULL)
 
 ifeq ($(OS_ARCH),WINNT)
 LOCAL_INCLUDES += \
-	-I$(srcdir)/../alerts/src \
 	-I$(srcdir)/../urlwidget \
   -I$(srcdir)/../winhooks \
   $(NULL)
 endif
 
+ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
+ifneq ($(MOZ_BUILD_APP),macbrowser)
+SHARED_LIBRARY_LIBS += $(DIST)/lib/$(LIB_PREFIX)appleevents_s.$(LIB_SUFFIX)
+EXTRA_DSO_LDOPTS += $(TK_LIBS)
 endif
+endif
+
+endif # MOZ_XULRUNNER
+endif # MOZ_PHOENIX
 
 ifeq ($(OS_ARCH),WINNT)
 OS_LIBS	+= $(call EXPAND_LIBNAME,ole32 shell32)
 endif
 
-EXTRA_DSO_LDOPTS = \
+EXTRA_DSO_LDOPTS += \
 	$(MOZ_UNICHARUTIL_LIBS) \
 	$(MOZ_COMPONENT_LIBS) \
 	$(EXTRA_DSO_LIBS) \
 	$(MOZ_JS_LIBS) \
 	$(NULL)
- 
+
 include $(topsrcdir)/config/rules.mk

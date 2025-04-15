@@ -1,26 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code, 
- * released March 31, 1998. 
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications 
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
- * Contributor(s): 
- *     Samir Gehani <sgehani@netscape.com>
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Samir Gehani <sgehani@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nscore.h"
 #include "nsXInstaller.h"
@@ -120,6 +135,8 @@ nsXInstaller::ParseConfig()
 
 BAIL:
     XI_IF_FREE(cfg);
+    if (err != OK)
+        ErrorHandler(err);
     return err;
 }
 
@@ -206,7 +223,7 @@ nsXInstaller::RunWizard(int argc, char **argv)
     if (gCtx->opt->mMode == nsXIOptions::MODE_DEFAULT)
     {
         // show welcome dlg
-        gCtx->wdlg->Show(nsXInstallerDlg::FORWARD_MOVE); 
+        gCtx->wdlg->Show(); 
 
         // pop over to main event loop
         gtk_main();
@@ -214,10 +231,8 @@ nsXInstaller::RunWizard(int argc, char **argv)
     }
     else
     {
-        // show install dlg
-        if (gCtx->opt->mMode == nsXIOptions::MODE_AUTO)
-            gCtx->idlg->Show(nsXInstallerDlg::FORWARD_MOVE);
-        gCtx->idlg->Next((GtkWidget *)NULL, (gpointer) gCtx->idlg);
+        // jump to the SetupType dialog to check destination directory
+        gCtx->sdlg->Next((GtkWidget *)NULL, (gpointer) gCtx->sdlg);
     }
 
     return OK;
@@ -302,18 +317,8 @@ nsXInstaller::DrawNavButtons()
 
     gCtx->next = gtk_button_new();  
     gCtx->back = gtk_button_new(); 
-    gCtx->nextLabel = gtk_label_new(gCtx->Res("NEXT"));
-    gCtx->backLabel = gtk_label_new(gCtx->Res("BACK"));
     XI_VERIFY(gCtx->next);
     XI_VERIFY(gCtx->back);
-    gtk_widget_show(gCtx->next);
-    gtk_widget_show(gCtx->back);
-    gtk_container_add(GTK_CONTAINER(gCtx->next), gCtx->nextLabel);
-    gtk_container_add(GTK_CONTAINER(gCtx->back), gCtx->backLabel);
-    gtk_widget_show(gCtx->nextLabel);
-    gtk_widget_show(gCtx->backLabel);
-    GTK_WIDGET_SET_FLAGS(gCtx->next, GTK_CAN_DEFAULT);
-    gtk_widget_grab_default(gCtx->next);
     
     navbtnhbox = gtk_hbox_new(TRUE, 10);
     canvasvbox = gtk_vbox_new(TRUE, 10);
@@ -337,6 +342,9 @@ nsXInstaller::DrawNavButtons()
     gtk_widget_show(navbtnhbox); 
     gtk_widget_show(canvasvbox);
 
+    GTK_WIDGET_SET_FLAGS(gCtx->next, GTK_CAN_DEFAULT);
+    gtk_widget_grab_default(gCtx->next);
+    gtk_widget_grab_focus(gCtx->next);
     gtk_widget_show(gCtx->mainbox);
 
     XI_VERIFY(canvasvbox);
@@ -414,28 +422,27 @@ ErrorHandler(int aErr, const char* aErrMsg)
     char errStr[16];
     
     sprintf(errStr, "%d", aErr); 
-    if (!IsErrFatal(aErr))
-    {
-	if(aErr == E_INSTALL)
-	{
-	    if (aErrMsg != NULL)
-	    {
-		sprintf(newmsg, gCtx->Res(errStr), aErrMsg);
-		sprintf(msg, gCtx->Res("ERROR"), aErr, newmsg);
-	    }
-	}
-	else
-	    sprintf(msg, gCtx->Res("ERROR"), aErr, gCtx->Res(errStr));
-    }
+    if (aErrMsg != NULL)
+       sprintf(newmsg, gCtx->Res(errStr), aErrMsg);
     else
-        sprintf(msg, gCtx->Res("FATAL_ERROR"), aErr, gCtx->Res(errStr));
+       strcpy(newmsg, gCtx->Res(errStr));
+
+    if (!IsErrFatal(aErr))
+        sprintf(msg, gCtx->Res("ERROR"), aErr, newmsg);
+    else
+        sprintf(msg, gCtx->Res("FATAL_ERROR"), aErr, newmsg);
     
-    if (gCtx->opt->mMode == nsXIOptions::MODE_SILENT)
+    // lack of gCtx->window indicates we have not yet run RunWizard 
+    // and gtk_init
+    if (gCtx->opt->mMode == nsXIOptions::MODE_SILENT || !gCtx->window)
     {
         fprintf (stderr, "%s\n", msg);
+        if (IsErrFatal(aErr))
+            exit(aErr);
         return aErr;
     }
     sErrDlg = gtk_dialog_new();
+    gtk_window_set_modal(GTK_WINDOW(sErrDlg), TRUE);
     gtk_window_set_title(GTK_WINDOW(sErrDlg), gCtx->Res("ERROR_TITLE"));
     okButton = gtk_button_new_with_label(gCtx->Res("OK_LABEL"));
     label = gtk_label_new(msg);
@@ -444,7 +451,9 @@ ErrorHandler(int aErr, const char* aErrMsg)
     gtk_container_add(GTK_CONTAINER(GTK_DIALOG(sErrDlg)->action_area), 
                       okButton);
     gtk_signal_connect(GTK_OBJECT(okButton), "clicked",
-                       GTK_SIGNAL_FUNC(ErrDlgOK), (void*)aErr);
+                       GTK_SIGNAL_FUNC(ErrDlgOK), NULL);
+    gtk_signal_connect(GTK_OBJECT(sErrDlg), "delete_event",
+                       GTK_SIGNAL_FUNC(ErrDlgOK), NULL);
 
     gtk_container_add(GTK_CONTAINER(GTK_DIALOG(sErrDlg)->vbox), label);
     
@@ -454,24 +463,19 @@ ErrorHandler(int aErr, const char* aErrMsg)
 
     gtk_main();
 
+    if (IsErrFatal(aErr))
+        exit(aErr);
+
     return aErr;
 }
 
 void
 ErrDlgOK(GtkWidget *aWidget, gpointer aData)
 {
-    int err = NS_PTR_TO_INT32(aData);
-    
-    if (sErrDlg)
-    {
-        gtk_widget_destroy(sErrDlg);
-        sErrDlg = NULL;
-    }
+    gtk_widget_destroy(sErrDlg);
+    sErrDlg = NULL;
 
     gtk_main_quit();
-
-    if (IsErrFatal(err))
-        exit(err);
 }
 
 int
@@ -487,6 +491,7 @@ IsErrFatal(int aErr)
         case E_MKDIR_FAIL:
         case E_OLD_INST:
         case E_DIR_NOT_EMPTY:
+        case E_INVALID_PROXY:
             bFatal = FALSE;
         default:
             break; 

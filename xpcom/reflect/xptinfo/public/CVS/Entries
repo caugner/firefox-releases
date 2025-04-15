@@ -1,7 +1,7 @@
-/.cvsignore/1.1/Mon Mar  8 21:27:00 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.9/Sat Dec 28 01:14:55 2002//TFIREFOX_1_0_RELEASE
-/nsIInterfaceInfo.idl/1.6/Tue Feb 19 14:47:55 2002//TFIREFOX_1_0_RELEASE
-/nsIInterfaceInfoManager.idl/1.6/Sun Feb  3 00:56:13 2002//TFIREFOX_1_0_RELEASE
-/nsIXPTLoader.idl/1.1/Thu Apr  4 22:10:24 2002//TFIREFOX_1_0_RELEASE
-/xptinfo.h/1.23/Tue Jun 24 22:12:34 2003//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Mon Mar  8 21:27:00 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.10/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
+/nsIInterfaceInfo.idl/1.7/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
+/nsIInterfaceInfoManager.idl/1.7/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
+/nsIXPTLoader.idl/1.2/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
+/xptinfo.h/1.24/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
 D

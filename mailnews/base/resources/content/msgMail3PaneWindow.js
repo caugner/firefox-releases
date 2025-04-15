@@ -1,28 +1,44 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Jan Varga (varga@nixcorp.com)
+ *   Jan Varga (varga@ku.sk)
  *   Håkan Waara (hwaara@chello.se)
  *   Neil Rashbrook (neil@parkwaycc.co.uk)
  *   Seth Spitzer <sspitzer@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* This is where functions related to the 3 pane window are kept */
 
@@ -30,6 +46,9 @@
 const nsMsgKey_None = 0xFFFFFFFF;
 const nsMsgViewIndex_None = 0xFFFFFFFF;
 const kMailCheckOncePrefName = "mail.startup.enabledMailCheckOnce";
+
+// from nsMsgFolderFlags.h
+const MSG_FOLDER_FLAG_ELIDED = 0x10;
 
 var gFolderTree; 
 var gMessagePane;
@@ -93,30 +112,16 @@ function SelectAndScrollToKey(aMsgKey)
 
 // the folderListener object
 var folderListener = {
-    OnItemAdded: function(parentItem, item, view) { },
+    OnItemAdded: function(parentItem, item) { },
 
-    OnItemRemoved: function(parentItem, item, view) { },
+    OnItemRemoved: function(parentItem, item) { },
 
     OnItemPropertyChanged: function(item, property, oldValue, newValue) { },
 
     OnItemIntPropertyChanged: function(item, property, oldValue, newValue) {
-      var currentLoadedFolder = GetThreadPaneFolder();
-      if (!currentLoadedFolder) return;
-      var currentURI = currentLoadedFolder.URI;
-
-      //if we don't have a folder loaded, don't bother.
-      if(currentURI) {
+      if (item == msgWindow.openFolder) {
         if(property.toString() == "TotalMessages" || property.toString() == "TotalUnreadMessages") {
-          var folder = item.QueryInterface(Components.interfaces.nsIMsgFolder);
-          if(folder) {
-            var folderResource = folder.QueryInterface(Components.interfaces.nsIRDFResource); 
-            if(folderResource) {
-              var folderURI = folderResource.Value;
-              if(currentURI == folderURI) {
-                UpdateStatusMessageCounts(folder);
-              }
-            }
-          }
+          UpdateStatusMessageCounts(msgWindow.openFolder);
         }      
       }
     },
@@ -130,11 +135,13 @@ var folderListener = {
        var eventType = event.toString();
        if (eventType == "FolderLoaded") {
          if (folder) {
+           var msgFolder = folder.QueryInterface(Components.interfaces.nsIMsgFolder);
            var uri = folder.URI;
-           if (uri == gCurrentFolderToReroot) {
+           var rerootingFolder = (uri == gCurrentFolderToReroot);
+           if (rerootingFolder) {
+            viewDebug("uri = gCurrentFolderToReroot, setting gQSViewIsDirty\n");
              gQSViewIsDirty = true;
              gCurrentFolderToReroot = null;
-             var msgFolder = folder.QueryInterface(Components.interfaces.nsIMsgFolder);
              if(msgFolder) {
                msgFolder.endFolderLoading();
                // suppress command updating when rerooting the folder
@@ -183,20 +190,19 @@ var folderListener = {
              // if you change the scrolling code below,
              // double check the scrolling logic in
              // searchBar.js, restorePreSearchView()
-
+             viewDebug("uri == current loading folder uri\n");
              gCurrentLoadingFolderURI = "";
 
              // if we didn't just scroll, 
              // scroll to the first new message
              // but don't select it
-             if (!scrolled)
+             if (!scrolled && pref.getBoolPref("mailnews.scroll_to_new_message"))
                scrolled = ScrollToMessage(nsMsgNavigationType.firstNew, true, false /* selectMessage */);
 
              if (!scrolled && pref.getBoolPref("mailnews.remember_selected_message")) {
                // if we failed to scroll to a new message,
                // reselect the last selected message
                var lastMessageLoaded = msgFolder.lastMessageLoaded;
-                 
                if (lastMessageLoaded != nsMsgKey_None) {
                  scrolled = SelectAndScrollToKey(lastMessageLoaded);
                }
@@ -241,17 +247,49 @@ var folderListener = {
               }
            }
            //folder loading is over, now issue quick search if there is an email address
-           if (gSearchEmailAddress)
+           viewDebug("in folder loaded gVirtualFolderTerms = " + gVirtualFolderTerms + "\n");
+           viewDebug("in folder loaded gMsgFolderSelected = " + gMsgFolderSelected.URI + "\n");
+           if (rerootingFolder)
            {
-             Search(gSearchEmailAddress);
-             gSearchEmailAddress = null;
-           } 
-           else if (gDefaultSearchViewTerms)
-           {
-             Search("");
-           }
-           else {
-             ViewChangeByValue(pref.getIntPref("mailnews.view.last"));
+             if (gSearchEmailAddress)
+             {
+               Search(gSearchEmailAddress);
+               gSearchEmailAddress = null;
+             } 
+             else if (gVirtualFolderTerms)
+             {
+                gDefaultSearchViewTerms = null;
+                viewDebug("searching gVirtualFolderTerms\n");
+                loadVirtualFolder();
+             }
+             else if (gMsgFolderSelected.flags & MSG_FOLDER_FLAG_VIRTUAL)
+             {
+                viewDebug("selected folder is virtual\n");
+                gDefaultSearchViewTerms = null;
+             }
+             else
+             {               
+               // get the view value from the folder
+               if (msgFolder)
+               {
+                 var msgDatabase = msgFolder.getMsgDatabase(msgWindow);
+                 var dbFolderInfo = msgDatabase.dBFolderInfo; 
+                 var result = dbFolderInfo.getUint32Property("current-view", 0);
+                 
+                 // if our new view is the same as the old view and we already have the list of search terms built up
+                 // for the old view, just re-use it
+                 if (gCurrentViewValue == result && gDefaultSearchViewTerms)
+                 {
+                   viewDebug("searching gDefaultSearchViewTerms and rerootingFolder\n");
+                   Search("");
+                 }
+                 else
+                 {
+                   viewDebug("changing view by value\n");
+                   ViewChangeByValue(result);
+                 }
+               }
+             }
            }
          }
        } 
@@ -295,14 +333,9 @@ var folderListener = {
 }
 
 var folderObserver = {
-    canDropOn: function(index)
+    canDrop: function(index, orientation)
     {
-        return CanDropOnFolderTree(index);
-    },
-
-    canDropBeforeAfter: function(index, before)
-    {
-        return CanDropBeforeAfterFolderTree(index, before);
+        return CanDropOnFolderTree(index, orientation);
     },
 
     onDrop: function(row, orientation)
@@ -323,15 +356,6 @@ var folderObserver = {
     },
 
     onSelectionChanged: function()
-    {
-    },
-
-    isEditable: function(row, colID)
-    {
-        return false;
-    },
-
-    onSetCellText: function(row, colID, value)
     {
     },
 
@@ -537,20 +561,30 @@ function LoadCurrentlyDisplayedMessage()
 
 function IsCurrentLoadedFolder(folder)
 {
-	var msgfolder = folder.QueryInterface(Components.interfaces.nsIMsgFolder);
-	if(msgfolder)
-	{
-		var folderResource = msgfolder.QueryInterface(Components.interfaces.nsIRDFResource);
-		if(folderResource)
-		{
-			var folderURI = folderResource.Value;
-			var currentLoadedFolder = GetThreadPaneFolder();
-			var currentURI = currentLoadedFolder.URI;
-			return(currentURI == folderURI);
-		}
-	}
+  var msgfolder = folder.QueryInterface(Components.interfaces.nsIMsgFolder);
+  if(msgfolder)
+  {
+    var folderResource = msgfolder.QueryInterface(Components.interfaces.nsIRDFResource);
+    if(folderResource)
+    {
+      var folderURI = folderResource.Value;
+      var currentLoadedFolder = GetThreadPaneFolder();
+      if (currentLoadedFolder.flags & MSG_FOLDER_FLAG_VIRTUAL)
+      {
+        var msgDatabase = currentLoadedFolder.getMsgDatabase(msgWindow);
+        var dbFolderInfo = msgDatabase.dBFolderInfo;
+        var srchFolderUri = dbFolderInfo.getCharPtrProperty("searchFolderUri");
+        var re = new RegExp("^" + folderURI + "$|^" + folderURI + "\||\|" + folderURI + "$|\|" + folderURI +"\|");
+        var retval = (currentLoadedFolder.URI.match(re));
+        return retval;
 
-	return false;
+      }
+      var currentURI = currentLoadedFolder.URI;
+      return(currentURI == folderURI);
+    }
+  }
+
+  return false;
 }
 
 function ServerContainsFolder(server, folder)
@@ -611,12 +645,48 @@ var gThreePaneIncomingServerListener = {
     }
 }
 
+function GetMailPaneConfig() {
+  try {
+    return pref.getIntPref("mail.pane_config.dynamic");
+  } catch (e) {
+    return pref.getIntPref("mail.pane_config");
+  }
+}
+
+function UpdateMailPaneConfig() {
+  const dynamicIds = ["messagesBox", "mailContent", "threadPaneBox"]
+  var desiredId = dynamicIds[GetMailPaneConfig()];
+  var messagePane = GetMessagePane();
+  if (messagePane.parentNode.id != desiredId) {
+    ClearAttachmentList();
+    var messagePaneSplitter = GetThreadAndMessagePaneSplitter();
+    var desiredParent = document.getElementById(desiredId);
+    desiredParent.appendChild(messagePaneSplitter);
+    desiredParent.appendChild(messagePane);
+    messagePaneSplitter.orient = desiredParent.orient;
+    messenger.SetWindow(null, null);
+    messenger.SetWindow(window, msgWindow);
+    if (gDBView && GetNumSelectedMessages() == 1)
+      gDBView.reloadMessage();
+  }
+}
+
+const MailPaneConfigObserver = {
+  observe: function observe(subject, topic, prefName) {
+    // verify that we're changing the mail pane config pref
+    if (topic == "nsPref:changed")
+      UpdateMailPaneConfig();
+  }
+};
 
 /* Functions related to startup */
 function OnLoadMessenger()
 {
   AddMailOfflineObserver();
   CreateMailWindowGlobals();
+  pref.QueryInterface(Components.interfaces.nsIPrefBranch2);
+  pref.addObserver("mail.pane_config.dynamic", MailPaneConfigObserver, false);
+  UpdateMailPaneConfig();
   Create3PaneGlobals();
   AddToolBarPrefListener();
   ShowHideToolBarButtons();
@@ -630,6 +700,7 @@ function OnLoadMessenger()
   InitPanes();
 
   accountManager.setSpecialFolders();
+  accountManager.loadVirtualFolders();
   accountManager.addIncomingServerListener(gThreePaneIncomingServerListener);
 
   AddToSession();
@@ -657,20 +728,15 @@ function OnLoadMessenger()
 
   gNotifyDefaultInboxLoadedOnStartup = true;
 
-  // fix for #168937.  now that we don't have a sidebar
-  // users who haven't moved the splitter will
-  // see it jump around
-  var messengerBox = document.getElementById("messengerBox");
-  if (!messengerBox.getAttribute("width")) {
-    messengerBox.setAttribute("width","500px");
-  }
-
   //Set focus to the Thread Pane the first time the window is opened.
   SetFocusThreadPane();
 }
 
 function OnUnloadMessenger()
 {
+  pref.removeObserver("mail.pane_config.dynamic", MailPaneConfigObserver, false);
+
+  OnLeavingFolder(gMsgFolderSelected);  // mark all read in current folder
   accountManager.removeIncomingServerListener(gThreePaneIncomingServerListener);
   RemoveToolBarPrefListener();
   // FIX ME - later we will be able to use onload from the overlay
@@ -694,26 +760,12 @@ function Create3PaneGlobals()
 // PerformExpand() for all servers that are open at startup.            
 function PerformExpandForAllOpenServers()
 {
-    var folderTree = GetFolderTree();
-    var view = folderTree.treeBoxObject.view;
-    for (var i = 0; i < view.rowCount; i++)
+    var servers = accountManager.allServers;
+    for (var i = 0; i < servers.Count(); i++)
     {
-        if (view.isContainer(i))
-        {
-            var folderResource = GetFolderResource(folderTree, i);
-            var msgFolder = folderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
-            var isServer = GetFolderAttribute(folderTree, folderResource, "IsServer"); 
-            if (isServer == "true")
-            {
-                if (view.isContainerOpen(i))
-                {
-                    var server = msgFolder.server;
-                    // Don't do this for imap servers. See bug #41943
-                    if (server.type != "imap")
-                        server.performExpand(msgWindow);
-                }
-            }
-        }
+        var server = servers.QueryElementAt(i, Components.interfaces.nsIMsgIncomingServer);
+        if (server.type != "imap" && !server.rootMsgFolder.getFlag(MSG_FOLDER_FLAG_ELIDED))
+            server.performExpand(msgWindow);
     }
 }
 
@@ -770,12 +822,13 @@ function loadStartFolder(initialUri)
 
         var startFolder = startFolderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
 
-        // only do this on startup, when we pass in null
-        if (!initialUri && isLoginAtStartUpEnabled && gLoadStartFolder)
-        {
-            // Perform biff on the server to check for new mail
-              defaultServer.PerformBiff(msgWindow);        
-        }
+        // Perform biff on the server to check for new mail, except for imap
+        // or a pop3 account that is deferred or deferred to,
+        // or the case where initialUri is non-null (non-startup)
+        if (!initialUri && isLoginAtStartUpEnabled && gLoadStartFolder
+            && defaultServer.type != "imap" && !defaultServer.isDeferredTo &&
+            defaultServer.rootFolder == defaultServer.rootMsgFolder)
+          defaultServer.PerformBiff(msgWindow);        
 
         SelectFolder(startFolder.URI);
 
@@ -820,14 +873,6 @@ function loadStartFolder(initialUri)
     }
 }
 
-function TriggerGetMessages(server)
-{
-    // downloadMessagesAtStartup for a given server type indicates whether 
-    // or not there is a need to Trigger GetMessages action
-    if (server.downloadMessagesAtStartup)
-        MsgGetMessage();
-}
-
 function AddToSession()
 {
     try {
@@ -870,28 +915,17 @@ function OnFolderUnreadColAttrModified(event)
     }
 }
 
-// builds prior to 8-14-2001 did not have the unread and total columns
-// in the folder pane.  so if a user ran an old build, and then
-// upgraded, they get the new columns, and this causes problems
-// because it looks like all the folder names are gone (see bug #96979)
-// to work around this, we hide those columns once, using the 
-// "mail.ui.folderpane.version" pref.
+function OnAttachmentColAttrModified(event)
+{
+  if (event.attrName == "hidden")
+    UpdateAttachmentCol(false);
+}
+
 function UpgradeFolderPaneUI()
 {
-  var folderPaneUIVersion = pref.getIntPref("mail.ui.folderpane.version");
-
-  if (folderPaneUIVersion == 1) {
-    var folderUnreadCol = document.getElementById("folderUnreadCol");
-    folderUnreadCol.setAttribute("hidden", "true");
-    var folderTotalCol = document.getElementById("folderTotalCol");
-    folderTotalCol.setAttribute("hidden", "true");
-    pref.setIntPref("mail.ui.folderpane.version", 2);
-  } // we fall through to the == 2 case so we'll upgrade v 1 profiles correctly
-  if (folderPaneUIVersion <= 2) {
-    var folderSizeCol = document.getElementById("folderSizeCol");
-    folderSizeCol.setAttribute("hidden", "true");
-    pref.setIntPref("mail.ui.folderpane.version", 3);
-  }
+  // placeholder in case any new columns get added to the folder pane
+  // note that this function fails to notice a pane layout switch
+  // var folderPaneUIVersion = pref.getIntPref("mail.ui.folderpane.version");
 }
 
 function OnLoadFolderPane()
@@ -931,44 +965,39 @@ function OnLoadFolderPane()
 // "mailnews.ui.threadpane.version" pref.
 function UpgradeThreadPaneUI()
 {
-  var labelCol;
-  var threadPaneUIVersion;
-
   try {
-    threadPaneUIVersion = pref.getIntPref("mailnews.ui.threadpane.version");
-    if (threadPaneUIVersion < 4) {
-      var threadTree = document.getElementById("threadTree");
-      var junkCol = document.getElementById("junkStatusCol");
-      var beforeCol;
-
-      if (threadPaneUIVersion < 3) {
-        var subjectCol = document.getElementById("subjectCol");
-      
+    var threadTree = document.getElementById("threadTree");
+    var junkCol = document.getElementById("junkStatusCol");
+    var subjectCol = document.getElementById("subjectCol");
+    var beforeCol;
+    switch (pref.getIntPref("mailnews.ui.threadpane.version")) {
+      case 1: // upgrade from 1 to 2
+      case 2: // upgrade from 2 to 3
         beforeCol = subjectCol.boxObject.nextSibling.boxObject.nextSibling;
         if (beforeCol)
           threadTree._reorderColumn(junkCol, beforeCol, true);
         else // subjectCol was the last column, put it after
           threadTree._reorderColumn(junkCol, subjectCol, false);
 
-        if (threadPaneUIVersion == 1) {
-          labelCol = document.getElementById("labelCol");
-          labelCol.setAttribute("hidden", "true");
-        }
-      }
+      case 3: // upgrade from 3 to 4
+        var senderCol = document.getElementById("senderCol");
+        var recipientCol = document.getElementById("recipientCol");
+        beforeCol = junkCol.boxObject.nextSibling.boxObject.nextSibling;
+        if (beforeCol)
+          threadTree._reorderColumn(recipientCol, beforeCol, true);
+        else // junkCol was the last column, put it after
+          threadTree._reorderColumn(recipientCol, junkCol, false);
+        threadTree._reorderColumn(senderCol, recipientCol, true);
 
-      var senderCol = document.getElementById("senderCol");
-      var recipientCol = document.getElementById("recipientCol");
-    
-      beforeCol = junkCol.boxObject.nextSibling.boxObject.nextSibling;
-      if (beforeCol)
-        threadTree._reorderColumn(recipientCol, beforeCol, true);
-      else // junkCol was the last column, put it after
-        threadTree._reorderColumn(recipientCol, junkCol, false);
-      threadTree._reorderColumn(senderCol, recipientCol, true);
+      case 4: // upgrade from 4 to 5
+        var attachmentCol = document.getElementById("attachmentCol");
+        threadTree._reorderColumn(attachmentCol, subjectCol, true);
+        pref.setIntPref("mailnews.ui.threadpane.version", 5);
 
-      pref.setIntPref("mailnews.ui.threadpane.version", 4);
+      default: // already upgraded
+        break;
     }
-	}
+  }
   catch (ex) {
     dump("UpgradeThreadPane: ex = " + ex + "\n");
   }
@@ -977,6 +1006,18 @@ function UpgradeThreadPaneUI()
 function OnLoadThreadPane()
 {
     UpgradeThreadPaneUI();
+    UpdateAttachmentCol(true);
+}
+
+function UpdateAttachmentCol(aFirstTimeFlag)
+{
+  var attachmentCol = document.getElementById("attachmentCol");
+  var threadTree = GetThreadTree();
+  threadTree.setAttribute("noattachcol", attachmentCol.getAttribute("hidden"));
+  if (aFirstTimeFlag)
+    attachmentCol.addEventListener("DOMAttrModified", OnAttachmentColAttrModified, false);
+  else
+    threadTree.treeBoxObject.clearStyleAndImageCaches();
 }
 
 function GetFolderDatasource()
@@ -1051,22 +1092,14 @@ function GetTotalCountElement()
 	return totalCount;
 }
 
-function IsThreadAndMessagePaneSplitterCollapsed()
+function IsMessagePaneCollapsed()
 {
-  var messagePane = GetMessagePane();
-  try {
-    return (messagePane.getAttribute("collapsed") == "true");
-  }
-  catch (ex) {
-    return false;
-  }
+  return GetMessagePane().collapsed;
 }
 
 function IsFolderPaneCollapsed()
 {
-  var folderPaneBox = GetFolderTree().parentNode;
-  return folderPaneBox.getAttribute("collapsed") == "true"
-    || folderPaneBox.getAttribute("hidden") == "true";
+  return GetFolderTree().parentNode.collapsed;
 }
 
 function FindMessenger()
@@ -1095,13 +1128,12 @@ function ClearMessagePane()
   {
     gHaveLoadedMessage = false;
     gCurrentDisplayedMessage = null;
-    if (GetMessagePaneFrame().location != "about:blank")
-        GetMessagePaneFrame().location = "about:blank";
+    if (GetMessagePaneFrame().location.href != "about:blank")
+        GetMessagePaneFrame().location.href = "about:blank";
+
     // hide the message header view AND the message pane...
     HideMessageHeaderPane();
-
-    // hide the junk bar
-    SetUpJunkBar(null);
+    gMessageNotificationBar.clearMsgNotifications();
   }
 }
 
@@ -1110,7 +1142,7 @@ function GetSelectedFolderIndex()
     var folderTree = GetFolderTree();
     var startIndex = {};
     var endIndex = {};
-    folderTree.treeBoxObject.selection.getRangeAt(0, startIndex, endIndex);
+    folderTree.view.selection.getRangeAt(0, startIndex, endIndex);
     return startIndex.value;
 }
 
@@ -1119,27 +1151,24 @@ function GetSelectedFolderIndex()
 // It will also keep the outline/dotted line in the original row.
 function ChangeSelectionWithoutContentLoad(event, tree)
 {
-    var row = {};
-    var col = {};
-    var elt = {};
     var treeBoxObj = tree.treeBoxObject;
-    var treeSelection = treeBoxObj.selection;
+    var treeSelection = tree.view.selection;
 
-    treeBoxObj.getCellAt(event.clientX, event.clientY, row, col, elt);
+    var row = treeBoxObj.getRowAt(event.clientX, event.clientY);
     // make sure that row.value is valid so that it doesn't mess up
     // the call to ensureRowIsVisible().
-    if((row.value >= 0) && !treeSelection.isSelected(row.value))
+    if((row >= 0) && !treeSelection.isSelected(row))
     {
         var saveCurrentIndex = treeSelection.currentIndex;
         treeSelection.selectEventsSuppressed = true;
-        treeSelection.select(row.value);
+        treeSelection.select(row);
         treeSelection.currentIndex = saveCurrentIndex;
-        treeBoxObj.ensureRowIsVisible(row.value);
+        treeBoxObj.ensureRowIsVisible(row);
         treeSelection.selectEventsSuppressed = false;
 
         // Keep track of which row in the thread pane is currently selected.
         if(tree.id == "threadTree")
-          gThreadPaneCurrentSelectedIndex = row.value;
+          gThreadPaneCurrentSelectedIndex = row;
     }
     event.preventBubble();
 }
@@ -1178,14 +1207,14 @@ function FolderPaneOnClick(event)
 
     if (elt.value == "twisty")
     {
-        var folderResource = GetFolderResource(folderTree, row.value);
-        var msgFolder = folderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
-
         if (!(folderTree.treeBoxObject.view.isContainerOpen(row.value)))
         {
+            var folderResource = GetFolderResource(folderTree, row.value);
+
             var isServer = GetFolderAttribute(folderTree, folderResource, "IsServer");
             if (isServer == "true")
             {
+                var msgFolder = folderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
                 var server = msgFolder.server;
                 server.performExpand(msgWindow);
             }
@@ -1207,10 +1236,6 @@ function FolderPaneOnClick(event)
     else if (event.detail == 2) {
       FolderPaneDoubleClick(row.value, event);
     }
-    else if (gDBView && gDBView.viewType == nsMsgViewType.eShowQuickSearchResults)
-    {
-      onClearSearch();
-    }
 
 }
 
@@ -1218,13 +1243,13 @@ function FolderPaneDoubleClick(folderIndex, event)
 {
     var folderTree = GetFolderTree();
     var folderResource = GetFolderResource(folderTree, folderIndex);
-    var msgFolder = folderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
-    var isServer = GetFolderAttribute(folderTree, folderResource, "IsServer");
 
+    var isServer = GetFolderAttribute(folderTree, folderResource, "IsServer");
     if (isServer == "true")
     {
       if (!(folderTree.treeBoxObject.view.isContainerOpen(folderIndex)))
       {
+        var msgFolder = folderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
         var server = msgFolder.server;
         server.performExpand(msgWindow);
       }
@@ -1246,7 +1271,7 @@ function ChangeSelection(tree, newIndex)
 {
     if(newIndex >= 0)
     {
-        tree.treeBoxObject.selection.select(newIndex);
+        tree.view.selection.select(newIndex);
         tree.treeBoxObject.ensureRowIsVisible(newIndex);
     }
 }
@@ -1256,13 +1281,13 @@ function GetSelectedFolders()
     var folderArray = [];
     var k = 0;
     var folderTree = GetFolderTree();
-    var rangeCount = folderTree.treeBoxObject.selection.getRangeCount();
+    var rangeCount = folderTree.view.selection.getRangeCount();
 
     for(var i = 0; i < rangeCount; i++)
     {
         var startIndex = {};
         var endIndex = {};
-        folderTree.treeBoxObject.selection.getRangeAt(i, startIndex, endIndex);
+        folderTree.view.selection.getRangeAt(i, startIndex, endIndex);
         for (var j = startIndex.value; j <= endIndex.value; j++)
         {
             var folderResource = GetFolderResource(folderTree, j);
@@ -1278,19 +1303,18 @@ function GetSelectedMsgFolders()
     var folderArray = [];
     var k = 0;
     var folderTree = GetFolderTree();
-    var rangeCount = folderTree.treeBoxObject.selection.getRangeCount();
+    var rangeCount = folderTree.view.selection.getRangeCount();
 
     for(var i = 0; i < rangeCount; i++)
     {
         var startIndex = {};
         var endIndex = {};
-        folderTree.treeBoxObject.selection.getRangeAt(i, startIndex, endIndex);
+        folderTree.view.selection.getRangeAt(i, startIndex, endIndex);
         for (var j = startIndex.value; j <= endIndex.value; j++)
         {
           var folderResource = GetFolderResource(folderTree, j); 
           if (folderResource.Value != "http://home.netscape.com/NC-rdf#PageTitleFakeAccount") {
             var msgFolder = folderResource.QueryInterface(Components.interfaces.nsIMsgFolder);
-
             if(msgFolder)
               folderArray[k++] = msgFolder;
           }
@@ -1394,7 +1418,7 @@ function NumberOfSelectedMessagesAboveCurrentIndex(index)
 
 function SetNextMessageAfterDelete()
 {
-  var treeSelection = GetThreadTree().treeBoxObject.selection;
+  var treeSelection = GetThreadTree().view.selection;
 
   if (treeSelection.isSelected(treeSelection.currentIndex))
     gNextMessageViewIndexAfterDelete = gDBView.msgToSelectAfterDelete;

@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *       Ben Bucksch <mozilla@bucksch.org>
+ *   Ben Bucksch <mozilla@bucksch.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -49,7 +49,7 @@
 #include "nsMimeStringResources.h"
 #include "mimemoz2.h"
 #include "nsIServiceManager.h"
-#include "nsIPref.h"
+#include "nsIPrefBranch.h"
 #include "prprf.h"
 #include "nsMsgI18N.h"
 
@@ -123,10 +123,11 @@ MimeInlineTextPlain_parse_begin (MimeObject *obj)
          obj->options->format_out == nsMimeOutput::nsMimeMessageBodyQuoting
        )       );  // The output will be inserted in the composer as quotation
   PRBool plainHTML = quoting || (obj->options &&
-       obj->options->format_out == nsMimeOutput::nsMimeMessageSaveAs);
+       (obj->options->format_out == nsMimeOutput::nsMimeMessageSaveAs));
        // Just good(tm) HTML. No reliance on CSS.
   PRBool rawPlainText = obj->options &&
-       obj->options->format_out == nsMimeOutput::nsMimeMessageFilterSniffer;
+       (obj->options->format_out == nsMimeOutput::nsMimeMessageFilterSniffer
+         || obj->options->format_out == nsMimeOutput::nsMimeMessageAttach);
 
   status = ((MimeObjectClass*)&MIME_SUPERCLASS)->parse_begin(obj);
   if (status < 0) return status;
@@ -151,14 +152,14 @@ MimeInlineTextPlain_parse_begin (MimeObject *obj)
       text->mCitationColor = nsnull;  // mail.citation_color
       PRBool graphicalQuote = PR_TRUE; // mail.quoted_graphical
 
-      nsIPref *prefs = GetPrefServiceManager(obj->options);
-      if (prefs)
+      nsIPrefBranch *prefBranch = GetPrefBranch(obj->options);
+      if (prefBranch)
       {
-        prefs->GetIntPref("mail.quoted_size", &(text->mQuotedSizeSetting));
-        prefs->GetIntPref("mail.quoted_style", &(text->mQuotedStyleSetting));
-        prefs->CopyCharPref("mail.citation_color", &(text->mCitationColor));
-        prefs->GetBoolPref("mail.quoted_graphical", &graphicalQuote);
-        prefs->GetBoolPref("mail.quoteasblock", &(text->mBlockquoting));
+        prefBranch->GetIntPref("mail.quoted_size", &(text->mQuotedSizeSetting));
+        prefBranch->GetIntPref("mail.quoted_style", &(text->mQuotedStyleSetting));
+        prefBranch->GetCharPref("mail.citation_color", &(text->mCitationColor));
+        prefBranch->GetBoolPref("mail.quoted_graphical", &graphicalQuote);
+        prefBranch->GetBoolPref("mail.quoteasblock", &(text->mBlockquoting));
       }
 
       if (!rawPlainText)
@@ -262,7 +263,8 @@ MimeInlineTextPlain_parse_eof (MimeObject *obj, PRBool abort_p)
        )           );  // see above
   
   PRBool rawPlainText = obj->options &&
-       obj->options->format_out == nsMimeOutput::nsMimeMessageFilterSniffer;
+       (obj->options->format_out == nsMimeOutput::nsMimeMessageFilterSniffer
+        || obj->options->format_out == nsMimeOutput::nsMimeMessageAttach);
 
   /* Run parent method first, to flush out any buffered data. */
   status = ((MimeObjectClass*)&MIME_SUPERCLASS)->parse_eof(obj, abort_p);
@@ -314,7 +316,8 @@ MimeInlineTextPlain_parse_line (char *line, PRInt32 length, MimeObject *obj)
        // see above
 
   PRBool rawPlainText = obj->options &&
-       obj->options->format_out == nsMimeOutput::nsMimeMessageFilterSniffer;
+       (obj->options->format_out == nsMimeOutput::nsMimeMessageFilterSniffer
+       || obj->options->format_out == nsMimeOutput::nsMimeMessageAttach);
 
   // this routine gets called for every line of data that comes through the
   // mime converter. It's important to make sure we are efficient with 
@@ -347,8 +350,7 @@ MimeInlineTextPlain_parse_line (char *line, PRInt32 length, MimeObject *obj)
          ((MimeInlineTextClass*)&mimeInlineTextClass)->initialize_charset(obj);
       mailCharset = inlinetext->charset;
       if (mailCharset && *mailCharset) {
-        rv = nsMsgI18NConvertToUnicode(nsDependentCString(mailCharset), 
-                                       inputStr, lineSourceStr);
+        rv = nsMsgI18NConvertToUnicode(mailCharset, inputStr, lineSourceStr);
         NS_ENSURE_SUCCESS(rv, -1);
       }
       else // this probably never happens ...
@@ -436,7 +438,7 @@ MimeInlineTextPlain_parse_line (char *line, PRInt32 length, MimeObject *obj)
     // recognize signature
     if ((lineSourceStr.Length() >= 4)
         && lineSourceStr.First() == '-'
-        && Substring(lineSourceStr, 0, 3).Equals(NS_LITERAL_STRING("-- "))
+        && Substring(lineSourceStr, 0, 3).EqualsLiteral("-- ")
         && (lineSourceStr[3] == '\r' || lineSourceStr[3] == '\n') )
     {
       text->mIsSig = PR_TRUE;
@@ -463,7 +465,7 @@ MimeInlineTextPlain_parse_line (char *line, PRInt32 length, MimeObject *obj)
         CopyUTF16toUTF8(lineResultUnichar, outString);
       else
       { // convert back to mailCharset before writing.       
-        rv = nsMsgI18NConvertFromUnicode(nsDependentCString(mailCharset), 
+        rv = nsMsgI18NConvertFromUnicode(mailCharset, 
                                          lineResultUnichar, outString);
         NS_ENSURE_SUCCESS(rv, -1);
       }

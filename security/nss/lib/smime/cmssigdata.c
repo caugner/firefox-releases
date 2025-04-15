@@ -1,40 +1,43 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  * CMS signedData methods.
  *
- * $Id: cmssigdata.c,v 1.27 2004/01/07 00:09:17 nelsonb%netscape.com Exp $
+ * $Id: cmssigdata.c,v 1.28.18.1 2005/10/10 23:22:51 wtchang%redhat.com Exp $
  */
 
 #include "cmslocal.h"
@@ -83,7 +86,7 @@ loser:
 void
 NSS_CMSSignedData_Destroy(NSSCMSSignedData *sigd)
 {
-    CERTCertificate **certs, *cert;
+    CERTCertificate **certs, **tempCerts, *cert;
     CERTCertificateList **certlists, *certlist;
     NSSCMSSignerInfo **signerinfos, *si;
 
@@ -91,11 +94,17 @@ NSS_CMSSignedData_Destroy(NSSCMSSignedData *sigd)
 	return;
 
     certs = sigd->certs;
+    tempCerts = sigd->tempCerts;
     certlists = sigd->certLists;
     signerinfos = sigd->signerInfos;
 
     if (certs != NULL) {
 	while ((cert = *certs++) != NULL)
+	    CERT_DestroyCertificate (cert);
+    }
+
+    if (tempCerts != NULL) {
+	while ((cert = *tempCerts++) != NULL)
 	    CERT_DestroyCertificate (cert);
     }
 
@@ -547,6 +556,13 @@ NSS_CMSSignedData_ImportCerts(NSSCMSSignedData *sigd, CERTCertDBHandle *certdb,
 	goto loser;
     }
 
+    /* save the certs so they don't get destroyed */
+    for (i=0; i < certcount; i++) {
+	CERTCertificate *cert = certArray[i];
+	if (cert)
+            NSS_CMSSignedData_AddTempCertificate(sigd, cert);
+    }
+
     if (!keepcerts) {
 	goto done;
     }
@@ -776,6 +792,22 @@ NSS_CMSSignedData_AddCertChain(NSSCMSSignedData *sigd, CERTCertificate *cert)
 
     rv = NSS_CMSSignedData_AddCertList(sigd, certlist);
 
+    return rv;
+}
+
+extern SECStatus
+NSS_CMSSignedData_AddTempCertificate(NSSCMSSignedData *sigd, CERTCertificate *cert)
+{
+    CERTCertificate *c;
+    SECStatus rv;
+
+    if (!sigd || !cert) {
+        PORT_SetError(SEC_ERROR_INVALID_ARGS);
+        return SECFailure;
+    }
+
+    c = CERT_DupCertificate(cert);
+    rv = NSS_CMSArray_Add(sigd->cmsg->poolp, (void ***)&(sigd->tempCerts), (void *)c);
     return rv;
 }
 

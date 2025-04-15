@@ -1,24 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla browser.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications, Inc.  Portions created by Netscape are
- * Copyright (C) 1999, Mozilla.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Travis Bogard <travis@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 // Local Includes
 #include "nsWebBrowser.h"
@@ -38,13 +55,13 @@
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIWebBrowserChrome.h"
-#include "nsIWebShell.h"
 #include "nsPIDOMWindow.h"
 #include "nsIFocusController.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsIWebProgress.h"
 #include "nsIWebProgressListener.h"
 #include "nsIWebBrowserFocus.h"
+#include "nsIWebBrowserStream.h"
 #include "nsIPresShell.h"
 #include "nsIGlobalHistory.h"
 #include "nsIDocShellHistory.h"
@@ -59,6 +76,7 @@
 
 // for painting the background window
 #include "nsIRenderingContext.h"
+#include "nsIRegion.h"
 #include "nsILookAndFeel.h"
 
 // Printing Includes
@@ -73,7 +91,6 @@
 #include "nsIEventSink.h"
 #endif
 
-static NS_DEFINE_CID(kWebShellCID, NS_WEB_SHELL_CID);
 static NS_DEFINE_IID(kWindowCID, NS_WINDOW_CID);
 static NS_DEFINE_CID(kChildCID, NS_CHILD_CID);
 static NS_DEFINE_CID(kLookAndFeelCID, NS_LOOKANDFEEL_CID);
@@ -93,8 +110,8 @@ nsWebBrowser::nsWebBrowser() : mDocShellTreeOwner(nsnull),
    mPersistCurrentState(nsIWebBrowserPersist::PERSIST_STATE_READY),
    mPersistResult(NS_OK),
    mPersistFlags(nsIWebBrowserPersist::PERSIST_FLAGS_NONE),
+   mStream(nsnull),
    mParentWidget(nsnull),
-   mParent(nsnull),
    mListenerArray(nsnull)
 #if (defined(XP_MAC) || defined(XP_MACOSX)) && !defined(MOZ_WIDGET_COCOA)
    , mTopLevelWidget(nsnull)
@@ -167,8 +184,10 @@ NS_INTERFACE_MAP_BEGIN(nsWebBrowser)
     NS_INTERFACE_MAP_ENTRY(nsIInterfaceRequestor)
     NS_INTERFACE_MAP_ENTRY(nsIWebBrowserSetup)
     NS_INTERFACE_MAP_ENTRY(nsIWebBrowserPersist)
+    NS_INTERFACE_MAP_ENTRY(nsICancelable)
     NS_INTERFACE_MAP_ENTRY(nsIWebBrowserFocus)
     NS_INTERFACE_MAP_ENTRY(nsIWebProgressListener)
+    NS_INTERFACE_MAP_ENTRY(nsIWebBrowserStream)
     NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
 NS_INTERFACE_MAP_END
 
@@ -299,7 +318,7 @@ NS_IMETHODIMP nsWebBrowser::RemoveWebBrowserListener(nsIWeakReference *aListener
     } else {
         nsCOMPtr<nsISupports> supports(do_QueryReferent(aListener));
         if (!supports) return NS_ERROR_INVALID_ARG;
-        rv = UnBindListener(aListener, aIID);
+        rv = UnBindListener(supports, aIID);
     }
     
     return rv;
@@ -382,13 +401,13 @@ NS_IMETHODIMP nsWebBrowser::GetContainerWindow(nsIWebBrowserChrome** aTopWindow)
 {
    NS_ENSURE_ARG_POINTER(aTopWindow);
 
-   if(mDocShellTreeOwner)
-      *aTopWindow = mDocShellTreeOwner->mWebBrowserChrome;
-   else
+   if(mDocShellTreeOwner) {
+      *aTopWindow = mDocShellTreeOwner->GetWebBrowserChrome().get();
+   } else {
       *aTopWindow = nsnull;
-   NS_IF_ADDREF(*aTopWindow);
+   }
 
-   return NS_OK;   
+   return NS_OK;
 }
 
 NS_IMETHODIMP nsWebBrowser::SetContainerWindow(nsIWebBrowserChrome* aTopWindow)
@@ -500,41 +519,14 @@ NS_IMETHODIMP nsWebBrowser::SetItemType(PRInt32 aItemType)
 
 NS_IMETHODIMP nsWebBrowser::GetParent(nsIDocShellTreeItem** aParent)
 {
-   NS_ENSURE_ARG_POINTER(aParent);
-
-   *aParent = mParent;
-   NS_IF_ADDREF(*aParent);
-
+   *aParent = nsnull;
    return NS_OK;
-}
-
-NS_IMETHODIMP nsWebBrowser::SetParent(nsIDocShellTreeItem* aParent)
-{
-  // null aParent is ok
-   
-  /* Note this doesn't do an addref on purpose.  This is because the parent
-   is an implied lifetime.  We don't want to create a cycle by refcounting
-   the parent.*/
-  mParent = aParent;
-  return NS_OK;
 }
 
 NS_IMETHODIMP nsWebBrowser::GetSameTypeParent(nsIDocShellTreeItem** aParent)
 {
-   NS_ENSURE_ARG_POINTER(aParent);
    *aParent = nsnull;
 
-   if(!mParent)
-      return NS_OK;
-      
-   PRInt32  parentType;
-   NS_ENSURE_SUCCESS(mParent->GetItemType(&parentType), NS_ERROR_FAILURE);
-
-   if(typeContentWrapper == parentType)
-      {
-      *aParent = mParent;
-      NS_ADDREF(*aParent);
-      }                   
    return NS_OK;
 }
 
@@ -572,13 +564,15 @@ NS_IMETHODIMP nsWebBrowser::GetSameTypeRootTreeItem(nsIDocShellTreeItem** aRootT
 }
 
 NS_IMETHODIMP nsWebBrowser::FindItemWithName(const PRUnichar *aName, 
-   nsISupports* aRequestor, nsIDocShellTreeItem **_retval)
+   nsISupports* aRequestor, nsIDocShellTreeItem* aOriginalRequestor,
+   nsIDocShellTreeItem **_retval)
 {
    NS_ENSURE_STATE(mDocShell);
    NS_ASSERTION(mDocShellTreeOwner, "This should always be set when in this situation");
 
    return mDocShellAsItem->FindItemWithName(aName, 
-      NS_STATIC_CAST(nsIDocShellTreeOwner*, mDocShellTreeOwner), _retval);
+      NS_STATIC_CAST(nsIDocShellTreeOwner*, mDocShellTreeOwner),
+      aOriginalRequestor, _retval);
 }
 
 NS_IMETHODIMP nsWebBrowser::GetTreeOwner(nsIDocShellTreeOwner** aTreeOwner)
@@ -989,6 +983,40 @@ NS_IMETHODIMP nsWebBrowser::SaveURI(
     return rv;
 }
 
+/* void saveChannel (in nsIChannel aChannel, in nsISupports aFile); */
+NS_IMETHODIMP nsWebBrowser::SaveChannel(
+    nsIChannel* aChannel, nsISupports *aFile)
+{
+    if (mPersist)
+    {
+        PRUint32 currentState;
+        mPersist->GetCurrentState(&currentState);
+        if (currentState == PERSIST_STATE_FINISHED)
+        {
+            mPersist = nsnull;
+        }
+        else
+        {
+            // You can't save again until the last save has completed
+            return NS_ERROR_FAILURE;
+        }
+    }
+
+    // Create a throwaway persistence object to do the work
+    nsresult rv;
+    mPersist = do_CreateInstance(NS_WEBBROWSERPERSIST_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
+    mPersist->SetProgressListener(this);
+    mPersist->SetPersistFlags(mPersistFlags);
+    mPersist->GetCurrentState(&mPersistCurrentState);
+    rv = mPersist->SaveChannel(aChannel, aFile);
+    if (NS_FAILED(rv))
+    {
+        mPersist = nsnull;
+    }
+    return rv;
+}
+
 /* void saveDocument (in nsIDOMDocument document, in nsISupports aFile, in nsISupports aDataPath); */
 NS_IMETHODIMP nsWebBrowser::SaveDocument(
     nsIDOMDocument *aDocument, nsISupports *aFile, nsISupports *aDataPath,
@@ -1051,6 +1079,18 @@ NS_IMETHODIMP nsWebBrowser::CancelSave()
     return NS_OK;
 }
 
+/* void cancel(nsresult aReason); */
+NS_IMETHODIMP nsWebBrowser::Cancel(nsresult aReason)
+{
+    if (mPersist)
+    {
+        return mPersist->Cancel(aReason);
+    }
+    return NS_OK;
+}
+
+
+
 
 //*****************************************************************************
 // nsWebBrowser::nsIBaseWindow
@@ -1101,7 +1141,7 @@ NS_IMETHODIMP nsWebBrowser::Create()
                               nsnull, nsnull, nsnull, &widgetInit);  
       }
 
-   nsCOMPtr<nsIDocShell> docShell(do_CreateInstance(kWebShellCID));
+   nsCOMPtr<nsIDocShell> docShell(do_CreateInstance("@mozilla.org/webshell;1"));
    NS_ENSURE_SUCCESS(SetDocShell(docShell), NS_ERROR_FAILURE);
 
    // get the system default window background colour
@@ -1175,8 +1215,12 @@ NS_IMETHODIMP nsWebBrowser::Create()
    rv = GetContentDOMWindow(getter_AddRefs(domWindow));
    if (NS_SUCCEEDED(rv))
    {
-       mSecurityUI = do_CreateInstance(NS_SECURE_BROWSER_UI_CONTRACTID, &rv);
-       if (NS_SUCCEEDED(rv))mSecurityUI->Init(domWindow);
+       // this works because the implementation of nsISecureBrowserUI
+       // (nsSecureBrowserUIImpl) get a docShell from the domWindow,
+       // and calls docShell->SetSecurityUI(this);
+       nsCOMPtr<nsISecureBrowserUI> securityUI =
+           do_CreateInstance(NS_SECURE_BROWSER_UI_CONTRACTID, &rv);
+       if (NS_SUCCEEDED(rv)) securityUI->Init(domWindow);
    }
 
    mDocShellTreeOwner->AddToWatcher(); // evil twin of Remove in SetDocShell(0)
@@ -1504,15 +1548,6 @@ NS_IMETHODIMP nsWebBrowser::SetScrollRangeEx(PRInt32 aMinHorizontalPos,
       aMaxHorizontalPos, aMinVerticalPos, aMaxVerticalPos);
 }
 
-NS_IMETHODIMP nsWebBrowser::GetCurrentScrollbarPreferences(PRInt32 aScrollOrientation,
-   PRInt32* aScrollbarPref)
-{
-   NS_ENSURE_STATE(mDocShell);
-
-   return mDocShellAsScrollable->GetCurrentScrollbarPreferences(aScrollOrientation,
-      aScrollbarPref);
-}
-
 NS_IMETHODIMP nsWebBrowser::GetDefaultScrollbarPreferences(PRInt32 aScrollOrientation,
    PRInt32* aScrollbarPref)
 {
@@ -1522,16 +1557,6 @@ NS_IMETHODIMP nsWebBrowser::GetDefaultScrollbarPreferences(PRInt32 aScrollOrient
       aScrollbarPref);
 }
 
-NS_IMETHODIMP nsWebBrowser::SetCurrentScrollbarPreferences(PRInt32 aScrollOrientation,
-   PRInt32 aScrollbarPref)
-{
-   NS_ENSURE_STATE(mDocShell);
-
-   return mDocShellAsScrollable->SetCurrentScrollbarPreferences(aScrollOrientation,
-      aScrollbarPref);
-
-}
-
 NS_IMETHODIMP nsWebBrowser::SetDefaultScrollbarPreferences(PRInt32 aScrollOrientation,
    PRInt32 aScrollbarPref)
 {
@@ -1539,13 +1564,6 @@ NS_IMETHODIMP nsWebBrowser::SetDefaultScrollbarPreferences(PRInt32 aScrollOrient
 
    return mDocShellAsScrollable->SetDefaultScrollbarPreferences(aScrollOrientation,
       aScrollbarPref);
-}
-
-NS_IMETHODIMP nsWebBrowser::ResetScrollbarPreferences()
-{
-   NS_ENSURE_STATE(mDocShell);
-
-   return mDocShellAsScrollable->ResetScrollbarPreferences();
 }
 
 NS_IMETHODIMP nsWebBrowser::GetScrollbarVisibility(PRBool* aVerticalVisible,
@@ -1663,7 +1681,23 @@ nsEventStatus PR_CALLBACK nsWebBrowser::HandleEvent(nsGUIEvent *aEvent)
       nscolor oldColor;
       rc->GetColor(oldColor);
       rc->SetColor(browser->mBackgroundColor);
-      rc->FillRect(*paintEvent->rect);
+
+      nsIRegion *region = paintEvent->region;
+      if (region) {
+          nsRegionRectSet *rects = nsnull;
+          region->GetRects(&rects);
+          if (rects) {
+              for (PRUint32 i = 0; i < rects->mNumRects; ++i) {
+                  nsRect r(rects->mRects[i].x, rects->mRects[i].y,
+                           rects->mRects[i].width, rects->mRects[i].height);
+                  rc->FillRect(r);
+              }
+
+              region->FreeRects(rects);
+          }
+      } else if (paintEvent->rect) {
+          rc->FillRect(*paintEvent->rect);
+      }
       rc->SetColor(oldColor);
       break;
     }
@@ -1717,13 +1751,10 @@ NS_IMETHODIMP nsWebBrowser::Activate(void)
   // focus controller object.
   nsCOMPtr<nsIDOMWindow> domWindowExternal;
   GetContentDOMWindow(getter_AddRefs(domWindowExternal));
-  nsCOMPtr<nsIDOMWindowInternal> domWindow;
-  domWindow = do_QueryInterface(domWindowExternal);
-  nsCOMPtr<nsPIDOMWindow> piWin(do_QueryInterface(domWindow));
+  nsCOMPtr<nsPIDOMWindow> piWin(do_QueryInterface(domWindowExternal));
   PRBool needToFocus = PR_TRUE;
   if (piWin) {
-    nsCOMPtr<nsIFocusController> focusController;
-    piWin->GetRootFocusController(getter_AddRefs(focusController));
+    nsIFocusController *focusController = piWin->GetRootFocusController();
     if (focusController) {
       // Go ahead and mark the focus controller as being active.  We have
       // to do this even before the activate message comes in.
@@ -1734,8 +1765,8 @@ NS_IMETHODIMP nsWebBrowser::Activate(void)
       if (focusedWindow) {
         needToFocus = PR_FALSE;
         focusController->SetSuppressFocus(PR_TRUE, "Activation Suppression");
-        domWindow->Focus(); // This sets focus, but we'll ignore it.  
-                           // A subsequent activate will cause us to stop suppressing.
+        piWin->Focus(); // This sets focus, but we'll ignore it.  
+                        // A subsequent activate will cause us to stop suppressing.
       }
     }
   }
@@ -1748,8 +1779,8 @@ NS_IMETHODIMP nsWebBrowser::Activate(void)
     GetPrimaryContentWindow(getter_AddRefs(contentDomWindow));
     if (contentDomWindow)
       contentDomWindow->Focus();
-    else if (domWindow)
-      domWindow->Focus();
+    else if (piWin)
+      piWin->Focus();
   }
 
   nsCOMPtr<nsIDOMWindow> win;
@@ -1759,19 +1790,14 @@ NS_IMETHODIMP nsWebBrowser::Activate(void)
     if (mWWatch)
       mWWatch->SetActiveWindow(win);
 
-    /* Activate the window itself. Do this only if the PresShell has
-       been created, since DOMWindow->Activate asserts otherwise.
-       (This method can be called during window creation before
-       the PresShell exists. For ex, Windows apps responding to
-       WM_ACTIVATE). */
-    NS_ENSURE_STATE(mDocShell);
-    nsCOMPtr<nsIPresShell> presShell;
-    mDocShell->GetPresShell(getter_AddRefs(presShell));
-    if(presShell) {
-      nsCOMPtr<nsPIDOMWindow> privateDOMWindow = do_QueryInterface(win);
-      if(privateDOMWindow)
-        privateDOMWindow->Activate();
-    }
+    /* Activate the window itself. Note that this method can be called during
+       window creation before the PresShell exists (for ex, Windows apps
+       responding to WM_ACTIVATE), which case nsGlobalWindow::Activate()
+       will return early.
+    */
+    nsCOMPtr<nsPIDOMWindow> privateDOMWindow = do_QueryInterface(win);
+    if (privateDOMWindow)
+      privateDOMWindow->Activate();
   }
 
   mActivating = PR_FALSE;
@@ -1786,19 +1812,13 @@ NS_IMETHODIMP nsWebBrowser::Deactivate(void)
      This seems harmless and maybe safer, but we have no real evidence
      either way just yet. */
 
-  NS_ENSURE_STATE(mDocShell);
-  nsCOMPtr<nsIPresShell> presShell;
-  mDocShell->GetPresShell(getter_AddRefs(presShell));
-  if(!presShell)
-    return NS_OK;
-
   nsCOMPtr<nsIDOMWindow> domWindow;
   GetContentDOMWindow(getter_AddRefs(domWindow));
   if (domWindow) {
     nsCOMPtr<nsPIDOMWindow> privateDOMWindow = do_QueryInterface(domWindow);
     if(privateDOMWindow) {
-      nsCOMPtr<nsIFocusController> focusController;
-      privateDOMWindow->GetRootFocusController(getter_AddRefs(focusController));
+      nsIFocusController *focusController =
+          privateDOMWindow->GetRootFocusController();
       if (focusController)
         focusController->SetActive(PR_FALSE);
       privateDOMWindow->Deactivate();
@@ -1835,8 +1855,7 @@ NS_IMETHODIMP nsWebBrowser::GetFocusedWindow(nsIDOMWindow * *aFocusedWindow)
     nsCOMPtr<nsPIDOMWindow> piWin(do_QueryInterface(domWindowExternal /*domWindow*/, &rv));
     if (NS_FAILED(rv)) return rv;
     
-    nsCOMPtr<nsIFocusController> focusController;
-    piWin->GetRootFocusController(getter_AddRefs(focusController));
+    nsIFocusController *focusController = piWin->GetRootFocusController();
     if (focusController)
       rv = focusController->GetFocusedWindow(getter_AddRefs(focusedWindow));
     
@@ -1865,8 +1884,7 @@ NS_IMETHODIMP nsWebBrowser::GetFocusedElement(nsIDOMElement * *aFocusedElement)
   nsCOMPtr<nsPIDOMWindow> piWin(do_QueryInterface(domWindowExternal, &rv));
   if (NS_FAILED(rv)) return rv;
 
-  nsCOMPtr<nsIFocusController> focusController;
-  piWin->GetRootFocusController(getter_AddRefs(focusController));
+  nsIFocusController *focusController = piWin->GetRootFocusController();
   if (focusController)
   rv = focusController->GetFocusedElement(getter_AddRefs(focusedElement));
 
@@ -1880,3 +1898,49 @@ NS_IMETHODIMP nsWebBrowser::SetFocusedElement(nsIDOMElement * aFocusedElement)
   return NS_OK;
 }
 
+//*****************************************************************************
+// nsWebBrowser::nsIWebBrowserStream
+//*****************************************************************************   
+
+/* void openStream(in nsIURI aBaseURI, in ACString aContentType); */
+NS_IMETHODIMP nsWebBrowser::OpenStream(nsIURI *aBaseURI, const nsACString& aContentType)
+{
+  nsresult rv;
+
+  if (!mStream) {
+    mStream = new nsEmbedStream();
+    mStreamGuard = do_QueryInterface(mStream);
+    mStream->InitOwner(this);
+    rv = mStream->Init();
+    if (NS_FAILED(rv))
+      return rv;
+  }
+
+  return mStream->OpenStream(aBaseURI, aContentType);
+}
+
+/* void appendToStream([const, array, size_is(aLen)] in octet aData,
+ * in unsigned long aLen); */
+NS_IMETHODIMP nsWebBrowser::AppendToStream(const PRUint8 *aData, PRUint32 aLen)
+{
+  if (!mStream)
+    return NS_ERROR_FAILURE;
+
+  return mStream->AppendToStream(aData, aLen);
+}
+
+/* void closeStream (); */
+NS_IMETHODIMP nsWebBrowser::CloseStream()
+{
+  nsresult rv;
+
+  if (!mStream)
+    return NS_ERROR_FAILURE;
+  rv = mStream->CloseStream();
+
+  // release
+  mStream = 0;
+  mStreamGuard = 0;
+
+  return rv;
+}

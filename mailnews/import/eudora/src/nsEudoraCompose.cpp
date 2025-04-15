@@ -1,20 +1,40 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.0 (the "NPL"); you may not use this file except in
- * compliance with the NPL.  You may obtain a copy of the NPL at
- * http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the NPL is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the NPL
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * NPL.
+ * License.
  *
- * The Initial Developer of this code under the NPL is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.  All Rights
- * Reserved.
- */
+ * The Original Code is mozilla.org Code.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 
 #include "nscore.h"
@@ -48,7 +68,6 @@
 #include "EudoraDebugLog.h"
 
 #include "nsMimeTypes.h"
-#include "nsIPref.h"
 #include "nsMsgUtils.h"
 
 static NS_DEFINE_CID( kMsgSendCID, NS_MSGSEND_CID);
@@ -247,7 +266,7 @@ nsresult nsEudoraCompose::CreateComponents( void)
 	
 	NS_IF_RELEASE( m_pMsgFields);
 	if (!m_pMsgSend) {
-		rv = nsComponentManager::CreateInstance( kMsgSendCID, nsnull, NS_GET_IID( nsIMsgSend), (void **) &m_pMsgSend); 
+		rv = CallCreateInstance( kMsgSendCID, &m_pMsgSend); 
 		if (NS_SUCCEEDED( rv) && m_pMsgSend) {
 			nsCOMPtr<nsIProxyObjectManager> proxyMgr = 
 			         do_GetService(kProxyObjectManagerCID, &rv);
@@ -269,7 +288,7 @@ nsresult nsEudoraCompose::CreateComponents( void)
 	}
 
 	if (NS_SUCCEEDED(rv) && m_pMsgSend) { 
-	    rv = nsComponentManager::CreateInstance( kMsgCompFieldsCID, nsnull, nsCOMTypeInfo<nsIMsgCompFields>::GetIID(), (void **) &m_pMsgFields); 
+	    rv = CallCreateInstance( kMsgCompFieldsCID, &m_pMsgFields); 
 		if (NS_SUCCEEDED(rv) && m_pMsgFields) {
 			// IMPORT_LOG0( "nsOutlookCompose - CreateComponents succeeded\n");
 			m_pMsgFields->SetForcePlainText( PR_FALSE);
@@ -501,7 +520,7 @@ void nsEudoraCompose::ExtractType( nsString& str)
 	// valid multipart!
 	if (str.Length() > 10) {
 		str.Left( tStr, 10);
-		if (tStr.Equals(NS_LITERAL_STRING("multipart/"), nsCaseInsensitiveStringComparator()))
+		if (tStr.LowerCaseEqualsLiteral("multipart/"))
 			str.Truncate();
 	}
 }
@@ -570,22 +589,6 @@ nsMsgAttachedFile * nsEudoraCompose::GetLocalAttachments( void)
 	return( a);
 }
 
-void nsEudoraCompose::ConvertSysToUnicode( const char *pStr, nsString& uniStr)
-{
-  if (!pStr)
-    return;
-
-	if (!m_pImportService) {
-		m_pImportService = do_GetService(NS_IMPORTSERVICE_CONTRACTID);
-	}
-	if (m_pImportService) {
-		m_pImportService->SystemStringToUnicode( pStr, uniStr);
-	}
-	else 
-		uniStr.AssignWithConversion( pStr);
-}
-
-
 // Test a message send????
 nsresult nsEudoraCompose::SendTheMessage( nsIFileSpec *pMsg)
 {
@@ -602,20 +605,20 @@ nsresult nsEudoraCompose::SendTheMessage( nsIFileSpec *pMsg)
 	nsString	headerVal;
 	GetHeaderValue( m_pHeaders, m_headerLen, "From:", headerVal);
 	if (!headerVal.IsEmpty())
-		m_pMsgFields->SetFrom( headerVal.get());
+		m_pMsgFields->SetFrom( headerVal);
 	GetHeaderValue( m_pHeaders, m_headerLen, "To:", headerVal);
 	if (!headerVal.IsEmpty())
-		m_pMsgFields->SetTo( headerVal.get());
+		m_pMsgFields->SetTo( headerVal);
 	GetHeaderValue( m_pHeaders, m_headerLen, "Subject:", headerVal);
 	if (!headerVal.IsEmpty())
-		m_pMsgFields->SetSubject( headerVal.get());
+		m_pMsgFields->SetSubject( headerVal);
 	GetHeaderValue( m_pHeaders, m_headerLen, "Content-type:", headerVal);
 	bodyType = headerVal;
 	ExtractType( bodyType);
 	ExtractCharset( headerVal);
   // Use platform charset as default if the msg doesn't specify one
   // (ie, no 'charset' param in the Content-Type: header). As the last
-  // resort we'll use the mail defaul charset.
+  // resort we'll use the mail default charset.
   if (headerVal.IsEmpty())
   {
     headerVal.AssignWithConversion(nsMsgI18NFileSystemCharset());
@@ -624,10 +627,9 @@ nsresult nsEudoraCompose::SendTheMessage( nsIFileSpec *pMsg)
       if (m_defCharset.IsEmpty())
       {
         nsXPIDLString defaultCharset;
-        nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &rv));
-        if (NS_SUCCEEDED(rv))
-          rv = prefs->GetLocalizedUnicharPref("mailnews.view_default_charset", getter_Copies(defaultCharset));
-        m_defCharset.Assign(defaultCharset ? defaultCharset.get() : NS_LITERAL_STRING("ISO-8859-1").get());
+        NS_GetLocalizedUnicharPreferenceWithDefault(nsnull, "mailnews.view_default_charset",
+                                                    NS_LITERAL_STRING("ISO-8859-1"), defaultCharset);
+        m_defCharset = defaultCharset;
       }
       headerVal = m_defCharset;
     }
@@ -636,21 +638,21 @@ nsresult nsEudoraCompose::SendTheMessage( nsIFileSpec *pMsg)
   charSet = headerVal;
 	GetHeaderValue( m_pHeaders, m_headerLen, "CC:", headerVal);
 	if (!headerVal.IsEmpty())
-		m_pMsgFields->SetCc( headerVal.get());
+		m_pMsgFields->SetCc( headerVal);
 	GetHeaderValue( m_pHeaders, m_headerLen, "Message-ID:", headerVal);
 	if (!headerVal.IsEmpty())
 		m_pMsgFields->SetMessageId( NS_LossyConvertUCS2toASCII(headerVal).get() );
 	GetHeaderValue( m_pHeaders, m_headerLen, "Reply-To:", headerVal);
 	if (!headerVal.IsEmpty())
-		m_pMsgFields->SetReplyTo( headerVal.get());
+		m_pMsgFields->SetReplyTo( headerVal);
 
-  // what about all of the other headers?!?!?!?!?!?!
+	// what about all of the other headers?!?!?!?!?!?!
   char *pMimeType; 
-  if (!bodyType.IsEmpty())
-    pMimeType = ToNewCString(bodyType);
+	if (!bodyType.IsEmpty())
+		pMimeType = ToNewCString(bodyType);
   else
     pMimeType = ToNewCString(m_bodyType);
-
+	
 	// IMPORT_LOG0( "Outlook compose calling CreateAndSendMessage\n");
 	nsMsgAttachedFile *pAttach = GetLocalAttachments();
 
@@ -665,20 +667,19 @@ nsresult nsEudoraCompose::SendTheMessage( nsIFileSpec *pMsg)
 	*/
 	
 	nsString	uniBody;
-	ConvertSysToUnicode( m_pBody, uniBody);
+	NS_CopyNativeToUnicode( nsDependentCString(m_pBody), uniBody);
 
 	nsCString	body;
-	nsCString	theCharset;
-	theCharset.AssignWithConversion( charSet);
 
-	rv = nsMsgI18NConvertFromUnicode( theCharset, uniBody, body);
+	rv = nsMsgI18NConvertFromUnicode( NS_LossyConvertUTF16toASCII(charSet).get(),
+                                    uniBody, body);
 	if (NS_FAILED( rv)) {
 		// in this case, if we did not use the default compose
 		// charset, then try that.
 		if (!charSet.Equals( m_defCharset)) {
-			theCharset.AssignWithConversion( m_defCharset);
 			body.Truncate();
-			rv = nsMsgI18NConvertFromUnicode( theCharset, uniBody, body);
+			rv = nsMsgI18NConvertFromUnicode( NS_LossyConvertUTF16toASCII(charSet).get(),
+                                        uniBody, body);
 		}
 	}
 	uniBody.Truncate();
@@ -688,12 +689,12 @@ nsresult nsEudoraCompose::SendTheMessage( nsIFileSpec *pMsg)
   // Eudora saves sent and draft msgs in Out folder (ie, mixed) and it does
   // store Bcc: header in the msg itself.
   nsMsgDeliverMode mode = nsIMsgSend::nsMsgDeliverNow;
-  PRUnichar *from, *to, *cc, *bcc;
-  rv = m_pMsgFields->GetFrom(&from);
-  rv = m_pMsgFields->GetTo(&to);
-  rv = m_pMsgFields->GetCc(&cc);
-  rv = m_pMsgFields->GetBcc(&bcc);
-  if ( (!from || !*from) || ((!to || !*to) && (!cc || !*cc) && (!bcc || !*bcc)) )
+  nsAutoString from, to, cc, bcc;
+  rv = m_pMsgFields->GetFrom(from);
+  rv = m_pMsgFields->GetTo(to);
+  rv = m_pMsgFields->GetCc(cc);
+  rv = m_pMsgFields->GetBcc(bcc);
+  if ( from.IsEmpty() || to.IsEmpty() && cc.IsEmpty() && bcc.IsEmpty() )
     mode = nsIMsgSend::nsMsgSaveAsDraft;
 
 	if (NS_FAILED( rv)) {
@@ -701,7 +702,7 @@ nsresult nsEudoraCompose::SendTheMessage( nsIFileSpec *pMsg)
 		rv = m_pSendProxy->CreateAndSendMessage(
                     nsnull,			                  // no editor shell
 										m_pIdentity,	                // dummy identity
-                    nsnull,                         // account key
+                                                                                nsnull,                         // account key
 										m_pMsgFields,	                // message fields
 										PR_FALSE,		                  // digest = NO
 										PR_TRUE,		                  // dont_deliver = YES, make a file

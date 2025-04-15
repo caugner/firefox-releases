@@ -1,7 +1,7 @@
-/.cvsignore/1.1/Tue Dec 18 09:12:22 2001//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.4/Thu Mar 14 07:11:21 2002//TFIREFOX_1_0_RELEASE
-/contents.rdf/1.27/Fri Feb 27 11:54:23 2004//TFIREFOX_1_0_RELEASE
-/jar.mn/1.7/Wed Feb  4 14:24:00 2004//TFIREFOX_1_0_RELEASE
-/pref-mailnewsOverlay.js/1.7.88.1/Mon May 17 00:57:50 2004//TFIREFOX_1_0_RELEASE
-/pref-mailnewsOverlay.xul/1.9.40.1/Mon May 17 00:57:50 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Tue Dec 18 09:12:22 2001//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.5/Sat Apr 17 18:33:02 2004//TFIREFOX_1_5_RELEASE
+/contents.rdf/1.27/Fri Feb 27 11:54:23 2004//TFIREFOX_1_5_RELEASE
+/jar.mn/1.8/Fri May 20 12:58:44 2005//TFIREFOX_1_5_RELEASE
+/pref-mailnewsOverlay.js/1.11/Tue Jun  7 22:08:55 2005//TFIREFOX_1_5_RELEASE
+/pref-mailnewsOverlay.xul/1.13/Tue Jun  7 22:08:55 2005//TFIREFOX_1_5_RELEASE
 D

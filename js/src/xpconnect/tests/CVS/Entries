@@ -1,6 +1,6 @@
-/.cvsignore/1.2/Tue Mar 23 20:30:06 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.29/Sat Nov 15 00:11:11 2003//TFIREFOX_1_0_RELEASE
-/TestXPC.cpp/1.72/Thu Feb 19 02:43:36 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.2/Tue Mar 23 20:30:06 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.30/Tue Apr  5 12:35:51 2005//TFIREFOX_1_5_RELEASE
+/TestXPC.cpp/1.74/Wed Mar 30 11:34:59 2005//TFIREFOX_1_5_RELEASE
 D/components////
 D/idispatch////
 D/idl////

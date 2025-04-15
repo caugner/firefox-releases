@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Henrik Gemal <mozilla@gemal.dk>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -104,6 +104,7 @@ nsNNTPNewsgroupList::nsNNTPNewsgroupList()
     m_maxArticles(0),
     m_lastPercent(-1),
     m_lastProcessedNumber(0),
+    m_firstMsgNumber(0),
     m_lastMsgNumber(0),
     m_firstMsgToDownload(0),
     m_lastMsgToDownload(0),
@@ -324,16 +325,16 @@ nsNNTPNewsgroupList::GetRangeOfArtsToDownload(nsIMsgWindow *aMsgWindow,
                 rv = args->SetArticleCount(*last - *first + 1);
                 NS_ENSURE_SUCCESS(rv,rv);
         
-                nsXPIDLCString groupName;
-                rv = m_newsFolder->GetAsciiName(getter_Copies(groupName));
+                nsXPIDLString groupName;
+                rv = m_newsFolder->GetUnicodeName(groupName);
                 NS_ENSURE_SUCCESS(rv,rv);
 
-                rv = args->SetGroupName((const char *)groupName);
+                rv = args->SetGroupName(groupName);
                 NS_ENSURE_SUCCESS(rv,rv);
 
-				// get the server key
-				nsXPIDLCString serverKey;
-				rv = server->GetKey(getter_Copies(serverKey));
+                // get the server key
+                nsXPIDLCString serverKey;
+                rv = server->GetKey(getter_Copies(serverKey));
                 NS_ENSURE_SUCCESS(rv,rv);
 
                 rv = args->SetServerKey((const char *)serverKey);
@@ -421,13 +422,11 @@ nsNNTPNewsgroupList::AddToKnownArticles(PRInt32 first, PRInt32 last)
     nsCOMPtr <nsIDBFolderInfo> newsGroupInfo;
     rv = m_newsDB->GetDBFolderInfo(getter_AddRefs(newsGroupInfo));
     if (NS_SUCCEEDED(rv) && newsGroupInfo) {
-      char *output;
-      status = m_knownArts.set->Output(&output);
+      nsXPIDLCString output;
+      status = m_knownArts.set->Output(getter_Copies(output));
       if (output) {
         newsGroupInfo->SetKnownArtsSet(output);
-        nsMemory::Free(output);
       }
-      output = nsnull;
     }
   }
   
@@ -504,17 +503,12 @@ nsNNTPNewsgroupList::ParseLine(char *line, PRUint32 * message_number)
     const char *subject = line;  /* #### const evilness */
     PRUint32 subjectLen = strlen(line);
     
-    PRUint32 flags;
-    rv = newMsgHdr->GetFlags(&flags);
-    if (NS_FAILED(rv)) 
-      return rv;
+    PRUint32 flags = 0;
+    // ### should call IsHeaderRead here...
     /* strip "Re: " */
     nsXPIDLCString modifiedSubject;
     if (NS_MsgStripRE(&subject, &subjectLen, getter_Copies(modifiedSubject)))
-      flags |= MSG_FLAG_HAS_RE;
-    rv = newMsgHdr->SetFlags(flags); // this will make sure read flags agree with newsrc
-    if (NS_FAILED(rv)) 
-      return rv;
+      (void) newMsgHdr->OrFlags(MSG_FLAG_HAS_RE, &flags); // this will make sure read flags agree with newsrc
     
     if (! (flags & MSG_FLAG_READ))
       rv = newMsgHdr->OrFlags(MSG_FLAG_NEW, &flags);
@@ -599,7 +593,7 @@ nsNNTPNewsgroupList::ParseLine(char *line, PRUint32 * message_number)
     rv = folder->GetFilterList(m_msgWindow, getter_AddRefs(m_filterList));
     NS_ENSURE_SUCCESS(rv,rv);
   }
-
+  
   if (!m_serverFilterList)
   {
     nsCOMPtr<nsIMsgIncomingServer> server;
@@ -614,7 +608,7 @@ nsNNTPNewsgroupList::ParseLine(char *line, PRUint32 * message_number)
   // if the action is Delete, and we get a hit (see ApplyFilterHit())
   // we set this to PR_FALSE.  if false, we won't add it to the db.
   m_addHdrToDB = PR_TRUE;
-  
+
   PRUint32 filterCount = 0;
   if (m_filterList) {
   	rv = m_filterList->GetFilterCount(&filterCount);
@@ -696,8 +690,8 @@ nsNNTPNewsgroupList::ParseLine(char *line, PRUint32 * message_number)
       // override the global filters in the per-newsgroup filters.
       if (filterCount)
       {
-      rv = m_filterList->ApplyFiltersToHdr(nsMsgFilterType::NewsRule, newMsgHdr, folder, m_newsDB, 
-        headers, headersSize, this, m_msgWindow);
+        rv = m_filterList->ApplyFiltersToHdr(nsMsgFilterType::NewsRule, newMsgHdr, folder, m_newsDB, 
+          headers, headersSize, this, m_msgWindow);
       }
       if (serverFilterCount)
       {
@@ -770,7 +764,7 @@ NS_IMETHODIMP nsNNTPNewsgroupList::ApplyFilterHit(nsIMsgFilter *aFilter, nsIMsgW
           m_newMsgHdr->OrFlags(MSG_FLAG_IGNORED, &newFlags);
         }
         break;
-      case nsMsgFilterAction::WatchThread: 
+      case nsMsgFilterAction::WatchThread:
         {
           PRUint32 newFlags;
           m_newMsgHdr->OrFlags(MSG_FLAG_WATCHED, &newFlags);
@@ -959,6 +953,8 @@ nsNNTPNewsgroupList::FinishXOVERLINE(int status, int *newstatus)
     m_set->AddRange(m_lastProcessedNumber + 1, m_lastMsgNumber);
   }
 
+  if (m_lastProcessedNumber)
+    AddToKnownArticles(m_firstMsgNumber, m_lastProcessedNumber);
   if (m_newsDB) {
     m_newsDB->Close(PR_TRUE);
     m_newsDB = nsnull;

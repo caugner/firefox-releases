@@ -1,11 +1,11 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Seth Spitzer <sspitzer@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -42,15 +42,17 @@ var gSearchTermList;
 var gSearchTerms = new Array;
 var gSearchRemovedTerms = new Array;
 var gSearchScope;
-var gSearchLessButton;
 var gSearchBooleanRadiogroup;
 
-// cache these so we don't have to hit the string bundle for them
-var gBooleanOrText;
-var gBooleanAndText;
-var gBooleanInitialText;
+var gUniqueSearchTermCounter = 0; // gets bumped every time we add a search term so we can always 
+                                  // dynamically generate unique IDs for the terms.
 
-//
+// cache these so we don't have to hit the string bundle for them
+var gMoreButtonTooltipText;
+var gLessButtonTooltipText;
+var gLoading = true;
+
+
 function searchTermContainer() {}
 
 searchTermContainer.prototype = {
@@ -122,25 +124,7 @@ searchTermContainer.prototype = {
     stringBundle: document.getElementById("bundle_search"),
     get booleanAnd() { return this.internalBooleanAnd; },
     set booleanAnd(val) {
-        // whenever you set this, all nodes in booleanNodes
-        // are updated to reflect the string
-
-        if (this.internalBooleanAnd == val) return val;
         this.internalBooleanAnd = val;
-
-        var booleanNodes = this.booleanNodes;
-        if (!booleanNodes) return val;
-
-        var stringBundle = this.stringBundle;
-        var andString = val ? "And" : "Or";
-        for (var i=0; i<booleanNodes.length; i++) {
-            try {
-                var staticString =
-                    stringBundle.getString("search" + andString + i);
-                if (staticString && staticString.length>0)
-                    booleanNodes[i].setAttribute("label", staticString);
-            } catch (ex) { /* no error, means string not found */}
-        }
         return val;
     },
 
@@ -172,15 +156,11 @@ function initializeSearchWidgets()
 {    
     gSearchBooleanRadiogroup = document.getElementById("booleanAndGroup");
     gSearchTermList = document.getElementById("searchTermList");
-    gSearchLessButton = document.getElementById("less");
-    if (!gSearchLessButton)
-        dump("I couldn't find less button!");
 
     // initialize some strings
     var bundle = document.getElementById('bundle_search');
-    gBooleanOrText = bundle.getString('orSearchText');
-    gBooleanAndText = bundle.getString('andSearchText');
-    gBooleanInitialText = bundle.getString('initialSearchText');
+    gMoreButtonTooltipText = bundle.getString('moreButtonTooltipText');
+    gLessButtonTooltipText = bundle.getString('lessButtonTooltipText');
 }
 
 function initializeBooleanWidgets() 
@@ -192,52 +172,68 @@ function initializeBooleanWidgets()
         booleanAnd = firstTerm.booleanAnd;
 
     // target radio items have value="and" or value="or"
-    var targetValue = booleanAnd ? "and" : "or";
-
-    var targetElement = gSearchBooleanRadiogroup.getElementsByAttribute("value", targetValue)[0];
-
-    gSearchBooleanRadiogroup.selectedItem = targetElement;
-
-    for (var i=1; i<gSearchTerms.length; i++) 
-    {
-      document.getElementById('boolOp' + i).setAttribute('value', booleanAnd ? gBooleanAndText : gBooleanOrText);
-    }
+    gSearchBooleanRadiogroup.value = booleanAnd ? "and" : "or";
 }
 
 function initializeSearchRows(scope, searchTerms)
 {
-    gTotalSearchTerms = searchTerms.Count();
-    for (var i=0; i<gTotalSearchTerms; i++) {
+    for (var i = 0; i < searchTerms.Count(); i++) {
         var searchTerm = searchTerms.QueryElementAt(i, nsIMsgSearchTerm);
         createSearchRow(i, scope, searchTerm);
+        gTotalSearchTerms++;
     }
     initializeBooleanWidgets();
+    updateRemoveRowButton();
 }
 
-function scrollToLastSearchTerm(index)
+// enables/disables the less button for the first row of search terms.
+function updateRemoveRowButton()
 {
-    if (index > 0)
-      gSearchTermList.ensureIndexIsVisible(index-1);
+  var firstListItem = gSearchTermList.getItemAtIndex(0);
+  if (firstListItem)
+    firstListItem.lastChild.lastChild.lastChild.setAttribute("disabled", gTotalSearchTerms == 1);
 }
  
+// Returns the actual list item row index in the list of search rows
+// that contains the passed in element id.
+function getSearchRowIndexForElement(aElement)
+{
+  var listItem = aElement;
+  
+  while (listItem && listItem.localName != "listitem")
+    listItem = listItem.parentNode;
+    
+  return gSearchTermList.getIndexOfItem(listItem);
+}
+
 function onMore(event)
 {
-    if(gTotalSearchTerms==1)
-      gSearchLessButton.removeAttribute("disabled", "false");
-    createSearchRow(gTotalSearchTerms++, gSearchScope, null);
-    // the user just added a term, so scroll to it
-    scrollToLastSearchTerm(gTotalSearchTerms);
+  // if we have an event, extract the list row index and use that as the row number
+  // for our insertion point. If there is no event, append to the end....
+  var rowIndex; 
+
+  if (event)
+    rowIndex = getSearchRowIndexForElement(event.target) + 1;
+  else
+    rowIndex = gSearchTermList.getRowCount();
+
+  createSearchRow(rowIndex, gSearchScope, null);
+  gTotalSearchTerms++;
+  updateRemoveRowButton();
+
+  // the user just added a term, so scroll to it
+  gSearchTermList.ensureIndexIsVisible(rowIndex);
 }
 
 function onLess(event)
 {
-    if (gTotalSearchTerms>1)
-        removeSearchRow(--gTotalSearchTerms);
-    if (gTotalSearchTerms==1)
-        gSearchLessButton .setAttribute("disabled", "true");
+  if (event && gTotalSearchTerms > 1) 
+  {
+    removeSearchRow(getSearchRowIndexForElement(event.target));    
+    --gTotalSearchTerms;
+  }
 
-    // the user removed a term, so scroll to the bottom so they are aware of it
-    scrollToLastSearchTerm(gTotalSearchTerms);
+  updateRemoveRowButton();
 }
 
 // set scope on all visible searchattribute tags
@@ -254,10 +250,9 @@ function setSearchScope(scope)
 
 function updateSearchAttributes()
 {
-    for (var i=0; i<gSearchTerms.length; i++) {
+    for (var i=0; i<gSearchTerms.length; i++) 
         gSearchTerms[i].obj.searchattribute.refreshList();
     }
-}
 
 function booleanChanged(event) {
     // when boolean changes, we have to update all the attributes on the search terms
@@ -269,13 +264,6 @@ function booleanChanged(event) {
     for (var i=0; i<gSearchTerms.length; i++) {
         var searchTerm = gSearchTerms[i].obj;
         searchTerm.booleanAnd = newBoolValue;
-        if (i)
-        {
-          if (newBoolValue)
-            document.getElementById('boolOp' + i).setAttribute('value', gBooleanAndText);
-          else
-            document.getElementById('boolOp' + i).setAttribute('value', gBooleanOrText);
-        }
     }
 }
 
@@ -285,22 +273,29 @@ function createSearchRow(index, scope, searchTerm)
     var searchOp = document.createElement("searchoperator");
     var searchVal = document.createElement("searchvalue");
     var enclosingBox = document.createElement('vbox');
-    var boolOp = document.createElement('label');
+
+    var buttonBox = document.createElement("hbox");
+    buttonBox.setAttribute("align", "start");
+    var moreButton = document.createElement("button");
+    var lessButton = document.createElement("button");
+    moreButton.setAttribute("class", "small-button");
+    moreButton.setAttribute("oncommand", "onMore(event);");
+    moreButton.setAttribute('label', '+');
+    moreButton.setAttribute('tooltiptext', gMoreButtonTooltipText);
+    lessButton.setAttribute("class", "small-button");
+    lessButton.setAttribute("oncommand", "onLess(event);");    
+    lessButton.setAttribute('label', '\u2212');
+    lessButton.setAttribute('tooltiptext', gLessButtonTooltipText);
 
     enclosingBox.setAttribute('align', 'right');
 
     // now set up ids:
-    searchAttr.id = "searchAttr" + index;
-    searchOp.id  = "searchOp" + index;
-    searchVal.id = "searchVal" + index;
-    boolOp.id = "boolOp" + index;
-    if (index == 0)
-      boolOp.setAttribute('value', gBooleanInitialText);
-    else if ( gSearchBooleanRadiogroup.selectedItem.value == 'and')
-      boolOp.setAttribute('value', gBooleanAndText);
-    else
-      boolOp.setAttribute('value', gBooleanOrText);
-    enclosingBox.appendChild(boolOp);
+    searchAttr.id = "searchAttr" + gUniqueSearchTermCounter;
+    searchOp.id  = "searchOp" + gUniqueSearchTermCounter;
+    searchVal.id = "searchVal" + gUniqueSearchTermCounter;
+
+    buttonBox.appendChild(moreButton);
+    buttonBox.appendChild(lessButton);
 
     searchAttr.setAttribute("for", searchOp.id + "," + searchVal.id);
     searchOp.setAttribute("opfor", searchVal.id);
@@ -308,21 +303,17 @@ function createSearchRow(index, scope, searchTerm)
     var rowdata = new Array(enclosingBox, searchAttr,
                             null, searchOp,
                             null, searchVal,
-                            null);
+                            null, buttonBox);
     var searchrow = constructRow(rowdata);
-    searchrow.id = "searchRow" + index;
+    searchrow.id = "searchRow" + gUniqueSearchTermCounter;
 
     var searchTermObj = new searchTermContainer;
-
-    gSearchTerms[gSearchTerms.length] = {obj:searchTermObj, scope:scope, searchTerm:searchTerm, initialized:false};
-
     searchTermObj.searchattribute = searchAttr;
     searchTermObj.searchoperator = searchOp;
     searchTermObj.searchvalue = searchVal;
 
-    // now invalidate the newly created items because they've been inserted
-    // into the document, and XBL bindings will be inserted in their place
-    //searchAttr = searchOp = searchVal = undefined;
+    // now insert the new search term into our list of terms
+    gSearchTerms.splice(index, 0, {obj:searchTermObj, scope:scope, searchTerm:searchTerm, initialized:false});
 
     // and/or string handling:
     // this is scary - basically we want to take every other
@@ -340,16 +331,34 @@ function createSearchRow(index, scope, searchTerm)
     }
     searchTermObj.booleanNodes = stringNodes;
 
-    gSearchTermList.appendChild(searchrow);
+    var editFilter = null;
+    try { editFilter = gFilter; } catch(e) { }
+
+    var editMailView = null;
+    try { editMailView = gMailView; } catch(e) { }
+
+    if ((!editFilter && !editMailView) ||
+        (editFilter && index == gTotalSearchTerms) ||
+        (editMailView && index == gTotalSearchTerms))
+      gLoading = false;
+
+    // index is index of new row
+    // gTotalSearchTerms has not been updated yet
+    if (gLoading || index == gTotalSearchTerms) {
+      gSearchTermList.appendChild(searchrow);
+    }
+    else {
+      var currentItem = gSearchTermList.getItemAtIndex(index);
+      gSearchTermList.insertBefore(searchrow, currentItem);
+    }
+    
+    // bump our unique search term counter
+    gUniqueSearchTermCounter++;
 }
 
 function initializeTermFromId(id)
 {
-    // id is of the form searchAttr<n>
-    // strlen("searchAttr") == 10
-    // turn searchAttr<n> -> <n>
-    var index = parseInt(id.slice(10)); 
-    initializeTermFromIndex(index)
+  initializeTermFromIndex(getSearchRowIndexForElement(document.getElementById(id)));
 }
 
 function initializeTermFromIndex(index)
@@ -366,7 +375,7 @@ function initializeTermFromIndex(index)
     // the UI
     else
     {
-      searchTermObj.booleanAnd = getBooleanAnd();
+      searchTermObj.booleanAnd = (gSearchBooleanRadiogroup.value == "and");
       if (index)
       {
         // if we weren't pre-initialized with a searchTerm then steal the search attribute from the 
@@ -412,6 +421,7 @@ function removeSearchRow(index)
     // need to remove row from list, so walk upwards from the
     // searchattribute to find the first <listitem>
     var listitem = searchTermObj.searchattribute;
+
     while (listitem) {
         if (listitem.localName == "listitem") break;
         listitem = listitem.parentNode;
@@ -430,18 +440,9 @@ function removeSearchRow(index)
     }
 
     listitem.parentNode.removeChild(listitem);
-    // remove it from the list of terms - XXX this does it?
-    // remove the last element
-    gSearchTerms.length--;
-}
-
-function getBooleanAnd()
-{
-    if (gSearchBooleanRadiogroup.selectedItem)
-        return (gSearchBooleanRadiogroup.selectedItem.getAttribute("value") == "and") ? true : false;
-
-    // default to false
-    return false;
+    
+    // now remove the item from our list of terms
+    gSearchTerms.splice(index, 1); 
 }
 
 // save the search terms from the UI back to the actual search terms
@@ -491,7 +492,7 @@ function onReset(event)
 {
     while (gTotalSearchTerms>0)
         removeSearchRow(--gTotalSearchTerms);
-    onMore(event);
+    onMore(null);
 }
 
 // this is a helper routine used by our search term xbl widget

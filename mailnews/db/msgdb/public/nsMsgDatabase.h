@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -119,7 +119,7 @@ public:
   static nsIMsgDatabase* FindInCache(nsIMsgFolder *folder);
 
   //helper function to fill in nsStrings from hdr row cell contents.
-  nsresult RowCellColumnTonsString(nsIMdbRow *row, mdb_token columnToken, nsString &resultStr);
+  nsresult RowCellColumnTonsString(nsIMdbRow *row, mdb_token columnToken, nsAString &resultStr);
   nsresult RowCellColumnToUInt32(nsIMdbRow *row, mdb_token columnToken, PRUint32 *uint32Result, PRUint32 defaultValue = 0);
   nsresult RowCellColumnToUInt32(nsIMdbRow *row, mdb_token columnToken, PRUint32 &uint32Result, PRUint32 defaultValue = 0);
   nsresult RowCellColumnToMime2DecodedString(nsIMdbRow *row, mdb_token columnToken, PRUnichar **);
@@ -131,12 +131,12 @@ public:
   // they should be used when the properties aren't accessed a lot
   nsresult        GetProperty(nsIMdbRow *row, const char *propertyName, char **result);
   nsresult        SetProperty(nsIMdbRow *row, const char *propertyName, const char *propertyVal);
-  nsresult        GetPropertyAsNSString(nsIMdbRow *row, const char *propertyName, nsString *result);
-  nsresult        SetPropertyFromNSString(nsIMdbRow *row, const char *propertyName, nsString *propertyVal);
+  nsresult        GetPropertyAsNSString(nsIMdbRow *row, const char *propertyName, nsAString &result);
+  nsresult        SetPropertyFromNSString(nsIMdbRow *row, const char *propertyName, const nsAString &propertyVal);
   nsresult        GetUint32Property(nsIMdbRow *row, const char *propertyName, PRUint32 *result, PRUint32 defaultValue = 0);
   nsresult        SetUint32Property(nsIMdbRow *row, const char *propertyName, PRUint32 propertyVal);
   // helper function for once we have the token.
-  nsresult        SetNSStringPropertyWithToken(nsIMdbRow *row, mdb_token aProperty, nsString *propertyStr);
+  nsresult        SetNSStringPropertyWithToken(nsIMdbRow *row, mdb_token aProperty, const nsAString &propertyStr);
   
   // helper functions to put values in cells for the passed-in row
   nsresult        UInt32ToRowCellColumn(nsIMdbRow *row, mdb_token columnToken, PRUint32 value);
@@ -145,16 +145,11 @@ public:
   
   
   // helper functions to copy an nsString to a yarn, int32 to yarn, and vice versa.
-  static struct mdbYarn *nsStringToYarn(struct mdbYarn *yarn, nsString *str);
+  static struct mdbYarn *nsStringToYarn(struct mdbYarn *yarn, const nsAString &str);
   static struct mdbYarn *UInt32ToYarn(struct mdbYarn *yarn, PRUint32 i);
-  static void YarnTonsString(struct mdbYarn *yarn, nsString *str);
-  static void YarnTonsCString(struct mdbYarn *yarn, nsCString *str);
+  static void YarnTonsString(struct mdbYarn *yarn, nsAString &str);
+  static void YarnTonsCString(struct mdbYarn *yarn, nsACString &str);
   static void YarnToUInt32(struct mdbYarn *yarn, PRUint32 *i);
-  
-  
-  // helper functions to convert a 64bits PRTime into a 32bits value (compatible time_t) and vice versa.
-  static void   PRTime2Seconds(PRTime prTime, PRUint32 *seconds);
-  static void   Seconds2PRTime(PRUint32 seconds, PRTime *prTime);
   
   static void   CleanupCache();
 #ifdef DEBUG
@@ -171,8 +166,9 @@ public:
   friend class nsMsgDBThreadEnumerator;
 protected:
   // prefs stuff - in future, we might want to cache the prefs interface
-  nsresult GetBoolPref(const char *prefName, PRBool *result);
-  nsresult GetIntPref(const char *prefName, PRInt32 *result);
+  nsresult        GetBoolPref(const char *prefName, PRBool *result);
+  nsresult        GetIntPref(const char *prefName, PRInt32 *result);
+  virtual void    GetGlobalPrefs();
     // retrieval methods
   nsIMsgThread *  GetThreadForReference(nsCString &msgID, nsIMsgDBHdr **pMsgHdr);
   nsIMsgThread *  GetThreadForSubject(nsCString &subject);
@@ -182,6 +178,7 @@ protected:
   // threading interfaces
   virtual nsresult CreateNewThread(nsMsgKey key, const char *subject, nsMsgThread **newThread);
   virtual PRBool  ThreadBySubjectWithoutRe();
+  virtual PRBool  UseStrictThreading();
   virtual nsresult ThreadNewHdr(nsMsgHdr* hdr, PRBool &newThread);
   virtual nsresult AddNewThread(nsMsgHdr *msgHdr);
   virtual nsresult AddToThread(nsMsgHdr *newHdr, nsIMsgThread *thread, nsIMsgDBHdr *pMsgHdr, PRBool threadInThread);
@@ -222,8 +219,10 @@ protected:
   nsCOMPtr <nsIMsgRetentionSettings> m_retentionSettings;
   nsCOMPtr <nsIMsgDownloadSettings> m_downloadSettings;
 
-  nsresult PurgeMessagesOlderThan(PRUint32 daysToKeepHdrs, PRBool keepUnreadMessagesOnly);
-  nsresult PurgeExcessMessages(PRUint32 numHeadersToKeep, PRBool keepUnreadMessagesOnly);
+  nsresult PurgeMessagesOlderThan(PRUint32 daysToKeepHdrs, PRBool keepUnreadMessagesOnly,
+                                  nsISupportsArray *hdrsToDelete);
+  nsresult PurgeExcessMessages(PRUint32 numHeadersToKeep, PRBool keepUnreadMessagesOnly,
+                               nsISupportsArray *hdrsToDelete);
   
   // mdb bookkeeping stuff
   virtual nsresult			InitExistingDB();
@@ -238,7 +237,7 @@ protected:
   nsIMdbTable   *m_mdbAllMsgHeadersTable;
   nsIMdbTable   *m_mdbAllThreadsTable;
   nsFileSpec    m_dbName;
-  nsMsgKeySet   *m_newSet;	// new messages since last open.
+  nsMsgKeyArray m_newSet;	// new messages since last open.
   PRBool        m_mdbTokensInitialized;
   nsCOMPtr <nsISupportsArray>  m_ChangeListeners;
   mdb_token     m_hdrRowScopeToken;

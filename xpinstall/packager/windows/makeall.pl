@@ -1,26 +1,42 @@
 #!c:\perl\bin\perl
 # 
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
-#  
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
-#  
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
+#
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
+#
 # The Original Code is Mozilla Communicator client code, released
 # March 31, 1998.
-# 
-# The Initial Developer of the Original Code is Netscape
-# Communications Corporation. Portions created by Netscape are
-# Copyright (C) 1998-1999 Netscape Communications Corporation. All
-# Rights Reserved.
-# 
-# Contributor(s): 
-# Sean Su <ssu@netscape.com>
-# 
+#
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1998-1999
+# the Initial Developer. All Rights Reserved.
+#
+# Contributor(s):
+#   Sean Su <ssu@netscape.com>
+#
+# Alternatively, the contents of this file may be used under the terms of
+# either of the GNU General Public License Version 2 or later (the "GPL"),
+# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
 #
 # This perl script builds the xpi, config.ini, and js files.
@@ -40,22 +56,25 @@ push(@INC, "$topsrcdir/xpinstall/packager");
 require StageUtils;
 require "$topsrcdir/config/zipcfunc.pl";
 
+ParseArgv(@ARGV);
+
+$topobjdir                = "$topsrcdir"                     if !defined($topobjdir);
+$inStagePath              = "$topobjdir/stage"               if !defined($inStagePath);
+$inDistPath               = "$topobjdir/dist"                if !defined($inDistPath);
+$inXpiURL                 = "ftp://not.supplied.invalid"     if !defined($inXpiURL);
+$inRedirIniURL            = $inXpiURL                        if !defined($inRedirIniURL);
+$inInstName               = "seamonkey-win32-installer"      if !defined($inInstName);
+$inStubName               = "seamonkey-win32-stub-installer" if !defined($inStubName);
+
 $seiFileNameGeneric       = "nsinstall.exe";
-$seiFileNameSpecific      = "mozilla-win32-installer.exe";
-$seiStubRootName          = "mozilla-win32-stub-installer";
+$seiFileNameSpecific      = "$inInstName.exe";
+$seiStubRootName          = $inStubName;
 $seiFileNameSpecificStub  = "$seiStubRootName.exe";
-$seuFileNameSpecific      = "MozillaUninstall.exe";
-$seuzFileNameSpecific     = "mozillauninstall.zip";
+$seuFileNameSpecific      = "SeaMonkeyUninstall.exe";
+$seuzFileNameSpecific     = "seamonkeyuninstall.zip";
 $seiGreFileNameSpecific   = "gre-win32-installer.exe";
 $seizGreFileNameSpecific  = "gre-win32-installer.zip";
 
-ParseArgv(@ARGV);
-
-$topobjdir                = "$topsrcdir"                 if !defined($topobjdir);
-$inStagePath              = "$topobjdir/stage"           if !defined($inStagePath);
-$inDistPath               = "$topobjdir/dist"            if !defined($inDistPath);
-$inXpiURL                 = "ftp://not.supplied.invalid" if !defined($inXpiURL);
-$inRedirIniURL            = $inXpiURL                    if !defined($inRedirIniURL);
 
 if(defined($ENV{DEBUG_INSTALLER_BUILD}))
 {
@@ -69,7 +88,7 @@ if(defined($ENV{DEBUG_INSTALLER_BUILD}))
 $gDefaultProductVersion   = StageUtils::GetProductY2KVersion($topobjdir, $topsrcdir, $topsrcdir);
 
 print "\n";
-print " Building Mozilla\n";
+print " Building SeaMonkey\n";
 print "  Raw version id   : $gDefaultProductVersion\n";
 
 # $gDefaultProductVersion has the form maj.min.release.bld where maj, min, release
@@ -143,9 +162,9 @@ copy("$gDirDistInstGre/$seiGreFileNameSpecific", "$gDirStageProduct/gre") ||
 
 $versionLanguage               = "en";
 $ENV{WIZ_nameCompany}          = "mozilla.org";
-$ENV{WIZ_nameProduct}          = "Mozilla";
-$ENV{WIZ_nameProductInternal}  = "Mozilla"; # product name without the version string
-$ENV{WIZ_fileMainExe}          = "Mozilla.exe";
+$ENV{WIZ_nameProduct}          = "SeaMonkey";
+$ENV{WIZ_nameProductInternal}  = "SeaMonkey"; # product name without the version string
+$ENV{WIZ_fileMainExe}          = "SeaMonkey.exe";
 $ENV{WIZ_fileUninstall}        = $seuFileNameSpecific;
 $ENV{WIZ_fileUninstallZip}     = $seuzFileNameSpecific;
 # The following variables are for displaying version info in the 
@@ -199,7 +218,9 @@ if(!(-d "$gDirStageProduct"))
                    "langenus",
                    "regus",
                    "venkman",
-                   "inspector");
+                   "inspector",
+                   "reporter",
+                   "sroaming");
 
 if(VerifyComponents()) # return value of 0 means no errors encountered
 {
@@ -457,6 +478,16 @@ sub PrintUsage
                                        redirec.ini resides.  If not supplied, it
                                        will be assumed to be the same as archive
                                        url.
+
+           -instname <filename base> : the base of the filename to be used for
+                                       the installer, e.g.
+                                       mozilla-1.8b2.en-US.win32.installer
+                                       (.exe will be appended in any case)
+
+           -stubname <filename base> : the base of the filename to be used for
+                                       the stub installer, e.g.
+                                       mozilla-1.8b2.en-US.win32.stub-installer
+                                       (.exe will be appended in any case)
        \n";
 }
 
@@ -513,6 +544,22 @@ sub ParseArgv
       {
         ++$counter;
         $inRedirIniURL = $myArgv[$counter];
+      }
+    }
+    elsif($myArgv[$counter] =~ /^[-,\/]instname$/i)
+    {
+      if($#myArgv >= ($counter + 1))
+      {
+        ++$counter;
+        $inInstName = $myArgv[$counter];
+      }
+    }
+    elsif($myArgv[$counter] =~ /^[-,\/]stubname$/i)
+    {
+      if($#myArgv >= ($counter + 1))
+      {
+        ++$counter;
+        $inStubName = $myArgv[$counter];
       }
     }
   }

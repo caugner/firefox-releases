@@ -12,12 +12,12 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Jonas Sicking.
  * Portions created by the Initial Developer are Copyright (C) 2002
- * Jonas Sicking. All Rights Reserved.
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Jonas Sicking <jonas@sicking.cc>
@@ -39,9 +39,7 @@
 #ifndef TRANSFRMX_TXEXECUTIONSTATE_H
 #define TRANSFRMX_TXEXECUTIONSTATE_H
 
-#include "txError.h"
-#include "baseutils.h"
-#include "txXMLEventHandler.h"
+#include "txCore.h"
 #include "txStack.h"
 #include "XMLUtils.h"
 #include "nsVoidArray.h"
@@ -52,6 +50,8 @@
 #include "txKey.h"
 #include "txStylesheet.h"
 
+class txAOutputHandlerFactory;
+class txAXMLEventHandler;
 class txInstruction;
 class txIOutputHandlerFactory;
 class txExpandedNameMap;
@@ -95,7 +95,7 @@ public:
     txExecutionState(txStylesheet* aStylesheet);
     ~txExecutionState();
     nsresult init(const txXPathNode& aNode, txExpandedNameMap* aGlobalParams);
-    nsresult end();
+    nsresult end(nsresult aResult);
 
     TX_DECL_MATCH_CONTEXT;
 

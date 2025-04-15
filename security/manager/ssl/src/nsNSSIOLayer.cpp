@@ -1,38 +1,42 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Brian Ryner <bryner@brianryner.com>
- *  Javier Delgadillo <javi@netscape.com>
+ *   Brian Ryner <bryner@brianryner.com>
+ *   Javier Delgadillo <javi@netscape.com>
  *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsNSSComponent.h"
 #include "nsNSSIOLayer.h"
@@ -41,7 +45,8 @@
 #include "prlog.h"
 #include "prnetdb.h"
 #include "nsIPrompt.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "nsIServiceManager.h"
 #include "nsIWebProgressListener.h"
 #include "nsIChannel.h"
@@ -252,6 +257,11 @@ nsNSSSocketInfo::GetNotificationCallbacks(nsIInterfaceRequestor** aCallbacks)
 NS_IMETHODIMP
 nsNSSSocketInfo::SetNotificationCallbacks(nsIInterfaceRequestor* aCallbacks)
 {
+  if (!aCallbacks) {
+    mCallbacks = nsnull;
+    return NS_OK;
+  }
+
   nsCOMPtr<nsIProxyObjectManager> proxyman(do_GetService(NS_XPCOMPROXY_CONTRACTID));
   if (!proxyman) 
     return NS_ERROR_FAILURE;
@@ -285,8 +295,10 @@ NS_IMETHODIMP
 nsNSSSocketInfo::GetShortSecurityDescription(PRUnichar** aText) {
   if (mShortDesc.IsEmpty())
     *aText = nsnull;
-  else
+  else {
     *aText = ToNewUnicode(mShortDesc);
+    NS_ENSURE_TRUE(*aText, NS_ERROR_OUT_OF_MEMORY);
+  }
   return NS_OK;
 }
 
@@ -487,7 +499,7 @@ nsHandleSSLError(nsNSSSocketInfo *socketInfo, PRInt32 err)
   nsCOMPtr<nsIStringBundleService> service = 
                               do_GetService(StringBundleServiceCID, &rv);
   nsCOMPtr<nsIStringBundle> brandBundle;
-  service->CreateBundle("chrome://global/locale/brand.properties",
+  service->CreateBundle("chrome://branding/locale/brand.properties",
                         getter_AddRefs(brandBundle));
   nsXPIDLString brandShortName;
   brandBundle->GetStringFromName(NS_LITERAL_STRING("brandShortName").get(),
@@ -1246,17 +1258,33 @@ nsContinueDespiteCertError(nsNSSSocketInfo  *infoObject,
                            nsNSSCertificate *nssCert)
 {
   PRBool retVal = PR_FALSE;
-  nsIBadCertListener *badCertHandler;
+  nsIBadCertListener *badCertHandler = nsnull;
   PRInt16 addType = nsIBadCertListener::UNINIT_ADD_FLAG;
   nsresult rv;
 
   if (!nssCert)
     return PR_FALSE;
-  rv = getNSSDialogs((void**)&badCertHandler, 
-                     NS_GET_IID(nsIBadCertListener),
-                     NS_BADCERTLISTENER_CONTRACTID);
-  if (NS_FAILED(rv)) 
-    return PR_FALSE;
+
+  // Try to get a nsIBadCertListener implementation from the socket consumer
+  // first.  If that fails, fallback to the default UI.
+  nsCOMPtr<nsIInterfaceRequestor> callbacks;
+  infoObject->GetNotificationCallbacks(getter_AddRefs(callbacks));
+  if (callbacks) {
+    nsCOMPtr<nsIBadCertListener> handler = do_GetInterface(callbacks);
+    if (handler)
+      NS_GetProxyForObject(NS_UI_THREAD_EVENTQ,
+                           NS_GET_IID(nsIBadCertListener),
+                           handler,
+                           PROXY_SYNC,
+                           (void**)&badCertHandler);
+  }
+  if (!badCertHandler) {
+    rv = getNSSDialogs((void**)&badCertHandler, 
+                       NS_GET_IID(nsIBadCertListener),
+                       NS_BADCERTLISTENER_CONTRACTID);
+    if (NS_FAILED(rv)) 
+      return PR_FALSE;
+  }
   nsIInterfaceRequestor *csi = NS_STATIC_CAST(nsIInterfaceRequestor*,
                                                  infoObject);
   nsIX509Cert *callBackCert = NS_STATIC_CAST(nsIX509Cert*, nssCert);
@@ -1790,9 +1818,9 @@ nsresult nsGetUserCertChoice(SSM_UserCertChoice* certChoice)
 
 	NS_ENSURE_ARG_POINTER(certChoice);
 
-	nsCOMPtr<nsIPref> prefService = do_GetService(NS_PREF_CONTRACTID);
+	nsCOMPtr<nsIPrefBranch> pref = do_GetService(NS_PREFSERVICE_CONTRACTID);
 
-	ret = prefService->CopyCharPref("security.default_personal_cert", &mode);
+	ret = pref->GetCharPref("security.default_personal_cert", &mode);
 	if (NS_FAILED(ret)) {
 		goto loser;
 	}
@@ -2038,40 +2066,41 @@ SECStatus nsNSS_SSLGetClientAuthData(void* arg, PRFileDesc* socket,
     CERT_DestroyCertificate(serverCert);
 
     certNicknameList = (PRUnichar **)nsMemory::Alloc(sizeof(PRUnichar *) * nicknames->numnicknames);
+    if (!certNicknameList)
+      goto loser;
     certDetailsList = (PRUnichar **)nsMemory::Alloc(sizeof(PRUnichar *) * nicknames->numnicknames);
+    if (!certDetailsList) {
+      nsMemory::Free(certNicknameList);
+      goto loser;
+    }
 
     PRInt32 CertsToUse;
-
     for (CertsToUse = 0, node = CERT_LIST_HEAD(certList);
          !CERT_LIST_END(node, certList) && CertsToUse < nicknames->numnicknames;
          node = CERT_LIST_NEXT(node)
         )
     {
-      nsNSSCertificate *tempCert = new nsNSSCertificate(node->cert);
+      nsRefPtr<nsNSSCertificate> tempCert = new nsNSSCertificate(node->cert);
 
-      if (tempCert) {
+      if (!tempCert)
+        continue;
       
-        // XXX we really should be using an nsCOMPtr instead of manually add-refing,
-        // but nsNSSCertificate does not have a default constructor.
-        
-        NS_ADDREF(tempCert);
+      NS_ConvertUTF8toUTF16 i_nickname(nicknames->nicknames[CertsToUse]);
+      nsAutoString nickWithSerial, details;
+      
+      if (NS_FAILED(tempCert->FormatUIStrings(i_nickname, nickWithSerial, details)))
+        continue;
 
-        nsAutoString i_nickname(NS_ConvertUTF8toUCS2(nicknames->nicknames[CertsToUse]));
-        nsAutoString nickWithSerial;
-        nsAutoString details;
-        if (NS_SUCCEEDED(tempCert->FormatUIStrings(i_nickname, nickWithSerial, details))) {
-          certNicknameList[CertsToUse] = ToNewUnicode(nickWithSerial);
-          certDetailsList[CertsToUse] = ToNewUnicode(details);
-        }
-        else {
-          certNicknameList[CertsToUse] = nsnull;
-          certDetailsList[CertsToUse] = nsnull;
-        }
-
-        NS_RELEASE(tempCert);
-        
-        ++CertsToUse;
+      certNicknameList[CertsToUse] = ToNewUnicode(nickWithSerial);
+      if (!certNicknameList[CertsToUse])
+        continue;
+      certDetailsList[CertsToUse] = ToNewUnicode(details);
+      if (!certDetailsList[CertsToUse]) {
+        nsMemory::Free(certNicknameList[CertsToUse]);
+        continue;
       }
+
+      ++CertsToUse;
     }
 
     /* Throw up the client auth dialog and get back the index of the selected cert */
@@ -2079,7 +2108,11 @@ SECStatus nsNSS_SSLGetClientAuthData(void* arg, PRFileDesc* socket,
                        NS_GET_IID(nsIClientAuthDialogs),
                        NS_CLIENTAUTHDIALOGS_CONTRACTID);
 
-    if (NS_FAILED(rv)) goto loser;
+    if (NS_FAILED(rv)) {
+      NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(CertsToUse, certNicknameList);
+      NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(CertsToUse, certDetailsList);
+      goto loser;
+    }
 
     {
       nsPSMUITracker tracker;
@@ -2093,19 +2126,15 @@ SECStatus nsNSS_SSLGetClientAuthData(void* arg, PRFileDesc* socket,
       }
     }
 
-    int i;
-    for (i = 0; i < CertsToUse; ++i) {
-      nsMemory::Free(certNicknameList[i]);
-      nsMemory::Free(certDetailsList[i]);
-    }
-    nsMemory::Free(certNicknameList);
-    nsMemory::Free(certDetailsList);
-
     NS_RELEASE(dialogs);
+    NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(CertsToUse, certNicknameList);
+    NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(CertsToUse, certDetailsList);
+    
     if (NS_FAILED(rv)) goto loser;
 
     if (canceled) { rv = NS_ERROR_NOT_AVAILABLE; goto loser; }
 
+    int i;
     for (i = 0, node = CERT_LIST_HEAD(certList);
          !CERT_LIST_END(node, certList);
          ++i, node = CERT_LIST_NEXT(node)) {

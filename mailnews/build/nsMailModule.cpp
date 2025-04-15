@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Scott MacGregor <mscott@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -46,6 +46,7 @@
 #include "nsIModule.h"
 #include "nsIGenericFactory.h"
 #include "pratom.h"
+#include "nsICategoryManager.h"
 #include "nsIComponentManager.h"
 #include "nsIServiceManager.h"
 #include "nsCRT.h"
@@ -95,7 +96,7 @@
 #include "nsMsgSpecialViews.h"
 #include "nsMsgXFVirtualFolderDBView.h"
 #include "nsMsgQuickSearchDBView.h"
-#include "nsMsgGroupView.h"
+#include "nsMsgGroupView.h"  
 #include "nsMsgOfflineManager.h"
 #include "nsMsgProgress.h"
 #include "nsSpamSettings.h"
@@ -103,7 +104,6 @@
 #include "nsCidProtocolHandler.h"
 #include "nsRssIncomingServer.h"
 #include "nsRssService.h"
-
 #ifdef XP_WIN
 #include "nsMessengerWinIntegration.h"
 #endif
@@ -113,7 +113,6 @@
 #ifdef XP_MACOSX
 #include "nsMessengerOSXIntegration.h"
 #endif
-
 #include "nsCURILoader.h"
 #include "nsMessengerContentHandler.h"
 
@@ -147,6 +146,7 @@
 #include "nsAbDirectoryQueryProxy.h"
 #include "nsAbView.h"
 #include "nsMsgVCardService.h"
+#include "nsAbLDIFService.h"
 
 #if defined(MOZ_LDAP_XPCOM)
 #include "nsAbLDAPDirectory.h"
@@ -189,7 +189,6 @@
 #include "nsSmtpServer.h"
 #include "nsSmtpDataSource.h"
 #include "nsSmtpDelegateFactory.h"
-#include "nsIContentHandler.h"
 #include "nsMsgRecipientArray.h"
 #include "nsMsgComposeStringBundle.h"
 #include "nsMsgCompUtils.h"
@@ -289,7 +288,6 @@
 // mailnews base factories
 ////////////////////////////////////////////////////////////////////////////////
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMessengerBootstrap)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgOptionsCmdLineHandler)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsUrlListenerManager)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgMailSession, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMessenger)
@@ -341,6 +339,7 @@ NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMessengerOSXIntegration, Init)
 #endif
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMessengerContentHandler)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMsgContentPolicy, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgCookiePolicy)
 
 ////////////////////////////////////////////////////////////////////////////////
 // addrbook factories
@@ -386,9 +385,8 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsAbLDAPProcessChangeLogData)
 
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsAbDirectoryQueryProxy)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsAbView)
-
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgVCardService) 
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgVCardStreamListener) 
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsAbLDIFService)
 
 ////////////////////////////////////////////////////////////////////////////////
 // bayesian spam filter factories
@@ -445,14 +443,14 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsNoneService)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMsgLocalMailFolder)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsParseMailMessageState)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsPop3IncomingServer)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsRssIncomingServer)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsRssService)
 #ifdef HAVE_MOVEMAIL
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMovemailIncomingServer)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsMovemailService)
 #endif /* HAVE_MOVEMAIL */
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsNoIncomingServer)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsLocalStringService)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsRssIncomingServer)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsRssService)
 
 ////////////////////////////////////////////////////////////////////////////////
 // msgdb factories
@@ -578,6 +576,54 @@ static NS_METHOD UnregisterContentPolicy(nsIComponentManager *aCompMgr, nsIFile 
   return catman->DeleteCategoryEntry("content-policy", NS_MSGCONTENTPOLICY_CONTRACTID, PR_TRUE);
 }
 
+static NS_METHOD
+RegisterCommandLineHandlers(nsIComponentManager* compMgr, nsIFile* path,
+                            const char *location, const char *type,
+                            const nsModuleComponentInfo *info)
+{
+  nsresult rv;
+  nsCOMPtr<nsICategoryManager> catMan (do_GetService(NS_CATEGORYMANAGER_CONTRACTID));
+  NS_ENSURE_TRUE(catMan, NS_ERROR_FAILURE);
+
+  rv  = catMan->AddCategoryEntry("command-line-handler", "m-mail",
+                                 NS_MESSENGERBOOTSTRAP_CONTRACTID,
+                                 PR_TRUE, PR_TRUE, nsnull);
+  rv |= catMan->AddCategoryEntry("command-line-handler", "m-addressbook",
+                                 NS_ADDRESSBOOK_CONTRACTID,
+                                 PR_TRUE, PR_TRUE, nsnull);
+  rv |= catMan->AddCategoryEntry("command-line-handler", "m-compose",
+                                 NS_MSGCOMPOSESERVICE_CONTRACTID,
+                                 PR_TRUE, PR_TRUE, nsnull);
+  rv |= catMan->AddCategoryEntry("command-line-handler", "m-news",
+                                 NS_NNTPSERVICE_CONTRACTID,
+                                 PR_TRUE, PR_TRUE, nsnull);
+  if (NS_FAILED(rv))
+    return NS_ERROR_FAILURE;
+
+  return NS_OK;
+}
+
+static NS_METHOD
+UnregisterCommandLineHandlers(nsIComponentManager* compMgr, nsIFile* path,
+                              const char *location,
+                              const nsModuleComponentInfo *info)
+{
+  nsCOMPtr<nsICategoryManager> catMan (do_GetService(NS_CATEGORYMANAGER_CONTRACTID));
+  NS_ENSURE_TRUE(catMan, NS_ERROR_FAILURE);
+
+  catMan->DeleteCategoryEntry("command-line-handler", "m-mail",
+                              PR_TRUE);
+  catMan->DeleteCategoryEntry("command-line-handler", "m-addressbook",
+                              PR_TRUE);
+  catMan->DeleteCategoryEntry("command-line-handler", "m-compose",
+                              PR_TRUE);
+  catMan->DeleteCategoryEntry("command-line-handler", "m-news",
+                              PR_TRUE);
+
+  return NS_OK;
+}
+                            
+
 // The list of components we register
 static const nsModuleComponentInfo gComponents[] = {
     ////////////////////////////////////////////////////////////////////////////////
@@ -586,22 +632,12 @@ static const nsModuleComponentInfo gComponents[] = {
     { "Netscape Messenger Bootstrapper", NS_MESSENGERBOOTSTRAP_CID,
       NS_MESSENGERBOOTSTRAP_CONTRACTID,
       nsMessengerBootstrapConstructor,
+      RegisterCommandLineHandlers,
+      UnregisterCommandLineHandlers
     },
     { "Netscape Messenger Window Service", NS_MESSENGERWINDOWSERVICE_CID,
       NS_MESSENGERWINDOWSERVICE_CONTRACTID,
       nsMessengerBootstrapConstructor,
-    },
-    { "Mail Startup Handler", NS_MESSENGERBOOTSTRAP_CID,
-      NS_MAILSTARTUPHANDLER_CONTRACTID,
-      nsMessengerBootstrapConstructor,
-      nsMessengerBootstrap::RegisterProc,
-      nsMessengerBootstrap::UnregisterProc
-    },
-    { "Options Startup Handler", NS_MESSENGEROPTIONSSTARTUP_CID,
-      NS_MAILOPTIONSTARTUPHANDLER_CONTRACTID,
-      nsMsgOptionsCmdLineHandlerConstructor,
-      nsMsgOptionsCmdLineHandler::RegisterProc,
-      nsMsgOptionsCmdLineHandler::UnregisterProc
     },
     { "UrlListenerManager", NS_URLLISTENERMANAGER_CID,
       NS_URLLISTENERMANAGER_CONTRACTID,
@@ -759,8 +795,8 @@ static const nsModuleComponentInfo gComponents[] = {
        nsMsgXFVirtualFolderDBViewConstructor,
     },
     { "grouped view", NS_MSG_GROUPDBVIEW_CID,
-       NS_MSGGROUPDBVIEW_CONTRACTID,
-       nsMsgGroupViewConstructor,
+      NS_MSGGROUPDBVIEW_CONTRACTID,
+      nsMsgGroupViewConstructor,
     },
     { "Messenger Offline Manager", NS_MSGOFFLINEMANAGER_CID,
       NS_MSGOFFLINEMANAGER_CONTRACTID,
@@ -796,7 +832,7 @@ static const nsModuleComponentInfo gComponents[] = {
       nsMessengerOSXIntegrationConstructor,
     },
 #endif
-    { "x-message-display content handler",
+    { "application/x-message-display content handler",
        NS_MESSENGERCONTENTHANDLER_CID,
        NS_MESSENGERCONTENTHANDLER_CONTRACTID,
        nsMessengerContentHandlerConstructor
@@ -806,15 +842,17 @@ static const nsModuleComponentInfo gComponents[] = {
        NS_MSGCONTENTPOLICY_CONTRACTID,
        nsMsgContentPolicyConstructor,
        RegisterContentPolicy, UnregisterContentPolicy },
+    { "mail cookie policy enforcer",
+      NS_MSGCOOKIEPOLICY_CID,
+      NS_COOKIEPERMISSION_CONTRACTID,
+      nsMsgCookiePolicyConstructor
+    },
     
     ////////////////////////////////////////////////////////////////////////////////
     // addrbook components
     ////////////////////////////////////////////////////////////////////////////////
     { "Address Book", NS_ADDRESSBOOK_CID,
       NS_ADDRESSBOOK_CONTRACTID, nsAddressBookConstructor },
-    { "Address Book Startup Handler", NS_ADDRESSBOOK_CID,
-      NS_ADDRESSBOOKSTARTUPHANDLER_CONTRACTID, nsAddressBookConstructor,
-      nsAddressBook::RegisterProc, nsAddressBook::UnregisterProc },
     { "Address Book Directory Datasource", NS_ABDIRECTORYDATASOURCE_CID,
       NS_ABDIRECTORYDATASOURCE_CONTRACTID, nsAbDirectoryDataSourceConstructor },
     { "Address Boot Strap Directory", NS_ABDIRECTORY_CID,
@@ -841,7 +879,7 @@ static const nsModuleComponentInfo gComponents[] = {
       NS_ADDBOOKURL_CONTRACTID, nsAddbookUrlConstructor },   
     { "The addbook Protocol Handler", NS_ADDBOOK_HANDLER_CID,
       NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "addbook", nsAddbookProtocolHandlerConstructor },
-    { "add vCard content handler", NS_ADDRESSBOOK_CID, NS_CONTENT_HANDLER_CONTRACTID_PREFIX"x-application-addvcard", nsAddressBookConstructor },
+    { "add vCard content handler", NS_ADDRESSBOOK_CID, NS_CONTENT_HANDLER_CONTRACTID_PREFIX"application/x-addvcard", nsAddressBookConstructor },
     { "add vCard content handler", NS_ADDRESSBOOK_CID, NS_CONTENT_HANDLER_CONTRACTID_PREFIX"text/x-vcard", nsAddressBookConstructor },
 
     { "The directory factory service interface", NS_ABDIRFACTORYSERVICE_CID,
@@ -889,12 +927,8 @@ static const nsModuleComponentInfo gComponents[] = {
     { "The directory query proxy interface", NS_ABDIRECTORYQUERYPROXY_CID,
       NS_ABDIRECTORYQUERYPROXY_CONTRACTID, nsAbDirectoryQueryProxyConstructor},
     { "addressbook view", NS_ABVIEW_CID, NS_ABVIEW_CONTRACTID, nsAbViewConstructor},
-    { "vcard helper service", NS_MSGVCARDSERVICE_CID, NS_MSGVCARDSERVICE_CONTRACTID, 
-       nsMsgVCardServiceConstructor },
-    { "vcard stream listener", NS_MSGVCARDSTREAMLISTENER_CID, NS_MSGVCARDSTREAMLISTENER_CONTRACTID, 
-      nsMsgVCardStreamListenerConstructor },
-
-
+    { "vcard helper service", NS_MSGVCARDSERVICE_CID, NS_MSGVCARDSERVICE_CONTRACTID, nsMsgVCardServiceConstructor },
+    { "ldif handler service", NS_ABLDIFSERVICE_CID, NS_ABLDIFSERVICE_CONTRACTID, nsAbLDIFServiceConstructor },
 
     ////////////////////////////////////////////////////////////////////////////////
     // bayesian spam filter components
@@ -909,9 +943,6 @@ static const nsModuleComponentInfo gComponents[] = {
       NS_MSGCOMPOSE_CONTRACTID,  nsMsgComposeConstructor },
     { "Msg Compose Service", NS_MSGCOMPOSESERVICE_CID, 
       NS_MSGCOMPOSESERVICE_CONTRACTID, nsMsgComposeServiceConstructor },
-    { "Msg Compose Startup Handler", NS_MSGCOMPOSESERVICE_CID,
-      NS_MSGCOMPOSESTARTUPHANDLER_CONTRACTID, nsMsgComposeServiceConstructor, nsMsgComposeService::RegisterProc,
-      nsMsgComposeService::UnregisterProc },
     { "mailto content handler", NS_MSGCOMPOSECONTENTHANDLER_CID,
       NS_MSGCOMPOSECONTENTHANDLER_CONTRACTID, nsMsgComposeContentHandlerConstructor },
     { "Msg Compose Parameters", NS_MSGCOMPOSEPARAMS_CID,
@@ -1112,9 +1143,6 @@ static const nsModuleComponentInfo gComponents[] = {
       NS_NNTPURL_CONTRACTID, nsNntpUrlConstructor },
     { "NNTP Service", NS_NNTPSERVICE_CID,
       NS_NNTPSERVICE_CONTRACTID, nsNntpServiceConstructor },
-    { "News Startup Handler", NS_NNTPSERVICE_CID,
-      NS_NEWSSTARTUPHANDLER_CONTRACTID, nsNntpServiceConstructor,
-      nsNntpService::RegisterProc, nsNntpService::UnregisterProc },
     { "NNTP Protocol Info", NS_NNTPSERVICE_CID,
       NS_NNTPPROTOCOLINFO_CONTRACTID, nsNntpServiceConstructor },
     { "NNTP Message Service",NS_NNTPSERVICE_CID,

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,25 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Original Author: David W. Hyatt (hyatt@netscape.com)
- *
+ *   Original Author: David W. Hyatt (hyatt@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -57,6 +56,7 @@
 #include "nsFrameManager.h"
 #include "nsStyleContext.h"
 #include "nsXBLPrototypeBinding.h"
+#include "nsCSSRuleProcessor.h"
 #include "nsContentUtils.h"
 
 NS_IMPL_ISUPPORTS1(nsXBLResourceLoader, nsICSSLoaderObserver)
@@ -93,11 +93,10 @@ nsXBLResourceLoader::LoadResources(PRBool* aResult)
   *aResult = PR_TRUE;
 
   // Declare our loaders.
-  nsCOMPtr<nsICSSLoader> cssLoader;
-
   nsCOMPtr<nsIDocument> doc;
   mBinding->XBLDocumentInfo()->GetDocument(getter_AddRefs(doc));
 
+  nsICSSLoader* cssLoader = doc->CSSLoader();
   nsIURI *docURL = doc->GetDocumentURI();
 
   nsCOMPtr<nsIURI> url;
@@ -120,17 +119,11 @@ nsXBLResourceLoader::LoadResources(PRBool* aResult)
       // Passing NULL for pretty much everything -- cause we don't care!
       // XXX: initialDocumentURI is NULL! 
       nsCOMPtr<imgIRequest> req;
-      nsContentUtils::LoadImage(url, doc, nsnull, nsIRequest::LOAD_BACKGROUND,
+      nsContentUtils::LoadImage(url, doc, docURL, nsnull,
+                                nsIRequest::LOAD_BACKGROUND,
                                 getter_AddRefs(req));
     }
     else if (curr->mType == nsXBLAtoms::stylesheet) {
-      if (!cssLoader) {
-        cssLoader = doc->GetCSSLoader();
-      }
-
-      if (!cssLoader)
-        continue;
-
       // Kick off the load of the stylesheet.
 
       // Always load chrome synchronously
@@ -185,19 +178,8 @@ nsXBLResourceLoader::StyleSheetLoaded(nsICSSStyleSheet* aSheet, PRBool aNotify)
   
   if (mPendingSheets == 0) {
     // All stylesheets are loaded.  
-    nsCOMPtr<nsIStyleRuleProcessor> prevProcessor;
-    mResources->mRuleProcessors.Clear();
-    PRInt32 count = mResources->mStyleSheetList.Count();
-    for (PRInt32 i = 0; i < count; i++) {
-      nsICSSStyleSheet* sheet = mResources->mStyleSheetList[i];
-
-      nsCOMPtr<nsIStyleRuleProcessor> processor;
-      sheet->GetStyleRuleProcessor(*getter_AddRefs(processor), prevProcessor);
-      if (processor != prevProcessor) {
-        mResources->mRuleProcessors.AppendObject(processor);
-        prevProcessor = processor;
-      }
-    }
+    mResources->mRuleProcessor =
+      new nsCSSRuleProcessor(mResources->mStyleSheetList);
 
     // XXX Check for mPendingScripts when scripts also come online.
     if (!mInLoadResourcesFunc)
@@ -248,14 +230,16 @@ nsXBLResourceLoader::NotifyBoundElements()
     xblService->BindingReady(content, bindingURI, &ready);
 
     if (ready) {
-      nsCOMPtr<nsIDocument> doc = content->GetDocument();
+      // We need the document to flush out frame construction and
+      // such, so we want to use the current document.
+      nsIDocument* doc = content->GetCurrentDoc();
     
       if (doc) {
-        // Flush first
-        doc->FlushPendingNotifications();
+        // Flush first to make sure we can get the frame for content
+        doc->FlushPendingNotifications(Flush_Frames);
 
         // Notify
-        nsCOMPtr<nsIContent> parent = content->GetParent();
+        nsIContent* parent = content->GetParent();
         PRInt32 index = 0;
         if (parent)
           index = parent->IndexOf(content);
@@ -286,7 +270,8 @@ nsXBLResourceLoader::NotifyBoundElements()
         }
 
         // Flush again
-        doc->FlushPendingNotifications();
+        // XXXbz why is this needed?
+        doc->FlushPendingNotifications(Flush_ContentAndNotify);
       }
     }
   }

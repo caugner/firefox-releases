@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -53,7 +53,6 @@
 #include "nsMimeMapper.h"
 #include "nsClipboard.h"
 #include "nsIRegion.h"
-#include "nsVoidArray.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
 #include "nsCOMPtr.h"
@@ -66,7 +65,7 @@
 #include "nsIDOMNode.h"
 #include "nsIDocument.h"
 #include "nsIPresShell.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIFrame.h"
 #include "nsIView.h"
 #include "nsRect.h"
@@ -78,10 +77,6 @@
 // file save stuff
 #include "nsNetUtil.h"
 #include "nsILocalFileMac.h"
-
-#ifdef MOZ_XUL
-#include "nsIXULContent.h"
-#endif
 
 #include "nsIDOMElement.h"
 #include "nsIImageMac.h"
@@ -141,15 +136,15 @@ nsDragService::ComputeGlobalRectFromFrame ( nsIDOMNode* aDOMNode, Rect & outScre
 #if USE_TRANSLUCENT_DRAGGING && defined(MOZ_XUL)
   // until bug 41237 is fixed, only do translucent dragging if the drag is in
   // the chrome or it's a link.
-  nsCOMPtr<nsIXULContent> xulContent ( do_QueryInterface(aDOMNode) );
-  if ( !xulContent ) {
+  nsCOMPtr<nsIContent> content = do_QueryInterface(aDOMNode);
+  if (!content || !content->IsContentOfType(nsIContent::eXUL)) {
     // the link node is the parent of the node we have (which is probably text or image).
     nsCOMPtr<nsIDOMNode> parent;
     aDOMNode->GetParentNode ( getter_AddRefs(parent) );
     if ( parent ) {
       nsAutoString localName;
       parent->GetLocalName ( localName );
-      if ( ! localName.Equals(NS_LITERAL_STRING("A")) )
+      if ( ! localName.EqualsLiteral("A") )
         return PR_FALSE;
     }
     else
@@ -161,7 +156,7 @@ nsDragService::ComputeGlobalRectFromFrame ( nsIDOMNode* aDOMNode, Rect & outScre
 
   // Get the frame for this content node (note: frames are not refcounted)
   nsIFrame *aFrame = nsnull;
-  nsCOMPtr<nsIPresContext> presContext;
+  nsCOMPtr<nsPresContext> presContext;
   GetFrameFromNode ( aDOMNode, &aFrame, getter_AddRefs(presContext) );
   if ( !aFrame || !presContext )
     return PR_FALSE;
@@ -176,7 +171,7 @@ nsDragService::ComputeGlobalRectFromFrame ( nsIDOMNode* aDOMNode, Rect & outScre
   // Find offset from our view
 	nsIView *containingView = nsnull;
 	nsPoint	viewOffset(0,0);
-	aFrame->GetOffsetFromView(presContext, viewOffset, &containingView);
+	aFrame->GetOffsetFromView(viewOffset, &containingView);
   NS_ASSERTION(containingView, "No containing view!");
   if ( !containingView )
     return PR_FALSE;
@@ -273,8 +268,8 @@ nsDragService::InvokeDragSession (nsIDOMNode *aDOMNode, nsISupportsArray * aTran
   // see it if you're paying attention, but who pays such close attention?
   Rect dragRect;
   ::GetRegionBounds(theDragRgn, &dragRect);
-  theEvent.where.v = rint(dragRect.top + (dragRect.bottom - dragRect.top) / 2);
-  theEvent.where.h = rint(dragRect.left + (dragRect.right - dragRect.left) / 2);
+  theEvent.where.v = dragRect.top + ((dragRect.bottom - dragRect.top) / 2);
+  theEvent.where.h = dragRect.left + ((dragRect.right - dragRect.left) / 2);
 
   // register drag send proc which will call us back when asked for the actual
   // flavor data (instead of placing it all into the drag manager)
@@ -344,20 +339,6 @@ nsDragService::BuildDragRegion ( nsIScriptableRegion* inRegion, nsIDOMNode* inNo
       Point offsetFromLocalToGlobal = { 0, 0 };
       ::LocalToGlobal ( &offsetFromLocalToGlobal );
       ::OffsetRgn ( ioDragRgn, offsetFromLocalToGlobal.h, offsetFromLocalToGlobal.v );
-
-#ifdef MOZ_WIDGET_COCOA
-      // for cocoa, we have to transform this region into cocoa screen 
-      // coordinates. Only the main screen is important in this caculation
-      // as that's where the 2 coord systems differ.
-      Rect regionBounds;
-      GetRegionBounds(ioDragRgn, &regionBounds);
-      
-      GDHandle  screenDevice = ::GetMainDevice();
-      Rect      screenRect   = (**screenDevice).gdRect;
-      // offset the rect
-      short screenHeight = screenRect.bottom - screenRect.top;
-      ::OffsetRgn(ioDragRgn, 0, screenRect.top + (screenHeight - regionBounds.top) - regionBounds.top);
-#endif
     }
   }
   else {
@@ -372,17 +353,6 @@ nsDragService::BuildDragRegion ( nsIScriptableRegion* inRegion, nsIDOMNode* inNo
       useRectFromFrame = ComputeGlobalRectFromFrame ( inNode, frameRect );
     else
       NS_WARNING ( "Can't find anything to get a drag rect from. I'm dyin' out here!" );
-
-#ifdef MOZ_WIDGET_COCOA
-    // for cocoa, we have to transform this region into cocoa screen 
-    // coordinates. Only the main screen is important in this caculation
-    // as that's where the 2 coord systems differ.
-    GDHandle  screenDevice = ::GetMainDevice();
-    Rect      screenRect   = (**screenDevice).gdRect;
-    // offset the rect
-    short screenHeight = screenRect.bottom - screenRect.top;
-    ::OffsetRect(&frameRect, 0, screenRect.top + (screenHeight - frameRect.top) - frameRect.top);
-#endif
 
     if ( ioDragRgn ) {
       RgnHandle frameRgn = ::NewRgn();
@@ -548,7 +518,7 @@ nsDragService::GetData ( nsITransferable * aTransferable, PRUint32 aItemIndex )
       FlavorFlags unused;
       PRBool dataFound = PR_FALSE;
       void* dataBuff = nsnull;
-      PRInt32 dataSize = 0;
+      PRUint32 dataSize = 0;
       if ( macOSFlavor && ::GetFlavorFlags(mDragRef, itemRef, macOSFlavor, &unused) == noErr ) {	    
         nsresult loadResult = ExtractDataFromOS(mDragRef, itemRef, macOSFlavor, &dataBuff, &dataSize);
   	    if ( NS_SUCCEEDED(loadResult) && dataBuff )
@@ -643,7 +613,6 @@ nsDragService::GetData ( nsITransferable * aTransferable, PRUint32 aItemIndex )
           nsLinebreakHelpers::ConvertPlatformToDOMLinebreaks(flavorStr.get(), &dataBuff, NS_REINTERPRET_CAST(int*, &dataSize));
 
           unsigned char *dataPtr = (unsigned char *) dataBuff;
-#if TARGET_CARBON
           // skip BOM (Byte Order Mark to distinguish little or big endian) in 'utxt'
           // 10.2 puts BOM for 'utxt', we need to remove it here
           // for little endian case, we also need to convert the data to big endian
@@ -655,7 +624,6 @@ nsDragService::GetData ( nsITransferable * aTransferable, PRUint32 aItemIndex )
             dataSize -= sizeof(PRUnichar);
             dataPtr += sizeof(PRUnichar);
           }
-#endif
           nsPrimitiveHelpers::CreatePrimitiveForData(flavorStr.get(), (void *) dataPtr, dataSize, getter_AddRefs(genericDataWrapper));
         }
         
@@ -1045,7 +1013,7 @@ char*
 nsDragService::LookupMimeMappingsForItem ( DragReference inDragRef, ItemReference inItemRef )
 {
   char* mapperData = nsnull;
-  PRInt32 mapperSize = 0;
+  PRUint32 mapperSize = 0;
   ExtractDataFromOS(inDragRef, inItemRef, nsMimeMapperMac::MappingFlavor(),  (void**)&mapperData, &mapperSize);
 
   return mapperData;
@@ -1081,7 +1049,7 @@ nsDragService::LookupMimeMappingsForItem ( DragReference inDragRef, ItemReferenc
 //
 nsresult
 nsDragService::ExtractDataFromOS ( DragReference inDragRef, ItemReference inItemRef, ResType inFlavor, 
-                                        void** outBuffer, PRInt32* outBuffSize )
+                                       void** outBuffer, PRUint32* outBuffSize )
 {
   if ( !outBuffer || !outBuffSize || !inFlavor )
     return NS_ERROR_FAILURE;

@@ -33,6 +33,12 @@
 //
 
 .text
+
+// PRInt32 _PR_ia64_AtomicIncrement(PRInt32 *val)
+//
+// Atomically increment the integer pointed to by 'val' and return
+// the result of the increment.
+//
         .align 16
         .global _PR_ia64_AtomicIncrement#
         .proc _PR_ia64_AtomicIncrement#
@@ -42,6 +48,11 @@ _PR_ia64_AtomicIncrement:
         adds r8 = 1, r8
         br.ret.sptk.many b0
         .endp _PR_ia64_AtomicIncrement#
+
+// PRInt32 _PR_ia64_AtomicDecrement(PRInt32 *val)
+//
+// Atomically decrement the integer pointed to by 'val' and return
+// the result of the decrement.
 //
         .align 16
         .global _PR_ia64_AtomicDecrement#
@@ -52,6 +63,11 @@ _PR_ia64_AtomicDecrement:
         adds r8 = -1, r8
         br.ret.sptk.many b0
         .endp _PR_ia64_AtomicDecrement#
+
+// PRInt32 _PR_ia64_AtomicAdd(PRInt32 *ptr, PRInt32 val)
+//
+// Atomically add 'val' to the integer pointed to by 'ptr'
+// and return the result of the addition.
 //
         .align 16
         .global _PR_ia64_AtomicAdd#
@@ -70,6 +86,11 @@ _PR_ia64_AtomicAdd:
         (p6) br.cond.dptk .L3
         br.ret.sptk.many b0
         .endp _PR_ia64_AtomicAdd#
+
+// PRInt32 _PR_ia64_AtomicSet(PRInt32 *val, PRInt32 newval)
+//
+// Atomically set the integer pointed to by 'val' to the new
+// value 'newval' and return the old value.
 //
         .align 16
         .global _PR_ia64_AtomicSet#
@@ -78,3 +99,6 @@ _PR_ia64_AtomicSet:
         xchg4 r8 = [r32], r33
         br.ret.sptk.many b0
         .endp _PR_ia64_AtomicSet#
+
+// Magic indicating no need for an executable stack
+.section .note.GNU-stack, "", @progbits ; .previous

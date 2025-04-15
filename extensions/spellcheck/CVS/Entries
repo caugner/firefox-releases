@@ -1,5 +1,6 @@
-/.cvsignore/1.2/Thu Jul 24 21:38:57 2003//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.4/Sat Aug 16 00:41:33 2003//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.2/Thu Jul 24 21:38:57 2003//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.5/Sat Jul 16 18:45:12 2005//TFIREFOX_1_5_RELEASE
 D/idl////
+D/locales////
 D/myspell////
 D/src////

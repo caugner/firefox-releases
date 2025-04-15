@@ -1,4 +1,4 @@
-/* -*- Mode: IDL; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is mozilla.org code.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
@@ -20,9 +20,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Peter Van der Beken <peterv@netscape.com> (original author)
+ *   Peter Van der Beken <peterv@propagandism.org>
  *   Axel Hecht <axel@pike.org>
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -140,14 +139,14 @@ protected:
     /**
      * Parses all XML Stylesheet PIs associated with the
      * given XML document. If any stylesheet PIs are found with
-     * type="text/xsl" the href psuedo attribute value will be
+     * type="text/xsl" the href pseudo attribute value will be
      * added to the given href argument. If multiple text/xsl stylesheet PIs
      * are found, the one closest to the end of the document is used.
      */
     static void getHrefFromStylesheetPI(Document& xmlDocument, nsAString& href);
 
     /**
-     * Parses the contents of data, returns the type and href psuedo attributes
+     * Parses the contents of data, returns the type and href pseudo attributes
      */
     static void parseStylesheetPI(const nsAFlatString& data,
                                   nsAString& type,

@@ -21,6 +21,8 @@
 #
 # Contributor(s):
 #   Benjamin Smedberg <bsmedberg@covad.net>
+#   Arthur Wiebe <artooro@gmail.com>
+#   Mark Mentovai <mark@moxienet.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -48,7 +50,11 @@ MOZ_PKG_FORMAT  = DMG
 else
 ifeq (,$(filter-out OS2 WINNT, $(OS_ARCH)))
 MOZ_PKG_FORMAT  = ZIP
+ifeq ($(OS_ARCH),OS2)
+INSTALLER_DIR   = os2
+else
 INSTALLER_DIR   = windows
+endif
 else
 ifeq (,$(filter-out SunOS, $(OS_ARCH)))
 MOZ_PKG_FORMAT  = BZ2
@@ -64,39 +70,87 @@ PACKAGE       = $(PKG_BASENAME)$(PKG_SUFFIX)
 
 MAKE_PACKAGE	= $(error What is a $(MOZ_PKG_FORMAT) package format?);
 
-TAR_CREATE_FLAGS = -cvhf
-
-ifeq ($(OS_ARCH),BSD_OS)
-TAR_CREATE_FLAGS = -cvLf
-endif
-
 CREATE_FINAL_TAR = tar -c --owner=0 --group=0 --numeric-owner --mode="go-w" -f
+UNPACK_TAR       = tar -x
 
 ifeq ($(MOZ_PKG_FORMAT),TAR)
 PKG_SUFFIX	= .tar
 MAKE_PACKAGE 	= $(CREATE_FINAL_TAR) - $(MOZ_PKG_APPNAME) > $(PACKAGE)
+UNMAKE_PACKAGE	= $(UNPACK_TAR) < $(UNPACKAGE)
 endif
 ifeq ($(MOZ_PKG_FORMAT),TGZ)
 PKG_SUFFIX	= .tar.gz
 MAKE_PACKAGE 	= $(CREATE_FINAL_TAR) - $(MOZ_PKG_APPNAME) | gzip -vf9 > $(PACKAGE)
+UNMAKE_PACKAGE	= gunzip -c $(UNPACKAGE) | $(UNPACK_TAR)
 endif
 ifeq ($(MOZ_PKG_FORMAT),BZ2)
 PKG_SUFFIX	= .tar.bz2
 MAKE_PACKAGE 	= $(CREATE_FINAL_TAR) - $(MOZ_PKG_APPNAME) | bzip2 -vf > $(PACKAGE)
+UNMAKE_PACKAGE	= bunzip2 -c $(UNPACKAGE) | $(UNPACK_TAR)
 endif
 ifeq ($(MOZ_PKG_FORMAT),ZIP)
 PKG_SUFFIX	= .zip
 MAKE_PACKAGE	= $(ZIP) -r9D $(PACKAGE) $(MOZ_PKG_APPNAME)
+UNMAKE_PACKAGE	= $(UNZIP) $(UNPACKAGE)
 endif
 ifeq ($(MOZ_PKG_FORMAT),DMG)
+ifndef _APPNAME
 ifdef MOZ_DEBUG
 _APPNAME	= $(MOZ_APP_DISPLAYNAME)Debug.app
 else
 _APPNAME	= $(MOZ_APP_DISPLAYNAME).app
 endif
-PKG_SUFFIX	= .dmg.gz
-_ABS_TOPSRCDIR	= $(shell cd $(topsrcdir) && pwd)
-MAKE_PACKAGE	= $(_ABS_TOPSRCDIR)/build/package/mac_osx/make-diskimage $(PKG_BASENAME).dmg $(MOZ_PKG_APPNAME) $(MOZ_APP_DISPLAYNAME) && gzip -vf9 $(PKG_BASENAME).dmg
+endif
+PKG_SUFFIX	= .dmg
+PKG_DMG_FLAGS	=
+ifneq (,$(MOZ_PKG_MAC_DSSTORE))
+PKG_DMG_FLAGS += --copy "$(MOZ_PKG_MAC_DSSTORE):/.DS_Store"
+endif
+ifneq (,$(MOZ_PKG_MAC_BACKGROUND))
+PKG_DMG_FLAGS += --mkdir /.background --copy "$(MOZ_PKG_MAC_BACKGROUND):/.background"
+endif
+ifneq (,$(MOZ_PKG_MAC_ICON))
+PKG_DMG_FLAGS += --icon "$(MOZ_PKG_MAC_ICON)"
+endif
+ifneq (,$(MOZ_PKG_MAC_RSRC))
+PKG_DMG_FLAGS += --resource "$(MOZ_PKG_MAC_RSRC)"
+endif
+ifneq (,$(MOZ_PKG_MAC_EXTRA))
+PKG_DMG_FLAGS += $(MOZ_PKG_MAC_EXTRA)
+endif
+_ABS_TOPSRCDIR = $(shell cd $(topsrcdir) && pwd)
+MAKE_PACKAGE	= $(_ABS_TOPSRCDIR)/build/package/mac_osx/pkg-dmg \
+  --source "$(MOZ_PKG_APPNAME)" --target "$(PACKAGE)" \
+  --volname "$(MOZ_APP_DISPLAYNAME)" $(PKG_DMG_FLAGS)
+UNMAKE_PACKAGE	= \
+  set -ex; \
+  function cleanup() { \
+    hdiutil detach $${DEV_NAME} || \
+     { sleep 5 && hdiutil detach $${DEV_NAME} -force; }; \
+    return $$1 && $$?; \
+  }; \
+  unset NEXT_ROOT; \
+  export PAGER=true; \
+  echo Y | hdiutil attach -readonly -mountroot /tmp -private -noautoopen $(UNPACKAGE) > hdi.output; \
+  DEV_NAME=`perl -n -e 'if($$_=~/(\/dev\/disk[^ ]*)/) {print $$1."\n";exit;}'< hdi.output`; \
+  MOUNTPOINT=`perl -n -e 'split(/\/dev\/disk[^ ]*/,$$_,2);if($$_[1]=~/(\/.*)/) {print $$1."\n";exit;}'< hdi.output` || cleanup 1; \
+  rsync -a "$${MOUNTPOINT}/$(_APPNAME)" $(MOZ_PKG_APPNAME) || cleanup 1; \
+  test -n "$(MOZ_PKG_MAC_DSSTORE)" && \
+    { rsync -a "$${MOUNTPOINT}/.DS_Store" "$(MOZ_PKG_MAC_DSSTORE)" || cleanup 1; }; \
+  test -n "$(MOZ_PKG_MAC_BACKGROUND)" && \
+    { rsync -a "$${MOUNTPOINT}/.background/`basename "$(MOZ_PKG_MAC_BACKGROUND)"`" "$(MOZ_PKG_MAC_BACKGROUND)" || cleanup 1; }; \
+  test -n "$(MOZ_PKG_MAC_ICON)" && \
+    { rsync -a "$${MOUNTPOINT}/.VolumeIcon.icns" "$(MOZ_PKG_MAC_ICON)" || cleanup 1; }; \
+  cleanup 0; \
+  if test -n "$(MOZ_PKG_MAC_RSRC)" ; then \
+    cp $(UNPACKAGE) $(MOZ_PKG_APPNAME).tmp.dmg && \
+    hdiutil unflatten $(MOZ_PKG_APPNAME).tmp.dmg && \
+    { /Developer/Tools/DeRez -skip plst -skip blkx $(MOZ_PKG_APPNAME).tmp.dmg > "$(MOZ_PKG_MAC_RSRC)" || { rm -f $(MOZ_PKG_APPNAME).tmp.dmg && false; }; } && \
+    rm -f $(MOZ_PKG_APPNAME).tmp.dmg; \
+  fi; \
+  $(NULL)
+# The plst and blkx resources are skipped because they belong to each
+# individual dmg and are created by hdiutil.
 endif
 
 # dummy macro if we don't have PSM built
@@ -105,15 +159,7 @@ ifndef CROSS_COMPILE
 ifdef MOZ_PSM
 SIGN_NSS		= @echo signing nss libraries;
 
-SIGN_ENV	= LD_LIBRARY_PATH=$(DIST)/bin:${LD_LIBRARY_PATH} \
-		LD_LIBRARYN32_PATH=$(DIST)/bin:${LD_LIBRARYN32_PATH} \
-		LD_LIBRARYN64_PATH=$(DIST)/bin:${LD_LIBRARYN64_PATH} \
-		LD_LIBRARY_PATH_64=$(DIST)/bin:${LD_LIBRARY_PATH_64} \
-		SHLIB_PATH=$(DIST)/bin:${SHLIB_PATH} LIBPATH=$(DIST)/bin:${LIBPATH} \
-		DYLD_LIBRARY_PATH=$(DIST)/bin:${DYLD_LIBRARY_PATH} \
-		LIBRARY_PATH=$(DIST)/bin:${LIBRARY_PATH}
-
-SIGN_CMD	= cd $(DIST)/$(MOZ_PKG_APPNAME) && $(SIGN_ENV) $(DIST)/bin/shlibsign -v -i
+SIGN_CMD	= $(DIST)/bin/run-mozilla.sh $(DIST)/bin/shlibsign -v -i
 
 SOFTOKN		= $(DIST)/$(MOZ_PKG_APPNAME)/$(DLL_PREFIX)softokn3$(DLL_SUFFIX)
 FREEBL_HYBRID	= $(DIST)/$(MOZ_PKG_APPNAME)/$(DLL_PREFIX)freebl_hybrid_3$(DLL_SUFFIX)
@@ -125,11 +171,6 @@ SIGN_NSS	+= $(SIGN_CMD) $(SOFTOKN); \
 
 endif # MOZ_PSM
 endif # !CROSS_COMPILE
-
-NSPR_LDIR	= $(findstring -L,$(NSPR_LIBS))
-ifneq ($(NSPR_LDIR),)
-NSPR_LDIR	= $(subst -L,,$(word 1,$(NSPR_LIBS)))
-endif
 
 NO_PKG_FILES += \
 	core \
@@ -155,10 +196,28 @@ NO_PKG_FILES += \
 	res/throbber \
 	shlibsign* \
 	winEmbed.exe \
+	os2Embed.exe \
 	chrome/chrome.rdf \
+	chrome/app-chrome.manifest \
+	chrome/overlayinfo \
+	components/compreg.dat \
+	components/xpti.dat \
 	$(NULL)
 
+# browser/locales/Makefile uses this makefile for it's variable defs, but
+# doesn't want the libs:: rule.
+ifndef PACKAGER_NO_LIBS
 libs:: $(PACKAGE)
+endif
+
+DEFINES += -DDLL_PREFIX=$(DLL_PREFIX) -DDLL_SUFFIX=$(DLL_SUFFIX)
+
+ifdef MOZ_PKG_REMOVALS
+MOZ_PKG_REMOVALS_GEN = removed-files
+
+$(MOZ_PKG_REMOVALS_GEN): $(MOZ_PKG_REMOVALS) Makefile Makefile.in
+	$(PERL) $(topsrcdir)/config/preprocessor.pl -Fsubstitution $(DEFINES) $(ACDEFINES) $(MOZ_PKG_REMOVALS) > $(MOZ_PKG_REMOVALS_GEN)
+endif
 
 GARBAGE		+= $(DIST)/$(PACKAGE) $(PACKAGE)
 
@@ -178,28 +237,35 @@ endif
 ifeq ($(OS_ARCH),OS2)
 STRIP		= $(srcdir)/os2/strip.cmd
 STRIP_FLAGS	=
-TAR_CREATE_FLAGS = -cvf
 PLATFORM_EXCLUDE_LIST = ! -name "*.ico"
 endif
 
-$(PACKAGE): $(MOZILLA_BIN)
-	@rm -rf $(DIST)/$(MOZ_PKG_APPNAME) $(DIST)/$(PKG_BASENAME).tar $(DIST)/$(PKG_BASENAME).dmg $(DIST)/$(PKG_BASENAME).dmg.gz $@ $(EXCLUDE_LIST)
+ifneq (,$(filter WINNT OS2,$(OS_ARCH)))
+PKGCP_OS = dos
+else
+PKGCP_OS = unix
+endif
+
+$(PACKAGE): $(MOZILLA_BIN) $(MOZ_PKG_MANIFEST) $(MOZ_PKG_REMOVALS_GEN)
+	@rm -rf $(DIST)/$(MOZ_PKG_APPNAME) $(DIST)/$(PKG_BASENAME).tar $(DIST)/$(PKG_BASENAME).dmg $@ $(EXCLUDE_LIST)
 # NOTE: this must be a tar now that dist links into the tree so that we
 # do not strip the binaries actually in the tree.
 	@echo "Creating package directory..."
 	@mkdir $(DIST)/$(MOZ_PKG_APPNAME)
+ifdef MOZ_PKG_MANIFEST
+	$(RM) -rf $(DIST)/xpt
+	$(PERL) -I$(topsrcdir)/xpinstall/packager -e 'use Packager; \
+	  Packager::Copy("$(DIST)", "$(DIST)/$(MOZ_PKG_APPNAME)", \
+	                 "$(MOZ_PKG_MANIFEST)", "$(PKGCP_OS)", 1, 0, 1);'
+	$(PERL) $(topsrcdir)/xpinstall/packager/xptlink.pl -s $(DIST) -d $(DIST)/xpt -f $(DIST)/$(MOZ_PKG_APPNAME)/components -v
+else # !MOZ_PKG_MANIFEST
 ifeq ($(MOZ_PKG_FORMAT),DMG)
-	@cd $(DIST) && rsync -auvL $(_APPNAME) $(MOZ_PKG_APPNAME)
+	@cd $(DIST) && rsync -auv --copy-unsafe-links $(_APPNAME) $(MOZ_PKG_APPNAME)
 else
 	@cd $(DIST)/bin && tar $(TAR_CREATE_FLAGS) - * | (cd ../$(MOZ_PKG_APPNAME); tar -xf -)
-ifdef MOZ_NATIVE_NSPR
-ifndef EXCLUDE_NSPR_LIBS
-	@echo "Copying NSPR libs..."
-	@cp -p $(NSPR_LDIR)/*$(DLL_SUFFIX) $(DIST)/$(MOZ_PKG_APPNAME)
-	@chmod 755 $(DIST)/$(MOZ_PKG_APPNAME)/*$(DLL_SUFFIX)
-endif
-endif
 endif # DMG
+endif # MOZ_PKG_MANIFEST
+ifndef PKG_SKIP_STRIP
 	@echo "Stripping package directory..."
 	@cd $(DIST)/$(MOZ_PKG_APPNAME); find . ! -type d \
 			! -name "*.js" \
@@ -225,11 +291,18 @@ endif # DMG
 			$(PLATFORM_EXCLUDE_LIST) \
 			-exec $(STRIP) $(STRIP_FLAGS) {} >/dev/null 2>&1 \;
 	$(SIGN_NSS)
+endif
 	@echo "Removing unpackaged files..."
 ifeq ($(MOZ_PKG_FORMAT),DMG)
 	cd $(DIST)/$(MOZ_PKG_APPNAME)/$(_APPNAME)/Contents/MacOS; rm -rf $(NO_PKG_FILES)
+ifdef MOZ_PKG_REMOVALS
+	$(SYSINSTALL) $(MOZ_PKG_REMOVALS_GEN) $(DIST)/$(MOZ_PKG_APPNAME)/$(_APPNAME)/Contents/MacOS
+endif # MOZ_PKG_REMOVALS
 else
 	cd $(DIST)/$(MOZ_PKG_APPNAME); rm -rf $(NO_PKG_FILES)
+ifdef MOZ_PKG_REMOVALS
+	$(SYSINSTALL) $(MOZ_PKG_REMOVALS_GEN) $(DIST)/$(MOZ_PKG_APPNAME)
+endif # MOZ_PKG_REMOVALS
 endif
 	@echo "Compressing..."
 	cd $(DIST); $(MAKE_PACKAGE)

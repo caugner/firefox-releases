@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is the TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Jonas Sicking.
@@ -37,7 +37,6 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "XSLTFunctions.h"
-#include "primitives.h"
 #include "txAtoms.h"
 #include "txIXPathContext.h"
 #include "txStylesheet.h"
@@ -48,7 +47,7 @@
 #include "prdtoa.h"
 
 #define INVALID_PARAM_VALUE \
-    NS_LITERAL_STRING("invalid parameter value for function: ")
+    NS_LITERAL_STRING("invalid parameter value for function")
 
 const PRUnichar txFormatNumberFunctionCall::FORMAT_QUOTE = '\'';
 
@@ -101,8 +100,11 @@ txFormatNumberFunctionCall::evaluate(txIEvalContext* aContext,
 
     txDecimalFormat* format = mStylesheet->getDecimalFormat(formatName);
     if (!format) {
-        nsAutoString err(NS_LITERAL_STRING("unknown decimal format for: "));
+        nsAutoString err(NS_LITERAL_STRING("unknown decimal format"));
+#ifdef TX_TO_STRING
+        err.AppendLiteral(" for: ");
         toString(err);
+#endif
         aContext->receiveError(err, NS_ERROR_XPATH_INVALID_ARG);
         return NS_ERROR_XPATH_INVALID_ARG;
     }
@@ -174,7 +176,10 @@ txFormatNumberFunctionCall::evaluate(txIEvalContext* aContext,
                         multiplier = 100;
                     else {
                         nsAutoString err(INVALID_PARAM_VALUE);
+#ifdef TX_TO_STRING
+                        err.AppendLiteral(": ");
                         toString(err);
+#endif
                         aContext->receiveError(err,
                                                NS_ERROR_XPATH_INVALID_ARG);
                         return NS_ERROR_XPATH_INVALID_ARG;
@@ -185,7 +190,10 @@ txFormatNumberFunctionCall::evaluate(txIEvalContext* aContext,
                         multiplier = 1000;
                     else {
                         nsAutoString err(INVALID_PARAM_VALUE);
+#ifdef TX_TO_STRING
+                        err.AppendLiteral(": ");
                         toString(err);
+#endif
                         aContext->receiveError(err,
                                                NS_ERROR_XPATH_INVALID_ARG);
                         return NS_ERROR_XPATH_INVALID_ARG;
@@ -270,7 +278,10 @@ txFormatNumberFunctionCall::evaluate(txIEvalContext* aContext,
         inQuote ||
         groupSize == 0) {
         nsAutoString err(INVALID_PARAM_VALUE);
+#ifdef TX_TO_STRING
+        err.AppendLiteral(": ");
         toString(err);
+#endif
         aContext->receiveError(err, NS_ERROR_XPATH_INVALID_ARG);
         return NS_ERROR_XPATH_INVALID_ARG;
     }
@@ -395,12 +406,15 @@ txFormatNumberFunctionCall::evaluate(txIEvalContext* aContext,
     return aContext->recycler()->getStringResult(res, aResult);
 } //-- evaluate
 
-nsresult txFormatNumberFunctionCall::getNameAtom(nsIAtom** aAtom)
+#ifdef TX_TO_STRING
+nsresult
+txFormatNumberFunctionCall::getNameAtom(nsIAtom** aAtom)
 {
     *aAtom = txXSLTAtoms::formatNumber;
     NS_ADDREF(*aAtom);
     return NS_OK;
 }
+#endif
 
 /*
  * txDecimalFormat

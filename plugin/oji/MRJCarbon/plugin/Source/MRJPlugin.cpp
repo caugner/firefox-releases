@@ -1,4 +1,4 @@
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Mozilla Public License Version
@@ -18,11 +18,12 @@
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s):  Patrick C. Beard <beard@netscape.com>
+ * Contributor(s):
+ *   Patrick C. Beard <beard@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -32,7 +33,7 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 /*
     MRJPlugin.cpp
@@ -214,16 +215,22 @@ CF_EXPORT Boolean CFURLGetFSRef(CFURLRef url, FSRef *fsRef);
 
 static CFBundleRef getPluginBundle()
 {
+#ifdef DEBUG
     printf("### MRJPlugin:  getPluginBundle() here. ###\n");
+#endif
     CFBundleRef bundle = CFBundleGetBundleWithIdentifier(CFSTR("com.netscape.MRJPlugin"));
     if (bundle) {
+#ifdef DEBUG
         printf("### MRJPlugin:  CFBundleGetBundleWithIdentifier() succeeded. ###\n");
+#endif
         // initialize thePluginSpec for later use. open our resource fork as well?
         CFURLRef url = CFBundleCopyExecutableURL(bundle);
         if (url) {
             FSRef ref;
             if (CFURLGetFSRef(url, &ref)) {
+#ifdef DEBUG
                 printf("### MRJPlugin:  CFURLGetFSRef() succeeded. ###\n");
+#endif
                 FSGetCatalogInfo(&ref, kFSCatInfoNone, NULL, NULL, &thePluginSpec, NULL);
 
                 // Open plugin's resource fork for read-only access. is this really necessary?

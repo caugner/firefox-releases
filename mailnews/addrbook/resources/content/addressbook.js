@@ -23,6 +23,7 @@
  *
  * Contributor(s):
  *   Seth Spitzer <sspitzer@netscape.com>
+ *   Mark Banner <mark@standard8.demon.co.uk>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -40,7 +41,6 @@
 
 var cvPrefs = 0;
 var addressbook = 0;
-var gAddressBookBundle;
 var gSearchTimer = null;
 var gStatusText = null;
 var gQueryURIFormat = null;
@@ -50,6 +50,7 @@ var gDirTree;
 var gSearchBox;
 var gCardViewBox;
 var gCardViewBoxEmail1;
+var gPreviousDirTreeIndex = -1;
 
 // Constants that correspond to choices
 // in Address Book->View -->Show Name as
@@ -59,6 +60,9 @@ const kFirstNameFirst = 2;
 const kLDAPDirectory = 0; // defined in nsDirPrefs.h
 const kPABDirectory  = 2; // defined in nsDirPrefs.h
 
+// Note: We need to keep this listener as it does not just handle dir
+// pane deletes but also deletes of address books and lists from places like
+// the sidebar and LDAP preference pane.
 var gAddressBookAbListener = {
   onItemAdded: function(parentDir, item) {
     // will not be called
@@ -66,12 +70,42 @@ var gAddressBookAbListener = {
   onItemRemoved: function(parentDir, item) {
     // will only be called when an addressbook is deleted
     try {
-      var directory = item.QueryInterface(Components.interfaces.nsIAbDirectory);
-      // check if the item being removed is the directory
-      // that we are showing in the addressbook
-      // if so, select the personal addressbook (it can't be removed)
-      if (directory && directory == GetAbView().directory) {
+      // If we don't have a record of the previous selection, the only
+      // option is to select the first.
+      if (gPreviousDirTreeIndex == -1) {
         SelectFirstAddressBook();
+      }
+      else {
+        // Don't reselect if we already have a valid selection, this may be
+        // the case if items are being removed via other methods, e.g. sidebar,
+        // LDAP preference pane etc.
+        if (dirTree.currentIndex == -1) {
+          var directory = item.QueryInterface(Components.interfaces.nsIAbDirectory);
+
+          // If we are a mail list, move the selection up the list before
+          // trying to find the parent. This way we'll end up selecting the
+          // parent address book when we remove a mailing list.
+          //
+          // For simple address books we don't need to move up the list, as
+          // we want to select the next one upon removal.
+          if (directory.isMailList && gPreviousDirTreeIndex > 0)
+            --gPreviousDirTreeIndex;
+
+          // Now get the parent of the row.
+          var newRow = dirTree.view.getParentIndex(gPreviousDirTreeIndex);
+
+          // if we have no parent (i.e. we are an address book), use the
+          // previous index.
+          if (newRow == -1)
+            newRow = gPreviousDirTreeIndex;
+
+          // Fall back to the first adddress book if we're not in a valid range
+          if (newRow >= dirTree.view.rowCount)
+            newRow = 0;
+
+          // Now select the new item.
+          dirTree.view.selection.select(newRow);
+        }
       }
     }
     catch (ex) {
@@ -84,7 +118,9 @@ var gAddressBookAbListener = {
 
 function OnUnloadAddressBook()
 {  
-  var addrbookSession = Components.classes["@mozilla.org/addressbook/services/session;1"].getService().QueryInterface(Components.interfaces.nsIAddrBookSession);
+  var addrbookSession =
+        Components.classes["@mozilla.org/addressbook/services/session;1"]
+                  .getService(Components.interfaces.nsIAddrBookSession);
   addrbookSession.removeAddressBookListener(gAddressBookAbListener);
 
   RemovePrefObservers();
@@ -119,7 +155,7 @@ function AddPrefObservers()
 {
   var prefService = Components.classes["@mozilla.org/preferences-service;1"]
                               .getService(Components.interfaces.nsIPrefService);
-  var prefBranch = prefService.getBranch(null).QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+  var prefBranch = prefService.getBranch(null).QueryInterface(Components.interfaces.nsIPrefBranch2);
   prefBranch.addObserver(kPrefMailAddrBookLastNameFirst, gMailAddrBookLastNameFirstObserver, false);
 }
 
@@ -127,13 +163,12 @@ function RemovePrefObservers()
 {
   var prefService = Components.classes["@mozilla.org/preferences-service;1"]
                               .getService(Components.interfaces.nsIPrefService);
-  var prefBranch = prefService.getBranch(null).QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+  var prefBranch = prefService.getBranch(null).QueryInterface(Components.interfaces.nsIPrefBranch2);
   prefBranch.removeObserver(kPrefMailAddrBookLastNameFirst, gMailAddrBookLastNameFirstObserver);
 }
 
 function OnLoadAddressBook()
 {
-  gAddressBookBundle = document.getElementById("bundle_addressBook");
   gSearchInput = document.getElementById("searchInput");
 
   verifyAccounts(null); 	// this will do migration, if we need to.
@@ -146,8 +181,8 @@ function OnLoadAddressBook()
 
   //This migrates the LDAPServer Preferences from 4.x to mozilla format.
   try {
-      gLDAPPrefsService = Components.classes["@mozilla.org/ldapprefs-service;1"].getService();       
-      gLDAPPrefsService = gLDAPPrefsService.QueryInterface( Components.interfaces.nsILDAPPrefsService);                  
+    Components.classes["@mozilla.org/ldapprefs-service;1"]
+              .getService(Components.interfaces.nsILDAPPrefsService);
   } catch (ex) {dump ("ERROR: Cannot get the LDAP service\n" + ex + "\n");}
 
   GetCurrentPrefs();
@@ -168,12 +203,25 @@ function OnLoadAddressBook()
 
   // add a listener, so we can switch directories if
   // the current directory is deleted
-  var addrbookSession = Components.classes["@mozilla.org/addressbook/services/session;1"].getService().QueryInterface(Components.interfaces.nsIAddrBookSession);
-  // this listener only cares when a directory is removed
-  addrbookSession.addAddressBookListener(gAddressBookAbListener, Components.interfaces.nsIAbListener.directoryRemoved);
+  var addrbookSession =
+        Components.classes["@mozilla.org/addressbook/services/session;1"]
+                  .getService(Components.interfaces.nsIAddrBookSession);
+  // this listener cares when a directory (= address book), or a directory item
+  // is/are removed. In the case of directory items, we are only really
+  // interested in mailing list changes and not cards but we have to have both.
+  addrbookSession.addAddressBookListener(
+    gAddressBookAbListener,
+    Components.interfaces.nsIAddrBookSession.directoryRemoved |
+    Components.interfaces.nsIAddrBookSession.directoryItemRemoved);
 
   var dirTree = GetDirTree();
   dirTree.addEventListener("click",DirPaneClick,true);
+
+  // Ensure we don't load xul error pages into the main window
+  window.QueryInterface(Components.interfaces.nsIInterfaceRequestor)
+        .getInterface(Components.interfaces.nsIWebNavigation)
+        .QueryInterface(Components.interfaces.nsIDocShell)
+        .useErrorPages = false;
 }
 
 function OnLoadDirTree() {
@@ -452,7 +500,7 @@ function AbPrintPreviewCard()
 
 function CreatePrintCardUrl(card)
 {
-  var url = "data:text/xml;base64," + card.convertToBase64EncodedXML();
+  var url = "data:application/xml;base64," + card.convertToBase64EncodedXML();
   return url;
 }
 
@@ -504,7 +552,7 @@ function AbExport()
     if (!selectedABURI) return;
     
     var directory = GetDirectoryFromURI(selectedABURI);
-    addressbook.exportAddressBook(directory);
+    addressbook.exportAddressBook(window, directory);
   }
   catch (ex) {
     var promptService = Components.classes["@mozilla.org/embedcomp/prompt-service;1"].getService(Components.interfaces.nsIPromptService);
@@ -542,16 +590,51 @@ function AbDeleteDirectory()
 
   var promptService = Components.classes["@mozilla.org/embedcomp/prompt-service;1"].getService(Components.interfaces.nsIPromptService);
  
-  var parentRow = GetParentRow(dirTree, dirTree.currentIndex);
+  var parentRow = dirTree.view.getParentIndex(dirTree.currentIndex);
   var parentId = (parentRow == -1) ? "moz-abdirectory://" : dirTree.builderView.getResourceAtIndex(parentRow).Value;
   var parentDir = GetDirectoryFromURI(parentId);
   parentArray.AppendElement(parentDir);
     
   var directory = GetDirectoryFromURI(selectedABURI);
-  var confirmDeleteMessage = gAddressBookBundle.getString(directory.isMailList ? "confirmDeleteMailingList" : "confirmDeleteAddressbook");
+  var confirmDeleteMessage;
+  var clearPrefsRequired = false;
 
-  if (!promptService.confirm(window, null, confirmDeleteMessage))
+  if (directory.isMailList)
+    confirmDeleteMessage = gAddressBookBundle.getString("confirmDeleteMailingList");
+  else {
+    // Check if this address book is being used for collection
+    if (gPrefs.getCharPref("mail.collect_addressbook") == selectedABURI &&
+        (gPrefs.getBoolPref("mail.collect_email_address_outgoing") ||
+         gPrefs.getBoolPref("mail.collect_email_address_incoming") ||
+         gPrefs.getBoolPref("mail.collect_email_address_newsgroup"))) {
+      var brandShortName = document.getElementById("bundle_brand").getString("brandShortName");
+
+      confirmDeleteMessage = gAddressBookBundle.getFormattedString("confirmDeleteCollectionAddressbook", [brandShortName]);
+      clearPrefsRequired = true;
+    }
+    else {
+      confirmDeleteMessage = gAddressBookBundle.getString("confirmDeleteAddressbook");
+    }
+  }
+
+  if (!promptService.confirm(window,
+                             gAddressBookBundle.getString(
+                                                directory.isMailList ?
+                                                "confirmDeleteMailingListTitle" :
+                                                "confirmDeleteAddressbookTitle"),
+                             confirmDeleteMessage))
     return;
+
+  // First clear all the prefs if required
+  if (clearPrefsRequired) {
+    gPrefs.setBoolPref("mail.collect_email_address_outgoing", false);
+    gPrefs.setBoolPref("mail.collect_email_address_incoming", false);
+    gPrefs.setBoolPref("mail.collect_email_address_newsgroup", false);
+
+    // Also reset the displayed value so that we don't get a blank item in the
+    // prefs dialog if it gets enabled.
+    gPrefs.setCharPref("mail.collect_addressbook", kPersonalAddressbookURI);
+  }
 
   var resourceArray = Components.classes["@mozilla.org/supports-array;1"].createInstance(Components.interfaces.nsISupportsArray);
   var selectedABResource = GetDirectoryFromURI(selectedABURI).QueryInterface(Components.interfaces.nsIRDFResource);
@@ -559,7 +642,6 @@ function AbDeleteDirectory()
   resourceArray.AppendElement(selectedABResource);
 
   top.addressbook.deleteAddressBooks(dirTree.database, parentArray, resourceArray);
-  SelectFirstAddressBook();
 }
 
 function SetStatusText(total)
@@ -601,8 +683,15 @@ function onAdvancedAbSearch()
   var selectedABURI = GetSelectedDirectory();
   if (!selectedABURI) return;
 
-  window.openDialog("chrome://messenger/content/ABSearchDialog.xul", "", 
-                    "chrome,resizable,status,centerscreen,dialog=no", {directory: selectedABURI} );
+  var windowManager = Components.classes['@mozilla.org/appshell/window-mediator;1'].
+                                 getService(Components.interfaces.nsIWindowMediator);
+  var existingSearchWindow = windowManager.getMostRecentWindow("mailnews:absearch");
+  if (existingSearchWindow)
+    existingSearchWindow.focus();
+  else
+    window.openDialog("chrome://messenger/content/ABSearchDialog.xul", "", 
+                      "chrome,resizable,status,centerscreen,dialog=no", 
+                      {directory: selectedABURI});
 }
 
 function onEnterInSearchBar()
@@ -616,9 +705,6 @@ function onEnterInSearchBar()
   var searchURI = GetSelectedDirectory();
   if (!searchURI) return;
 
-  var sortColumn = gAbView.sortColumn;
-  var sortDirection = gAbView.sortDirection;
-
   /*
    XXX todo, handle the case where the LDAP url
    already has a query, like 
@@ -630,7 +716,7 @@ function onEnterInSearchBar()
     searchURI += gQueryURIFormat.replace(/@V/g, encodeURIComponent(gSearchInput.value));
   }
 
-  SetAbView(searchURI, gSearchInput.value != "", sortColumn, sortDirection);
+  SetAbView(searchURI, gSearchInput.value != "");
   
   // XXX todo 
   // this works for synchronous searches of local addressbooks, 
@@ -768,9 +854,11 @@ function IsCardViewAndAbResultsPaneSplitterCollapsed()
 
 function LaunchUrl(url)
 {
-  var messenger = Components.classes["@mozilla.org/messenger;1"].createInstance(Components.interfaces.nsIMessenger);
-  messenger.SetWindow(window, null);
-  messenger.OpenURL(url);
+  // Doesn't matter if this bit fails, window.location contains its own prompts
+  try {
+    window.location = url;
+  }
+  catch (ex) {}
 }
 
 function AbIMSelected()

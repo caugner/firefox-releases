@@ -1,12 +1,12 @@
 /* vim:set ts=4 sw=4 cindent et: */
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -15,7 +15,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -49,12 +49,11 @@
 #include "nsInputStreamChannel.h"
 #include "nsXPIDLString.h" 
 #include "nsReadableUtils.h"
-#include "nsPrintfCString.h"
 #include "nsIErrorService.h" 
 #include "netCore.h"
 #include "nsIObserverService.h"
 #include "nsIPrefService.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "nsIPrefLocalizedString.h"
 #include "nsICategoryManager.h"
 #include "nsXPCOM.h"
@@ -188,6 +187,8 @@ nsIOService::Init()
     // down later. If we wait until the nsIOService is being shut down,
     // GetService will fail at that point.
 
+    // TODO(darin): Load the Socket and DNS services lazily.
+
     mSocketTransportService = do_GetService(kSocketTransportServiceCID, &rv);
     if (NS_FAILED(rv))
         NS_WARNING("failed to get socket transport service");
@@ -196,20 +197,10 @@ nsIOService::Init()
     if (NS_FAILED(rv))
         NS_WARNING("failed to get DNS service");
 
-    mProxyService = do_GetService(kProtocolProxyServiceCID, &rv);
-    if (NS_FAILED(rv))
-        NS_WARNING("failed to get protocol proxy service");
-
     // XXX hack until xpidl supports error info directly (bug 13423)
     nsCOMPtr<nsIErrorService> errorService = do_GetService(kErrorServiceCID);
     if (errorService) {
         errorService->RegisterErrorStringBundle(NS_ERROR_MODULE_NETWORK, NECKO_MSGS_URL);
-        errorService->RegisterErrorStringBundleKey(nsISocketTransport::STATUS_RESOLVING, "ResolvingHost");
-        errorService->RegisterErrorStringBundleKey(nsISocketTransport::STATUS_CONNECTED_TO, "ConnectedTo");
-        errorService->RegisterErrorStringBundleKey(nsISocketTransport::STATUS_SENDING_TO, "SendingTo");
-        errorService->RegisterErrorStringBundleKey(nsISocketTransport::STATUS_RECEIVING_FROM, "ReceivingFrom");
-        errorService->RegisterErrorStringBundleKey(nsISocketTransport::STATUS_CONNECTING_TO, "ConnectingTo");
-        errorService->RegisterErrorStringBundleKey(nsISocketTransport::STATUS_WAITING_FOR, "WaitingFor");
     }
     else
         NS_WARNING("failed to get error service");
@@ -219,7 +210,7 @@ nsIOService::Init()
         mRestrictedPortList.AppendElement(NS_REINTERPRET_CAST(void *, gBadPortList[i]));
 
     // Further modifications to the port list come from prefs
-    nsCOMPtr<nsIPrefBranchInternal> prefBranch;
+    nsCOMPtr<nsIPrefBranch2> prefBranch;
     GetPrefBranch(getter_AddRefs(prefBranch));
     if (prefBranch) {
         prefBranch->AddObserver(PORT_PREF_PREFIX, this, PR_TRUE);
@@ -246,8 +237,9 @@ nsIOService::~nsIOService()
 {
 }   
 
-NS_IMPL_THREADSAFE_ISUPPORTS3(nsIOService,
+NS_IMPL_THREADSAFE_ISUPPORTS4(nsIOService,
                               nsIIOService,
+                              nsINetUtil,
                               nsIObserver,
                               nsISupportsWeakReference)
 
@@ -312,11 +304,12 @@ nsIOService::GetProtocolHandler(const char* scheme, nsIProtocolHandler* *result)
     // and service manager stuff
 
     rv = GetCachedProtocolHandler(scheme, result);
-    if (NS_SUCCEEDED(rv)) return NS_OK;
+    if (NS_SUCCEEDED(rv))
+        return rv;
 
     PRBool externalProtocol = PR_FALSE;
     PRBool listedProtocol   = PR_TRUE;
-    nsCOMPtr<nsIPrefBranchInternal> prefBranch;
+    nsCOMPtr<nsIPrefBranch2> prefBranch;
     GetPrefBranch(getter_AddRefs(prefBranch));
     if (prefBranch) {
         nsCAutoString externalProtocolPref("network.protocol-handler.external.");
@@ -334,50 +327,59 @@ nsIOService::GetProtocolHandler(const char* scheme, nsIProtocolHandler* *result)
         ToLowerCase(contractID);
 
         rv = CallGetService(contractID.get(), result);
+        if (NS_SUCCEEDED(rv)) {
+            CacheProtocolHandler(scheme, *result);
+            return rv;
+        }
 
-        // If the pref for this protocol was explicitly set to false,
-        // stop here and do not invoke the default handler.
-        if (NS_FAILED(rv) && listedProtocol)
-            return NS_ERROR_UNKNOWN_PROTOCOL;
+        // If the pref for this protocol was explicitly set to false, we want
+        // to use our special "blocked protocol" handler.  That will ensure we
+        // don't open any channels for this protocol.
+        if (listedProtocol) {
+            rv = CallGetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX"default-blocked",
+                                result);
+            if (NS_FAILED(rv))
+                return NS_ERROR_UNKNOWN_PROTOCOL;
+        }
     }
     
-    if (externalProtocol || NS_FAILED(rv)) {
 #ifdef MOZ_X11
+    // check to see whether GnomeVFS can handle this URI scheme.  if it can
+    // create a nsIURI for the "scheme:", then we assume it has support for
+    // the requested protocol.  otherwise, we failover to using the default
+    // protocol handler.
 
-      // check to see if GnomeVFS can handle this URI scheme.  if it can create
-      // a nsIURI for the "scheme:", then we assume it has support for the
-      // requested protocol.  otherwise, we failover to using the default
-      // protocol handler.
+    // XXX should this be generalized into something that searches a
+    // category?  (see bug 234714)
 
-      // XXX should this be generalized into something that searches a category?
-      // (see bug 234714)
+    rv = CallGetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX"moz-gnomevfs",
+                        result);
+    if (NS_SUCCEEDED(rv)) {
+        nsCAutoString spec(scheme);
+        spec.Append(':');
 
-      rv = CallGetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX"moz-gnomevfs",
-                          result);
-      if (NS_SUCCEEDED(rv)) {
-          nsCAutoString spec(scheme);
-          spec.Append(':');
-          nsCOMPtr<nsIURI> uri;
-          rv = (*result)->NewURI(spec, nsnull, nsnull, getter_AddRefs(uri));
-          if (NS_SUCCEEDED(rv))
-              return NS_OK;
-          NS_RELEASE(*result);
-      }
+        nsIURI *uri;
+        rv = (*result)->NewURI(spec, nsnull, nsnull, &uri);
+        if (NS_SUCCEEDED(rv)) {
+            NS_RELEASE(uri);
+            return rv;
+        }
 
+        NS_RELEASE(*result);
+    }
 #endif
 
-      // okay we don't have a protocol handler to handle this url type, so use the default protocol handler.
-      // this will cause urls to get dispatched out to the OS ('cause we can't do anything with them) when 
-      // we try to read from a channel created by the default protocol handler.
+    // Okay we don't have a protocol handler to handle this url type, so use
+    // the default protocol handler.  This will cause urls to get dispatched
+    // out to the OS ('cause we can't do anything with them) when we try to
+    // read from a channel created by the default protocol handler.
 
-      rv = CallGetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX"default",
-                          result);
-      if (NS_FAILED(rv)) return NS_ERROR_UNKNOWN_PROTOCOL;
-    }
+    rv = CallGetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX"default",
+                        result);
+    if (NS_FAILED(rv))
+        return NS_ERROR_UNKNOWN_PROTOCOL;
 
-    CacheProtocolHandler(scheme, *result);
-
-    return NS_OK;
+    return rv;
 }
 
 NS_IMETHODIMP
@@ -448,34 +450,48 @@ nsIOService::NewChannelFromURI(nsIURI *aURI, nsIChannel **result)
 
     nsCAutoString scheme;
     rv = aURI->GetScheme(scheme);
-    if (NS_FAILED(rv)) return rv;
-
-    nsCOMPtr<nsIProxyInfo> pi;
-    if (mProxyService) {
-        rv = mProxyService->ExamineForProxy(aURI, getter_AddRefs(pi));
-        if (NS_FAILED(rv))
-            pi = 0;
-    }
+    if (NS_FAILED(rv))
+        return rv;
 
     nsCOMPtr<nsIProtocolHandler> handler;
+    rv = GetProtocolHandler(scheme.get(), getter_AddRefs(handler));
+    if (NS_FAILED(rv))
+        return rv;
 
-    if (pi && !strcmp(pi->Type(),"http")) {
-        // we are going to proxy this channel using an http proxy
-        rv = GetProtocolHandler("http", getter_AddRefs(handler));
-        if (NS_FAILED(rv)) return rv;
-    } else {
-        rv = GetProtocolHandler(scheme.get(), getter_AddRefs(handler));
-        if (NS_FAILED(rv)) return rv;
+    PRUint32 protoFlags;
+    rv = handler->GetProtocolFlags(&protoFlags);
+    if (NS_FAILED(rv))
+        return rv;
+
+    // Talk to the PPS if the protocol handler allows proxying.  Otherwise,
+    // skip this step.  This allows us to lazily load the PPS at startup.
+    if (protoFlags & nsIProtocolHandler::ALLOWS_PROXY) {
+        nsCOMPtr<nsIProxyInfo> pi;
+        if (!mProxyService) {
+            mProxyService = do_GetService(NS_PROTOCOLPROXYSERVICE_CONTRACTID);
+            if (!mProxyService)
+                NS_WARNING("failed to get protocol proxy service");
+        }
+        if (mProxyService) {
+            rv = mProxyService->Resolve(aURI, 0, getter_AddRefs(pi));
+            if (NS_FAILED(rv))
+                pi = nsnull;
+        }
+        if (pi) {
+            nsCAutoString type;
+            if (NS_SUCCEEDED(pi->GetType(type)) && type.EqualsLiteral("http")) {
+                // we are going to proxy this channel using an http proxy
+                rv = GetProtocolHandler("http", getter_AddRefs(handler));
+                if (NS_FAILED(rv))
+                    return rv;
+            }
+            nsCOMPtr<nsIProxiedProtocolHandler> pph = do_QueryInterface(handler);
+            if (pph)
+                return pph->NewProxiedChannel(aURI, pi, result);
+        }
     }
 
-    nsCOMPtr<nsIProxiedProtocolHandler> pph = do_QueryInterface(handler);
-
-    if (pph)
-        rv = pph->NewProxiedChannel(aURI, pi, result);
-    else
-        rv = handler->NewChannel(aURI, result);
-
-    return rv;
+    return handler->NewChannel(aURI, result);
 }
 
 NS_IMETHODIMP
@@ -655,7 +671,7 @@ nsIOService::ParsePortList(nsIPrefBranch *prefBranch, const char *pref, PRBool r
 }
 
 void
-nsIOService::GetPrefBranch(nsIPrefBranchInternal **result)
+nsIOService::GetPrefBranch(nsIPrefBranch2 **result)
 {
     *result = nsnull;
     CallGetService(NS_PREFSERVICE_CONTRACTID, result);
@@ -688,7 +704,18 @@ nsIOService::Observe(nsISupports *subject,
         SetOffline(PR_TRUE);
 
         // Break circular reference.
-        mProxyService = 0;
+        mProxyService = nsnull;
     }
     return NS_OK;
+}
+
+// nsINetUtil interface
+NS_IMETHODIMP
+nsIOService::ParseContentType(const nsACString &aTypeHeader,
+                              nsACString &aCharset,
+                              PRBool *aHadCharset,
+                              nsACString &aContentType)
+{
+  net_ParseContentType(aTypeHeader, aContentType, aCharset, aHadCharset);
+  return NS_OK;
 }

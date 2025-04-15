@@ -184,7 +184,7 @@ nsUnicharStreamLoader::OnStopRequest(nsIRequest *request,
     rv = uin->Init(mInputStream,
                    mCharset.get(),
                    mSegmentSize,
-                   PR_TRUE);
+                   nsIConverterInputStream::DEFAULT_REPLACEMENT_CHARACTER);
     
     if (NS_FAILED(rv)) {
       rv = mObserver->OnStreamComplete(this, mContext, rv, nsnull);
@@ -231,7 +231,7 @@ nsUnicharStreamLoader::WriteSegmentFun(nsIInputStream *aInputStream,
     
     if (NS_FAILED(rv) || self->mCharset.IsEmpty()) {
       // The observer told us nothing useful
-      self->mCharset = NS_LITERAL_CSTRING("ISO-8859-1");
+      self->mCharset.AssignLiteral("ISO-8859-1");
     }
 
     NS_ASSERTION(IsASCII(self->mCharset),

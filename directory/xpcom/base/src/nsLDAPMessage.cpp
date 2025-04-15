@@ -1,36 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * 
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the mozilla.org LDAP XPCOM SDK.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s): Dan Mosedale <dmose@mozilla.org>
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Dan Mosedale <dmose@mozilla.org>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsLDAPInternal.h"
 #include "nsLDAPMessage.h"
@@ -42,12 +47,22 @@
 #include "nsISupportsUtils.h"
 #include "nsLDAPBERValue.h"
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsLDAPMessage, nsILDAPMessage)
+
+NS_IMPL_THREADSAFE_ADDREF(nsLDAPMessage)
+NS_IMPL_THREADSAFE_RELEASE(nsLDAPMessage)
+NS_INTERFACE_MAP_BEGIN(nsLDAPMessage)
+  NS_INTERFACE_MAP_ENTRY(nsILDAPMessage)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsILDAPMessage)
+  NS_IMPL_QUERY_CLASSINFO(nsLDAPMessage)
+NS_INTERFACE_MAP_END_THREADSAFE
+NS_IMPL_CI_INTERFACE_GETTER1(nsLDAPMessage, nsILDAPMessage)
+
 
 // constructor
 //
 nsLDAPMessage::nsLDAPMessage() 
     : mMsgHandle(0),
+      mErrorCode(LDAP_SUCCESS),
       mMatchedDn(0),
       mErrorMessage(0),
       mReferrals(0),
@@ -515,9 +530,9 @@ nsLDAPMessage::GetValues(const char *aAttr, PRUint32 *aCount,
     for ( i = 0 ; i < numVals ; i++ ) {
         nsDependentCString sValue(values[i]);
         if (IsUTF8(sValue))
-        	(*aValues)[i] = UTF8ToNewUnicode(sValue);
+            (*aValues)[i] = UTF8ToNewUnicode(sValue);
         else
-        	(*aValues)[i] = ToNewUnicode(sValue);
+            (*aValues)[i] = ToNewUnicode(sValue);
         if ( ! (*aValues)[i] ) {
             NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(i, aValues);
             ldap_value_free(values);
@@ -598,7 +613,7 @@ nsLDAPMessage::GetBinaryValues(const char *aAttr, PRUint32 *aCount,
         NS_NEWXPCOM(berValue, nsLDAPBERValue);
         if (!berValue) {
             NS_ERROR("nsLDAPMessage::GetBinaryValues(): out of memory"
-                     " creating nsBERValue object");
+                     " creating nsLDAPBERValue object");
             NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(i, aValues);
             ldap_value_free_len(values);
             return NS_ERROR_OUT_OF_MEMORY;

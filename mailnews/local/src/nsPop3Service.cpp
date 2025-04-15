@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -64,6 +64,7 @@
 #include "nsIMsgAccount.h"
 #include "nsLocalMailFolder.h"
 #include "nsIMailboxUrl.h"
+#include "nsInt64.h"
 
 #define POP3_PORT 110 // The IANA port for Pop3
 #define SECURE_POP3_PORT 995 // The port for Pop3 over SSL
@@ -122,6 +123,15 @@ nsresult nsPop3Service::GetMail(PRBool downloadNewMail,
   
   server = do_QueryInterface(aPopServer);
   
+  nsCOMPtr <nsIMsgLocalMailFolder> destLocalFolder = do_QueryInterface(aInbox);
+  if (destLocalFolder)
+  {
+    PRBool destFolderTooBig;
+    destLocalFolder->WarnIfLocalFileTooBig(aMsgWindow, &destFolderTooBig);
+    if (destFolderTooBig)
+      return NS_MSG_ERROR_WRITING_MAIL_FOLDER;
+  }
+
   if (!server) 
     return NS_MSG_INVALID_OR_MISSING_SERVER;
   
@@ -326,7 +336,8 @@ NS_IMETHODIMP nsPop3Service::NewURI(const nsACString &aSpec,
       NS_ENSURE_SUCCESS(rv,rv);
       msgUrl->GetMessageHeader(getter_AddRefs(msgHdr));
       // we do this to get the account key
-      localFolder->GetUidlFromFolder(&folderScanState, msgHdr);
+      if (msgHdr)
+        localFolder->GetUidlFromFolder(&folderScanState, msgHdr);
       if (!folderScanState.m_accountKey.IsEmpty())
       {
         nsCOMPtr<nsIMsgAccountManager> accountManager = 
@@ -342,7 +353,7 @@ NS_IMETHODIMP nsPop3Service::NewURI(const nsACString &aSpec,
     }
 
     if (!server)
-      rv = folder->GetServer(getter_AddRefs(server));
+    rv = folder->GetServer(getter_AddRefs(server));
     if (NS_FAILED(rv)) return rv;
     nsCOMPtr<nsIPop3IncomingServer> popServer = do_QueryInterface(server,&rv);
     if (NS_FAILED(rv)) return rv;

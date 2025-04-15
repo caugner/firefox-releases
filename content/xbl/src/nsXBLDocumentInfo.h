@@ -54,7 +54,6 @@ public:
   NS_IMETHOD GetDocument(nsIDocument** aResult) { NS_ADDREF(*aResult = mDocument); return NS_OK; };
 
   NS_IMETHOD GetScriptAccess(PRBool* aResult) { *aResult = mScriptAccess; return NS_OK; };
-  NS_IMETHOD SetScriptAccess(PRBool aAccess) { mScriptAccess = aAccess; return NS_OK; };
 
   NS_IMETHOD_(nsIURI*) DocumentURI() { return mDocument->GetDocumentURI(); };
 
@@ -63,12 +62,15 @@ public:
 
   NS_IMETHOD FlushSkinStylesheets();
 
+  NS_IMETHOD_(PRBool) IsChrome() { return mIsChrome; }
+
   // nsIScriptGlobalObjectOwner methods
-  NS_DECL_NSISCRIPTGLOBALOBJECTOWNER
+  virtual nsIScriptGlobalObject* GetScriptGlobalObject();
 
 private:
   nsCOMPtr<nsIDocument> mDocument;
-  PRBool mScriptAccess;
+  PRPackedBool mScriptAccess;
+  PRPackedBool mIsChrome;
   // the binding table owns each nsXBLPrototypeBinding
   nsObjectHashtable* mBindingTable;
 

@@ -1,27 +1,43 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* vim: set ts=4 sw=4 et tw=80: */
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code,
- * released March 31, 1998.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *     Daniel Veditz <dveditz@netscape.com>
- *     Douglas Turner <dougt@netscape.com>
- */
+ *   Daniel Veditz <dveditz@netscape.com>
+ *   Douglas Turner <dougt@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsSoftwareUpdate.h"
 #include "nsSoftwareUpdateRun.h"
@@ -53,10 +69,10 @@
 #include "nsIConsoleService.h"
 #include "nsIScriptError.h"
 
-#include "nsIExtensionManager.h"
-
 #include "nsIJAR.h"
 #include "nsIPrincipal.h"
+
+#include "nsIExtensionManager.h"
 
 static NS_DEFINE_CID(kSoftwareUpdateCID,  NS_SoftwareUpdate_CID);
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
@@ -64,18 +80,18 @@ static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 extern JSObject *InitXPInstallObjects(JSContext *jscontext, JSObject *global, 
                                       nsIFile* jarfile, const PRUnichar* url, 
                                       const PRUnichar* args, PRUint32 flags, 
-                                      nsIXULChromeRegistry* registry, 
+                                      CHROMEREG_IFACE* registry, 
                                       nsIZipReader* hZip);
 extern nsresult InitInstallVersionClass(JSContext *jscontext, JSObject *global, void** prototype);
 extern nsresult InitInstallTriggerGlobalClass(JSContext *jscontext, JSObject *global, void** prototype);
 
 // Defined in this file:
 PR_STATIC_CALLBACK(void) XPInstallErrorReporter(JSContext *cx, const char *message, JSErrorReport *report);
-static PRInt32  GetInstallScriptFromJarfile(nsIZipReader* hZip, nsIFile* jarFile, nsIPrincipal* aPrincipal, char** scriptBuffer, PRUint32 *scriptLength);
-static PRInt32  CanInstallFromExtensionManifest(nsIZipReader* hZip, nsIFile* jarFile, nsIPrincipal* aPrincipal);
+static PRInt32  GetInstallScriptFromJarfile(nsIZipReader* hZip, char** scriptBuffer, PRUint32 *scriptLength);
+static PRInt32  OpenAndValidateArchive(nsIZipReader* hZip, nsIFile* jarFile, nsIPrincipal* aPrincipal);
 
 static nsresult SetupInstallContext(nsIZipReader* hZip, nsIFile* jarFile, const PRUnichar* url, const PRUnichar* args, 
-                                    PRUint32 flags, nsIXULChromeRegistry* reg, JSRuntime *jsRT, JSContext **jsCX, JSObject **jsGlob);
+                                    PRUint32 flags, CHROMEREG_IFACE* reg, JSRuntime *jsRT, JSContext **jsCX, JSObject **jsGlob);
 
 extern "C" void RunInstallOnThread(void *data);
 
@@ -210,9 +226,9 @@ XPInstallErrorReporter(JSContext *cx, const char *message, JSErrorReport *report
         nsAutoString logMessage;
         if (report)
         {
-            logMessage.Assign(NS_LITERAL_STRING("Line: "));
+            logMessage.AssignLiteral("Line: ");
             logMessage.AppendInt(report->lineno, 10);
-            logMessage.Append(NS_LITERAL_STRING("\t"));
+            logMessage.AppendLiteral("\t");
             if (report->ucmessage)
                 logMessage.Append( NS_REINTERPRET_CAST(const PRUnichar*, report->ucmessage) );
             else
@@ -227,8 +243,8 @@ XPInstallErrorReporter(JSContext *cx, const char *message, JSErrorReport *report
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
-// Function name    : CanInstallFromExtensionManifest
-// Description      : Returns a stream to an extension manifest file from a passed jar file.
+// Function name    : OpenAndValidateArchive
+// Description      : Opens install archive and validates contents
 // Return type      : PRInt32
 // Argument         : nsIZipReader* hZip       - the zip reader
 // Argument         : nsIFile* jarFile         - the .xpi file
@@ -237,12 +253,13 @@ XPInstallErrorReporter(JSContext *cx, const char *message, JSErrorReport *report
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 static PRInt32
-CanInstallFromExtensionManifest(nsIZipReader* hZip, nsIFile* jarFile, nsIPrincipal* aPrincipal)
+OpenAndValidateArchive(nsIZipReader* hZip, nsIFile* jarFile, nsIPrincipal* aPrincipal)
 {
-    PRInt32 result = NS_OK;
+    if (!jarFile)
+        return nsInstall::DOWNLOAD_ERROR;
 
-    nsIFile* jFile;
-    nsresult rv =jarFile->Clone(&jFile);
+    nsCOMPtr<nsIFile> jFile;
+    nsresult rv =jarFile->Clone(getter_AddRefs(jFile));
     if (NS_SUCCEEDED(rv))
         rv = hZip->Init(jFile);
 
@@ -252,75 +269,44 @@ CanInstallFromExtensionManifest(nsIZipReader* hZip, nsIFile* jarFile, nsIPrincip
     rv = hZip->Open();
     if (NS_FAILED(rv))
         return nsInstall::CANT_READ_ARCHIVE;
-
+ 
     // CRC check the integrity of all items in this archive
     rv = hZip->Test(nsnull);
     if (NS_FAILED(rv))
     {
-        NS_ASSERTION(0, "CRC check of archive failed!");
+        NS_WARNING("CRC check of archive failed!");
         return nsInstall::CANT_READ_ARCHIVE;
     }
 
     rv = VerifySigning(hZip, aPrincipal);
     if (NS_FAILED(rv))
     {
-        NS_ASSERTION(0, "Signing check of archive failed!");
+        NS_WARNING("Signing check of archive failed!");
         return nsInstall::INVALID_SIGNATURE;
     }
-
-    // Verify that install.rdf exists
-    return hZip->Test("install.rdf");
+ 
+    return nsInstall::SUCCESS;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // Function name    : GetInstallScriptFromJarfile
 // Description      : Extracts and reads in a install.js file from a passed jar file.
 // Return type      : static PRInt32
-// Argument         : const char* jarFile     - **NSPR** filepath
-// Argument         : nsIPrincipal* aPrincipal - a principal, if any, displayed to the user 
-//                    regarding the cert used to sign this install
 // Argument         : char** scriptBuffer     - must be deleted via delete []
 // Argument         : PRUint32 *scriptLength
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 static PRInt32
-GetInstallScriptFromJarfile(nsIZipReader* hZip, nsIFile* jarFile, nsIPrincipal* aPrincipal, char** scriptBuffer, PRUint32 *scriptLength)
+GetInstallScriptFromJarfile(nsIZipReader* hZip, char** scriptBuffer, PRUint32 *scriptLength)
 {
     PRInt32 result = NS_OK;
 
     *scriptBuffer = nsnull;
     *scriptLength = 0;
 
-    nsIFile* jFile;
-    nsresult rv =jarFile->Clone(&jFile);
-    if (NS_SUCCEEDED(rv))
-      rv = hZip->Init(jFile);
-
-    if (NS_FAILED(rv))
-        return nsInstall::CANT_READ_ARCHIVE;
-
-    rv = hZip->Open();
-    if (NS_FAILED(rv))
-        return nsInstall::CANT_READ_ARCHIVE;
-
-    // CRC check the integrity of all items in this archive
-    rv = hZip->Test(nsnull);
-    if (NS_FAILED(rv))
-    {
-        NS_ASSERTION(0, "CRC check of archive failed!");
-        return nsInstall::CANT_READ_ARCHIVE;
-    }
-
-    rv = VerifySigning(hZip, aPrincipal);
-    if (NS_FAILED(rv))
-    {
-        NS_ASSERTION(0, "Signing check of archive failed!");
-        return nsInstall::INVALID_SIGNATURE;
-    }
-
     // Extract the install.js file.
     nsCOMPtr<nsIInputStream> instream;
-    rv = hZip->GetInputStream("install.js", getter_AddRefs(instream));
+    nsresult rv = hZip->GetInputStream("install.js", getter_AddRefs(instream));
     if ( NS_SUCCEEDED(rv) )
     {
         // Read it into a buffer
@@ -379,7 +365,7 @@ static nsresult SetupInstallContext(nsIZipReader* hZip,
                                     const PRUnichar* url,
                                     const PRUnichar* args,
                                     PRUint32 flags,
-                                    nsIXULChromeRegistry* reg,
+                                    CHROMEREG_IFACE* reg,
                                     JSRuntime *rt,
                                     JSContext **jsCX,
                                     JSObject **jsGlob)
@@ -401,15 +387,18 @@ static nsresult SetupInstallContext(nsIZipReader* hZip,
 
     JS_SetErrorReporter(cx, XPInstallErrorReporter);
 
-
+    JS_BeginRequest(cx);
     glob = InitXPInstallObjects(cx, nsnull, jarFile, url, args, flags, reg, hZip);
+    if (!glob)
+        return NS_ERROR_OUT_OF_MEMORY;
+
     // Init standard classes
     JS_InitStandardClasses(cx, glob);
 
     // Add our Install class to this context
     InitInstallVersionClass(cx, glob, nsnull);
     InitInstallTriggerGlobalClass(cx, glob, nsnull);
-
+    JS_EndRequest(cx);
     *jsCX   = cx;
     *jsGlob = glob;
 
@@ -464,13 +453,10 @@ extern "C" void RunInstallOnThread(void *data)
     JSContext   *cx;
     JSObject    *glob;
 
-    nsCOMPtr<nsIZipReader> hZip;
-
-    static NS_DEFINE_IID(kIZipReaderIID, NS_IZIPREADER_IID);
     static NS_DEFINE_IID(kZipReaderCID,  NS_ZIPREADER_CID);
-    nsresult rv = nsComponentManager::CreateInstance(kZipReaderCID, nsnull, kIZipReaderIID,
-                                                     getter_AddRefs(hZip));
 
+    nsresult rv;
+    nsCOMPtr<nsIZipReader> hZip = do_CreateInstance(kZipReaderCID, &rv);
     if (NS_FAILED(rv))
         return;
 
@@ -507,44 +493,41 @@ extern "C" void RunInstallOnThread(void *data)
 
     nsCOMPtr<nsIFile> jarpath = installInfo->GetFile();
 
-    if (NS_SUCCEEDED(rv))
+    finalStatus = OpenAndValidateArchive( hZip,
+                                          jarpath,
+                                          installInfo->mPrincipal);
+
+    if (finalStatus == nsInstall::SUCCESS)
     {
-        PRBool installed = PR_FALSE;
-        finalStatus = CanInstallFromExtensionManifest( hZip,
-                                                       jarpath,
-                                                       installInfo->mPrincipal);
-        if (NS_SUCCEEDED(finalStatus)) 
+#ifdef MOZ_XUL_APP
+        if (NS_SUCCEEDED(hZip->Test("install.rdf")))
         {
+            hZip->Close();
+            // appears to be an Extension Manager install
             nsIExtensionManager* em = installInfo->GetExtensionManager();
-            if (em) 
+            if (em)
             {
-                rv = em->InstallExtension(jarpath, nsIExtensionManager::FLAG_INSTALL_PROFILE);
-                if (NS_SUCCEEDED(rv))
-                    installed = PR_TRUE;
+                rv = em->InstallItemFromFile(jarpath, 
+                                             NS_INSTALL_LOCATION_APPPROFILE);
+                if (NS_FAILED(rv))
+                    finalStatus = nsInstall::EXECUTION_ERROR;
+            } else {
+                finalStatus = nsInstall::UNEXPECTED_ERROR;
             }
-        }
-        
-        if (!installed)
+            // If install.rdf exists, but the install failed, we don't want
+            // to try an install.js install.
+        } else
+#endif
         {
+            // If we're the suite, or there is no install.rdf,
+            // try original XPInstall
             finalStatus = GetInstallScriptFromJarfile( hZip,
-                                                       jarpath,
-                                                       installInfo->mPrincipal,
                                                        &scriptBuffer,
                                                        &scriptLength);
- 
             if ( finalStatus == NS_OK && scriptBuffer )
             {
-                PRBool ownRuntime = PR_FALSE;
-
-                nsCOMPtr<nsIJSRuntimeService> rtsvc =
-                        do_GetService("@mozilla.org/js/xpc/RuntimeService;1", &rv);
-                if(NS_FAILED(rv) || NS_FAILED(rtsvc->GetRuntime(&rt)))
-                {
-                    // service not available (wizard context?)
-                    // create our own runtime
-                    ownRuntime = PR_TRUE;
-                    rt = JS_Init(4L * 1024L * 1024L);
-                }
+                // create our runtime
+                rt = JS_NewRuntime(4L * 1024L * 1024L);
 
                 rv = SetupInstallContext( hZip, jarpath,
                                           installInfo->GetURL(),
@@ -610,18 +593,12 @@ extern "C" void RunInstallOnThread(void *data)
                     finalStatus = nsInstall::UNEXPECTED_ERROR;
                 }
 
-                // clean up Runtime if we created it ourselves
-                if ( ownRuntime )
-                    JS_DestroyRuntime(rt);
+                // Clean up after ourselves.
+                JS_DestroyRuntime(rt);
             }
         }
         // force zip archive closed before other cleanup
         hZip = 0;
-    }
-    else
-    {
-        // no path to local jar archive
-        finalStatus = nsInstall::DOWNLOAD_ERROR;
     }
 
     if(listener)
@@ -655,105 +632,77 @@ extern "C" void RunChromeInstallOnThread(void *data)
         listener->OnInstallStart(info->GetURL());
 
     // make sure we've got a chrome registry -- can't proceed if not
-    nsIXULChromeRegistry* reg = info->GetChromeRegistry();
+    CHROMEREG_IFACE* reg = info->GetChromeRegistry();
+    NS_ASSERTION(reg, "We shouldn't get here without a chrome registry.");
+
     if (reg)
     {
-        // build up jar: URL
-        nsCString spec;
-        spec.SetCapacity(200);
-        spec = "jar:";
+#ifdef MOZ_XUL_APP
+        if (info->GetType() == CHROME_SKIN) {
+            static NS_DEFINE_CID(kZipReaderCID,  NS_ZIPREADER_CID);
+            nsCOMPtr<nsIZipReader> hZip = do_CreateInstance(kZipReaderCID, &rv);
+            if (hZip)
+                rv = hZip->Init(info->GetFile());
+            if (NS_SUCCEEDED(rv))
+                rv = hZip->Open();
 
-        nsCAutoString localURL;
-        rv = NS_GetURLSpecFromFile(info->GetFile(), localURL);
-        if (NS_SUCCEEDED(rv)) {
-            spec.Append(localURL);
-            spec.Append("!/");
+            if (NS_SUCCEEDED(rv))
+            {
+                rv = hZip->Test("install.rdf");
+                nsIExtensionManager* em = info->GetExtensionManager();
+                if (NS_SUCCEEDED(rv) && em) {
+                    rv = em->InstallItemFromFile(info->GetFile(), 
+                                                 NS_INSTALL_LOCATION_APPPROFILE);
+                }
+            }
+            hZip->Close();
+            // Extension Manager copies the theme .jar file to 
+            // a different location, so remove the temporary file.
+            info->GetFile()->Remove(PR_FALSE);
+        }
+#else
+        PRBool isSkin    = (info->GetType() & CHROME_SKIN);
+        PRBool isLocale  = (info->GetType() & CHROME_LOCALE);
+        PRBool isContent = (info->GetType() & CHROME_CONTENT);
+        PRBool selected  = (info->GetFlags() != 0);
+
+        const nsCString& spec = info->GetFileJARSpec();
+
+        if ( isContent )
+            rv = reg->InstallPackage(spec.get(), PR_TRUE);
+
+        if ( isSkin )
+        {
+            rv = reg->InstallSkin(spec.get(), PR_TRUE, PR_FALSE);
+                
+            if (NS_SUCCEEDED(rv) && selected)
+            {
+                NS_ConvertUCS2toUTF8 utf8Args(info->GetArguments());
+                rv = reg->SelectSkin(utf8Args, PR_TRUE);
+            }
         }
 
-        // Now register the new chrome
-        if (NS_SUCCEEDED(rv))
+        if ( isLocale )
         {
-            PRBool isSkin    = (info->GetType() & CHROME_SKIN);
-            PRBool isLocale  = (info->GetType() & CHROME_LOCALE);
-            PRBool isContent = (info->GetType() & CHROME_CONTENT);
-            PRBool selected  = (info->GetFlags() != 0);
+            rv = reg->InstallLocale(spec.get(), PR_TRUE);
 
-            if ( isContent )
+            if (NS_SUCCEEDED(rv) && selected)
             {
-                rv = reg->InstallPackage(spec.get(), PR_TRUE);
+                NS_ConvertUCS2toUTF8 utf8Args(info->GetArguments());
+                rv = reg->SelectLocale(utf8Args, PR_TRUE);
             }
+        }
 
-            if ( isSkin )
-            {
-                PRBool installed = PR_FALSE;
-
-                // Look for a theme manifest
-                nsCOMPtr<nsIZipReader> hZip;
-
-                static NS_DEFINE_IID(kIZipReaderIID, NS_IZIPREADER_IID);
-                static NS_DEFINE_IID(kZipReaderCID,  NS_ZIPREADER_CID);
-                nsresult rv = nsComponentManager::CreateInstance(kZipReaderCID, nsnull, kIZipReaderIID,
-                                                                 getter_AddRefs(hZip));
-                if (hZip)
-                    rv = hZip->Init(info->GetFile());
-                if (NS_SUCCEEDED(rv))
-                {
-                    hZip->Open();
-
-                    nsIExtensionManager* em = info->GetExtensionManager();
-                    rv = hZip->Test("install.rdf");
-                    if (NS_SUCCEEDED(rv) && em)
-                    {
-                        rv = em->InstallTheme(info->GetFile(), nsIExtensionManager::FLAG_INSTALL_PROFILE);
-                        if (NS_SUCCEEDED(rv))
-                            installed = PR_TRUE;
-                    }
-    
-                    hZip->Close();
-                    // Extension Manager copies the theme .jar file to 
-                    // a different location, so remove the temporary file.
-                    info->GetFile()->Remove(PR_FALSE);
-                }
-                
-                // We either have an old-style theme with no theme.rdf 
-                // manifest, OR we have a new style theme and InstallTheme
-                // returned an error (e.g. it's not implemented in Seamonkey, 
-                // or something else went wrong)
-                if (!installed)
-                    rv = reg->InstallSkin(spec.get(), PR_TRUE, PR_FALSE);
-                
-#ifndef MOZ_XUL_APP
-                if (NS_SUCCEEDED(rv) && selected)
-                {
-                    NS_ConvertUCS2toUTF8 utf8Args(info->GetArguments());
-                    rv = reg->SelectSkin(utf8Args, PR_TRUE);
-                }
-#endif
-            }
-
-            if ( isLocale )
-            {
-                rv = reg->InstallLocale(spec.get(), PR_TRUE);
-
-#ifndef MOZ_XUL_APP
-                if (NS_SUCCEEDED(rv) && selected)
-                {
-                    NS_ConvertUCS2toUTF8 utf8Args(info->GetArguments());
-                    rv = reg->SelectLocale(utf8Args, PR_TRUE);
-                }
-#endif
-            }
-
-            // now that all types are registered try to activate
-            if ( isSkin && selected )
-                reg->RefreshSkins();
+        // now that all types are registered try to activate
+        if ( isSkin && selected )
+            reg->RefreshSkins();
 
 #ifdef RELOAD_CHROME_WORKS
 // XXX ReloadChrome() crashes right now
             if ( isContent || (isLocale && selected) )
                 reg->ReloadChrome();
 #endif
-        }
+#endif
     }
 
     if (listener)

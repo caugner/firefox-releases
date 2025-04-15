@@ -1,11 +1,12 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=2 sw=2 et tw=80: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +15,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,25 +24,23 @@
  *   Travis Bogard <travis@netscape.com>
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsGlobalWindow.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIScriptContext.h"
-#include "nsIWebShell.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellLoadInfo.h"
 #include "nsIWebNavigation.h"
@@ -62,6 +61,8 @@
 #include "nsIDOMWindow.h"
 #include "nsIDOMDocument.h"
 #include "nsIDocument.h"
+#include "nsIPresShell.h"
+#include "nsPresContext.h"
 #include "nsIJSContextStack.h"
 #include "nsXPIDLString.h"
 #include "nsDOMError.h"
@@ -69,6 +70,33 @@
 #include "nsCRT.h"
 #include "nsIProtocolHandler.h"
 #include "nsReadableUtils.h"
+#include "nsITextToSubURI.h"
+#include "nsContentUtils.h"
+
+static nsresult
+GetContextFromStack(nsIJSContextStack *aStack, JSContext **aContext)
+{
+  nsCOMPtr<nsIJSContextStackIterator>
+    iterator(do_CreateInstance("@mozilla.org/js/xpc/ContextStackIterator;1"));
+  NS_ENSURE_TRUE(iterator, NS_ERROR_FAILURE);
+
+  nsresult rv = iterator->Reset(aStack);
+  NS_ENSURE_SUCCESS(rv, rv);
+  
+  PRBool done;
+  while (NS_SUCCEEDED(iterator->Done(&done)) && !done) {
+    rv = iterator->Prev(aContext);
+    NS_ASSERTION(NS_SUCCEEDED(rv), "Broken iterator implementation");
+
+    if (nsJSUtils::GetDynamicScriptContext(*aContext)) {
+      return NS_OK;
+    }
+  }
+
+  *aContext = nsnull;
+
+  return NS_OK;
+}
 
 static nsresult
 GetDocumentCharacterSetForURI(const nsAString& aHref, nsACString& aCharset)
@@ -82,7 +110,7 @@ GetDocumentCharacterSetForURI(const nsAString& aHref, nsACString& aCharset)
 
   JSContext *cx;
 
-  rv = stack->Peek(&cx);
+  rv = GetContextFromStack(stack, &cx);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (cx) {
@@ -104,18 +132,18 @@ GetDocumentCharacterSetForURI(const nsAString& aHref, nsACString& aCharset)
   return NS_OK;
 }
 
-LocationImpl::LocationImpl(nsIDocShell *aDocShell)
+nsLocation::nsLocation(nsIDocShell *aDocShell)
 {
   mDocShell = aDocShell; // Weak Reference
 }
 
-LocationImpl::~LocationImpl()
+nsLocation::~nsLocation()
 {
 }
 
 
-// QueryInterface implementation for LocationImpl
-NS_INTERFACE_MAP_BEGIN(LocationImpl)
+// QueryInterface implementation for nsLocation
+NS_INTERFACE_MAP_BEGIN(nsLocation)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNSLocation)
   NS_INTERFACE_MAP_ENTRY(nsIDOMLocation)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMLocation)
@@ -123,17 +151,17 @@ NS_INTERFACE_MAP_BEGIN(LocationImpl)
 NS_INTERFACE_MAP_END
 
 
-NS_IMPL_ADDREF(LocationImpl)
-NS_IMPL_RELEASE(LocationImpl)
+NS_IMPL_ADDREF(nsLocation)
+NS_IMPL_RELEASE(nsLocation)
 
 void
-LocationImpl::SetDocShell(nsIDocShell *aDocShell)
+nsLocation::SetDocShell(nsIDocShell *aDocShell)
 {
    mDocShell = aDocShell; // Weak Reference
 }
 
 nsresult
-LocationImpl::CheckURL(nsIURI* aURI, nsIDocShellLoadInfo** aLoadInfo)
+nsLocation::CheckURL(nsIURI* aURI, nsIDocShellLoadInfo** aLoadInfo)
 {
   *aLoadInfo = nsnull;
 
@@ -147,54 +175,55 @@ LocationImpl::CheckURL(nsIURI* aURI, nsIDocShellLoadInfo** aLoadInfo)
 
   JSContext *cx;
 
-  if (NS_FAILED(stack->Peek(&cx)))
+  if (NS_FAILED(GetContextFromStack(stack, &cx)))
     return NS_ERROR_FAILURE;
 
-  if (!cx) {
+  nsCOMPtr<nsISupports> owner;
+  nsCOMPtr<nsIURI> sourceURI;
+
+  if (cx) {
     // No cx means that there's no JS running, or at least no JS that
     // was run through code that properly pushed a context onto the
     // context stack (as all code that runs JS off of web pages
-    // does). Going further from here will crash, so lets not do
-    // that...
+    // does). We won't bother with security checks in this case, but
+    // we need to create the loadinfo etc.
 
-    return NS_OK;
+    // Get security manager.
+    nsCOMPtr<nsIScriptSecurityManager>
+      secMan(do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &result));
+
+    if (NS_FAILED(result))
+      return NS_ERROR_FAILURE;
+
+    // Check to see if URI is allowed.
+    result = secMan->CheckLoadURIFromScript(cx, aURI);
+
+    if (NS_FAILED(result))
+      return result;
+
+    // Now get the principal to use when loading the URI
+    nsCOMPtr<nsIPrincipal> principal;
+    if (NS_FAILED(secMan->GetSubjectPrincipal(getter_AddRefs(principal))) ||
+        !principal)
+      return NS_ERROR_FAILURE;
+    owner = do_QueryInterface(principal);
+
+    GetSourceURL(cx, getter_AddRefs(sourceURI));
   }
-
-  // Get security manager.
-  nsCOMPtr<nsIScriptSecurityManager>
-    secMan(do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &result));
-
-  if (NS_FAILED(result))
-    return NS_ERROR_FAILURE;
-
-  // Check to see if URI is allowed.
-  result = secMan->CheckLoadURIFromScript(cx, aURI);
-
-  if (NS_FAILED(result))
-    return result;
 
   // Create load info
   nsCOMPtr<nsIDocShellLoadInfo> loadInfo;
   mDocShell->CreateLoadInfo(getter_AddRefs(loadInfo));
   NS_ENSURE_TRUE(loadInfo, NS_ERROR_FAILURE);
 
-  // Now get the principal to use when loading the URI
-  nsCOMPtr<nsIPrincipal> principal;
-  if (NS_FAILED(secMan->GetSubjectPrincipal(getter_AddRefs(principal))) ||
-      !principal)
-    return NS_ERROR_FAILURE;
-  nsCOMPtr<nsISupports> owner = do_QueryInterface(principal);
   loadInfo->SetOwner(owner);
 
   // now set the referrer on the loadinfo
-  nsCOMPtr<nsIURI> sourceURI;
-  GetSourceURL(cx, getter_AddRefs(sourceURI));
   if (sourceURI) {
     loadInfo->SetReferrer(sourceURI);
   }
-  
-  *aLoadInfo = loadInfo.get();
-  NS_ADDREF(*aLoadInfo);
+
+  loadInfo.swap(*aLoadInfo);
 
   return NS_OK;
 }
@@ -203,19 +232,21 @@ LocationImpl::CheckURL(nsIURI* aURI, nsIDocShellLoadInfo** aLoadInfo)
 // anything that would allow a relative uri.
 
 nsresult
-LocationImpl::FindUsableBaseURI(nsIURI * aBaseURI, nsIDocShell * aParent, nsIURI ** aUsableURI)
+nsLocation::FindUsableBaseURI(nsIURI * aBaseURI, nsIDocShell * aParent,
+                              nsIURI ** aUsableURI)
 {
   if (!aBaseURI || !aParent)
     return NS_ERROR_FAILURE;
   NS_ENSURE_ARG_POINTER(aUsableURI);
-    
+
   *aUsableURI = nsnull;
   nsresult rv = NS_OK;    
   nsCOMPtr<nsIDocShell> parentDS = aParent;
   nsCOMPtr<nsIURI> baseURI = aBaseURI;
-  nsCOMPtr<nsIIOService> ioService(do_GetService(NS_IOSERVICE_CONTRACTID, &rv));
+  nsCOMPtr<nsIIOService> ioService =
+    do_GetService(NS_IOSERVICE_CONTRACTID, &rv);
 
-  while(NS_SUCCEEDED(rv) && baseURI && ioService) {
+  while(NS_SUCCEEDED(rv) && baseURI) {
     // Check if the current base uri supports relative uris.
     // We make this check by looking at the protocol flags of
     // the protocol handler. If the protocol flags has URI_NORELATIVE,
@@ -257,7 +288,7 @@ LocationImpl::FindUsableBaseURI(nsIURI * aBaseURI, nsIDocShell * aParent, nsIURI
 
 
 nsresult
-LocationImpl::GetURI(nsIURI** aURI, PRBool aGetInnermostURI)
+nsLocation::GetURI(nsIURI** aURI, PRBool aGetInnermostURI)
 {
   *aURI = nsnull;
 
@@ -295,7 +326,7 @@ LocationImpl::GetURI(nsIURI** aURI, PRBool aGetInnermostURI)
 }
 
 nsresult
-LocationImpl::GetWritableURI(nsIURI** aURI)
+nsLocation::GetWritableURI(nsIURI** aURI)
 {
   *aURI = nsnull;
 
@@ -310,7 +341,7 @@ LocationImpl::GetWritableURI(nsIURI** aURI)
 }
 
 nsresult
-LocationImpl::SetURI(nsIURI* aURI)
+nsLocation::SetURI(nsIURI* aURI, PRBool aReplace)
 {
   if (mDocShell) {
     nsCOMPtr<nsIDocShellLoadInfo> loadInfo;
@@ -319,7 +350,12 @@ LocationImpl::SetURI(nsIURI* aURI)
     if(NS_FAILED(CheckURL(aURI, getter_AddRefs(loadInfo))))
       return NS_ERROR_FAILURE;
 
-    webNav->Stop(nsIWebNavigation::STOP_CONTENT);
+    if (aReplace) {
+      loadInfo->SetLoadType(nsIDocShellLoadInfo::loadStopContentAndReplace);
+    } else {
+      loadInfo->SetLoadType(nsIDocShellLoadInfo::loadStopContent);
+    }
+
     return mDocShell->LoadURI(aURI, loadInfo,
                               nsIWebNavigation::LOAD_FLAGS_NONE, PR_TRUE);
   }
@@ -328,35 +364,50 @@ LocationImpl::SetURI(nsIURI* aURI)
 }
 
 NS_IMETHODIMP
-LocationImpl::GetHash(nsAString& aHash)
+nsLocation::GetHash(nsAString& aHash)
 {
   aHash.SetLength(0);
 
   nsCOMPtr<nsIURI> uri;
-  nsresult result = NS_OK;
-
-  result = GetURI(getter_AddRefs(uri));
+  nsresult rv = GetURI(getter_AddRefs(uri));
 
   nsCOMPtr<nsIURL> url(do_QueryInterface(uri));
 
   if (url) {
     nsCAutoString ref;
+    nsAutoString unicodeRef;
 
-    result = url->GetRef(ref);
-    // XXX danger... this may result in non-ASCII octets!
-    NS_UnescapeURL(ref);
+    rv = url->GetRef(ref);
+    if (NS_SUCCEEDED(rv)) {
+      nsCOMPtr<nsITextToSubURI> textToSubURI(
+          do_GetService(NS_ITEXTTOSUBURI_CONTRACTID, &rv));
 
-    if (NS_SUCCEEDED(result) && !ref.IsEmpty()) {
+      if (NS_SUCCEEDED(rv)) {
+        nsCAutoString charset;
+        url->GetOriginCharset(charset);
+        
+        rv = textToSubURI->UnEscapeURIForUI(charset, ref, unicodeRef);
+      }
+      
+      if (NS_FAILED(rv)) {
+        // Oh, well.  No intl here!
+        NS_UnescapeURL(ref);
+        CopyASCIItoUTF16(ref, unicodeRef);
+        rv = NS_OK;
+      }
+    }
+
+    if (NS_SUCCEEDED(rv) && !unicodeRef.IsEmpty()) {
       aHash.Assign(PRUnichar('#'));
-      AppendASCIItoUTF16(ref, aHash);
+      aHash.Append(unicodeRef);
     }
   }
 
-  return result;
+  return rv;
 }
 
 NS_IMETHODIMP
-LocationImpl::SetHash(const nsAString& aHash)
+nsLocation::SetHash(const nsAString& aHash)
 {
   nsCOMPtr<nsIURI> uri;
   nsresult result = NS_OK;
@@ -367,24 +418,14 @@ LocationImpl::SetHash(const nsAString& aHash)
 
   if (url) {
     url->SetRef(NS_ConvertUCS2toUTF8(aHash));
-
-    if (mDocShell) {
-      nsCOMPtr<nsIDocShellLoadInfo> loadInfo;
-
-      if (NS_SUCCEEDED(CheckURL(url, getter_AddRefs(loadInfo))))
-        // We're not calling nsIWebNavigation->Stop, we don't want to
-        // stop the load when we're just scrolling to a named anchor
-        // in the document. See bug 114975.
-        mDocShell->LoadURI(url, loadInfo,
-                           nsIWebNavigation::LOAD_FLAGS_NONE, PR_TRUE);
-    }
+    SetURI(url);
   }
 
   return result;
 }
 
 NS_IMETHODIMP
-LocationImpl::GetHost(nsAString& aHost)
+nsLocation::GetHost(nsAString& aHost)
 {
   aHost.Truncate();
 
@@ -407,7 +448,7 @@ LocationImpl::GetHost(nsAString& aHost)
 }
 
 NS_IMETHODIMP
-LocationImpl::SetHost(const nsAString& aHost)
+nsLocation::SetHost(const nsAString& aHost)
 {
   nsCOMPtr<nsIURI> uri;
   nsresult result;
@@ -423,7 +464,7 @@ LocationImpl::SetHost(const nsAString& aHost)
 }
 
 NS_IMETHODIMP
-LocationImpl::GetHostname(nsAString& aHostname)
+nsLocation::GetHostname(nsAString& aHostname)
 {
   aHostname.Truncate();
 
@@ -446,7 +487,7 @@ LocationImpl::GetHostname(nsAString& aHostname)
 }
 
 NS_IMETHODIMP
-LocationImpl::SetHostname(const nsAString& aHostname)
+nsLocation::SetHostname(const nsAString& aHostname)
 {
   nsCOMPtr<nsIURI> uri;
   nsresult result;
@@ -462,7 +503,7 @@ LocationImpl::SetHostname(const nsAString& aHostname)
 }
 
 NS_IMETHODIMP
-LocationImpl::GetHref(nsAString& aHref)
+nsLocation::GetHref(nsAString& aHref)
 {
   aHref.Truncate();
 
@@ -485,7 +526,7 @@ LocationImpl::GetHref(nsAString& aHref)
 }
 
 NS_IMETHODIMP
-LocationImpl::SetHref(const nsAString& aHref)
+nsLocation::SetHref(const nsAString& aHref)
 {
   nsAutoString oldHref;
   nsresult rv = NS_OK;
@@ -499,7 +540,7 @@ LocationImpl::SetHref(const nsAString& aHref)
 
   JSContext *cx;
 
-  if (NS_FAILED(stack->Peek(&cx)))
+  if (NS_FAILED(GetContextFromStack(stack, &cx)))
     return NS_ERROR_FAILURE;
 
   if (cx) {
@@ -522,8 +563,8 @@ LocationImpl::SetHref(const nsAString& aHref)
 }
 
 nsresult
-LocationImpl::SetHrefWithContext(JSContext* cx, const nsAString& aHref,
-                                 PRBool aReplace)
+nsLocation::SetHrefWithContext(JSContext* cx, const nsAString& aHref,
+                               PRBool aReplace)
 {
   nsCOMPtr<nsIURI> base;
 
@@ -538,8 +579,8 @@ LocationImpl::SetHrefWithContext(JSContext* cx, const nsAString& aHref,
 }
 
 nsresult
-LocationImpl::SetHrefWithBase(const nsAString& aHref,
-                              nsIURI* aBase, PRBool aReplace)
+nsLocation::SetHrefWithBase(const nsAString& aHref, nsIURI* aBase,
+                            PRBool aReplace)
 {
   nsresult result;
   nsCOMPtr<nsIURI> newUri, baseURI;
@@ -557,15 +598,7 @@ LocationImpl::SetHrefWithBase(const nsAString& aHref,
   else
     result = NS_NewURI(getter_AddRefs(newUri), aHref, nsnull, baseURI);
 
-  if (newUri && mDocShell) {
-    nsCOMPtr<nsIDocShellLoadInfo> loadInfo;
-    nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(mDocShell));
-
-    nsresult rv = CheckURL(newUri, getter_AddRefs(loadInfo));
-
-    if(NS_FAILED(rv))
-      return rv;
-     
+  if (newUri) {
     /* Check with the scriptContext if it is currently processing a script tag.
      * If so, this must be a <script> tag with a location.href in it.
      * we want to do a replace load, in such a situation. 
@@ -583,31 +616,31 @@ LocationImpl::SetHrefWithBase(const nsAString& aHref,
     if (stack) {
       JSContext *cx;
 
-      result = stack->Peek(&cx);
+      result = GetContextFromStack(stack, &cx);
       if (cx) {
         nsIScriptContext *scriptContext =
           nsJSUtils::GetDynamicScriptContext(cx);
 
         if (scriptContext) {
-          inScriptTag = scriptContext->GetProcessingScriptTag();
+          if (scriptContext->GetProcessingScriptTag()) {
+            // Now check to make sure that the script is running in our window,
+            // since we only want to replace if the location is set by a
+            // <script> tag in the same window.  See bug 178729.
+            nsCOMPtr<nsIScriptGlobalObject> ourGlobal(do_GetInterface(mDocShell));
+            inScriptTag = (ourGlobal == scriptContext->GetGlobalObject());
+          }
         }  
       } //cx
     }  // stack
 
-    if (aReplace ||  inScriptTag) {
-      loadInfo->SetLoadType(nsIDocShellLoadInfo::loadNormalReplace);
-    }
-
-    webNav->Stop(nsIWebNavigation::STOP_CONTENT);
-    return mDocShell->LoadURI(newUri, loadInfo,
-                              nsIWebNavigation::LOAD_FLAGS_NONE, PR_TRUE);
+    return SetURI(newUri, aReplace || inScriptTag);
   }
 
   return result;
 }
 
 NS_IMETHODIMP
-LocationImpl::GetPathname(nsAString& aPathname)
+nsLocation::GetPathname(nsAString& aPathname)
 {
   aPathname.Truncate();
 
@@ -631,7 +664,7 @@ LocationImpl::GetPathname(nsAString& aPathname)
 }
 
 NS_IMETHODIMP
-LocationImpl::SetPathname(const nsAString& aPathname)
+nsLocation::SetPathname(const nsAString& aPathname)
 {
   nsCOMPtr<nsIURI> uri;
   nsresult result = NS_OK;
@@ -647,7 +680,7 @@ LocationImpl::SetPathname(const nsAString& aPathname)
 }
 
 NS_IMETHODIMP
-LocationImpl::GetPort(nsAString& aPort)
+nsLocation::GetPort(nsAString& aPort)
 {
   aPort.SetLength(0);
 
@@ -658,20 +691,23 @@ LocationImpl::GetPort(nsAString& aPort)
 
   if (uri) {
     PRInt32 port;
-    uri->GetPort(&port);
+    result = uri->GetPort(&port);
 
-    if (-1 != port) {
+    if (NS_SUCCEEDED(result) && -1 != port) {
       nsAutoString portStr;
       portStr.AppendInt(port);
       aPort.Append(portStr);
     }
+
+    // Don't propagate this exception to caller
+    result = NS_OK;
   }
 
   return result;
 }
 
 NS_IMETHODIMP
-LocationImpl::SetPort(const nsAString& aPort)
+nsLocation::SetPort(const nsAString& aPort)
 {
   nsCOMPtr<nsIURI> uri;
   nsresult result = NS_OK;
@@ -701,7 +737,7 @@ LocationImpl::SetPort(const nsAString& aPort)
 }
 
 NS_IMETHODIMP
-LocationImpl::GetProtocol(nsAString& aProtocol)
+nsLocation::GetProtocol(nsAString& aProtocol)
 {
   aProtocol.SetLength(0);
 
@@ -725,7 +761,7 @@ LocationImpl::GetProtocol(nsAString& aProtocol)
 }
 
 NS_IMETHODIMP
-LocationImpl::SetProtocol(const nsAString& aProtocol)
+nsLocation::SetProtocol(const nsAString& aProtocol)
 {
   nsCOMPtr<nsIURI> uri;
   nsresult result = NS_OK;
@@ -741,7 +777,7 @@ LocationImpl::SetProtocol(const nsAString& aProtocol)
 }
 
 NS_IMETHODIMP
-LocationImpl::GetSearch(nsAString& aSearch)
+nsLocation::GetSearch(nsAString& aSearch)
 {
   aSearch.SetLength(0);
 
@@ -767,7 +803,7 @@ LocationImpl::GetSearch(nsAString& aSearch)
 }
 
 NS_IMETHODIMP
-LocationImpl::SetSearch(const nsAString& aSearch)
+nsLocation::SetSearch(const nsAString& aSearch)
 {
   nsCOMPtr<nsIURI> uri;
   nsresult result = NS_OK;
@@ -784,7 +820,7 @@ LocationImpl::SetSearch(const nsAString& aSearch)
 }
 
 NS_IMETHODIMP
-LocationImpl::Reload(PRBool aForceget)
+nsLocation::Reload(PRBool aForceget)
 {
   nsresult rv;
   nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(mDocShell));
@@ -797,6 +833,12 @@ LocationImpl::Reload(PRBool aForceget)
                     nsIWebNavigation::LOAD_FLAGS_BYPASS_PROXY;
     }
     rv = webNav->Reload(reloadFlags);
+    if (rv == NS_BINDING_ABORTED) {
+      // This happens when we attempt to reload a POST result and the user says
+      // no at the "do you want to reload?" prompt.  Don't propagate this one
+      // back to callers.
+      rv = NS_OK;
+    }
   } else {
     NS_ASSERTION(0, "nsIWebNavigation interface is not available!");
     rv = NS_ERROR_FAILURE;
@@ -806,15 +848,11 @@ LocationImpl::Reload(PRBool aForceget)
 }
 
 NS_IMETHODIMP
-LocationImpl::Reload()
+nsLocation::Reload()
 {
-  nsresult rv;
-  nsCOMPtr<nsIXPConnect> xpc(do_GetService(nsIXPConnect::GetCID(), &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
   nsCOMPtr<nsIXPCNativeCallContext> ncc;
-
-  rv = xpc->GetCurrentNativeCallContext(getter_AddRefs(ncc));
+  nsresult rv = nsContentUtils::XPConnect()->
+    GetCurrentNativeCallContext(getter_AddRefs(ncc));
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!ncc)
@@ -823,26 +861,20 @@ LocationImpl::Reload()
   nsCOMPtr<nsPIDOMWindow> window(do_GetInterface(mDocShell));
 
   if (window && window->IsHandlingResizeEvent()) {
-    // location.reload() was called while handling a resize
-    // event. Sites do this since Netscape 4.x needed it, but we
-    // don't, and it's a horrible experience for nothing. In stead of
-    // reloading the page, just clear style data and reflow the page
-    // since some sites may use this trick to work around gecko reflow
-    // bugs, and this should have the same effect.
+    // location.reload() was called on a window that is handling a
+    // resize event. Sites do this since Netscape 4.x needed it, but
+    // we don't, and it's a horrible experience for nothing. In stead
+    // of reloading the page, just clear style data and reflow the
+    // page since some sites may use this trick to work around gecko
+    // reflow bugs, and this should have the same effect.
 
-    nsCOMPtr<nsIDOMDocument> domDoc;
-    window->GetExtantDocument(getter_AddRefs(domDoc));
-
-    nsCOMPtr<nsIDocument> doc(do_QueryInterface(domDoc));
+    nsCOMPtr<nsIDocument> doc(do_QueryInterface(window->GetExtantDocument()));
 
     nsIPresShell *shell;
-    if (doc && (shell = doc->GetShellAt(0))) {
-      nsCOMPtr<nsIPresContext> pcx;
-      shell->GetPresContext(getter_AddRefs(pcx));
-
-      if (pcx) {
-        pcx->ClearStyleDataAndReflow();
-      }
+    nsPresContext *pcx;
+    if (doc && (shell = doc->GetShellAt(0)) &&
+        (pcx = shell->GetPresContext())) {
+      pcx->ClearStyleDataAndReflow();
     }
 
     return NS_OK;
@@ -872,7 +904,7 @@ LocationImpl::Reload()
 }
 
 NS_IMETHODIMP
-LocationImpl::Replace(const nsAString& aUrl)
+nsLocation::Replace(const nsAString& aUrl)
 {
   nsresult rv = NS_OK;
 
@@ -883,7 +915,7 @@ LocationImpl::Replace(const nsAString& aUrl)
   if (stack) {
     JSContext *cx;
 
-    rv = stack->Peek(&cx);
+    rv = GetContextFromStack(stack, &cx);
     NS_ENSURE_SUCCESS(rv, rv);
     if (cx) {
       return SetHrefWithContext(cx, aUrl, PR_TRUE);
@@ -904,7 +936,7 @@ LocationImpl::Replace(const nsAString& aUrl)
 }
 
 NS_IMETHODIMP
-LocationImpl::Assign(const nsAString& aUrl)
+nsLocation::Assign(const nsAString& aUrl)
 {
   nsAutoString oldHref;
   nsresult result = NS_OK;
@@ -925,13 +957,13 @@ LocationImpl::Assign(const nsAString& aUrl)
 }
 
 NS_IMETHODIMP
-LocationImpl::ToString(nsAString& aReturn)
+nsLocation::ToString(nsAString& aReturn)
 {
   return GetHref(aReturn);
 }
 
 nsresult
-LocationImpl::GetSourceDocument(JSContext* cx, nsIDocument** aDocument)
+nsLocation::GetSourceDocument(JSContext* cx, nsIDocument** aDocument)
 {
   // XXX Code duplicated from nsHTMLDocument
   // XXX Tom said this reminded him of the "Six Degrees of
@@ -964,7 +996,7 @@ LocationImpl::GetSourceDocument(JSContext* cx, nsIDocument** aDocument)
 }
 
 nsresult
-LocationImpl::GetSourceBaseURL(JSContext* cx, nsIURI** sourceURL)
+nsLocation::GetSourceBaseURL(JSContext* cx, nsIURI** sourceURL)
 {
   nsCOMPtr<nsIDocument> doc;
   nsresult rv = GetSourceDocument(cx, getter_AddRefs(doc));
@@ -978,7 +1010,7 @@ LocationImpl::GetSourceBaseURL(JSContext* cx, nsIURI** sourceURL)
 }
 
 nsresult
-LocationImpl::GetSourceURL(JSContext* cx, nsIURI** sourceURL)
+nsLocation::GetSourceURL(JSContext* cx, nsIURI** sourceURL)
 {
   nsCOMPtr<nsIDocument> doc;
   nsresult rv = GetSourceDocument(cx, getter_AddRefs(doc));

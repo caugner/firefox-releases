@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Benjamin Smedberg <bsmedberg@covad.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -51,6 +51,8 @@
 #include "nsDirectoryServiceDefs.h"
 #include "nsNetUtil.h"
 #include "nsURLHelper.h"
+
+static NS_DEFINE_CID(kResURLCID, NS_RESURL_CID);
 
 static nsResProtocolHandler *gResHandler = nsnull;
 
@@ -74,17 +76,8 @@ static PRLogModuleInfo *gResLog;
 // nsResURL : overrides nsStandardURL::GetFile to provide nsIFile resolution
 //----------------------------------------------------------------------------
 
-#include "nsStandardURL.h"
-
-class nsResURL : public nsStandardURL
-{
-public:
-    nsResURL() : nsStandardURL(PR_TRUE) {}
-    NS_IMETHOD GetFile(nsIFile **);
-};
-
-NS_IMETHODIMP
-nsResURL::GetFile(nsIFile **result)
+nsresult
+nsResURL::EnsureFile()
 {
     nsresult rv;
 
@@ -94,11 +87,11 @@ nsResURL::GetFile(nsIFile **result)
     rv = gResHandler->ResolveURI(this, spec);
     if (NS_FAILED(rv)) return rv;
 
-    rv = net_GetFileFromURLSpec(spec, result);
+    rv = net_GetFileFromURLSpec(spec, getter_AddRefs(mFile));
 #ifdef DEBUG_bsmedberg
     if (NS_SUCCEEDED(rv)) {
         PRBool exists = PR_TRUE;
-        (*result)->Exists(&exists);
+        mFile->Exists(&exists);
         if (!exists) {
             printf("resource %s doesn't exist!\n", spec.get());
         }
@@ -106,6 +99,21 @@ nsResURL::GetFile(nsIFile **result)
 #endif
 
     return rv;
+}
+
+/* virtual */ nsStandardURL*
+nsResURL::StartClone()
+{
+    nsResURL *clone;
+    NS_NEWXPCOM(clone, nsResURL);
+    return clone;
+}
+
+NS_IMETHODIMP 
+nsResURL::GetClassIDNoAlloc(nsCID *aClassIDNoAlloc)
+{
+    *aClassIDNoAlloc = kResURLCID;
+    return NS_OK;
 }
 
 //----------------------------------------------------------------------------
@@ -161,10 +169,13 @@ nsResProtocolHandler::Init()
     //
     // make resource://gre/ point to the GRE directory
     //
-    return AddSpecialDir(NS_GRE_DIR, NS_LITERAL_CSTRING("gre"));
+    rv = AddSpecialDir(NS_GRE_DIR, NS_LITERAL_CSTRING("gre"));
+    NS_ENSURE_SUCCESS(rv, rv);
 
     //XXXbsmedberg Neil wants a resource://pchrome/ for the profile chrome dir...
     // but once I finish multiple chrome registration I'm not sure that it is needed
+
+    return rv;
 }
 
 //----------------------------------------------------------------------------
@@ -183,7 +194,7 @@ NS_IMPL_THREADSAFE_ISUPPORTS3(nsResProtocolHandler,
 NS_IMETHODIMP
 nsResProtocolHandler::GetScheme(nsACString &result)
 {
-    result = "resource";
+    result.AssignLiteral("resource");
     return NS_OK;
 }
 
@@ -265,7 +276,25 @@ nsResProtocolHandler::GetSubstitution(const nsACString& root, nsIURI **result)
 {
     NS_ENSURE_ARG_POINTER(result);
 
-    return mSubstitutions.Get(root, result) ? NS_OK : NS_ERROR_NOT_AVAILABLE;
+    if (mSubstitutions.Get(root, result))
+        return NS_OK;
+
+    // try invoking the directory service for "resource:root"
+
+    nsCAutoString key;
+    key.AssignLiteral("resource:");
+    key.Append(root);
+
+    nsCOMPtr<nsIFile> file;
+    nsresult rv = NS_GetSpecialDirectory(key.get(), getter_AddRefs(file));
+    if (NS_FAILED(rv))
+        return NS_ERROR_NOT_AVAILABLE;
+        
+    rv = mIOService->NewFileURI(file, result);
+    if (NS_FAILED(rv))
+        return NS_ERROR_NOT_AVAILABLE;
+
+    return NS_OK;
 }
 
 NS_IMETHODIMP

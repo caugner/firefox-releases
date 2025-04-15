@@ -41,6 +41,7 @@
 #include "nsIDOMHTMLCollection.h"
 #include "nsIDocument.h"
 #include "nsILink.h"
+#include "nsIDOMText.h"
 #include "nsIURI.h"
 #include "nsNetUtil.h"
 
@@ -49,16 +50,17 @@
 // --------------------------------------------------------
 NS_IMPL_ISUPPORTS_INHERITED1(nsHTMLLinkAccessibleWrap, nsHTMLLinkAccessible, nsIAccessibleHyperLink)
 
-nsHTMLLinkAccessibleWrap::nsHTMLLinkAccessibleWrap(nsIDOMNode* aDomNode, nsIWeakReference* aShell):
-nsHTMLLinkAccessible(aDomNode, aShell)
+nsHTMLLinkAccessibleWrap::nsHTMLLinkAccessibleWrap(nsIDOMNode* aDomNode, nsIArray* aTextNodes, nsIWeakReference* aShell, nsIFrame *aFrame):
+nsHTMLLinkAccessible(aDomNode, aShell, aFrame)
 { 
+  mTextNodes = aTextNodes;
 }
 
 //-------------------------- nsIAccessibleHyperLink -------------------------
 /* readonly attribute long anchors; */
 NS_IMETHODIMP nsHTMLLinkAccessibleWrap::GetAnchors(PRInt32 *aAnchors)
 {
-  if (!IsALink())
+  if (!mIsLink)
     return NS_ERROR_FAILURE;
   
   *aAnchors = 1;
@@ -68,15 +70,15 @@ NS_IMETHODIMP nsHTMLLinkAccessibleWrap::GetAnchors(PRInt32 *aAnchors)
 /* readonly attribute long startIndex; */
 NS_IMETHODIMP nsHTMLLinkAccessibleWrap::GetStartIndex(PRInt32 *aStartIndex)
 {
-  //not see the value to implement this attributes
-  return NS_ERROR_NOT_IMPLEMENTED;
+  PRInt32 endIndex;
+  return GetLinkOffset(aStartIndex, &endIndex);
 }
 
 /* readonly attribute long endIndex; */
 NS_IMETHODIMP nsHTMLLinkAccessibleWrap::GetEndIndex(PRInt32 *aEndIndex)
 {
-  //not see the value to implement this attributes
-  return NS_ERROR_NOT_IMPLEMENTED;
+  PRInt32 startIndex;
+  return GetLinkOffset(&startIndex, aEndIndex);
 }
 
 /* nsIURI getURI (in long i); */
@@ -87,7 +89,10 @@ NS_IMETHODIMP nsHTMLLinkAccessibleWrap::GetURI(PRInt32 i, nsIURI **aURI)
   //more powerful for the future.
   *aURI = nsnull;
 
-  nsCOMPtr<nsILink> link(do_QueryInterface(mLinkContent));
+  if (!mIsLink)
+    return NS_ERROR_FAILURE;
+
+  nsCOMPtr<nsILink> link(do_QueryInterface(mActionContent));
   if (link) {
     return link->GetHrefURI(aURI);
   }
@@ -116,10 +121,51 @@ NS_IMETHODIMP nsHTMLLinkAccessibleWrap::IsValid(PRBool *aIsValid)
 /* boolean isSelected (); */
 NS_IMETHODIMP nsHTMLLinkAccessibleWrap::IsSelected(PRBool *aIsSelected)
 {
-  nsCOMPtr<nsIDOMNode> focusedNode;
-  GetFocusedNode(mDOMNode, getter_AddRefs(focusedNode));
-  *aIsSelected = (focusedNode == mDOMNode);
+  *aIsSelected = (gLastFocusedNode == mDOMNode);
   return NS_OK;
+}
+
+nsresult nsHTMLLinkAccessibleWrap::GetLinkOffset(PRInt32* aStartOffset, PRInt32* aEndOffset)
+{
+  NS_ENSURE_TRUE(mTextNodes, NS_ERROR_FAILURE);
+
+  if (!mIsLink)
+    return NS_ERROR_FAILURE;
+
+  nsCOMPtr<nsILink> currentLink(do_QueryInterface(mActionContent));
+  NS_ENSURE_TRUE(currentLink, NS_ERROR_FAILURE);
+
+  PRUint32 index, count = 0;
+  PRUint32 totalLength = 0, textLength = 0;
+
+  mTextNodes->GetLength(&count);
+  for (index = 0; index < count; index++) {
+    nsCOMPtr<nsIDOMNode> domNode(do_QueryElementAt(mTextNodes, index));
+    nsCOMPtr<nsIDOMText> domText(do_QueryInterface(domNode));
+    if (domText) {
+      domText->GetLength(&textLength);
+      totalLength += textLength;
+    }
+
+    // text node maybe a child (or grandchild, ...) of a link node
+    nsCOMPtr<nsIDOMNode> parentNode;
+    nsCOMPtr<nsILink> link = nsnull;
+    domNode->GetParentNode(getter_AddRefs(parentNode));
+    while (parentNode) {
+      link = do_QueryInterface(parentNode);
+      if (link)
+        break;
+      nsCOMPtr<nsIDOMNode> temp = parentNode;
+      temp->GetParentNode(getter_AddRefs(parentNode));
+    }
+
+    if (link == currentLink) {
+      *aEndOffset = totalLength;
+      *aStartOffset = totalLength - textLength;
+      return NS_OK;
+    }
+  }
+  return NS_ERROR_FAILURE;
 }
 
 // --------------------------------------------------------
@@ -185,8 +231,11 @@ NS_IMETHODIMP nsHTMLImageMapAccessible::GetURI(PRInt32 aIndex, nsIURI **aURI)
 NS_IMETHODIMP nsHTMLImageMapAccessible::GetObject(PRInt32 aIndex,
                                                   nsIAccessible **aAccessible)
 {
-  *aAccessible = CreateAreaAccessible(aIndex);
-  return NS_OK;
+  *aAccessible = nsnull;
+  nsCOMPtr<nsIAccessible> areaAccessible;
+  nsresult rv = GetChildAt(aIndex, getter_AddRefs(areaAccessible));
+  areaAccessible.swap(*aAccessible);
+  return rv;
 }
 
 /* boolean isValid (); */

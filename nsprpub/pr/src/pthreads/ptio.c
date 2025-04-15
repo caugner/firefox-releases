@@ -1,36 +1,39 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* 
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape Portable Runtime (NSPR).
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1998-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
 ** File:   ptio.c
@@ -192,23 +195,8 @@ static ssize_t (*pt_aix_sendfile_fptr)() = NULL;
 #endif
 #endif
 
-#ifdef DARWIN
+#ifdef _PR_IPV6_V6ONLY_PROBE
 static PRBool _pr_ipv6_v6only_on_by_default;
-/* The IPV6_V6ONLY socket option is not defined on Mac OS X 10.1. */
-#ifndef IPV6_V6ONLY
-#define IPV6_V6ONLY 27
-#endif
-#endif
-
-#if defined(SOLARIS)
-#define _PRSockOptVal_t char *
-#elif defined(IRIX) || defined(OSF1) || defined(AIX) || defined(HPUX) \
-    || defined(LINUX) || defined(FREEBSD) || defined(BSDI) || defined(VMS) \
-    || defined(NTO) || defined(OPENBSD) || defined(DARWIN) \
-    || defined(UNIXWARE) || defined(NETBSD)
-#define _PRSockOptVal_t void *
-#else
-#error "Cannot determine architecture"
 #endif
 
 #if (defined(HPUX) && !defined(HPUX10_30) && !defined(HPUX11))
@@ -220,7 +208,7 @@ static PRBool _pr_ipv6_v6only_on_by_default;
     || defined(HPUX10_30) || defined(HPUX11) || defined(LINUX) \
     || defined(FREEBSD) || defined(NETBSD) || defined(OPENBSD) \
     || defined(BSDI) || defined(VMS) || defined(NTO) || defined(DARWIN) \
-    || defined(UNIXWARE)
+    || defined(UNIXWARE) || defined(RISCOS)
 #define _PRSelectFdSetArg_t fd_set *
 #else
 #error "Cannot determine architecture"
@@ -1157,7 +1145,7 @@ void _PR_InitIO(void)
     _pr_stderr = pt_SetMethods(2, PR_DESC_FILE, PR_FALSE, PR_TRUE);
     PR_ASSERT(_pr_stdin && _pr_stdout && _pr_stderr);
 
-#ifdef DARWIN
+#ifdef _PR_IPV6_V6ONLY_PROBE
     /* In Mac OS X v10.3 Panther Beta the IPV6_V6ONLY socket option
      * is turned on by default, contrary to what RFC 3493, Section
      * 5.3 says.  So we have to turn it off.  Find out whether we
@@ -1583,10 +1571,9 @@ static PRStatus pt_Connect(
     addrCopy = *addr;
     ((struct sockaddr*)&addrCopy)->sa_len = addr_len;
     ((struct sockaddr*)&addrCopy)->sa_family = md_af;
-    rv = connect(fd->secret->md.osfd, (struct sockaddr*)&addrCopy, addr_len);
-#else
-    rv = connect(fd->secret->md.osfd, (struct sockaddr*)addrp, addr_len);
+    addrp = &addrCopy;
 #endif
+    rv = connect(fd->secret->md.osfd, (struct sockaddr*)addrp, addr_len);
     syserrno = errno;
     if ((-1 == rv) && (EINPROGRESS == syserrno) && (!fd->secret->nonblocking))
     {
@@ -1595,11 +1582,7 @@ static PRStatus pt_Connect(
         {
             pt_Continuation op;
             op.arg1.osfd = fd->secret->md.osfd;
-#ifdef _PR_HAVE_SOCKADDR_LEN
-            op.arg2.buffer = (void*)&addrCopy;
-#else
-            op.arg2.buffer = (void*)addr;
-#endif
+            op.arg2.buffer = (void*)addrp;
             op.arg3.amount = addr_len;
             op.timeout = timeout;
             op.function = pt_connect_cont;
@@ -1778,10 +1761,9 @@ static PRStatus pt_Bind(PRFileDesc *fd, const PRNetAddr *addr)
     addrCopy = *addr;
     ((struct sockaddr*)&addrCopy)->sa_len = addr_len;
     ((struct sockaddr*)&addrCopy)->sa_family = md_af;
-    rv = bind(fd->secret->md.osfd, (struct sockaddr*)&addrCopy, addr_len);
-#else
-    rv = bind(fd->secret->md.osfd, (struct sockaddr*)addrp, addr_len);
+    addrp = &addrCopy;
 #endif
+    rv = bind(fd->secret->md.osfd, (struct sockaddr*)addrp, addr_len);
 
     if (rv == -1) {
         pt_MapError(_PR_MD_MAP_BIND_ERROR, errno);
@@ -2018,14 +2000,11 @@ static PRInt32 pt_SendTo(
     addrCopy = *addr;
     ((struct sockaddr*)&addrCopy)->sa_len = addr_len;
     ((struct sockaddr*)&addrCopy)->sa_family = md_af;
-    bytes = sendto(
-        fd->secret->md.osfd, buf, amount, flags,
-        (struct sockaddr*)&addrCopy, addr_len);
-#else
+    addrp = &addrCopy;
+#endif
     bytes = sendto(
         fd->secret->md.osfd, buf, amount, flags,
         (struct sockaddr*)addrp, addr_len);
-#endif
     syserrno = errno;
     if ( (bytes == -1) && (syserrno == EWOULDBLOCK || syserrno == EAGAIN)
         && (!fd->secret->nonblocking) )
@@ -2040,11 +2019,7 @@ static PRInt32 pt_SendTo(
         op.arg2.buffer = (void*)buf;
         op.arg3.amount = amount;
         op.arg4.flags = flags;
-#ifdef _PR_HAVE_SOCKADDR_LEN
-        op.arg5.addr = (PRNetAddr*)&addrCopy;
-#else
-        op.arg5.addr = (PRNetAddr*)addr;
-#endif
+        op.arg5.addr = (PRNetAddr*)addrp;
         op.timeout = timeout;
         op.result.code = 0;  /* initialize the number sent */
         op.function = pt_sendto_cont;
@@ -3257,7 +3232,7 @@ static PRIOMethods _pr_socketpollfd_methods = {
 #if defined(HPUX) || defined(OSF1) || defined(SOLARIS) || defined (IRIX) \
     || defined(AIX) || defined(LINUX) || defined(FREEBSD) || defined(NETBSD) \
     || defined(OPENBSD) || defined(BSDI) || defined(VMS) || defined(NTO) \
-    || defined(DARWIN) || defined(UNIXWARE)
+    || defined(DARWIN) || defined(UNIXWARE) || defined(RISCOS)
 #define _PR_FCNTL_FLAGS O_NONBLOCK
 #else
 #error "Can't determine architecture"
@@ -3477,7 +3452,7 @@ PR_IMPLEMENT(PRFileDesc*) PR_Socket(PRInt32 domain, PRInt32 type, PRInt32 proto)
     if (osfd == -1) pt_MapError(_PR_MD_MAP_SOCKET_ERROR, errno);
     else
     {
-#ifdef DARWIN
+#ifdef _PR_IPV6_V6ONLY_PROBE
         if ((domain == AF_INET6) && _pr_ipv6_v6only_on_by_default)
         {
             int on = 0;
@@ -4313,8 +4288,13 @@ PR_IMPLEMENT(PRDirEntry*) PR_ReadDir(PRDir *dir, PRDirFlags flags)
 
     for (;;)
     {
+        errno = 0;
         dp = readdir(dir->md.d);
-        if (NULL == dp) return NULL;
+        if (NULL == dp)
+        {
+            pt_MapError(_PR_MD_MAP_READDIR_ERROR, errno);
+            return NULL;
+        }
         if ((flags & PR_SKIP_DOT)
             && ('.' == dp->d_name[0])
             && (0 == dp->d_name[1])) continue;
@@ -4361,8 +4341,8 @@ PR_IMPLEMENT(PRStatus) PR_NewTCPSocketPair(PRFileDesc *fds[2])
     if (pt_TestAbort()) return PR_FAILURE;
 
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, osfd) == -1) {
-    pt_MapError(_PR_MD_MAP_SOCKETPAIR_ERROR, errno);
-    return PR_FAILURE;
+        pt_MapError(_PR_MD_MAP_SOCKETPAIR_ERROR, errno);
+        return PR_FAILURE;
     }
 
     fds[0] = pt_SetMethods(osfd[0], PR_DESC_SOCKET_TCP, PR_FALSE, PR_FALSE);

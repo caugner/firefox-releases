@@ -45,9 +45,9 @@
 
 class nsIContent;
 class nsMappedAttributes;
-class nsIHTMLStyleSheet;
+class nsHTMLStyleSheet;
 class nsRuleWalker;
-class nsIHTMLContent;
+class nsGenericHTMLElement;
 
 #define ATTRCHILD_ARRAY_GROWSIZE 8
 #define ATTRCHILD_ARRAY_LINEAR_THRESHOLD 32
@@ -88,7 +88,6 @@ public:
   }
   nsresult InsertChildAt(nsIContent* aChild, PRUint32 aPos);
   void RemoveChildAt(PRUint32 aPos);
-  void ReplaceChildAt(nsIContent* aChild, PRUint32 aPos);
   PRInt32 IndexOfChild(nsIContent* aPossibleChild) const;
 
   PRUint32 AttrCount() const;
@@ -104,8 +103,9 @@ public:
   PRInt32 IndexOfAttr(nsIAtom* aLocalName, PRInt32 aNamespaceID = kNameSpaceID_None) const;
 
   nsresult SetAndTakeMappedAttr(nsIAtom* aLocalName, nsAttrValue& aValue,
-                                nsIHTMLContent* aContent, nsIHTMLStyleSheet* aSheet);
-  nsresult SetMappedAttrStyleSheet(nsIHTMLStyleSheet* aSheet);
+                                nsGenericHTMLElement* aContent,
+                                nsHTMLStyleSheet* aSheet);
+  nsresult SetMappedAttrStyleSheet(nsHTMLStyleSheet* aSheet);
   void WalkMappedAttributeStyleRules(nsRuleWalker* aRuleWalker);
 
   void Compact();
@@ -119,8 +119,8 @@ private:
   PRUint32 NonMappedAttrCount() const;
   PRUint32 MappedAttrCount() const;
 
-  nsresult GetModifiableMapped(nsIHTMLContent* aContent,
-                               nsIHTMLStyleSheet* aSheet,
+  nsresult GetModifiableMapped(nsGenericHTMLElement* aContent,
+                               nsHTMLStyleSheet* aSheet,
                                PRBool aWillAddAttr,
                                nsMappedAttributes** aModifiable);
   nsresult MakeMappedUnique(nsMappedAttributes* aAttributes);

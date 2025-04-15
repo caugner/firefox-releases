@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,15 +14,14 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   David Epstein <depstein@netscape.com> 
- *   Ashish Bhatt <ashishbhatt@netscape.com> 
- *
+ *   David Epstein <depstein@netscape.com>
+ *   Ashish Bhatt <ashishbhatt@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -30,11 +29,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -96,7 +95,7 @@ void CNsIHistory::OnStartTests(UINT nMenuID)
    nsCOMPtr<nsISimpleEnumerator> theSimpleEnum;
 
 
-   //nsCOMPtr<nsIURI> theUri;
+   //nsCOMPtr<nsIURI> theURI;
    // do_QueryInterface
    // NS_HISTORYENTRY_CONTRACTID
    // NS_SHISTORYLISTENER_CONTRACTID
@@ -377,15 +376,15 @@ void CNsIHistory::GetMaxLengthTest(nsISHistory *theSessionHistory, PRInt32 *theM
 void CNsIHistory::GetURIHistTest(nsIHistoryEntry* theHistoryEntry,
 								 PRInt16 displayMode)
 {
-	rv = theHistoryEntry->GetURI(getter_AddRefs(theUri));
+	rv = theHistoryEntry->GetURI(getter_AddRefs(theURI));
 	RvTestResult(rv, "GetURI() (URI attribute) test", 1);
 	RvTestResultDlg(rv, "GetURI() (URI attribute) test");
-	if (!theUri)
-		QAOutput("theUri for GetURI() invalid. Test failed.", 1);
+	if (!theURI)
+		QAOutput("theURI for GetURI() invalid. Test failed.", 1);
 	else
 	{
 		nsCAutoString uriString;
-		rv = theUri->GetSpec(uriString);
+		rv = theURI->GetSpec(uriString);
 		if (NS_FAILED(rv))
 			QAOutput("We didn't get the uriString.", 1);
 		else
@@ -449,11 +448,11 @@ void CNsIHistory::SimpleEnumTest(nsISimpleEnumerator *theSimpleEnum,
 	 nextHistoryEntry = do_QueryInterface(nextObj);
 	 if (!nextHistoryEntry)
 		continue;
-	 rv = nextHistoryEntry->GetURI(getter_AddRefs(theUri));
+	 rv = nextHistoryEntry->GetURI(getter_AddRefs(theURI));
 	 RvTestResult(rv, "theSimpleEnum nsIHistoryEntry->GetURI() test", 1);
 	 RvTestResultDlg(rv, "theSimpleEnum nsIHistoryEntry->GetURI() test");
 	 nsCAutoString uriString;
-	 rv = theUri->GetSpec(uriString);
+	 rv = theURI->GetSpec(uriString);
 	 if (NS_FAILED(rv))
 		QAOutput("uriString for GetSpec() invalid. Test failed.", 1);
 	 else

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): Daniel Switkin, Mathias Agopian and Sergei Dolgov
- *
+ * Contributor(s):
+ *   Daniel Switkin, Mathias Agopian and Sergei Dolgov
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -154,8 +154,18 @@ void nsImageBeOS::ImageUpdated(nsIDeviceContext *aContext, PRUint8 aFlags, nsRec
 		mDecodedX2 = aUpdateRect->XMost();
 } 
 
+/** ---------------------------------------------------
+ *  See documentation in nsIImage.h
+ */
+PRBool nsImageBeOS::GetIsImageComplete() {
+  return mDecodedX1 == 0 &&
+         mDecodedY1 == 0 &&
+         mDecodedX2 == mWidth &&
+         mDecodedY2 == mHeight;
+}
+
 // Draw the bitmap, this method has a source and destination coordinates
-NS_IMETHODIMP nsImageBeOS::Draw(nsIRenderingContext &aContext, nsDrawingSurface aSurface,
+NS_IMETHODIMP nsImageBeOS::Draw(nsIRenderingContext &aContext, nsIDrawingSurface* aSurface,
 	PRInt32 aSX, PRInt32 aSY, PRInt32 aSWidth, PRInt32 aSHeight,
 	PRInt32 aDX, PRInt32 aDY, PRInt32 aDWidth, PRInt32 aDHeight) 
 {
@@ -224,8 +234,8 @@ NS_IMETHODIMP nsImageBeOS::Draw(nsIRenderingContext &aContext, nsDrawingSurface 
 					BRect(dstX, dstY, dstMostX - 1, dstMostY - 1));
 			}
 			// view was locked by LockAndUpdateView() before it was aquired. So unlock.
-			view->UnlockLooper();
 		}
+		((nsRenderingContextBeOS&)aContext).UnlockView();
 		beosdrawing->ReleaseView();
 	}
 	
@@ -234,7 +244,7 @@ NS_IMETHODIMP nsImageBeOS::Draw(nsIRenderingContext &aContext, nsDrawingSurface 
 }
 
 // Draw the bitmap, this draw just has destination coordinates
-NS_IMETHODIMP nsImageBeOS::Draw(nsIRenderingContext &aContext, nsDrawingSurface aSurface,
+NS_IMETHODIMP nsImageBeOS::Draw(nsIRenderingContext &aContext, nsIDrawingSurface* aSurface,
 	PRInt32 aX, PRInt32 aY, PRInt32 aWidth, PRInt32 aHeight) 
 {
 	//Don't bother to draw nothing		
@@ -291,8 +301,8 @@ NS_IMETHODIMP nsImageBeOS::Draw(nsIRenderingContext &aContext, nsDrawingSurface 
 				view->DrawBitmap(mImage, BRect(validX, validY, validMostX - 1, validMostY - 1), 
 								BRect(aX + validX, aY + validY, aX + validMostX - 1, aY + validMostY - 1));
 			}
-			view->UnlockLooper();
 		}
+		((nsRenderingContextBeOS&)aContext).UnlockView();
 		beosdrawing->ReleaseView();
 	}
 
@@ -300,7 +310,7 @@ NS_IMETHODIMP nsImageBeOS::Draw(nsIRenderingContext &aContext, nsDrawingSurface 
 	return NS_OK;
 }
 
-NS_IMETHODIMP nsImageBeOS::DrawTile(nsIRenderingContext &aContext, nsDrawingSurface aSurface,
+NS_IMETHODIMP nsImageBeOS::DrawTile(nsIRenderingContext &aContext, nsIDrawingSurface* aSurface,
 	PRInt32 aSXOffset, PRInt32 aSYOffset, PRInt32 aPadX, PRInt32 aPadY, const nsRect &aTileRect) 
 {
 	// Don't bother to draw nothing	
@@ -337,7 +347,9 @@ NS_IMETHODIMP nsImageBeOS::DrawTile(nsIRenderingContext &aContext, nsDrawingSurf
 		beosdrawing->AcquireView(&view);
 		if (view) 
 		{
-			// TODO: see comment above about clipping.
+	        BRegion rgn(BRect(aTileRect.x, aTileRect.y,
+	        			aTileRect.x + aTileRect.width - 1, aTileRect.y + aTileRect.height - 1));
+    	    view->ConstrainClippingRegion(&rgn);
 
 			BBitmap *tmpbmp = 0;			
 			// Force transparency for bitmap blitting in case of padding even if mAlphaDepth == 0
@@ -350,7 +362,7 @@ NS_IMETHODIMP nsImageBeOS::DrawTile(nsIRenderingContext &aContext, nsDrawingSurf
 			if (!tmpbmp || tmpbitlength == 0)
 			{
 				// Failed. Cleaning things a bit.
-				view->UnlockLooper();
+				((nsRenderingContextBeOS&)aContext).UnlockView();
 				if(tmpbmp)
 					delete tmpbmp;
 				beosdrawing->ReleaseView();
@@ -377,7 +389,7 @@ NS_IMETHODIMP nsImageBeOS::DrawTile(nsIRenderingContext &aContext, nsDrawingSurf
 			{					
 				src = src0 + yy*mWidth;
 				dst = dst0 + y*dstRowLength;
-				// Avoid unneccessary job outside update rect
+				// Avoid unnecessary job outside update rect
 				if (yy >= validY && yy <= validMostY)
 				{
 					for (uint32 x = 0, xx = aSXOffset; x < dstRowLength; ++x) 
@@ -403,14 +415,14 @@ NS_IMETHODIMP nsImageBeOS::DrawTile(nsIRenderingContext &aContext, nsDrawingSurf
 			// Flushing temporary bitmap to proper area in drawable BView	
 			view->DrawBitmap(tmpbmp, BPoint(aTileRect.x , aTileRect.y ));
 			view->SetDrawingMode(B_OP_COPY);
-			view->Sync(); // useful in multilayered pages with animation
-			view->UnlockLooper();
+			
 			if (tmpbmp) 
 			{
 				delete tmpbmp;
 				tmpbmp = 0;
 			}
 		}
+		((nsRenderingContextBeOS&)aContext).UnlockView();
 		beosdrawing->ReleaseView();
 	}
 	mFlags = 0;
@@ -445,7 +457,7 @@ nsresult nsImageBeOS::Optimize(nsIDeviceContext *aContext)
 }
 
 // Not implemented at the moment. It's unclear whether this is necessary for
-// the BeOS port or not. BBitmap::Lock/UnlockBits()  may be used if neccessary
+// the BeOS port or not. BBitmap::Lock/UnlockBits()  may be used if necessary
 NS_IMETHODIMP nsImageBeOS::LockImagePixels(PRBool aMaskPixels) 
 {
 	return NS_OK;
@@ -457,7 +469,7 @@ NS_IMETHODIMP nsImageBeOS::UnlockImagePixels(PRBool aMaskPixels)
 	return NS_OK;
 }
 
-nsresult nsImageBeOS::BuildImage(nsDrawingSurface aDrawingSurface) 
+nsresult nsImageBeOS::BuildImage(nsIDrawingSurface* aDrawingSurface) 
 {
 	CreateImage(aDrawingSurface);
 	return NS_OK;
@@ -467,7 +479,7 @@ nsresult nsImageBeOS::BuildImage(nsDrawingSurface aDrawingSurface)
 // and mAlphaBits) into a BBitmap so it can be drawn using the Be APIs. Since it is
 // expensive to create and destroy a BBitmap for this purpose, we will keep this bitmap
 // around, which also prevents the need to copy the bits if they have not changed.
-void nsImageBeOS::CreateImage(nsDrawingSurface aSurface) 
+void nsImageBeOS::CreateImage(nsIDrawingSurface* aSurface) 
 {
 	PRInt32 validX = 0, validY = 0, validMostX = mWidth, validMostY = mHeight;
 

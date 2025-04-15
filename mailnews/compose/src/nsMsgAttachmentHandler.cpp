@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
  
@@ -61,10 +61,10 @@
 #include "nsEscape.h"
 #include "nsIURL.h"
 #include "nsNetCID.h"
-#include "nsIStreamConverterService.h"
 #include "nsIMimeStreamConverter.h"
 #include "nsMsgMimeCID.h"
 #include "nsNetUtil.h"
+#include "nsNativeCharsetUtils.h"
 
 
 ///////////////////////////////////////////////////////////////////////////
@@ -279,8 +279,22 @@ nsMsgAttachmentHandler::PickEncoding(const char *charset, nsIMsgSend *mime_deliv
      */
     
     PRBool encode_p;
+    PRBool force_p = PR_FALSE;
     
-    if (m_max_column > 900)
+    /*
+      force quoted-printable if the sender does not allow
+      conversion to 7bit
+    */
+    if (mCompFields) {
+      if (mCompFields->GetForceMsgEncoding())
+        force_p = PR_TRUE;
+    }
+    else if (mime_delivery_state) {
+      if (((nsMsgComposeAndSend *)mime_delivery_state)->mCompFields->GetForceMsgEncoding())
+        force_p = PR_TRUE;
+    }
+    
+    if (force_p || (m_max_column > 900))
       encode_p = PR_TRUE;
     else if (UseQuotedPrintable() && m_unprintable_count)
       encode_p = PR_TRUE;
@@ -522,7 +536,8 @@ nsMsgAttachmentHandler::SnarfMsgAttachment(nsMsgCompFields *compFields)
         {
           nsAutoString error_msg;
           nsAutoString path;
-          nsMsgGetNativePathString(mFileSpec->GetNativePathCString(),path);
+          NS_CopyNativeToUnicode(
+            nsDependentCString(mFileSpec->GetNativePathCString()), path);
           nsMsgBuildErrorMessageByID(NS_MSG_UNABLE_TO_OPEN_TMP_FILE, error_msg, &path, nsnull);
           sendReport->SetMessage(nsIMsgSendReport::process_Current, error_msg.get(), PR_FALSE);
         }
@@ -581,8 +596,8 @@ nsMsgAttachmentHandler::SnarfMsgAttachment(nsMsgCompFields *compFields)
         goto done;
 
       rv = m_mime_parser->AsyncConvertData(
-		    NS_LITERAL_STRING("message/rfc822").get(),
-		    NS_LITERAL_STRING("message/rfc822").get(),
+		    "message/rfc822",
+		    "message/rfc822",
 		    strListener, m_converter_channel);
       if (NS_FAILED(rv))
         goto done;
@@ -658,7 +673,8 @@ nsMsgAttachmentHandler::SnarfAttachment(nsMsgCompFields *compFields)
       {
         nsAutoString error_msg;
         nsAutoString path;
-        nsMsgGetNativePathString(mFileSpec->GetNativePathCString(),path);
+        NS_CopyNativeToUnicode(
+          nsDependentCString(mFileSpec->GetNativePathCString()), path);
         nsMsgBuildErrorMessageByID(NS_MSG_UNABLE_TO_OPEN_TMP_FILE, error_msg, &path, nsnull);
         sendReport->SetMessage(nsIMsgSendReport::process_Current, error_msg.get(), PR_FALSE);
       }
@@ -972,11 +988,11 @@ nsMsgAttachmentHandler::LoadDataFromFile(nsFileSpec& fSpec, nsString &sigData, P
 
   if (charsetConversion)
   {
-    if (NS_FAILED(ConvertToUnicode(m_charset, readBuf, sigData)))
-      sigData.AssignWithConversion(readBuf);
+    if (NS_FAILED(ConvertToUnicode(m_charset, nsDependentCString(readBuf), sigData)))
+      CopyASCIItoUTF16(readBuf, sigData);
   }
   else
-      sigData.AssignWithConversion(readBuf);
+    CopyASCIItoUTF16(readBuf, sigData);
 
   PR_FREEIF(readBuf);
   return NS_OK;
@@ -1129,7 +1145,7 @@ nsMsgAttachmentHandler::UrlExit(nsresult status, const PRUnichar* aMsg)
       // Now use the converter service here to do the right 
       // thing and convert this data to plain text for us!
       //
-      nsString      conData;
+      nsAutoString      conData;
 
       if (NS_SUCCEEDED(LoadDataFromFile(*mFileSpec, conData, PR_TRUE)))
       {
@@ -1141,13 +1157,12 @@ nsMsgAttachmentHandler::UrlExit(nsresult status, const PRUnichar* aMsg)
           nsOutputFileStream tempfile(*mFileSpec, PR_WRONLY | PR_CREATE_FILE, 00600);
           if (tempfile.is_open()) 
           {
-            char    *tData = nsnull;
-            if (NS_FAILED(ConvertFromUnicode(m_charset, conData, &tData)))
-              tData = ToNewCString(conData);
-            if (tData)
+            nsCAutoString tData;
+            if (NS_FAILED(ConvertFromUnicode(m_charset, conData, tData)))
+              LossyCopyUTF16toASCII(conData, tData);
+            if (!tData.IsEmpty())
             {
-              (void) tempfile.write(tData, strlen(tData));
-              PR_FREEIF(tData);
+              (void) tempfile.write(tData.get(), tData.Length());
             }
             tempfile.close();
           }

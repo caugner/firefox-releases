@@ -1,7 +1,8 @@
-/.cvsignore/1.1/Fri Mar 29 02:44:30 2002//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.2/Wed Nov  6 07:36:18 2002//TFIREFOX_1_0_RELEASE
-/nsITreeBoxObject.idl/1.27/Mon Sep 15 11:30:10 2003//TFIREFOX_1_0_RELEASE
-/nsITreeContentView.idl/1.7/Tue Oct 21 15:35:47 2003//TFIREFOX_1_0_RELEASE
-/nsITreeSelection.idl/1.16/Wed Mar 12 08:59:34 2003//TFIREFOX_1_0_RELEASE
-/nsITreeView.idl/1.20/Sat Apr 26 21:38:52 2003//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Fri Mar 29 02:44:30 2002//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.4/Sun Apr 18 14:30:37 2004//TFIREFOX_1_5_RELEASE
+/nsITreeBoxObject.idl/1.33/Mon Apr 18 05:22:34 2005//TFIREFOX_1_5_RELEASE
+/nsITreeColumns.idl/1.2/Tue May  4 14:26:17 2004//TFIREFOX_1_5_RELEASE
+/nsITreeContentView.idl/1.11/Fri Oct 29 06:29:49 2004//TFIREFOX_1_5_RELEASE
+/nsITreeSelection.idl/1.19/Tue May  4 14:26:17 2004//TFIREFOX_1_5_RELEASE
+/nsITreeView.idl/1.25/Fri Oct 29 06:29:49 2004//TFIREFOX_1_5_RELEASE
 D

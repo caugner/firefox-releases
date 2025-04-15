@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "nsString.h"
@@ -65,17 +64,15 @@ NS_IMETHODIMP  nsTextToSubURI::ConvertAndEscape(
   if(nsnull == _retval)
     return NS_ERROR_NULL_POINTER;
   *_retval = nsnull;
-  nsIUnicodeEncoder *encoder = nsnull;
   nsresult rv = NS_OK;
   
   // Get Charset, get the encoder.
-  nsICharsetConverterManager * ccm = nsnull;
-  rv = nsServiceManager::GetService(kCharsetConverterManagerCID ,
-                                    NS_GET_IID(nsICharsetConverterManager),
-                                    (nsISupports**)&ccm);
-  if(NS_SUCCEEDED(rv) && (nsnull != ccm)) {
+  nsICharsetConverterManager *ccm;
+  rv = CallGetService(kCharsetConverterManagerCID, &ccm);
+  if(NS_SUCCEEDED(rv)) {
+     nsIUnicodeEncoder *encoder;
      rv = ccm->GetUnicodeEncoder(charset, &encoder);
-     nsServiceManager::ReleaseService( kCharsetConverterManagerCID, ccm);
+     NS_RELEASE(ccm);
      if (NS_SUCCEEDED(rv)) {
        rv = encoder->SetOutputErrorBehavior(nsIUnicodeEncoder::kOnError_Replace, nsnull, (PRUnichar)'?');
        if(NS_SUCCEEDED(rv))
@@ -110,7 +107,7 @@ NS_IMETHODIMP  nsTextToSubURI::ConvertAndEscape(
           if(pBuf != buf)
              PR_Free(pBuf);
        }
-       NS_IF_RELEASE(encoder);
+       NS_RELEASE(encoder);
      }
   }
   
@@ -153,10 +150,10 @@ NS_IMETHODIMP  nsTextToSubURI::UnEscapeAndConvert(
           }
         }
       }
-      NS_IF_RELEASE(decoder);
+      NS_RELEASE(decoder);
     }
   }
-  PR_FREEIF(unescaped);
+  PR_Free(unescaped);
 
   return rv;
 }
@@ -233,7 +230,12 @@ NS_IMETHODIMP  nsTextToSubURI::UnEscapeURIForUI(const nsACString & aCharset,
   NS_UnescapeURL(PromiseFlatCString(aURIFragment), 
                  esc_SkipControl | esc_AlwaysCopy, unescapedSpec);
 
-  return convertURItoUnicode(PromiseFlatCString(aCharset), unescapedSpec, PR_TRUE, _retval);
+  // in case of failure, return escaped URI
+  if (NS_FAILED(convertURItoUnicode(
+                PromiseFlatCString(aCharset), unescapedSpec, PR_TRUE, _retval)))
+    // assume UTF-8 instead of ASCII  because hostname (IDN) may be in UTF-8
+    CopyUTF8toUTF16(aURIFragment, _retval); 
+  return NS_OK;
 }
 
 NS_IMETHODIMP  nsTextToSubURI::UnEscapeNonAsciiURI(const nsACString & aCharset, 

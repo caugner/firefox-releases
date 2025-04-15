@@ -14,7 +14,7 @@
  *
  * The Original Code is a COM aware array class.
  *
- * The Initial Developer of the Original Code
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corp.
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
@@ -97,7 +97,7 @@ public:
     }
 
     nsISupports* ObjectAt(PRInt32 aIndex) const {
-        return NS_STATIC_CAST(nsISupports*, mArray.ElementAt(aIndex));
+        return NS_STATIC_CAST(nsISupports*, mArray.FastElementAt(aIndex));
     }
     
     nsISupports* SafeObjectAt(PRInt32 aIndex) const {

@@ -1,39 +1,39 @@
 # -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
 # ***** BEGIN LICENSE BLOCK *****
-# Version: NPL 1.1/GPL 2.0/LGPL 2.1
-# 
-# The contents of this file are subject to the Netscape Public License
-# Version 1.1 (the "License"); you may not use this file except in
-# compliance with the License. You may obtain a copy of the License at
-# http://www.mozilla.org/NPL/
-# 
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
+#
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
 # for the specific language governing rights and limitations under the
 # License.
-# 
+#
 # The Original Code is mozilla.org code.
-# 
-# The Initial Developer of the Original Code is 
+#
+# The Initial Developer of the Original Code is
 # Netscape Communications Corporation.
 # Portions created by the Initial Developer are Copyright (C) 1998
 # the Initial Developer. All Rights Reserved.
-# 
+#
 # Contributor(s):
 #   Alec Flett <alecf@netscape.com>
-# 
+#
 # Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or 
+# either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
 # in which case the provisions of the GPL or the LGPL are applicable instead
 # of those above. If you wish to allow use of your version of this file only
 # under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the NPL, indicate your
+# use your version of this file under the terms of the MPL, indicate your
 # decision by deleting the provisions above and replace them with the notice
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
-# the terms of any one of the NPL, the GPL or the LGPL.
-# 
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
 # ***** END LICENSE BLOCK *****
 
 /**
@@ -42,6 +42,7 @@
  **/
 
 var goPrefWindow = 0;
+var gBidiUI = false;
 
 function getBrowserURL()
 {
@@ -224,7 +225,7 @@ function openUILinkIn( url, where )
   switch (where) {
   case "current":
     browser.loadURI(url);
-    w._content.focus();
+    w.content.focus();
     break;
   case "tabshifted":
   case "tab":
@@ -234,7 +235,7 @@ function openUILinkIn( url, where )
     // context menu item could call openUILinkwhere directly.
     if ((where == "tab") ^ getBoolPref("browser.tabs.loadBookmarksInBackground", false)) {
       browser.selectedTab = tab;
-      w._content.focus();
+      w.content.focus();
     }
 
     break;
@@ -287,7 +288,8 @@ function goUpdateGlobalEditMenuItems()
   goUpdateCommand('cmd_paste');
   goUpdateCommand('cmd_selectAll');
   goUpdateCommand('cmd_delete');
-  // XXX: implement controller for cmd_SwitchTextDirection  document.getElementById('cmd_SwitchTextDirection').setAttribute('disabled', !document.commandDispatcher.focusedElement);
+  if (gBidiUI)
+    goUpdateCommand('cmd_switchTextDirection');
 }
 
 // update menu items that rely on the current selection
@@ -320,11 +322,10 @@ function gatherTextUnder ( root )
   var depth = 1;
   while ( node && depth > 0 ) {
     // See if this node is text.
-    if ( node.nodeName == "#text" ) {
+    if ( node.nodeType == Node.TEXT_NODE ) {
       // Add this text to our collection.
       text += " " + node.data;
-    } else if ( node.nodeType == Node.ELEMENT_NODE 
-                && node.localName.toUpperCase() == "IMG" ) {
+    } else if ( node instanceof HTMLImageElement) {
       // If it has an alt= attribute, use that.
       var altText = node.getAttribute( "alt" );
       if ( altText && altText != "" ) {
@@ -364,6 +365,160 @@ function getShellService()
   try {
     shell = Components.classes["@mozilla.org/browser/shell-service;1"]
       .getService(Components.interfaces.nsIShellService);
-  } catch (e) {}
+  } catch (e) {dump("*** e = " + e + "\n");}
   return shell;
 }
+
+function isBidiEnabled() {
+  var rv = false;
+
+  try {
+    var localeService = Components.classes["@mozilla.org/intl/nslocaleservice;1"]
+                                  .getService(Components.interfaces.nsILocaleService);
+    var systemLocale = localeService.getSystemLocale().getCategory("NSILOCALE_CTYPE").substr(0,3);
+
+    switch (systemLocale) {
+      case "ar-":
+      case "he-":
+      case "fa-":
+      case "ur-":
+      case "syr":
+        rv = true;
+    }
+  } catch (e) {}
+
+  // check the overriding pref
+  if (!rv)
+    rv = getBoolPref("bidi.browser.ui");
+
+  return rv;
+}
+
+function openAboutDialog()
+{
+#ifdef XP_MACOSX
+  var wm = Components.classes["@mozilla.org/appshell/window-mediator;1"]
+                     .getService(Components.interfaces.nsIWindowMediator);
+  var win = wm.getMostRecentWindow("Browser:About");
+  if (win)
+    win.focus();
+  else {
+    // XXXmano: define minimizable=no although it does nothing on OS X
+    // (see Bug 287162); remove this comment once Bug 287162 is fixed...
+    window.open("chrome://browser/content/aboutDialog.xul", "About",
+                "chrome, resizable=no, minimizable=no");
+  }
+#else
+  window.openDialog("chrome://browser/content/aboutDialog.xul", "About", "modal,centerscreen,chrome,resizable=no");
+#endif
+}
+
+function openPreferences(paneID)
+{
+  var instantApply = getBoolPref("browser.preferences.instantApply", false);
+  var features = "chrome,titlebar,toolbar,centerscreen" + (instantApply ? ",dialog=no" : ",modal");
+
+  var wm = Components.classes["@mozilla.org/appshell/window-mediator;1"]
+                     .getService(Components.interfaces.nsIWindowMediator);
+  var win = wm.getMostRecentWindow("Browser:Preferences");
+  if (win) {
+    win.focus();
+    if (paneID) {
+      var pane = win.document.getElementById(paneID);
+      win.document.documentElement.showPane(pane);
+    }
+  }
+  else
+    openDialog("chrome://browser/content/preferences/preferences.xul",
+               "Preferences", features, paneID);
+}
+
+/**
+ * Opens the release notes page for this version of the application.
+ * @param   event
+ *          The DOM Event that caused this function to be called, used to
+ *          determine where the release notes page should be displayed based
+ *          on modifiers (e.g. Ctrl = new tab)
+ */
+function openReleaseNotes(event)
+{
+  var appInfo = Components.classes["@mozilla.org/xre/app-info;1"]
+                          .getService(Components.interfaces.nsIXULAppInfo);
+  var regionBundle = document.getElementById("bundle_browser_region");
+  var relnotesURL = regionBundle.getFormattedString("releaseNotesURL", [appInfo.version]);
+  openUILink(relnotesURL, event, false, true);
+}
+  
+/**
+ * Opens the update manager and checks for updates to the application.
+ */
+function checkForUpdates()
+{
+  var um = 
+      Components.classes["@mozilla.org/updates/update-manager;1"].
+      getService(Components.interfaces.nsIUpdateManager);
+  var prompter = 
+      Components.classes["@mozilla.org/updates/update-prompt;1"].
+      createInstance(Components.interfaces.nsIUpdatePrompt);
+
+  // If there's an update ready to be applied, show the "Update Downloaded"
+  // UI instead and let the user know they have to restart the browser for
+  // the changes to be applied. 
+  if (um.activeUpdate && um.activeUpdate.state == "pending")
+    prompter.showUpdateDownloaded(um.activeUpdate);
+  else
+    prompter.checkForUpdates();
+}
+
+function buildHelpMenu()
+{
+  var updates = 
+      Components.classes["@mozilla.org/updates/update-service;1"].
+      getService(Components.interfaces.nsIApplicationUpdateService);
+  var um = 
+      Components.classes["@mozilla.org/updates/update-manager;1"].
+      getService(Components.interfaces.nsIUpdateManager);
+
+  // Disable the UI if the update enabled pref has been locked by the 
+  // administrator or if we cannot update for some other reason
+  var checkForUpdates = document.getElementById("checkForUpdates");
+  var canUpdate = updates.canUpdate;
+  checkForUpdates.setAttribute("disabled", !canUpdate);
+  if (!canUpdate)
+    return; 
+
+  var strings = document.getElementById("bundle_browser");
+  var activeUpdate = um.activeUpdate;
+  
+  // If there's an active update, substitute its name into the label
+  // we show for this item, otherwise display a generic label.
+  function getStringWithUpdateName(key) {
+    if (activeUpdate && activeUpdate.name)
+      return strings.getFormattedString(key, [activeUpdate.name]);
+    return strings.getString(key + "Fallback");
+  }
+  
+  // By default, show "Check for Updates..."
+  var key = "default";
+  if (activeUpdate) {
+    switch (activeUpdate.state) {
+    case "downloading":
+      // If we're downloading an update at present, show the text:
+      // "Downloading Firefox x.x..." otherwise we're paused, and show
+      // "Resume Downloading Firefox x.x..."
+      key = updates.isDownloading ? "downloading" : "resume";
+      break;
+    case "pending":
+      // If we're waiting for the user to restart, show: "Apply Downloaded
+      // Updates Now..."
+      key = "pending";
+      break;
+    }
+  }
+  checkForUpdates.label = getStringWithUpdateName("updatesItem_" + key);
+  if (um.activeUpdate && updates.isDownloading)
+    checkForUpdates.setAttribute("loading", "true");
+  else
+    checkForUpdates.removeAttribute("loading");
+}
+

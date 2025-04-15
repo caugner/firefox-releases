@@ -11,12 +11,11 @@ function upgradeCleanup()
   deleteThisFolder("Chrome",      "en-win");
   deleteThisFile("Chrome",        "en-win.jar");
   deleteThisFolder("Chrome",      "US");
-  // Remove chrome and overlay registries, to remove bogus dependencies
-  // on any of the above files which may cause the app not to start. 
-  // XXXben Erk. This will effectively disable all global extensions...
-  //        we need to come up with a way to preserve global extensions 
-  //        across app versions...
+  deleteThisFile("Chrome",        "help.jar");
+
   deleteThisFile("Chrome",        "chrome.rdf");
+  deleteThisFile("Chrome",        "installed-chrome.txt");
+  deleteThisFile("Chrome",        "app-chrome.manifest");
   deleteThisFolder("Chrome",      "overlayinfo");
 
   // Remove defunct components and type libraries
@@ -33,6 +32,10 @@ function upgradeCleanup()
   deleteThisFile("Components",    "util.xpt");
   deleteThisFile("Components",    "compreg.dat");
   deleteThisFile("Components",    "xpti.dat");
+
+  // Remove non-linked xpt files for rev'd interfaces; this prevents a
+  // conflict if you had previously installed a zip build in the app directory.
+  deleteThisFile("Components",    "autocomplete.xpt");
   
   // Remove defunct defaults files. 
   deleteThisFile("Program",	      "defaults/pref/all.js");
@@ -42,9 +45,14 @@ function upgradeCleanup()
   deleteThisFile("Program",	      "defaults/pref/security-prefs.js");
   deleteThisFile("Program",	      "defaults/pref/unix.js");
   deleteThisFile("Program",	      "defaults/pref/xpinstall.js");
+  deleteThisFile("Program",	      "defaults/pref/bug307259.js");
   deleteThisFile("Program",	      "defaults/profile/panels.rdf");
   deleteThisFolder("Program",	    "defaults/profile/US");
   
+  // Delete dictionary.com search plugin  
+  deleteThisFile("Program",     "searchplugins/dictionary.src");
+  deleteThisFile("Program",     "searchplugins/dictionary.png");
+
   // These files are related to app patches and will interfere with the 
   // UA/app version strings if we do not remove them. 
   deleteThisFile("Program",	    "defaults/pref/bug259708.js");
@@ -85,46 +93,6 @@ if (verifyDiskSpace(communicatorFolder, srDest))
     var pluginsFolder = getFolder("Plugins");
     var ignoreErr = dirCreate(pluginsFolder);
     logComment("dirCreate() returned: " + ignoreErr);
-
-    // register chrome
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome", "browser.jar"), "content/browser/");
-    registerChrome(SKIN | DELAYED_CHROME, getFolder("Chrome", "classic.jar"), "skin/classic/browser/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome", "browser.jar"), "content/browser-region/");
-
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome", "toolkit.jar"), "content/passwordmgr/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome", "toolkit.jar"), "content/mozapps/");
-    registerChrome(SKIN | DELAYED_CHROME, getFolder("Chrome", "classic.jar"), "skin/classic/mozapps/");
-
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/autoconfig/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/necko/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/cookie/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/wallet/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/xbl-marquee/");
-
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","toolkit.jar"),"content/global/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","toolkit.jar"),"content/global-region/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","toolkit.jar"),"content/global-platform/");
-    registerChrome(SKIN | DELAYED_CHROME, getFolder("Chrome","classic.jar"),"skin/classic/global/");
-
-    // XXXben Stuff that will become obsolete
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/navigator/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/navigator-region/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/navigator-platform/");
-    registerChrome(SKIN | DELAYED_CHROME, getFolder("Chrome","classic.jar"),"skin/classic/navigator/");
-
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/communicator/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/communicator-region/");
-    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/communicator-platform/");
-    registerChrome(SKIN | DELAYED_CHROME, getFolder("Chrome","classic.jar"),"skin/classic/communicator/");
-
-    // Register the psm chrome files, if they exist.
-    var pki = getFolder("Chrome", "pippki.jar");
-    if (File.exists(pki))
-      registerChrome(CONTENT | DELAYED_CHROME, pki, "content/pippki/");
-
-    var nss = getFolder("Chrome", "pipnss.jar");
-    if (File.exists(nss))
-      registerChrome(CONTENT | DELAYED_CHROME, nss, "content/pipnss/");
 
     if (err==SUCCESS)
     {

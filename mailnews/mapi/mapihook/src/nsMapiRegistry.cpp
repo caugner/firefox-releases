@@ -48,6 +48,8 @@
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 
+#include "nsEmbedCID.h"
+
 /** Implementation of the nsIMapiRegistry interface.
  *  Use standard implementation of nsISupports stuff.
  */
@@ -55,7 +57,7 @@ NS_IMPL_ISUPPORTS1(nsMapiRegistry, nsIMapiRegistry)
 
 nsMapiRegistry::nsMapiRegistry() {
     m_DefaultMailClient = m_registryUtils.IsDefaultMailClient();
-    m_DefaultNewsClient = m_registryUtils.IsDefaultNewsClient();
+    m_DefaultNewsClient = m_registryUtils.IsDefaultNewsClient(); 
     // m_ShowDialog should be initialized to false 
     // if we are the default mail client.
     m_ShowDialog = !m_registryUtils.HasRestrictedRegistryAccess() && !m_DefaultMailClient;
@@ -79,6 +81,15 @@ nsMapiRegistry::GetIsDefaultNewsClient(PRBool * retval) {
     // because the registry settings can be changed from
     // other mail applications.
     *retval = m_registryUtils.IsDefaultNewsClient();
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMapiRegistry::GetIsDefaultFeedClient(PRBool * retval) {
+    // we need to get the value from registry everytime
+    // because the registry settings can be changed from
+    // other applications.
+    *retval = m_registryUtils.IsDefaultFeedClient();
     return NS_OK;
 }
 
@@ -139,6 +150,13 @@ nsMapiRegistry::SetIsDefaultNewsClient(PRBool aIsDefaultNewsClient)
     return rv ;
 }
 
+NS_IMETHODIMP
+nsMapiRegistry::SetIsDefaultFeedClient(PRBool aIsDefaultFeedClient) 
+{
+    nsresult rv = NS_OK;
+    return aIsDefaultFeedClient ? m_registryUtils.setDefaultFeedClient() : m_registryUtils.unsetDefaultFeedClient();
+}
+
 NS_IMETHODIMP nsMapiRegistry::RegisterMailAndNewsClient()
 {
   m_registryUtils.registerNewsApp(PR_FALSE);
@@ -160,7 +178,7 @@ nsMapiRegistry::ShowMailIntegrationDialog(nsIDOMWindow *aParentWindow) {
 
     nsresult rv;
     nsCOMPtr<nsIPromptService> promptService(do_GetService(
-                  "@mozilla.org/embedcomp/prompt-service;1", &rv));
+                  NS_PROMPTSERVICE_CONTRACTID, &rv));
     if (NS_SUCCEEDED(rv) && promptService)
     {
         nsCOMPtr<nsIStringBundle> bundle;

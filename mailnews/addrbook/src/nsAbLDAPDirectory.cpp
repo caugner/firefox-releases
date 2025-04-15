@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,32 +14,31 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Paul Sandoz <paul.sandoz@sun.com>
- * Sun Microsystems, Inc.
+ * The Initial Developer of the Original Code is
+ * Paul Sandoz <paul.sandoz@sun.com> Sun Microsystems, Inc.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Seth Spitzer <sspitzer@netscape.com>
  *   Dan Mosedale <dmose@netscape.com>
+ *   Paul Sandoz <paul.sandoz@sun.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsAbLDAPDirectory.h"
-#include "nsAbLDAPProperties.h"
-#include "nsAbUtils.h"
 
 #include "nsAbQueryStringToExpression.h"
 
@@ -52,12 +51,14 @@
 #include "nsAutoLock.h"
 #include "nsNetCID.h"
 #include "nsIIOService.h"
-#include "nsIPref.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
+#include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsCOMArray.h"
 #include "nsArrayEnumerator.h"
+#include "nsLDAP.h"
+#include "nsIAbLDAPAttributeMap.h"
 
 nsAbLDAPDirectory::nsAbLDAPDirectory() :
     nsAbDirectoryRDFResource(),
@@ -76,7 +77,7 @@ nsAbLDAPDirectory::~nsAbLDAPDirectory()
         PR_DestroyLock (mLock);
 }
 
-NS_IMPL_ISUPPORTS_INHERITED3(nsAbLDAPDirectory, nsAbDirectoryRDFResource, nsIAbDirectory, nsIAbDirectoryQuery, nsIAbDirectorySearch)
+NS_IMPL_ISUPPORTS_INHERITED4(nsAbLDAPDirectory, nsAbDirectoryRDFResource, nsIAbDirectory, nsIAbDirectoryQuery, nsIAbDirectorySearch, nsIAbLDAPDirectory)
 
 NS_IMETHODIMP nsAbLDAPDirectory::Init(const char* aURI)
 {
@@ -120,7 +121,7 @@ nsresult nsAbLDAPDirectory::InitiateConnection ()
     mURL = do_CreateInstance(NS_LDAPURL_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIPref> prefs = do_GetService(NS_PREF_CONTRACTID, &rv); 
+    nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
     NS_ENSURE_SUCCESS(rv, rv);
 
     // use mURINoQuery to get a prefName
@@ -129,7 +130,7 @@ nsresult nsAbLDAPDirectory::InitiateConnection ()
 
     // turn moz-abldapdirectory://ldap_2.servers.nscpphonebook into -> "ldap_2.servers.nscpphonebook.uri"
     nsXPIDLCString URI;
-    rv = prefs->CopyCharPref(prefName.get(), getter_Copies(URI));
+    rv = prefs->GetCharPref(prefName.get(), getter_Copies(URI));
     if (NS_FAILED(rv))
     {
         /*
@@ -231,7 +232,7 @@ NS_IMETHODIMP nsAbLDAPDirectory::GetChildCards(nsIEnumerator** result)
       nsCOMPtr <nsIRDFService> rdfService = do_GetService("@mozilla.org/rdf/rdf-service;1",&rv);
       NS_ENSURE_SUCCESS(rv, rv);
 
-      nsCOMPtr<nsIPref> prefs = do_GetService(NS_PREF_CONTRACTID, &rv); 
+      nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
       NS_ENSURE_SUCCESS(rv, rv);
 
       // use mURINoQuery to get a prefName
@@ -239,7 +240,7 @@ NS_IMETHODIMP nsAbLDAPDirectory::GetChildCards(nsIEnumerator** result)
       prefName = nsDependentCString(mURINoQuery.get() + kLDAPDirectoryRootLen) + NS_LITERAL_CSTRING(".filename");
 
       nsXPIDLCString fileName;
-      rv = prefs->CopyCharPref(prefName.get(), getter_Copies(fileName));
+      rv = prefs->GetCharPref(prefName.get(), getter_Copies(fileName));
       NS_ENSURE_SUCCESS(rv,rv);
       
       // if there is no fileName, bail out now.
@@ -361,13 +362,8 @@ NS_IMETHODIMP nsAbLDAPDirectory::StartSearch ()
 
     // Set the return properties to
     // return nsIAbCard interfaces
-    nsCStringArray properties;
-    properties.AppendCString (nsCAutoString ("card:nsIAbCard"));
-    CharPtrArrayGuard returnProperties (PR_FALSE);
-    rv = CStringArrayToCharPtrArray::Convert (properties,returnProperties.GetSizeAddr(),
-                    returnProperties.GetArrayAddr(), PR_FALSE);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = arguments->SetReturnProperties (returnProperties.GetSize(), returnProperties.GetArray());
+    const char *arr = "card:nsIAbCard";
+    rv = arguments->SetReturnProperties (1, &arr);
     NS_ENSURE_SUCCESS(rv, rv);
 
     rv = arguments->SetQuerySubDirectories (PR_TRUE);
@@ -379,7 +375,7 @@ NS_IMETHODIMP nsAbLDAPDirectory::StartSearch ()
         new nsAbDirSearchListener (this);
     queryListener = _queryListener;
 
-    nsCOMPtr<nsIPref> prefs = do_GetService(NS_PREF_CONTRACTID, &rv); 
+    nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
     NS_ENSURE_SUCCESS(rv, rv);
 
     // use mURINoQuery to get a prefName
@@ -391,6 +387,23 @@ NS_IMETHODIMP nsAbLDAPDirectory::StartSearch ()
     rv = prefs->GetIntPref(prefName.get(), &maxHits);
     if (NS_FAILED(rv))
       maxHits = 100;
+
+    // get the appropriate ldap attribute map, and pass it in via the
+    // TypeSpecificArgument
+    nsCOMPtr<nsIAbLDAPAttributeMapService> mapSvc = 
+        do_GetService("@mozilla.org/addressbook/ldap-attribute-map-service;1", &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIAbLDAPAttributeMap> attrMap;
+    rv = mapSvc->GetMapForPrefBranch(prefName, getter_AddRefs(attrMap));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsISupports> typeSpecificArg = do_QueryInterface(attrMap, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = arguments->SetTypeSpecificArg(attrMap);
+    NS_ENSURE_SUCCESS(rv, rv);
+
 
     // Perform the query
     rv = DoQuery(arguments, queryListener, maxHits, 0, &mContext);
@@ -485,7 +498,7 @@ NS_IMETHODIMP nsAbLDAPDirectory::GetIsSecure(PRBool *aIsSecure)
   NS_ENSURE_ARG_POINTER(aIsSecure);
 
   nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+  nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
   
   // use mURINoQuery to get a prefName
@@ -512,3 +525,30 @@ NS_IMETHODIMP nsAbLDAPDirectory::GetSearchDuringLocalAutocomplete(PRBool *aSearc
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsAbLDAPDirectory::GetSearchClientControls(nsIMutableArray **aControls)
+{
+    NS_IF_ADDREF(*aControls = mSearchClientControls);
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsAbLDAPDirectory::SetSearchClientControls(nsIMutableArray *aControls)
+{
+    mSearchClientControls = aControls;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsAbLDAPDirectory::GetSearchServerControls(nsIMutableArray **aControls)
+{
+    NS_IF_ADDREF(*aControls = mSearchServerControls);
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsAbLDAPDirectory::SetSearchServerControls(nsIMutableArray *aControls)
+{
+    mSearchServerControls = aControls;
+    return NS_OK;
+}

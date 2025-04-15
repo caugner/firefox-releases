@@ -150,6 +150,16 @@ function getPref(prefName) {
     }
 }
 
+function clearPref(prefName) {
+
+    try {
+        var prefBranch = getPrefBranch();
+            prefBranch.clearUserPref(prefName);
+    }
+    catch(e) {
+    }
+        
+}
 
 function setLDAPVersion(version) {
     gVersion = version;
@@ -168,7 +178,7 @@ function getLDAPAttributes(host, base, filter, attribs) {
         // default to LDAP v3
         if (!gVersion)
           gVersion = Components.interfaces.nsILDAPConnection.VERSION3
-	// user supplied method
+ 	// user supplied method
         processLDAPValues(ldapquery.getQueryResults(url, gVersion));
     }
     catch(e) {

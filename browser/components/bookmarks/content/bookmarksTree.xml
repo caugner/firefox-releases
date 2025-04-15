@@ -1,27 +1,44 @@
 <?xml version="1.0"?>  
 
 #  -*- Mode: HTML; indent-tabs-mode: nil; -*-
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
-# 
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
-# 
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
+#
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
+#
 # The Original Code is mozilla.org code.
-# 
-# The Initial Developer of the Original Code is Netscape
-# Communications Corporation.  Portions created by Netscape are
-# Copyright (C) 1998 Netscape Communications Corporation. All
-# Rights Reserved.
-# 
-# Contributor(s): 
+#
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1998
+# the Initial Developer. All Rights Reserved.
+#
+# Contributor(s):
 #   Ben Goodger <ben@netscape.com> (Original Author)
 #   Blake Ross <blaker@nemtscape.com>
 #   Pierre Chanial <chanial@noos.fr> (v 2.0)
+#
+# Alternatively, the contents of this file may be used under the terms of
+# either the GNU General Public License Version 2 or later (the "GPL"), or
+# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
 <!DOCTYPE window [
   <!ENTITY % bookmarksDTD SYSTEM "chrome://browser/locale/bookmarks/bookmarks.dtd" >
@@ -78,7 +95,7 @@
         const kPrefSvcIID = Components.interfaces.nsIPrefService;
         var prefSvc = Components.classes[kPrefSvcContractID].getService(kPrefSvcIID);
         var prefs = prefSvc.getBranch(null);
-        const kPrefBranchInternalIID = Components.interfaces.nsIPrefBranchInternal;
+        const kPrefBranchInternalIID = Components.interfaces.nsIPrefBranch2;
         var bookmarksPrefsInternal = prefs.QueryInterface(kPrefBranchInternalIID);
         bookmarksPrefsInternal.addObserver(this.sortChangedObserver.domain, 
                                            this.sortChangedObserver, false);
@@ -91,7 +108,7 @@
         // Save column settings and sort info to persisted attribute
         var persistString = "";
         
-        var sortResource = NC_NS + "Name";
+        var sortResource = gNC_NS + "Name";
         var sortDirection = "none";
 
         var treecols = document.getAnonymousElementByAttribute(this, "anonid", "treecols");
@@ -124,7 +141,7 @@
         const kPrefSvcIID = Components.interfaces.nsIPrefService;
         var prefSvc = Components.classes[kPrefSvcContractID].getService(kPrefSvcIID);
         var prefs = prefSvc.getBranch(null);
-        const kPrefBranchInternalIID = Components.interfaces.nsIPrefBranchInternal;
+        const kPrefBranchInternalIID = Components.interfaces.nsIPrefBranch2;
         var bookmarksPrefsInternal = prefs.QueryInterface(kPrefBranchInternalIID);
         bookmarksPrefsInternal.removeObserver(this.sortChangedObserver.domain, 
                                               this.sortChangedObserver);
@@ -264,7 +281,7 @@
 
       <property name="currentIndex">
         <getter><![CDATA[
-          return this.treeBoxObject.selection.currentIndex;
+          return this.treeBoxObject.view.selection.currentIndex;
         ]]></getter>
       </property>
     
@@ -307,8 +324,8 @@
         <body><![CDATA[
           var index = this.treeBuilder.getIndexOfResource(aResource);
           if (index != -1) {
-            if (!this.treeBoxObject.selection.isSelected(index))
-              this.treeBoxObject.selection.toggleSelect(index);
+            if (!this.treeBoxObject.view.selection.isSelected(index))
+              this.treeBoxObject.view.selection.toggleSelect(index);
             return;
           }
          
@@ -317,7 +334,7 @@
           for (var i=0; i<chain.length; i++) {
             var rParent = chain.queryElementAt(i, kRDFRSCIID);
             index = this.treeBuilder.getIndexOfResource(rParent);
-            //dump(i+":"+BookmarksUtils.getProperty(rParent, NC_NS+"Name")+", index:"+index+"\n");
+            //dump(i+":"+BookmarksUtils.getProperty(rParent, gNC_NS+"Name")+", index:"+index+"\n");
             if (index == -1)
 #             rParent is or is a parent of "ref", we go on searching for the
 #             first parent in the tree.
@@ -333,7 +350,7 @@
 
           index = this.treeBuilder.getIndexOfResource(aResource);
           if (index != -1)
-            this.treeBoxObject.selection.toggleSelect(index);
+            this.treeBoxObject.view.selection.toggleSelect(index);
         ]]></body>
       </method>
 
@@ -352,13 +369,13 @@
           selection.item       = [];
           selection.parent     = [];
           selection.isExpanded = [];
-          var rangeCount = this.treeBoxObject.selection.getRangeCount();
+          var rangeCount = this.treeBoxObject.view.selection.getRangeCount();
           // workaround for bug 171547: if rowCount==0, rangeCount==1
           if (this.treeBuilder.rowCount > 0)
           for (var k = 0; k < rangeCount; ++k) {
             var rangeMin = {};
             var rangeMax = {};
-            this.treeBoxObject.selection.getRangeAt(k, rangeMin, rangeMax);
+            this.treeBoxObject.view.selection.getRangeAt(k, rangeMin, rangeMax);
             for (var i = rangeMin.value; i <= rangeMax.value; ++i) {
               var selectedItem   = this.getRowResource(i);
               var selectedParent = this.getParentResource(i);
@@ -497,11 +514,11 @@
 
       <method name="updateTreeSelection">
         <body><![CDATA[
-          this.treeBoxObject.selection.clearSelection();
+          this.treeBoxObject.view.selection.clearSelection();
           for (var i=0; i<this._itemToBeToggled.length; ++i) {
             index = this.treeBuilder.getIndexOfResource(this._itemToBeToggled[i]);
-            if (index != -1 && !this.treeBoxObject.selection.isSelected(index))
-              this.treeBoxObject.selection.toggleSelect(index);
+            if (index != -1 && !this.treeBoxObject.view.selection.isSelected(index))
+              this.treeBoxObject.view.selection.toggleSelect(index);
           }
         ]]></body>
       </method>
@@ -540,7 +557,7 @@
             return;
 
           if (this.clickCount == 2 && modifKey) {
-            this.treeBoxObject.selection.select(row);
+            this.treeBoxObject.view.selection.select(row);
             this._selection = this.getTreeSelection();
           }
           var selection = this._selection;
@@ -555,10 +572,6 @@
           }
           var browserTarget = whereToOpenLink(aEvent);
           BookmarksCommand.openBookmark(selection, browserTarget, this.db);
-          // give focus back to this; openBookmark/openLocation steals it and gives it
-          // to the browser content.  This is to make things like cut/copy/etc. behave sanely
-          // in the bookmarks sidebar.
-          this.focus();
         ]]></body>
       </method>
 
@@ -621,22 +634,19 @@
         {
           var selection = this.mOuter._selection;
           var target    = this.mOuter._target;
-          this.mOuter.treeBoxObject.selection.selectEventsSuppressed = true;
+          this.mOuter.treeBoxObject.view.selection.selectEventsSuppressed = true;
           this.mOuter._itemToBeToggled = [];
           
           switch (aCommand) {
           case "cmd_selectAll":
-            this.mOuter.treeBoxObject.selection.selectAll();
-            break;
-          case "cmd_bm_expandfolder":
-            this.mOuter.treeBoxObject.view.toggleOpenState(this.mOuter.currentIndex);
+            this.mOuter.treeBoxObject.view.selection.selectAll();
             break;
           default:
             this.mOuter.saveSelection();
             BookmarksController.doCommand(aCommand, selection, target);
             this.mOuter.restoreSelection(aCommand);
           }
-          this.mOuter.treeBoxObject.selection.selectEventsSuppressed = false;
+          this.mOuter.treeBoxObject.view.selection.selectEventsSuppressed = false;
         }
       })
       ]]></field>
@@ -660,35 +670,19 @@
       ({
         mOuter: this,
 
-        canDropOn: function(index)
-        {
-          var dragSession = DS.getCurrentSession();
-          if (!dragSession)
-            return false;
-
-          var rsrc = this.mOuter.getRowResource(index);
-
-          // we can only test for kCopyAction if the source is a bookmark
-          var checkCopy = dragSession.isDataFlavorSupported("moz/rdfitem");
-          const kCopyAction = kDSIID.DRAGDROP_ACTION_COPY + kDSIID.DRAGDROP_ACTION_LINK;
-          if (!checkCopy || dragSession.dragAction & kCopyAction) {
-              return true;
-          } else {
-              var selection = BookmarksUtils.getSelectionFromXferData(dragSession);
-              // we can't drop into Livemarks, file:/find: URIs, etc.
-              if (!BookmarksUtils.isValidTargetContainer (rsrc, selection))
-                  return false;
-              return true;
-          }
-        },
-
-        canDropBeforeAfter: function(index, before)
+        canDrop: function(index, orientation)
         {
           var dragSession = DS.getCurrentSession();
           if (!dragSession)
             return false;
 
           var selection = BookmarksUtils.getSelectionFromXferData(dragSession);
+          var isBookmark = dragSession.isDataFlavorSupported("moz/rdfitem");
+          if (isBookmark && selection.containsImmutable)
+            return false;
+          if (orientation == BookmarksUtils.DROP_ON)
+            return true;
+          
           var rsrc = this.mOuter.getRowResource(index);
           var rsrcParent = this.mOuter.getParentResource(index);
 
@@ -702,7 +696,7 @@
             return true;
           if (rsrc.Value != "NC:BookmarksRoot")
             return true;
-          return before? false:this.mOuter.treeBoxObject.view.isContainerOpen(0)
+          return orientation == BookmarksUtils.DROP_BEFORE ? false : this.mOuter.treeBoxObject.view.isContainerOpen(0)
         },
 
         onDrop: function(row, orientation)
@@ -723,7 +717,7 @@
           else {
             target = this.mOuter.getTreeTarget(rItem, rParent, orientation);
           }
-          this.mOuter.treeBoxObject.selection.selectEventsSuppressed = true;
+          this.mOuter.treeBoxObject.view.selection.selectEventsSuppressed = true;
           this.mOuter._itemToBeToggled = [];
 
           // we can only test for kCopyAction if the source is a bookmark
@@ -746,7 +740,7 @@
             this.mOuter.updateTreeSelection();
           // use of a timer to speedup
           var This = this.mOuter;
-          setTimeout( function (){This.treeBoxObject.selection.selectEventsSuppressed = false}, 100)
+          setTimeout( function (){This.treeBoxObject.view.selection.selectEventsSuppressed = false}, 100)
           //dump("DND time:"+(Date.now()-date)+"\n")
         },
 
@@ -789,8 +783,6 @@
         },
         
         onCycleCell          : function (aItemIndex, aColumnID)          {},
-        isEditable           : function (aItemIndex, aColumnID)          {},
-        onSetCellText        : function (aItemIndex, aColumnID, aValue)  {},
         onPerformAction      : function (aAction)                        {},
         onPerformActionOnRow : function (aAction, aItemIndex)            {},
         onPerformActionOnCell: function (aAction, aItemIndex, aColumnID) {}

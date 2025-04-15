@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Author: Aaron Leventhal (aaronl@netscape.com)
- *
+ *   Author: Aaron Leventhal (aaronl@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -57,15 +56,27 @@ nsLinkableAccessible(aDomNode, aShell)
 }
 
 /* wstring getName (); */
-NS_IMETHODIMP nsHTMLAreaAccessible::GetName(nsAString & _retval)
+NS_IMETHODIMP nsHTMLAreaAccessible::GetName(nsAString & aName)
 {
-  nsCOMPtr<nsIDOMElement> elt(do_QueryInterface(mDOMNode));
-  if (elt) {
-    nsAutoString hrefString;
-    elt->GetAttribute(NS_LITERAL_STRING("title"), _retval);
-    if (_retval.IsEmpty())
-      GetValue(_retval);
+  nsCOMPtr<nsIContent> content(do_QueryInterface(mDOMNode));
+  if (!content) {
+    return NS_ERROR_FAILURE;
   }
+
+  aName.Truncate();
+  if (mRoleMapEntry) {
+    nsresult rv = nsAccessible::GetName(aName);
+    if (!aName.IsEmpty()) {
+      return rv;
+    }
+  }
+  if (NS_CONTENT_ATTR_NO_VALUE ==
+      content->GetAttr(kNameSpaceID_None, nsAccessibilityAtoms::alt, aName) &&  
+      NS_CONTENT_ATTR_NO_VALUE ==
+      content->GetAttr(kNameSpaceID_None, nsAccessibilityAtoms::title, aName)) {
+    return GetValue(aName);
+  }
+
   return NS_OK;
 }
 
@@ -108,51 +119,6 @@ NS_IMETHODIMP nsHTMLAreaAccessible::GetChildCount(PRInt32 *_retval)
   return NS_OK;
 }
 
-
-NS_IMETHODIMP nsHTMLAreaAccessible::GetParent(nsIAccessible * *aParent) 
-{ 
-  *aParent = mParent;
-  NS_IF_ADDREF(*aParent);
-  return NS_OK;
-}
-
-nsIAccessible *nsHTMLAreaAccessible::GetAreaAccessible(nsIDOMNode *aDOMNode)
-{
-  nsCOMPtr<nsIAccessibilityService> accService(do_GetService("@mozilla.org/accessibilityService;1"));
-  if (accService) {
-    nsIAccessible* acc = nsnull;
-    accService->GetCachedAccessible(aDOMNode, mWeakShell, &acc);
-    if (!acc) {
-      accService->CreateHTMLAreaAccessible(mWeakShell, aDOMNode, mParent, &acc);
-    }
-    return acc;
-  }
-  return nsnull;
-
-}
-
-NS_IMETHODIMP nsHTMLAreaAccessible::GetNextSibling(nsIAccessible * *aNextSibling) 
-{ 
-  *aNextSibling = nsnull;
-  nsCOMPtr<nsIDOMNode> nextNode;
-  mDOMNode->GetNextSibling(getter_AddRefs(nextNode));
-  if (nextNode)
-    *aNextSibling = GetAreaAccessible(nextNode);
-  return NS_OK;  
-}
-
-/* readonly attribute nsIAccessible accPreviousSibling; */
-NS_IMETHODIMP nsHTMLAreaAccessible::GetPreviousSibling(nsIAccessible * *aAccPrevSibling) 
-{
-  *aAccPrevSibling = nsnull;
-  nsCOMPtr<nsIDOMNode> prevNode;
-  mDOMNode->GetPreviousSibling(getter_AddRefs(prevNode));
-  if (prevNode)
-    *aAccPrevSibling = GetAreaAccessible(prevNode);
-  return NS_OK;  
-}
-
-
 /* void accGetBounds (out long x, out long y, out long width, out long height); */
 NS_IMETHODIMP nsHTMLAreaAccessible::GetBounds(PRInt32 *x, PRInt32 *y, PRInt32 *width, PRInt32 *height)
 {
@@ -160,18 +126,14 @@ NS_IMETHODIMP nsHTMLAreaAccessible::GetBounds(PRInt32 *x, PRInt32 *y, PRInt32 *w
 
   *x = *y = *width = *height = 0;
 
-  nsCOMPtr<nsIPresShell> presShell(GetPresShell());
-  NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
-
-  nsCOMPtr<nsIPresContext> presContext;
-  presShell->GetPresContext(getter_AddRefs(presContext));
+  nsPresContext *presContext = GetPresContext();
   NS_ENSURE_TRUE(presContext, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsIContent> ourContent(do_QueryInterface(mDOMNode));
   NS_ENSURE_TRUE(ourContent, NS_ERROR_FAILURE);
 
-  nsIFrame *frame = nsnull;
-  presShell->GetPrimaryFrameFor(ourContent, &frame);
+  nsIFrame *frame = GetFrame();
+  NS_ENSURE_TRUE(frame, NS_ERROR_FAILURE);
   nsIImageFrame *imageFrame;
   nsresult rv = frame->QueryInterface(NS_GET_IID(nsIImageFrame), (void**)&imageFrame);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -197,9 +159,8 @@ NS_IMETHODIMP nsHTMLAreaAccessible::GetBounds(PRInt32 *x, PRInt32 *y, PRInt32 *w
 
   // Put coords in absolute screen coords
   GetScreenOrigin(presContext, frame, &orgRectPixels);
-  GetScrollOffset(&pageRectPixels);
-  *x += orgRectPixels.x - pageRectPixels.x;
-  *y += orgRectPixels.y - pageRectPixels.y;
+  *x += orgRectPixels.x;
+  *y += orgRectPixels.y;
 
   return NS_OK;
 }

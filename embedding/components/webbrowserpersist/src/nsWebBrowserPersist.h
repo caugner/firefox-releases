@@ -1,24 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla browser.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications, Inc.  Portions created by Netscape are
- * Copyright (C) 1999, Mozilla.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Adam Lock <adamlock@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #ifndef nsWebBrowserPersist_h__
 #define nsWebBrowserPersist_h__
@@ -37,10 +54,11 @@
 #include "nsITransport.h"
 #include "nsIProgressEventSink.h"
 #include "nsILocalFile.h"
-#include "nsIWebProgressListener.h"
+#include "nsIWebProgressListener2.h"
 
 #include "nsHashtable.h"
 #include "nsVoidArray.h"
+#include "nsInt64.h"
 
 #include "nsCWebBrowserPersist.h"
 
@@ -63,6 +81,7 @@ public:
     
     NS_DECL_ISUPPORTS
     NS_DECL_NSIINTERFACEREQUESTOR
+    NS_DECL_NSICANCELABLE
     NS_DECL_NSIWEBBROWSERPERSIST
     NS_DECL_NSIREQUESTOBSERVER
     NS_DECL_NSISTREAMLISTENER
@@ -77,6 +96,8 @@ protected:
         nsIURI *aURI, nsISupports *aCacheKey, nsIURI *aReferrer,
         nsIInputStream *aPostData, const char *aExtraHeaders, nsIURI *aFile,
         PRBool aCalcFileExt);
+    nsresult SaveChannelInternal(
+        nsIChannel *aChannel, nsIURI *aFile, PRBool aCalcFileExt);
     nsresult SaveDocumentInternal(
         nsIDOMDocument *aDocument, nsIURI *aFile, nsIURI *aDataPath);
     nsresult SaveDocuments();
@@ -146,6 +167,8 @@ private:
     PRBool SerializeNextFile();
     void CalcTotalProgress();
 
+    void SetApplyConversionIfNeeded(nsIChannel *aChannel);
+
     // Hash table enumerators
     static PRBool PR_CALLBACK EnumPersistURIs(
         nsHashKey *aKey, void *aData, void* closure);
@@ -175,6 +198,12 @@ private:
     nsCOMPtr<nsIMIMEService>  mMIMEService;
     nsCOMPtr<nsIURI>          mURI;
     nsCOMPtr<nsIWebProgressListener> mProgressListener;
+    /**
+     * Progress listener for 64-bit values; this is the same object as
+     * mProgressListener, but is a member to avoid having to qi it for each
+     * progress notification.
+     */
+    nsCOMPtr<nsIWebProgressListener2> mProgressListener2;
     nsHashtable               mOutputMap;
     nsHashtable               mUploadList;
     nsHashtable               mURIMap;
@@ -190,8 +219,8 @@ private:
     PRPackedBool              mSerializingOutput;
     PRUint32                  mPersistFlags;
     PRUint32                  mPersistResult;
-    PRInt32                   mTotalCurrentProgress;
-    PRInt32                   mTotalMaxProgress;
+    nsInt64                   mTotalCurrentProgress;
+    nsInt64                   mTotalMaxProgress;
     PRInt16                   mWrapColumn;
     PRUint32                  mEncodingFlags;
     nsString                  mContentType;

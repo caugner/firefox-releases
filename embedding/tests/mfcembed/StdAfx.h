@@ -25,7 +25,7 @@
  * DEALINGS IN THE SOFTWARE.
  *
  * Contributor(s):
- *   Chak Nanga <chak@netscape.com> 
+ *   Chak Nanga <chak@netscape.com>
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -72,11 +72,8 @@
 #endif
 
 #include "nsCOMPtr.h"
-#include "nsNetUtil.h"
-#include "nsString.h"
-#include "nsVoidArray.h"
+#include "nsEmbedString.h"
 #include "nsCWebBrowser.h"
-#include "nsXPIDLString.h"
 #include "nsWidgetsCID.h"
 #include "nsIDocShell.h"
 #include "nsIWebBrowser.h"
@@ -100,7 +97,6 @@
 #include "nsIDOMDocument.h"
 #include "nsIDOMHTMLDocument.h"
 #include "nsIDOMHTMLFrameSetElement.h"
-#include "nsReadableUtils.h"
 #include "nsIPrompt.h"
 #include "nsEmbedAPI.h"         
 #include "nsISHistory.h"
@@ -119,6 +115,7 @@
 #include "nsIEmbeddingSiteWindow2.h"
 #include "nsIWebBrowserFind.h"
 #include "nsIWebBrowserFocus.h"
+#include "nsIURI.h"
 
 // Printer Includes
 #include "nsIWebBrowserPrint.h"

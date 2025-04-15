@@ -1,25 +1,41 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Håkan Waara <hwaara@chello.se>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 var rdfDatasourcePrefix = "@mozilla.org/rdf/datasource;1?name=";
 var rdfServiceContractID    = "@mozilla.org/rdf/rdf-service;1";
@@ -50,7 +66,6 @@ var gDataSourceSearchListener;
 var gViewSearchListener;
 
 var gSearchStopButton;
-var gSearchSessionFolderListener;
 var gMailSession;
 
 var MSG_FOLDER_FLAG_VIRTUAL = 0x0020;
@@ -125,9 +140,8 @@ var nsSearchResultsController =
             return true;
 
         case "saveas_vf_button":
-            // prompt for view name - create virtual folder in ok callback.
-          saveAsVirtualFolder();
-
+            saveAsVirtualFolder();
+            return true;
         default:
             return false;
         }
@@ -191,9 +205,9 @@ var gSearchNotificationListener =
 
 // the folderListener object
 var gFolderListener = {
-    OnItemAdded: function(parentItem, item, view) {},
+    OnItemAdded: function(parentItem, item) {},
 
-    OnItemRemoved: function(parentItem, item, view){},
+    OnItemRemoved: function(parentItem, item){},
 
     OnItemPropertyChanged: function(item, property, oldValue, newValue) {},
 
@@ -241,12 +255,14 @@ function searchOnLoad()
   CreateMessenger();
 
   gSearchBundle = document.getElementById("bundle_search");
+  gSearchStopButton.setAttribute("label", gSearchBundle.getString("labelForSearchButton"));
+  gSearchStopButton.setAttribute("accesskey", gSearchBundle.getString("accesskeyForSearchButton"));
   gMessengerBundle = document.getElementById("bundle_messenger");
   setupDatasource();
   setupSearchListener();
 
   if (window.arguments && window.arguments[0])
-    selectFolder(window.arguments[0].folder);
+      selectFolder(window.arguments[0].folder);
 
   onMore(null);
   UpdateMailSearch("onload");
@@ -257,10 +273,10 @@ function searchOnLoad()
   HideSearchColumn("unreadCol"); // since you can't thread search results
   HideSearchColumn("unreadButtonColHeader");
   HideSearchColumn("statusCol");
-  HideSearchColumn("sizeCol");
   HideSearchColumn("flaggedCol");
   HideSearchColumn("idCol");
   HideSearchColumn("junkStatusCol");
+  HideSearchColumn("accountCol");
   
   // we want to show the location column for search
   ShowSearchColumn("locationCol");
@@ -272,8 +288,7 @@ function searchOnUnload()
     gSearchSession.unregisterListener(gViewSearchListener);
     gSearchSession.unregisterListener(gSearchNotificationListener);
 
-    gMailSession.RemoveFolderListener(gSearchSessionFolderListener);
-	gSearchSession.removeFolderListener(gFolderListener);
+    gMailSession.RemoveFolderListener(gFolderListener);
 	
     if (gSearchView) {
 	gSearchView.close();
@@ -312,32 +327,14 @@ function onResetSearch(event) {
     gStatusFeedback.showStatusString("");
 }
 
-function getFirstItemByTag(root, tag)
-{
-    var node;
-    if (root.localName == tag)
-        return root;
-
-    if (root.childNodes) {
-        for (node = root.firstChild; node; node=node.nextSibling) {
-            if (node.localName != "template") {
-                var result = getFirstItemByTag(node, tag);
-                if (result) return result;
-            }
-        }
-    }
-    return null;
-}
-
 function selectFolder(folder) 
 {
     var folderURI;
 
     // if we can't search messages on this folder, just select the first one
     if (!folder || !folder.server.canSearchMessages || (folder.flags & MSG_FOLDER_FLAG_VIRTUAL)) {
-        // walk folders to find first item
-        var firstItem = getFirstItemByTag(gFolderPicker, "menu");
-        folderURI = firstItem.id;
+        // find first item in our folder picker menu list
+        folderURI = gFolderPicker.firstChild.tree.builderView.getResourceAtIndex(0).Value;
     } else {
         folderURI = folder.URI;
     }
@@ -352,7 +349,15 @@ function updateSearchFolderPicker(folderURI)
     gCurrentFolder =
         RDF.GetResource(folderURI).QueryInterface(nsIMsgFolder);
 
+    var searchLocalSystem = document.getElementById("checkSearchLocalSystem");
+    if (searchLocalSystem)
+        searchLocalSystem.disabled = gCurrentFolder.server.searchScope == nsMsgSearchScope.offlineMail;
     setSearchScope(GetScopeForFolder(gCurrentFolder));
+}
+
+function updateSearchLocalSystem()
+{
+  setSearchScope(GetScopeForFolder(gCurrentFolder));
 }
 
 function UpdateAfterCustomHeaderChange()
@@ -492,9 +497,11 @@ function AddSubFoldersToURI(folder)
   return returnString;
 }
 
+
 function GetScopeForFolder(folder) 
 {
-  return folder.server.searchScope;
+  var searchLocalSystem = document.getElementById("checkSearchLocalSystem");
+  return searchLocalSystem && searchLocalSystem.checked ? nsMsgSearchScope.offlineMail : folder.server.searchScope;
 }
 
 var nsMsgViewSortType = Components.interfaces.nsMsgViewSortType;
@@ -559,16 +566,14 @@ function setupDatasource() {
     // attributes about each message)
     gSearchSession = Components.classes[searchSessionContractID].createInstance(Components.interfaces.nsIMsgSearchSession);
 
-    gSearchSessionFolderListener = gSearchSession.QueryInterface(Components.interfaces.nsIFolderListener);
     gMailSession = Components.classes[mailSessionContractID].getService(Components.interfaces.nsIMsgMailSession);
     var nsIFolderListener = Components.interfaces.nsIFolderListener;
     var notifyFlags = nsIFolderListener.event;
-    gMailSession.AddFolderListener(gSearchSessionFolderListener, notifyFlags);
+    gMailSession.AddFolderListener(gFolderListener, notifyFlags);
 
     // the datasource is a listener on the search results
     gViewSearchListener = gSearchView.QueryInterface(Components.interfaces.nsIMsgSearchNotify);
     gSearchSession.registerListener(gViewSearchListener);
-    gSearchSession.addFolderListener(gFolderListener);
 }
 
 
@@ -582,7 +587,7 @@ function setupSearchListener()
 function GetFolderDatasource()
 {
     if (!gFolderDatasource)
-        gFolderDatasource = Components.classes[folderDSContractID].createInstance(Components.interfaces.nsIRDFDataSource);
+        gFolderDatasource = Components.classes[folderDSContractID].getService(Components.interfaces.nsIRDFDataSource);
     return gFolderDatasource;
 }
 
@@ -794,3 +799,4 @@ function saveAsVirtualFolder()
                                   searchTerms:gSearchSession.searchTerms,
                                   searchFolderURIs: searchFolderURIs});
 }
+

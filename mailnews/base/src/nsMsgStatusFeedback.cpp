@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -42,7 +42,7 @@
 #include "nsIWebProgress.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsPIDOMWindow.h"
-
+#include "nsIXULBrowserWindow.h"
 #include "nsMsgStatusFeedback.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIDocumentViewer.h"
@@ -52,6 +52,7 @@
 #include "nsIDocShellTreeItem.h"
 #include "nsIChannel.h"
 #include "prinrval.h"
+#include "nsInt64.h"
 #include "nsITimelineService.h"
 #include "nsIMsgMailNewsUrl.h"
 #include "nsIMimeMiscStatus.h"
@@ -60,8 +61,6 @@
 #include "nsIMsgHdr.h"
 
 #define MSGFEEDBACK_TIMER_INTERVAL 500
-
-nsIAtom * nsMsgStatusFeedback::kMsgLoadedAtom = nsnull;
 
 nsMsgStatusFeedback::nsMsgStatusFeedback() :
   m_lastPercent(0)
@@ -76,13 +75,12 @@ nsMsgStatusFeedback::nsMsgStatusFeedback() :
         bundleService->CreateBundle("chrome://messenger/locale/messenger.properties",
                                     getter_AddRefs(mBundle));
 
-    kMsgLoadedAtom = NS_NewAtom("msgLoaded");
+    m_msgLoadedAtom = do_GetAtom("msgLoaded");
 }
 
 nsMsgStatusFeedback::~nsMsgStatusFeedback()
 {
   mBundle = nsnull;
-  NS_RELEASE(kMsgLoadedAtom);
 }
 
 NS_IMPL_THREADSAFE_ADDREF(nsMsgStatusFeedback)
@@ -190,7 +188,7 @@ nsMsgStatusFeedback::OnStateChange(nsIWebProgress* aWebProgress,
               // not sending this notification is not a fatal error...
               (void) msgUrl->GetMessageHeader(getter_AddRefs(msgHdr));
               if (msgFolder && msgHdr)
-                msgFolder->NotifyPropertyFlagChanged(msgHdr, kMsgLoadedAtom, 0, 1);
+                msgFolder->NotifyPropertyFlagChanged(msgHdr, m_msgLoadedAtom, 0, 1);
             }
           }
         }
@@ -238,6 +236,15 @@ nsMsgStatusFeedback::ShowStatusString(const PRUnichar *status)
   if (mStatusFeedback)
     mStatusFeedback->ShowStatusString(status);
 	return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMsgStatusFeedback::SetStatusString(const PRUnichar *status)
+{
+  nsCOMPtr <nsIXULBrowserWindow> xulBrowserWindow = do_QueryInterface(mStatusFeedback);
+  if (xulBrowserWindow)
+    xulBrowserWindow->SetJSDefaultStatus(status);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -312,11 +319,12 @@ NS_IMETHODIMP nsMsgStatusFeedback::SetDocShell(nsIDocShell *shell, nsIDOMWindow 
 }
 
 NS_IMETHODIMP nsMsgStatusFeedback::OnProgress(nsIRequest *request, nsISupports* ctxt, 
-                                          PRUint32 aProgress, PRUint32 aProgressMax)
+                                          PRUint64 aProgress, PRUint64 aProgressMax)
 {
   // XXX: What should the nsIWebProgress be?
-  return OnProgressChange(nsnull, request, aProgress, aProgressMax, 
-                          aProgress /* current total progress */, aProgressMax /* max total progress */);
+  // XXX: this truncates 64-bit to 32-bit
+  return OnProgressChange(nsnull, request, nsUint64(aProgress), nsUint64(aProgressMax), 
+                          nsUint64(aProgress) /* current total progress */, nsUint64(aProgressMax) /* max total progress */);
 }
 
 NS_IMETHODIMP nsMsgStatusFeedback::OnStatus(nsIRequest *request, nsISupports* ctxt, 

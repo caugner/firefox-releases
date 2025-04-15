@@ -1,24 +1,47 @@
 <?xml version="1.0"?> 
-<!--
-   The contents of this file are subject to the Netscape Public
-   License Version 1.1 (the "License"); you may not use this file
-   except in compliance with the License. You may obtain a copy of
-   the License at http://www.mozilla.org/NPL/
-    
-   Software distributed under the License is distributed on an "AS
-   IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-   implied. See the License for the specific language governing
-   rights and limitations under the License.
+<!-- ***** BEGIN LICENSE BLOCK *****
+ Version: MPL 1.1/GPL 2.0/LGPL 2.1
 
-  Contributor(s):   J.Betak     <jbetak@netscape.com>
-                    Josh Soref  <timeless@mac.com>
-  -->
+ The contents of this file are subject to the Mozilla Public License Version
+ 1.1 (the "License"); you may not use this file except in compliance with
+ the License. You may obtain a copy of the License at
+ http://www.mozilla.org/MPL/
+
+ Software distributed under the License is distributed on an "AS IS" basis,
+ WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ for the specific language governing rights and limitations under the
+ License.
+
+ The Original Code is mozilla.org Code.
+
+ The Initial Developer of the Original Code is
+ Netscape Communications Corporation.
+ Portions created by the Initial Developer are Copyright (C) 2001
+ the Initial Developer. All Rights Reserved.
+
+ Contributor(s):
+   J.Betak     <jbetak@netscape.com>
+   Josh Soref  <timeless@mac.com>
+
+ Alternatively, the contents of this file may be used under the terms of
+ either the GNU General Public License Version 2 or later (the "GPL"), or
+ the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ in which case the provisions of the GPL or the LGPL are applicable instead
+ of those above. If you wish to allow use of your version of this file only
+ under the terms of either the GPL or the LGPL, and not to allow others to
+ use your version of this file under the terms of the MPL, indicate your
+ decision by deleting the provisions above and replace them with the notice
+ and other provisions required by the GPL or the LGPL. If you do not delete
+ the provisions above, a recipient may use your version of this file under
+ the terms of any one of the MPL, the GPL or the LGPL.
+
+ ***** END LICENSE BLOCK ***** -->
 
 <?xml-stylesheet href="chrome://communicator/skin/" type="text/css"?>
 <?xul-overlay href="chrome://communicator/content/utilityOverlay.xul"?>
  
 <!DOCTYPE page [
-<!ENTITY % brandDTD SYSTEM "chrome://global/locale/brand.dtd" >
+<!ENTITY % brandDTD SYSTEM "chrome://branding/locale/brand.dtd" >
 %brandDTD;
 <!ENTITY % regionDTD SYSTEM "chrome://global-region/locale/region.dtd" >
 %regionDTD;
@@ -41,18 +64,18 @@
       var regionName = contentList.getAttribute("prefvalue");
       var regionElements = contentList.getElementsByAttribute("value", regionName);
 
-      if (regionElements.length) {
-        contentList.selectItem(regionElements[0]);
+      if (regionElements.item(0)) {
+        contentList.selectItem(regionElements.item(0));
       } else {
         contentList.selectedIndex = 0;
       }
 
       var languageList = document.getElementById( "languagePackList" );
       var languageName = languageList.getAttribute("prefvalue");
-      var languageElements =languageList.getElementsByAttribute("value", languageName);
+      var languageElements = languageList.getElementsByAttribute("value", languageName);
 
-      if (languageElements.length) {
-        languageList.selectItem(languageElements[0]);
+      if (languageElements.item(0)) {
+        languageList.selectItem(languageElements.item(0));
       } else {
         languageList.selectedIndex = 0;
       }
@@ -105,7 +128,7 @@
           faslFile.remove(false);
         } catch(e) {}
       }
-	    return true;
+      return true;
     }
 
     function SelectPack(listbox, button)
@@ -150,8 +173,8 @@
       var listSelection = list.getElementsByAttribute("value", list.getAttribute("prefvalue"));
       
       //find and select the list item corresponding to the current chrome provider
-      if (listSelection.length)
-        list.selectedItem = listSelection[0];
+      if (listSelection.item(0))
+        list.selectedItem = listSelection.item(0);
       else
         list.selectedIndex = 0;
     }
@@ -169,7 +192,7 @@
   <description>&languageIntro.label;</description>
   <separator class="thin"/>
 
-  <description>&installedLanguagePacks.label;</description>
+  <label control="languagePackList">&installedLanguagePacks.label;</label>
   <listbox id="languagePackList" flex="1" rows="3" 
         ref="urn:mozilla:locale:root" 
         datasources="rdf:chrome"
@@ -195,9 +218,22 @@
 
       <!-- This rule "falls through" to match obsolete language packs -->
       <rule>
-        <listitem uri="..." translation="true" nselected="false" class="outofdate"
-                  label="rdf:http://www.mozilla.org/rdf/chrome#displayName &update.label;"
-                  value="rdf:http://www.mozilla.org/rdf/chrome#name"/>
+        <conditions>
+          <content uri="?container"/>
+          <member container="?container" child="?member"/>
+          <triple predicate="http://www.mozilla.org/rdf/chrome#localeVersion"
+                  subject="?member" object="?version"/>
+        </conditions>
+        <bindings>
+          <binding predicate="http://www.mozilla.org/rdf/chrome#displayName"
+                   subject="?member" object="?label"/>
+          <binding predicate="http://www.mozilla.org/rdf/chrome#name"
+                   subject="?member" object="?value"/>
+        </bindings>
+        <action>
+          <listitem uri="?member" label="?label ?version &update.label;" value="?value"
+                    translation="true" nselected="false" class="outofdate"/>
+        </action>
       </rule>
     </template>
   </listbox>
@@ -221,7 +257,7 @@
   <separator class="thin"/>
   <description>&contentIntro.label;</description>
 
-  <description>&installedContentPacks.label;</description>
+  <label control="contentPackList">&installedContentPacks.label;</label>
   <listbox id="contentPackList" flex="1" rows="3" 
         ref="urn:mozilla:locale:root" datasources="rdf:chrome"
         sortResource="http://www.mozilla.org/rdf/chrome#name"

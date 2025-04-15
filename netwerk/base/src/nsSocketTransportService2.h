@@ -38,7 +38,7 @@
 #ifndef nsSocketTransportService2_h__
 #define nsSocketTransportService2_h__
 
-#include "nsISocketTransportService.h"
+#include "nsPISocketTransportService.h"
 #include "nsIEventTarget.h"
 #include "nsIRunnable.h"
 #include "nsIThread.h"
@@ -70,7 +70,11 @@ extern PRLogModuleInfo *gSocketTransportLog;
 class nsASocketHandler : public nsISupports
 {
 public:
-    nsASocketHandler() : mCondition(NS_OK), mPollFlags(0) {}
+    nsASocketHandler()
+        : mCondition(NS_OK)
+        , mPollFlags(0)
+        , mPollTimeout(PR_UINT16_MAX)
+        {}
 
     //
     // this condition variable will be checked to determine if the socket
@@ -87,12 +91,24 @@ public:
     PRUint16 mPollFlags;
 
     //
+    // this value specifies the maximum amount of time in seconds that may be
+    // spent waiting for activity on this socket.  if this timeout is reached,
+    // then OnSocketReady will be called with outFlags = -1.
+    //
+    // the default value for this member is PR_UINT16_MAX, which disables the
+    // timeout error checking.  (i.e., a timeout value of PR_UINT16_MAX is
+    // never reached.)
+    //
+    PRUint16 mPollTimeout;
+
+    //
     // called to service a socket
     // 
     // params:
     //   socketRef - socket identifier
     //   fd        - socket file descriptor
     //   outFlags  - value of PR_PollDesc::out_flags after PR_Poll returns
+    //               or -1 if a timeout occured
     //
     virtual void OnSocketReady(PRFileDesc *fd, PRInt16 outFlags) = 0;
 
@@ -107,12 +123,13 @@ public:
 
 //-----------------------------------------------------------------------------
 
-class nsSocketTransportService : public nsISocketTransportService
+class nsSocketTransportService : public nsPISocketTransportService
                                , public nsIEventTarget
                                , public nsIRunnable
 {
 public:
     NS_DECL_ISUPPORTS
+    NS_DECL_NSPISOCKETTRANSPORTSERVICE
     NS_DECL_NSISOCKETTRANSPORTSERVICE
     NS_DECL_NSIEVENTTARGET
     NS_DECL_NSIRUNNABLE
@@ -164,6 +181,12 @@ private:
     PRBool      mAutodialEnabled;
 
     //-------------------------------------------------------------------------
+    // misc (socket thread only)
+    //-------------------------------------------------------------------------
+    // indicates whether we are currently in the process of shutting down
+    PRBool      mShuttingDown;
+
+    //-------------------------------------------------------------------------
     // event queue (any thread)
     //-------------------------------------------------------------------------
 
@@ -185,6 +208,7 @@ private:
     {
         PRFileDesc       *mFD;
         nsASocketHandler *mHandler;
+        PRUint16          mElapsedTime;  // time elapsed w/o activity
     };
 
     SocketContext mActiveList [ NS_SOCKET_MAX_COUNT ];
@@ -213,7 +237,10 @@ private:
 
     PRPollDesc mPollList[ NS_SOCKET_MAX_COUNT + 1 ];
 
-    PRInt32 Poll(); // calls PR_Poll
+    PRIntervalTime PollTimeout();            // computes ideal poll timeout
+    PRInt32        Poll(PRUint32 *interval); // calls PR_Poll.  the out param
+                                             // interval indicates the poll
+                                             // duration in seconds.
 
     //-------------------------------------------------------------------------
     // pending socket queue - see NotifyWhenCanAttachSocket

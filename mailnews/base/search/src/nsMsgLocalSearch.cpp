@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -246,9 +246,9 @@ void nsMsgSearchBoolExpression::GenerateEncodeStr(nsCString * buffer)
         // a ' ' to preceded the closing paren in the OR encoding.
         PRUint32 lastCharPos = buffer->Length() - 1;
         if (buffer->CharAt(lastCharPos) == ' ')
-		{
+        {
             buffer->Truncate(lastCharPos);
-		}
+        }
         
         *buffer += ')';
     }
@@ -382,14 +382,14 @@ nsresult nsMsgSearchOfflineMail::ConstructExpressionTree(nsIMsgDBHdr *msgToMatch
 {
   PRBool result;
 
-	NS_ENSURE_ARG_POINTER(pResult);
+  NS_ENSURE_ARG_POINTER(pResult);
 
-	*pResult = PR_FALSE;
+  *pResult = PR_FALSE;
 
   // Don't even bother to look at expunged messages awaiting compression
   PRUint32 msgFlags;
   msgToMatch->GetFlags(&msgFlags);
-	if (msgFlags & MSG_FLAG_EXPUNGED)
+  if (msgFlags & MSG_FLAG_EXPUNGED)
     result = PR_FALSE;
     
   PRUint32 count;
@@ -476,7 +476,7 @@ nsresult nsMsgSearchOfflineMail::ProcessSearchTerm(nsIMsgDBHdr *msgToMatch,
 
     NS_ENSURE_ARG_POINTER(pResult);
 
-	*pResult = PR_FALSE;
+    *pResult = PR_FALSE;
 
     nsMsgSearchAttribValue attrib;
     aTerm->GetAttrib(&attrib);
@@ -627,8 +627,8 @@ nsresult nsMsgSearchOfflineMail::MatchTerms(nsIMsgDBHdr *msgToMatch,
                           Filtering, &expressionTree, pResult);
 
   // evaluate the expression tree and return the result
-	if (NS_SUCCEEDED(err) && expressionTree)
-		*pResult = expressionTree->OfflineEvaluate();
+  if (NS_SUCCEEDED(err) && expressionTree)
+    *pResult = expressionTree->OfflineEvaluate();
   delete expressionTree;
 
   return err;
@@ -706,27 +706,15 @@ nsresult nsMsgSearchOfflineMail::Search (PRBool *aDone)
 
 void nsMsgSearchOfflineMail::CleanUpScope()
 {
-    // Let go of the DB when we're done with it so we don't kill the db cache
-    if (m_db)
-    {
-        m_listContext = nsnull; 
-        m_db->Close(PR_FALSE);
-    }
-    
-    m_db = nsnull;
+  // Let go of the DB when we're done with it so we don't kill the db cache
+  if (m_db)
+  {
+    m_listContext = nsnull; 
+    m_db->Close(PR_FALSE);
+  }
+  
+  m_db = nsnull;
   m_scope->SetInputStream(nsnull);
-#if 0 // not sure how we'll clean this up. the scope term caches in the input stream - maybe just null it out.
-  nsCOMPtr <nsILineInputStream> inputStream;
-  nsCOMPtr <nsILocalFile> localFile
-  nsresult rv = m_scope->GetMailFile(getter_AddRefs(localFile));
-    PRBool isOpen = PR_FALSE;
-  if (NS_SUCCEEDED(rv) && localFile)
-	{
-       fileSpec->IsStreamOpen(&isOpen);
-       if (isOpen) 
-         fileSpec->CloseStream();    
-    }
-#endif
 }
 
 NS_IMETHODIMP nsMsgSearchOfflineMail::AddResultElement (nsIMsgDBHdr *pHeaders)

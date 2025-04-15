@@ -23,6 +23,7 @@
  *
  * Contributor(s):
  *   John Bandhauer <jband@netscape.com> (original author)
+ *   Nate Nielsen <nielsen@memberwebs.com> 
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -48,6 +49,7 @@
 #include "nsIInterfaceInfo.idl"
 #include "nsIInterfaceInfoManager.idl"
 #include "nsIExceptionService.idl"
+#include "nsIVariant.idl"
 
 %{ C++
 #include "jspubtd.h"
@@ -176,7 +178,37 @@ interface nsIXPConnectWrappedNative : nsIXPConnectJSObjectHolder
      * object it points into.
      */
     voidPtrPtr GetSecurityInfoAddress();
+
+%{C++
+    /**
+     * Faster access to the native object from C++.  Will never return null.
+     */
+    nsISupports* Native() const { return mIdentity; }
+
+protected:
+    nsISupports *mIdentity;
+public:
+%}
 };
+
+%{C++
+inline
+const nsQueryInterface
+do_QueryWrappedNative(nsIXPConnectWrappedNative *aWrappedNative)
+{
+    return nsQueryInterface(aWrappedNative->Native());
+}
+
+inline
+const nsQueryInterfaceWithError
+do_QueryWrappedNative(nsIXPConnectWrappedNative *aWrappedNative,
+                      nsresult *aError)
+
+{
+    return nsQueryInterfaceWithError(aWrappedNative->Native(), aError);
+}
+
+%}
 
 [uuid(BED52030-BCA6-11d2-BA79-00805F8A5DD7)]
 interface nsIXPConnectWrappedJS : nsIXPConnectJSObjectHolder
@@ -386,7 +418,7 @@ interface nsIXPCFunctionThisTranslator : nsISupports
     { 0xbd, 0xd6, 0x0, 0x0, 0x64, 0x65, 0x73, 0x74 } }
 %}
 
-[uuid(EFAE37B0-946D-11d2-BA58-00805F8A5DD7)]
+[uuid(DEB1D48E-7469-4B01-B186-D9854C7D3F2D)]
 interface nsIXPConnect : nsISupports
 {
 %{ C++
@@ -402,7 +434,10 @@ interface nsIXPConnect : nsISupports
                   in JSContextPtr aJSContext,
                   in nsISupports  aCOMObj,
                   in nsIIDRef     aIID,
-                  in PRBool       aCallJS_InitStandardClasses);
+                  in PRUint32     aFlags);
+
+    const PRUint32 INIT_JS_STANDARD_CLASSES  = 1 << 0;
+    const PRUint32 FLAG_SYSTEM_GLOBAL_OBJECT = 1 << 1;
 
     /**
     * wrapNative will create a new JSObject or return an existing one.
@@ -427,6 +462,9 @@ interface nsIXPConnect : nsISupports
     * It *might* be possible to QueryInterface the nsIXPConnectJSObjectHolder
     * returned by the method into a nsIXPConnectWrappedNative or a
     * nsIXPConnectWrappedJS.
+    *
+    * This method will never wrap the JSObject involved in an
+    * XPCNativeWrapper before returning.
     *
     * Returns:
     *    success:
@@ -592,4 +630,29 @@ interface nsIXPConnect : nsISupports
     attribute PRBool deferReleasesUntilAfterGarbageCollection;
 
     void releaseJSContext(in JSContextPtr aJSContext, in PRBool noGC);
+
+    JSVal variantToJS(in JSContextPtr ctx, in JSObjectPtr scope, in nsIVariant value);
+    nsIVariant JSToVariant(in JSContextPtr ctx, in JSVal value);
+
+    /**
+     * Preconfigure XPCNativeWrapper automation so that when a scripted
+     * caller whose filename starts with filenamePrefix accesses a wrapped
+     * native that is not flagged as "system", the wrapped native will be
+     * automatically wrapped with an XPCNativeWrapper.
+     *
+     * @param aFilenamePrefix the UTF-8 filename prefix to match, which
+     *                        should end with a slash (/) character
+     */
+    void flagSystemFilenamePrefix(in string aFilenamePrefix);
+
+    /**
+     * Restore an old prototype for wrapped natives of type
+     * aClassInfo. This should be used only when restoring an old
+     * scope into a state close to where it was prior to
+     * being reinitialized.
+     */
+    void restoreWrappedNativePrototype(in JSContextPtr aJSContext,
+                                       in JSObjectPtr  aScope,
+                                       in nsIClassInfo aClassInfo,
+                                       in nsIXPConnectJSObjectHolder aPrototype);
 };

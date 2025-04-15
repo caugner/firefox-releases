@@ -44,18 +44,16 @@
 #include "nsINodeInfo.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
-#include "nsIWebNavigation.h"
-#include "nsIRefreshURI.h"
 #include "nsCPrefetchService.h"
 #include "nsIURI.h"
 #include "nsNetUtil.h"
 #include "nsIHttpChannel.h"
 #include "nsIContent.h"
-#include "nsIDOMHTMLScriptElement.h"
+#include "nsIScriptElement.h"
 #include "nsIParser.h"
 #include "nsContentErrors.h"
 #include "nsIPresShell.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIViewManager.h"
 #include "nsIScrollableView.h"
 #include "nsIContentViewer.h"
@@ -68,7 +66,7 @@
 #include "nsNetCID.h"
 #include "nsICookieService.h"
 #include "nsIPrompt.h"
-#include "nsIServiceManagerUtils.h"
+#include "nsServiceManagerUtils.h"
 #include "nsICharsetConverterManager.h"
 #include "nsContentUtils.h"
 #include "nsParserUtils.h"
@@ -76,6 +74,7 @@
 #include "nsEscape.h"
 #include "nsWeakReference.h"
 #include "nsUnicharUtils.h"
+#include "nsNodeInfoManager.h"
 
 
 #ifdef ALLOW_ASYNCH_STYLE_SHEETS
@@ -106,7 +105,7 @@ NS_IMPL_ISUPPORTS1(nsScriptLoaderObserverProxy, nsIScriptLoaderObserver)
 
 NS_IMETHODIMP
 nsScriptLoaderObserverProxy::ScriptAvailable(nsresult aResult,
-                                             nsIDOMHTMLScriptElement *aElement,
+                                             nsIScriptElement *aElement,
                                              PRBool aIsInline,
                                              PRBool aWasPending,
                                              nsIURI *aURI,
@@ -125,7 +124,7 @@ nsScriptLoaderObserverProxy::ScriptAvailable(nsresult aResult,
 
 NS_IMETHODIMP
 nsScriptLoaderObserverProxy::ScriptEvaluated(nsresult aResult,
-                                             nsIDOMHTMLScriptElement *aElement,
+                                             nsIScriptElement *aElement,
                                              PRBool aIsInline,
                                              PRBool aWasPending)
 {
@@ -182,14 +181,12 @@ nsContentSink::Init(nsIDocument* aDoc,
   nsresult rv = loader->AddObserver(proxy);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  mCSSLoader = aDoc->GetCSSLoader();
+  mCSSLoader = aDoc->CSSLoader();
 
-  // XXX this presumes HTTP header info is already set in document
-  // XXX if it isn't we need to set it here...
   ProcessHTTPHeaders(aChannel);
 
-  mNodeInfoManager = aDoc->GetNodeInfoManager();
-  return mNodeInfoManager ? NS_OK : NS_ERROR_NOT_INITIALIZED;
+  mNodeInfoManager = aDoc->NodeInfoManager();
+  return NS_OK;
 
 }
 
@@ -202,7 +199,7 @@ nsContentSink::StyleSheetLoaded(nsICSSStyleSheet* aSheet,
 
 NS_IMETHODIMP
 nsContentSink::ScriptAvailable(nsresult aResult,
-                               nsIDOMHTMLScriptElement *aElement,
+                               nsIScriptElement *aElement,
                                PRBool aIsInline,
                                PRBool aWasPending,
                                nsIURI *aURI,
@@ -237,10 +234,15 @@ nsContentSink::ScriptAvailable(nsresult aResult,
     mScriptElements.RemoveObjectAt(count - 1);
 
     if (mParser && aWasPending && aResult != NS_BINDING_ABORTED) {
-      // Loading external script failed!. So, resume
-      // parsing since the parser got blocked when loading
-      // external script. - Ref. Bug: 94903
-      mParser->ContinueParsing();
+      // Loading external script failed!. So, resume parsing since the parser
+      // got blocked when loading external script. See
+      // http://bugzilla.mozilla.org/show_bug.cgi?id=94903.
+      //
+      // XXX We don't resume parsing if we get NS_BINDING_ABORTED from the
+      //     script load, assuming that that error code means that the user
+      //     stopped the load through some action (like clicking a link). See
+      //     http://bugzilla.mozilla.org/show_bug.cgi?id=243392.
+      mParser->ContinueInterruptedParsing();
     }
   }
 
@@ -249,7 +251,7 @@ nsContentSink::ScriptAvailable(nsresult aResult,
 
 NS_IMETHODIMP
 nsContentSink::ScriptEvaluated(nsresult aResult,
-                               nsIDOMHTMLScriptElement *aElement,
+                               nsIScriptElement *aElement,
                                PRBool aIsInline,
                                PRBool aWasPending)
 {
@@ -271,7 +273,7 @@ nsContentSink::ScriptEvaluated(nsresult aResult,
   }
 
   if (mParser && mParser->IsParserEnabled() && aWasPending) {
-    mParser->ContinueParsing();
+    mParser->ContinueInterruptedParsing();
   }
 
   return NS_OK;
@@ -286,24 +288,16 @@ nsContentSink::ProcessHTTPHeaders(nsIChannel* aChannel)
     return NS_OK;
   }
 
-  static const char *const headers[] = {
-    "link",
-    "default-style",
-    "content-style-type",
-    // add more http headers if you need
-    0
-  };
+  // Note that the only header we care about is the "link" header, since we
+  // have all the infrastructure for kicking off stylesheet loads.
   
-  const char *const *name = headers;
-  nsCAutoString tmp;
+  nsCAutoString linkHeader;
   
-  while (*name) {
-    nsresult rv = httpchannel->GetResponseHeader(nsDependentCString(*name), tmp);
-    if (NS_SUCCEEDED(rv) && !tmp.IsEmpty()) {
-      nsCOMPtr<nsIAtom> key = do_GetAtom(*name);
-      ProcessHeaderData(key, NS_ConvertASCIItoUCS2(tmp));
-    }
-    ++name;
+  nsresult rv = httpchannel->GetResponseHeader(NS_LITERAL_CSTRING("link"),
+                                               linkHeader);
+  if (NS_SUCCEEDED(rv) && !linkHeader.IsEmpty()) {
+    ProcessHeaderData(nsHTMLAtoms::link,
+                      NS_ConvertASCIItoUTF16(linkHeader));
   }
   
   return NS_OK;
@@ -318,29 +312,11 @@ nsContentSink::ProcessHeaderData(nsIAtom* aHeader, const nsAString& aValue,
 
   mDocument->SetHeaderData(aHeader, aValue);
 
-  NS_ENSURE_TRUE(mDocShell, NS_ERROR_FAILURE);
-
-  // see if we have a refresh "header".
-  if (aHeader == nsHTMLAtoms::refresh) {
-    // first get our baseURI
-
-    nsCOMPtr<nsIURI> baseURI;
-    nsCOMPtr<nsIWebNavigation> webNav = do_QueryInterface(mDocShell);
-    rv = webNav->GetCurrentURI(getter_AddRefs(baseURI));
-    if (NS_FAILED(rv)) {
-      return rv;
-    }
-
-    nsCOMPtr<nsIRefreshURI> reefer = do_QueryInterface(mDocShell);
-    if (reefer) {
-      rv = reefer->SetupRefreshURIFromHeader(baseURI,
-                                             NS_ConvertUCS2toUTF8(aValue));
-      if (NS_FAILED(rv)) {
-        return rv;
-      }
-    }
-  }
-  else if (aHeader == nsHTMLAtoms::setcookie) {
+  if (aHeader == nsHTMLAtoms::setcookie) {
+    // Note: Necko already handles cookies set via the channel.  We can't just
+    // call SetCookie on the channel because we want to do some security checks
+    // here and want to use the prompt associated to our current window, not
+    // the window where the channel was dispatched.
     nsCOMPtr<nsICookieService> cookieServ =
       do_GetService(NS_COOKIESERVICE_CONTRACTID, &rv);
     if (NS_FAILED(rv)) {
@@ -395,15 +371,18 @@ nsContentSink::ProcessHeaderData(nsIAtom* aHeader, const nsAString& aValue,
   }
   else if (aHeader == nsHTMLAtoms::msthemecompatible) {
     // Disable theming for the presshell if the value is no.
+    // XXXbz don't we want to support this as an HTTP header too?
     nsAutoString value(aValue);
-    if (value.EqualsIgnoreCase("no")) {
+    if (value.LowerCaseEqualsLiteral("no")) {
       nsIPresShell* shell = mDocument->GetShellAt(0);
       if (shell) {
         shell->DisableThemeSupport();
       }
     }
   }
-  else if (mParser) {
+  // Don't report "refresh" headers back to necko, since our document handles
+  // them
+  else if (aHeader != nsHTMLAtoms::refresh && mParser) {
     // we also need to report back HTTP-EQUIV headers to the channel
     // so that it can process things like pragma: no-cache or other
     // cache-control headers. Ideally this should also be the way for
@@ -551,22 +530,22 @@ nsContentSink::ProcessLinkHeader(nsIContent* aElement,
             value++;
           }
 
-          if (attr.EqualsIgnoreCase("rel")) {
+          if (attr.LowerCaseEqualsLiteral("rel")) {
             if (rel.IsEmpty()) {
               rel = value;
               rel.CompressWhitespace();
             }
-          } else if (attr.EqualsIgnoreCase("title")) {
+          } else if (attr.LowerCaseEqualsLiteral("title")) {
             if (title.IsEmpty()) {
               title = value;
               title.CompressWhitespace();
             }
-          } else if (attr.EqualsIgnoreCase("type")) {
+          } else if (attr.LowerCaseEqualsLiteral("type")) {
             if (type.IsEmpty()) {
               type = value;
               type.StripWhitespace();
             }
-          } else if (attr.EqualsIgnoreCase("media")) {
+          } else if (attr.LowerCaseEqualsLiteral("media")) {
             if (media.IsEmpty()) {
               media = value;
 
@@ -612,9 +591,9 @@ nsContentSink::ProcessLinkHeader(nsIContent* aElement,
 
 nsresult
 nsContentSink::ProcessLink(nsIContent* aElement,
-                           const nsAString& aHref, const nsAString& aRel,
-                           const nsAString& aTitle, const nsAString& aType,
-                           const nsAString& aMedia)
+                           const nsSubstring& aHref, const nsSubstring& aRel,
+                           const nsSubstring& aTitle, const nsSubstring& aType,
+                           const nsSubstring& aMedia)
 {
   // XXX seems overkill to generate this string array
   nsStringArray linkTypes;
@@ -638,11 +617,11 @@ nsContentSink::ProcessLink(nsIContent* aElement,
 
 nsresult
 nsContentSink::ProcessStyleLink(nsIContent* aElement,
-                                const nsAString& aHref,
+                                const nsSubstring& aHref,
                                 PRBool aAlternate,
-                                const nsAString& aTitle,
-                                const nsAString& aType,
-                                const nsAString& aMedia)
+                                const nsSubstring& aTitle,
+                                const nsSubstring& aType,
+                                const nsSubstring& aMedia)
 {
   if (aAlternate && aTitle.IsEmpty()) {
     // alternates must have title return without error, for now
@@ -654,7 +633,7 @@ nsContentSink::ProcessStyleLink(nsIContent* aElement,
   nsParserUtils::SplitMimeType(aType, mimeType, params);
 
   // see bug 18817
-  if (!mimeType.IsEmpty() && !mimeType.EqualsIgnoreCase("text/css")) {
+  if (!mimeType.IsEmpty() && !mimeType.LowerCaseEqualsLiteral("text/css")) {
     // Unknown stylesheet language
     return NS_OK;
   }
@@ -859,13 +838,9 @@ nsContentSink::ScrollToRef(PRBool aReallyScroll)
   for (i = 0; i < ns; i++) {
     nsIPresShell* shell = mDocument->GetShellAt(i);
     if (shell) {
-      // Scroll to the anchor
-      if (aReallyScroll) {
-        shell->FlushPendingNotifications(PR_FALSE);
-      }
-
       // Check an empty string which might be caused by the UTF-8 conversion
       if (!ref.IsEmpty()) {
+        // Note that GoToAnchor will handle flushing layout as needed.
         rv = shell->GoToAnchor(ref, aReallyScroll);
       } else {
         rv = NS_ERROR_FAILURE;
@@ -942,9 +917,7 @@ nsContentSink::StartLayout(PRBool aIsFrameset)
       shell->BeginObservingDocument();
 
       // Resize-reflow this time
-      nsCOMPtr<nsIPresContext> cx;
-      shell->GetPresContext(getter_AddRefs(cx));
-      nsRect r = cx->GetVisibleArea();
+      nsRect r = shell->GetPresContext()->GetVisibleArea();
       shell->InitialReflow(r.width, r.height);
 
       // Now trigger a refresh
@@ -974,24 +947,6 @@ nsContentSink::StartLayout(PRBool aIsFrameset)
       ++start; // Skip over the '#'
 
       mRef = Substring(start, end);
-    }
-  }
-
-  if (!mRef.IsEmpty() || aIsFrameset) {
-    // Disable the scroll bars.
-    for (i = 0; i < ns; i++) {
-      nsIPresShell *shell = mDocument->GetShellAt(i);
-
-      nsIViewManager* vm = shell->GetViewManager();
-      if (vm) {
-        nsIView* rootView = nsnull;
-        vm->GetRootView(rootView);
-        nsCOMPtr<nsIScrollableView> sview(do_QueryInterface(rootView));
-
-        if (sview) {
-          sview->SetScrollPreference(nsScrollPreference_kNeverScroll);
-        }
-      }
     }
   }
 }

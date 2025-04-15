@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,28 +14,28 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is 
- * .
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Leon Sha <leon.sha@sun.com>
- *    Alex Fritze <alex@croczilla.com>
+ *   Leon Sha <leon.sha@sun.com>
+ *   Alex Fritze <alex@croczilla.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 
 #include "nsCOMPtr.h"
@@ -43,7 +43,7 @@
 #include "nsIDOMSVGMatrix.h"
 #include "nsISVGGlyphGeometrySource.h"
 #include "nsPromiseFlatString.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsMemory.h"
 
 #include "nsSVGLibartFreetype.h"
@@ -52,9 +52,11 @@
 #include "libart-incs.h"
 #include "nsISVGLibartCanvas.h"
 
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIDeviceContext.h"
 #include "nsIComponentManager.h"
+
+#include "nsSVGLibartGradient.h"
 
 /**
  * \addtogroup libart_renderer Libart Rendering Engine
@@ -167,7 +169,8 @@ nsSVGLibartGlyphGeometryFT::Render(nsISVGRendererCanvas *canvas)
   {
     PRUint16 filltype;
     mSource->GetFillPaintType(&filltype);
-    if (filltype == nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR)
+    if (filltype == nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR || 
+        filltype == nsISVGGeometrySource::PAINT_TYPE_SERVER)
       hasFill = PR_TRUE;
   }
 
@@ -175,7 +178,8 @@ nsSVGLibartGlyphGeometryFT::Render(nsISVGRendererCanvas *canvas)
   {
     PRUint16 stroketype;
     mSource->GetStrokePaintType(&stroketype);
-    if (stroketype == nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR)
+    if (stroketype == nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR || 
+        stroketype == nsISVGGeometrySource::PAINT_TYPE_SERVER)
       hasStroke = PR_TRUE;
   }
 
@@ -226,7 +230,7 @@ nsSVGLibartGlyphGeometryFT::PaintFill(nsISVGLibartCanvas* canvas,
     mSource->GetY(&y);
     
     nsCOMPtr<nsIDOMSVGMatrix> ctm;
-    mSource->GetCTM(getter_AddRefs(ctm));
+    mSource->GetCanvasTM(getter_AddRefs(ctm));
     NS_ASSERTION(ctm, "graphic source didn't specify a ctm");
 
     // negations of B,C,F are to transform matrix from y-down to y-up
@@ -249,11 +253,26 @@ nsSVGLibartGlyphGeometryFT::PaintFill(nsISVGLibartCanvas* canvas,
   float opacity;
   mSource->GetFillOpacity(&opacity);
 
+  // Define the variables we want to fill only once and use in the loop
   ArtColor fill_color;
-  {
+  PRUint16 type;
+  nsCOMPtr<nsISVGGradient> aGrad;
+  nsCOMPtr<nsISVGLibartRegion> aLibartRegion;
+
+  // Get the fill type
+  mSource->GetFillPaintType(&type);
+  if (type == nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR) {
     nscolor rgb;
     mSource->GetFillPaint(&rgb);
     canvas->GetArtColor(rgb, fill_color);
+  } else if (type == nsISVGGeometrySource::PAINT_TYPE_SERVER) {
+    // Handle gradients
+    mSource->GetFillGradient(getter_AddRefs(aGrad));
+
+    // Now, get the appropriate gradient fill
+    nsCOMPtr<nsISVGRendererRegion> region;
+    GetCoveredRegion(getter_AddRefs(region));
+    aLibartRegion = do_QueryInterface(region);
   }
   
   PRUint32 glyph_count = metrics->GetGlyphCount();
@@ -276,7 +295,13 @@ nsSVGLibartGlyphGeometryFT::PaintFill(nsISVGLibartCanvas* canvas,
                                             bitmap->left+bitmap->bitmap.width,
                                             -bitmap->top+bitmap->bitmap.rows);
       if (render) {
-        art_render_image_solid(render, fill_color);
+        if(type == nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR)
+          art_render_image_solid(render, fill_color);
+        else if (type == nsISVGGeometrySource::PAINT_TYPE_SERVER) {
+          nsCOMPtr<nsIDOMSVGMatrix> ctm;
+          mSource->GetCanvasTM(getter_AddRefs(ctm));
+          LibartGradient(render, ctm, aGrad, aLibartRegion, mSource);
+        }
         art_render_mask_solid(render, (int)(0x10000*opacity));
         
         art_render_mask(render,

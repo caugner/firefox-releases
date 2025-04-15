@@ -1,11 +1,11 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,17 +27,17 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 
 /*
- *  npapi.h $Revision: 3.33.6.1 $
+ *  npapi.h $Revision: 3.40.4.1 $
  *  Netscape client plug-in API spec
  */
 
@@ -126,7 +125,7 @@
 /*----------------------------------------------------------------------*/
 
 #define NP_VERSION_MAJOR 0
-#define NP_VERSION_MINOR 14
+#define NP_VERSION_MINOR 16
 
 
 /* The OS/2 version of Netscape uses RC_DATA to define the
@@ -385,13 +384,24 @@ typedef enum {
   NPPVpluginScriptableInstance = (10 | NP_ABI_MASK),
   NPPVpluginScriptableIID = 11,
 
-  /* 12 and over are available on Mozilla builds starting with 0.9.9 */
+  /* Introduced in Mozilla 0.9.9 */
   NPPVjavascriptPushCallerBool = 12,
-  NPPVpluginKeepLibraryInMemory = 13,   /* available in Mozilla 1.0 */
+
+  /* Introduced in Mozilla 1.0 */
+  NPPVpluginKeepLibraryInMemory = 13,
   NPPVpluginNeedsXEmbed         = 14,
 
-  /* Get the NPObject for scripting the plugin. */
-  NPPVpluginScriptableNPObject  = 15
+  /* Get the NPObject for scripting the plugin. Introduced in Firefox
+   * 1.0 (NPAPI minor version 14).
+   */
+  NPPVpluginScriptableNPObject  = 15,
+
+  /* Get the plugin value (as \0-terminated UTF-8 string data) for
+   * form submission if the plugin is part of a form. Use
+   * NPN_MemAlloc() to allocate memory for the string data. Introduced
+   * in Mozilla 1.8b2 (NPAPI minor version 15).
+   */
+  NPPVformValue = 16
 } NPPVariable;
 
 /*
@@ -663,9 +673,6 @@ void    NP_LOADDS NPP_URLNotify(NPP instance, const char* url,
 jref    NP_LOADDS NPP_GetJavaClass(void);
 #endif
 NPError NP_LOADDS NPP_GetValue(NPP instance, NPPVariable variable, void *value);
-/*
- * Uh, shouldn't NPP_SetValue() take an NPPVariable and not an NPNVariable?
- */
 NPError NP_LOADDS NPP_SetValue(NPP instance, NPNVariable variable, void *value);
 
 /*
@@ -704,6 +711,8 @@ NPError NP_LOADDS NPN_SetValue(NPP instance, NPPVariable variable, void *value);
 void    NP_LOADDS NPN_InvalidateRect(NPP instance, NPRect *invalidRect);
 void    NP_LOADDS NPN_InvalidateRegion(NPP instance, NPRegion invalidRegion);
 void    NP_LOADDS NPN_ForceRedraw(NPP instance);
+void    NP_LOADDS NPN_PushPopupsEnabledState(NPP instance, NPBool enabled);
+void    NP_LOADDS NPN_PopPopupsEnabledState(NPP instance);
 
 #ifdef __cplusplus
 }  /* end extern "C" */

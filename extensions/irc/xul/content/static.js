@@ -1,41 +1,48 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/ 
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * License. 
+ * License.
  *
- * The Original Code is ChatZilla
- * 
+ * The Original Code is ChatZilla.
+ *
  * The Initial Developer of the Original Code is
- * Netscape Communications Corporation
- * Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.
- *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the MPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the MPL or the GPL.
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Robert Ginda, <rginda@netscape.com>, original author
- *  Chiaki Koufugata chiaki@mozilla.gr.jp UI i18n 
- *  Samuel Sieb, samuel@sieb.net, MIRC color codes, munger menu, and various
- */
+ *   Robert Ginda, <rginda@netscape.com>, original author
+ *   Chiaki Koufugata chiaki@mozilla.gr.jp UI i18n
+ *   Samuel Sieb, samuel@sieb.net, MIRC color codes, munger menu, and various
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
-const __cz_version   = "0.9.61";
+const __cz_version   = "0.9.67+";
 const __cz_condition = "green";
+const __cz_suffix    = "";
+const __cz_guid      = "59c81df5-4b7a-477b-912d-4e0fdf64e5f2";
 
 var warn;
 var ASSERT;
@@ -45,10 +52,10 @@ if (DEBUG)
 {
     _dd_pfx = "cz: ";
     warn = function (msg) { dumpln ("** WARNING " + msg + " **"); }
-    TEST = ASSERT = function (expr, msg) {
+    TEST = ASSERT = function _assert(expr, msg) {
                  if (!expr) {
-                     dump ("** ASSERTION FAILED: " + msg + " **\n" + 
-                           getStackTrace() + "\n"); 
+                     dd("** ASSERTION FAILED: " + msg + " **\n" +
+                        getStackTrace() + "\n");
                      return false;
                  } else {
                      return true;
@@ -62,7 +69,7 @@ var client = new Object();
 
 client.TYPE = "IRCClient";
 client.COMMAND_CHAR = "/";
-client.STEP_TIMEOUT = 500;
+client.STEP_TIMEOUT = 100;
 client.MAX_MESSAGES = 200;
 client.MAX_HISTORY = 50;
 /* longest nick to show in display before forcing the message to a block level
@@ -74,9 +81,10 @@ client.PRINT_DIRECTION = 1; /*1 => new messages at bottom, -1 => at top */
 
 client.MAX_MSG_PER_ROW = 3; /* default number of messages to collapse into a
                              * single row, max. */
-client.INITIAL_COLSPAN = 5; /* MAX_MSG_PER_ROW cannot grow to greater than 
+client.INITIAL_COLSPAN = 5; /* MAX_MSG_PER_ROW cannot grow to greater than
                              * one half INITIAL_COLSPAN + 1. */
 client.NOTIFY_TIMEOUT = 5 * 60 * 1000; /* update notify list every 5 minutes */
+client.AWAY_TIMEOUT = 2 * 60 * 1000; /* update away status every 2 mins */
 
 client.SLOPPY_NETWORKS = true; /* true if msgs from a network can be displayed
                                 * on the current object if it is related to
@@ -86,7 +94,7 @@ client.SLOPPY_NETWORKS = true; /* true if msgs from a network can be displayed
                                 */
 client.DOUBLETAB_TIME = 500;
 client.IMAGEDIR = "chrome://chatzilla/skin/images/";
-client.HIDE_CODES = true;      /* true if you'd prefer to show numeric response 
+client.HIDE_CODES = true;      /* true if you'd prefer to show numeric response
                                 * codes as some default value (ie, "===") */
 /* true if the browser widget shouldn't be allowed to take focus.  windows, and
  * probably the mac, need to be able to give focus to the browser widget for
@@ -105,8 +113,12 @@ client.lastTabUp = new Date();
 CIRCNetwork.prototype.INITIAL_CHANNEL = "";
 CIRCNetwork.prototype.MAX_MESSAGES = 100;
 CIRCNetwork.prototype.IGNORE_MOTD = false;
+CIRCNetwork.prototype.RECLAIM_WAIT = 15000;
+CIRCNetwork.prototype.RECLAIM_TIMEOUT = 400000;
 
 CIRCServer.prototype.READ_TIMEOUT = 0;
+CIRCServer.prototype.PRUNE_OLD_USERS = 0; // prune on user quit.
+
 CIRCUser.prototype.MAX_MESSAGES = 200;
 
 CIRCChannel.prototype.MAX_MESSAGES = 300;
@@ -117,25 +129,30 @@ function init()
 {
     if (("initialized" in client) && client.initialized)
         return;
-    
+
     client.initialized = false;
 
     client.networks = new Object();
+    client.entities = new Object();
     client.eventPump = new CEventPump (200);
 
     if (DEBUG)
     {
         /* hook all events EXCEPT server.poll and *.event-end types
          * (the 4th param inverts the match) */
-        client.debugHook = 
+        client.debugHook =
             client.eventPump.addHook([{type: "poll", set:/^(server|dcc-chat)$/},
                                     {type: "event-end"}], event_tracer,
                                     "event-tracer", true /* negate */,
                                     false /* disable */);
-    }    
+    }
+
+    initApplicationCompatibility();
+    initMessages();
+    if (client.host == "")
+        showErrorDlg(getMsg(MSG_ERR_UNKNOWN_HOST, getBrowserURL()));
 
     initRDF();
-    initMessages();
     initCommands();
     initPrefs();
     initMunger();
@@ -144,100 +161,233 @@ function init()
     initStatic();
     initHandlers();
 
+    // Create DCC handler.
+    client.dcc = new CIRCDCC(client);
+
     // start logging.  nothing should call display() before this point.
     if (client.prefs["log"])
-       client.openLogFile(client);
- 
+        client.openLogFile(client);
+
     client.display(MSG_WELCOME, "HELLO");
-    setCurrentObject (client);
-   
+    client.dispatch("set-current-view", { view: client });
+
     importFromFrame("updateHeader");
     importFromFrame("setHeaderState");
     importFromFrame("changeCSS");
+    importFromFrame("addUsers");
+    importFromFrame("updateUsers");
+    importFromFrame("removeUsers");
 
     processStartupScripts();
 
     client.commandManager.installKeys(document);
     createMenus();
 
+    initIcons();
+
+    client.busy = false;
+    updateProgress();
+
     client.initialized = true;
 
     dispatch("networks");
     dispatch("commands");
-    
+
     processStartupURLs();
 }
 
 function initStatic()
 {
-    CIRCServer.prototype.VERSION_RPLY =
-        getMsg(MSG_VERSION_REPLY, [__cz_version, navigator.userAgent]);
-
     client.mainWindow = window;
 
-    const nsISound = Components.interfaces.nsISound;
-    client.sound =
-        Components.classes["@mozilla.org/sound;1"].createInstance(nsISound);
-
-    const nsIGlobalHistory = Components.interfaces.nsIGlobalHistory;
-    const GHIST_CONTRACTID = "@mozilla.org/browser/global-history;1";
-    client.globalHistory =
-        Components.classes[GHIST_CONTRACTID].getService(nsIGlobalHistory);
-
-    const nsISDateFormat = Components.interfaces.nsIScriptableDateFormat;
-    const DTFMT_CID = "@mozilla.org/intl/scriptabledateformat;1";
-    client.dtFormatter = 
-        Components.classes[DTFMT_CID].createInstance(nsISDateFormat);
-    
-    // Mmmm, fun. This ONLY affects the ChatZilla window, don't worry!
-    Date.prototype.toStringInt = Date.prototype.toString;
-    Date.prototype.toString = function() {
-        var dtf = client.dtFormatter;
-        return dtf.FormatDateTime("", dtf.dateFormatLong, 
-                                  dtf.timeFormatSeconds, 
-                                  this.getFullYear(), this.getMonth() + 1, 
-                                  this.getDate(), this.getHours(), 
-                                  this.getMinutes(), this.getSeconds()
-                                 );
+    try
+    {
+        var io = Components.classes['@mozilla.org/network/io-service;1'];
+        client.iosvc = io.getService(Components.interfaces.nsIIOService);
     }
-    
+    catch (ex)
+    {
+        dd("IO service failed to initalize: " + ex);
+    }
+
+    try
+    {
+        const nsISound = Components.interfaces.nsISound;
+        client.sound =
+            Components.classes["@mozilla.org/sound;1"].createInstance(nsISound);
+
+        client.soundList = new Object();
+    }
+    catch (ex)
+    {
+        dd("Sound failed to initalize: " + ex);
+    }
+
+    try
+    {
+        const nsIGlobalHistory = Components.interfaces.nsIGlobalHistory;
+        const GHIST_CONTRACTID = "@mozilla.org/browser/global-history;1";
+        client.globalHistory =
+            Components.classes[GHIST_CONTRACTID].getService(nsIGlobalHistory);
+    }
+    catch (ex)
+    {
+        dd("Global History failed to initalize: " + ex);
+    }
+
+    try
+    {
+        const nsISDateFormat = Components.interfaces.nsIScriptableDateFormat;
+        const DTFMT_CID = "@mozilla.org/intl/scriptabledateformat;1";
+        client.dtFormatter =
+            Components.classes[DTFMT_CID].createInstance(nsISDateFormat);
+
+        // Mmmm, fun. This ONLY affects the ChatZilla window, don't worry!
+        Date.prototype.toStringInt = Date.prototype.toString;
+        Date.prototype.toString = function() {
+            var dtf = client.dtFormatter;
+            return dtf.FormatDateTime("", dtf.dateFormatLong,
+                                      dtf.timeFormatSeconds,
+                                      this.getFullYear(), this.getMonth() + 1,
+                                      this.getDate(), this.getHours(),
+                                      this.getMinutes(), this.getSeconds()
+                                     );
+        }
+    }
+    catch (ex)
+    {
+        dd("Locale-correct date formatting failed to initalize: " + ex);
+    }
+
     multilineInputMode(client.prefs["multiline"]);
     if (client.prefs["showModeSymbols"])
         setListMode("symbol");
     else
         setListMode("graphic");
     setDebugMode(client.prefs["debugMode"]);
-    
-    var ary = navigator.userAgent.match (/(rv:[^;)\s]+).*?Gecko\/(\d+)/);
-    if (ary)
+
+    var ver = __cz_version + (__cz_suffix ? "-" + __cz_suffix : "");
+
+    var ua = navigator.userAgent;
+    var app = getService("@mozilla.org/xre/app-info;1", "nsIXULAppInfo");
+    if (app)
     {
-        client.userAgent = "ChatZilla " + __cz_version + " [Mozilla " + 
-            ary[1] + "/" + ary[2] + "]";
+        // Use the XUL host app info, and Gecko build ID.
+        if (app.ID == "{" + __cz_guid + "}")
+        {
+            // We ARE the app, in other words, we're running in XULrunner.
+            // Because of this, we must disregard app.(name|vendor|version).
+            // "XULRunner 1.7+/2005071506"
+            ua = "XULRunner " + app.platformVersion + "/" + app.platformBuildID;
+
+            // "XULRunner 1.7+/2005071506, Windows"
+            CIRCServer.prototype.HOST_RPLY = ua + ", " + client.platform;
+        }
+        else
+        {
+            // "Firefox 1.0+/2005071506"
+            ua = app.name + " " + app.version + "/";
+            if ("platformBuildID" in app) // 1.1 and up
+                ua += app.platformBuildID;
+            else if ("geckoBuildID" in app) // 1.0 - 1.1 trunk only
+                ua += app.geckoBuildID;
+            else // Uh oh!
+                ua += "??????????";
+
+            // "Mozilla Firefox 1.0+, Windows"
+            CIRCServer.prototype.HOST_RPLY = app.vendor + " " + app.name + " " +
+                                             app.version + ", " + client.platform;
+        }
     }
     else
     {
-        client.userAgent = "ChatZilla " + __cz_version + " [" + 
-            navigator.userAgent + "]";
+        // Extract the revision number, and Gecko build ID.
+        var ary = navigator.userAgent.match(/(rv:[^;)\s]+).*?Gecko\/(\d+)/);
+        if (ary)
+        {
+            if (navigator.vendor)
+                ua = navigator.vendor + " " + navigator.vendorSub; // FF 1.0
+            else
+                ua = client.entities.brandShortName + " " + ary[1]; // Suite
+            ua = ua + "/" + ary[2];
+        }
+        CIRCServer.prototype.HOST_RPLY = client.entities.brandShortName + ", " +
+                                         client.platform;
     }
 
+    client.userAgent = getMsg(MSG_VERSION_REPLY, [ver, ua]);
+    CIRCServer.prototype.VERSION_RPLY = client.userAgent;
+    CIRCServer.prototype.SOURCE_RPLY = MSG_SOURCE_REPLY;
+
     client.statusBar = new Object();
-    
+
     client.statusBar["server-nick"] = document.getElementById ("server-nick");
 
-    client.statusElement = document.getElementById ("status-text");
+    client.statusElement = document.getElementById("status-text");
     client.defaultStatus = MSG_DEFAULT_STATUS;
+
+    client.progressPanel = document.getElementById("status-progress-panel");
+    client.progressBar = document.getElementById("status-progress-bar");
 
     client.logFile = null;
     setInterval("onNotifyTimeout()", client.NOTIFY_TIMEOUT);
-    
+    setInterval("onWhoTimeout()", client.AWAY_TIMEOUT);
+
     client.defaultCompletion = client.COMMAND_CHAR + "help ";
 
     client.deck = document.getElementById('output-deck');
 }
 
+function initApplicationCompatibility()
+{
+    // This routine does nothing more than tweak the UI based on the host
+    // application.
+
+    // Set up simple host and platform information.
+    client.host = "Unknown";
+    if ("getBrowserURL" in window)
+    {
+        var url = getBrowserURL();
+        if (url == "chrome://navigator/content/navigator.xul")
+            client.host = "Mozilla";
+        else if (url == "chrome://browser/content/browser.xul")
+            client.host = "Firefox";
+        else
+            client.host = ""; // We don't know this host. Show an error later.
+    }
+    else
+    {
+        client.host = "XULrunner";
+    }
+
+    client.platform = "Unknown";
+    if (navigator.platform.search(/mac/i) > -1)
+        client.platform = "Mac";
+    if (navigator.platform.search(/win/i) > -1)
+        client.platform = "Windows";
+    if (navigator.platform.search(/linux/i) > -1)
+        client.platform = "Linux";
+    if (navigator.platform.search(/os\/2/i) > -1)
+        client.platform = "OS/2";
+
+    client.hostPlatform = client.host + client.platform;
+
+    CIRCServer.prototype.OS_RPLY = navigator.oscpu + " (" +
+                                   navigator.platform + ")";
+
+    // Windows likes \r\n line endings, as wussy-notepad can't cope with just
+    // \n logs.
+    if (client.platform == "Windows")
+        client.lineEnd = "\r\n";
+    else
+        client.lineEnd = "\n";
+}
+
 function initNetworks()
 {
-    client.addNetwork("moznet",[{name: "irc.mozilla.org", port: 6667}]);
+    client.addNetwork("moznet",
+                      [{name: "irc.mozilla.org", port:6667}, 
+                       {name: "irc.mozilla.org", port:6697, isSecure:true}]);
     client.addNetwork("hybridnet", [{name: "irc.ssc.net", port: 6667}]);
     client.addNetwork("slashnet", [{name: "irc.slashnet.org", port:6667}]);
     client.addNetwork("dalnet", [{name: "irc.dal.net", port:6667}]);
@@ -245,11 +395,70 @@ function initNetworks()
     client.addNetwork("webbnet", [{name: "irc.webbnet.info", port:6667}]);
     client.addNetwork("quakenet", [{name: "irc.quakenet.org", port:6667}]);
     client.addNetwork("freenode", [{name: "irc.freenode.net", port:6667}]);
+    client.addNetwork("serenia", 
+                      [{name: "chat.serenia.net", port:9999, isSecure:true}]);
     client.addNetwork("efnet",
-                      [{name: "irc.mcs.net", port: 6667},
-                       {name: "irc.prison.net", port: 6667},
-                       {name: "irc.freei.net", port: 6667},
+                      [{name: "irc.prison.net", port: 6667},
                        {name: "irc.magic.ca", port: 6667}]);
+}
+
+function initIcons()
+{
+    // Make sure we got the ChatZilla icon(s) in place first.
+    const iconName = "chatzilla-window";
+    const suffixes = [".ico", ".xpm", "16.xpm"];
+
+    /* when installing on Mozilla, the XPI has the power to put the icons where
+     * they are needed - in Firefox, it doesn't. So we move them here, instead.
+     */
+    if (client.host != "Firefox")
+        return;
+
+    var sourceDir = getSpecialDirectory("ProfD");
+    sourceDir.append("extensions");
+    sourceDir.append("{" + __cz_guid + "}");
+    sourceDir.append("defaults");
+
+    var destDir = getSpecialDirectory("AChrom");
+    destDir.append("icons");
+    destDir.append("default");
+    if (!destDir.exists())
+    {
+        try
+        {
+            mkdir(destDir);
+        }
+        catch(ex)
+        {
+            return;
+        }
+    }
+
+    for (var i = 0; i < suffixes.length; i++)
+    {
+        var iconDest = destDir.clone();
+        iconDest.append(iconName + suffixes[i]);
+        var iconSrc = sourceDir.clone();
+        iconSrc.append(iconName + suffixes[i]);
+
+        if (iconSrc.exists() && !iconDest.exists())
+        {
+            try
+            {
+                iconSrc.copyTo(iconDest.parent, iconDest.leafName);
+            }
+            catch(ex){}
+        }
+    }
+}
+
+function getFindData(e)
+{
+    var findData = new nsFindInstData();
+    findData.browser = e.sourceObject.frame;
+    findData.rootSearchWindow = e.sourceObject.frame.contentWindow;
+    findData.currentSearchWindow = e.sourceObject.frame.contentWindow;
+    return findData;
 }
 
 function importFromFrame(method)
@@ -258,6 +467,8 @@ function importFromFrame(method)
     CIRCNetwork.prototype.__defineGetter__(method, import_wrapper);
     CIRCChannel.prototype.__defineGetter__(method, import_wrapper);
     CIRCUser.prototype.__defineGetter__(method, import_wrapper);
+    CIRCDCCChat.prototype.__defineGetter__(method, import_wrapper);
+    CIRCDCCFileTransfer.prototype.__defineGetter__(method, import_wrapper);
 
     function import_wrapper()
     {
@@ -265,7 +476,7 @@ function importFromFrame(method)
 
         if (!("frame" in this))
             return dummy;
-            
+
         try
         {
             var window = getContentWindow(this.frame)
@@ -297,6 +508,12 @@ function processStartupScripts()
         }
 
         var path = getFileFromURLSpec(scripts[i]);
+
+        if (!path.exists())
+        {
+            display(getMsg(MSG_ERR_ITEM_NOT_FOUND, scripts[i]), MT_WARN);
+            continue;
+        }
 
         if (path.isDirectory())
             loadPluginDirectory(path);
@@ -341,7 +558,7 @@ function getPluginById(id)
     {
         if (client.plugins[i].id == id)
             return client.plugins[i];
-        
+
     }
 
     return null;
@@ -353,7 +570,7 @@ function getPluginIndexById(id)
     {
         if (client.plugins[i].id == id)
             return i;
-        
+
     }
 
     return -1;
@@ -365,7 +582,7 @@ function getPluginByURL(url)
     {
         if (client.plugins[i].url == url)
             return client.plugins[i];
-        
+
     }
 
     return null;
@@ -377,7 +594,7 @@ function getPluginIndexByURL(url)
     {
         if (client.plugins[i].url == url)
             return i;
-        
+
     }
 
     return -1;
@@ -392,13 +609,13 @@ function processStartupURLs()
         "url" in window.arguments[0])
     {
         var url = window.arguments[0].url;
-        if (url.search(/^irc:\/?\/?\/?$/i) == -1)
+        if (url.search(/^ircs?:\/?\/?\/?$/i) == -1)
         {
-            /* if the url is not irc: irc:/ or irc://, then go to it. */
+            /* if the url is not irc: irc:/, irc://, or ircs equiv then go to it. */
             gotoIRCURL(url);
             wentSomewhere = true;
         }
-    }    
+    }
 
     if (!wentSomewhere)
     {
@@ -408,7 +625,7 @@ function processStartupURLs()
         {
             if (ary[i] && ary[i] == "irc:///")
             {
-                // Clean out "default network" entries, which we don't 
+                // Clean out "default network" entries, which we don't
                 // support any more; replace with the harmless irc:// URL.
                 ary[i] = "irc://";
                 client.prefs["initialURLs"].update();
@@ -417,13 +634,10 @@ function processStartupURLs()
                 gotoIRCURL(ary[i]);
         }
     }
-    
+
     if (client.viewsArray.length > 1 && !isStartupURL("irc://"))
     {
-        var tb = getTabForObject(client);
-        deleteTab(tb);
-        client.deck.removeChild(client.frame);
-        client.deck.selectedIndex = 0;
+        dispatch("delete-view", {view: client});
     }
 }
 
@@ -453,15 +667,27 @@ function isVisible (id)
 
     if (!ASSERT(e,"Bogus id ``" + id + "'' passed to isVisible() **"))
         return false;
-    
+
     return (e.getAttribute ("collapsed") != "true");
+}
+
+client.getConnectedNetworks =
+function getConnectedNetworks()
+{
+    var rv = [];
+    for (var n in client.networks)
+    {
+        if (client.networks[n].isConnected())
+            rv.push(client.networks[n]);
+    }
+    return rv;
 }
 
 function insertLink (matchText, containerTag)
 {
     var href;
     var linkText;
-    
+
     var trailing;
     ary = matchText.match(/([.,?]+)$/);
     if (ary)
@@ -503,6 +729,11 @@ function insertLink (matchText, containerTag)
         href = "http://" + linkText;
     }
 
+    var max = client.prefs["urls.store.max"];
+    if (client.prefs["urls.list"].unshift(href) > max)
+        client.prefs["urls.list"].pop();
+    client.prefs["urls.list"].update();
+
     var anchor = document.createElementNS ("http://www.w3.org/1999/xhtml",
                                            "html:a");
     anchor.setAttribute ("href", href);
@@ -519,12 +750,12 @@ function insertMailToLink (matchText, containerTag)
 {
 
     var href;
-    
+
     if (matchText.indexOf ("mailto:") != 0)
         href = "mailto:" + matchText;
     else
         href = matchText;
-    
+
     var anchor = document.createElementNS ("http://www.w3.org/1999/xhtml",
                                            "html:a");
     anchor.setAttribute ("href", href);
@@ -532,7 +763,7 @@ function insertMailToLink (matchText, containerTag)
     //anchor.setAttribute ("target", "_content");
     insertHyphenatedWord (matchText, anchor);
     containerTag.appendChild (anchor);
-    
+
 }
 
 function insertChannelLink (matchText, containerTag, eventData)
@@ -540,12 +771,13 @@ function insertChannelLink (matchText, containerTag, eventData)
     var bogusChannels =
         /^#(include|error|define|if|ifdef|else|elsif|endif|\d+)$/i;
 
-    if (!eventData.network || matchText.search(bogusChannels) != -1)
+    if (!("network" in eventData) || !eventData.network ||
+        matchText.search(bogusChannels) != -1)
     {
         containerTag.appendChild(document.createTextNode(matchText));
         return;
     }
-    
+
     var encodedMatchText = fromUnicode(matchText, eventData.sourceObject);
     var anchor = document.createElementNS("http://www.w3.org/1999/xhtml",
                                           "html:a");
@@ -556,18 +788,27 @@ function insertChannelLink (matchText, containerTag, eventData)
     containerTag.appendChild (anchor);
 }
 
-function insertBugzillaLink (matchText, containerTag)
+function insertBugzillaLink (matchText, containerTag, eventData)
 {
     var number = matchText.match (/(\d+)/)[1];
-    
+
     var anchor = document.createElementNS ("http://www.w3.org/1999/xhtml",
                                            "html:a");
-    anchor.setAttribute ("href", client.prefs["bugURL"].replace("%s", number));
+
+    var bugURL;
+    if (eventData.channel)
+        bugURL = eventData.channel.prefs["bugURL"];
+    else if (eventData.network)
+        bugURL = eventData.network.prefs["bugURL"];
+    else
+        bugURL = client.prefs["bugURL"];
+
+    anchor.setAttribute ("href", bugURL.replace("%s", number));
     anchor.setAttribute ("class", "chatzilla-link");
     anchor.setAttribute ("target", "_content");
     insertHyphenatedWord (matchText, anchor);
     containerTag.appendChild (anchor);
-    
+
 }
 
 function insertRheet (matchText, containerTag)
@@ -580,7 +821,7 @@ function insertRheet (matchText, containerTag)
     anchor.setAttribute ("class", "chatzilla-rheet chatzilla-link");
     //anchor.setAttribute ("target", "_content");
     insertHyphenatedWord (matchText, anchor);
-    containerTag.appendChild (anchor);    
+    containerTag.appendChild (anchor);
 }
 
 function insertQuote (matchText, containerTag)
@@ -591,36 +832,60 @@ function insertQuote (matchText, containerTag)
         containerTag.appendChild(document.createTextNode("\u201d"));
 }
 
-function insertEar (matchText, containerTag)
-{
-    var img = document.createElementNS ("http://www.w3.org/1999/xhtml",
-                                        "html:img");
-    img.setAttribute ("src", client.IMAGEDIR + "face-ear.gif");
-    img.setAttribute ("title", matchText);
-    containerTag.appendChild (img);
-    
-}
-
-function insertSmiley (emoticon, containerTag)
+function insertSmiley(emoticon, containerTag)
 {
     var type = "error";
 
-    if (emoticon.search (/\;[-^v]?[\)>\]]/) != -1)
-        type = "face-wink";
-    else if (emoticon.search (/[=:;][-^v]?[\)>\]]/) != -1)
-        type = "face-smile";
-    else if (emoticon.search (/[=:;][-^v]?[\/\\]/) != -1)
-        type = "face-screw";
-    else if (emoticon.search (/[=:;]\~[-^v]?\(/) != -1)
-        type = "face-cry";
-    else if (emoticon.search (/[=:;][-^v]?[\(<\[]/) != -1)
-        type = "face-frown";
-    else if (emoticon.search (/\<?[=:;][-^v]?[0oO]/) != -1)
-        type = "face-surprise";
-    else if (emoticon.search (/[=:;][-^v]?[pP]/) != -1)
-        type = "face-tongue";
-    else if (emoticon.search (/\>?[=:;][\-\^\v]?[\(\|]/) != -1)
+    if (emoticon.search(/\>[-^v]?\)/) != -1)
+        type = "face-alien";
+    else if (emoticon.search(/\>[=:;][-^v]?[(|]/) != -1)
         type = "face-angry";
+    else if (emoticon.search(/[=:;][-^v]?[Ss\\\/]/) != -1)
+        type = "face-confused";
+    else if (emoticon.search(/[B8][-^v]?[)\]]/) != -1)
+        type = "face-cool";
+    else if (emoticon.search(/[=:;][~'][-^v]?\(/) != -1)
+        type = "face-cry";
+    else if (emoticon.search(/o[._]O/) != -1)
+        type = "face-dizzy";
+    else if (emoticon.search(/O[._]o/) != -1)
+        type = "face-dizzy-back";
+    else if (emoticon.search(/o[._]o|O[._]O/) != -1)
+        type = "face-eek";
+    else if (emoticon.search(/\>[=:;][-^v]?D/) != -1)
+        type = "face-evil";
+    else if (emoticon.search(/[=:;][-^v]?DD/) != -1)
+        type = "face-lol";
+    else if (emoticon.search(/[=:;][-^v]?D/) != -1)
+        type = "face-laugh";
+    else if (emoticon.search(/\([-^v]?D|[xX][-^v]?D/) != -1)
+        type = "face-rofl";
+    else if (emoticon.search(/[=:;][-^v]?\|/) != -1)
+        type = "face-normal";
+    else if (emoticon.search(/[=:;][-^v]?\?/) != -1)
+        type = "face-question";
+    else if (emoticon.search(/[=:;]"[)\]]/) != -1)
+        type = "face-red";
+    else if (emoticon.search(/9[._]9/) != -1)
+        type = "face-rolleyes";
+    else if (emoticon.search(/[=:;][-^v]?[(\[]/) != -1)
+        type = "face-sad";
+    else if (emoticon.search(/[=:][-^v]?[)\]]/) != -1)
+        type = "face-smile";
+    else if (emoticon.search(/[=:;][-^v]?[0oO]/) != -1)
+        type = "face-surprised";
+    else if (emoticon.search(/[=:;][-^v]?[pP]/) != -1)
+        type = "face-tongue";
+    else if (emoticon.search(/;[-^v]?[)\]]/) != -1)
+        type = "face-wink";
+
+    if (type == "error")
+    {
+        // We didn't actually match anything, so it'll be a too-generic match
+        // from the munger RegExp.
+        containerTag.appendChild(document.createTextNode(emoticon));
+        return;
+    }
 
     var span = document.createElementNS ("http://www.w3.org/1999/xhtml",
                                          "html:span");
@@ -643,7 +908,7 @@ function insertSmiley (emoticon, containerTag)
     span.setAttribute ("type", type);
     span.setAttribute ("title", emoticon);
     containerTag.appendChild (span);
-    
+
 }
 
 function mircChangeColor (colorInfo, containerTag, data)
@@ -713,7 +978,7 @@ function mircToggleUnder (colorInfo, containerTag, data)
     if ("isUnderline" in data)
         delete data.isUnderline;
     else
-        data.isUnderline = true; 
+        data.isUnderline = true;
     data.hasColorInfo = true;
 }
 
@@ -777,13 +1042,37 @@ function insertHyphenatedWord (longWord, containerTag)
     }
 }
 
+function insertInlineButton(text, containerTag, data)
+{
+    var ary = text.match(/\[\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]\]/);
+
+    if (!ary)
+    {
+        containerTag.appendChild(document.createTextNode(text));
+        return;
+    }
+
+    var label = ary[1];
+    var title = ary[2];
+    var command = ary[3];
+
+    var link = document.createElementNS("http://www.w3.org/1999/xhtml", "a");
+    link.setAttribute("href", "x-cz-command:" + encodeURI(command));
+    link.setAttribute("title", title);
+    link.appendChild(document.createTextNode(label));
+
+    containerTag.appendChild(document.createTextNode("["));
+    containerTag.appendChild(link);
+    containerTag.appendChild(document.createTextNode("]"));
+}
+
 function combineNicks(nickList, max)
 {
     if (!max)
         max = 4;
 
     var combinedList = [];
-    
+
     for (var i = 0; i < nickList.length; i += max)
     {
         count = Math.min(max, nickList.length - i);
@@ -792,7 +1081,7 @@ function combineNicks(nickList, max)
         str.count = count;
         combinedList.push(str);
     }
-    
+
     return combinedList;
 }
 
@@ -813,13 +1102,13 @@ function updateStalkExpression(network)
     {
         return "\\" + ch;
     };
-    
+
     var list = client.prefs["stalkWords"];
 
     var ary = new Array();
 
-    ary.push(network.primServ.me.nick.replace(/[^\w\d]/g, escapeChar));
-    
+    ary.push(network.primServ.me.unicodeName.replace(/[^\w\d]/g, escapeChar));
+
     for (var i = 0; i < list.length; ++i)
         ary.push(list[i].replace(/[^\w\d]/g, escapeChar));
 
@@ -837,11 +1126,11 @@ function getDefaultFontSize()
     const PREF_CTRID = "@mozilla.org/preferences-service;1";
     const nsIPrefService = Components.interfaces.nsIPrefService;
     const nsIPrefBranch = Components.interfaces.nsIPrefBranch;
-    
-    var prefService =
-        Components.classes[PREF_CTRID].getService(nsIPrefService);
-    var prefBranch = prefService.getBranch(null);
-    
+    const XHTML_NS = "http://www.w3.org/1999/xhtml";
+
+    var prefSvc = Components.classes[PREF_CTRID].getService(nsIPrefService);
+    var prefBranch = prefSvc.getBranch(null);
+
     // PX size pref: font.size.variable.x-western
     var pxSize = 16;
     try
@@ -849,23 +1138,47 @@ function getDefaultFontSize()
         pxSize = prefBranch.getIntPref("font.size.variable.x-western");
     }
     catch(ex) { }
-    
-    // Get the DPI the fun way (make Mozilla do the work).
-    var b = document.createElement("box");
-    b.style.width = "1in";
-    var dpi = window.getComputedStyle(b, null).width.match(/^\d+/);
-    
+
+    var dpi = 96;
+    try
+    {
+        // Get the DPI the fun way (make Mozilla do the work).
+        var b = document.createElement("box");
+        b.style.width = "1in";
+        dpi = window.getComputedStyle(b, null).width.match(/^\d+/);
+    }
+    catch(ex)
+    {
+        try
+        {
+            // Get the DPI the fun way (make Mozilla do the work).
+            b = document.createElementNS("box", XHTML_NS);
+            b.style.width = "1in";
+            dpi = window.getComputedStyle(b, null).width.match(/^\d+/);
+        }
+        catch(ex) { }
+    }
+
     return Math.round((pxSize / dpi) * 72);
 }
 
 function getDefaultContext(cx)
 {
-    return getObjectDetails(client.currentObject, cx);
+    if (!cx)
+        cx = new Object();
+    /* Use __proto__ here and in all other get*Context so that the command can
+     * tell the difference between getObjectDetails and actual parameters. See
+     * cmdJoin for more details.
+     */
+    cx.__proto__ = getObjectDetails(client.currentObject);
+    return cx;
 }
 
 function getMessagesContext(cx, element)
 {
-    cx = getObjectDetails(client.currentObject, cx);
+    if (!cx)
+        cx = new Object();
+    cx.__proto__ = getObjectDetails(client.currentObject);
     if (!element)
         element = document.popupNode;
 
@@ -877,19 +1190,20 @@ function getMessagesContext(cx, element)
                 var href = element.getAttribute("href");
                 cx.url = href;
                 break;
-                
-            case "td":
+
+            case "tr":
                 var nickname = element.getAttribute("msg-user");
                 if (!nickname)
                     break;
-                
+
                 // strip out  a potential ME! suffix
                 var ary = nickname.match(/(\S+)/);
                 nickname = ary[1];
-                
-                if (!cx.network || !(nickname in cx.network.users))
+
+                if (!cx.network)
                     break;
-                
+
+                // NOTE: nickname is the unicodeName here!
                 if (cx.channel)
                     cx.user = cx.channel.getUser(nickname);
                 else
@@ -897,8 +1211,12 @@ function getMessagesContext(cx, element)
 
                 if (cx.user)
                 {
-                    cx.nickname = cx.user.properNick;
-                    cx.canonNick = cx.user.nick;
+                    cx.nickname = cx.user.unicodeName;
+                    cx.canonNick = cx.user.canonicalName;
+                }
+                else
+                {
+                    cx.nickname = nickname;
                 }
                 break;
         }
@@ -911,6 +1229,8 @@ function getMessagesContext(cx, element)
 
 function getTabContext(cx, element)
 {
+    if (!cx)
+        cx = new Object();
     if (!element)
         element = document.popupNode;
 
@@ -924,35 +1244,45 @@ function getTabContext(cx, element)
     return cx;
 }
 
-function getUserlistContext(cx) 
+function getUserlistContext(cx)
 {
-    cx = getObjectDetails(client.currentObject, cx);
+    if (!cx)
+        cx = new Object();
+    cx.__proto__ = getObjectDetails(client.currentObject);
     if (!cx.channel)
         return cx;
-    
+
     cx.userList = new Array();
     cx.nicknameList = new Array();
-    
-    var tree = document.getElementById("user-list");
+    cx.canonNickList = new Array();
 
+    var tree = document.getElementById("user-list");
     var rangeCount = tree.view.selection.getRangeCount();
+
     for (var i = 0; i < rangeCount; ++i)
     {
         var start = {}, end = {};
         tree.view.selection.getRangeAt(i, start, end);
+
+        // If they == -1, we've got no selection, so bail.
+        if ((start.value == -1) && (end.value == -1))
+            return cx;
+
         for (var k = start.value; k <= end.value; ++k)
         {
             var item = tree.contentView.getItemAtIndex(k);
             var cell = item.firstChild.firstChild;
-            var user = cx.channel.getUser(cell.getAttribute("label"));
+            var user = cx.channel.getUser(cell.getAttribute("unicodeName"));
             if (user)
             {
                 cx.userList.push(user);
-                cx.nicknameList.push(user.nick);
+                cx.nicknameList.push(user.unicodeName);
+                cx.canonNickList.push(user.canonicalName);
                 if (i == 0 && k == start.value)
                 {
                     cx.user = user;
-                    cx.nickname = user.properNick;
+                    cx.nickname = user.unicodeName;
+                    cx.canonNick = user.canonicalName;
                 }
             }
         }
@@ -963,21 +1293,23 @@ function getUserlistContext(cx)
 
 function getFontContext(cx)
 {
-    cx = getObjectDetails(client.currentObject, cx);
+    if (!cx)
+        cx = new Object();
+    cx.__proto__ = getObjectDetails(client.currentObject);
     cx.fontSizeDefault = getDefaultFontSize();
     var view = client;
-    
+
     if ("prefs" in cx.sourceObject)
     {
         cx.fontFamily = view.prefs["font.family"];
         if (cx.fontFamily.match(/^(default|(sans-)?serif|monospace)$/))
             delete cx.fontFamily;
-        
+
         cx.fontSize = view.prefs["font.size"];
         if (cx.fontSize == 0)
             delete cx.fontSize;
     }
-    
+
     return cx;
 }
 
@@ -987,9 +1319,9 @@ function msgIsImportant (msg, sourceNick, network)
      * plain text of a message, ignoring color codes, bold, etc. so we put it
      * through the munger. This produces a tree of HTML elements, which we use
      * |.innerHTML| to convert to a textual representation.
-     * 
+     *
      * Then we remove all the HTML tags, using a RegExp.
-     * 
+     *
      * It certainly isn't ideal, and there has to be a better way, but it:
      *   a) works, and
      *   b) is fast enough to not cause problems,
@@ -997,53 +1329,115 @@ function msgIsImportant (msg, sourceNick, network)
      */
     var plainMsg = client.munger.munge(msg, null, {});
     plainMsg = plainMsg.innerHTML.replace(/<[^>]+>/g, "");
-    
+
     var re = network.stalkExpression;
     if (plainMsg.search(re) != -1 || sourceNick && sourceNick.search(re) == 0)
         return true;
 
-    return false;    
+    return false;
 }
 
 function isStartupURL(url)
 {
     return arrayContains(client.prefs["initialURLs"], url);
 }
-    
+
 function cycleView (amount)
 {
     var len = client.viewsArray.length;
     if (len <= 1)
         return;
-    
+
     var tb = getTabForObject (client.currentObject);
     if (!tb)
         return;
-    
+
     var vk = Number(tb.getAttribute("viewKey"));
     var destKey = (vk + amount) % len; /* wrap around */
     if (destKey < 0)
         destKey += len;
-    
-    setCurrentObject (client.viewsArray[destKey].source);
+
+    dispatch("set-current-view", { view: client.viewsArray[destKey].source });
 }
 
-function playSounds (list)
+// Plays the sound for a particular event on a type of object.
+function playEventSounds(type, event)
+{
+    if (!client.sound || !client.prefs["sound.enabled"])
+        return;
+
+    // Converts .TYPE values into the event object names.
+    // IRCChannel => channel, IRCUser => user, etc.
+    if (type.match(/^IRC/))
+        type = type.substr(3, type.length).toLowerCase();
+
+    var ev = type + "." + event;
+
+    if (ev in client.soundList)
+        return;
+
+    if (!(("sound." + ev) in client.prefs))
+        return;
+
+    var s = client.prefs["sound." + ev];
+
+    if (!s)
+        return;
+
+    if (client.prefs["sound.overlapDelay"] > 0)
+    {
+        client.soundList[ev] = true;
+        setTimeout("delete client.soundList['" + ev + "']",
+                   client.prefs["sound.overlapDelay"]);
+    }
+
+    if (event == "start")
+    {
+        blockEventSounds(type, "event");
+        blockEventSounds(type, "chat");
+        blockEventSounds(type, "stalk");
+    }
+
+    playSounds(s);
+}
+
+// Blocks a particular type of event sound occuring.
+function blockEventSounds(type, event)
+{
+    if (!client.sound || !client.prefs["sound.enabled"])
+        return;
+
+    // Converts .TYPE values into the event object names.
+    // IRCChannel => channel, IRCUser => user, etc.
+    if (type.match(/^IRC/))
+        type = type.substr(3, type.length).toLowerCase();
+
+    var ev = type + "." + event;
+
+    if (client.prefs["sound.overlapDelay"] > 0)
+    {
+        client.soundList[ev] = true;
+        setTimeout("delete client.soundList['" + ev + "']",
+                   client.prefs["sound.overlapDelay"]);
+    }
+}
+
+function playSounds(list)
 {
     var ary = list.split (" ");
     if (ary.length == 0)
         return;
-    
-    playSound (ary[0]);
+
+    playSound(ary[0]);
     for (var i = 1; i < ary.length; ++i)
-        setTimeout (playSound, 250 * i, ary[i]);
+        setTimeout(playSound, 250 * i, ary[i]);
 }
 
 function playSound(file)
 {
-    if (!client.sound || !file)
+    if (!client.sound || !client.prefs["sound.enabled"] || !file)
         return;
-    
+
     if (file == "beep")
     {
         client.sound.beep();
@@ -1052,9 +1446,7 @@ function playSound(file)
     {
         try
         {
-            var io = Components.classes['@mozilla.org/network/io-service;1'];
-            io = io.createInstance(Components.interfaces.nsIIOService);
-            var uri = io.newURI(file, null, null);
+            var uri = client.iosvc.newURI(file, null, null);
             client.sound.play(uri);
         }
         catch (ex)
@@ -1071,10 +1463,11 @@ function mainStep()
     setTimeout ("mainStep()", client.STEP_TIMEOUT);
 }
 
-function openQueryTab (server, nick)
+function openQueryTab(server, nick)
 {
     var user = server.addUser(nick);
-    client.globalHistory.addPage(user.getURL());
+    if (client.globalHistory)
+        client.globalHistory.addPage(user.getURL());
     if (!("messages" in user))
     {
         var value = "";
@@ -1082,9 +1475,9 @@ function openQueryTab (server, nick)
         for (var c in server.channels)
         {
             var chan = server.channels[c];
-            if (!(user.nick in chan.users))
+            if (!(user.canonicalName in chan.users))
                 continue;
-            /* This takes a boolean value for each channel (true - channel has 
+            /* This takes a boolean value for each channel (true - channel has
              * same value as first), and &&-s them all together. Thus, |same|
              * will tell us, at the end, if all the channels found have the
              * same value for charset.
@@ -1102,10 +1495,10 @@ function openQueryTab (server, nick)
         {
             user.prefManager.prefRecords["charset"].defaultValue = value;
         }
-        
-        user.displayHere (getMsg(MSG_QUERY_OPENED, user.properNick));
+
+        user.displayHere (getMsg(MSG_QUERY_OPENED, user.unicodeName));
     }
-    server.sendData ("WHOIS " + nick + "\n");
+    user.whois();
     return user;
 }
 
@@ -1113,16 +1506,16 @@ function arraySpeak (ary, single, plural)
 {
     var rv = "";
     var and = MSG_AND;
-    
+
     switch (ary.length)
     {
         case 0:
             break;
-            
+
         case 1:
             rv = ary[0];
             if (single)
-                rv += " " + single;            
+                rv += " " + single;
             break;
 
         case 2:
@@ -1141,7 +1534,7 @@ function arraySpeak (ary, single, plural)
     }
 
     return rv;
-    
+
 }
 
 function getObjectDetails (obj, rv)
@@ -1162,7 +1555,7 @@ function getObjectDetails (obj, rv)
     rv.channel = null;
     rv.server = null;
     rv.network = null;
-    
+
     switch (obj.TYPE)
     {
         case "IRCChannel":
@@ -1176,7 +1569,7 @@ function getObjectDetails (obj, rv)
         case "IRCUser":
             rv.viewType = MSG_USER;
             rv.user = obj;
-            rv.userName = obj.properNick;
+            rv.userName = obj.unicodeName;
             rv.server = rv.user.parent;
             rv.network = rv.server.parent;
             break;
@@ -1184,7 +1577,7 @@ function getObjectDetails (obj, rv)
         case "IRCChanUser":
             rv.viewType = MSG_USER;
             rv.user = obj;
-            rv.userName = obj.properNick;
+            rv.userName = obj.unicodeName;
             rv.channel = rv.user.parent;
             rv.server = rv.channel.parent;
             rv.network = rv.server.parent;
@@ -1202,28 +1595,28 @@ function getObjectDetails (obj, rv)
         case "IRCClient":
             rv.viewType = MSG_TAB;
             break;
-            
+
         default:
             /* no setup for unknown object */
             break;
     }
 
     if (rv.network)
-        rv.networkName = rv.network.name;
+        rv.networkName = rv.network.unicodeName;
 
     return rv;
-    
+
 }
 
 function findDynamicRule (selector)
 {
     var rules = frames[0].document.styleSheets[1].cssRules;
-    
+
     if (selector instanceof RegExp)
         fun = "search";
     else
         fun = "indexOf";
-    
+
     for (var i = 0; i < rules.length; ++i)
     {
         var rule = rules.item(i);
@@ -1231,7 +1624,7 @@ function findDynamicRule (selector)
             return {sheet: frames[0].document.styleSheets[1], rule: rule,
                     index: i};
     }
-    
+
     return null;
 }
 
@@ -1248,7 +1641,7 @@ function getCommandEnabled(command)
     try {
         var dispatcher = top.document.commandDispatcher;
         var controller = dispatcher.getControllerForCommand(command);
-        
+
         return controller.isCommandEnabled(command);
     }
     catch (e)
@@ -1300,12 +1693,13 @@ function doURLTest()
 function parseIRCURL (url)
 {
     var specifiedHost = "";
-    
+
     var rv = new Object();
     rv.spec = url;
+    rv.scheme = url.split(":")[0];
     rv.host = null;
     rv.target = "";
-    rv.port = 6667;
+    rv.port = (rv.scheme == "ircs" ? 9999 : 6667);
     rv.msg = "";
     rv.pass = null;
     rv.key = null;
@@ -1314,12 +1708,12 @@ function parseIRCURL (url)
     rv.needkey = false;
     rv.isnick = false;
     rv.isserver = false;
-    
-    if (url.search(/^(irc:\/?\/?)$/i) != -1)
+
+    if (url.search(/^(ircs?:\/?\/?)$/i) != -1)
         return rv;
 
     /* split url into <host>/<everything-else> pieces */
-    var ary = url.match (/^irc:\/\/([^\/\s]+)?(\/.*)?\s*$/i);
+    var ary = url.match (/^ircs?:\/\/([^\/\s]+)?(\/.*)?\s*$/i);
     if (!ary || !ary[1])
     {
         dd ("parseIRCURL: initial split failed");
@@ -1335,7 +1729,7 @@ function parseIRCURL (url)
         dd ("parseIRCURL: host/port split failed");
         return null;
     }
-    
+
     if (arrayHasElementAt(ary, 2))
     {
         if (!arrayHasElementAt(ary, 2))
@@ -1362,8 +1756,8 @@ function parseIRCURL (url)
             dd ("parseIRCURL: rest split failed ``" + rest + "''");
             return null;
         }
-        
-        rv.target = arrayHasElementAt(ary, 1) ? 
+
+        rv.target = arrayHasElementAt(ary, 1) ?
             ecmaUnescape(ary[1]).replace("\n", "\\n") : "";
         var i = rv.target.indexOf(" ");
         if (i != -1)
@@ -1381,20 +1775,20 @@ function parseIRCURL (url)
                 /* isnick w/o a target is bogus */
                 return null;
             }
-        
+
             if (!rv.isserver)
             {
                 rv.isserver =
                     (params.search (/,\s*isserver\s*,|,\s*isserver\s*$/) != -1);
             }
-            
+
             if (rv.isserver && !specifiedHost)
             {
                 dd ("parseIRCURL: isserver w/o host");
                     /* isserver w/o a host is bogus */
                 return null;
             }
-                
+
             rv.needpass =
                 (params.search (/,\s*needpass\s*,|,\s*needpass\s*$/) != -1);
 
@@ -1434,12 +1828,12 @@ function parseIRCURL (url)
                         rv.charset = unescape(arg[1]).replace ("\n", "\\n");
                         break;
                 }
-            }            
+            }
         }
     }
 
     return rv;
-    
+
 }
 
 function gotoIRCURL (url)
@@ -1447,7 +1841,7 @@ function gotoIRCURL (url)
     var urlspec = url;
     if (typeof url == "string")
         url = parseIRCURL(url);
-    
+
     if (!url)
     {
         window.alert (getMsg(MSG_ERR_BAD_IRCURL, urlspec));
@@ -1466,7 +1860,7 @@ function gotoIRCURL (url)
 
     var network;
     var pass = "";
-    
+
     if (url.needpass)
     {
         if (url.pass)
@@ -1474,7 +1868,7 @@ function gotoIRCURL (url)
         else
             pass = window.promptPassword(getMsg(MSG_URL_PASSWORD, url.spec));
     }
-    
+
     if (url.isserver)
     {
         var alreadyThere = false;
@@ -1497,8 +1891,8 @@ function gotoIRCURL (url)
             dd ("gotoIRCURL: not already connected to " +
                 "server " + url.host + " trying to connect...");
             */
-            network = dispatch("server", {hostname: url.host, port: url.port,
-                                          password: pass});
+            network = dispatch((url.scheme == "ircs" ? "sslserver" : "server"),
+                                {hostname: url.host, port: url.port, password: pass});
             if (!("pendingURLs" in network))
                 network.pendingURLs = new Array();
             network.pendingURLs.unshift(url);
@@ -1513,7 +1907,7 @@ function gotoIRCURL (url)
             display(getMsg(MSG_ERR_UNKNOWN_NETWORK, url.host));
             return;
         }
-        
+
         network = client.networks[url.host];
         if (!network.isConnected())
         {
@@ -1521,14 +1915,14 @@ function gotoIRCURL (url)
             dd ("gotoIRCURL: not already connected to " +
                 "network " + url.host + " trying to connect...");
             */
-            client.connectToNetwork(network);
+            client.connectToNetwork(network, (url.scheme == "ircs" ? true : false));
             if (!("pendingURLs" in network))
                 network.pendingURLs = new Array();
             network.pendingURLs.unshift(url);
             return;
         }
     }
-    
+
     /* already connected, do whatever comes next in the url */
     //dd ("gotoIRCURL: connected, time to finish parsing ``" + url + "''");
     if (url.target)
@@ -1557,13 +1951,34 @@ function gotoIRCURL (url)
                     key = window.promptPassword(getMsg(MSG_URL_KEY, url.spec));
             }
 
-            var charset;
             if (url.charset)
-                charset = url.charset;
-                    
-            targetObject = network.dispatch("join",
-                                            { channelName: url.target, key: key,
-                                              charset: charset });
+            {
+                var d = { channelName: url.target, key: key,
+                          charset: url.charset };
+                targetObject = network.dispatch("join", d);
+            }
+            else
+            {
+                // Must do this the hard way... we have the server's format
+                // for the channel name here, and all our commands only work
+                // with the Unicode forms.
+                var serv = network.primServ;
+                var target = url.target;
+
+                /* If we don't have a valid prefix, stick a "#" on it.
+                 * NOTE: This is always a "#" so that URLs may be compared
+                 * properly without involving the server (e.g. off-line).
+                 */
+                if (arrayIndexOf(serv.channelTypes, target[0]) == -1)
+                    target = "#" + target;
+
+                var chan = new CIRCChannel(serv, null, target);
+
+                d = { channelName: chan.unicodeName, key: key,
+                      charset: url.charset };
+                targetObject = network.dispatch("join", d);
+            }
+
             if (!targetObject)
                 return;
         }
@@ -1584,14 +1999,14 @@ function gotoIRCURL (url)
                                      client.currentObject);
             }
             targetObject.say(msg);
-            setCurrentObject(targetObject);
+            dispatch("set-current-view", { view: targetObject });
         }
     }
     else
     {
         if (!network.messages)
-            network.displayHere (getMsg(MSG_NETWORK_OPENED, network.name));
-        setCurrentObject(network);
+            network.displayHere (getMsg(MSG_NETWORK_OPENED, network.unicodeName));
+        dispatch("set-current-view", { view: network });
     }
 }
 
@@ -1600,12 +2015,74 @@ function setTopicText (text)
     var topic = client.statusBar["channel-topic"];
     var span = document.createElementNS ("http://www.w3.org/1999/xhtml",
                                          "html:span");
-    
+
     span.appendChild(stringToMsg(text, client.currentObject));
     topic.removeChild(topic.firstChild);
     topic.appendChild(span);
 }
-    
+
+function updateProgress()
+{
+    var busy;
+    var progress = -1;
+
+    if ("busy" in client.currentObject)
+        busy = client.currentObject.busy;
+
+    if ("progress" in client.currentObject)
+        progress = client.currentObject.progress;
+
+    client.progressPanel.collapsed = !busy;
+    if (busy && (progress >= 0))
+    {
+        client.progressBar.value = progress;
+        client.progressBar.mode = "determined";
+    }
+    else
+    {
+        client.progressBar.mode = "undetermined";
+    }
+}
+
+function updateSecurityIcon()
+{
+    var o = getObjectDetails(client.currentObject);
+    var securityButton = window.document.getElementById("security-button");
+    securityButton.firstChild.value = "";
+    securityButton.removeAttribute("level");
+    securityButton.removeAttribute("tooltiptext");
+    if (!o.server || !o.server.isConnected) // No server or connection?
+    {
+        securityButton.setAttribute("tooltiptext", MSG_SECURITY_INFO);
+        return;
+    }
+
+    var securityState = o.server.connection.getSecurityState()
+    switch (securityState[0]) 
+    {
+        case STATE_IS_SECURE:
+            securityButton.firstChild.value = o.server.hostname;
+            if (securityState[1] == STATE_SECURE_HIGH)
+                securityButton.setAttribute("level", "high");
+            else // Because low security is the worst we have when being secure
+                securityButton.setAttribute("level", "low");
+
+            // Add the tooltip:
+            var issuer = o.server.connection.getCertificate().issuerOrganization;
+            var tooltiptext = getMsg(MSG_SECURE_CONNECTION, issuer);
+            securityButton.setAttribute("tooltiptext", tooltiptext);
+            securityButton.firstChild.setAttribute("tooltiptext", tooltiptext);
+            securityButton.lastChild.setAttribute("tooltiptext", tooltiptext);
+            break;
+        case STATE_IS_BROKEN:
+            securityButton.setAttribute("level", "broken");
+            // No break to make sure we get the correct tooltip
+        case STATE_IS_INSECURE:
+        default:
+            securityButton.setAttribute("tooltiptext", MSG_SECURITY_INFO);
+    }
+}
+
 function updateNetwork()
 {
     var o = getObjectDetails (client.currentObject);
@@ -1615,28 +2092,28 @@ function updateNetwork()
     if (o.server)
     {
         if (o.server.me)
-            nick = o.server.me.properNick;
+            nick = o.server.me.unicodeName;
         lag = (o.server.lag != -1) ? o.server.lag : MSG_UNKNOWN;
     }
-    client.statusBar["header-url"].setAttribute("value", 
+    client.statusBar["header-url"].setAttribute("value",
                                                  client.currentObject.getURL());
-    client.statusBar["header-url"].setAttribute("href", 
+    client.statusBar["header-url"].setAttribute("href",
                                                  client.currentObject.getURL());
-    client.statusBar["header-url"].setAttribute("name", 
-                                                 client.currentObject.name);
+    client.statusBar["header-url"].setAttribute("name",
+                                                 client.currentObject.unicodeName);
 }
 
 function updateTitle (obj)
 {
-    if (!(("currentObject" in client) && client.currentObject) || 
+    if (!(("currentObject" in client) && client.currentObject) ||
         (obj && obj != client.currentObject))
         return;
 
     var tstring;
     var o = getObjectDetails(client.currentObject);
-    var net = o.network ? o.network.name : "";
+    var net = o.network ? o.network.unicodeName : "";
     var nick = "";
-    
+
     switch (client.currentObject.TYPE)
     {
         case "IRCNetwork":
@@ -1646,7 +2123,7 @@ function updateTitle (obj)
                 serv = o.server.hostname;
                 port = o.server.port;
                 if (o.server.me)
-                    nick = o.server.me.properNick;
+                    nick = o.server.me.unicodeName;
                 tstring = getMsg(MSG_TITLE_NET_ON, [nick, net, serv, port]);
             }
             else
@@ -1655,17 +2132,19 @@ function updateTitle (obj)
                 tstring = getMsg(MSG_TITLE_NET_OFF, [nick, net]);
             }
             break;
-            
+
         case "IRCChannel":
             var chan = "", mode = "", topic = "";
             if ("me" in o.parent)
             {
-                nick = o.parent.me.properNick;
-                if (o.parent.me.nick in client.currentObject.users)
+                nick = o.parent.me.unicodeName;
+                if (o.parent.me.canonicalName in client.currentObject.users)
                 {
-                    var cuser = client.currentObject.users[o.parent.me.nick];
+                    var cuser = client.currentObject.users[o.parent.me.canonicalName];
                     if (cuser.isOp)
                         nick = "@" + nick;
+                    else if (cuser.isHalfOp)
+                        nick = "%" + nick;
                     else if (cuser.isVoice)
                         nick = "+" + nick;
                 }
@@ -1681,12 +2160,12 @@ function updateTitle (obj)
             topic = o.channel.topic ? o.channel.topic : MSG_TITLE_NO_TOPIC;
             var re = /\x1f|\x02|\x0f|\x16|\x03([0-9]{1,2}(,[0-9]{1,2})?)?/g;
             topic = topic.replace(re, "");
-            
+
             tstring = getMsg(MSG_TITLE_CHANNEL, [nick, chan, mode, topic]);
             break;
 
         case "IRCUser":
-            nick = client.currentObject.properNick;
+            nick = client.currentObject.unicodeName;
             var source = "";
             if (client.currentObject.name)
             {
@@ -1694,8 +2173,11 @@ function updateTitle (obj)
                     client.currentObject.host +">";
             }
             tstring = getMsg(MSG_TITLE_USER, [nick, source]);
-            nick = "me" in o.parent ? o.parent.me.properNick : MSG_TITLE_NONICK;
+            nick = "me" in o.parent ? o.parent.me.unicodeName : MSG_TITLE_NONICK;
             break;
+
+        case "IRCClient":
+            nick = client.prefs["nickname"];
 
         default:
             tstring = MSG_TITLE_UNKNOWN;
@@ -1714,7 +2196,7 @@ function updateTitle (obj)
     }
 
     document.title = tstring;
-    client.statusBar["server-nick"].setAttribute("value", nick);
+    client.statusBar["server-nick"].setAttribute("label", nick);
 }
 
 function multilineInputMode (state)
@@ -1728,10 +2210,10 @@ function multilineInputMode (state)
     var h;
 
     client._mlMode = state;
-    
+
     if (state)  /* turn on multiline input mode */
     {
-        
+
         h = iw.getAttribute ("lastHeight");
         if (h)
             iw.setAttribute ("height", h); /* restore the slider position */
@@ -1739,6 +2221,8 @@ function multilineInputMode (state)
         singleInputBox.setAttribute ("collapsed", "true");
         splitter.setAttribute ("collapsed", "false");
         multiInputBox.setAttribute ("collapsed", "false");
+        // multiInput should have the same direction as singleInput
+        multiInput.setAttribute("dir", singleInput.getAttribute("dir"));
         client.input = multiInput;
     }
     else  /* turn off multiline input mode */
@@ -1746,21 +2230,38 @@ function multilineInputMode (state)
         h = iw.getAttribute ("height");
         iw.setAttribute ("lastHeight", h); /* save the slider position */
         iw.removeAttribute ("height");     /* let the slider drop */
-        
+
         splitter.setAttribute ("collapsed", "true");
         multiInputBox.setAttribute ("collapsed", "true");
         singleInputBox.setAttribute ("collapsed", "false");
+        // singleInput should have the same direction as multiInput
+        singleInput.setAttribute("dir", multiInput.getAttribute("dir"));
         client.input = singleInput;
     }
 
     client.input.focus();
 }
 
+function displayCertificateInfo()
+{
+    var o = getObjectDetails(client.currentObject);
+    if (!o.server)
+        return;
+
+    if (!o.server.isSecure)
+    {
+        alert(getMsg(MSG_INSECURE_SERVER, o.server.hostname));
+        return;
+    }
+
+    viewCert(o.server.connection.getCertificate());
+}
+
 function newInlineText (data, className, tagName)
 {
     if (typeof tagName == "undefined")
         tagName = "html:span";
-    
+
     var a = document.createElementNS ("http://www.w3.org/1999/xhtml",
                                       tagName);
     if (className)
@@ -1771,7 +2272,7 @@ function newInlineText (data, className, tagName)
         case "string":
             a.appendChild (document.createTextNode (data));
             break;
-            
+
         case "object":
             for (var p in data)
                 if (p != "data")
@@ -1787,11 +2288,11 @@ function newInlineText (data, className, tagName)
             ASSERT(0, "INVALID TYPE ('" + typeof data + "') passed to " +
                    "newInlineText.");
             break;
-            
+
     }
 
     return a;
-    
+
 }
 
 function stringToMsg (message, obj)
@@ -1800,7 +2301,7 @@ function stringToMsg (message, obj)
     var span = document.createElementNS ("http://www.w3.org/1999/xhtml",
                                          "html:span");
     var data = getObjectDetails(obj);
-    
+
     if (ary.length == 1)
         client.munger.munge(ary[0], span, data);
     else
@@ -1808,7 +2309,7 @@ function stringToMsg (message, obj)
         for (var l = 0; l < ary.length - 1; ++l)
         {
             client.munger.munge(ary[l], span, data);
-            span.appendChild 
+            span.appendChild
                 (document.createElementNS ("http://www.w3.org/1999/xhtml",
                                            "html:br"));
         }
@@ -1835,13 +2336,13 @@ function setCurrentObject (obj)
         client.rdf.Unassert (client.rdf.resNullChan, client.rdf.resChanUser,
                              client.rdf.resNullUser, true);
     };
-        
+
     if (!ASSERT(obj.messages, "INVALID OBJECT passed to setCurrentObject **"))
         return;
 
     if ("currentObject" in client && client.currentObject == obj)
         return;
-        
+
     var tb, userList;
 
     if ("currentObject" in client && client.currentObject)
@@ -1853,18 +2354,18 @@ function setCurrentObject (obj)
         tb.selected = false;
         tb.setAttribute ("state", "normal");
     }
-    
+
     /* Unselect currently selected users. */
     userList = document.getElementById("user-list");
     /* If the splitter's collapsed, the userlist *isn't* visible, but we'll not
-     * get told when it becomes visible, so update it even if it's only the 
+     * get told when it becomes visible, so update it even if it's only the
      * splitter visible. */
     if (isVisible("user-list-box") || isVisible("main-splitter"))
     {
         /* Remove currently selected items before this tree gets rerooted,
          * because it seems to remember the selections for eternity if not. */
-        if (userList.treeBoxObject.selection)
-            userList.treeBoxObject.selection.select(-1);
+        if (userList.view && userList.view.selection)
+            userList.view.selection.select(-1);
 
         if (obj.TYPE == "IRCChannel")
         {
@@ -1880,31 +2381,44 @@ function setCurrentObject (obj)
             setTimeout(clearList, 100);
         }
     }
-    
+
     client.currentObject = obj;
-    tb = getTabForObject(obj, true);
+    tb = dispatch("create-tab-for-view", { view: obj });
     if (tb)
     {
         tb.selected = true;
         tb.setAttribute ("state", "current");
     }
-    
+
     var vk = Number(tb.getAttribute("viewKey"));
     delete client.activityList[vk];
     client.deck.selectedIndex = vk;
 
     updateTitle();
+    updateProgress();
+    updateSecurityIcon();
 
     if (client.PRINT_DIRECTION == 1)
-        scrollDown(obj.frame, false);    
+        scrollDown(obj.frame, false);
 
+    // Input area should have the same direction as the output area
+    if (("frame" in client.currentObject) &&
+        client.currentObject.frame &&
+        ("contentDocument" in client.currentObject.frame) &&
+        client.currentObject.frame.contentDocument &&
+        ("body" in client.currentObject.frame.contentDocument) &&
+        client.currentObject.frame.contentDocument.body)
+    {
+        var contentArea = client.currentObject.frame.contentDocument.body;
+        client.input.setAttribute("dir", contentArea.getAttribute("dir"));
+    }
     client.input.focus();
 }
 
 function checkScroll(frame)
 {
     var window = getContentWindow(frame);
-    if (!window)
+    if (!window || !("document" in window))
         return false;
 
     return (window.document.height - window.innerHeight -
@@ -1922,31 +2436,50 @@ function scrollDown(frame, force)
  * final value for state is dependant on priority of the current state, and the
  * new state. the priority is: normal < superfluous < activity < attention.
  */
-function setTabState (source, what)
+function setTabState(source, what, callback)
 {
     if (typeof source != "object")
     {
-        if (!ASSERT(source in client.viewsArray, 
+        if (!ASSERT(source in client.viewsArray,
                     "INVALID SOURCE passed to setTabState"))
             return;
         source = client.viewsArray[source].source;
     }
-    
-    var tb = getTabForObject (source, true);
+
+    callback = callback || false;
+
+    var tb = source.dispatch("create-tab-for-view", { view: source });
     var vk = Number(tb.getAttribute("viewKey"));
-    
-    if ("currentObject" in client && client.currentObject != source)
+
+    var current = ("currentObject" in client && client.currentObject == source);
+
+    /* We want to play sounds if they're from a non-current view, or we don't
+     * have focus at all. Also make sure stalk matches always play sounds.
+     * Also make sure we don't play on the 2nd half of the flash (Callback).
+     */
+    if (!callback && (!window.isFocused || !current || (what == "attention")))
     {
-        var state = tb.getAttribute ("state");
+        if (what == "attention")
+            playEventSounds(source.TYPE, "stalk");
+        else if (what == "activity")
+            playEventSounds(source.TYPE, "chat");
+        else if (what == "superfluous")
+            playEventSounds(source.TYPE, "event");
+    }
+
+    // Only change the tab's colour if it's not the active view.
+    if (!current)
+    {
+        var state = tb.getAttribute("state");
         if (state == what)
         {
             /* if the tab state has an equal priority to what we are setting
              * then blink it */
             if (client.prefs["activityFlashDelay"] > 0)
             {
-                tb.setAttribute ("state", "normal");
-                setTimeout (setTabState, client.prefs["activityFlashDelay"], 
-                            vk, what);
+                tb.setAttribute("state", "normal");
+                setTimeout(setTabState, client.prefs["activityFlashDelay"],
+                           vk, what, true);
             }
         }
         else
@@ -1956,7 +2489,7 @@ function setTabState (source, what)
             {
                 /* if the tab state has a lower priority than what we are
                  * setting, change it to the new state */
-                tb.setAttribute ("state", what);
+                tb.setAttribute("state", what);
                 /* we only change the activity list if priority has increased */
                 if (what == "attention")
                    client.activityList[vk] = "!";
@@ -1976,10 +2509,10 @@ function setTabState (source, what)
                  * blink the new lower state quickly, then back to the old */
                 if (client.prefs["activityFlashDelay"] > 0)
                 {
-                    tb.setAttribute ("state", what);
-                    setTimeout (setTabState, 
-                                client.prefs["activityFlashDelay"], vk, 
-                                state);
+                    tb.setAttribute("state", what);
+                    setTimeout(setTabState,
+                               client.prefs["activityFlashDelay"], vk,
+                               state, true);
                 }
             }
         }
@@ -1990,10 +2523,10 @@ function notifyAttention (source)
 {
     if (typeof source != "object")
         source = client.viewsArray[source].source;
-    
+
     if (client.currentObject != source)
     {
-        var tb = getTabForObject (source, true);
+        var tb = dispatch("create-tab-for-view", { view: source });
         var vk = Number(tb.getAttribute("viewKey"));
 
         tb.setAttribute ("state", "attention");
@@ -2003,7 +2536,7 @@ function notifyAttention (source)
 
     if (client.prefs["notify.aggressive"])
         window.getAttention();
-    
+
 }
 
 function setDebugMode(mode)
@@ -2012,12 +2545,12 @@ function setDebugMode(mode)
         client.debugHook.enabled = true;
     else
         client.debugHook.enabled = false;
-    
+
     if (mode.indexOf("c") != -1)
         client.dbgContexts = true;
     else
         delete client.dbgContexts;
-    
+
     if (mode.indexOf("d") != -1)
         client.dbgDispatch = true;
     else
@@ -2038,8 +2571,10 @@ function updateUserList()
 {
     var node;
     var sortDirection;
-    
+
     node = document.getElementById("user-list");
+    if (!node.view)
+        return;
 
     const nsIXULSortService = Components.interfaces.nsIXULSortService;
     const isupports_uri = "@mozilla.org/xul/xul-sort-service;1";
@@ -2050,7 +2585,7 @@ function updateUserList()
         return;
 
     var sortResource;
-    
+
     if (client.prefs["sortUsersByMode"])
         sortResource = RES_PFX + "sortname";
     else
@@ -2079,7 +2614,7 @@ function getFrameForDOMWindow(window)
             return frame;
     }
     return undefined;
-} 
+}
 
 function replaceColorCodes(msg)
 {
@@ -2091,7 +2626,7 @@ function replaceColorCodes(msg)
     msg = msg.replace(/(^|[^%])%R/g, "$1\x16");
     // %%[UBOCR] --> %[UBOCR].
     msg = msg.replace(/%(%[UBOCR])/g, "$1");
-    
+
     return msg;
 }
 
@@ -2105,57 +2640,87 @@ function decodeColorCodes(msg)
     msg = msg.replace(/\x0f/g, "%O");
     msg = msg.replace(/\x03/g, "%C");
     msg = msg.replace(/\x16/g, "%R");
-    
+
     return msg;
 }
 
 client.progressListener = new Object();
- 
-client.progressListener.QueryInterface = 
+
+client.progressListener.QueryInterface =
 function qi(iid)
 {
     return this;
 }
 
-client.progressListener.onStateChange = 
+client.progressListener.onStateChange =
 function client_statechange (webProgress, request, stateFlags, status)
 {
     const nsIWebProgressListener = Components.interfaces.nsIWebProgressListener;
     const START = nsIWebProgressListener.STATE_START;
     const STOP = nsIWebProgressListener.STATE_STOP;
+    const IS_NETWORK = nsIWebProgressListener.STATE_IS_NETWORK;
+    const IS_DOCUMENT = nsIWebProgressListener.STATE_IS_DOCUMENT;
 
     var frame;
-    if (stateFlags & START)
+
+    // We only care about the initial start of loading, not the loading of
+    // and page sub-components (IS_DOCUMENT, etc.).
+    if ((stateFlags & START) && (stateFlags & IS_NETWORK) &&
+        (stateFlags & IS_DOCUMENT))
     {
         frame = getFrameForDOMWindow(webProgress.DOMWindow);
         if (!frame)
         {
-            dd("can't find frame for window")
-            webProgress.removeProgressListener(this);
-            return;
+            dd("can't find frame for window (start)");
+            try
+            {
+                webProgress.removeProgressListener(this);
+            }
+            catch(ex)
+            {
+                dd("Exception removing progress listener (start): " + ex);
+            }
         }
     }
-    else if (stateFlags == 786448)
+    // We only want to know when the *network* stops, not the page's
+    // individual components (STATE_IS_REQUEST/STATE_IS_DOCUMENT/somesuch).
+    else if ((stateFlags & STOP) && (stateFlags & IS_NETWORK))
     {
         frame = getFrameForDOMWindow(webProgress.DOMWindow);
         if (!frame)
         {
-            dd("can't find frame for window");
-            webProgress.removeProgressListener(this);
-            return;
+            dd("can't find frame for window (stop)");
+            try
+            {
+                webProgress.removeProgressListener(this);
+            }
+            catch(ex)
+            {
+                dd("Exception removing progress listener (stop): " + ex);
+            }
         }
-
-        var cwin = getContentWindow(frame);
-        if (cwin && "initOutputWindow" in cwin)
+        else
         {
-            cwin.getMsg = getMsg;
-            cwin.initOutputWindow(client, frame.source, onMessageViewClick);
-            cwin.changeCSS(frame.source.getTimestampCSS("data"), 
-                           "cz-timestamp-format");
-            cwin.changeCSS(frame.source.getFontCSS("data"), 
-                           "cz-fonts");
-            scrollDown(frame, true);
-            webProgress.removeProgressListener(this);
+            var cwin = getContentWindow(frame);
+            if (cwin && "initOutputWindow" in cwin)
+            {
+                cwin.getMsg = getMsg;
+                cwin.initOutputWindow(client, frame.source, onMessageViewClick);
+                cwin.changeCSS(frame.source.getTimestampCSS("data"),
+                               "cz-timestamp-format");
+                cwin.changeCSS(frame.source.getFontCSS("data"),
+                               "cz-fonts");
+                scrollDown(frame, true);
+
+                try
+                {
+                    webProgress.removeProgressListener(this);
+                }
+                catch(ex)
+                {
+                    dd("Exception removing progress listener (done): " + ex);
+                }
+            }
         }
     }
 }
@@ -2165,12 +2730,12 @@ function client_progresschange (webProgress, request, currentSelf, totalSelf,
                                 currentMax, selfMax)
 {
 }
- 
+
 client.progressListener.onLocationChange =
 function client_locationchange (webProgress, request, uri)
 {
 }
- 
+
 client.progressListener.onStatusChange =
 function client_statuschange (webProgress, request, status, message)
 {
@@ -2181,43 +2746,54 @@ function client_securitychange (webProgress, request, state)
 {
 }
 
-function syncOutputFrame(obj)
+function syncOutputFrame(obj, nesting)
 {
     const nsIWebProgress = Components.interfaces.nsIWebProgress;
-    const ALL = nsIWebProgress.NOTIFY_ALL;
-    const DOCUMENT = nsIWebProgress.NOTIFY_STATE_DOCUMENT;
     const WINDOW = nsIWebProgress.NOTIFY_STATE_WINDOW;
- 
+    const NETWORK = nsIWebProgress.NOTIFY_STATE_NETWORK;
+    const ALL = nsIWebProgress.NOTIFY_ALL;
+
     var iframe = obj.frame;
-    
-    function tryAgain ()
+
+    function tryAgain(nLevel)
     {
-        syncOutputFrame(obj);
+        syncOutputFrame(obj, nLevel);
     };
- 
+
+    if (typeof nesting != "number")
+        nesting = 0;
+
+    if (nesting > 10)
+    {
+        dd("Aborting syncOutputFrame, taken too many tries.");
+        return;
+    }
+
     try
     {
-        if ("contentDocument" in iframe && "webProgress" in iframe)
+        if (("contentDocument" in iframe) && ("webProgress" in iframe))
         {
             var url = obj.prefs["outputWindowURL"];
-            iframe.addProgressListener(client.progressListener, WINDOW);
+            iframe.addProgressListener(client.progressListener, ALL);
             iframe.loadURI(url);
         }
         else
         {
-            setTimeout(tryAgain, 500);
+            setTimeout(tryAgain, 500, nesting + 1);
         }
     }
     catch (ex)
     {
         dd("caught exception showing session view, will try again later.");
         dd(dumpObjectTree(ex) + "\n");
-        setTimeout (tryAgain, 500);
+        setTimeout(tryAgain, 500, nesting + 1);
     }
 }
 
 function createMessages(source)
 {
+    playEventSounds(source.TYPE, "start");
+
     source.messages =
     document.createElementNS ("http://www.w3.org/1999/xhtml",
                               "html:table");
@@ -2239,25 +2815,15 @@ function getTabForObject (source, create)
 
     if (!ASSERT(source, "UNDEFINED passed to getTabForObject"))
         return null;
-    
-    switch (source.TYPE)
-    {
-        case "IRCChanUser":
-        case "IRCUser":
-            name = source.properNick;
-            break;
-            
-        case "IRCNetwork":
-        case "IRCClient":
-            name = source.name;
-            break;
-        case "IRCChannel":
-            name = source.unicodeName;
-            break;
 
-        default:
-            ASSERT(0, "INVALID OBJECT passed to getTabForObject");
-            return null;
+    if ("viewName" in source)
+    {
+        name = source.viewName;
+    }
+    else
+    {
+        ASSERT(0, "INVALID OBJECT passed to getTabForObject");
+        return null;
     }
 
     var tb, id = "tb[" + name + "]";
@@ -2281,18 +2847,18 @@ function getTabForObject (source, create)
             createMessages(source);
         var views = document.getElementById ("views-tbar-inner");
         tb = document.createElement ("tab");
-        tb.setAttribute ("ondraggesture",
-                         "nsDragAndDrop.startDrag(event, tabDNDObserver);");
-        tb.setAttribute ("href", source.getURL());
-        tb.setAttribute ("name", source.name);
-        tb.setAttribute ("onclick", "onTabClick(event, " + id.quote() + ");");
-        tb.setAttribute ("crop", "right");
-        tb.setAttribute ("context", "context:tab");
-        tb.setAttribute ("tooltip", "xul-tooltip-mode");
-        
-        tb.setAttribute ("class", "tab-bottom view-button");
-        tb.setAttribute ("id", id);
-        tb.setAttribute ("state", "normal");
+        tb.setAttribute("ondraggesture",
+                        "nsDragAndDrop.startDrag(event, tabDNDObserver);");
+        tb.setAttribute("href", source.getURL());
+        tb.setAttribute("name", source.unicodeName);
+        tb.setAttribute("onclick", "onTabClick(event, " + id.quote() + ");");
+        // This wouldn't be here if there was a supported CSS property for it.
+        tb.setAttribute("crop", "center");
+        tb.setAttribute("context", "context:tab");
+        tb.setAttribute("tooltip", "xul-tooltip-node");
+        tb.setAttribute("class", "tab-bottom view-button");
+        tb.setAttribute("id", id);
+        tb.setAttribute("state", "normal");
 
         client.viewsArray.push ({source: source, tb: tb});
         tb.setAttribute ("viewKey", client.viewsArray.length - 1);
@@ -2303,7 +2869,7 @@ function getTabForObject (source, create)
         else
             tb.setAttribute("label", name);
 
-        views.appendChild(tb);        
+        views.appendChild(tb);
 
         var browser = document.createElement ("browser");
         browser.setAttribute("class", "output-container");
@@ -2330,7 +2896,7 @@ function getTabForObject (source, create)
     }
 
     return tb;
-    
+
 }
 
 var contentDropObserver = new Object();
@@ -2355,10 +2921,10 @@ function tabdnd_drop (aEvent, aXferData, aDragSession)
                                                 aXferData.flavour.contentType);
     if (!url || url.search(client.linkRE) == -1)
         return;
-    
+
     if (url.search(/\.css$/i) != -1  && confirm (getMsg(MSG_TABDND_DROP, url)))
         dispatch("motif", {"motif": url});
-    else if (url.search(/^irc:\/\//i) != -1)
+    else if (url.search(/^ircs?:\/\//i) != -1)
         dispatch("goto-url", {"url": url});
 }
 
@@ -2380,7 +2946,7 @@ function tabdnd_dstart (aEvent, aXferData, aDragAction)
     var tb = aEvent.currentTarget;
     var href = tb.getAttribute("href");
     var name = tb.getAttribute("name");
-    
+
     aXferData.data = new TransferData();
     /* x-moz-url has the format "<url>\n<name>", goodie */
     aXferData.data.addDataForFlavour("text/x-moz-url", href + "\n" + name);
@@ -2391,7 +2957,7 @@ function tabdnd_dstart (aEvent, aXferData, aDragAction)
 
 function deleteTab (tb)
 {
-    if (!ASSERT(tb.hasAttribute("viewKey"), 
+    if (!ASSERT(tb.hasAttribute("viewKey"),
                 "INVALID OBJECT passed to deleteTab (" + tb + ")"))
     {
         return null;
@@ -2399,7 +2965,7 @@ function deleteTab (tb)
 
     var i;
     var key = Number(tb.getAttribute("viewKey"));
-    
+
     /* re-index higher toolbuttons */
     for (i = key + 1; i < client.viewsArray.length; i++)
     {
@@ -2427,41 +2993,41 @@ function filterOutput (msg, msgtype)
 }
 
 client.addNetwork =
-function cli_addnet(name, serverList)
+function cli_addnet(name, serverList, temporary)
 {
     client.networks[name] =
-        new CIRCNetwork (name, serverList, client.eventPump);
+        new CIRCNetwork (name, serverList, client.eventPump, temporary);
 }
 
 client.connectToNetwork =
-function cli_connect(networkOrName)
+function cli_connect(networkOrName, requireSecurity)
 {
     var network;
     var name;
-    
-    
+
+
     if (networkOrName instanceof CIRCNetwork)
     {
         network = networkOrName;
-        name = network.name;
     }
     else
     {
         name = networkOrName;
-        
+
         if (!(name in client.networks))
         {
             display(getMsg(MSG_ERR_UNKNOWN_NETWORK, name), MT_ERROR);
             return null;
         }
-    
+
         network = client.networks[name];
     }
-    
+    name = network.unicodeName;
+
     if (!("messages" in network))
         network.displayHere(getMsg(MSG_NETWORK_OPENED, name));
 
-    setCurrentObject(network);
+    dispatch("set-current-view", { view: network });
 
     if (network.isConnected())
     {
@@ -2469,17 +3035,16 @@ function cli_connect(networkOrName)
         return network;
     }
 
-    if (network.connecting)
+    if (network.state != NET_OFFLINE)
         return network;
-    
+
     if (network.prefs["nickname"] == DEFAULT_NICK)
         network.prefs["nickname"] = prompt(MSG_ENTER_NICK, DEFAULT_NICK);
-    
+
     if (!("connecting" in network))
         network.display(getMsg(MSG_NETWORK_CONNECTING, name));
 
-    network.connecting = true;
-    network.connect();
+    network.connect(requireSecurity);
 
     network.updateHeader();
     client.updateHeader();
@@ -2501,30 +3066,31 @@ function cli_load(url, scope)
     if (!("_loader" in client))
     {
         const LOADER_CTRID = "@mozilla.org/moz/jssubscript-loader;1";
-        const mozIJSSubScriptLoader = 
+        const mozIJSSubScriptLoader =
             Components.interfaces.mozIJSSubScriptLoader;
 
         var cls;
         if ((cls = Components.classes[LOADER_CTRID]))
-            client._loader = cls.createInstance(mozIJSSubScriptLoader);
+            client._loader = cls.getService(mozIJSSubScriptLoader);
     }
 
     return client._loader.loadSubScript(url, scope);
 }
-    
+
 client.sayToCurrentTarget =
 function cli_say(msg)
 {
+    if ("say" in client.currentObject)
+    {
+        msg = filterOutput (msg, "PRIVMSG");
+        display(msg, "PRIVMSG", "ME!", client.currentObject);
+        client.currentObject.say(msg);
+
+        return;
+    }
+
     switch (client.currentObject.TYPE)
     {
-        case "IRCChannel":
-        case "IRCUser":
-        case "IRCChanUser":
-            msg = filterOutput (msg, "PRIVMSG");
-            display(msg, "PRIVMSG", "ME!", client.currentObject);
-            client.currentObject.say(msg);
-            break;
-
         case "IRCClient":
             dispatch("eval", {expression: msg});
             break;
@@ -2547,7 +3113,7 @@ function net_getprefs()
         this._prefManager = getNetworkPrefManager(this);
         this._prefs = this._prefManager.prefs;
     }
-    
+
     return this._prefs;
 }
 
@@ -2559,7 +3125,7 @@ function net_getprefmgr()
         this._prefManager = getNetworkPrefManager(this);
         this._prefs = this._prefManager.prefs;
     }
-    
+
     return this._prefManager;
 }
 
@@ -2583,7 +3149,7 @@ function chan_getprefs()
         this._prefManager = getChannelPrefManager(this);
         this._prefs = this._prefManager.prefs;
     }
-    
+
     return this._prefs;
 }
 
@@ -2595,7 +3161,7 @@ function chan_getprefmgr()
         this._prefManager = getChannelPrefManager(this);
         this._prefs = this._prefManager.prefs;
     }
-    
+
     return this._prefManager;
 }
 
@@ -2607,7 +3173,7 @@ function usr_getprefs()
         this._prefManager = getUserPrefManager(this);
         this._prefs = this._prefManager.prefs;
     }
-    
+
     return this._prefs;
 }
 
@@ -2619,7 +3185,7 @@ function usr_getprefmgr()
         this._prefManager = getUserPrefManager(this);
         this._prefs = this._prefManager.prefs;
     }
-    
+
     return this._prefManager;
 }
 
@@ -2659,6 +3225,18 @@ function usr_display(message, msgtype, sourceObj, destObj)
     }
 }
 
+CIRCDCCChat.prototype.display =
+CIRCDCCFileTransfer.prototype.display =
+function dcc_display(message, msgtype, sourceObj, destObj)
+{
+    var o = getObjectDetails(client.currentObject);
+
+    if ("messages" in this)
+        this.displayHere(message, msgtype, sourceObj, destObj);
+    else
+        client.currentObject.display(message, msgtype, sourceObj, destObj);
+}
+
 function feedback(e, message, msgtype, sourceObj, destObj)
 {
     if ("isInteractive" in e && e.isInteractive)
@@ -2668,6 +3246,8 @@ function feedback(e, message, msgtype, sourceObj, destObj)
 CIRCChannel.prototype.feedback =
 CIRCNetwork.prototype.feedback =
 CIRCUser.prototype.feedback =
+CIRCDCCChat.prototype.feedback =
+CIRCDCCFileTransfer.prototype.feedback =
 client.feedback =
 function this_feedback(e, message, msgtype, sourceObj, destObj)
 {
@@ -2684,6 +3264,8 @@ client.getTimestampCSS =
 CIRCNetwork.prototype.getTimestampCSS =
 CIRCChannel.prototype.getTimestampCSS =
 CIRCUser.prototype.getTimestampCSS =
+CIRCDCCChat.prototype.getTimestampCSS =
+CIRCDCCFileTransfer.prototype.getTimestampCSS =
 function this_getTimestampCSS(format)
 {
     /* Wow, this is cool. We just put together a CSS-rule string based on the
@@ -2691,20 +3273,20 @@ function this_getTimestampCSS(format)
      * We also provide a "data: URL" format, to simplify other code.
      */
     var css;
-    
+
     if (this.prefs["timestamps"])
     {
-        /* Hack. To get around a Mozilla bug, we must force the display back 
+        /* Hack. To get around a Mozilla bug, we must force the display back
          * to a displayed value.
          */
         css = ".msg-timestamp { display: table-cell; } " +
-              ".msg-timestamp:before { content: '" + 
+              ".msg-timestamp:before { content: '" +
               this.prefs["timestampFormat"] + "'; }";
-        
+
         var letters = new Array('y', 'm', 'd', 'h', 'n', 's');
         for (var i = 0; i < letters.length; i++)
         {
-            css = css.replace("%" + letters[i], "' attr(time-" + 
+            css = css.replace("%" + letters[i], "' attr(time-" +
                               letters[i] + ") '");
         }
     }
@@ -2713,7 +3295,7 @@ function this_getTimestampCSS(format)
         /* Completely remove the <td>s if they're off, neatens display. */
         css = ".msg-timestamp { display: none; }";
     }
-    
+
     if (format == "data")
         return "data:text/css," + encodeURIComponent(css);
     return css;
@@ -2723,13 +3305,15 @@ client.getFontCSS =
 CIRCNetwork.prototype.getFontCSS =
 CIRCChannel.prototype.getFontCSS =
 CIRCUser.prototype.getFontCSS =
+CIRCDCCChat.prototype.getFontCSS =
+CIRCDCCFileTransfer.prototype.getFontCSS =
 function this_getFontCSS(format)
 {
     /* See this_getTimestampCSS. */
     var css;
     var fs;
     var fn;
-    
+
     if (this.prefs["font.family"] != "default")
         fn = "font-family: " + this.prefs["font.family"] + ";";
     else
@@ -2738,9 +3322,9 @@ function this_getFontCSS(format)
         fs = "font-size: " + this.prefs["font.size"] + "pt;";
     else
         fs = "font-size: medium;";
-    
+
     css = "body.chatzilla-body { " + fs + fn + " }";
-    
+
     if (format == "data")
         return "data:text/css," + encodeURIComponent(css);
     return css;
@@ -2752,32 +3336,11 @@ CIRCNetwork.prototype.displayHere =
 CIRCChannel.prototype.display =
 CIRCChannel.prototype.displayHere =
 CIRCUser.prototype.displayHere =
+CIRCDCCChat.prototype.displayHere =
+CIRCDCCFileTransfer.prototype.displayHere =
 function __display(message, msgtype, sourceObj, destObj)
 {
-    var canMergeData = false;
-    var logText = "";
-
-    function setAttribs (obj, c, attrs)
-    {
-        if (attrs)
-        {
-            for (var a in attrs)
-                obj.setAttribute (a, attrs[a]);
-        }
-        obj.setAttribute ("class", c);
-        obj.setAttribute ("msg-type", msgtype);
-        obj.setAttribute ("msg-dest", toAttr);
-        obj.setAttribute ("dest-type", toType);
-        obj.setAttribute ("view-type", viewType); 
-        if (fromAttr)
-        {
-            if (fromUser)
-                obj.setAttribute ("msg-user", fromAttr);
-            else
-                obj.setAttribute ("msg-source", fromAttr);
-        }
-    };
-    
+    // We like some control on the number of digits.
     function formatTimeNumber (num, digits)
     {
         var rv = num.toString();
@@ -2786,213 +3349,253 @@ function __display(message, msgtype, sourceObj, destObj)
         return rv;
     };
 
+    // We need a message type, assume "INFO".
     if (!msgtype)
         msgtype = MT_INFO;
 
     var blockLevel = false; /* true if this row should be rendered at block
                              * level, (like, if it has a really long nickname
                              * that might disturb the rest of the layout)     */
-    var o = getObjectDetails (this);          /* get the skinny on |this|     */
+    var o = getObjectDetails(this);           /* get the skinny on |this|     */
+
+    // Get the 'me' object, so we can be sure to get the attributes right.
     var me;
-    if (o.server && "me" in o.server)
-        me = o.server.me;    /* get the object representing the user          */
+    if ("me" in this)
+        me = this.me;
+    else if (o.server && "me" in o.server)
+        me = o.server.me;
 
+    // Let callers get away with "ME!" and we have to substitute here.
     if (sourceObj == "ME!")
-        sourceObj = me;      /* if the caller passes "ME!"   */
+        sourceObj = me;
     if (destObj == "ME!")
-        destObj = me;        /* substitute the actual object */
+        destObj = me;
 
+    // Get the TYPE of the source object.
     var fromType = (sourceObj && sourceObj.TYPE) ? sourceObj.TYPE : "unk";
-    var fromUser = (fromType.search(/IRC.*User/) != -1);    
+    // Is the source a user?
+    var fromUser = (fromType.search(/IRC.*User/) != -1);
+    // Get some sort of "name" for the source.
+    var fromAttr = "";
+    if (sourceObj)
+    {
+        if ("unicodeName" in sourceObj)
+            fromAttr = sourceObj.unicodeName;
+        else if ("name" in sourceObj)
+            fromAttr = sourceObj.name;
+        else
+            fromAttr = sourceObj.viewName;
+    }
+    // Attach "ME!" if appropriate, so motifs can style differently.
+    if (sourceObj == me)
+        fromAttr = fromAttr + " ME!";
 
-    var fromAttr;
-    if (fromUser && sourceObj == me)
-        fromAttr = me.nick + " ME!";
-    else if (fromUser)
-        fromAttr = sourceObj.nick;
-    else if (typeof sourceObj == "object")
-        fromAttr = sourceObj.name;
-
+    // Get the dest TYPE too...
     var toType = (destObj) ? destObj.TYPE : "unk";
-    var toAttr;
-    
+    // Is the dest a user?
+    var toUser = (toType.search(/IRC.*User/) != -1);
+    // Get a dest name too...
+    var toAttr = "";
+    if (destObj)
+    {
+        if ("unicodeName" in destObj)
+            toAttr = destObj.unicodeName;
+        else if ("name" in destObj)
+            toAttr = destObj.name;
+        else
+            toAttr = destObj.viewName;
+    }
+    // Also do "ME!" work for the dest.
     if (destObj && destObj == me)
-        toAttr = me.nick + " ME!";
-    else if (toType == "IRCUser")
-        toAttr = destObj.nick;
-    else if (typeof destObj == "object")
-        toAttr = destObj.name;
+        toAttr = me.unicodeName + " ME!";
 
     /* isImportant means to style the messages as important, and flash the
      * window, getAttention means just flash the window. */
     var isImportant = false, getAttention = false, isSuperfluous = false;
     var viewType = this.TYPE;
     var code;
-    var msgRow = document.createElementNS("http://www.w3.org/1999/xhtml",
-                                          "html:tr");
-    setAttribs(msgRow, "msg");
 
-    //dd ("fromType is " + fromType + ", fromAttr is " + fromAttr);
     var d = new Date();
-    var mins = d.getMinutes();
-    if (mins < 10)
-        mins = "0" + mins;
+    var dateInfo = { y: formatTimeNumber(d.getFullYear(), 4),
+                     m: formatTimeNumber(d.getMonth() + 1, 2),
+                     d: formatTimeNumber(d.getDate(), 2),
+                     h: formatTimeNumber(d.getHours(), 2),
+                     n: formatTimeNumber(d.getMinutes(), 2),
+                     s: formatTimeNumber(d.getSeconds(), 2)
+                   };
+
+    // Statusbar text, and the line that gets saved to the log.
     var statusString;
-    
+    var logString;
+
     var dtf = client.dtFormatter;
-    var timeStamp = dtf.FormatDateTime("", dtf.dateFormatShort, 
-                                       dtf.timeFormatNoSeconds, d.getFullYear(), 
-                                       d.getMonth() + 1, d.getDate(), 
-                                       d.getHours(), d.getMinutes(), 
+    var timeStamp = dtf.FormatDateTime("", dtf.dateFormatShort,
+                                       dtf.timeFormatNoSeconds, d.getFullYear(),
+                                       d.getMonth() + 1, d.getDate(),
+                                       d.getHours(), d.getMinutes(),
                                        d.getSeconds()
                                       );
-    logText = "[" + timeStamp + "] ";
+    logString = "[" + timeStamp + "] ";
 
     if (fromUser)
     {
-        statusString =
-            getMsg(MSG_FMT_STATUS, [timeStamp,
-                                    sourceObj.nick + "!" + 
-                                    sourceObj.name + "@" + sourceObj.host]);
+        statusString = getMsg(MSG_FMT_STATUS,
+                              [timeStamp,
+                               sourceObj.unicodeName + "!" +
+                               sourceObj.name + "@" + sourceObj.host]);
     }
     else
     {
         var name;
         if (sourceObj)
-        {
-            name = (sourceObj.TYPE == "IRCChannel") ?
-                sourceObj.unicodeName : sourceObj.name;
-        }
+            name = sourceObj.viewName;
         else
-        {
-            name = (this.TYPE == "IRCChannel") ?
-                this.unicodeName : this.name;
-        }
+            name = this.viewName;
 
-        statusString = getMsg(MSG_FMT_STATUS, [timeStamp, name]);
+        statusString = getMsg(MSG_FMT_STATUS,
+                              [timeStamp, name]);
     }
-    
-    var msgTimestamp = document.createElementNS("http://www.w3.org/1999/xhtml",
-                                                "html:td");
-    var atts = { statusText: statusString,
-                 "time-y": formatTimeNumber(d.getFullYear(), 4), 
-                 "time-m": formatTimeNumber(d.getMonth() + 1, 2), 
-                 "time-d": formatTimeNumber(d.getDate(), 2), 
-                 "time-h": formatTimeNumber(d.getHours(), 2), 
-                 "time-n": formatTimeNumber(d.getMinutes(), 2), 
-                 "time-s": formatTimeNumber(d.getSeconds(), 2)
-               };
-    setAttribs (msgTimestamp, "msg-timestamp", atts);
+
+    // The table row, and it's attributes.
+    var msgRow = document.createElementNS("http://www.w3.org/1999/xhtml",
+                                          "html:tr");
+    msgRow.setAttribute("class", "msg");
+    msgRow.setAttribute("msg-type", msgtype);
+    msgRow.setAttribute("msg-dest", toAttr);
+    msgRow.setAttribute("dest-type", toType);
+    msgRow.setAttribute("view-type", viewType);
+    msgRow.setAttribute("statusText", statusString);
+    if (fromAttr)
+    {
+        if (fromUser)
+            msgRow.setAttribute("msg-user", fromAttr);
+        else
+            msgRow.setAttribute("msg-source", fromAttr);
+    }
     if (isImportant)
         msgTimestamp.setAttribute ("important", "true");
-    
-    var msgSource, msgType, msgData;
-    
-    if (fromType.search(/IRC.*User/) != -1 &&
-        msgtype.search(/PRIVMSG|ACTION|NOTICE/) != -1)
+
+    // Timestamp cell.
+    var msgRowTimestamp = document.createElementNS("http://www.w3.org/1999/xhtml",
+                                                   "html:td");
+    msgRowTimestamp.setAttribute("class", "msg-timestamp");
+    for (var key in dateInfo)
+        msgRowTimestamp.setAttribute("time-" + key, dateInfo[key]);
+
+    var canMergeData;
+    var msgRowSource, msgRowType, msgRowData;
+    if (fromUser && msgtype.match(/^(PRIVMSG|ACTION|NOTICE)$/))
     {
-        /* do nick things here */
-        var nick;
+        var nick = sourceObj.unicodeName;
+
         var nickURL;
-        
+        if ((sourceObj != me) && ("getURL" in sourceObj))
+            nickURL = sourceObj.getURL();
+
         if (sourceObj != me)
         {
-            nick = sourceObj.properNick;
-            if (!nick)
-                nick = sourceObj.name + "@" + sourceObj.host;
-            else if ("getURL" in sourceObj)
-                nickURL = sourceObj.getURL();
-            
-            if (toType == "IRCUser") /* msg from user to me */
+            // Not from us...
+            if (destObj == me)
             {
+                // ...but to us. Messages from someone else to us.
+
                 getAttention = true;
                 this.defaultCompletion = "/msg " + nick + " ";
+
                 if (msgtype == "ACTION")
                 {
-                    logText += "*" + nick + " ";
+                    logString += "* " + nick + " ";
                 }
                 else
                 {
+                    // If this private message is not in a query view, use
+                    // *nick* instead of <nick>.
                     if (this.TYPE == "IRCUser")
-                        logText += "<" + nick + "> ";
+                        logString += "<" + nick + "> ";
                     else
-                        logText += "*" + nick + "* ";
+                        logString += "*" + nick + "* ";
                 }
             }
-            else /* msg from user to channel */
+            else
             {
+                // ...or to us. Messages from someone else to channel or similar.
+
                 if ((typeof message == "string") && me)
                 {
-                    isImportant = msgIsImportant (message, nick, o.network);
+                    isImportant = msgIsImportant(message, nick, o.network);
                     if (isImportant)
                     {
                         this.defaultCompletion = nick +
                             client.prefs["nickCompleteStr"] + " ";
-                        if (this.TYPE != "IRCNetwork")
-                            playSounds(client.prefs["stalkBeep"]);
-                    }                        
+                    }
                 }
                 if (msgtype == "ACTION")
-                    logText += "*" + nick + " ";
+                    logString += "* " + nick + " ";
                 else
-                    logText += "<" + nick + "> ";
+                    logString += "<" + nick + "> ";
             }
         }
-        else if (toType == "IRCUser") /* msg from me to user */
+        else
         {
-            if (this.TYPE == "IRCUser")
+            // Messages from us to somewhere...
+
+            if (toUser)
             {
-                nick    = sourceObj.properNick;
+                // From us to a user.
+
+                if (this.TYPE == "IRCUser")
+                {
+                    if (msgtype == "ACTION")
+                        logString += "* " + nick + " ";
+                    else
+                        logString += "<" + nick + "> ";
+                }
+                else
+                {
+                    nick = destObj.unicodeName;
+                    logString += ">" + nick + "< ";
+                }
+            }
+            else
+            {
                 if (msgtype == "ACTION")
-                    logText += "*" + nick + " ";
+                    logString += "*" + nick + " ";
                 else
-                    logText += "<" + nick + "> ";
+                    logString += "<" + nick + "> ";
             }
-            else
-            {
-                nick    = destObj.properNick;
-                logText += ">" + nick + "< ";
-            }
-        }
-        else /* msg from me to channel */
-        {
-            nick = sourceObj.properNick;
-            if (msgtype == "ACTION")
-                logText += "*" + nick + " ";
-            else
-                logText += "<" + nick + "> ";
-        }
-        
-        if (!("mark" in this))
-            this.mark = "odd";
-        
-        if (!("lastNickDisplayed" in this) ||
-            this.lastNickDisplayed != nick)
-        {
-            this.lastNickDisplayed = nick;
-            this.mark = (this.mark == "even") ? "odd" : "even";
         }
 
-        msgSource = document.createElementNS("http://www.w3.org/1999/xhtml",
+        // Mark makes alternate "talkers" show up in different shades.
+        //if (!("mark" in this))
+        //    this.mark = "odd";
+
+        if (!("lastNickDisplayed" in this) || this.lastNickDisplayed != nick)
+        {
+            this.lastNickDisplayed = nick;
+            this.mark = (("mark" in this) && this.mark == "even") ? "odd" : "even";
+        }
+
+        msgRowSource = document.createElementNS("http://www.w3.org/1999/xhtml",
                                              "html:td");
-        setAttribs (msgSource, "msg-user", {statusText: statusString});
-        if (isImportant)
-            msgSource.setAttribute ("important", "true");
-        if (nick.length > client.MAX_NICK_DISPLAY)
+        msgRowSource.setAttribute("class", "msg-user");
+
+        // Make excessive nicks get shunted.
+        if (nick && (nick.length > client.MAX_NICK_DISPLAY))
             blockLevel = true;
+
         if (nickURL)
         {
             var nick_anchor =
                 document.createElementNS("http://www.w3.org/1999/xhtml",
                                          "html:a");
-            nick_anchor.setAttribute ("class", "chatzilla-link");
-            nick_anchor.setAttribute ("href", nickURL);
-            nick_anchor.appendChild (newInlineText (nick));
-            msgSource.appendChild (nick_anchor);
+            nick_anchor.setAttribute("class", "chatzilla-link");
+            nick_anchor.setAttribute("href", nickURL);
+            nick_anchor.appendChild(newInlineText(nick));
+            msgRowSource.appendChild(nick_anchor);
         }
         else
         {
-            msgSource.appendChild (newInlineText (nick));
+            msgRowSource.appendChild(newInlineText(nick));
         }
         canMergeData = this.prefs["collapseMsgs"];
     }
@@ -3010,51 +3613,50 @@ function __display(message, msgtype, sourceObj, destObj)
             else
                 code = "[" + msgtype + "]";
         }
-        
-        /* Display the message code */
-        msgType = document.createElementNS("http://www.w3.org/1999/xhtml",
-                                           "html:td");
-        setAttribs (msgType, "msg-type", {statusText: statusString});
 
-        msgType.appendChild (newInlineText (code));
-        logText += code + " ";
+        /* Display the message code */
+        msgRowType = document.createElementNS("http://www.w3.org/1999/xhtml",
+                                           "html:td");
+        msgRowType.setAttribute("class", "msg-type");
+
+        msgRowType.appendChild(newInlineText(code));
+        logString += code + " ";
     }
-             
+
     if (message)
     {
-        msgData = document.createElementNS("http://www.w3.org/1999/xhtml",
+        msgRowData = document.createElementNS("http://www.w3.org/1999/xhtml",
                                            "html:td");
-        setAttribs(msgData, "msg-data", {statusText: statusString, 
-                                         colspan: client.INITIAL_COLSPAN,
-                                         timeStamp: timeStamp});
-        if (isImportant)
-            msgData.setAttribute("important", "true");
+        msgRowData.setAttribute("class", "msg-data");
 
-        if ("mark" in this)
-            msgData.setAttribute("mark", this.mark);
-        
         if (typeof message == "string")
         {
-            msgData.appendChild (stringToMsg (message, this));
-            logText += message;
+            msgRowData.appendChild(stringToMsg(message, this));
+            logString += message;
         }
         else
         {
-            msgData.appendChild (message);
-            logText += message.innerHTML.replace(/<[^<]*>/g, "");
+            msgRowData.appendChild(message);
+            logString += message.innerHTML.replace(/<[^<]*>/g, "");
         }
     }
+
+    if ("mark" in this)
+        msgRow.setAttribute("mark", this.mark);
 
     if (isImportant)
         msgRow.setAttribute ("important", "true");
 
-    if (msgSource)
-        msgRow.appendChild (msgSource);
+    // Timestamps first...
+    msgRow.appendChild(msgRowTimestamp);
+    // Now do the rest of the row, after block-level stuff.
+    if (msgRowSource)
+        msgRow.appendChild(msgRowSource);
     else
-        msgRow.appendChild (msgType);
-    if (msgData)
-        msgRow.appendChild (msgData);
-    
+        msgRow.appendChild(msgRowType);
+    if (msgRowData)
+        msgRow.appendChild(msgRowData);
+
     if (blockLevel)
     {
         /* putting a div here crashes mozilla, so fake it with nested tables
@@ -3063,29 +3665,28 @@ function __display(message, msgtype, sourceObj, destObj)
                                            "html:tr");
         tr.setAttribute ("class", "msg-nested-tr");
         var td = document.createElementNS ("http://www.w3.org/1999/xhtml",
-                                           "html:td");        
+                                           "html:td");
         td.setAttribute ("class", "msg-nested-td");
-        td.setAttribute ("colspan", "2");
-        
+        td.setAttribute ("colspan", "3");
+
         tr.appendChild(td);
         var table = document.createElementNS ("http://www.w3.org/1999/xhtml",
                                               "html:table");
         table.setAttribute ("class", "msg-nested-table");
-        table.setAttribute ("cellpadding", "0");
-        
+
         td.appendChild (table);
         var tbody =  document.createElementNS ("http://www.w3.org/1999/xhtml",
                                                "html:tbody");
-        
-        tbody.appendChild (msgRow);
-        table.appendChild (tbody);
-        msgRow = tr;
-        canMergeData = false;
-    }
-    
-    msgRow.insertBefore (msgTimestamp, msgRow.firstChild);
 
+        tbody.appendChild(msgRow);
+        table.appendChild(tbody);
+        msgRow = tr;
+    }
+
+    // Actually add the item.
     addHistory (this, msgRow, canMergeData);
+
+    // Update attention states...
     if (isImportant || getAttention)
     {
         setTabState(this, "attention");
@@ -3095,39 +3696,39 @@ function __display(message, msgtype, sourceObj, destObj)
     else
     {
         if (isSuperfluous)
+        {
             setTabState(this, "superfluous");
+        }
         else
+        {
             setTabState(this, "activity");
+        }
     }
 
-    if (isImportant && client.prefs["copyMessages"])
+    // Copy Important Messages [to network view].
+    if (isImportant && client.prefs["copyMessages"] && (o.network != this))
     {
-        if (o.network != this)
-            o.network.displayHere("{" + this.name + "} " + message, msgtype,
-                                  sourceObj, destObj);
+        o.network.displayHere("{" + this.unicodeName + "} " + message, msgtype,
+                              sourceObj, destObj);
     }
 
+    // Log file time!
     if (this.prefs["log"])
     {
         if (!this.logFile)
             client.openLogFile(this);
-        
+
         try
         {
-            this.logFile.write(fromUnicode(logText + "\n", "utf-8"));
+            this.logFile.write(fromUnicode(logString + client.lineEnd, "utf-8"));
         }
         catch (ex)
         {
-            this.displayHere(getMsg(MSG_LOGFILE_WRITE_ERROR, this.logFile.path),
+            // Stop logging before showing any messages!
+            this.prefs["log"] = false;
+            dd("Log file write error: " + formatException(ex));
+            this.displayHere(getMsg(MSG_LOGFILE_WRITE_ERROR, getLogPath(this)),
                              "ERROR");
-            try
-            {
-                this.logFile.close();
-            }
-            catch(ex)
-            {
-                // can't do much here.
-            }
         }
     }
 }
@@ -3138,57 +3739,65 @@ function addHistory (source, obj, mergeData)
         createMessages(source);
 
     var tbody = source.messages.firstChild;
+    var appendTo = tbody;
 
     var needScroll = false;
 
     if (mergeData)
     {
-        var thisUserCol = obj.firstChild;
-        var thisMessageCol = thisUserCol.nextSibling;
+        var inobj = obj;
+        // This gives us the non-nested row when there is nesting.
+        if (inobj.className == "msg-nested-tr")
+            inobj = inobj.firstChild.firstChild.firstChild.firstChild;
+
+        var thisUserCol = inobj.firstChild;
+        while (thisUserCol && !thisUserCol.className.match(/^(msg-user|msg-type)$/))
+            thisUserCol = thisUserCol.nextSibling;
+
+        var thisMessageCol = inobj.firstChild;
+        while (thisMessageCol && !(thisMessageCol.className == "msg-data"))
+            thisMessageCol = thisMessageCol.nextSibling;
+
         var ci = findPreviousColumnInfo(source.messages);
         var nickColumns = ci.nickColumns;
         var rowExtents = ci.extents;
         var nickColumnCount = nickColumns.length;
+
+        // Are we the same user as last time?
         var sameNick = (nickColumnCount > 0 &&
-                        nickColumns[nickColumnCount - 1].
+                        nickColumns[nickColumnCount - 1].parentNode.
                         getAttribute("msg-user") ==
-                        thisUserCol.getAttribute("msg-user"));
+                        thisUserCol.parentNode.getAttribute("msg-user"));
+
+        // What was the span last time?
         var lastRowSpan = (nickColumnCount > 0) ?
             Number(nickColumns[0].getAttribute("rowspan")) : 0;
-        if (sameNick && mergeData)
+
+        if (sameNick)
         {
+            obj = inobj;
+            if (ci.nested)
+                appendTo = source.messages.firstChild.lastChild.firstChild.firstChild.firstChild;
+
             if (obj.getAttribute("important"))
             {
-                nickColumns[nickColumnCount - 1].setAttribute ("important",
-                                                               true);
+                nickColumns[nickColumnCount - 1].setAttribute("important",
+                                                              true);
             }
-            /* message is from the same person as last time,
-             * strip the nick first... */
-            obj.removeChild(obj.childNodes[1]);
-            /* Adjust height of previous cells, maybe. */
-            for (i = 0; i < rowExtents.length - 1; ++i)
-            {
-                var myLastData = 
-                    rowExtents[i].childNodes[nickColumnCount - 1];
-                var myLastRowSpan = (myLastData) ?
-                    myLastData.getAttribute("rowspan") : 0;
-                if (myLastData && myLastRowSpan > 1)
-                {
-                    myLastData.removeAttribute("rowspan");
-                }
-            }
-            /* then add one to the colspan for the previous user columns */
-            if (!lastRowSpan)
-                lastRowSpan = 1;
+
+            // Remove nickname column from new row.
+            obj.removeChild(thisUserCol);
+
+            // Expand previous grouping's nickname cell(s) to fill-in the gap.
             for (var i = 0; i < nickColumns.length; ++i)
-                nickColumns[i].setAttribute ("rowspan", lastRowSpan + 1);
+                nickColumns[i].setAttribute("rowspan", rowExtents.length + 1);
         }
     }
-    
+
     if ("frame" in source)
         needScroll = checkScroll(source.frame);
     if (obj)
-        tbody.appendChild (obj);
+        appendTo.appendChild(obj);
 
     if (source.MAX_MESSAGES)
     {
@@ -3207,8 +3816,8 @@ function addHistory (source, obj, mergeData)
                 var y = window.pageYOffset;
                 tbody.removeChild (tbody.firstChild);
                 --source.messageCount;
-                while (tbody.firstChild &&
-                       tbody.firstChild.firstChild.getAttribute("class") ==
+                while (tbody.firstChild && tbody.firstChild.childNodes[1] &&
+                       tbody.firstChild.childNodes[1].getAttribute("class") ==
                        "msg-data")
                 {
                     --source.messageCount;
@@ -3221,8 +3830,8 @@ function addHistory (source, obj, mergeData)
             {
                 tbody.removeChild (tbody.lastChild);
                 --source.messageCount;
-                while (tbody.lastChild &&
-                       tbody.lastChild.firstChild.getAttribute("class") ==
+                while (tbody.lastChild && tbody.lastChild.childNodes[1] &&
+                       tbody.lastChild.childNodes[1].getAttribute("class") ==
                        "msg-data")
                 {
                     --source.messageCount;
@@ -3235,46 +3844,72 @@ function addHistory (source, obj, mergeData)
     if (needScroll)
     {
         scrollDown(source.frame, true);
-        setTimeout (scrollDown, 500, source.frame, false);
-        setTimeout (scrollDown, 1000, source.frame, false);
-        setTimeout (scrollDown, 2000, source.frame, false);
+        setTimeout(scrollDown, 500, source.frame, false);
+        setTimeout(scrollDown, 1000, source.frame, false);
+        setTimeout(scrollDown, 2000, source.frame, false);
     }
 }
 
-function findPreviousColumnInfo (table)
+function findPreviousColumnInfo(table)
 {
+    // All the rows in the grouping (for merged rows).
     var extents = new Array();
+    // Get the last row in the table.
     var tr = table.firstChild.lastChild;
-    var className = tr ? tr.childNodes[1].getAttribute("class") : "";
-    while (tr && className.search(/msg-user|msg-type|msg-nested-td/) == -1)
+    // Bail if there's no rows.
+    if (!tr)
+        return {extents: [], nickColumns: [], nested: false};
+    // Get message type.
+    if (tr.className == "msg-nested-tr")
+    {
+        var rv = findPreviousColumnInfo(tr.firstChild.firstChild);
+        rv.nested = true;
+        return rv;
+    }
+    // Now get the read one...
+    var className = (tr && tr.childNodes[1]) ? tr.childNodes[1].getAttribute("class") : "";
+    // Keep going up rows until you find the first in a group.
+    // This will go up until it hits the top of a multiline/merged block.
+    while (tr && tr.childNodes[1] && className.search(/msg-user|msg-type/) == -1)
     {
         extents.push(tr);
         tr = tr.previousSibling;
-        if (tr)
+        if (tr && tr.childNodes[1])
             className = tr.childNodes[1].getAttribute("class");
     }
-    
+
+    // If we ran out of rows, or it's not a talking line, we're outta here.
     if (!tr || className != "msg-user")
-        return {extents: [], nickColumns: []};
-    
+        return {extents: [], nickColumns: [], nested: false};
+
     extents.push(tr);
+
+    // Time to collect the nick data...
     var nickCol = tr.firstChild;
+    // All the cells that contain nickname info.
     var nickCols = new Array();
     while (nickCol)
     {
+        // Just collect nickname column cells.
         if (nickCol.getAttribute("class") == "msg-user")
-            nickCols.push (nickCol);
+            nickCols.push(nickCol);
         nickCol = nickCol.nextSibling;
     }
 
-    return {extents: extents, nickColumns: nickCols};
-}    
+    // And we're done.
+    return {extents: extents, nickColumns: nickCols, nested: false};
+}
+
+function getLogPath(obj)
+{
+    return getURLSpecFromFile(obj.prefs["logFileName"]);
+}
 
 client.getConnectionCount =
 function cli_gccount ()
 {
     var count = 0;
-    
+
     for (var n in client.networks)
     {
         if (client.networks[n].isConnected())
@@ -3282,7 +3917,7 @@ function cli_gccount ()
     }
 
     return count;
-}   
+}
 
 client.quit =
 function cli_quit (reason)
@@ -3322,26 +3957,33 @@ function gettabmatch_usr (line, wordStart, wordEnd, word, cursorPos)
 client.openLogFile =
 function cli_startlog (view)
 {
+    const NORMAL_FILE_TYPE = Components.interfaces.nsIFile.NORMAL_FILE_TYPE;
+
     try
     {
-        view.logFile = fopen(view.prefs["logFileName"], ">>");
+        var file = new LocalFile(view.prefs["logFileName"]);
+        if (!file.localFile.exists())
+        {
+            // futils.umask may be 0022. Result is 0644.
+            file.localFile.create(NORMAL_FILE_TYPE, 0666 & ~futils.umask);
+        }
+        view.logFile = fopen(file.localFile, ">>");
     }
     catch (ex)
     {
-        view.displayHere(getMsg(MSG_LOGFILE_ERROR, view.logFile), MT_ERROR);
-        view.logFile = null;
         view.prefs["log"] = false;
+        dd("Log file open error: " + formatException(ex));
+        view.displayHere(getMsg(MSG_LOGFILE_ERROR, getLogPath(view)), MT_ERROR);
         return;
     }
 
-    view.displayHere(getMsg(MSG_LOGFILE_OPENED,
-                            getURLSpecFromFile(view.logFile.path)));
+    view.displayHere(getMsg(MSG_LOGFILE_OPENED, getLogPath(view)));
 }
 
 client.closeLogFile =
 function cli_stoplog (view)
 {
-    view.displayHere(MSG_LOGFILE_CLOSING);
+    view.displayHere(getMsg(MSG_LOGFILE_CLOSING, getLogPath(view)));
 
     if (view.logFile)
     {
@@ -3350,33 +3992,57 @@ function cli_stoplog (view)
     }
 }
 
+CIRCChannel.prototype.getLCFunction =
+CIRCNetwork.prototype.getLCFunction =
+CIRCUser.prototype.getLCFunction    =
+CIRCDCCChat.prototype.getLCFunction =
+CIRCDCCFileTransfer.prototype.getLCFunction =
+function getlcfn()
+{
+    var details = getObjectDetails(this);
+    var lcFn;
+
+    if (details.server)
+    {
+        lcFn = function(text)
+            {
+                return details.server.toLowerCase(text);
+            }
+    }
+
+    return lcFn;
+}
+
 CIRCChannel.prototype.performTabMatch =
 CIRCNetwork.prototype.performTabMatch =
 CIRCUser.prototype.performTabMatch    =
-function gettabmatch_other (line, wordStart, wordEnd, word, cursorpos)
+CIRCDCCChat.prototype.performTabMatch =
+CIRCDCCFileTransfer.prototype.performTabMatch =
+function gettabmatch_other (line, wordStart, wordEnd, word, cursorpos, lcFn)
 {
     if (wordStart == 0 && line[0] == client.COMMAND_CHAR)
     {
-        return client.performTabMatch (line, wordStart, wordEnd, word,
-                                       cursorpos);
+        return client.performTabMatch(line, wordStart, wordEnd, word,
+                                      cursorpos);
     }
-    
+
     var matchList = new Array();
     var users;
     var channels;
+    var userIndex = -1;
 
     var details = getObjectDetails(this);
 
-    if (details.channel && word == details.channel.name[0])
+    if (details.channel && word == details.channel.unicodeName[0])
     {
-        /* When we have #<tab>, we just want the current channel, 
+        /* When we have #<tab>, we just want the current channel,
            if possible. */
-        matchList.push (details.channel.unicodeName);
+        matchList.push(details.channel.unicodeName);
     }
     else
     {
         /* Ok, not #<tab> or no current channel, so get the full list. */
-        
+
         if (details.channel)
             users = details.channel.users;
 
@@ -3384,41 +4050,41 @@ function gettabmatch_other (line, wordStart, wordEnd, word, cursorpos)
         {
             channels = details.server.channels;
             for (var c in channels)
-                matchList.push (channels[c].name);
+                matchList.push(channels[c].unicodeName);
             if (!users)
                 users = details.server.users;
         }
 
         if (users)
         {
+            userIndex = matchList.length;
             for (var n in users)
-                matchList.push (users[n].nick);
+                matchList.push(users[n].unicodeName);
         }
     }
-    
-    var matches = matchEntry (word, matchList);
 
-    if (matches.length == 1)
+    var matches = matchEntry(word, matchList, lcFn);
+
+    var list = new Array();
+    for (var i = 0; i < matches.length; i++)
+        list.push(matchList[matches[i]]);
+
+    if (list.length == 1)
     {
-        if (users && matches[0] in users)
+        if (users && (userIndex >= 0) && (matches[0] >= userIndex))
         {
-            matches[0] = users[matches[0]].properNick;
             if (wordStart == 0)
-                matches[0] += client.prefs["nickCompleteStr"];
-        }
-        else if (channels && matches[0] in channels)
-        {
-            matches[0] = channels[matches[0]].unicodeName;
+                list[0] += client.prefs["nickCompleteStr"];
         }
 
         if (wordEnd == line.length)
         {
             /* add a space if the word is at the end of the line. */
-            matches[0] += " ";
+            list[0] += " ";
         }
     }
 
-    return matches;
+    return list;
 }
 
 CIRCChannel.prototype.getGraphResource =
@@ -3426,11 +4092,11 @@ function my_graphres ()
 {
     if (!("rdfRes" in this))
     {
-        var id = RES_PFX + "CHANNEL:" + this.parent.parent.name + ":" + 
-            escape(this.name);
+        var id = RES_PFX + "CHANNEL:" + this.parent.parent.unicodeName + ":" +
+            escape(this.unicodeName);
         this.rdfRes = client.rdf.GetResource(id);
     }
-    
+
     return this.rdfRes;
 }
 
@@ -3442,28 +4108,30 @@ function usr_graphres()
     {
         return null;
     }
-    
+
     var rdf = client.rdf;
-    
+
     if (!("rdfRes" in this))
     {
         if (!("nextResID" in CIRCUser))
             CIRCUser.nextResID = 0;
-        
-        this.rdfRes = rdf.GetResource (RES_PFX + "CUSER:" + 
-                                       this.parent.parent.parent.name + ":" +
-                                       escape(this.parent.name) + ":" +
-                                       CIRCUser.nextResID++);
+
+        this.rdfRes = rdf.GetResource(RES_PFX + "CUSER:" +
+                                      this.parent.parent.parent.unicodeName + ":" +
+                                      this.parent.unicodeName + ":" +
+                                      CIRCUser.nextResID++);
 
             //dd ("created cuser resource " + this.rdfRes.Value);
-        
-        rdf.Assert (this.rdfRes, rdf.resNick, rdf.GetLiteral(this.properNick));
+
+        rdf.Assert (this.rdfRes, rdf.resNick, rdf.GetLiteral(this.unicodeName));
+        rdf.Assert (this.rdfRes, rdf.resUniName, rdf.GetLiteral(this.unicodeName));
         rdf.Assert (this.rdfRes, rdf.resUser, rdf.litUnk);
         rdf.Assert (this.rdfRes, rdf.resHost, rdf.litUnk);
         rdf.Assert (this.rdfRes, rdf.resSortName, rdf.litUnk);
         rdf.Assert (this.rdfRes, rdf.resOp, rdf.litUnk);
         rdf.Assert (this.rdfRes, rdf.resHalfOp, rdf.litUnk);
         rdf.Assert (this.rdfRes, rdf.resVoice, rdf.litUnk);
+        rdf.Assert (this.rdfRes, rdf.resAway, rdf.litUnk);
         this.updateGraphResource();
     }
 
@@ -3484,10 +4152,10 @@ function usr_updres()
         this.getGraphResource();
         return;
     }
-    
+
     var rdf = client.rdf;
-    
-    rdf.Change (this.rdfRes, rdf.resNick, rdf.GetLiteral(this.properNick));
+
+    rdf.Change (this.rdfRes, rdf.resUniName, rdf.GetLiteral(this.unicodeName));
     if (this.name)
         rdf.Change (this.rdfRes, rdf.resUser, rdf.GetLiteral(this.name));
     else
@@ -3497,23 +4165,46 @@ function usr_updres()
     else
         rdf.Change (this.rdfRes, rdf.resHost, rdf.litUnk);
 
-    var sortname;
+    // Check for the highest mode the user has.
+    const userModes = this.parent.parent.userModes;
+    var modeLevel = 0;
+    var mode = "";
+    for (var i = 0; i < this.modes.length; i++)
+    {
+        for (var j = 0; j < userModes.length; j++)
+        {
+            if (userModes[j].mode == this.modes[i])
+            {
+                if (userModes.length - j > modeLevel)
+                {
+                    modeLevel = userModes.length - j;
+                    mode = userModes[j].symbol;
+                }
+                break;
+            }
+        }
+    }
 
-    if (this.isOp)
-        sortname = "a-";
-    else if (this.isHalfOp)
-        sortname = "b-";
-    else if (this.isVoice)
-        sortname = "c-";
+    // Counts up from Z to A.
+    var sortname = String.fromCharCode(90 - modeLevel) + "-" + this.unicodeName;
+
+    // We want to show mode symbols, but only those we don't 'style'.
+    if (mode && !mode.match(/^[@%+]$/))
+    {
+        rdf.Change(this.rdfRes, rdf.resNick,
+                   rdf.GetLiteral(mode + " " + this.unicodeName));
+    }
     else
-        sortname = "d-";
-    
-    sortname += this.nick;
-    rdf.Change (this.rdfRes, rdf.resSortName, rdf.GetLiteral(sortname));
-    rdf.Change (this.rdfRes, rdf.resOp, 
-                this.isOp ? rdf.litTrue : rdf.litFalse);
-    rdf.Change (this.rdfRes, rdf.resHalfOp, 
-                this.isHalfOp ? rdf.litTrue : rdf.litFalse);
-    rdf.Change (this.rdfRes, rdf.resVoice,
-                this.isVoice ? rdf.litTrue : rdf.litFalse);
+    {
+        rdf.Change (this.rdfRes, rdf.resNick, rdf.GetLiteral(this.unicodeName));
+    }
+    rdf.Change(this.rdfRes, rdf.resSortName, rdf.GetLiteral(sortname));
+    rdf.Change(this.rdfRes, rdf.resOp,
+               this.isOp ? rdf.litTrue : rdf.litFalse);
+    rdf.Change(this.rdfRes, rdf.resHalfOp,
+               this.isHalfOp ? rdf.litTrue : rdf.litFalse);
+    rdf.Change(this.rdfRes, rdf.resVoice,
+               this.isVoice ? rdf.litTrue : rdf.litFalse);
+    rdf.Change(this.rdfRes, rdf.resAway,
+               this.isAway ? rdf.litTrue : rdf.litFalse);
 }

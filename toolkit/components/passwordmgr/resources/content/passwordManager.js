@@ -1,26 +1,43 @@
 # -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 #
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
 #
-# The Original Code is Mozilla Communicator client code, released March
-# 31, 1998.
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
 #
-# The Initial Developer of the Original Code is Netscape Communications
-# Corporation. Portions created by Netscape are
-# Copyright (C) 1998 Netscape Communications Corporation. All
-# Rights Reserved.
+# The Original Code is Mozilla Communicator client code, released
+# March 31, 1998.
 #
-# Contributor(s): 
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1998
+# the Initial Developer. All Rights Reserved.
+#
+# Contributor(s):
 #   Ben "Count XULula" Goodger
 #   Brian Ryner <bryner@brianryner.com>
+#
+# Alternatively, the contents of this file may be used under the terms of
+# either the GNU General Public License Version 2 or later (the "GPL"), or
+# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
 /*** =================== INITIALISATION CODE =================== ***/
 
@@ -124,11 +141,11 @@ var signonsTreeView = {
   getCellValue : function(row,column) {},
   getCellText : function(row,column) {
     var rv="";
-    if (column=="siteCol") {
+    if (column.id=="siteCol") {
       rv = signons[row].host;
-    } else if (column=="userCol") {
+    } else if (column.id=="userCol") {
       rv = signons[row].user;
-    } else if (column=="passwordCol") {
+    } else if (column.id=="passwordCol") {
       rv = signons[row].password;
     }
     return rv;
@@ -136,10 +153,10 @@ var signonsTreeView = {
   isSeparator : function(index) { return false; },
   isSorted : function() { return false; },
   isContainer : function(index) { return false; },
-  cycleHeader : function(aColId, aElt) {},
-  getRowProperties : function(row,column,prop) {},
-  getColumnProperties : function(column,columnElement,prop) {},
-  getCellProperties : function(row,prop) {}
+  cycleHeader : function(column) {},
+  getRowProperties : function(row,prop) {},
+  getColumnProperties : function(column,prop) {},
+  getCellProperties : function(row,column,prop) {}
  };
 var signonsTree;
 
@@ -314,7 +331,7 @@ var rejectsTreeView = {
   getCellValue : function(row,column) {},
   getCellText : function(row,column){
     var rv="";
-    if (column=="rejectCol") {
+    if (column.id=="rejectCol") {
       rv = rejects[row].host;
     }
     return rv;
@@ -322,10 +339,10 @@ var rejectsTreeView = {
   isSeparator : function(index) {return false;},
   isSorted: function() { return false; },
   isContainer : function(index) {return false;},
-  cycleHeader : function(aColId, aElt) {},
-  getRowProperties : function(row,column,prop){},
-  getColumnProperties : function(column,columnElement,prop){},
-  getCellProperties : function(row,prop){}
+  cycleHeader : function(column) {},
+  getRowProperties : function(row,prop){},
+  getColumnProperties : function(column,prop){},
+  getCellProperties : function(row,column,prop){}
  };
 var rejectsTree;
 
@@ -445,7 +462,7 @@ function DeleteSelectedItemFromTree
   // Remove selected items from list (by setting them to null) and place in
   // deleted list.  At the same time, notify the tree of the row count changes.
 
-  var selection = box.selection;
+  var selection = box.view.selection;
   var oldSelectStart = table.length;
   box.beginUpdateBatch();
 
@@ -484,23 +501,23 @@ function DeleteSelectedItemFromTree
   box.endUpdateBatch();
 
   // update selection and/or buttons
-  var removeButton = document.getElementById(removeButton);
-  var removeAllButton = document.getElementById(removeAllButton);
+  var removeBtn = document.getElementById(removeButton);
+  var removeAllBtn = document.getElementById(removeAllButton);
 
   if (table.length) {
-    removeButton.removeAttribute("disabled");
-    removeAllButton.removeAttribute("disabled");
+    removeBtn.removeAttribute("disabled");
+    removeAllBtn.removeAttribute("disabled");
 
     selection.select(oldSelectStart < table.length ? oldSelectStart : table.length - 1);
   } else {
-    removeButton.setAttribute("disabled", "true");
-    removeAllButton.setAttribute("disabled", "true");
+    removeBtn.setAttribute("disabled", "true");
+    removeAllBtn.setAttribute("disabled", "true");
   }
 }
 
 function GetTreeSelections(tree) {
   var selections = [];
-  var select = tree.treeBoxObject.selection;
+  var select = tree.view.selection;
   if (select) {
     var count = select.getRangeCount();
     var min = new Object();
@@ -546,8 +563,8 @@ function SortTree(tree, view, table, column, lastSortColumn, lastSortAscending, 
       if (table[s].number == selectedNumber) {
         // update selection
         // note: we need to deselect before reselecting in order to trigger ...Selected()
-        tree.treeBoxObject.view.selection.select(-1);
-        tree.treeBoxObject.view.selection.select(s);
+        tree.view.selection.select(-1);
+        tree.view.selection.select(s);
         selectedRow = s;
         break;
       }

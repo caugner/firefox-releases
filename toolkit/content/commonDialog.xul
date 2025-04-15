@@ -6,6 +6,9 @@
 
 <dialog id="commonDialog"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul" 
+        xmlns:xhtml2="http://www.w3.org/TR/xhtml2"
+        xmlns:wairole="http://www.w3.org/2005/01/wai-rdf/GUIRoleTaxonomy#"
+        xhtml2:role="wairole:alert"
         onload="commonDialogOnLoad();"
         ondialogaccept="return commonDialogOnAccept();"
         ondialogextra1="return commonDialogOnExtra1();"
@@ -21,6 +24,11 @@
     </hbox>
     
     <vbox flex="1" style="max-width: 45em;">
+#ifdef XP_MACOSX
+# On mac, we're exposing the dialog title inside the dialog
+      <!-- Dialog title -->
+      <description id="info.title" class="dialogTitle"/>
+#endif
       <!-- text -->
       <description id="info.header" class="header"/>
       <vbox id="info.box"/>
@@ -43,14 +51,12 @@
       </vbox>
   
       <!-- checkbox -->
-      <hbox id="checkboxContainer" collapsed="true">
+      <vbox id="checkboxContainer" align="start" collapsed="true">
         <checkbox id="checkbox" oncommand="onCheckboxClick(this);"/>
-      </hbox>
+      </vbox>
     </vbox>
   </hbox>
 
-  <separator class="thin"/>
-  
   <!-- This method is called inline because it may unset hidden="true" on the
        above boxes, causing their frames to be build and bindings to load.  
        So, by calling this inline, we guarantee the textboxes and checkboxes 

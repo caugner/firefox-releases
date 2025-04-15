@@ -12,12 +12,12 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Jonas Sicking.
  * Portions created by the Initial Developer are Copyright (C) 2002
- * Jonas Sicking. All Rights Reserved.
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Jonas Sicking <sicking@bigfoot.com>
@@ -37,7 +37,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "txExpandedNameMap.h"
-#include "TxObject.h"
+#include "txCore.h"
 #include <string.h>
 
 const int kTxExpandedNameMapAllocSize = 16;

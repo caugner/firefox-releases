@@ -14,9 +14,9 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code mozilla.org code.
+ * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code Christopher Blizzard
+ * The Initial Developer of the Original Code is Christopher Blizzard
  * <blizzard@mozilla.org>.  Portions created by the Initial Developer
  * are Copyright (C) 2001 the Initial Developer. All Rights Reserved.
  *
@@ -38,8 +38,13 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <plgetopt.h>
+#ifdef MOZ_WIDGET_PHOTON
+#include "PhRemoteClient.h"
+#else
 #include "XRemoteClient.h"
+#endif
 
 static void print_usage(void);
 

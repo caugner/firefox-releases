@@ -1,30 +1,46 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla MathML Project.
  *
- * The Initial Developer of the Original Code is The University Of
- * Queensland.  Portions created by The University Of Queensland are
- * Copyright (C) 1999 The University Of Queensland.  All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * The University Of Queensland.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Roger B. Sidje <rbs@maths.uq.edu.au>
  *   David J. Fiddes <D.J.Fiddes@hw.ac.uk>
  *   Shyjan Mahamud <mahamud@cs.cmu.edu> (added TeX rendering rules)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 
 #include "nsCOMPtr.h"
 #include "nsFrame.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsUnitConversion.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
@@ -61,17 +77,16 @@ nsMathMLmmultiscriptsFrame::~nsMathMLmmultiscriptsFrame()
 }
 
 NS_IMETHODIMP
-nsMathMLmmultiscriptsFrame::TransmitAutomaticData(nsIPresContext* aPresContext)
+nsMathMLmmultiscriptsFrame::TransmitAutomaticData()
 {
   // if our base is an embellished operator, let its state bubble to us
-  GetEmbellishDataFrom(mFrames.FirstChild(), mEmbellishData);
-  if (NS_MATHML_IS_EMBELLISH_OPERATOR(mEmbellishData.flags))
-    mEmbellishData.nextFrame = mFrames.FirstChild();
+  mPresentationData.baseFrame = mFrames.FirstChild();
+  GetEmbellishDataFrom(mPresentationData.baseFrame, mEmbellishData);
 
   // The REC says:
   // The <mmultiscripts> element increments scriptlevel by 1, and sets
   // displaystyle to "false", within each of its arguments except base
-  UpdatePresentationDataFromChildAt(aPresContext, 1, -1, 1,
+  UpdatePresentationDataFromChildAt(1, -1, 1,
     ~NS_MATHML_DISPLAYSTYLE, NS_MATHML_DISPLAYSTYLE);
 
   // The TeXbook (Ch 17. p.141) says the superscript inherits the compression
@@ -104,7 +119,7 @@ nsMathMLmmultiscriptsFrame::TransmitAutomaticData(nsIPresContext* aPresContext)
   }
   for (PRInt32 i = subScriptFrames.Count() - 1; i >= 0; i--) {
     childFrame = (nsIFrame*)subScriptFrames[i];
-    PropagatePresentationDataFor(aPresContext, childFrame, 0,
+    PropagatePresentationDataFor(childFrame, 0,
       NS_MATHML_COMPRESSED, NS_MATHML_COMPRESSED);
   }
 
@@ -112,11 +127,10 @@ nsMathMLmmultiscriptsFrame::TransmitAutomaticData(nsIPresContext* aPresContext)
 }
 
 void
-nsMathMLmmultiscriptsFrame::ProcessAttributes(nsIPresContext* aPresContext)
+nsMathMLmmultiscriptsFrame::ProcessAttributes()
 {
   mSubScriptShift = 0;
   mSupScriptShift = 0;
-  mScriptSpace = NSFloatPointsToTwips(0.5f); // 0.5pt as in plain TeX
 
   // check if the subscriptshift attribute is there
   nsAutoString value;
@@ -124,7 +138,7 @@ nsMathMLmmultiscriptsFrame::ProcessAttributes(nsIPresContext* aPresContext)
                    nsMathMLAtoms::subscriptshift_, value)) {
     nsCSSValue cssValue;
     if (ParseNumericValue(value, cssValue) && cssValue.IsLengthUnit()) {
-      mSubScriptShift = CalcLength(aPresContext, mStyleContext, cssValue);
+      mSubScriptShift = CalcLength(GetPresContext(), mStyleContext, cssValue);
     }
   }
   // check if the superscriptshift attribute is there
@@ -132,14 +146,13 @@ nsMathMLmmultiscriptsFrame::ProcessAttributes(nsIPresContext* aPresContext)
                    nsMathMLAtoms::superscriptshift_, value)) {
     nsCSSValue cssValue;
     if (ParseNumericValue(value, cssValue) && cssValue.IsLengthUnit()) {
-      mSupScriptShift = CalcLength(aPresContext, mStyleContext, cssValue);
+      mSupScriptShift = CalcLength(GetPresContext(), mStyleContext, cssValue);
     }
   }
 }
 
 NS_IMETHODIMP
-nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
-                                  nsIRenderingContext& aRenderingContext,
+nsMathMLmmultiscriptsFrame::Place(nsIRenderingContext& aRenderingContext,
                                   PRBool               aPlaceOrigin,
                                   nsHTMLReflowMetrics& aDesiredSize)
 {
@@ -153,7 +166,7 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
   // depend only on the current font
   ////////////////////////////////////////
 
-  ProcessAttributes(aPresContext);
+  ProcessAttributes();
 
   // get x-height (an ex)
   aRenderingContext.SetFont(GetStyleFont()->mFont, nsnull);
@@ -165,6 +178,11 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
 
   nscoord ruleSize;
   GetRuleThickness (aRenderingContext, fm, ruleSize);
+
+  // scriptspace from TeX for extra spacing after sup/subscript (0.5pt in plain TeX)
+  // forced to be at least 1 pixel here
+  nscoord onePixel = GetPresContext()->IntScaledPixelsToTwips(1);
+  nscoord scriptSpace = PR_MAX(NSFloatPointsToTwips(0.5f), onePixel);
 
   /////////////////////////////////////
   // first the shift for the subscript
@@ -261,7 +279,7 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
         // duplicate <mprescripts/> found
         // report an error, encourage people to get their markups in order
         NS_WARNING("invalid markup");
-        return ReflowError(aPresContext, aRenderingContext, aDesiredSize);
+        return ReflowError(aRenderingContext, aDesiredSize);
       }
       mprescriptsFrame = childFrame;
       firstPrescriptsPair = PR_TRUE;
@@ -272,6 +290,8 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
         baseFrame = childFrame;
         GetReflowAndBoundingMetricsFor(baseFrame, baseSize, bmBase);
         GetItalicCorrection(bmBase, italicCorrection);
+        // for the superscript, we always add "a little to spare"
+        italicCorrection += onePixel;
 
         // we update mBoundingMetrics.{ascent,descent} with that
         // of the baseFrame only after processing all the sup/sub pairs
@@ -287,7 +307,7 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
           subScriptFrame = childFrame;
           GetReflowAndBoundingMetricsFor(subScriptFrame, subScriptSize, bmSubScript);
           // get the subdrop from the subscript font
-          GetSubDropFromChild (aPresContext, subScriptFrame, subDrop);
+          GetSubDropFromChild (subScriptFrame, subDrop);
           // parameter v, Rule 18a, App. G, TeXbook
           minSubScriptShift = bmBase.descent + subDrop;
           trySubScriptShift = PR_MAX(minSubScriptShift,subScriptShift);
@@ -295,15 +315,15 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
             PR_MAX(mBoundingMetrics.descent,bmSubScript.descent);
           aDesiredSize.descent =
             PR_MAX(aDesiredSize.descent,subScriptSize.descent);
-          width = bmSubScript.width + mScriptSpace;
-          rightBearing = bmSubScript.rightBearing + mScriptSpace;          
+          width = bmSubScript.width + scriptSpace;
+          rightBearing = bmSubScript.rightBearing;
         }
         else {
           // supscript
           supScriptFrame = childFrame;
           GetReflowAndBoundingMetricsFor(supScriptFrame, supScriptSize, bmSupScript);
           // get the supdrop from the supscript font
-          GetSupDropFromChild (aPresContext, supScriptFrame, supDrop);
+          GetSupDropFromChild (supScriptFrame, supDrop);
           // parameter u, Rule 18a, App. G, TeXbook
           minSupScriptShift = bmBase.ascent - supDrop;
           // get min supscript shift limit from x-height
@@ -316,8 +336,8 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
             PR_MAX(mBoundingMetrics.ascent,bmSupScript.ascent);
           aDesiredSize.ascent =
             PR_MAX(aDesiredSize.ascent,supScriptSize.ascent);
-          width = PR_MAX(width, bmSupScript.width + mScriptSpace);
-          rightBearing = PR_MAX(rightBearing, bmSupScript.rightBearing + mScriptSpace);
+          width = PR_MAX(width, bmSupScript.width + scriptSpace);
+          rightBearing = PR_MAX(rightBearing, bmSupScript.rightBearing);
 
           if (!mprescriptsFrame) { // we are still looping over base & postscripts
             mBoundingMetrics.rightBearing = mBoundingMetrics.width + rightBearing;
@@ -370,7 +390,7 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
   if ((0 != width) || !baseFrame || !subScriptFrame || !supScriptFrame) {
     // report an error, encourage people to get their markups in order
     NS_WARNING("invalid markup");
-    return ReflowError(aPresContext, aRenderingContext, aDesiredSize);
+    return ReflowError(aRenderingContext, aDesiredSize);
   }
 
   // we left out the width of prescripts, so ...
@@ -412,8 +432,8 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
         // place the base ...
         childFrame = baseFrame;
         dy = aDesiredSize.ascent - baseSize.ascent;
-        FinishReflowChild (baseFrame, aPresContext, nsnull, baseSize, dx, dy, 0);
-        dx += bmBase.width + mScriptSpace + italicCorrection;
+        FinishReflowChild (baseFrame, GetPresContext(), nsnull, baseSize, dx, dy, 0);
+        dx += bmBase.width + italicCorrection;
       }
       else if (mprescriptsFrame != childFrame) {
         // process each sup/sub pair
@@ -435,15 +455,15 @@ nsMathMLmmultiscriptsFrame::Place(nsIPresContext*      aPresContext,
 
           dy = aDesiredSize.ascent - subScriptSize.ascent +
             maxSubScriptShift;
-          FinishReflowChild (subScriptFrame, aPresContext, nsnull, subScriptSize,
+          FinishReflowChild (subScriptFrame, GetPresContext(), nsnull, subScriptSize,
                              dx + (width-subScriptSize.width)/2, dy, 0);
 
           dy = aDesiredSize.ascent - supScriptSize.ascent -
             maxSupScriptShift;
-          FinishReflowChild (supScriptFrame, aPresContext, nsnull, supScriptSize,
+          FinishReflowChild (supScriptFrame, GetPresContext(), nsnull, supScriptSize,
                              dx + (width-supScriptSize.width)/2, dy, 0);
 
-          dx += mScriptSpace + width;
+          dx += width + scriptSpace;
         }
       }
       childFrame = childFrame->GetNextSibling();

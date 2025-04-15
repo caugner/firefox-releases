@@ -1,4 +1,5 @@
 classic.jar:
+% skin global classic/1.0 %skin/classic/global/
 +  skin/classic/global/10pct_transparent_grey.png
 +  skin/classic/global/10pct_transparent_pixel.png
 +  skin/classic/global/20pct_transparent_pixel.png
@@ -7,6 +8,7 @@ classic.jar:
 +  skin/classic/global/activetab-left.png
 +  skin/classic/global/activetab-middle.png
 +  skin/classic/global/activetab-right.png
++  skin/classic/global/arrow.css
 +  skin/classic/global/autocomplete.css
 +  skin/classic/global/browser.css
 +  skin/classic/global/button.css
@@ -14,7 +16,6 @@ classic.jar:
 +  skin/classic/global/closetab.png
 +  skin/classic/global/colorpicker.css
 +  skin/classic/global/config.css
-+  skin/classic/global/contents.rdf
 +  skin/classic/global/customizeToolbar.css
 +  skin/classic/global/dialog.css
 +  skin/classic/global/filepicker.css
@@ -33,10 +34,15 @@ classic.jar:
 +  skin/classic/global/listbox.css
 +  skin/classic/global/menu.css
 +  skin/classic/global/menulist.css
++  skin/classic/global/netError.css
 +  skin/classic/global/popup.css
 +  skin/classic/global/progressmeter.css
 +  skin/classic/global/radio.css
-+  skin/classic/global/scrollbars.css
++  skin/classic/global/richlistbox.css
+# chrome://global/skin/nativescrollbars.css is used on Mac
++  skin/classic/global/nativescrollbars.css
+# chrome://global/skin/xulscrollbars.css is used on non-Mac platforms
++  skin/classic/global/xulscrollbars.css                              (../../winstripe/global/xulscrollbars.css)
 +  skin/classic/global/scrollbox.css
 +  skin/classic/global/spinbuttons.css
 +  skin/classic/global/splitter.css
@@ -78,7 +84,6 @@ classic.jar:
 +  skin/classic/global/console/console-error-dash.gif                 (console/console-error-dash.gif)
 +  skin/classic/global/console/console.css                            (console/console.css)
 +  skin/classic/global/icons/alert-error.gif                          (icons/alert-error.gif)
-+  skin/classic/global/icons/alert-exclam.png                         (icons/alert-exclam.png)
 +  skin/classic/global/icons/alert-message.gif                        (icons/alert-message.gif)
 +  skin/classic/global/icons/alert-question.gif                       (icons/alert-question.gif)
 +  skin/classic/global/icons/autocomplete-dropmarker.png              (icons/autocomplete-dropmarker.png)
@@ -105,6 +110,8 @@ classic.jar:
 +  skin/classic/global/icons/small-globe-sunken-grey.png              (icons/small-globe-sunken-grey.png)
 +  skin/classic/global/icons/small-globe-sunken.png                   (icons/small-globe-sunken.png)
 +  skin/classic/global/icons/white-gray-gradient.gif                  (icons/white-gray-gradient.gif)
++  skin/classic/global/icons/warning-large.png                        (icons/warning-large.png)
++  skin/classic/global/icons/thumb.png                                (icons/thumb.png)
 +  skin/classic/global/menu/menu-arrow-dis.gif                        (menu/menu-arrow-dis.gif)
 +  skin/classic/global/menu/menu-arrow-hov.gif                        (menu/menu-arrow-hov.gif)
 +  skin/classic/global/menu/menu-arrow.gif                            (menu/menu-arrow.gif)
@@ -121,6 +128,7 @@ classic.jar:
 +  skin/classic/global/menulist/menulist-arrow-dis.gif                (menulist/menulist-arrow-dis.gif)
 +  skin/classic/global/menulist/menulist-arrow.gif                    (menulist/menulist-arrow.gif)
 +  skin/classic/global/splitter/dimple.png                            (splitter/dimple.png)
++  skin/classic/global/tabDragDrop/tabDragIndicator.png               (tabDragDrop/tabDragIndicator.png)
 +  skin/classic/global/toolbar/Lighten.png                            (toolbar/Lighten.png)
 +  skin/classic/global/toolbar/spring.gif                             (toolbar/spring.gif)
 +  skin/classic/global/toolbar/toolbar-pinstripe-overlay.png          (toolbar/toolbar-pinstripe-overlay.png)

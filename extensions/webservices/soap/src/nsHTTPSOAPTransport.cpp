@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,11 +27,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -67,7 +66,7 @@ nsHTTPSOAPTransport::~nsHTTPSOAPTransport()
 }
 
 NS_IMPL_ISUPPORTS1_CI(nsHTTPSOAPTransport, nsISOAPTransport)
-#ifdef DEBUG2
+#ifdef DEBUG
 #define DEBUG_DUMP_DOCUMENT(message,doc) \
   { \
           nsresult rcc;\
@@ -225,7 +224,7 @@ static nsresult GetTransportURI(nsISOAPCall * aCall, nsAString & aURI)
       nsSOAPUtils::GetSpecificChildElement(nsnull, element, gSOAPStrings->kVerifySourceNamespaceURI, 
         gSOAPStrings->kVerifySourceHeader, getter_AddRefs(verifySource));
       if (verifySource) {
-        element->RemoveChild(verifySource, getter_AddRefs(ignore));
+        rc = element->RemoveChild(verifySource, getter_AddRefs(ignore));
         if (NS_FAILED(rc))
           return rc;
       }
@@ -282,7 +281,7 @@ static nsresult GetTransportURI(nsISOAPCall * aCall, nsAString & aURI)
       if (NS_FAILED(rc)) 
         return rc;
       stringType.Append(gSOAPStrings->kQualifiedSeparator);
-      stringType.Append(NS_LITERAL_STRING("anyURI"));
+      stringType.AppendLiteral("anyURI");
     }
 
     //  If it is available, add the sourceURI 
@@ -301,29 +300,23 @@ static nsresult GetTransportURI(nsISOAPCall * aCall, nsAString & aURI)
       nsCOMPtr<nsIDOMText> text;
       rc = document->CreateTextNode(sourceURI, getter_AddRefs(text));
       if (NS_FAILED(rc)) 
-      return rc;
-      element->AppendChild(text, getter_AddRefs(ignore));
+        return rc;
+      rc = element->AppendChild(text, getter_AddRefs(ignore));
       if (NS_FAILED(rc)) 
-      return rc;
+        return rc;
     }
   }
   return NS_OK;
 }
 
-/* void syncCall (in nsISOAPCall aCall, in nsISOAPResponse aResponse); */
-NS_IMETHODIMP nsHTTPSOAPTransport::SyncCall(nsISOAPCall * aCall, nsISOAPResponse * aResponse)
+nsresult // static
+nsHTTPSOAPTransport::SetupRequest(nsISOAPCall* aCall, PRBool async,
+                                  nsIXMLHttpRequest** ret)
 {
-  NS_ENSURE_ARG(aCall);
-
   nsresult rv;
-  nsCOMPtr < nsIXMLHttpRequest > request;
-
-  nsCOMPtr < nsIDOMDocument > messageDocument;
-  rv = aCall->GetMessage(getter_AddRefs(messageDocument));
+  nsCOMPtr<nsIXMLHttpRequest> request = do_CreateInstance(NS_XMLHTTPREQUEST_CONTRACTID, &rv);
   if (NS_FAILED(rv))
     return rv;
-  if (!messageDocument)
-    return SOAP_EXCEPTION(NS_ERROR_NOT_INITIALIZED,"SOAP_MESSAGE_DOCUMENT", "No message document is present.");
 
   nsAutoString uri;
   rv = GetTransportURI(aCall, uri);
@@ -332,30 +325,30 @@ NS_IMETHODIMP nsHTTPSOAPTransport::SyncCall(nsISOAPCall * aCall, nsISOAPResponse
   if (AStringIsNull(uri))
     return SOAP_EXCEPTION(NS_ERROR_NOT_INITIALIZED,"SOAP_TRANSPORT_URI", "No transport URI was specified.");
 
-  DEBUG_DUMP_DOCUMENT("Synchronous Request", messageDocument)
-
-  request = do_CreateInstance(NS_XMLHTTPREQUEST_CONTRACTID, &rv);
-  if (NS_FAILED(rv))
-    return rv;
-
-  rv = request->OverrideMimeType(NS_LITERAL_CSTRING("text/xml"));
+  rv = request->OverrideMimeType(NS_LITERAL_CSTRING("application/xml"));
   if (NS_FAILED(rv))
     return rv;
 
   const nsAString& empty = EmptyString();
   rv = request->OpenRequest(NS_LITERAL_CSTRING("POST"),
-                            NS_ConvertUTF16toUTF8(uri), PR_FALSE, empty,
-                            empty);
-  if (NS_FAILED(rv))
-    return rv;
-
-  rv = request->SetRequestHeader(NS_LITERAL_CSTRING("Content-Type"),
-                                 NS_LITERAL_CSTRING("text/xml; charset=UTF-8"));
+                            NS_ConvertUTF16toUTF8(uri), async, empty, empty);
   if (NS_FAILED(rv))
     return rv;
 
   nsAutoString action;
   rv = aCall->GetActionURI(action);
+  if (NS_FAILED(rv))
+    return rv;
+
+  // nsXMLHttpRequest sends nsIDOMDocument payloads encoded as UTF-8,
+  // but it doesn't say so in the Content-Type header. For SOAP
+  // requests, we prefer to make this explicit. Some implementations
+  // rely on this.
+
+  // XXX : Use application/soap+xml for SOAP 1.2 once it gets
+  // registered by IANA.
+  rv = request->SetRequestHeader(NS_LITERAL_CSTRING("Content-Type"),
+                                 NS_LITERAL_CSTRING("text/xml; charset=UTF-8"));
   if (NS_FAILED(rv))
     return rv;
 
@@ -365,7 +358,7 @@ NS_IMETHODIMP nsHTTPSOAPTransport::SyncCall(nsISOAPCall * aCall, nsISOAPResponse
 
     //XXXdoron necko doesn't allow empty header values, so set it to " "
     if (action.IsEmpty())
-      action = NS_LITERAL_STRING(" ");
+      action.AssignLiteral(" ");
 
     rv = request->SetRequestHeader(NS_LITERAL_CSTRING("SOAPAction"),
                                    NS_ConvertUTF16toUTF8(action));
@@ -373,7 +366,32 @@ NS_IMETHODIMP nsHTTPSOAPTransport::SyncCall(nsISOAPCall * aCall, nsISOAPResponse
       return rv;
   }
 
-  nsCOMPtr < nsIWritableVariant > variant =
+
+  NS_ADDREF(*ret = request);
+
+  return NS_OK;
+}
+
+/* void syncCall (in nsISOAPCall aCall, in nsISOAPResponse aResponse); */
+NS_IMETHODIMP 
+nsHTTPSOAPTransport::SyncCall(nsISOAPCall * aCall, nsISOAPResponse * aResponse)
+{
+  NS_ENSURE_ARG(aCall);
+
+  nsCOMPtr<nsIDOMDocument> messageDocument;
+  nsresult rv = aCall->GetMessage(getter_AddRefs(messageDocument));
+  if (NS_FAILED(rv))
+    return rv;
+  if (!messageDocument)
+    return SOAP_EXCEPTION(NS_ERROR_NOT_INITIALIZED,"SOAP_MESSAGE_DOCUMENT", "No message document is present.");
+  DEBUG_DUMP_DOCUMENT("Synchronous Request", messageDocument)
+
+  nsCOMPtr<nsIXMLHttpRequest> request;
+  rv = SetupRequest(aCall, PR_FALSE, getter_AddRefs(request));
+  if (NS_FAILED(rv))
+    return rv;
+
+  nsCOMPtr<nsIWritableVariant> variant =
       do_CreateInstance(NS_VARIANT_CONTRACTID, &rv);
   if (NS_FAILED(rv))
     return rv;
@@ -398,7 +416,7 @@ NS_IMETHODIMP nsHTTPSOAPTransport::SyncCall(nsISOAPCall * aCall, nsISOAPResponse
 #endif
 
   if (aResponse) {
-    nsCOMPtr < nsIDOMDocument > response;
+    nsCOMPtr<nsIDOMDocument> response;
     rv = request->GetResponseXML(getter_AddRefs(response));
     if (NS_FAILED(rv))
       return rv;
@@ -443,7 +461,7 @@ NS_IMETHODIMP
 {
   NS_ENSURE_ARG(aResponse);
   *aResponse =
-      mRequest ? (nsCOMPtr < nsISOAPResponse >) nsnull : mResponse;
+      mRequest ? nsnull : mResponse.get();
   NS_IF_ADDREF(*aResponse);
   return NS_OK;
 }
@@ -496,7 +514,7 @@ NS_IMETHODIMP
       rv = NS_ERROR_FAILURE;
 #endif
     if (mResponse) { // && NS_SUCCEEDED(rv)) {
-      nsCOMPtr < nsIDOMDocument > document;
+      nsCOMPtr<nsIDOMDocument> document;
       rv = mRequest->GetResponseXML(getter_AddRefs(document));
       if (NS_SUCCEEDED(rv) && document) {
         rv = mResponse->SetMessage(document);
@@ -509,8 +527,8 @@ NS_IMETHODIMP
     } else {
       mResponse = nsnull;
     }
-    nsCOMPtr < nsISOAPCallCompletion > kungFuDeathGrip = this;
-    mRequest = nsnull;                //  Break cycle of references by releas.
+    nsCOMPtr<nsISOAPCallCompletion> kungFuDeathGrip = this;
+    mRequest = nsnull;                //  Break cycle of references by releasing the request.
     PRBool c;                        //  In other transports, this may signal to stop returning if multiple returns
     mListener->HandleResponse(mResponse, mCall, rv, PR_TRUE, &c);
   }
@@ -519,77 +537,34 @@ NS_IMETHODIMP
 
 /* void asyncCall (in nsISOAPCall aCall, in nsISOAPResponseListener aListener, in nsISOAPResponse aResponse); */
 NS_IMETHODIMP
-    nsHTTPSOAPTransport::AsyncCall(nsISOAPCall * aCall,
-                                   nsISOAPResponseListener * aListener,
-                                   nsISOAPResponse * aResponse,
-                                   nsISOAPCallCompletion ** aCompletion)
+nsHTTPSOAPTransport::AsyncCall(nsISOAPCall * aCall,
+                               nsISOAPResponseListener * aListener,
+                               nsISOAPResponse * aResponse,
+                               nsISOAPCallCompletion ** aCompletion)
 {
   NS_ENSURE_ARG(aCall);
   NS_ENSURE_ARG(aCompletion);
 
-  nsresult rv;
-  nsCOMPtr < nsIXMLHttpRequest > request;
 
-  nsCOMPtr < nsIDOMDocument > messageDocument;
-  rv = aCall->GetMessage(getter_AddRefs(messageDocument));
+  nsCOMPtr<nsIDOMDocument> messageDocument;
+  nsresult rv = aCall->GetMessage(getter_AddRefs(messageDocument));
   if (NS_FAILED(rv))
     return rv;
   if (!messageDocument)
     return SOAP_EXCEPTION(NS_ERROR_NOT_INITIALIZED,"SOAP_MESSAGE_DOCUMENT", "No message document is present.");
-
-  request = do_CreateInstance(NS_XMLHTTPREQUEST_CONTRACTID, &rv);
-  if (NS_FAILED(rv))
-    return rv;
-
-  nsCOMPtr < nsIDOMEventTarget > eventTarget =
-      do_QueryInterface(request, &rv);
-  if (NS_FAILED(rv))
-    return rv;
-
-  nsAutoString uri;
-  rv = GetTransportURI(aCall, uri);
-  if (NS_FAILED(rv))
-    return rv;
-  if (AStringIsNull(uri))
-    return SOAP_EXCEPTION(NS_ERROR_NOT_INITIALIZED,"SOAP_TRANSPORT_URI", "No transport URI was specified.");
-
   DEBUG_DUMP_DOCUMENT("Asynchronous Request", messageDocument)
-  rv = request->OverrideMimeType(NS_LITERAL_CSTRING("text/xml"));
+
+  nsCOMPtr<nsIXMLHttpRequest> request;
+  rv = SetupRequest(aCall, PR_TRUE, getter_AddRefs(request));
   if (NS_FAILED(rv))
     return rv;
 
-  const nsAString& empty = EmptyString();
-  rv = request->OpenRequest(NS_LITERAL_CSTRING("POST"),
-                            NS_ConvertUTF16toUTF8(uri), PR_TRUE, empty, empty);
+  nsCOMPtr<nsIDOMEventTarget> eventTarget = 
+    do_QueryInterface(request, &rv);
   if (NS_FAILED(rv))
     return rv;
 
-  nsAutoString action;
-  rv = aCall->GetActionURI(action);
-  if (NS_FAILED(rv))
-    return rv;
-
-  rv = request->SetRequestHeader(NS_LITERAL_CSTRING("Content-Type"),
-                                 NS_LITERAL_CSTRING("text/xml; charset=UTF-8"));
-  if (NS_FAILED(rv))
-    return rv;
-
-  // Apache Axis web services WSDL files say to set soapAction to "" and require it to be sent.  
-  // So only check if its not void instead of using AStringIsNull.
-
-  if (!action.IsVoid()) {
-
-    //XXXdoron necko doesn't allow empty header values, so set it to " "
-    if (action.IsEmpty())
-      action = NS_LITERAL_STRING(" ");
-
-    rv = request->SetRequestHeader(NS_LITERAL_CSTRING("SOAPAction"),
-                                   NS_ConvertUTF16toUTF8(action));
-    if (NS_FAILED(rv))
-      return rv;
-  }
-
-  nsCOMPtr < nsIWritableVariant > variant =
+  nsCOMPtr<nsIWritableVariant> variant =
       do_CreateInstance(NS_VARIANT_CONTRACTID, &rv);
   if (NS_FAILED(rv))
     return rv;
@@ -599,7 +574,7 @@ NS_IMETHODIMP
   if (NS_FAILED(rv))
     return rv;
 
-  nsCOMPtr < nsISOAPCallCompletion > completion;
+  nsCOMPtr<nsISOAPCallCompletion> completion;
 
   if (aListener) {
     completion =
@@ -608,7 +583,7 @@ NS_IMETHODIMP
     if (!completion)
       return NS_ERROR_OUT_OF_MEMORY;
 
-    nsCOMPtr < nsIDOMEventListener > listener =
+    nsCOMPtr<nsIDOMEventListener> listener =
         do_QueryInterface(completion);
     rv = eventTarget->AddEventListener(NS_LITERAL_STRING("load"), listener,
                                        PR_FALSE);

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Steve Dagley <sdagley@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -79,10 +79,6 @@ static void ConvertCharStringToStr255(const char* inString, Str255& outString)
 
 nsInternetConfigService::nsInternetConfigService()
 {
-  long  version;
-  OSErr err;
-  mRunningOSX = ((err = ::Gestalt(gestaltSystemVersion, &version)) == noErr && version >= 0x00001000);
-  mRunningJaguar = (err == noErr && version >= 0x00001020);
 }
 
 nsInternetConfigService::~nsInternetConfigService()
@@ -100,35 +96,19 @@ NS_IMPL_ISUPPORTS1(nsInternetConfigService, nsIInternetConfigService)
 // Under OS X use LaunchServices instead of IC
 NS_IMETHODIMP nsInternetConfigService::LaunchURL(const char *url)
 {
-  nsresult rv = NS_ERROR_FAILURE;
-  
-#if TARGET_CARBON
-  if (mRunningOSX && ((UInt32)LSOpenCFURLRef != (UInt32)kUnresolvedCFragSymbolAddress))
+  nsresult rv = NS_ERROR_FAILURE; 
+
+  CFURLRef myURLRef = ::CFURLCreateWithBytes(
+                                             kCFAllocatorDefault,
+                                             (const UInt8*)url,
+                                             strlen(url),
+                                             kCFStringEncodingUTF8, NULL);
+  if (myURLRef)
   {
-    CFURLRef myURLRef = ::CFURLCreateWithBytes(
-                                              kCFAllocatorDefault,
-                                              (const UInt8*)url,
-                                              strlen(url),
-                                              kCFStringEncodingUTF8, NULL);
-    if (myURLRef)
-    {
-      rv = ::LSOpenCFURLRef(myURLRef, NULL);
-      ::CFRelease(myURLRef);
-    }
+    rv = ::LSOpenCFURLRef(myURLRef, NULL);
+    ::CFRelease(myURLRef);
   }
-  else
-#endif
-  {
-    size_t len = strlen(url);
-    long selStart = 0, selEnd = len;
-    ICInstance inst = nsInternetConfig::GetInstance();
-    
-    if (inst)
-    {
-      if (::ICLaunchURL(inst, "\p", (Ptr)url, (long)len, &selStart, &selEnd) == noErr)
-        rv = NS_OK;
-    }
-  }
+
   return rv;
 }
 
@@ -152,103 +132,45 @@ NS_IMETHODIMP nsInternetConfigService::HasProtocolHandler(const char *protocol, 
 {
   *_retval = PR_FALSE;            // Presume failure
   nsresult rv = NS_ERROR_FAILURE; // Ditto
-  
-#if TARGET_CARBON
-  // Use LaunchServices directly when we're running under OS X to avoid the problem of some protocols
-  // apparently not being reflected into the IC mappings (webcal for one).  Even better it seems
-  // LaunchServices under 10.1.x will often fail to find an app when using LSGetApplicationForURL
-  // so we only use it for 10.2 or later.
-  
-  // Since protocol comes in with _just_ the protocol we have to add a ':' to the end of it or
-  // LaunchServices will be very unhappy with the CFURLRef created from it (crashes trying to look
-  // up a handler for it with LSGetApplicationForURL, at least under 10.2.1)
-  if (mRunningJaguar)
-  {
-    nsCAutoString scheme(protocol);
-    scheme += ":";
-    CFURLRef myURLRef = ::CFURLCreateWithBytes(
-                                                kCFAllocatorDefault,
-                                                (const UInt8 *)scheme.get(),
-                                                scheme.Length(),
-                                                kCFStringEncodingUTF8, NULL);
-    if (myURLRef)
-    {
-      FSRef appFSRef;
-      
-      if (::LSGetApplicationForURL(myURLRef, kLSRolesAll, &appFSRef, NULL) == noErr)
-      { // Now see if the FSRef for the found app == the running app
-        ProcessSerialNumber psn;
-        if (::GetCurrentProcess(&psn) == noErr)
-        {
-          FSRef runningAppFSRef;
-          if (::GetProcessBundleLocation(&psn, &runningAppFSRef) == noErr)
-          {
-            if (::FSCompareFSRefs(&appFSRef, &runningAppFSRef) == noErr)
-            { // Oops, the current app is the handler which would cause infinite recursion
-              rv = NS_ERROR_NOT_AVAILABLE;
-            }
-            else
-            {
-              *_retval = PR_TRUE;
-              rv = NS_OK;
-            }
-          }
-        }
-      }
-      ::CFRelease(myURLRef);
-    }
-  }
-  else
-#endif
-  {
-    // look for IC pref "\pHelper¥<protocol>"
-    Str255 pref = kICHelper;
 
-    if (nsCRT::strlen(protocol) > 248)
-      rv = NS_ERROR_OUT_OF_MEMORY;
-    else
-    {
-      memcpy(pref + pref[0] + 1, protocol, nsCRT::strlen(protocol));
-      pref[0] = pref[0] + nsCRT::strlen(protocol);
-      
-      ICInstance instance = nsInternetConfig::GetInstance();
-      if (instance)
+  // Since protocol comes in with _just_ the protocol we have to add a ':' to
+  // the end of it or LaunchServices will be very unhappy with the CFURLRef
+  // created from it (crashes trying to look up a handler for it with
+  // LSGetApplicationForURL, at least under 10.2.1)
+  nsCAutoString scheme(protocol);
+  scheme += ":";
+  CFURLRef myURLRef = ::CFURLCreateWithBytes(
+                                              kCFAllocatorDefault,
+                                              (const UInt8 *)scheme.get(),
+                                              scheme.Length(),
+                                              kCFStringEncodingUTF8, NULL);
+  if (myURLRef)
+  {
+    FSRef appFSRef;
+  
+    if (::LSGetApplicationForURL(myURLRef, kLSRolesAll, &appFSRef, NULL) == noErr)
+    { // Now see if the FSRef for the found app == the running app
+      ProcessSerialNumber psn;
+      if (::GetCurrentProcess(&psn) == noErr)
       {
-        OSStatus  err;
-        ICAttr    junk;
-        ICAppSpec spec;
-        long      ioSize = sizeof(ICAppSpec);
-        err = ::ICGetPref(instance, pref, &junk, (void *)&spec, &ioSize);
-      
-        if (err == noErr)
+        FSRef runningAppFSRef;
+        if (::GetProcessBundleLocation(&psn, &runningAppFSRef) == noErr)
         {
-          // check if registered protocol helper is us
-          // if so, return PR_FALSE because we'll go into infinite recursion
-          // continually launching back into ourselves
-          ProcessSerialNumber psn;
-          OSErr oserr = ::GetCurrentProcess(&psn);
-          if (oserr == noErr)
+          if (::FSCompareFSRefs(&appFSRef, &runningAppFSRef) == noErr)
+          { // Oops, the current app is the handler which would cause infinite recursion
+            rv = NS_ERROR_NOT_AVAILABLE;
+          }
+          else
           {
-            ProcessInfoRec info;
-            info.processInfoLength = sizeof(ProcessInfoRec);
-            info.processName = nsnull;
-            info.processAppSpec = nsnull;
-            err = ::GetProcessInformation(&psn, &info);
-            if (err == noErr)
-            {
-              if (info.processSignature != spec.fCreator)
-              {
-                *_retval = PR_TRUE;
-                rv = NS_OK;
-              }
-              else
-                rv = NS_ERROR_NOT_AVAILABLE;
-            }
+            *_retval = PR_TRUE;
+            rv = NS_OK;
           }
         }
       }
     }
+    ::CFRelease(myURLRef);
   }
+
   return rv;
 }
 
@@ -364,29 +286,29 @@ nsresult nsInternetConfigService::FillMIMEInfoForICEntry(ICMapEntry& entry, nsIM
     nsCAutoString mimetype ((char *)&entry.MIMEType[1], entry.MIMEType[0]);
     // check if entry.MIMEType is empty, if so, set mime type to APPLICATION_OCTET_STREAM
     if (entry.MIMEType[0])
-      info->SetMIMEType(mimetype.get());
+      info->SetMIMEType(mimetype);
     else
     { // The IC mappings seem to not be very agressive about determining the mime type if
       // all we have is a type or creator code.  This is a bandaid approach for when we
       // get a file of type 'TEXT' with no mime type mapping so that we'll display the
       // file rather than trying to download it.
       if (entry.fileType == 'TEXT')
-        info->SetMIMEType(TEXT_PLAIN);
+        info->SetMIMEType(NS_LITERAL_CSTRING(TEXT_PLAIN));
       else
-        info->SetMIMEType(APPLICATION_OCTET_STREAM);
+        info->SetMIMEType(NS_LITERAL_CSTRING(APPLICATION_OCTET_STREAM));
     }
     
     // convert entry.extension which is a Str255 
     // don't forget to remove the '.' in front of the file extension....
     nsCAutoString temp((char *)&entry.extension[2], entry.extension[0] > 0 ? (int)entry.extension[0]-1 : 0);
-    info->AppendExtension(temp.get());
+    info->AppendExtension(temp);
     info->SetMacType(entry.fileType);
     info->SetMacCreator(entry.fileCreator);
     temp.Assign((char *) &entry.entryName[1], entry.entryName[0]);
-    info->SetDescription(NS_ConvertASCIItoUCS2(temp.get()).get());
+    info->SetDescription(NS_ConvertASCIItoUCS2(temp));
     
     temp.Assign((char *) &entry.postAppName[1], entry.postAppName[0]);
-    info->SetDefaultDescription(NS_ConvertASCIItoUCS2(temp.get()).get());
+    info->SetDefaultDescription(NS_ConvertASCIItoUCS2(temp));
     
     if (entry.flags & kICMapPostMask)
     {

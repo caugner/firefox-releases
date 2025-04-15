@@ -14,7 +14,7 @@
 # The Original Code is Firebird Help code.
 #
 # The Initial Developer of the Original Code is
-# R.J. Keller
+# R.J. Keller.
 # Portions created by the Initial Developer are Copyright (C) 2003
 # the Initial Developer. All Rights Reserved.
 #
@@ -32,8 +32,8 @@
 # the provisions above, a recipient may use your version of this file under
 # the terms of any one of the MPL, the GPL or the LGPL.
 #
-#
-#
+# ***** END LICENSE BLOCK *****
+
 # CustomizeToolbar() - Enables the Customize Toolbar dialog and sets toolbar
 #	and toolbar button properties approprately.
 #
@@ -62,7 +62,7 @@ function ToolboxCustomizeDone(aToolboxChanged)
     UpdateToolbar(focus);
 
 # Set the Sidebar Toolbar Button's label appropriately.
-  var sidebarButton = document.getElementById("sidebar-button");
+  var sidebarButton = document.getElementById("help-sidebar-button");
   var strBundle = document.getElementById("bundle_help");
   if (document.getElementById("helpsidebar-box").hidden) {
     sidebarButton.label = strBundle.getString("showSidebarLabel");

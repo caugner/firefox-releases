@@ -1,10 +1,10 @@
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -13,14 +13,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
- *   Adam Lock <adamlock@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -28,11 +26,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -54,9 +52,9 @@ const kTotalSecurityHostingFlags =
     nsIActiveXSecurityPolicy.HOSTING_FLAGS_HOST_NOTHING;
 
 // Host only safe controls, no downloading or scripting
-const kHighSecurityHostingFlags = 
+const kHighSecurityHostingFlags =
     nsIActiveXSecurityPolicy.HOSTING_FLAGS_HOST_SAFE_OBJECTS;
-    
+
 // Host and script safe controls and allow downloads
 const kMediumSecurityGlobalHostingFlags =
     nsIActiveXSecurityPolicy.HOSTING_FLAGS_HOST_SAFE_OBJECTS |
@@ -69,9 +67,9 @@ const kLowSecurityHostFlags =
     nsIActiveXSecurityPolicy.HOSTING_FLAGS_DOWNLOAD_CONTROLS |
     nsIActiveXSecurityPolicy.HOSTING_FLAGS_SCRIPT_SAFE_OBJECTS |
     nsIActiveXSecurityPolicy.HOSTING_FLAGS_HOST_ALL_OBJECTS;
-    
+
 // Goodbye cruel world
-const kNoSecurityHostingFlags = 
+const kNoSecurityHostingFlags =
     nsIActiveXSecurityPolicy.HOSTING_FLAGS_HOST_SAFE_OBJECTS |
     nsIActiveXSecurityPolicy.HOSTING_FLAGS_DOWNLOAD_CONTROLS |
     nsIActiveXSecurityPolicy.HOSTING_FLAGS_SCRIPT_SAFE_OBJECTS |
@@ -87,7 +85,7 @@ const kDefaultGlobalHostingFlags = kMediumSecurityGlobalHostingFlags;
 const kDefaultOtherHostingFlags  = kMediumSecurityGlobalHostingFlags;
 
 // Preferences security policy reads from
-const kHostingPrefPart1 = "security.xpconnect.activex."; 
+const kHostingPrefPart1 = "security.xpconnect.activex.";
 const kHostingPrefPart2 = ".hosting_flags";
 const kGlobalHostingFlagsPref = kHostingPrefPart1 + "global" + kHostingPrefPart2;
 
@@ -101,7 +99,7 @@ function addPrefListener(observer, prefStr)
                                         .getService(Components.interfaces.nsIPrefService);
             gPref = prefService.getBranch(null);
         }
-        var pbi = gPref.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+        var pbi = gPref.QueryInterface(Components.interfaces.nsIPrefBranch2);
         pbi.addObserver(prefStr, observer, false);
     } catch(ex) {
         dump("Failed to observe prefs: " + ex + "\n");
@@ -168,11 +166,13 @@ AxSecurityPolicy.prototype = {
     },
     // nsISupports
     QueryInterface: function(iid) {
-        if (!iid.equals(nsISupports) &&
-            !iid.equals(nsIActiveXSecurityPolicy) &&
-            !iid.equals(nsIObserver))
-            throw Components.results.NS_ERROR_NO_INTERFACE;
-        return this;
+        if (iid.equals(nsISupports) ||
+            iid.equals(nsIActiveXSecurityPolicy) ||
+            iid.equals(nsIObserver))
+            return this;
+
+        Components.returnCode = Components.results.NS_ERROR_NO_INTERFACE;
+        return null;
     }
 };
 
@@ -201,7 +201,7 @@ var AxSecurityPolicyModule = {
             "ActiveX Security Policy Service",
             NS_IACTIVEXSECURITYPOLICY_CONTRACTID,
             fileSpec,
-            location, 
+            location,
             type);
     },
     unregisterSelf: function(compMgr, fileSpec, location)
@@ -217,7 +217,7 @@ var AxSecurityPolicyModule = {
         if (!iid.equals(Components.interfaces.nsIFactory))
             throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
 
-        throw Components.results.NS_ERROR_NO_INTERFACE;    
+        throw Components.results.NS_ERROR_NO_INTERFACE;
     },
     canUnload: function(compMgr)
     {

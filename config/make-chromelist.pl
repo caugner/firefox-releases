@@ -68,7 +68,7 @@ my $nofilelocks = $flock ? ($flock eq "-l") : 0;
 # chrome your platform uses. There are currently three sorts of chrome:
 # win, mac, and unix.
  
-my $win32 = ($^O =~ /((MS)?win32)|cygwin|os2/i) ? 1 : 0;
+my $win32 = ($^O =~ /((MS)?win32)|msys|cygwin|os2/i) ? 1 : 0;
 my $macos = ($^O =~ /MacOS|darwin/i)     ? 1 : 0;
 my $unix  = !($win32 || $macos)          ? 1 : 0;
 
@@ -130,7 +130,10 @@ while (<JARFILE>)
   if (!$1 || $1 eq "")
   {
     $chromefile = File::Spec::Unix->canonpath("$jarfilename/$_");
-    $_ =~ /.*\/(.*?)$/;
+    # match / 0 or 1 time and all chars except / to the end of the string.
+    # this is so it can also handle the case where a file is located in the
+    # root of the base directory (e.g. icon.png).
+    $_ =~ /\/?([^\/]*?)$/;
     $cvsfile = File::Spec::Unix->canonpath($1);
   } else {
     $chromefile = File::Spec::Unix->canonpath("$jarfilename/$chromefile");
@@ -142,7 +145,14 @@ while (<JARFILE>)
   if ($macos) { $chromefile =~ tr|/|:|; }
   if ($win32) { $chromefile =~ tr|/|\\|; }
 
-  $cvsfile = File::Spec::Unix->catfile($stub, $cvsfile);
+  # Deal with leading slashes, if there is one we do not need
+  # to add the stub and need to remove that slash
+  if ($cvsfile =~ m|^/|) {
+    $cvsfile =~ s/^\///;
+    $cvsfile = File::Spec::Unix->catfile($cvsfile);
+  } else {
+    $cvsfile = File::Spec::Unix->catfile($stub, $cvsfile);
+  }
   
   print BIGLIST "$chromefile ($cvsfile)\n";
 }

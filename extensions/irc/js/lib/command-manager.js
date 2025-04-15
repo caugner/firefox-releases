@@ -1,25 +1,41 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is JSIRC Library
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is New Dimensions Consulting,
- * Inc. Portions created by New Dimensions Consulting, Inc. are
- * Copyright (C) 1999 New Dimenstions Consulting, Inc. All
- * Rights Reserved.
+ * The Original Code is JSIRC Library.
+ *
+ * The Initial Developer of the Original Code is
+ * New Dimensions Consulting, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Robert Ginda, rginda@ndcico.com, original author
- */
+ *   Robert Ginda, rginda@ndcico.com, original author
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 function getAccessKey (str)
 {
@@ -94,7 +110,7 @@ function cr_scanusage()
     var inName = false;
     var len = spec.length;
     var capNext = false;
-    
+
     this._usage = spec;
     this.argNames = new Array();
 
@@ -105,22 +121,22 @@ function cr_scanusage()
             case '[':
                 this.argNames.push (":");
                 break;
-                
+
             case '<':
                 inName = true;
                 break;
-                
+
             case '-':
                 capNext = true;
                 break;
-                
+
             case '>':
                 inName = false;
                 this.argNames.push (currentName);
                 currentName = "";
                 capNext = false;
                 break;
-                
+
             default:
                 if (inName)
                     currentName += capNext ? spec[i].toUpperCase() : spec[i];
@@ -166,7 +182,7 @@ function cmgr_defcmds (cmdary)
     var len = cmdary.length;
     var commands = new Object();
     var bundle = "stringBundle" in cmdary ? cmdary.stringBundle : null;
-    
+
     for (var i = 0; i < len; ++i)
     {
         var name  = cmdary[i][0];
@@ -175,7 +191,7 @@ function cmgr_defcmds (cmdary)
         var usage;
         if (3 in cmdary[i])
             usage = cmdary[i][3];
-        
+
         var command = this.defineCommand(name, func, flags, usage, bundle);
         commands[name] = command;
 
@@ -196,10 +212,10 @@ function cmdmgr_defcmd (name, func, flags, usage, bundle)
 
     if (typeof flags != "number")
         flags = this.defaultFlags;
-    
+
     if (flags & CMD_NO_HELP)
         helpDefault = MSG_NO_HELP;
-    
+
     if (typeof usage != "string")
         usage = getMsgFrom(bundle, "cmd." + name + ".params", null, "");
 
@@ -210,12 +226,12 @@ function cmdmgr_defcmd (name, func, flags, usage, bundle)
             aliasFor = ary[1];
         else
             aliasFor = null;
-        helpDefault = getMsg (MSG_DEFAULT_ALIAS_HELP, func); 
+        helpDefault = getMsg (MSG_DEFAULT_ALIAS_HELP, func);
         if (aliasFor)
             labelDefault = getMsgFrom (bundle, "cmd." + aliasFor + ".label",
                                        null, name);
     }
-    
+
     var label = getMsgFrom(bundle, "cmd." + name + ".label", null,
                            labelDefault);
     var help  = getMsgFrom(bundle, "cmd." + name + ".help", null,
@@ -245,7 +261,7 @@ function cmgr_instkeys (document, commands)
 
     if (!commands)
         commands = this.commands;
-    
+
     for (var c in commands)
         this.installKey (parentElem, commands[c]);
 }
@@ -270,17 +286,20 @@ function cmgr_instkey (parentElem, command)
     {
         return;
     }
-    
+
     var key = document.createElement ("key");
     key.setAttribute ("id", "key:" + command.name);
     key.setAttribute ("oncommand", "dispatch('" + command.name +
                       "', {isInteractive: true});");
-    key.setAttribute ("modifiers", ary[1]);
+
+    if (ary[1])
+        key.setAttribute ("modifiers", ary[1]);
+
     if (ary[2].indexOf("VK_") == 0)
         key.setAttribute ("keycode", ary[2]);
     else
         key.setAttribute ("key", ary[2]);
-    
+
     parentElem.appendChild(key);
     command.keyNodes.push(key);
 }
@@ -290,7 +309,7 @@ function cmgr_uninstkeys (commands)
 {
     if (!commands)
         commands = this.commands;
-    
+
     for (var c in commands)
         this.uninstallKey (commands[c]);
 }
@@ -321,14 +340,18 @@ function cmgr_add (command)
     this.commands[command.name] = command;
 }
 
-CommandManager.prototype.removeCommands = 
-function cmgr_removes (commands)
+CommandManager.prototype.removeCommands =
+function cmgr_removes (cmdary)
 {
-    for (var c in commands)
-        this.removeCommand(commands[c]);
+    for (var i in cmdary)
+    {
+        var command = isinstance(cmdary[i], Array) ?
+            {name: cmdary[i][0]} : cmdary[i];
+        this.removeCommand(command);
+    }
 }
 
-CommandManager.prototype.removeCommand = 
+CommandManager.prototype.removeCommand =
 function cmgr_remove (command)
 {
     delete this.commands[command.name];
@@ -350,9 +373,9 @@ function cmgr_hook (commandName, func, id, before)
     {
         return;
     }
-    
+
     var command = this.commands[commandName];
-    
+
     if (before)
     {
         if (!("beforeHooks" in command))
@@ -372,10 +395,10 @@ function cmgr_hooks (hooks, prefix)
 {
     if (!prefix)
         prefix = "";
-    
+
     for (var h in hooks)
     {
-        this.addHook(h, hooks[h], prefix + ":" + h, 
+        this.addHook(h, hooks[h], prefix + ":" + h,
                      ("_before" in hooks[h]) ? hooks[h]._before : false);
     }
 }
@@ -385,10 +408,10 @@ function cmgr_remhooks (hooks, prefix)
 {
     if (!prefix)
         prefix = "";
-    
+
     for (var h in hooks)
     {
-        this.removeHook(h, prefix + ":" + h, 
+        this.removeHook(h, prefix + ":" + h,
                         ("before" in hooks[h]) ? hooks[h].before : false);
     }
 }
@@ -424,7 +447,7 @@ function cmgr_list (partialName, flags)
 
         if (a == b)
             return 0;
- 
+
         if (a > b)
             return 1;
 
@@ -447,7 +470,7 @@ function cmgr_list (partialName, flags)
             if (!partialName ||
                 this.commands[name].name.indexOf(partialName) == 0)
             {
-                if (partialName && 
+                if (partialName &&
                     partialName.length == this.commands[name].name.length)
                 {
                     /* exact match */
@@ -478,7 +501,7 @@ function cmgr_listnames (partialName, flags)
 {
     var cmds = this.list(partialName, flags);
     var cmdNames = new Array();
-    
+
     for (var c in cmds)
         cmdNames.push (cmds[c].name);
 
@@ -498,7 +521,7 @@ CommandManager.prototype.parseArguments =
 function cmgr_parseargs (e)
 {
     var rv = this.parseArgumentsRaw(e);
-    //dd("parseArguments '" + e.command.usage + "' " + 
+    //dd("parseArguments '" + e.command.usage + "' " +
     //   (rv ? "passed" : "failed") + "\n" + dumpObjectTree(e));
     delete e.currentArgIndex;
     return rv;
@@ -525,7 +548,7 @@ function cmgr_parseargs (e)
  * input string "411 foo", stored as |e.command.usage| and |e.inputData|
  * respectively, this method would add the following propertys to the event
  * object...
- *   -name---value--notes-   
+ *   -name---value--notes-
  *   e.int    411   Parsed as an integer
  *   e.word   foo   Parsed as a string
  *   e.word2  null  Optional parameters not specified will be set to null.
@@ -555,13 +578,13 @@ CommandManager.prototype.parseArgumentsRaw =
 function parse_parseargsraw (e)
 {
     var argc = e.command.argNames.length;
-    
+
     function initOptionals()
     {
         for (var i = 0; i < argc; ++i)
         {
-            if (e.command.argNames[i] != ":" && 
-                e.command.argNames[i] != "..."  && 
+            if (e.command.argNames[i] != ":" &&
+                e.command.argNames[i] != "..."  &&
                 !(e.command.argNames[i] in e))
             {
                 e[e.command.argNames[i]] = null;
@@ -578,7 +601,7 @@ function parse_parseargsraw (e)
             }
         }
     }
-        
+
     if ("inputData" in e && e.inputData)
     {
         /* if data has been provided, parse it */
@@ -590,7 +613,7 @@ function parse_parseargsraw (e)
         if (argc)
         {
             currentArg = e.command.argNames[e.currentArgIndex];
-        
+
             while (e.unparsedData)
             {
                 if (currentArg != ":")
@@ -610,12 +633,12 @@ function parse_parseargsraw (e)
                  * parsed all of the declared arguments, and we're not stopped
                  * at an optional marker, so we must be missing something
                  * required... */
-                e.parseError = getMsg(MSG_ERR_REQUIRED_PARAM, 
+                e.parseError = getMsg(MSG_ERR_REQUIRED_PARAM,
                                       e.command.argNames[e.currentArgIndex]);
                 return false;
             }
         }
-        
+
         if (e.unparsedData)
         {
             /* parse loop completed with unparsed data, which means we've
@@ -647,7 +670,7 @@ function cmgr_isok (e, command)
         command = e.command;
     else if (typeof command == "string")
         command = this.commands[command];
-    
+
     if (!command.enabled)
         return false;
 
@@ -655,7 +678,7 @@ function cmgr_isok (e, command)
     {
         if (command.argNames[i] == ":")
              return true;
-        
+
         if (!(command.argNames[i] in e))
         {
             e.parseError = getMsg(MSG_ERR_REQUIRED_PARAM, command.argNames[i]);
@@ -682,7 +705,7 @@ CommandManager.prototype.parseArgument =
 function cmgr_parsearg (e, name)
 {
     var parseResult;
-    
+
     if (name in this.argTypes)
         parseResult = this.argTypes[name](e, name, this);
     else
@@ -822,20 +845,20 @@ CommandManager.prototype.argTypes["..."] =
 function parse_repeat (e, name, cm)
 {
     ASSERT (e.currentArgIndex > 0, "<...> can't be the first argument.");
-    
+
     var lastArg = e.command.argNames[e.currentArgIndex - 1];
     if (lastArg == ":")
         lastArg = e.command.argNames[e.currentArgIndex - 2];
 
     var listName = lastArg + "List";
     e[listName] = [ e[lastArg] ];
-    
+
     while (e.unparsedData)
     {
         if (!cm.parseArgument(e, lastArg))
             return false;
         e[listName].push(e[lastArg]);
-    }    
+    }
 
     e[lastArg] = e[listName][0];
     return true;

@@ -1,11 +1,12 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: set ts=4 sw=4 et tw=80: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -26,18 +27,17 @@
  *   Dan Rosen <dr@netscape.com>
  *   Johnny Stenback <jst@netscape.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -73,8 +73,6 @@
 #include "nsIContentViewer.h"
 #include "nsGUIEvent.h"
 #include "nsIDOMXULElement.h"
-#include "nsIElementFactory.h"
-#include "nsIPrincipal.h"
 #include "nsIPrivateDOMEvent.h"
 #include "nsIRDFNode.h"
 #include "nsIRDFRemoteDataSource.h"
@@ -84,7 +82,7 @@
 #include "nsITimer.h"
 #include "nsIDocShell.h"
 #include "nsXULAtoms.h"
-#include "nsIXULContent.h"
+#include "nsHTMLAtoms.h"
 #include "nsIXULContentSink.h"
 #include "nsXULContentUtils.h"
 #include "nsIXULOverlayProvider.h"
@@ -94,7 +92,6 @@
 #include "nsPIBoxObject.h"
 #include "nsRDFCID.h"
 #include "nsILocalStore.h"
-#include "nsRDFDOMNodeList.h"
 #include "nsXPIDLString.h"
 #include "nsPIDOMWindow.h"
 #include "nsXULCommandDispatcher.h"
@@ -105,7 +102,6 @@
 #include "nsIFrame.h"
 #include "nsIXBLService.h"
 #include "nsCExternalHandlerService.h"
-#include "nsIMIMEService.h"
 #include "nsMimeTypes.h"
 #include "nsIFastLoadService.h"
 #include "nsIObjectInputStream.h"
@@ -115,20 +111,21 @@
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptGlobalObjectOwner.h"
 #include "nsIScriptSecurityManager.h"
+#include "nsNodeInfoManager.h"
+#include "nsContentCreatorFunctions.h"
 #include "nsContentUtils.h"
 #include "nsIParser.h"
 #include "nsICSSStyleSheet.h"
+#include "nsIScriptError.h"
 
 //----------------------------------------------------------------------
 //
 // CIDs
 //
 
-static NS_DEFINE_CID(kHTMLElementFactoryCID,     NS_HTML_ELEMENT_FACTORY_CID);
 static NS_DEFINE_CID(kLocalStoreCID,             NS_LOCALSTORE_CID);
 static NS_DEFINE_CID(kParserCID,                 NS_PARSER_CID);
 static NS_DEFINE_CID(kRDFServiceCID,             NS_RDFSERVICE_CID);
-static NS_DEFINE_CID(kXMLElementFactoryCID,      NS_XML_ELEMENT_FACTORY_CID);
 static NS_DEFINE_CID(kXULPrototypeCacheCID,      NS_XULPROTOTYPECACHE_CID);
 
 static PRBool IsChromeURI(nsIURI* aURI)
@@ -163,9 +160,6 @@ nsIRDFService* nsXULDocument::gRDFService;
 nsIRDFResource* nsXULDocument::kNC_persist;
 nsIRDFResource* nsXULDocument::kNC_attribute;
 nsIRDFResource* nsXULDocument::kNC_value;
-
-nsIElementFactory* nsXULDocument::gHTMLElementFactory;
-nsIElementFactory*  nsXULDocument::gXMLElementFactory;
 
 nsIXULPrototypeCache* nsXULDocument::gXULCache;
 
@@ -369,7 +363,9 @@ nsXULDocument::nsXULDocument(void)
     // bother initializing members to 0.
 
     // Override the default in nsDocument
-    mCharacterSet.Assign(NS_LITERAL_CSTRING("UTF-8"));
+    mCharacterSet.AssignLiteral("UTF-8");
+
+    mDefaultElementType = kNameSpaceID_XUL;
 }
 
 nsXULDocument::~nsXULDocument()
@@ -417,9 +413,6 @@ nsXULDocument::~nsXULDocument()
         NS_IF_RELEASE(kNC_attribute);
         NS_IF_RELEASE(kNC_value);
 
-        NS_IF_RELEASE(gHTMLElementFactory);
-        NS_IF_RELEASE(gXMLElementFactory);
-
         if (gXULCache) {
             // Remove the current document here from the FastLoad table in
             // case the document did not make it past StartLayout in
@@ -438,6 +431,8 @@ nsXULDocument::~nsXULDocument()
     // from happening.
     if (mIsPopup) {
         mStyleSheets.Clear();
+        mStyleAttrStyleSheet = nsnull;
+        mAttrStyleSheet = nsnull;
     }
 
     // This is done in nsDocument::~nsDocument() too, but since this
@@ -514,14 +509,14 @@ nsXULDocument::ResetToURI(nsIURI* aURI, nsILoadGroup* aLoadGroup)
 NS_IMETHODIMP
 nsXULDocument::GetContentType(nsAString& aContentType)
 {
-    aContentType.Assign(NS_LITERAL_STRING("application/vnd.mozilla.xul+xml"));
+    aContentType.AssignLiteral("application/vnd.mozilla.xul+xml");
     return NS_OK;
 }
 
 void
 nsXULDocument::SetContentType(const nsAString& aContentType)
 {
-    NS_ASSERTION(aContentType.Equals(NS_LITERAL_STRING("application/vnd.mozilla.xul+xml")),
+    NS_ASSERTION(aContentType.EqualsLiteral("application/vnd.mozilla.xul+xml"),
                  "xul-documents always has content-type application/vnd.mozilla.xul+xml");
     // Don't do anything, xul always has the mimetype
     // application/vnd.mozilla.xul+xml
@@ -536,19 +531,23 @@ nsXULDocument::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
 {
     mDocumentLoadGroup = do_GetWeakReference(aLoadGroup);
 
-    mDocumentTitle.Truncate();
+    mDocumentTitle.SetIsVoid(PR_TRUE);
+
+    mChannel = aChannel;
 
     nsresult rv = aChannel->GetOriginalURI(getter_AddRefs(mDocumentURI));
     NS_ENSURE_SUCCESS(rv, rv);
     
     // XXXbz this code is repeated from nsDocument::Reset; we
     // really need to refactor this part better.
+    PRBool isAbout = PR_FALSE;
     PRBool isChrome = PR_FALSE;
     PRBool isRes = PR_FALSE;
     rv = mDocumentURI->SchemeIs("chrome", &isChrome);
     rv |= mDocumentURI->SchemeIs("resource", &isRes);
+    rv |= mDocumentURI->SchemeIs("about", &isAbout);
 
-    if (NS_SUCCEEDED(rv) && !isChrome && !isRes) {
+    if (NS_SUCCEEDED(rv) && !isChrome && !isRes && !isAbout) {
         rv = aChannel->GetURI(getter_AddRefs(mDocumentURI));
         NS_ENSURE_SUCCESS(rv, rv);
     }
@@ -694,9 +693,9 @@ nsXULDocument::EndLoad()
     if (isChrome) {
         nsCOMPtr<nsIXULOverlayProvider> reg =
             do_GetService(NS_CHROMEREGISTRY_CONTRACTID);
-        nsCOMPtr<nsICSSLoader> cssLoader = GetCSSLoader();
+        nsICSSLoader* cssLoader = CSSLoader();
         
-        if (reg && cssLoader) {
+        if (reg) {
             nsCOMPtr<nsISimpleEnumerator> overlays;
             reg->GetStyleOverlays(uri, getter_AddRefs(overlays));
 
@@ -725,7 +724,7 @@ nsXULDocument::EndLoad()
                     continue;
                 }
 
-                AddStyleSheet(sheet, 0);
+                AddStyleSheet(sheet);
             }
         }
 
@@ -831,7 +830,7 @@ nsXULDocument::SynchronizeBroadcastListener(nsIDOMElement   *aBroadcaster,
     nsCOMPtr<nsIContent> broadcaster = do_QueryInterface(aBroadcaster);
     nsCOMPtr<nsIContent> listener = do_QueryInterface(aListener);
 
-    if (aAttr.Equals(NS_LITERAL_STRING("*"))) {
+    if (aAttr.EqualsLiteral("*")) {
         PRUint32 count = broadcaster->GetAttrCount();
         while (count-- > 0) {
             PRInt32 nameSpaceID;
@@ -1050,21 +1049,20 @@ nsXULDocument::ExecuteOnBroadcastHandlerFor(nsIContent* aBroadcaster,
                        listeningToAttribute);
 
         if (!aAttr->Equals(listeningToAttribute) &&
-            listeningToAttribute != NS_LITERAL_STRING("*")) {
+            !listeningToAttribute.EqualsLiteral("*")) {
             continue;
         }
 
         // This is the right <observes> element. Execute the
         // |onbroadcast| event handler
-        nsEvent event(NS_XUL_BROADCAST);
+        nsEvent event(PR_TRUE, NS_XUL_BROADCAST);
 
         PRInt32 j = mPresShells.Count();
         while (--j >= 0) {
             nsCOMPtr<nsIPresShell> shell =
                 NS_STATIC_CAST(nsIPresShell*, mPresShells[j]);
 
-            nsCOMPtr<nsIPresContext> aPresContext;
-            shell->GetPresContext(getter_AddRefs(aPresContext));
+            nsCOMPtr<nsPresContext> aPresContext = shell->GetPresContext();
 
             // Handle the DOM event
             nsEventStatus status = nsEventStatus_eIgnore;
@@ -1189,25 +1187,6 @@ nsXULDocument::ContentInserted(nsIContent* aContainer,
 }
 
 void
-nsXULDocument::ContentReplaced(nsIContent* aContainer,
-                               nsIContent* aOldChild,
-                               nsIContent* aNewChild,
-                               PRInt32 aIndexInContainer)
-{
-    nsresult rv;
-    rv = RemoveSubtreeFromDocument(aOldChild);
-    if (NS_FAILED(rv))
-        return;
-
-    rv = AddSubtreeToDocument(aNewChild);
-    if (NS_FAILED(rv))
-        return;
-
-    nsXMLDocument::ContentReplaced(aContainer, aOldChild, aNewChild,
-                                   aIndexInContainer);
-}
-
-void
 nsXULDocument::ContentRemoved(nsIContent* aContainer,
                               nsIContent* aChild,
                               PRInt32 aIndexInContainer)
@@ -1222,12 +1201,15 @@ nsXULDocument::ContentRemoved(nsIContent* aContainer,
 }
 
 nsresult
-nsXULDocument::HandleDOMEvent(nsIPresContext* aPresContext,
-                            nsEvent* aEvent,
-                            nsIDOMEvent** aDOMEvent,
-                            PRUint32 aFlags,
-                            nsEventStatus* aEventStatus)
+nsXULDocument::HandleDOMEvent(nsPresContext* aPresContext,
+                              nsEvent* aEvent,
+                              nsIDOMEvent** aDOMEvent,
+                              PRUint32 aFlags,
+                              nsEventStatus* aEventStatus)
 {
+    // Make sure to tell the event that dispatch has started.
+    NS_MARK_EVENT_DISPATCH_STARTED(aEvent);
+
     nsresult ret = NS_OK;
     nsIDOMEvent* domEvent = nsnull;
     PRBool externalDOMEvent = PR_FALSE;
@@ -1288,6 +1270,10 @@ nsXULDocument::HandleDOMEvent(nsIPresContext* aPresContext,
             }
         }
         aDOMEvent = nsnull;
+
+        // Now that we're done with this event, remove the flag that says
+        // we're in the process of dispatching this event.
+        NS_MARK_EVENT_DISPATCH_DONE(aEvent);
     }
 
     return ret;
@@ -1430,24 +1416,20 @@ nsXULDocument::GetElementsByAttribute(const nsAString& aAttribute,
                                       const nsAString& aValue,
                                       nsIDOMNodeList** aReturn)
 {
-    // XXX This should use nsContentList, but that does not support
-    // _two_ strings being passed to the match func.  Ah, the ability
-    // to create real closures, where art thou?
-    nsRDFDOMNodeList* elements = new nsRDFDOMNodeList();
-    NS_ENSURE_TRUE(elements, NS_ERROR_OUT_OF_MEMORY);
-    NS_ADDREF(elements);
+    nsCOMPtr<nsIAtom> attrAtom(do_GetAtom(aAttribute));
+    NS_ENSURE_TRUE(attrAtom, NS_ERROR_OUT_OF_MEMORY);
 
-    nsCOMPtr<nsIDOMNode> domRoot = do_QueryInterface(mRootContent);
-    NS_ASSERTION(domRoot, "no doc root");
+    nsContentList *list = new nsContentList(this,
+                                            MatchAttribute,
+                                            aValue,
+                                            nsnull,
+                                            PR_TRUE,
+                                            attrAtom,
+                                            kNameSpaceID_None);
+    NS_ENSURE_TRUE(list, NS_ERROR_OUT_OF_MEMORY);
 
-    nsresult rv = NS_OK;
-    if (domRoot) {
-        rv = GetElementsByAttribute(domRoot, aAttribute, aValue, elements);
-    }
-
-    *aReturn = elements;
-
-    return rv;
+    NS_ADDREF(*aReturn = list);
+    return NS_OK;
 }
 
 
@@ -1612,7 +1594,7 @@ nsXULDocument::GetPixelDimensions(nsIPresShell* aShell, PRInt32* aWidth,
     nsSize size;
     nsIFrame* frame;
 
-    FlushPendingNotifications();
+    FlushPendingNotifications(Flush_Layout);
 
     result = aShell->GetPrimaryFrameFor(mRootContent, &frame);
     if (NS_SUCCEEDED(result) && frame) {
@@ -1620,9 +1602,9 @@ nsXULDocument::GetPixelDimensions(nsIPresShell* aShell, PRInt32* aWidth,
         // If we have a view check if it's scrollable. If not,
         // just use the view size itself
         if (view) {
-            nsIScrollableView* scrollableView;
+            nsIScrollableView* scrollableView = view->ToScrollableView();
 
-            if (NS_SUCCEEDED(CallQueryInterface(view, &scrollableView))) {
+            if (scrollableView) {
                 scrollableView->GetScrolledView(view);
             }
 
@@ -1636,16 +1618,10 @@ nsXULDocument::GetPixelDimensions(nsIPresShell* aShell, PRInt32* aWidth,
         }
 
         // Convert from twips to pixels
-        nsCOMPtr<nsIPresContext> context;
-        result = aShell->GetPresContext(getter_AddRefs(context));
+        float scale = aShell->GetPresContext()->TwipsToPixels();
 
-        if (NS_SUCCEEDED(result)) {
-            float scale;
-            scale = context->TwipsToPixels();
-
-            *aWidth = NSTwipsToIntPixels(size.width, scale);
-            *aHeight = NSTwipsToIntPixels(size.height, scale);
-        }
+        *aWidth = NSTwipsToIntPixels(size.width, scale);
+        *aHeight = NSTwipsToIntPixels(size.height, scale);
     }
     else {
         *aWidth = 0;
@@ -1714,6 +1690,11 @@ nsXULDocument::GetPopupNode(nsIDOMNode** aNode)
     // get popup node
     rv = focusController->GetPopupNode(aNode); // addref happens here
 
+    if (NS_SUCCEEDED(rv) && *aNode && !nsContentUtils::CanCallerAccess(*aNode)) {
+        NS_RELEASE(*aNode);
+        return NS_ERROR_DOM_SECURITY_ERR;
+    }
+
     return rv;
 }
 
@@ -1735,6 +1716,9 @@ nsXULDocument::SetPopupNode(nsIDOMNode* aNode)
 NS_IMETHODIMP
 nsXULDocument::GetTooltipNode(nsIDOMNode** aNode)
 {
+    if (mTooltipNode && !nsContentUtils::CanCallerAccess(mTooltipNode)) {
+        return NS_ERROR_DOM_SECURITY_ERR;
+    }
     *aNode = mTooltipNode;
     NS_IF_ADDREF(*aNode);
     return NS_OK;
@@ -1798,7 +1782,7 @@ nsXULDocument::AddElementToDocumentPre(nsIContent* aElement)
     rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::commandupdater,
                            value);
     if (rv == NS_CONTENT_ATTR_HAS_VALUE &&
-        value == NS_LITERAL_STRING("true")) {
+        value.EqualsLiteral("true")) {
         rv = nsXULContentUtils::SetCommandUpdater(this, aElement);
         if (NS_FAILED(rv)) return rv;
     }
@@ -1806,7 +1790,7 @@ nsXULDocument::AddElementToDocumentPre(nsIContent* aElement)
     // 3. Check for a broadcaster hookup attribute, in which case
     // we'll hook the node up as a listener on a broadcaster.
     PRBool listener, resolved;
-    rv = CheckBroadcasterHookup(this, aElement, &listener, &resolved);
+    rv = CheckBroadcasterHookup(aElement, &listener, &resolved);
     if (NS_FAILED(rv)) return rv;
 
     // If it's not there yet, we may be able to defer hookup until
@@ -1874,7 +1858,7 @@ nsXULDocument::AddSubtreeToDocument(nsIContent* aElement)
     if (NS_FAILED(rv)) return rv;
 
     // Recurse to children
-    nsCOMPtr<nsIXULContent> xulcontent = do_QueryInterface(aElement);
+    nsXULElement *xulcontent = nsXULElement::FromContent(aElement);
 
     PRUint32 count =
         xulcontent ? xulcontent->PeekChildCount() : aElement->GetChildCount();
@@ -1915,7 +1899,7 @@ nsXULDocument::RemoveSubtreeFromDocument(nsIContent* aElement)
     rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::commandupdater,
                            value);
     if (rv == NS_CONTENT_ATTR_HAS_VALUE &&
-        value == NS_LITERAL_STRING("true")) {
+        value.EqualsLiteral("true")) {
         nsCOMPtr<nsIDOMElement> domelement = do_QueryInterface(aElement);
         NS_ASSERTION(domelement != nsnull, "not a DOM element");
         if (! domelement)
@@ -1927,33 +1911,14 @@ nsXULDocument::RemoveSubtreeFromDocument(nsIContent* aElement)
 
     // 4. Remove the element from our broadcaster map, since it is no longer
     // in the document.
-    // Do a getElementById to retrieve the broadcaster
-    nsCOMPtr<nsIDOMElement> broadcaster;
-    nsAutoString observesVal;
-
-    if (aElement->HasAttr(kNameSpaceID_None, nsXULAtoms::observes)) {
-        aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::observes, observesVal);
-        if (!observesVal.IsEmpty()) {
-            GetElementById(observesVal, getter_AddRefs(broadcaster));
-            if (broadcaster) {
-                nsCOMPtr<nsIDOMElement> elt(do_QueryInterface(aElement));
-                RemoveBroadcastListenerFor(broadcaster, elt,
-                                           NS_LITERAL_STRING("*"));
-            }
-        }
+    nsCOMPtr<nsIDOMElement> broadcaster, listener;
+    nsAutoString attribute, broadcasterID;
+    rv = FindBroadcaster(aElement, getter_AddRefs(listener),
+                         broadcasterID, attribute, getter_AddRefs(broadcaster));
+    if (rv == NS_FINDBROADCASTER_FOUND) {
+        RemoveBroadcastListenerFor(broadcaster, listener, attribute);
     }
 
-    if (aElement->HasAttr(kNameSpaceID_None, nsXULAtoms::command)) {
-        aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::command, observesVal);
-        if (!observesVal.IsEmpty()) {
-            GetElementById(observesVal, getter_AddRefs(broadcaster));
-            if (broadcaster) {
-                nsCOMPtr<nsIDOMElement> elt(do_QueryInterface(aElement));
-                RemoveBroadcastListenerFor(broadcaster, elt,
-                                           NS_LITERAL_STRING("*"));
-            }
-        }
-    }
     return NS_OK;
 }
 
@@ -2113,14 +2078,6 @@ nsXULDocument::Init()
         gRDFService->GetResource(NS_LITERAL_CSTRING(NC_NAMESPACE_URI "value"),
                                  &kNC_value);
 
-        rv = CallGetService(kHTMLElementFactoryCID, &gHTMLElementFactory);
-        NS_ASSERTION(NS_SUCCEEDED(rv), "unable to get HTML element factory");
-        if (NS_FAILED(rv)) return rv;
-
-        rv = CallGetService(kXMLElementFactoryCID, &gXMLElementFactory);
-        NS_ASSERTION(NS_SUCCEEDED(rv), "unable to get XML element factory");
-        if (NS_FAILED(rv)) return rv;
-
         rv = CallGetService(kXULPrototypeCacheCID, &gXULCache);
         if (NS_FAILED(rv)) return rv;
     }
@@ -2139,11 +2096,13 @@ nsXULDocument::StartLayout(void)
 {
     if (!mRootContent) {
 #ifdef PR_LOGGING
-        nsCAutoString urlspec;
-        mDocumentURI->GetSpec(urlspec);
+        if (PR_LOG_TEST(gXULLog, PR_LOG_WARNING)) {
+            nsCAutoString urlspec;
+            mDocumentURI->GetSpec(urlspec);
 
-        PR_LOG(gXULLog, PR_LOG_ALWAYS,
-               ("xul: unable to layout '%s'; no root content", urlspec.get()));
+            PR_LOG(gXULLog, PR_LOG_WARNING,
+                   ("xul: unable to layout '%s'; no root content", urlspec.get()));
+        }
 #endif
         return NS_OK;
     }
@@ -2153,8 +2112,7 @@ nsXULDocument::StartLayout(void)
         nsIPresShell *shell = GetShellAt(i);
 
         // Resize-reflow this time
-        nsCOMPtr<nsIPresContext> cx;
-        shell->GetPresContext(getter_AddRefs(cx));
+        nsPresContext *cx = shell->GetPresContext();
         NS_ASSERTION(cx != nsnull, "no pres context");
         if (! cx)
             return NS_ERROR_UNEXPECTED;
@@ -2191,11 +2149,6 @@ nsXULDocument::StartLayout(void)
 
         shell->InitialReflow(r.width, r.height);
 
-        // This is done because iframes don't load their subdocs until
-        // they get reflowed.  If we reflow asynchronously, our onload
-        // will fire too early. -- hyatt
-        FlushPendingNotifications();
-
         // Start observing the document _after_ we do the initial
         // reflow. Otherwise, we'll get into an trouble trying to
         // create kids before the root frame is established.
@@ -2206,66 +2159,30 @@ nsXULDocument::StartLayout(void)
 }
 
 
-nsresult
-nsXULDocument::GetElementsByAttribute(nsIDOMNode* aNode,
-                                        const nsAString& aAttribute,
-                                        const nsAString& aValue,
-                                        nsRDFDOMNodeList* aElements)
+/* static */
+PRBool
+nsXULDocument::MatchAttribute(nsIContent* aContent,
+                              PRInt32 aNamespaceID,
+                              nsIAtom* aAttrName,
+                              const nsAString& aAttrValue)
 {
-    nsresult rv;
-
-    nsCOMPtr<nsIDOMElement> element;
-    element = do_QueryInterface(aNode);
-    if (!element)
-        return NS_OK;
-
-    nsAutoString attrValue;
-    if (NS_FAILED(rv = element->GetAttribute(aAttribute, attrValue))) {
-        NS_ERROR("unable to get attribute value");
-        return rv;
+    NS_PRECONDITION(aContent, "Must have content node to work with!");
+  
+    // Getting attrs is expensive, so use HasAttr() first.
+    if (!aContent->HasAttr(aNamespaceID, aAttrName)) {
+        return PR_FALSE;
     }
 
-    if ((attrValue.Equals(aValue)) ||
-        (!attrValue.IsEmpty() && aValue.Equals(NS_LITERAL_STRING("*")))) {
-        if (NS_FAILED(rv = aElements->AppendNode(aNode))) {
-            NS_ERROR("unable to append element to node list");
-            return rv;
-        }
+    if (aAttrValue.EqualsLiteral("*")) {
+        // Wildcard.  We already know we have this attr, so we match
+        return PR_TRUE;
     }
 
-    nsCOMPtr<nsIDOMNodeList> children;
-    if (NS_FAILED(rv = aNode->GetChildNodes( getter_AddRefs(children) ))) {
-        NS_ERROR("unable to get node's children");
-        return rv;
-    }
+    nsAutoString value;
+    nsresult rv = aContent->GetAttr(aNamespaceID, aAttrName, value);
 
-    // no kids: terminate the recursion
-    if (! children)
-        return NS_OK;
-
-    PRUint32 length;
-    if (NS_FAILED(children->GetLength(&length))) {
-        NS_ERROR("unable to get node list's length");
-        return rv;
-    }
-
-    for (PRUint32 i = 0; i < length; ++i) {
-        nsCOMPtr<nsIDOMNode> child;
-        if (NS_FAILED(rv = children->Item(i, getter_AddRefs(child) ))) {
-            NS_ERROR("unable to get child from list");
-            return rv;
-        }
-
-        if (NS_FAILED(rv = GetElementsByAttribute(child, aAttribute, aValue,
-                                                  aElements))) {
-            NS_ERROR("unable to recursively get elements by attribute");
-            return rv;
-        }
-    }
-
-    return NS_OK;
+    return NS_SUCCEEDED(rv) && value.Equals(aAttrValue);
 }
-
 
 nsresult
 nsXULDocument::PrepareToLoad(nsISupports* aContainer,
@@ -2624,16 +2541,18 @@ nsXULDocument::PrepareToWalk()
 
     if (! proto) {
 #ifdef PR_LOGGING
-        nsCOMPtr<nsIURI> url;
-        rv = mCurrentPrototype->GetURI(getter_AddRefs(url));
-        if (NS_FAILED(rv)) return rv;
+        if (PR_LOG_TEST(gXULLog, PR_LOG_ERROR)) {
+            nsCOMPtr<nsIURI> url;
+            rv = mCurrentPrototype->GetURI(getter_AddRefs(url));
+            if (NS_FAILED(rv)) return rv;
 
-        nsCAutoString urlspec;
-        rv = url->GetSpec(urlspec);
-        if (NS_FAILED(rv)) return rv;
+            nsCAutoString urlspec;
+            rv = url->GetSpec(urlspec);
+            if (NS_FAILED(rv)) return rv;
 
-        PR_LOG(gXULLog, PR_LOG_ALWAYS,
-               ("xul: error parsing '%s'", urlspec.get()));
+            PR_LOG(gXULLog, PR_LOG_ERROR,
+                   ("xul: error parsing '%s'", urlspec.get()));
+        }
 #endif
 
         return NS_OK;
@@ -2647,8 +2566,9 @@ nsXULDocument::PrepareToWalk()
         rv = CreateElementFromPrototype(proto, getter_AddRefs(root));
         if (NS_FAILED(rv)) return rv;
 
-        SetRootContent(root);
-
+        rv = SetRootContent(root);
+        if (NS_FAILED(rv)) return rv;
+        
         // Add the root element to the XUL document's ID-to-element map.
         rv = AddElementToMap(root);
         if (NS_FAILED(rv)) return rv;
@@ -2728,6 +2648,196 @@ nsXULDocument::AddChromeOverlays()
     return NS_OK;
 }
 
+NS_IMETHODIMP
+nsXULDocument::LoadOverlay(const nsAString& aURL, nsIObserver* aObserver)
+{
+    nsresult rv;
+
+    nsCOMPtr<nsIURI> uri;
+    rv = NS_NewURI(getter_AddRefs(uri), aURL, nsnull);
+    if (NS_FAILED(rv)) return rv;
+
+    if (aObserver) {
+        nsIObserver* obs = nsnull;
+        NS_ENSURE_TRUE(mOverlayLoadObservers.IsInitialized() || mOverlayLoadObservers.Init(), 
+                       NS_ERROR_OUT_OF_MEMORY);
+        
+        obs = mOverlayLoadObservers.GetWeak(uri);
+
+        if (obs) {
+            // We don't support loading the same overlay twice into the same
+            // document - that doesn't make sense anyway.
+            return NS_ERROR_FAILURE;
+        }
+        mOverlayLoadObservers.Put(uri, aObserver);
+    }
+    PRBool shouldReturn;
+    rv = LoadOverlayInternal(uri, PR_TRUE, &shouldReturn);
+    if (NS_FAILED(rv))
+      mOverlayLoadObservers.Remove(uri); // remove the observer if LoadOverlayInternal generated an error
+    return rv;
+}
+
+nsresult
+nsXULDocument::LoadOverlayInternal(nsIURI* aURI, PRBool aIsDynamic, PRBool* aShouldReturn)
+{
+    nsresult rv;
+
+    *aShouldReturn = PR_FALSE;
+
+    nsCOMPtr<nsIScriptSecurityManager> secMan = do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+#ifdef PR_LOGGING
+    if (PR_LOG_TEST(gXULLog, PR_LOG_DEBUG)) {
+        nsCAutoString urlspec;
+        aURI->GetSpec(urlspec);
+
+        PR_LOG(gXULLog, PR_LOG_DEBUG,
+                ("xul: loading overlay %s", urlspec.get()));
+    }
+#endif
+
+    mResolutionPhase = nsForwardReference::eStart;
+
+    // Chrome documents are allowed to load overlays from anywhere.
+    // Also, any document may load a chrome:// overlay.
+    // In all other cases, the overlay is only allowed to load if
+    // the master document and prototype document have the same origin.
+
+    PRBool overlayIsChrome = IsChromeURI(aURI);
+    if (!IsChromeURI(mDocumentURI) && !overlayIsChrome) {
+        // Make sure we're allowed to load this overlay.
+        rv = secMan->CheckSameOriginURI(mDocumentURI, aURI);
+        if (NS_FAILED(rv)) return rv;
+    }
+
+    // Look in the prototype cache for the prototype document with
+    // the specified overlay URI.
+    if (overlayIsChrome)
+        gXULCache->GetPrototype(aURI, getter_AddRefs(mCurrentPrototype));
+    else
+        mCurrentPrototype = nsnull;
+
+    // Same comment as nsChromeProtocolHandler::NewChannel and
+    // nsXULDocument::StartDocumentLoad
+    // - Ben Goodger
+    //
+    // We don't abort on failure here because there are too many valid
+    // cases that can return failure, and the null-ness of |proto| is
+    // enough to trigger the fail-safe parse-from-disk solution.
+    // Example failure cases (for reference) include:
+    //
+    // NS_ERROR_NOT_AVAILABLE: the URI was not found in the FastLoad file,
+    //                         parse from disk
+    // other: the FastLoad file, XUL.mfl, could not be found, probably
+    //        due to being accessed before a profile has been selected
+    //        (e.g. loading chrome for the profile manager itself).
+    //        The .xul file must be parsed from disk.
+
+    PRBool useXULCache;
+    gXULCache->GetEnabled(&useXULCache);
+    mIsWritingFastLoad = useXULCache;
+
+    if (useXULCache && mCurrentPrototype) {
+        PRBool loaded;
+        rv = mCurrentPrototype->AwaitLoadDone(this, &loaded);
+        if (NS_FAILED(rv)) return rv;
+
+        if (! loaded) {
+            // Return to the main event loop and eagerly await the
+            // prototype overlay load's completion. When the content
+            // sink completes, it will trigger an EndLoad(), which'll
+            // wind us back up here, in ResumeWalk().
+            *aShouldReturn = PR_TRUE;
+            return NS_OK;
+        }
+
+        // Found the overlay's prototype in the cache, fully loaded.
+        rv = AddPrototypeSheets();
+        if (NS_FAILED(rv)) return rv;
+
+        // Now prepare to walk the prototype to create its content
+        rv = PrepareToWalk();
+        if (NS_FAILED(rv)) return rv;
+
+        PR_LOG(gXULLog, PR_LOG_DEBUG, ("xul: overlay was cached"));
+
+        // If this is a dynamic overlay and we have the prototype in the chrome 
+        // cache already, we must manually call ResumeWalk.
+        if (aIsDynamic)
+            return ResumeWalk();
+    }
+    else {
+        // Not there. Initiate a load.
+        PR_LOG(gXULLog, PR_LOG_DEBUG, ("xul: overlay was not cached"));
+
+        nsCOMPtr<nsIParser> parser;
+        rv = PrepareToLoadPrototype(aURI, "view", nsnull, getter_AddRefs(parser));
+        if (NS_FAILED(rv)) return rv;
+
+        // Predicate mIsWritingFastLoad on the XUL cache being enabled,
+        // so we don't have to re-check whether the cache is enabled all
+        // the time.
+        mIsWritingFastLoad = useXULCache;
+
+        nsCOMPtr<nsIStreamListener> listener = do_QueryInterface(parser);
+        if (! listener)
+            return NS_ERROR_UNEXPECTED;
+
+        // Add an observer to the parser; this'll get called when
+        // Necko fires its On[Start|Stop]Request() notifications,
+        // and will let us recover from a missing overlay.
+        ParserObserver* parserObserver = new ParserObserver(this);
+        if (! parserObserver)
+            return NS_ERROR_OUT_OF_MEMORY;
+
+        NS_ADDREF(parserObserver);
+        parser->Parse(aURI, parserObserver);
+        NS_RELEASE(parserObserver);
+
+        nsCOMPtr<nsILoadGroup> group = do_QueryReferent(mDocumentLoadGroup);
+        rv = NS_OpenURI(listener, nsnull, aURI, nsnull, group);
+        if (NS_FAILED(rv)) {
+            // Just move on to the next overlay.  NS_OpenURI could fail
+            // just because a channel could not be opened, which can happen
+            // if a file or chrome package does not exist.
+            ReportMissingOverlay(aURI);
+            return rv;
+        }
+
+        // If it's a 'chrome:' prototype document, then put it into
+        // the prototype cache; other XUL documents will be reloaded
+        // each time.  We must do this after NS_OpenURI and AsyncOpen,
+        // or chrome code will wrongly create a cached chrome channel
+        // instead of a real one.
+        if (useXULCache && overlayIsChrome) {
+            rv = gXULCache->PutPrototype(mCurrentPrototype);
+            if (NS_FAILED(rv)) return rv;
+        }
+
+        // Return to the main event loop and eagerly await the
+        // overlay load's completion. When the content sink
+        // completes, it will trigger an EndLoad(), which'll wind
+        // us back in ResumeWalk().
+        if (!aIsDynamic)
+            *aShouldReturn = PR_TRUE;
+    }
+    return NS_OK;
+}
+
+PR_STATIC_CALLBACK(PLDHashOperator)
+FirePendingMergeNotification(nsIURI* aKey, nsCOMPtr<nsIObserver>& aObserver, void* aClosure)
+{
+    aObserver->Observe(aKey, "xul-overlay-merged", EmptyString().get());
+
+    typedef nsInterfaceHashtable<nsURIHashKey,nsIObserver> table;
+    table* observers = NS_STATIC_CAST(table*, aClosure);
+    observers->Remove(aKey);
+
+    return PL_DHASH_REMOVE;
+}
+
 nsresult
 nsXULDocument::ResumeWalk()
 {
@@ -2757,14 +2867,22 @@ nsXULDocument::ResumeWalk()
             if (NS_FAILED(rv)) return rv;
 
             if (indx >= (PRInt32)proto->mNumChildren) {
-                // We've processed all of the prototype's children. If
-                // we're in the master prototype, do post-order
-                // document-level hookup. (An overlay will get its
-                // document hookup done when it's successfully
-                // resolved.)
-                if (element && (mState == eState_Master))
-                    AddElementToDocumentPost(element);
+                if (element) {
+                    // We've processed all of the prototype's children. If
+                    // we're in the master prototype, do post-order
+                    // document-level hookup. (An overlay will get its
+                    // document hookup done when it's successfully
+                    // resolved.)
+                    if (mState == eState_Master) {
+                        AddElementToDocumentPost(element);
+                    }
 
+#ifdef MOZ_XTF
+                    if (element->GetNameSpaceID() > kNameSpaceID_LastBuiltin) {
+                        element->DoneAddingChildren();
+                    }
+#endif
+                }
                 // Now pop the context stack back up to the parent
                 // element and continue the prototype walk.
                 mContextStack.Pop();
@@ -2796,7 +2914,7 @@ nsXULDocument::ResumeWalk()
                     if (NS_FAILED(rv)) return rv;
 
                     // ...and append it to the content model.
-                    rv = element->AppendChildTo(child, PR_FALSE, PR_FALSE);
+                    rv = element->AppendChildTo(child, PR_FALSE);
                     if (NS_FAILED(rv)) return rv;
 
                     // do pre-order document-level hookup, but only if
@@ -2844,9 +2962,9 @@ nsXULDocument::ResumeWalk()
                     // stale and must be reloaded.
                     PRBool blocked;
                     rv = LoadScript(scriptproto, &blocked);
-                    if (NS_FAILED(rv)) return rv;
+                    // If the script cannot be loaded, just keep going!
 
-                    if (blocked)
+                    if (NS_SUCCEEDED(rv) && blocked)
                         return NS_OK;
                 }
                 else if (scriptproto->mJSObject) {
@@ -2873,17 +2991,13 @@ nsXULDocument::ResumeWalk()
 
                     nsXULPrototypeText* textproto =
                         NS_REINTERPRET_CAST(nsXULPrototypeText*, childproto);
-                    rv = text->SetText(textproto->mValue.get(),
-                                       textproto->mValue.Length(),
-                                       PR_FALSE);
-
-                    if (NS_FAILED(rv)) return rv;
+                    text->SetText(textproto->mValue, PR_FALSE);
 
                     nsCOMPtr<nsIContent> child = do_QueryInterface(text);
                     if (! child)
                         return NS_ERROR_UNEXPECTED;
 
-                    rv = element->AppendChildTo(child, PR_FALSE, PR_FALSE);
+                    rv = element->AppendChildTo(child, PR_FALSE);
                     if (NS_FAILED(rv)) return rv;
                 }
             }
@@ -3014,7 +3128,13 @@ nsXULDocument::ResumeWalk()
 
             nsCOMPtr<nsILoadGroup> group = do_QueryReferent(mDocumentLoadGroup);
             rv = NS_OpenURI(listener, nsnull, uri, nsnull, group);
-            if (NS_FAILED(rv)) return rv;
+            if (NS_FAILED(rv)) {
+                // Just move on to the next overlay.  NS_OpenURI could fail
+                // just because a channel could not be opened, which can happen
+                // if a file or chrome package does not exist.
+                ReportMissingOverlay(uri);
+                continue;
+            }
 
             // If it's a 'chrome:' prototype document, then put it into
             // the prototype cache; other XUL documents will be reloaded
@@ -3042,33 +3162,116 @@ nsXULDocument::ResumeWalk()
     rv = ApplyPersistentAttributes();
     if (NS_FAILED(rv)) return rv;
 
-    // Everything after this point we only want to do once we're
-    // certain that we've been embedded in a presentation shell.
+    // XXXldb This is where we should really be setting the chromehidden
+    // attribute.
 
-    StartLayout();
+    PRBool didInitialReflow = PR_TRUE;
+    nsIPresShell *shell = GetShellAt(0);
+    if (shell)
+        shell->GetDidInitialReflow(&didInitialReflow);
 
-    if (mIsWritingFastLoad && IsChromeURI(mDocumentURI))
-        gXULCache->WritePrototype(mMasterPrototype);
+    if (!didInitialReflow) {
+        // Everything after this point we only want to do once we're
+        // certain that we've been embedded in a presentation shell.
 
-    for (PRInt32 i = mObservers.Count() - 1; i >= 0; --i) {
-        nsIDocumentObserver* observer = (nsIDocumentObserver*) mObservers[i];
-        observer->EndLoad(this);
+        nsAutoString title;
+        mRootContent->GetAttr(kNameSpaceID_None, nsHTMLAtoms::title, title);
+        SetTitle(title);
+
+        StartLayout();
+
+        if (mIsWritingFastLoad && IsChromeURI(mDocumentURI))
+            gXULCache->WritePrototype(mMasterPrototype);
+
+        for (PRInt32 i = mObservers.Count() - 1; i >= 0; --i) {
+            nsIDocumentObserver* observer = (nsIDocumentObserver*) mObservers[i];
+            observer->EndLoad(this);
+        }
+
+        DispatchContentLoadedEvents();
+
+        NS_ASSERTION(mPlaceHolderRequest, "Bug 119310, perhaps overlayinfo referenced a overlay that doesn't exist");
+        if (mPlaceHolderRequest) {
+            // Remove the placeholder channel; if we're the last channel in the
+            // load group, this will fire the OnEndDocumentLoad() method in the
+            // docshell, and run the onload handlers, etc.
+            nsCOMPtr<nsILoadGroup> group = do_QueryReferent(mDocumentLoadGroup);
+            if (group) {
+                rv = group->RemoveRequest(mPlaceHolderRequest, nsnull, NS_OK);
+                if (NS_FAILED(rv)) return rv;
+            }
+        }
+        mInitialLayoutComplete = PR_TRUE;
+
+        // Walk the set of pending load notifications and notify any observers.
+        // See below for detail.
+        if (mPendingOverlayLoadNotifications.IsInitialized())
+            mPendingOverlayLoadNotifications.Enumerate(FirePendingMergeNotification, (void*)&mOverlayLoadObservers);
     }
-    NS_ASSERTION(mPlaceHolderRequest, "Bug 119310, perhaps overlayinfo referenced a overlay that doesn't exist");
-    if (mPlaceHolderRequest) {
-        // Remove the placeholder channel; if we're the last channel in the
-        // load group, this will fire the OnEndDocumentLoad() method in the
-        // docshell, and run the onload handlers, etc.
-        nsCOMPtr<nsILoadGroup> group = do_QueryReferent(mDocumentLoadGroup);
-        if (group) {
-            rv = group->RemoveRequest(mPlaceHolderRequest, nsnull, NS_OK);
-            if (NS_FAILED(rv)) return rv;
+    else {
+        if (mOverlayLoadObservers.IsInitialized()) {
+            nsCOMPtr<nsIURI> overlayURI;
+            mCurrentPrototype->GetURI(getter_AddRefs(overlayURI));
+            nsCOMPtr<nsIObserver> obs;
+            if (mInitialLayoutComplete) {
+                // We have completed initial layout, so just send the notification.
+                mOverlayLoadObservers.Get(overlayURI, getter_AddRefs(obs));
+                if (obs)
+                    obs->Observe(overlayURI, "xul-overlay-merged", EmptyString().get());
+                mOverlayLoadObservers.Remove(overlayURI);
+            }
+            else {
+                // If we have not yet displayed the document for the first time 
+                // (i.e. we came in here as the result of a dynamic overlay load
+                // which was spawned by a binding-attached event caused by 
+                // StartLayout() on the master prototype - we must remember that
+                // this overlay has been merged and tell the listeners after 
+                // StartLayout() is completely finished rather than doing so 
+                // immediately - otherwise we may be executing code that needs to
+                // access XBL Binding implementations on nodes for which frames 
+                // have not yet been constructed because their bindings have not
+                // yet been attached. This can be a race condition because dynamic
+                // overlay loading can take varying amounts of time depending on
+                // whether or not the overlay prototype is in the XUL cache. The
+                // most likely effect of this bug is odd UI initialization due to
+                // methods and properties that do not work.
 
-            mPlaceHolderRequest = nsnull;
+                NS_ENSURE_TRUE(mPendingOverlayLoadNotifications.IsInitialized() || mPendingOverlayLoadNotifications.Init(), 
+                               NS_ERROR_OUT_OF_MEMORY);
+                
+                mPendingOverlayLoadNotifications.Get(overlayURI, getter_AddRefs(obs));
+                if (!obs) {
+                    mOverlayLoadObservers.Get(overlayURI, getter_AddRefs(obs));
+                    NS_ASSERTION(obs, "null overlay load observer?");
+                    mPendingOverlayLoadNotifications.Put(overlayURI, obs);
+                }
+            }
         }
     }
 
     return rv;
+}
+
+void
+nsXULDocument::ReportMissingOverlay(nsIURI* aURI)
+{
+    NS_PRECONDITION(aURI, "Must have a URI");
+    
+    nsCAutoString spec;
+    aURI->GetSpec(spec);
+
+    NS_ConvertUTF8toUTF16 utfSpec(spec);
+    const PRUnichar* params[] = { utfSpec.get() };
+
+    nsContentUtils::ReportToConsole(nsContentUtils::eXUL_PROPERTIES,
+                                    "MissingOverlay",
+                                    params, NS_ARRAY_LENGTH(params),
+                                    mDocumentURI,
+                                    EmptyString(), /* source line */
+                                    0, /* line number */
+                                    0, /* column number */
+                                    nsIScriptError::warningFlag,
+                                    "XUL Document");
 }
 
 nsresult
@@ -3142,15 +3345,15 @@ nsXULDocument::OnStreamComplete(nsIStreamLoader* aLoader,
                                 nsISupports* context,
                                 nsresult aStatus,
                                 PRUint32 stringLen,
-                                const char* string)
+                                const PRUint8* string)
 {
+    nsCOMPtr<nsIRequest> request;
+    aLoader->GetRequest(getter_AddRefs(request));
+    nsCOMPtr<nsIChannel> channel = do_QueryInterface(request);
+
 #ifdef DEBUG
     // print a load error on bad status
     if (NS_FAILED(aStatus)) {
-        nsCOMPtr<nsIRequest> request;
-        aLoader->GetRequest(getter_AddRefs(request));
-        nsCOMPtr<nsIChannel> channel;
-        channel = do_QueryInterface(request);
         if (channel) {
             nsCOMPtr<nsIURI> uri;
             channel->GetURI(getter_AddRefs(uri));
@@ -3193,9 +3396,14 @@ nsXULDocument::OnStreamComplete(nsIStreamLoader* aLoader,
         // not to reach here.
         nsCOMPtr<nsIURI> uri = scriptProto->mSrcURI;
 
-        nsString stringStr; stringStr.AssignWithConversion(string, stringLen);
-        rv = scriptProto->Compile(stringStr.get(), stringLen, uri, 1, this,
-                                  mCurrentPrototype);
+        // XXX should also check nsIHttpChannel::requestSucceeded
+
+        nsString stringStr;
+        rv = nsScriptLoader::ConvertToUTF16(channel, string, stringLen,
+                                            EmptyString(), this, stringStr);
+        if (NS_SUCCEEDED(rv))
+          rv = scriptProto->Compile(stringStr.get(), stringStr.Length(), uri,
+                                    1, this, mCurrentPrototype);
 
         aStatus = rv;
         if (NS_SUCCEEDED(rv) && scriptProto->mJSObject) {
@@ -3242,10 +3450,10 @@ nsXULDocument::OnStreamComplete(nsIStreamLoader* aLoader,
                 // Ignore the return value, as we don't need to propagate
                 // a failure to write to the FastLoad file, because this
                 // method aborts that whole process on error.
-                nsCOMPtr<nsIScriptGlobalObjectOwner> globalOwner
-                  = do_QueryInterface(mCurrentPrototype);
-                nsCOMPtr<nsIScriptGlobalObject> global;
-                globalOwner->GetScriptGlobalObject(getter_AddRefs(global));
+                nsCOMPtr<nsIScriptGlobalObjectOwner> globalOwner =
+                  do_QueryInterface(mCurrentPrototype);
+                nsIScriptGlobalObject* global = 
+                  globalOwner->GetScriptGlobalObject();
 
                 NS_ASSERTION(global != nsnull, "master prototype w/o global?!");
                 if (global) {
@@ -3303,9 +3511,11 @@ nsXULDocument::ExecuteScript(JSObject* aScriptObject)
 
     NS_ASSERTION(mScriptGlobalObject != nsnull, "no script global object");
 
-    nsIScriptContext *context;
+    nsCOMPtr<nsIScriptContext> context;
     if (mScriptGlobalObject && (context = mScriptGlobalObject->GetContext()))
-        rv = context->ExecuteScript(aScriptObject, nsnull, nsnull, nsnull);
+        rv = context->ExecuteScript(aScriptObject,
+                                    mScriptGlobalObject->GetGlobalJSObject(),
+                                    nsnull, nsnull);
 
     return rv;
 }
@@ -3324,13 +3534,13 @@ nsXULDocument::CreateElementFromPrototype(nsXULPrototypeElement* aPrototype,
     nsresult rv = NS_OK;
 
 #ifdef PR_LOGGING
-    if (PR_LOG_TEST(gXULLog, PR_LOG_ALWAYS)) {
+    if (PR_LOG_TEST(gXULLog, PR_LOG_NOTICE)) {
         nsAutoString tagstr;
         aPrototype->mNodeInfo->GetQualifiedName(tagstr);
 
         nsCAutoString tagstrC;
         tagstrC.AssignWithConversion(tagstr);
-        PR_LOG(gXULLog, PR_LOG_ALWAYS,
+        PR_LOG(gXULLog, PR_LOG_NOTICE,
                ("xul: creating <%s> from prototype",
                 tagstrC.get()));
     }
@@ -3344,39 +3554,26 @@ nsXULDocument::CreateElementFromPrototype(nsXULPrototypeElement* aPrototype,
         rv = nsXULElement::Create(aPrototype, this, PR_TRUE, getter_AddRefs(result));
         if (NS_FAILED(rv)) return rv;
     }
-    else if (aPrototype->mNodeInfo->NamespaceEquals(kNameSpaceID_XHTML)) {
-        // If it's an HTML element, it's gonna be heavyweight no matter
-        // what. So we need to copy everything out of the prototype
-        // into the element.
-
-        gHTMLElementFactory->CreateInstanceByTag(aPrototype->mNodeInfo,
-                                                 getter_AddRefs(result));
-        if (NS_FAILED(rv)) return rv;
-
-        if (! result)
-            return NS_ERROR_UNEXPECTED;
-
-        result->SetDocument(this, PR_FALSE, PR_TRUE);
-
-        rv = AddAttributes(aPrototype, result);
-        if (NS_FAILED(rv)) return rv;
-    }
     else {
         // If it's not a XUL element, it's gonna be heavyweight no matter
         // what. So we need to copy everything out of the prototype
-        // into the element.
-
-        nsCOMPtr<nsIElementFactory> elementFactory;
-        GetElementFactory(aPrototype->mNodeInfo->NamespaceID(),
-                          getter_AddRefs(elementFactory));
-        rv = elementFactory->CreateInstanceByTag(aPrototype->mNodeInfo,
-                                                 getter_AddRefs(result));
+        // into the element.  Get a nodeinfo from our nodeinfo manager
+        // for this node.
+        nsCOMPtr<nsINodeInfo> newNodeInfo;
+        rv = mNodeInfoManager->GetNodeInfo(aPrototype->mNodeInfo->NameAtom(),
+                                           aPrototype->mNodeInfo->GetPrefixAtom(),
+                                           aPrototype->mNodeInfo->NamespaceID(),
+                                           getter_AddRefs(newNodeInfo));
+        if (NS_FAILED(rv)) return rv;
+        rv = NS_NewElement(getter_AddRefs(result), newNodeInfo->NamespaceID(),
+                           newNodeInfo);
         if (NS_FAILED(rv)) return rv;
 
-        if (! result)
-            return NS_ERROR_UNEXPECTED;
-
-        result->SetDocument(this, PR_FALSE, PR_TRUE);
+#ifdef MOZ_XTF
+        if (result && newNodeInfo->NamespaceID() > kNameSpaceID_LastBuiltin) {
+            result->BeginAddingChildren();
+        }
+#endif
 
         rv = AddAttributes(aPrototype, result);
         if (NS_FAILED(rv)) return rv;
@@ -3384,8 +3581,8 @@ nsXULDocument::CreateElementFromPrototype(nsXULPrototypeElement* aPrototype,
 
     result->SetContentID(mNextContentID++);
 
-    *aResult = result;
-    NS_ADDREF(*aResult);
+    result.swap(*aResult);
+
     return NS_OK;
 }
 
@@ -3511,6 +3708,7 @@ nsXULDocument::CreateTemplateBuilder(nsIContent* aElement)
         builder->Init(aElement);
 
         // Create a <treechildren> if one isn't there already.
+        // XXXvarga what about attributes?
         nsCOMPtr<nsIContent> bodyContent;
         nsXULContentUtils::FindChildByTag(aElement, kNameSpaceID_XUL,
                                           nsXULAtoms::treechildren,
@@ -3518,19 +3716,18 @@ nsXULDocument::CreateTemplateBuilder(nsIContent* aElement)
 
         if (! bodyContent) {
             // Get the document.
-            nsCOMPtr<nsIDOMDocument> domdoc =
-                do_QueryInterface(aElement->GetDocument());
-            NS_ASSERTION(domdoc, "no document");
-            if (! domdoc)
+            nsIDocument *document = aElement->GetDocument();
+            NS_ASSERTION(document, "no document");
+            if (! document)
                 return NS_ERROR_UNEXPECTED;
-            if (domdoc) {
-                nsCOMPtr<nsIDOMElement> bodyElement;
-                domdoc->CreateElement(NS_LITERAL_STRING("treechildren"),
-                                      getter_AddRefs(bodyElement));
 
-                bodyContent = do_QueryInterface(bodyElement);
-                aElement->AppendChildTo(bodyContent, PR_FALSE, PR_TRUE);
-            }
+            nsresult rv = document->CreateElem(nsXULAtoms::treechildren,
+                                               nsnull, kNameSpaceID_XUL,
+                                               PR_FALSE,
+                                               getter_AddRefs(bodyContent));
+            NS_ENSURE_SUCCESS(rv, rv);
+
+            aElement->AppendChildTo(bodyContent, PR_FALSE);
         }
     }
     else {
@@ -3543,11 +3740,11 @@ nsXULDocument::CreateTemplateBuilder(nsIContent* aElement)
 
         builder->Init(aElement);
 
-        nsCOMPtr<nsIXULContent> xulContent = do_QueryInterface(aElement);
+        nsXULElement *xulContent = nsXULElement::FromContent(aElement);
         if (xulContent) {
             // Mark the XUL element as being lazy, so the template builder
             // will run when layout first asks for these nodes.
-            xulContent->SetLazyState(nsIXULContent::eChildrenMustBeRebuilt);
+            xulContent->SetLazyState(nsXULElement::eChildrenMustBeRebuilt);
         }
         else {
             // Force construction of immediate template sub-content _now_.
@@ -3601,14 +3798,12 @@ nsXULDocument::AddPrototypeSheets()
         // only system that partially invalidates the XUL cache).
         // - dwh
         //XXXbz we hit this code from fastload all the time.  Bug 183505.
-        nsICSSLoader* loader = GetCSSLoader();
-        NS_ENSURE_TRUE(loader, NS_ERROR_OUT_OF_MEMORY);
-        rv = loader->LoadAgentSheet(uri, getter_AddRefs(sheet));
+        rv = CSSLoader()->LoadAgentSheet(uri, getter_AddRefs(sheet));
         // XXXldb We need to prevent bogus sheets from being held in the
         // prototype's list, but until then, don't propagate the failure
         // from LoadAgentSheet (and thus exit the loop).
         if (NS_SUCCEEDED(rv)) {
-            AddStyleSheet(sheet, 0);
+            AddStyleSheet(sheet);
         }
     }
 
@@ -3627,6 +3822,11 @@ nsXULDocument::OverlayForwardReference::Resolve()
     // Resolve a forward reference from an overlay element; attempt to
     // hook it up into the main document.
     nsresult rv;
+ 
+    PRBool notify = PR_FALSE;
+    nsIPresShell *shell = mDocument->GetShellAt(0);
+    if (shell)
+        shell->GetDidInitialReflow(&notify);
 
     nsAutoString id;
     rv = mOverlay->GetAttr(kNameSpaceID_None, nsXULAtoms::id, id);
@@ -3634,7 +3834,7 @@ nsXULDocument::OverlayForwardReference::Resolve()
 
     if (id.IsEmpty()) {
         // overlay had no id, use the root element
-        mDocument->InsertElement(mDocument->mRootContent, mOverlay);
+        mDocument->InsertElement(mDocument->mRootContent, mOverlay, notify);
         mResolved = PR_TRUE;
         return eResolve_Succeeded;
     }
@@ -3653,7 +3853,7 @@ nsXULDocument::OverlayForwardReference::Resolve()
     if (! target)
         return eResolve_Error;
 
-    rv = Merge(target, mOverlay);
+    rv = Merge(target, mOverlay, notify);
     if (NS_FAILED(rv)) return eResolve_Error;
 
     // Add child and any descendants to the element map
@@ -3661,11 +3861,13 @@ nsXULDocument::OverlayForwardReference::Resolve()
     if (NS_FAILED(rv)) return eResolve_Error;
 
 #ifdef PR_LOGGING
-    nsCAutoString idC;
-    idC.AssignWithConversion(id);
-    PR_LOG(gXULLog, PR_LOG_ALWAYS,
-           ("xul: overlay resolved '%s'",
-            idC.get()));
+    if (PR_LOG_TEST(gXULLog, PR_LOG_NOTICE)) {
+        nsCAutoString idC;
+        idC.AssignWithConversion(id);
+        PR_LOG(gXULLog, PR_LOG_NOTICE,
+               ("xul: overlay resolved '%s'",
+                idC.get()));
+    }
 #endif
 
     mResolved = PR_TRUE;
@@ -3676,13 +3878,22 @@ nsXULDocument::OverlayForwardReference::Resolve()
 
 nsresult
 nsXULDocument::OverlayForwardReference::Merge(nsIContent* aTargetNode,
-                                              nsIContent* aOverlayNode)
+                                              nsIContent* aOverlayNode, 
+                                              PRBool aNotify)
 {
     // This function is given:
     // aTargetNode:  the node in the document whose 'id' attribute
     //               matches a toplevel node in our overlay.
     // aOverlayNode: the node in the overlay document that matches
     //               a node in the actual document.
+    // aNotify:      whether or not content manipulation methods should
+    //               use the aNotify parameter. After the initial 
+    //               reflow (i.e. in the dynamic overlay merge case),
+    //               we want all the content manipulation methods we
+    //               call to notify so that frames are constructed 
+    //               etc. Otherwise do not, since that's during initial
+    //               document construction before StartLayout has been
+    //               called which will do everything for us.
     //
     // This function merges the tree from the overlay into the tree in
     // the document, overwriting attributes and appending child content
@@ -3710,13 +3921,10 @@ nsXULDocument::OverlayForwardReference::Merge(nsIContent* aTargetNode,
         rv = aOverlayNode->GetAttr(nameSpaceID, attr, value);
         if (NS_FAILED(rv)) return rv;
 
-        nsAutoString tempID;
-        rv = aOverlayNode->GetAttr(kNameSpaceID_None, nsXULAtoms::id, tempID);
-
         // Element in the overlay has the 'removeelement' attribute set
         // so remove it from the actual document.
         if (attr == nsXULAtoms::removeelement &&
-            value.Equals(NS_LITERAL_STRING("true"))) {
+            value.EqualsLiteral("true")) {
 
             rv = RemoveElement(aTargetNode->GetParent(), aTargetNode);
             if (NS_FAILED(rv)) return rv;
@@ -3724,7 +3932,7 @@ nsXULDocument::OverlayForwardReference::Merge(nsIContent* aTargetNode,
             return NS_OK;
         }
 
-        rv = aTargetNode->SetAttr(nameSpaceID, attr, prefix, value, PR_FALSE);
+        rv = aTargetNode->SetAttr(nameSpaceID, attr, prefix, value, aNotify);
         if (NS_FAILED(rv)) return rv;
     }
 
@@ -3785,7 +3993,7 @@ nsXULDocument::OverlayForwardReference::Merge(nsIContent* aTargetNode,
             if (parentID.Equals(documentParentID)) {
                 // The element matches. "Go Deep!"
                 nsCOMPtr<nsIContent> childDocumentContent(do_QueryInterface(nodeInDocument));
-                rv = Merge(childDocumentContent, currContent);
+                rv = Merge(childDocumentContent, currContent, aNotify);
                 if (NS_FAILED(rv)) return rv;
                 rv = aOverlayNode->RemoveChildAt(0, PR_FALSE);
                 if (NS_FAILED(rv)) return rv;
@@ -3797,7 +4005,7 @@ nsXULDocument::OverlayForwardReference::Merge(nsIContent* aTargetNode,
         rv = aOverlayNode->RemoveChildAt(0, PR_FALSE);
         if (NS_FAILED(rv)) return rv;
 
-        rv = InsertElement(aTargetNode, currContent);
+        rv = InsertElement(aTargetNode, currContent, aNotify);
         if (NS_FAILED(rv)) return rv;
     }
 
@@ -3809,13 +4017,13 @@ nsXULDocument::OverlayForwardReference::Merge(nsIContent* aTargetNode,
 nsXULDocument::OverlayForwardReference::~OverlayForwardReference()
 {
 #ifdef PR_LOGGING
-    if (PR_LOG_TEST(gXULLog, PR_LOG_ALWAYS) && !mResolved) {
+    if (PR_LOG_TEST(gXULLog, PR_LOG_WARNING) && !mResolved) {
         nsAutoString id;
         mOverlay->GetAttr(kNameSpaceID_None, nsXULAtoms::id, id);
 
         nsCAutoString idC;
         idC.AssignWithConversion(id);
-        PR_LOG(gXULLog, PR_LOG_ALWAYS,
+        PR_LOG(gXULLog, PR_LOG_WARNING,
                ("xul: overlay failed to resolve '%s'",
                 idC.get()));
     }
@@ -3834,7 +4042,7 @@ nsXULDocument::BroadcasterHookup::Resolve()
     nsresult rv;
 
     PRBool listener;
-    rv = CheckBroadcasterHookup(mDocument, mObservesElement, &listener, &mResolved);
+    rv = mDocument->CheckBroadcasterHookup(mObservesElement, &listener, &mResolved);
     if (NS_FAILED(rv)) return eResolve_Error;
 
     return mResolved ? eResolve_Succeeded : eResolve_Later;
@@ -3844,7 +4052,7 @@ nsXULDocument::BroadcasterHookup::Resolve()
 nsXULDocument::BroadcasterHookup::~BroadcasterHookup()
 {
 #ifdef PR_LOGGING
-    if (PR_LOG_TEST(gXULLog, PR_LOG_ALWAYS) && !mResolved) {
+    if (PR_LOG_TEST(gXULLog, PR_LOG_WARNING) && !mResolved) {
         // Tell the world we failed
         nsresult rv;
 
@@ -3864,7 +4072,7 @@ nsXULDocument::BroadcasterHookup::~BroadcasterHookup()
             rv = mObservesElement->GetAttr(kNameSpaceID_None, nsXULAtoms::observes, broadcasterID);
             if (NS_FAILED(rv)) return;
 
-            attribute.Assign(NS_LITERAL_STRING("*"));
+            attribute.AssignLiteral("*");
         }
 
         nsAutoString tagStr;
@@ -3875,7 +4083,7 @@ nsXULDocument::BroadcasterHookup::~BroadcasterHookup()
         tagstrC.AssignWithConversion(tagStr);
         attributeC.AssignWithConversion(attribute);
         broadcasteridC.AssignWithConversion(broadcasterID);
-        PR_LOG(gXULLog, PR_LOG_ALWAYS,
+        PR_LOG(gXULLog, PR_LOG_WARNING,
                ("xul: broadcaster hookup failed <%s attribute='%s'> to %s",
                 tagstrC.get(),
                 attributeC.get(),
@@ -3910,10 +4118,96 @@ nsXULDocument::TemplateBuilderHookup::Resolve()
 
 //----------------------------------------------------------------------
 
+nsresult
+nsXULDocument::FindBroadcaster(nsIContent* aElement,
+                               nsIDOMElement** aListener,
+                               nsString& aBroadcasterID,
+                               nsString& aAttribute,
+                               nsIDOMElement** aBroadcaster)
+{
+    nsresult rv;
+    nsINodeInfo *ni = aElement->GetNodeInfo();
+    *aListener = nsnull;
+    *aBroadcaster = nsnull;
+
+    if (ni && ni->Equals(nsXULAtoms::observes, kNameSpaceID_XUL)) {
+        // It's an <observes> element, which means that the actual
+        // listener is the _parent_ node. This element should have an
+        // 'element' attribute that specifies the ID of the
+        // broadcaster element, and an 'attribute' element, which
+        // specifies the name of the attribute to observe.
+        nsIContent* parent = aElement->GetParent();
+
+        // If we're still parented by an 'overlay' tag, then we haven't
+        // made it into the real document yet. Defer hookup.
+        if (parent->GetNodeInfo()->Equals(nsXULAtoms::overlay, kNameSpaceID_XUL)) {
+            return NS_FINDBROADCASTER_AWAIT_OVERLAYS;
+        }
+
+        if (NS_FAILED(CallQueryInterface(parent, aListener)))
+            *aListener = nsnull;
+
+        rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::element, aBroadcasterID);
+        if (NS_FAILED(rv)) return rv;
+
+        rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::attribute,
+                               aAttribute);
+        if (NS_FAILED(rv)) return rv;
+    }
+    else {
+        // It's a generic element, which means that we'll use the
+        // value of the 'observes' attribute to determine the ID of
+        // the broadcaster element, and we'll watch _all_ of its
+        // values.
+        rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::observes, aBroadcasterID);
+        if (NS_FAILED(rv)) return rv;
+
+        // Bail if there's no aBroadcasterID
+        if ((rv != NS_CONTENT_ATTR_HAS_VALUE) || (aBroadcasterID.IsEmpty())) {
+            // Try the command attribute next.
+            rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::command, aBroadcasterID);
+            if (NS_FAILED(rv)) return rv;
+
+            if (rv == NS_CONTENT_ATTR_HAS_VALUE && !aBroadcasterID.IsEmpty()) {
+                // We've got something in the command attribute.  We
+                // only treat this as a normal broadcaster if we are
+                // not a menuitem or a key.
+
+                if (ni->Equals(nsXULAtoms::menuitem, kNameSpaceID_XUL) ||
+                    ni->Equals(nsXULAtoms::key, kNameSpaceID_XUL)) {
+                return NS_FINDBROADCASTER_NOT_FOUND;
+              }
+            }
+            else {
+              return NS_FINDBROADCASTER_NOT_FOUND;
+            }
+        }
+
+        if (NS_FAILED(CallQueryInterface(aElement, aListener)))
+            *aListener = nsnull;
+
+        aAttribute.AssignLiteral("*");
+    }
+
+    // Make sure we got a valid listener.
+    NS_ENSURE_TRUE(*aListener, NS_ERROR_UNEXPECTED);
+
+    // Try to find the broadcaster element in the document.
+    rv = GetElementById(aBroadcasterID, aBroadcaster);
+    if (NS_FAILED(rv)) return rv;
+
+    // If we can't find the broadcaster, then we'll need to defer the
+    // hookup. We may need to resolve some of the other overlays
+    // first.
+    if (! *aBroadcaster) {
+        return NS_FINDBROADCASTER_AWAIT_OVERLAYS;
+    }
+
+    return NS_FINDBROADCASTER_FOUND;
+}
 
 nsresult
-nsXULDocument::CheckBroadcasterHookup(nsXULDocument* aDocument,
-                                      nsIContent* aElement,
+nsXULDocument::CheckBroadcasterHookup(nsIContent* aElement,
                                       PRBool* aNeedsHookup,
                                       PRBool* aDidResolve)
 {
@@ -3927,93 +4221,29 @@ nsXULDocument::CheckBroadcasterHookup(nsXULDocument* aDocument,
     nsCOMPtr<nsIDOMElement> listener;
     nsAutoString broadcasterID;
     nsAutoString attribute;
+    nsCOMPtr<nsIDOMElement> broadcaster;
 
-    nsINodeInfo *ni = aElement->GetNodeInfo();
-
-    if (ni && ni->Equals(nsXULAtoms::observes, kNameSpaceID_XUL)) {
-        // It's an <observes> element, which means that the actual
-        // listener is the _parent_ node. This element should have an
-        // 'element' attribute that specifies the ID of the
-        // broadcaster element, and an 'attribute' element, which
-        // specifies the name of the attribute to observe.
-        nsIContent* parent = aElement->GetParent();
-
-        // If we're still parented by an 'overlay' tag, then we haven't
-        // made it into the real document yet. Defer hookup.
-        if (parent->GetNodeInfo()->Equals(nsXULAtoms::overlay, kNameSpaceID_XUL)) {
+    rv = FindBroadcaster(aElement, getter_AddRefs(listener),
+                         broadcasterID, attribute, getter_AddRefs(broadcaster));
+    switch (rv) {
+        case NS_FINDBROADCASTER_NOT_FOUND:
+            *aNeedsHookup = PR_FALSE;
+            return NS_OK;
+        case NS_FINDBROADCASTER_AWAIT_OVERLAYS:
             *aNeedsHookup = PR_TRUE;
             return NS_OK;
-        }
-
-        listener = do_QueryInterface(parent);
-
-        rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::element, broadcasterID);
-        if (NS_FAILED(rv)) return rv;
-
-        rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::attribute, attribute);
-        if (NS_FAILED(rv)) return rv;
-    }
-    else {
-        // It's a generic element, which means that we'll use the
-        // value of the 'observes' attribute to determine the ID of
-        // the broadcaster element, and we'll watch _all_ of its
-        // values.
-        rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::observes, broadcasterID);
-        if (NS_FAILED(rv)) return rv;
-
-        // Bail if there's no broadcasterID
-        if ((rv != NS_CONTENT_ATTR_HAS_VALUE) || (broadcasterID.IsEmpty())) {
-            // Try the command attribute next.
-            rv = aElement->GetAttr(kNameSpaceID_None, nsXULAtoms::command, broadcasterID);
-            if (NS_FAILED(rv)) return rv;
-
-            if (rv == NS_CONTENT_ATTR_HAS_VALUE && !broadcasterID.IsEmpty()) {
-                // We've got something in the command attribute.  We
-                // only treat this as a normal broadcaster if we are
-                // not a menuitem or a key.
-
-                nsINodeInfo *ni = aElement->GetNodeInfo();
-                if (ni->Equals(nsXULAtoms::menuitem, kNameSpaceID_XUL) ||
-                    ni->Equals(nsXULAtoms::key, kNameSpaceID_XUL)) {
-                *aNeedsHookup = PR_FALSE;
-                return NS_OK;
-              }
-            }
-            else {
-              *aNeedsHookup = PR_FALSE;
-              return NS_OK;
-            }
-        }
-
-        listener = do_QueryInterface(aElement);
-
-        attribute.Assign(NS_LITERAL_STRING("*"));
+        case NS_FINDBROADCASTER_FOUND:
+            break;
+        default:
+            return rv;
     }
 
-    // Make sure we got a valid listener.
-    NS_ASSERTION(listener != nsnull, "no listener");
-    if (! listener)
-        return NS_ERROR_UNEXPECTED;
-
-    // Try to find the broadcaster element in the document.
-    nsCOMPtr<nsIDOMElement> broadcaster;
-    rv = aDocument->GetElementById(broadcasterID, getter_AddRefs(broadcaster));
-    if (NS_FAILED(rv)) return rv;
-
-    // If we can't find the broadcaster, then we'll need to defer the
-    // hookup. We may need to resolve some of the other overlays
-    // first.
-    if (! broadcaster) {
-        *aNeedsHookup = PR_TRUE;
-        return NS_OK;
-    }
-
-    rv = aDocument->AddBroadcastListenerFor(broadcaster, listener, attribute);
+    rv = AddBroadcastListenerFor(broadcaster, listener, attribute);
     if (NS_FAILED(rv)) return rv;
 
 #ifdef PR_LOGGING
     // Tell the world we succeeded
-    if (PR_LOG_TEST(gXULLog, PR_LOG_ALWAYS)) {
+    if (PR_LOG_TEST(gXULLog, PR_LOG_NOTICE)) {
         nsCOMPtr<nsIContent> content =
             do_QueryInterface(listener);
 
@@ -4029,7 +4259,7 @@ nsXULDocument::CheckBroadcasterHookup(nsXULDocument* aDocument,
         tagstrC.AssignWithConversion(tagStr);
         attributeC.AssignWithConversion(attribute);
         broadcasteridC.AssignWithConversion(broadcasterID);
-        PR_LOG(gXULLog, PR_LOG_ALWAYS,
+        PR_LOG(gXULLog, PR_LOG_NOTICE,
                ("xul: broadcaster hookup <%s attribute='%s'> to %s",
                 tagstrC.get(),
                 attributeC.get(),
@@ -4043,7 +4273,7 @@ nsXULDocument::CheckBroadcasterHookup(nsXULDocument* aDocument,
 }
 
 nsresult
-nsXULDocument::InsertElement(nsIContent* aParent, nsIContent* aChild)
+nsXULDocument::InsertElement(nsIContent* aParent, nsIContent* aChild, PRBool aNotify)
 {
     // Insert aChild appropriately into aParent, accounting for a
     // 'pos' attribute set on aChild.
@@ -4095,7 +4325,7 @@ nsXULDocument::InsertElement(nsIContent* aParent, nsIContent* aChild)
 
             if (pos != -1) {
                 pos = isInsertAfter ? pos + 1 : pos;
-                rv = aParent->InsertChildAt(aChild, pos, PR_FALSE, PR_TRUE);
+                rv = aParent->InsertChildAt(aChild, pos, aNotify);
                 if (NS_FAILED(rv))
                     return rv;
 
@@ -4112,9 +4342,13 @@ nsXULDocument::InsertElement(nsIContent* aParent, nsIContent* aChild)
         if (rv == NS_CONTENT_ATTR_HAS_VALUE) {
             // Positions are one-indexed.
             PRInt32 pos = posStr.ToInteger(NS_REINTERPRET_CAST(PRInt32*, &rv));
-            if (NS_SUCCEEDED(rv)) {
-                rv = aParent->InsertChildAt(aChild, pos - 1, PR_FALSE,
-                                            PR_TRUE);
+            // Note: if the insertion index (which is |pos - 1|) would be less
+            // than 0 or greater than the number of children aParent has, then
+            // don't insert, since the position is bogus.  Just skip on to
+            // appending.
+            if (NS_SUCCEEDED(rv) && pos > 0 &&
+                PRUint32(pos - 1) <= aParent->GetChildCount()) {
+                rv = aParent->InsertChildAt(aChild, pos - 1, aNotify);
                 if (NS_SUCCEEDED(rv))
                     wasInserted = PR_TRUE;
                 // If the insertion fails, then we should still
@@ -4126,7 +4360,7 @@ nsXULDocument::InsertElement(nsIContent* aParent, nsIContent* aChild)
     }
 
     if (! wasInserted) {
-        rv = aParent->AppendChildTo(aChild, PR_FALSE, PR_TRUE);
+        rv = aParent->AppendChildTo(aChild, aNotify);
         if (NS_FAILED(rv)) return rv;
     }
     return NS_OK;
@@ -4138,21 +4372,6 @@ nsXULDocument::RemoveElement(nsIContent* aParent, nsIContent* aChild)
     PRInt32 nodeOffset = aParent->IndexOf(aChild);
 
     return aParent->RemoveChildAt(nodeOffset, PR_TRUE);
-}
-
-void
-nsXULDocument::GetElementFactory(PRInt32 aNameSpaceID,
-                                 nsIElementFactory** aResult)
-{
-    // Retrieve the appropriate factory.
-    nsContentUtils::GetNSManagerWeakRef()->GetElementFactory(aNameSpaceID,
-                                                             aResult);
-
-    if (!*aResult) {
-        // Nothing found. Use generic XML element.
-        *aResult = gXMLElementFactory;
-        NS_IF_ADDREF(*aResult);
-    }
 }
 
 //----------------------------------------------------------------------
@@ -4248,20 +4467,14 @@ nsXULDocument::ParserObserver::OnStopRequest(nsIRequest *request,
     if (NS_FAILED(aStatus)) {
         // If an overlay load fails, we need to nudge the prototype
         // walk along.
-#define YELL_IF_MISSING_OVERLAY 1
-#if defined(DEBUG) || defined(YELL_IF_MISSING_OVERLAY)
-
         nsCOMPtr<nsIChannel> aChannel = do_QueryInterface(request);
-        if (!aChannel) return NS_ERROR_FAILURE;
-
-        nsCOMPtr<nsIURI> uri;
-        aChannel->GetOriginalURI(getter_AddRefs(uri));
-
-        nsCAutoString spec;
-        uri->GetSpec(spec);
-
-        printf("*** Failed to load overlay %s\n", spec.get());
-#endif
+        if (aChannel) {
+            nsCOMPtr<nsIURI> uri;
+            aChannel->GetOriginalURI(getter_AddRefs(uri));
+            if (uri) {
+                mDocument->ReportMissingOverlay(uri);
+            }
+        }
 
         rv = mDocument->ResumeWalk();
     }
@@ -4280,67 +4493,7 @@ nsXULDocument::GetFocusController(nsIFocusController** aFocusController)
     nsCOMPtr<nsIInterfaceRequestor> ir = do_QueryReferent(mDocumentContainer);
     nsCOMPtr<nsPIDOMWindow> windowPrivate = do_GetInterface(ir);
     if (windowPrivate) {
-        windowPrivate->GetRootFocusController(aFocusController);
+        NS_IF_ADDREF(*aFocusController = windowPrivate->GetRootFocusController());
     } else
         *aFocusController = nsnull;
-}
-
-//----------------------------------------------------------------------
-//
-// The XUL element factory
-//
-
-class XULElementFactoryImpl : public nsIElementFactory
-{
-protected:
-    XULElementFactoryImpl();
-    virtual ~XULElementFactoryImpl();
-
-public:
-    friend
-    nsresult
-    NS_NewXULElementFactory(nsIElementFactory** aResult);
-
-    // nsISupports interface
-    NS_DECL_ISUPPORTS
-
-    // nsIElementFactory interface
-    NS_IMETHOD CreateInstanceByTag(nsINodeInfo *aNodeInfo, nsIContent** aResult);
-};
-
-XULElementFactoryImpl::XULElementFactoryImpl()
-{
-}
-
-XULElementFactoryImpl::~XULElementFactoryImpl()
-{
-}
-
-
-NS_IMPL_ISUPPORTS1(XULElementFactoryImpl, nsIElementFactory)
-
-
-nsresult
-NS_NewXULElementFactory(nsIElementFactory** aResult)
-{
-    NS_PRECONDITION(aResult != nsnull, "null ptr");
-    if (! aResult)
-        return NS_ERROR_NULL_POINTER;
-
-    XULElementFactoryImpl* result = new XULElementFactoryImpl();
-    if (! result)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    NS_ADDREF(result);
-    *aResult = result;
-    return NS_OK;
-}
-
-
-
-NS_IMETHODIMP
-XULElementFactoryImpl::CreateInstanceByTag(nsINodeInfo *aNodeInfo,
-                                           nsIContent** aResult)
-{
-    return nsXULElement::Create(aNodeInfo, aResult);
 }

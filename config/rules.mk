@@ -1,51 +1,41 @@
+# vim:set ts=8 sw=8 sts=8 noet:
 #
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
 #
 # The Original Code is mozilla.org code.
 #
-# The Initial Developer of the Original Code is Netscape
-# Communications Corporation.  Portions created by Netscape are
-# Copyright (C) 1998 Netscape Communications Corporation. All
-# Rights Reserved.
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1998
+# the Initial Developer. All Rights Reserved.
 #
-# Contributor(s): 
+# Contributor(s):
+#  Chase Phillips <chase@mozilla.org>
 #
-################################################################################
+# Alternatively, the contents of this file may be used under the terms of
+# either of the GNU General Public License Version 2 or later (the "GPL"),
+# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
 #
-# We now use a 2-pass build system.  This needs to be re-thought....
-#
-# Pass 1. export  - Create generated headers and stubs.  Publish public headers
-#                   to dist/include.
-#
-# Pass 2. libs - Create libraries & programs.  Publish them to dist/bin.
-#
-# Parameters to this makefile (set these before including):
-#
-# a)
-#	TARGETS	-- the target to create
-#			(defaults to $LIBRARY $PROGRAM)
-# b)
-#	DIRS	-- subdirectories for make to recurse on
-#			(the 'all' rule builds $TARGETS $DIRS)
-# c)
-#	CSRCS, CPPSRCS -- .c and .cpp files to compile
-#			(used to define $OBJS)
-# d)
-#	PROGRAM	-- the target program name to create from $OBJS
-# d2)
-#	SIMPLE_PROGRAMS	-- Compiles Foo.cpp Bar.cpp into Foo, Bar executables.
-# e)
-#	LIBRARY_NAME	-- the target library name to create from $OBJS
-#
-################################################################################
+# ***** END LICENSE BLOCK *****
 ifndef topsrcdir
 topsrcdir		= $(DEPTH)
 endif
@@ -56,10 +46,6 @@ endif
 
 ifndef INCLUDED_CONFIG_MK
 include $(topsrcdir)/config/config.mk
-endif
-
-ifdef CROSS_COMPILE
-HOST_AR_FLAGS		= $(AR_FLAGS)
 endif
 
 ifndef INCLUDED_VERSION_MK
@@ -75,7 +61,7 @@ EXEC			= exec
 endif
 
 # ELOG prints out failed command when building silently (gmake -s).
-ifneq (,$(findstring s,$(MAKEFLAGS)))
+ifneq (,$(findstring -s,$(MAKEFLAGS)))
   ELOG := $(EXEC) sh $(BUILD_TOOLS)/print-failed-commands.sh
 else
   ELOG :=
@@ -84,14 +70,14 @@ endif
 ifeq ($(MOZ_OS2_TOOLS),VACPP)
 _LIBNAME_RELATIVE_PATHS=1
 else
-ifeq ($(OS_ARCH),WINNT)
+ifeq (,$(filter-out WINNT WINCE,$(OS_ARCH)))
 ifndef GNU_CC
 _LIBNAME_RELATIVE_PATHS=1
 endif
 endif
 endif
 
-ifeq ($(OS_ARCH),WINNT)
+ifeq (,$(filter-out WINNT WINCE,$(OS_ARCH)))
 PWD := $(shell pwd)
 _VPATH_SRCS = $(if $(filter /%,$<),$<,$(PWD)/$<)
 else
@@ -122,7 +108,7 @@ endif
 
 ifndef LIBRARY
 ifdef LIBRARY_NAME
-ifneq (,$(filter OS2 WINNT,$(OS_ARCH)))
+ifneq (,$(filter OS2 WINNT WINCE,$(OS_ARCH)))
 ifdef SHORT_LIBNAME
 LIBRARY_NAME		:= $(SHORT_LIBNAME)
 endif
@@ -151,7 +137,7 @@ ifeq ($(OS_ARCH),OS2)
 DEF_FILE		:= $(SHARED_LIBRARY:.dll=.def)
 endif
 
-ifneq (,$(filter OS2 WINNT,$(OS_ARCH)))
+ifneq (,$(filter OS2 WINNT WINCE,$(OS_ARCH)))
 IMPORT_LIBRARY		:= $(LIB_PREFIX)$(LIBRARY_NAME).$(IMPORT_LIB_SUFFIX)
 endif
 
@@ -183,20 +169,20 @@ LIBRARY			:= $(NULL)
 endif
 endif
 
-ifeq ($(OS_ARCH),WINNT)
+ifeq (,$(filter-out WINNT WINCE,$(OS_ARCH)))
 ifndef GNU_CC
 
-ifdef LIBRARY_NAME
-PDBFILE=$(LIBRARY_NAME).pdb
-ifdef MOZ_DEBUG
-CODFILE=$(LIBRARY_NAME).cod
-endif
-else
+# Previously when possible we wrote to $LIBRARY_NAME.pdb.  This broke parallel
+# make builds on Windows.  Now we just write to a pdb file per compiled file.
+# See bug 286179 <https://bugzilla.mozilla.org/show_bug.cgi?id=286179> for
+# details. -- chase@mozilla.org
+#
+# Changes to the PDBFILE naming scheme should also be reflected in HOST_PDBFILE
+# 
 PDBFILE=$(basename $(@F)).pdb
 ifdef MOZ_DEBUG
 CODFILE=$(basename $(@F)).cod
 endif
-endif # LIBRARY_NAME
 
 ifdef MOZ_MAPINFO
 ifdef LIBRARY_NAME
@@ -207,11 +193,11 @@ endif # LIBRARY_NAME
 endif # MOZ_MAPINFO
 
 ifdef DEFFILE
-OS_LDFLAGS += /DEF:$(DEFFILE)
+OS_LDFLAGS += -DEF:$(DEFFILE)
 endif
 
 ifdef MAPFILE
-OS_LDFLAGS += /MAP:$(MAPFILE) /MAPINFO:LINES
+OS_LDFLAGS += -MAP:$(MAPFILE) -MAPINFO:LINES
 #CFLAGS += -Fm$(MAPFILE)
 #CXXFLAGS += -Fm$(MAPFILE)
 endif
@@ -222,7 +208,23 @@ endif
 #endif
 
 endif # !GNU_CC
+
+ifdef ENABLE_CXX_EXCEPTIONS
+ifdef GNU_CC
+CXXFLAGS		+= -fexceptions
+else
+ifeq (,$(filter-out 1200 1300 1310,$(_MSC_VER)))
+CXXFLAGS		+= -GX
+else
+CXXFLAGS		+= -EHsc
+endif # _MSC_VER
+endif # GNU_CC
+endif # ENABLE_CXX_EXCEPTIONS
 endif # WINNT
+
+ifeq (,$(filter-out WINNT WINCE,$(HOST_OS_ARCH)))
+HOST_PDBFILE=$(basename $(@F)).pdb
+endif
 
 ifndef TARGETS
 TARGETS			= $(LIBRARY) $(SHARED_LIBRARY) $(PROGRAM) $(SIMPLE_PROGRAMS) $(HOST_LIBRARY) $(HOST_PROGRAM) $(HOST_SIMPLE_PROGRAMS)
@@ -241,7 +243,7 @@ OBJS	= $(strip $(_OBJS))
 endif
 
 ifndef HOST_OBJS
-HOST_OBJS		= $(addprefix host_,$(HOST_CSRCS:.c=.o))
+HOST_OBJS		= $(addprefix host_,$(HOST_CSRCS:.c=.$(OBJ_SUFFIX)))
 endif
 
 ifeq ($(MOZ_OS2_TOOLS),VACPP)
@@ -279,7 +281,7 @@ GARBAGE			+= $(SIMPLE_PROGRAMS:%=%.$(OBJ_SUFFIX))
 endif
 
 ifdef HOST_SIMPLE_PROGRAMS
-GARBAGE			+= $(addprefix host_,$(HOST_SIMPLE_PROGRAMS:%=%.o))
+GARBAGE			+= $(addprefix host_,$(HOST_SIMPLE_PROGRAMS:%=%.$(OBJ_SUFFIX)))
 endif
 
 #
@@ -318,8 +320,6 @@ ifdef MOZ_UPDATE_XTERM
 UPDATE_TITLE = sed -e "s!Y!$@ in $(shell $(BUILD_TOOLS)/print-depth-path.sh)/$$d!" $(MOZILLA_DIR)/config/xterm.str;
 endif
 
-EXIT_ON_ERROR := set -e; # Shell loops continue past errors without this.
-
 ifdef DIRS
 LOOP_OVER_DIRS = \
     @$(EXIT_ON_ERROR) \
@@ -337,6 +337,15 @@ LOOP_OVER_MOZ_DIRS = \
 
 endif
 
+ifdef TOOL_DIRS
+LOOP_OVER_TOOL_DIRS = \
+    @$(EXIT_ON_ERROR) \
+    for d in $(TOOL_DIRS); do \
+	    $(UPDATE_TITLE) \
+	    $(MAKE) -C $$d $@; \
+	done
+endif
+
 #
 # Now we can differentiate between objects used to build a library, and
 # objects used to build an executable in the same directory.
@@ -347,12 +356,6 @@ endif
 
 ifndef HOST_PROGOBJS
 HOST_PROGOBJS		= $(HOST_OBJS)
-endif
-
-# SUBMAKEFILES: List of Makefiles for next level down.
-#   This is used to update or create the Makefiles before invoking them.
-ifneq ($(DIRS),)
-SUBMAKEFILES		:= $(addsuffix /Makefile, $(filter-out $(STATIC_MAKEFILES), $(DIRS)))
 endif
 
 # MAKE_DIRS: List of directories to build while looping over directories.
@@ -539,6 +542,13 @@ else
 OUTOPTION = -o # eol
 endif # WINNT && !GNU_CC
 endif # VACPP
+ifneq (,$(filter WINCE,$(OS_ARCH)))
+OUTOPTION = -Fo# eol
+endif
+
+ifeq ($(OS_TARGET), WINCE)
+OUTOPTION = -Fo# eol
+endif
 
 ifdef GRE_MODULE
 ifndef DISABLE_DIST_GRE
@@ -550,6 +560,12 @@ endif
 
 ################################################################################
 
+# The root makefile doesn't want to do a plain export/libs, because
+# of the tiers and because of libxul. Suppress the default rules in favor
+# of something else. Makefiles which use this var *must* provide a sensible
+# default rule before including rules.mk
+ifndef SUPPRESS_DEFAULT_RULES
+
 all:: 
 	$(MAKE) export
 	$(MAKE) libs
@@ -559,6 +575,8 @@ alldep::
 	$(MAKE) export
 	$(MAKE) depend
 	$(MAKE) libs
+
+endif # SUPPRESS_DEFAULT_RULES
 
 # Do everything from scratch
 everything::
@@ -586,8 +604,8 @@ endif
 
 # Target to only regenerate makefiles
 makefiles: $(SUBMAKEFILES)
-ifdef DIRS
-	@for d in $(filter-out $(STATIC_MAKEFILES), $(DIRS)); do\
+ifneq (,$(DIRS)$(TOOL_DIRS))
+	@for d in $(TOOL_DIRS) $(filter-out $(STATIC_MAKEFILES), $(DIRS)); do\
 		$(UPDATE_TITLE) 				\
 		$(MAKE) -C $$d $@;				\
 	done
@@ -595,6 +613,16 @@ endif
 
 export:: $(SUBMAKEFILES) $(MAKE_DIRS)
 	+$(LOOP_OVER_DIRS)
+	+$(LOOP_OVER_TOOL_DIRS)
+
+tools:: $(SUBMAKEFILES) $(MAKE_DIRS)
+	+$(LOOP_OVER_DIRS)
+ifdef TOOL_DIRS
+	@for d in $(TOOL_DIRS); do \
+	    $(UPDATE_TITLE) \
+	    $(MAKE) -C $$d libs; \
+	done
+endif
 
 #
 # Rule to create list of libraries for final link
@@ -615,34 +643,6 @@ endif # IS_COMPONENT
 endif # EXPORT_LIBRARY
 endif # LIBRARY_NAME
 
-# Dependent libs
-ifdef USE_DEPENDENT_LIBS
-ifdef IS_COMPONENT
-
-ifeq (,$(filter-out OS2 WINNT,$(OS_ARCH))$(GNU_CXX))
-DEPENDENT_LIBS = $(filter-out %_s$(DLL_SUFFIX), $(patsubst %.$(IMPORT_LIB_SUFFIX),$(LIB_PREFIX)%$(DLL_SUFFIX),$(notdir $(filter %.$(IMPORT_LIB_SUFFIX), $(EXTRA_DSO_LDOPTS)))))
-else
-DEPENDENT_LIBS = $(filter-out %_s$(DLL_SUFFIX), $(patsubst -l%,$(DLL_PREFIX)%$(DLL_SUFFIX),$(filter -l%, $(EXTRA_DSO_LDOPTS))))
-endif
-
-ifneq (,$(strip $(DEPENDENT_LIBS)))
-DEFINES	+= -DHAVE_DEPENDENT_LIBS
-INCLUDES += -I.
-# This must match value in nsIGenericFactory.h
-DEPENDENT_LIBS_H = dependentLibs.h
-GARBAGE += $(DEPENDENT_LIBS_H)
-
-export:: $(DEPENDENT_LIBS_H)
-
-$(DEPENDENT_LIBS_H): Makefile Makefile.in
-	@rm -f $@
-	echo "#define DEPENDENT_LIBS $(foreach f,$(DEPENDENT_LIBS),\"${f}\",) " > $@
-
-endif
-endif
-endif
-
-
 # Create dependencies on static libraries
 LIBS_DEPS = $(filter %.$(LIB_SUFFIX), $(LIBS))
 HOST_LIBS_DEPS = $(filter %.$(LIB_SUFFIX), $(HOST_LIBS))
@@ -661,7 +661,7 @@ endif
 endif # LIBRARY
 endif # BUILD_STATIC_LIBS || FORCE_STATIC_LIB
 ifdef MAPS
-	$(INSTALL) $(IFLAGS1) $(MAPS) $(DIST)/bin
+	$(INSTALL) $(IFLAGS1) $(MAPS) $(FINAL_TARGET)
 endif
 ifdef SHARED_LIBRARY
 ifdef IS_COMPONENT
@@ -674,17 +674,11 @@ ifdef BEOS_ADDON_WORKAROUND
 endif
 endif
 endif # GRE_MODULE
-ifeq ($(OS_ARCH),OS2)
-	$(INSTALL) $(IFLAGS2) $(IMPORT_LIBRARY) $(DIST)/lib/components
-else
-	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(DIST)/lib/components
-	$(ELF_DYNSTR_GC) $(DIST)/lib/components/$(SHARED_LIBRARY)
-endif
 ifndef _SKIP_OLD_GRE_INSTALL
-	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(DIST)/bin/components
-	$(ELF_DYNSTR_GC) $(DIST)/bin/components/$(SHARED_LIBRARY)
+	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(FINAL_TARGET)/components
+	$(ELF_DYNSTR_GC) $(FINAL_TARGET)/components/$(SHARED_LIBRARY)
 ifdef BEOS_ADDON_WORKAROUND
-	( cd $(DIST)/bin/components && $(CC) -nostart -o $(SHARED_LIBRARY).stub $(SHARED_LIBRARY) )
+	( cd $(FINAL_TARGET)/components && $(CC) -nostart -o $(SHARED_LIBRARY).stub $(SHARED_LIBRARY) )
 endif
 endif # ! _SKIP_OLD_GRE_INSTALL
 else # ! IS_COMPONENT
@@ -696,15 +690,16 @@ ifdef BEOS_ADDON_WORKAROUND
 endif
 endif
 endif # GRE_MODULE
-ifneq (,$(filter OS2 WINNT,$(OS_ARCH)))
+
+ifneq (,$(filter OS2 WINNT WINCE,$(OS_ARCH)))
 	$(INSTALL) $(IFLAGS2) $(IMPORT_LIBRARY) $(DIST)/lib
 else
 	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(DIST)/lib
 endif
 ifndef _SKIP_OLD_GRE_INSTALL
-	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(DIST)/bin
+	$(INSTALL) $(IFLAGS2) $(SHARED_LIBRARY) $(FINAL_TARGET)
 ifdef BEOS_ADDON_WORKAROUND
-	( cd $(DIST)/bin && $(CC) -nostart -o $(SHARED_LIBRARY).stub $(SHARED_LIBRARY) )
+	( cd $(FINAL_TARGET) && $(CC) -nostart -o $(SHARED_LIBRARY).stub $(SHARED_LIBRARY) )
 endif
 endif # ! _SKIP_OLD_GRE_INSTALL
 endif # IS_COMPONENT
@@ -716,11 +711,11 @@ ifndef DISABLE_DIST_GRE
 endif
 endif
 ifndef _SKIP_OLD_GRE_INSTALL
-	$(INSTALL) $(IFLAGS2) $(PROGRAM) $(DIST)/bin
+	$(INSTALL) $(IFLAGS2) $(PROGRAM) $(FINAL_TARGET)
 endif
 endif
 ifdef SIMPLE_PROGRAMS
-	$(INSTALL) $(IFLAGS2) $(SIMPLE_PROGRAMS) $(DIST)/bin
+	$(INSTALL) $(IFLAGS2) $(SIMPLE_PROGRAMS) $(FINAL_TARGET)
 endif
 ifdef HOST_PROGRAM
 	$(INSTALL) $(IFLAGS2) $(HOST_PROGRAM) $(DIST)/host/bin
@@ -733,10 +728,14 @@ ifdef HOST_LIBRARY
 endif
 endif # !NO_DIST_INSTALL
 	+$(LOOP_OVER_DIRS)
+ifndef MOZ_ENABLE_LIBXUL
+	+$(LOOP_OVER_TOOL_DIRS)
+endif
 
 ##############################################
 install:: $(SUBMAKEFILES) $(MAKE_DIRS)
 	+$(LOOP_OVER_DIRS)
+	+$(LOOP_OVER_TOOL_DIRS)
 
 install:: $(EXPORTS)
 ifndef NO_INSTALL
@@ -797,8 +796,8 @@ endif # NO_INSTALL
 checkout:
 	$(MAKE) -C $(topsrcdir) -f client.mk checkout
 
-run_viewer: $(DIST)/bin/viewer
-	cd $(DIST)/bin; \
+run_viewer: $(FINAL_TARGET)/viewer
+	cd $(FINAL_TARGET); \
 	MOZILLA_FIVE_HOME=`pwd` \
 	LD_LIBRARY_PATH=".:$(LIBS_PATH):$$LD_LIBRARY_PATH" \
 	viewer
@@ -807,13 +806,15 @@ clean clobber realclean clobber_all:: $(SUBMAKEFILES)
 	-rm -f $(ALL_TRASH)
 	-rm -rf $(ALL_TRASH_DIRS)
 	+$(LOOP_OVER_DIRS)
+	+$(LOOP_OVER_TOOL_DIRS)
 
 distclean:: $(SUBMAKEFILES)
 	+$(LOOP_OVER_DIRS)
+	+$(LOOP_OVER_TOOL_DIRS)
 	-rm -rf $(ALL_TRASH_DIRS) 
 	-rm -f $(ALL_TRASH)  \
 	Makefile .HSancillary \
-	$(wildcard *.$(OBJ_SUFFIX)) $(wildcard *.ho) $(wildcard host_*.o) \
+	$(wildcard *.$(OBJ_SUFFIX)) $(wildcard *.ho) $(wildcard host_*.o*) \
 	$(wildcard *.$(LIB_SUFFIX)) $(wildcard *$(DLL_SUFFIX)) \
 	$(wildcard *.$(IMPORT_LIB_SUFFIX))
 ifeq ($(MOZ_OS2_TOOLS),VACPP)
@@ -829,11 +830,15 @@ alltags:
 # creates OBJS, links with LIBS to create Foo
 #
 $(PROGRAM): $(PROGOBJS) $(LIBS_DEPS) $(EXTRA_DEPS) $(EXE_DEF_FILE) $(RESFILE) Makefile Makefile.in
-ifeq ($(MOZ_OS2_TOOLS),VACPP)
-	$(LD) -OUT:$@ $(LDFLAGS) $(PROGOBJS) $(LIBS) $(EXTRA_LIBS) $(OS_LIBS) $(EXE_DEF_FILE) /ST:0x100000
+ifeq (WINCE,$(OS_ARCH))
+	$(LD) -NOLOGO -OUT:$@ $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(PROGOBJS) $(RESFILE) $(LIBS) $(EXTRA_LIBS) $(OS_LIBS)
 else
+ifeq ($(MOZ_OS2_TOOLS),VACPP)
+	$(LD) -OUT:$@ $(LDFLAGS) $(PROGOBJS) $(LIBS) $(EXTRA_LIBS) $(OS_LIBS) $(EXE_DEF_FILE) -ST:0x100000
+else
+
 ifeq (_WINNT,$(GNU_CC)_$(OS_ARCH))
-	$(LD) /NOLOGO /OUT:$@ /PDB:$(PDBFILE) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(PROGOBJS) $(RESFILE) $(LIBS) $(EXTRA_LIBS) $(OS_LIBS)
+	$(LD) -NOLOGO -OUT:$@ -PDB:$(PDBFILE) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(PROGOBJS) $(RESFILE) $(LIBS) $(EXTRA_LIBS) $(OS_LIBS)
 else
 ifeq ($(CPP_PROG_LINK),1)
 	$(CCC) -o $@ $(CXXFLAGS) $(WRAP_MALLOC_CFLAGS) $(PROGOBJS) $(RESFILE) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(LIBS_DIR) $(LIBS) $(OS_LIBS) $(EXTRA_LIBS) $(BIN_FLAGS) $(WRAP_MALLOC_LIB) $(PROFILER_LIBS) $(EXE_DEF_FILE)
@@ -842,6 +847,8 @@ else # ! CPP_PROG_LINK
 endif # CPP_PROG_LINK
 endif # WINNT && !GNU_CC
 endif # OS2
+endif # WINCE
+
 ifdef ENABLE_STRIP
 	$(STRIP) $@
 endif
@@ -857,12 +864,16 @@ endif # BeOS
 
 $(HOST_PROGRAM): $(HOST_PROGOBJS) $(HOST_LIBS_DEPS) $(HOST_EXTRA_DEPS) Makefile Makefile.in
 ifeq ($(MOZ_OS2_TOOLS),VACPP)
-	$(LD) -OUT:$@ $(LDFLAGS) $(HOST_OBJS) $(HOST_LIBS) $(EXTRA_LIBS) /ST:0x100000
+	$(LD) -OUT:$@ $(LDFLAGS) $(HOST_OBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS) -ST:0x100000
+else
+ifeq (WINCE,$(OS_ARCH))
+	$(HOST_LD) -NOLOGO -OUT:$@ $(HOST_OBJS) $(WIN32_EXE_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
 ifeq (_WINNT,$(GNU_CC)_$(OS_ARCH))
-	$(HOST_LD) /NOLOGO /OUT:$@ /PDB:$(PDBFILE) $(HOST_OBJS) $(WIN32_EXE_LDFLAGS) $(HOST_LIBS) $(EXTRA_LIBS)
+	$(HOST_LD) -NOLOGO -OUT:$@ -PDB:$(PDBFILE) $(HOST_OBJS) $(WIN32_EXE_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
 	$(HOST_CC) -o $@ $(HOST_CFLAGS) $(HOST_LDFLAGS) $(HOST_PROGOBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+endif
 endif
 endif
 
@@ -875,11 +886,14 @@ endif
 # creates Foo.o Bar.o, links with LIBS to create Foo, Bar.
 #
 $(SIMPLE_PROGRAMS): %$(BIN_SUFFIX): %.$(OBJ_SUFFIX) $(LIBS_DEPS) $(EXTRA_DEPS) Makefile Makefile.in
+ifeq (WINCE,$(OS_ARCH))
+	$(LD) -nologo  -entry:main -out:$@ $< $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(LIBS) $(EXTRA_LIBS) $(OS_LIBS)
+else
 ifeq ($(MOZ_OS2_TOOLS),VACPP)
-	$(LD) /Out:$@ $< $(LDFLAGS) $(LIBS) $(OS_LIBS) $(EXTRA_LIBS) $(WRAP_MALLOC_LIB) $(PROFILER_LIBS)
+	$(LD) -Out:$@ $< $(LDFLAGS) $(LIBS) $(OS_LIBS) $(EXTRA_LIBS) $(WRAP_MALLOC_LIB) $(PROFILER_LIBS)
 else
 ifeq (_WINNT,$(GNU_CC)_$(OS_ARCH))
-	$(LD) /nologo /out:$@ /pdb:$(PDBFILE) $< $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(LIBS) $(EXTRA_LIBS) $(OS_LIBS)
+	$(LD) -nologo -out:$@ -pdb:$(PDBFILE) $< $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(LIBS) $(EXTRA_LIBS) $(OS_LIBS)
 else
 ifeq ($(CPP_PROG_LINK),1)
 	$(CCC) $(WRAP_MALLOC_CFLAGS) $(CXXFLAGS) -o $@ $< $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(LIBS_DIR) $(LIBS) $(OS_LIBS) $(EXTRA_LIBS) $(WRAP_MALLOC_LIB) $(PROFILER_LIBS) $(BIN_FLAGS)
@@ -888,6 +902,8 @@ else
 endif # CPP_PROG_LINK
 endif # WINNT && !GNU_CC
 endif # OS/2 VACPP
+endif # WINCE
+
 ifdef ENABLE_STRIP
 	$(STRIP) $@
 endif
@@ -895,8 +911,12 @@ ifdef MOZ_POST_PROGRAM_COMMAND
 	$(MOZ_POST_PROGRAM_COMMAND) $@
 endif
 
-$(HOST_SIMPLE_PROGRAMS): host_%$(HOST_BIN_SUFFIX): host_%.o $(HOST_LIBS_DEPS) $(HOST_EXTRA_DEPS) Makefile Makefile.in
+$(HOST_SIMPLE_PROGRAMS): host_%$(HOST_BIN_SUFFIX): host_%.$(OBJ_SUFFIX) $(HOST_LIBS_DEPS) $(HOST_EXTRA_DEPS) Makefile Makefile.in
+ifeq (WINCE,$(OS_ARCH))
+	$(HOST_LD) -NOLOGO -OUT:$@ $(WIN32_EXE_LDFLAGS) $< $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+else
 	$(HOST_CC) $(OUTOPTION)$@ $(HOST_CFLAGS) $(INCLUDES) $< $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+endif
 
 #
 # Purify target.  Solaris/sparc only to start.
@@ -910,7 +930,7 @@ else
 	$(PURIFY) $(CC) -o $^.pure $(CFLAGS) $(PROGOBJS) $(LDFLAGS) $(LIBS_DIR) $(LIBS) $(OS_LIBS) $(EXTRA_LIBS)
 endif
 ifndef NO_DIST_INSTALL
-	$(INSTALL) $(IFLAGS2) $^.pure $(DIST)/bin
+	$(INSTALL) $(IFLAGS2) $^.pure $(FINAL_TARGET)
 endif
 
 quantify: $(PROGRAM)
@@ -920,7 +940,7 @@ else
 	$(QUANTIFY) $(CC) -o $^.quantify $(CFLAGS) $(PROGOBJS) $(LDFLAGS) $(LIBS_DIR) $(LIBS) $(OS_LIBS) $(EXTRA_LIBS)
 endif
 ifndef NO_DIST_INSTALL
-	$(INSTALL) $(IFLAGS2) $^.quantify $(DIST)/bin
+	$(INSTALL) $(IFLAGS2) $^.quantify $(FINAL_TARGET)
 endif
 
 #
@@ -928,7 +948,7 @@ endif
 # that are built using other static libraries.  Confused...?
 #
 ifdef SHARED_LIBRARY_LIBS
-ifeq (,$(GNU_LD)$(filter-out OS2 WINNT, $(OS_ARCH)))
+ifeq (,$(GNU_LD)$(filter-out OS2 WINNT WINCE, $(OS_ARCH)))
 ifneq (,$(BUILD_STATIC_LIBS)$(FORCE_STATIC_LIB))
 LOBJS	+= $(SHARED_LIBRARY_LIBS)
 endif
@@ -945,7 +965,7 @@ endif
 
 $(LIBRARY): $(OBJS) $(LOBJS) $(SHARED_LIBRARY_LIBS) $(EXTRA_DEPS) Makefile Makefile.in
 	rm -f $@
-ifneq (,$(GNU_LD)$(filter-out OS2 WINNT, $(OS_ARCH)))
+ifneq (,$(GNU_LD)$(filter-out OS2 WINNT WINCE, $(OS_ARCH)))
 ifdef SHARED_LIBRARY_LIBS
 	@rm -f $(SUB_LOBJS)
 	@for lib in $(SHARED_LIBRARY_LIBS); do $(AR_EXTRACT) $${lib}; $(CLEANUP2); done
@@ -955,7 +975,7 @@ endif
 	$(RANLIB) $@
 	@rm -f foodummyfilefoo $(SUB_LOBJS)
 
-ifeq ($(OS_ARCH),WINNT)
+ifeq (,$(filter-out WINNT WINCE, $(OS_ARCH)))
 $(IMPORT_LIBRARY): $(SHARED_LIBRARY)
 endif
 
@@ -1019,9 +1039,9 @@ ifdef SHARED_LIBRARY_LIBS
 endif # SHARED_LIBRARY_LIBS
 endif # NO_LD_ARCHIVE_FLAGS
 	$(MKSHLIB) $(SHLIB_LDSTARTFILE) $(OBJS) $(LOBJS) $(SUB_SHLOBJS) $(RESFILE) $(LDFLAGS) $(EXTRA_DSO_LDOPTS) $(OS_LIBS) $(EXTRA_LIBS) $(DEF_FILE) $(SHLIB_LDENDFILE)
-	@rm -f foodummyfilefoo $(SUB_SHLOBJS)
+	@rm -f foodummyfilefoo $(SUB_SHLOBJS) $(DELETE_AFTER_LINK)
 else # os2 vacpp
-	$(MKSHLIB) /O:$@ /DLL /INC:_dllentry $(LDFLAGS) $(OBJS) $(LOBJS) $(EXTRA_DSO_LDOPTS) $(OS_LIBS) $(EXTRA_LIBS) $(DEF_FILE)
+	$(MKSHLIB) -O:$@ -DLL -INC:_dllentry $(LDFLAGS) $(OBJS) $(LOBJS) $(EXTRA_DSO_LDOPTS) $(OS_LIBS) $(EXTRA_LIBS) $(DEF_FILE)
 endif # !os2 vacpp
 	chmod +x $@
 ifndef NO_COMPONENT_LINK_MAP
@@ -1047,15 +1067,14 @@ ifndef COMPILER_DEPEND
 #
 _MDDEPFILE = $(MDDEPDIR)/$(@F).pp
 
-ifeq (,$(CROSS_COMPILE)$(filter-out WINNT,$(OS_ARCH)))
-_dos_srcdir := $(shell cygpath -w $(srcdir) | sed 's|\\|/|g')
+ifeq (,$(CROSS_COMPILE)$(filter-out WINCE WINNT,$(OS_ARCH)))
 define MAKE_DEPS_AUTO
 if test -d $(@D); then \
 	echo "Building deps for $<"; \
 	touch $(_MDDEPFILE) && \
 	$(MKDEPEND) -o'.$(OBJ_SUFFIX)' -f$(_MDDEPFILE) $(DEFINES) $(ACDEFINES) $(INCLUDES) $< >/dev/null 2>&1 && \
 	mv $(_MDDEPFILE) $(_MDDEPFILE).old && \
-	cat $(_MDDEPFILE).old | sed -e "s|^$(srcdir)/||" -e "s|^$(_dos_srcdir)/||" > $(_MDDEPFILE) && rm -f $(_MDDEPFILE).old ; \
+	cat $(_MDDEPFILE).old | sed -e "s|^$(srcdir)/||" -e "s|^$(win_srcdir)/||" > $(_MDDEPFILE) && rm -f $(_MDDEPFILE).old ; \
 fi
 endef
 else
@@ -1074,7 +1093,7 @@ endif # !COMPILER_DEPEND
 endif # MOZ_AUTO_DEPS
 
 # Rules for building native targets must come first because of the host_ prefix
-host_%.o: %.c Makefile Makefile.in
+host_%.$(OBJ_SUFFIX): %.c Makefile Makefile.in
 	$(REPORT_BUILD)
 	$(ELOG) $(HOST_CC) $(OUTOPTION)$@ -c $(HOST_CFLAGS) $(INCLUDES) $(NSPR_CFLAGS) $(_VPATH_SRCS)
 
@@ -1151,7 +1170,7 @@ $(OBJ_PREFIX)%.$(OBJ_SUFFIX): %.m Makefile Makefile.in
 %.res: %.rc
 	@echo Creating Resource file: $@
 ifeq ($(OS_ARCH),OS2)
-	$(RC) $(subst /,\,$(RCFLAGS:-D%=-d %)) -i $(subst /,\,$(srcdir)) -r $< $@
+	$(RC) $(RCFLAGS:-D%=-d %) -i $(subst /,\,$(srcdir)) -r $< $@
 else
 ifdef GNU_CC
 	$(RC) $(RCFLAGS) $(filter-out -U%,$(DEFINES)) $(INCLUDES:-I%=--include-dir %) $(OUTOPTION)$@ $(_VPATH_SRCS)
@@ -1182,15 +1201,22 @@ endif
 ###############################################################################
 # Update Makefiles
 ###############################################################################
+
+# In GNU make 3.80, makefiles must use the /cygdrive syntax, even if we're
+# processing them with AS perl. See bug 232003
+ifdef AS_PERL
+CYGWIN_TOPSRCDIR = -nowrap -p $(topsrcdir) -wrap
+endif
+
 # Note: Passing depth to make-makefile is optional.
 #       It saves the script some work, though.
 Makefile: Makefile.in
-	@$(PERL) $(AUTOCONF_TOOLS)/make-makefile -t $(topsrcdir) -d $(DEPTH) 
+	@$(PERL) $(AUTOCONF_TOOLS)/make-makefile -t $(topsrcdir) -d $(DEPTH) $(CYGWIN_TOPSRCDIR)
 
 ifdef SUBMAKEFILES
 # VPATH does not work on some machines in this case, so add $(srcdir)
 $(SUBMAKEFILES): % : $(srcdir)/%.in
-	$(PERL) $(AUTOCONF_TOOLS)/make-makefile -t $(topsrcdir) -d $(DEPTH) $@
+	$(PERL) $(AUTOCONF_TOOLS)/make-makefile -t $(topsrcdir) -d $(DEPTH) $(CYGWIN_TOPSRCDIR) $@
 endif
 
 ifdef AUTOUPDATE_CONFIGURE
@@ -1210,11 +1236,15 @@ $(SDK_PUBLIC) $(PUBLIC)::
 	@if test ! -d $@; then echo Creating $@; rm -rf $@; $(NSINSTALL) -D $@; else true; fi
 endif
 
+ifneq ($(XPI_NAME),)
+export::
+	@if test ! -d $(FINAL_TARGET); then echo Creating $(FINAL_TARGET); rm -fr $(FINAL_TARGET); $(NSINSTALL) -D $(FINAL_TARGET); else true; fi
+endif
+
 ifneq ($(EXPORTS),)
 ifndef NO_DIST_INSTALL
 export:: $(EXPORTS) $(PUBLIC)
 	$(INSTALL) $(IFLAGS1) $^
-	$(PERL) -I$(MOZILLA_DIR)/config $(MOZILLA_DIR)/config/build-list.pl $(PUBLIC)/.headerlist $(notdir $(filter-out $(PUBLIC),$^))
 endif # NO_DIST_INSTALL
 endif 
 
@@ -1224,7 +1254,6 @@ export:: $(PUBLIC) $(SDK_PUBLIC)
 
 export:: $(SDK_HEADERS) 
 	$(INSTALL) $(IFLAGS1) $^ $(PUBLIC)
-	$(PERL) -I$(MOZILLA_DIR)/config $(MOZILLA_DIR)/config/build-list.pl $(PUBLIC)/.headerlist $(notdir $^)
 	$(INSTALL) $(IFLAGS1) $^ $(SDK_PUBLIC)
 endif # NO_DIST_INSTALL
 endif 
@@ -1237,11 +1266,15 @@ ifdef GRE_MODULE
 PREF_DIST_DIR    = $(GRE_DIST)
 PREF_DIR = greprefs
 else
-PREF_DIST_DIR    = $(DIST)/bin
+PREF_DIST_DIR    = $(FINAL_TARGET)
+ifdef XPI_NAME
+PREF_DIR = defaults/preferences
+else
 PREF_DIR = defaults/pref
 endif
+endif
 
-$(DIST)/bin/$(PREF_DIR) $(GRE_DIST)/$(PREF_DIR) $(DESTDIR)$(mozappdir)/$(PREF_DIR):
+$(FINAL_TARGET)/$(PREF_DIR) $(GRE_DIST)/$(PREF_DIR) $(DESTDIR)$(mozappdir)/$(PREF_DIR):
 	@if test ! -d $@; then echo Creating $@; rm -rf $@; $(NSINSTALL) -D $@; else true; fi
 
 # on win32, pref files need CRLF line endings... see bug 206029
@@ -1250,7 +1283,7 @@ PREF_PPFLAGS = --line-endings=crlf
 endif
 
 ifndef NO_DIST_INSTALL
-export:: $(PREF_JS_EXPORTS) $(PREF_DIST_DIR)/$(PREF_DIR)
+libs:: $(PREF_JS_EXPORTS) $(PREF_DIST_DIR)/$(PREF_DIR)
 	$(EXIT_ON_ERROR)  \
 	for i in $(PREF_JS_EXPORTS); \
 	do $(PERL) $(topsrcdir)/config/preprocessor.pl $(PREF_PPFLAGS) $(DEFINES) $(ACDEFINES) $$i > $(PREF_DIST_DIR)/$(PREF_DIR)/`basename $$i`; \
@@ -1258,10 +1291,10 @@ export:: $(PREF_JS_EXPORTS) $(PREF_DIST_DIR)/$(PREF_DIR)
 
 ifdef GRE_MODULE
 ifndef _SKIP_OLD_GRE_INSTALL
-export:: $(PREF_JS_EXPORTS) $(DIST)/bin/$(PREF_DIR)
+libs:: $(PREF_JS_EXPORTS) $(FINAL_TARGET)/$(PREF_DIR)
 	$(EXIT_ON_ERROR)  \
 	for i in $(PREF_JS_EXPORTS); \
-	do $(PERL) $(topsrcdir)/config/preprocessor.pl $(PREF_PPFLAGS) $(DEFINES) $(ACDEFINES) $$i > $(DIST)/bin/$(PREF_DIR)/`basename $$i`; \
+	do $(PERL) $(topsrcdir)/config/preprocessor.pl $(PREF_PPFLAGS) $(DEFINES) $(ACDEFINES) $$i > $(FINAL_TARGET)/$(PREF_DIR)/`basename $$i`; \
 	done
 endif
 endif
@@ -1277,14 +1310,14 @@ endif
 endif
 
 ################################################################################
-# Copy each element of AUTOCFG_JS_EXPORTS to $(DIST)/bin/defaults/autoconfig
+# Copy each element of AUTOCFG_JS_EXPORTS to $(FINAL_TARGET)/defaults/autoconfig
 
 ifneq ($(AUTOCFG_JS_EXPORTS),)
-$(DIST)/bin/defaults/autoconfig::
+$(FINAL_TARGET)/defaults/autoconfig::
 	@if test ! -d $@; then echo Creating $@; rm -rf $@; $(NSINSTALL) -D $@; else true; fi
 
 ifndef NO_DIST_INSTALL
-export:: $(AUTOCFG_JS_EXPORTS) $(DIST)/bin/defaults/autoconfig
+export:: $(AUTOCFG_JS_EXPORTS) $(FINAL_TARGET)/defaults/autoconfig
 	$(INSTALL) $(IFLAGS1) $^
 endif
 
@@ -1332,7 +1365,7 @@ $(XPIDL_GEN_DIR)/%.h: %.idl $(XPIDL_COMPILE) $(XPIDL_GEN_DIR)/.done
 
 ifndef NO_GEN_XPT
 # generate intermediate .xpt files into $(XPIDL_GEN_DIR), then link
-# into $(XPIDL_MODULE).xpt and export it to $(DIST)/bin/components.
+# into $(XPIDL_MODULE).xpt and export it to $(FINAL_TARGET)/components.
 $(XPIDL_GEN_DIR)/%.xpt: %.idl $(XPIDL_COMPILE) $(XPIDL_GEN_DIR)/.done
 	$(REPORT_BUILD)
 	$(ELOG) $(XPIDL_COMPILE) -m typelib -w -I $(IDL_DIR) -I$(srcdir) -o $(XPIDL_GEN_DIR)/$* $(_VPATH_SRCS)
@@ -1351,7 +1384,7 @@ ifndef DISABLE_DIST_GRE
 endif
 endif
 ifndef _SKIP_OLD_GRE_INSTALL
-	$(INSTALL) $(IFLAGS1) $(XPIDL_GEN_DIR)/$(XPIDL_MODULE).xpt $(DIST)/bin/components
+	$(INSTALL) $(IFLAGS1) $(XPIDL_GEN_DIR)/$(XPIDL_MODULE).xpt $(FINAL_TARGET)/components
 endif
 endif
 
@@ -1381,7 +1414,6 @@ endif
 export:: $(patsubst %.idl,$(XPIDL_GEN_DIR)/%.h, $(XPIDLSRCS)) 
 ifndef NO_DIST_INSTALL
 	$(INSTALL) $(IFLAGS1) $^ $(PUBLIC)
-	$(PERL) -I$(MOZILLA_DIR)/config $(MOZILLA_DIR)/config/build-list.pl $(PUBLIC)/.headerlist $(notdir $^)
 endif # NO_DIST_INSTALL
 
 
@@ -1418,6 +1450,7 @@ export-idl:: $(XPIDLSRCS) $(SDK_XPIDLSRCS) $(IDL_DIR)
 endif
 endif
 	+$(LOOP_OVER_DIRS)
+	+$(LOOP_OVER_TOOL_DIRS)
 
 
 
@@ -1435,7 +1468,6 @@ endif # NO_DIST_INSTALL
 export:: $(patsubst %.idl,$(XPIDL_GEN_DIR)/%.h, $(SDK_XPIDLSRCS))
 ifndef NO_DIST_INSTALL
 	$(INSTALL) $(IFLAGS1) $^ $(PUBLIC)
-	$(PERL) -I$(MOZILLA_DIR)/config $(MOZILLA_DIR)/config/build-list.pl $(PUBLIC)/.headerlist $(notdir $^)
 	$(INSTALL) $(IFLAGS1) $^ $(SDK_PUBLIC)
 endif
 
@@ -1452,16 +1484,34 @@ endif
 endif # SDK_XPIDLSRCS
 
 ################################################################################
-# Copy each element of EXTRA_COMPONENTS to $(DIST)/bin/components
+# Copy each element of EXTRA_COMPONENTS to $(FINAL_TARGET)/components
 ifdef EXTRA_COMPONENTS
 libs:: $(EXTRA_COMPONENTS)
 ifndef NO_DIST_INSTALL
-	$(INSTALL) $(IFLAGS2) $^ $(DIST)/bin/components
+	$(INSTALL) $(IFLAGS2) $^ $(FINAL_TARGET)/components
 endif
 
 install:: $(EXTRA_COMPONENTS)
 ifndef NO_INSTALL
 	$(SYSINSTALL) $(IFLAGS2) $^ $(DESTDIR)$(mozappdir)/components
+endif
+endif
+
+ifdef EXTRA_PP_COMPONENTS
+libs:: $(EXTRA_PP_COMPONENTS)
+ifndef NO_DIST_INSTALL
+	$(EXIT_ON_ERROR) \
+	for i in $^; \
+	do $(PERL) $(topsrcdir)/config/preprocessor.pl $(DEFINES) $(ACDEFINES) $$i > $(FINAL_TARGET)/components/`basename $$i`; \
+	done
+endif
+
+install:: $(EXTRA_PP_COMPONENTS)
+ifndef NO_INSTALL
+	$(EXIT_ON_ERROR) \
+	for i in $^; \
+	do $(PERL) $(topsrcdir)/config/preprocessor.pl $(DEFINES) $(ACDEFINES) $$i > $(DESTDIR)$(mozappdir)/components/`basename $$i`; \
+	done
 endif
 endif
 
@@ -1495,39 +1545,24 @@ endif # SDK_BINARY
 
 JAR_MANIFEST := $(srcdir)/jar.mn
 
-ifneq (,$(filter flat symlink,$(MOZ_CHROME_FILE_FORMAT)))
-_JAR_REGCHROME_DISABLE_JAR=1
-else
-_JAR_REGCHROME_DISABLE_JAR=0
-endif
-
-ifdef NO_JAR_AUTO_REG
-_JAR_AUTO_REG=-a
-endif
-
-ifeq ($(OS_TARGET),WIN95)
-_NO_FLOCK=-l
-endif
-
 chrome::
 	$(MAKE) realchrome
 	+$(LOOP_OVER_MOZ_DIRS)
+	+$(LOOP_OVER_TOOL_DIRS)
 
 libs realchrome:: $(CHROME_DEPS)
 ifndef NO_DIST_INSTALL
 	@$(EXIT_ON_ERROR) \
 	if test -f $(JAR_MANIFEST); then \
-	  if test ! -d $(DIST)/bin/chrome; then mkdir $(DIST)/bin/chrome; fi; \
+	  if test ! -d $(FINAL_TARGET)/chrome; then $(NSINSTALL) -D $(FINAL_TARGET)/chrome; fi; \
+	  if test ! -d $(MAKE_JARS_TARGET)/chrome; then $(NSINSTALL) -D $(MAKE_JARS_TARGET)/chrome; fi; \
 	  $(PERL) $(MOZILLA_DIR)/config/preprocessor.pl $(XULPPFLAGS) $(DEFINES) $(ACDEFINES) \
 	    $(JAR_MANIFEST) | \
 	  $(PERL) -I$(MOZILLA_DIR)/config $(MOZILLA_DIR)/config/make-jars.pl \
-	    $(if $(filter gtk gtk2 xlib,$(MOZ_WIDGET_TOOLKIT)),-x) \
-	    $(if $(CROSS_COMPILE),-o $(OS_ARCH)) $(_NO_FLOCK) $(_JAR_AUTO_REG) \
-	    -f $(MOZ_CHROME_FILE_FORMAT) -d $(DIST)/bin/chrome \
-	    -s $(srcdir) -t $(topsrcdir) -z $(ZIP) -p $(MOZILLA_DIR)/config/preprocessor.pl -- \
-	    "$(XULPPFLAGS) $(DEFINES) $(ACDEFINES)"; \
+	    -d $(MAKE_JARS_TARGET)/chrome -j $(FINAL_TARGET)/chrome \
+	    $(MAKE_JARS_FLAGS) -- "$(XULPPFLAGS) $(DEFINES) $(ACDEFINES)"; \
 	  $(PERL) -I$(MOZILLA_DIR)/config $(MOZILLA_DIR)/config/make-chromelist.pl \
-	    $(DIST)/bin/chrome $(JAR_MANIFEST) $(_NO_FLOCK); \
+	    $(FINAL_TARGET)/chrome $(JAR_MANIFEST) $(_NO_FLOCK); \
 	fi
 endif
 
@@ -1535,23 +1570,68 @@ install:: $(CHROME_DEPS)
 ifndef NO_INSTALL
 	@$(EXIT_ON_ERROR) \
 	if test -f $(JAR_MANIFEST); then \
-	  if test ! -d $(DESTDIR)$(mozappdir)/chrome; then mkdir $(DESTDIR)$(mozappdir)/chrome; fi; \
+	  if test ! -d $(DESTDIR)$(mozappdir)/chrome; then $(NSINSTALL) -D $(DESTDIR)$(mozappdir)/chrome; fi; \
+	  if test ! -d $(MAKE_JARS_TARGET)/chrome; then $(NSINSTALL) -D $(MAKE_JARS_TARGET)/chrome; fi; \
 	  $(PERL) $(MOZILLA_DIR)/config/preprocessor.pl $(XULPPFLAGS) $(DEFINES) $(ACDEFINES) \
 	    $(JAR_MANIFEST) | \
 	  $(PERL) -I$(MOZILLA_DIR)/config $(MOZILLA_DIR)/config/make-jars.pl \
-	    $(if $(filter gtk gtk2 xlib,$(MOZ_WIDGET_TOOLKIT)),-x) \
-	    $(if $(CROSS_COMPILE),-o $(OS_ARCH)) $(_NO_FLOCK) $(_JAR_AUTO_REG) \
-	    -f $(MOZ_CHROME_FILE_FORMAT) -d $(DESTDIR)$(mozappdir)/chrome \
-	    -s $(srcdir) -t $(topsrcdir) -z $(ZIP) -p $(MOZILLA_DIR)/config/preprocessor.pl -- \
-	    "$(XULPPFLAGS) $(DEFINES) $(ACDEFINES)"; \
+	    -d $(MAKE_JARS_TARGET) -j $(DESTDIR)$(mozappdir)/chrome \
+	    $(MAKE_JARS_FLAGS) -- "$(XULPPFLAGS) $(DEFINES) $(ACDEFINES)"; \
 	  $(PERL) -I$(MOZILLA_DIR)/config $(MOZILLA_DIR)/config/make-chromelist.pl \
 	    $(DESTDIR)$(mozappdir)/chrome $(JAR_MANIFEST) $(_NO_FLOCK); \
 	fi
 endif
 
+ifneq ($(DIST_FILES),)
+libs:: $(DIST_FILES)
+	@$(EXIT_ON_ERROR) \
+	for f in $(DIST_FILES); do \
+		$(PERL) $(MOZILLA_DIR)/config/preprocessor.pl \
+			$(XULAPP_DEFINES) $(DEFINES) $(ACDEFINES) \
+			$(srcdir)/$$f > $(FINAL_TARGET)/`basename $$f`; \
+	done
+endif
+
+ifneq ($(DIST_CHROME_FILES),)
+libs:: $(DIST_CHROME_FILES)
+	@$(EXIT_ON_ERROR) \
+	for f in $(DIST_CHROME_FILES); do \
+		$(PERL) $(MOZILLA_DIR)/config/preprocessor.pl \
+			$(XULAPP_DEFINES) $(DEFINES) $(ACDEFINES) \
+			$(srcdir)/$$f > $(FINAL_TARGET)/chrome/`basename $$f`; \
+	done
+endif
+
+ifneq ($(XPI_PKGNAME),)
+libs realchrome::
+	@echo "Packaging $(XPI_PKGNAME).xpi..."
+	cd $(FINAL_TARGET) && $(ZIP) -qr ../$(XPI_PKGNAME).xpi *
+endif
+
+ifdef INSTALL_EXTENSION_ID
+ifndef XPI_NAME
+$(error XPI_NAME must be set for INSTALL_EXTENSION_ID)
+endif
+
+libs::
+	$(RM) -rf "$(DIST)/bin/extensions/$(INSTALL_EXTENSION_ID)"
+	$(NSINSTALL) -D "$(DIST)/bin/extensions/$(INSTALL_EXTENSION_ID)"
+	cd $(FINAL_TARGET) && tar $(TAR_CREATE_FLAGS) - * | (cd "../../bin/extensions/$(INSTALL_EXTENSION_ID)" && tar -xf -)
+
+install::
+	$(NSINSTALL) -D "$(DESTDIR)$(mozappdir)/extensions/$(INSTALL_EXTENSION_ID)"
+	cd $(FINAL_TARGET) && tar $(TAR_CREATE_FLAGS) - * | (cd "$(DESTDIR)$(mozappdir)/extensions/$(INSTALL_EXTENSION_ID)" && tar -xf -)
+endif
+
+ifneq (,$(filter flat symlink,$(MOZ_CHROME_FILE_FORMAT)))
+_JAR_REGCHROME_DISABLE_JAR=1
+else
+_JAR_REGCHROME_DISABLE_JAR=0
+endif
+
 REGCHROME = $(PERL) -I$(MOZILLA_DIR)/config $(MOZILLA_DIR)/config/add-chrome.pl \
 	$(if $(filter gtk gtk2 xlib,$(MOZ_WIDGET_TOOLKIT)),-x) \
-	$(if $(CROSS_COMPILE),-o $(OS_ARCH)) $(DIST)/bin/chrome/installed-chrome.txt \
+	$(if $(CROSS_COMPILE),-o $(OS_ARCH)) $(FINAL_TARGET)/chrome/installed-chrome.txt \
 	$(_JAR_REGCHROME_DISABLE_JAR)
 
 REGCHROME_INSTALL = $(PERL) -I$(MOZILLA_DIR)/config $(MOZILLA_DIR)/config/add-chrome.pl \
@@ -1616,10 +1696,12 @@ else
 depend:: $(SUBMAKEFILES)
 endif
 	+$(LOOP_OVER_DIRS)
+	+$(LOOP_OVER_TOOL_DIRS)
 
 dependclean:: $(SUBMAKEFILES)
 	rm -f $(MDDEPFILES)
 	+$(LOOP_OVER_DIRS)
+	+$(LOOP_OVER_TOOL_DIRS)
 
 endif # MOZ_AUTO_DEPS
 
@@ -1647,7 +1729,7 @@ ifdef PERL
 # because it handles the case when header files are removed from the build.
 # 'make' would complain that there is no way to build missing headers.
 $(MDDEPDIR)/.all.pp: FORCE
-	@cat $(MDDEPEND_FILES) | $(PERL) $(BUILD_TOOLS)/mddepend.pl $@
+	@$(PERL) $(BUILD_TOOLS)/mddepend.pl $@ $(MDDEPEND_FILES)
 -include $(MDDEPDIR)/.all.pp
 else
 include $(MDDEPEND_FILES)
@@ -1692,7 +1774,7 @@ endif
 # Fake targets.  Always run these rules, even if a file/directory with that
 # name already exists.
 #
-.PHONY: all all_platforms alltags boot checkout chrome realchrome clean clobber clobber_all export install libs makefiles realclean run_viewer run_apprunner $(DIRS) FORCE
+.PHONY: all all_platforms alltags boot checkout chrome realchrome clean clobber clobber_all export install libs makefiles realclean run_viewer run_apprunner tools $(DIRS) $(TOOL_DIRS) FORCE check
 
 # Used as a dependency to force targets to rebuild
 FORCE:
@@ -1819,3 +1901,7 @@ endif
 documentation:
 	@cd $(DEPTH)
 	$(DOXYGEN) $(DEPTH)/config/doxygen.cfg
+
+check:: $(SUBMAKEFILES) $(MAKE_DIRS)
+	+$(LOOP_OVER_DIRS)
+	+$(LOOP_OVER_TOOL_DIRS)

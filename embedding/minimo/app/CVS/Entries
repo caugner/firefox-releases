@@ -1,5 +1,21 @@
-/Makefile.in/1.3/Tue Jan 27 01:46:04 2004//TFIREFOX_1_0_RELEASE
-/Minimo.cpp/1.4/Sun Feb  1 05:22:51 2004//TFIREFOX_1_0_RELEASE
-/icons.h/1.2/Fri Jan 30 07:36:31 2004//TFIREFOX_1_0_RELEASE
-/minimo-link-comps/1.3/Tue Feb 24 03:22:33 2004//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.8/Mon May  2 16:59:21 2005//TFIREFOX_1_5_RELEASE
+/Minimo.cpp/1.12/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/bookmark.h/1.4/Thu Mar 31 17:56:09 2005//TFIREFOX_1_5_RELEASE
+/history.h/1.1/Sun Mar 20 18:40:18 2005//TFIREFOX_1_5_RELEASE
+/icons.h/1.4/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/minimo-link-comps/1.4/Wed Feb 16 17:50:51 2005//TFIREFOX_1_5_RELEASE
+/minimo_bookmark.cpp/1.1/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/minimo_bookmark.h/1.1/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/minimo_callbacks.cpp/1.1/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/minimo_callbacks.h/1.1/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/minimo_context.cpp/1.1/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/minimo_context.h/1.1/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/minimo_history.cpp/1.1/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/minimo_history.h/1.1/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/minimo_preference.cpp/1.1/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/minimo_preference.h/1.1/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/minimo_types.h/1.2/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/mozilla_api.cpp/1.1/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/mozilla_api.h/1.2/Mon May  2 16:36:18 2005//TFIREFOX_1_5_RELEASE
+/preference.h/1.1/Sun Mar 20 18:40:18 2005//TFIREFOX_1_5_RELEASE
 D

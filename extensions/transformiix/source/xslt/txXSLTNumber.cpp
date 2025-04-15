@@ -12,12 +12,12 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Jonas Sicking.
  * Portions created by the Initial Developer are Copyright (C) 2002
- * Jonas Sicking. All Rights Reserved.
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Jonas Sicking <sicking@bigfoot.com>
@@ -38,7 +38,7 @@
 
 #include "txXSLTNumber.h"
 #include "txAtoms.h"
-#include "primitives.h"
+#include "txCore.h"
 #include <math.h>
 #include "Expr.h"
 #include "ExprResult.h"
@@ -70,10 +70,8 @@ nsresult txXSLTNumber::createNumber(Expr* aValueExpr, txPattern* aCountPattern,
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (!valueString.IsEmpty()) {
-        // XXX Xalan and XSLT2 says this, but XSLT1 says otherwise
-        aResult = head;
-        aResult.Append(valueString);
-        aResult.Append(tail);
+        aResult = valueString;
+
         return NS_OK;
     }
 
@@ -147,7 +145,8 @@ txXSLTNumber::getValueList(Expr* aValueExpr, txPattern* aCountPattern,
     if (!aCountPattern) {
         ownsCountPattern = MB_TRUE;
         txNodeTest* nodeTest = 0;
-        switch (txXPathNodeUtils::getNodeType(currNode)) {
+        PRUint16 nodeType = txXPathNodeUtils::getNodeType(currNode);
+        switch (nodeType) {
             case txXPathNodeType::ELEMENT_NODE:
             {
                 nsCOMPtr<nsIAtom> localName =
@@ -187,7 +186,7 @@ txXSLTNumber::getValueList(Expr* aValueExpr, txPattern* aCountPattern,
                 // this won't match anything as we walk up the tree
                 // but it's what the spec says to do
                 nodeTest = new txNameTest(0, txXPathAtoms::_asterix, 0,
-                                          txXPathNodeUtils::getNodeType(currNode));
+                                          nodeType);
                 break;
             }
         }
@@ -361,7 +360,7 @@ txXSLTNumber::getCounters(Expr* aGroupSize, Expr* aGroupSeparator,
                                                groupSeparator, defaultCounter);
         NS_ENSURE_SUCCESS(rv, rv);
 
-        defaultCounter->mSeparator = NS_LITERAL_STRING(".");
+        defaultCounter->mSeparator.AssignLiteral(".");
         rv = aCounters.add(defaultCounter);
         if (NS_FAILED(rv)) {
             // XXX ErrorReport: out of memory
@@ -380,7 +379,7 @@ txXSLTNumber::getCounters(Expr* aGroupSize, Expr* aGroupSeparator,
             // there is only one formatting token and we're formatting a
             // value-list longer then one we use the default separator. This
             // won't be used when formatting the first value anyway.
-            sepToken = NS_LITERAL_STRING(".");
+            sepToken.AssignLiteral(".");
         }
         else {
             while (formatPos < formatLen &&

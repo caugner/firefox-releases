@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,27 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
- *
+ *   Ken Herron <kherron+mozilla@fmailbox.com>
+ *   Julien Lafon <julien.lafon@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
  
@@ -63,6 +64,7 @@
 #endif /* USE_XPRINT */
 
 #ifdef USE_POSTSCRIPT
+#include "nsPSPrinters.h"
 #include "nsPaperPS.h"  /* Paper size list */
 #endif /* USE_POSTSCRIPT */
 
@@ -90,7 +92,8 @@ public:
   nsresult  InitializeGlobalPrinters();
 
   PRBool    PrintersAreAllocated()       { return mGlobalPrinterList != nsnull; }
-  PRInt32   GetNumPrinters()             { return mGlobalNumPrinters; }
+  PRInt32   GetNumPrinters()
+    { return mGlobalPrinterList ? mGlobalPrinterList->Count() : 0; }
   nsString* GetStringAt(PRInt32 aInx)    { return mGlobalPrinterList->StringAt(aInx); }
   void      GetDefaultPrinterName(PRUnichar **aDefaultPrinterName);
 
@@ -99,7 +102,6 @@ protected:
 
   static GlobalPrinters mGlobalPrinters;
   static nsStringArray* mGlobalPrinterList;
-  static int            mGlobalNumPrinters;
 };
 
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
@@ -132,6 +134,37 @@ public:
   /* Set number of plex records and the records itself */
   void SetNumPlexRecords( PRInt32 aCount );
   void SetPlexRecord( PRInt32 aIndex, const char *aName );
+
+  /* Does this printer allow to set/change the resolution name ? */
+  void SetCanChangeResolutionName( PRBool aCanSetResolutionName );
+  /* Does this Mozilla print module allow set/change the resolution name ? */
+  void SetSupportsResolutionNameChange( PRBool aSupportsResolutionChange );
+  /* Set number of resolution records and the records itself */
+  void SetNumResolutionNameRecords( PRInt32 aCount );
+  void SetResolutionNameRecord( PRInt32 aIndex, const char *aName );
+
+  /* Does this printer allow to set/change the colorspace ? */
+  void SetCanChangeColorspace( PRBool aCanSetColorspace );
+  /* Does this Mozilla print module allow set/change the colorspace ? */
+  void SetSupportsColorspaceChange( PRBool aSupportsColorspace );
+  /* Set number of colorspace records and the records itself */
+  void SetNumColorspaceRecords( PRInt32 aCount );
+  void SetColorspaceRecord( PRInt32 aIndex, const char *aName );
+
+  /* Does this device allow to set/change the usage of the internal grayscale mode ? */
+  void SetCanChangePrintInColor( PRBool aCanSetPrintInColor );
+  /* Does this printer allow to set/change the usage of the internal grayscale mode ? */
+  void SetSupportsPrintInColorChange( PRBool aSupportPrintInColorChange );
+
+  /* Does this device allow to set/change the usage of font download to the printer? */
+  void SetCanChangeDownloadFonts( PRBool aCanSetDownloadFonts );
+  /* Does this printer allow to set/change the usage of font download to the printer? */
+  void SetSupportsDownloadFontsChange( PRBool aSupportDownloadFontsChange );
+
+  /* Does this device allow to set/change the job title ? */
+  void SetCanChangeJobTitle( PRBool aCanSetJobTitle );
+  /* Does this printer allow to set/change the job title ? */
+  void SetSupportsJobTitleChange( PRBool aSupportJobTitleChange );
     
   /* Does this device allow to set/change the spooler command ? */
   void SetCanChangeSpoolerCommand( PRBool aCanSetSpoolerCommand );
@@ -244,6 +277,66 @@ void nsPrinterFeatures::SetPlexRecord( PRInt32 aIndex, const char *aPlexName )
   SetCharValue(nsPrintfCString(256, "plex.%d.name", aIndex).get(), aPlexName);
 }
 
+void nsPrinterFeatures::SetCanChangeResolutionName( PRBool aCanSetResolutionName )
+{
+  SetBoolValue("can_change_resolution", aCanSetResolutionName);
+}
+
+void nsPrinterFeatures::SetSupportsResolutionNameChange( PRBool aSupportsResolutionNameChange )
+{
+  SetBoolValue("supports_resolution_change", aSupportsResolutionNameChange);
+}
+
+void nsPrinterFeatures::SetNumResolutionNameRecords( PRInt32 aCount )
+{
+  SetIntValue("resolution.count", aCount);          
+}
+
+void nsPrinterFeatures::SetResolutionNameRecord( PRInt32 aIndex, const char *aResolutionName )
+{
+  SetCharValue(nsPrintfCString(256, "resolution.%d.name", aIndex).get(), aResolutionName);
+}
+
+void nsPrinterFeatures::SetCanChangeColorspace( PRBool aCanSetColorspace )
+{
+  SetBoolValue("can_change_colorspace", aCanSetColorspace);
+}
+
+void nsPrinterFeatures::SetSupportsColorspaceChange( PRBool aSupportsColorspaceChange )
+{
+  SetBoolValue("supports_colorspace_change", aSupportsColorspaceChange);
+}
+
+void nsPrinterFeatures::SetNumColorspaceRecords( PRInt32 aCount )
+{
+  SetIntValue("colorspace.count", aCount);          
+}
+
+void nsPrinterFeatures::SetColorspaceRecord( PRInt32 aIndex, const char *aColorspace )
+{
+  SetCharValue(nsPrintfCString(256, "colorspace.%d.name", aIndex).get(), aColorspace);
+}
+
+void nsPrinterFeatures::SetCanChangeDownloadFonts( PRBool aCanSetDownloadFonts )
+{
+  SetBoolValue("can_change_downloadfonts", aCanSetDownloadFonts);
+}
+
+void nsPrinterFeatures::SetSupportsDownloadFontsChange( PRBool aSupportDownloadFontsChange )
+{
+  SetBoolValue("supports_downloadfonts_change", aSupportDownloadFontsChange);
+}
+
+void nsPrinterFeatures::SetCanChangePrintInColor( PRBool aCanSetPrintInColor )
+{
+  SetBoolValue("can_change_printincolor", aCanSetPrintInColor);
+}
+
+void nsPrinterFeatures::SetSupportsPrintInColorChange( PRBool aSupportPrintInColorChange )
+{
+  SetBoolValue("supports_printincolor_change", aSupportPrintInColorChange);
+}
+
 void nsPrinterFeatures::SetCanChangeSpoolerCommand( PRBool aCanSetSpoolerCommand )
 {
   SetBoolValue("can_change_spoolercommand", aCanSetSpoolerCommand);
@@ -252,6 +345,16 @@ void nsPrinterFeatures::SetCanChangeSpoolerCommand( PRBool aCanSetSpoolerCommand
 void nsPrinterFeatures::SetSupportsSpoolerCommandChange( PRBool aSupportSpoolerCommandChange )
 {
   SetBoolValue("supports_spoolercommand_change", aSupportSpoolerCommandChange);
+}
+
+void nsPrinterFeatures::SetCanChangeJobTitle( PRBool aCanSetJobTitle )
+{
+  SetBoolValue("can_change_jobtitle", aCanSetJobTitle);
+}
+
+void nsPrinterFeatures::SetSupportsJobTitleChange( PRBool aSupportsJobTitle )
+{
+  SetBoolValue("supports_jobtitle_change", aSupportsJobTitle);
 }
 
 void nsPrinterFeatures::SetCanChangeNumCopies( PRBool aCanSetNumCopies )
@@ -270,7 +373,6 @@ void nsPrinterFeatures::SetMultipleConcurrentDeviceContextsSupported( PRBool aCa
 // static members
 GlobalPrinters GlobalPrinters::mGlobalPrinters;
 nsStringArray* GlobalPrinters::mGlobalPrinterList = nsnull;
-int            GlobalPrinters::mGlobalNumPrinters = 0;
 //---------------
 
 nsDeviceContextSpecXlib::nsDeviceContextSpecXlib()
@@ -320,13 +422,11 @@ NS_IMPL_ISUPPORTS1(nsDeviceContextSpecXlib,
  * - Xlib-toolkit: 
  *   file:     mozilla/gfx/src/xlib/nsDeviceContextSpecXlib.cpp 
  *   function: NS_IMETHODIMP nsDeviceContextSpecXlib::Init()
- * - Qt-toolkit:
- *   file:     mozilla/gfx/src/qt/nsDeviceContextSpecQT.cpp
- *   function: NS_IMETHODIMP nsDeviceContextSpecQT::Init()
  * 
  * ** Please update the other toolkits when changing this function.
  */
-NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS)
+NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS,
+        PRBool aIsPrintPreview)
 {
   DO_PR_DEBUG_LOG(("nsDeviceContextSpecXlib::Init(aPS=%p)\n", aPS));
   nsresult rv = NS_ERROR_FAILURE;
@@ -354,6 +454,9 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS)
     PRUnichar *printer        = nsnull;
     PRUnichar *papername      = nsnull;
     PRUnichar *plexname       = nsnull;
+    PRUnichar *resolutionname = nsnull;
+    PRUnichar *colorspace     = nsnull;
+    PRBool     downloadfonts  = PR_TRUE;
     PRUnichar *printfile      = nsnull;
     double     dleft          = 0.5;
     double     dright         = 0.5;
@@ -364,6 +467,9 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS)
     aPS->GetPrintReversed(&reversed);
     aPS->GetPrintInColor(&color);
     aPS->GetPaperName(&papername);
+    aPS->GetResolutionName(&resolutionname);
+    aPS->GetColorspace(&colorspace);
+    aPS->GetDownloadFonts(&downloadfonts);
     aPS->GetPlexName(&plexname);
     aPS->GetOrientation(&orientation);
     aPS->GetPrintCommand(&command);
@@ -388,6 +494,10 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS)
       PL_strncpyz(mPaperName, NS_ConvertUCS2toUTF8(papername).get(), sizeof(mPaperName));  
     if (plexname) 
       PL_strncpyz(mPlexName,  NS_ConvertUCS2toUTF8(plexname).get(),  sizeof(mPlexName));  
+    if (resolutionname) 
+      PL_strncpyz(mResolutionName, NS_ConvertUCS2toUTF8(resolutionname).get(), sizeof(mResolutionName));  
+    if (colorspace) 
+      PL_strncpyz(mColorspace, NS_ConvertUCS2toUTF8(colorspace).get(), sizeof(mColorspace));  
 
     DO_PR_DEBUG_LOG(("margins:   %5.2f,%5.2f,%5.2f,%5.2f\n", dtop, dleft, dbottom, dright));
     DO_PR_DEBUG_LOG(("printRange %d\n",   printRange));
@@ -399,16 +509,21 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS)
     DO_PR_DEBUG_LOG(("printer    '%s'\n", printer? NS_ConvertUCS2toUTF8(printer).get():"<NULL>"));
     DO_PR_DEBUG_LOG(("papername  '%s'\n", papername? NS_ConvertUCS2toUTF8(papername).get():"<NULL>"));
     DO_PR_DEBUG_LOG(("plexname   '%s'\n", plexname? NS_ConvertUCS2toUTF8(plexname).get():"<NULL>"));
+    DO_PR_DEBUG_LOG(("resolution '%s'\n", resolutionname? NS_ConvertUCS2toUTF8(resolutionname).get():"<NULL>"));
+    DO_PR_DEBUG_LOG(("colorspace '%s'\n", colorspace? NS_ConvertUCS2toUTF8(colorspace).get():"<NULL>"));
 
     mTop         = dtop;
     mBottom      = dbottom;
     mLeft        = dleft;
     mRight       = dright;
     mFpf         = !reversed;
+    mDownloadFonts = downloadfonts;
     mGrayscale   = !color;
     mOrientation = orientation;
     mToPrinter   = !tofile;
     mCopies      = copies;
+    mIsPPreview  = aIsPrintPreview;
+    mCancel      = PR_FALSE;
   }
 
   return rv;
@@ -417,6 +532,12 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::Init(nsIPrintSettings *aPS)
 NS_IMETHODIMP nsDeviceContextSpecXlib::GetToPrinter(PRBool &aToPrinter)
 {
   aToPrinter = mToPrinter;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsDeviceContextSpecXlib::GetIsPrintPreview(PRBool &aIsPPreview)
+{
+  aIsPPreview = mIsPPreview;
   return NS_OK;
 }
 
@@ -504,6 +625,24 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::GetPlexName( const char **aPlexName )
   return NS_OK;
 }
 
+NS_IMETHODIMP nsDeviceContextSpecXlib::GetResolutionName( const char **aResolutionName )
+{
+  *aResolutionName = mResolutionName;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsDeviceContextSpecXlib::GetColorspace( const char **aColorspace )
+{
+  *aColorspace = mColorspace;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsDeviceContextSpecXlib::GetDownloadFonts(PRBool &aDownloadFonts)      
+{
+  aDownloadFonts = mDownloadFonts;
+  return NS_OK;
+}
+
 NS_IMETHODIMP nsDeviceContextSpecXlib::GetPageSizeInTwips(PRInt32 *aWidth, PRInt32 *aHeight)
 {
   return mPrintSettings->GetPageSizeInTwips(aWidth, aHeight);
@@ -518,10 +657,8 @@ NS_IMETHODIMP nsDeviceContextSpecXlib::GetPrintMethod(PrintMethod &aMethod)
 nsresult nsDeviceContextSpecXlib::GetPrintMethod(const char *aPrinter, PrintMethod &aMethod)
 {
 #if defined(USE_POSTSCRIPT) && defined(USE_XPRINT)
-  /* printer names for the PostScript module alwas start with 
-   * the NS_POSTSCRIPT_DRIVER_NAME string */
-  if (strncmp(aPrinter, NS_POSTSCRIPT_DRIVER_NAME, 
-              NS_POSTSCRIPT_DRIVER_NAME_LEN) != 0)
+  if (nsPSPrinterList::kTypeUnknown ==
+      nsPSPrinterList::GetPrinterType(nsDependentCString(aPrinter)))
     aMethod = pmXprint;
   else
     aMethod = pmPostScript;
@@ -705,9 +842,11 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
 #ifdef USE_POSTSCRIPT
   /* "Demangle" postscript printer name */
   if (type == pmPostScript) {
-    /* Strip the leading NS_POSTSCRIPT_DRIVER_NAME from |printerName|,
+    /* Strip the printing method name from the printer,
      * e.g. turn "PostScript/foobar" to "foobar" */
-    printerName.Cut(0, NS_POSTSCRIPT_DRIVER_NAME_LEN);
+    PRInt32 slash = printerName.FindChar('/');
+    if (kNotFound != slash)
+      printerName.Cut(0, slash + 1);
   }
 #endif /* USE_POSTSCRIPT */
 
@@ -746,6 +885,9 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
     printerFeatures.SetSupportsPaperSizeChange(PR_TRUE);
     printerFeatures.SetSupportsOrientationChange(PR_TRUE);
     printerFeatures.SetSupportsPlexChange(PR_TRUE);
+    printerFeatures.SetSupportsResolutionNameChange(PR_TRUE);
+    printerFeatures.SetSupportsColorspaceChange(PR_TRUE);
+    printerFeatures.SetSupportsJobTitleChange(PR_TRUE);
     printerFeatures.SetSupportsSpoolerCommandChange(PR_FALSE); /* won't work by design and very good reasons! */
 #endif /* SET_PRINTER_FEATURES_VIA_PREFS */ 
     
@@ -898,10 +1040,88 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
       XpuFreeMediumSourceSizeList(mlist);
     }
 
+    /* Setup resolution/quality stuff */
+    XpuResolutionList rlist;
+    int               rcount;
+    XpuResolutionRec *default_resolution;
+    
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+    PRBool canSetResolutionName = MAKE_PR_BOOL(supported_doc_attrs & XPUATTRIBUTESUPPORTED_DEFAULT_PRINTER_RESOLUTION);
+    printerFeatures.SetCanChangeResolutionName(canSetResolutionName);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+    
+    rlist = XpuGetResolutionList(pdpy, pcontext, &rcount);
+    if (rlist) {
+      default_resolution = &rlist[0]; /* First entry is the default one */
+    
+      DO_PR_DEBUG_LOG(("setting default resolution to '%s'/%ldx%ld\n",
+                       default_resolution->name,
+                       default_resolution->x_dpi,
+                       default_resolution->y_dpi));
+      aPrintSettings->SetResolutionName(NS_ConvertUTF8toUCS2(default_resolution->name).get());
+
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+      int i;
+      for( i = 0 ; i < rcount ; i++ )
+      {
+        XpuResolutionRec *curr = &rlist[i];
+        printerFeatures.SetResolutionNameRecord(i, curr->name);
+      }
+      printerFeatures.SetNumResolutionNameRecords(rcount);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+   
+      XpuFreeResolutionList(rlist);
+    }
+
+    /* We still support the old print-in-color boolean */
+    printerFeatures.SetSupportsPrintInColorChange(PR_TRUE);
+    printerFeatures.SetCanChangePrintInColor(PR_TRUE);
+
+    /* Setup colorspace stuff */
+    XpuColorspaceList cslist;
+    int               cscount;
+    XpuColorspaceRec *default_colorspace;
+    
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+    printerFeatures.SetCanChangeColorspace(PR_TRUE);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+    
+    cslist = XpuGetColorspaceList(pdpy, pcontext, &cscount);
+    if (cslist) {
+      default_colorspace = &cslist[0]; /* First entry is the default one */
+    
+      DO_PR_DEBUG_LOG(("setting default colorspace to '%s'\n", default_colorspace->name));
+      aPrintSettings->SetColorspace(NS_ConvertUTF8toUCS2(default_colorspace->name).get());
+
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+      int i;
+      for( i = 0 ; i < cscount ; i++ )
+      {
+        XpuColorspaceRec *curr = &cslist[i];
+        printerFeatures.SetColorspaceRecord(i, curr->name);
+      }
+      printerFeatures.SetNumColorspaceRecords(cscount);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+   
+      XpuFreeColorspaceList(cslist);
+    }
+
+    /* Fonts */
+    PRBool canSetListFontsMode = MAKE_PR_BOOL(supported_doc_attrs & XPUATTRIBUTESUPPORTED_LISTFONTS_MODES);
+    printerFeatures.SetCanChangeDownloadFonts(canSetListFontsMode);
+    printerFeatures.SetSupportsDownloadFontsChange(PR_TRUE);
+
+    Bool downloadFonts = XpuGetEnableFontDownload(pdpy, pcontext);
+    aPrintSettings->SetDownloadFonts(downloadFonts);
+
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
     /* Xprint does not allow the client to set a spooler command. 
      * Job spooling is the job of the server side (=Xprt) */
     printerFeatures.SetCanChangeSpoolerCommand(PR_FALSE);
+
+    /* Check whether printer/driver allow changes of the job name */
+    PRBool canSetJobName = MAKE_PR_BOOL(XpuGetSupportedJobAttributes(pdpy, pcontext) & XPUATTRIBUTESUPPORTED_JOB_NAME);
+    printerFeatures.SetCanChangeJobTitle(canSetJobName);
 
     /* Mozilla's Xprint support allows multiple nsIDeviceContext instances
      * be used in parallel */
@@ -925,7 +1145,8 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
     printerFeatures.SetSupportsPaperSizeChange(PR_TRUE);
     printerFeatures.SetSupportsOrientationChange(PR_TRUE);
     printerFeatures.SetSupportsPlexChange(PR_FALSE);
-    printerFeatures.SetSupportsSpoolerCommandChange(PR_TRUE);
+    printerFeatures.SetSupportsResolutionNameChange(PR_FALSE);
+    printerFeatures.SetSupportsColorspaceChange(PR_FALSE);
 #endif /* SET_PRINTER_FEATURES_VIA_PREFS */ 
       
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
@@ -963,18 +1184,39 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
     printerFeatures.SetPlexRecord(0, "default");
     printerFeatures.SetNumPlexRecords(1);
 #endif /* SET_PRINTER_FEATURES_VIA_PREFS */
-   
+
+    /* PostScript module does not support changing the resolution mode... */
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+    printerFeatures.SetCanChangeResolutionName(PR_FALSE);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+    DO_PR_DEBUG_LOG(("setting default resolution to '%s'\n", "default"));
+    aPrintSettings->SetResolutionName(NS_LITERAL_STRING("default").get());
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+    printerFeatures.SetResolutionNameRecord(0, "default");
+    printerFeatures.SetNumResolutionNameRecords(1);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+
+    /* PostScript module does not support changing the colorspace... */
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+    printerFeatures.SetCanChangeColorspace(PR_FALSE);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */
+    DO_PR_DEBUG_LOG(("setting default colorspace to '%s'\n", "default"));
+    aPrintSettings->SetColorspace(NS_LITERAL_STRING("default").get());
+#ifdef SET_PRINTER_FEATURES_VIA_PREFS
+    printerFeatures.SetColorspaceRecord(0, "default");
+    printerFeatures.SetNumColorspaceRecords(1);
+#endif /* SET_PRINTER_FEATURES_VIA_PREFS */   
+
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
     printerFeatures.SetCanChangePaperSize(PR_TRUE);
 #endif /* SET_PRINTER_FEATURES_VIA_PREFS */
     nsXPIDLCString papername;
     if (NS_SUCCEEDED(CopyPrinterCharPref(pPrefs, "postscript", printerName, "paper_size", getter_Copies(papername)))) {
       nsPaperSizePS paper;
-      
+
       if (paper.Find(papername)) {
         DO_PR_DEBUG_LOG(("setting default paper size to '%s' (%g mm/%g mm)\n",
               paper.Name(), paper.Width_mm(), paper.Height_mm()));
-        aPrintSettings->SetPaperSizeType(nsIPrintSettings::kPaperSizeDefined);
         aPrintSettings->SetPaperSizeUnit(paper.IsMetric() ?
             (int)nsIPrintSettings::kPaperSizeMillimeters :
             (int)nsIPrintSettings::kPaperSizeInches);
@@ -998,14 +1240,32 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::InitPrintSettingsFromPrinter(const PRUnic
 #endif /* SET_PRINTER_FEATURES_VIA_PREFS */
     }
 
+    PRBool hasSpoolerCmd = (nsPSPrinterList::kTypePS ==
+        nsPSPrinterList::GetPrinterType(fullPrinterName));
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
-    printerFeatures.SetCanChangeSpoolerCommand(PR_TRUE);
+    printerFeatures.SetSupportsSpoolerCommandChange(hasSpoolerCmd);
+    printerFeatures.SetCanChangeSpoolerCommand(hasSpoolerCmd);
+
+    /* Postscript module does not pass the job title to lpr */
+    printerFeatures.SetSupportsJobTitleChange(PR_FALSE);
+    printerFeatures.SetCanChangeJobTitle(PR_FALSE);
+    /* Postscript module has no control over builtin fonts yet */
+    printerFeatures.SetSupportsDownloadFontsChange(PR_FALSE);
+    printerFeatures.SetCanChangeDownloadFonts(PR_FALSE);
+    /* Postscript module does not support multiple colorspaces
+     * so it has to use the old way */
+    printerFeatures.SetSupportsPrintInColorChange(PR_TRUE);
+    printerFeatures.SetCanChangePrintInColor(PR_TRUE);
 #endif /* SET_PRINTER_FEATURES_VIA_PREFS */
 
-    nsXPIDLCString command;
-    if (NS_SUCCEEDED(CopyPrinterCharPref(pPrefs, "postscript", printerName, "print_command", getter_Copies(command)))) {
-      DO_PR_DEBUG_LOG(("setting default print command to '%s'\n", command.get()));
-      aPrintSettings->SetPrintCommand(NS_ConvertUTF8toUCS2(command).get());
+    if (hasSpoolerCmd) {
+      nsXPIDLCString command;
+      if (NS_SUCCEEDED(CopyPrinterCharPref(pPrefs, "postscript",
+            printerName, "print_command", getter_Copies(command)))) {
+        DO_PR_DEBUG_LOG(("setting default print command to '%s'\n",
+            command.get()));
+        aPrintSettings->SetPrintCommand(NS_ConvertUTF8toUCS2(command).get());
+      }
     }
     
 #ifdef SET_PRINTER_FEATURES_VIA_PREFS
@@ -1024,6 +1284,18 @@ NS_IMETHODIMP nsPrinterEnumeratorXlib::DisplayPropertiesDlg(const PRUnichar *aPr
   return NS_OK;
 }
 
+
+//----------------------------------------------------------------------
+//String array enumeration callback to append a printer to the global
+//printer list.
+static PRBool
+GlobalPrinterEnumFunc(nsCString& aName, void *aData)
+{
+  nsStringArray *a = (nsStringArray *)aData;
+  a->AppendString(NS_ConvertUTF8toUTF16(aName));
+  return PR_TRUE;
+}
+
 //----------------------------------------------------------------------
 nsresult GlobalPrinters::InitializeGlobalPrinters ()
 {
@@ -1031,20 +1303,29 @@ nsresult GlobalPrinters::InitializeGlobalPrinters ()
     return NS_OK;
   }
 
-  mGlobalNumPrinters = 0;
   mGlobalPrinterList = new nsStringArray();
   if (!mGlobalPrinterList) 
     return NS_ERROR_OUT_OF_MEMORY;
+
+  nsresult rv;
+  nsCOMPtr<nsIPref> pPrefs = do_GetService(NS_PREF_CONTRACTID, &rv);
+  if (NS_FAILED(rv))
+    return rv;
       
 #ifdef USE_XPRINT   
-  XPPrinterList plist = XpuGetPrinterList(nsnull, &mGlobalNumPrinters);
+  int printerCount;
+  XPPrinterList plist = XpuGetPrinterList(nsnull, &printerCount);
   
-  if (plist && (mGlobalNumPrinters > 0))
+  if (plist)
   {  
     int i;
-    for(  i = 0 ; i < mGlobalNumPrinters ; i++ )
+    for( i = 0 ; i < printerCount ; i++ )
     {
-      mGlobalPrinterList->AppendString(nsString(NS_ConvertASCIItoUCS2(plist[i].name)));
+      /* Add name to our list of printers... */
+      mGlobalPrinterList->AppendString(nsString(NS_ConvertUTF8toUCS2(plist[i].name)));
+
+      /* ... and store the description text for this printer */
+      pPrefs->SetCharPref(nsPrintfCString(256, "print.printer_%s.printer_description", plist[i].name).get(), plist[i].desc);      
     }
     
     XpuFreePrinterList(plist);
@@ -1052,76 +1333,17 @@ nsresult GlobalPrinters::InitializeGlobalPrinters ()
 #endif /* USE_XPRINT */
 
 #ifdef USE_POSTSCRIPT
-  nsCOMPtr<nsIPref> pPrefs = do_GetService(NS_PREF_CONTRACTID);
-  PRBool psPrintModuleEnabled = PR_TRUE;
-
-  const char *val = PR_GetEnv("MOZILLA_POSTSCRIPT_ENABLED");
-  if (val) {
-    if (val[0] == '0' || !strcasecmp(val, "false"))
-      psPrintModuleEnabled = PR_FALSE;
-  }
-  else
-  {
-    if (pPrefs) {
-      if (NS_FAILED(pPrefs->GetBoolPref("print.postscript.enabled", &psPrintModuleEnabled))) {
-        psPrintModuleEnabled = PR_TRUE;
-      }
-    }
-  }
-
-  if (psPrintModuleEnabled) {
+  nsPSPrinterList psMgr;
+  if (NS_SUCCEEDED(psMgr.Init()) && psMgr.Enabled()) {
     /* Get the list of PostScript-module printers */
-    char   *printerList           = nsnull;
-    PRBool  added_default_printer = PR_FALSE; /* Did we already add the default printer ? */
-
-    /* The env var MOZILLA_POSTSCRIPT_PRINTER_LIST can "override" the prefs */
-    printerList = PR_GetEnv("MOZILLA_POSTSCRIPT_PRINTER_LIST");
-
-    if (!printerList) {
-      if (pPrefs) {
-        (void) pPrefs->CopyCharPref("print.printer_list", &printerList);
-      }
-    }  
-
-    if (printerList) {
-      char       *tok_lasts;
-      const char *name;
-
-      /* PL_strtok_r() will modify the string - copy it! */
-      printerList = strdup(printerList);
-      if (!printerList)
-        return NS_ERROR_OUT_OF_MEMORY;    
-
-      for( name = PL_strtok_r(printerList, " ", &tok_lasts) ; 
-           name != nsnull ; 
-           name = PL_strtok_r(nsnull, " ", &tok_lasts) )
-      {
-        /* Is this the "default" printer ? */
-        if (!strcmp(name, "default"))
-          added_default_printer = PR_TRUE;
-
-        mGlobalPrinterList->AppendString(
-          nsString(NS_ConvertASCIItoUCS2(NS_POSTSCRIPT_DRIVER_NAME)) + 
-          nsString(NS_ConvertASCIItoUCS2(name)));
-        mGlobalNumPrinters++;      
-      }
-
-      free(printerList);
-    }
-
-    /* Add an entry for the default printer (see nsPostScriptObj.cpp) if we
-     * did not add it already... */
-    if (!added_default_printer)
-    {
-      mGlobalPrinterList->AppendString(
-        nsString(NS_ConvertASCIItoUCS2(NS_POSTSCRIPT_DRIVER_NAME "default")));
-      mGlobalNumPrinters++;
-    }
+    nsCStringArray printerList;
+    psMgr.GetPrinterList(printerList);
+    printerList.EnumerateForwards(GlobalPrinterEnumFunc, mGlobalPrinterList);
   }
 #endif /* USE_POSTSCRIPT */  
       
   /* If there are no printers available after all checks, return an error */
-  if (mGlobalNumPrinters == 0)
+  if (!mGlobalPrinterList->Count())
   {
     /* Make sure we do not cache an empty printer list */
     FreeGlobalPrinters();
@@ -1145,7 +1367,6 @@ void GlobalPrinters::FreeGlobalPrinters()
   if (mGlobalPrinterList) {
     delete mGlobalPrinterList;
     mGlobalPrinterList = nsnull;
-    mGlobalNumPrinters = 0;
   }  
 }
 

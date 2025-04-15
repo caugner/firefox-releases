@@ -1,28 +1,44 @@
 #! /usr/bin/env perl
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
 #
 # The Original Code is mozilla.org code.
 #
-# The Initial Developer of the Original Code is Netscape
-# Communications Corporation.  Portions created by Netscape are
-# Copyright (C) 1999 Netscape Communications Corporation. All
-# Rights Reserved.
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1999
+# the Initial Developer. All Rights Reserved.
 #
-# Contributor(s): 
+# Contributor(s):
 #
+# Alternatively, the contents of this file may be used under the terms of
+# either of the GNU General Public License Version 2 or later (the "GPL"),
+# or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
 # make-makefiles - Quickly create Makefiles for subdirectories.
 #      Also, creates any needed subdirectories.
 #
-# usage: make-makefiles [ -t <topsrcdir> -d <depth> ] [ <subdir> | <subdir>/Makefile ] ...
+# usage: make-makefiles [ -t <topsrcdir> -p <print_topsrcdir> -d <depth> ] [ <subdir> | <subdir>/Makefile ] ...
 
 # Send comments, improvements, bugs to Steve Lamm (slamm@netscape.com).
 
@@ -30,7 +46,7 @@
 
 # Determine various tree path variables
 #
-($topsrcdir, $depth, @makefiles) = parse_arguments(@ARGV);
+($topsrcdir, $ptopsrcdir, $depth, @makefiles) = parse_arguments(@ARGV);
 
 $object_fullpath = `pwd`;
 chdir $depth;
@@ -59,6 +75,7 @@ create_directories(@makefiles);
 #  was invoked. The path is either relative to the object directory
 #  or an absolute path.
 $given_srcdir = find_srcdir($topsrcdir, $depth);
+$pgiven_srcdir = find_srcdir($ptopsrcdir, $depth);
 
 if ($debug) {
   warn "object_fullpath = $object_fullpath\n";
@@ -68,7 +85,7 @@ if ($debug) {
   warn "given_srcdir    = $given_srcdir\n";
 }
 
-@unhandled = update_makefiles($given_srcdir, @makefiles);
+@unhandled = update_makefiles($given_srcdir, $pgiven_srcdir, @makefiles);
 
 run_config_status(@unhandled);
 
@@ -96,6 +113,7 @@ sub parse_arguments {
   my @args = @_;
   my $depth = '';
   my $topsrcdir = '';
+  my $ptopsrcdir;
   my @makefiles = ();
 
   while (1) {
@@ -107,6 +125,10 @@ sub parse_arguments {
       $topsrcdir = $args[1];
       shift @args; 
       shift @args; 
+    } elsif ($args[0] eq '-p') {
+      $ptopsrcdir = $args[1];
+      shift @args;
+      shift @args;
     } else {
       last;
     }
@@ -115,6 +137,9 @@ sub parse_arguments {
   if ($topsrcdir eq '') {
     $topsrcdir = $0; # Figure out topsrcdir based on program name.
     $topsrcdir =~ s|/?build/autoconf/.*$||;
+  }
+  if ($ptopsrcdir eq '') {
+    $ptopsrcdir = $topsrcdir;
   }
   if ($depth eq '') {
     # Use $(DEPTH) in the Makefile or Makefile.in to determine the depth
@@ -143,7 +168,7 @@ sub parse_arguments {
   }
   @makefiles = "Makefile" unless @args;
 
-  return ($topsrcdir, $depth, @makefiles);
+  return ($topsrcdir, $ptopsrcdir, $depth, @makefiles);
 }
 
 
@@ -157,7 +182,7 @@ sub create_directories {
     push @dirs, dirname($ac_file);
   }
   # Call mkdir with the directories sorted by subdir count (how many /'s)
-  system "mkdir -p ". join(' ', @dirs) if @dirs;
+  system "mkdir -p ". join(' ', map("\"$_\"", @dirs)) if @dirs;
 }
 
 # Find the top of the source directory
@@ -183,7 +208,7 @@ sub find_srcdir {
 # Output the makefiles.
 #
 sub update_makefiles {
-  my ($ac_given_srcdir, @makefiles) = @_;
+  my ($ac_given_srcdir, $pac_given_srcdir, @makefiles) = @_;
   my @unhandled=();
 
   my $ac_file;
@@ -201,6 +226,12 @@ sub update_makefiles {
       $ac_dir_suffix = "/$ac_dir";
       $ac_dir_suffix =~ s%^/\./%/%;
       $ac_dots = $ac_dir_suffix;
+      # Remove .. components from the provided dir suffix, and
+      # also the forward path components they were reversing.
+      my $backtracks = $ac_dots =~ s%\.\.(/|$)%%g;
+      while ($backtracks--) {
+        $ac_dots =~ s%/[^/]*%%;
+      }
       $ac_dots =~ s%/[^/]*%../%g;
     }
     if ($ac_given_srcdir eq '.') {
@@ -208,10 +239,14 @@ sub update_makefiles {
         $top_srcdir = $ac_dots;
         $top_srcdir =~ s%/$%%;
       }
-    } elsif ($ac_given_srcdir =~ m%^/% or $ac_given_srcdir =~ m%^.:/%) {
-      $srcdir     = "$ac_given_srcdir$ac_dir_suffix";
-      $top_srcdir = "$ac_given_srcdir";
+    } elsif ($pac_given_srcdir =~ m%^/% or $pac_given_srcdir =~ m%^.:/%) {
+      $srcdir     = "$pac_given_srcdir$ac_dir_suffix";
+      $top_srcdir = "$pac_given_srcdir";
     } else {
+      if ($debug) {
+      	print "ac_dots       = $ac_dots\n";
+	print "ac_dir_suffix = $ac_dir_suffix\n";
+      }
       $srcdir     = "$ac_dots$ac_given_srcdir$ac_dir_suffix";
       $top_srcdir = "$ac_dots$ac_given_srcdir";
     }

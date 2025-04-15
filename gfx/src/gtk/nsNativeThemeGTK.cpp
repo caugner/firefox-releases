@@ -39,6 +39,7 @@
 #include "nsNativeThemeGTK.h"
 #include "nsThemeConstants.h"
 #include "nsDrawingSurfaceGTK.h"
+#include "nsDeviceContextGTK.h"
 #include "gtkdrawing.h"
 
 #include "nsIObserverService.h"
@@ -75,15 +76,10 @@ nsNativeThemeGTK::nsNativeThemeGTK()
   // We have to call moz_gtk_shutdown before the event loop stops running.
   nsCOMPtr<nsIObserverService> obsServ =
     do_GetService("@mozilla.org/observer-service;1");
-  obsServ->AddObserver(this, "quit-application", PR_FALSE);
+  obsServ->AddObserver(this, "xpcom-shutdown", PR_FALSE);
 
-  mDisabledAtom = do_GetAtom("disabled");
-  mCheckedAtom = do_GetAtom("checked");
-  mSelectedAtom = do_GetAtom("selected");
   mInputCheckedAtom = do_GetAtom("_moz-input-checked");
   mInputAtom = do_GetAtom("input");
-  mFocusedAtom = do_GetAtom("focused");
-  mFirstTabAtom = do_GetAtom("first-tab");
   mCurPosAtom = do_GetAtom("curpos");
   mMaxPosAtom = do_GetAtom("maxpos");
   mMenuActiveAtom = do_GetAtom("_moz-menuactive");
@@ -109,7 +105,7 @@ NS_IMETHODIMP
 nsNativeThemeGTK::Observe(nsISupports *aSubject, const char *aTopic,
                           const PRUnichar *aData)
 {
-  if (!nsCRT::strcmp(aTopic, "quit-application")) {
+  if (!nsCRT::strcmp(aTopic, "xpcom-shutdown")) {
     moz_gtk_shutdown();
   } else {
     NS_NOTREACHED("unexpected topic");
@@ -119,21 +115,10 @@ nsNativeThemeGTK::Observe(nsISupports *aSubject, const char *aTopic,
   return NS_OK;
 }
 
-static nsIPresShell *
-GetPrimaryPresShell(nsIFrame* aFrame)
+void
+nsNativeThemeGTK::RefreshWidgetWindow(nsIFrame* aFrame)
 {
-  if (!aFrame)
-    return nsnull;
-
-  // this is a workaround for the egcs 1.1.2 not inliningg
-  // aFrame->GetPresContext(), which causes an undefined symbol
-  nsIPresContext *context = aFrame->GetStyleContext()->GetRuleNode()->GetPresContext();
-  return context ? context->GetPresShell() : nsnull;
-}
-
-static void RefreshWidgetWindow(nsIFrame* aFrame)
-{
-  nsIPresShell *shell = GetPrimaryPresShell(aFrame);
+  nsIPresShell *shell = GetPresShell(aFrame);
   if (!shell)
     return;
 
@@ -144,61 +129,6 @@ static void RefreshWidgetWindow(nsIFrame* aFrame)
   vm->UpdateAllViews(NS_VMREFRESH_NO_SYNC);
 }
 
-static PRInt32 GetContentState(nsIFrame* aFrame)
-{
-  if (!aFrame)
-    return 0;
-
-  nsIPresShell *shell = GetPrimaryPresShell(aFrame);
-  if (!shell)
-    return 0;
-
-  nsCOMPtr<nsIPresContext> context;
-  shell->GetPresContext(getter_AddRefs(context));
-  PRInt32 flags = 0;
-  context->EventStateManager()->GetContentState(aFrame->GetContent(), flags);
-  return flags;
-}
-
-static PRBool CheckBooleanAttr(nsIFrame* aFrame, nsIAtom* aAtom)
-{
-  if (!aFrame)
-    return PR_FALSE;
-
-  nsIContent* content = aFrame->GetContent();
-  if (content->IsContentOfType(nsIContent::eHTML))
-    return content->HasAttr(kNameSpaceID_None, aAtom);
-
-  nsAutoString attr;
-  content->GetAttr(kNameSpaceID_None, aAtom, attr);
-  return attr.Equals(NS_LITERAL_STRING("true")); // This handles the XUL case.
-}
-
-static PRInt32 CheckIntegerAttr(nsIFrame *aFrame, nsIAtom *aAtom)
-{
-  if (!aFrame)
-    return 0;
-
-  nsIContent* content = aFrame->GetContent();
-  if (!content)
-    return 0;
-
-  nsAutoString attr;
-  content->GetAttr(kNameSpaceID_None, aAtom, attr);
-  if (attr.IsEmpty())
-    return 0;
-
-  PRInt32 error;
-  PRInt32 retval = attr.ToInteger(&error);
-  return retval;
-}
-
-PRBool
-nsNativeThemeGTK::IsDisabled(nsIFrame* aFrame)
-{
-  return CheckBooleanAttr(aFrame, mDisabledAtom);
-}
-  
 static PRBool IsWidgetTypeDisabled(PRUint8* aDisabledVector, PRUint8 aWidgetType) {
   return aDisabledVector[aWidgetType >> 3] & (1 << (aWidgetType & 7));
 }
@@ -246,9 +176,10 @@ nsNativeThemeGTK::GetGtkWidgetAndState(PRUint8 aWidgetType, nsIFrame* aFrame,
       memset(aState, 0, sizeof(GtkWidgetState));
     } else {
 
-      // for dropdown textfields, look at the parent frame (the textbox)
+      // for dropdown textfields, look at the parent frame (textbox or menulist)
       if (aWidgetType == NS_THEME_DROPDOWN_TEXTFIELD)
         aFrame = aFrame->GetParent();
+
       // For XUL checkboxes and radio buttons, the state of the parent
       // determines our state.
       if (aWidgetType == NS_THEME_CHECKBOX || aWidgetType == NS_THEME_RADIO ||
@@ -275,7 +206,7 @@ nsNativeThemeGTK::GetGtkWidgetAndState(PRUint8 aWidgetType, nsIFrame* aFrame,
         }
       }
 
-      PRInt32 eventState = GetContentState(aFrame);
+      PRInt32 eventState = GetContentState(aFrame, aWidgetType);
 
       aState->disabled = IsDisabled(aFrame);
       aState->active  = (eventState & NS_EVENT_STATE_ACTIVE) == NS_EVENT_STATE_ACTIVE;
@@ -292,7 +223,7 @@ nsNativeThemeGTK::GetGtkWidgetAndState(PRUint8 aWidgetType, nsIFrame* aFrame,
           aWidgetType == NS_THEME_RADIO_CONTAINER ||
           aWidgetType == NS_THEME_RADIO_LABEL ||
           aWidgetType == NS_THEME_RADIO) {
-        aState->focused = CheckBooleanAttr(aFrame, mFocusedAtom);
+        aState->focused = IsFocused(aFrame);
       }
 
       if (aWidgetType == NS_THEME_SCROLLBAR_THUMB_VERTICAL ||
@@ -301,8 +232,8 @@ nsNativeThemeGTK::GetGtkWidgetAndState(PRUint8 aWidgetType, nsIFrame* aFrame,
         // the slider to the actual scrollbar object
         nsIFrame *tmpFrame = aFrame->GetParent()->GetParent();
 
-        aState->curpos = CheckIntegerAttr(tmpFrame, mCurPosAtom);
-        aState->maxpos = CheckIntegerAttr(tmpFrame, mMaxPosAtom);
+        aState->curpos = CheckIntAttr(tmpFrame, mCurPosAtom);
+        aState->maxpos = CheckIntAttr(tmpFrame, mMaxPosAtom);
       }
 
       // menu item state is determined by the attribute "_moz-menuactive",
@@ -310,14 +241,15 @@ nsNativeThemeGTK::GetGtkWidgetAndState(PRUint8 aWidgetType, nsIFrame* aFrame,
       // menus which are children of a menu bar are only marked as prelight
       // if they are open, not on normal hover.
 
-      if (aWidgetType == NS_THEME_MENUITEM) {
+      if (aWidgetType == NS_THEME_MENUITEM ||
+          aWidgetType == NS_THEME_CHECKMENUITEM ||
+          aWidgetType == NS_THEME_RADIOMENUITEM) {
         PRBool isTopLevel = PR_FALSE;
         nsIMenuFrame *menuFrame;
         CallQueryInterface(aFrame, &menuFrame);
 
         if (menuFrame) {
-          nsIMenuParent *menuParent;
-          menuFrame->GetMenuParent(&menuParent);
+          nsIMenuParent *menuParent = menuFrame->GetMenuParent();
           if (menuParent)
             menuParent->IsMenuBar(isTopLevel);
         }
@@ -331,6 +263,21 @@ nsNativeThemeGTK::GetGtkWidgetAndState(PRUint8 aWidgetType, nsIFrame* aFrame,
         }
 
         aState->active = FALSE;
+        
+        if (aWidgetType == NS_THEME_CHECKMENUITEM ||
+            aWidgetType == NS_THEME_RADIOMENUITEM) {
+          if (aFrame) {
+            nsAutoString attr;
+            nsresult res = aFrame->GetContent()->GetAttr(kNameSpaceID_None, mCheckedAtom, attr);
+            if (res == NS_CONTENT_ATTR_NO_VALUE ||
+               (res != NS_CONTENT_ATTR_NOT_THERE && attr.IsEmpty()))
+              *aWidgetFlags = FALSE;
+            else
+              *aWidgetFlags = attr.EqualsIgnoreCase("true");
+          } else {
+            *aWidgetFlags = FALSE;
+          }
+        }
       }
     }
   }
@@ -370,10 +317,15 @@ nsNativeThemeGTK::GetGtkWidgetAndState(PRUint8 aWidgetType, nsIFrame* aFrame,
   case NS_THEME_TOOLBAR_GRIPPER:
     aGtkWidgetType = MOZ_GTK_GRIPPER;
     break;
-  case NS_THEME_DROPDOWN_TEXTFIELD:
   case NS_THEME_TEXTFIELD:
+  case NS_THEME_DROPDOWN_TEXTFIELD:
     aGtkWidgetType = MOZ_GTK_ENTRY;
     break;
+  case NS_THEME_DROPDOWN:
+    aGtkWidgetType = MOZ_GTK_DROPDOWN;
+    break;
+  case NS_THEME_DROPDOWN_TEXT:
+    return PR_FALSE; // nothing to do, but prevents the bg from being drawn
   case NS_THEME_DROPDOWN_BUTTON:
     aGtkWidgetType = MOZ_GTK_DROPDOWN_ARROW;
     break;
@@ -438,6 +390,12 @@ nsNativeThemeGTK::GetGtkWidgetAndState(PRUint8 aWidgetType, nsIFrame* aFrame,
   case NS_THEME_MENUITEM:
     aGtkWidgetType = MOZ_GTK_MENUITEM;
     break;
+  case NS_THEME_CHECKMENUITEM:
+    aGtkWidgetType = MOZ_GTK_CHECKMENUITEM;
+    break;
+  case NS_THEME_RADIOMENUITEM:
+    aGtkWidgetType = MOZ_GTK_RADIOMENUITEM;
+    break;
   case NS_THEME_WINDOW:
   case NS_THEME_DIALOG:
     aGtkWidgetType = MOZ_GTK_WINDOW;
@@ -470,7 +428,7 @@ nsNativeThemeGTK::DrawWidgetBackground(nsIRenderingContext* aContext,
     return NS_OK;
 
   nsDrawingSurfaceGTK* surface;
-  aContext->GetDrawingSurface((nsDrawingSurface*)&surface);
+  aContext->GetDrawingSurface((nsIDrawingSurface**)&surface);
   GdkWindow* window = (GdkWindow*) surface->GetDrawable();
 
   nsTransform2D* transformMatrix;
@@ -579,6 +537,37 @@ nsNativeThemeGTK::GetWidgetPadding(nsIDeviceContext* aContext,
   return PR_FALSE;
 }
 
+PRBool
+nsNativeThemeGTK::GetWidgetOverflow(nsIDeviceContext* aContext,
+                                    nsIFrame* aFrame, PRUint8 aWidgetType,
+                                    nsRect* aResult)
+{
+  nsIntMargin extraSize(0,0,0,0);
+  // Allow an extra one pixel above and below the thumb for certain
+  // GTK2 themes (Ximian Industrial, Bluecurve, Misty, at least);
+  // see moz_gtk_scrollbar_thumb_paint in gtk2drawing.c
+  switch (aWidgetType) {
+  case NS_THEME_SCROLLBAR_THUMB_VERTICAL:
+    extraSize.top = extraSize.bottom = 1;
+    break;
+  case NS_THEME_SCROLLBAR_THUMB_HORIZONTAL:
+    extraSize.left = extraSize.right = 1;
+    break;
+  default:
+    return PR_FALSE;
+  }
+
+  float p2t = aContext->DevUnitsToAppUnits();
+  nsMargin m(NSIntPixelsToTwips(extraSize.left, p2t),
+             NSIntPixelsToTwips(extraSize.top, p2t),
+             NSIntPixelsToTwips(extraSize.right, p2t),
+             NSIntPixelsToTwips(extraSize.bottom, p2t));
+  nsRect r(nsPoint(0, 0), aFrame->GetSize());
+  r.Inflate(m);
+  *aResult = r;
+  return PR_TRUE;
+}
+
 NS_IMETHODIMP
 nsNativeThemeGTK::GetMinimumWidgetSize(nsIRenderingContext* aContext,
                                        nsIFrame* aFrame, PRUint8 aWidgetType,
@@ -590,14 +579,23 @@ nsNativeThemeGTK::GetMinimumWidgetSize(nsIRenderingContext* aContext,
   switch (aWidgetType) {
     case NS_THEME_SCROLLBAR_BUTTON_UP:
     case NS_THEME_SCROLLBAR_BUTTON_DOWN:
-    case NS_THEME_SCROLLBAR_BUTTON_LEFT:
-    case NS_THEME_SCROLLBAR_BUTTON_RIGHT:
       {
         MozGtkScrollbarMetrics metrics;
         moz_gtk_get_scrollbar_metrics(&metrics);
 
         aResult->width = metrics.slider_width;
         aResult->height = metrics.stepper_size;
+        *aIsOverridable = PR_FALSE;
+      }
+      break;
+    case NS_THEME_SCROLLBAR_BUTTON_LEFT:
+    case NS_THEME_SCROLLBAR_BUTTON_RIGHT:
+      {
+        MozGtkScrollbarMetrics metrics;
+        moz_gtk_get_scrollbar_metrics(&metrics);
+
+        aResult->width = metrics.stepper_size;
+        aResult->height = metrics.slider_width;
         *aIsOverridable = PR_FALSE;
       }
       break;
@@ -711,16 +709,17 @@ nsNativeThemeGTK::WidgetStateChanged(nsIFrame* aFrame, PRUint8 aWidgetType,
 NS_IMETHODIMP
 nsNativeThemeGTK::ThemeChanged()
 {
+  nsDeviceContextGTK::ClearCachedSystemFonts();
+
   memset(mDisabledWidgetTypes, 0, sizeof(mDisabledWidgetTypes));
   return NS_OK;
 }
 
 NS_IMETHODIMP_(PRBool)
-nsNativeThemeGTK::ThemeSupportsWidget(nsIPresContext* aPresContext,
+nsNativeThemeGTK::ThemeSupportsWidget(nsPresContext* aPresContext,
                                       nsIFrame* aFrame,
                                       PRUint8 aWidgetType)
 {
-  // Check for specific widgets to see if HTML has overridden the style.
   if (aFrame) {
     // For now don't support HTML.
     if (aFrame->GetContent()->IsContentOfType(nsIContent::eHTML))
@@ -781,9 +780,7 @@ nsNativeThemeGTK::ThemeSupportsWidget(nsIPresContext* aPresContext,
     // case NS_THEME_SCROLLBAR_GRIPPER_VERTICAL:  (n/a for gtk)
   case NS_THEME_TEXTFIELD:
     // case NS_THEME_TEXTFIELD_CARET:
-    // case NS_THEME_DROPDOWN:
   case NS_THEME_DROPDOWN_BUTTON:
-    // case NS_THEME_DROPDOWN_TEXT:
   case NS_THEME_DROPDOWN_TEXTFIELD:
     // case NS_THEME_SLIDER:
     // case NS_THEME_SLIDER_THUMB:
@@ -798,10 +795,14 @@ nsNativeThemeGTK::ThemeSupportsWidget(nsIPresContext* aPresContext,
   case NS_THEME_MENUBAR:
   case NS_THEME_MENUPOPUP:
   case NS_THEME_MENUITEM:
+  case NS_THEME_CHECKMENUITEM:
+  case NS_THEME_RADIOMENUITEM:
   case NS_THEME_WINDOW:
   case NS_THEME_DIALOG:
+  case NS_THEME_DROPDOWN:
+  case NS_THEME_DROPDOWN_TEXT:
 #endif
-    return PR_TRUE;
+    return !IsWidgetStyled(aPresContext, aFrame, aWidgetType);
   }
 
   return PR_FALSE;

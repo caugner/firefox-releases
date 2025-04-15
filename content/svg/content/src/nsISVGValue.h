@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,27 +14,27 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Crocodile Clips Ltd..
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 
 #ifndef __NS_ISVGVALUE_H__
@@ -57,16 +57,22 @@ class nsISVGValueObserver;
   XXX Observers
 */
 
-// {79293232-F695-4bda-9FC7-C2679647B790}
+// {d8299a5e-af9a-4bad-9845-fb1b6e2eed19}
 #define NS_ISVGVALUE_IID \
-{ 0x79293232, 0xf695, 0x4bda, { 0x9f, 0xc7, 0xc2, 0x67, 0x96, 0x47, 0xb7, 0x90 } }
+{ 0xd8299a5e, 0xaf9a, 0x4bad, { 0x98, 0x45, 0xfb, 0x1b, 0x6e, 0x2e, 0xed, 0x19 } }
 
 
 class nsISVGValue : public nsISupports
 {
 public:
+  enum modificationType {
+    mod_other = 0,
+    mod_context,
+    mod_die
+  };
+
   NS_DEFINE_STATIC_IID_ACCESSOR(NS_ISVGVALUE_IID)
-  
+
   NS_IMETHOD SetValueString(const nsAString& aValue)=0;
   NS_IMETHOD GetValueString(nsAString& aValue)=0;
 
@@ -82,6 +88,6 @@ NS_CreateSVGGenericStringValue(const nsAString& aValue, nsISVGValue** aResult);
 
 nsresult
 NS_CreateSVGStringProxyValue(nsISVGValue* proxiedValue, nsISVGValue** aResult);
-                             
+
 #endif // __NS_ISVGVALUE_H__
 

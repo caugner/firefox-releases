@@ -1,11 +1,12 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: set sw=4 ts=4 sts=4 et cin: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +15,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +24,16 @@
  *   Darin Fisher <darin@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -122,10 +123,31 @@ RequestHashInitEntry(PLDHashTable *table, PLDHashEntryHdr *entry,
 }
 
 
+static void
+RescheduleRequest(nsIRequest *aRequest, PRInt32 delta)
+{
+    nsCOMPtr<nsISupportsPriority> p = do_QueryInterface(aRequest);
+    if (p)
+        p->AdjustPriority(delta);
+}
+
+PR_STATIC_CALLBACK(PLDHashOperator)
+RescheduleRequests(PLDHashTable *table, PLDHashEntryHdr *hdr,
+                   PRUint32 number, void *arg)
+{
+    RequestMapEntry *e = NS_STATIC_CAST(RequestMapEntry *, hdr);
+    PRInt32 *delta = NS_STATIC_CAST(PRInt32 *, arg);
+
+    RescheduleRequest(e->mKey, *delta);
+    return PL_DHASH_NEXT;
+}
+
+
 nsLoadGroup::nsLoadGroup(nsISupports* outer)
     : mForegroundCount(0)
     , mLoadFlags(LOAD_NORMAL)
     , mStatus(NS_OK)
+    , mPriority(PRIORITY_NORMAL)
     , mIsCanceling(PR_FALSE)
 {
     NS_INIT_AGGREGATED(outer);
@@ -228,6 +250,9 @@ nsLoadGroup::AggregatedQueryInterface(const nsIID& aIID, void** aInstancePtr)
         aIID.Equals(NS_GET_IID(nsISupports))) {
         *aInstancePtr = NS_STATIC_CAST(nsILoadGroup*, this);
     }
+    else if (aIID.Equals(NS_GET_IID(nsISupportsPriority))) {
+        *aInstancePtr = NS_STATIC_CAST(nsISupportsPriority*,this);
+    }
     else if (aIID.Equals(NS_GET_IID(nsISupportsWeakReference))) {
         *aInstancePtr = NS_STATIC_CAST(nsISupportsWeakReference*,this);
     }
@@ -299,7 +324,7 @@ AppendRequestsToVoidArray(PLDHashTable *table, PLDHashEntryHdr *hdr,
 // nsVoidArray enumeration callback that releases all items in the
 // nsVoidArray
 PR_STATIC_CALLBACK(PRBool)
-ReleaseVoidArrayItems(void* aElement, void *aData)
+ReleaseVoidArrayItems(void *aElement, void *aData)
 {
     nsISupports *s = NS_STATIC_CAST(nsISupports *, aElement);
 
@@ -312,7 +337,7 @@ NS_IMETHODIMP
 nsLoadGroup::Cancel(nsresult status)
 {
     NS_ASSERTION(NS_FAILED(status), "shouldn't cancel with a success code");
-    nsresult rv, firstError;
+    nsresult rv;
     PRUint32 count = mRequests.entryCount;
 
     nsAutoVoidArray requests;
@@ -336,12 +361,10 @@ nsLoadGroup::Cancel(nsresult status)
     //
     mIsCanceling = PR_TRUE;
 
-    firstError = NS_OK;
-
-    nsIRequest* request;
+    nsresult firstError = NS_OK;
 
     while (count > 0) {
-        request = NS_STATIC_CAST(nsIRequest*, requests.ElementAt(--count));
+        nsIRequest* request = NS_STATIC_CAST(nsIRequest*, requests.ElementAt(--count));
 
         NS_ASSERTION(request, "NULL request found in list.");
 
@@ -514,6 +537,7 @@ NS_IMETHODIMP
 nsLoadGroup::GetLoadGroup(nsILoadGroup **loadGroup)
 {
     *loadGroup = mLoadGroup;
+    NS_IF_ADDREF(*loadGroup);
     return NS_OK;
 }
 
@@ -602,6 +626,9 @@ nsLoadGroup::AddRequest(nsIRequest *request, nsISupports* ctxt)
         return NS_ERROR_OUT_OF_MEMORY;
     }
 
+    if (mPriority != 0)
+        RescheduleRequest(request, mPriority);
+
     if (!(flags & nsIRequest::LOAD_BACKGROUND)) {
         // Update the count of foreground URIs..
         mForegroundCount += 1;
@@ -633,6 +660,12 @@ nsLoadGroup::AddRequest(nsIRequest *request, nsISupports* ctxt)
                 mForegroundCount -= 1;
             }
         }
+
+        // Ensure that we're part of our loadgroup while pending
+        if (mForegroundCount == 1 && mLoadGroup) {
+            mLoadGroup->AddRequest(this, nsnull);
+        }
+
     }
 
     return rv;
@@ -678,6 +711,10 @@ nsLoadGroup::RemoveRequest(nsIRequest *request, nsISupports* ctxt,
 
     PL_DHashTableRawRemove(&mRequests, entry);
 
+    // Undo any group priority delta...
+    if (mPriority != 0)
+        RescheduleRequest(request, -mPriority);
+
     nsLoadFlags flags;
     rv = request->GetLoadFlags(&flags);
     if (NS_FAILED(rv)) return rv;
@@ -700,6 +737,11 @@ nsLoadGroup::RemoveRequest(nsIRequest *request, nsISupports* ctxt,
                     this, request));
             }
 #endif
+        }
+
+        // If that was the last request -> remove ourselves from loadgroup
+        if (mForegroundCount == 0 && mLoadGroup) {
+            mLoadGroup->RemoveRequest(this, nsnull, aStatus);
         }
     }
 
@@ -780,6 +822,33 @@ NS_IMETHODIMP
 nsLoadGroup::SetNotificationCallbacks(nsIInterfaceRequestor *aCallbacks)
 {
     mCallbacks = aCallbacks;
+    return NS_OK;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// nsISupportsPriority methods:
+
+NS_IMETHODIMP
+nsLoadGroup::GetPriority(PRInt32 *aValue)
+{
+    *aValue = mPriority;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsLoadGroup::SetPriority(PRInt32 aValue)
+{
+    return AdjustPriority(aValue - mPriority);
+}
+
+NS_IMETHODIMP
+nsLoadGroup::AdjustPriority(PRInt32 aDelta)
+{
+    // Update the priority for each request that supports nsISupportsPriority
+    if (aDelta != 0) {
+        mPriority += aDelta;
+        PL_DHashTableEnumerate(&mRequests, RescheduleRequests, &aDelta);
+    }
     return NS_OK;
 }
 

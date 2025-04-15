@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -26,16 +26,16 @@
  *   Bradley Baetz <bbaetz@student.usyd.edu.au>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,7 +44,7 @@
   A directory viewer object. Parses "application/http-index-format"
   per Lou Montulli's original spec:
 
-    http://www.area.com/~roeber/file_format.html
+  http://www.mozilla.org/projects/netlib/dirindexformat.html
 
   One added change is for a description entry, for when the
   target does not match the filename (ie gopher)
@@ -58,7 +58,6 @@
 #include "nsCRT.h"
 #include "nsEscape.h"
 #include "nsIDocumentLoader.h"
-#include "nsIDocumentViewer.h"
 #include "nsIEnumerator.h"
 #include "nsIRDFService.h"
 #include "nsIScriptContext.h"
@@ -80,18 +79,20 @@
 #include "nsIPrompt.h"
 #include "nsIAuthPrompt.h"
 #include "nsIProgressEventSink.h"
-#include "nsIContent.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsIDOMWindowCollection.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMText.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "nsIStreamConverterService.h"
-#include "nsIDirectoryListing.h"
 #include "nsICategoryManager.h"
 #include "nsXPCOMCID.h"
+
+static const int FORMAT_HTML = 2;
+static const int FORMAT_XUL = 3;
 
 //----------------------------------------------------------------------
 //
@@ -480,7 +481,8 @@ nsHTTPIndex::OnIndexAvailable(nsIRequest* aRequest, nsISupports *aContext,
       PRInt64 size;
       rv = aIndex->GetSize(&size);
       if (NS_FAILED(rv)) return rv;
-      if (LL_NE(size, LL_INIT(0, -1))) {
+      PRInt64 minus1 = LL_MAXUINT;
+      if (LL_NE(size, minus1)) {
         PRInt32 intSize;
         LL_L2I(intSize, size);
         // XXX RDF should support 64 bit integers (bug 240160)
@@ -541,6 +543,13 @@ nsHTTPIndex::OnIndexAvailable(nsIRequest* aRequest, nsISupports *aContext,
   }
 
   return rv;
+}
+
+nsresult
+nsHTTPIndex::OnInformationAvailable(nsIRequest *aRequest,
+                                  nsISupports *aCtxt,
+                                  const nsAString& aInfo) {
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 //----------------------------------------------------------------------
@@ -1024,12 +1033,6 @@ nsHTTPIndex::FireTimer(nsITimer* aTimer, void* aClosure)
           }
           if (NS_SUCCEEDED(rv) && (channel)) {
             channel->SetNotificationCallbacks(httpIndex);
-            nsCOMPtr<nsIDirectoryListing> dirList = do_QueryInterface(channel);
-            NS_ASSERTION(dirList, "Directory listing doesn't impl nsIDirectoryListing");
-            if (dirList) {
-              rv = dirList->SetListFormat(nsIDirectoryListing::FORMAT_HTTP_INDEX);
-              NS_ASSERTION(NS_SUCCEEDED(rv), "Could not set directory list format");
-            }
             rv = channel->AsyncOpen(httpIndex, aSource);
           }
         }
@@ -1373,31 +1376,22 @@ nsDirectoryViewerFactory::CreateInstance(const char *aCommand,
   nsresult rv;
 
   // OK - are we going to be using the html listing or not?
-  nsCOMPtr<nsIPref> prefSrv = do_GetService(NS_PREF_CONTRACTID, &rv);
+  nsCOMPtr<nsIPrefBranch> prefSrv = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
   if (NS_FAILED(rv)) return rv;
 
   PRBool useXUL = PR_FALSE;
   PRInt32 dirPref;
   rv = prefSrv->GetIntPref("network.dir.format", &dirPref);
-  if (NS_SUCCEEDED(rv) && dirPref == nsIDirectoryListing::FORMAT_HTTP_INDEX) {
+  if (NS_SUCCEEDED(rv) && dirPref == FORMAT_XUL) {
     useXUL = PR_TRUE;
-  }
-
-  // We need to disable html mode for file:///, at least for the moment
-  // The charset coding isn't quite right for non ASCII systems
-  // XXX - This is a temporary hack
-  nsCOMPtr<nsIURI> uri;
-  rv = aChannel->GetURI(getter_AddRefs(uri));
-  if (NS_SUCCEEDED(rv)) {
-    PRBool isFile;
-    if (NS_SUCCEEDED(uri->SchemeIs("file", &isFile)) && isFile)
-      useXUL = PR_TRUE;
   }
 
   PRBool viewSource = (PL_strstr(aContentType,"view-source") != 0);
 
   if ((NS_FAILED(rv) || useXUL) && !viewSource) {
-    
+    // ... and setup the original channel's content type
+    (void)aChannel->SetContentType(NS_LITERAL_CSTRING("application/vnd.mozilla.xul+xml"));
+
     // This is where we shunt the HTTP/Index stream into our datasource,
     // and open the directory viewer XUL file as the content stream to
     // load in its place.
@@ -1449,13 +1443,13 @@ nsDirectoryViewerFactory::CreateInstance(const char *aCommand,
     listener = do_QueryInterface(httpindex,&rv);
     *aDocListenerResult = listener.get();
     NS_ADDREF(*aDocListenerResult);
-
-    // ... and set the original channel's content type up
-    (void)aChannel->SetContentType(NS_LITERAL_CSTRING("application/vnd.mozilla.xul+xml"));
     
     return NS_OK;
   }
-  
+
+  // setup the original channel's content type
+  (void)aChannel->SetContentType(NS_LITERAL_CSTRING("text/html"));
+
   // Otherwise, lets use the html listing
   nsCOMPtr<nsICategoryManager> catMan(do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv));
   if (NS_FAILED(rv))
@@ -1486,18 +1480,13 @@ nsDirectoryViewerFactory::CreateInstance(const char *aCommand,
   nsCOMPtr<nsIStreamConverterService> scs = do_GetService("@mozilla.org/streamConverters;1", &rv);
   if (NS_FAILED(rv)) return rv;
 
-  rv = scs->AsyncConvertData(NS_LITERAL_STRING("application/http-index-format").get(),
-                             NS_LITERAL_STRING("text/html").get(),
+  rv = scs->AsyncConvertData("application/http-index-format",
+                             "text/html",
                              listener,
                              nsnull,
                              aDocListenerResult);
 
   if (NS_FAILED(rv)) return rv;
-
-  NS_ADDREF(*aDocListenerResult);
-
-  // ... and set the original channel's content type up
-  (void)aChannel->SetContentType(NS_LITERAL_CSTRING("text/html"));
 
   return NS_OK;
 }

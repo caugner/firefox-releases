@@ -46,13 +46,19 @@
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsXPIDLString.h"
-#include "nsIScriptSecurityManager.h"
 #include "nsIStringBundle.h"
 #include "prefapi.h"
 #include "prmem.h"
 #include "pldhash.h"
+#include "nsPrefsCID.h"
 
+#ifndef MOZ_NO_XPCOM_OBSOLETE
 #include "nsIFileSpec.h"  // this should be removed eventually
+#endif
+
+#include "plstr.h"
+#include "nsCRT.h"
+
 #include "prefapi_private_data.h"
 
 // Definitions
@@ -112,7 +118,8 @@ NS_IMPL_THREADSAFE_RELEASE(nsPrefBranch)
 NS_INTERFACE_MAP_BEGIN(nsPrefBranch)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIPrefBranch)
   NS_INTERFACE_MAP_ENTRY(nsIPrefBranch)
-  NS_INTERFACE_MAP_ENTRY(nsIPrefBranchInternal)
+  NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIPrefBranch2, !mIsDefault)
+  NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIPrefBranchInternal, !mIsDefault)
   NS_INTERFACE_MAP_ENTRY(nsISecurityPref)
   NS_INTERFACE_MAP_ENTRY(nsIObserver)
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
@@ -313,7 +320,7 @@ NS_IMETHODIMP nsPrefBranch::GetComplexValue(const char *aPrefName, const nsIID &
       return rv;
     
     nsCOMPtr<nsILocalFile> theFile;
-    rv = NS_NewNativeLocalFile(nsCString(), PR_TRUE, getter_AddRefs(theFile));
+    rv = NS_NewNativeLocalFile(EmptyCString(), PR_TRUE, getter_AddRefs(theFile));
     if (NS_FAILED(rv))
       return rv;
     rv = theFile->SetRelativeDescriptor(fromFile, Substring(++keyEnd, strEnd));
@@ -346,6 +353,7 @@ NS_IMETHODIMP nsPrefBranch::GetComplexValue(const char *aPrefName, const nsIID &
   }
 
   // This is deprecated and you should not be using it
+#ifndef MOZ_NO_XPCOM_OBSOLETE
   if (aType.Equals(NS_GET_IID(nsIFileSpec))) {
     nsCOMPtr<nsIFileSpec> file(do_CreateInstance(NS_FILESPEC_CONTRACTID, &rv));
 
@@ -365,6 +373,7 @@ NS_IMETHODIMP nsPrefBranch::GetComplexValue(const char *aPrefName, const nsIID &
     }
     return rv;
   }
+#endif
 
   NS_WARNING("nsPrefBranch::GetComplexValue - Unsupported interface type");
   return NS_NOINTERFACE;
@@ -446,6 +455,7 @@ NS_IMETHODIMP nsPrefBranch::SetComplexValue(const char *aPrefName, const nsIID &
     return rv;
   }
 
+#ifndef MOZ_NO_XPCOM_OBSOLETE
   // This is deprecated and you should not be using it
   if (aType.Equals(NS_GET_IID(nsIFileSpec))) {
     nsCOMPtr<nsIFileSpec> file = do_QueryInterface(aValue);
@@ -457,6 +467,7 @@ NS_IMETHODIMP nsPrefBranch::SetComplexValue(const char *aPrefName, const nsIID &
     }
     return rv;
   }
+#endif
 
   NS_WARNING("nsPrefBranch::SetComplexValue - Unsupported interface type");
   return NS_NOINTERFACE;
@@ -602,7 +613,7 @@ NS_IMETHODIMP nsPrefBranch::GetChildList(const char *aStartingAt, PRUint32 *aCou
 
 
 /*
- *  nsIPrefBranchInternal methods
+ *  nsIPrefBranch2 methods
  */
 
 NS_IMETHODIMP nsPrefBranch::AddObserver(const char *aDomain, nsIObserver *aObserver, PRBool aHoldWeak)
@@ -635,7 +646,8 @@ NS_IMETHODIMP nsPrefBranch::AddObserver(const char *aDomain, nsIObserver *aObser
       nsMemory::Free(pCallback);
       return NS_ERROR_INVALID_ARG;
     }
-    observerRef = do_GetWeakReference(weakRefFactory);
+    nsCOMPtr<nsIWeakReference> tmp = do_GetWeakReference(weakRefFactory);
+    observerRef = tmp;
   } else {
     observerRef = aObserver;
   }
@@ -677,8 +689,10 @@ NS_IMETHODIMP nsPrefBranch::RemoveObserver(const char *aDomain, nsIObserver *aOb
      nsCOMPtr<nsISupports> observerRef;
      if (pCallback->bIsWeakRef) {
        nsCOMPtr<nsISupportsWeakReference> weakRefFactory = do_QueryInterface(aObserver);
-       if (weakRefFactory)
-         observerRef = do_GetWeakReference(aObserver);
+       if (weakRefFactory) {
+         nsCOMPtr<nsIWeakReference> tmp = do_GetWeakReference(aObserver);
+         observerRef = tmp;
+       }
      }
      if (!observerRef)
        observerRef = aObserver;
@@ -731,7 +745,7 @@ PR_STATIC_CALLBACK(nsresult) NotifyObserver(const char *newpref, void *data)
     observer = do_QueryReferent(weakRef);
     if (!observer) {
       // this weak referenced observer went away, remove them from the list
-      nsCOMPtr<nsIPrefBranchInternal> pbi = do_QueryInterface(pData->pBranch);
+      nsCOMPtr<nsIPrefBranch2> pbi = do_QueryInterface(pData->pBranch);
       if (pbi) {
         observer = NS_STATIC_CAST(nsIObserver *, pData->pObserver);
         pbi->RemoveObserver(newpref, observer);
@@ -807,7 +821,7 @@ nsresult nsPrefBranch::GetDefaultFromPropertiesFile(const char *aPrefName, PRUni
 
   // string names are in unicode
   nsAutoString stringId;
-  stringId.AssignWithConversion(aPrefName);
+  stringId.AssignASCII(aPrefName);
 
   return bundle->GetStringFromName(stringId.get(), return_buf);
 }
@@ -840,14 +854,14 @@ nsresult nsPrefBranch::getValidatedPrefName(const char *aPrefName, const char **
     PL_strncmp(fullPref, capabilityPrefix, sizeof(capabilityPrefix)-1) == 0)
   {
     nsresult rv;
-    nsCOMPtr<nsIScriptSecurityManager> secMan = 
-             do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
+    nsCOMPtr<nsIPrefSecurityCheck> secCheck = 
+             do_GetService(NS_GLOBAL_PREF_SECURITY_CHECK, &rv);
 
     if (NS_FAILED(rv))
       return NS_ERROR_FAILURE;
 
     PRBool enabled;
-    rv = secMan->IsCapabilityEnabled("CapabilityPreferencesAccess", &enabled);
+    rv = secCheck->CanAccessSecurityPreferences(&enabled);
     if (NS_FAILED(rv) || !enabled)
       return NS_ERROR_FAILURE;
   }
@@ -965,6 +979,8 @@ nsPrefLocalizedString::GetData(PRUnichar** _retval)
 NS_IMETHODIMP
 nsPrefLocalizedString::SetData(const PRUnichar *aData)
 {
+  if (!aData)
+    return SetData(EmptyString());
   return SetData(nsDependentString(aData));
 }
 
@@ -972,6 +988,8 @@ NS_IMETHODIMP
 nsPrefLocalizedString::SetDataWithLength(PRUint32 aLength,
                                          const PRUnichar* aData)
 {
+  if (!aData)
+    return SetData(EmptyString());
   return SetData(Substring(aData, aData + aLength));
 }
 
@@ -994,7 +1012,7 @@ NS_IMETHODIMP nsRelativeFilePref::GetFile(nsILocalFile * *aFile)
     NS_ENSURE_ARG_POINTER(aFile);
     *aFile = mFile;
     NS_IF_ADDREF(*aFile);
-    return *aFile ? NS_OK : NS_ERROR_NULL_POINTER;
+    return NS_OK;
 }
 
 NS_IMETHODIMP nsRelativeFilePref::SetFile(nsILocalFile * aFile)

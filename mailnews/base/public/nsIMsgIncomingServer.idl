@@ -1,11 +1,11 @@
 /* -*- Mode: IDL; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Seth Spitzer <sspitzer@netscape.com>
+ *   Seth Spitzer <sspitzer@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -49,14 +49,14 @@ interface nsIMsgDownloadSettings;
 interface nsISpamSettings;
 interface nsIMsgFilterPlugin;
 interface nsIUrlListener;
-
+interface nsIMsgDBHdr;
 /*
  * Interface for incoming mail/news host
  * this is the base interface for all mail server types (imap, pop, nntp, etc)
  * often you will want to add extra interfaces that give you server-specific
  * attributes and methods.
  */
-[scriptable, uuid(ad3ca01a-eff4-4a2b-8c4f-ae1a766d7e7b)]
+[scriptable, uuid(e0446c10-1bb1-4282-be4b-7fdadce4717a)]
 interface nsIMsgIncomingServer : nsISupports {
 
   /**
@@ -177,6 +177,14 @@ interface nsIMsgIncomingServer : nsISupports {
 
   /* should we use secure authentication? */
   attribute boolean useSecAuth;
+
+  const long defaultSocket = 0;
+  const long tryTLS = 1;
+  const long alwaysUseTLS = 2;
+  const long useSSL = 3;
+
+  /* use above values */
+  attribute long socketType;
 
   /* if a logon mechanism fails, should we fallback to a different
      mechanism?
@@ -371,16 +379,17 @@ interface nsIMsgIncomingServer : nsISupports {
   readonly attribute boolean passwordPromptRequired;
 
   /**
+   * for mail, this configures both the MDN filter, and the server-side
+   * spam filter filters, if needed.
+   *
    * If we have set up to filter return receipts into
    * our Sent folder, this utility method creates
    * a filter to do that, and adds it to our filterList
    * if it doesn't exist.  If it does, it will enable it.
    *
-   * If the user changes their prefs, to leave the 
-   * return receipt in the inbox, this will disable 
-   * the existing return receipts filter, if it exists.
+   * this is not used by news filters (yet).
    */
-  void configureTemporaryReturnReceiptsFilter(in nsIMsgFilterList filterList);
+  void configureTemporaryFilters(in nsIMsgFilterList filterList);
 
   /**
    * If Sent folder pref is changed we need to clear the temporary 
@@ -398,6 +407,16 @@ interface nsIMsgIncomingServer : nsISupports {
   nsIMsgFolder getMsgFolderFromURI(in nsIMsgFolder aFolderResource, in string aURI);
 
   readonly attribute boolean isDeferredTo;
+
+  const long keepDups = 0;
+  const long deleteDups = 1;
+  const long moveDupsToTrash = 2;
+  const long markDupsRead = 3;
+
+  attribute long incomingDuplicateAction;
+
+  // check if new hdr is a duplicate of a recently arrived header
+  boolean isNewHdrDuplicate(in nsIMsgDBHdr aNewHdr);
 };
 
 %{C++

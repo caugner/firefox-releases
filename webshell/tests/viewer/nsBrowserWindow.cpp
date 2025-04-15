@@ -1,25 +1,40 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
- *   Brian Ryner <bryner@brianryner.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK *****
  * This Original Code has been modified by IBM Corporation. Modifications made by IBM 
  * described herein are Copyright (c) International Business Machines Corporation, 2000.
  * Modifications to Mozilla code or documentation identified per MPL Section 3.3
@@ -59,8 +74,9 @@
 #include "nsIDocumentViewer.h"
 #include "nsIContentViewer.h"
 #include "nsIContentViewerFile.h"
+#include "nsIContentViewerContainer.h"
 #include "nsIPresShell.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIDocument.h"
 #include "nsILayoutDebugger.h"
 #include "nsThrobber.h"
@@ -79,6 +95,7 @@
 
 #include "nsCWebBrowser.h"
 #include "nsUnicharUtils.h"
+#include "nsInt64.h"
 
 #include "nsIParser.h"
 #include "nsEditorMode.h"
@@ -175,7 +192,6 @@ static NS_DEFINE_CID(kTextFieldCID, NS_TEXTFIELD_CID);
 static NS_DEFINE_CID(kWindowCID, NS_WINDOW_CID);
 
 static NS_DEFINE_IID(kIXPBaseWindowIID, NS_IXPBASE_WINDOW_IID);
-static NS_DEFINE_IID(kILookAndFeelIID, NS_ILOOKANDFEEL_IID);
 static NS_DEFINE_IID(kIButtonIID, NS_IBUTTON_IID);
 static NS_DEFINE_IID(kIDOMDocumentIID, NS_IDOMDOCUMENT_IID);
 static NS_DEFINE_IID(kITextWidgetIID, NS_ITEXTWIDGET_IID);
@@ -463,7 +479,7 @@ GetPresShellFor(nsIDocShell* aDocShell)
       nsIDocumentViewer* docv = nsnull;
       cv->QueryInterface(kIDocumentViewerIID, (void**) &docv);
       if (nsnull != docv) {
-        nsCOMPtr<nsIPresContext> cx;
+        nsCOMPtr<nsPresContext> cx;
         docv->GetPresContext(getter_AddRefs(cx));
         if (nsnull != cx) {
           NS_IF_ADDREF(shell = cx->GetPresShell());
@@ -785,13 +801,6 @@ nsBrowserWindow::DispatchMenuItem(PRInt32 aID)
 
   case VIEW_SOURCE:
     {
-//      PRInt32 theIndex;
-//      nsCOMPtr<nsIWebShell> webShell(do_QueryInterface(mDocShell));
-//      webShell->GetHistoryIndex(theIndex);
-//      nsXPIDLString theURL;
-//      webShell->GetURL(theIndex, getter_Copies(theURL));
-//      nsAutoString theString(theURL);
-//      mApp->ViewSource(theString);
       //XXX Find out how the string is allocated, and perhaps delete it...
     }
     break;
@@ -829,9 +838,9 @@ nsBrowserWindow::DispatchMenuItem(PRInt32 aID)
     {
       PRIntn ix = aID - VIEWER_DEMO0;
       nsAutoString url; url.AssignWithConversion(SAMPLES_BASE_URL);
-      url.Append(NS_LITERAL_STRING("/test"));
+      url.AppendLiteral("/test");
       url.AppendInt(ix, 10);
-      url.Append(NS_LITERAL_STRING(".html"));
+      url.AppendLiteral(".html");
       nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(mWebBrowser));
       webNav->LoadURI(url.get(), nsIWebNavigation::LOAD_FLAGS_NONE, nsnull, nsnull, nsnull);
     }
@@ -840,7 +849,7 @@ nsBrowserWindow::DispatchMenuItem(PRInt32 aID)
   case VIEWER_XPTOOLKITTOOLBAR1:
     {
       nsAutoString url; url.AssignWithConversion(SAMPLES_BASE_URL);
-      url.Append(NS_LITERAL_STRING("/toolbarTest1.xul"));
+      url.AppendLiteral("/toolbarTest1.xul");
       nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(mWebBrowser));
       webNav->LoadURI(url.get(), nsIWebNavigation::LOAD_FLAGS_NONE, nsnull, nsnull, nsnull);
       break;
@@ -848,7 +857,7 @@ nsBrowserWindow::DispatchMenuItem(PRInt32 aID)
   case VIEWER_XPTOOLKITTREE1:
     {
       nsAutoString url; url.AssignWithConversion(SAMPLES_BASE_URL);
-      url.Append(NS_LITERAL_STRING("/treeTest1.xul"));
+      url.AppendLiteral("/treeTest1.xul");
       nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(mWebBrowser));
       webNav->LoadURI(url.get(), nsIWebNavigation::LOAD_FLAGS_NONE, nsnull, nsnull, nsnull);
       break;
@@ -954,9 +963,7 @@ nsBrowserWindow::DispatchMenuItem(PRInt32 aID)
   nsIPresShell* shell;
   shell = nsnull;
   shell = GetPresShell();
-  res = nsServiceManager::GetService(kWalletServiceCID,
-                                     kIWalletServiceIID,
-                                     (nsISupports **)&walletservice);
+  res = CallGetService(kWalletServiceCID, &walletservice);
   if ((NS_OK == res) && (nsnull != walletservice)) {
     nsString urlString2;
 //    res = walletservice->WALLET_Prefill(shell, (PRVCY_QPREFILL == aID));
@@ -980,9 +987,7 @@ nsBrowserWindow::DispatchMenuItem(PRInt32 aID)
 
 
   /* set a cookie for the javascript wallet editor */
-  res = nsServiceManager::GetService(kWalletServiceCID,
-                                     kIWalletServiceIID,
-                                     (nsISupports **)&walletservice);
+  res = CallGetService(kWalletServiceCID, &walletservice);
   if ((NS_OK == res) && (nsnull != walletservice)) {
     nsIURI * url;
     nsCOMPtr<nsIIOService> service(do_GetService(kIOServiceCID, &res));
@@ -1016,9 +1021,7 @@ nsBrowserWindow::DispatchMenuItem(PRInt32 aID)
 
 #if defined(SingleSignon)
   case PRVCY_DISPLAY_SIGNONS:
-  res = nsServiceManager::GetService(kWalletServiceCID,
-                                     kIWalletServiceIID,
-                                     (nsISupports **)&walletservice);
+  res = CallGetService(kWalletServiceCID, &walletservice);
   if ((NS_OK == res) && (nsnull != walletservice)) {
 //    res = walletservice->SI_DisplaySignonInfoAsHTML();
     NS_RELEASE(walletservice);
@@ -1138,8 +1141,7 @@ NS_IMETHODIMP nsBrowserWindow::ForceRefresh()
 {
   nsIPresShell* shell = GetPresShell();
   if (nsnull != shell) {
-    nsCOMPtr<nsIViewManager> vm;
-    shell->GetViewManager(getter_AddRefs(vm));
+    nsIViewManager *vm = shell->GetViewManager();
     if (vm) {
       nsIView* root;
       vm->GetRootView(root);
@@ -1201,8 +1203,7 @@ GetTitleSuffix(void)
 {
   nsString* suffix = new nsString(" - Failed");
   nsIStringBundleService* service = nsnull;
-  nsresult ret = nsServiceManager::GetService(kStringBundleServiceCID,
-    kIStringBundleServiceIID, (nsISupports**) &service);
+  nsresult ret = CallGetService(kStringBundleServiceCID, &service);
   if (NS_FAILED(ret)) {
     return suffix;
   }
@@ -1243,7 +1244,7 @@ nsBrowserWindow::nsBrowserWindow()
     gTitleSuffix = GetTitleSuffix();
 #endif
     if ( (gTitleSuffix = new nsString) != 0 )
-      gTitleSuffix->Assign(NS_LITERAL_STRING(" - Raptor"));
+      gTitleSuffix->AssignLiteral(" - Raptor");
   }
   AddBrowser(this);
 }
@@ -1271,7 +1272,7 @@ nsBrowserWindow::~nsBrowserWindow()
   }
 }
 
-NS_IMPL_ISUPPORTS4(nsBrowserWindow, nsIBaseWindow, nsIInterfaceRequestor, nsIProgressEventSink, nsIWebShellContainer)
+NS_IMPL_ISUPPORTS3(nsBrowserWindow, nsIBaseWindow, nsIInterfaceRequestor, nsIProgressEventSink)
 
 nsresult
 nsBrowserWindow::GetInterface(const nsIID& aIID,
@@ -1306,9 +1307,8 @@ nsBrowserWindow::Init(nsIAppShell* aAppShell,
   mAllowPlugins = aAllowPlugins;
 
   // Create top level window
-  nsresult rv = nsComponentManager::CreateInstance(kWindowCID, nsnull,
-                                                   kIWidgetIID,
-                                                   getter_AddRefs(mWindow));
+  nsresult rv;
+  mWindow = do_CreateInstance(kWindowCID, &rv);
   if (NS_OK != rv) {
     return rv;
   }
@@ -1346,8 +1346,6 @@ nsBrowserWindow::Init(nsIAppShell* aAppShell,
 
   mDocShell = do_GetInterface(mWebBrowser);
   mDocShell->SetAllowPlugins(aAllowPlugins);
-  nsCOMPtr<nsIWebShell> webShell(do_QueryInterface(mDocShell));
-  webShell->SetContainer((nsIWebShellContainer*) this);
   webBrowserWin->SetVisibility(PR_TRUE);
 
   if (nsIWebBrowserChrome::CHROME_MENUBAR & aChromeMask) {
@@ -1386,20 +1384,16 @@ nsBrowserWindow::Init(nsIAppShell* aAppShell,
                       PRUint32 aChromeMask,
                       PRBool aAllowPlugins,
                       nsIDocumentViewer* aDocumentViewer,
-                      nsIPresContext* aPresContext)
+                      nsPresContext* aPresContext)
 {
   mChromeMask = aChromeMask;
   mAppShell = aAppShell;
   NS_IF_ADDREF(mAppShell);
   mAllowPlugins = aAllowPlugins;
   // Create top level window
-  nsresult rv = nsComponentManager::CreateInstance(kWindowCID,
-nsnull,
-                                                  
-kIWidgetIID,
-                                                  
-getter_AddRefs(mWindow));
-  if (NS_OK != rv) {
+  nsresult rv;
+  mWindow = do_CreateInstance(kWindowCID, &rv);
+  if (NS_FAILED(rv)) {
     return rv;
   }
   nsWidgetInitData initData;
@@ -1422,8 +1416,6 @@ nsnull, r.x, r.y, r.width, r.height);
   webBrowserWin->Create();
   mDocShell = do_GetInterface(mWebBrowser);
   mDocShell->SetAllowPlugins(aAllowPlugins);
-  nsCOMPtr<nsIWebShell> webShell(do_QueryInterface(mDocShell));
-  webShell->SetContainer((nsIWebShellContainer*) this);
   webBrowserWin->SetVisibility(PR_TRUE);
   if (nsIWebBrowserChrome::CHROME_MENUBAR & aChromeMask) {
     rv = CreateMenuBar(r.width);
@@ -1512,8 +1504,7 @@ nsBrowserWindow::CreateToolBar(PRInt32 aWidth)
   rv = NS_NewButton(&mBack);
 #else
   // Create and place back button
-  rv = nsComponentManager::CreateInstance(kButtonCID, nsnull, kIButtonIID,
-                                          (void**)&mBack);
+  rv = CallCreateInstance(kButtonCID, &mBack);
 #endif
 
   if (NS_OK != rv) {
@@ -1537,8 +1528,7 @@ nsBrowserWindow::CreateToolBar(PRInt32 aWidth)
 #ifdef USE_LOCAL_WIDGETS
   rv = NS_NewButton(&mForward);
 #else
-  rv = nsComponentManager::CreateInstance(kButtonCID, nsnull, kIButtonIID,
-                                          (void**)&mForward);
+  rv = CallCreateInstance(kButtonCID, &mForward);
 #endif
   if (NS_OK != rv) {
     return rv;
@@ -1562,8 +1552,7 @@ nsBrowserWindow::CreateToolBar(PRInt32 aWidth)
 #ifdef USE_LOCAL_WIDGETS
   rv = NS_NewTextWidget(&mLocation);
 #else
-  rv = nsComponentManager::CreateInstance(kTextFieldCID, nsnull, kITextWidgetIID,
-                                          (void**)&mLocation);
+  rv = CallCreateInstance(kTextFieldCID, &mLocation);
 #endif
 
   if (NS_OK != rv) {
@@ -1623,8 +1612,7 @@ nsBrowserWindow::CreateStatusBar(PRInt32 aWidth)
 #ifdef USE_LOCAL_WIDGETS
   rv = NS_NewTextWidget(&mStatus);
 #else
-  rv = nsComponentManager::CreateInstance(kTextFieldCID, nsnull, kITextWidgetIID,
-                                          (void**)&mStatus);
+  rv = CallCreateInstance(kTextFieldCID, &mStatus);
 #endif
 
   if (NS_OK != rv) {
@@ -1637,7 +1625,7 @@ nsBrowserWindow::CreateStatusBar(PRInt32 aWidth)
   {
     widget->SetForegroundColor(NS_RGB(0, 0, 0));
     PRUint32 size;
-    mStatus->SetText(nsAutoString(),size);
+    mStatus->SetText(EmptyString(),size);
     mStatus->SetMaxTextLength(MAX_TEXT_LENGTH);
 
     nsITextWidget* textWidget = nsnull;
@@ -1659,12 +1647,13 @@ nsBrowserWindow::Layout(PRInt32 aWidth, PRInt32 aHeight)
 {
   nscoord txtHeight;
   nscoord menuBarHeight;
-  nsILookAndFeel * lookAndFeel;
-  if (NS_OK == nsComponentManager::CreateInstance(kLookAndFeelCID, nsnull, kILookAndFeelIID, (void**)&lookAndFeel)) {
-    lookAndFeel->GetMetric(nsILookAndFeel::eMetric_TextFieldHeight, txtHeight);
-    NS_RELEASE(lookAndFeel);
-  } else {
-    txtHeight = 24;
+  {
+    nsCOMPtr<nsILookAndFeel> lookAndFeel = do_GetService(kLookAndFeelCID);
+    if (lookAndFeel) {
+      lookAndFeel->GetMetric(nsILookAndFeel::eMetric_TextFieldHeight, txtHeight);
+    } else {
+      txtHeight = 24;
+    }
   }
 
   // Find out the menubar height
@@ -1838,20 +1827,16 @@ nsBrowserWindow::GetChrome(PRUint32& aChromeMaskResult)
 }
 
 NS_IMETHODIMP
-nsBrowserWindow::GetWebShell(nsIWebShell*& aResult)
+nsBrowserWindow::GetDocShell(nsIDocShell*& aResult)
 {
-  nsCOMPtr<nsIWebShell> webShell(do_QueryInterface(mDocShell));
-  aResult = webShell;
-  NS_IF_ADDREF(aResult);
+  NS_IF_ADDREF(aResult = mDocShell);
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsBrowserWindow::GetContentWebShell(nsIWebShell **aResult)
+nsBrowserWindow::GetContentDocShell(nsIDocShell **aResult)
 {
-  nsCOMPtr<nsIWebShell> webShell(do_QueryInterface(mDocShell));
-  *aResult = webShell;
-  NS_IF_ADDREF(*aResult);
+  NS_IF_ADDREF(*aResult = mDocShell);
   return NS_OK;
 }
 
@@ -1868,138 +1853,11 @@ nsBrowserWindow::ShowMenuBar(PRBool aShow)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsBrowserWindow::WillLoadURL(nsIWebShell* aShell, const PRUnichar* aURL,
-                             nsLoadType aReason)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsBrowserWindow::BeginLoadURL(nsIWebShell* aShell, const PRUnichar* aURL)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsBrowserWindow::ProgressLoadURL(nsIWebShell* aShell,
-                                 const PRUnichar* aURL,
-                                 PRInt32 aProgress,
-                                 PRInt32 aProgressMax)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsBrowserWindow::EndLoadURL(nsIWebShell* aShell,
-                            const PRUnichar* aURL,
-                            nsresult aStatus)
-{  
-   return NS_OK;
-}
-
-
-NS_IMETHODIMP
-nsBrowserWindow::NewWebShell(PRUint32 aChromeMask,
-                             PRBool aVisible,
-                             nsIWebShell*& aNewWebShell)
-{
-  nsresult rv = NS_OK;
-
-  if (mWebCrawler) {
-    if (mWebCrawler->Crawling() || mWebCrawler->LoadingURLList()) {
-      // Do not fly javascript popups when we are crawling
-      aNewWebShell = nsnull;
-      return NS_ERROR_NOT_IMPLEMENTED;
-    }
-  }
-
-  // Create new window. By default, the refcnt will be 1 because of
-  // the registration of the browser window in gBrowsers.
-  nsNativeBrowserWindow* browser;
-  NS_NEWXPCOM(browser, nsNativeBrowserWindow);
-
-  if (nsnull != browser)
-  {
-    nsRect  bounds;
-    GetContentBounds(bounds);
-
-    browser->SetApp(mApp);
-
-    // Assume no controls for now
-    rv = browser->Init(mAppShell, bounds, aChromeMask, mAllowPlugins);
-    if (NS_OK == rv)
-    {
-      // Default is to startup hidden
-      if (aVisible) {
-        browser->SetVisibility(PR_TRUE);
-      }
-      nsIWebShell *shell;
-      rv = browser->GetWebShell(shell);
-      aNewWebShell = shell;
-    }
-    else
-    {
-      browser->Destroy();
-    }
-  }
-  else
-    rv = NS_ERROR_OUT_OF_MEMORY;
-
-  return rv;
-}
-
-
-NS_IMETHODIMP
-nsBrowserWindow::ContentShellAdded(nsIWebShell* aChildShell, nsIContent* frameNode)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsBrowserWindow::FindWebShellWithName(const PRUnichar* aName, nsIWebShell*& aResult)
-{
-  PRInt32 i, n = gBrowsers ? gBrowsers->Count() : 0;
-
-  aResult = nsnull;
-  nsString aNameStr(aName);
-
-  for (i = 0; i < n; i++) {
-    nsBrowserWindow* bw = (nsBrowserWindow*) gBrowsers->ElementAt(i);
-    nsCOMPtr<nsIWebShell> webShell;
-    
-    if (NS_OK == bw->GetWebShell(*getter_AddRefs(webShell))) {
-      nsXPIDLString name;
-      nsCOMPtr<nsIDocShellTreeItem> docShellAsItem(do_QueryInterface(mDocShell));
-      if (NS_OK == docShellAsItem->GetName(getter_Copies(name))) {
-        if (aNameStr.Equals(name)) {
-          aResult = webShell;
-          NS_ADDREF(aResult);
-          return NS_OK;
-        }
-      }      
-
-      nsCOMPtr<nsIDocShellTreeNode> docShellAsNode(do_QueryInterface(mDocShell));
-
-      nsCOMPtr<nsIDocShellTreeItem> result;
-      if (NS_OK == docShellAsNode->FindChildWithName(aName, PR_TRUE, PR_FALSE, nsnull,
-         getter_AddRefs(result))) {
-        if (result) {
-          CallQueryInterface(result, &aResult);
-          return NS_OK;
-        }
-      }
-    }
-  }
-  return NS_OK;
-}
-
-
 //----------------------------------------
 
 NS_IMETHODIMP
 nsBrowserWindow::OnProgress(nsIRequest* request, nsISupports *ctxt,
-                            PRUint32 aProgress, PRUint32 aProgressMax)
+                            PRUint64 aProgress, PRUint64 aProgressMax)
 {
   nsresult rv;
 
@@ -2015,11 +1873,11 @@ nsBrowserWindow::OnProgress(nsIRequest* request, nsISupports *ctxt,
       aURL->GetSpec(str);
       AppendUTF8toUTF16(str, url);
     }
-    url.Append(NS_LITERAL_STRING(": progress "));
-    url.AppendInt(aProgress, 10);
-    if (0 != aProgressMax) {
-      url.Append(NS_LITERAL_STRING(" (out of "));
-      url.AppendInt(aProgressMax, 10);
+    url.AppendLiteral(": progress ");
+    url.AppendInt(PRInt64(aProgress), 10);
+    if (nsUint64(0) != aProgressMax) {
+      url.AppendLiteral(" (out of ");
+      url.AppendInt(PRInt64(aProgressMax), 10);
       url.Append(NS_LITERAL_STRING(")"));
     }
     PRUint32 size;
@@ -2172,10 +2030,11 @@ void nsBrowserWindow::DoTableInspector()
     nsRect rect(0, 0, 375, 510);
     nsString title(NS_LITERAL_STRING("Table Inspector"));
 
+    nsCOMPtr<nsIComponentManager> compMgr;
+    NS_GetComponentManager(getter_AddRefs(compMgr));
+
     nsXPBaseWindow * xpWin = nsnull;
-    nsresult rv = nsComponentManager::CreateInstance(kXPBaseWindowCID, nsnull,
-                                                     kIXPBaseWindowIID,
-                                                     (void**) &xpWin);
+    nsresult rv = compMgr->CreateInstance(kXPBaseWindowCID, nsnull, kIXPBaseWindowIID, (void **) &xpWin);
     if (rv == NS_OK) {
       xpWin->Init(eXPBaseWindowType_dialog, mAppShell, printHTML, title, rect, PRUint32(~0), PR_FALSE);
       xpWin->SetVisible(PR_TRUE);
@@ -2205,8 +2064,11 @@ void nsBrowserWindow::DoImageInspector()
     nsRect rect(0, 0, 485, 124);
     nsString title(NS_LITERAL_STRING("Image Inspector"));
 
-    nsXPBaseWindow * xpWin = nsnull;
-    nsresult rv = nsComponentManager::CreateInstance(kXPBaseWindowCID, nsnull, kIXPBaseWindowIID, (void**) &xpWin);
+    nsCOMPtr<nsIComponentManager> compMgr;
+    NS_GetComponentManager(getter_AddRefs(compMgr));
+
+    nsXPBaseWindow * xpWin;
+    nsresult rv = compMgr->CreateInstance(kXPBaseWindowCID, nsnull, kIXPBaseWindowIID, (void **) &xpWin);
     if (rv == NS_OK) {
       xpWin->Init(eXPBaseWindowType_dialog, mAppShell, printHTML, title, rect, PRUint32(~0), PR_FALSE);
       xpWin->SetVisible(PR_TRUE);
@@ -2376,8 +2238,7 @@ DumpContentRecurse(nsIDocShell* aDocShell, FILE* out)
     fprintf(out, "docshell=%p \n", aDocShell);
     nsIPresShell* shell = GetPresShellFor(aDocShell);
     if (nsnull != shell) {
-      nsCOMPtr<nsIDocument> doc;
-      shell->GetDocument(getter_AddRefs(doc));
+      nsIDocument *doc = shell->GetDocument();
       if (doc) {
         nsIContent *root = doc->GetRootContent();
         if (nsnull != root) {
@@ -2418,17 +2279,12 @@ DumpFramesRecurse(nsIDocShell* aDocShell, FILE* out, nsString *aFilterName)
     fprintf(out, "webshell=%p \n", aDocShell);
     nsIPresShell* shell = GetPresShellFor(aDocShell);
     if (nsnull != shell) {
-      nsIFrame* root;
-      shell->GetRootFrame(&root);
+      nsIFrame* root = shell->GetRootFrame();
       if (nsnull != root) {
-        nsIPresContext* presContext;
-        shell->GetPresContext(&presContext);
-
         nsIFrameDebug* fdbg;
         if (NS_SUCCEEDED(CallQueryInterface(root, &fdbg))) {
-          fdbg->List(presContext, out, 0);
+          fdbg->List(shell->GetPresContext(), out, 0);
         }
-        NS_IF_RELEASE(presContext);
       }
       NS_RELEASE(shell);
     }
@@ -2468,8 +2324,7 @@ DumpViewsRecurse(nsIDocShell* aDocShell, FILE* out)
     fprintf(out, "docshell=%p \n", aDocShell);
     nsIPresShell* shell = GetPresShellFor(aDocShell);
     if (nsnull != shell) {
-      nsCOMPtr<nsIViewManager> vm;
-      shell->GetViewManager(getter_AddRefs(vm));
+      nsIViewManager *vm = shell->GetViewManager();
       if (vm) {
         nsIView* root;
         vm->GetRootView(root);
@@ -2521,8 +2376,7 @@ nsBrowserWindow::DumpStyleContexts(FILE* out)
 {
   nsCOMPtr<nsIPresShell> shell = dont_AddRef(GetPresShell());
   if (shell) {
-    nsIFrame* root;
-    shell->GetRootFrame(&root);
+    nsIFrame* root = shell->GetRootFrame();
     shell->ListStyleContexts(root, out);
   } else {
     fputs("null pres shell\n", out);
@@ -2569,10 +2423,7 @@ void
 nsBrowserWindow::ToggleFrameBorders()
 {
   nsILayoutDebugger* ld;
-  nsresult rv = nsComponentManager::CreateInstance(kLayoutDebuggerCID,
-                                                   nsnull,
-                                                   kILayoutDebuggerIID,
-                                                   (void **)&ld);
+  nsresult rv = CallCreateInstance(kLayoutDebuggerCID, &ld);
   if (NS_SUCCEEDED(rv)) {
     PRBool showing;
     ld->GetShowFrameBorders(&showing);
@@ -2586,10 +2437,7 @@ void
 nsBrowserWindow::ToggleVisualEventDebugging()
 {
   nsILayoutDebugger* ld;
-  nsresult rv = nsComponentManager::CreateInstance(kLayoutDebuggerCID,
-                                                   nsnull,
-                                                   kILayoutDebuggerIID,
-                                                   (void **)&ld);
+  nsresult rv = CallCreateInstance(kLayoutDebuggerCID, &ld);
   if (NS_SUCCEEDED(rv)) {
     PRBool showing;
     ld->GetShowEventTargetFrameBorder(&showing);
@@ -2839,8 +2687,7 @@ nsBrowserWindow::DispatchStyleMenu(PRInt32 aID)
       nsIPresShell* shell = GetPresShell();
       if (nsnull != shell) {
         nsAutoString  defaultStyle;
-        nsCOMPtr<nsIDocument> doc;
-        shell->GetDocument(getter_AddRefs(doc));
+        nsIDocument *doc = shell->GetDocument();
         if (doc) {
           nsIAtom* defStyleAtom = NS_NewAtom("default-style");
           doc->GetHeaderData(defStyleAtom, defaultStyle);
@@ -2877,8 +2724,7 @@ nsBrowserWindow::DispatchStyleMenu(PRInt32 aID)
     {
       nsIPresShell* shell = GetPresShell();
       if (nsnull != shell) {
-        nsCOMPtr<nsIDocument> doc;
-        shell->GetDocument(getter_AddRefs(doc));
+        nsIDocument *doc = shell->GetDocument();
         if (doc) {
           nsAutoString  defaultStyle;
           nsIAtom* defStyleAtom = NS_NewAtom("default-style");

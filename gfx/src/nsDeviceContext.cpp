@@ -1,26 +1,42 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): 
+ * Contributor(s):
  *   Roland Mainz <Roland.Mainz@informatik.med.uni-giessen.de>
  *   IBM Corp.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsDeviceContext.h"
 #include "nsFont.h"
@@ -44,7 +60,6 @@ DeviceContextImpl::DeviceContextImpl()
   mAppUnitsToDevUnits = 1.0f;
   mCPixelScale = 1.0f;
   mZoom = 1.0f;
-  mTextZoom = 1.0f;
   mWidget = nsnull;
   mFontAliasTable = nsnull;
 
@@ -150,7 +165,7 @@ NS_IMETHODIMP DeviceContextImpl::CreateRenderingContext(nsIView *aView, nsIRende
   return rv;
 }
 
-NS_IMETHODIMP DeviceContextImpl::CreateRenderingContext(nsDrawingSurface aSurface, nsIRenderingContext *&aContext)
+NS_IMETHODIMP DeviceContextImpl::CreateRenderingContext(nsIDrawingSurface* aSurface, nsIRenderingContext *&aContext)
 {
 #ifdef NS_PRINT_PREVIEW
   // AltDC NEVER use widgets to create their DCs
@@ -230,7 +245,7 @@ nsresult DeviceContextImpl::InitRenderingContext(nsIRenderingContext *aContext, 
 #endif
 }
 
-nsresult DeviceContextImpl::InitRenderingContext(nsIRenderingContext *aContext, nsDrawingSurface aSurface)
+nsresult DeviceContextImpl::InitRenderingContext(nsIRenderingContext *aContext, nsIDrawingSurface* aSurface)
 {
 #ifdef NS_PRINT_PREVIEW
   // there are a couple of cases where the kUseAltDCFor_CREATERC_xxx flag has been turned off
@@ -269,7 +284,7 @@ DeviceContextImpl::GetLocaleLangGroup(void)
     nsCOMPtr<nsILanguageAtomService> langService;
     langService = do_GetService(NS_LANGUAGEATOMSERVICE_CONTRACTID);
     if (langService) {
-      langService->GetLocaleLanguageGroup(getter_AddRefs(mLocaleLangGroup));
+      mLocaleLangGroup = langService->GetLocaleLanguageGroup();
     }
     if (!mLocaleLangGroup) {
       mLocaleLangGroup = do_GetAtom("x-western");
@@ -335,18 +350,6 @@ NS_IMETHODIMP DeviceContextImpl::SetZoom(float aZoom)
 NS_IMETHODIMP DeviceContextImpl::GetZoom(float &aZoom) const
 {
   aZoom = mZoom;
-  return NS_OK;
-}
-
-NS_IMETHODIMP DeviceContextImpl::SetTextZoom(float aTextZoom)
-{
-  mTextZoom = aTextZoom;
-  return NS_OK;
-}
-
-NS_IMETHODIMP DeviceContextImpl::GetTextZoom(float &aTextZoom) const
-{
-  aTextZoom = mTextZoom;
   return NS_OK;
 }
 
@@ -446,13 +449,13 @@ nsresult DeviceContextImpl::CreateFontAliasTable()
     mFontAliasTable = new nsHashtable();
     if (nsnull != mFontAliasTable) {
 
-      nsAutoString  times;              times.Assign(NS_LITERAL_STRING("Times"));
-      nsAutoString  timesNewRoman;      timesNewRoman.Assign(NS_LITERAL_STRING("Times New Roman"));
-      nsAutoString  timesRoman;         timesRoman.Assign(NS_LITERAL_STRING("Times Roman"));
-      nsAutoString  arial;              arial.Assign(NS_LITERAL_STRING("Arial"));
-      nsAutoString  helvetica;          helvetica.Assign(NS_LITERAL_STRING("Helvetica"));
-      nsAutoString  courier;            courier.Assign(NS_LITERAL_STRING("Courier"));
-      nsAutoString  courierNew;         courierNew.Assign(NS_LITERAL_STRING("Courier New"));
+      nsAutoString  times;              times.AssignLiteral("Times");
+      nsAutoString  timesNewRoman;      timesNewRoman.AssignLiteral("Times New Roman");
+      nsAutoString  timesRoman;         timesRoman.AssignLiteral("Times Roman");
+      nsAutoString  arial;              arial.AssignLiteral("Arial");
+      nsAutoString  helvetica;          helvetica.AssignLiteral("Helvetica");
+      nsAutoString  courier;            courier.AssignLiteral("Courier");
+      nsAutoString  courierNew;         courierNew.AssignLiteral("Courier New");
       nsAutoString  nullStr;
 
       AliasFont(times, timesNewRoman, timesRoman, PR_FALSE);
@@ -606,9 +609,7 @@ nsFontCache::GetMetricsFor(const nsFont& aFont, nsIAtom* aLangGroup,
   PRInt32 n = mFontMetrics.Count() - 1;
   for (PRInt32 i = n; i >= 0; --i) {
     fm = NS_STATIC_CAST(nsIFontMetrics*, mFontMetrics[i]);
-    const nsFont* font;
-    fm->GetFont(font);
-    if (font->Equals(aFont)) {
+    if (fm->Font().Equals(aFont)) {
       nsCOMPtr<nsIAtom> langGroup;
       fm->GetLangGroup(getter_AddRefs(langGroup));
       if (aLangGroup == langGroup.get()) {

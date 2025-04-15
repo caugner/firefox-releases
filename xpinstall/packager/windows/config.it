@@ -132,6 +132,7 @@ Cleanup=TRUE
 ObjectToIgnore0=plugins
 ObjectToIgnore1=uninstall
 ObjectToIgnore2=install_status.log
+ObjectToIgnore3=mozilla.bmp
 
 ; List of files/dirs that is used to determine if a directory is a profile
 ; or not.  This is so the directory is not deleted as part of the Cleanup
@@ -238,7 +239,7 @@ C7=Component QFA
 ;*** LOCALIZE ME BABY ***
 Description Short=C&omplete
 ;*** LOCALIZE ME BABY ***
-Description Long=Program will be installed with the most common options.
+Description Long=Program will be installed with all the options available.
 
 ; List of components to install/enable for this Setup Type.
 ; All other components not listed here will be disabled if
@@ -254,10 +255,12 @@ C7=Component Venkman
 C8=Component US English Profile Defaults
 C9=Component En US lang pack
 C10=Component US region pack
+C11=Component DOM Inspector
+C12=Component SRoaming
+C13=Component RPT
 ; Make sure Component QFA is LAST so 3rd party developers who might not want
 ; this component can easily remove it.
-C11=Component DOM Inspector
-C12=Component QFA
+C14=Component QFA
 
 [Setup Type2]
 ;*** LOCALIZE ME BABY ***
@@ -281,10 +284,12 @@ C7=Component Venkman
 C8=Component US English Profile Defaults
 C9=Component En US lang pack
 C10=Component US region pack
+C11=Component DOM Inspector
+C12=Component SRoaming
+C13=Component RPT
 ; Make sure Component QFA is LAST so 3rd party developers who might not want
 ; this component can easily remove it.
-C11=Component DOM Inspector
-C12=Component QFA
+C14=Component QFA
 
 
 
@@ -308,23 +313,23 @@ Message0=Select or clear the additional components you want to install.
 Show Dialog=FALSE
 Title=$ProductName$ Setup - Windows Integration
 Message0=Check the options you would like Setup to perform.
-Message1=These settings allow you to set default Internet preferences for browsing and searching.  They affect browsers installed on your machine, including Mozilla, Netscape and Microsoft Internet Explorer.
+Message1=These settings allow you to set default Internet preferences for browsing and searching.  They affect browsers installed on your machine, including SeaMonkey, Mozilla, Netscape and Microsoft Internet Explorer.
 
 ; Only a maximum of 4 "Windows Integration-Item"s are allowded.  Each Item
 ; shows up as a checkbox in the Windows Integration dialog.
 [Windows Integration-Item0]
 CheckBoxState=FALSE
-Description=Make Mozilla my default Internet browser
+Description=Make SeaMonkey my default Internet browser
 Archive=
 
 [Windows Integration-Item1]
 CheckBoxState=FALSE
-Description=Make Mozilla Netcenter my home page
+Description=Make SeaMonkey Netcenter my home page
 Archive=
 
 [Windows Integration-Item2]
 CheckBoxState=FALSE
-Description=Use Mozilla Netcenter to search the Web
+Description=Use SeaMonkey Netcenter to search the Web
 Archive=
 ;*** DO NOT LOCALIZE - END ***
 
@@ -378,7 +383,7 @@ Show Dialog=TRUE
 ;*** LOCALIZE ME BABY ***
 Title=$ProductName$ Setup - Quick Launch
 ;*** LOCALIZE ME BABY ***
-Message0=Quick Launch starts Mozilla faster by keeping portions of the program in computer memory.
+Message0=Quick Launch starts SeaMonkey faster by keeping portions of the program in computer memory.
 ;*** LOCALIZE ME BABY ***
 Message1=You can access Quick Launch through the icon on the Windows taskbar tray.
 ;*** LOCALIZE ME BABY ***
@@ -422,7 +427,7 @@ Message Retry0=Some files have failed the CRC check and are being downloaded aga
 Show Dialog=AUTO
 
 [Check Instance0]
-Class Name=MozillaMessageWindow
+Class Name=$ProductName$MessageWindow
 Window Name=
 Process Name=$MainExeFile$
 Pretty Name=$ProductNameInternal$
@@ -438,13 +443,36 @@ Message wait=Shutting down $ProductNameInternal$.  Please wait...
 Close All Process Windows=TRUE
 
 ; These keys are not normally necessary for checking instances.  They are
-; set here because Mozilla requires a way to shut down it's turbo mode.
+; set here because SeaMonkey requires a way to shut down its turbo mode.
 Extra Cmd0 Reg Key Root=HKEY_LOCAL_MACHINE
 Extra Cmd0 Reg Key=Software\Microsoft\Windows\CurrentVersion\App Paths\$MainExeFile$
 Extra Cmd0 Reg Name=
 Extra Cmd0 Parameter=-kill
 
 [Check Instance1]
+Class Name=MozillaMessageWindow
+Window Name=
+Process Name=Mozilla.exe
+Pretty Name=Mozilla
+;*** LOCALIZE ME BABY ***
+Message=Download of $ProductName$ was successful. Mozilla must be closed to proceed with installation. Click OK to exit Mozilla automatically and to begin installation.
+;*** LOCALIZE ME BABY ***
+Message Full Installer=Mozilla must be closed to proceed with installation. Click OK to exit Mozilla automatically and to begin installation.
+;*** LOCALIZE ME BABY ***
+Message wait=Shutting down Mozilla.  Please wait...
+
+; This key indicates whether or not to close all the windows associated with
+; the process id of this app instance window found.
+Close All Process Windows=TRUE
+
+; These keys are not normally necessary for checking instances.  They are
+; set here because SeaMonkey requires a way to shut down its turbo mode.
+Extra Cmd0 Reg Key Root=HKEY_LOCAL_MACHINE
+Extra Cmd0 Reg Key=Software\Microsoft\Windows\CurrentVersion\App Paths\Mozilla.exe
+Extra Cmd0 Reg Name=
+Extra Cmd0 Parameter=-kill
+
+[Check Instance2]
 Class Name=Netscape6MessageWindow
 Window Name=
 Process Name=Netscp.exe
@@ -461,7 +489,7 @@ Message wait=Shutting down Netscape.  Please wait...
 Close All Process Windows=TRUE
 
 ; These keys are not normally necessary for checking instances.  They are
-; set here because Netscape 6 requires a way to shut down it's turbo mode.
+; set here because Netscape 6 requires a way to shut down its turbo mode.
 ; This will stop at the first one that succeeds (key and file found).
 Extra Cmd0 Reg Key Root=HKEY_LOCAL_MACHINE
 Extra Cmd0 Reg Key=Software\Microsoft\Windows\CurrentVersion\App Paths\Netscp6.exe
@@ -590,7 +618,7 @@ $InstallSizeSystem$
 $InstallSizeArchive$:gre-win32-installer.zip
 Attributes=SELECTED|UNCOMPRESS|SUPERSEDE|LAUNCHAPP|INVISIBLE
 ;*** LOCALIZE ME BABY ***
-Parameter=-mmi -app "$ProductNameInternal$ $UserAgent$" -app_path "[SETUP PATH]\$MainExeFile$"
+Parameter=-mmi -ms -app "$ProductNameInternal$ $UserAgent$" -app_path "[SETUP PATH]\$MainExeFile$"
 SupersedeType=GRE
 SupersedeWinReg0=HKEY_LOCAL_MACHINE\Software\mozilla.org\GRE
 SupersedeVersion0=$GreFileVersion$
@@ -687,6 +715,17 @@ $InstallSizeArchive$:inspector.xpi
 Attributes=SELECTED|FORCE_UPGRADE
 Force Upgrade File0=[SETUP PATH]\chrome\inspector.jar
 
+[Component SRoaming]
+Description Short=Roaming
+;*** LOCALIZE ME BABY ***
+Description Long=Profile Roaming
+Archive=sroaming.xpi
+$InstallSize$:sroaming
+$InstallSizeSystem$
+$InstallSizeArchive$:sroaming.xpi
+Attributes=SELECTED|FORCE_UPGRADE
+Force Upgrade File0=[SETUP PATH]\chrome\sroaming.jar
+
 [Component US English Profile Defaults]
 Description Short=US English profile defaults
 ;*** LOCALIZE ME BABY ***
@@ -732,6 +771,17 @@ Install Size System=1
 Install Size Archive=248
 Attributes=SELECTED|FORCE_UPGRADE
 Force Upgrade File0=[SETUP PATH]\components\fullsoft.dll
+
+[Component RPT]
+Description Short=Website Reporter
+;*** LOCALIZE ME BABY ***
+Description Long=Website Reporter
+Archive=reporter.xpi
+$InstallSize$:reporter
+$InstallSizeSystem$
+$InstallSizeArchive$:reporter.xpi
+Attributes=SELECTED|FORCE_UPGRADE
+Force Upgrade File0=[SETUP PATH]\chrome\reporter.jar
 
 ; This is to randomly set the default checkbox for this component.
 ; This particular value will set the checkbox checked [number]% of the time.
@@ -1121,13 +1171,13 @@ Timing=pre smartupdate
 
 [Cleanup Previous Product RegKeys]
 Reg Key Root0=HKEY_LOCAL_MACHINE
-Product Name0=Mozilla
-Product Reg Key0=Software\Mozilla.org\Mozilla
+Product Name0=SeaMonkey
+Product Reg Key0=Software\Mozilla.org\SeaMonkey
 Current Version0=$UserAgent$
 
 Reg Key Root1=HKEY_CURRENT_USER
-Product Name1=Mozilla
-Product Reg Key1=Software\Mozilla.org\Mozilla
+Product Name1=SeaMonkey
+Product Reg Key1=Software\Mozilla.org\SeaMonkey
 Current Version1=$UserAgent$
 
 

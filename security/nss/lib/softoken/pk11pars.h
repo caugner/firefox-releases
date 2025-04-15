@@ -1,35 +1,38 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 2001 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 /*
  * The following handles the loading, unloading and management of
  * various PCKS #11 modules
@@ -48,61 +51,61 @@
 #include "secmodt.h"
 #include "pk11init.h"
 
-#define PK11_ARG_LIBRARY_PARAMETER "library="
-#define PK11_ARG_NAME_PARAMETER "name="
-#define PK11_ARG_MODULE_PARAMETER "parameters="
-#define PK11_ARG_NSS_PARAMETER "NSS="
-#define PK11_ARG_FORTEZZA_FLAG "FORTEZZA"
-#define PK11_ARG_ESCAPE '\\'
+#define SECMOD_ARG_LIBRARY_PARAMETER "library="
+#define SECMOD_ARG_NAME_PARAMETER "name="
+#define SECMOD_ARG_MODULE_PARAMETER "parameters="
+#define SECMOD_ARG_NSS_PARAMETER "NSS="
+#define SECMOD_ARG_FORTEZZA_FLAG "FORTEZZA"
+#define SECMOD_ARG_ESCAPE '\\'
 
-struct pk11argSlotFlagTable {
+struct secmodargSlotFlagTable {
     char *name;
     int len;
     unsigned long value;
 };
 
-#define PK11_DEFAULT_CIPHER_ORDER 0
-#define PK11_DEFAULT_TRUST_ORDER 50
+#define SFTK_DEFAULT_CIPHER_ORDER 0
+#define SFTK_DEFAULT_TRUST_ORDER 50
 
 
-#define PK11_ARG_ENTRY(arg,flag) \
+#define SECMOD_ARG_ENTRY(arg,flag) \
 { #arg , sizeof(#arg)-1, flag }
-static struct pk11argSlotFlagTable pk11_argSlotFlagTable[] = {
-	PK11_ARG_ENTRY(RSA,SECMOD_RSA_FLAG),
-	PK11_ARG_ENTRY(DSA,SECMOD_RSA_FLAG),
-	PK11_ARG_ENTRY(RC2,SECMOD_RC4_FLAG),
-	PK11_ARG_ENTRY(RC4,SECMOD_RC2_FLAG),
-	PK11_ARG_ENTRY(DES,SECMOD_DES_FLAG),
-	PK11_ARG_ENTRY(DH,SECMOD_DH_FLAG),
-	PK11_ARG_ENTRY(FORTEZZA,SECMOD_FORTEZZA_FLAG),
-	PK11_ARG_ENTRY(RC5,SECMOD_RC5_FLAG),
-	PK11_ARG_ENTRY(SHA1,SECMOD_SHA1_FLAG),
-	PK11_ARG_ENTRY(MD5,SECMOD_MD5_FLAG),
-	PK11_ARG_ENTRY(MD2,SECMOD_MD2_FLAG),
-	PK11_ARG_ENTRY(SSL,SECMOD_SSL_FLAG),
-	PK11_ARG_ENTRY(TLS,SECMOD_TLS_FLAG),
-	PK11_ARG_ENTRY(AES,SECMOD_AES_FLAG),
-	PK11_ARG_ENTRY(PublicCerts,SECMOD_FRIENDLY_FLAG),
-	PK11_ARG_ENTRY(RANDOM,SECMOD_RANDOM_FLAG),
+static struct secmodargSlotFlagTable secmod_argSlotFlagTable[] = {
+	SECMOD_ARG_ENTRY(RSA,SECMOD_RSA_FLAG),
+	SECMOD_ARG_ENTRY(DSA,SECMOD_RSA_FLAG),
+	SECMOD_ARG_ENTRY(RC2,SECMOD_RC4_FLAG),
+	SECMOD_ARG_ENTRY(RC4,SECMOD_RC2_FLAG),
+	SECMOD_ARG_ENTRY(DES,SECMOD_DES_FLAG),
+	SECMOD_ARG_ENTRY(DH,SECMOD_DH_FLAG),
+	SECMOD_ARG_ENTRY(FORTEZZA,SECMOD_FORTEZZA_FLAG),
+	SECMOD_ARG_ENTRY(RC5,SECMOD_RC5_FLAG),
+	SECMOD_ARG_ENTRY(SHA1,SECMOD_SHA1_FLAG),
+	SECMOD_ARG_ENTRY(MD5,SECMOD_MD5_FLAG),
+	SECMOD_ARG_ENTRY(MD2,SECMOD_MD2_FLAG),
+	SECMOD_ARG_ENTRY(SSL,SECMOD_SSL_FLAG),
+	SECMOD_ARG_ENTRY(TLS,SECMOD_TLS_FLAG),
+	SECMOD_ARG_ENTRY(AES,SECMOD_AES_FLAG),
+	SECMOD_ARG_ENTRY(PublicCerts,SECMOD_FRIENDLY_FLAG),
+	SECMOD_ARG_ENTRY(RANDOM,SECMOD_RANDOM_FLAG),
 };
 
-#define PK11_HANDLE_STRING_ARG(param,target,value,command) \
+#define SECMOD_HANDLE_STRING_ARG(param,target,value,command) \
     if (PORT_Strncasecmp(param,value,sizeof(value)-1) == 0) { \
 	param += sizeof(value)-1; \
-	target = pk11_argFetchValue(param,&next); \
+	target = secmod_argFetchValue(param,&next); \
 	param += next; \
 	command ;\
     } else  
 
-#define PK11_HANDLE_FINAL_ARG(param) \
-    { param = pk11_argSkipParameter(param); } param = pk11_argStrip(param);
+#define SECMOD_HANDLE_FINAL_ARG(param) \
+    { param = secmod_argSkipParameter(param); } param = secmod_argStrip(param);
 	
 
-static int pk11_argSlotFlagTableSize = 
-	sizeof(pk11_argSlotFlagTable)/sizeof(pk11_argSlotFlagTable[0]);
+static int secmod_argSlotFlagTableSize = 
+	sizeof(secmod_argSlotFlagTable)/sizeof(secmod_argSlotFlagTable[0]);
 
 
-static PRBool pk11_argGetPair(char c) {
+static PRBool secmod_argGetPair(char c) {
     switch (c) {
     case '\'': return c;
     case '\"': return c;
@@ -115,15 +118,15 @@ static PRBool pk11_argGetPair(char c) {
     return ' ';
 }
 
-static PRBool pk11_argIsBlank(char c) {
+static PRBool secmod_argIsBlank(char c) {
    return isspace(c);
 }
 
-static PRBool pk11_argIsEscape(char c) {
+static PRBool secmod_argIsEscape(char c) {
     return c == '\\';
 }
 
-static PRBool pk11_argIsQuote(char c) {
+static PRBool secmod_argIsQuote(char c) {
     switch (c) {
     case '\'':
     case '\"':
@@ -136,7 +139,7 @@ static PRBool pk11_argIsQuote(char c) {
     return PR_FALSE;
 }
 
-static PRBool pk11_argHasChar(char *v, char c)
+static PRBool secmod_argHasChar(char *v, char c)
 {
    for ( ;*v; v++) {
 	if (*v == c) return PR_TRUE;
@@ -144,26 +147,26 @@ static PRBool pk11_argHasChar(char *v, char c)
    return PR_FALSE;
 }
 
-static PRBool pk11_argHasBlanks(char *v)
+static PRBool secmod_argHasBlanks(char *v)
 {
    for ( ;*v; v++) {
-	if (pk11_argIsBlank(*v)) return PR_TRUE;
+	if (secmod_argIsBlank(*v)) return PR_TRUE;
    }
    return PR_FALSE;
 }
 
-static char *pk11_argStrip(char *c) {
-   while (*c && pk11_argIsBlank(*c)) c++;
+static char *secmod_argStrip(char *c) {
+   while (*c && secmod_argIsBlank(*c)) c++;
    return c;
 }
 
 static char *
-pk11_argFindEnd(char *string) {
+secmod_argFindEnd(char *string) {
     char endChar = ' ';
     PRBool lastEscape = PR_FALSE;
 
-    if (pk11_argIsQuote(*string)) {
-	endChar = pk11_argGetPair(*string);
+    if (secmod_argIsQuote(*string)) {
+	endChar = secmod_argGetPair(*string);
 	string++;
     }
 
@@ -172,11 +175,11 @@ pk11_argFindEnd(char *string) {
 	    lastEscape = PR_FALSE;
 	    continue;
 	}
-	if (pk11_argIsEscape(*string) && !lastEscape) {
+	if (secmod_argIsEscape(*string) && !lastEscape) {
 	    lastEscape = PR_TRUE;
 	    continue;
 	} 
-	if ((endChar == ' ') && pk11_argIsBlank(*string)) break;
+	if ((endChar == ' ') && secmod_argIsBlank(*string)) break;
 	if (*string == endChar) {
 	    break;
 	}
@@ -186,9 +189,9 @@ pk11_argFindEnd(char *string) {
 }
 
 static char *
-pk11_argFetchValue(char *string, int *pcount)
+secmod_argFetchValue(char *string, int *pcount)
 {
-    char *end = pk11_argFindEnd(string);
+    char *end = secmod_argFindEnd(string);
     char *retString, *copyString;
     PRBool lastEscape = PR_FALSE;
 
@@ -199,9 +202,9 @@ pk11_argFetchValue(char *string, int *pcount)
     copyString = retString = (char *)PORT_Alloc(*pcount);
     if (retString == NULL) return NULL;
 
-    if (pk11_argIsQuote(*string)) string++;
+    if (secmod_argIsQuote(*string)) string++;
     for (; string < end; string++) {
-	if (pk11_argIsEscape(*string) && !lastEscape) {
+	if (secmod_argIsEscape(*string) && !lastEscape) {
 	    lastEscape = PR_TRUE;
 	    continue;
 	}
@@ -213,44 +216,44 @@ pk11_argFetchValue(char *string, int *pcount)
 }
 
 static char *
-pk11_argSkipParameter(char *string) 
+secmod_argSkipParameter(char *string) 
 {
      char *end;
      /* look for the end of the <name>= */
      for (;*string; string++) {
 	if (*string == '=') { string++; break; }
-	if (pk11_argIsBlank(*string)) return(string); 
+	if (secmod_argIsBlank(*string)) return(string); 
      }
 
-     end = pk11_argFindEnd(string);
+     end = secmod_argFindEnd(string);
      if (*end) end++;
      return end;
 }
 
 
 static SECStatus
-pk11_argParseModuleSpec(char *modulespec, char **lib, char **mod, 
+secmod_argParseModuleSpec(char *modulespec, char **lib, char **mod, 
 					char **parameters, char **nss)
 {
     int next;
-    modulespec = pk11_argStrip(modulespec);
+    modulespec = secmod_argStrip(modulespec);
 
     *lib = *mod = *parameters = *nss = 0;
 
     while (*modulespec) {
-	PK11_HANDLE_STRING_ARG(modulespec,*lib,PK11_ARG_LIBRARY_PARAMETER,;)
-	PK11_HANDLE_STRING_ARG(modulespec,*mod,PK11_ARG_NAME_PARAMETER,;)
-	PK11_HANDLE_STRING_ARG(modulespec,*parameters,
-						PK11_ARG_MODULE_PARAMETER,;)
-	PK11_HANDLE_STRING_ARG(modulespec,*nss,PK11_ARG_NSS_PARAMETER,;)
-	PK11_HANDLE_FINAL_ARG(modulespec)
+	SECMOD_HANDLE_STRING_ARG(modulespec,*lib,SECMOD_ARG_LIBRARY_PARAMETER,;)
+	SECMOD_HANDLE_STRING_ARG(modulespec,*mod,SECMOD_ARG_NAME_PARAMETER,;)
+	SECMOD_HANDLE_STRING_ARG(modulespec,*parameters,
+						SECMOD_ARG_MODULE_PARAMETER,;)
+	SECMOD_HANDLE_STRING_ARG(modulespec,*nss,SECMOD_ARG_NSS_PARAMETER,;)
+	SECMOD_HANDLE_FINAL_ARG(modulespec)
    }
    return SECSuccess;
 }
 
 
 static char *
-pk11_argGetParamValue(char *paramName,char *parameters)
+secmod_argGetParamValue(char *paramName,char *parameters)
 {
     char searchValue[256];
     int paramLen = strlen(paramName);
@@ -266,19 +269,19 @@ pk11_argGetParamValue(char *paramName,char *parameters)
     while (*parameters) {
 	if (PORT_Strncasecmp(parameters,searchValue,paramLen+1) == 0) {
 	    parameters += paramLen+1;
-	    returnValue = pk11_argFetchValue(parameters,&next);
+	    returnValue = secmod_argFetchValue(parameters,&next);
 	    break;
 	} else {
-	    parameters = pk11_argSkipParameter(parameters);
+	    parameters = secmod_argSkipParameter(parameters);
 	}
-	parameters = pk11_argStrip(parameters);
+	parameters = secmod_argStrip(parameters);
    }
    return returnValue;
 }
     
 
 static char *
-pk11_argNextFlag(char *flags)
+secmod_argNextFlag(char *flags)
 {
     for (; *flags ; flags++) {
 	if (*flags == ',') {
@@ -290,16 +293,16 @@ pk11_argNextFlag(char *flags)
 }
 
 static PRBool
-pk11_argHasFlag(char *label, char *flag, char *parameters)
+secmod_argHasFlag(char *label, char *flag, char *parameters)
 {
     char *flags,*index;
     int len = strlen(flag);
     PRBool found = PR_FALSE;
 
-    flags = pk11_argGetParamValue(label,parameters);
+    flags = secmod_argGetParamValue(label,parameters);
     if (flags == NULL) return PR_FALSE;
 
-    for (index=flags; *index; index=pk11_argNextFlag(index)) {
+    for (index=flags; *index; index=secmod_argNextFlag(index)) {
 	if (PORT_Strncasecmp(index,flag,len) == 0) {
 	    found=PR_TRUE;
 	    break;
@@ -310,14 +313,14 @@ pk11_argHasFlag(char *label, char *flag, char *parameters)
 }
 
 static void
-pk11_argSetNewCipherFlags(unsigned long *newCiphers,char *cipherList)
+secmod_argSetNewCipherFlags(unsigned long *newCiphers,char *cipherList)
 {
     newCiphers[0] = newCiphers[1] = 0;
     if ((cipherList == NULL) || (*cipherList == 0)) return;
 
-    for (;*cipherList; cipherList=pk11_argNextFlag(cipherList)) {
-	if (PORT_Strncasecmp(cipherList,PK11_ARG_FORTEZZA_FLAG,
-				sizeof(PK11_ARG_FORTEZZA_FLAG)-1) == 0) {
+    for (;*cipherList; cipherList=secmod_argNextFlag(cipherList)) {
+	if (PORT_Strncasecmp(cipherList,SECMOD_ARG_FORTEZZA_FLAG,
+				sizeof(SECMOD_ARG_FORTEZZA_FLAG)-1) == 0) {
 	    newCiphers[0] |= SECMOD_FORTEZZA_FLAG;
 	} 
 
@@ -338,7 +341,7 @@ pk11_argSetNewCipherFlags(unsigned long *newCiphers,char *cipherList)
  * decode a number. handle octal (leading '0'), hex (leading '0x') or decimal
  */
 static long
-pk11_argDecodeNumber(char *num)
+secmod_argDecodeNumber(char *num)
 {
     int	radix = 10;
     unsigned long value = 0;
@@ -348,7 +351,7 @@ pk11_argDecodeNumber(char *num)
 
     if (num == NULL) return retValue;
 
-    num = pk11_argStrip(num);
+    num = secmod_argStrip(num);
 
     if (*num == '-') {
 	sign = -1;
@@ -384,18 +387,18 @@ pk11_argDecodeNumber(char *num)
 }
 
 static long
-pk11_argReadLong(char *label,char *params, long defValue, PRBool *isdefault)
+secmod_argReadLong(char *label,char *params, long defValue, PRBool *isdefault)
 {
     char *value;
     long retValue;
     if (isdefault) *isdefault = PR_FALSE; 
 
-    value = pk11_argGetParamValue(label,params);
+    value = secmod_argGetParamValue(label,params);
     if (value == NULL) {
 	if (isdefault) *isdefault = PR_TRUE;
 	return defValue;
     }
-    retValue = pk11_argDecodeNumber(value);
+    retValue = secmod_argDecodeNumber(value);
     if (value) PORT_Free(value);
 
     return retValue;
@@ -403,23 +406,23 @@ pk11_argReadLong(char *label,char *params, long defValue, PRBool *isdefault)
 
 
 static unsigned long
-pk11_argSlotFlags(char *label,char *params)
+secmod_argSlotFlags(char *label,char *params)
 {
     char *flags,*index;
     unsigned long retValue = 0;
     int i;
     PRBool all = PR_FALSE;
 
-    flags = pk11_argGetParamValue(label,params);
+    flags = secmod_argGetParamValue(label,params);
     if (flags == NULL) return 0;
 
     if (PORT_Strcasecmp(flags,"all") == 0) all = PR_TRUE;
 
-    for (index=flags; *index; index=pk11_argNextFlag(index)) {
-	for (i=0; i < pk11_argSlotFlagTableSize; i++) {
-	    if (all || (PORT_Strncasecmp(index, pk11_argSlotFlagTable[i].name,
-				pk11_argSlotFlagTable[i].len) == 0)) {
-		retValue |= pk11_argSlotFlagTable[i].value;
+    for (index=flags; *index; index=secmod_argNextFlag(index)) {
+	for (i=0; i < secmod_argSlotFlagTableSize; i++) {
+	    if (all || (PORT_Strncasecmp(index, secmod_argSlotFlagTable[i].name,
+				secmod_argSlotFlagTable[i].len) == 0)) {
+		retValue |= secmod_argSlotFlagTable[i].value;
 	    }
 	}
     }
@@ -429,15 +432,16 @@ pk11_argSlotFlags(char *label,char *params)
 
 
 static void
-pk11_argDecodeSingleSlotInfo(char *name,char *params,PK11PreSlotInfo *slotInfo)
+secmod_argDecodeSingleSlotInfo(char *name, char *params, 
+                               PK11PreSlotInfo *slotInfo)
 {
     char *askpw;
 
-    slotInfo->slotID=pk11_argDecodeNumber(name);
-    slotInfo->defaultFlags=pk11_argSlotFlags("slotFlags",params);
-    slotInfo->timeout=pk11_argReadLong("timeout",params, 0, NULL);
+    slotInfo->slotID=secmod_argDecodeNumber(name);
+    slotInfo->defaultFlags=secmod_argSlotFlags("slotFlags",params);
+    slotInfo->timeout=secmod_argReadLong("timeout",params, 0, NULL);
 
-    askpw = pk11_argGetParamValue("askpw",params);
+    askpw = secmod_argGetParamValue("askpw",params);
     slotInfo->askpw = 0;
 
     if (askpw) {
@@ -449,12 +453,14 @@ pk11_argDecodeSingleSlotInfo(char *name,char *params,PK11PreSlotInfo *slotInfo)
 	PORT_Free(askpw);
 	slotInfo->defaultFlags |= PK11_OWN_PW_DEFAULTS;
     }
-    slotInfo->hasRootCerts = pk11_argHasFlag("rootFlags","hasRootCerts",params);
-    slotInfo->hasRootTrust = pk11_argHasFlag("rootFlags","hasRootTrust",params);
+    slotInfo->hasRootCerts = secmod_argHasFlag("rootFlags", "hasRootCerts", 
+                                               params);
+    slotInfo->hasRootTrust = secmod_argHasFlag("rootFlags", "hasRootTrust", 
+                                               params);
 }
 
 static char *
-pk11_argGetName(char *inString, int *next) 
+secmod_argGetName(char *inString, int *next) 
 {
     char *name=NULL;
     char *string;
@@ -463,7 +469,7 @@ pk11_argGetName(char *inString, int *next)
     /* look for the end of the <name>= */
     for (string = inString;*string; string++) {
 	if (*string == '=') { break; }
-	if (pk11_argIsBlank(*string)) break;
+	if (secmod_argIsBlank(*string)) break;
     }
 
     len = string - inString;
@@ -479,7 +485,7 @@ pk11_argGetName(char *inString, int *next)
 }
 
 static PK11PreSlotInfo *
-pk11_argParseSlotInfo(PRArenaPool *arena, char *slotParams, int *retCount)
+secmod_argParseSlotInfo(PRArenaPool *arena, char *slotParams, int *retCount)
 {
     char *slotIndex;
     PK11PreSlotInfo *slotInfo = NULL;
@@ -489,8 +495,8 @@ pk11_argParseSlotInfo(PRArenaPool *arena, char *slotParams, int *retCount)
     if ((slotParams == NULL) || (*slotParams == 0))  return NULL;
 
     /* first count the number of slots */
-    for (slotIndex = pk11_argStrip(slotParams); *slotIndex; 
-		slotIndex = pk11_argStrip(pk11_argSkipParameter(slotIndex))) {
+    for (slotIndex = secmod_argStrip(slotParams); *slotIndex; 
+	 slotIndex = secmod_argStrip(secmod_argSkipParameter(slotIndex))) {
 	count++;
     }
 
@@ -505,38 +511,38 @@ pk11_argParseSlotInfo(PRArenaPool *arena, char *slotParams, int *retCount)
     }
     if (slotInfo == NULL) return NULL;
 
-    for (slotIndex = pk11_argStrip(slotParams), i = 0; 
+    for (slotIndex = secmod_argStrip(slotParams), i = 0; 
 					*slotIndex && i < count ; ) {
 	char *name;
-	name = pk11_argGetName(slotIndex,&next);
+	name = secmod_argGetName(slotIndex,&next);
 	slotIndex += next;
 
-	if (!pk11_argIsBlank(*slotIndex)) {
-	    char *args = pk11_argFetchValue(slotIndex,&next);
+	if (!secmod_argIsBlank(*slotIndex)) {
+	    char *args = secmod_argFetchValue(slotIndex,&next);
 	    slotIndex += next;
 	    if (args) {
-		pk11_argDecodeSingleSlotInfo(name,args,&slotInfo[i]);
+		secmod_argDecodeSingleSlotInfo(name,args,&slotInfo[i]);
 		i++;
 		PORT_Free(args);
 	    }
 	}
 	if (name) PORT_Free(name);
-	slotIndex = pk11_argStrip(slotIndex);
+	slotIndex = secmod_argStrip(slotIndex);
     }
     *retCount = i;
     return slotInfo;
 }
 
-static char *pk11_nullString = "";
+static char *secmod_nullString = "";
 
 static char *
-pk11_formatValue(PRArenaPool *arena, char *value, char quote)
+secmod_formatValue(PRArenaPool *arena, char *value, char quote)
 {
     char *vp,*vp2,*retval;
     int size = 0, escapes = 0;
 
     for (vp=value; *vp ;vp++) {
-	if ((*vp == quote) || (*vp == PK11_ARG_ESCAPE)) escapes++;
+	if ((*vp == quote) || (*vp == SECMOD_ARG_ESCAPE)) escapes++;
 	size++;
     }
     if (arena) {
@@ -547,48 +553,49 @@ pk11_formatValue(PRArenaPool *arena, char *value, char quote)
     if (retval == NULL) return NULL;
     vp2 = retval;
     for (vp=value; *vp; vp++) {
-	if ((*vp == quote) || (*vp == PK11_ARG_ESCAPE)) 
-				*vp2++ = PK11_ARG_ESCAPE;
+	if ((*vp == quote) || (*vp == SECMOD_ARG_ESCAPE)) 
+				*vp2++ = SECMOD_ARG_ESCAPE;
 	*vp2++ = *vp;
     }
     return retval;
 }
     
-static char *pk11_formatPair(char *name,char *value, char quote)
+static char *secmod_formatPair(char *name,char *value, char quote)
 {
     char openQuote = quote;
-    char closeQuote = pk11_argGetPair(quote);
+    char closeQuote = secmod_argGetPair(quote);
     char *newValue = NULL;
     char *returnValue;
     PRBool need_quote = PR_FALSE;
 
-    if (!value || (*value == 0)) return pk11_nullString;
+    if (!value || (*value == 0)) return secmod_nullString;
 
-    if (pk11_argHasBlanks(value) || pk11_argIsQuote(value[0]))
+    if (secmod_argHasBlanks(value) || secmod_argIsQuote(value[0]))
 							 need_quote=PR_TRUE;
 
-    if ((need_quote && pk11_argHasChar(value,closeQuote))
-				 || pk11_argHasChar(value,PK11_ARG_ESCAPE)) {
-	value = newValue = pk11_formatValue(NULL, value,quote);
-	if (newValue == NULL) return pk11_nullString;
+    if ((need_quote && secmod_argHasChar(value,closeQuote))
+				 || secmod_argHasChar(value,SECMOD_ARG_ESCAPE)) {
+	value = newValue = secmod_formatValue(NULL, value,quote);
+	if (newValue == NULL) return secmod_nullString;
     }
     if (need_quote) {
     	returnValue = PR_smprintf("%s=%c%s%c",name,openQuote,value,closeQuote);
     } else {
     	returnValue = PR_smprintf("%s=%s",name,value);
     }
-    if (returnValue == NULL) returnValue = pk11_nullString;
+    if (returnValue == NULL) returnValue = secmod_nullString;
 
     if (newValue) PORT_Free(newValue);
 
     return returnValue;
 }
 
-static char *pk11_formatIntPair(char *name,unsigned long value, unsigned long def)
+static char *secmod_formatIntPair(char *name, unsigned long value, 
+                                  unsigned long def)
 {
     char *returnValue;
 
-    if (value == def) return pk11_nullString;
+    if (value == def) return secmod_nullString;
 
     returnValue = PR_smprintf("%s=%d",name,value);
 
@@ -596,9 +603,9 @@ static char *pk11_formatIntPair(char *name,unsigned long value, unsigned long de
 }
 
 static void
-pk11_freePair(char *pair)
+secmod_freePair(char *pair)
 {
-    if (pair && pair != pk11_nullString) {
+    if (pair && pair != secmod_nullString) {
 	PR_smprintf_free(pair);
     }
 }
@@ -606,7 +613,7 @@ pk11_freePair(char *pair)
 #define MAX_FLAG_SIZE  sizeof("internal")+sizeof("FIPS")+sizeof("moduleDB")+\
 				sizeof("moduleDBOnly")+sizeof("critical")
 static char *
-pk11_mkNSSFlags(PRBool internal, PRBool isFIPS,
+secmod_mkNSSFlags(PRBool internal, PRBool isFIPS,
 		PRBool isModuleDB, PRBool isModuleDBOnly, PRBool isCritical)
 {
     char *flags = (char *)PORT_ZAlloc(MAX_FLAG_SIZE);
@@ -641,7 +648,7 @@ pk11_mkNSSFlags(PRBool internal, PRBool isFIPS,
 }
 
 static char *
-pk11_mkCipherFlags(unsigned long ssl0, unsigned long ssl1)
+secmod_mkCipherFlags(unsigned long ssl0, unsigned long ssl1)
 {
     char *cipher = NULL;
     int i;
@@ -659,7 +666,7 @@ pk11_mkCipherFlags(unsigned long ssl0, unsigned long ssl1)
 		tmp = PR_smprintf("%s,%s",cipher,string);
 		PR_smprintf_free(cipher);
 		PR_smprintf_free(string);
-		tmp = cipher;
+		cipher = tmp;
 	    } else {
 		cipher = string;
 	    }
@@ -669,9 +676,9 @@ pk11_mkCipherFlags(unsigned long ssl0, unsigned long ssl1)
 	if (ssl1 & (1<<i)) {
 	    if (cipher) {
 		char *tmp;
-		tmp = PR_smprintf("%s,0l0x%08",cipher,1<<i);
+		tmp = PR_smprintf("%s,0l0x%08x",cipher,1<<i);
 		PR_smprintf_free(cipher);
-		tmp = cipher;
+		cipher = tmp;
 	    } else {
 		cipher = PR_smprintf("0l0x%08x",1<<i);
 	    }
@@ -682,7 +689,7 @@ pk11_mkCipherFlags(unsigned long ssl0, unsigned long ssl1)
 }
 
 static char *
-pk11_mkSlotFlags(unsigned long defaultFlags)
+secmod_mkSlotFlags(unsigned long defaultFlags)
 {
     char *flags=NULL;
     int i,j;
@@ -691,9 +698,9 @@ pk11_mkSlotFlags(unsigned long defaultFlags)
 	if (defaultFlags & (1<<i)) {
 	    char *string = NULL;
 
-	    for (j=0; j < pk11_argSlotFlagTableSize; j++) {
-		if (pk11_argSlotFlagTable[j].value == (((unsigned long)1)<<i)) {
-		    string = pk11_argSlotFlagTable[j].name;
+	    for (j=0; j < secmod_argSlotFlagTableSize; j++) {
+		if (secmod_argSlotFlagTable[j].value == ( 1UL << i )) {
+		    string = secmod_argSlotFlagTable[j].name;
 		    break;
 		}
 	    }
@@ -713,15 +720,15 @@ pk11_mkSlotFlags(unsigned long defaultFlags)
     return flags;
 }
 
-#define PK11_MAX_ROOT_FLAG_SIZE  sizeof("hasRootCerts")+sizeof("hasRootTrust")
+#define SECMOD_MAX_ROOT_FLAG_SIZE  sizeof("hasRootCerts")+sizeof("hasRootTrust")
 
 static char *
-pk11_mkRootFlags(PRBool hasRootCerts, PRBool hasRootTrust)
+secmod_mkRootFlags(PRBool hasRootCerts, PRBool hasRootTrust)
 {
-    char *flags= (char *)PORT_ZAlloc(PK11_MAX_ROOT_FLAG_SIZE);
+    char *flags= (char *)PORT_ZAlloc(SECMOD_MAX_ROOT_FLAG_SIZE);
     PRBool first = PR_TRUE;
 
-    PORT_Memset(flags,0,PK11_MAX_ROOT_FLAG_SIZE);
+    PORT_Memset(flags,0,SECMOD_MAX_ROOT_FLAG_SIZE);
     if (hasRootCerts) {
 	PORT_Strcat(flags,"hasRootCerts");
 	first = PR_FALSE;
@@ -735,7 +742,7 @@ pk11_mkRootFlags(PRBool hasRootCerts, PRBool hasRootTrust)
 }
 
 static char *
-pk11_mkSlotString(unsigned long slotID, unsigned long defaultFlags,
+secmod_mkSlotString(unsigned long slotID, unsigned long defaultFlags,
 		  unsigned long timeout, unsigned char askpw_in,
 		  PRBool hasRootCerts, PRBool hasRootTrust) {
     char *askpw,*flags,*rootFlags,*slotString;
@@ -752,24 +759,27 @@ pk11_mkSlotString(unsigned long slotID, unsigned long defaultFlags,
 	askpw = "any";
 	break;
     }
-    flags = pk11_mkSlotFlags(defaultFlags);
-    rootFlags = pk11_mkRootFlags(hasRootCerts,hasRootTrust);
-    flagPair=pk11_formatPair("slotFlags",flags,'\'');
-    rootFlagsPair=pk11_formatPair("rootFlags",rootFlags,'\'');
+    flags = secmod_mkSlotFlags(defaultFlags);
+    rootFlags = secmod_mkRootFlags(hasRootCerts,hasRootTrust);
+    flagPair=secmod_formatPair("slotFlags",flags,'\'');
+    rootFlagsPair=secmod_formatPair("rootFlags",rootFlags,'\'');
     if (flags) PR_smprintf_free(flags);
     if (rootFlags) PORT_Free(rootFlags);
     if (defaultFlags & PK11_OWN_PW_DEFAULTS) {
-    	slotString = PR_smprintf("0x%08x=[%s askpw=%s timeout=%d %s]",slotID,flagPair,askpw,timeout,rootFlagsPair);
+    	slotString = PR_smprintf("0x%08lx=[%s askpw=%s timeout=%d %s]",
+				(PRUint32)slotID,flagPair,askpw,timeout,
+				rootFlagsPair);
     } else {
-    	slotString = PR_smprintf("0x%08x=[%s %s]",slotID,flagPair,rootFlagsPair);
+    	slotString = PR_smprintf("0x%08lx=[%s %s]",
+				(PRUint32)slotID,flagPair,rootFlagsPair);
     }
-    pk11_freePair(flagPair);
-    pk11_freePair(rootFlagsPair);
+    secmod_freePair(flagPair);
+    secmod_freePair(rootFlagsPair);
     return slotString;
 }
 
 static char *
-pk11_mkNSS(char **slotStrings, int slotCount, PRBool internal, PRBool isFIPS,
+secmod_mkNSS(char **slotStrings, int slotCount, PRBool internal, PRBool isFIPS,
 	  PRBool isModuleDB,  PRBool isModuleDBOnly, PRBool isCritical, 
 	  unsigned long trustOrder, unsigned long cipherOrder,
 				unsigned long ssl0, unsigned long ssl1) {
@@ -799,29 +809,29 @@ pk11_mkNSS(char **slotStrings, int slotCount, PRBool internal, PRBool isFIPS,
     /*
      * now the NSS structure
      */
-    nssFlags = pk11_mkNSSFlags(internal,isFIPS,isModuleDB,isModuleDBOnly,
+    nssFlags = secmod_mkNSSFlags(internal,isFIPS,isModuleDB,isModuleDBOnly,
 							isCritical); 
 	/* for now only the internal module is critical */
-    ciphers = pk11_mkCipherFlags(ssl0, ssl1);
+    ciphers = secmod_mkCipherFlags(ssl0, ssl1);
 
-    trustOrderPair=pk11_formatIntPair("trustOrder",trustOrder,
-					PK11_DEFAULT_TRUST_ORDER);
-    cipherOrderPair=pk11_formatIntPair("cipherOrder",cipherOrder,
-					PK11_DEFAULT_CIPHER_ORDER);
-    slotPair=pk11_formatPair("slotParams",slotParams,'{'); /* } */
+    trustOrderPair=secmod_formatIntPair("trustOrder",trustOrder,
+					SFTK_DEFAULT_TRUST_ORDER);
+    cipherOrderPair=secmod_formatIntPair("cipherOrder",cipherOrder,
+					SFTK_DEFAULT_CIPHER_ORDER);
+    slotPair=secmod_formatPair("slotParams",slotParams,'{'); /* } */
     if (slotParams) PORT_Free(slotParams);
-    cipherPair=pk11_formatPair("ciphers",ciphers,'\'');
+    cipherPair=secmod_formatPair("ciphers",ciphers,'\'');
     if (ciphers) PR_smprintf_free(ciphers);
-    flagPair=pk11_formatPair("Flags",nssFlags,'\'');
+    flagPair=secmod_formatPair("Flags",nssFlags,'\'');
     if (nssFlags) PORT_Free(nssFlags);
     nss = PR_smprintf("%s %s %s %s %s",trustOrderPair,
 			cipherOrderPair,slotPair,cipherPair,flagPair);
-    pk11_freePair(trustOrderPair);
-    pk11_freePair(cipherOrderPair);
-    pk11_freePair(slotPair);
-    pk11_freePair(cipherPair);
-    pk11_freePair(flagPair);
-    tmp = pk11_argStrip(nss);
+    secmod_freePair(trustOrderPair);
+    secmod_freePair(cipherOrderPair);
+    secmod_freePair(slotPair);
+    secmod_freePair(cipherPair);
+    secmod_freePair(flagPair);
+    tmp = secmod_argStrip(nss);
     if (*tmp == '\0') {
 	PR_smprintf_free(nss);
 	nss = NULL;
@@ -830,7 +840,7 @@ pk11_mkNSS(char **slotStrings, int slotCount, PRBool internal, PRBool isFIPS,
 }
 
 static char *
-pk11_mkNewModuleSpec(char *dllName, char *commonName, char *parameters, 
+secmod_mkNewModuleSpec(char *dllName, char *commonName, char *parameters, 
 								char *NSS) {
     char *moduleSpec;
     char *lib,*name,*param,*nss;
@@ -838,15 +848,15 @@ pk11_mkNewModuleSpec(char *dllName, char *commonName, char *parameters,
     /*
      * now the final spec
      */
-    lib = pk11_formatPair("library",dllName,'\"');
-    name = pk11_formatPair("name",commonName,'\"');
-    param = pk11_formatPair("parameters",parameters,'\"');
-    nss = pk11_formatPair("NSS",NSS,'\"');
+    lib = secmod_formatPair("library",dllName,'\"');
+    name = secmod_formatPair("name",commonName,'\"');
+    param = secmod_formatPair("parameters",parameters,'\"');
+    nss = secmod_formatPair("NSS",NSS,'\"');
     moduleSpec = PR_smprintf("%s %s %s %s", lib,name,param,nss);
-    pk11_freePair(lib);
-    pk11_freePair(name);
-    pk11_freePair(param);
-    pk11_freePair(nss);
+    secmod_freePair(lib);
+    secmod_freePair(name);
+    secmod_freePair(param);
+    secmod_freePair(nss);
     return (moduleSpec);
 }
 

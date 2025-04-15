@@ -1,22 +1,40 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
- */
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* This is where functions related to the standalone message window are kept */
 
@@ -40,41 +58,22 @@ var gNextMessageAfterLoad = null;
 
 // the folderListener object
 var folderListener = {
-  OnItemAdded: function(parentItem, item, view) {},
+  OnItemAdded: function(parentItem, item) {},
 
-  OnItemRemoved: function(parentItem, item, view) {
-    var parentFolderResource = parentItem.QueryInterface(Components.interfaces.nsIRDFResource);
-    if (!parentFolderResource)
+  OnItemRemoved: function(parentItem, item) {
+    if (parentItem.Value != gCurrentFolderUri)
       return;
 
-    var parentURI = parentFolderResource.Value;
-    if (parentURI != gCurrentFolderUri)
-      return;
-
-    var deletedMessageHdr = item.QueryInterface(Components.interfaces.nsIMsgDBHdr);
-    if (extractMsgKeyFromURI() == deletedMessageHdr.messageKey)
+    if (item instanceof Components.interfaces.nsIMsgDBHdr &&
+        extractMsgKeyFromURI() == item.messageKey)
       gCurrentMessageIsDeleted = true;
   },
 
   OnItemPropertyChanged: function(item, property, oldValue, newValue) {},
   OnItemIntPropertyChanged: function(item, property, oldValue, newValue) { 
-    var currentLoadedFolder = GetLoadedMsgFolder();
-    if (!currentLoadedFolder) return;
-    var currentURI = currentLoadedFolder.URI;
-
-    //if we don't have a folder loaded, don't bother.
-    if (currentURI) {
+    if (item.Value == gCurrentFolderUri) {
       if (property.toString() == "TotalMessages" || property.toString() == "TotalUnreadMessages") {
-        var folder = item.QueryInterface(Components.interfaces.nsIMsgFolder);
-        if (folder) {
-          var folderResource = folder.QueryInterface(Components.interfaces.nsIRDFResource); 
-          if (folderResource) {
-            var folderURI = folderResource.Value;
-            if (currentURI == folderURI) {
-              UpdateStandAloneMessageCounts();
-            }
-          }
-        }
+        UpdateStandAloneMessageCounts();
       }      
     }
   },
@@ -209,7 +208,7 @@ function HandleDeleteOrMoveMsgCompleted(folder)
     {
       var nextMstKey = gDBView.getKeyAt(gNextMessageViewIndexAfterDelete);
       if (nextMstKey != nsMsgKey_None) {
-        LoadMessageByMsgKey(nextMstKey);
+        LoadMessageByViewIndex(gNextMessageViewIndexAfterDelete);
       }
       else {
         window.close();
@@ -245,7 +244,6 @@ function IsCurrentLoadedFolder(folder)
 
 function OnLoadMessageWindow()
 {
-	HideMenus();
   AddMailOfflineObserver();
 	CreateMailWindowGlobals();
 	CreateMessageWindowGlobals();
@@ -281,7 +279,7 @@ function OnLoadMessageWindow()
         messageUri = window.arguments[0];
         if (messageUri instanceof Components.interfaces.nsIURI)
         {
-          loadCustomMessage = /type=x-message-display/.test(messageUri.spec);
+          loadCustomMessage = /type=application\/x-message-display/.test(messageUri.spec);
           gCurrentMessageUri = messageUri.spec;
           if (messageUri instanceof Components.interfaces.nsIMsgMailNewsUrl)
             folder = messageUri.folder;
@@ -323,7 +321,7 @@ function OnLoadMessageWindowDelayed(loadCustomMessage)
   else
   {
     var msgKey = extractMsgKeyFromURI(gCurrentMessageUri);
-    gDBView.loadMessageByMsgKey(msgKey);
+    LoadMessageByViewIndex(gDBView.findIndexFromKey(msgKey, true));
   }
   gNextMessageViewIndexAfterDelete = gDBView.msgToSelectAfterDelete; 
   UpdateStandAloneMessageCounts();
@@ -402,73 +400,6 @@ function extractMsgKeyFromURI()
   return msgKey;
 }
 
-function HideMenus()
-{
-	var message_menuitem=document.getElementById('menu_showMessage');
-	if (message_menuitem)
-		message_menuitem.setAttribute("hidden", "true");
-
-	var showSearchToolbar = document.getElementById('menu_showSearchToolbar');
-	if (showSearchToolbar)
-		showSearchToolbar.setAttribute("hidden", "true");
-
-	var showSearch_showMessage_Separator = document.getElementById('menu_showSearch_showMessage_Separator');
-	if (showSearch_showMessage_Separator)
-		showSearch_showMessage_Separator.setAttribute("hidden", "true");
-
-	var expandOrCollapseMenu = document.getElementById('menu_expandOrCollapse');
-	if (expandOrCollapseMenu)
-		expandOrCollapseMenu.setAttribute("hidden", "true");
-
-	var renameFolderMenu = document.getElementById('menu_renameFolder');
-	if (renameFolderMenu)
-		renameFolderMenu.setAttribute("hidden", "true");
-
-	var viewMessagesMenu = document.getElementById('viewMessagesMenu');
-	if (viewMessagesMenu)
-		viewMessagesMenu.setAttribute("hidden", "true");
-
-	var viewMessageViewMenu = document.getElementById('viewMessageViewMenu');
-	if (viewMessageViewMenu)
-		viewMessageViewMenu.setAttribute("hidden", "true");
-
-	var viewMessagesMenuSeparator = document.getElementById('viewMessagesMenuSeparator');
-	if (viewMessagesMenuSeparator)
-		viewMessagesMenuSeparator.setAttribute("hidden", "true");
-
-	var openMessageMenu = document.getElementById('openMessageWindowMenuitem');
-	if (openMessageMenu)
-		openMessageMenu.setAttribute("hidden", "true");
-
-	var viewSortMenu = document.getElementById('viewSortMenu');
-	if (viewSortMenu)
-		viewSortMenu.setAttribute("hidden", "true");
-
-	var emptryTrashMenu = document.getElementById('menu_emptyTrash');
-	if (emptryTrashMenu)
-		emptryTrashMenu.setAttribute("hidden", "true");
-
-	var menuProperties = document.getElementById('menu_properties');
-	if (menuProperties)
-		menuProperties.setAttribute("hidden", "true");
-
-	var compactFolderMenu = document.getElementById('menu_compactFolder');
-	if (compactFolderMenu)
-		compactFolderMenu.setAttribute("hidden", "true");
-
-	var trashSeparator = document.getElementById('trashMenuSeparator');
-	if (trashSeparator)
-		trashSeparator.setAttribute("hidden", "true");
-
-	var goStartPageSeparator = document.getElementById('goStartPageSeparator');
-	if (goStartPageSeparator)
-		goStartPageSeparator.hidden = true;
-
-  var goStartPage = document.getElementById('goStartPage');
-	if (goStartPage)
-   goStartPage.hidden = true;
-}
-
 function OnUnloadMessageWindow()
 {
   RemoveToolBarPrefListener();
@@ -545,6 +476,11 @@ function GetLoadedMsgFolder()
 		return RDF.GetResource(gCurrentFolderUri).QueryInterface(Components.interfaces.nsIMsgFolder);
 	else
     return null;
+}
+
+function GetSelectedFolderURI()
+{
+  return gCurrentFolderUri;
 }
 
 function GetLoadedMessage()
@@ -719,6 +655,8 @@ var MessageWindowController =
       case "cmd_markAsJunk":
       case "cmd_markAsNotJunk":
       case "cmd_recalculateJunkScore":
+      case "cmd_markAsShowRemote":
+      case "cmd_markAsNotPhish":
       case "cmd_applyFilters":
       case "cmd_runJunkControls":
       case "cmd_deleteJunk":
@@ -817,6 +755,10 @@ var MessageWindowController =
       case "button_file":
 			case "cmd_file":
         return (gCurrentMessageUri != null);
+      case "cmd_markAsShowRemote":
+        return (GetNumSelectedMessages() > 0 && checkMsgHdrPropertyIsNot("remoteContentPolicy", kAllowRemoteContent));
+      case "cmd_markAsNotPhish":
+        return (GetNumSelectedMessages() > 0 && checkMsgHdrPropertyIsNot("notAPhishMessage", kNotAPhishMessage));
 			case "cmd_printSetup":
 			  return true;
 			case "cmd_getNewMessages":
@@ -910,7 +852,8 @@ var MessageWindowController =
 				MsgEditMessageAsNew();
 				break;
       case "cmd_createFilterFromPopup":
-				break;// This does nothing because the createfilter is invoked from the popupnode oncommand.        
+        CreateFilter(document.popupNode);
+        break;
       case "cmd_createFilterFromMenu":
         MsgCreateFilter();
 				break;        
@@ -983,6 +926,12 @@ var MessageWindowController =
 				return;
       case "cmd_recalculateJunkScore":
         analyzeMessagesForJunk();
+        return;
+      case "cmd_markAsShowRemote":
+        LoadMsgWithRemoteContent();
+        return;
+      case "cmd_markAsNotPhish":
+        MsgIsNotAScam();
         return;
       case "cmd_label0":
         gDBView.doCommand(nsMsgViewCommandType.label0);
@@ -1090,12 +1039,17 @@ function GetDBView()
 
 function LoadMessageByMsgKey(messageKey)
 {
+  var viewIndex = gDBView.findIndexFromKey(messageKey, true);
+  gDBView.loadMessageByViewIndex(viewIndex);
+ // we only want to update the toolbar if there was no previous selected message.
+  if (nsMsgKey_None == gDBView.keyForFirstSelectedMessage)
+    UpdateMailToolbar("update toolbar for message Window");
+}
+
+function LoadMessageByViewIndex(viewIndex)
+{
+  gDBView.loadMessageByViewIndex(viewIndex);
   // we only want to update the toolbar if there was no previous selected message.
   if (nsMsgKey_None == gDBView.keyForFirstSelectedMessage)
-  {
-    gDBView.loadMessageByMsgKey(messageKey);
     UpdateMailToolbar("update toolbar for message Window");
-  }
-  else
-    gDBView.loadMessageByMsgKey(messageKey);
 }

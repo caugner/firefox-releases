@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,31 +14,32 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Author: Aaron Leventhal (aaronl@netscape.com)
- *
+ *   Author: Aaron Leventhal (aaronl@netscape.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsHTMLTableAccessible.h"
+#include "nsAccessibilityAtoms.h"
 #include "nsIDOMElement.h"
+#include "nsINameSpaceManager.h"
 
 NS_IMPL_ISUPPORTS_INHERITED0(nsHTMLTableCellAccessible, nsBlockAccessible)
 
@@ -79,7 +80,7 @@ nsHTMLTableCaptionAccessible::GetState(PRUint32 *aResult)
 NS_IMETHODIMP
 nsHTMLTableCaptionAccessible::GetValue(nsAString& aResult)
 {
-  aResult.Assign(NS_LITERAL_STRING(""));  // Default name is blank
+  aResult.Truncate();  // Default name is blank
 
   nsCOMPtr<nsIContent> captionContent(do_QueryInterface(mDOMNode));
   AppendFlatStringFromSubtree(captionContent, &aResult);
@@ -104,25 +105,41 @@ NS_IMETHODIMP nsHTMLTableAccessible::GetRole(PRUint32 *aResult)
 NS_IMETHODIMP nsHTMLTableAccessible::GetState(PRUint32 *aResult)
 {
   nsAccessible::GetState(aResult);
+  *aResult |= STATE_READONLY;
   *aResult &= ~STATE_FOCUSABLE;   // Inherit all states except focusable state since tables cannot be focused
   return NS_OK;
 }
 
-NS_IMETHODIMP nsHTMLTableAccessible::GetName(nsAString& aResult)
+NS_IMETHODIMP nsHTMLTableAccessible::GetName(nsAString& aName)
 {
-  aResult.Assign(NS_LITERAL_STRING(""));  // Default name is blank
+  aName.Truncate();  // Default name is blank
+
+  if (mRoleMapEntry) {
+    nsAccessible::GetName(aName);
+    if (!aName.IsEmpty()) {
+      return NS_OK;
+    }
+  }
 
   nsCOMPtr<nsIDOMElement> element(do_QueryInterface(mDOMNode));
   if (element) {
     nsCOMPtr<nsIDOMNodeList> captions;
-    element->GetElementsByTagName(NS_LITERAL_STRING("caption"), getter_AddRefs(captions));
+    nsAutoString nameSpaceURI;
+    element->GetNamespaceURI(nameSpaceURI);
+    element->GetElementsByTagNameNS(nameSpaceURI, NS_LITERAL_STRING("caption"), 
+                                    getter_AddRefs(captions));
     if (captions) {
       nsCOMPtr<nsIDOMNode> captionNode;
       captions->Item(0, getter_AddRefs(captionNode));
       if (captionNode) {
         nsCOMPtr<nsIContent> captionContent(do_QueryInterface(captionNode));
-        AppendFlatStringFromSubtree(captionContent, &aResult);
+        AppendFlatStringFromSubtree(captionContent, &aName);
       }
+    }
+    if (aName.IsEmpty()) {
+      nsCOMPtr<nsIContent> content(do_QueryInterface(element));
+      NS_ASSERTION(content, "No content for DOM element");
+      content->GetAttr(kNameSpaceID_None, nsAccessibilityAtoms::summary, aName);
     }
   }
   return NS_OK;

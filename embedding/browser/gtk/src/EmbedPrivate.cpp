@@ -1,28 +1,47 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Christopher Blizzard.
- * Portions created by Christopher Blizzard are Copyright (C)
- * Christopher Blizzard.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Christopher Blizzard. Portions created by Christopher Blizzard are Copyright (C) Christopher Blizzard.  All Rights Reserved.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Christopher Blizzard <blizzard@mozilla.org>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include <nsIDocShell.h>
 #include <nsIWebProgress.h>
 #include "nsIWidget.h"
 #include "nsCRT.h"
+#include "nsNetUtil.h"
+#include "nsIWebBrowserStream.h"
+#include "nsIWebBrowserFocus.h"
 
 // for NS_APPSHELL_CID
 #include <nsWidgetsCID.h>
@@ -45,6 +64,9 @@
 #include <nsIDOMWindowInternal.h>
 #include <nsIChromeEventHandler.h>
 
+// For seting scrollbar visibilty
+#include <nsIDOMBarProp.h>
+
 // for the focus hacking we need to do
 #include <nsIFocusController.h>
 
@@ -62,21 +84,16 @@
 #include "EmbedContentListener.h"
 #include "EmbedEventListener.h"
 #include "EmbedWindowCreator.h"
-#include "EmbedStream.h"
 #ifdef MOZ_WIDGET_GTK2
 #include "GtkPromptService.h"
+#else
+#include "nsNativeCharsetUtils.h"
 #endif
 
 #ifdef MOZ_ACCESSIBILITY_ATK
 #include "nsIAccessibilityService.h"
 #include "nsIAccessible.h"
 #include "nsIDOMDocument.h"
-#endif
-
-#ifdef _BUILD_STATIC_BIN
-#include "nsStaticComponent.h"
-nsresult PR_CALLBACK
-gtk_getModuleInfo(nsStaticModuleInfo **info, PRUint32 *count);
 #endif
 
 static NS_DEFINE_CID(kAppShellCID, NS_APPSHELL_CID);
@@ -128,8 +145,7 @@ EmbedPrivate::EmbedPrivate(void)
   mProgress         = nsnull;
   mContentListener  = nsnull;
   mEventListener    = nsnull;
-  mStream           = nsnull;
-  mChromeMask       = 0;
+  mChromeMask       = nsIWebBrowserChrome::CHROME_ALL;
   mIsChrome         = PR_FALSE;
   mChromeLoaded     = PR_FALSE;
   mListenersAttached = PR_FALSE;
@@ -270,6 +286,9 @@ EmbedPrivate::Realize(PRBool *aAlreadyRealized)
   gdk_window_get_user_data(tmp_window, &data);
   mMozWindowWidget = NS_STATIC_CAST(GtkWidget *, data);
 
+  // Apply the current chrome mask
+  ApplyChromeMask();
+
   return NS_OK;
 }
 
@@ -349,7 +368,7 @@ EmbedPrivate::Destroy(void)
   DetachListeners();
   if (mEventReceiver)
     mEventReceiver = nsnull;
-  
+
   // destroy our child window
   mWindow->ReleaseChildren();
 
@@ -368,23 +387,31 @@ void
 EmbedPrivate::SetURI(const char *aURI)
 {
 #ifdef MOZ_WIDGET_GTK
-  mURI.AssignWithConversion(aURI);
+  // XXX: Even though NS_CopyNativeToUnicode is not designed for non-filenames,
+  // we know that it will do "the right thing" on UNIX.
+  NS_CopyNativeToUnicode(nsDependentCString(aURI), mURI);
 #endif
 
 #ifdef MOZ_WIDGET_GTK2
-  mURI.Assign(NS_ConvertUTF8toUCS2(aURI));
+  CopyUTF8toUTF16(aURI, mURI);
 #endif
 }
 
 void
 EmbedPrivate::LoadCurrentURI(void)
 {
-  if (mURI.Length())
+  if (mURI.Length()) {
+    nsCOMPtr<nsPIDOMWindow> piWin;
+    GetPIDOMWindow(getter_AddRefs(piWin));
+
+    nsAutoPopupStatePusher popupStatePusher(piWin, openAllowed);
+
     mNavigation->LoadURI(mURI.get(),                        // URI string
                          nsIWebNavigation::LOAD_FLAGS_NONE, // Load flags
                          nsnull,                            // Referring URI
                          nsnull,                            // Post data
                          nsnull);                           // extra headers
+  }
 }
 
 void
@@ -405,28 +432,56 @@ EmbedPrivate::Reload(PRUint32 reloadFlags)
 }
 
 
+void
+EmbedPrivate::ApplyChromeMask()
+{
+   if (mWindow) {
+      nsCOMPtr<nsIWebBrowser> webBrowser;
+      mWindow->GetWebBrowser(getter_AddRefs(webBrowser));
+
+      nsCOMPtr<nsIDOMWindow> domWindow;
+      webBrowser->GetContentDOMWindow(getter_AddRefs(domWindow));
+      if (domWindow) {
+
+         nsCOMPtr<nsIDOMBarProp> scrollbars;
+         domWindow->GetScrollbars(getter_AddRefs(scrollbars));
+         if (scrollbars) {
+
+            scrollbars->SetVisible
+               (mChromeMask & nsIWebBrowserChrome::CHROME_SCROLLBARS ?
+                PR_TRUE : PR_FALSE);
+         }
+      }
+   }
+}
+
+
+void
+EmbedPrivate::SetChromeMask(PRUint32 aChromeMask)
+{
+   mChromeMask = aChromeMask;
+
+   ApplyChromeMask();
+}
+
+
 /* static */
 void
 EmbedPrivate::PushStartup(void)
 {
   // increment the number of widgets
   sWidgetCount++;
-  
+
   // if this is the first widget, fire up xpcom
   if (sWidgetCount == 1) {
     nsresult rv;
     nsCOMPtr<nsILocalFile> binDir;
-    
+
     if (sCompPath) {
       rv = NS_NewNativeLocalFile(nsDependentCString(sCompPath), 1, getter_AddRefs(binDir));
       if (NS_FAILED(rv))
 	return;
     }
-
-#ifdef _BUILD_STATIC_BIN
-    // Initialize XPCOM's module info table
-    NSGetStaticModuleInfo = gtk_getModuleInfo;
-#endif
 
     rv = NS_InitEmbedding(binDir, sAppFileLocProvider);
     if (NS_FAILED(rv))
@@ -447,7 +502,7 @@ EmbedPrivate::PushStartup(void)
     // XXX startup appshell service?
     // XXX create offscreen window for appshell service?
     // XXX remove X prop from offscreen window?
-    
+
     nsCOMPtr<nsIAppShell> appShell;
     appShell = do_CreateInstance(kAppShellCID);
     if (!appShell) {
@@ -470,7 +525,7 @@ EmbedPrivate::PopStartup(void)
 
     // destroy the offscreen window
     DestroyOffscreenWindow();
-    
+
     // shut down the profiles
     ShutdownProfile();
 
@@ -488,7 +543,7 @@ EmbedPrivate::PopStartup(void)
 
 /* static */
 void
-EmbedPrivate::SetCompPath(char *aPath)
+EmbedPrivate::SetCompPath(const char *aPath)
 {
   if (sCompPath)
     free(sCompPath);
@@ -509,7 +564,7 @@ EmbedPrivate::SetAppComponents(const nsModuleComponentInfo* aComps,
 
 /* static */
 void
-EmbedPrivate::SetProfilePath(char *aDir, char *aName)
+EmbedPrivate::SetProfilePath(const char *aDir, const char *aName)
 {
   if (sProfileDir) {
     nsMemory::Free(sProfileDir);
@@ -523,17 +578,17 @@ EmbedPrivate::SetProfilePath(char *aDir, char *aName)
 
   if (aDir)
     sProfileDir = (char *)nsMemory::Clone(aDir, strlen(aDir) + 1);
-  
+
   if (aName)
-    sProfileName = (char *)nsMemory::Clone(aName, strlen(aDir) + 1);
+    sProfileName = (char *)nsMemory::Clone(aName, strlen(aName) + 1);
 }
 
-void 
-EmbedPrivate::SetDirectoryServiceProvider(nsIDirectoryServiceProvider * appFileLocProvider) 
+void
+EmbedPrivate::SetDirectoryServiceProvider(nsIDirectoryServiceProvider * appFileLocProvider)
 {
   if (sAppFileLocProvider)
     NS_RELEASE(sAppFileLocProvider);
-  
+
   if (appFileLocProvider) {
     sAppFileLocProvider = appFileLocProvider;
     NS_ADDREF(sAppFileLocProvider);
@@ -543,48 +598,47 @@ EmbedPrivate::SetDirectoryServiceProvider(nsIDirectoryServiceProvider * appFileL
 nsresult
 EmbedPrivate::OpenStream(const char *aBaseURI, const char *aContentType)
 {
-  nsresult rv;
+  nsCOMPtr<nsIWebBrowser> webBrowser;
+  mWindow->GetWebBrowser(getter_AddRefs(webBrowser));
 
-  if (!mStream) {
-    mStream = new EmbedStream();
-    mStreamGuard = do_QueryInterface(mStream);
-    mStream->InitOwner(this);
-    rv = mStream->Init();
-    if (NS_FAILED(rv))
-      return rv;
-  }
+  nsCOMPtr<nsIWebBrowserStream> wbStream = do_QueryInterface(webBrowser);
+  if (!wbStream) return NS_ERROR_FAILURE;
 
-  rv = mStream->OpenStream(aBaseURI, aContentType);
+  nsCOMPtr<nsIURI> uri;
+  nsresult rv = NS_NewURI(getter_AddRefs(uri), aBaseURI);
+  if (NS_FAILED(rv))
+    return rv;
+
+  rv = wbStream->OpenStream(uri, nsDependentCString(aContentType));
   return rv;
 }
 
 nsresult
-EmbedPrivate::AppendToStream(const char *aData, PRInt32 aLen)
+EmbedPrivate::AppendToStream(const PRUint8 *aData, PRUint32 aLen)
 {
-  if (!mStream)
-    return NS_ERROR_FAILURE;
-
   // Attach listeners to this document since in some cases we don't
   // get updates for content added this way.
   ContentStateChange();
 
-  return mStream->AppendToStream(aData, aLen);
+  nsCOMPtr<nsIWebBrowser> webBrowser;
+  mWindow->GetWebBrowser(getter_AddRefs(webBrowser));
+
+  nsCOMPtr<nsIWebBrowserStream> wbStream = do_QueryInterface(webBrowser);
+  if (!wbStream) return NS_ERROR_FAILURE;
+
+  return wbStream->AppendToStream(aData, aLen);
 }
 
 nsresult
 EmbedPrivate::CloseStream(void)
 {
-  nsresult rv;
+  nsCOMPtr<nsIWebBrowser> webBrowser;
+  mWindow->GetWebBrowser(getter_AddRefs(webBrowser));
 
-  if (!mStream)
-    return NS_ERROR_FAILURE;
-  rv = mStream->CloseStream();
+  nsCOMPtr<nsIWebBrowserStream> wbStream = do_QueryInterface(webBrowser);
+  if (!wbStream) return NS_ERROR_FAILURE;
 
-  // release
-  mStream = 0;
-  mStreamGuard = 0;
-
-  return rv;
+  return wbStream->CloseStream();
 }
 
 /* static */
@@ -624,7 +678,7 @@ EmbedPrivate::ContentStateChange(void)
 
   if (!mEventReceiver)
     return;
-  
+
   AttachListeners();
 
 }
@@ -639,7 +693,7 @@ EmbedPrivate::ContentFinishedLoading(void)
     // get the web browser
     nsCOMPtr<nsIWebBrowser> webBrowser;
     mWindow->GetWebBrowser(getter_AddRefs(webBrowser));
-    
+
     // get the content DOM window for that web browser
     nsCOMPtr<nsIDOMWindow> domWindow;
     webBrowser->GetContentDOMWindow(getter_AddRefs(domWindow));
@@ -647,7 +701,7 @@ EmbedPrivate::ContentFinishedLoading(void)
       NS_WARNING("no dom window in content finished loading\n");
       return;
     }
-    
+
     // resize the content
     domWindow->SizeToContent();
 
@@ -660,6 +714,7 @@ EmbedPrivate::ContentFinishedLoading(void)
   }
 }
 
+#ifdef MOZ_WIDGET_GTK
 // handle focus in and focus out events
 void
 EmbedPrivate::TopLevelFocusIn(void)
@@ -673,8 +728,7 @@ EmbedPrivate::TopLevelFocusIn(void)
   if (!piWin)
     return;
 
-  nsCOMPtr<nsIFocusController> focusController;
-  piWin->GetRootFocusController(getter_AddRefs(focusController));
+  nsIFocusController *focusController = piWin->GetRootFocusController();
   if (focusController)
     focusController->SetActive(PR_TRUE);
 }
@@ -691,11 +745,11 @@ EmbedPrivate::TopLevelFocusOut(void)
   if (!piWin)
     return;
 
-  nsCOMPtr<nsIFocusController> focusController;
-  piWin->GetRootFocusController(getter_AddRefs(focusController));
+  nsIFocusController *focusController = piWin->GetRootFocusController();
   if (focusController)
     focusController->SetActive(PR_FALSE);
 }
+#endif /* MOZ_WIDGET_GTK */
 
 void
 EmbedPrivate::ChildFocusIn(void)
@@ -703,6 +757,21 @@ EmbedPrivate::ChildFocusIn(void)
   if (mIsDestroyed)
     return;
 
+#ifdef MOZ_WIDGET_GTK2
+  nsresult rv;
+  nsCOMPtr<nsIWebBrowser> webBrowser;
+  rv = mWindow->GetWebBrowser(getter_AddRefs(webBrowser));
+  if (NS_FAILED(rv))
+    return;
+
+  nsCOMPtr<nsIWebBrowserFocus> webBrowserFocus(do_QueryInterface(webBrowser));
+  if (!webBrowserFocus)
+    return;
+  
+  webBrowserFocus->Activate();
+#endif /* MOZ_WIDGET_GTK2 */
+
+#ifdef MOZ_WIDGET_GTK
   nsCOMPtr<nsPIDOMWindow> piWin;
   GetPIDOMWindow(getter_AddRefs(piWin));
 
@@ -710,6 +779,7 @@ EmbedPrivate::ChildFocusIn(void)
     return;
 
   piWin->Activate();
+#endif /* MOZ_WIDGET_GTK */
 }
 
 void
@@ -718,6 +788,21 @@ EmbedPrivate::ChildFocusOut(void)
   if (mIsDestroyed)
     return;
 
+#ifdef MOZ_WIDGET_GTK2
+  nsresult rv;
+  nsCOMPtr<nsIWebBrowser> webBrowser;
+  rv = mWindow->GetWebBrowser(getter_AddRefs(webBrowser));
+  if (NS_FAILED(rv))
+	  return;
+
+  nsCOMPtr<nsIWebBrowserFocus> webBrowserFocus(do_QueryInterface(webBrowser));
+  if (!webBrowserFocus)
+	  return;
+  
+  webBrowserFocus->Deactivate();
+#endif /* MOZ_WIDGET_GTK2 */
+
+#ifdef MOZ_WIDGET_GTK
   nsCOMPtr<nsPIDOMWindow> piWin;
   GetPIDOMWindow(getter_AddRefs(piWin));
 
@@ -728,11 +813,10 @@ EmbedPrivate::ChildFocusOut(void)
 
   // but the window is still active until the toplevel gets a focus
   // out
-  nsCOMPtr<nsIFocusController> focusController;
-  piWin->GetRootFocusController(getter_AddRefs(focusController));
+  nsIFocusController *focusController = piWin->GetRootFocusController();
   if (focusController)
     focusController->SetActive(PR_TRUE);
-
+#endif /* MOZ_WIDGET_GTK */
 }
 
 // Get the event listener for the chrome event handler.
@@ -749,10 +833,7 @@ EmbedPrivate::GetListener(void)
   if (!piWin)
     return;
 
-  nsCOMPtr<nsIChromeEventHandler> chromeHandler;
-  piWin->GetChromeEventHandler(getter_AddRefs(chromeHandler));
-
-  mEventReceiver = do_QueryInterface(chromeHandler);
+  mEventReceiver = do_QueryInterface(piWin->GetChromeEventHandler());
 }
 
 // attach key and mouse event listeners
@@ -780,6 +861,13 @@ EmbedPrivate::AttachListeners(void)
 					     NS_GET_IID(nsIDOMMouseListener));
   if (NS_FAILED(rv)) {
     NS_WARNING("Failed to add mouse listener\n");
+    return;
+  }
+
+  rv = mEventReceiver->AddEventListenerByIID(eventListener,
+                                             NS_GET_IID(nsIDOMUIListener));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Failed to add UI listener\n");
     return;
   }
 
@@ -813,6 +901,12 @@ EmbedPrivate::DetachListeners(void)
     return;
   }
 
+  rv = mEventReceiver->RemoveEventListenerByIID(eventListener,
+						NS_GET_IID(nsIDOMUIListener));
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Failed to remove UI listener\n");
+    return;
+  }
 
   mListenersAttached = PR_FALSE;
 }
@@ -835,13 +929,7 @@ EmbedPrivate::GetPIDOMWindow(nsPIDOMWindow **aPIWin)
   // get the private DOM window
   nsCOMPtr<nsPIDOMWindow> domWindowPrivate = do_QueryInterface(domWindow);
   // and the root window for that DOM window
-  nsCOMPtr<nsIDOMWindowInternal> rootWindow;
-  domWindowPrivate->GetPrivateRoot(getter_AddRefs(rootWindow));
-  
-  nsCOMPtr<nsIChromeEventHandler> chromeHandler;
-  nsCOMPtr<nsPIDOMWindow> piWin(do_QueryInterface(rootWindow));
-
-  *aPIWin = piWin.get();
+  *aPIWin = domWindowPrivate->GetPrivateRoot();
 
   if (*aPIWin) {
     NS_ADDREF(*aPIWin);
@@ -945,6 +1033,10 @@ EmbedPrivate::RegisterAppComponents(void)
   nsresult rv = NS_GetComponentRegistrar(getter_AddRefs(cr));
   NS_ENSURE_SUCCESS(rv, rv);
 
+  nsCOMPtr<nsIComponentManager> cm;
+  rv = NS_GetComponentManager (getter_AddRefs (cm));
+  NS_ENSURE_SUCCESS (rv, rv);
+
   for (int i = 0; i < sNumAppComps; ++i) {
     nsCOMPtr<nsIGenericFactory> componentFactory;
     rv = NS_NewGenericFactory(getter_AddRefs(componentFactory),
@@ -957,11 +1049,18 @@ EmbedPrivate::RegisterAppComponents(void)
     rv = cr->RegisterFactory(sAppComps[i].mCID, sAppComps[i].mDescription,
                              sAppComps[i].mContractID, componentFactory);
     NS_ASSERTION(NS_SUCCEEDED(rv), "Unable to register factory for component");
+
+    // Call the registration hook of the component, if any
+    if (sAppComps[i].mRegisterSelfProc) {
+      rv = sAppComps[i].mRegisterSelfProc(cm, nsnull, nsnull, nsnull,
+                                          &(sAppComps[i]));
+      NS_ASSERTION(NS_SUCCEEDED(rv), "Unable to self-register component");
+    }
   }
 
   return rv;
 }
-			     
+
 /* static */
 void
 EmbedPrivate::EnsureOffscreenWindow(void)

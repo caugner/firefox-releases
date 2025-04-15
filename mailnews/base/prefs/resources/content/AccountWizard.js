@@ -1,22 +1,40 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
- */
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /* the okCallback is used for sending a callback for the parent window */
 var okCallback = null;
@@ -118,7 +136,6 @@ function onAccountWizardLoad() {
     }
 }
 
-    
 function onCancel() 
 {
   if ("ActivationOnCancel" in this && ActivationOnCancel())
@@ -324,11 +341,10 @@ function PageDataToAccountData(pageData, accountData)
     var server = accountData.incomingServer;
     var smtp = accountData.smtp;
 
-    dump("Setting identity for \n");
     if (pageData.identity.email)
-    identity.email = pageData.identity.email.value;
+        identity.email = pageData.identity.email.value;
     if (pageData.identity.fullName)
-    identity.fullName = pageData.identity.fullName.value;
+        identity.fullName = pageData.identity.fullName.value;
 
     server.type = getCurrentServerType(pageData);
     server.hostName = getCurrentHostname(pageData);
@@ -394,22 +410,22 @@ function createAccount(accountData)
     var server = am.createIncomingServer(username,
                                          server.hostName,
                                          server.type);
-    
+
     dump("am.createAccount()\n");
     var account = am.createAccount();
     
     if (accountData.identity.email) // only create an identity for this account if we really have one (use the email address as a check)
     {
-    dump("am.createIdentity()\n");
-    var identity = am.createIdentity();
+        dump("am.createIdentity()\n");
+        var identity = am.createIdentity();
     
-    /* new nntp identities should use plain text by default
-     * we want that GNKSA (The Good Net-Keeping Seal of Approval) */
-    if (server.type == "nntp") {
-			identity.composeHtml = false;
-    }
+        /* new nntp identities should use plain text by default
+         * we want that GNKSA (The Good Net-Keeping Seal of Approval) */
+        if (server.type == "nntp") {
+			    identity.composeHtml = false;
+        }
 
-    account.addIdentity(identity);
+        account.addIdentity(identity);
     }
 
     // we mark the server as invalid so that the account manager won't
@@ -454,87 +470,86 @@ function finishAccount(account, accountData)
 
     // copy identity info
     var destIdentity = account.identities.Count() ? account.identities.QueryElementAt(0, nsIMsgIdentity) : null;
-    
+
     if (destIdentity) // does this account have an identity? 
     {   
         if (accountData.identity && accountData.identity.email) {
             dump('trying to write out an identity: ' + destIdentity + '\n');
 
-        // fixup the email address if we have a default domain
-        var emailArray = accountData.identity.email.split('@');
-        if (emailArray.length < 2 && accountData.domain) {
-            accountData.identity.email += '@' + accountData.domain;
+            // fixup the email address if we have a default domain
+            var emailArray = accountData.identity.email.split('@');
+            if (emailArray.length < 2 && accountData.domain) {
+                accountData.identity.email += '@' + accountData.domain;
+            }
+
+            copyObjectToInterface(destIdentity,
+                                  accountData.identity);
+            destIdentity.valid=true;
         }
 
-        copyObjectToInterface(destIdentity,
-                              accountData.identity);
-        destIdentity.valid=true;
-    }
-
-    /**
-     * If signature file need to be set, get the path to the signature file.
-     * Signature files, if exist, are placed under default location. Get
-     * default files location for messenger using directory service. Signature 
-     * file name should be extracted from the account data to build the complete
-     * path for signature file. Once the path is built, set the identity's signature pref.
-     */
-    if (destIdentity.attachSignature)
-    {
-        var sigFileName = accountData.signatureFileName;
-      
-        var sigFile = gMailSession.getDataFilesDir("messenger");
-        sigFile.append(sigFileName);
-        destIdentity.signature = sigFile;
-    }
-
-    // don't try to create an smtp server if we already have one.
-    if (!destIdentity.smtpServerKey)
-    {
-        var smtpServer;
-        
         /**
-         * Create a new smtp server if needed. If smtpCreateNewServer pref
-         * is set then createSmtpServer routine() will create one. Otherwise,
-         * default server is returned which is also set to create a new smtp server
-         * (via GetDefaultServer()) if no default server is found.
+         * If signature file need to be set, get the path to the signature file.
+         * Signature files, if exist, are placed under default location. Get
+         * default files location for messenger using directory service. Signature 
+         * file name should be extracted from the account data to build the complete
+         * path for signature file. Once the path is built, set the identity's signature pref.
          */
-        if (accountData.smtp.hostname != null)
-          smtpServer = smtpService.createSmtpServer();
-        else
-          smtpServer = smtpService.defaultServer;
-
-        // may not have a smtp server, see bug #138076
-        if (smtpServer) {
-          dump("Copying smtpServer (" + smtpServer + ") to accountData\n");
-          //set the smtp server to be the default only if it is not a redirectorType
-          if (accountData.smtp.redirectorType == null) 
-          {
-            if ((smtpService.defaultServer.hostname == null) || (smtpService.defaultServer.redirectorType != null))
-              smtpService.defaultServer = smtpServer;
-          }
-
-          copyObjectToInterface(smtpServer, accountData.smtp);
-
-          // refer bug#141314
-          // since we clone the default smtpserver with the new account's username
-          // force every account to use the smtp server that was created or assigned to it in the
-          // case of isps using rdf files
-          try{
-            destIdentity.smtpServerKey = smtpServer.key;
-          }
-          catch(ex)
-          {
-            dump("There is no smtp server assigned to this account: Exception= "+ex+"\n");
-          }
+        if (destIdentity.attachSignature)
+        {
+            var sigFileName = accountData.signatureFileName;
+      
+            var sigFile = gMailSession.getDataFilesDir("messenger");
+            sigFile.append(sigFileName);
+            destIdentity.signature = sigFile;
         }
-     }
+
+        // don't try to create an smtp server if we already have one.
+        if (!destIdentity.smtpServerKey)
+        {
+            var smtpServer;
+        
+            /**
+             * Create a new smtp server if needed. If smtpCreateNewServer pref
+             * is set then createSmtpServer routine() will create one. Otherwise,
+             * default server is returned which is also set to create a new smtp server
+             * (via GetDefaultServer()) if no default server is found.
+             */
+            if (accountData.smtp.hostname != null)
+              smtpServer = smtpService.createSmtpServer();
+            else
+              smtpServer = smtpService.defaultServer;
+
+            // may not have a smtp server, see bug #138076
+            if (smtpServer) {
+              dump("Copying smtpServer (" + smtpServer + ") to accountData\n");
+              //set the smtp server to be the default only if it is not a redirectorType
+              if (accountData.smtp.redirectorType == null) 
+              {
+                if ((smtpService.defaultServer.hostname == null) || (smtpService.defaultServer.redirectorType != null))
+                  smtpService.defaultServer = smtpServer;
+              }
+
+              copyObjectToInterface(smtpServer, accountData.smtp);
+
+              // refer bug#141314
+              // since we clone the default smtpserver with the new account's username
+              // force every account to use the smtp server that was created or assigned to it in the
+              // case of isps using rdf files
+              try{
+                destIdentity.smtpServerKey = smtpServer.key;
+              }
+              catch(ex)
+              {
+                dump("There is no smtp server assigned to this account: Exception= "+ex+"\n");
+              }
+            }
+         }
      } // if the account has an identity...
 
      if (this.FinishAccountHook != undefined) {
          FinishAccountHook(accountData.domain);
      }
 }
-
 
 // copy over all attributes from dest into src that already exist in src
 // the assumption is that src is an XPConnect interface full of attributes
@@ -595,6 +610,8 @@ function setupCopiesAndFoldersServer(account, accountIsDeferred)
 {
   try {
     var server = account.incomingServer;
+    if (server.type == "rss")
+      return false;
     var identity = account.identities.QueryElementAt(0, Components.interfaces.nsIMsgIdentity);
     // For this server, do we default the folder prefs to this server, or to the "Local Folders" server
     // If it's deferred, we use the local folders account.
@@ -700,7 +717,7 @@ function AccountExists(userName,hostName,serverType)
   var accountExists = false;
   var accountManager = Components.classes["@mozilla.org/messenger/account-manager;1"].getService(Components.interfaces.nsIMsgAccountManager);
   try {
-        var server = accountManager.findRealServer(userName,hostName,serverType);
+        var server = accountManager.findRealServer(userName,hostName,serverType,0);
         if (server) {
                 accountExists = true;
         }
@@ -814,12 +831,10 @@ function AccountToAccountData(account, defaultAccountData)
     
     accountData.incomingServer = account.incomingServer;
     accountData.identity = account.identities.QueryElementAt(0, nsIMsgIdentity);
-    try {accountData.smtp = smtpService.defaultServer;}
-    catch (ex){}
+    accountData.smtp = smtpService.defaultServer;
 
     return accountData;
 }
-
 
 // sets the page data, automatically creating the arrays as necessary
 function setPageData(pageData, tag, slot, value) {
@@ -896,7 +911,6 @@ function GetPageData()
 
     return gPageData;
 }
-    
 
 function PrefillAccountForIsp(ispName)
 {

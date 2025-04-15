@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,6 +43,7 @@
 #include "nsIContent.h"
 #include "nsIDOMCharacterData.h"
 #include "nsCRT.h"
+#include "nsIRangeUtils.h"
 
 const PRUnichar nbsp = 160;
 
@@ -708,9 +708,7 @@ nsWSRunObject::GetWSNodes()
   if (mHTMLEditor->IsTextNode(mNode))
   {
     nsCOMPtr<nsITextContent> textNode(do_QueryInterface(mNode));
-    const nsTextFragment *textFrag;
-    res = textNode->GetText(&textFrag);
-    NS_ENSURE_SUCCESS(res, res);
+    const nsTextFragment *textFrag = textNode->Text();
     
     res = PrependNodeToList(mNode);
     NS_ENSURE_SUCCESS(res, res);
@@ -771,11 +769,8 @@ nsWSRunObject::GetWSNodes()
         NS_ENSURE_SUCCESS(res, res);
         nsCOMPtr<nsITextContent> textNode(do_QueryInterface(priorNode));
         if (!textNode) return NS_ERROR_NULL_POINTER;
-        const nsTextFragment *textFrag;
-        res = textNode->GetText(&textFrag);
-        PRInt32 len;
-        res = textNode->GetTextLength(&len);
-        NS_ENSURE_SUCCESS(res, res);
+        const nsTextFragment *textFrag = textNode->Text();
+        PRUint32 len = textNode->TextLength();
 
         if (len < 1)
         {
@@ -845,11 +840,9 @@ nsWSRunObject::GetWSNodes()
   {
     // dont need to put it on list. it already is from code above
     nsCOMPtr<nsITextContent> textNode(do_QueryInterface(mNode));
-    const nsTextFragment *textFrag;
-    res = textNode->GetText(&textFrag);
-    NS_ENSURE_SUCCESS(res, res);
-    PRInt32 len;
-    textNode->GetTextLength(&len);
+    const nsTextFragment *textFrag = textNode->Text();
+
+    PRUint32 len = textNode->TextLength();
     if (mOffset<len)
     {
       PRInt32 pos;
@@ -908,12 +901,8 @@ nsWSRunObject::GetWSNodes()
         NS_ENSURE_SUCCESS(res, res);
         nsCOMPtr<nsITextContent> textNode(do_QueryInterface(nextNode));
         if (!textNode) return NS_ERROR_NULL_POINTER;
-        const nsTextFragment *textFrag;
-        res = textNode->GetText(&textFrag);
-        NS_ENSURE_SUCCESS(res, res);
-        PRInt32 len;
-        res = textNode->GetTextLength(&len);
-        NS_ENSURE_SUCCESS(res, res);
+        const nsTextFragment *textFrag = textNode->Text();
+        PRUint32 len = textNode->TextLength();
 
         if (len < 1)
         {
@@ -1597,7 +1586,7 @@ nsWSRunObject::DeleteChars(nsIDOMNode *aStartNode, PRInt32 aStartOffset,
       }
       PRBool nodeBefore, nodeAfter;
       nsCOMPtr<nsIContent> content (do_QueryInterface(node));
-      res = mHTMLEditor->mRangeHelper->CompareNodeToRange(content, range, &nodeBefore, &nodeAfter);
+      res = mHTMLEditor->sRangeHelper->CompareNodeToRange(content, range, &nodeBefore, &nodeAfter);
       NS_ENSURE_SUCCESS(res, res);
       if (nodeAfter)
       {
@@ -1676,11 +1665,7 @@ nsWSRunObject::GetCharAfter(WSPoint &aPoint, WSPoint *outPoint)
   if (idx == -1) return NS_OK;  // can't find point, but it's not an error
   PRInt32 numNodes = mNodeArray.Count();
   
-  PRInt32 len;
-  nsresult res = aPoint.mTextNode->GetTextLength(&len);
-  NS_ENSURE_SUCCESS(res, res);
-  
-  if (aPoint.mOffset < len)
+  if (aPoint.mOffset < aPoint.mTextNode->TextLength())
   {
     *outPoint = aPoint;
     outPoint->mChar = GetCharAt(aPoint.mTextNode, aPoint.mOffset);
@@ -1722,9 +1707,9 @@ nsWSRunObject::GetCharBefore(WSPoint &aPoint, WSPoint *outPoint)
     nsIDOMNode* node = mNodeArray[idx-1];
     if (!node) return NS_ERROR_FAILURE;
     outPoint->mTextNode = do_QueryInterface(node);
-    PRInt32 len;
-    res = outPoint->mTextNode->GetTextLength(&len);
-    NS_ENSURE_SUCCESS(res, res);
+
+    PRUint32 len = outPoint->mTextNode->TextLength();
+
     if (len)
     {
       outPoint->mOffset = len-1;
@@ -1863,7 +1848,7 @@ nsWSRunObject::FindRun(nsIDOMNode *aNode, PRInt32 aOffset, WSFragment **outRun, 
   WSFragment *run = mStartRun;
   while (run)
   {
-    PRInt16 comp = mHTMLEditor->mRangeHelper->ComparePoints(aNode, aOffset, run->mStartNode, run->mStartOffset);
+    PRInt16 comp = mHTMLEditor->sRangeHelper->ComparePoints(aNode, aOffset, run->mStartNode, run->mStartOffset);
     if (comp <= 0)
     {
       if (after)
@@ -1877,7 +1862,7 @@ nsWSRunObject::FindRun(nsIDOMNode *aNode, PRInt32 aOffset, WSFragment **outRun, 
         return res;
       }
     }
-    comp = mHTMLEditor->mRangeHelper->ComparePoints(aNode, aOffset, run->mEndNode, run->mEndOffset);
+    comp = mHTMLEditor->sRangeHelper->ComparePoints(aNode, aOffset, run->mEndNode, run->mEndOffset);
     if (comp < 0)
     {
       *outRun = run;
@@ -1921,14 +1906,10 @@ nsWSRunObject::GetCharAt(nsITextContent *aTextNode, PRInt32 aOffset)
   if (!aTextNode)
     return 0;
     
-  const nsTextFragment *textFrag;
-  nsresult res = aTextNode->GetText(&textFrag);
-  NS_ENSURE_SUCCESS(res, 0);
+  const nsTextFragment *textFrag = aTextNode->Text();
   
-  PRInt32 len = textFrag->GetLength();
-  if (!len) 
-    return 0;
-  if (aOffset>=len) 
+  PRUint32 len = textFrag->GetLength();
+  if (aOffset < 0 || aOffset>=len) 
     return 0;
     
   return textFrag->CharAt(aOffset);
@@ -1958,7 +1939,7 @@ nsWSRunObject::GetWSPointAfter(nsIDOMNode *aNode, PRInt32 aOffset, WSPoint *outP
   {
     PRUint32 savedCur = curNum;
     curNode = mNodeArray[curNum];
-    cmp = mHTMLEditor->mRangeHelper->ComparePoints(aNode, aOffset, curNode, 0);
+    cmp = mHTMLEditor->sRangeHelper->ComparePoints(aNode, aOffset, curNode, 0);
     if (cmp < 0)
     {
       if (lastNum > curNum)
@@ -1980,14 +1961,12 @@ nsWSRunObject::GetWSPointAfter(nsIDOMNode *aNode, PRInt32 aOffset, WSPoint *outP
   
   if (cmp < 0)
   {
-    WSPoint point(textNode,0,0);
+    WSPoint point(textNode, 0, 0);
     return GetCharAfter(point, outPoint);
   }
   else
   {
-    PRInt32 len;
-    textNode->GetTextLength(&len);
-    WSPoint point(textNode,len,0);
+    WSPoint point(textNode, textNode->TextLength(), 0);
     return GetCharAfter(point, outPoint);
   }
   
@@ -2018,7 +1997,7 @@ nsWSRunObject::GetWSPointBefore(nsIDOMNode *aNode, PRInt32 aOffset, WSPoint *out
   {
     PRUint32 savedCur = curNum;
     curNode = mNodeArray[curNum];
-    cmp = mHTMLEditor->mRangeHelper->ComparePoints(aNode, aOffset, curNode, 0);
+    cmp = mHTMLEditor->sRangeHelper->ComparePoints(aNode, aOffset, curNode, 0);
     if (cmp < 0)
     {
       if (lastNum > curNum)
@@ -2040,9 +2019,7 @@ nsWSRunObject::GetWSPointBefore(nsIDOMNode *aNode, PRInt32 aOffset, WSPoint *out
   
   if (cmp > 0)
   {
-    PRInt32 len;
-    textNode->GetTextLength(&len);
-    WSPoint point(textNode,len,0);
+    WSPoint point(textNode, textNode->TextLength(), 0);
     return GetCharBefore(point, outPoint);
   }
   else

@@ -42,11 +42,11 @@
 #include "nsILineInputStream.h"
 #include "plbase64.h"
 #include "nsISecretDecoderRing.h"
-#include "nsIPassword.h"
+#include "nsIPasswordInternal.h"
 #include "nsIPrompt.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "prmem.h"
 #include "nsIStringBundle.h"
 #include "nsArray.h"
@@ -106,7 +106,7 @@ public:
   ~SignonHashEntry() { delete head; }
 };
 
-class nsPasswordManager::PasswordEntry : public nsIPassword
+class nsPasswordManager::PasswordEntry : public nsIPasswordInternal
 {
 public:
   PasswordEntry(const nsACString& aKey, SignonDataEntry* aData);
@@ -114,16 +114,20 @@ public:
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIPASSWORD
+  NS_DECL_NSIPASSWORDINTERNAL
 
 protected:
 
   nsCString mHost;
   nsString  mUser;
+  nsString  mUserField;
   nsString  mPassword;
+  nsString  mPasswordField;
   PRBool    mDecrypted[2];
 };
 
-NS_IMPL_ISUPPORTS1(nsPasswordManager::PasswordEntry, nsIPassword)
+NS_IMPL_ISUPPORTS2(nsPasswordManager::PasswordEntry, nsIPassword,
+                   nsIPasswordInternal)
 
 nsPasswordManager::PasswordEntry::PasswordEntry(const nsACString& aKey,
                                                 SignonDataEntry* aData)
@@ -133,7 +137,9 @@ nsPasswordManager::PasswordEntry::PasswordEntry(const nsACString& aKey,
 
   if (aData) {
     mUser.Assign(aData->userValue);
+    mUserField.Assign(aData->userField);
     mPassword.Assign(aData->passValue);
+    mPasswordField.Assign(aData->passField);
   }
 }
 
@@ -172,7 +178,19 @@ nsPasswordManager::PasswordEntry::GetPassword(nsAString& aPassword)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsPasswordManager::PasswordEntry::GetUserFieldName(nsAString& aField)
+{
+  aField.Assign(mUserField);
+  return NS_OK;
+}
 
+NS_IMETHODIMP
+nsPasswordManager::PasswordEntry::GetPasswordFieldName(nsAString& aField)
+{
+  aField.Assign(mPasswordField);
+  return NS_OK;
+}
 
 
 
@@ -239,7 +257,7 @@ nsPasswordManager::Init()
 
   mPrefBranch->GetBoolPref("rememberSignons", &sRememberPasswords);
 
-  nsCOMPtr<nsIPrefBranchInternal> branchInternal = do_QueryInterface(mPrefBranch);
+  nsCOMPtr<nsIPrefBranch2> branchInternal = do_QueryInterface(mPrefBranch);
 
   // Have the pref service hold a weak reference; the service manager
   // will be holding a strong reference.
@@ -992,13 +1010,17 @@ nsPasswordManager::Notify(nsIContent* aFormNode,
   // This function must never return a failure code or the form submit
   // will be cancelled.
 
+  NS_ENSURE_TRUE(aWindow, NS_OK);
+
   // Don't do anything if the global signon pref is disabled
   if (!SingleSignonEnabled())
     return NS_OK;
 
   // Check the reject list
   nsCAutoString realm;
-  if (!GetPasswordRealm(aFormNode->GetDocument()->GetDocumentURI(), realm))
+  // XXX bug 281125: GetDocument() could sometimes be null here, hinting
+  // XXX at a problem with document teardown while a modal dialog is posted.
+  if (!GetPasswordRealm(aFormNode->GetOwnerDoc()->GetDocumentURI(), realm))
     return NS_OK;
 
   PRInt32 rejectValue;
@@ -1088,10 +1110,8 @@ nsPasswordManager::Notify(nsIContent* aFormNode,
       passFields.ObjectAt(0)->GetValue(passValue);
       passFields.ObjectAt(0)->GetName(passFieldName);
 
-      // If username and password are both empty, there is no reason
-      // to store this login.
-
-      if (userValue.IsEmpty() && passValue.IsEmpty())
+      // If the password is empty, there is no reason to store this login.
+      if (passValue.IsEmpty())
         return NS_OK;
 
       SignonHashEntry* hashEnt;
@@ -1126,21 +1146,47 @@ nsPasswordManager::Notify(nsIContent* aFormNode,
         }
       }
 
-      nsAutoString dialogTitle, dialogText, neverText;
-      GetLocalizedString(NS_LITERAL_STRING("savePasswordTitle"), dialogTitle);
+      nsresult rv;
+      nsCOMPtr<nsIStringBundleService> bundleService =
+        do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
+      nsCOMPtr<nsIStringBundle> brandBundle;
+      rv = bundleService->CreateBundle("chrome://branding/locale/brand.properties",
+                                       getter_AddRefs(brandBundle));
+      NS_ENSURE_SUCCESS(rv, rv);
+      nsXPIDLString brandShortName;
+      rv = brandBundle->GetStringFromName(NS_LITERAL_STRING("brandShortName").get(),
+                                          getter_Copies(brandShortName));
+      NS_ENSURE_SUCCESS(rv, rv);
+      const PRUnichar* formatArgs[1] = { brandShortName.get() };
+
+      nsAutoString dialogText;
       GetLocalizedString(NS_LITERAL_STRING("savePasswordText"),
                          dialogText,
-                         PR_TRUE);
-      GetLocalizedString(NS_LITERAL_STRING("neverForSite"), neverText);
+                         PR_TRUE,
+                         formatArgs,
+                         1);
+
+      nsAutoString dialogTitle, neverButtonText, rememberButtonText,
+                   notNowButtonText;
+      GetLocalizedString(NS_LITERAL_STRING("savePasswordTitle"), dialogTitle);
+
+      GetLocalizedString(NS_LITERAL_STRING("neverForSiteButtonText"), 
+                         neverButtonText);
+      GetLocalizedString(NS_LITERAL_STRING("rememberButtonText"), 
+                         rememberButtonText);
+      GetLocalizedString(NS_LITERAL_STRING("notNowButtonText"),
+                         notNowButtonText);
 
       PRInt32 selection;
       prompt->ConfirmEx(dialogTitle.get(),
                         dialogText.get(),
-                        (nsIPrompt::BUTTON_TITLE_YES * nsIPrompt::BUTTON_POS_0) +
-                        (nsIPrompt::BUTTON_TITLE_NO * nsIPrompt::BUTTON_POS_1) +
+                        nsIPrompt::BUTTON_POS_1_DEFAULT +
+                        (nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_0) +
+                        (nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_1) +
                         (nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_2),
-                        nsnull, nsnull,
-                        neverText.get(),
+                        rememberButtonText.get(),
+                        notNowButtonText.get(),
+                        neverButtonText.get(),
                         nsnull, nsnull,
                         &selection);
 
@@ -1205,8 +1251,11 @@ nsPasswordManager::Notify(nsIContent* aFormNode,
               temp = entry;
 
               for (PRUint32 arg = 0; arg < entryCount; ++arg) {
-                if (NS_FAILED(DecryptData(temp->userValue, ptUsernames[arg])))
+                if (NS_FAILED(DecryptData(temp->userValue, ptUsernames[arg]))) {
+                  delete [] formatArgs;
+                  delete [] ptUsernames;
                   return NS_OK;
+                }
 
                 formatArgs[arg] = ptUsernames[arg].get();
                 temp = temp->next;
@@ -1484,7 +1533,9 @@ nsPasswordManager::AutoCompleteSearch(const nsAString& aSearchString,
 
         if (aSearchString.Length() <= userValue.Length() &&
             StringBeginsWith(userValue, aSearchString)) {
-          result->mArray.AppendElement(ToNewUnicode(userValue));
+          PRUnichar* data = ToNewUnicode(userValue);
+          if (data)
+            result->mArray.AppendElement(data);
         }
       }
 

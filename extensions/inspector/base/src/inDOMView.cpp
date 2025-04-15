@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Joe Hewitt <hewitt@netscape.com> (original author)
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -56,6 +55,7 @@
 #include "nsIBindingManager.h"
 #include "nsIDocument.h"
 #include "nsIServiceManager.h"
+#include "nsITreeColumns.h"
 
 ////////////////////////////////////////////////////////////////////////
 // inDOMViewNode
@@ -319,7 +319,7 @@ inDOMView::GetRowProperties(PRInt32 index, nsISupportsArray *properties)
 }
 
 NS_IMETHODIMP
-inDOMView::GetCellProperties(PRInt32 row, const PRUnichar *colID, nsISupportsArray *properties)
+inDOMView::GetCellProperties(PRInt32 row, nsITreeColumn* col, nsISupportsArray *properties)
 {
   inDOMViewNode* node = nsnull;
   RowToNode(row, &node);
@@ -374,31 +374,31 @@ inDOMView::GetCellProperties(PRInt32 row, const PRUnichar *colID, nsISupportsArr
 }
 
 NS_IMETHODIMP
-inDOMView::GetColumnProperties(const PRUnichar *colID, nsIDOMElement *colElt, nsISupportsArray *properties)
+inDOMView::GetColumnProperties(nsITreeColumn* col, nsISupportsArray *properties)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-inDOMView::GetImageSrc(PRInt32 row, const PRUnichar *colID, nsAString& _retval)
+inDOMView::GetImageSrc(PRInt32 row, nsITreeColumn* col, nsAString& _retval)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-inDOMView::GetProgressMode(PRInt32 row, const PRUnichar *colID, PRInt32* _retval)
+inDOMView::GetProgressMode(PRInt32 row, nsITreeColumn* col, PRInt32* _retval)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-inDOMView::GetCellValue(PRInt32 row, const PRUnichar *colID, nsAString& _retval)
+inDOMView::GetCellValue(PRInt32 row, nsITreeColumn* col, nsAString& _retval)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-inDOMView::GetCellText(PRInt32 row, const PRUnichar *colID, nsAString& _retval)
+inDOMView::GetCellText(PRInt32 row, nsITreeColumn* col, nsAString& _retval)
 {
   inDOMViewNode* node = nsnull;
   RowToNode(row, &node);
@@ -406,29 +406,30 @@ inDOMView::GetCellText(PRInt32 row, const PRUnichar *colID, nsAString& _retval)
 
   nsIDOMNode* domNode = node->node;
 
-  nsAutoString col(colID);
-  if (col.Equals(NS_LITERAL_STRING("colNodeName")))
+  nsAutoString colID;
+  col->GetId(colID);
+  if (colID.EqualsLiteral("colNodeName"))
     domNode->GetNodeName(_retval);
-  else if (col.Equals(NS_LITERAL_STRING("colLocalName")))
+  else if (colID.EqualsLiteral("colLocalName"))
     domNode->GetLocalName(_retval);
-  else if (col.Equals(NS_LITERAL_STRING("colPrefix")))
+  else if (colID.EqualsLiteral("colPrefix"))
     domNode->GetPrefix(_retval);
-  else if (col.Equals(NS_LITERAL_STRING("colNamespaceURI")))
+  else if (colID.EqualsLiteral("colNamespaceURI"))
     domNode->GetNamespaceURI(_retval);
-  else if (col.Equals(NS_LITERAL_STRING("colNodeType"))) {
+  else if (colID.EqualsLiteral("colNodeType")) {
     PRUint16 nodeType;
     domNode->GetNodeType(&nodeType);
     nsAutoString temp;
     temp.AppendInt(PRInt32(nodeType));
     _retval = temp;
-  } else if (col.Equals(NS_LITERAL_STRING("colNodeValue")))
+  } else if (colID.EqualsLiteral("colNodeValue"))
     domNode->GetNodeValue(_retval);
   else {
-    if (StringBeginsWith(col, NS_LITERAL_STRING("col@"))) {
+    if (StringBeginsWith(colID, NS_LITERAL_STRING("col@"))) {
       nsCOMPtr<nsIDOMElement> el = do_QueryInterface(node->node);
       if (el) {
         nsAutoString attr;
-        col.Right(attr, col.Length()-4); // have to use this because Substring is crashing on me!
+        colID.Right(attr, colID.Length()-4); // have to use this because Substring is crashing on me!
         el->GetAttribute(attr, _retval);
       }
     }
@@ -563,25 +564,31 @@ inDOMView::SelectionChanged()
 }
 
 NS_IMETHODIMP
-inDOMView::SetCellText(PRInt32 row, const PRUnichar *colID, const PRUnichar *value)
+inDOMView::SetCellValue(PRInt32 row, nsITreeColumn* col, const nsAString& value)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-inDOMView::CycleHeader(const PRUnichar *colID, nsIDOMElement *elt)
+inDOMView::SetCellText(PRInt32 row, nsITreeColumn* col, const nsAString& value)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-inDOMView::CycleCell(PRInt32 row, const PRUnichar *colID)
+inDOMView::CycleHeader(nsITreeColumn* col)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-inDOMView::IsEditable(PRInt32 row, const PRUnichar *colID, PRBool *_retval)
+inDOMView::CycleCell(PRInt32 row, nsITreeColumn* col)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+inDOMView::IsEditable(PRInt32 row, nsITreeColumn* col, PRBool *_retval)
 {
   return NS_OK;
 }
@@ -599,14 +606,9 @@ inDOMView::IsSorted(PRBool *_retval)
 }
 
 NS_IMETHODIMP
-inDOMView::CanDropOn(PRInt32 index, PRBool *_retval)
+inDOMView::CanDrop(PRInt32 index, PRInt32 orientation, PRBool *_retval)
 {
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-inDOMView::CanDropBeforeAfter(PRInt32 index, PRBool before, PRBool *_retval)
-{
+  *_retval = PR_FALSE;
   return NS_OK;
 }
 
@@ -629,7 +631,7 @@ inDOMView::PerformActionOnRow(const PRUnichar *action, PRInt32 row)
 }
 
 NS_IMETHODIMP
-inDOMView::PerformActionOnCell(const PRUnichar *action, PRInt32 row, const PRUnichar *colID)
+inDOMView::PerformActionOnCell(const PRUnichar* action, PRInt32 row, nsITreeColumn* col)
 {
   return NS_OK;
 }
@@ -839,37 +841,6 @@ inDOMView::ContentInserted(nsIDocument *aDocument, nsIContent* aContainer,
   InsertNode(newNode, row);
 
   mTree->RowCountChanged(row, 1);
-}
-
-void
-inDOMView::ContentReplaced(nsIDocument *aDocument, nsIContent* aContainer, nsIContent* aOldChild, nsIContent* aNewChild, PRInt32 aIndexInContainer)
-{
-  if (!mTree)
-    return;
-
-  nsresult rv;
-
-  // find the inDOMViewNode for the old child
-  nsCOMPtr<nsIDOMNode> oldDOMNode(do_QueryInterface(aOldChild));
-  nsCOMPtr<nsIDOMNode> newDOMNode(do_QueryInterface(aNewChild));
-  PRInt32 row = 0;
-  if (NS_FAILED(rv = NodeToRow(oldDOMNode, &row)))
-    return;
-  inDOMViewNode* oldNode;
-  if (NS_FAILED(rv = RowToNode(row, &oldNode)))
-    return;
-
-  PRInt32 oldRowCount = GetRowCount();
-  if (oldNode->isOpen)
-    CollapseNode(row);
-
-  inDOMViewNode* newNode = CreateNode(newDOMNode, oldNode->parent);
-  ReplaceLink(newNode, oldNode);
-
-  ReplaceNode(newNode, row);
-
-  // XXX can this go into ReplaceNode?
-  mTree->InvalidateRange(row, oldRowCount-1);
 }
 
 void

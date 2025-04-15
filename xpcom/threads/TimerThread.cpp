@@ -1,6 +1,9 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
  * The contents of this file are subject to the Mozilla Public License Version
  * 1.1 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -13,16 +16,17 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape Communications
- * Corporation. Portions created by the Initial Developer are
- * Copyright (C) 2001 the Initial Developer. All Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Stuart Parmenter <pavlov@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -31,7 +35,8 @@
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
- */
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsTimerImpl.h"
 #include "TimerThread.h"
@@ -42,9 +47,11 @@
 #include "nsIObserverService.h"
 #include "nsIServiceManager.h"
 
-NS_IMPL_THREADSAFE_ISUPPORTS3(TimerThread, nsIRunnable, nsISupportsWeakReference, nsIObserver)
+NS_IMPL_THREADSAFE_ISUPPORTS2(TimerThread, nsIRunnable, nsIObserver)
 
 TimerThread::TimerThread() :
+  mInitInProgress(0),
+  mInitialized(PR_FALSE),
   mLock(nsnull),
   mCondVar(nsnull),
   mShutdown(PR_FALSE),
@@ -70,20 +77,12 @@ TimerThread::~TimerThread()
     nsTimerImpl *timer = NS_STATIC_CAST(nsTimerImpl *, mTimers[n]);
     NS_RELEASE(timer);
   }
-
-  nsCOMPtr<nsIObserverService> observerService = do_GetService("@mozilla.org/observer-service;1");
-  if (observerService) {
-    observerService->RemoveObserver(this, "sleep_notification");
-    observerService->RemoveObserver(this, "wake_notification");
-  }
-
 }
 
-nsresult TimerThread::Init()
+nsresult
+TimerThread::InitLocks()
 {
-  if (mThread)
-    return NS_OK;
-
+  NS_ASSERTION(!mLock, "InitLocks called twice?");
   mLock = PR_NewLock();
   if (!mLock)
     return NS_ERROR_OUT_OF_MEMORY;
@@ -92,29 +91,63 @@ nsresult TimerThread::Init()
   if (!mCondVar)
     return NS_ERROR_OUT_OF_MEMORY;
 
-  nsresult rv;
-  mEventQueueService = do_GetService("@mozilla.org/event-queue-service;1", &rv);
-  if (NS_FAILED(rv))
-    return rv;
+  return NS_OK;
+}
 
-  // We hold on to mThread to keep the thread alive.
-  rv = NS_NewThread(getter_AddRefs(mThread),
-                    NS_STATIC_CAST(nsIRunnable*, this),
-                    0,
-                    PR_JOINABLE_THREAD,
-                    PR_PRIORITY_NORMAL,
-                    PR_GLOBAL_THREAD);
-  if (NS_FAILED(rv))
-    return rv;
+nsresult TimerThread::Init()
+{
+  if (mInitialized) {
+    if (!mThread)
+      return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsIObserverService> observerService = do_GetService("@mozilla.org/observer-service;1", &rv);
-  if (NS_FAILED(rv))
-    return rv;
-  
-  observerService->AddObserver(this, "sleep_notification", PR_TRUE);
-  observerService->AddObserver(this, "wake_notification", PR_TRUE);
-  
-  return rv;
+    return NS_OK;
+  }
+
+  if (PR_AtomicSet(&mInitInProgress, 1) == 0) {
+    nsresult rv;
+
+    mEventQueueService = do_GetService("@mozilla.org/event-queue-service;1", &rv);
+    if (NS_SUCCEEDED(rv)) {
+      nsCOMPtr<nsIObserverService> observerService
+        (do_GetService("@mozilla.org/observer-service;1", &rv));
+
+      if (NS_SUCCEEDED(rv)) {
+        // We hold on to mThread to keep the thread alive.
+        rv = NS_NewThread(getter_AddRefs(mThread),
+                          NS_STATIC_CAST(nsIRunnable*, this),
+                          0,
+                          PR_JOINABLE_THREAD,
+                          PR_PRIORITY_NORMAL,
+                          PR_GLOBAL_THREAD);
+
+        if (NS_FAILED(rv)) {
+          mThread = nsnull;
+        }
+        else {
+          // We'll be released at xpcom shutdown
+          observerService->AddObserver(this, "sleep_notification", PR_FALSE);
+          observerService->AddObserver(this, "wake_notification", PR_FALSE);
+        }
+      }
+    }
+
+    PR_Lock(mLock);
+    mInitialized = PR_TRUE;
+    PR_NotifyAllCondVar(mCondVar);
+    PR_Unlock(mLock);
+  }
+  else {
+    PR_Lock(mLock);
+    while (!mInitialized) {
+      PR_WaitCondVar(mCondVar, PR_INTERVAL_NO_TIMEOUT);
+    }
+    PR_Unlock(mLock);
+  }
+
+  if (!mThread)
+    return NS_ERROR_FAILURE;
+
+  return NS_OK;
 }
 
 nsresult TimerThread::Shutdown()

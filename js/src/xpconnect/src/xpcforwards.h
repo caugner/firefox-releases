@@ -79,6 +79,7 @@ class NativeSetMap;
 class IID2ThisTranslatorMap;
 class XPCNativeScriptableSharedMap;
 class XPCWrappedNativeProtoMap;
+class XPCNativeWrapperMap;
 
 class nsXPCComponents;
 class nsXPCComponents_Interfaces;
@@ -89,6 +90,7 @@ class nsXPCComponents_Results;
 class nsXPCComponents_ID;
 class nsXPCComponents_Exception;
 class nsXPCComponents_Constructor;
+class nsXPCComponents_Utils;
 class nsXPCConstructor;
 
 class AutoMarkingPtr;

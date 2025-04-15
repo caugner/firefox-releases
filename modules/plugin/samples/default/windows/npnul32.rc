@@ -59,7 +59,7 @@ FONT 8, "MS Sans Serif"
 BEGIN
     LTEXT           "Information on this page requires a plug-in for:",
                     IDC_STATIC_INFO,7,7,211,10
-    LTEXT           "Firefox can retrieve the plug-in for you from:",
+    LTEXT           "Communicator can retrieve the plug-in for you from:",
                     IDC_STATIC_LOCATION,7,32,211,8
     DEFPUSHBUTTON   "Get the Plug-in",IDC_GET_PLUGIN,41,144,64,14
     PUSHBUTTON      "Cancel",IDC_BUTTON_CANCEL,109,144,64,14

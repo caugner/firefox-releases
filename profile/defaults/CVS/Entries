@@ -1,9 +1,9 @@
-/.cvsignore/1.1/Tue Jul 13 19:15:41 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.18/Wed Jan  7 13:36:47 2004//TFIREFOX_1_0_RELEASE
-/bookmarks.html/1.15/Sat Mar 13 21:36:33 2004//TFIREFOX_1_0_RELEASE
-/localstore.rdf/1.19.34.1/Thu May 13 05:36:24 2004//TFIREFOX_1_0_RELEASE
-/mimeTypes.rdf/1.8/Fri Jan 24 00:46:11 2003//TFIREFOX_1_0_RELEASE
-/panels.rdf/1.19/Wed Jan 28 21:22:18 2004//TFIREFOX_1_0_RELEASE
-/profiledef.pkg/1.2/Wed Jan  7 01:22:11 2004//TFIREFOX_1_0_RELEASE
-/search.rdf/1.9/Tue Apr  6 22:19:14 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Tue Jul 13 19:15:41 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.19/Sat Apr 17 18:29:42 2004//TFIREFOX_1_5_RELEASE
+/bookmarks.html/1.18/Thu Jul  7 11:09:09 2005//TFIREFOX_1_5_RELEASE
+/localstore.rdf/1.21/Fri Apr 29 13:04:53 2005//TFIREFOX_1_5_RELEASE
+/mimeTypes.rdf/1.8/Fri Jan 24 00:46:11 2003//TFIREFOX_1_5_RELEASE
+/panels.rdf/1.20/Fri May 13 20:53:58 2005//TFIREFOX_1_5_RELEASE
+/profiledef.pkg/1.2/Wed Jan  7 01:22:11 2004//TFIREFOX_1_5_RELEASE
+/search.rdf/1.10/Sat Apr 17 18:29:42 2004//TFIREFOX_1_5_RELEASE
 D/chrome////

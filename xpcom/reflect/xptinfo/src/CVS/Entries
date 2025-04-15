@@ -1,14 +1,14 @@
-/.cvsignore/1.1/Mon Mar  8 21:27:02 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.24/Fri Jan  3 08:58:56 2003//TFIREFOX_1_0_RELEASE
-/TODO/1.5/Thu Jan 10 23:49:46 2002//TFIREFOX_1_0_RELEASE
-/xptiFile.cpp/1.6/Thu Jan 10 23:49:46 2002//TFIREFOX_1_0_RELEASE
-/xptiInterfaceInfo.cpp/1.18/Wed Jan  8 23:10:10 2003//TFIREFOX_1_0_RELEASE
-/xptiInterfaceInfoManager.cpp/1.52.8.1/Mon May 17 21:38:16 2004//TFIREFOX_1_0_RELEASE
-/xptiManifest.cpp/1.27/Tue Mar 11 21:36:58 2003//TFIREFOX_1_0_RELEASE
-/xptiMisc.cpp/1.11/Mon Sep  8 00:31:24 2003//TFIREFOX_1_0_RELEASE
-/xptiTypelibGuts.cpp/1.5/Thu Jan 10 23:49:47 2002//TFIREFOX_1_0_RELEASE
-/xptiWorkingSet.cpp/1.12/Fri Apr  4 15:10:37 2003//TFIREFOX_1_0_RELEASE
-/xptiZipItem.cpp/1.5/Thu Jan 10 23:49:47 2002//TFIREFOX_1_0_RELEASE
-/xptiZipLoader.cpp/1.11/Thu Apr  4 22:24:50 2002//TFIREFOX_1_0_RELEASE
-/xptiprivate.h/1.29/Thu Jan 15 06:14:15 2004//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Mon Mar  8 21:27:02 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.26/Fri Apr  1 18:22:54 2005//TFIREFOX_1_5_RELEASE
+/TODO/1.5/Thu Jan 10 23:49:46 2002//TFIREFOX_1_5_RELEASE
+/xptiFile.cpp/1.7/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
+/xptiInterfaceInfo.cpp/1.19/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
+/xptiInterfaceInfoManager.cpp/1.54/Fri May  7 00:50:53 2004//TFIREFOX_1_5_RELEASE
+/xptiManifest.cpp/1.31/Sat May 22 20:02:42 2004//TFIREFOX_1_5_RELEASE
+/xptiMisc.cpp/1.12/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
+/xptiTypelibGuts.cpp/1.6/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
+/xptiWorkingSet.cpp/1.16/Sat May 22 20:02:42 2004//TFIREFOX_1_5_RELEASE
+/xptiZipItem.cpp/1.6/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
+/xptiZipLoader.cpp/1.12/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
+/xptiprivate.h/1.30/Sun Apr 18 14:18:20 2004//TFIREFOX_1_5_RELEASE
 D

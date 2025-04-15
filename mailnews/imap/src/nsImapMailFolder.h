@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998, 1999
+ * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Lorenzo Colitti <lorenzo@colitti.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #ifndef nsImapMailFolder_h__
@@ -42,8 +42,6 @@
 #include "nsMsgDBFolder.h"
 #include "nsIImapMailFolderSink.h"
 #include "nsIImapMessageSink.h"
-#include "nsIImapExtensionSink.h"
-#include "nsIImapMiscellaneousSink.h"
 #include "nsICopyMessageListener.h"
 #include "nsIImapService.h"
 #include "nsIUrlListener.h"
@@ -103,10 +101,12 @@ public:
     PRUint32 m_unreadCount; // num unread messages we're moving
     PRBool m_streamCopy;
     char *m_dataBuffer; // temporary buffer for this copy operation
+    nsCOMPtr<nsIOutputStream> m_msgFileStream;         // temporary file (processed mail)
     PRUint32 m_dataBufferSize;
     PRUint32 m_leftOver;
     PRBool m_allowUndo;
     PRBool m_eatLF;
+    PRBool m_newMsgFlags; // only used if there's no m_message 
 };
 
 // ACLs for this folder.
@@ -193,8 +193,6 @@ class nsImapMailFolder :  public nsMsgDBFolder,
                           public nsIMsgImapMailFolder,
                           public nsIImapMailFolderSink,
                           public nsIImapMessageSink,
-                          public nsIImapExtensionSink,
-                          public nsIImapMiscellaneousSink,
                           public nsICopyMessageListener,
                           public nsIMsgFilterHitNotify,
                           public nsIJunkMailClassificationListener
@@ -215,13 +213,16 @@ public:
   NS_IMETHOD UpdateFolder(nsIMsgWindow *aWindow);
   
   NS_IMETHOD CreateSubfolder(const PRUnichar *folderName,nsIMsgWindow *msgWindow );
-  NS_IMETHOD AddSubfolder(const nsAString & aName, nsIMsgFolder** aChild);
-  NS_IMETHOD AddSubfolderWithPath(nsAutoString *name, nsIFileSpec *dbPath, nsIMsgFolder **child);
+  NS_IMETHOD AddSubfolder(const nsAString& aName, nsIMsgFolder** aChild);
+  NS_IMETHOD AddSubfolderWithPath(nsAString& name, nsIFileSpec *dbPath, nsIMsgFolder **child);
   NS_IMETHODIMP CreateStorageIfMissing(nsIUrlListener* urlListener);
   
   NS_IMETHOD Compact(nsIUrlListener *aListener, nsIMsgWindow *aMsgWindow);
   NS_IMETHOD CompactAll(nsIUrlListener *aListener, nsIMsgWindow *aMsgWindow, nsISupportsArray *aFolderArray, PRBool aCompactOfflineAlso, nsISupportsArray *aOfflineFolderArray);
   NS_IMETHOD EmptyTrash(nsIMsgWindow *msgWindow, nsIUrlListener *aListener);
+  NS_IMETHOD CopyDataToOutputStreamForAppend(nsIInputStream *aIStream,
+                     PRInt32 aLength, nsIOutputStream *outputStream);
+  NS_IMETHOD CopyDataDone();
   NS_IMETHOD Delete ();
   NS_IMETHOD Rename (const PRUnichar *newName, nsIMsgWindow *msgWindow);
   NS_IMETHOD RenameSubFolders(nsIMsgWindow *msgWindow, nsIMsgFolder *oldFolder);
@@ -247,7 +248,7 @@ public:
   NS_IMETHOD MarkMessagesFlagged(nsISupportsArray *messages, PRBool markFlagged);
   NS_IMETHOD MarkThreadRead(nsIMsgThread *thread);
   NS_IMETHOD SetLabelForMessages(nsISupportsArray *aMessages, nsMsgLabelValue aLabel);
-  
+  NS_IMETHOD SetJunkScoreForMessages(nsISupportsArray *aMessages, const char *aJunkScore);
   NS_IMETHOD DeleteSubFolders(nsISupportsArray *folders, nsIMsgWindow *msgWindow);
   NS_IMETHOD ReadFromFolderCacheElem(nsIMsgFolderCacheElement *element);
   NS_IMETHOD WriteToFolderCacheElem(nsIMsgFolderCacheElement *element);
@@ -268,6 +269,7 @@ public:
   NS_IMETHOD CopyFileMessage(nsIFileSpec* fileSpec, 
                               nsIMsgDBHdr* msgToReplace,
                               PRBool isDraftOrTemplate,
+                              PRUint32 aNewMsgFlags,
                               nsIMsgWindow *msgWindow,
                               nsIMsgCopyServiceListener* listener);
   NS_IMETHOD GetNewMessages(nsIMsgWindow *aWindow, nsIUrlListener *aListener);
@@ -300,32 +302,9 @@ public:
   NS_IMETHOD OnStartRunningUrl(nsIURI * aUrl);
   NS_IMETHOD OnStopRunningUrl(nsIURI * aUrl, nsresult aExitCode);
   
-  // nsIImapExtensionSink methods
-  NS_IMETHOD ClearFolderRights(nsIImapProtocol* aProtocol,
-                                nsIMAPACLRightsInfo* aclRights);
-  
-  NS_IMETHOD SetCopyResponseUid(nsIImapProtocol* aProtocol,
-                                nsMsgKeyArray* keyArray,
-                                const char* msgIdString,
-                                nsIImapUrl * aUrl);
-  NS_IMETHOD SetAppendMsgUid(nsIImapProtocol* aProtocol,
-                              nsMsgKey aKey,
-                              nsIImapUrl * aUrl);
-  NS_IMETHOD GetMessageId(nsIImapProtocol* aProtocol,
-                          nsCString* messageId,
-                          nsIImapUrl * aUrl);
-  
   // nsIImapMiscellaneousSink methods
   NS_IMETHOD AddSearchResult(nsIImapProtocol* aProtocol, 
                               const char* searchHitLine);
-  NS_IMETHOD HeaderFetchCompleted(nsIImapProtocol* aProtocol);
-  // ****
-  NS_IMETHOD SetBiffStateAndUpdate(nsIImapProtocol* aProtocol,
-                                    nsMsgBiffState biffState);
-  NS_IMETHOD ProgressStatus(nsIImapProtocol* aProtocol,
-                            PRUint32 aMsgId, const PRUnichar *extraInfo);
-  NS_IMETHOD PercentProgress(nsIImapProtocol* aProtocol,
-                              ProgressInfo* aInfo);
   NS_IMETHOD MatchName(nsString *name, PRBool *matches);
   
   NS_DECL_NSIMSGFILTERHITNOTIFY
@@ -413,6 +392,7 @@ protected:
                           PRBool isMove,
                           PRBool selectedState,
                           PRBool acrossServers,
+                          PRUint32 newMsgFlags,
                           nsIMsgCopyServiceListener* listener,
                           nsIMsgWindow *msgWindow,
                           PRBool allowUndo);
@@ -448,6 +428,7 @@ protected:
   PRInt32 m_numFilterClassifyRequests;
   PRBool m_msgMovedByFilter;
   nsImapMoveCoalescer *m_moveCoalescer; // strictly owned by the nsImapMailFolder
+  nsCOMPtr <nsISupportsArray> m_junkMessagesToMarkAsRead;
   nsMsgKey m_curMsgUid;
   PRUint32 m_uidValidity;
   PRInt32 m_numStatusRecentMessages; // used to store counts from Status command

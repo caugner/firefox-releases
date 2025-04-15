@@ -26,13 +26,13 @@
     </content>
     
     <implementation>
-      <property name="title" onget="return this.getAttribute('title')"
-                             onset="this.setAttribute('title', val);"/>
+      <property name="title" onget="return document.title;"
+                             onset="return document.title = val;"/>
 
       <property name="canAdvance" onget="return this._canAdvance;"
-                                  onset="this._canAdvance=val; this._nextButton.setAttribute('disabled', !val);"/>
+                                  onset="this._canAdvance=val; this._nextButton.disabled = !val;"/>
       <property name="canRewind" onget="return this._canRewind;"
-                                 onset="this._canRewind=val; this._backButton.setAttribute('disabled', !val);"/>
+                                 onset="this._canRewind=val; this._backButton.disabled = !val;"/>
 
       <property name="pageStep" onget="return this._pageStack.length"/>
 
@@ -97,7 +97,9 @@
           if (val < 0 || val >= this.pageCount)
             return this._pageIndex;
 
-          this.currentPage = this.wizardPages[val];
+          var page = this.wizardPages[val];
+          this._pageStack[this._pageStack.length-1] = page;
+          this.currentPage = page;
         ]]>
         </setter>
       </property>
@@ -118,7 +120,7 @@
         <body>
         <![CDATA[
           var btns = this.getElementsByAttribute("dlgtype", aDlgType);
-          return btns.length > 0 ? btns[0] : document.getAnonymousElementByAttribute(this._wizardButtons, "dlgtype", aDlgType);
+          return btns.item(0) ? btns[0] : document.getAnonymousElementByAttribute(this._wizardButtons, "dlgtype", aDlgType);
         ]]>
         </body>
       </method>
@@ -184,7 +186,7 @@
         <parameter name="aPageId"/>
         <body><![CDATA[
           var els = this.getElementsByAttribute("pageid", aPageId);
-          return els.length > 0 ? els[0] : null;
+          return els.item(0);
         ]]></body>
       </method>
 
@@ -348,12 +350,10 @@
       </method>
 
       <method name="_hitEnter">
+        <parameter name="evt"/>
         <body>
         <![CDATA[
-          // if a button is focused, dispatch its command instead 
-          // of advancing the wizard
-          var focused = document.commandDispatcher.focusedElement;
-          if (!(focused && focused.localName == "button" && focused.hasAttribute("dlgtype")))
+          if (!evt.getPreventDefault())
             this.advance();
         ]]>
         </body>
@@ -387,9 +387,14 @@
     </implementation>
 
     <handlers>
-      <handler event="keypress" keycode="VK_ENTER" action="this._hitEnter()"/>
-      <handler event="keypress" keycode="VK_RETURN" action="this._hitEnter()"/>
-      <handler event="keypress" keycode="VK_ESCAPE" action="this.cancel();"/>
+      <handler event="keypress" keycode="VK_ENTER"
+               group="system" action="this._hitEnter(event)"/>
+      <handler event="keypress" keycode="VK_RETURN"
+               group="system" action="this._hitEnter(event)"/>
+      <handler event="keypress" keycode="VK_ESCAPE" group="system">
+        if (!event.getPreventDefault())
+          this.cancel();
+      </handler>
     </handlers>
   </binding>
 

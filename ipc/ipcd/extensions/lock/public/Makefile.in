@@ -44,10 +44,14 @@ VPATH		= @srcdir@
 include $(DEPTH)/config/autoconf.mk
 
 MODULE		= ipcd
+XPIDL_MODULE = ipcd_lock
+
+EXPORTS		= \
+			ipcLockCID.h \
+			$(NULL)
 
 XPIDLSRCS	= \
 			ipcILockService.idl \
-			ipcILockNotify.idl \
 			$(NULL)
 
 include $(topsrcdir)/config/rules.mk

@@ -42,13 +42,15 @@
 #include "nsIConsoleService.h"
 #include "nsIServiceManager.h"
 #include "nsIDNSService.h"
+#include "nsIDNSRecord.h"
+#include "nsICancelable.h"
 #include "nsIRequest.h"
 #include "nsEventQueueUtils.h"
 #include "nsAutoPtr.h"
 #include "nsNetCID.h"
 
 static const char kSecurityProperties[] =
-  "chrome://communicator/locale/webservices/security.properties";
+  "chrome://global/locale/webservices/security.properties";
 static NS_DEFINE_CID(kDNSServiceCID, NS_DNSSERVICE_CID);
 static NS_DEFINE_CID(kEventQueueServiceCID, NS_EVENTQUEUESERVICE_CID);
 
@@ -249,7 +251,7 @@ nsWSAUtils::GetOfficialHostName(nsIURI* aServiceURI,
   if (NS_FAILED(rv))
     return rv;
 
-  nsCOMPtr<nsIDNSRequest> dummy;
+  nsCOMPtr<nsICancelable> dummy;
   rv = dns->AsyncResolve(host, nsIDNSService::RESOLVE_CANONICAL_NAME,
                          listener, eventQ, getter_AddRefs(dummy));
   
@@ -283,7 +285,7 @@ nsDNSListener::~nsDNSListener()
 }
 
 NS_IMETHODIMP
-nsDNSListener::OnLookupComplete(nsIDNSRequest* aRequest, 
+nsDNSListener::OnLookupComplete(nsICancelable* aRequest, 
                                 nsIDNSRecord* aRecord,
                                 nsresult aStatus)
 {

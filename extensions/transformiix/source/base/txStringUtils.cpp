@@ -1,4 +1,4 @@
-/* -*- Mode: IDL; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -12,7 +12,7 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is mozilla.org code.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
@@ -21,8 +21,7 @@
  *
  * Contributor(s):
  *   Axel Hecht <axel@pike.org>
- *   Peter Van der Beken <peterv@netscape.com>
- *
+ *   Peter Van der Beken <peterv@propagandism.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -41,32 +40,6 @@
 #include "txStringUtils.h"
 #include "nsDependentString.h"
 
-PRBool
-TX_StringEqualsAtom(const nsASingleFragmentString& aString, nsIAtom* aAtom)
-{
-    const char* ASCIIAtom;
-    aAtom->GetUTF8String(&ASCIIAtom);
-
-    PRUint32 UTF16Length = aString.Length();
-    if (strlen(ASCIIAtom) != UTF16Length) {
-        return PR_FALSE;
-    }
-
-    const PRUnichar* UTF16Iter;
-    aString.BeginReading(UTF16Iter);
-
-    while (*ASCIIAtom) {
-        if (PRUnichar(*ASCIIAtom) != *UTF16Iter) {
-            return PR_FALSE;
-        }
-        ++ASCIIAtom;
-        ++UTF16Iter;
-    }
-
-    return PR_TRUE;
-}
-
-#ifdef TX_EXE
 int
 txCaseInsensitiveStringComparator::operator()(const char_type* lhs,
                                               const char_type* rhs,
@@ -178,5 +151,3 @@ void TX_ToLowerCase(const nsAString& aSource, nsAString& aDest)
   copy_string(aSource.BeginReading(fromBegin), aSource.EndReading(fromEnd),
               converter);
 }
-
-#endif

@@ -1,28 +1,30 @@
 <?xml version="1.0"?>
 
 # -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+# ***** BEGIN LICENSE BLOCK *****
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
-# 
+#
 # The contents of this file are subject to the Mozilla Public License Version
 # 1.1 (the "License"); you may not use this file except in compliance with
 # the License. You may obtain a copy of the License at
 # http://www.mozilla.org/MPL/
-# 
+#
 # Software distributed under the License is distributed on an "AS IS" basis,
 # WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
 # for the specific language governing rights and limitations under the
 # License.
-# 
+#
 # The Original Code is Mozilla.org Code.
-# 
-# The Initial Developer of the Original Code is . 
+#
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
 # Portions created by the Initial Developer are Copyright (C) 2001
 # the Initial Developer. All Rights Reserved.
-# 
+#
 # Contributor(s):
-#   Ben Goodger <ben@bengoodger.com> (v2.0) 
+#   Ben Goodger <ben@bengoodger.com> (v2.0)
 #   Blake Ross <blakeross@telocity.com>
-# 
+#
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
 # the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -34,7 +36,7 @@
 # and other provisions required by the GPL or the LGPL. If you do not delete
 # the provisions above, a recipient may use your version of this file under
 # the terms of any one of the MPL, the GPL or the LGPL.
-# 
+#
 # ***** END LICENSE BLOCK *****
 
 #ifdef XP_UNIX
@@ -56,20 +58,20 @@
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         id="downloadManager" windowtype="Download:Manager"
         orient="vertical" title="&downloads.title;" statictitle="&downloads.title;"
-        width="400" height="300" screenX="10" screenY="10"
+        width="&window.width;" height="&window.height;" screenX="10" screenY="10"
         persist="width height screenX screenY sizeMode"
         onload="Startup();" onunload="Shutdown();"
         onclose="return closeWindow(false);">
       
   <script type="application/x-javascript" src="chrome://mozapps/content/downloads/DownloadProgressListener.js"/>
   <script type="application/x-javascript" src="chrome://mozapps/content/downloads/downloads.js"/>
-  <script type="application/x-javascript" src="chrome://browser/content/contentAreaUtils.js"/>
+  <script type="application/x-javascript" src="chrome://global/content/contentAreaUtils.js"/>
   <script type="application/x-javascript" src="chrome://global/content/nsDragAndDrop.js"/>
   <script type="application/x-javascript" src="chrome://global/content/nsTransferable.js"/>
   <script type="application/x-javascript" src="chrome://global/content/globalOverlay.js"/>
   
   <stringbundleset id="downloadSet">
-    <stringbundle id="brandStrings" src="chrome://global/locale/brand.properties"/>
+    <stringbundle id="brandStrings" src="chrome://branding/locale/brand.properties"/>
     <stringbundle id="downloadStrings" src="chrome://mozapps/locale/downloads/downloads.properties"/>
   </stringbundleset>
 
@@ -94,41 +96,41 @@
   <vbox id="contextMenuPalette" hidden="true">
     <menuitem id="menuitem_pause" 
               label="&cmd.pause.label;" accesskey="&cmd.pause.accesskey;"
-              oncommand="fireEventForElement(gDownloadsView.selected, 'pause');"/>
+              oncommand="fireEventForElement(gDownloadsView.selectedItem, 'pause');"/>
     <menuitem id="menuitem_resume" 
               label="&cmd.resume.label;" accesskey="&cmd.resume.accesskey;"
-              oncommand="fireEventForElement(gDownloadsView.selected, 'resume');"/>
+              oncommand="fireEventForElement(gDownloadsView.selectedItem, 'resume');"/>
     <menuitem id="menuitem_cancel" 
               label="&cmd.cancel.label;" accesskey="&cmd.cancel.accesskey;"
-              oncommand="fireEventForElement(gDownloadsView.selected, 'cancel');"/>
+              oncommand="fireEventForElement(gDownloadsView.selectedItem, 'cancel');"/>
 
     <menuitem id="menuitem_open" default="true"
               label="&cmd.open.label;" accesskey="&cmd.open.accesskey;"
-              oncommand="fireEventForElement(gDownloadsView.selected, 'open');"/>
+              oncommand="fireEventForElement(gDownloadsView.selectedItem, 'open');"/>
     <menuitem id="menuitem_openWith" 
               label="&cmd.openWith.label;" accesskey="&cmd.openWith.accesskey;"
-              oncommand="fireEventForElement(gDownloadsView.selected, 'openWith');"/>
+              oncommand="fireEventForElement(gDownloadsView.selectedItem, 'openWith');"/>
     <menuitem id="menuitem_show" 
               label="&cmd.show.label;" accesskey="&cmd.show.accesskey;"
-              oncommand="fireEventForElement(gDownloadsView.selected, 'show');"/>
+              oncommand="fireEventForElement(gDownloadsView.selectedItem, 'show');"/>
 
     <menuitem id="menuitem_retry" default="true"
               label="&cmd.retry.label;" accesskey="&cmd.retry.accesskey;"
-              oncommand="fireEventForElement(gDownloadsView.selected, 'retry');"/>
+              oncommand="fireEventForElement(gDownloadsView.selectedItem, 'retry');"/>
 
     <menuitem id="menuitem_remove"
               label="&cmd.remove.label;" accesskey="&cmd.remove.accesskey;"
-              oncommand="fireEventForElement(gDownloadsView.selected, 'remove');"/>
+              oncommand="fireEventForElement(gDownloadsView.selectedItem, 'remove');"/>
               
     <menuseparator id="menuseparator_properties"/>              
     <menuitem id="menuitem_properties" 
               label="&cmd.properties.label;" accesskey="&cmd.properties.accesskey;"
-              oncommand="fireEventForElement(gDownloadsView.selected, 'properties');"/>
+              oncommand="fireEventForElement(gDownloadsView.selectedItem, 'properties');"/>
   </vbox>
   
   <popup id="downloadContextMenu" onpopupshowing="return buildContextMenu(event);"/>
 
-  <vbox id="downloadView" flex="1" style="overflow: auto;"
+  <richlistbox id="downloadView" flex="1" context="downloadContextMenu"
         datasources="rdf:null" ref="NC:DownloadsRoot"
         ondragover="nsDragAndDrop.dragOver(event, gDownloadDNDObserver);"
         ondragdrop="nsDragAndDrop.drop(event, gDownloadDNDObserver);">
@@ -162,19 +164,19 @@
                   object="?icon"/>
         </bindings>            
         <action>
-          <download uri="?download" context="downloadContextMenu"
+          <download uri="?download"
                     image="?icon" file="?file" target="?target" state="?state"
                     animated="?animated" status="?status" progress="?progress-percent"/>
         </action>
       </rule>
     </template>
-  </vbox> 
+  </richlistbox>
   
   <hbox>
     <hbox id="commandBar" flex="1">
       <hbox align="center" flex="1" id="autodownloadInfo">
         <label>&filesSavedTo.label;</label>
-        <toolbarbutton id="saveToFolder" crop="right" flex="1"
+        <toolbarbutton class="tabbable" id="saveToFolder" crop="right" flex="1"
                        oncommand="onDownloadShowFolder();"
                        tooltiptext="&showFolder.label;"/>
       </hbox> 

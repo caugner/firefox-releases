@@ -5,7 +5,7 @@
    xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
    xmlns:xbl="http://www.mozilla.org/xbl">
 
-  <binding id="radiogroup">
+  <binding id="radiogroup" extends="chrome://global/content/bindings/general.xml#basecontrol">
     <resources>
       <stylesheet src="chrome://global/skin/radio.css"/>
     </resources>
@@ -20,8 +20,21 @@
         </getter>
       </property>
 
-      <property name="value" onset="this.setAttribute('value',val); return val;"
-                             onget="return this.getAttribute('value');"/>
+      <property name="value" onget="return this.getAttribute('value');">
+        <setter>
+          <![CDATA[
+            this.setAttribute("value", val);
+            var children = this._getRadioChildren();
+            for (var i = 0; i < children.length; i++) {
+              if (String(children[i].value) == String(val)) {
+                this.selectedItem = children[i];
+                break;
+              }
+            }
+            return val;
+          ]]>
+        </setter>
+      </property>
       <property name="disabled">
         <getter>
         <![CDATA[
@@ -89,7 +102,7 @@
             alreadySelected = val.getAttribute("selected") == "true";
             val.setAttribute("focused", focused);
             val.setAttribute("selected", "true");
-            this.value = val.value;
+            this.setAttribute("value", val.value);
           }
 
           // uncheck all other group nodes
@@ -196,18 +209,23 @@
           // collecting the child nodes could trigger constructors
           // which would blow away our list.
           var radioChildren = [];
-          function _filterRadioGroup(aNode) {
-            switch (aNode.localName) {
-              case "radio": return NodeFilter.FILTER_ACCEPT;
-              case "template":
-              case "radiogroup": return NodeFilter.FILTER_REJECT;
-              default: return NodeFilter.FILTER_SKIP;
-            }
-          }
-          var iterator = this.ownerDocument.createTreeWalker(this, NodeFilter.SHOW_ELEMENT, _filterRadioGroup, true);
+          var iterator = this.ownerDocument.createTreeWalker(this, NodeFilter.SHOW_ELEMENT, this._filterRadioGroup, true);
           while (iterator.nextNode())
             radioChildren.push(iterator.currentNode);
           return this.mRadioChildren = radioChildren;
+        ]]>
+        </body>
+      </method>
+      <method name="_filterRadioGroup">
+        <parameter name="node"/>
+        <body>
+        <![CDATA[
+          switch (node.localName) {
+            case "radio": return NodeFilter.FILTER_ACCEPT;
+            case "template":
+            case "radiogroup": return NodeFilter.FILTER_REJECT;
+            default: return NodeFilter.FILTER_SKIP;
+          }
         ]]>
         </body>
       </method>
@@ -344,7 +362,7 @@
       </xul:hbox>
     </content>
 
-    <implementation implements="nsIDOMXULSelectControlItemElement, nsIAccessibleProvider">
+    <implementation implements="nsIDOMXULSelectControlItemElement, nsIDOMXULLabeledControlElement, nsIAccessibleProvider">
       <constructor>
         <![CDATA[
           // Just clear out the parent's cached list of radio children
@@ -405,6 +423,14 @@
         <![CDATA[
           if (!this.disabled)
             this.radioGroup.focusedItem = this;
+         ]]>
+      </handler>
+      <handler event="focus">
+        <![CDATA[
+          if (!this.disabled) {
+            this.radioGroup.focusedItem = this;
+            this.radioGroup.focus();
+          }
          ]]>
       </handler>
     </handlers>

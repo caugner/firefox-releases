@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,82 +14,92 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Original Author: Eric Vaughan (evaughan@netscape.com)
  * Contributor(s):
  *   Aaron Leventhal (aaronl@netscape.com)
  *   Kyle Yuan (kyle.yuan@sun.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsHTMLTextAccessible.h"
+#include "nsAccessibleTreeWalker.h"
+#include "nsBulletFrame.h"
 #include "nsIAccessibleDocument.h"
+#include "nsIAccessibleEvent.h"
 #include "nsIFrame.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsISelection.h"
 #include "nsISelectionController.h"
 
-nsHTMLTextAccessible::nsHTMLTextAccessible(nsIDOMNode* aDomNode, nsIWeakReference* aShell):
-nsTextAccessibleWrap(aDomNode, aShell)
+nsHTMLTextAccessible::nsHTMLTextAccessible(nsIDOMNode* aDomNode, nsIWeakReference* aShell, nsIFrame *aFrame):
+nsTextAccessibleWrap(aDomNode, aShell), mFrame(aFrame)
 { 
 }
 
 NS_IMETHODIMP nsHTMLTextAccessible::GetName(nsAString& aName)
-{ 
-  nsAutoString accName;
-  if (NS_FAILED(mDOMNode->GetNodeValue(accName)))
+{
+  aName.Truncate();
+  if (!mDOMNode) {
     return NS_ERROR_FAILURE;
-  accName.CompressWhitespace();
-  aName = accName;
-  return NS_OK;
+  }
+
+  nsIFrame *frame = GetFrame();
+  NS_ENSURE_TRUE(frame, NS_ERROR_FAILURE);
+
+  nsAutoString name;
+  nsresult rv = mDOMNode->GetNodeValue(name);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!frame->GetStyleText()->WhiteSpaceIsSignificant()) {
+    // Replace \r\n\t in markup with space unless in this is preformatted text
+    // where those characters are significant
+    name.ReplaceChar("\r\n\t", ' ');
+  }
+  aName = name;
+  return rv;
+}
+
+nsIFrame* nsHTMLTextAccessible::GetFrame()
+{
+  if (!mWeakShell) {
+    return nsnull;
+  }
+  if (!mFrame) {
+    mFrame = nsTextAccessible::GetFrame();
+  }
+  return mFrame;
+}
+
+NS_IMETHODIMP nsHTMLTextAccessible::FireToolkitEvent(PRUint32 aEvent,
+                                                     nsIAccessible *aTarget,
+                                                     void *aData)
+{
+  if (aEvent == nsIAccessibleEvent::EVENT_HIDE) {
+    mFrame = nsnull;  // Invalidate cached frame
+  }
+  return nsTextAccessibleWrap::FireToolkitEvent(aEvent, aTarget, aData);
 }
 
 NS_IMETHODIMP nsHTMLTextAccessible::GetState(PRUint32 *aState)
 {
   nsTextAccessible::GetState(aState);
-  // Get current selection and find out if current node is in it
-  nsCOMPtr<nsIPresShell> shell(GetPresShell());
-  if (!shell) {
-     return NS_ERROR_FAILURE;  
-  }
-
-  nsCOMPtr<nsIPresContext> context;
-  shell->GetPresContext(getter_AddRefs(context));
-  nsCOMPtr<nsIContent> content(do_QueryInterface(mDOMNode));
-  nsIFrame *frame = nsnull;
-  if (content && NS_SUCCEEDED(shell->GetPrimaryFrameFor(content, &frame)) && frame) {
-    nsCOMPtr<nsISelectionController> selCon;
-    frame->GetSelectionController(context, getter_AddRefs(selCon));
-    if (selCon) {
-      nsCOMPtr<nsISelection> domSel;
-      selCon->GetSelection(nsISelectionController::SELECTION_NORMAL, getter_AddRefs(domSel));
-      if (domSel) {
-        PRBool isSelected = PR_FALSE, isCollapsed = PR_TRUE;
-        domSel->ContainsNode(mDOMNode, PR_TRUE, &isSelected);
-        domSel->GetIsCollapsed(&isCollapsed);
-        if (isSelected && !isCollapsed)
-          *aState |=STATE_SELECTED;
-      }
-    }
-  }
-  *aState |= STATE_SELECTABLE;
 
   nsCOMPtr<nsIAccessibleDocument> docAccessible(GetDocAccessible());
   if (docAccessible) {
@@ -176,3 +186,86 @@ NS_IMETHODIMP nsHTMLLabelAccessible::GetChildCount(PRInt32 *aAccChildCount)
   // A <label> is not necessarily a leaf!
   return nsAccessible::GetChildCount(aAccChildCount);
 }
+
+nsHTMLLIAccessible::nsHTMLLIAccessible(nsIDOMNode *aDOMNode, nsIWeakReference* aShell, 
+                   nsIFrame *aBulletFrame, const nsAString& aBulletText):
+  nsBlockAccessible(aDOMNode, aShell)
+{
+  if (!aBulletText.IsEmpty()) {
+    mBulletAccessible = new nsHTMLListBulletAccessible(mDOMNode, mWeakShell, 
+                                                       aBulletFrame, aBulletText);
+    nsCOMPtr<nsPIAccessNode> bulletANode(mBulletAccessible);
+    if (bulletANode) {
+      bulletANode->Init();
+    }
+  }
+}
+
+NS_IMETHODIMP nsHTMLLIAccessible::GetBounds(PRInt32 *x, PRInt32 *y, PRInt32 *width, PRInt32 *height)
+{
+  nsresult rv = nsAccessibleWrap::GetBounds(x, y, width, height);
+  if (NS_FAILED(rv) || !mBulletAccessible) {
+    return rv;
+  }
+
+  PRInt32 bulletX, bulletY, bulletWidth, bulletHeight;
+  rv = mBulletAccessible->GetBounds(&bulletX, &bulletY, &bulletWidth, &bulletHeight);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *x = bulletX; // Move x coordinate of list item over to cover bullet as well
+  *width += bulletWidth;
+  return NS_OK;
+}
+
+void nsHTMLLIAccessible::CacheChildren(PRBool aWalkAnonContent)
+{
+  if (!mBulletAccessible || !mWeakShell) {
+    nsAccessibleWrap::CacheChildren(aWalkAnonContent);
+    return;
+  }
+
+  if (mAccChildCount == eChildCountUninitialized) {
+    SetFirstChild(mBulletAccessible);
+    mAccChildCount = 1;
+    nsAccessibleTreeWalker walker(mWeakShell, mDOMNode, aWalkAnonContent);
+    walker.mState.frame = GetFrame();
+    walker.GetFirstChild();
+
+    nsCOMPtr<nsPIAccessible> privatePrevAccessible = mBulletAccessible.get();
+    while (walker.mState.accessible) {
+      ++mAccChildCount;
+      privatePrevAccessible->SetNextSibling(walker.mState.accessible);
+      privatePrevAccessible = do_QueryInterface(walker.mState.accessible);
+      privatePrevAccessible->SetParent(this);
+      walker.GetNextSibling();
+    }
+  }
+}
+
+
+nsHTMLListBulletAccessible::nsHTMLListBulletAccessible(nsIDOMNode* aDomNode, 
+  nsIWeakReference* aShell, nsIFrame *aFrame, const nsAString& aBulletText): 
+  nsHTMLTextAccessible(aDomNode, aShell, aFrame), mBulletText(aBulletText)
+{
+}
+
+NS_IMETHODIMP nsHTMLListBulletAccessible::GetUniqueID(void **aUniqueID)
+{
+  // Since mDOMNode is same as for list item, use |this| pointer as the unique Id
+  *aUniqueID = NS_STATIC_CAST(void*, this);
+  return NS_OK;
+}
+
+
+NS_IMETHODIMP nsHTMLListBulletAccessible::Shutdown()
+{
+  mBulletText.Truncate();
+  return nsHTMLTextAccessible::Shutdown();
+}
+
+NS_IMETHODIMP nsHTMLListBulletAccessible::GetName(nsAString &aName)
+{
+  aName = mBulletText;
+  return NS_OK;
+}
+

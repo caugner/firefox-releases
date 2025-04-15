@@ -1,9 +1,8 @@
-/.cvsignore/1.1/Sun Jul 18 00:26:01 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.16.20.1/Sun Oct 24 12:04:32 2004//TFIREFOX_1_0_RELEASE
-/nsIPrincipal.idl/1.29.18.1/Sun Oct 24 12:04:32 2004//TFIREFOX_1_0_RELEASE
-/nsIPrincipalObsolete.idl/1.1.2.1/Sun Oct 24 12:04:32 2004//TFIREFOX_1_0_RELEASE
-/nsIScriptSecurityManager.idl/1.61.8.1/Sun Oct 24 12:04:32 2004//TFIREFOX_1_0_RELEASE
-/nsIScriptSecurityManagerObsolete.idl/1.1.2.1/Sun Oct 24 12:04:32 2004//TFIREFOX_1_0_RELEASE
-/nsISecurityCheckedComponent.idl/1.5/Tue Sep 25 01:03:51 2001//TFIREFOX_1_0_RELEASE
-/nsISignatureVerifier.idl/1.6/Tue Sep 25 01:03:51 2001//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Sun Jul 18 00:26:01 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.19/Wed Jun  1 17:40:08 2005//TFIREFOX_1_5_RELEASE
+/nsICryptoHash.idl/1.2.4.1/Fri Aug 26 06:41:50 2005//TFIREFOX_1_5_RELEASE
+/nsIPrincipal.idl/1.32/Fri Jul 22 19:05:38 2005//TFIREFOX_1_5_RELEASE
+/nsIScriptSecurityManager.idl/1.66/Fri Jul 22 19:05:38 2005//TFIREFOX_1_5_RELEASE
+/nsISecurityCheckedComponent.idl/1.6/Sat Apr 17 21:50:35 2004//TFIREFOX_1_5_RELEASE
+/nsISignatureVerifier.idl/1.9/Wed Jun  1 17:40:08 2005//TFIREFOX_1_5_RELEASE
 D

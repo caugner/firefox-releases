@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -56,6 +55,7 @@
 #include "nsUnicharUtils.h"
 #include "nsCRT.h"
 #include "nsContentUtils.h"
+#include "nsLayoutAtoms.h"
 
 typedef struct {
   nsString mPrefix;
@@ -103,35 +103,30 @@ nsXMLContentSerializer::AppendTextData(nsIDOMNode* aNode,
 {
   nsCOMPtr<nsITextContent> content(do_QueryInterface(aNode));
   if (!content) return NS_ERROR_FAILURE;
-  
-  const nsTextFragment* frag;
-  content->GetText(&frag);
 
-  if (frag) {
-    PRInt32 endoffset = (aEndOffset == -1) ? frag->GetLength() : aEndOffset;
-    PRInt32 length = endoffset - aStartOffset;
-    
-    NS_ASSERTION(aStartOffset >= 0, "Negative start offset for text fragment!");
-    NS_ASSERTION(aStartOffset <= endoffset, "A start offset is beyond the end of the text fragment!");
+  const nsTextFragment* frag = content->Text();
 
-    if (length <= 0) {
-      return NS_OK;  // XXX Zero is a legal value, maybe non-zero values should
-                     //     be an error.
-    }
+  PRInt32 endoffset = (aEndOffset == -1) ? frag->GetLength() : aEndOffset;
+  PRInt32 length = endoffset - aStartOffset;
+
+  NS_ASSERTION(aStartOffset >= 0, "Negative start offset for text fragment!");
+  NS_ASSERTION(aStartOffset <= endoffset, "A start offset is beyond the end of the text fragment!");
+
+  if (length <= 0) {
+    // XXX Zero is a legal value, maybe non-zero values should be an
+    // error.
+
+    return NS_OK;
+  }
     
-    if (frag->Is2b()) {
-      const PRUnichar *strStart = frag->Get2b() + aStartOffset;
-      AppendToString(Substring(strStart, strStart + length),
-                     aStr,
-                     aTranslateEntities,
-                     aIncrColumn);
-    }
-    else {
-      AppendToString(NS_ConvertASCIItoUCS2(frag->Get1b()+aStartOffset, length),
-                     aStr,
-                     aTranslateEntities,
-                     aIncrColumn);
-    }
+  if (frag->Is2b()) {
+    const PRUnichar *strStart = frag->Get2b() + aStartOffset;
+    AppendToString(Substring(strStart, strStart + length), aStr,
+                   aTranslateEntities, aIncrColumn);
+  }
+  else {
+    AppendToString(NS_ConvertASCIItoUCS2(frag->Get1b()+aStartOffset, length),
+                   aStr, aTranslateEntities, aIncrColumn);
   }
 
   return NS_OK;
@@ -300,7 +295,7 @@ nsXMLContentSerializer::AppendDoctype(nsIDOMDocumentType *aDoctype,
   return NS_OK;
 }
 
-#define kXMLNS NS_LITERAL_STRING("xmlns")
+#define kXMLNS "xmlns"
 
 nsresult
 nsXMLContentSerializer::PushNameSpaceDecl(const nsAString& aPrefix,
@@ -336,26 +331,28 @@ nsXMLContentSerializer::PopNameSpaceDeclsFor(nsIDOMElement* aOwner)
   }
 }
 
-/* ConfirmPrefix() is needed for cases where scripts have 
- * moved/modified elements/attributes 
- */
 PRBool
 nsXMLContentSerializer::ConfirmPrefix(nsAString& aPrefix,
-                                      const nsAString& aURI)
+                                      const nsAString& aURI,
+                                      nsIDOMElement* aElement,
+                                      PRBool aMustHavePrefix)
 {
-  if (aPrefix.Equals(kXMLNS)) {
+  if (aPrefix.EqualsLiteral(kXMLNS) ||
+      (aPrefix.EqualsLiteral("xml") &&
+       aURI.EqualsLiteral("http://www.w3.org/XML/1998/namespace"))) {
     return PR_FALSE;
   }
   if (aURI.IsEmpty()) {
     aPrefix.Truncate();
     return PR_FALSE;
   }
-  PRInt32 index, count;
+
   nsAutoString closestURIMatch;
   PRBool uriMatch = PR_FALSE;
 
-  count = mNameSpaceStack.Count();
-  for (index = count - 1; index >= 0; index--) {
+  PRInt32 count = mNameSpaceStack.Count();
+  PRInt32 index = count - 1;
+  while (index >= 0) {
     NameSpaceDecl* decl = (NameSpaceDecl*)mNameSpaceStack.ElementAt(index);
     // Check if we've found a prefix match
     if (aPrefix.Equals(decl->mPrefix)) {
@@ -364,35 +361,88 @@ nsXMLContentSerializer::ConfirmPrefix(nsAString& aPrefix,
       if (aURI.Equals(decl->mURI)) {
         return PR_FALSE;
       }
-      // If they don't, we can't use this prefix
-      else {
-        aPrefix.Truncate();
+
+      // If they don't, and either:
+      // 1) We have a prefix (so we'd be redeclaring this prefix to point to a
+      //    different namespace) or
+      // 2) We're looking at an existing default namespace decl on aElement (so
+      //    we can't create a new default namespace decl for this URI)
+      // then generate a new prefix.  Note that we do NOT generate new prefixes
+      // if we happen to have aPrefix == decl->mPrefix == "" and mismatching
+      // URIs when |decl| doesn't have aElement as its owner.  In that case we
+      // can simply push the new namespace URI as the default namespace for
+      // aElement.
+      if (!aPrefix.IsEmpty() ||
+          (decl->mPrefix.IsEmpty() && decl->mOwner == aElement)) {
+        GenerateNewPrefix(aPrefix);
+        // Now we need to validate our new prefix/uri combination; check it
+        // against the full namespace stack again.  Note that just restarting
+        // the while loop is ok, since we haven't changed aURI, so the
+        // closestURIMatch state is not affected.
+        index = count - 1;
+        continue;
       }
     }
+    
     // If we've found a URI match, then record the first one
-    else if (!uriMatch && aURI.Equals(decl->mURI)) {
-      uriMatch = PR_TRUE;
-      closestURIMatch.Assign(decl->mPrefix);
+    if (!uriMatch && aURI.Equals(decl->mURI)) {
+      // Need to check that decl->mPrefix is not declared anywhere closer to
+      // us.  If it is, we can't use it.
+      PRBool prefixOK = PR_TRUE;
+      PRInt32 index2;
+      for (index2 = count-1; index2 > index && prefixOK; --index2) {
+        NameSpaceDecl* decl2 =
+          (NameSpaceDecl*)mNameSpaceStack.ElementAt(index2);
+        prefixOK = (decl2->mPrefix != decl->mPrefix);
+      }
+      
+      if (prefixOK) {
+        uriMatch = PR_TRUE;
+        closestURIMatch.Assign(decl->mPrefix);
+      }
     }
+    
+    --index;
   }
 
-  // There are no namespace declarations that match the prefix, uri pair. 
-  // If there's another prefix that matches that URI, us it.
-  if (uriMatch) {
+  // At this point the following invariants hold:
+  // 1) There is nothing on the namespace stack that matches the pair
+  //    (aPrefix, aURI)
+  // 2) There is nothing on the namespace stack that has aPrefix as the prefix
+  //    and a _different_ URI, except for the case aPrefix.IsEmpty (and
+  //    possible default namespaces on ancestors)
+  // 3) The prefix in closestURIMatch is mapped to aURI in our scope if
+  //    uriMatch is set.
+  
+  // So if uriMatch is set it's OK to use the closestURIMatch prefix.  The one
+  // exception is when closestURIMatch is actually empty (default namespace
+  // decl) and we must have a prefix.
+  if (uriMatch && (!aMustHavePrefix || !closestURIMatch.IsEmpty())) {
     aPrefix.Assign(closestURIMatch);
     return PR_FALSE;
   }
-  // If we don't have a prefix, create one
-  else if (aPrefix.IsEmpty()) {
-    aPrefix.Assign(NS_LITERAL_STRING("a"));
-    char buf[128];
-    PR_snprintf(buf, sizeof(buf), "%d", mPrefixIndex++);
-    AppendASCIItoUTF16(buf, aPrefix);
+  
+  // At this point, if aPrefix is empty (which means we never had a prefix to
+  // start with) and we must have a prefix, just generate a new prefix and then
+  // send it back through the namespace stack checks to make sure it's OK.
+  if (aPrefix.IsEmpty() && aMustHavePrefix) {
+    GenerateNewPrefix(aPrefix);
+    return ConfirmPrefix(aPrefix, aURI, aElement, aMustHavePrefix);
   }
+  // else we will just set aURI as the new default namespace URI
 
   // Indicate that we need to create a namespace decl for the
   // final prefix
   return PR_TRUE;
+}
+
+void
+nsXMLContentSerializer::GenerateNewPrefix(nsAString& aPrefix)
+{
+  aPrefix.AssignLiteral("a");
+  char buf[128];
+  PR_snprintf(buf, sizeof(buf), "%d", mPrefixIndex++);
+  AppendASCIItoUTF16(buf, aPrefix);
 }
 
 void
@@ -486,7 +536,7 @@ nsXMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
 
   nsAutoString tagPrefix, tagLocalName, tagNamespaceURI;
   nsAutoString xmlnsStr;
-  xmlnsStr.Assign(kXMLNS);
+  xmlnsStr.AssignLiteral(kXMLNS);
 
   nsCOMPtr<nsIContent> content(do_QueryInterface(aElement));
   if (!content) return NS_ERROR_FAILURE;
@@ -511,12 +561,19 @@ nsXMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
                            getter_AddRefs(attrName),
                            getter_AddRefs(attrPrefix));
     
-    if (namespaceID == kNameSpaceID_XMLNS) {
+    if (namespaceID == kNameSpaceID_XMLNS ||
+        // Also push on the stack attrs named "xmlns" in the null
+        // namespace... because once we serialize those out they'll look like
+        // namespace decls.  :(
+        // XXXbz what if we have both "xmlns" in the null namespace and "xmlns"
+        // in the xmlns namespace?
+        (namespaceID == kNameSpaceID_None &&
+         attrName == nsLayoutAtoms::xmlnsNameSpace)) {
       content->GetAttr(namespaceID, attrName, uriStr);
 
       if (!attrPrefix) {
         // Default NS attribute does not have prefix (and the name is "xmlns")
-        PushNameSpaceDecl(nsString(), uriStr, aElement);
+        PushNameSpaceDecl(EmptyString(), uriStr, aElement);
       } else {
         attrName->ToString(nameStr);
         PushNameSpaceDecl(nameStr, uriStr, aElement);
@@ -528,7 +585,7 @@ nsXMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
     
   MaybeAddNewline(aStr);
 
-  addNSAttr = ConfirmPrefix(tagPrefix, tagNamespaceURI);
+  addNSAttr = ConfirmPrefix(tagPrefix, tagNamespaceURI, aElement, PR_FALSE);
   // Serialize the qualified name of the element
   AppendToString(NS_LITERAL_STRING("<"), aStr);
   if (!tagPrefix.IsEmpty()) {
@@ -540,7 +597,13 @@ nsXMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
   // If we had to add a new namespace declaration, serialize
   // and push it on the namespace stack
   if (addNSAttr) {
-    SerializeAttr(xmlnsStr, tagPrefix, tagNamespaceURI, aStr, PR_TRUE);
+    if (tagPrefix.IsEmpty()) {
+      // Serialize default namespace decl
+      SerializeAttr(EmptyString(), xmlnsStr, tagNamespaceURI, aStr, PR_TRUE);
+    } else {
+      // Serialize namespace decl
+      SerializeAttr(xmlnsStr, tagPrefix, tagNamespaceURI, aStr, PR_TRUE);
+    }
     PushNameSpaceDecl(tagPrefix, tagNamespaceURI, aElement);
   }
 
@@ -564,7 +627,8 @@ nsXMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
     if (kNameSpaceID_XMLNS != namespaceID) {
       nsContentUtils::GetNSManagerWeakRef()->GetNameSpaceURI(namespaceID,
                                                              uriStr);
-      addNSAttr = ConfirmPrefix(prefixStr, uriStr);
+      addNSAttr = ConfirmPrefix(prefixStr, uriStr, aElement,
+                                namespaceID != kNameSpaceID_None);
     }
     
     content->GetAttr(namespaceID, attrName, valueStr);
@@ -577,9 +641,7 @@ nsXMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
       continue;
 
     if (namespaceID == kNameSpaceID_None) {
-      PRInt32 elementNsID;
-      content->GetNameSpaceID(&elementNsID);
-      if (elementNsID == kNameSpaceID_XHTML) {
+      if (content->GetNameSpaceID() == kNameSpaceID_XHTML) {
         if (IsShorthandAttr(attrName, content->Tag()) &&
             valueStr.IsEmpty()) {
           valueStr = nameStr;
@@ -589,6 +651,8 @@ nsXMLContentSerializer::AppendElementStart(nsIDOMElement *aElement,
     SerializeAttr(prefixStr, nameStr, valueStr, aStr, PR_TRUE);
     
     if (addNSAttr) {
+      NS_ASSERTION(!prefixStr.IsEmpty(),
+                   "Namespaced attributes must have a prefix");
       SerializeAttr(xmlnsStr, prefixStr, uriStr, aStr, PR_TRUE);
       PushNameSpaceDecl(prefixStr, uriStr, aElement);
     }
@@ -616,7 +680,7 @@ nsXMLContentSerializer::AppendElementEnd(nsIDOMElement *aElement,
   PRBool hasChildren;
   if (NS_SUCCEEDED(node->HasChildNodes(&hasChildren)) && !hasChildren) {
     PopNameSpaceDeclsFor(aElement);
-
+  
     return NS_OK;
   }
   
@@ -629,7 +693,11 @@ nsXMLContentSerializer::AppendElementEnd(nsIDOMElement *aElement,
   aElement->GetLocalName(tagLocalName);
   aElement->GetNamespaceURI(tagNamespaceURI);
 
-  ConfirmPrefix(tagPrefix, tagNamespaceURI);
+#ifdef DEBUG
+  PRBool debugNeedToPushNamespace =
+#endif
+  ConfirmPrefix(tagPrefix, tagNamespaceURI, aElement, PR_FALSE);
+  NS_ASSERTION(!debugNeedToPushNamespace, "Can't push namespaces in closing tag!");
 
   AppendToString(NS_LITERAL_STRING("</"), aStr);
   if (!tagPrefix.IsEmpty()) {
@@ -873,7 +941,7 @@ nsXMLContentSerializer::AppendDocumentStart(nsIDOMDocument *aDocument,
     aStr += NS_LITERAL_STRING(" standalone=\"") + standalone + endQuote;
   }
 
-  aStr += NS_LITERAL_STRING("?>");
+  aStr.AppendLiteral("?>");
   mAddNewline = PR_TRUE;
 
   return NS_OK;

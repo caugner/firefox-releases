@@ -1,31 +1,42 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
- * Original Author(s):
- *   Robert John Churchill    <rjc@netscape.com>
- *   Chris Waterson           <waterson@netscape.com>
- *
- * Contributor(s): 
+ * Contributor(s):
  *   Scott Putterman          <putterman@netscape.com>
  *   Pierre Phaneuf           <pp@ludusdesign.com>
  *   Chase Tingley            <tingley@sundell.net>
- *   Joe Hewitt               <hewitt@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK *****
  *
  * This Original Code has been modified by IBM Corporation.
  * Modifications made by IBM described herein are
@@ -78,6 +89,7 @@
 #include "nsILocaleService.h"
 #include "nsIRDFContainerUtils.h"
 #include "nsXULAtoms.h"
+#include "nsINodeInfo.h"
 
 
 ////////////////////////////////////////////////////////////////////////
@@ -417,7 +429,7 @@ XULSortServiceImpl::GetSortColumnInfo(nsIContent *tree,
                                       nsXULAtoms::sortActive, value))
     && (rv == NS_CONTENT_ATTR_HAS_VALUE))
   {
-    if (value.Equals(NS_LITERAL_STRING("true")))
+    if (value.EqualsLiteral("true"))
     {
       if (NS_SUCCEEDED(rv = tree->GetAttr(kNameSpaceID_None,
                                           nsXULAtoms::sortResource,
@@ -437,7 +449,7 @@ XULSortServiceImpl::GetSortColumnInfo(nsIContent *tree,
                                               value)) &&
               (rv == NS_CONTENT_ATTR_HAS_VALUE))
           {
-            if (value.Equals(NS_LITERAL_STRING("true")))
+            if (value.EqualsLiteral("true"))
             {
               inbetweenSeparatorSort = PR_TRUE;
             }
@@ -1161,7 +1173,7 @@ XULSortServiceImpl::SortContainer(nsIContent *container, sortPtr sortInfo,
         if (NS_SUCCEEDED(rv = contentSortInfoArray[loop]->content->GetAttr(kNameSpaceID_RDF,
             nsXULAtoms::type, type)) && (rv == NS_CONTENT_ATTR_HAS_VALUE))
         {
-          if (type.EqualsWithConversion(kURINC_BookmarkSeparator)) {
+          if (type.EqualsASCII(kURINC_BookmarkSeparator)) {
             if (loop > startIndex + 1) {
               if (merelyInvertFlag)
                 InvertSortInfo(&contentSortInfoArray[startIndex], loop-startIndex);
@@ -1216,14 +1228,14 @@ XULSortServiceImpl::SortContainer(nsIContent *container, sortPtr sortInfo,
       contentSortInfo * contentSortInfo = contentSortInfoArray[loop];
       nsIContent *parentNode = (nsIContent *)contentSortInfo->content;
       nsIContent* kid = parentNode;
-      container->InsertChildAt(kid, childPos++, PR_FALSE, PR_TRUE);
+      container->InsertChildAt(kid, childPos++, PR_FALSE);
 
       NS_RELEASE(contentSortInfo->content);
       delete contentSortInfo;
 
       // if it's a container, find its treechildren nodes, and sort those
       if (NS_FAILED(rv = parentNode->GetAttr(kNameSpaceID_None, nsXULAtoms::container, value)) ||
-        (rv != NS_CONTENT_ATTR_HAS_VALUE) || !value.Equals(NS_LITERAL_STRING("true")))
+        (rv != NS_CONTENT_ATTR_HAS_VALUE) || !value.EqualsLiteral("true"))
         continue;
         
       numChildren = parentNode->GetChildCount();
@@ -1337,13 +1349,13 @@ XULSortServiceImpl::InsertContainerNode(nsIRDFCompositeDataSource *db, nsRDFSort
       sortState->sortProperty = sortInfo.sortProperty;
       
       nsAutoString resourceUrl = sortResource;
-      resourceUrl.Append(NS_LITERAL_STRING("?collation=true"));
+      resourceUrl.AppendLiteral("?collation=true");
       rv = gRDFService->GetUnicodeResource(resourceUrl, getter_AddRefs(sortInfo.sortPropertyColl));
       if (NS_FAILED(rv)) return rv;
       sortState->sortPropertyColl = sortInfo.sortPropertyColl;
 
       resourceUrl = sortResource;
-      resourceUrl.Append(NS_LITERAL_STRING("?sort=true"));
+      resourceUrl.AppendLiteral("?sort=true");
       rv = gRDFService->GetUnicodeResource(resourceUrl, getter_AddRefs(sortInfo.sortPropertySort));
       if (NS_FAILED(rv)) return rv;
       sortState->sortPropertySort = sortInfo.sortPropertySort;
@@ -1355,13 +1367,13 @@ XULSortServiceImpl::InsertContainerNode(nsIRDFCompositeDataSource *db, nsRDFSort
         sortState->sortProperty2 = sortInfo.sortProperty2;
 
         resourceUrl = sortResource2;
-        resourceUrl.Append(NS_LITERAL_STRING("?collation=true"));
+        resourceUrl.AppendLiteral("?collation=true");
         rv = gRDFService->GetUnicodeResource(resourceUrl, getter_AddRefs(sortInfo.sortPropertyColl2));
         if (NS_FAILED(rv)) return rv;
         sortState->sortPropertyColl2 = sortInfo.sortPropertyColl2;
 
         resourceUrl = sortResource2;
-        resourceUrl.Append(NS_LITERAL_STRING("?sort=true"));
+        resourceUrl.AppendLiteral("?sort=true");
         rv = gRDFService->GetUnicodeResource(resourceUrl, getter_AddRefs(sortInfo.sortPropertySort2));
         if (NS_FAILED(rv)) return rv;
         sortState->sortPropertySort2 = sortInfo.sortPropertySort2;
@@ -1457,7 +1469,7 @@ XULSortServiceImpl::InsertContainerNode(nsIRDFCompositeDataSource *db, nsRDFSort
       }
       
       if (NS_SUCCEEDED(rv = root->GetAttr(kNameSpaceID_None, nsXULAtoms::sortStaticsLast, valueStr))
-          && (rv == NS_CONTENT_ATTR_HAS_VALUE) && valueStr.Equals(NS_LITERAL_STRING("true")))
+          && (rv == NS_CONTENT_ATTR_HAS_VALUE) && valueStr.EqualsLiteral("true"))
       {
         // indicate that static XUL comes after RDF-generated content by making negative
         staticCount = -staticCount;
@@ -1490,7 +1502,7 @@ XULSortServiceImpl::InsertContainerNode(nsIRDFCompositeDataSource *db, nsRDFSort
         temp = child;
         direction = inplaceSortCallback(&node, &temp, &sortInfo);
         if (direction < 0) {
-          container->InsertChildAt(node, staticCount, aNotify, PR_FALSE);
+          container->InsertChildAt(node, staticCount, aNotify);
           childAdded = PR_TRUE;
         } else
           sortState->lastWasFirst = PR_FALSE;
@@ -1499,7 +1511,7 @@ XULSortServiceImpl::InsertContainerNode(nsIRDFCompositeDataSource *db, nsRDFSort
         temp = child;
         direction = inplaceSortCallback(&node, &temp, &sortInfo);
         if (direction > 0) {
-          container->InsertChildAt(node, realNumChildren, aNotify, PR_FALSE);
+          container->InsertChildAt(node, realNumChildren, aNotify);
           childAdded = PR_TRUE;
         } else
           sortState->lastWasLast = PR_FALSE;
@@ -1519,7 +1531,7 @@ XULSortServiceImpl::InsertContainerNode(nsIRDFCompositeDataSource *db, nsRDFSort
              && (direction >= 0)) || (left == right))
         {
           PRInt32 thePos = ((direction > 0) ? x : x-1);
-          container->InsertChildAt(node, thePos, aNotify, PR_FALSE);
+          container->InsertChildAt(node, thePos, aNotify);
           childAdded = PR_TRUE;
           
           sortState->lastWasFirst = (thePos == staticCount) ? PR_TRUE: PR_FALSE;
@@ -1536,7 +1548,7 @@ XULSortServiceImpl::InsertContainerNode(nsIRDFCompositeDataSource *db, nsRDFSort
   }
 
   if (!childAdded)
-    container->InsertChildAt(node, numChildren, aNotify, PR_FALSE);
+    container->InsertChildAt(node, numChildren, aNotify);
 
   if (!sortState->mCache && sortInfo.mInner)
     sortState->mCache = sortInfo.mInner;
@@ -1572,7 +1584,7 @@ XULSortServiceImpl::Sort(nsIDOMNode* node, const nsAString& sortResource, const 
   nsAutoString value;
   if (NS_SUCCEEDED(rv = dbNode->GetAttr(kNameSpaceID_None, nsXULAtoms::sortActive, value))
       && (rv == NS_CONTENT_ATTR_HAS_VALUE) 
-      && value.Equals(NS_LITERAL_STRING("true")))
+      && value.EqualsLiteral("true"))
   {
     if (NS_SUCCEEDED(rv = dbNode->GetAttr(kNameSpaceID_None, nsXULAtoms::sortResource, value))
         && (rv == NS_CONTENT_ATTR_HAS_VALUE) 
@@ -1623,12 +1635,12 @@ XULSortServiceImpl::Sort(nsIDOMNode* node, const nsAString& sortResource, const 
 
   nsAutoString resourceUrl;
   resourceUrl.Assign(sortResource);
-  resourceUrl.Append(NS_LITERAL_STRING("?collation=true"));
+  resourceUrl.AppendLiteral("?collation=true");
   rv = gRDFService->GetUnicodeResource(resourceUrl, getter_AddRefs(sortInfo.sortPropertyColl));
   if (NS_FAILED(rv)) return rv;
 
   resourceUrl.Assign(sortResource);
-  resourceUrl.Append(NS_LITERAL_STRING("?sort=true"));
+  resourceUrl.AppendLiteral("?sort=true");
   rv = gRDFService->GetUnicodeResource(resourceUrl, getter_AddRefs(sortInfo.sortPropertySort));
   if (NS_FAILED(rv)) return rv;
 
@@ -1638,12 +1650,12 @@ XULSortServiceImpl::Sort(nsIDOMNode* node, const nsAString& sortResource, const 
     if (NS_FAILED(rv)) return rv;
 
     resourceUrl = sortResource2;
-    resourceUrl.Append(NS_LITERAL_STRING("?collation=true"));
+    resourceUrl.AppendLiteral("?collation=true");
     rv = gRDFService->GetUnicodeResource(resourceUrl, getter_AddRefs(sortInfo.sortPropertyColl2));
     if (NS_FAILED(rv)) return rv;
 
     resourceUrl = sortResource2;
-    resourceUrl.Append(NS_LITERAL_STRING("?sort=true"));
+    resourceUrl.AppendLiteral("?sort=true");
     rv = gRDFService->GetUnicodeResource(resourceUrl, getter_AddRefs(sortInfo.sortPropertySort2));
     if (NS_FAILED(rv)) return rv;
   }
@@ -1660,14 +1672,16 @@ XULSortServiceImpl::Sort(nsIDOMNode* node, const nsAString& sortResource, const 
   nsCOMPtr<nsIContent> containerParent = container->GetParent();
   PRInt32 containerIndex = containerParent->IndexOf(container);
   PRInt32 childCount = containerParent->GetChildCount();
-  if (NS_FAILED(rv = containerParent->RemoveChildAt(containerIndex, PR_TRUE))) return rv;
+  rv = containerParent->RemoveChildAt(containerIndex, PR_TRUE);
+  NS_ENSURE_SUCCESS(rv, rv);
+  
   if (containerIndex+1 < childCount) {
-    if (NS_FAILED(rv = containerParent->InsertChildAt(container, containerIndex, PR_TRUE, PR_TRUE))) return rv;
+    rv = containerParent->InsertChildAt(container, containerIndex, PR_TRUE);
   } else {
-    if (NS_FAILED(rv = containerParent->AppendChildTo(container, PR_TRUE, PR_TRUE))) return rv;
+    rv = containerParent->AppendChildTo(container, PR_TRUE);
   }
   
-  return NS_OK;
+  return rv;
 }
 
 nsresult

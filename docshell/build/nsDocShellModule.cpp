@@ -1,29 +1,50 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla browser.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications, Inc.  Portions created by Netscape are
- * Copyright (C) 1999, Mozilla.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Travis Bogard <travis@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsIModule.h"
 #include "nsIGenericFactory.h"
+
+#include "nsDocShellCID.h"
+
 #include "nsWebShell.h"
 #include "nsDefaultURIFixup.h"
+#include "nsWebNavigationInfo.h"
 
 // uriloader
 #include "nsURILoader.h"
@@ -41,15 +62,40 @@
 #include "nsGlobalHistoryAdapter.h"
 #include "nsGlobalHistory2Adapter.h"
 
+static PRBool gInitialized = PR_FALSE;
+
+// The one time initialization for this module
+// static
+PR_STATIC_CALLBACK(nsresult)
+Initialize(nsIModule* aSelf)
+{
+  NS_PRECONDITION(!gInitialized, "docshell module already initialized");
+  if (gInitialized) {
+    return NS_OK;
+  }
+  gInitialized = PR_TRUE;
+
+  nsresult rv = nsSHistory::Startup();
+  return rv;
+}
+
+PR_STATIC_CALLBACK(void)
+Shutdown(nsIModule* aSelf)
+{
+  gInitialized = PR_FALSE;
+}
+
 // docshell
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsWebShell)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsWebShell, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDefaultURIFixup)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsWebNavigationInfo, Init)
 
 // uriloader
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsURILoader)
-NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsDocLoaderImpl, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsDocLoader, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsOSHelperAppService, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsExternalProtocolHandler)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsBlockedExternalProtocolHandler)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsPrefetchService, Init)
 
 #if defined(XP_MAC) || defined(XP_MACOSX)
@@ -60,7 +106,7 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsInternetConfigService)
 // session history
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSHEntry)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSHTransaction)
-NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsSHistory, Init)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsSHistory)
 
 // Currently no-one is instantiating docshell's directly because
 // nsWebShell is still our main "shell" class. nsWebShell is a subclass
@@ -81,12 +127,16 @@ static const nsModuleComponentInfo gDocShellModuleInfo[] = {
       NS_URIFIXUP_CONTRACTID,
       nsDefaultURIFixupConstructor
     },
+    { "Webnavigation info service",
+      NS_WEBNAVIGATION_INFO_CID,
+      NS_WEBNAVIGATION_INFO_CONTRACTID,
+      nsWebNavigationInfoConstructor
+    },
 
     // uriloader
   { "Netscape URI Loader Service", NS_URI_LOADER_CID, NS_URI_LOADER_CONTRACTID, nsURILoaderConstructor, },
-  { "Netscape Doc Loader", NS_DOCUMENTLOADER_CID, NS_DOCUMENTLOADER_CONTRACTID, nsDocLoaderImplConstructor, },
   { "Netscape Doc Loader Service", NS_DOCUMENTLOADER_SERVICE_CID, NS_DOCUMENTLOADER_SERVICE_CONTRACTID, 
-     nsDocLoaderImplConstructor, },
+     nsDocLoaderConstructor, },
   { "Netscape External Helper App Service", NS_EXTERNALHELPERAPPSERVICE_CID, NS_EXTERNALHELPERAPPSERVICE_CONTRACTID, 
      nsOSHelperAppServiceConstructor, },
   { "Netscape External Helper App Service", NS_EXTERNALHELPERAPPSERVICE_CID, NS_EXTERNALPROTOCOLSERVICE_CONTRACTID, 
@@ -95,6 +145,8 @@ static const nsModuleComponentInfo gDocShellModuleInfo[] = {
      nsOSHelperAppServiceConstructor, },
   { "Netscape Default Protocol Handler", NS_EXTERNALPROTOCOLHANDLER_CID, NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX"default", 
      nsExternalProtocolHandlerConstructor, },
+  { "Netscape Default Blocked Protocol Handler", NS_BLOCKEDEXTERNALPROTOCOLHANDLER_CID, NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX"default-blocked", 
+     nsBlockedExternalProtocolHandlerConstructor, },
   {  NS_PREFETCHSERVICE_CLASSNAME, NS_PREFETCHSERVICE_CID, NS_PREFETCHSERVICE_CONTRACTID,
      nsPrefetchServiceConstructor, },
 #if defined(XP_MAC) || defined(XP_MACOSX)
@@ -125,5 +177,5 @@ static const nsModuleComponentInfo gDocShellModuleInfo[] = {
 
 // "docshell provider" to illustrate that this thing really *should*
 // be dispensing docshells rather than webshells.
-NS_IMPL_NSGETMODULE(docshell_provider, gDocShellModuleInfo)
-
+NS_IMPL_NSGETMODULE_WITH_CTOR_DTOR(docshell_provider, gDocShellModuleInfo,
+                                   Initialize, Shutdown)

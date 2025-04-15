@@ -45,7 +45,6 @@
 #include "nsIContent.h"
 
 class nsIScrollbarMediator;
-class StControlProcSingleton5;
 
 
 //
@@ -64,7 +63,9 @@ private:
 public:
                 nsNativeScrollbar();
   virtual       ~nsNativeScrollbar();
-  
+
+  NS_IMETHOD    Destroy();
+
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSINATIVESCROLLBAR
 
@@ -73,8 +74,10 @@ protected:
   // nsWindow Interface
   virtual PRBool DispatchMouseEvent(nsMouseEvent &aEvent);
   
-  ControlHandle GetControl() { return mControl; }
+  virtual ControlPartCode GetControlHiliteState();
 
+  ControlHandle   GetControl() { return mControl; }
+  
   void UpdateContentPosition(PRUint32 inNewPos);
 
 private:
@@ -89,6 +92,7 @@ private:
 
   nsIContent*       mContent;          // the content node that affects the scrollbar's value
   nsIScrollbarMediator* mMediator;     // for scrolling with outliners
+  nsISupports*      mScrollbar;        // for calling into the mediator
   
   PRUint32          mMaxValue;
   PRUint32          mVisibleImageSize;

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -99,13 +99,6 @@ NS_MSG_BASE PRBool    nsMsgI18Ncheck_data_in_charset_range(const char *charset, 
 NS_MSG_BASE const char *nsMsgI18NGetAcceptLanguage(void); 
 
 /**
- * Return charset name internally used in messsage compose.
- *
- * @return            Charset name.
- */
-NS_MSG_BASE const char *msgCompHeaderInternalCharset(void);
-
-/**
  * Return charset name of file system (OS dependent).
  *
  * @return            File system charset name.
@@ -120,10 +113,11 @@ NS_MSG_BASE const char * nsMsgI18NFileSystemCharset(void);
  * @param outString   [OUT] Converted output string.
  * @return            nsresult.
  */
-NS_MSG_BASE nsresult nsMsgI18NConvertFromUnicode(const nsAFlatCString& aCharset, 
-                                     const nsAFlatString& inString,
-                                     nsACString& outString);
-
+NS_MSG_BASE nsresult nsMsgI18NConvertFromUnicode(const char* aCharset,
+                                                 const nsAFlatString& inString,
+                                                 nsACString& outString,
+                                                 PRBool aIsCharsetCanonical =
+                                                        PR_FALSE);
 /**
  * Convert from charset to unicode.
  *
@@ -132,34 +126,11 @@ NS_MSG_BASE nsresult nsMsgI18NConvertFromUnicode(const nsAFlatCString& aCharset,
  * @param outString   [OUT] Output unicode string.
  * @return            nsresult.
  */
-NS_MSG_BASE nsresult nsMsgI18NConvertToUnicode(const nsAFlatCString& aCharset, 
-                                   const nsAFlatCString& inString, 
-                                   nsAString& outString);
-
-/**
- * Convert from unicode to target charset.
- *
- * @param charset     [IN] Charset name.
- * @param inString    [IN] Unicode string to convert.
- * @param outCString  [OUT] Output C string, need PR_FREE.
- * @return            nsresult.
- */
-NS_MSG_BASE nsresult ConvertFromUnicode(const char* aCharset, 
-                                   const nsString& inString,
-                                   char** outCString);
-
-/**
- * Convert from charset to unicode.
- *
- * @param charset     [IN] Charset name.
- * @param inCString   [IN] C string to convert.
- * @param outString   [OUT] Output unicode string.
- * @return            nsresult.
- */
-NS_MSG_BASE nsresult ConvertToUnicode(const char* aCharset, 
-                                 const char* inCString, 
-                                 nsString& outString);
-
+NS_MSG_BASE nsresult nsMsgI18NConvertToUnicode(const char* aCharset,
+                                               const nsAFlatCString& inString,
+                                               nsAString& outString,
+                                               PRBool aIsCharsetCanonical =
+                                                      PR_FALSE);
 /**
  * Parse for META charset.
  *
@@ -210,11 +181,59 @@ NS_MSG_BASE nsresult nsMsgI18NSaveAsCharset(const char* contentType, const char*
  */
 NS_MSG_BASE nsresult nsMsgI18NFormatNNTPXPATInNonRFC1522Format(const nsCString& aCharset, const nsString& inString, nsCString& outString);
 
-/**
- * convert a path in the native filesystem charset
- */
-NS_MSG_BASE
-void
-nsMsgGetNativePathString(const char *aPath, nsString& aResult);
+// inline forwarders to avoid littering with 'x-imap4-.....'
+inline nsresult CopyUTF16toMUTF7(const nsAFlatString &aSrc, nsACString& aDest)
+{
+    return nsMsgI18NConvertFromUnicode("x-imap4-modified-utf7", aSrc,
+                                       aDest, PR_TRUE);
+}
+
+inline nsresult CopyMUTF7toUTF16(const nsAFlatCString& aSrc, nsAString& aDest)
+{
+    return nsMsgI18NConvertToUnicode("x-imap4-modified-utf7", aSrc,
+                                     aDest, PR_TRUE);
+}
+
+inline nsresult ConvertToUnicode(const char* charset,
+                                 const nsAFlatCString &aSrc, nsAString& aDest)
+{
+    return nsMsgI18NConvertToUnicode(charset, aSrc, aDest);
+}
+
+inline nsresult ConvertToUnicode(const char* charset,
+                                 const char* aSrc, nsAString& aDest)
+{
+    return nsMsgI18NConvertToUnicode(charset, nsDependentCString(aSrc), aDest);
+}
+
+inline nsresult ConvertFromUnicode(const char* charset,
+                                   const nsAFlatString &aSrc, nsACString& aDest)
+{
+    return nsMsgI18NConvertFromUnicode(charset, aSrc, aDest);
+}
+
+// XXX to be replaced by NS_CopyNativeToUnicode
+inline nsresult nsMsgI18NCopyNativeToUTF16(const nsAFlatCString &aSrc,
+                                           nsAString &aDest)
+{
+  return nsMsgI18NConvertToUnicode(nsMsgI18NFileSystemCharset(), aSrc, aDest);
+}
+
+inline nsresult nsMsgI18NCopyNativeToUTF16(const char* aSrc, nsAString &aDest)
+{
+  return nsMsgI18NCopyNativeToUTF16(nsDependentCString(aSrc), aDest);
+}
+
+// XXX to be replaced by NS_CopyUnicodeToNative
+inline nsresult nsMsgI18NCopyUTF16ToNative(const nsAFlatString &aSrc,
+                                           nsACString &aDest)
+{
+  return nsMsgI18NConvertFromUnicode(nsMsgI18NFileSystemCharset(), aSrc, aDest);
+}
+inline nsresult nsMsgI18NCopyUTF16ToNative(const PRUnichar* aSrc,
+                                           nsACString &aDest)
+{
+  return nsMsgI18NCopyUTF16ToNative(nsDependentString(aSrc), aDest);
+}
 
 #endif /* _nsMsgI18N_H_ */

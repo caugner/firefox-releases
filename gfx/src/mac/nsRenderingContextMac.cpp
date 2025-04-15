@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,30 +14,31 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
- *
+ *   Mark Mentovai <mark@moxienet.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsIInterfaceRequestorUtils.h" 
+#include "nsIServiceManager.h"
 #include "nsRenderingContextMac.h"
 #include "nsDeviceContextMac.h"
 #include "nsFontMetricsMac.h"
@@ -51,6 +52,10 @@
 #include "nsGfxCIID.h"
 #include "nsGfxUtils.h"
 #include "nsCOMPtr.h"
+
+#ifdef MOZ_WIDGET_COCOA
+#include "nsIQDFlushManager.h"
+#endif
 
 #include "plhash.h"
 
@@ -71,6 +76,10 @@
 nsRenderingContextMac::nsRenderingContextMac()
 : mP2T(1.0f)
 , mContext(nsnull)
+#ifndef MOZ_WIDGET_COCOA
+, mSavePort(nsnull)
+, mSaveDevice(nsnull)
+#endif /* ! MOZ_WIDGET_COCOA */
 , mCurrentSurface(nsnull)
 , mPort(nsnull)
 , mGS(nsnull)
@@ -88,6 +97,13 @@ nsRenderingContextMac::~nsRenderingContextMac()
 {
 	// restore stuff
 	NS_IF_RELEASE(mContext);
+
+#ifndef MOZ_WIDGET_COCOA
+  if (mSavePort) {
+    ::SetGWorld(mSavePort, mSaveDevice);
+    ::SetOrigin(mSavePortRect.left, mSavePortRect.top);
+  }
+#endif /* ! MOZ_WIDGET_COCOA */
 
 	// release surfaces
 	NS_IF_RELEASE(mFrontSurface);
@@ -147,7 +163,7 @@ NS_IMETHODIMP nsRenderingContextMac::Init(nsIDeviceContext* aContext, nsIWidget*
 //------------------------------------------------------------------------
 
 // should only be called for an offscreen drawing surface, without an offset or clip region
-NS_IMETHODIMP nsRenderingContextMac::Init(nsIDeviceContext* aContext, nsDrawingSurface aSurface)
+NS_IMETHODIMP nsRenderingContextMac::Init(nsIDeviceContext* aContext, nsIDrawingSurface* aSurface)
 {
 	// make sure all allocations in the constructor succeeded.
 	if (nsnull == mFrontSurface)
@@ -191,6 +207,15 @@ void nsRenderingContextMac::SelectDrawingSurface(nsDrawingSurfaceMac* aSurface, 
 		return;
 
   NS_ASSERTION(ValidateDrawingState(), "Bad drawing state");
+
+#ifndef MOZ_WIDGET_COCOA
+  if (!mSavePort) {
+    ::GetGWorld(&mSavePort, &mSaveDevice);
+    if (mSavePort) {
+      ::GetPortBounds(mSavePort, &mSavePortRect);
+    }
+  }
+#endif /* ! MOZ_WIDGET_COCOA */
 	
 	// if surface is changing, be extra conservative about graphic state changes.
 	if (mCurrentSurface != aSurface)
@@ -233,7 +258,6 @@ void nsRenderingContextMac::SelectDrawingSurface(nsDrawingSurfaceMac* aSurface, 
 	if (!mContext) return;
 	
 	// GS and context initializations
-	((nsDeviceContextMac *)mContext)->SetDrawingSurface(mPort);
 #if 0
 	((nsDeviceContextMac *)mContext)->InstallColormap();
 #endif
@@ -315,7 +339,7 @@ NS_IMETHODIMP nsRenderingContextMac::PushState(void)
 
 //------------------------------------------------------------------------
 
-NS_IMETHODIMP nsRenderingContextMac::PopState(PRBool &aClipEmpty)
+NS_IMETHODIMP nsRenderingContextMac::PopState(void)
 {
 	NS_ASSERTION(ValidateDrawingState(), "Bad drawing state");
 
@@ -343,8 +367,6 @@ NS_IMETHODIMP nsRenderingContextMac::PopState(PRBool &aClipEmpty)
 		mTranMatrix = &(mGS->mTMatrix);
 	}
 
-	aClipEmpty = (::EmptyRgn(mGS->mClipRegion));
-
 	return NS_OK;
 }
 
@@ -367,8 +389,7 @@ NS_IMETHODIMP nsRenderingContextMac::LockDrawingSurface(PRInt32 aX, PRInt32 aY,
 
 NS_IMETHODIMP nsRenderingContextMac::UnlockDrawingSurface(void)
 {
-  PRBool  clipstate;
-  PopState(clipstate);
+  PopState();
 
   mCurrentSurface->Unlock();
   
@@ -378,7 +399,7 @@ NS_IMETHODIMP nsRenderingContextMac::UnlockDrawingSurface(void)
 //------------------------------------------------------------------------
 
 
-NS_IMETHODIMP nsRenderingContextMac::SelectOffScreenDrawingSurface(nsDrawingSurface aSurface)
+NS_IMETHODIMP nsRenderingContextMac::SelectOffScreenDrawingSurface(nsIDrawingSurface* aSurface)
 {  
 	nsDrawingSurfaceMac* surface = static_cast<nsDrawingSurfaceMac*>(aSurface);
 
@@ -392,7 +413,7 @@ NS_IMETHODIMP nsRenderingContextMac::SelectOffScreenDrawingSurface(nsDrawingSurf
 
 //------------------------------------------------------------------------
 
-NS_IMETHODIMP nsRenderingContextMac::GetDrawingSurface(nsDrawingSurface *aSurface)
+NS_IMETHODIMP nsRenderingContextMac::GetDrawingSurface(nsIDrawingSurface* *aSurface)
 {  
 	*aSurface = mCurrentSurface;
 	// on Mac, select it too, to ensure that the port gets set correct for
@@ -403,7 +424,7 @@ NS_IMETHODIMP nsRenderingContextMac::GetDrawingSurface(nsDrawingSurface *aSurfac
 
 //------------------------------------------------------------------------
 
-NS_IMETHODIMP nsRenderingContextMac::CopyOffScreenBits(nsDrawingSurface aSrcSurf,
+NS_IMETHODIMP nsRenderingContextMac::CopyOffScreenBits(nsIDrawingSurface* aSrcSurf,
                                                          PRInt32 aSrcX, PRInt32 aSrcY,
                                                          const nsRect &aDestBounds,
                                                          PRUint32 aCopyFlags)
@@ -497,7 +518,7 @@ NS_IMETHODIMP nsRenderingContextMac::CopyOffScreenBits(nsDrawingSurface aSrcSurf
 
 //------------------------------------------------------------------------
 
-NS_IMETHODIMP nsRenderingContextMac::CreateDrawingSurface(const nsRect& aBounds, PRUint32 aSurfFlags, nsDrawingSurface &aSurface)
+NS_IMETHODIMP nsRenderingContextMac::CreateDrawingSurface(const nsRect& aBounds, PRUint32 aSurfFlags, nsIDrawingSurface* &aSurface)
 {
 	aSurface = nsnull;
 
@@ -526,7 +547,7 @@ NS_IMETHODIMP nsRenderingContextMac::CreateDrawingSurface(const nsRect& aBounds,
 
 //------------------------------------------------------------------------
 
-NS_IMETHODIMP nsRenderingContextMac::DestroyDrawingSurface(nsDrawingSurface aSurface)
+NS_IMETHODIMP nsRenderingContextMac::DestroyDrawingSurface(nsIDrawingSurface* aSurface)
 {
 	if (!aSurface)
 		return NS_ERROR_FAILURE;
@@ -589,7 +610,7 @@ NS_IMETHODIMP nsRenderingContextMac::IsVisibleRect(const nsRect& aRect, PRBool &
 
 //------------------------------------------------------------------------
 
-NS_IMETHODIMP nsRenderingContextMac::SetClipRect(const nsRect& aRect, nsClipCombine aCombine, PRBool &aClipEmpty)
+NS_IMETHODIMP nsRenderingContextMac::SetClipRect(const nsRect& aRect, nsClipCombine aCombine)
 {
 	nsRect  trect = aRect;
 
@@ -598,7 +619,7 @@ NS_IMETHODIMP nsRenderingContextMac::SetClipRect(const nsRect& aRect, nsClipComb
 	Rect macRect;
 	::SetRect(&macRect, trect.x, trect.y, trect.x + trect.width, trect.y + trect.height);
 
-	RgnHandle rectRgn = sNativeRegionPool.GetNewRegion();
+	StRegionFromPool rectRgn;
 	RgnHandle clipRgn = mGS->mClipRegion;
 	if (!clipRgn || !rectRgn)
 		return NS_ERROR_OUT_OF_MEMORY;
@@ -623,7 +644,6 @@ NS_IMETHODIMP nsRenderingContextMac::SetClipRect(const nsRect& aRect, nsClipComb
 		::SectRgn(rectRgn, mGS->mMainRegion, clipRgn);
 		break;
 	}
-	sNativeRegionPool.ReleaseRegion(rectRgn);
 
 	{
 		StPortSetter setter(mPort);
@@ -631,7 +651,6 @@ NS_IMETHODIMP nsRenderingContextMac::SetClipRect(const nsRect& aRect, nsClipComb
 	}
 
 	mGS->mClipRegion = clipRgn;
-	aClipEmpty = ::EmptyRgn(clipRgn);
 	
 	// note that the clipping changed.
 	mChanges |= kClippingChanged;
@@ -659,7 +678,7 @@ NS_IMETHODIMP nsRenderingContextMac::GetClipRect(nsRect &aRect, PRBool &aClipVal
 
 //------------------------------------------------------------------------
 
-NS_IMETHODIMP nsRenderingContextMac::SetClipRegion(const nsIRegion& aRegion, nsClipCombine aCombine, PRBool &aClipEmpty)
+NS_IMETHODIMP nsRenderingContextMac::SetClipRegion(const nsIRegion& aRegion, nsClipCombine aCombine)
 {
 	RgnHandle regionH;
 	aRegion.GetNativeRegion((void*&)regionH);
@@ -693,7 +712,6 @@ NS_IMETHODIMP nsRenderingContextMac::SetClipRegion(const nsIRegion& aRegion, nsC
 	}
 
 	mGS->mClipRegion = clipRgn;
-	aClipEmpty = ::EmptyRgn(clipRgn);
 
 	// note that the clipping changed.
 	mChanges |= kClippingChanged;
@@ -878,34 +896,10 @@ NS_IMETHODIMP nsRenderingContextMac::DrawLine(nscoord aX0, nscoord aY0, nscoord 
 
 //------------------------------------------------------------------------
 
-NS_IMETHODIMP nsRenderingContextMac::DrawStdLine(nscoord aX0, nscoord aY0, nscoord aX1, nscoord aY1)
-{
-	SetupPortState();
-
-	// make the line one pixel shorter to match other platforms
-	nscoord diffX = aX1 - aX0;
-	if (diffX)
-		diffX -= (diffX > 0 ? 1 : -1);
-
-	nscoord diffY = aY1 - aY0;
-	if (diffY)
-		diffY -= (diffY > 0 ? 1 : -1);
-
-	// draw line
-	::MoveTo(aX0, aY0);
-	::Line(diffX, diffY);
-
-	return NS_OK;
-}
-
-
-//------------------------------------------------------------------------
-
 NS_IMETHODIMP nsRenderingContextMac::DrawPolyline(const nsPoint aPoints[], PRInt32 aNumPoints)
 {
 	SetupPortState();
 
-	PRUint32   i;
 	PRInt32    x,y;
 
 	x = aPoints[0].x;
@@ -913,7 +907,8 @@ NS_IMETHODIMP nsRenderingContextMac::DrawPolyline(const nsPoint aPoints[], PRInt
 	mGS->mTMatrix.TransformCoord((PRInt32*)&x,(PRInt32*)&y);
 	::MoveTo(x,y);
 
-	for (i = 1; i < aNumPoints; i++){
+	for (PRInt32 i = 1; i < aNumPoints; i++)
+	{
 		x = aPoints[i].x;
 		y = aPoints[i].y;
 
@@ -1005,7 +1000,6 @@ NS_IMETHODIMP nsRenderingContextMac::DrawPolygon(const nsPoint aPoints[], PRInt3
 {
 	SetupPortState();
 
-	PRUint32   i;
 	PolyHandle thepoly;
 	PRInt32    x,y;
 
@@ -1019,7 +1013,7 @@ NS_IMETHODIMP nsRenderingContextMac::DrawPolygon(const nsPoint aPoints[], PRInt3
 	mGS->mTMatrix.TransformCoord((PRInt32*)&x,(PRInt32*)&y);
 	::MoveTo(x,y);
 
-	for (i = 1; i < aNumPoints; i++) {
+	for (PRInt32 i = 1; i < aNumPoints; i++) {
 		x = aPoints[i].x;
 		y = aPoints[i].y;
 		
@@ -1041,7 +1035,6 @@ NS_IMETHODIMP nsRenderingContextMac::FillPolygon(const nsPoint aPoints[], PRInt3
 {
 	SetupPortState();
 
-	PRUint32   i;
 	PolyHandle thepoly;
 	PRInt32    x,y;
 
@@ -1055,7 +1048,7 @@ NS_IMETHODIMP nsRenderingContextMac::FillPolygon(const nsPoint aPoints[], PRInt3
 	mGS->mTMatrix.TransformCoord((PRInt32*)&x,(PRInt32*)&y);
 	::MoveTo(x,y);
 
-	for (i = 1; i < aNumPoints; i++) {
+	for (PRInt32 i = 1; i < aNumPoints; i++) {
 		x = aPoints[i].x;
 		y = aPoints[i].y;
 		mGS->mTMatrix.TransformCoord((PRInt32*)&x,(PRInt32*)&y);
@@ -1150,7 +1143,7 @@ NS_IMETHODIMP nsRenderingContextMac::DrawArc(nscoord aX, nscoord aY, nscoord aWi
 
 	mGS->mTMatrix.TransformCoord(&x,&y,&w,&h);
 	::SetRect(&therect, pinToShort(x), pinToShort(y), pinToShort(x + w), pinToShort(y + h));
-	::FrameArc(&therect,aStartAngle,aEndAngle);
+	::FrameArc(&therect, (short)aStartAngle, (short)aEndAngle);
 
 	return NS_OK;
 }
@@ -1180,7 +1173,7 @@ NS_IMETHODIMP nsRenderingContextMac::FillArc(nscoord aX, nscoord aY, nscoord aWi
 
 	mGS->mTMatrix.TransformCoord(&x,&y,&w,&h);
 	::SetRect(&therect, pinToShort(x), pinToShort(y), pinToShort(x + w), pinToShort(y + h));
-	::PaintArc(&therect,aStartAngle,aEndAngle);
+	::PaintArc(&therect, (short)aStartAngle, (short)aEndAngle);
 
 	return NS_OK;
 }
@@ -1329,7 +1322,7 @@ NS_IMETHODIMP nsRenderingContextMac::DrawString(const char *aString, PRUint32 aL
 		{
 			mGS->mTMatrix.ScaleXCoords(aSpacing, aLength, spacing);
 			PRInt32 currentX = x;
-			for (PRInt32 i = 0; i < aLength; i++)
+			for (PRUint32 i = 0; i < aLength; i++)
 			{
 				::DrawChar(aString[i]);
 				currentX += spacing[i];
@@ -1425,25 +1418,30 @@ NS_IMETHODIMP
 nsRenderingContextMac::FlushRect(nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight)
 {
 #ifdef MOZ_WIDGET_COCOA
-    if (mPort) {
-        SetupPortState();
+  if (mPort) {
+    SetupPortState();
 
-        nscoord x,y,w,h;
-        Rect	therect;
-    
-        x = aX;
-        y = aY;
-        w = aWidth;
-        h = aHeight;
-    
-        mGS->mTMatrix.TransformCoord(&x, &y, &w, &h);
-        RgnHandle rgn = ::NewRgn();
-        ::SetRectRgn(rgn, pinToShort(x), pinToShort(y), pinToShort(x + w), pinToShort(y + h));
-        ::QDFlushPortBuffer(mPort, rgn);
-        ::DisposeRgn(rgn);
-    }
+    nscoord x,y,w,h;
+
+    x = aX;
+    y = aY;
+    w = aWidth;
+    h = aHeight;
+
+    mGS->mTMatrix.TransformCoord(&x, &y, &w, &h);
+
+    StRegionFromPool rgn;
+    if (!rgn) return NS_ERROR_OUT_OF_MEMORY;
+
+    ::SetRectRgn(rgn, pinToShort(x), pinToShort(y), pinToShort(x + w), pinToShort(y + h));
+
+    nsCOMPtr<nsIQDFlushManager> qdFlushManager =
+     do_GetService("@mozilla.org/gfx/qdflushmanager;1");
+    if (qdFlushManager)
+      qdFlushManager->FlushPortBuffer(mPort, rgn);
+  }
 #endif
-    return NS_OK;
+  return NS_OK;
 }
 
 #ifdef MOZ_MATHML
@@ -1488,6 +1486,22 @@ nsRenderingContextMac::SetRightToLeftText(PRBool aIsRTL)
 	return NS_OK;
 }
 
+NS_IMETHODIMP
+nsRenderingContextMac::DrawImage(imgIContainer *aImage, const nsRect & aSrcRect, const nsRect & aDestRect)
+{
+  SetupPortState();
+  return nsRenderingContextImpl::DrawImage(aImage, aSrcRect, aDestRect);
+}
+
+NS_IMETHODIMP
+nsRenderingContextMac::DrawTile(imgIContainer *aImage,
+                    nscoord aXImageStart, nscoord aYImageStart,
+                    const nsRect * aTargetRect)
+{
+  SetupPortState();
+  return nsRenderingContextImpl::DrawTile(aImage, aXImageStart, aYImageStart, aTargetRect);
+}
+
 #pragma mark -
 
 // override to set the port back to the window port
@@ -1503,38 +1517,21 @@ nsRenderingContextMac::ReleaseBackbuffer(void)
 NS_IMETHODIMP 
 nsRenderingContextMac::UseBackbuffer(PRBool* aUseBackbuffer)
 {
-  *aUseBackbuffer = !OnMacOSX();
+  *aUseBackbuffer = PR_FALSE;
   return NS_OK;
 }
 
 
-//
-// Return true if we are on Mac OS X, caching the result after the first call
-//
 PRBool
-nsRenderingContextMac::OnMacOSX()
-{
-  static PRBool gInitVer = PR_FALSE;
-  static PRBool gOnMacOSX = PR_FALSE;
-  if(! gInitVer) {
-    long version;
-    OSErr err = ::Gestalt(gestaltSystemVersion, &version);
-    gOnMacOSX = (err == noErr && version >= 0x00001000);
-    gInitVer = PR_TRUE;
-  }
-  return gOnMacOSX;
-}
-
-PRBool
-nsRenderingContextMac::OnJaguar()
+nsRenderingContextMac::OnTigerOrLater()
 {
   static PRBool sInitVer = PR_FALSE;
-  static PRBool sOnJaguar = PR_FALSE;
+  static PRBool sOnTigerOrLater = PR_FALSE;
   if (!sInitVer) {
     long version;
     OSErr err = ::Gestalt(gestaltSystemVersion, &version);
-    sOnJaguar = (err == noErr && version >= 0x00001020);
+    sOnTigerOrLater = ((err == noErr) && (version >= 0x00001040));
     sInitVer = PR_TRUE;
   }
-  return sOnJaguar;
+  return sOnTigerOrLater;
 }

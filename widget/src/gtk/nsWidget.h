@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -124,6 +124,8 @@ public:
   virtual PRBool OnResize(nsRect &aRect);
   virtual PRBool OnMove(PRInt32 aX, PRInt32 aY);
 
+  NS_IMETHOD SetZIndex(PRInt32 aZIndex);
+
   nsIFontMetrics *GetFont(void);
   NS_IMETHOD SetFont(const nsFont &aFont);
 
@@ -145,7 +147,7 @@ public:
   NS_IMETHOD SetPreferredSize(PRInt32 aWidth, PRInt32 aHeight);
 
   // Use this to set the name of a widget for normal widgets.. not the same as the nsWindow version
-  NS_IMETHOD SetTitle(const nsString& aTitle);
+  NS_IMETHOD SetTitle(const nsAString& aTitle);
 
 
   virtual void ConvertToDeviceCoordinates(nscoord &aX, nscoord &aY);
@@ -170,6 +172,9 @@ public:
 
   // nsIKBStateControl
   NS_IMETHOD ResetInputState();
+  NS_IMETHOD SetIMEOpenState(PRBool aState);
+  NS_IMETHOD GetIMEOpenState(PRBool* aState);
+  NS_IMETHOD CancelIMEComposition();
 
   void InitEvent(nsGUIEvent& event, nsPoint* aPoint = nsnull);
     
@@ -194,6 +199,9 @@ public:
 
   // Return the Gdk window used for rendering
   virtual GdkWindow * GetRenderWindow(GtkObject * aGtkWidget);
+  // Return the Gdk window used for positioning, raising and lowering
+  virtual GdkWindow* GetLayeringWindow();
+
 
   // get the toplevel window for this widget
   virtual GtkWindow *GetTopLevelWindow(void);
@@ -316,9 +324,13 @@ public:
   // This reduces problems with 16-bit coordinates wrapping.
   virtual void ResetInternalVisibility();
 
+  // Reestablish the correct Z-ordering of this widget among
+  // its siblings
+  void ResetZOrder();
+
 protected:
-  // override this method to do whatever you have to do to make this widget
-  // visible or invisibile --- i.e., the real work of Show()
+  // override this method to do whatever you have to do to make this
+  // widget visible or invisibile --- i.e., the real work of Show()
   virtual void SetInternalVisibility(PRBool aVisible);
 
   //////////////////////////////////////////////////////////////////

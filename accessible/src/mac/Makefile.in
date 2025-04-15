@@ -43,7 +43,10 @@ include $(DEPTH)/config/autoconf.mk
 
 MODULE = accessibility
 LIBRARY_NAME = accessibility_toolkit_s
+LIBXUL_LIBRARY = 1
+
 REQUIRES	= content \
+		  docshell \
 		  dom \
 		  editor \
 		  gfx \
@@ -69,6 +72,9 @@ EXPORTS = \
   nsAccessibleWrap.h \
   nsDocAccessibleWrap.h \
   nsRootAccessibleWrap.h \
+  nsHTMLFormControlAccessibleWrap.h \
+  nsXULMenuAccessibleWrap.h \
+  nsXULTreeAccessibleWrap.h \
   $(NULL)
 
 # we don't want the shared lib, but we want to force the creation of a static lib.

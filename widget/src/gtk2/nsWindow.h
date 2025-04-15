@@ -14,9 +14,9 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code mozilla.org code.
+ * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code Christopher Blizzard
+ * The Initial Developer of the Original Code is Christopher Blizzard
  * <blizzard@mozilla.org>.  Portions created by the Initial Developer
  * are Copyright (C) 2001 the Initial Developer. All Rights Reserved.
  *
@@ -87,6 +87,7 @@ public:
                               nsIToolkit       *aToolkit,
                               nsWidgetInitData *aInitData);
     NS_IMETHOD         Destroy(void);
+    NS_IMETHOD         SetParent(nsIWidget* aNewParent);
     NS_IMETHOD         SetModal(PRBool aModal);
     NS_IMETHOD         IsVisible(PRBool & aState);
     NS_IMETHOD         ConstrainPosition(PRBool aAllowSlop,
@@ -97,6 +98,7 @@ public:
     NS_IMETHOD         PlaceBehind(nsTopLevelWidgetZPlacement  aPlacement,
                                    nsIWidget                  *aWidget,
                                    PRBool                      aActivate);
+    NS_IMETHOD         SetZIndex(PRInt32 aZIndex);
     NS_IMETHOD         SetSizeMode(PRInt32 aMode);
     NS_IMETHOD         Enable(PRBool aState);
     NS_IMETHOD         SetFocus(PRBool aRaise = PR_FALSE);
@@ -106,6 +108,8 @@ public:
     virtual            nsIFontMetrics* GetFont(void);
     NS_IMETHOD         SetFont(const nsFont &aFont);
     NS_IMETHOD         SetCursor(nsCursor aCursor);
+    NS_IMETHOD         SetCursor(imgIContainer* aCursor,
+                                 PRUint32 aHotspotX, PRUint32 aHotspotY);
     NS_IMETHOD         Validate();
     NS_IMETHOD         Invalidate(PRBool aIsSynchronous);
     NS_IMETHOD         Invalidate(const nsRect &aRect,
@@ -124,7 +128,7 @@ public:
                                   PRInt32  aDy);
     virtual void*      GetNativeData(PRUint32 aDataType);
     NS_IMETHOD         SetBorderStyle(nsBorderStyle aBorderStyle);
-    NS_IMETHOD         SetTitle(const nsString& aTitle);
+    NS_IMETHOD         SetTitle(const nsAString& aTitle);
     NS_IMETHOD         SetIcon(const nsAString& aIconSpec);
     NS_IMETHOD         SetMenuBar(nsIMenuBar * aMenuBar);
     NS_IMETHOD         ShowMenuBar(PRBool aShow);
@@ -143,6 +147,7 @@ public:
                                            PRBool aDoCapture,
                                            PRBool aConsumeRollupEvent);
     NS_IMETHOD         GetAttention(PRInt32 aCycleCount);
+    NS_IMETHOD         MakeFullScreen(PRBool aFullScreen);
     NS_IMETHOD         HideWindowChrome(PRBool aShouldHide);
 
     // utility methods
@@ -246,6 +251,8 @@ public:
     void               SetNonXEmbedPluginFocus(void);
     void               LoseNonXEmbedPluginFocus(void);
 
+    void               ThemeChanged(void);
+
     Window             mOldFocusWindow;
 
     static guint32     mLastButtonPressTime;
@@ -258,6 +265,7 @@ public:
     void               IMEComposeText    (const PRUnichar *aText,
                                           const PRInt32 aLen,
                                           const gchar *aPreeditString,
+                                          const gint aCursorPos,
                                           const PangoAttrList *aFeedback);
     void               IMEComposeEnd     (void);
     GtkIMContext*      IMEGetContext     (void);
@@ -267,6 +275,14 @@ public:
     GtkIMContext       *mIMContext;
     PRBool             mComposingText;
 
+#endif
+
+   void                ResizeTransparencyBitmap(PRInt32 aNewWidth, PRInt32 aNewHeight);
+   void                ApplyTransparencyBitmap();
+#ifdef MOZ_XUL
+   NS_IMETHOD          SetWindowTranslucency(PRBool aTransparent);
+   NS_IMETHOD          GetWindowTranslucency(PRBool& aTransparent);
+   NS_IMETHOD          UpdateTranslucentWindowAlpha(const nsRect& aRect, PRUint8* aAlphas);
 #endif
 
 private:
@@ -306,6 +322,13 @@ private:
     // The cursor cache
     static GdkCursor   *gsGtkCursorCache[eCursorCount];
 
+    // Transparency
+    PRBool       mIsTranslucent;
+    // This bitmap tracks which pixels are transparent. We don't support
+    // full translucency at this time; each pixel is either fully opaque
+    // or fully transparent.
+    gchar*       mTransparencyBitmap;
+ 
     // all of our DND stuff
     // this is the last window that had a drag event happen on it.
     static nsWindow    *mLastDragMotionWindow;

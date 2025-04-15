@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,27 +14,27 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Crocodile Clips Ltd..
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
+ *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 #include <windows.h>
 
@@ -50,13 +50,15 @@ using namespace Gdiplus;
 #include "nsISVGGDIPlusCanvas.h"
 #include "nsIDOMSVGMatrix.h"
 #include "nsSVGGDIPlusRegion.h"
+#include "nsISVGGDIPlusRegion.h"
 #include "nsISVGRendererRegion.h"
 #include "nsISVGGlyphGeometrySource.h"
 #include "nsPromiseFlatString.h"
 #include "nsSVGGDIPlusGlyphMetrics.h"
 #include "nsISVGGDIPlusGlyphMetrics.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsMemory.h"
+#include "nsSVGGDIPlusGradient.h"
 
 /**
  * \addtogroup gdiplus_renderer GDI+ Rendering Engine
@@ -213,6 +215,7 @@ class nsSVGGDIPlusGlyphGeometry : public nsISVGRendererGlyphGeometry
 protected:
   friend nsresult NS_NewSVGGDIPlusGlyphGeometry(nsISVGRendererGlyphGeometry **result,
                                                 nsISVGGlyphGeometrySource *src);
+  friend void gradCBPath(Graphics *gfx, Brush *brush, void *cbStruct);
 
   nsSVGGDIPlusGlyphGeometry();
   ~nsSVGGDIPlusGlyphGeometry();
@@ -224,9 +227,10 @@ public:
 
   // nsISVGRendererGlyphGeometry interface:
   NS_DECL_NSISVGRENDERERGLYPHGEOMETRY
-  
+
 protected:
-  void DrawFill(Graphics* g, Brush& b, const WCHAR* start, INT length, float x, float y);
+  void DrawFill(Graphics* g, Brush& b, nsISVGGradient *aGrad,
+                const WCHAR* start, INT length, float x, float y);
   void GetGlobalTransform(Matrix *matrix);
   void UpdateStroke();
   void UpdateRegions(); // update covered region & hit-test region
@@ -298,6 +302,12 @@ NS_INTERFACE_MAP_END
 //----------------------------------------------------------------------
 // nsISVGRendererGlyphGeometry methods:
 
+static void gradCBPath(Graphics *gfx, Brush *brush, void *cbStruct)
+{
+  nsSVGGDIPlusGlyphGeometry *geom = (nsSVGGDIPlusGlyphGeometry *)cbStruct;
+  gfx->FillPath(brush, geom->mStroke);
+}
+
 /** Implements void render(in nsISVGRendererCanvas canvas); */
 NS_IMETHODIMP
 nsSVGGDIPlusGlyphGeometry::Render(nsISVGRendererCanvas *canvas)
@@ -308,20 +318,72 @@ nsSVGGDIPlusGlyphGeometry::Render(nsISVGRendererCanvas *canvas)
     Update(nsISVGGeometrySource::UPDATEMASK_ALL, getter_AddRefs(region));
   }
 
-  PRBool hasFill = PR_FALSE;
-  {
-    PRUint16 filltype;
-    mSource->GetFillPaintType(&filltype);
-    if (filltype == nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR)
-      hasFill = PR_TRUE;
+  nsCOMPtr<nsISVGGDIPlusCanvas> gdiplusCanvas = do_QueryInterface(canvas);
+  NS_ASSERTION(gdiplusCanvas, "wrong svg canvas for geometry!");
+  if (!gdiplusCanvas) return NS_ERROR_FAILURE;
+
+  PRUint16 canvasRenderMode;
+  canvas->GetRenderMode(&canvasRenderMode);
+  if (canvasRenderMode == nsISVGRendererCanvas::SVG_RENDER_MODE_CLIP) {
+    nsCOMPtr<nsISVGGDIPlusGlyphMetrics> metrics;
+    {
+      nsCOMPtr<nsISVGRendererGlyphMetrics> xpmetrics;
+      mSource->GetMetrics(getter_AddRefs(xpmetrics));
+      metrics = do_QueryInterface(xpmetrics);
+      NS_ASSERTION(metrics, "wrong metrics object!");
+      if (!metrics)
+        return NS_ERROR_FAILURE;
+    }
+  
+    FontFamily fontFamily;
+    metrics->GetFont()->GetFamily(&fontFamily);
+  
+    nsAutoString text;
+    mSource->GetCharacterData(text);
+
+    float x,y;
+    mSource->GetX(&x);
+    mSource->GetY(&y);
+  
+    GraphicsPath path;
+    path.AddString(PromiseFlatString(text).get(), -1,
+                   &fontFamily, metrics->GetFont()->GetStyle(),
+                   metrics->GetFont()->GetSize(),
+                   PointF(x,y), StringFormat::GenericTypographic());
+
+    PRUint16 rule;
+    mSource->GetClipRule(&rule);
+    if (rule == nsISVGGeometrySource::FILL_RULE_EVENODD)
+      path.SetFillMode(FillModeAlternate);
+    else
+      path.SetFillMode(FillModeWinding);
+
+    Region *region = gdiplusCanvas->GetClipRegion();
+    if (region)
+      region->Union(&path);
+    return NS_OK;
   }
 
-  PRBool hasStroke = PR_FALSE;
-  {
-    PRUint16 stroketype;
-    mSource->GetStrokePaintType(&stroketype);
-    if (stroketype == nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR && mStroke)
-      hasStroke = PR_TRUE;
+  PRBool hasFill = PR_FALSE, hasStroke = PR_FALSE;
+  PRUint16 filltype, stroketype;
+  PRUint16 fillServerType = 0, strokeServerType = 0;
+
+  mSource->GetFillPaintType(&filltype);
+  if (filltype != nsISVGGeometrySource::PAINT_TYPE_NONE)
+    hasFill = PR_TRUE;
+
+  if (filltype == nsISVGGeometrySource::PAINT_TYPE_SERVER) {
+    if(NS_FAILED(mSource->GetFillPaintServerType(&fillServerType)))
+      hasFill = PR_FALSE;
+  }
+
+  mSource->GetStrokePaintType(&stroketype);
+  if (stroketype != nsISVGGeometrySource::PAINT_TYPE_NONE && mStroke)
+    hasStroke = PR_TRUE;
+
+  if (stroketype == nsISVGGeometrySource::PAINT_TYPE_SERVER) {
+    if(NS_FAILED(mSource->GetStrokePaintServerType(&strokeServerType)))
+      hasStroke = PR_FALSE;
   }
 
   if (!hasFill && !hasStroke) return NS_OK; // nothing to paint
@@ -329,9 +391,6 @@ nsSVGGDIPlusGlyphGeometry::Render(nsISVGRendererCanvas *canvas)
   SectionIterator sections(mSource);
   if (sections.IsEnd()) return NS_OK; // nothing to paint
 
-  nsCOMPtr<nsISVGGDIPlusCanvas> gdiplusCanvas = do_QueryInterface(canvas);
-  NS_ASSERTION(gdiplusCanvas, "wrong svg canvas for geometry!");
-  if (!gdiplusCanvas) return NS_ERROR_FAILURE;
   gdiplusCanvas->GetGraphics()->SetSmoothingMode(SmoothingModeAntiAlias);
   //gdiplusCanvas->GetGraphics()->SetPixelOffsetMode(PixelOffsetModeHalf);
   
@@ -373,7 +432,14 @@ nsSVGGDIPlusGlyphGeometry::Render(nsISVGRendererCanvas *canvas)
 
       SolidBrush brush(Color((BYTE)(opacity*255),NS_GET_R(color),NS_GET_G(color),NS_GET_B(color)));
 
-      DrawFill(gdiplusCanvas->GetGraphics(), brush,
+      nsCOMPtr<nsISVGGradient> aGrad;
+      if (filltype != nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR) {
+        if (fillServerType == nsISVGGeometrySource::PAINT_TYPE_GRADIENT) {
+          mSource->GetFillGradient(getter_AddRefs(aGrad));
+        }
+      }
+
+      DrawFill(gdiplusCanvas->GetGraphics(), brush, aGrad,
                sections.GetSectionPtr(), sections.GetLength(), sections.GetAdvance()+x, y);
     }
 
@@ -387,11 +453,30 @@ nsSVGGDIPlusGlyphGeometry::Render(nsISVGRendererCanvas *canvas)
       float opacity;
       mSource->GetStrokeOpacity(&opacity);
 
+      nsCOMPtr<nsISVGGradient> aGrad;
+      if (stroketype != nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR) {
+        if (strokeServerType == nsISVGGeometrySource::PAINT_TYPE_GRADIENT) {
+          mSource->GetStrokeGradient(getter_AddRefs(aGrad));
+        }
+      }
+
       SolidBrush brush(Color((BYTE)(opacity*255), NS_GET_R(color), NS_GET_G(color), NS_GET_B(color)));
 
       if (sections.IsOnlySection() && !sections.IsHighlighted()) {
         // this is the 'normal' case
-        gdiplusCanvas->GetGraphics()->FillPath(&brush, mStroke);
+        if (stroketype == nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR) {
+          gdiplusCanvas->GetGraphics()->FillPath(&brush, mStroke);
+        } else if (strokeServerType == nsISVGGeometrySource::PAINT_TYPE_GRADIENT) {
+          nsCOMPtr<nsISVGRendererRegion> region;
+          GetCoveredRegion(getter_AddRefs(region));
+          nsCOMPtr<nsISVGGDIPlusRegion> aRegion = do_QueryInterface(region);
+          nsCOMPtr<nsIDOMSVGMatrix> ctm;
+          mSource->GetCanvasTM(getter_AddRefs(ctm));
+          
+          GDIPlusGradient(aRegion, aGrad, ctm,
+                          gdiplusCanvas->GetGraphics(), mSource,
+                          gradCBPath, this);
+        }
       }
       else {
         // There is more than one section, so we need to clip our cached mStroke
@@ -399,7 +484,7 @@ nsSVGGDIPlusGlyphGeometry::Render(nsISVGRendererCanvas *canvas)
         gdiplusCanvas->GetGraphics()->FillPath(&brush, mStroke);
         // ... and paint a fill on top if the section is highlighted:
         if (sections.IsHighlighted())
-          DrawFill(gdiplusCanvas->GetGraphics(), brush,
+          DrawFill(gdiplusCanvas->GetGraphics(), brush, aGrad,
                    sections.GetSectionPtr(), sections.GetLength(), sections.GetAdvance()+x, y);
       }
       
@@ -430,13 +515,13 @@ nsSVGGDIPlusGlyphGeometry::Update(PRUint32 updatemask, nsISVGRendererRegion **_r
     nsISVGGeometrySource::UPDATEMASK_STROKE_MITERLIMIT  |
     nsISVGGeometrySource::UPDATEMASK_STROKE_DASH_ARRAY  |
     nsISVGGeometrySource::UPDATEMASK_STROKE_DASHOFFSET  |
-    nsISVGGeometrySource::UPDATEMASK_CTM;
+    nsISVGGeometrySource::UPDATEMASK_CANVAS_TM;
   
   const unsigned long regionsmask =
     nsISVGGlyphGeometrySource::UPDATEMASK_METRICS |
     nsISVGGlyphGeometrySource::UPDATEMASK_X       |
     nsISVGGlyphGeometrySource::UPDATEMASK_Y       |
-    nsISVGGeometrySource::UPDATEMASK_CTM;
+    nsISVGGeometrySource::UPDATEMASK_CANVAS_TM;
 
   
   nsCOMPtr<nsISVGRendererRegion> regionBefore = mCoveredRegion;
@@ -456,9 +541,10 @@ nsSVGGDIPlusGlyphGeometry::Update(PRUint32 updatemask, nsISVGRendererRegion **_r
       NS_IF_ADDREF(*_retval);
     }
   }
-  else if (updatemask != nsISVGGeometrySource::UPDATEMASK_NOTHING) {
+
+  if (!*_retval) {
     // region hasn't changed, but something has. so invalidate whole area:
-    *_retval = mCoveredRegion;
+    *_retval = regionBefore;
     NS_IF_ADDREF(*_retval);
   }    
       
@@ -490,8 +576,23 @@ nsSVGGDIPlusGlyphGeometry::ContainsPoint(float x, float y, PRBool *_retval)
 //----------------------------------------------------------------------
 //
 
+struct gradCallbackStruct {
+  const WCHAR *start;
+  INT length;
+  nsISVGGDIPlusGlyphMetrics *metrics;
+  float x, y;
+  StringFormat *stringformat;
+};
+
+static void gradCBString(Graphics *gfx, Brush *brush, void *cbStruct)
+{
+  gradCallbackStruct *info = (gradCallbackStruct *)cbStruct;
+  gfx->DrawString(info->start, info->length, info->metrics->GetFont(),
+                  PointF(info->x, info->y), info->stringformat, brush);
+}
+
 void
-nsSVGGDIPlusGlyphGeometry::DrawFill(Graphics* g, Brush& b,
+nsSVGGDIPlusGlyphGeometry::DrawFill(Graphics* g, Brush& b, nsISVGGradient *aGrad,
                                     const WCHAR* start, INT length,
                                     float x, float y)
 {
@@ -516,8 +617,25 @@ nsSVGGDIPlusGlyphGeometry::DrawFill(Graphics* g, Brush& b,
                               StringFormatFlagsMeasureTrailingSpaces);
   stringFormat.SetLineAlignment(StringAlignmentNear);
   
-  g->DrawString(start, length, metrics->GetFont(), PointF(x,y),
-                &stringFormat, &b);
+  if (aGrad) {
+    nsCOMPtr<nsISVGRendererRegion> region;
+    GetCoveredRegion(getter_AddRefs(region));
+    nsCOMPtr<nsISVGGDIPlusRegion> aRegion = do_QueryInterface(region);
+    nsCOMPtr<nsIDOMSVGMatrix> ctm;
+    mSource->GetCanvasTM(getter_AddRefs(ctm));
+    
+    gradCallbackStruct cb;
+    cb.start = start;
+    cb.length = length;
+    cb.metrics = metrics;
+    cb.x = x;  cb.y = y;
+    cb.stringformat = &stringFormat;
+    
+    GDIPlusGradient(aRegion, aGrad, ctm, g, mSource, gradCBString, &cb);
+  }
+  else
+    g->DrawString(start, length, metrics->GetFont(), PointF(x,y),
+                  &stringFormat, &b);
   
   g->Restore(state);
 }
@@ -526,7 +644,7 @@ void
 nsSVGGDIPlusGlyphGeometry::GetGlobalTransform(Matrix *matrix)
 {
   nsCOMPtr<nsIDOMSVGMatrix> ctm;
-  mSource->GetCTM(getter_AddRefs(ctm));
+  mSource->GetCanvasTM(getter_AddRefs(ctm));
   NS_ASSERTION(ctm, "graphic source didn't specify a ctm");
   
   float m[6];
@@ -562,7 +680,7 @@ nsSVGGDIPlusGlyphGeometry::UpdateStroke()
 
   PRUint16 type;
   mSource->GetStrokePaintType(&type);
-  if (type != nsISVGGeometrySource::PAINT_TYPE_SOLID_COLOR)
+  if (type == nsISVGGeometrySource::PAINT_TYPE_NONE)
     return;
 
   float width;
@@ -727,7 +845,7 @@ nsSVGGDIPlusGlyphGeometry::UpdateRegions()
   
   // clone the covered region from the hit-test region:
 
-  nsCOMPtr<nsIPresContext> presContext;
+  nsCOMPtr<nsPresContext> presContext;
   mSource->GetPresContext(getter_AddRefs(presContext));
 
   NS_NewSVGGDIPlusClonedRegion(getter_AddRefs(mCoveredRegion),

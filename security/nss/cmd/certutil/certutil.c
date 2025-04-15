@@ -1,39 +1,39 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Portions created by Sun Microsystems, Inc. are Copyright (C) 2003
- * Sun Microsystems, Inc. All Rights Reserved. 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *	Dr Vipul Gupta <vipul.gupta@sun.com>, Sun Microsystems Laboratories
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *   Dr Vipul Gupta <vipul.gupta@sun.com>, Sun Microsystems Laboratories
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
 ** certutil.c
@@ -106,14 +106,19 @@ GetGeneralName (PRArenaPool *arena)
 	puts ("\t4 - x400Address\n\t5 - directoryName\n\t6 - ediPartyName\n");
 	puts ("\t7 - uniformResourceidentifier\n\t8 - ipAddress\n\t9 - registerID\n");
 	puts ("\tOther - omit\n\t\tChoice:");
-	scanf ("%d", &intValue);
+	if (scanf ("%d", &intValue) == EOF) {
+	    PORT_SetError(SEC_ERROR_INPUT_LEN);
+            GEN_BREAK (SECFailure);
+        }
+        /*
+         * Should use ZAlloc instead of Alloc to avoid problem with garbage
+         * initialized pointers in CERT_CopyName
+         */
 	if (intValue >= certOtherName || intValue <= certRegisterID) {
 	    if (namesList == NULL) {
-		namesList = current = tail = (CERTGeneralName *) PORT_ArenaAlloc 
-		                                  (arena, sizeof (CERTGeneralName));
+		namesList = current = tail = PORT_ArenaZNew(arena, CERTGeneralName);
 	    } else {
-		current = (CERTGeneralName *) PORT_ArenaAlloc(arena, 
-							      sizeof (CERTGeneralName));
+		current = PORT_ArenaZNew(arena, CERTGeneralName);
 	    }
 	    if (current == NULL) {
 		GEN_BREAK (SECFailure);
@@ -124,7 +129,10 @@ GetGeneralName (PRArenaPool *arena)
 	current->type = intValue;
 	puts ("\nEnter data:");
 	fflush (stdout);
-	gets (buffer);
+	if (gets (buffer) == NULL) {
+	    PORT_SetError(SEC_ERROR_INPUT_LEN);
+            GEN_BREAK (SECFailure);
+        }
 	switch (current->type) {
 	    case certURI:
 	    case certDNSName:
@@ -181,7 +189,6 @@ GetGeneralName (PRArenaPool *arena)
     }while (1);
 
     if (rv != SECSuccess) {
-	PORT_SetError (rv);
 	PORT_ArenaRelease (arena, mark);
 	namesList = NULL;
     }
@@ -351,57 +358,21 @@ AddCert(PK11SlotInfo *slot, CERTCertDBHandle *handle, char *name, char *trusts,
     return rv;
 }
 
-/* This function belongs in libNSS somewhere. */
-static SECOidTag
-getSignatureOidTag(KeyType keyType, SECOidTag hashAlgTag)
-{
-    SECOidTag sigTag = SEC_OID_UNKNOWN;
-
-    switch (keyType) {
-    case rsaKey:
-	switch (hashAlgTag) {
-	case SEC_OID_MD2:
-	    sigTag = SEC_OID_PKCS1_MD2_WITH_RSA_ENCRYPTION;	break;
-	case SEC_OID_UNKNOWN:	/* default for RSA if not specified */
-	case SEC_OID_MD5:
-	    sigTag = SEC_OID_PKCS1_MD5_WITH_RSA_ENCRYPTION;	break;
-	case SEC_OID_SHA1:
-	    sigTag = SEC_OID_PKCS1_SHA1_WITH_RSA_ENCRYPTION;	break;
-	case SEC_OID_SHA256:
-	    sigTag = SEC_OID_PKCS1_SHA256_WITH_RSA_ENCRYPTION;	break;
-	case SEC_OID_SHA384:
-	    sigTag = SEC_OID_PKCS1_SHA384_WITH_RSA_ENCRYPTION;	break;
-	case SEC_OID_SHA512:
-	    sigTag = SEC_OID_PKCS1_SHA512_WITH_RSA_ENCRYPTION;	break;
-	default:
-	    break;
-	}
-	break;
-    case dsaKey:
-	switch (hashAlgTag) {
-	case SEC_OID_UNKNOWN:	/* default for DSA if not specified */
-	case SEC_OID_SHA1:
-	    sigTag = SEC_OID_ANSIX9_DSA_SIGNATURE_WITH_SHA1_DIGEST; break;
-	default:
-	    break;
-	}
-	break;
-#ifdef NSS_ENABLE_ECC
-    case ecKey:
-        /* XXX For now only ECDSA with SHA1 is supported */
-        sigTag = SEC_OID_ANSIX962_ECDSA_SIGNATURE_WITH_SHA1_DIGEST;
-	break;
-#endif /* NSS_ENABLE_ECC */
-    default:
-    	break;
-    }
-    return sigTag;
-}
+static SECStatus
+AddExtensions(void *, const char *, const char *, PRBool, PRBool, PRBool, PRBool,
+              PRBool, PRBool);
 
 static SECStatus
 CertReq(SECKEYPrivateKey *privk, SECKEYPublicKey *pubk, KeyType keyType,
         SECOidTag hashAlgTag, CERTName *subject, char *phone, int ascii, 
-	const char *emailAddrs, const char *dnsNames, PRFileDesc *outFile)
+	const char *emailAddrs, const char *dnsNames,
+        PRBool	keyUsage, 
+	PRBool  extKeyUsage,
+	PRBool  basicConstraint, 
+	PRBool  authKeyID,
+	PRBool  crlDistPoints, 
+	PRBool  nscpCertType,
+        PRFileDesc *outFile)
 {
     CERTSubjectPublicKeyInfo *spki;
     CERTCertificateRequest *cr;
@@ -411,6 +382,7 @@ CertReq(SECKEYPrivateKey *privk, SECKEYPublicKey *pubk, KeyType keyType,
     SECStatus rv;
     PRArenaPool *arena;
     PRInt32 numBytes;
+    void *extHandle;
 
     /* Create info about public key */
     spki = SECKEY_CreateSubjectPublicKeyInfo(pubk);
@@ -418,9 +390,9 @@ CertReq(SECKEYPrivateKey *privk, SECKEYPublicKey *pubk, KeyType keyType,
 	SECU_PrintError(progName, "unable to create subject public key");
 	return SECFailure;
     }
-
+    
     /* Generate certificate request */
-    cr = CERT_CreateCertificateRequest(subject, spki, 0);
+    cr = CERT_CreateCertificateRequest(subject, spki, NULL);
     if (!cr) {
 	SECU_PrintError(progName, "unable to make certificate request");
 	return SECFailure;
@@ -432,6 +404,20 @@ CertReq(SECKEYPrivateKey *privk, SECKEYPublicKey *pubk, KeyType keyType,
 	return SECFailure;
     }
     
+    extHandle = CERT_StartCertificateRequestAttributes(cr);
+    if (extHandle == NULL) {
+        PORT_FreeArena (arena, PR_FALSE);
+	return SECFailure;
+    }
+    if (AddExtensions(extHandle, emailAddrs, dnsNames, keyUsage, extKeyUsage,
+                      basicConstraint, authKeyID, crlDistPoints, nscpCertType)
+                  != SECSuccess) {
+        PORT_FreeArena (arena, PR_FALSE);
+        return SECFailure;
+    }
+    CERT_FinishExtensions(extHandle);
+    CERT_FinishCertificateRequestAttributes(cr);
+
     /* Der encode the request */
     encoding = SEC_ASN1EncodeItem(arena, NULL, cr,
 		  SEC_ASN1_GET(CERT_CertificateRequestTemplate));
@@ -441,7 +427,7 @@ CertReq(SECKEYPrivateKey *privk, SECKEYPublicKey *pubk, KeyType keyType,
     }
 
     /* Sign the request */
-    signAlgTag = getSignatureOidTag(keyType, hashAlgTag);
+    signAlgTag = SEC_GetSignatureAlgorithmOidTag(keyType, hashAlgTag);
     if (signAlgTag == SEC_OID_UNKNOWN) {
 	SECU_PrintError(progName, "unknown Key or Hash type");
 	return SECFailure;
@@ -1039,9 +1025,7 @@ static void LongUsage(char *progName)
     FPS "%-25s C \t trusted CA to issue server certs (implies c)\n", "");
     FPS "%-25s u \t user cert\n", "");
     FPS "%-25s w \t send warning\n", "");
-#ifdef DEBUG_NSSTEAM_ONLY
     FPS "%-25s g \t make step-up cert\n", "");
-#endif /* DEBUG_NSSTEAM_ONLY */
     FPS "%-20s Specify the password file\n",
 	"   -f pwfile");
     FPS "%-20s Cert database directory (default is ~/.netscape)\n",
@@ -1591,12 +1575,14 @@ AddExtKeyUsage (void *extHandle)
     fprintf(stdout, "%-25s 3 - Email Protection\n", "");
     fprintf(stdout, "%-25s 4 - Timestamp\n", "");
     fprintf(stdout, "%-25s 5 - OCSP Responder\n", "");
-#ifdef DEBUG_NSSTEAM_ONLY
     fprintf(stdout, "%-25s 6 - Step-up\n", "");
-#endif /* DEBUG_NSSTEAM_ONLY */
     fprintf(stdout, "%-25s Other to finish\n", "");
 
-    gets(buffer);
+    if (gets(buffer) == NULL) {
+        PORT_SetError(SEC_ERROR_INPUT_LEN);
+        rv = SECFailure;
+        goto loser;
+    }
     value = atoi(buffer);
 
     switch( value ) {
@@ -1618,11 +1604,9 @@ AddExtKeyUsage (void *extHandle)
     case 5:
       rv = AddOidToSequence(os, SEC_OID_OCSP_RESPONDER);
       break;
-#ifdef DEBUG_NSSTEAM_ONLY
     case 6:
       rv = AddOidToSequence(os, SEC_OID_NS_KEY_USAGE_GOVT_APPROVED);
       break;
-#endif /* DEBUG_NSSTEAM_ONLY */
     default:
       goto endloop;
     }
@@ -1659,12 +1643,15 @@ AddNscpCertType (void *extHandle)
 	fprintf(stdout, "%-25s 1 - SSL Server\n", "");
 	fprintf(stdout, "%-25s 2 - S/MIME\n", "");
 	fprintf(stdout, "%-25s 3 - Object Signing\n", "");   
-	fprintf(stdout, "%-25s 4 - Reserved for futuer use\n", "");
+	fprintf(stdout, "%-25s 4 - Reserved for future use\n", "");
 	fprintf(stdout, "%-25s 5 - SSL CA\n", "");   
 	fprintf(stdout, "%-25s 6 - S/MIME CA\n", "");
 	fprintf(stdout, "%-25s 7 - Object Signing CA\n", "");
 	fprintf(stdout, "%-25s Other to finish\n", "");
-	gets (buffer);
+	if (gets (buffer) == NULL) {
+	    PORT_SetError(SEC_ERROR_INPUT_LEN);
+            return SECFailure;
+        }
 	value = atoi (buffer);
 	if (value < 0 || value > 7)
 	    break;
@@ -1684,21 +1671,16 @@ AddNscpCertType (void *extHandle)
 }
 
 static SECStatus 
-AddSubjectAltNames(void *extHandle, const char *names, CERTGeneralNameType type)
+AddSubjectAltNames(PRArenaPool *arena, CERTGeneralName **existingListp,
+                    const char *names, CERTGeneralNameType type)
 {
-    SECItem item = { 0, NULL, 0 };
     CERTGeneralName *nameList = NULL;
     CERTGeneralName *current = NULL;
     PRCList *prev = NULL;
-    PRArenaPool *arena;
     const char *cp;
     char *tbuf;
     SECStatus rv = SECSuccess;
 
-    arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
-    if (arena == NULL) {
-	return SECFailure;
-    }
 	
     /*
      * walk down the comma separated list of names. NOTE: there is
@@ -1731,74 +1713,46 @@ AddSubjectAltNames(void *extHandle, const char *names, CERTGeneralNameType type)
 	    nameList = current;
 	}
 	current->type = type;
-	current->type = certRFC822Name;
 	current->name.other.data = (unsigned char *)tbuf;
 	current->name.other.len = PORT_Strlen(tbuf);
 	prev = &(current->l);
     }
-    if (rv != SECSuccess) {
-	goto loser;
+    /* at this point nameList points to the head of a doubly linked, but not yet 
+       circular, list and current points to its tail. */
+    if (rv == SECSuccess && nameList) {
+        if (*existingListp != NULL) {
+            PRCList *existingprev;
+            /* add nameList to the end of the existing list */
+            existingprev = (*existingListp)->l.prev;
+            (*existingListp)->l.prev = &(current->l);
+            nameList->l.prev = existingprev;
+            existingprev->next = &(nameList->l);
+            current->l.next = &((*existingListp)->l);
+        }
+        else {
+            /* make nameList circular and set it as the new existingList */
+            nameList->l.prev = prev;
+            current->l.next = &(nameList->l);
+            *existingListp = nameList;
+        }
     }
-    /* no email address */
-    if (!nameList) {
-	/*rv=SECSuccess; We know rv is SECSuccess because of the previous if*/
-	goto done; 
-    }
-    nameList->l.prev = prev;
-    current->l.next = &(nameList->l);
-
-    CERT_EncodeAltNameExtension(arena, nameList, &item);
-    rv = CERT_AddExtension (extHandle, SEC_OID_X509_SUBJECT_ALT_NAME, &item, 
-							PR_FALSE, PR_TRUE);
-done:
-loser:
-    PORT_FreeArena(arena, PR_FALSE);
     return rv;
-
 }
 
 static SECStatus 
-AddEmailSubjectAlt(void *extHandle, const char *emailAddrs)
+AddEmailSubjectAlt(PRArenaPool *arena, CERTGeneralName **existingListp,
+                    const char *emailAddrs)
 {
-    return AddSubjectAltNames(extHandle, emailAddrs, certRFC822Name);
+    return AddSubjectAltNames(arena, existingListp, emailAddrs, certRFC822Name);
 }
 
 static SECStatus 
-AddDNSSubjectAlt(void *extHandle, const char *dnsNames)
+AddDNSSubjectAlt(PRArenaPool *arena, CERTGeneralName **existingListp,
+                    const char *dnsNames)
 {
-    return AddSubjectAltNames(extHandle, dnsNames, certDNSName);
+    return AddSubjectAltNames(arena, existingListp, dnsNames, certDNSName);
 }
 
-
-typedef SECStatus (* EXTEN_VALUE_ENCODER)
-		(PRArenaPool *extHandle, void *value, SECItem *encodedValue);
-
-static SECStatus 
-EncodeAndAddExtensionValue(
-	PRArenaPool *	arena, 
-	void *		extHandle, 
-	void *		value, 
-	PRBool 		criticality,
-	int 		extenType, 
-	EXTEN_VALUE_ENCODER EncodeValueFn)
-{
-    SECItem encodedValue;
-    SECStatus rv;
-	
-
-    encodedValue.data = NULL;
-    encodedValue.len = 0;
-    do {
-	rv = (*EncodeValueFn)(arena, value, &encodedValue);
-	if (rv != SECSuccess)
-	break;
-
-	rv = CERT_AddExtension
-	     (extHandle, extenType, &encodedValue, criticality,PR_TRUE);
-    } while (0);
-	
-    return (rv);
-}
 
 static SECStatus 
 AddBasicConstraint(void *extHandle)
@@ -1869,7 +1823,7 @@ SignCert(CERTCertDBHandle *handle, CERTCertificate *cert, PRBool selfsign,
 	
     arena = cert->arena;
 
-    algID = getSignatureOidTag(privKey->keyType, hashAlgTag);
+    algID = SEC_GetSignatureAlgorithmOidTag(privKey->keyType, hashAlgTag);
     if (algID == SEC_OID_UNKNOWN) {
 	fprintf(stderr, "Unknown key or hash type for issuer.");
 	goto done;
@@ -1954,11 +1908,11 @@ AddAuthKeyID (void *extHandle)
 	puts ("Is this a critical extension [y/n]? ");
 	gets (buffer);	
 
-	rv = EncodeAndAddExtensionValue
+	rv = SECU_EncodeAndAddExtensionValue
 	    (arena, extHandle, authKeyID,
 	     (buffer[0] == 'y' || buffer[0] == 'Y') ? PR_TRUE : PR_FALSE,
 	     SEC_OID_X509_AUTH_KEY_ID, 
-	     (EXTEN_VALUE_ENCODER) CERT_EncodeAuthKeyID);
+	     (EXTEN_EXT_VALUE_ENCODER) CERT_EncodeAuthKeyID);
 	if (rv)
 	    break;
 	
@@ -2077,14 +2031,93 @@ AddCrlDistPoint(void *extHandle)
 	puts ("Is this a critical extension [y/n]? ");
 	gets (buffer);	
 	
-	rv = EncodeAndAddExtensionValue(arena, extHandle, crlDistPoints,
+	rv = SECU_EncodeAndAddExtensionValue(arena, extHandle, crlDistPoints,
 	      (buffer[0] == 'Y' || buffer[0] == 'y') ? PR_TRUE : PR_FALSE,
 	      SEC_OID_X509_CRL_DIST_POINTS,
-	      (EXTEN_VALUE_ENCODER)  CERT_EncodeCRLDistributionPoints);
+	      (EXTEN_EXT_VALUE_ENCODER)  CERT_EncodeCRLDistributionPoints);
     }
     if (arena)
 	PORT_FreeArena (arena, PR_FALSE);
     return (rv);
+}
+
+static SECStatus
+AddExtensions(void *extHandle, const char *emailAddrs, const char *dnsNames,
+	PRBool	keyUsage, 
+	PRBool  extKeyUsage,
+	PRBool  basicConstraint, 
+	PRBool  authKeyID,
+	PRBool  crlDistPoints, 
+	PRBool  nscpCertType)
+{
+    SECStatus 	rv = SECSuccess;
+    do {
+	/* Add key usage extension */
+	if (keyUsage) {
+	    rv = AddKeyUsage(extHandle);
+	    if (rv)
+		break;
+	}
+
+	/* Add extended key usage extension */
+	if (extKeyUsage) {
+	    rv = AddExtKeyUsage(extHandle);
+	    if (rv)
+		break;
+	}
+
+	/* Add basic constraint extension */
+	if (basicConstraint) {
+	    rv = AddBasicConstraint(extHandle);
+	    if (rv)
+		break;
+	}
+
+	if (authKeyID) {
+	    rv = AddAuthKeyID (extHandle);
+	    if (rv)
+		break;
+	}    
+
+	if (crlDistPoints) {
+	    rv = AddCrlDistPoint (extHandle);
+	    if (rv)
+		break;
+	}
+	
+	if (nscpCertType) {
+	    rv = AddNscpCertType(extHandle);
+	    if (rv)
+		break;
+	}
+
+	if (emailAddrs || dnsNames) {
+            PRArenaPool *arena;
+            CERTGeneralName *namelist = NULL;
+            SECItem item = { 0, NULL, 0 };
+            
+            arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
+            if (arena == NULL) {
+                rv = SECFailure;
+                break;
+            }
+
+	    rv = AddEmailSubjectAlt(arena, &namelist, emailAddrs);
+
+	    rv |= AddDNSSubjectAlt(arena, &namelist, dnsNames);
+
+            if (rv == SECSuccess) {
+                rv = CERT_EncodeAltNameExtension(arena, namelist, &item);
+                if (rv == SECSuccess) {
+                   rv = CERT_AddExtension(extHandle,
+                                           SEC_OID_X509_SUBJECT_ALT_NAME,
+                                           &item, PR_FALSE, PR_TRUE);
+                }
+            }
+            PORT_FreeArena(arena, PR_FALSE);
+	}
+    } while (0);
+    return rv;
 }
 
 static SECStatus
@@ -2117,6 +2150,7 @@ CreateCert(
     CERTCertificateRequest *certReq	= NULL;
     SECStatus 	rv 			= SECSuccess;
     SECItem 	reqDER;
+    CERTCertExtension **CRexts;
 
     reqDER.data = NULL;
     do {
@@ -2136,63 +2170,32 @@ CreateCert(
 	if (subjectCert == NULL) {
 	    GEN_BREAK (SECFailure)
 	}
-
+        
+        
 	extHandle = CERT_StartCertExtensions (subjectCert);
 	if (extHandle == NULL) {
 	    GEN_BREAK (SECFailure)
 	}
-
-	/* Add key usage extension */
-	if (keyUsage) {
-	    rv = AddKeyUsage(extHandle);
-	    if (rv)
-		break;
+        
+        rv = AddExtensions(extHandle, emailAddrs, dnsNames, keyUsage, extKeyUsage,
+                          basicConstraint, authKeyID, crlDistPoints, nscpCertType);
+        if (rv != SECSuccess) {
+	    GEN_BREAK (SECFailure)
 	}
-
-	/* Add extended key usage extension */
-	if (extKeyUsage) {
-	    rv = AddExtKeyUsage(extHandle);
-	    if (rv)
-		break;
-	}
-
-	/* Add basic constraint extension */
-	if (basicConstraint) {
-	    rv = AddBasicConstraint(extHandle);
-	    if (rv)
-		break;
-	}
-
-	if (authKeyID) {
-	    rv = AddAuthKeyID (extHandle);
-	    if (rv)
-		break;
-	}    
-
-
-	if (crlDistPoints) {
-	    rv = AddCrlDistPoint (extHandle);
-	    if (rv)
-		break;
-	}
-	
-	if (nscpCertType) {
-	    rv = AddNscpCertType(extHandle);
-	    if (rv)
-		break;
-	}
-
-	if (emailAddrs != NULL) {
-	    rv = AddEmailSubjectAlt(extHandle,emailAddrs);
-	    if (rv)
-		break;
-	}
-
-	if (dnsNames != NULL) {
-	    rv = AddDNSSubjectAlt(extHandle,dnsNames);
-	    if (rv)
-		break;
-	}
+        
+        if (certReq->attributes != NULL &&
+	    certReq->attributes[0] != NULL &&
+	    certReq->attributes[0]->attrType.data != NULL &&
+	    certReq->attributes[0]->attrType.len   > 0    &&
+            SECOID_FindOIDTag(&certReq->attributes[0]->attrType)
+                == SEC_OID_PKCS9_EXTENSION_REQUEST) {
+            rv = CERT_GetCertificateRequestExtensions(certReq, &CRexts);
+            if (rv != SECSuccess)
+                break;
+            rv = CERT_MergeExtensions(extHandle, CRexts);
+            if (rv != SECSuccess)
+                break;
+        }
 
 	CERT_FinishExtensions(extHandle);
 
@@ -2439,21 +2442,8 @@ secuCommandFlag certutil_options[] =
     /*  -Z hash type  */
     if (certutil.options[opt_Hash].activated) {
 	char * arg = certutil.options[opt_Hash].arg;
-	if (!PL_strcmp(arg, "MD2")) {
-	    hashAlgTag = SEC_OID_MD2;
-	} else if (!PL_strcmp(arg, "MD4")) {
-	    hashAlgTag = SEC_OID_MD4;
-	} else if (!PL_strcmp(arg, "MD5")) {
-	    hashAlgTag = SEC_OID_MD5;
-	} else if (!PL_strcmp(arg, "SHA1")) {
-	    hashAlgTag = SEC_OID_SHA1;
-	} else if (!PL_strcmp(arg, "SHA256")) {
-	    hashAlgTag = SEC_OID_SHA256;
-	} else if (!PL_strcmp(arg, "SHA384")) {
-	    hashAlgTag = SEC_OID_SHA384;
-	} else if (!PL_strcmp(arg, "SHA512")) {
-	    hashAlgTag = SEC_OID_SHA512;
-	} else {
+        hashAlgTag = SECU_StringToSignatureAlgTag(arg);
+        if (hashAlgTag == SEC_OID_UNKNOWN) {
 	    PR_fprintf(PR_STDERR, "%s -Z:  %s is not a recognized type.\n",
 	               progName, arg);
 	    return 255;
@@ -2492,8 +2482,13 @@ secuCommandFlag certutil_options[] =
     }
 
     /*  -P certdb name prefix */
-    if (certutil.options[opt_DBPrefix].activated)
-	certPrefix = strdup(certutil.options[opt_DBPrefix].arg);
+    if (certutil.options[opt_DBPrefix].activated) {
+        if (certutil.options[opt_DBPrefix].arg) {
+            certPrefix = strdup(certutil.options[opt_DBPrefix].arg);
+        } else {
+            Usage(progName);
+        }
+    }
 
     /*  -q PQG file or curve name */
     if (certutil.options[opt_PQGFile].activated) {
@@ -2748,6 +2743,7 @@ secuCommandFlag certutil_options[] =
 	    rv = SECFailure;
 	    goto shutdown;
         }
+    	SECU_RegisterDynamicOids();
     }
     certHandle = CERT_GetDefaultCertDB();
 
@@ -2875,15 +2871,20 @@ secuCommandFlag certutil_options[] =
      *  Certificate request
      */
 
-    /*  Make a cert request (-R or -S).  */
-    if (certutil.commands[cmd_CreateAndAddCert].activated ||
-         certutil.commands[cmd_CertReq].activated) {
+    /*  Make a cert request (-R).  */
+    if (certutil.commands[cmd_CertReq].activated) {
 	rv = CertReq(privkey, pubkey, keytype, hashAlgTag, subject,
 	             certutil.options[opt_PhoneNumber].arg,
 	             certutil.options[opt_ASCIIForIO].activated,
 		     certutil.options[opt_ExtendedEmailAddrs].arg,
 		     certutil.options[opt_ExtendedDNSNames].arg,
-		     outFile ? outFile : PR_STDOUT);
+                     certutil.options[opt_AddKeyUsageExt].activated,
+                     certutil.options[opt_AddExtKeyUsageExt].activated,
+                     certutil.options[opt_AddBasicConstraintExt].activated,
+                     certutil.options[opt_AddAuthorityKeyIDExt].activated,
+                     certutil.options[opt_AddCRLDistPtsExt].activated,
+                     certutil.options[opt_AddNSCertTypeExt].activated,
+                     outFile ? outFile : PR_STDOUT);
 	if (rv) 
 	    goto shutdown;
 	privkey->wincx = &pwdata;
@@ -2893,10 +2894,26 @@ secuCommandFlag certutil_options[] =
      *  Certificate creation
      */
 
-    /*  If making and adding a cert, load the cert request file
+    /*  If making and adding a cert, create a cert request file first without
+     *  any extensions, then load it with the command line extensions
      *  and output the cert to another file.
      */
     if (certutil.commands[cmd_CreateAndAddCert].activated) {
+	rv = CertReq(privkey, pubkey, keytype, hashAlgTag, subject,
+	             certutil.options[opt_PhoneNumber].arg,
+	             certutil.options[opt_ASCIIForIO].activated,
+		     NULL,
+		     NULL,
+                     PR_FALSE,
+                     PR_FALSE,
+                     PR_FALSE,
+                     PR_FALSE,
+                     PR_FALSE,
+                     PR_FALSE,
+                     outFile ? outFile : PR_STDOUT);
+	if (rv) 
+	    goto shutdown;
+	privkey->wincx = &pwdata;
 	PR_Close(outFile);
 	inFile  = PR_Open(certreqfile, PR_RDONLY, 0);
 	if (!inFile) {

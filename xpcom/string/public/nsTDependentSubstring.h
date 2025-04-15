@@ -49,25 +49,23 @@ class nsTDependentSubstring_CharT : public nsTSubstring_CharT
 
     public:
 
+#ifdef MOZ_V1_STRING_ABI
       NS_COM void Rebind( const abstract_string_type&, PRUint32 startPos, PRUint32 length = size_type(-1) );
+#endif
       NS_COM void Rebind( const substring_type&, PRUint32 startPos, PRUint32 length = size_type(-1) );
 
-      void Rebind( const char_type* start, const char_type* end )
-        {
-          NS_ASSERTION(start && end, "nsTDependentSubstring must wrap a non-NULL buffer");
-          mData = NS_CONST_CAST(char_type*, start);
-          mLength = end - start;
-          SetDataFlags(F_NONE);
-        }
+      NS_COM void Rebind( const char_type* start, const char_type* end );
 
+#ifdef MOZ_V1_STRING_ABI
       nsTDependentSubstring_CharT( const abstract_string_type& str, PRUint32 startPos, PRUint32 length = size_type(-1) )
-        : substring_type(F_NONE)
+        : substring_type()
         {
           Rebind(str, startPos, length);
         }
+#endif
 
       nsTDependentSubstring_CharT( const substring_type& str, PRUint32 startPos, PRUint32 length = size_type(-1) )
-        : substring_type(F_NONE)
+        : substring_type()
         {
           Rebind(str, startPos, length);
         }
@@ -78,6 +76,10 @@ class nsTDependentSubstring_CharT : public nsTSubstring_CharT
       nsTDependentSubstring_CharT( const const_iterator& start, const const_iterator& end )
         : substring_type(NS_CONST_CAST(char_type*, start.get()), end.get() - start.get(), F_NONE) {}
 
+      // Create a nsTDependentSubstring to be bound later
+      nsTDependentSubstring_CharT()
+        : substring_type() {}
+
       // auto-generated copy-constructor OK (XXX really?? what about base class copy-ctor?)
 
     private:
@@ -85,12 +87,14 @@ class nsTDependentSubstring_CharT : public nsTSubstring_CharT
       void operator=( const self_type& );        // we're immutable, you can't assign into a substring
   };
 
+#ifdef MOZ_V1_STRING_ABI
 inline
 const nsTDependentSubstring_CharT
 Substring( const nsTAString_CharT& str, PRUint32 startPos, PRUint32 length = PRUint32(-1) )
   {
     return nsTDependentSubstring_CharT(str, startPos, length);
   }
+#endif
 
 inline
 const nsTDependentSubstring_CharT
@@ -113,12 +117,14 @@ Substring( const CharT* start, const CharT* end )
     return nsTDependentSubstring_CharT(start, end);
   }
 
+#ifdef MOZ_V1_STRING_ABI
 inline
 const nsTDependentSubstring_CharT
 StringHead( const nsTAString_CharT& str, PRUint32 count )
   {
     return nsTDependentSubstring_CharT(str, 0, count);
   }
+#endif
 
 inline
 const nsTDependentSubstring_CharT
@@ -127,12 +133,14 @@ StringHead( const nsTSubstring_CharT& str, PRUint32 count )
     return nsTDependentSubstring_CharT(str, 0, count);
   }
 
+#ifdef MOZ_V1_STRING_ABI
 inline
 const nsTDependentSubstring_CharT
 StringTail( const nsTAString_CharT& str, PRUint32 count )
   {
     return nsTDependentSubstring_CharT(str, str.Length() - count, count);
   }
+#endif
 
 inline
 const nsTDependentSubstring_CharT

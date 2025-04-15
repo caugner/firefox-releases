@@ -1,24 +1,41 @@
 /* -*- Mode: C++; tab-width: 3; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Mozilla browser.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications, Inc.  Portions created by Netscape are
- * Copyright (C) 1999, Mozilla.  All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications, Inc.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   David W. Hyatt <hyatt@netscape.com> (Original Author)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsCOMPtr.h"
 #include "nsWindowRoot.h"
@@ -27,7 +44,7 @@
 #include "nsIDocument.h"
 #include "nsIEventListenerManager.h"
 #include "nsIPresShell.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsLayoutCID.h"
 #include "nsContentCID.h"
 #include "nsIEventStateManager.h"
@@ -54,7 +71,13 @@ nsWindowRoot::~nsWindowRoot()
 {
 }
 
-NS_IMPL_ISUPPORTS5(nsWindowRoot, nsIDOMEventReceiver, nsIChromeEventHandler, nsPIWindowRoot, nsIDOMEventTarget, nsIDOM3EventTarget)
+NS_IMPL_ISUPPORTS6(nsWindowRoot,
+                   nsIDOMEventReceiver,
+                   nsIChromeEventHandler,
+                   nsPIWindowRoot,
+                   nsIDOMEventTarget,
+                   nsIDOM3EventTarget,
+                   nsIDOMNSEventTarget)
 
 NS_IMETHODIMP
 nsWindowRoot::AddEventListener(const nsAString& aType, nsIDOMEventListener* aListener, PRBool aUseCapture)
@@ -85,8 +108,7 @@ nsWindowRoot::DispatchEvent(nsIDOMEvent* aEvt, PRBool *_retval)
   nsIPresShell *shell = doc->GetShellAt(0);
   
   // Retrieve the context
-  nsCOMPtr<nsIPresContext> aPresContext;
-  shell->GetPresContext(getter_AddRefs(aPresContext));
+  nsCOMPtr<nsPresContext> aPresContext = shell->GetPresContext();
 
   return aPresContext->EventStateManager()->
     DispatchNewEvent(NS_STATIC_CAST(nsIDOMEventReceiver*, this),
@@ -132,6 +154,24 @@ nsWindowRoot::IsRegisteredHere(const nsAString & type, PRBool *_retval)
 }
 
 NS_IMETHODIMP
+nsWindowRoot::AddEventListener(const nsAString& aType,
+                               nsIDOMEventListener *aListener,
+                               PRBool aUseCapture, PRBool aWantsUntrusted)
+{
+  nsCOMPtr<nsIEventListenerManager> manager;
+  nsresult rv = GetListenerManager(getter_AddRefs(manager));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  PRInt32 flags = aUseCapture ? NS_EVENT_FLAG_CAPTURE : NS_EVENT_FLAG_BUBBLE;
+
+  if (aWantsUntrusted) {
+    flags |= NS_PRIV_EVENT_UNTRUSTED_PERMITTED;
+  }
+
+  return manager->AddEventListenerByType(aListener, aType, flags, nsnull);
+}
+
+NS_IMETHODIMP
 nsWindowRoot::AddEventListenerByIID(nsIDOMEventListener *aListener, const nsIID& aIID)
 {
   nsCOMPtr<nsIEventListenerManager> manager;
@@ -172,8 +212,8 @@ nsWindowRoot::GetListenerManager(nsIEventListenerManager** aResult)
 NS_IMETHODIMP
 nsWindowRoot::HandleEvent(nsIDOMEvent *aEvent)
 {
-  PRBool noDefault;
-  return DispatchEvent(aEvent, &noDefault);
+  PRBool defaultActionEnabled;
+  return DispatchEvent(aEvent, &defaultActionEnabled);
 }
 
 NS_IMETHODIMP
@@ -186,10 +226,14 @@ nsWindowRoot::GetSystemEventGroup(nsIDOMEventGroup **aGroup)
   return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP nsWindowRoot::HandleChromeEvent(nsIPresContext* aPresContext,
-   nsEvent* aEvent, nsIDOMEvent** aDOMEvent, PRUint32 aFlags, 
-   nsEventStatus* aEventStatus)
+NS_IMETHODIMP
+nsWindowRoot::HandleChromeEvent(nsPresContext* aPresContext, nsEvent* aEvent,
+                                nsIDOMEvent** aDOMEvent, PRUint32 aFlags, 
+                                nsEventStatus* aEventStatus)
 {
+  // Make sure to tell the event that dispatch has started.
+  NS_MARK_EVENT_DISPATCH_STARTED(aEvent);
+
   // Prevent the world from going
   // away until after we've finished handling the event.
   nsCOMPtr<nsIDOMWindow> kungFuDeathGrip(mWindow);
@@ -212,13 +256,16 @@ NS_IMETHODIMP nsWindowRoot::HandleChromeEvent(nsIPresContext* aPresContext,
   }
 
   if (NS_EVENT_FLAG_INIT & aFlags) {
-    // We're leaving the DOM event loop so if we created a DOM event, release here.
+    // We're leaving the DOM event loop so if we created a DOM event,
+    // release here.
     if (nsnull != *aDOMEvent) {
       nsrefcnt rc;
       NS_RELEASE2(*aDOMEvent, rc);
       if (0 != rc) {
-      //Okay, so someone in the DOM loop (a listener, JS object) still has a ref to the DOM Event but
-      //the internal data hasn't been malloc'd.  Force a copy of the data here so the DOM Event is still valid.
+        // Okay, so someone in the DOM loop (a listener, JS object)
+        // still has a ref to the DOM Event but the internal data
+        // hasn't been malloc'd.  Force a copy of the data here so the
+        // DOM Event is still valid.
         nsIPrivateDOMEvent *privateEvent;
         if (NS_OK == (*aDOMEvent)->QueryInterface(NS_GET_IID(nsIPrivateDOMEvent), (void**)&privateEvent)) {
           privateEvent->DuplicatePrivateData();
@@ -227,6 +274,10 @@ NS_IMETHODIMP nsWindowRoot::HandleChromeEvent(nsIPresContext* aPresContext,
       }
     }
     aDOMEvent = nsnull;
+
+    // Now that we're done with this event, remove the flag that says
+    // we're in the process of dispatching this event.
+    NS_MARK_EVENT_DISPATCH_DONE(aEvent);
   }
 
   return ret;

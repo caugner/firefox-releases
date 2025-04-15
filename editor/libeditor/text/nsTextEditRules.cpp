@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -50,7 +49,9 @@
 #include "nsIDOMNodeList.h"
 #include "nsISelection.h"
 #include "nsISelectionPrivate.h"
+#include "nsISelectionController.h"
 #include "nsIDOMRange.h"
+#include "nsIDOMNSRange.h"
 #include "nsIDOMCharacterData.h"
 #include "nsIContent.h"
 #include "nsIContentIterator.h"
@@ -59,6 +60,8 @@
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
 #include "nsUnicharUtils.h"
+#include "nsIWordBreakerFactory.h"
+#include "nsLWBrkCIID.h"
 
 // for IBMBIDI
 #include "nsIPresShell.h"
@@ -90,8 +93,6 @@ nsTextEditRules::nsTextEditRules()
 , mPasswordText()
 , mPasswordIMEText()
 , mPasswordIMEIndex(0)
-, mBogusNode(nsnull)
-, mBody(nsnull)
 , mFlags(0) // initialized to 0 ("no flags set").  Real initial value is given in Init()
 , mActionNesting(0)
 , mLockRulesSniffing(PR_FALSE)
@@ -128,16 +129,12 @@ nsTextEditRules::Init(nsPlaintextEditor *aEditor, PRUint32 aFlags)
   mEditor->GetSelection(getter_AddRefs(selection));
   NS_ASSERTION(selection, "editor cannot get selection");
 
-  // remember our root node
-  nsCOMPtr<nsIDOMElement> bodyElement;
-  nsresult res = mEditor->GetRootElement(getter_AddRefs(bodyElement));
-  if (NS_FAILED(res)) return res;
-  if (!bodyElement) return NS_ERROR_NULL_POINTER;
-  mBody = do_QueryInterface(bodyElement);
-  if (!mBody) return NS_ERROR_FAILURE;
+  // Cache our body node, if available.
+  GetBody();
 
-  // put in a magic br if needed
-  res = CreateBogusNodeIfNeeded(selection);   // this method handles null selection, which should never happen anyway
+  // Put in a magic br if needed. This method handles null selection,
+  // which should never happen anyway
+  nsresult res = CreateBogusNodeIfNeeded(selection);
   if (NS_FAILED(res)) return res;
 
   if (mFlags & nsIPlaintextEditor::eEditorPlaintextMask)
@@ -146,25 +143,31 @@ nsTextEditRules::Init(nsPlaintextEditor *aEditor, PRUint32 aFlags)
     res = CreateTrailingBRIfNeeded();
     if (NS_FAILED(res)) return res;
   }
-  
-  // create a range that is the entire body contents
-  nsCOMPtr<nsIDOMRange> wholeDoc = do_CreateInstance("@mozilla.org/content/range;1");
-  if (!wholeDoc) return NS_ERROR_NULL_POINTER;
-  wholeDoc->SetStart(mBody,0);
-  nsCOMPtr<nsIDOMNodeList> list;
-  res = mBody->GetChildNodes(getter_AddRefs(list));
-  if (NS_FAILED(res)) return res;
-  if (!list) return NS_ERROR_FAILURE;
 
-  PRUint32 listCount;
-  res = list->GetLength(&listCount);
-  if (NS_FAILED(res)) return res;
+  if (mBody)
+  {
+    // create a range that is the entire body contents
+    nsCOMPtr<nsIDOMRange> wholeDoc =
+      do_CreateInstance("@mozilla.org/content/range;1");
+    if (!wholeDoc) return NS_ERROR_NULL_POINTER;
+    wholeDoc->SetStart(mBody,0);
+    nsCOMPtr<nsIDOMNodeList> list;
+    res = mBody->GetChildNodes(getter_AddRefs(list));
+    if (NS_FAILED(res)) return res;
+    if (!list) return NS_ERROR_FAILURE;
 
-  res = wholeDoc->SetEnd(mBody, listCount);
-  if (NS_FAILED(res)) return res;
+    PRUint32 listCount;
+    res = list->GetLength(&listCount);
+    if (NS_FAILED(res)) return res;
 
-  // replace newlines in that range with breaks
-  return ReplaceNewlines(wholeDoc);
+    res = wholeDoc->SetEnd(mBody, listCount);
+    if (NS_FAILED(res)) return res;
+
+    // replace newlines in that range with breaks
+    res = ReplaceNewlines(wholeDoc);
+  }
+
+  return res;
 }
 
 NS_IMETHODIMP
@@ -197,6 +200,15 @@ nsTextEditRules::BeforeEdit(PRInt32 action, nsIEditor::EDirection aDirection)
   nsAutoLockRulesSniffing lockIt(this);
   mDidExplicitlySetInterline = PR_FALSE;
   
+  // get the selection and cache the position before editing
+  nsCOMPtr<nsISelection> selection;
+  nsresult res = mEditor->GetSelection(getter_AddRefs(selection));
+  if (NS_FAILED(res)) 
+    return res;
+
+  selection->GetAnchorNode(getter_AddRefs(mCachedSelectionNode));
+  selection->GetAnchorOffset(&mCachedSelectionOffset);
+
   if (!mActionNesting)
   {
     // let rules remember the top level action
@@ -222,13 +234,21 @@ nsTextEditRules::AfterEdit(PRInt32 action, nsIEditor::EDirection aDirection)
     res = mEditor->GetSelection(getter_AddRefs(selection));
     if (NS_FAILED(res)) return res;
   
+    res = mEditor->HandleInlineSpellCheck(action, selection,
+                                          mCachedSelectionNode, mCachedSelectionOffset,
+                                          nsnull, 0, nsnull, 0);
+    if (NS_FAILED(res)) 
+      return res;
+
     // detect empty doc
     res = CreateBogusNodeIfNeeded(selection);
-    if (NS_FAILED(res)) return res;
+    if (NS_FAILED(res)) 
+      return res;
     
     // insure trailing br node
     res = CreateTrailingBRIfNeeded();
-    if (NS_FAILED(res)) return res;
+    if (NS_FAILED(res)) 
+      return res;
     
     /* After inserting text the cursor Bidi level must be set to the level of the inserted text.
      * This is difficult, because we cannot know what the level is until after the Bidi algorithm
@@ -236,7 +256,8 @@ nsTextEditRules::AfterEdit(PRInt32 action, nsIEditor::EDirection aDirection)
      *
      * So we set the cursor Bidi level to UNDEFINED here, and the caret code will set it correctly later
      */
-    if (action == nsEditor::kOpInsertText) {
+    if (action == nsEditor::kOpInsertText
+        || action == nsEditor::kOpInsertIMEText) {
       nsCOMPtr<nsIPresShell> shell;
       mEditor->GetPresShell(getter_AddRefs(shell));
       if (shell) {
@@ -347,7 +368,7 @@ nsTextEditRules::DocumentIsEmpty(PRBool *aDocumentIsEmpty)
   if (!aDocumentIsEmpty)
     return NS_ERROR_NULL_POINTER;
   
-  *aDocumentIsEmpty = (mBogusNode.get() != nsnull);
+  *aDocumentIsEmpty = (mBogusNode != nsnull);
   return NS_OK;
 }
 
@@ -371,7 +392,7 @@ nsTextEditRules::WillInsert(nsISelection *aSelection, PRBool *aCancel)
   if (mBogusNode)
   {
     mEditor->DeleteNode(mBogusNode);
-    mBogusNode = do_QueryInterface(nsnull);
+    mBogusNode = nsnull;
   }
 
   return NS_OK;
@@ -434,9 +455,7 @@ nsTextEditRules::DidInsertBreak(nsISelection *aSelection, nsresult aResult)
   if (NS_FAILED(res)) return res;
   // confirm we are at end of document
   if (selOffset == 0) return NS_OK;  // cant be after a br if we are at offset 0
-  nsCOMPtr<nsIDOMElement> rootElem;
-  res = mEditor->GetRootElement(getter_AddRefs(rootElem));
-  if (NS_FAILED(res)) return res;
+  nsIDOMElement *rootElem = mEditor->GetRoot();
 
   nsCOMPtr<nsIDOMNode> root = do_QueryInterface(rootElem);
   if (!root) return NS_ERROR_NULL_POINTER;
@@ -573,8 +592,18 @@ nsTextEditRules::WillInsertText(PRInt32          aAction,
     else if (singleLineNewlineBehavior == ePasteFirstLine)
     {
       PRInt32 firstCRLF = tString.FindCharInSet(CRLF);
+
+      // we get first *non-empty* line.
+      PRInt32 offset = 0;
+      while (firstCRLF == offset)
+      {
+        offset++;
+        firstCRLF = tString.FindCharInSet(CRLF, offset);
+      }
       if (firstCRLF > 0)
         tString.Truncate(firstCRLF);
+      if (offset > 0)
+        tString.Cut(0, offset);
     }
     else if (singleLineNewlineBehavior == eReplaceWithCommas)
     {
@@ -600,7 +629,7 @@ nsTextEditRules::WillInsertText(PRInt32          aAction,
   if (NS_FAILED(res)) return res;
 
   // don't put text in places that can't have it
-  if (!mEditor->IsTextNode(selNode) && !mEditor->CanContainTag(selNode, NS_LITERAL_STRING("__moz_text")))
+  if (!mEditor->IsTextNode(selNode) && !mEditor->CanContainTag(selNode, NS_LITERAL_STRING("#text")))
     return NS_ERROR_FAILURE;
 
   // we need to get the doc
@@ -660,7 +689,7 @@ nsTextEditRules::WillInsertText(PRInt32          aAction,
         nsDependentSubstring subStr(tString, oldPos, subStrLen);
         
         // is it a return?
-        if (subStr.Equals(NS_LITERAL_STRING(LFSTR)))
+        if (subStr.EqualsLiteral(LFSTR))
         {
           if (nsIPlaintextEditor::eEditorSingleLineMask & mFlags)
           {
@@ -728,13 +757,13 @@ nsTextEditRules::WillInsertText(PRInt32          aAction,
         nsDependentSubstring subStr(tString, oldPos, subStrLen);
         
         // is it a tab?
-        if (subStr.Equals(NS_LITERAL_STRING("\t")))
+        if (subStr.EqualsLiteral("\t"))
         {
           res = mEditor->InsertTextImpl(NS_LITERAL_STRING("    "), address_of(curNode), &curOffset, doc);
           pos++;
         }
         // is it a return?
-        else if (subStr.Equals(NS_LITERAL_STRING(LFSTR)))
+        else if (subStr.EqualsLiteral(LFSTR))
         {
           res = mEditor->CreateBRImpl(address_of(curNode), &curOffset, address_of(unused), nsIEditor::eNone);
           pos++;
@@ -929,7 +958,7 @@ nsTextEditRules::WillDeleteSelection(nsISelection *aSelection,
       // make sure it is not last node in editfield.  If it is, cancel deletion.
       if (nextNode && (aCollapsedAction == nsIEditor::eNext) && nsTextEditUtils::IsBreak(nextNode))
       {
-        if (!mBody) return NS_ERROR_NULL_POINTER;
+        if (!GetBody()) return NS_ERROR_NULL_POINTER;
         nsCOMPtr<nsIDOMNode> lastChild;
         res = mBody->GetLastChild(getter_AddRefs(lastChild));
         if (lastChild == nextNode)
@@ -1004,17 +1033,15 @@ nsTextEditRules:: DidUndo(nsISelection *aSelection, nsresult aResult)
   if (NS_SUCCEEDED(res)) 
   {
     if (mBogusNode) {
-      mBogusNode = do_QueryInterface(nsnull);
+      mBogusNode = nsnull;
     }
     else
     {
-      nsCOMPtr<nsIDOMElement> theBody;
-      res = mEditor->GetRootElement(getter_AddRefs(theBody));
-      if (NS_FAILED(res)) return res;
-      if (!theBody) return NS_ERROR_FAILURE;
-      nsCOMPtr<nsIDOMNode> node = mEditor->GetLeftmostChild(theBody);
+      nsIDOMElement *theRoot = mEditor->GetRoot();
+      if (!theRoot) return NS_ERROR_FAILURE;
+      nsCOMPtr<nsIDOMNode> node = mEditor->GetLeftmostChild(theRoot);
       if (node && mEditor->IsMozEditorBogusNode(node))
-        mBogusNode = do_QueryInterface(node);
+        mBogusNode = node;
     }
   }
   return res;
@@ -1039,17 +1066,16 @@ nsTextEditRules::DidRedo(nsISelection *aSelection, nsresult aResult)
   if (NS_SUCCEEDED(res)) 
   {
     if (mBogusNode) {
-      mBogusNode = do_QueryInterface(nsnull);
+      mBogusNode = nsnull;
     }
     else
     {
-      nsCOMPtr<nsIDOMElement> theBody;
-      res = mEditor->GetRootElement(getter_AddRefs(theBody));
-      if (NS_FAILED(res)) return res;
-      if (!theBody) return NS_ERROR_FAILURE;
+      nsIDOMElement *theRoot = mEditor->GetRoot();
+      if (!theRoot) return NS_ERROR_FAILURE;
       
       nsCOMPtr<nsIDOMNodeList> nodeList;
-      res = theBody->GetElementsByTagName(NS_LITERAL_STRING("div"), getter_AddRefs(nodeList));
+      res = theRoot->GetElementsByTagName(NS_LITERAL_STRING("div"),
+                                          getter_AddRefs(nodeList));
       if (NS_FAILED(res)) return res;
       if (nodeList)
       {
@@ -1057,11 +1083,11 @@ nsTextEditRules::DidRedo(nsISelection *aSelection, nsresult aResult)
         nodeList->GetLength(&len);
         
         if (len != 1) return NS_OK;  // only in the case of one div could there be the bogus node
-        nsCOMPtr<nsIDOMNode>node;
+        nsCOMPtr<nsIDOMNode> node;
         nodeList->Item(0, getter_AddRefs(node));
         if (!node) return NS_ERROR_NULL_POINTER;
         if (mEditor->IsMozEditorBogusNode(node))
-          mBogusNode = do_QueryInterface(node);
+          mBogusNode = node;
       }
     }
   }
@@ -1085,7 +1111,7 @@ nsTextEditRules::WillOutputText(nsISelection *aSelection,
 
   nsAutoString outputFormat(*aOutputFormat);
   ToLowerCase(outputFormat);
-  if (outputFormat.Equals(NS_LITERAL_STRING("text/plain")))
+  if (outputFormat.EqualsLiteral("text/plain"))
   { // only use these rules for plain text output
     if (mFlags & nsIPlaintextEditor::eEditorPasswordMask)
     {
@@ -1175,7 +1201,7 @@ nsTextEditRules::ReplaceNewlines(nsIDOMRange *aRange)
       if (!txn)  return NS_ERROR_OUT_OF_MEMORY;
       res = mEditor->DoTransaction(txn); 
       if (NS_FAILED(res))  return res; 
-      // The transaction system (if any) has taken ownwership of txn
+      // The transaction system (if any) has taken ownership of txn
       NS_IF_RELEASE(txn);
       
       // insert a break
@@ -1192,7 +1218,7 @@ nsTextEditRules::CreateTrailingBRIfNeeded()
   // but only if we aren't a single line edit field
   if (mFlags & nsIPlaintextEditor::eEditorSingleLineMask)
     return NS_OK;
-  if (!mBody) return NS_ERROR_NULL_POINTER;
+  if (!GetBody()) return NS_ERROR_NULL_POINTER;
   nsCOMPtr<nsIDOMNode> lastChild;
   nsresult res = mBody->GetLastChild(getter_AddRefs(lastChild));
   // assuming CreateBogusNodeIfNeeded() has been called first
@@ -1221,13 +1247,19 @@ nsTextEditRules::CreateBogusNodeIfNeeded(nsISelection *aSelection)
   // tell rules system to not do any post-processing
   nsAutoRules beginRulesSniffing(mEditor, nsEditor::kOpIgnore, nsIEditor::eNone);
   
-  if (!mBody) return NS_ERROR_NULL_POINTER;
+  if (!GetBody())
+  {
+    // we don't even have a body yet, don't insert any bogus nodes at
+    // this point.
+
+    return NS_OK;
+  }
 
   // now we've got the body tag.
   // iterate the body tag, looking for editable content
   // if no editable content is found, insert the bogus node
   PRBool needsBogusContent=PR_TRUE;
-  nsCOMPtr<nsIDOMNode>bodyChild;
+  nsCOMPtr<nsIDOMNode> bodyChild;
   nsresult res = mBody->GetFirstChild(getter_AddRefs(bodyChild));        
   while ((NS_SUCCEEDED(res)) && bodyChild)
   { 
@@ -1249,7 +1281,7 @@ nsTextEditRules::CreateBogusNodeIfNeeded(nsISelection *aSelection)
     nsCOMPtr<nsIDOMElement>brElement = do_QueryInterface(newContent);
 
     // set mBogusNode to be the newly created <br>
-    mBogusNode = do_QueryInterface(brElement);
+    mBogusNode = brElement;
     if (!mBogusNode) return NS_ERROR_NULL_POINTER;
 
     // give it a special attribute
@@ -1390,4 +1422,16 @@ nsTextEditRules::CreateMozBR(nsIDOMNode *inParent, PRInt32 inOffset, nsCOMPtr<ns
     if (NS_FAILED(res)) return res;
   }
   return res;
+}
+
+nsIDOMNode *
+nsTextEditRules::GetBody()
+{
+  if (!mBody)
+  {
+    // remember our body node
+    mBody = mEditor->GetRoot();
+  }
+
+  return mBody;
 }

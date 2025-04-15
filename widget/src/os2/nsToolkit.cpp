@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,21 +24,24 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsToolkit.h"
 #include "nsSwitchToUIThread.h"
+
+// Window procedure for the internal window
+static MRESULT EXPENTRY nsToolkitWindowProc(HWND, ULONG, MPARAM, MPARAM);
 
 NS_IMPL_ISUPPORTS1(nsToolkit, nsIToolkit)
 
@@ -205,27 +208,10 @@ MRESULT EXPENTRY nsToolkitWindowProc(HWND hWnd, ULONG msg, MPARAM mp1,
         case WM_CALLMETHOD:
         {
             MethodInfo *info = (MethodInfo *)mp2;
-            PRMonitor *monitor = (PRMonitor *)mp1;
-            info->Invoke();
-            PR_EnterMonitor(monitor);
-            PR_Notify(monitor);
-            PR_ExitMonitor(monitor);
-            break;
+            return (MRESULT)info->Invoke();
         }
-        case WM_SENDMSG:
-        {
-            SendMsgStruct *pData = (SendMsgStruct*) mp1;
-            // send the message
-            pData->rc = WinSendMsg( pData->hwnd, pData->msg, pData->mp1, pData->mp2);
-            // signal the monitor to let the caller continue
-            PR_EnterMonitor( pData->pMonitor);
-            PR_Notify( pData->pMonitor);
-            PR_ExitMonitor( pData->pMonitor);
-            break;
-        }
-        default:
-            return ::WinDefWindowProc(hWnd, msg, mp1, mp2);
     }
+    return ::WinDefWindowProc(hWnd, msg, mp1, mp2);
 }
 
 
@@ -277,39 +263,4 @@ NS_METHOD NS_GetCurrentToolkit(nsIToolkit* *aResult)
   }
 
   return rv;
-}
-
-void nsToolkit::CallMethod(MethodInfo *info)
-{
-   PR_EnterMonitor(mMonitor);
-
-   ::WinPostMsg(mDispatchWnd, WM_CALLMETHOD, MPFROMP(mMonitor), MPFROMP(info));
-
-   PR_Wait(mMonitor, PR_INTERVAL_NO_TIMEOUT);
-   PR_ExitMonitor( mMonitor);
-}
-
-MRESULT nsToolkit::SendMsg( HWND hwnd, ULONG msg, MPARAM mp1, MPARAM mp2)
-{
-   MRESULT rc = 0;
-
-   if( hwnd && IsGuiThread())
-      rc = WinSendMsg( hwnd, msg, mp1, mp2);
-   else if( hwnd)
-   {
-      PR_EnterMonitor( mMonitor);
-
-      SendMsgStruct data( hwnd, msg, mp1, mp2, mMonitor);
-
-      // post a message to the window
-      WinPostMsg( mDispatchWnd, WM_SENDMSG, MPFROMP(&data), 0);
-
-      // wait for it to complete...
-      PR_Wait( mMonitor, PR_INTERVAL_NO_TIMEOUT);
-      PR_ExitMonitor( mMonitor);
-
-      rc = data.rc;
-   }
-
-   return rc;
 }

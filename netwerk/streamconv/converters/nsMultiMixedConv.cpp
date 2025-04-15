@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,21 +22,22 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsMultiMixedConv.h"
 #include "nsMemory.h"
+#include "nsInt64.h"
 #include "plstr.h"
 #include "nsIHttpChannel.h"
 #include "nsIServiceManager.h"
@@ -44,9 +45,9 @@
 #include "nsMimeTypes.h"
 #include "nsIStringStream.h"
 #include "nsReadableUtils.h"
-#include "nsIMultiPartChannel.h"
 #include "nsCRT.h"
 #include "nsIHttpChannelInternal.h"
+#include "nsURLHelper.h"
 
 //
 // Helper function for determining the length of data bytes up to
@@ -66,55 +67,14 @@ LengthToToken(const char *cursor, const char *token)
     return len;
 }
 
-//
-// nsPartChannel is a "dummy" channel which represents an individual part of
-// a multipart/mixed stream...
-//
-// Instances on this channel are passed out to the consumer through the
-// nsIStreamListener interface.
-//
-class nsPartChannel : public nsIChannel,
-                      public nsIByteRangeRequest,
-                      public nsIMultiPartChannel
-{
-public:
-  nsPartChannel(nsIChannel *aMultipartChannel);
-
-  void InitializeByteRange(PRInt32 aStart, PRInt32 aEnd);
-
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIREQUEST
-  NS_DECL_NSICHANNEL
-  NS_DECL_NSIBYTERANGEREQUEST
-  NS_DECL_NSIMULTIPARTCHANNEL
-
-protected:
-  virtual ~nsPartChannel();
-
-protected:
-  nsCOMPtr<nsIChannel>    mMultipartChannel;
-  
-  nsresult                mStatus;
-  nsLoadFlags             mLoadFlags;
-
-  nsCOMPtr<nsILoadGroup>  mLoadGroup;
-
-  nsCString               mContentType;
-  nsCString               mContentCharset;
-  nsCString               mContentDisposition;
-  PRInt32                 mContentLength;
-
-  PRBool                  mIsByteRangeRequest;
-  PRInt32                 mByteRangeStart;
-  PRInt32                 mByteRangeEnd;
-};
-
-nsPartChannel::nsPartChannel(nsIChannel *aMultipartChannel) :
+nsPartChannel::nsPartChannel(nsIChannel *aMultipartChannel, PRUint32 aPartID) :
   mStatus(NS_OK),
-  mContentLength(-1),
+  mContentLength(LL_MAXUINT),
   mIsByteRangeRequest(PR_FALSE),
   mByteRangeStart(0),
-  mByteRangeEnd(0)
+  mByteRangeEnd(0),
+  mPartID(aPartID),
+  mIsLastPart(PR_FALSE)
 {
     mMultipartChannel = aMultipartChannel;
 
@@ -128,7 +88,7 @@ nsPartChannel::~nsPartChannel()
 {
 }
 
-void nsPartChannel::InitializeByteRange(PRInt32 aStart, PRInt32 aEnd)
+void nsPartChannel::InitializeByteRange(PRInt64 aStart, PRInt64 aEnd)
 {
     mIsByteRangeRequest = PR_TRUE;
     
@@ -190,6 +150,7 @@ nsPartChannel::Cancel(nsresult aStatus)
 {
     // Cancelling an individual part must not cancel the underlying
     // multipart channel...
+    // XXX but we should stop sending data for _this_ part channel!
     mStatus = aStatus;
     return NS_OK;
 }
@@ -199,6 +160,7 @@ nsPartChannel::Suspend(void)
 {
     // Suspending an individual part must not suspend the underlying
     // multipart channel...
+    // XXX why not?
     return NS_OK;
 }
 
@@ -207,6 +169,7 @@ nsPartChannel::Resume(void)
 {
     // Resuming an individual part must not resume the underlying
     // multipart channel...
+    // XXX why not?
     return NS_OK;
 }
 
@@ -317,7 +280,8 @@ nsPartChannel::GetContentType(nsACString &aContentType)
 NS_IMETHODIMP
 nsPartChannel::SetContentType(const nsACString &aContentType)
 {
-    NS_ParseContentType(aContentType, mContentType, mContentCharset);
+    PRBool dummy;
+    net_ParseContentType(aContentType, mContentType, mContentCharset, &dummy);
     return NS_OK;
 }
 
@@ -338,7 +302,7 @@ nsPartChannel::SetContentCharset(const nsACString &aContentCharset)
 NS_IMETHODIMP
 nsPartChannel::GetContentLength(PRInt32 *aContentLength)
 {
-    *aContentLength = mContentLength;
+    *aContentLength = mContentLength; // XXX truncates 64-bit value
     return NS_OK;
 }
 
@@ -363,6 +327,20 @@ nsPartChannel::SetContentDisposition(const nsACString &aContentDisposition)
     return NS_OK;
 }
 
+NS_IMETHODIMP
+nsPartChannel::GetPartID(PRUint32 *aPartID)
+{
+    *aPartID = mPartID;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsPartChannel::GetIsLastPart(PRBool *aIsLastPart)
+{
+    *aIsLastPart = mIsLastPart;
+    return NS_OK;
+}
+
 //
 // nsIByteRangeRequest implementation...
 //
@@ -377,7 +355,7 @@ nsPartChannel::GetIsByteRangeRequest(PRBool *aIsByteRangeRequest)
 
 
 NS_IMETHODIMP 
-nsPartChannel::GetStartRange(PRInt32 *aStartRange)
+nsPartChannel::GetStartRange(PRInt64 *aStartRange)
 {
     *aStartRange = mByteRangeStart;
 
@@ -385,7 +363,7 @@ nsPartChannel::GetStartRange(PRInt32 *aStartRange)
 }
 
 NS_IMETHODIMP 
-nsPartChannel::GetEndRange(PRInt32 *aEndRange)
+nsPartChannel::GetEndRange(PRInt64 *aEndRange)
 {
     *aEndRange = mByteRangeEnd;
     return NS_OK;
@@ -414,15 +392,15 @@ NS_IMPL_THREADSAFE_ISUPPORTS3(nsMultiMixedConv,
 // No syncronous conversion at this time.
 NS_IMETHODIMP
 nsMultiMixedConv::Convert(nsIInputStream *aFromStream,
-                          const PRUnichar *aFromType,
-                          const PRUnichar *aToType,
+                          const char *aFromType,
+                          const char *aToType,
                           nsISupports *aCtxt, nsIInputStream **_retval) {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 // Stream converter service calls this to initialize the actual stream converter (us).
 NS_IMETHODIMP
-nsMultiMixedConv::AsyncConvertData(const PRUnichar *aFromType, const PRUnichar *aToType,
+nsMultiMixedConv::AsyncConvertData(const char *aFromType, const char *aToType,
                                    nsIStreamListener *aListener, nsISupports *aCtxt) {
     NS_ASSERTION(aListener && aFromType && aToType, "null pointer passed into multi mixed converter");
 
@@ -573,7 +551,7 @@ nsMultiMixedConv::OnDataAvailable(nsIRequest *request, nsISupports *context,
             mNewPart = PR_TRUE;
             // Reset state so we don't carry it over from part to part
             mContentType.Truncate();
-            mContentLength = -1;
+            mContentLength = LL_MAXUINT;
             mContentDisposition.Truncate();
             mIsByteRangeRequest = PR_FALSE;
             mByteRangeStart = 0;
@@ -684,6 +662,8 @@ nsMultiMixedConv::OnStopRequest(nsIRequest *request, nsISupports *ctxt,
         return NS_ERROR_FAILURE;
 
     if (mPartChannel) {
+        mPartChannel->SetIsLastPart();
+
         // we've already called SendStart() (which sets up the mPartChannel,
         // and fires an OnStart()) send any data left over, and then fire the stop.
         if (mBufLen > 0 && mBuffer) {
@@ -713,10 +693,12 @@ nsMultiMixedConv::OnStopRequest(nsIRequest *request, nsISupports *ctxt,
 
 
 // nsMultiMixedConv methods
-nsMultiMixedConv::nsMultiMixedConv() {
+nsMultiMixedConv::nsMultiMixedConv() :
+  mCurrentPartID(0)
+{
     mTokenLen           = 0;
     mNewPart            = PR_TRUE;
-    mContentLength      = -1;
+    mContentLength      = LL_MAXUINT;
     mBuffer             = nsnull;
     mBufLen             = 0;
     mProcessingHeaders  = PR_FALSE;
@@ -753,14 +735,14 @@ nsMultiMixedConv::SendStart(nsIChannel *aChannel) {
     nsresult rv = NS_OK;
 
     if (mContentType.IsEmpty())
-        mContentType = NS_LITERAL_CSTRING(UNKNOWN_CONTENT_TYPE);
+        mContentType.AssignLiteral(UNKNOWN_CONTENT_TYPE);
 
     // if we already have an mPartChannel, that means we never sent a Stop()
     // before starting up another "part." that would be bad.
     NS_ASSERTION(!mPartChannel, "tisk tisk, shouldn't be overwriting a channel");
 
     nsPartChannel *newChannel;
-    newChannel = new nsPartChannel(aChannel);
+    newChannel = new nsPartChannel(aChannel, mCurrentPartID++);
     if (!newChannel)
         return NS_ERROR_OUT_OF_MEMORY;
 
@@ -776,14 +758,11 @@ nsMultiMixedConv::SendStart(nsIChannel *aChannel) {
     rv = mPartChannel->SetContentType(mContentType);
     if (NS_FAILED(rv)) return rv;
 
-    rv = mPartChannel->SetContentLength(mContentLength);
+    rv = mPartChannel->SetContentLength(mContentLength); // XXX Truncates 64-bit!
     if (NS_FAILED(rv)) return rv;
 
-    nsCOMPtr<nsIMultiPartChannel> partChannel(do_QueryInterface(mPartChannel));
-    if (partChannel) {
-        rv = partChannel->SetContentDisposition(mContentDisposition);
-        if (NS_FAILED(rv)) return rv;
-    }
+    rv = mPartChannel->SetContentDisposition(mContentDisposition);
+    if (NS_FAILED(rv)) return rv;
 
     nsLoadFlags loadFlags = 0;
     mPartChannel->GetLoadFlags(&loadFlags);
@@ -832,10 +811,10 @@ nsMultiMixedConv::SendData(char *aBuffer, PRUint32 aLen) {
     
     if (!mPartChannel) return NS_ERROR_FAILURE; // something went wrong w/ processing
 
-    if (mContentLength != -1) {
+    if (mContentLength != LL_MAXUINT) {
         // make sure that we don't send more than the mContentLength
         // XXX why? perhaps the Content-Length header was actually wrong!!
-        if ((aLen + mTotalSent) > PRUint32(mContentLength))
+        if ((nsUint64(aLen) + mTotalSent) > mContentLength)
             aLen = mContentLength - mTotalSent;
 
         if (aLen == 0)
@@ -884,7 +863,7 @@ nsMultiMixedConv::ParseHeaders(nsIChannel *aChannel, char *&aPtr,
     PRBool done = PR_FALSE;
     PRUint32 lineFeedIncrement = 1;
     
-    mContentLength = -1; // XXX what if we were already called?
+    mContentLength = LL_MAXUINT; // XXX what if we were already called?
     while (cursorLen && (newLine = (char *) memchr(cursor, nsCRT::LF, cursorLen))) {
         // adjust for linefeeds
         if ((newLine > cursor) && (newLine[-1] == nsCRT::CR) ) { // CRLF
@@ -918,20 +897,20 @@ nsMultiMixedConv::ParseHeaders(nsIChannel *aChannel, char *&aPtr,
             headerVal.CompressWhitespace();
 
             // examine header
-            if (headerStr.EqualsIgnoreCase("content-type")) {
+            if (headerStr.LowerCaseEqualsLiteral("content-type")) {
                 mContentType = headerVal;
-            } else if (headerStr.EqualsIgnoreCase("content-length")) {
-                mContentLength = atoi(headerVal.get());
-            } else if (headerStr.EqualsIgnoreCase("content-disposition")) {
+            } else if (headerStr.LowerCaseEqualsLiteral("content-length")) {
+                mContentLength = atoi(headerVal.get()); // XXX 64-bit math?
+            } else if (headerStr.LowerCaseEqualsLiteral("content-disposition")) {
                 mContentDisposition = headerVal;
-            } else if (headerStr.EqualsIgnoreCase("set-cookie")) {
+            } else if (headerStr.LowerCaseEqualsLiteral("set-cookie")) {
                 nsCOMPtr<nsIHttpChannelInternal> httpInternal =
                     do_QueryInterface(aChannel);
                 if (httpInternal) {
                     httpInternal->SetCookie(headerVal.get());
                 }
-            } else if (headerStr.EqualsIgnoreCase("content-range") || 
-                       headerStr.EqualsIgnoreCase("range") ) {
+            } else if (headerStr.LowerCaseEqualsLiteral("content-range") || 
+                       headerStr.LowerCaseEqualsLiteral("range") ) {
                 // something like: Content-range: bytes 7000-7999/8000
                 char* tmpPtr;
 
@@ -955,14 +934,14 @@ nsMultiMixedConv::ParseHeaders(nsIChannel *aChannel, char *&aPtr,
                     
                     tmpPtr[0] = '\0';
                     
-                    mByteRangeStart = atoi(range);
+                    mByteRangeStart = atoi(range); // XXX want 64-bit conv
                     tmpPtr++;
                     mByteRangeEnd = atoi(tmpPtr);
                 }
 
                 mIsByteRangeRequest = PR_TRUE;
-                if (mContentLength == -1)   
-                    mContentLength = mByteRangeEnd - mByteRangeStart + 1;
+                if (mContentLength == LL_MAXUINT)
+                    mContentLength = PRUint64(PRInt64(mByteRangeEnd - mByteRangeStart + nsInt64(1)));
             }
         }
         *newLine = tmpChar;

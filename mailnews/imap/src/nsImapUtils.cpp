@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1999
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,6 +44,7 @@
 #include "prsystem.h"
 #include "nsEscape.h"
 #include "nsIFileSpec.h"
+#include "nsNetCID.h"
 
 // stuff for temporary root folder hack
 #include "nsIMsgAccountManager.h"
@@ -61,10 +62,14 @@ nsImapURI2Path(const char* rootURI, const char* uriStr, nsFileSpec& pathResult)
   nsresult rv;
   
   nsAutoString sbdSep;
-  
+  nsCOMPtr<nsIURL> url;
+ 
   rv = nsGetMailFolderSeparator(sbdSep);
   if (NS_FAILED(rv)) 
     return rv;
+  
+  url = do_CreateInstance(NS_STANDARDURL_CONTRACTID, &rv);
+  if (NS_FAILED(rv)) return rv;
   
   nsCAutoString uri(uriStr);
   if (uri.Find(rootURI) != 0)     // if doesn't start with rootURI
@@ -77,56 +82,25 @@ nsImapURI2Path(const char* rootURI, const char* uriStr, nsFileSpec& pathResult)
     rv = NS_ERROR_FAILURE; 
   }
   
-  // the server name is the first component of the path, so extract it out
-  PRInt32 hostStart;
-  
-  hostStart = uri.FindChar('/');
-  if (hostStart <= 0) return NS_ERROR_FAILURE;
-  
-  // skip past all //
-  while (uri.CharAt(hostStart) =='/') hostStart++;
-  
-  // cut imap://[userid@]hostname/folder -> [userid@]hostname/folder
-  nsCAutoString hostname;
-  uri.Right(hostname, uri.Length() - hostStart);
-  
-  nsCAutoString username;
-  
-  PRInt32 atPos = hostname.FindChar('@');
-  if (atPos != -1) {
-    hostname.Left(username, atPos);
-    hostname.Cut(0, atPos+1);
-  }
-  
+  // Set our url to the string given
+  rv = url->SetSpec(nsDependentCString(uriStr));
+  if (NS_FAILED(rv)) return rv;
+
+  // Set the folder to the url path
   nsCAutoString folder;
-  // folder comes after the hostname, after the '/'
-  // cut off first '/' and everything following it
-  // hostname/folder -> hostname
-  PRInt32 hostEnd = hostname.FindChar('/');
-  if (hostEnd > 0) 
-  {
-    hostname.Right(folder, hostname.Length() - hostEnd - 1);
-    hostname.Truncate(hostEnd);
-  }
-  
+  rv = url->GetPath(folder);
+  // can't have leading '/' in path
+  if (folder.CharAt(0) == '/')
+    folder.Cut(0, 1);
+  // Now find the server from the URL
   nsCOMPtr<nsIMsgIncomingServer> server;
   nsCOMPtr<nsIMsgAccountManager> accountManager = 
     do_GetService(NS_MSGACCOUNTMANAGER_CONTRACTID, &rv);
   if(NS_FAILED(rv)) return rv;
   
-  char *unescapedUserName = ToNewCString(username);
-  if (unescapedUserName)
-  {
-    nsUnescape(unescapedUserName);
-    rv = accountManager->FindServer(unescapedUserName,
-      hostname.get(),
-      "imap",
-      getter_AddRefs(server));
-    PR_Free(unescapedUserName);
-  }
-  else
-    rv = NS_ERROR_OUT_OF_MEMORY;
-  
+  rv = accountManager->FindServerByURI(url, PR_FALSE,
+    getter_AddRefs(server));
+
   if (NS_FAILED(rv)) return rv;
   
   if (server) 

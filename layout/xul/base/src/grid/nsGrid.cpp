@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -220,13 +220,17 @@ nsGrid::RebuildIfNeeded()
   // So in this case we need to make 1 extra column.
   //
 
+  // Make sure to update mExtraColumnCount no matter what, since it might
+  // happen that we now have as many columns as are defined, and we wouldn't
+  // want to have a positive mExtraColumnCount hanging about in that case!
+  mExtraColumnCount = computedColumnCount - columnCount;
   if (computedColumnCount > columnCount) {
-     mExtraColumnCount = computedColumnCount - columnCount;
      columnCount = computedColumnCount;
   }
 
+  // Same for rows.
+  mExtraRowCount = computedRowCount - rowCount;
   if (computedRowCount > rowCount) {
-     mExtraRowCount    = computedRowCount - rowCount;
      rowCount = computedRowCount;
   }
 
@@ -289,8 +293,7 @@ nsGrid::FindRowsAndColumns(nsIBox** aRows, nsIBox** aColumns)
     nsresult rv = NS_OK;
     nsCOMPtr<nsIScrollableFrame> scrollFrame = do_QueryInterface(child, &rv);
     if (scrollFrame) {
-       nsIFrame* scrolledFrame = nsnull;
-       scrollFrame->GetScrolledFrame(nsnull, scrolledFrame);
+       nsIFrame* scrolledFrame = scrollFrame->GetScrolledFrame();
        NS_ASSERTION(scrolledFrame,"Error no scroll frame!!");
        if (NS_FAILED(CallQueryInterface(scrolledFrame, &child)))
          child = nsnull;
@@ -537,10 +540,10 @@ nsGrid::GetRowAt(PRInt32 aIndex, PRBool aIsHorizontal)
   RebuildIfNeeded();
 
   if (aIsHorizontal) {
-    NS_ASSERTION(aIndex < mRowCount || aIndex >= 0, "Index out of range");
+    NS_ASSERTION(aIndex < mRowCount && aIndex >= 0, "Index out of range");
     return &mRows[aIndex];
   } else {
-    NS_ASSERTION(aIndex < mColumnCount || aIndex >= 0, "Index out of range");
+    NS_ASSERTION(aIndex < mColumnCount && aIndex >= 0, "Index out of range");
     return &mColumns[aIndex];
   }
 }
@@ -1174,8 +1177,10 @@ nsGrid::GetMaxRowHeight(nsBoxLayoutState& aState, PRInt32 aIndex, nscoord& aSize
     if (!isCollapsed)
     {
       nsSize childSize(0,0);
-
       child->GetMaxSize(aState, childSize);
+      nsSize min(0,0);
+      child->GetMinSize(aState, min);
+      nsBox::BoundsCheckMinMax(min, childSize);
 
       nsSprocketLayout::AddLargestSize(size, childSize, aIsHorizontal);
     }
@@ -1459,12 +1464,9 @@ nsGrid::GetScrolledBox(nsIBox* aChild)
   // first see if it is a scrollframe. If so walk down into it and get the scrolled child
       nsCOMPtr<nsIScrollableFrame> scrollFrame = do_QueryInterface(aChild);
       if (scrollFrame) {
-         nsIFrame* scrolledFrame = nsnull;
-         scrollFrame->GetScrolledFrame(nsnull, scrolledFrame);
+         nsIFrame* scrolledFrame = scrollFrame->GetScrolledFrame();
          NS_ASSERTION(scrolledFrame,"Error no scroll frame!!");
-         nsIBox *box = nsnull;
-         CallQueryInterface(scrolledFrame, &box);
-         return box;
+         return scrolledFrame->IsBoxFrame() ? scrolledFrame : nsnull;
       }
 
       return aChild;
@@ -1477,6 +1479,9 @@ nsGrid::GetScrolledBox(nsIBox* aChild)
 nsIBox*
 nsGrid::GetScrollBox(nsIBox* aChild)
 {
+  if (!aChild)
+    return nsnull;
+
   // get parent
   nsIBox* parent = nsnull;
   nsCOMPtr<nsIBoxLayout> layout;

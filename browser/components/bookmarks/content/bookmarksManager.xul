@@ -1,32 +1,50 @@
 <?xml version="1.0"?>
 
-# The contents of this file are subject to the Netscape Public
-# License Version 1.1 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy of
-# the License at http://www.mozilla.org/NPL/
-# 
-# Software distributed under the License is distributed on an "AS
-# IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-# implied. See the License for the specific language governing
-# rights and limitations under the License.
-# 
+# ***** BEGIN LICENSE BLOCK *****
+# Version: MPL 1.1/GPL 2.0/LGPL 2.1
+#
+# The contents of this file are subject to the Mozilla Public License Version
+# 1.1 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+# http://www.mozilla.org/MPL/
+#
+# Software distributed under the License is distributed on an "AS IS" basis,
+# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+# for the specific language governing rights and limitations under the
+# License.
+#
 # The Original Code is mozilla.org code.
-# 
-# The Initial Developer of the Original Code is Netscape
-# Communications Corporation.  Portions created by Netscape are
-# Copyright (C) 1998 Netscape Communications Corporation. All
-# Rights Reserved.
-# 
-# Contributor(s): 
+#
+# The Initial Developer of the Original Code is
+# Netscape Communications Corporation.
+# Portions created by the Initial Developer are Copyright (C) 1998
+# the Initial Developer. All Rights Reserved.
+#
+# Contributor(s):
 #   Ben Goodger <ben@netscape.com>
 #   Blake Ross <blaker@netscape.com>
 #   Dean Tessman <dean_tessman@hotmail.com>
 #   Pierre Chanial <chanial@noos.fr>
+#
+# Alternatively, the contents of this file may be used under the terms of
+# either the GNU General Public License Version 2 or later (the "GPL"), or
+# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+# in which case the provisions of the GPL or the LGPL are applicable instead
+# of those above. If you wish to allow use of your version of this file only
+# under the terms of either the GPL or the LGPL, and not to allow others to
+# use your version of this file under the terms of the MPL, indicate your
+# decision by deleting the provisions above and replace them with the notice
+# and other provisions required by the GPL or the LGPL. If you do not delete
+# the provisions above, a recipient may use your version of this file under
+# the terms of any one of the MPL, the GPL or the LGPL.
+#
+# ***** END LICENSE BLOCK *****
 
 <?xml-stylesheet href="chrome://global/skin/" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/skin/bookmarks/bookmarksManager.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/content/bookmarks/bookmarks.css" type="text/css"?>
 <?xul-overlay href="chrome://global/content/editMenuOverlay.xul"?>
+<?xul-overlay href="chrome://browser/content/baseMenuOverlay.xul"?>
 <!DOCTYPE window SYSTEM "chrome://browser/locale/bookmarks/bookmarks.dtd">
 
 <window id="bookmark-window" windowtype="bookmarks:manager"
@@ -46,6 +64,8 @@
   <script type="application/x-javascript" src="chrome://browser/content/bookmarks/bookmarks.js"/>
   <script type="application/x-javascript" src="chrome://browser/content/bookmarks/bookmarksManager.js"/>
 
+  <stringbundleset id="stringbundleset"/>
+
   <commandset id="editMenuCommands"/>
   <commandset id="CommandUpdate_Bookmarks"
               events="focus,tree-select"
@@ -56,7 +76,6 @@
   <command id="cmd_bm_open"                      oncommand="goDoCommand('cmd_bm_open');"/>
   <command id="cmd_bm_openinnewwindow"           oncommand="goDoCommand('cmd_bm_openinnewwindow');"/>
   <command id="cmd_bm_openinnewtab"              oncommand="goDoCommand('cmd_bm_openinnewtab');"/>
-  <command id="cmd_bm_expandfolder"              oncommand="goDoCommand('cmd_bm_expandfolder');"/>
   <command id="cmd_bm_openfolder"                oncommand="goDoCommand('cmd_bm_openfolder');"/>
   <command id="cmd_bm_managefolder"              oncommand="goDoCommand('cmd_bm_managefolder');"/>
   <command id="cmd_bm_newfolder"                 oncommand="goDoCommand('cmd_bm_newfolder');"/>
@@ -81,7 +100,13 @@
     <key keycode="VK_ESCAPE" command="cmd_close"/>
     <key id="bm_key_find" key="&edit.find.keybinding;" modifiers="accel" command="cmd_bm_find"/>
     <key id="bm_key_properties" key="&edit.properties.keybinding;" modifiers="accel" command="cmd_bm_properties"/>
+#ifdef XP_MACOSX
+    <key id="key_delete2" keycode="VK_BACK" command="cmd_delete"/>
+#endif
   </keyset>
+
+  <commandset id="baseMenuCommandSet" />
+  <keyset id="baseMenuKeyset" />
 
   <toolbox id="bookmarks-toolbox">
     <menubar id="main-menubar">
@@ -132,6 +157,7 @@
                     accesskey="&menuitem.personaltoolbarfolder.accesskey;"/>
           <menuseparator/>
           <menuitem label="&command.refreshLivemark.label;"
+                    accesskey="&command.refreshLivemark.accesskey;"
                     command="cmd_bm_refreshlivemark"/>
           <menuseparator/>
           <menuitem label="&command.properties.label;"
@@ -169,9 +195,14 @@
                     resource="direction" name="sortDirectionSet"/>
         </menupopup>
       </menu>
+#ifdef XP_MACOSX
+      <menu id="windowMenu"/>
+      <menupopup id="menu_ToolsPopup"/>
+#endif
+      <menu id="helpMenu"/>
     </menubar>
 
-    <toolbar id="command-toolbar" tbalign="stretch">
+    <toolbar id="command-toolbar" tbalign="stretch" class="chromeclass-toolbar">
       <toolbarbutton id="newbookmark" label="&menuitem.newBookmark.label;"
                      accesskey="&menuitem.newBookmark.accesskey;"
                      command="cmd_bm_newbookmark"/>

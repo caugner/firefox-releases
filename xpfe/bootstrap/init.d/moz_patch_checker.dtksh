@@ -15,6 +15,8 @@
 # for the specific language governing rights and limitations under the
 # License.
 #
+# The Original Code is mozilla.org code.
+#
 # The Initial Developer of the Original Code is
 # Roland Mainz <roland.mainz@nrubsig.org>
 # Portions created by the Initial Developer are Copyright (C) 2004
@@ -45,6 +47,14 @@ enumerate_patch_list()
     #cat patchlist.txt | grep "^Patch: "
 }
 
+# Exit with a warning for unsupported platforms
+
+unsupported_exit()
+{
+    echo "# WARNING: Patch checker not supported for $(uname -sr) on $(uname -p)."
+    exit 0
+}
+
 # Setup list of required patches
 typeset -A required_patches
 case "$(uname -p)" in
@@ -67,8 +77,8 @@ case "$(uname -p)" in
         # Solaris 2.8/SPARC
         "5.8")
             required_patches=(
-              [0]="108434-14" [0_title]="32-Bit Shared library patch for C++"
-              [1]="108435-14" [1_title]="64-Bit Shared library patch for C++"
+              [0]="108434-17" [0_title]="32-Bit Shared library patch for C++"
+              [1]="108435-17" [1_title]="64-Bit Shared library patch for C++"
               [2]="108652-79" [2_title]="X11 6.5.1: Xsun patch"
               [3]="108773-18" [3_title]="SunOS 5.8: IIIM and X Input & Output Method patch"
               [4]="109147-27" [4_title]="SunOS 5.8: linker patch"
@@ -77,15 +87,16 @@ case "$(uname -p)" in
               [7]="111721-04" [7_title]="SunOS 5.8: Math Library (libm) patch"
               [8]="113261-02" [8_title]="SunOS 5.8: UTF-8 locale ICONV patch"
               [9]="114542-01" [9_title]="SunOS 5.8: Adds extended Arabic support"
+              [10]="111721-04" [10_title]="SunOS 5.8: Math Library (libm) patch"
             )
-            num_required_patches=10
+            num_required_patches=11
             ;;
 
         # Solaris 2.9/SPARC
         "5.9")
             required_patches=(
-              [0]="111711-08" [0_title]="32-Bit Shared library patch for C++"
-              [1]="111712-08" [1_title]="64-Bit Shared library patch for C++"
+              [0]="111711-11" [0_title]="32-Bit Shared library patch for C++"
+              [1]="111712-11" [1_title]="64-Bit Shared library patch for C++"
               [2]="111722-04" [2_title]="SunOS 5.9: Math Library (libm) patch"
               [3]="112661-06" [3_title]="SunOS 5.9: IIIM and X Input & Output Method patch"
               [4]="112785-34" [4_title]="X11 6.6.1: Xsun patch"
@@ -93,12 +104,18 @@ case "$(uname -p)" in
               [6]="113902-03" [6_title]="SunOS 5.9: Asian UTF-8 iconv modules enhancement"
               [7]="114276-02" [7_title]="SunOS 5.9: Extended Arabic support in UTF-8"
               [8]="114641-02" [8_title]="SunOS 5.9: Japanese iconv for UTF-8 patch"
+              [9]="111722-04" [9_title]="SunOS 5.9: Math Library (libm) patch"
             )
-            num_required_patches=9
+            num_required_patches=10
             ;;
-        *)
-            echo "# WARNING: Patch checker not supported for $(uname -s)."
+
+	# Solaris 10/SPARC - no patches yet
+	"5.10")
             exit 0
+            ;;
+
+        *)
+            unsupported_exit
             ;;
       esac
       ;;
@@ -129,8 +146,9 @@ case "$(uname -p)" in
               [6]="112757-01" [6_title]="SunOS 5.8_x86: Math Library (libm) patch"
               [7]="113262-02" [7_title]="SunOS 5.8_x86: UTF-8 locale ICONV patch"
               [8]="114543-01" [8_title]="SunOS 5.8_x86: Adds extended Arabic support"
+              [9]="112757-01" [9_title]="SunOS 5.8_x86: Math Library (libm) patch"
             )
-            num_required_patches=9
+            num_required_patches=10
             ;;
 
         # Solaris 2.9/x86
@@ -144,19 +162,23 @@ case "$(uname -p)" in
               [5]="113903-03" [5_title]="SunOS 5.9_x86: Asian UTF-8 iconv modules enhancement"
               [6]="114277-02" [6_title]="SunOS 5.9_x86: Extended Arabic support in UTF-8 "
               [7]="114642-02" [7_title]="SunOS 5.9_x86: Japanese iconv for UTF-8 patch"
+              [8]="111728-03" [8_title]="SunOS 5.9_x86: Math Library (libm) patch"
             )
-            num_required_patches=8
+            num_required_patches=9
+            ;;
+
+	# Solaris 10/x86 - no patches yet
+	"5.10")
+            exit 0
             ;;
 
         *)
-            echo "# WARNING: Patch checker not supported for $(uname -s)."
-            exit 0
+            unsupported_exit
             ;;
       esac
       ;;
   *)
-      echo "# ERROR: Patch checker not supported for $(uname -p)."
-      exit 1
+      unsupported_exit
       ;;
 esac
 

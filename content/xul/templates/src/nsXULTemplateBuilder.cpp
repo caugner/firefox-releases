@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,19 +24,19 @@
  *   David Hyatt <hyatt@netscape.com>
  *   Chris Waterson <waterson@netscape.com>
  *   Pierre Phaneuf <pp@ludusdesign.com>
- *
+ *   Joe Hewitt <hewitt@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -74,7 +74,6 @@
 #include "nsIDocument.h"
 #include "nsIBindingManager.h"
 #include "nsIDOMNodeList.h"
-#include "nsINameSpace.h"
 #include "nsINameSpaceManager.h"
 #include "nsIRDFCompositeDataSource.h"
 #include "nsIRDFInferDataSource.h"
@@ -88,7 +87,6 @@
 #include "nsIRDFService.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIServiceManager.h"
-#include "nsISecurityCheckedComponent.h"
 #include "nsISimpleEnumerator.h"
 #include "nsISupportsArray.h"
 #include "nsITimer.h"
@@ -97,7 +95,6 @@
 #include "nsIXULSortService.h"
 #include "nsContentCID.h"
 #include "nsRDFCID.h"
-#include "nsIXULContent.h"
 #include "nsXULContentUtils.h"
 #include "nsRDFSort.h"
 #include "nsRuleNetwork.h"
@@ -128,6 +125,8 @@
 
 static NS_DEFINE_CID(kRDFContainerUtilsCID,      NS_RDFCONTAINERUTILS_CID);
 static NS_DEFINE_CID(kRDFServiceCID,             NS_RDFSERVICE_CID);
+
+#define PARSE_TYPE_INTEGER  "Integer"
 
 //----------------------------------------------------------------------
 //
@@ -205,10 +204,15 @@ nsXULTemplateBuilder::Init()
     return NS_OK;
 }
 
-NS_IMPL_ISUPPORTS3(nsXULTemplateBuilder,
-                   nsIXULTemplateBuilder,
-                   nsISecurityCheckedComponent,
-                   nsIRDFObserver)
+NS_IMPL_ADDREF(nsXULTemplateBuilder)
+NS_IMPL_RELEASE(nsXULTemplateBuilder)
+
+NS_INTERFACE_MAP_BEGIN(nsXULTemplateBuilder)
+  NS_INTERFACE_MAP_ENTRY(nsIXULTemplateBuilder)
+  NS_INTERFACE_MAP_ENTRY(nsIRDFObserver)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIXULTemplateBuilder)
+  NS_INTERFACE_MAP_ENTRY_DOM_CLASSINFO(XULTemplateBuilder)
+NS_INTERFACE_MAP_END
 
 //----------------------------------------------------------------------
 //
@@ -266,7 +270,10 @@ nsXULTemplateBuilder::Refresh()
         }
     }
 
-    return Rebuild();
+    // XXXbsmedberg: it would be kinda nice to install an async nsIRDFXMLSink
+    // observer and call rebuild() once the load is complete. See bug 254600.
+
+    return NS_OK;
 }   
 
 NS_IMETHODIMP
@@ -347,6 +354,10 @@ nsXULTemplateBuilder::AttributeChanged(nsIDocument *aDocument,
 void
 nsXULTemplateBuilder::DocumentWillBeDestroyed(nsIDocument *aDocument)
 {
+    // The call to RemoveObserver could release the last reference to
+    // |this|, so hold another reference.
+    nsRefPtr<nsXULTemplateBuilder> kungFuDeathGrip(this);
+
     // Break circular references
     if (mDB) {
         mDB->RemoveObserver(this);
@@ -686,12 +697,12 @@ nsXULTemplateBuilder::LoadDataSources(nsIDocument* doc)
 	// check for magical attributes. XXX move to ``flags''?
 	nsAutoString coalesce;
 	mRoot->GetAttr(kNameSpaceID_None, nsXULAtoms::coalesceduplicatearcs, coalesce);
-    if (coalesce == NS_LITERAL_STRING("false"))
+    if (coalesce.EqualsLiteral("false"))
 		mCompDB->SetCoalesceDuplicateArcs(PR_FALSE);
 
     nsAutoString allowneg;
     mRoot->GetAttr(kNameSpaceID_None, nsXULAtoms::allownegativeassertions, allowneg);
-    if (allowneg == NS_LITERAL_STRING("false"))
+    if (allowneg.EqualsLiteral("false"))
 		mCompDB->SetAllowNegativeAssertions(PR_FALSE);
 
     // Grab the doc's principal...
@@ -745,7 +756,7 @@ nsXULTemplateBuilder::LoadDataSources(nsIDocument* doc)
         first = last + 1;
 
         // A special 'dummy' datasource
-        if (uriStr == NS_LITERAL_STRING("rdf:null"))
+        if (uriStr.EqualsLiteral("rdf:null"))
             continue;
 
         // N.B. that `failure' (e.g., because it's an unknown
@@ -826,7 +837,7 @@ nsXULTemplateBuilder::LoadDataSources(nsIDocument* doc)
 
     // Now set the database on the element, so that script writers can
     // access it.
-    nsCOMPtr<nsIXULContent> xulcontent = do_QueryInterface(mRoot);
+    nsXULElement *xulcontent = nsXULElement::FromContent(mRoot);
     if (! xulcontent) {
         // Hmm. This must be an HTML element. Try to set it as a
         // JS property "by hand".
@@ -855,6 +866,8 @@ nsXULTemplateBuilder::InitHTMLTemplateRoot()
     if (! global)
         return NS_ERROR_UNEXPECTED;
 
+    JSObject *scope = global->GetGlobalJSObject();
+
     nsIScriptContext *context = global->GetContext();
     if (! context)
         return NS_ERROR_UNEXPECTED;
@@ -864,15 +877,12 @@ nsXULTemplateBuilder::InitHTMLTemplateRoot()
     if (! jscontext)
         return NS_ERROR_UNEXPECTED;
 
-    static NS_DEFINE_CID(kXPConnectCID, NS_XPCONNECT_CID);
-    nsCOMPtr<nsIXPConnect> xpc = do_GetService(kXPConnectCID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsIXPConnect *xpc = nsContentUtils::XPConnect();
 
     JSObject* jselement = nsnull;
 
     nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
-    rv = xpc->WrapNative(jscontext, ::JS_GetGlobalObject(jscontext), mRoot,
-                         NS_GET_IID(nsIDOMElement),
+    rv = xpc->WrapNative(jscontext, scope, mRoot, NS_GET_IID(nsIDOMElement),
                          getter_AddRefs(wrapper));
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -881,7 +891,7 @@ nsXULTemplateBuilder::InitHTMLTemplateRoot()
 
     {
         // database
-        rv = xpc->WrapNative(jscontext, ::JS_GetGlobalObject(jscontext), mDB,
+        rv = xpc->WrapNative(jscontext, scope, mDB,
                              NS_GET_IID(nsIRDFCompositeDataSource),
                              getter_AddRefs(wrapper));
         NS_ENSURE_SUCCESS(rv, rv);
@@ -968,6 +978,13 @@ nsXULTemplateBuilder::ParseAttribute(const nsAString& aAttributeValue,
             (*aTextCallback)(this, Substring(mark, backup), aClosure);
         }
 
+        if (*iter == PRUnichar('?')) {
+            // Well, it was not really a variable, but "??". We use one
+            // question mark (the second one, actually) literally.
+            mark = iter;
+            continue;
+        }
+
         // Construct a substring that is the symbol we need to look up
         // in the rule's symbol table. The symbol is terminated by a
         // space character, a caret, or the end of the string,
@@ -1017,7 +1034,7 @@ nsXULTemplateBuilder::SubstituteText(nsTemplateMatch& aMatch,
                                      nsAString& aResult)
 {
     // See if it's the special value "..."
-    if (aAttributeValue == NS_LITERAL_STRING("...")) {
+    if (aAttributeValue.EqualsLiteral("...")) {
         Value memberval;
         aMatch.GetAssignmentFor(mConflictSet, mMemberVar, &memberval);
 
@@ -1068,7 +1085,7 @@ nsXULTemplateBuilder::SubstituteTextReplaceVariable(nsXULTemplateBuilder* aThis,
 
     // The symbol "rdf:*" is special, and means "this guy's URI"
     PRInt32 var = 0;
-    if (aVariable == NS_LITERAL_STRING("rdf:*"))
+    if (aVariable.EqualsLiteral("rdf:*"))
         var = c->match.mRule->GetMemberVariable();
     else
         var = aThis->mRules.LookupSymbol(PromiseFlatString(aVariable).get());
@@ -1464,28 +1481,24 @@ nsXULTemplateBuilder::GetTemplateRoot(nsIContent** aResult)
     if (! doc)
         return NS_ERROR_FAILURE;
 
-    nsIBindingManager *bindingManager = doc->GetBindingManager();
+    nsCOMPtr<nsIDOMNodeList> kids;
+    doc->BindingManager()->GetXBLChildNodesFor(mRoot, getter_AddRefs(kids));
 
-    if (bindingManager) {
-        nsCOMPtr<nsIDOMNodeList> kids;
-        bindingManager->GetXBLChildNodesFor(mRoot, getter_AddRefs(kids));
+    if (kids) {
+        PRUint32 length;
+        kids->GetLength(&length);
 
-        if (kids) {
-            PRUint32 length;
-            kids->GetLength(&length);
+        for (PRUint32 i = 0; i < length; ++i) {
+            nsCOMPtr<nsIDOMNode> node;
+            kids->Item(i, getter_AddRefs(node));
+            if (! node)
+                continue;
 
-            for (PRUint32 i = 0; i < length; ++i) {
-                nsCOMPtr<nsIDOMNode> node;
-                kids->Item(i, getter_AddRefs(node));
-                if (! node)
-                    continue;
+            nsCOMPtr<nsIContent> child = do_QueryInterface(node);
 
-                nsCOMPtr<nsIContent> child = do_QueryInterface(node);
-
-                if (IsTemplateElement(child)) {
-                    NS_ADDREF(*aResult = child.get());
-                    return NS_OK;
-                }
+            if (IsTemplateElement(child)) {
+                NS_ADDREF(*aResult = child.get());
+                return NS_OK;
             }
         }
     }
@@ -1772,6 +1785,35 @@ nsXULTemplateBuilder::CompileCondition(nsIAtom* aTag,
 }
 
 nsresult
+nsXULTemplateBuilder::ParseLiteral(const nsString& aParseType, 
+                                   const nsString& aValue,
+                                   nsIRDFNode** aResult)
+{
+    nsresult rv = NS_OK;
+    *aResult = nsnull;
+
+    if (aParseType.EqualsLiteral(PARSE_TYPE_INTEGER)) {
+        nsCOMPtr<nsIRDFInt> intLiteral;
+        PRInt32 errorCode;
+        PRInt32 intValue = aValue.ToInteger(&errorCode);
+        if (NS_FAILED(errorCode))
+            return NS_ERROR_FAILURE;
+        rv = gRDFService->GetIntLiteral(intValue, getter_AddRefs(intLiteral));
+        if (NS_FAILED(rv)) 
+            return rv;
+        rv = CallQueryInterface(intLiteral, aResult);
+    }
+    else {
+        nsCOMPtr<nsIRDFLiteral> literal;
+        rv = gRDFService->GetLiteral(aValue.get(), getter_AddRefs(literal));
+        if (NS_FAILED(rv)) 
+            return rv;
+        rv = CallQueryInterface(literal, aResult);
+    }
+    return rv;
+}
+
+nsresult
 nsXULTemplateBuilder::CompileTripleCondition(nsTemplateRule* aRule,
                                              nsIContent* aCondition,
                                              InnerNode* aParentNode,
@@ -1828,9 +1870,11 @@ nsXULTemplateBuilder::CompileTripleCondition(nsTemplateRule* aRule,
         onode = do_QueryInterface(resource);
     }
     else {
-        nsCOMPtr<nsIRDFLiteral> literal;
-        gRDFService->GetLiteral(object.get(), getter_AddRefs(literal));
-        onode = do_QueryInterface(literal);
+        nsAutoString parseType;
+        aCondition->GetAttr(kNameSpaceID_None, nsXULAtoms::parsetype, parseType);
+        nsresult rv = ParseLiteral(parseType, object, getter_AddRefs(onode));
+        if (NS_FAILED(rv))
+            return rv;
     }
 
     nsRDFPropertyTestNode* testnode = nsnull;
@@ -2094,10 +2138,10 @@ nsXULTemplateBuilder::CompileSimpleRule(nsIContent* aRuleElement,
             if (NS_FAILED(rv)) return rv;
 
             if (rv == NS_CONTENT_ATTR_HAS_VALUE) {
-                if (value.Equals(NS_LITERAL_STRING("true"))) {
+                if (value.EqualsLiteral("true")) {
                     iscontainer = nsRDFConInstanceTestNode::eTrue;
                 }
-                else if (value.Equals(NS_LITERAL_STRING("false"))) {
+                else if (value.EqualsLiteral("false")) {
                     iscontainer = nsRDFConInstanceTestNode::eFalse;
                 }
             }
@@ -2109,10 +2153,10 @@ nsXULTemplateBuilder::CompileSimpleRule(nsIContent* aRuleElement,
             if (NS_FAILED(rv)) return rv;
 
             if (rv == NS_CONTENT_ATTR_HAS_VALUE) {
-                if (value.Equals(NS_LITERAL_STRING("true"))) {
+                if (value.EqualsLiteral("true")) {
                     isempty = nsRDFConInstanceTestNode::eTrue;
                 }
-                else if (value.Equals(NS_LITERAL_STRING("false"))) {
+                else if (value.EqualsLiteral("false")) {
                     isempty = nsRDFConInstanceTestNode::eFalse;
                 }
             }
@@ -2146,25 +2190,11 @@ nsXULTemplateBuilder::CompileSimpleRule(nsIContent* aRuleElement,
                 target = do_QueryInterface(resource);
             }
             else {                
-                if (aRuleElement->HasAttr(kNameSpaceID_None, nsXULAtoms::parsetype)) {
-                   nsAutoString parseType;
-                   aRuleElement->GetAttr(kNameSpaceID_None, nsXULAtoms::parsetype, parseType);
-                   if (parseType.Equals(NS_LITERAL_STRING("Integer"))) {                     
-                     nsCOMPtr<nsIRDFInt> intLiteral;
-                     PRInt32 errorCode = nsnull;                     
-                     rv = gRDFService->GetIntLiteral(value.ToInteger(&errorCode), getter_AddRefs(intLiteral));
-                     if (NS_FAILED(rv)) return rv;
-                     
-                     target = do_QueryInterface(intLiteral);
-                   }
-                }
-                else {
-                   nsCOMPtr<nsIRDFLiteral> literal;
-                   rv = gRDFService->GetLiteral(value.get(), getter_AddRefs(literal));
-                   if (NS_FAILED(rv)) return rv;
-
-                   target = do_QueryInterface(literal);
-                }
+              nsAutoString parseType;
+              aRuleElement->GetAttr(kNameSpaceID_None, nsXULAtoms::parsetype, parseType);
+              rv = ParseLiteral(parseType, value, getter_AddRefs(target));
+              if (NS_FAILED(rv))
+                  return rv;
             }
 
             testnode = new nsRDFPropertyTestNode(aParentNode, mConflictSet, mDB, mMemberVar, property, target);
@@ -2288,38 +2318,6 @@ nsXULTemplateBuilder::AddBindingsFor(nsXULTemplateBuilder* aThis,
 
 //----------------------------------------------------------------------
 
-
-/* string canCreateWrapper (in nsIIDPtr iid); */
-NS_IMETHODIMP
-nsXULTemplateBuilder::CanCreateWrapper(const nsIID * iid, char **_retval)
-{
-  *_retval = PL_strdup("AllAccess");
-  return NS_OK;
-}
-
-/* string canCallMethod (in nsIIDPtr iid, in wstring methodName); */
-NS_IMETHODIMP
-nsXULTemplateBuilder::CanCallMethod(const nsIID * iid, const PRUnichar *methodName, char **_retval)
-{
-  *_retval = PL_strdup("AllAccess");
-  return NS_OK;
-}
-
-/* string canGetProperty (in nsIIDPtr iid, in wstring propertyName); */
-NS_IMETHODIMP
-nsXULTemplateBuilder::CanGetProperty(const nsIID * iid, const PRUnichar *propertyName, char **_retval)
-{
-  *_retval = PL_strdup("AllAccess");
-  return NS_OK;
-}
-
-/* string canSetProperty (in nsIIDPtr iid, in wstring propertyName); */
-NS_IMETHODIMP
-nsXULTemplateBuilder::CanSetProperty(const nsIID * iid, const PRUnichar *propertyName, char **_retval)
-{
-  *_retval = PL_strdup("AllAccess");
-  return NS_OK;
-}
 
 nsresult 
 nsXULTemplateBuilder::IsSystemPrincipal(nsIPrincipal *principal, PRBool *result)

@@ -1,4 +1,4 @@
-# ***** BEGIN LICENSE BLOCK *****
+# ***** BEGIN LICENSE BLOCK ***** 
 # Version: MPL 1.1/GPL 2.0/LGPL 2.1
 #
 # The contents of this file are subject to the Mozilla Public License Version
@@ -20,6 +20,7 @@
 #
 # Contributor(s):
 #  Brian Ryner <bryner@brianryner.com>
+#  Benjamin Smedberg <benjamin@smedbergs.us>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -42,34 +43,48 @@ VPATH   = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-ifdef MOZ_THUNDERBIRD
-DIRS = console filepicker printing viewsource
-else
-ifdef MOZ_STANDALONE_COMPOSER
-DIRS = console filepicker printing viewsource
-else
-DIRS = 		\
-	autocomplete \
+# These component dirs are built for all apps (including seamonkey)
+
+ifdef MOZ_ENABLE_XREMOTE
+DIRS += remote
+endif
+
+# These component dirs are built only for XUL apps
+
+ifdef MOZ_XUL_APP
+DIRS += \
+	alerts \
 	console \
 	filepicker \
+	printing \
+	viewsource \
+	viewconfig \
+	$(NULL)
+
+ifndef MOZ_THUNDERBIRD
+DIRS +=	\
+	autocomplete \
+	cookie \
 	help \
 	history \
 	passwordmgr \
-	printing \
 	satchel \
 	typeaheadfind \
-	viewconfig \
-	viewsource \
+	$(NULL)
+endif # MOZ_THUNDERBIRD
+
+ifdef MOZ_XPINSTALL
+DIRS +=	downloads
+endif
+
+DIRS += \
+	commandlines \
+	startup \
+	build \
 	$(NULL)
 
-ifeq ($(OS_ARCH),WINNT)
-DIRS += alerts
-endif
+EXTRA_PP_COMPONENTS = nsDefaultCLH.js
 
-DIRS += downloads build
-
-endif
-endif
-
+endif # MOZ_XUL_APP
 
 include $(topsrcdir)/config/rules.mk

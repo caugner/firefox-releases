@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,32 +14,31 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
 #include <locale.h>
 #include "nsIPlatformCharset.h"
 #include "pratom.h"
-#include "nsURLProperties.h"
+#include "nsGREResProperties.h"
 #include "nsCOMPtr.h"
 #include "nsReadableUtils.h"
 #include "nsLocaleCID.h"
@@ -66,8 +65,8 @@
 
 NS_IMPL_THREADSAFE_ISUPPORTS1(nsPlatformCharset, nsIPlatformCharset)
 
-static nsURLProperties *gNLInfo = nsnull;
-static nsURLProperties *gInfo_deprecated = nsnull;
+static nsGREResProperties *gNLInfo = nsnull;
+static nsGREResProperties *gInfo_deprecated = nsnull;
 static PRInt32 gCnt=0;
 
 //this lock is for protecting above static variable operation
@@ -97,8 +96,9 @@ nsPlatformCharset::ConvertLocaleToCharsetUsingDeprecatedConfig(nsAString& locale
   {
     nsAutoLock guard(gLock);
     if (!gInfo_deprecated) {
-      nsURLProperties *info = new nsURLProperties(NS_LITERAL_CSTRING("resource://gre/res/unixcharset.properties"));
-      NS_ASSERTION( info, "cannot create nsURLProperties");
+      nsGREResProperties *info =
+          new nsGREResProperties(NS_LITERAL_CSTRING("unixcharset.properties"));
+      NS_ASSERTION(info, "cannot create nsGREResProperties");
       gInfo_deprecated = info;
     }
   }
@@ -106,9 +106,9 @@ nsPlatformCharset::ConvertLocaleToCharsetUsingDeprecatedConfig(nsAString& locale
   if (gInfo_deprecated && !(locale.IsEmpty())) {
     nsAutoString platformLocaleKey;
     // note: NS_LITERAL_STRING("locale." OSTYPE ".") does not compile on AIX
-    platformLocaleKey.Assign(NS_LITERAL_STRING("locale."));
+    platformLocaleKey.AssignLiteral("locale.");
     platformLocaleKey.AppendWithConversion(OSTYPE);
-    platformLocaleKey.Append(NS_LITERAL_STRING("."));
+    platformLocaleKey.AppendLiteral(".");
     platformLocaleKey.Append(locale);
 
     nsAutoString charset;
@@ -118,7 +118,7 @@ nsPlatformCharset::ConvertLocaleToCharsetUsingDeprecatedConfig(nsAString& locale
       return NS_OK;
     }
     nsAutoString localeKey;
-    localeKey.Assign(NS_LITERAL_STRING("locale.all."));
+    localeKey.AssignLiteral("locale.all.");
     localeKey.Append(locale);
     res = gInfo_deprecated->Get(localeKey, charset);
     if (NS_SUCCEEDED(res))  {
@@ -127,8 +127,8 @@ nsPlatformCharset::ConvertLocaleToCharsetUsingDeprecatedConfig(nsAString& locale
     }
    }
    NS_ASSERTION(0, "unable to convert locale to charset using deprecated config");
-   mCharset.Assign(NS_LITERAL_CSTRING("ISO-8859-1"));
-   oResult.Assign(NS_LITERAL_CSTRING("ISO-8859-1"));
+   mCharset.AssignLiteral("ISO-8859-1");
+   oResult.AssignLiteral("ISO-8859-1");
    return NS_SUCCESS_USING_FALLBACK_LOCALE;
 }
 
@@ -165,8 +165,8 @@ nsPlatformCharset::GetDefaultCharsetForLocale(const nsAString& localeName, nsACS
   // 
   if (mLocale.Equals(localeName) ||
     // support the 4.x behavior
-    (mLocale.EqualsIgnoreCase("en_US") && 
-     localeName.Equals(NS_LITERAL_STRING("C"),nsCaseInsensitiveStringComparator()))) {
+    (mLocale.LowerCaseEqualsLiteral("en_us") && 
+     localeName.LowerCaseEqualsLiteral("c"))) {
     oResult = mCharset;
     return NS_OK;
   }
@@ -206,7 +206,7 @@ nsPlatformCharset::GetDefaultCharsetForLocale(const nsAString& localeName, nsACS
     return res;
 
   NS_ASSERTION(0, "unable to convert locale to charset using deprecated config");
-  oResult.Assign(NS_LITERAL_CSTRING("ISO-8859-1"));
+  oResult.AssignLiteral("ISO-8859-1");
   return NS_SUCCESS_USING_FALLBACK_LOCALE;
 }
 
@@ -238,17 +238,15 @@ nsPlatformCharset::InitGetCharset(nsACString &oString)
     nsAutoLock guard(gLock);
 
     if (!gNLInfo) {
-      nsCAutoString propertyURL;
-      // note: NS_LITERAL_STRING("resource:/res/unixcharset." OSARCH ".properties") does not compile on AIX
-      propertyURL.Assign(NS_LITERAL_CSTRING("resource://gre/res/unixcharset."));
-      propertyURL.Append(OSARCH);
-      propertyURL.Append(NS_LITERAL_CSTRING(".properties"));
-      nsURLProperties *info;
-      info = new nsURLProperties( propertyURL );
-      NS_ASSERTION( info, "cannot create nsURLProperties");
+      nsCAutoString propertyFile;
+      // note: NS_LITERAL_CSTRING("unixcharset." OSARCH ".properties") does not compile on AIX
+      propertyFile.AssignLiteral("unixcharset.");
+      propertyFile.Append(OSARCH);
+      propertyFile.AppendLiteral(".properties");
+      nsGREResProperties *info = new nsGREResProperties(propertyFile);
+      NS_ASSERTION(info, "cannot create nsGREResProperties");
       if (info) {
-        PRBool didLoad;
-        info->DidLoad(didLoad);
+        PRBool didLoad = info->DidLoad();
         if (!didLoad) {
           delete info;
           info = nsnull;
@@ -270,9 +268,9 @@ nsPlatformCharset::InitGetCharset(nsACString &oString)
     //
     const char *glibc_version = gnu_get_libc_version();
     if ((glibc_version != nsnull) && (strlen(glibc_version))) {
-      localeKey.Assign(NS_LITERAL_STRING("nllic."));
+      localeKey.AssignLiteral("nllic.");
       localeKey.AppendWithConversion(glibc_version);
-      localeKey.Append(NS_LITERAL_STRING("."));
+      localeKey.AppendLiteral(".");
       localeKey.AppendWithConversion(nl_langinfo_codeset);
       nsAutoString uCharset;
       res = gNLInfo->Get(localeKey, uCharset);
@@ -290,7 +288,7 @@ nsPlatformCharset::InitGetCharset(nsACString &oString)
     //
     // look for a charset specific charset remap
     //
-    localeKey.Assign(NS_LITERAL_STRING("nllic."));
+    localeKey.AssignLiteral("nllic.");
     localeKey.AppendWithConversion(nl_langinfo_codeset);
     nsAutoString uCharset;
     res = gNLInfo->Get(localeKey, uCharset);
@@ -326,7 +324,7 @@ NS_IMETHODIMP
 nsPlatformCharset::Init()
 {
   nsCAutoString charset;
-  nsresult res;
+  nsresult res = NS_OK;
 
   //
   // remember default locale so we can use the
@@ -335,9 +333,9 @@ nsPlatformCharset::Init()
   char* locale = setlocale(LC_CTYPE, nsnull);
   NS_ASSERTION(locale, "cannot setlocale");
   if (locale) {
-    mLocale.AssignWithConversion(locale);
+    CopyASCIItoUTF16(locale, mLocale); 
   } else {
-    mLocale.Assign(NS_LITERAL_STRING("en_US"));
+    mLocale.AssignLiteral("en_US");
   }
 
   res = InitGetCharset(charset);
@@ -348,7 +346,7 @@ nsPlatformCharset::Init()
 
   // last resort fallback
   NS_ASSERTION(0, "unable to convert locale to charset using deprecated config");
-  mCharset.Assign(NS_LITERAL_CSTRING("ISO-8859-1"));
+  mCharset.AssignLiteral("ISO-8859-1");
   return NS_SUCCESS_USING_FALLBACK_LOCALE;
 }
 

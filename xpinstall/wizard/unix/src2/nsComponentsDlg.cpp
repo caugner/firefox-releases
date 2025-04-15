@@ -1,26 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code, 
- * released March 31, 1998. 
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications 
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
- * Contributor(s): 
- *     Samir Gehani <sgehani@netscape.com>
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Samir Gehani <sgehani@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsComponentsDlg.h"
 #include "nsXInstaller.h"
@@ -49,21 +64,20 @@ nsComponentsDlg::Back(GtkWidget *aWidget, gpointer aData)
 {
     DUMP("Back");
     if (aData != gCtx->cdlg) return;
+#ifdef MOZ_WIDGET_GTK
     if (gCtx->bMoving)
     {
         gCtx->bMoving = FALSE;
         return;
     }
+#endif
 
     // hide this notebook page
-    gCtx->cdlg->Hide(nsXInstallerDlg::BACKWARD_MOVE);
+    gCtx->cdlg->Hide();
 
-    // disconnect this dlg's nav btn signal handlers
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
+    gCtx->sdlg->Show();
 
-    gCtx->sdlg->Show(nsXInstallerDlg::BACKWARD_MOVE);
-    gCtx->bMoving = TRUE;
+    // don't set bMoving since setuptype has no "back"
 }
 
 void
@@ -71,25 +85,25 @@ nsComponentsDlg::Next(GtkWidget *aWidget, gpointer aData)
 {
     DUMP("Next");
     if (aData != gCtx->cdlg) return;
+#ifdef MOZ_WIDGET_GTK
     if (gCtx->bMoving)
     {
         gCtx->bMoving = FALSE;
         return;
     }
+#endif
 
-	if (OK != nsSetupTypeDlg::VerifyDiskSpace())
-	    return;
+    if (OK != nsSetupTypeDlg::VerifyDiskSpace())
+        return;
 
     // hide this notebook page
-    gCtx->cdlg->Hide(nsXInstallerDlg::FORWARD_MOVE);
-
-    // disconnect this dlg's nav btn signal handlers
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
+    gCtx->cdlg->Hide();
 
     // show the next dlg
-    gCtx->idlg->Show(nsXInstallerDlg::FORWARD_MOVE);
+    gCtx->idlg->Show();
+#ifdef MOZ_WIDGET_GTK
     gCtx->bMoving = TRUE;
+#endif
 }
 
 int
@@ -120,17 +134,6 @@ nsComponentsDlg::Parse(nsINIParser *aParser)
     /* optional keys */
     err = aParser->GetStringAlloc(DLG_COMPONENTS, MSG0, &mMsg0, &bufsize);
     if (err != OK && err != nsINIParser::E_NO_KEY) goto BAIL; else err = OK;
-
-    bufsize = 5;
-    err = aParser->GetStringAlloc(DLG_COMPONENTS, SHOW_DLG, &showDlg, &bufsize);
-    if (err != OK && err != nsINIParser::E_NO_KEY) goto BAIL; else err = OK;
-    if (bufsize != 0 && showDlg)
-    {
-        if (0 == strncmp(showDlg, "TRUE", 4))
-            mShowDlg = nsXInstallerDlg::SHOW_DIALOG;
-        else if (0 == strncmp(showDlg, "FALSE", 5))
-            mShowDlg = nsXInstallerDlg::SKIP_DIALOG;
-    }
 
     bufsize = 0;
     err = aParser->GetStringAlloc(DLG_COMPONENTS, TITLE, &mTitle, &bufsize);
@@ -175,6 +178,7 @@ nsComponentsDlg::Parse(nsINIParser *aParser)
         currComp = new nsComponent();
         if (!currComp) return E_MEM;
 
+        currComp->SetIndex(i);
         currComp->SetDescShort(currDescShort);
         currComp->SetDescLong(currDescLong);
         currComp->SetArchive(currArchive);
@@ -260,7 +264,7 @@ BAIL:
 }
 
 int
-nsComponentsDlg::Show(int aDirection)
+nsComponentsDlg::Show()
 {
     int err = OK;
     int customSTIndex = 0, i;
@@ -304,7 +308,7 @@ nsComponentsDlg::Show(int aDirection)
         GdkPixmap *checked = NULL;
         GdkBitmap *un_mask = NULL;
         GdkPixmap *unchecked = NULL;
-        gchar *dummy = "";
+        gchar *dummy[2] = { " ", " " };
         nsComponent *currComp = sCustomST->GetComponents()->GetHead();
         GtkWidget *descLongTable = NULL;
         GtkWidget *frame = NULL;
@@ -323,7 +327,7 @@ nsComponentsDlg::Show(int aDirection)
         // determine number of rows we'll need
         numRows = sCustomST->GetComponents()->GetLengthVisible();
         for (i = 0; i < numRows; i++)
-            gtk_clist_append(GTK_CLIST(list), &dummy);
+            gtk_clist_append(GTK_CLIST(list), dummy);
     
         style = gtk_widget_get_style(gCtx->window);
         checked = gdk_pixmap_create_from_xpm_d(gCtx->window->window, &ch_mask, 
@@ -347,7 +351,7 @@ nsComponentsDlg::Show(int aDirection)
                 currRow++;
             }
 
-            currComp = currComp->GetNext();
+            currComp = sCustomST->GetComponents()->GetNext();
         }
 
         // by default, first row selected upon Show()
@@ -406,25 +410,37 @@ nsComponentsDlg::Show(int aDirection)
     gCtx->nextID = gtk_signal_connect(GTK_OBJECT(gCtx->next), "clicked",
                    GTK_SIGNAL_FUNC(nsComponentsDlg::Next), gCtx->cdlg);
 
-    // show back btn again after setup type dlg where we couldn't go back
+    // show both back and next buttons
+    gCtx->backLabel = gtk_label_new(gCtx->Res("BACK"));
+    gCtx->nextLabel = gtk_label_new(gCtx->Res("NEXT"));
+    gtk_container_add(GTK_CONTAINER(gCtx->back), gCtx->backLabel);
+    gtk_container_add(GTK_CONTAINER(gCtx->next), gCtx->nextLabel);
+    gtk_widget_show(gCtx->backLabel);
+    gtk_widget_show(gCtx->nextLabel);
     gtk_widget_show(gCtx->back);
+    gtk_widget_show(gCtx->next);
 
-    if (aDirection == nsXInstallerDlg::BACKWARD_MOVE) // from install dlg
-    {
-        gtk_container_remove(GTK_CONTAINER(gCtx->next), gCtx->installLabel);
-        gCtx->nextLabel = gtk_label_new(gCtx->Res("NEXT"));
-        gtk_container_add(GTK_CONTAINER(gCtx->next), gCtx->nextLabel);
-        gtk_widget_show(gCtx->nextLabel);
-        gtk_widget_show(gCtx->next);
-    }     
+    GTK_WIDGET_SET_FLAGS(gCtx->next, GTK_CAN_DEFAULT);
+    gtk_widget_grab_default(gCtx->next);
+    gtk_widget_grab_focus(gCtx->next);
 
     return err;
 }
 
 int
-nsComponentsDlg::Hide(int aDirection)
+nsComponentsDlg::Hide()
 {
     gtk_widget_hide(mTable);
+
+    // disconnect and remove this dlg's nav btns
+    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
+    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
+
+    gtk_container_remove(GTK_CONTAINER(gCtx->back), gCtx->backLabel); 
+    gtk_container_remove(GTK_CONTAINER(gCtx->next), gCtx->nextLabel); 
+
+    gtk_widget_hide(gCtx->back);
+    gtk_widget_hide(gCtx->next);
 
     return OK;
 }
@@ -480,7 +496,7 @@ nsComponentsDlg::RowSelected(GtkWidget *aWidget, gint aRow, gint aColumn,
     ToggleRowSelection(aWidget, aRow, aColumn);
 }
 
-void
+gboolean
 nsComponentsDlg::KeyPressed(GtkWidget *aWidget, GdkEventKey *aEvent, 
                             gpointer aData)
 {
@@ -488,6 +504,8 @@ nsComponentsDlg::KeyPressed(GtkWidget *aWidget, GdkEventKey *aEvent,
 
   if (aEvent->keyval == GDK_space)
       ToggleRowSelection(aWidget, sCurrRowSelected, 0);
+
+  return FALSE;
 }
 
 void
@@ -540,7 +558,7 @@ nsComponentsDlg::ToggleRowSelection(GtkWidget *aWidget, gint aRow,
             }
             currRow++;
         }
-        currComp = currComp->GetNext();
+        currComp = sCustomST->GetComponents()->GetNext();
     }
 
     // after resolving dependees redraw all checkboxes in one fell swoop
@@ -562,6 +580,6 @@ nsComponentsDlg::ToggleRowSelection(GtkWidget *aWidget, gint aRow,
             }
             currRow++;
         }
-        currComp = currComp->GetNext();
+        currComp = sCustomST->GetComponents()->GetNext();
     }
 }

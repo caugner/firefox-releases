@@ -60,7 +60,7 @@
 #include "nsString.h"
 #include "nsIAtom.h"
 #include "nsParserCIID.h"
-#include "nsIServiceManagerUtils.h"
+#include "nsServiceManagerUtils.h"
 #include "nsUnicharUtils.h"
 #include "nsIDOMElement.h"
 #include "nsCRT.h"
@@ -70,7 +70,6 @@
 
 static NS_DEFINE_CID(kCContentIteratorCID, NS_CONTENTITERATOR_CID);
 static NS_DEFINE_CID(kCPreContentIteratorCID, NS_PRECONTENTITERATOR_CID);
-static NS_DEFINE_CID(kParserServiceCID, NS_PARSERSERVICE_CID);
 static NS_DEFINE_IID(kRangeCID, NS_RANGE_CID);
 
 // -----------------------------------------------------------------------
@@ -448,10 +447,8 @@ NS_NewFindContentIterator(PRBool aFindBackward,
 
 // Sure would be nice if we could just get these from somewhere else!
 PRInt32 nsFind::sInstanceCount = 0;
-nsIAtom* nsFind::sTextAtom = nsnull;
 nsIAtom* nsFind::sImgAtom = nsnull;
 nsIAtom* nsFind::sHRAtom = nsnull;
-nsIAtom* nsFind::sCommentAtom = nsnull;
 nsIAtom* nsFind::sScriptAtom = nsnull;
 nsIAtom* nsFind::sNoframesAtom = nsnull;
 nsIAtom* nsFind::sSelectAtom = nsnull;
@@ -469,10 +466,8 @@ nsFind::nsFind()
   // Initialize the atoms if they aren't already:
   if (sInstanceCount <= 0)
   {
-    sTextAtom = NS_NewAtom("__moz_text");
     sImgAtom = NS_NewAtom("img");
     sHRAtom = NS_NewAtom("hr");
-    sCommentAtom = NS_NewAtom("__moz_comment");
     sScriptAtom = NS_NewAtom("script");
     sNoframesAtom = NS_NewAtom("noframes");
     sSelectAtom = NS_NewAtom("select");
@@ -487,10 +482,8 @@ nsFind::~nsFind()
 {
   if (sInstanceCount <= 1)
   {
-    NS_IF_RELEASE(sTextAtom);
     NS_IF_RELEASE(sImgAtom);
     NS_IF_RELEASE(sHRAtom);
-    NS_IF_RELEASE(sCommentAtom);
     NS_IF_RELEASE(sScriptAtom);
     NS_IF_RELEASE(sNoframesAtom);
     NS_IF_RELEASE(sSelectAtom);
@@ -802,16 +795,13 @@ PRBool nsFind::IsBlockNode(nsIContent* aContent)
     return PR_TRUE;
 
   if (!mParserService) {
-    mParserService = do_GetService(kParserServiceCID);
+    mParserService = do_GetService(NS_PARSERSERVICE_CONTRACTID);
     if (!mParserService)
       return PR_FALSE;
   }
 
-  PRInt32 id;
-  mParserService->HTMLAtomTagToId(atom, &id);
-
   PRBool isBlock = PR_FALSE;
-  mParserService->IsBlock(id, isBlock);
+  mParserService->IsBlock(mParserService->HTMLAtomTagToId(atom), isBlock);
   return isBlock;
 }
 
@@ -821,7 +811,7 @@ PRBool nsFind::IsTextNode(nsIDOMNode* aNode)
   // also implements that interface.
   nsCOMPtr<nsIContent> content (do_QueryInterface(aNode));
 
-  return content && content->Tag() == sTextAtom;
+  return content && content->IsContentOfType(nsIContent::eTEXT);
 }
 
 PRBool nsFind::IsVisibleNode(nsIDOMNode *aDOMNode)
@@ -857,10 +847,9 @@ PRBool nsFind::SkipNode(nsIContent* aContent)
 
   // We may not need to skip comment nodes,
   // now that IsTextNode distinguishes them from real text nodes.
-  return (atom == sCommentAtom ||
+  return (aContent->IsContentOfType(nsIContent::eCOMMENT) ||
           (aContent->IsContentOfType(nsIContent::eHTML) &&
            (atom == sScriptAtom ||
-            atom == sCommentAtom ||
             atom == sNoframesAtom ||
             atom == sSelectAtom)));
 
@@ -875,7 +864,7 @@ PRBool nsFind::SkipNode(nsIContent* aContent)
   {
     atom = content->Tag();
 
-    if (atom == sCommentAtom ||
+    if (aContent->IsContentOfType(nsIContent::eCOMMENT) ||
         (content->IsContentOfType(nsIContent::eHTML) &&
          (atom == sScriptAtom ||
           atom == sNoframesAtom ||
@@ -999,6 +988,7 @@ nsFind::Find(const PRUnichar *aPatText, nsIDOMRange* aSearchRange,
   aEndPoint->GetEndContainer(getter_AddRefs(endNode));
   aEndPoint->GetEndOffset(&endOffset);
 
+  PRUnichar prevChar = 0;
   while (1)
   {
 #ifdef DEBUG_FIND
@@ -1056,8 +1046,8 @@ nsFind::Find(const PRUnichar *aPatText, nsIDOMRange* aSearchRange,
         return NS_OK;
       }
 
-      nsresult rv = tc->GetText(&frag);
-      if (NS_FAILED(rv)) continue;
+      frag = tc->Text();
+
       fragLen = frag->GetLength();
 
       // Set our starting point in this node.
@@ -1177,9 +1167,21 @@ nsFind::Find(const PRUnichar *aPatText, nsIDOMRange* aSearchRange,
     else if (!inWhitespace && !mCaseSensitive && IsUpperCase(c))
       c = ToLowerCase(c);
 
+    // a '\n' between CJ characters is ignored
+    if (pindex != (mFindBackward ? patLen : 0) && c != patc && !inWhitespace) {
+      if (c == '\n' && t2b && IS_CJ_CHAR(prevChar)) {
+        PRInt32 nindex = findex + incr;
+        if (mFindBackward ? (nindex >= 0) : (nindex < fragLen)) {
+          if (IS_CJ_CHAR(t2b[nindex]))
+            continue;
+        }
+      }
+    }
+
     // Compare
     if ((c == patc) || (inWhitespace && IsSpace(c)))
     {
+      prevChar = c;
 #ifdef DEBUG_FIND
       if (inWhitespace)
         printf("YES (whitespace)(%d of %d)\n", pindex, patLen);

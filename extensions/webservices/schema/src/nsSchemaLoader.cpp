@@ -1,28 +1,44 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications.  Portions created by Netscape Communications are
- * Copyright (C) 2001 by Netscape Communications.  All
- * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Vidur Apparao <vidur@netscape.com> (original author)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsSchemaPrivate.h"
 #include "nsSchemaLoader.h"
+#include "nsIWebServiceErrorHandler.h"
 
 // content includes
 #include "nsIContent.h"
@@ -36,6 +52,7 @@
 #include "nsIDOMEventListener.h"
 #include "nsIDOMEventTarget.h"
 #include "nsNetUtil.h"
+#include "nsIParserService.h"
 
 // string includes
 #include "nsReadableUtils.h"
@@ -48,6 +65,7 @@
 // XPCOM includes
 #include "nsIServiceManager.h"
 #include "nsIComponentManager.h"
+#include "nsStaticAtom.h"
 
 ////////////////////////////////////////////////////////////
 //
@@ -55,249 +73,21 @@
 //
 ////////////////////////////////////////////////////////////
 
-// Statics
-nsIAtom* nsSchemaAtoms::sAnyType_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sString_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sNormalizedString_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sToken_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sByte_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sUnsignedByte_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sBase64Binary_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sHexBinary_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sInteger_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sPositiveInteger_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sNegativeInteger_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sNonnegativeInteger_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sNonpositiveInteger_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sInt_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sUnsignedInt_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sLong_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sUnsignedLong_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sShort_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sUnsignedShort_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sDecimal_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sFloat_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sDouble_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sBoolean_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sTime_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sDateTime_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sDuration_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sDate_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sGMonth_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sGYear_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sGYearMonth_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sGDay_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sGMonthDay_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sName_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sQName_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sNCName_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sAnyUri_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sLanguage_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sID_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sIDREF_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sIDREFS_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sENTITY_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sENTITIES_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sNOTATION_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sNMTOKEN_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sNMTOKENS_atom = nsnull;
+// define storage for all atoms
+#define SCHEMA_ATOM(_name, _value) nsIAtom* nsSchemaAtoms::_name;
+#include "nsSchemaAtomList.h"
+#undef SCHEMA_ATOM
 
-nsIAtom* nsSchemaAtoms::sElement_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sModelGroup_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sAny_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sAttribute_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sAttributeGroup_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sSimpleType_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sComplexType_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sSimpleContent_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sComplexContent_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sAll_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sChoice_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sSequence_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sAnyAttribute_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sRestriction_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sExtension_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sAnnotation_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sList_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sUnion_atom = nsnull;
+static const nsStaticAtom atomInfo[] = {
+#define SCHEMA_ATOM(_name, _value) { _value, &nsSchemaAtoms::_name },
+#include "nsSchemaAtomList.h"
+#undef SCHEMA_ATOM
+};
 
-nsIAtom* nsSchemaAtoms::sMinExclusive_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sMinInclusive_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sMaxExclusive_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sMaxInclusive_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sTotalDigits_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sFractionDigits_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sLength_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sMinLength_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sMaxLength_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sEnumeration_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sWhiteSpace_atom = nsnull;
-nsIAtom* nsSchemaAtoms::sPattern_atom = nsnull;
-
-void
-nsSchemaAtoms::CreateSchemaAtoms()
+nsresult
+nsSchemaAtoms::AddRefAtoms()
 {
-  sAnyType_atom = NS_NewAtom("anyType");
-  sString_atom = NS_NewAtom("string");
-  sNormalizedString_atom = NS_NewAtom("normalizedString");
-  sToken_atom = NS_NewAtom("token");
-  sByte_atom = NS_NewAtom("byte");
-  sUnsignedByte_atom = NS_NewAtom("unsignedByte");
-  sBase64Binary_atom = NS_NewAtom("base64Binary");
-  sHexBinary_atom = NS_NewAtom("hexBinary");
-  sInteger_atom = NS_NewAtom("integer");
-  sPositiveInteger_atom = NS_NewAtom("positiveInteger");
-  sNegativeInteger_atom = NS_NewAtom("negativeInteger");
-  sNonnegativeInteger_atom = NS_NewAtom("nonNegativeInteger");
-  sNonpositiveInteger_atom = NS_NewAtom("nonPositiveInteger");
-  sInt_atom = NS_NewAtom("int");
-  sUnsignedInt_atom = NS_NewAtom("unsignedInt");
-  sLong_atom = NS_NewAtom("long");
-  sUnsignedLong_atom = NS_NewAtom("unsignedLong");
-  sShort_atom = NS_NewAtom("short");
-  sUnsignedShort_atom = NS_NewAtom("unsignedShort");
-  sDecimal_atom = NS_NewAtom("decimal");
-  sFloat_atom = NS_NewAtom("float");
-  sDouble_atom = NS_NewAtom("double");
-  sBoolean_atom = NS_NewAtom("boolean");
-  sTime_atom = NS_NewAtom("time");
-  sDateTime_atom = NS_NewAtom("dateTime");
-  sDuration_atom = NS_NewAtom("duration");
-  sDate_atom = NS_NewAtom("date");
-  sGMonth_atom = NS_NewAtom("gMonth");
-  sGYear_atom = NS_NewAtom("gYear");
-  sGYearMonth_atom = NS_NewAtom("gYearMonth");
-  sGDay_atom = NS_NewAtom("gDay");
-  sGMonthDay_atom = NS_NewAtom("gMonthDay");
-  sName_atom = NS_NewAtom("name");
-  sQName_atom = NS_NewAtom("QName");
-  sNCName_atom = NS_NewAtom("NCName");
-  sAnyUri_atom = NS_NewAtom("anyUri");
-  sLanguage_atom = NS_NewAtom("language");
-  sID_atom = NS_NewAtom("ID");
-  sIDREF_atom = NS_NewAtom("IDREF");
-  sIDREFS_atom = NS_NewAtom("IDREFS");
-  sENTITY_atom = NS_NewAtom("ENTITY");
-  sENTITIES_atom = NS_NewAtom("ENTITIES");
-  sNOTATION_atom = NS_NewAtom("NOTATION");
-  sNMTOKEN_atom = NS_NewAtom("NMTOKEN");
-  sNMTOKENS_atom = NS_NewAtom("NMTOKENS");
-
-  sElement_atom = NS_NewAtom("element");
-  sModelGroup_atom = NS_NewAtom("group");
-  sAny_atom = NS_NewAtom("any");
-  sAttribute_atom = NS_NewAtom("attribute");
-  sAttributeGroup_atom = NS_NewAtom("attributeGroup");
-  sSimpleType_atom = NS_NewAtom("simpleType");
-  sComplexType_atom = NS_NewAtom("complexType");
-  sSimpleContent_atom = NS_NewAtom("simpleContent");
-  sComplexContent_atom = NS_NewAtom("complexContent");
-  sAll_atom = NS_NewAtom("all");
-  sChoice_atom = NS_NewAtom("choice");
-  sSequence_atom = NS_NewAtom("sequence");
-  sAnyAttribute_atom = NS_NewAtom("anyAttribute");
-  sRestriction_atom = NS_NewAtom("restriction");
-  sExtension_atom = NS_NewAtom("extension");
-  sAnnotation_atom = NS_NewAtom("annotation");
-  sList_atom = NS_NewAtom("list");
-  sUnion_atom = NS_NewAtom("union");
-
-  sMinExclusive_atom = NS_NewAtom("minExclusive");
-  sMinInclusive_atom = NS_NewAtom("minInclusive");
-  sMaxExclusive_atom = NS_NewAtom("maxExclusive");
-  sMaxInclusive_atom = NS_NewAtom("maxInclusive");
-  sTotalDigits_atom = NS_NewAtom("totalDigits");
-  sFractionDigits_atom = NS_NewAtom("fractionDigits");
-  sLength_atom = NS_NewAtom("length");
-  sMinLength_atom = NS_NewAtom("minLength");
-  sMaxLength_atom = NS_NewAtom("maxLength");
-  sEnumeration_atom = NS_NewAtom("enumeration");
-  sWhiteSpace_atom = NS_NewAtom("whiteSpace");
-  sPattern_atom = NS_NewAtom("pattern");
-}
-
-void
-nsSchemaAtoms::DestroySchemaAtoms()
-{
-  if (sAnyType_atom) {
-    NS_RELEASE(sAnyType_atom);
-    NS_RELEASE(sString_atom);
-    NS_RELEASE(sNormalizedString_atom);
-    NS_RELEASE(sToken_atom);
-    NS_RELEASE(sByte_atom);
-    NS_RELEASE(sUnsignedByte_atom);
-    NS_RELEASE(sBase64Binary_atom);
-    NS_RELEASE(sHexBinary_atom);
-    NS_RELEASE(sInteger_atom);
-    NS_RELEASE(sPositiveInteger_atom);
-    NS_RELEASE(sNegativeInteger_atom);
-    NS_RELEASE(sNonnegativeInteger_atom);
-    NS_RELEASE(sNonpositiveInteger_atom);
-    NS_RELEASE(sInt_atom);
-    NS_RELEASE(sUnsignedInt_atom);
-    NS_RELEASE(sLong_atom);
-    NS_RELEASE(sUnsignedLong_atom);
-    NS_RELEASE(sShort_atom);
-    NS_RELEASE(sUnsignedShort_atom);
-    NS_RELEASE(sDecimal_atom);
-    NS_RELEASE(sFloat_atom);
-    NS_RELEASE(sDouble_atom);
-    NS_RELEASE(sBoolean_atom);
-    NS_RELEASE(sTime_atom);
-    NS_RELEASE(sDateTime_atom);
-    NS_RELEASE(sDuration_atom);
-    NS_RELEASE(sDate_atom);
-    NS_RELEASE(sGMonth_atom);
-    NS_RELEASE(sGYear_atom);
-    NS_RELEASE(sGYearMonth_atom);
-    NS_RELEASE(sGDay_atom);
-    NS_RELEASE(sGMonthDay_atom);
-    NS_RELEASE(sName_atom);
-    NS_RELEASE(sQName_atom);
-    NS_RELEASE(sNCName_atom);
-    NS_RELEASE(sAnyUri_atom);
-    NS_RELEASE(sLanguage_atom);
-    NS_RELEASE(sID_atom);
-    NS_RELEASE(sIDREF_atom);
-    NS_RELEASE(sIDREFS_atom);
-    NS_RELEASE(sENTITY_atom);
-    NS_RELEASE(sENTITIES_atom);
-    NS_RELEASE(sNOTATION_atom);
-    NS_RELEASE(sNMTOKEN_atom);
-    NS_RELEASE(sNMTOKENS_atom);
-    
-    NS_RELEASE(sElement_atom);
-    NS_RELEASE(sModelGroup_atom);
-    NS_RELEASE(sAny_atom);
-    NS_RELEASE(sAttribute_atom);
-    NS_RELEASE(sAttributeGroup_atom);
-    NS_RELEASE(sSimpleType_atom);
-    NS_RELEASE(sComplexType_atom);
-    NS_RELEASE(sSimpleContent_atom);
-    NS_RELEASE(sComplexContent_atom);
-    NS_RELEASE(sAll_atom);
-    NS_RELEASE(sChoice_atom);
-    NS_RELEASE(sSequence_atom);
-    NS_RELEASE(sAnyAttribute_atom);
-    NS_RELEASE(sRestriction_atom);
-    NS_RELEASE(sExtension_atom);
-    NS_RELEASE(sAnnotation_atom);
-    NS_RELEASE(sList_atom);
-    NS_RELEASE(sUnion_atom);
-    
-    NS_RELEASE(sMinExclusive_atom);
-    NS_RELEASE(sMinInclusive_atom);
-    NS_RELEASE(sMaxExclusive_atom);
-    NS_RELEASE(sMaxInclusive_atom);
-    NS_RELEASE(sTotalDigits_atom);
-    NS_RELEASE(sFractionDigits_atom);
-    NS_RELEASE(sLength_atom);
-    NS_RELEASE(sMinLength_atom);
-    NS_RELEASE(sMaxLength_atom);
-    NS_RELEASE(sEnumeration_atom);
-    NS_RELEASE(sWhiteSpace_atom);
-    NS_RELEASE(sPattern_atom);
-  }
+  return NS_RegisterStaticAtoms(atomInfo, NS_ARRAY_LENGTH(atomInfo));
 }
 
 ////////////////////////////////////////////////////////////
@@ -345,41 +135,62 @@ NS_IMETHODIMP
 LoadListener::HandleEvent(nsIDOMEvent *event)
 {
   nsresult rv;
+
+  PRUint32 httpStatus;
+  mRequest->GetStatus(&httpStatus);
+
+  nsCOMPtr<nsISchema> schema;
+
   nsAutoString eventType;
-  
   event->GetType(eventType);
-  
-  if (eventType.Equals(NS_LITERAL_STRING("load"))) {
+
+  PRBool succeeded = (httpStatus / 100 == 2);
+
+  // if we loaded fine, and not http/https, we assume success in loaded the file.
+  if (!succeeded && eventType.EqualsLiteral("load")) {
+    nsCOMPtr<nsIChannel> channel;
+    mRequest->GetChannel(getter_AddRefs(channel));
+    if (channel) {
+      nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
+
+      // if qi to httpChannel fails, it isn't a http:// or https:// request
+      if (!httpChannel) {
+        succeeded = PR_TRUE;
+      }
+    }
+  }
+
+  if (succeeded && eventType.EqualsLiteral("load")) {
     nsCOMPtr<nsIDOMDocument> document;
-    nsCOMPtr<nsISchema> schema;
-    
+
     rv = mRequest->GetResponseXML(getter_AddRefs(document));
     if (NS_SUCCEEDED(rv)) {
       nsCOMPtr<nsIDOMElement> element;
-      
+
       if (document)
         document->GetDocumentElement(getter_AddRefs(element));
 
-      if (element) {
-        rv = mLoader->ProcessSchemaElement(element, getter_AddRefs(schema));
-      }
-      else {
+      //XXXTelemac TODO Use an nsIWebServiceErrorHandler instead of nsnull
+      if (element)
+        rv = mLoader->ProcessSchemaElement(element, nsnull, getter_AddRefs(schema));
+      else
         rv = NS_ERROR_SCHEMA_NOT_SCHEMA_ELEMENT;
-      }
     }
+  }
+  else {
+    rv = NS_ERROR_SCHEMA_LOADING_ERROR;
+  }
 
-    if (NS_SUCCEEDED(rv)) {
+  //XXXTelemac OnError call replace by use of nsIWebServiceErrorHandler 
+  //XXXTelemac in sub-processing methods.
+
+  if (mListener) {
+    if (NS_SUCCEEDED(rv))
       mListener->OnLoad(schema);
-    }
-    else {
-      mListener->OnError(rv, NS_LITERAL_STRING("Failure processing schema document"));
-    }
+    else
+      mListener->OnError(rv, NS_LITERAL_STRING("Failure loading"));
   }
-  else if (eventType.Equals(NS_LITERAL_STRING("error")) &&
-           mListener) {
-    mListener->OnError(NS_ERROR_SCHEMA_LOADING_ERROR, 
-                       NS_LITERAL_STRING("Failure loading"));
-  }
+
   NS_IF_RELEASE(mLoader);
   mListener = nsnull;
   mRequest = nsnull;
@@ -394,15 +205,13 @@ LoadListener::HandleEvent(nsIDOMEvent *event)
 ////////////////////////////////////////////////////////////
 nsBuiltinSchemaCollection::nsBuiltinSchemaCollection()
 {
-  if (!nsSchemaAtoms::sAnyType_atom) {
-    nsSchemaAtoms::CreateSchemaAtoms();
-  }
 }
 
-nsBuiltinSchemaCollection::~nsBuiltinSchemaCollection()
+nsresult
+nsBuiltinSchemaCollection::Init()
 {
-  mBuiltinTypesHash.Reset();
-  mSOAPTypeHash.Reset();
+  return (mBuiltinTypesHash.Init() && mSOAPTypeHash.Init()) ? NS_OK
+                                                            : NS_ERROR_FAILURE;
 }
 
 NS_IMPL_ISUPPORTS1(nsBuiltinSchemaCollection,
@@ -424,6 +233,13 @@ nsBuiltinSchemaCollection::GetElement(const nsAString & aName,
                                       const nsAString & aNamespace, 
                                       nsISchemaElement **_retval)
 {
+  if (aNamespace.IsEmpty()) {
+    NS_WARNING("nsSchemaLoader::GetSchema(nsAString,nsISchema): "
+               "Invalid |targetNamespace| is empty");
+    
+    return NS_ERROR_INVALID_ARG;
+  }
+
   NS_ENSURE_ARG_POINTER(_retval);
   *_retval = nsnull;
   return NS_ERROR_FAILURE;
@@ -443,8 +259,8 @@ nsBuiltinSchemaCollection::GetAttribute(const nsAString & aName,
 static PRBool
 IsSchemaNamespace(const nsAString& aNamespace)
 {
-  if (aNamespace.Equals(NS_LITERAL_STRING(NS_SCHEMA_2001_NAMESPACE)) ||
-      aNamespace.Equals(NS_LITERAL_STRING(NS_SCHEMA_1999_NAMESPACE))) {
+  if (aNamespace.EqualsLiteral(NS_SCHEMA_2001_NAMESPACE) ||
+      aNamespace.EqualsLiteral(NS_SCHEMA_1999_NAMESPACE)) {
     return PR_TRUE;
   }
   else {
@@ -455,8 +271,8 @@ IsSchemaNamespace(const nsAString& aNamespace)
 static PRBool
 IsSOAPNamespace(const nsAString& aNamespace)
 {
-  if (aNamespace.Equals(NS_LITERAL_STRING(NS_SOAP_1_1_ENCODING_NAMESPACE)) ||
-      aNamespace.Equals(NS_LITERAL_STRING(NS_SOAP_1_2_ENCODING_NAMESPACE))) {
+  if (aNamespace.EqualsLiteral(NS_SOAP_1_1_ENCODING_NAMESPACE) ||
+      aNamespace.EqualsLiteral(NS_SOAP_1_2_ENCODING_NAMESPACE)) {
     return PR_TRUE;
   }
   else {
@@ -486,13 +302,7 @@ nsBuiltinSchemaCollection::GetBuiltinType(const nsAString& aName,
                                           const nsAString& aNamespace,
                                           nsISchemaType** aType)
 {
-  nsresult rv = NS_OK;
-  nsStringKey key(aName);
-  nsCOMPtr<nsISupports> sup = dont_AddRef(mBuiltinTypesHash.Get(&key));
-  if (sup) {
-    rv = CallQueryInterface(sup, aType);
-  }
-  else {
+  if (!mBuiltinTypesHash.Get(aName, aType)) {
     nsCOMPtr<nsIAtom> typeName = do_GetAtom(aName);
     PRUint16 typeVal;
     if (typeName == nsSchemaAtoms::sAnyType_atom) {
@@ -600,7 +410,7 @@ nsBuiltinSchemaCollection::GetBuiltinType(const nsAString& aName,
     else if (typeName == nsSchemaAtoms::sNCName_atom) {
       typeVal = nsISchemaBuiltinType::BUILTIN_TYPE_NCNAME;
     }
-    else if (typeName == nsSchemaAtoms::sAnyUri_atom) {
+    else if (typeName == nsSchemaAtoms::sAnyURI_atom) {
       typeVal = nsISchemaBuiltinType::BUILTIN_TYPE_ANYURI;
     }
     else if (typeName == nsSchemaAtoms::sLanguage_atom) {
@@ -635,15 +445,13 @@ nsBuiltinSchemaCollection::GetBuiltinType(const nsAString& aName,
       return NS_ERROR_SCHEMA_UNKNOWN_TYPE;
     }
 
-    nsSchemaBuiltinType* builtin = new nsSchemaBuiltinType(typeVal);
+    nsCOMPtr<nsISchemaType> builtin = new nsSchemaBuiltinType(typeVal);
     if (!builtin) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
-    sup = builtin;
-    mBuiltinTypesHash.Put(&key, sup);
-    
-    *aType = builtin;
-    NS_ADDREF(*aType);
+
+    mBuiltinTypesHash.Put(aName, builtin);
+    builtin.swap(*aType);
   }
 
   return NS_OK;
@@ -655,13 +463,9 @@ nsBuiltinSchemaCollection::GetSOAPType(const nsAString& aName,
                                        nsISchemaType** aType)
 {
   nsresult rv = NS_OK;
-  nsStringKey key(aName);
-  nsCOMPtr<nsISupports> sup = dont_AddRef(mSOAPTypeHash.Get(&key));
-  if (sup) {
-    rv = CallQueryInterface(sup, aType);
-  }
-  else {
-    if (aName.Equals(NS_LITERAL_STRING("Array"))) {
+
+  if (!mSOAPTypeHash.Get(aName, aType)) {
+    if (aName.EqualsLiteral("Array")) {
       nsCOMPtr<nsISchemaType> anyType;
       rv = GetBuiltinType(NS_LITERAL_STRING("anyType"),
                           NS_LITERAL_STRING(NS_SCHEMA_2001_NAMESPACE),
@@ -674,20 +478,20 @@ nsBuiltinSchemaCollection::GetSOAPType(const nsAString& aName,
       if (!array) {
         return NS_ERROR_OUT_OF_MEMORY;
       }
-      sup = array;
-      mSOAPTypeHash.Put(&key, sup);
-    
+
+      mSOAPTypeHash.Put(aName, array);
+
       *aType = array;
       NS_ADDREF(*aType);
     }
-    else if (aName.Equals(NS_LITERAL_STRING("arrayType"))) {
+    else if (aName.EqualsLiteral("arrayType")) {
       nsSOAPArrayType* arrayType = new nsSOAPArrayType();
       if (!arrayType) {
         return NS_ERROR_OUT_OF_MEMORY;
       }
-      sup = arrayType;
-      mSOAPTypeHash.Put(&key, sup);
-    
+
+      mSOAPTypeHash.Put(aName, arrayType);
+
       *aType = arrayType;
       NS_ADDREF(*aType);
     }
@@ -710,34 +514,26 @@ nsSchemaLoader::nsSchemaLoader()
   mBuiltinCollection = do_GetService(NS_BUILTINSCHEMACOLLECTION_CONTRACTID);
 }
 
-nsSchemaLoader::~nsSchemaLoader()
+nsresult
+nsSchemaLoader::Init()
 {
+  return mSchemas.Init() ? NS_OK : NS_ERROR_FAILURE;
 }
 
-NS_IMPL_ISUPPORTS2_CI(nsSchemaLoader, 
-                      nsISchemaLoader, 
+NS_IMPL_ISUPPORTS2_CI(nsSchemaLoader,
+                      nsISchemaLoader,
                       nsISchemaCollection)
 
 
 /* nsISchema getSchema (in AString targetNamespace); */
 NS_IMETHODIMP 
 nsSchemaLoader::GetSchema(const nsAString & targetNamespace, 
-                          nsISchema **_retval)
+                          nsISchema ** aResult)
 {
-  NS_ENSURE_ARG_POINTER(_retval);
+  NS_ENSURE_ARG_POINTER(aResult);
 
-  nsStringKey key(targetNamespace);
-  nsCOMPtr<nsISupports> sup = dont_AddRef(mSchemas.Get(&key));
-  nsCOMPtr<nsISchema> schema(do_QueryInterface(sup));
-
-  if (!schema) {
-    return NS_ERROR_SCHEMA_UNKNOWN_TARGET_NAMESPACE;  // no schema for specified targetname
-  }
-
-  *_retval = schema;
-  NS_ADDREF(*_retval);
-
-  return NS_OK;
+  return mSchemas.Get(targetNamespace, aResult) ? NS_OK :
+           NS_ERROR_SCHEMA_UNKNOWN_TARGET_NAMESPACE;
 }
 
 /* nsISchemaElement getElement (in AString name, in AString namespace); */
@@ -776,17 +572,44 @@ nsSchemaLoader::GetType(const nsAString & aName,
                         const nsAString & aNamespace, 
                         nsISchemaType **_retval)
 {
+  nsresult rv = NS_OK;
+
   if (IsSchemaNamespace(aNamespace) || IsSOAPNamespace(aNamespace)) {
-    return mBuiltinCollection->GetType(aName, aNamespace, _retval);
+    rv = mBuiltinCollection->GetType(aName, aNamespace, _retval);
+
+    if (NS_FAILED(rv)) {
+      nsAutoString errorMsg(NS_LITERAL_STRING("nsSchemaLoader::GetType: "));
+      errorMsg.AppendLiteral("Failure processing schema: cannot get schema type \"");
+      errorMsg.Append(aName);
+      errorMsg.AppendLiteral("\"");
+      NS_ERROR(NS_ConvertUTF16toUTF8(errorMsg).get());
+
+      return rv;
+    }
+
+    return NS_OK;
   }
 
   nsCOMPtr<nsISchema> schema;
-  nsresult rv = GetSchema(aNamespace, getter_AddRefs(schema));
+  rv = GetSchema(aNamespace, getter_AddRefs(schema));
   if (NS_FAILED(rv)) {
     return rv;
   }
 
-  return schema->GetTypeByName(aName, _retval);
+  rv = schema->GetTypeByName(aName, _retval);
+
+  if (NS_FAILED(rv)) {
+    nsAutoString msg(NS_LITERAL_STRING("nsSchemaLoader::GetType: "));
+    msg.AppendLiteral("Failure processing schema: ");
+    msg.AppendLiteral("cannot get schema type \"");
+    msg.Append(aName);
+    msg.AppendLiteral("\"");
+    NS_ERROR(NS_ConvertUTF16toUTF8(msg).get());
+
+    return rv;
+  }
+
+  return NS_OK;
 }
 
 nsresult
@@ -815,10 +638,10 @@ nsSchemaLoader::GetResolvedURI(const nsAString& aSchemaURI,
     if (NS_SUCCEEDED(rv)) {
       principal->GetURI(getter_AddRefs(baseURI));
     }
-    
+
     rv = NS_NewURI(aURI, aSchemaURI, nsnull, baseURI);
     if (NS_FAILED(rv)) return rv;
-    
+
     rv = secMan->CheckLoadURIFromScript(cx, *aURI);
     if (NS_FAILED(rv))
     {
@@ -842,7 +665,7 @@ nsSchemaLoader::Load(const nsAString& schemaURI,
                      nsISchema **_retval)
 {
   NS_ENSURE_ARG_POINTER(_retval);
-
+  
   nsCOMPtr<nsIURI> resolvedURI;
   nsresult rv = GetResolvedURI(schemaURI, "load", getter_AddRefs(resolvedURI));
   if (NS_FAILED(rv)) {
@@ -864,7 +687,7 @@ nsSchemaLoader::Load(const nsAString& schemaURI,
   }
 
   // Force the mimetype of the returned stream to be xml.
-  rv = request->OverrideMimeType(NS_LITERAL_CSTRING("text/xml"));
+  rv = request->OverrideMimeType(NS_LITERAL_CSTRING("application/xml"));
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -883,7 +706,8 @@ nsSchemaLoader::Load(const nsAString& schemaURI,
   nsCOMPtr<nsIDOMElement> element;
   document->GetDocumentElement(getter_AddRefs(element));
   if (element) {
-    rv = ProcessSchemaElement(element, _retval);
+    //XXXTelemac TODO Have an error handler there instead or nsnull
+    rv = ProcessSchemaElement(element, nsnull, _retval);
   }
   else {
     rv = NS_ERROR_SCHEMA_NOT_SCHEMA_ELEMENT;
@@ -920,7 +744,7 @@ nsSchemaLoader::LoadAsync(const nsAString& schemaURI,
   }
 
   // Force the mimetype of the returned stream to be xml.
-  rv = request->OverrideMimeType(NS_LITERAL_CSTRING("text/xml"));
+  rv = request->OverrideMimeType(NS_LITERAL_CSTRING("application/xml"));
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -959,116 +783,136 @@ static const char* kSchemaNamespaces[] = {NS_SCHEMA_1999_NAMESPACE,
                                           NS_SCHEMA_2001_NAMESPACE};
 static PRUint32 kSchemaNamespacesLength = sizeof(kSchemaNamespaces) / sizeof(const char*);
 
-/* nsISchema processSchemaElement (in nsIDOMElement element); */
+/* nsISchema processSchemaElement (in nsIDOMElement element, in nsIWebServiceErrorHandler aErrorHandler); */
 NS_IMETHODIMP 
-nsSchemaLoader::ProcessSchemaElement(nsIDOMElement* aElement, 
-                                     nsISchema **_retval)
+nsSchemaLoader::ProcessSchemaElement(nsIDOMElement* aElement,
+                                     nsIWebServiceErrorHandler* aErrorHandler,
+                                     nsISchema **aResult)
 {
   NS_ENSURE_ARG(aElement);
-  NS_ENSURE_ARG_POINTER(_retval);
+  NS_ENSURE_ARG_POINTER(aResult);
 
-  nsresult rv = NS_OK;
-
-  nsSchema* schemaInst = new nsSchema(this, aElement);
-  nsCOMPtr<nsISchema> schema = schemaInst;
-  if (!schema) {
+  nsRefPtr<nsSchema> schemaInst = new nsSchema(this, aElement);
+  if (!schemaInst) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  nsAutoString targetNamespace;
-  schema->GetTargetNamespace(targetNamespace);
-  nsStringKey key(targetNamespace);
-  
-  nsCOMPtr<nsISupports> old = getter_AddRefs(mSchemas.Get(&key));
-  nsCOMPtr<nsISchema> os = do_QueryInterface(old);
+  nsresult rv = schemaInst->Init();
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  // Schema for given target namespace has already been 
-  if (os) {
-    *_retval = os;
-  } // end of if
-  
-  // Load schema for this new target namespace
-  else {
-    nsChildElementIterator iterator(aElement, 
-                                    kSchemaNamespaces, kSchemaNamespacesLength);
-    nsCOMPtr<nsIDOMElement> childElement;
-    nsCOMPtr<nsIAtom> tagName;
-    
-    while (NS_SUCCEEDED(iterator.GetNextChild(getter_AddRefs(childElement),
-                                              getter_AddRefs(tagName))) &&
-           childElement) {
-      if (tagName == nsSchemaAtoms::sElement_atom) {
-        nsCOMPtr<nsISchemaElement> schemaElement;
-        rv = ProcessElement(schemaInst, childElement,  
-                            getter_AddRefs(schemaElement));
-        if (NS_SUCCEEDED(rv)) {
-          rv = schemaInst->AddElement(schemaElement);
-        }
-      }
-      else if (tagName == nsSchemaAtoms::sComplexType_atom) {
-        nsCOMPtr<nsISchemaComplexType> complexType;
-        rv = ProcessComplexType(schemaInst, childElement,
-                                getter_AddRefs(complexType));
-        if (NS_SUCCEEDED(rv)) {
-          rv = schemaInst->AddType(complexType);
-        }
-      }
-      else if (tagName == nsSchemaAtoms::sSimpleType_atom) {
-        nsCOMPtr<nsISchemaSimpleType> simpleType;
-        rv = ProcessSimpleType(schemaInst, childElement,
-                               getter_AddRefs(simpleType));
-        if (NS_SUCCEEDED(rv)) {
-          rv = schemaInst->AddType(simpleType);
-        }
-      }
-      else if (tagName == nsSchemaAtoms::sAttribute_atom) {
-        nsCOMPtr<nsISchemaAttribute> attribute;
-        rv = ProcessAttribute(schemaInst, childElement,
-                              getter_AddRefs(attribute));
-        if (NS_SUCCEEDED(rv)) {
-          rv = schemaInst->AddAttribute(attribute);
-        }
-      }
-      else if (tagName == nsSchemaAtoms::sAttributeGroup_atom) {
-        nsCOMPtr<nsISchemaAttributeGroup> attributeGroup;
-        rv = ProcessAttributeGroup(schemaInst, childElement,
-                                   getter_AddRefs(attributeGroup));
-        if (NS_SUCCEEDED(rv)) {
-          rv = schemaInst->AddAttributeGroup(attributeGroup);
-        }
-      }
-      else if (tagName == nsSchemaAtoms::sModelGroup_atom) {
-        nsCOMPtr<nsISchemaModelGroup> modelGroup;
-        rv = ProcessModelGroup(schemaInst, childElement,
-                               tagName, nsnull, getter_AddRefs(modelGroup));
-        if (NS_SUCCEEDED(rv)) {
-          rv = schemaInst->AddModelGroup(modelGroup);
-        }
-      }
-      // For now, ignore the following
-      // annotations
-      // include
-      // import
-      // redefine
-      // notation
-      // identity-constraint elements
-      if (NS_FAILED(rv)) {
-        return rv;
+  nsAutoString targetNamespace;
+  schemaInst->GetTargetNamespace(targetNamespace);
+
+  nsISchema * os;
+  if (mSchemas.Get(targetNamespace, &os)) {
+    *aResult = os;
+    return NS_OK;
+  }
+
+  nsChildElementIterator iterator(aElement,
+                                  kSchemaNamespaces, kSchemaNamespacesLength);
+  nsCOMPtr<nsIDOMElement> childElement;
+  nsCOMPtr<nsIAtom> tagName;
+
+  // For now, ignore the following
+  // annotations
+  // include
+  // import
+  // redefine
+  // notation
+  // identity-constraint elements
+
+  while (NS_SUCCEEDED(iterator.GetNextChild(getter_AddRefs(childElement),
+                                            getter_AddRefs(tagName))) &&
+         childElement) {
+    if (tagName == nsSchemaAtoms::sElement_atom) {
+      nsCOMPtr<nsISchemaElement> schemaElement;
+      rv = ProcessElement(aErrorHandler, schemaInst, childElement,
+                          getter_AddRefs(schemaElement));
+      if (NS_SUCCEEDED(rv)) {
+        rv = schemaInst->AddElement(schemaElement);
       }
     }
-    
-    // Resolve all forward references 
-    rv = schemaInst->Resolve();
+    else if (tagName == nsSchemaAtoms::sComplexType_atom) {
+      nsCOMPtr<nsISchemaComplexType> complexType;
+      rv = ProcessComplexType(aErrorHandler, schemaInst, childElement,
+                              getter_AddRefs(complexType));
+      if (NS_SUCCEEDED(rv)) {
+        rv = schemaInst->AddType(complexType);
+      }
+    }
+    else if (tagName == nsSchemaAtoms::sSimpleType_atom) {
+      nsCOMPtr<nsISchemaSimpleType> simpleType;
+      rv = ProcessSimpleType(aErrorHandler, schemaInst, childElement,
+                             getter_AddRefs(simpleType));
+      if (NS_SUCCEEDED(rv)) {
+        rv = schemaInst->AddType(simpleType);
+      }
+    }
+    else if (tagName == nsSchemaAtoms::sAttribute_atom) {
+      nsCOMPtr<nsISchemaAttribute> attribute;
+      rv = ProcessAttribute(aErrorHandler, schemaInst, childElement,
+                            getter_AddRefs(attribute));
+      if (NS_SUCCEEDED(rv)) {
+        rv = schemaInst->AddAttribute(attribute);
+      }
+    }
+    else if (tagName == nsSchemaAtoms::sAttributeGroup_atom) {
+      nsCOMPtr<nsISchemaAttributeGroup> attributeGroup;
+      rv = ProcessAttributeGroup(aErrorHandler, schemaInst, childElement,
+                                 getter_AddRefs(attributeGroup));
+      if (NS_SUCCEEDED(rv)) {
+        rv = schemaInst->AddAttributeGroup(attributeGroup);
+      }
+    }
+    else if (tagName == nsSchemaAtoms::sModelGroup_atom) {
+      nsCOMPtr<nsISchemaModelGroup> modelGroup;
+      rv = ProcessModelGroup(aErrorHandler, schemaInst, childElement,
+                             tagName, nsnull, getter_AddRefs(modelGroup));
+      if (NS_SUCCEEDED(rv)) {
+        rv = schemaInst->AddModelGroup(modelGroup);
+      }
+    } else if (tagName != nsSchemaAtoms::sAnnotation_atom &&
+               tagName != nsSchemaAtoms::sInclude_atom &&
+               tagName != nsSchemaAtoms::sImport_atom &&
+               tagName != nsSchemaAtoms::sRedefine_atom &&
+               tagName != nsSchemaAtoms::sNotation_atom) {
+      // if it is none of these, unexpected element.
+      nsAutoString elementName;
+      nsresult rc = aElement->GetTagName(elementName);
+      NS_ENSURE_SUCCESS(rc, rc);
+
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure processing schema, unexpected element \"");
+      errorMsg.Append(elementName);
+      errorMsg.AppendLiteral("\" in <schema .../>");
+
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
+      return NS_ERROR_UNEXPECTED;
+    }
+
     if (NS_FAILED(rv)) {
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure processing schema");
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
       return rv;
     }
-    
-    mSchemas.Put(&key, schema);
+  }
 
-    *_retval = schema;
-  } // end of else
+  // We need to add this schema into the schema collection because resolving
+  // forward references may require resolving types with namespace prefixes,
+  // which could easily point back at this schema file.
+  mSchemas.Put(targetNamespace, schemaInst);
 
-  NS_ADDREF(*_retval);
+  // Resolve all forward references 
+  rv = schemaInst->Resolve(aErrorHandler);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  NS_ADDREF(*aResult = schemaInst);
 
   return NS_OK;
 }
@@ -1145,8 +989,15 @@ nsSchemaLoader::GetNewOrUsedType(nsSchema* aSchema,
   return rv;
 }
 
+/**
+ * @param aErrorHandler Error handler (in).
+ * @param aSchema Schema in which is the element, not null (in).
+ * @param aElement DOM element <element .../>, not null (in).
+ * @param aSchemaElement Schema element from processing DOM element (out).
+ */
 nsresult 
-nsSchemaLoader::ProcessElement(nsSchema* aSchema, 
+nsSchemaLoader::ProcessElement(nsIWebServiceErrorHandler* aErrorHandler,
+                               nsSchema* aSchema, 
                                nsIDOMElement* aElement,
                                nsISchemaElement** aSchemaElement)
 {
@@ -1161,8 +1012,13 @@ nsSchemaLoader::ProcessElement(nsSchema* aSchema,
   aElement->GetAttribute(NS_LITERAL_STRING("ref"), ref);
   if (!ref.IsEmpty()) {
     nsSchemaElementRef* elementRef;
-    
-    elementRef = new nsSchemaElementRef(aSchema, ref);
+    nsAutoString refNS;
+
+    // need to handle ns:type
+    nsresult rv = ParseNameAndNS(ref, aElement, ref, refNS);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+    elementRef = new nsSchemaElementRef(aSchema, ref, refNS);
     if (!elementRef) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
@@ -1178,8 +1034,20 @@ nsSchemaLoader::ProcessElement(nsSchema* aSchema,
 
     rv = aElement->GetAttributeNS(empty, NS_LITERAL_STRING("name"), value);
     
-    if (NS_FAILED(rv))
+    if (NS_FAILED(rv)) {
+      nsresult rc = aElement->GetTagName(value);
+      NS_ENSURE_SUCCESS(rc, rc);
+
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure processing schema element, cannot get ");
+      errorMsg.AppendLiteral("attribute \"name\" of element \"");
+      errorMsg.Append(value);
+      errorMsg.AppendLiteral("\"");
+
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
       return rv;
+    }
 
     value.Trim(" \r\n\t");
     elementInst = new nsSchemaElement(aSchema, value);
@@ -1194,31 +1062,79 @@ nsSchemaLoader::ProcessElement(nsSchema* aSchema,
     nsAutoString defaultValue, fixedValue;
     rv = aElement->GetAttributeNS(empty, NS_LITERAL_STRING("default"),
                                   defaultValue);
-    if (NS_FAILED(rv))
+    if (NS_FAILED(rv)) {
+      nsresult rc = aElement->GetTagName(value);
+      NS_ENSURE_SUCCESS(rc, rc);
+
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure processing schema element, cannot get ");
+      errorMsg.AppendLiteral("attribute \"default\" of element \"");
+      errorMsg.Append(value);
+      errorMsg.AppendLiteral("\"");
+
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
       return rv;
+    }
     
     rv = aElement->GetAttributeNS(empty, NS_LITERAL_STRING("fixed"), 
                                   fixedValue);
-    if (NS_FAILED(rv))
+    if (NS_FAILED(rv)) {
+      nsresult rc = aElement->GetTagName(value);
+      NS_ENSURE_SUCCESS(rc, rc);
+
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure processing schema element, cannot get ");
+      errorMsg.AppendLiteral("attribute \"fixed\" of element \"");
+      errorMsg.Append(value);
+      errorMsg.AppendLiteral("\"");
+
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
       return rv;
+    }
 
     elementInst->SetConstraints(defaultValue, fixedValue);
 
     rv = aElement->GetAttributeNS(empty, NS_LITERAL_STRING("nillable"), value);
-    if (NS_FAILED(rv))
+    if (NS_FAILED(rv)) {
+      nsresult rc = aElement->GetTagName(value);
+      NS_ENSURE_SUCCESS(rc, rc);
+
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure processing schema element, cannot get ");
+      errorMsg.AppendLiteral("attribute \"nillable\" of element \"");
+      errorMsg.Append(value);
+      errorMsg.AppendLiteral("\"");
+
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
       return rv;
+    }
     value.Trim(" \r\n\t");
 
     PRInt32 flags = 0;
-    if (value.Equals(NS_LITERAL_STRING("true")))
+    if (value.EqualsLiteral("true"))
       flags |= nsSchemaElement::NILLABLE;
 
     rv = aElement->GetAttributeNS(empty, NS_LITERAL_STRING("abstract"), value);
-    if (NS_FAILED(rv))
+    if (NS_FAILED(rv)) {
+      nsresult rc = aElement->GetTagName(value);
+      NS_ENSURE_SUCCESS(rc, rc);
+
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure processing schema element, cannot get ");
+      errorMsg.AppendLiteral("attribute \"abstract\" of element \"");
+      errorMsg.Append(value);
+      errorMsg.AppendLiteral("\"");
+
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
       return rv;
+    }
     value.Trim(" \r\n\t");
 
-    if (value.Equals(NS_LITERAL_STRING("true")))
+    if (value.EqualsLiteral("true"))
       flags |= nsSchemaElement::ABSTRACT;
 
     nsCOMPtr<nsIDOMNode> parent;
@@ -1237,14 +1153,23 @@ nsSchemaLoader::ProcessElement(nsSchema* aSchema,
     // elementFormDefault on the <schema> ancestor is qualified, then the
     // actual value of the  targetNamespace [attribute] is that of the ancestor
     // <schema> element information item, or absent if there is none.
-    if (value.Equals(NS_LITERAL_STRING("schema"))) {
+    if (value.EqualsLiteral("schema")) {
       flags |= nsSchemaElement::FORM_QUALIFIED;
     }
     else {
       rv = aElement->GetAttributeNS(empty, NS_LITERAL_STRING("form"), 
                                     value);
-      if (NS_FAILED(rv))
+      if (NS_FAILED(rv)) {
+        nsAutoString errorMsg;
+        errorMsg.AppendLiteral("Failure processing schema element, cannot get ");
+        errorMsg.AppendLiteral("attribute \"form\" of element \"");
+        errorMsg.Append(value);
+        errorMsg.AppendLiteral("\"");
+
+        NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
         return rv;
+      }
       value.Trim(" \r\n\t");
       if (value.IsEmpty()) {
         if (aSchema->IsElementFormQualified()) {
@@ -1254,7 +1179,7 @@ nsSchemaLoader::ProcessElement(nsSchema* aSchema,
            flags &= ~nsSchemaElement::FORM_QUALIFIED;
         }
       }
-      else if (value.Equals(NS_LITERAL_STRING("qualified"))) {
+      else if (value.EqualsLiteral("qualified")) {
         flags |= nsSchemaElement::FORM_QUALIFIED;
       }
       else {
@@ -1267,10 +1192,17 @@ nsSchemaLoader::ProcessElement(nsSchema* aSchema,
     nsCOMPtr<nsISchemaType> schemaType;
     nsAutoString typeStr;
     aElement->GetAttribute(NS_LITERAL_STRING("type"), typeStr);
-    if (typeStr.Length() > 0) {
+    if (!typeStr.IsEmpty()) {
       rv = GetNewOrUsedType(aSchema, aElement, typeStr, 
                             getter_AddRefs(schemaType));
       if (NS_FAILED(rv)) {
+        nsAutoString errorMsg;
+        errorMsg.AppendLiteral("Failure processing schema, unknown type \"");
+        errorMsg.Append(typeStr);
+        errorMsg.AppendLiteral("\"");
+
+        NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
         return rv;
       }
     }
@@ -1288,7 +1220,7 @@ nsSchemaLoader::ProcessElement(nsSchema* aSchema,
         if (tagName == nsSchemaAtoms::sSimpleType_atom) {
           nsCOMPtr<nsISchemaSimpleType> simpleType;
           
-          rv = ProcessSimpleType(aSchema, childElement,
+          rv = ProcessSimpleType(aErrorHandler, aSchema, childElement,
                                  getter_AddRefs(simpleType));
           if (NS_FAILED(rv)) {
             return rv;
@@ -1299,7 +1231,7 @@ nsSchemaLoader::ProcessElement(nsSchema* aSchema,
         else if (tagName == nsSchemaAtoms::sComplexType_atom) {
           nsCOMPtr<nsISchemaComplexType> complexType;
           
-          rv = ProcessComplexType(aSchema, childElement,
+          rv = ProcessComplexType(aErrorHandler, aSchema, childElement,
                                   getter_AddRefs(complexType));
           if (NS_FAILED(rv)) {
             return rv;
@@ -1317,6 +1249,14 @@ nsSchemaLoader::ProcessElement(nsSchema* aSchema,
                    ns,
                    getter_AddRefs(schemaType));
       if (NS_FAILED(rv)) {
+        nsAutoString errorMsg;
+        errorMsg.AppendLiteral("Failure processing schema, cannot find \'anyType\' ");
+        errorMsg.AppendLiteral("placeholder type in namespace \"");
+        errorMsg.Append(ns);
+        errorMsg.AppendLiteral("\"");
+
+        NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
         return rv;
       }
     }
@@ -1333,8 +1273,17 @@ nsSchemaLoader::ProcessElement(nsSchema* aSchema,
   return NS_OK;
 }
 
+/**
+ * Handle <complexType ...>
+ *
+ * @param aErrorHandler Webservice error handler.
+ * @param aSchema Owning schema (in)
+ * @param aElement <complexType> element (in)
+ * @param aComplexType Schema complex type built from |aElement|
+ */
 nsresult 
-nsSchemaLoader::ProcessComplexType(nsSchema* aSchema, 
+nsSchemaLoader::ProcessComplexType(nsIWebServiceErrorHandler* aErrorHandler,
+                                   nsSchema* aSchema, 
                                    nsIDOMElement* aElement,
                                    nsISchemaComplexType** aComplexType)
 {
@@ -1347,11 +1296,14 @@ nsSchemaLoader::ProcessComplexType(nsSchema* aSchema,
 
   nsSchemaComplexType* typeInst;
   typeInst = new nsSchemaComplexType(aSchema, name, 
-                                     abstract.Equals(NS_LITERAL_STRING("true")));
+                                     abstract.EqualsLiteral("true"));
   if (!typeInst) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
   complexType = typeInst;
+
+  rv = typeInst->Init();
+  NS_ENSURE_SUCCESS(rv, rv);
 
   nsChildElementIterator iterator(aElement, 
                                   kSchemaNamespaces, 
@@ -1363,29 +1315,56 @@ nsSchemaLoader::ProcessComplexType(nsSchema* aSchema,
   PRUint16 derivation = nsISchemaComplexType::DERIVATION_SELF_CONTAINED;
   nsCOMPtr<nsISchemaType> baseType;
   nsCOMPtr<nsISchemaModelGroup> modelGroup;
-  
+
   while (NS_SUCCEEDED(iterator.GetNextChild(getter_AddRefs(childElement),
                                             getter_AddRefs(tagName))) &&
          childElement) {
     if (tagName == nsSchemaAtoms::sSimpleContent_atom) {
       contentModel = nsISchemaComplexType::CONTENT_MODEL_SIMPLE;
-      
-      rv = ProcessSimpleContent(aSchema, 
-                                childElement, typeInst,
+
+      rv = ProcessSimpleContent(aErrorHandler, aSchema, childElement, typeInst,
                                 &derivation, getter_AddRefs(baseType));
       break;
     }
-    else if (tagName == nsSchemaAtoms::sComplexContent_atom) {       
-      rv = ProcessComplexContent(aSchema, 
-                                 childElement, typeInst, 
+
+    if (tagName == nsSchemaAtoms::sComplexContent_atom) {
+      rv = ProcessComplexContent(aErrorHandler, aSchema, childElement, typeInst,
                                  &contentModel, &derivation,
                                  getter_AddRefs(baseType));
-      break;                                   
+      break;
     }
-    else if (tagName != nsSchemaAtoms::sAnnotation_atom) {
-      rv = ProcessComplexTypeBody(aSchema, 
+
+    if (tagName == nsSchemaAtoms::sModelGroup_atom ||
+        tagName == nsSchemaAtoms::sAll_atom ||
+        tagName == nsSchemaAtoms::sChoice_atom ||
+        tagName == nsSchemaAtoms::sSequence_atom ||
+        tagName == nsSchemaAtoms::sAttribute_atom ||
+        tagName == nsSchemaAtoms::sAttributeGroup_atom ||
+        tagName == nsSchemaAtoms::sAnyAttribute_atom) {
+      rv = ProcessComplexTypeBody(aErrorHandler, aSchema,
                                   aElement, typeInst, nsnull,
                                   &contentModel);
+      break;
+    }
+
+    if (tagName == nsSchemaAtoms::sAnnotation_atom) {
+      // XXX: skipping for now
+    }
+    else {
+      // Unexpected schema element
+      nsAutoString elementName;
+      rv = aElement->GetTagName(elementName);
+      NS_ENSURE_SUCCESS(rv, rv);
+      rv = NS_ERROR_UNEXPECTED;
+
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure processing schema, unexpected element \"");
+      errorMsg.Append(elementName);
+      errorMsg.AppendLiteral("\" in <complexType />, should be <simpleContent .../>");
+      errorMsg.AppendLiteral(", <complexContent ../>, <annotation .../>");
+
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
       break;
     }
   }
@@ -1396,7 +1375,7 @@ nsSchemaLoader::ProcessComplexType(nsSchema* aSchema,
 
   nsAutoString mixed;
   aElement->GetAttribute(NS_LITERAL_STRING("mixed"), mixed);
-  if (mixed.Equals(NS_LITERAL_STRING("true"))) {
+  if (mixed.EqualsLiteral("true")) {
     contentModel = nsISchemaComplexType::CONTENT_MODEL_MIXED;
   }
 
@@ -1476,6 +1455,9 @@ nsSchemaLoader::ParseDimensions(nsSchema* aSchema,
     }
     nsCOMPtr<nsISchemaComplexType> complexType = typeInst;
 
+    rv = typeInst->Init();
+    NS_ENSURE_SUCCESS(rv, rv);
+
     nsCOMPtr<nsISchemaType> soapArray;
     rv = GetType(NS_LITERAL_STRING("Array"),
                  NS_LITERAL_STRING(NS_SOAP_1_2_ENCODING_NAMESPACE),
@@ -1529,7 +1511,8 @@ nsSchemaLoader::ParseArrayType(nsSchema* aSchema,
 
 
 nsresult
-nsSchemaLoader::ProcessComplexTypeBody(nsSchema* aSchema, 
+nsSchemaLoader::ProcessComplexTypeBody(nsIWebServiceErrorHandler* aErrorHandler,
+                                       nsSchema* aSchema, 
                                        nsIDOMElement* aElement,
                                        nsSchemaComplexType* aComplexType,
                                        nsSchemaModelGroup* aSequence,
@@ -1553,12 +1536,26 @@ nsSchemaLoader::ProcessComplexTypeBody(nsSchema* aSchema,
         (tagName == nsSchemaAtoms::sAll_atom) ||
         (tagName == nsSchemaAtoms::sChoice_atom) || 
         (tagName == nsSchemaAtoms::sSequence_atom)) {
-      // We shouldn't already have a model group
+
       if (modelGroup) {
+        // We shouldn't already have a model group
+        nsAutoString elementName;
+        nsresult rv = childElement->GetTagName(elementName);
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        nsAutoString errorMsg;
+        errorMsg.AppendLiteral("Failure processing schema, must have ");
+        errorMsg.AppendLiteral("model group in <complexType .../>, ");
+        errorMsg.AppendLiteral("unexpected element \"");
+        errorMsg.Append(elementName);
+        errorMsg.AppendLiteral("\"");
+
+        NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_INVALID_STRUCTURE, errorMsg);
+
         return NS_ERROR_SCHEMA_INVALID_STRUCTURE;
       }
       
-      rv = ProcessModelGroup(aSchema, 
+      rv = ProcessModelGroup(aErrorHandler, aSchema, 
                              childElement, tagName,
                              aSequence, getter_AddRefs(modelGroup));
       if (NS_FAILED(rv)) {
@@ -1602,7 +1599,7 @@ nsSchemaLoader::ProcessComplexTypeBody(nsSchema* aSchema,
              (tagName == nsSchemaAtoms::sAnyAttribute_atom)) {
       nsCOMPtr<nsISchemaAttributeComponent> attribute;
       
-      rv = ProcessAttributeComponent(aSchema, 
+      rv = ProcessAttributeComponent(aErrorHandler, aSchema, 
                                      childElement, tagName,
                                      getter_AddRefs(attribute));
       if (NS_FAILED(rv)) {
@@ -1611,6 +1608,23 @@ nsSchemaLoader::ProcessComplexTypeBody(nsSchema* aSchema,
 
       rv = aComplexType->AddAttribute(attribute);
       if (NS_FAILED(rv)) {
+        nsAutoString elementName;
+        nsAutoString attributeName;
+        nsresult rc = childElement->GetTagName(elementName);
+        NS_ENSURE_SUCCESS(rc, rc);
+
+        rc = attribute->GetName(attributeName);
+        NS_ENSURE_SUCCESS(rc, rc);
+
+        nsAutoString errorMsg;
+        errorMsg.AppendLiteral("Failure processing schema, cannot process attribute \"");
+        errorMsg.Append(attributeName);
+        errorMsg.AppendLiteral("\" of element \"");
+        errorMsg.Append(elementName);
+        errorMsg.AppendLiteral("\"");
+
+        NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
         return rv;
       }
 
@@ -1633,11 +1647,27 @@ nsSchemaLoader::ProcessComplexTypeBody(nsSchema* aSchema,
                               getter_AddRefs(arraySchemaType),
                               &arrayDimension);
           if (NS_FAILED(rv)) {
+            nsAutoString errorMsg;
+            errorMsg.AppendLiteral("Failure processing schema, ");
+            errorMsg.AppendLiteral("cannot process array type \"");
+            errorMsg.Append(arrayType);
+            errorMsg.AppendLiteral("\"");
+
+            NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
             return rv;
           }
 
           rv = aComplexType->SetArrayInfo(arraySchemaType, arrayDimension);
           if (NS_FAILED(rv)) {
+            nsAutoString errorMsg;
+            errorMsg.AppendLiteral("Failure processing schema, cannot set ");
+            errorMsg.AppendLiteral("array information for array type \"");
+            errorMsg.Append(arrayType);
+            errorMsg.AppendLiteral("\"");
+
+            NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
             return rv;
           }
         }
@@ -1649,7 +1679,8 @@ nsSchemaLoader::ProcessComplexTypeBody(nsSchema* aSchema,
 }
 
 nsresult 
-nsSchemaLoader::ProcessSimpleContent(nsSchema* aSchema, 
+nsSchemaLoader::ProcessSimpleContent(nsIWebServiceErrorHandler* aErrorHandler,
+                                     nsSchema* aSchema, 
                                      nsIDOMElement* aElement,
                                      nsSchemaComplexType* aComplexType,
                                      PRUint16* aDerivation,
@@ -1667,6 +1698,12 @@ nsSchemaLoader::ProcessSimpleContent(nsSchema* aSchema,
   
   // A simpleContent element must have children
   if (!iterator.HasChildNodes()) {
+    nsAutoString errorMsg(NS_LITERAL_STRING("Failure processing schema, "));
+    errorMsg.AppendLiteral("<simpleContent .../> invalid structure, should contains ");
+    errorMsg.AppendLiteral("<restriction .../> or <extension .../>");
+
+    NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_INVALID_STRUCTURE, errorMsg);
+
     return NS_ERROR_SCHEMA_INVALID_STRUCTURE;
   }
 
@@ -1678,19 +1715,38 @@ nsSchemaLoader::ProcessSimpleContent(nsSchema* aSchema,
         (tagName == nsSchemaAtoms::sExtension_atom)) {
       childElement->GetAttribute(NS_LITERAL_STRING("base"), baseStr);
       if (baseStr.IsEmpty()) {
+        nsAutoString elementName;
+        rv = childElement->GetTagName(elementName);
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        nsAutoString errorMsg;
+        errorMsg.AppendLiteral("Failure processing schema, \"");
+        errorMsg.Append(elementName);
+        errorMsg.AppendLiteral("\" must have a \"base\" attribute in order ");
+        errorMsg.AppendLiteral("to specify base type");
+
+        NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_MISSING_TYPE, errorMsg);
+
         return NS_ERROR_SCHEMA_MISSING_TYPE;
       }
       
       rv = GetNewOrUsedType(aSchema, childElement, baseStr, 
                             getter_AddRefs(baseType));
       if (NS_FAILED(rv)) {
+        nsAutoString errorMsg;
+        errorMsg.AppendLiteral("Failure processing schema, unknown base type \"");
+        errorMsg.Append(baseStr);
+        errorMsg.AppendLiteral("\"");
+
+        NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
         return rv;
       }
 
       nsCOMPtr<nsISchemaSimpleType> simpleBaseType;
       if (tagName == nsSchemaAtoms::sRestriction_atom) {
         *aDerivation = nsISchemaComplexType::DERIVATION_RESTRICTION_SIMPLE;
-        rv = ProcessSimpleContentRestriction(aSchema, childElement,
+        rv = ProcessSimpleContentRestriction(aErrorHandler, aSchema, childElement,
                                              aComplexType, baseType,
                                              getter_AddRefs(simpleBaseType));
         if (NS_FAILED(rv)) {
@@ -1713,17 +1769,33 @@ nsSchemaLoader::ProcessSimpleContent(nsSchema* aSchema,
             rv = complexBaseType->GetAttributeByIndex(attrIndex,
                                                       getter_AddRefs(attribute));
             if (NS_FAILED(rv)) {
+              nsAutoString errorMsg;
+              errorMsg.AppendLiteral("Failure processing schema, cannot clone ");
+              errorMsg.AppendLiteral("attributes from base type \"");
+              errorMsg.Append(baseStr);
+              errorMsg.AppendLiteral("\"");
+
+              NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
               return rv;
             }
 
             rv = aComplexType->AddAttribute(attribute);
             if (NS_FAILED(rv)) {
+              nsAutoString errorMsg;
+              errorMsg.AppendLiteral("Failure processing schema, cannot clone ");
+              errorMsg.AppendLiteral("attributes from base type \"");
+              errorMsg.Append(baseStr);
+              errorMsg.AppendLiteral("\"");
+              
+              NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
               return rv;
             }
           }
         }
         
-        rv = ProcessSimpleContentExtension(aSchema, childElement,
+        rv = ProcessSimpleContentExtension(aErrorHandler, aSchema, childElement,
                                            aComplexType, baseType,
                                            getter_AddRefs(simpleBaseType));
         if (NS_FAILED(rv)) {
@@ -1748,7 +1820,8 @@ nsSchemaLoader::ProcessSimpleContent(nsSchema* aSchema,
 }
 
 nsresult 
-nsSchemaLoader::ProcessSimpleContentRestriction(nsSchema* aSchema, 
+nsSchemaLoader::ProcessSimpleContentRestriction(nsIWebServiceErrorHandler* aErrorHandler,
+                                                nsSchema* aSchema, 
                                                 nsIDOMElement* aElement,
                                                 nsSchemaComplexType* aComplexType, 
                                                 nsISchemaType* aBaseType,
@@ -1775,6 +1848,18 @@ nsSchemaLoader::ProcessSimpleContentRestriction(nsSchema* aSchema,
   // have a simple base type.
   nsCOMPtr<nsISchemaComplexType> complexBase = do_QueryInterface(aBaseType);
   if (!complexBase) {
+    nsAutoString baseStr;
+    rv = aBaseType->GetName(baseStr);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsAutoString errorMsg;
+    errorMsg.AppendLiteral("Failure processing schema, base type \"");
+    errorMsg.Append(baseStr);
+    errorMsg.AppendLiteral("\" of restriction must be a complex type ");
+    errorMsg.AppendLiteral("which itself must be based on a simple type");
+
+    NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_INVALID_TYPE_USAGE, errorMsg);
+
     return NS_ERROR_SCHEMA_INVALID_TYPE_USAGE;
   }
 
@@ -1794,7 +1879,7 @@ nsSchemaLoader::ProcessSimpleContentRestriction(nsSchema* aSchema,
     if (tagName == nsSchemaAtoms::sSimpleType_atom) {
       nsCOMPtr<nsISchemaSimpleType> simpleType;
       
-      rv = ProcessSimpleType(aSchema, childElement, 
+      rv = ProcessSimpleType(aErrorHandler, aSchema, childElement, 
                              getter_AddRefs(simpleType));
       if (NS_FAILED(rv)) {
         return rv;
@@ -1819,7 +1904,7 @@ nsSchemaLoader::ProcessSimpleContentRestriction(nsSchema* aSchema,
              (tagName == nsSchemaAtoms::sPattern_atom)) {
       nsCOMPtr<nsISchemaFacet> facet;
       
-      rv = ProcessFacet(aSchema, childElement, 
+      rv = ProcessFacet(aErrorHandler, aSchema, childElement, 
                         tagName, getter_AddRefs(facet));
       if (NS_FAILED(rv)) {
         return rv;
@@ -1835,7 +1920,7 @@ nsSchemaLoader::ProcessSimpleContentRestriction(nsSchema* aSchema,
              (tagName == nsSchemaAtoms::sAnyAttribute_atom)) {
       nsCOMPtr<nsISchemaAttributeComponent> attribute;
       
-      rv = ProcessAttributeComponent(aSchema,
+      rv = ProcessAttributeComponent(aErrorHandler, aSchema,
                                      childElement, tagName,
                                      getter_AddRefs(attribute));
       if (NS_FAILED(rv)) {
@@ -1856,7 +1941,8 @@ nsSchemaLoader::ProcessSimpleContentRestriction(nsSchema* aSchema,
 }
  
 nsresult 
-nsSchemaLoader::ProcessSimpleContentExtension(nsSchema* aSchema, 
+nsSchemaLoader::ProcessSimpleContentExtension(nsIWebServiceErrorHandler* aErrorHandler,
+                                              nsSchema* aSchema, 
                                               nsIDOMElement* aElement,
                                               nsSchemaComplexType* aComplexType,
                                               nsISchemaType* aBaseType,
@@ -1889,7 +1975,7 @@ nsSchemaLoader::ProcessSimpleContentExtension(nsSchema* aSchema,
         (tagName == nsSchemaAtoms::sAnyAttribute_atom)) {
       nsCOMPtr<nsISchemaAttributeComponent> attribute;
       
-      rv = ProcessAttributeComponent(aSchema, 
+      rv = ProcessAttributeComponent(aErrorHandler, aSchema, 
                                      childElement, tagName,
                                      getter_AddRefs(attribute));
       if (NS_FAILED(rv)) {
@@ -1907,7 +1993,8 @@ nsSchemaLoader::ProcessSimpleContentExtension(nsSchema* aSchema,
 }
  
 nsresult 
-nsSchemaLoader::ProcessComplexContent(nsSchema* aSchema, 
+nsSchemaLoader::ProcessComplexContent(nsIWebServiceErrorHandler* aErrorHandler,
+                                      nsSchema* aSchema, 
                                       nsIDOMElement* aElement,
                                       nsSchemaComplexType* aComplexType,
                                       PRUint16* aContentModel,
@@ -1925,6 +2012,11 @@ nsSchemaLoader::ProcessComplexContent(nsSchema* aSchema,
   
   // A complexContent element must have children
   if (!iterator.HasChildNodes()) {
+    nsAutoString errorMsg(NS_LITERAL_STRING("Failure processing schema, "));
+    errorMsg.AppendLiteral("<complexContent .../> must contains ");
+    errorMsg.AppendLiteral("<restriction .../> or <extension .../>");
+    NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_INVALID_STRUCTURE, errorMsg);
+
     return NS_ERROR_SCHEMA_INVALID_STRUCTURE;
   }
   
@@ -1936,18 +2028,40 @@ nsSchemaLoader::ProcessComplexContent(nsSchema* aSchema,
         (tagName == nsSchemaAtoms::sExtension_atom)) {
       childElement->GetAttribute(NS_LITERAL_STRING("base"), baseStr);
       if (baseStr.IsEmpty()) {
+        nsAutoString errorMsg;
+        errorMsg.AppendLiteral("Failure processing schema, ");
+        
+        if (tagName == nsSchemaAtoms::sRestriction_atom) {
+          errorMsg.AppendLiteral("restriction");
+        }
+        else {
+          errorMsg.AppendLiteral("extension");
+        }
+        
+        errorMsg.AppendLiteral(" must have a \"base\" attribute in order to ");
+        errorMsg.AppendLiteral("specify base type");
+        
+        NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_MISSING_TYPE, errorMsg);
+        
         return NS_ERROR_SCHEMA_MISSING_TYPE;
       }
       
       rv = GetNewOrUsedType(aSchema, childElement, baseStr, 
                             getter_AddRefs(baseType));
       if (NS_FAILED(rv)) {
+        nsAutoString errorMsg;
+        errorMsg.AppendLiteral("Failure processing schema, unknown base type \"");
+        errorMsg.Append(baseStr);
+        errorMsg.AppendLiteral("\"");
+
+        NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
         return rv;
       }
       
       if (tagName == nsSchemaAtoms::sRestriction_atom) {
         *aDerivation = nsISchemaComplexType::DERIVATION_RESTRICTION_COMPLEX;
-        rv = ProcessComplexTypeBody(aSchema, childElement,
+        rv = ProcessComplexTypeBody(aErrorHandler, aSchema, childElement,
                                     aComplexType, nsnull, aContentModel);
       }
       else {
@@ -1961,6 +2075,14 @@ nsSchemaLoader::ProcessComplexContent(nsSchema* aSchema,
           nsCOMPtr<nsISchemaModelGroup> baseGroup;
           rv = complexBaseType->GetModelGroup(getter_AddRefs(baseGroup));
           if (NS_FAILED(rv)) {
+            nsAutoString errorMsg;
+            errorMsg.AppendLiteral("Failure processing schema, extension for type \"");
+            errorMsg.Append(baseStr);
+            errorMsg.AppendLiteral("\" does not contains any model group");
+            errorMsg.AppendLiteral("such as <all>, <choice>, <sequence>, or <group>");
+
+            NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
             return rv;
           }
           
@@ -1991,11 +2113,29 @@ nsSchemaLoader::ProcessComplexContent(nsSchema* aSchema,
                 
                 rv = baseGroup->GetParticle(pIndex, getter_AddRefs(particle));
                 if (NS_FAILED(rv)) {
+                  nsAutoString errorMsg;
+                  errorMsg.AppendLiteral("Failure processing schema, failure ");
+                  errorMsg.AppendLiteral("processing model group for extension ");
+                  errorMsg.AppendLiteral("of type \"");
+                  errorMsg.Append(baseStr);
+                  errorMsg.AppendLiteral("\"");
+
+                  NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
                   return rv;
                 }
                 
                 rv = sequenceInst->AddParticle(particle);
                 if (NS_FAILED(rv)) {
+                  nsAutoString errorMsg;
+                  errorMsg.AppendLiteral("Failure processing schema, failure ");
+                  errorMsg.AppendLiteral("processing model group for extension ");
+                  errorMsg.AppendLiteral("of type \"");
+                  errorMsg.Append(baseStr);
+                  errorMsg.AppendLiteral("\"");
+
+                  NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
                   return rv;
                 }
               }
@@ -2019,18 +2159,34 @@ nsSchemaLoader::ProcessComplexContent(nsSchema* aSchema,
             rv = complexBaseType->GetAttributeByIndex(attrIndex,
                                                       getter_AddRefs(attribute));
             if (NS_FAILED(rv)) {
+              nsAutoString errorMsg;
+              errorMsg.AppendLiteral("Failure processing schema, cannot clone ");
+              errorMsg.AppendLiteral("attributes from base type \"");
+              errorMsg.Append(baseStr);
+              errorMsg.AppendLiteral("\"");
+
+              NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
               return rv;
             }
 
             rv = aComplexType->AddAttribute(attribute);
             if (NS_FAILED(rv)) {
+              nsAutoString errorMsg;
+              errorMsg.AppendLiteral("Failure processing schema, cannot clone ");
+              errorMsg.AppendLiteral("attributes from base type \"");
+              errorMsg.Append(baseStr);
+              errorMsg.AppendLiteral("\"");
+
+              NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
               return rv;
             }
           }
         }
         
         PRUint16 explicitContent;
-        rv = ProcessComplexTypeBody(aSchema, childElement,
+        rv = ProcessComplexTypeBody(aErrorHandler, aSchema, childElement,
                                     aComplexType, sequenceInst,
                                     &explicitContent);
         if (NS_FAILED(rv)) {
@@ -2052,7 +2208,7 @@ nsSchemaLoader::ProcessComplexContent(nsSchema* aSchema,
 
   nsAutoString mixed;
   aElement->GetAttribute(NS_LITERAL_STRING("mixed"), mixed);
-  if (mixed.Equals(NS_LITERAL_STRING("true"))) {
+  if (mixed.EqualsLiteral("true")) {
     *aContentModel = nsISchemaComplexType::CONTENT_MODEL_MIXED;
   }
 
@@ -2063,7 +2219,8 @@ nsSchemaLoader::ProcessComplexContent(nsSchema* aSchema,
 }
 
 nsresult 
-nsSchemaLoader::ProcessSimpleType(nsSchema* aSchema, 
+nsSchemaLoader::ProcessSimpleType(nsIWebServiceErrorHandler* aErrorHandler,
+                                  nsSchema* aSchema, 
                                   nsIDOMElement* aElement,
                                   nsISchemaSimpleType** aSimpleType)
 {
@@ -2082,17 +2239,17 @@ nsSchemaLoader::ProcessSimpleType(nsSchema* aSchema,
                                             getter_AddRefs(tagName))) &&
          childElement) {
     if (tagName == nsSchemaAtoms::sRestriction_atom) {
-      rv = ProcessSimpleTypeRestriction(aSchema, childElement,
+      rv = ProcessSimpleTypeRestriction(aErrorHandler, aSchema, childElement,
                                         name, aSimpleType);
       break;
     }
     else if (tagName == nsSchemaAtoms::sList_atom) {
-      rv = ProcessSimpleTypeList(aSchema, childElement,
+      rv = ProcessSimpleTypeList(aErrorHandler, aSchema, childElement,
                                  name, aSimpleType);
       break;
     }
-    else if (tagName = nsSchemaAtoms::sUnion_atom) {
-      rv = ProcessSimpleTypeUnion(aSchema, childElement,
+    else if (tagName == nsSchemaAtoms::sUnion_atom) {
+      rv = ProcessSimpleTypeUnion(aErrorHandler, aSchema, childElement,
                                   name, aSimpleType);
       break;
     }
@@ -2102,7 +2259,8 @@ nsSchemaLoader::ProcessSimpleType(nsSchema* aSchema,
 }
 
 nsresult 
-nsSchemaLoader::ProcessSimpleTypeRestriction(nsSchema* aSchema, 
+nsSchemaLoader::ProcessSimpleTypeRestriction(nsIWebServiceErrorHandler* aErrorHandler,
+                                             nsSchema* aSchema, 
                                              nsIDOMElement* aElement,
                                              const nsAString& aName,
                                              nsISchemaSimpleType** aSimpleType)
@@ -2125,11 +2283,25 @@ nsSchemaLoader::ProcessSimpleTypeRestriction(nsSchema* aSchema,
     rv = GetNewOrUsedType(aSchema, aElement, baseStr, 
                           getter_AddRefs(baseType));
     if (NS_FAILED(rv)) {
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure processing schema, unknown base type \"");
+      errorMsg.Append(baseStr);
+      errorMsg.AppendLiteral("\"");
+
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
       return rv;
     }
 
     nsCOMPtr<nsISchemaSimpleType> simpleBase(do_QueryInterface(baseType));
     if (!simpleBase) {
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure processing schema, base type \"");
+      errorMsg.Append(baseStr);
+      errorMsg.AppendLiteral("\" should be a simple type");
+
+      NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_INVALID_TYPE_USAGE, errorMsg);
+
       return NS_ERROR_SCHEMA_INVALID_TYPE_USAGE;
     }
     rv = restrictionInst->SetBaseType(simpleBase);
@@ -2148,7 +2320,7 @@ nsSchemaLoader::ProcessSimpleTypeRestriction(nsSchema* aSchema,
         !baseType) {
       nsCOMPtr<nsISchemaSimpleType> simpleType;
       
-      rv = ProcessSimpleType(aSchema, childElement, 
+      rv = ProcessSimpleType(aErrorHandler, aSchema, childElement, 
                              getter_AddRefs(simpleType));
       if (NS_FAILED(rv)) {
         return rv;
@@ -2174,7 +2346,7 @@ nsSchemaLoader::ProcessSimpleTypeRestriction(nsSchema* aSchema,
              (tagName == nsSchemaAtoms::sPattern_atom)) {
       nsCOMPtr<nsISchemaFacet> facet;
       
-      rv = ProcessFacet(aSchema, childElement, 
+      rv = ProcessFacet(aErrorHandler, aSchema, childElement, 
                         tagName, getter_AddRefs(facet));
       if (NS_FAILED(rv)) {
         return rv;
@@ -2194,7 +2366,8 @@ nsSchemaLoader::ProcessSimpleTypeRestriction(nsSchema* aSchema,
 }
  
 nsresult 
-nsSchemaLoader::ProcessSimpleTypeList(nsSchema* aSchema, 
+nsSchemaLoader::ProcessSimpleTypeList(nsIWebServiceErrorHandler* aErrorHandler,
+                                      nsSchema* aSchema, 
                                       nsIDOMElement* aElement,
                                       const nsAString& aName,
                                       nsISchemaSimpleType** aSimpleType)
@@ -2219,6 +2392,13 @@ nsSchemaLoader::ProcessSimpleTypeList(nsSchema* aSchema,
     rv = GetNewOrUsedType(aSchema, aElement, itemTypeStr, 
                           getter_AddRefs(type));
     if (NS_FAILED(rv)) {
+      nsAutoString errorMsg;
+      errorMsg.AppendLiteral("Failure processing schema, unknown item type \"");
+      errorMsg.Append(itemTypeStr);
+      errorMsg.AppendLiteral("\"");
+
+      NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
       return rv;
     }
 
@@ -2235,7 +2415,7 @@ nsSchemaLoader::ProcessSimpleTypeList(nsSchema* aSchema,
                                               getter_AddRefs(tagName))) &&
            childElement) {
       if (tagName == nsSchemaAtoms::sSimpleType_atom) {
-        rv = ProcessSimpleType(aSchema, childElement,
+        rv = ProcessSimpleType(aErrorHandler, aSchema, childElement,
                                getter_AddRefs(itemType));
         if (NS_FAILED(rv)) {
           return rv;
@@ -2246,6 +2426,14 @@ nsSchemaLoader::ProcessSimpleTypeList(nsSchema* aSchema,
   }
 
   if (!itemType) {
+    nsAutoString errorMsg;
+    errorMsg.AppendLiteral("Failure processing schema, no item type ");
+    errorMsg.AppendLiteral("for simple type \"");
+    errorMsg.Append(aName);
+    errorMsg.AppendLiteral("\"");
+
+    NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_MISSING_TYPE, errorMsg);
+
     return NS_ERROR_SCHEMA_MISSING_TYPE;
   }
   listInst->SetListType(itemType);
@@ -2257,7 +2445,8 @@ nsSchemaLoader::ProcessSimpleTypeList(nsSchema* aSchema,
 }
 
 nsresult 
-nsSchemaLoader::ProcessSimpleTypeUnion(nsSchema* aSchema, 
+nsSchemaLoader::ProcessSimpleTypeUnion(nsIWebServiceErrorHandler* aErrorHandler, 
+                                       nsSchema* aSchema, 
                                        nsIDOMElement* aElement,
                                        const nsAString& aName,
                                        nsISchemaSimpleType** aSimpleType)
@@ -2297,11 +2486,27 @@ nsSchemaLoader::ProcessSimpleTypeUnion(nsSchema* aSchema,
       rv = GetNewOrUsedType(aSchema, aElement, typeStr, 
                             getter_AddRefs(type));
       if (NS_FAILED(rv)) {
+        nsAutoString errorMsg;
+        errorMsg.AppendLiteral("Failure processing schema, unknown type \"");
+        errorMsg.Append(typeStr);
+        errorMsg.AppendLiteral("\"");
+
+        NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
         return rv;
       }
       
       memberType = do_QueryInterface(type);
       if (!memberType) {
+        nsAutoString errorMsg;
+        errorMsg.AppendLiteral("Failure processing schema, invalid member type \"");
+        errorMsg.Append(typeStr);
+        errorMsg.AppendLiteral("\" for union about simple type \"");
+        errorMsg.Append(aName);
+        errorMsg.AppendLiteral("\"");
+
+        NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_INVALID_TYPE_USAGE, errorMsg);
+
         return NS_ERROR_SCHEMA_INVALID_TYPE_USAGE;
       }
 
@@ -2322,7 +2527,7 @@ nsSchemaLoader::ProcessSimpleTypeUnion(nsSchema* aSchema,
                                             getter_AddRefs(tagName))) &&
          childElement) {
     if (tagName == nsSchemaAtoms::sSimpleType_atom) {
-      rv = ProcessSimpleType(aSchema, childElement,
+      rv = ProcessSimpleType(aErrorHandler, aSchema, childElement,
                              getter_AddRefs(memberType));
       if (NS_FAILED(rv)) {
         return rv;
@@ -2342,7 +2547,8 @@ nsSchemaLoader::ProcessSimpleTypeUnion(nsSchema* aSchema,
 }
 
 nsresult 
-nsSchemaLoader::ProcessModelGroup(nsSchema* aSchema, 
+nsSchemaLoader::ProcessModelGroup(nsIWebServiceErrorHandler* aErrorHandler,
+                                  nsSchema* aSchema, 
                                   nsIDOMElement* aElement,
                                   nsIAtom* aTagName,
                                   nsSchemaModelGroup* aParentSequence,
@@ -2355,13 +2561,18 @@ nsSchemaLoader::ProcessModelGroup(nsSchema* aSchema,
   GetMinAndMax(aElement, &minOccurs, &maxOccurs);
 
   // Check for a ref attribute
-  nsAutoString ref;
+  nsAutoString ref, refNS;
   aElement->GetAttribute(NS_LITERAL_STRING("ref"), ref);
   
   if ((aTagName == nsSchemaAtoms::sModelGroup_atom) &&
       !ref.IsEmpty()) {
+
+    rv = ParseNameAndNS(ref, aElement, ref, refNS);
+    NS_ENSURE_SUCCESS(rv, rv);
+
     nsSchemaModelGroupRef* modelGroupRef = new nsSchemaModelGroupRef(aSchema, 
-                                                                     ref);
+                                                                     ref,
+                                                                     refNS);
     if (!modelGroupRef) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
@@ -2433,7 +2644,7 @@ nsSchemaLoader::ProcessModelGroup(nsSchema* aSchema,
       if (tagName != nsSchemaAtoms::sAnnotation_atom) {
         nsCOMPtr<nsISchemaParticle> particle;
 
-        rv = ProcessParticle(aSchema, childElement,
+        rv = ProcessParticle(aErrorHandler, aSchema, childElement,
                              tagName, getter_AddRefs(particle));
         if (NS_FAILED(rv)) {
           return rv;
@@ -2454,7 +2665,8 @@ nsSchemaLoader::ProcessModelGroup(nsSchema* aSchema,
 }
 
 nsresult 
-nsSchemaLoader::ProcessParticle(nsSchema* aSchema, 
+nsSchemaLoader::ProcessParticle(nsIWebServiceErrorHandler* aErrorHandler,
+                                nsSchema* aSchema, 
                                 nsIDOMElement* aElement,
                                 nsIAtom* aTagName,
                                 nsISchemaParticle** aParticle)
@@ -2464,7 +2676,7 @@ nsSchemaLoader::ProcessParticle(nsSchema* aSchema,
   if (aTagName == nsSchemaAtoms::sElement_atom) {
     nsCOMPtr<nsISchemaElement> element;
 
-    rv = ProcessElement(aSchema, aElement, getter_AddRefs(element));
+    rv = ProcessElement(aErrorHandler, aSchema, aElement, getter_AddRefs(element));
     if (NS_FAILED(rv)) {
       return rv;
     }
@@ -2476,7 +2688,7 @@ nsSchemaLoader::ProcessParticle(nsSchema* aSchema,
            (aTagName == nsSchemaAtoms::sSequence_atom)) {
     nsCOMPtr<nsISchemaModelGroup> modelGroup;
     
-    rv = ProcessModelGroup(aSchema, aElement, 
+    rv = ProcessModelGroup(aErrorHandler, aSchema, aElement, 
                            aTagName, nsnull, getter_AddRefs(modelGroup));
     if (NS_FAILED(rv)) {
       return rv;
@@ -2515,7 +2727,8 @@ nsSchemaLoader::ProcessParticle(nsSchema* aSchema,
 }
 
 nsresult 
-nsSchemaLoader::ProcessAttributeComponent(nsSchema* aSchema, 
+nsSchemaLoader::ProcessAttributeComponent(nsIWebServiceErrorHandler* aErrorHandler,
+                                          nsSchema* aSchema, 
                                           nsIDOMElement* aElement,
                                           nsIAtom* aTagName,
                                           nsISchemaAttributeComponent** aAttribute)
@@ -2525,7 +2738,7 @@ nsSchemaLoader::ProcessAttributeComponent(nsSchema* aSchema,
   if (aTagName == nsSchemaAtoms::sAttribute_atom) {
     nsCOMPtr<nsISchemaAttribute> attribute;
 
-    rv = ProcessAttribute(aSchema, aElement, 
+    rv = ProcessAttribute(aErrorHandler, aSchema, aElement, 
                           getter_AddRefs(attribute));
     if (NS_FAILED(rv)) {
       return rv;
@@ -2536,7 +2749,7 @@ nsSchemaLoader::ProcessAttributeComponent(nsSchema* aSchema,
   else if (aTagName == nsSchemaAtoms::sAttributeGroup_atom) {
     nsCOMPtr<nsISchemaAttributeGroup> attributeGroup;
 
-    rv = ProcessAttributeGroup(aSchema, aElement, 
+    rv = ProcessAttributeGroup(aErrorHandler, aSchema, aElement, 
                                getter_AddRefs(attributeGroup));
     if (NS_FAILED(rv)) {
       return rv;
@@ -2569,7 +2782,8 @@ nsSchemaLoader::ProcessAttributeComponent(nsSchema* aSchema,
 }
 
 nsresult 
-nsSchemaLoader::ProcessAttribute(nsSchema* aSchema, 
+nsSchemaLoader::ProcessAttribute(nsIWebServiceErrorHandler* aErrorHandler,
+                                 nsSchema* aSchema, 
                                  nsIDOMElement* aElement,
                                  nsISchemaAttribute** aAttribute)
 {
@@ -2584,11 +2798,14 @@ nsSchemaLoader::ProcessAttribute(nsSchema* aSchema,
   PRUint16 use;
   GetUse(aElement, &use);
 
-  nsAutoString ref;
+  nsAutoString ref, refNS;
   aElement->GetAttribute(NS_LITERAL_STRING("ref"), ref);
   if (!ref.IsEmpty()) {
+    nsresult rv = ParseNameAndNS(ref, aElement, ref, refNS);
+    NS_ENSURE_SUCCESS(rv, rv);
+
     nsSchemaAttributeRef* attributeRef = new nsSchemaAttributeRef(aSchema,
-                                                                  ref);
+                                                                  ref, refNS);
     if (!attributeRef) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
@@ -2623,7 +2840,7 @@ nsSchemaLoader::ProcessAttribute(nsSchema* aSchema,
                                               getter_AddRefs(tagName))) &&
            childElement) {
       if (tagName == nsSchemaAtoms::sSimpleType_atom) {
-        rv = ProcessSimpleType(aSchema, childElement,
+        rv = ProcessSimpleType(aErrorHandler, aSchema, childElement,
                                getter_AddRefs(simpleType));
         if (NS_FAILED(rv)) {
           return rv;
@@ -2641,11 +2858,27 @@ nsSchemaLoader::ProcessAttribute(nsSchema* aSchema,
         rv = GetNewOrUsedType(aSchema, aElement, typeStr, 
                               getter_AddRefs(schemaType));
         if (NS_FAILED(rv)) {
+          nsAutoString errorMsg;
+          errorMsg.AppendLiteral("Failure processing schema, unknown type \"");
+          errorMsg.Append(typeStr);
+          errorMsg.AppendLiteral("\"");
+
+          NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
           return rv;
         }
 
         simpleType = do_QueryInterface(schemaType);
         if (!simpleType) {
+          nsAutoString errorMsg;
+          errorMsg.AppendLiteral("Failure processing schema, invalid type \"");
+          errorMsg.Append(typeStr);
+          errorMsg.AppendLiteral("\" for attribute \"");
+          errorMsg.Append(name);
+          errorMsg.AppendLiteral("\"");
+
+          NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_INVALID_TYPE_USAGE, errorMsg);
+
           return NS_ERROR_SCHEMA_INVALID_TYPE_USAGE;
         }
       }
@@ -2661,7 +2894,8 @@ nsSchemaLoader::ProcessAttribute(nsSchema* aSchema,
 }
 
 nsresult 
-nsSchemaLoader::ProcessAttributeGroup(nsSchema* aSchema, 
+nsSchemaLoader::ProcessAttributeGroup(nsIWebServiceErrorHandler* aErrorHandler,
+                                      nsSchema* aSchema, 
                                       nsIDOMElement* aElement,
                                       nsISchemaAttributeGroup** aAttributeGroup)
 {
@@ -2669,12 +2903,17 @@ nsSchemaLoader::ProcessAttributeGroup(nsSchema* aSchema,
 
   nsCOMPtr<nsISchemaAttributeGroup> attributeGroup;
 
-  nsAutoString ref;
+  nsAutoString ref, refNS;
   aElement->GetAttribute(NS_LITERAL_STRING("ref"), ref);
 
   if (!ref.IsEmpty()) {
+    // need to handle ns:type
+    nsresult rv = ParseNameAndNS(ref, aElement, ref, refNS);
+    NS_ENSURE_SUCCESS(rv, rv);
+
     nsSchemaAttributeGroupRef* attrRef = new nsSchemaAttributeGroupRef(aSchema,
-                                                                       ref);
+                                                                       ref,
+                                                                       refNS);
     if (!attrRef) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
@@ -2691,6 +2930,9 @@ nsSchemaLoader::ProcessAttributeGroup(nsSchema* aSchema,
     }
     attributeGroup = attrInst;
 
+    rv = attrInst->Init();
+    NS_ENSURE_SUCCESS(rv, rv);
+
     nsChildElementIterator iterator(aElement, 
                                     kSchemaNamespaces, 
                                     kSchemaNamespacesLength);
@@ -2705,7 +2947,7 @@ nsSchemaLoader::ProcessAttributeGroup(nsSchema* aSchema,
           (tagName == nsSchemaAtoms::sAnyAttribute_atom)) {
         nsCOMPtr<nsISchemaAttributeComponent> attribute;
         
-        rv = ProcessAttributeComponent(aSchema, 
+        rv = ProcessAttributeComponent(aErrorHandler, aSchema, 
                                        childElement, tagName,
                                        getter_AddRefs(attribute));
         if (NS_FAILED(rv)) {
@@ -2727,7 +2969,8 @@ nsSchemaLoader::ProcessAttributeGroup(nsSchema* aSchema,
 }
  
 nsresult 
-nsSchemaLoader::ProcessFacet(nsSchema* aSchema, 
+nsSchemaLoader::ProcessFacet(nsIWebServiceErrorHandler* aErrorHandler,
+                             nsSchema* aSchema, 
                              nsIDOMElement* aElement,
                              nsIAtom* aTagName,
                              nsISchemaFacet** aFacet)
@@ -2769,7 +3012,7 @@ nsSchemaLoader::ProcessFacet(nsSchema* aSchema,
   else if (aTagName == nsSchemaAtoms::sMaxExclusive_atom) {
     facetType = nsISchemaFacet::FACET_TYPE_MAXEXCLUSIVE;
   }
-  else if (aTagName == nsSchemaAtoms::sMaxInclusive_atom) {
+  else if (aTagName == nsSchemaAtoms::sMinExclusive_atom) {
     facetType = nsISchemaFacet::FACET_TYPE_MINEXCLUSIVE;
   }
   else if (aTagName == nsSchemaAtoms::sTotalDigits_atom) {
@@ -2779,6 +3022,17 @@ nsSchemaLoader::ProcessFacet(nsSchema* aSchema,
     facetType = nsISchemaFacet::FACET_TYPE_FRACTIONDIGITS;
   }
   else {
+    nsAutoString elementName;
+    rv = aElement->GetTagName(elementName);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsAutoString errorMsg;
+    errorMsg.AppendLiteral("Failure processing schema, unknown type of facet \"");
+    errorMsg.Append(elementName);
+    errorMsg.AppendLiteral("\"");
+
+    NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_UNEXPECTED, errorMsg);
+
     return NS_ERROR_UNEXPECTED;
   }
   facetInst->SetFacetType(facetType);
@@ -2786,7 +3040,21 @@ nsSchemaLoader::ProcessFacet(nsSchema* aSchema,
   nsAutoString valueStr;
   aElement->GetAttribute(NS_LITERAL_STRING("value"), valueStr);
   if (valueStr.IsEmpty()) {
-    return NS_ERROR_SCHEMA_FACET_VALUE_ERROR;
+    nsAutoString elementName;
+    rv = aElement->GetTagName(elementName);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = NS_ERROR_SCHEMA_FACET_VALUE_ERROR;
+
+    nsAutoString errorMsg; 
+    errorMsg.AppendLiteral("Failure processing schema, invalid empty value ");
+    errorMsg.AppendLiteral("for facet \"");
+    errorMsg.Append(elementName);
+    errorMsg.AppendLiteral("\"");
+
+    NS_SCHEMALOADER_FIRE_ERROR(rv, errorMsg);
+
+    return rv;
   }
 
   if ((aTagName == nsSchemaAtoms::sLength_atom) ||
@@ -2799,6 +3067,17 @@ nsSchemaLoader::ProcessFacet(nsSchema* aSchema,
     if (NS_FAILED(rv) ||
         (intVal < 0) ||
         ((aTagName == nsSchemaAtoms::sTotalDigits_atom) && (intVal == 0))) {
+      nsAutoString elementName;
+      rv = aElement->GetTagName(elementName);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      nsAutoString errorMsg; 
+      errorMsg.AppendLiteral("Failure processing schema, invalid value for facet \"");
+      errorMsg.Append(elementName);
+      errorMsg.AppendLiteral("\", <=0");
+
+      NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_FACET_VALUE_ERROR, errorMsg);
+
       return NS_ERROR_SCHEMA_FACET_VALUE_ERROR;
     }
 
@@ -2806,16 +3085,27 @@ nsSchemaLoader::ProcessFacet(nsSchema* aSchema,
   }
   else if (aTagName == nsSchemaAtoms::sWhiteSpace_atom) {
     PRUint16 whiteSpaceVal;
-    if (valueStr.Equals(NS_LITERAL_STRING("collapse"))) {
+    if (valueStr.EqualsLiteral("collapse")) {
       whiteSpaceVal = nsSchemaFacet::WHITESPACE_COLLAPSE;
     }
-    else if (valueStr.Equals(NS_LITERAL_STRING("preserve"))) {
+    else if (valueStr.EqualsLiteral("preserve")) {
       whiteSpaceVal = nsSchemaFacet::WHITESPACE_PRESERVE;
     }
-    else if (valueStr.Equals(NS_LITERAL_STRING("replace"))) {
+    else if (valueStr.EqualsLiteral("replace")) {
       whiteSpaceVal = nsSchemaFacet::WHITESPACE_REPLACE;
     }
     else {
+      nsAutoString elementName;
+      rv = aElement->GetTagName(elementName);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      nsAutoString errorMsg; 
+      errorMsg.AppendLiteral("Failure processing schema, invalid value for facet \"");
+      errorMsg.Append(elementName);
+      errorMsg.AppendLiteral("\", should be \"collapse\", \"preserve\" or \"replace\"");
+
+      NS_SCHEMALOADER_FIRE_ERROR(NS_ERROR_SCHEMA_FACET_VALUE_ERROR, errorMsg);
+
       return NS_ERROR_SCHEMA_FACET_VALUE_ERROR;
     }
 
@@ -2827,7 +3117,7 @@ nsSchemaLoader::ProcessFacet(nsSchema* aSchema,
   
   nsAutoString isFixed;
   aElement->GetAttribute(NS_LITERAL_STRING("fixed"), isFixed);
-  facetInst->SetIsFixed(isFixed.Equals(NS_LITERAL_STRING("true")));
+  facetInst->SetIsFixed(isFixed.EqualsLiteral("true"));
 
   *aFacet = facet;
   NS_ADDREF(*aFacet);
@@ -2844,10 +3134,10 @@ nsSchemaLoader::GetUse(nsIDOMElement* aElement,
   nsAutoString use;
   aElement->GetAttribute(NS_LITERAL_STRING("use"), use);
   
-  if (use.Equals(NS_LITERAL_STRING("prohibited"))) {
+  if (use.EqualsLiteral("prohibited")) {
     *aUse = nsISchemaAttribute::USE_PROHIBITED;
   }
-  else if (use.Equals(NS_LITERAL_STRING("required"))) {
+  else if (use.EqualsLiteral("required")) {
     *aUse = nsISchemaAttribute::USE_REQUIRED;
   }
 }
@@ -2861,10 +3151,10 @@ nsSchemaLoader::GetProcess(nsIDOMElement* aElement,
   nsAutoString process;
   aElement->GetAttribute(NS_LITERAL_STRING("process"), process);
 
-  if (process.Equals(NS_LITERAL_STRING("lax"))) {
+  if (process.EqualsLiteral("lax")) {
     *aProcess = nsISchemaAnyParticle::PROCESS_LAX;
   }
-  else if (process.Equals(NS_LITERAL_STRING("skip"))) {
+  else if (process.EqualsLiteral("skip")) {
     *aProcess = nsISchemaAnyParticle::PROCESS_SKIP;
   }
 }
@@ -2890,7 +3180,7 @@ nsSchemaLoader::GetMinAndMax(nsIDOMElement* aElement,
   }
 
   if (!maxStr.IsEmpty()) {
-    if (maxStr.Equals(NS_LITERAL_STRING("unbounded"))) {
+    if (maxStr.EqualsLiteral("unbounded")) {
       *aMaxOccurs = nsISchemaParticle::OCCURRENCE_UNBOUNDED;
     }
     else {
@@ -2902,3 +3192,35 @@ nsSchemaLoader::GetMinAndMax(nsIDOMElement* aElement,
   }
 }
 
+nsresult
+nsSchemaLoader::ParseNameAndNS(const nsAString& aName, nsIDOMElement* aElement,
+                               nsAString& aTypeName, nsAString& aTypeNS)
+{
+  nsresult rv;
+  nsCOMPtr<nsIParserService> parserService =
+    do_GetService("@mozilla.org/parser/parser-service;1", &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  const nsAFlatString& qName = PromiseFlatString(aName);
+  const PRUnichar *colon;
+  rv = parserService->CheckQName(qName, PR_TRUE, &colon);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (colon) {
+    const PRUnichar* end;
+    qName.EndReading(end);
+
+    nsAutoString schemaTypePrefix;
+    schemaTypePrefix.Assign(Substring(qName.get(), colon));
+    aTypeName.Assign(Substring(colon + 1, end));
+
+    nsCOMPtr<nsIDOM3Node> domNode3 = do_QueryInterface(aElement);
+    NS_ENSURE_STATE(domNode3);
+
+    // get the namespace url from the prefix
+    rv = domNode3->LookupNamespaceURI(schemaTypePrefix, aTypeNS);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return rv;
+}

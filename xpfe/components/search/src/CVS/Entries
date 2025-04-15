@@ -1,8 +1,8 @@
-/.cvsignore/1.1/Thu Sep 16 11:31:41 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.22/Mon Jan 12 14:01:09 2004//TFIREFOX_1_0_RELEASE
-/nsInternetSearchService.cpp/1.207.6.9/Thu Oct 14 06:22:12 2004//TFIREFOX_1_0_RELEASE
-/nsInternetSearchService.h/1.18.8.2/Thu Oct  7 22:51:05 2004//TFIREFOX_1_0_RELEASE
-/nsLocalSearchService.cpp/1.43/Fri May 23 12:03:37 2003//TFIREFOX_1_0_RELEASE
-/nsLocalSearchService.h/1.6/Sat Mar 23 21:23:50 2002//TFIREFOX_1_0_RELEASE
-/nsRegisterSearch.cpp/1.15/Wed Jan 30 21:10:44 2002//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Thu Sep 16 11:31:41 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.25/Fri Apr  8 17:20:32 2005//TFIREFOX_1_5_RELEASE
+/nsInternetSearchService.cpp/1.236.2.4/Mon Oct 17 17:37:24 2005//TFIREFOX_1_5_RELEASE
+/nsInternetSearchService.h/1.23.4.1/Wed Aug 17 09:26:09 2005//TFIREFOX_1_5_RELEASE
+/nsLocalSearchService.cpp/1.46/Mon Nov  8 16:33:11 2004//TFIREFOX_1_5_RELEASE
+/nsLocalSearchService.h/1.7/Sat Apr 17 16:51:31 2004//TFIREFOX_1_5_RELEASE
+/nsRegisterSearch.cpp/1.16/Sat Apr 17 16:51:31 2004//TFIREFOX_1_5_RELEASE
 D

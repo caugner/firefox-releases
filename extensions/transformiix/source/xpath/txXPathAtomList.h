@@ -12,12 +12,12 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is TransforMiiX XSLT processor.
+ * The Original Code is TransforMiiX XSLT processor code.
  *
  * The Initial Developer of the Original Code is
  * Jonas Sicking.
  * Portions created by the Initial Developer are Copyright (C) 2001
- * Jonas Sicking. All Rights Reserved.
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Jonas Sicking <sicking@bigfoot.com>
@@ -90,3 +90,21 @@ TX_ATOM(parent, "parent")
 TX_ATOM(preceding, "preceding")
 TX_ATOM(precedingSibling, "preceding-sibling")
 TX_ATOM(self, "self")
+
+#ifndef DISABLE_XFORMS_HOOKS
+// XForms XPath Extensions
+TX_ATOM(avg, "avg")
+TX_ATOM(booleanFromString, "boolean-from-string")
+TX_ATOM(countNonEmpty, "count-non-empty")
+TX_ATOM(daysFromDate, "days-from-date")
+TX_ATOM(ifFunc, "if")
+TX_ATOM(index, "index")
+TX_ATOM(instance, "instance")
+TX_ATOM(min, "min")
+TX_ATOM(max, "max")
+TX_ATOM(months, "months")
+TX_ATOM(now, "now")
+TX_ATOM(property, "property")
+TX_ATOM(seconds, "seconds")
+TX_ATOM(secondsFromDateTime, "seconds-from-dateTime")
+#endif

@@ -1,23 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.0 (the "NPL"); you may not use this file except in
- * compliance with the NPL.  You may obtain a copy of the NPL at
- * http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the NPL is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the NPL
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * NPL.
+ * License.
  *
- * The Initial Developer of this code under the NPL is Netscape
- * Communications Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.  All Rights
- * Reserved.
+ * The Original Code is mozilla.org Code.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsCOMPtr.h"
 #include "nsReadableUtils.h"
@@ -98,7 +116,7 @@ PRBool nsEudoraWin32::FindEudoraLocation( nsIFileSpec *pFolder, PRBool findIni)
 		if (pBytes) {
 			nsCString str((const char *)pBytes);
 			delete [] pBytes;
-
+			
       str.CompressWhitespace();
 			
 			// Command line is Eudora mailfolder eudora.ini
@@ -123,37 +141,37 @@ PRBool nsEudoraWin32::FindEudoraLocation( nsIFileSpec *pFolder, PRBool findIni)
         } 
       } // if findIni
       else {
-			  int	idx = -1;
-			  if (str.CharAt( 0) == '"') {
-				  idx = str.FindChar( '"', 1);
-				  if (idx != -1)
-					  idx++;
-			  }
-			  else {
-				  idx = str.FindChar( ' ');
-			  }
-	  
-			  if (idx != -1) {
-				  idx++;
-				  while (str.CharAt( idx) == ' ') idx++;
-				  int endIdx = -1;
-				  if (str.CharAt( idx) == '"') {
-					  endIdx = str.FindChar( '"', idx);
-				  }
-				  else {
-					  endIdx = str.FindChar( ' ', idx);
-				  }
-				  if (endIdx != -1) {
-					  nsCString	path;
-					  str.Mid( path, idx, endIdx - idx);					
-					  
-            pFolder->SetNativePath( path.get());
+			int	idx = -1;
+			if (str.CharAt( 0) == '"') {
+				idx = str.FindChar( '"', 1);
+				if (idx != -1)
+					idx++;
+			}
+			else {
+				idx = str.FindChar( ' ');
+			}
+			
+			if (idx != -1) {
+				idx++;
+				while (str.CharAt( idx) == ' ') idx++;
+				int endIdx = -1;
+				if (str.CharAt( idx) == '"') {
+					endIdx = str.FindChar( '"', idx);
+				}
+				else {
+					endIdx = str.FindChar( ' ', idx);
+				}
+				if (endIdx != -1) {
+					nsCString	path;
+					str.Mid( path, idx, endIdx - idx);					
+					
+					pFolder->SetNativePath( path.get());
 
 					  if (NS_SUCCEEDED( pFolder->IsDirectory( &exists)))
-					    result = exists;
-				  }
-			  }
-      }
+							result = exists;
+						}
+					}
+				}
     } // if pBytes
 		::RegCloseKey( sKey);
 	}
@@ -262,7 +280,7 @@ nsresult nsEudoraWin32::IterateMailDir( nsIFileSpec *pFolder, nsISupportsArray *
 					name = fName;
 				}
 				ToLowerCase(ext);
-				if (ext.Equals(NS_LITERAL_CSTRING(".fol"))) {
+				if (ext.EqualsLiteral(".fol")) {
 					isFolder = PR_FALSE;
 					entry->IsDirectory( &isFolder);
 					if (isFolder) {
@@ -276,7 +294,7 @@ nsresult nsEudoraWin32::IterateMailDir( nsIFileSpec *pFolder, nsISupportsArray *
 						}
 					}
 				}
-				else if (ext.Equals(NS_LITERAL_CSTRING(".mbx"))) {
+				else if (ext.EqualsLiteral(".mbx")) {
 					isFile = PR_FALSE;
 					entry->IsFile( &isFile);
 					if (isFile) {
@@ -413,7 +431,7 @@ nsresult nsEudoraWin32::FoundMailbox( nsIFileSpec *mailFile, const char *pName, 
 	nsCOMPtr<nsIImportMailboxDescriptor>	desc;
 	nsISupports *							pInterface;
 
-	ConvertToUnicode(pName, displayName);
+	NS_CopyNativeToUnicode(nsDependentCString(pName), displayName);
 
 #ifdef IMPORT_DEBUG
 	char *pPath = nsnull;
@@ -456,7 +474,7 @@ nsresult nsEudoraWin32::FoundMailFolder( nsIFileSpec *mailFolder, const char *pN
 	nsCOMPtr<nsIImportMailboxDescriptor>	desc;
 	nsISupports *							pInterface;
 
-	ConvertToUnicode(pName, displayName);
+	NS_CopyNativeToUnicode(nsDependentCString(pName), displayName);
 
 #ifdef IMPORT_DEBUG
 	char *pPath = nsnull;
@@ -685,7 +703,7 @@ void nsEudoraWin32::GetAccountName( const char *pSection, nsString& str)
 	nsCString	s(pSection);
 	
 	if (s.Equals(NS_LITERAL_CSTRING("Settings"), nsCaseInsensitiveCStringComparator())) {
-		str.Assign(NS_LITERAL_STRING("Eudora "));
+		str.AssignLiteral("Eudora ");
 		str.AppendWithConversion( pSection);
 	}
 	else {
@@ -970,7 +988,7 @@ PRBool nsEudoraWin32::FindMimeIniFile( nsIFileSpec *pSpec)
 					name = fName;
 				}
 				ToLowerCase(ext);
-				if (ext.Equals(NS_LITERAL_CSTRING(".ini"))) {
+				if (ext.EqualsLiteral(".ini")) {
 					isFile = PR_FALSE;
 					entry->IsFile( &isFile);
 					if (isFile) {
@@ -1329,7 +1347,7 @@ nsresult nsEudoraWin32::ScanAddressDir( nsIFileSpec *pDir, nsISupportsArray *pAr
 					name = fName;
 				}
 				ToLowerCase(ext);
-				if (ext.Equals(NS_LITERAL_CSTRING(".txt"))) {
+				if (ext.EqualsLiteral(".txt")) {
 					isFile = PR_FALSE;
 					entry->IsFile( &isFile);
 					if (isFile) {
@@ -1366,12 +1384,11 @@ nsresult nsEudoraWin32::FoundAddressBook( nsIFileSpec *spec, const PRUnichar *pN
 			return( rv);
 		if (!pLeaf)
 			return( NS_ERROR_FAILURE);
-		ConvertToUnicode(pLeaf, name);
+		NS_CopyNativeToUnicode(nsDependentCString(pLeaf), name);
 		nsCRT::free( pLeaf);
 		nsString	tStr;
 		name.Right( tStr, 4);
-		if (tStr.Equals(NS_LITERAL_STRING(".txt"),
-                        nsCaseInsensitiveStringComparator())) {
+		if (tStr.LowerCaseEqualsLiteral(".txt")) {
 			name.Left( tStr, name.Length() - 4);
 			name = tStr;
 		}

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,13 +14,12 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *
  *   Adam Lock <adamlock@eircom.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
@@ -29,11 +28,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -44,8 +43,10 @@
 
 #include "WebBrowserContainer.h"
 
-#include "nsICategoryManager.h"
 #include "nsReadableUtils.h"
+
+#include "nsServiceManagerUtils.h"
+#include "nsIWebNavigationInfo.h"
 
 CWebBrowserContainer::CWebBrowserContainer(CMozillaBrowser *pOwner) :
     mOwner(pOwner),
@@ -406,28 +407,25 @@ NS_IMETHODIMP CWebBrowserContainer::IsPreferred(const char *aContentType, char *
 NS_IMETHODIMP CWebBrowserContainer::CanHandleContent(const char *aContentType, PRBool aIsContentPreferred, char **aDesiredContentType, PRBool *_retval)
 {
     *_retval = PR_FALSE;
+    *aDesiredContentType = nsnull;
     
     if (aContentType)
     {
-        nsCOMPtr<nsICategoryManager> catMgr;
-        nsresult rv;
-        catMgr = do_GetService(NS_CATEGORYMANAGER_CONTRACTID, &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
-        nsXPIDLCString value;
-        rv = catMgr->GetCategoryEntry("Gecko-Content-Viewers",
-            aContentType, 
-            getter_Copies(value));
-
-        // If the category manager can't find what we're looking for
-        // it returns NS_ERROR_NOT_AVAILABLE, we don't want to propagate
-        // that to the caller since it's really not a failure
-
-        if (NS_FAILED(rv) && rv != NS_ERROR_NOT_AVAILABLE)
-            return rv;
-
-        if (value && *value)
-            *_retval = PR_TRUE;
+        nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(mOwner->mWebBrowser));
+        nsCOMPtr<nsIWebNavigationInfo> webNavInfo(
+           do_GetService("@mozilla.org/webnavigation-info;1"));
+        if (webNavInfo)
+        {
+            PRUint32 canHandle;
+            nsresult rv =
+                webNavInfo->IsTypeSupported(nsDependentCString(aContentType),
+                                            webNav,
+                                            &canHandle);
+            NS_ENSURE_SUCCESS(rv, rv);
+            *_retval = (canHandle != nsIWebNavigationInfo::UNSUPPORTED);
+        }
     }
+
     return NS_OK;
 }
 

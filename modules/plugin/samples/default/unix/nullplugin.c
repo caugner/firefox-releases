@@ -116,6 +116,7 @@ DialogOKClicked (GtkButton *button, gpointer data)
         url = NPN_MemAlloc(strlen(address) + 1 + strlen(This->type)+1);
         if (url != NULL)
         {
+            NPN_PushPopupsEnabledState(This->instance, TRUE);
                 /* Append the MIME type to the URL */
             sprintf(url, "%s?%s", address, This->type);
             if (strcmp (This->type, JVM_MINETYPE) == 0) 
@@ -127,6 +128,7 @@ DialogOKClicked (GtkButton *button, gpointer data)
                 NPN_GetURL(This->instance, url, TARGET);
             }
             NPN_MemFree(url);
+            NPN_PopPopupsEnabledState(This->instance);
         }
     }
     destroyWidget(This);
@@ -467,7 +469,10 @@ xt_event_handler(Widget xt_w, PluginInstance *This, XEvent *xevent, Boolean *b)
             drawPixmap(This);
             break;
         case ButtonRelease:
-            makeWidget(This);
+            if (xevent->xbutton.button == Button1)
+            {
+                makeWidget(This);
+            } 
             break;
         default:
             break;

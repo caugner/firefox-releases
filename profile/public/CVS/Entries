@@ -1,11 +1,9 @@
-/.cvsignore/1.1/Thu Apr 15 22:56:15 1999//TFIREFOX_1_0_RELEASE
-/Makefile.in/1.15/Mon Nov 17 08:20:17 2003//TFIREFOX_1_0_RELEASE
-/dialshr.h/1.4/Fri Sep 28 20:10:02 2001//TFIREFOX_1_0_RELEASE
-/nsIAccount.h/1.5/Wed Apr  2 22:44:58 2003//TFIREFOX_1_0_RELEASE
-/nsIProfile.idl/1.30/Fri Sep 28 20:10:02 2001//TFIREFOX_1_0_RELEASE
-/nsIProfileChangeStatus.idl/1.8/Thu May  8 13:39:27 2003//TFIREFOX_1_0_RELEASE
-/nsIProfileInternal.idl/1.12/Wed Mar  3 07:48:49 2004//TFIREFOX_1_0_RELEASE
-/nsIProfileStartupListener.idl/1.3/Fri Sep 28 20:10:02 2001//TFIREFOX_1_0_RELEASE
-/nsISessionRoaming.idl/1.1/Mon Nov 17 08:20:17 2003//TFIREFOX_1_0_RELEASE
-/resource.h/1.1/Wed Jul 21 04:16:05 1999//TFIREFOX_1_0_RELEASE
+/.cvsignore/1.1/Thu Apr 15 22:56:15 1999//TFIREFOX_1_5_RELEASE
+/Makefile.in/1.19/Tue Jun 28 21:07:42 2005//TFIREFOX_1_5_RELEASE
+/nsIProfile.idl/1.32/Sun Sep  5 13:29:58 2004//TFIREFOX_1_5_RELEASE
+/nsIProfileChangeStatus.idl/1.10/Sun Sep  5 13:29:58 2004//TFIREFOX_1_5_RELEASE
+/nsIProfileInternal.idl/1.14/Sun Sep  5 13:29:58 2004//TFIREFOX_1_5_RELEASE
+/nsIProfileStartupListener.idl/1.5/Sun Sep  5 13:29:58 2004//TFIREFOX_1_5_RELEASE
+/nsIProfileUnlocker.idl/1.1/Tue Mar 15 20:01:11 2005//TFIREFOX_1_5_RELEASE
+/nsISessionRoaming.idl/1.1/Mon Nov 17 08:20:17 2003//TFIREFOX_1_5_RELEASE
 D

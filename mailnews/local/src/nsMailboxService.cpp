@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -53,13 +53,13 @@
 #include "nsIDocShell.h"
 #include "nsIPop3Service.h"
 #include "nsMsgUtils.h"
-#include "nsIStreamConverterService.h"
 #include "nsNetUtil.h"
 #include "nsIDocShellLoadInfo.h"
 #include "nsIWebNavigation.h"
 #include "prprf.h"
 #include "nsEscape.h"
 #include "nsIMsgHdr.h"
+#include "nsIFileURL.h"
 
 static NS_DEFINE_CID(kCMailboxUrl, NS_MAILBOXURL_CID);
 static NS_DEFINE_CID(kCPop3ServiceCID, NS_POP3SERVICE_CID);
@@ -77,13 +77,8 @@ NS_IMPL_ISUPPORTS4(nsMailboxService, nsIMailboxService, nsIMsgMessageService, ns
 nsresult nsMailboxService::ParseMailbox(nsIMsgWindow *aMsgWindow, nsFileSpec& aMailboxPath, nsIStreamListener *aMailboxParser, 
 										nsIUrlListener * aUrlListener, nsIURI ** aURL)
 {
-  nsCOMPtr<nsIMailboxUrl> mailboxurl;
-  nsresult rv = NS_OK;
-  
-  rv = nsComponentManager::CreateInstance(kCMailboxUrl,
-    nsnull,
-    NS_GET_IID(nsIMailboxUrl),
-    (void **) getter_AddRefs(mailboxurl));
+  nsresult rv;
+  nsCOMPtr<nsIMailboxUrl> mailboxurl = do_CreateInstance(kCMailboxUrl, &rv);
   if (NS_SUCCEEDED(rv) && mailboxurl)
   {
     nsCOMPtr<nsIMsgMailNewsUrl> url = do_QueryInterface(mailboxurl);
@@ -186,39 +181,80 @@ nsresult nsMailboxService::FetchMessage(const char* aMessageURI,
   
   nsMailboxAction actionToUse = mailboxAction;
   
-  rv = PrepareMessageUrl(aMessageURI, aUrlListener, actionToUse , getter_AddRefs(mailboxurl), aMsgWindow);
-  
-  if (NS_SUCCEEDED(rv))
+  nsCOMPtr <nsIURI> url;
+  if (!strncmp(aMessageURI, "file:", 5))
   {
-    nsCOMPtr<nsIURI> url = do_QueryInterface(mailboxurl);
-    nsCOMPtr<nsIMsgMailNewsUrl> msgUrl (do_QueryInterface(url));
-    msgUrl->SetMsgWindow(aMsgWindow);
-    nsCOMPtr<nsIMsgI18NUrl> i18nurl (do_QueryInterface(msgUrl));
-    i18nurl->SetCharsetOverRide(aCharsetOverride);
-    
-    if (aFileName)
-      msgUrl->SetFileName(nsDependentCString(aFileName));
-    
-    // instead of running the mailbox url like we used to, let's try to run the url in the docshell...
-    nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(aDisplayConsumer, &rv));
-    // if we were given a docShell, run the url in the docshell..otherwise just run it normally.
-    if (NS_SUCCEEDED(rv) && docShell)
+    PRInt64 fileSize;
+    nsCOMPtr<nsIURI> fileUri;
+    rv = NS_NewURI(getter_AddRefs(fileUri), aMessageURI);
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr <nsIFileURL> fileUrl = do_QueryInterface(fileUri, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr <nsIFile> file;
+    rv = fileUrl->GetFile(getter_AddRefs(file));
+    NS_ENSURE_SUCCESS(rv, rv);
+    file->GetFileSize(&fileSize);
+    nsCAutoString uriString(aMessageURI);
+    uriString.ReplaceSubstring(NS_LITERAL_CSTRING("file:"), NS_LITERAL_CSTRING("mailbox:"));
+    uriString.Append(NS_LITERAL_CSTRING("&number=0"));
+    rv = NS_NewURI(getter_AddRefs(url), uriString);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIMsgMailNewsUrl> msgurl = do_QueryInterface(url);
+    if (msgurl)
     {
-      nsCOMPtr<nsIDocShellLoadInfo> loadInfo;
-      // DIRTY LITTLE HACK --> if we are opening an attachment we want the docshell to
-      // treat this load as if it were a user click event. Then the dispatching stuff will be much
-      // happier.
-      if (mailboxAction == nsIMailboxUrl::ActionFetchPart)
+      msgurl->SetMsgWindow(aMsgWindow);
+      nsCOMPtr <nsIMailboxUrl> mailboxUrl = do_QueryInterface(msgurl, &rv);
+      mailboxUrl->SetMessageSize((PRUint32) fileSize);
+      nsCOMPtr <nsIMsgHeaderSink> headerSink;
+       // need to tell the header sink to capture some headers to create a fake db header
+       // so we can do reply to a .eml file or a rfc822 msg attachment.
+      if (aMsgWindow)
+        aMsgWindow->GetMsgHeaderSink(getter_AddRefs(headerSink));
+      if (headerSink)
       {
-        docShell->CreateLoadInfo(getter_AddRefs(loadInfo));
-        loadInfo->SetLoadType(nsIDocShellLoadInfo::loadLink);
+        nsCOMPtr <nsIMsgDBHdr> dummyHeader;
+        headerSink->GetDummyMsgHeader(getter_AddRefs(dummyHeader));
+        if (dummyHeader)
+          dummyHeader->SetMessageSize((PRUint32) fileSize);
       }
-      rv = docShell->LoadURI(url, loadInfo, nsIWebNavigation::LOAD_FLAGS_NONE, PR_FALSE);
     }
-    else
-      rv = RunMailboxUrl(url, aDisplayConsumer); 
   }
+  else
+  {
+    rv = PrepareMessageUrl(aMessageURI, aUrlListener, actionToUse , getter_AddRefs(mailboxurl), aMsgWindow);
   
+    if (NS_SUCCEEDED(rv))
+    {
+      url = do_QueryInterface(mailboxurl);
+      nsCOMPtr<nsIMsgMailNewsUrl> msgUrl (do_QueryInterface(url));
+      msgUrl->SetMsgWindow(aMsgWindow);
+      nsCOMPtr<nsIMsgI18NUrl> i18nurl (do_QueryInterface(msgUrl));
+      i18nurl->SetCharsetOverRide(aCharsetOverride);
+      if (aFileName)
+        msgUrl->SetFileName(nsDependentCString(aFileName));
+    }
+  }
+    
+  // instead of running the mailbox url like we used to, let's try to run the url in the docshell...
+  nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(aDisplayConsumer, &rv));
+  // if we were given a docShell, run the url in the docshell..otherwise just run it normally.
+  if (NS_SUCCEEDED(rv) && docShell)
+  {
+    nsCOMPtr<nsIDocShellLoadInfo> loadInfo;
+    // DIRTY LITTLE HACK --> if we are opening an attachment we want the docshell to
+    // treat this load as if it were a user click event. Then the dispatching stuff will be much
+    // happier.
+    if (mailboxAction == nsIMailboxUrl::ActionFetchPart)
+    {
+      docShell->CreateLoadInfo(getter_AddRefs(loadInfo));
+      loadInfo->SetLoadType(nsIDocShellLoadInfo::loadLink);
+    }
+    rv = docShell->LoadURI(url, loadInfo, nsIWebNavigation::LOAD_FLAGS_NONE, PR_FALSE);
+  }
+  else
+    rv = RunMailboxUrl(url, aDisplayConsumer); 
+ 
   if (aURL)
     mailboxurl->QueryInterface(NS_GET_IID(nsIURI), (void **) aURL);
   
@@ -257,8 +293,9 @@ nsMailboxService::StreamMessage(const char *aMessageURI, nsISupports *aConsumer,
                                         const char *aAdditionalHeader,
 					nsIURI **aURL)
 {
-    // The mailbox protocol object will look for "header=filter" to decide if it wants to convert 
-    // the data instead of using aConvertData. It turns out to be way too hard to pass aConvertData 
+    // The mailbox protocol object will look for "header=filter" or 
+    // "header=attach" to decide if it wants to convert the data instead of 
+    // using aConvertData. It turns out to be way too hard to pass aConvertData 
     // all the way over to the mailbox protocol object.
     nsCAutoString aURIString(aMessageURI);
     if (aAdditionalHeader)
@@ -280,20 +317,40 @@ NS_IMETHODIMP nsMailboxService::OpenAttachment(const char *aContentType,
                                                nsIMsgWindow *aMsgWindow, 
                                                nsIUrlListener *aUrlListener)
 {
-  nsCAutoString partMsgUrl(aMessageUri);
-  
-  // try to extract the specific part number out from the url string
-  partMsgUrl += "?";
-  const char *part = PL_strstr(aUrl, "part=");
-  partMsgUrl += part;
-  partMsgUrl += "&type=";
-  partMsgUrl += aContentType;
-  partMsgUrl += "&filename=";
-  partMsgUrl += aFileName;
-  return FetchMessage(partMsgUrl.get(), aDisplayConsumer,
-                      aMsgWindow,aUrlListener, aFileName,
-                      nsIMailboxUrl::ActionFetchPart, nsnull, nsnull);
+  nsCOMPtr <nsIURI> URL;
+  nsCAutoString urlString(aUrl);
+  // strip out ?type=application/x-message-display because it confuses libmime
 
+  PRInt32 typeIndex = urlString.Find("?type=application/x-message-display");
+  if (typeIndex != kNotFound)
+  {
+    urlString.Cut(typeIndex, sizeof("?type=application/x-message-display") - 1);
+    // we also need to replace the next '&' with '?'
+    PRInt32 firstPartIndex = urlString.FindChar('&');
+    if (firstPartIndex != kNotFound)
+      urlString.SetCharAt('?', firstPartIndex);
+  }
+  urlString += "&type=";
+  urlString += aContentType;
+  urlString += "&filename=";
+  urlString += aFileName;
+  CreateStartupUrl(urlString.get(), getter_AddRefs(URL));
+  nsresult rv;
+  // try to run the url in the docshell...
+  nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(aDisplayConsumer, &rv));
+  // if we were given a docShell, run the url in the docshell..otherwise just run it normally.
+  if (NS_SUCCEEDED(rv) && docShell)
+  {
+    nsCOMPtr<nsIDocShellLoadInfo> loadInfo;
+    // DIRTY LITTLE HACK --> since we are opening an attachment we want the docshell to
+    // treat this load as if it were a user click event. Then the dispatching stuff will be much
+    // happier.
+    docShell->CreateLoadInfo(getter_AddRefs(loadInfo));
+    loadInfo->SetLoadType(nsIDocShellLoadInfo::loadLink);
+    return docShell->LoadURI(URL, loadInfo, nsIWebNavigation::LOAD_FLAGS_NONE, PR_FALSE);
+  }
+  return RunMailboxUrl(URL, aDisplayConsumer); 
+  
 }
 
 
@@ -333,6 +390,9 @@ nsMailboxService::SaveMessageToDisk(const char *aMessageURI,
 
 NS_IMETHODIMP nsMailboxService::GetUrlForUri(const char *aMessageURI, nsIURI **aURL, nsIMsgWindow *aMsgWindow)
 {
+  if (!strncmp(aMessageURI, "file:", 5))
+    return NS_NewURI(aURL, aMessageURI);
+
   nsresult rv = NS_OK;
   nsCOMPtr<nsIMailboxUrl> mailboxurl;
   rv = PrepareMessageUrl(aMessageURI, nsnull, nsIMailboxUrl::ActionFetchMessage, getter_AddRefs(mailboxurl), aMsgWindow);
@@ -373,12 +433,7 @@ nsresult nsMailboxService::PrepareMessageUrl(const char * aSrcMsgMailboxURI, nsI
                                              nsMailboxAction aMailboxAction, nsIMailboxUrl ** aMailboxUrl,
                                              nsIMsgWindow *msgWindow)
 {
-  nsresult rv = NS_OK;
-  rv = nsComponentManager::CreateInstance(kCMailboxUrl,
-    nsnull,
-    NS_GET_IID(nsIMailboxUrl),
-    (void **) aMailboxUrl);
-  
+  nsresult rv = CallCreateInstance(kCMailboxUrl, aMailboxUrl);
   if (NS_SUCCEEDED(rv) && aMailboxUrl && *aMailboxUrl)
   {
     // okay now generate the url string

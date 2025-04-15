@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2000
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *     Conrad Carlen conrad@ingress.com
+ *   Conrad Carlen conrad@ingress.com
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
  
@@ -69,14 +69,17 @@
                                                                 // installed locale. Second choice
                                                                 // when above is not available.
                                                                                                                        
-#define NS_APP_USER_PROFILES_ROOT_DIR           "DefProfRt"     // The dir where user profile dirs get created.
+#define NS_APP_USER_PROFILES_ROOT_DIR           "DefProfRt"     // The dir where user profile dirs live.
+#define NS_APP_USER_PROFILES_LOCAL_ROOT_DIR     "DefProfLRt"  // The dir where user profile temp dirs live.
 
 #define NS_APP_RES_DIR                          "ARes"
 #define NS_APP_CHROME_DIR                       "AChrom"
 #define NS_APP_PLUGINS_DIR                      "APlugns"       // Deprecated - use NS_APP_PLUGINS_DIR_LIST
 #define NS_APP_SEARCH_DIR                       "SrchPlugns"
 
+#define NS_APP_CHROME_DIR_LIST                  "AChromDL"
 #define NS_APP_PLUGINS_DIR_LIST                 "APluginsDL"
+#define NS_APP_SEARCH_DIR_LIST                  "SrchPluginsDL"
 
 // --------------------------------------------------------------------------------------
 // Files and directories which exist on a per-profile basis
@@ -95,8 +98,10 @@
 #define NS_APP_PREFS_DEFAULTS_DIR_LIST          "PrefDL"
         
 #define NS_APP_USER_PROFILE_50_DIR              "ProfD"
+#define NS_APP_USER_PROFILE_LOCAL_50_DIR        "ProfLD"
         
 #define NS_APP_USER_CHROME_DIR                  "UChrm"
+#define NS_APP_USER_SEARCH_DIR                  "UsrSrchPlugns"
          
 #define NS_APP_LOCALSTORE_50_FILE               "LclSt"
 #define NS_APP_HISTORY_50_FILE                  "UHist"
@@ -116,4 +121,6 @@
 #define NS_APP_MESSENGER_FOLDER_CACHE_50_DIR    "MFCaD"
 
 #define NS_APP_INSTALL_CLEANUP_DIR              "XPIClnupD"  //location of xpicleanup.dat xpicleanup.exe 
+
+#define NS_APP_STORAGE_50_FILE                  "UStor" // sqlite database used as mozStorage profile db
 #endif

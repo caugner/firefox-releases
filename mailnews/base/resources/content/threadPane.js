@@ -1,22 +1,40 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 var gLastMessageUriToLoad = null;
 var gThreadPaneCommandUpdater = null;
@@ -42,35 +60,33 @@ function ThreadPaneOnClick(event)
     }
     else if (t.localName == "treechildren") {
       var row = new Object;
-      var colID = new Object;
+      var col = new Object;
       var childElt = new Object;
 
       var tree = GetThreadTree();
       // figure out what cell the click was in
-      tree.treeBoxObject.getCellAt(event.clientX, event.clientY, row, colID, childElt);
+      tree.treeBoxObject.getCellAt(event.clientX, event.clientY, row, col, childElt);
       if (row.value == -1)
        return;
 
       // if the cell is in a "cycler" column
       // or if the user double clicked on the twisty,
       // don't open the message in a new window
-      var col = document.getElementById(colID.value);
-      if (col) {
-        if (event.detail == 2 && col.getAttribute("cycler") != "true" && (childElt.value != "twisty")) {
-          ThreadPaneDoubleClick();
-          // double clicking should not toggle the open / close state of the 
-          // thread.  this will happen if we don't prevent the event from
-          // bubbling to the default handler in tree.xml
-          event.preventBubble();
-        }
-        else if (colID.value == "junkStatusCol") {
-          MsgJunkMailInfo(true);
-       }
-       else if (colID.value == "threadCol" && !event.shiftKey && (event.ctrlKey || event.metaKey)) {
-         gDBView.ExpandAndSelectThreadByIndex(row.value, true);
-         event.preventBubble();
-       }
-      }      
+      if (event.detail == 2 && !col.value.cycler && (childElt.value != "twisty")) {
+        ThreadPaneDoubleClick();
+        // double clicking should not toggle the open / close state of the 
+        // thread.  this will happen if we don't prevent the event from
+        // bubbling to the default handler in tree.xml
+        event.preventBubble();
+      }
+      else if (col.value.id == "junkStatusCol") {
+        MsgJunkMailInfo(true);
+      }
+      else if (col.value.id == "threadCol" && !event.shiftKey &&
+          (event.ctrlKey || event.metaKey)) {
+        gDBView.ExpandAndSelectThreadByIndex(row.value, true);
+        event.preventBubble();
+      }
     }
 }
 
@@ -273,17 +289,19 @@ function MsgSortByThread()
 
 function MsgSortThreadPane(sortType)
 {
-    var dbview = GetDBView();
-  var viewFlags = dbview.viewFlags;
-  dbview.viewFlags &= ~ nsMsgViewFlagsType.kGroupBySort;
-  if (viewFlags & nsMsgViewFlagsType.kGroupBySort)
+  var dbview = GetDBView();
+
+  if (dbview.viewFlags & nsMsgViewFlagsType.kGroupBySort)
   {
+    dbview.viewFlags &= ~nsMsgViewFlagsType.kGroupBySort;
     dbview.sortType = sortType; // save sort in current view
     viewDebug("switching view to all msgs\n");
-    return SwitchView("cmd_viewAllMsgs");
+    SwitchView("cmd_viewAllMsgs");
+    return;
   }
-    dbview.sort(sortType, nsMsgViewSortOrder.ascending);
-    UpdateSortIndicators(sortType, nsMsgViewSortOrder.ascending);
+
+  dbview.sort(sortType, nsMsgViewSortOrder.ascending);
+  UpdateSortIndicators(sortType, nsMsgViewSortOrder.ascending);
 }
 
 function MsgReverseSortThreadPane()
@@ -300,15 +318,15 @@ function MsgReverseSortThreadPane()
 function MsgToggleThreaded()
 {
     var dbview = GetDBView();
-    var viewFlags = dbview.viewFlags;
-    dbview.viewFlags ^= nsMsgViewFlagsType.kThreadedDisplay;
-    dbview.viewFlags &= ~nsMsgViewFlagsType.kGroupBySort;
-    if (viewFlags & nsMsgViewFlagsType.kGroupBySort)
-    {
-      viewDebug("switching view to all msgs\n");
-      return SwitchView("cmd_viewAllMsgs");
-    }
 
+    dbview.viewFlags ^= nsMsgViewFlagsType.kThreadedDisplay;
+    if (dbview.viewFlags & nsMsgViewFlagsType.kGroupBySort)
+    {
+      dbview.viewFlags &= ~nsMsgViewFlagsType.kGroupBySort;
+      viewDebug("switching view to all msgs\n");
+      SwitchView("cmd_viewAllMsgs");
+      return;
+    }
 
     dbview.sort(dbview.sortType, dbview.sortOrder);
     UpdateSortIndicators(dbview.sortType, dbview.sortOrder);
@@ -316,11 +334,12 @@ function MsgToggleThreaded()
 
 function MsgSortThreaded()
 {
-    var viewFlags = GetDBView().viewFlags;
+    var dbview = GetDBView();
+    var viewFlags = dbview.viewFlags;
 
     if (viewFlags & nsMsgViewFlagsType.kGroupBySort)
     {
-      GetDBView().viewFlags &= ~nsMsgViewFlagsType.kGroupBySort;
+      dbview.viewFlags &= ~nsMsgViewFlagsType.kGroupBySort;
       viewDebug("switching view to all msgs\n");
       SwitchView("cmd_viewAllMsgs");
     }
@@ -341,7 +360,8 @@ function MsgGroupBySort()
   var sortTypeSupportsGrouping = (sortType == nsMsgViewSortType.byAuthor 
          || sortType == nsMsgViewSortType.byDate || sortType == nsMsgViewSortType.byPriority
          || sortType == nsMsgViewSortType.bySubject || sortType == nsMsgViewSortType.byLabel
-         || sortType == nsMsgViewSortType.byStatus  || sortType == nsMsgViewSortType.byRecipient);
+         || sortType == nsMsgViewSortType.byStatus  || sortType == nsMsgViewSortType.byRecipient
+         || sortType == nsMsgViewSortType.byAccount);
 
   if (!dbview.supportsThreading || !sortTypeSupportsGrouping)
     return; // we shouldn't be trying to group something we don't support grouping for...
@@ -511,10 +531,9 @@ function ThreadPaneOnLoad()
 
 function ThreadPaneSelectionChanged()
 {
-  var treeBoxObj = GetThreadTree().treeBoxObject;
-  var treeSelection = treeBoxObj.selection;
+  UpdateStatusMessageCounts(msgWindow.openFolder);
   if (!gRightMouseButtonDown)
-    treeBoxObj.view.selectionChanged();
+    GetThreadTree().view.selectionChanged();
 }
 
 addEventListener("load",ThreadPaneOnLoad,true);

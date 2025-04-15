@@ -1,22 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
  *
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Ian Neal <bugzilla@arlen.demon.co.uk>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /**
  * interfaces
@@ -99,6 +118,8 @@ var gReceiptOptionChanged;
 var gAttachVCardOptionChanged;
 
 var gMailSession;
+var gAutoSaveInterval;
+var gAutoSaveTimeout;
 
 const kComposeAttachDirPrefName = "mail.compose.attach.dir";
 
@@ -109,10 +130,13 @@ function InitializeGlobalVariables()
   gPromptService = Components.classes["@mozilla.org/embedcomp/prompt-service;1"].getService(Components.interfaces.nsIPromptService);
   
   //This migrates the LDAPServer Preferences from 4.x to mozilla format.
-  try {
-      gLDAPPrefsService = Components.classes["@mozilla.org/ldapprefs-service;1"].getService();       
-      gLDAPPrefsService = gLDAPPrefsService.QueryInterface( Components.interfaces.nsILDAPPrefsService);                  
-  } catch (ex) {dump ("ERROR: Cannot get the LDAP service\n" + ex + "\n");}
+  gLDAPPrefsService = Components.classes["@mozilla.org/ldapprefs-service;1"];
+  if (gLDAPPrefsService) {
+      try {
+          gLDAPPrefsService = gLDAPPrefsService.getService().gLDAPPrefsService
+              .QueryInterface( Components.interfaces.nsILDAPPrefsService);
+      } catch (ex) {dump ("ERROR: Cannot get the LDAP prefs service\n" + ex + "\n");}
+  }
 
   gMsgCompose = null;
   gWindowLocked = false;
@@ -142,6 +166,8 @@ function InitializeGlobalVariables()
   gLastWindowToHaveFocus = null;
   gReceiptOptionChanged = false;
   gAttachVCardOptionChanged = false;
+
+
 }
 InitializeGlobalVariables();
 
@@ -218,6 +244,9 @@ var gComposeRecyclingListener = {
         document.getElementById("FormatToolbar").hidden = false;
     }
 
+    // Stop InlineSpellChecker so personal dictionary is saved
+    StopInlineSpellChecker();
+
     //Reset editor
     EditorResetFontAndColorAttributes();
     EditorCleanup();
@@ -229,6 +258,8 @@ var gComposeRecyclingListener = {
     var event = document.createEvent('Events');
     event.initEvent('compose-window-close', false, true);
     document.getElementById("msgcomposeWindow").dispatchEvent(event);
+    if (gAutoSaveTimeout)
+      clearTimeout(gAutoSaveTimeout);
   },
 
   onReopen: function(params) {
@@ -290,6 +321,7 @@ var progressListener = {
       if (aStateFlags & Components.interfaces.nsIWebProgressListener.STATE_START)
       {
         document.getElementById('compose-progressmeter').setAttribute( "mode", "undetermined" );
+        document.getElementById('progress-panel').hidden = false;
       }
       
       if (aStateFlags & Components.interfaces.nsIWebProgressListener.STATE_STOP)
@@ -297,6 +329,7 @@ var progressListener = {
         gSendOrSaveOperationInProgress = false;
         document.getElementById('compose-progressmeter').setAttribute( "mode", "normal" );
         document.getElementById('compose-progressmeter').setAttribute( "value", 0 );
+        document.getElementById('progress-panel').hidden = true;
         document.getElementById('statusText').setAttribute('label', '');
       }
     },
@@ -582,6 +615,25 @@ function updateComposeItems() {
   } catch(e) {}
 }
 
+function openEditorContextMenu()
+{
+  // if we have a mispelled word, show spellchecker context
+  // menuitems as well as the usual context menu
+  var spellCheckNoSuggestionsItem = document.getElementById('spellCheckNoSuggestions');
+  var word;
+  var misspelledWordStatus = InlineSpellChecker.updateSuggestionsMenu(document.getElementById('msgComposeContext'),
+                             spellCheckNoSuggestionsItem, word);
+
+  var hideSpellingItems = (misspelledWordStatus == kSpellNoMispelling);
+  spellCheckNoSuggestionsItem.hidden = hideSpellingItems || misspelledWordStatus != kSpellNoSuggestionsFound;
+  document.getElementById('spellCheckAddToDictionary').hidden = hideSpellingItems;
+  document.getElementById('spellCheckIgnoreWord').hidden = hideSpellingItems;
+  document.getElementById('spellCheckAddSep').hidden = hideSpellingItems;
+  document.getElementById('spellCheckSuggestionsSeparator').hidden = hideSpellingItems;
+
+  updateEditItems();
+}
+
 function updateEditItems() {
   goUpdateCommand("cmd_pasteNoFormatting");
   goUpdateCommand("cmd_pasteQuote");
@@ -741,8 +793,13 @@ function setupLdapAutocompleteSession()
         LDAPSession = gLDAPSession;
     } else {
         LDAPSession = Components.classes[
-            "@mozilla.org/autocompleteSession;1?type=ldap"].createInstance()
-            .QueryInterface(Components.interfaces.nsILDAPAutoCompleteSession);
+            "@mozilla.org/autocompleteSession;1?type=ldap"];
+        if (LDAPSession) {
+            try {
+                LDAPSession = LDAPSession.createInstance()
+                    .QueryInterface(Components.interfaces.nsILDAPAutoCompleteSession);
+            } catch (ex) {dump ("ERROR: Cannot get the LDAP autocomplete session\n" + ex + "\n");}
+        }
     }
             
     if (autocompleteDirectory && !gIsOffline) { 
@@ -1130,6 +1187,23 @@ function ComposeFieldsReady(msgType)
   AdjustFocus();
 }
 
+// checks if the passed in string is a mailto url, if it is, generates nsIMsgComposeParams
+// for the url and returns them.
+function handleMailtoArgs(mailtoUrl)
+{
+  // see if the string is a mailto url....do this by checking the first 7 characters of the string
+  if (/^mailto:/i.test(mailtoUrl))
+  {
+    // if it is a mailto url, turn the mailto url into a MsgComposeParams object....
+    var uri = gIOService.newURI(mailtoUrl, null, null);
+
+    if (uri)
+      return sMsgComposeService.getParamsForMailto(uri);
+  }
+
+  return null;
+}
+
 function ComposeStartup(recycled, aParams)
 {
   var params = null; // New way to pass parameters to the compose window as a nsIMsgComposeParameters object
@@ -1143,12 +1217,20 @@ function ComposeStartup(recycled, aParams)
   else
     if (window.arguments && window.arguments[0]) {
       try {
-        params = window.arguments[0].QueryInterface(Components.interfaces.nsIMsgComposeParams);
+      if (window.arguments[0] instanceof Components.interfaces.nsIMsgComposeParams)
+        params = window.arguments[0];
+      else
+        params = handleMailtoArgs(window.arguments[0]);
       }
       catch(ex) { dump("ERROR with parameters: " + ex + "\n"); }
+      
+    // if still no dice, try and see if the params is an old fashioned list of string attributes
+    // XXX can we get rid of this yet? 
       if (!params)
+    {
         args = GetArgs(window.arguments[0]);
     }
+  }
 
   var identityList = document.getElementById("msgIdentity");
   var identityListPopup = document.getElementById("msgIdentityPopup");
@@ -1236,6 +1318,8 @@ function ComposeStartup(recycled, aParams)
                                          gMsgCompose.compFields.returnReceipt);
       document.getElementById("cmd_attachVCard").setAttribute('checked', 
                                          gMsgCompose.compFields.attachVCard);
+      document.getElementById("menu_inlineSpellCheck").setAttribute('checked',
+                                         sPrefs.getBoolPref("mail.spellcheck.inline"));
 
       // If recycle, editor is already created
       if (!recycled) 
@@ -1298,8 +1382,7 @@ function ComposeStartup(recycled, aParams)
 
       if (recycled)
       {
-        // This sets charset and does reply quote insertion
-        gMsgCompose.initEditor(GetCurrentEditor(), window.content);
+        InitEditor(GetCurrentEditor());
 
         if (gMsgCompose.composeHTML)
         {
@@ -1329,6 +1412,12 @@ function ComposeStartup(recycled, aParams)
       }
     }
   }
+  gAutoSaveInterval = sPrefs.getBoolPref("mail.compose.autosave") 
+    ? sPrefs.getIntPref("mail.compose.autosaveinterval") * 60000
+    : 0;
+
+  if (gAutoSaveInterval)
+    gAutoSaveTimeout = setTimeout(AutoSave, gAutoSaveInterval);
 }
 
 // The new, nice, simple way of getting notified when a new editor has been created
@@ -1340,7 +1429,14 @@ var gMsgEditorCreationObserver =
     {
       var editor = GetCurrentEditor();
       if (editor && GetCurrentCommandManager() == aSubject)
-        gMsgCompose.initEditor(editor, window.content);
+        InitEditor(editor);
+      // Now that we know this document is an editor, update commands now if
+      // the document has focus, or next time it receives focus via
+      // CommandUpdate_MsgCompose()
+      if (gLastWindowToHaveFocus == document.commandDispatcher.focusedWindow)
+        updateComposeItems();
+      else
+        gLastWindowToHaveFocus = null;
     }
   }
 }
@@ -1367,7 +1463,7 @@ function ComposeLoad()
     var prefService = Components.classes["@mozilla.org/preferences-service;1"]
                               .getService(Components.interfaces.nsIPrefService);
     sPrefs = prefService.getBranch(null);
-    sPrefBranchInternal = sPrefs.QueryInterface(Components.interfaces.nsIPrefBranchInternal);
+    sPrefBranchInternal = sPrefs.QueryInterface(Components.interfaces.nsIPrefBranch2);
   }
   catch (ex) {
     dump("failed to preferences services\n");
@@ -1381,7 +1477,7 @@ function ComposeLoad()
   }
 
   try {
-    sAccountManagerDataSource = Components.classes["@mozilla.org/rdf/datasource;1?name=msgaccountmanager"].createInstance(Components.interfaces.nsIRDFDataSource);
+    sAccountManagerDataSource = Components.classes["@mozilla.org/rdf/datasource;1?name=msgaccountmanager"].getService(Components.interfaces.nsIRDFDataSource);
     sRDF = Components.classes['@mozilla.org/rdf/rdf-service;1'].getService(Components.interfaces.nsIRDFService);
     sNameProperty = sRDF.GetResource("http://home.netscape.com/NC-rdf#Name?sort=true");
   }
@@ -1434,6 +1530,9 @@ function ComposeUnload()
 {
   dump("\nComposeUnload from XUL\n");
 
+  // Stop InlineSpellChecker so personal dictionary is saved
+  StopInlineSpellChecker();
+
   EditorCleanup();
 
   RemoveMessageComposeOfflineObserver();
@@ -1444,6 +1543,8 @@ function ComposeUnload()
     RemoveDirectorySettingsObserver(gCurrentAutocompleteDirectory);
   if (gMsgCompose)
     gMsgCompose.UnregisterStateListener(stateListener);
+  if (gAutoSaveTimeout)
+    clearTimeout(gAutoSaveTimeout);
 }
 
 function SetDocumentCharacterSet(aCharset)
@@ -1596,13 +1697,13 @@ function GenericSendMessage( msgType )
           {
             var result = {value:sComposeMsgsBundle.getString("defaultSubject")};
             if (gPromptService.prompt(
-              window,
-              sComposeMsgsBundle.getString("subjectDlogTitle"),
-              sComposeMsgsBundle.getString("subjectDlogMessage"),
-                        result,
-              null,
-              {value:0}
-              ))
+                  window,
+                  sComposeMsgsBundle.getString("sendMsgTitle"),
+                  sComposeMsgsBundle.getString("subjectDlogMessage"),
+                  result,
+                  null,
+                  {value:0}
+               ))
               {
                 msgCompFields.subject = result.value;
                 var subjectInputElem = document.getElementById("msgSubject");
@@ -1610,12 +1711,62 @@ function GenericSendMessage( msgType )
               }
               else
                 return;
-            }
           }
+        }
+
+        // check if the user tries to send a message to a newsgroup through a mail account
+        var currentAccountKey = getCurrentAccountKey();
+        var account = gAccountManager.getAccount(currentAccountKey);
+        if (!account)
+        {
+          throw "UNEXPECTED: currentAccountKey '" + currentAccountKey +
+              "' has no matching account!";
+        }
+        var servertype = account.incomingServer.type;
+
+        if (servertype != "nntp" && msgCompFields.newsgroups != "")
+        {
+          const kDontAskAgainPref = "mail.compose.dontWarnMail2Newsgroup";
+          // default to ask user if the pref is not set
+          var dontAskAgain = false;
+          try {
+            var pref = Components.classes["@mozilla.org/preferences-service;1"]
+                                .getService(Components.interfaces.nsIPrefBranch);
+            dontAskAgain = pref.getBoolPref(kDontAskAgainPref);
+          } catch (ex) {}
+
+          if (!dontAskAgain)
+          {
+            var checkbox = {value:false};
+            var okToProceed = gPromptService.confirmCheck(
+                              window,
+                              sComposeMsgsBundle.getString("subjectDlogTitle"),
+                              sComposeMsgsBundle.getString("recipientDlogMessage"),
+                              sComposeMsgsBundle.getString("CheckMsg"),
+                              checkbox);
+
+            if (!okToProceed)
+              return;
+
+            try {
+              if (checkbox.value)
+                pref.setBoolPref(kDontAskAgainPref, true);
+            } catch (ex) {}
+          }
+
+          // remove newsgroups to prevent news_p to be set 
+          // in nsMsgComposeAndSend::DeliverMessage()
+          msgCompFields.newsgroups = "";
+        }
 
         // Before sending the message, check what to do with HTML message, eventually abort.
         var convert = DetermineConvertibility();
         var action = DetermineHTMLAction(convert);
+        // check if e-mail addresses are complete, in case user
+        // has turned off autocomplete to local domain.
+        if (!CheckValidEmailAddress(msgCompFields.to, msgCompFields.cc, msgCompFields.bcc))
+          return;
+
         if (action == nsIMsgCompSendFormat.AskUser)
         {
                     var recommAction = convert == nsIMsgCompConvertible.No
@@ -1664,6 +1815,7 @@ function GenericSendMessage( msgType )
         msgType == nsIMsgCompDeliverMode.Later ||
         msgType == nsIMsgCompDeliverMode.Save || 
         msgType == nsIMsgCompDeliverMode.SaveAsDraft || 
+        msgType == nsIMsgCompDeliverMode.AutoSaveAsDraft || 
         msgType == nsIMsgCompDeliverMode.SaveAsTemplate) 
       {
         var fallbackCharset = new Object;
@@ -1672,9 +1824,24 @@ function GenericSendMessage( msgType )
         {
           var dlgTitle = sComposeMsgsBundle.getString("initErrorDlogTitle");
           var dlgText = sComposeMsgsBundle.getString("12553");  // NS_ERROR_MSG_MULTILINGUAL_SEND
-          if (!gPromptService.confirm(window, dlgTitle, dlgText))
-            return;
-          fallbackCharset.value = "UTF-8";
+          var result3 = gPromptService.confirmEx(window, dlgTitle, dlgText,
+              (gPromptService.BUTTON_TITLE_IS_STRING * gPromptService.BUTTON_POS_0) +
+              (gPromptService.BUTTON_TITLE_IS_STRING * gPromptService.BUTTON_POS_1) +
+              (gPromptService.BUTTON_TITLE_CANCEL * gPromptService.BUTTON_POS_2),
+              sComposeMsgsBundle.getString('sendInUTF8'), 
+              sComposeMsgsBundle.getString('sendAnyway'),
+              null, null, {value:0}); 
+          switch(result3)
+          {
+            case 0: 
+              fallbackCharset.value = "UTF-8";
+              break;
+            case 1:  // send anyway
+              msgCompFields.needToCheckCharset = false;
+              break;
+            case 2:  // cancel 
+              return;
+          }
         }
         if (fallbackCharset && 
             fallbackCharset.value && fallbackCharset.value != "")
@@ -1692,8 +1859,9 @@ function GenericSendMessage( msgType )
           gSendOrSaveOperationInProgress = true;
         }
         msgWindow.SetDOMWindow(window);
+        msgWindow.rootDocShell.allowAuth = true;
 
-        gMsgCompose.SendMsg(msgType, getCurrentIdentity(), getCurrentAccountKey(), msgWindow, progress);
+        gMsgCompose.SendMsg(msgType, getCurrentIdentity(), currentAccountKey, msgWindow, progress);
       }
       catch (ex) {
         dump("failed to SendMsg: " + ex + "\n");
@@ -1705,6 +1873,28 @@ function GenericSendMessage( msgType )
   }
   else
     dump("###SendMessage Error: composeAppCore is null!\n");
+}
+
+function CheckValidEmailAddress(aTo, aCC, aBCC)
+{
+  var invalidStr = null;
+  // crude check that the to, cc, and bcc fields contain at least one '@'.
+  // We could parse each address, but that might be overkill.
+  if (aTo.length > 0 && (aTo.indexOf("@") <= 0 || aTo.indexOf("@") == aTo.length - 1))
+    invalidStr = aTo;
+  else if (aCC.length > 0 && (aCC.indexOf("@") <= 0 || aCC.indexOf("@") == aCC.length - 1))
+    invalidStr = aCC;
+  else if (aBCC.length > 0 && (aBCC.indexOf("@") <= 0 || aBCC.indexOf("@") == aBCC.length - 1))
+    invalidStr = aBCC;
+  if (invalidStr)
+  {
+    var errorTitle = sComposeMsgsBundle.getString("sendMsgTitle");
+    var errorMsg = sComposeMsgsBundle.getFormattedString("addressInvalid", [invalidStr], 1);
+    if (gPromptService)
+      gPromptService.alert(window, errorTitle, errorMsg);
+    return false;
+  } 
+  return true;
 }
 
 function SendMessage()
@@ -1879,6 +2069,49 @@ function SelectAddress()
   AdjustFocus();
 }
 
+// walk through the recipients list and add them to the inline spell checker ignore list
+function addRecipientsToIgnoreList(aAddressesToAdd)
+{
+  if (InlineSpellChecker.inlineSpellChecker && InlineSpellChecker.inlineSpellChecker.enableRealTimeSpell)
+  {
+    // break the list of potentially many recipients back into individual names
+    var hdrParser = Components.classes["@mozilla.org/messenger/headerparser;1"].getService(Components.interfaces.nsIMsgHeaderParser);
+    var emailAddresses = {};
+    var names = {};
+    var fullNames = {};
+    var numAddresses = hdrParser.parseHeadersWithArray(aAddressesToAdd, emailAddresses, names, fullNames);
+    var tokenizedNames = [];
+
+    // each name could consist of multiple words delimited by commas and/or spaces.
+    // i.e. Green Lantern or Lantern,Green.
+    for (var i = 0; i < names.value.length; i++)
+    {
+      var splitNames = names.value[i].match(/[^\s,]+/g);
+      if (splitNames)
+        tokenizedNames = tokenizedNames.concat(splitNames);
+    }
+
+    InlineSpellChecker.inlineSpellChecker.ignoreWords(tokenizedNames, tokenizedNames.length);
+  }
+}
+
+function StopInlineSpellChecker()
+{
+  if (InlineSpellChecker.inlineSpellChecker)
+    InlineSpellChecker.inlineSpellChecker.enableRealTimeSpell = false;
+}
+
+function ToggleInlineSpellChecker(target)
+{
+  if (InlineSpellChecker.inlineSpellChecker)
+  {
+    InlineSpellChecker.inlineSpellChecker.enableRealTimeSpell = !InlineSpellChecker.inlineSpellChecker.enableRealTimeSpell;
+
+    if (InlineSpellChecker.inlineSpellChecker.enableRealTimeSpell)
+      InlineSpellChecker.checkDocument(window.content.document);
+  }
+}
+
 function ToggleReturnReceipt(target)
 {
     var msgCompFields = gMsgCompose.compFields;
@@ -1913,8 +2146,8 @@ function queryISupportsArray(supportsArray, iid) {
 function ClearIdentityListPopup(popup)
 {
   if (popup)
-    for (var i = popup.childNodes.length - 1; i >= 0; i--)
-      popup.removeChild(popup.childNodes[i]);
+    while (popup.hasChildNodes())
+      popup.removeChild(popup.lastChild);
 }
 
 function compareAccountSortOrder(account1, account2)
@@ -2033,7 +2266,7 @@ function SetComposeWindowTitle()
     newTitle = sComposeMsgsBundle.getString("defaultSubject");
 
   newTitle += GetCharsetUIString();
-  window.title = sComposeMsgsBundle.getString("windowTitlePrefix") + " " + newTitle;
+  document.title = sComposeMsgsBundle.getString("windowTitlePrefix") + " " + newTitle;
 }
 
 // Check for changes to document and allow saving before closing
@@ -2065,7 +2298,6 @@ function ComposeCanClose()
     }
   }
 
-  dump("XXX changed? " + gContentChanged + "," + gMsgCompose.bodyModified + "\n");
   // Returns FALSE only if user cancels save action
   if (gContentChanged || gMsgCompose.bodyModified)
   {
@@ -2265,23 +2497,12 @@ function MessageHasSelectedAttachments()
 
 function AttachPage()
 {
-   if (gPromptService)
-   {
-      var result = {value:"http://"};
-      if (gPromptService.prompt(
-        window,
-        sComposeMsgsBundle.getString("attachPageDlogTitle"),
-        sComposeMsgsBundle.getString("attachPageDlogMessage"),
-          result,
-        null,
-        {value:0}))
-      {
-        var attachment = Components.classes["@mozilla.org/messengercompose/attachment;1"].createInstance(Components.interfaces.nsIMsgAttachment);
-        attachment.url = result.value;
-        AddAttachment(attachment);
-      }
-   }
+  var result = { attachment: null };
+  window.openDialog("chrome://messenger/content/messengercompose/MsgAttachPage.xul", "_blank", "chrome,close,titlebar,modal", result);
+  if (result.attachment)
+    AddAttachment(result.attachment);
 }
+
 function DuplicateFileCheck(FileUrl)
 {
   var bucket = document.getElementById('attachmentBucket');
@@ -2319,9 +2540,9 @@ function RemoveAllAttachments()
 {
   var child;
   var bucket = document.getElementById("attachmentBucket");
-  for (var i = bucket.childNodes.length - 1; i >= 0; i--)
+  while (bucket.hasChildNodes())
   {
-    child = bucket.removeChild(bucket.childNodes[i]);
+    child = bucket.removeChild(bucket.lastChild);
     // Let's release the attachment object hold by the node else it won't go away until the window is destroyed
     child.attachment = null;
   }
@@ -2392,8 +2613,8 @@ function DetermineHTMLAction(convertible)
         dump("DetermineHTMLAction: preferFormat = " + preferFormat + ", noHtmlRecipients are " + noHtmlRecipients + "\n");
 
         //Check newsgroups now...
-           noHtmlnewsgroups = gMsgCompose.compFields.newsgroups;
-
+        noHtmlnewsgroups = gMsgCompose.compFields.newsgroups;
+        
         if (noHtmlRecipients != "" || noHtmlnewsgroups != "")
         {
             if (convertible == nsIMsgCompConvertible.Plain)
@@ -2530,6 +2751,8 @@ function LoadIdentity(startup)
             gAutocompleteSession = Components.classes["@mozilla.org/autocompleteSession;1?type=addrbook"].getService(Components.interfaces.nsIAbAutoCompleteSession);
           if (gAutocompleteSession)
             setDomainName();
+          if (sPrefs.getBoolPref("mail.autoComplete.highlightNonMatches"))
+            document.getElementById('addressCol2#1').highlightNonMatches = true;
 
           try {
               setupLdapAutocompleteSession();
@@ -2537,15 +2760,26 @@ function LoadIdentity(startup)
               // catch the exception and ignore it, so that if LDAP setup 
               // fails, the entire compose window doesn't end up horked
           }
+
+          // only do this if we aren't starting up....it gets done as part of startup already
+          addRecipientsToIgnoreList(gCurrentIdentity.identityName);
       }
     }
 }
 
 function setDomainName()
 {
-  var emailAddr = gCurrentIdentity.email;
-  var start = emailAddr.lastIndexOf("@");
-  gAutocompleteSession.defaultDomain = emailAddr.slice(start + 1, emailAddr.length);
+  var defaultDomain = "";
+
+  if (gCurrentIdentity.autocompleteToMyDomain)
+  {
+    var emailAddr = gCurrentIdentity.email;
+    var start = emailAddr.lastIndexOf("@");
+    defaultDomain = emailAddr.slice(start + 1);
+  }
+
+  // If autocompleteToMyDomain is false the defaultDomain is emptied
+  gAutocompleteSession.defaultDomain = defaultDomain;
 }
 
 function setupAutocomplete()
@@ -2556,15 +2790,22 @@ function setupAutocomplete()
     if (gAutocompleteSession) {
       setDomainName();
 
+      var autoCompleteWidget = document.getElementById("addressCol2#1");
+      // When autocompleteToMyDomain is off, there is no default entry with the domain
+      // appended, so reduce the minimum results for a popup to 2 in this case.
+      if (!gCurrentIdentity.autocompleteToMyDomain)
+        autoCompleteWidget.minResultsForPopup = 2;
+
       // if the pref is set to turn on the comment column, honor it here.
       // this element then gets cloned for subsequent rows, so they should 
       // honor it as well
       //
       try {
-          if (sPrefs.getIntPref("mail.autoComplete.commentColumn")) {
-              document.getElementById('addressCol2#1').showCommentColumn =
-                  true;
-          }
+          if (sPrefs.getBoolPref("mail.autoComplete.highlightNonMatches"))
+            autoCompleteWidget.highlightNonMatches = true;
+
+          if (sPrefs.getIntPref("mail.autoComplete.commentColumn"))
+            autoCompleteWidget.showCommentColumn = true;
       } catch (ex) {
           // if we can't get this pref, then don't show the columns (which is
           // what the XUL defaults to)
@@ -2945,3 +3186,23 @@ function loadHTMLMsgPrefs() {
 
 }
 
+function AutoSave()
+{
+  dump("in autosave\n");
+  if (gMsgCompose.editor && (gContentChanged || gMsgCompose.bodyModified))
+    GenericSendMessage(nsIMsgCompDeliverMode.AutoSaveAsDraft);
+
+  gAutoSaveTimeout = setTimeout(AutoSave, gAutoSaveInterval);
+}
+
+function InitEditor(editor)
+{
+  gMsgCompose.initEditor(editor, window.content);
+  try {
+    InlineSpellChecker.Init(editor, sPrefs.getBoolPref("mail.spellcheck.inline"));
+  } catch (e) {
+    // InlineSpellChecker.Init throws if there is no inline spellchecker
+    // so disable menuitem.
+    document.getElementById('menu_inlineSpellCheck').setAttribute('disabled', true);
+  }
+}

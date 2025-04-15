@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -85,7 +84,7 @@ nsresult TypeInState::UpdateSelState(nsISelection *aSelection)
 }
 
 
-NS_IMETHODIMP TypeInState::NotifySelectionChanged(nsIDOMDocument *, nsISelection *aSelection, short)
+NS_IMETHODIMP TypeInState::NotifySelectionChanged(nsIDOMDocument *, nsISelection *aSelection, PRInt16)
 {
   // XXX: Selection currently generates bogus selection changed notifications
   // XXX: (bug 140303). It can notify us when the selection hasn't actually
@@ -159,12 +158,12 @@ void TypeInState::Reset()
 
 nsresult TypeInState::SetProp(nsIAtom *aProp)
 {
-  return SetProp(aProp,nsAutoString(),nsAutoString());
+  return SetProp(aProp,EmptyString(),EmptyString());
 }
 
 nsresult TypeInState::SetProp(nsIAtom *aProp, const nsString &aAttr)
 {
-  return SetProp(aProp,aAttr,nsAutoString());
+  return SetProp(aProp,aAttr,EmptyString());
 }
 
 nsresult TypeInState::SetProp(nsIAtom *aProp, const nsString &aAttr, const nsString &aValue)
@@ -210,12 +209,12 @@ nsresult TypeInState::SetProp(nsIAtom *aProp, const nsString &aAttr, const nsStr
 nsresult TypeInState::ClearAllProps()
 {
   // null prop means "all" props
-  return ClearProp(nsnull,nsAutoString());
+  return ClearProp(nsnull,EmptyString());
 }
 
 nsresult TypeInState::ClearProp(nsIAtom *aProp)
 {
-  return ClearProp(aProp,nsAutoString());
+  return ClearProp(aProp,EmptyString());
 }
 
 nsresult TypeInState::ClearProp(nsIAtom *aProp, const nsString &aAttr)
@@ -224,7 +223,7 @@ nsresult TypeInState::ClearProp(nsIAtom *aProp, const nsString &aAttr)
   if (IsPropCleared(aProp,aAttr)) return NS_OK;
   
   // make a new propitem
-  PropItem *item = new PropItem(aProp,aAttr,nsAutoString());
+  PropItem *item = new PropItem(aProp,aAttr,EmptyString());
   if (!item) return NS_ERROR_OUT_OF_MEMORY;
   
   // remove it from the list of set properties, if we have a match
@@ -286,7 +285,7 @@ nsresult TypeInState::TakeRelativeFontSize(PRInt32 *outRelSize)
 
 nsresult TypeInState::GetTypingState(PRBool &isSet, PRBool &theSetting, nsIAtom *aProp)
 {
-  return GetTypingState(isSet, theSetting, aProp, nsAutoString(), nsnull);
+  return GetTypingState(isSet, theSetting, aProp, EmptyString(), nsnull);
 }
 
 nsresult TypeInState::GetTypingState(PRBool &isSet, 
@@ -414,7 +413,7 @@ PRBool TypeInState::IsPropCleared(nsIAtom *aProp,
 {
   if (FindPropInList(aProp, aAttr, nsnull, mClearedArray, outIndex))
     return PR_TRUE;
-  if (FindPropInList(0, nsAutoString(), nsnull, mClearedArray, outIndex))
+  if (FindPropInList(0, EmptyString(), nsnull, mClearedArray, outIndex))
   {
     // special case for all props cleared
     outIndex = -1;

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -49,7 +49,6 @@
 #include "nsNetUtil.h"
 #include "nsIFileURL.h"
 #include "nsFileStream.h"
-#include "nsIDNSService.h"
 #include "nsIMsgWindow.h"
 #include "nsIMsgStatusFeedback.h"
 #include "nsIWebProgressListener.h"
@@ -61,6 +60,8 @@
 #include "nsIProtocolProxyService.h"
 #include "nsIProxyInfo.h"
 #include "nsEventQueueUtils.h"
+#include "nsIPrefBranch.h"
+#include "nsIPrefService.h"
 
 static NS_DEFINE_CID(kSocketTransportServiceCID, NS_SOCKETTRANSPORTSERVICE_CID);
 static NS_DEFINE_CID(kStreamTransportServiceCID, NS_STREAMTRANSPORTSERVICE_CID);
@@ -111,6 +112,10 @@ nsresult nsMsgProtocol::InitFromURI(nsIURI *aUrl)
 nsMsgProtocol::~nsMsgProtocol()
 {}
 
+
+static PRBool gGotTimeoutPref;
+static PRInt32 gSocketTimeout = 60;
+
 nsresult
 nsMsgProtocol::OpenNetworkSocketWithInfo(const char * aHostName,
                                          PRInt32 aGetPort,
@@ -144,6 +149,20 @@ nsMsgProtocol::OpenNetworkSocketWithInfo(const char * aHostName,
 
   m_socketIsOpen = PR_FALSE;
   m_transport = strans;
+
+  if (!gGotTimeoutPref)
+  {
+    nsCOMPtr<nsIPrefBranch> prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+    if (prefBranch)
+    {
+      prefBranch->GetIntPref("mailnews.tcptimeout", &gSocketTimeout);
+      gGotTimeoutPref = PR_TRUE;
+    }
+  }
+  strans->SetTimeout(nsISocketTransport::TIMEOUT_CONNECT, gSocketTimeout + 60);  
+  strans->SetTimeout(nsISocketTransport::TIMEOUT_READ_WRITE, gSocketTimeout);  
+
+
   return SetupTransportState();
 }
 
@@ -193,9 +212,14 @@ nsMsgProtocol::OpenNetworkSocket(nsIURI * aURL, const char *connectionType,
           if (NS_SUCCEEDED(rv))
               rv = proxyUri->SetScheme(NS_LITERAL_CSTRING("mailto"));
       }
+      //
+      // XXX(darin): Consider using AsyncResolve instead to avoid blocking
+      //             the calling thread in cases where PAC may call into
+      //             our DNS resolver.
+      //
       if (NS_SUCCEEDED(rv))
-          rv = pps->ExamineForProxy(proxyUri, getter_AddRefs(proxyInfo));
-      NS_ASSERTION(NS_SUCCEEDED(rv), "Couldn't successfully call ExamineForProxy");
+          rv = pps->Resolve(proxyUri, 0, getter_AddRefs(proxyInfo));
+      NS_ASSERTION(NS_SUCCEEDED(rv), "Couldn't successfully resolve a proxy");
       if (NS_FAILED(rv)) proxyInfo = nsnull;
   }
 
@@ -246,7 +270,9 @@ nsresult nsMsgProtocol::OpenFileSocket(nsIURI * aURL, PRUint32 aStartPosition, P
       do_GetService(kStreamTransportServiceCID, &rv);
   if (NS_FAILED(rv)) return rv;
 
-  rv = sts->CreateInputTransport(stream, aStartPosition, aReadCount, PR_TRUE, getter_AddRefs(m_transport));
+  rv = sts->CreateInputTransport(stream, nsInt64(aStartPosition),
+                                 nsInt64(aReadCount), PR_TRUE,
+                                 getter_AddRefs(m_transport));
 
   m_socketIsOpen = PR_FALSE;
 	return rv;
@@ -261,7 +287,6 @@ nsresult nsMsgProtocol::SetupTransportState()
     // open buffered, blocking output stream
     rv = m_transport->OpenOutputStream(nsITransport::OPEN_BLOCKING, 0, 0, getter_AddRefs(m_outputStream));
     if (NS_FAILED(rv)) return rv;
-    
     // we want to open the stream 
   } // if m_transport
   
@@ -346,6 +371,11 @@ NS_IMETHODIMP nsMsgProtocol::OnStartRequest(nsIRequest *request, nsISupports *ct
     rv = m_channelListener->OnStartRequest(this, m_channelContext);
   }
   
+  nsCOMPtr<nsISocketTransport> strans = do_QueryInterface(m_transport);
+
+  if (strans)
+    strans->SetTimeout(nsISocketTransport::TIMEOUT_READ_WRITE, gSocketTimeout);  
+
   NS_ENSURE_SUCCESS(rv, rv);
   return rv;
 }
@@ -405,7 +435,7 @@ NS_IMETHODIMP nsMsgProtocol::OnStopRequest(nsIRequest *request, nsISupports *ctx
         {
           nsAutoString resultString(NS_LITERAL_STRING("[StringID "));
           resultString.AppendInt(errorID);
-          resultString.Append(NS_LITERAL_STRING("?]"));
+          resultString.AppendLiteral("?]");
           errorMsg = ToNewUnicode(resultString);
         }
         rv = msgPrompt->Alert(nsnull, errorMsg);
@@ -413,6 +443,10 @@ NS_IMETHODIMP nsMsgProtocol::OnStopRequest(nsIRequest *request, nsISupports *ctx
       }
     } // if we got an error code
   } // if we have a mailnews url.
+
+  // Drop notification callbacks to prevent cycles.
+  mCallbacks = 0;
+  mProgressEventSink = 0;
 
   return rv;
 }
@@ -468,7 +502,7 @@ nsresult nsMsgProtocol::LoadUrl(nsIURI * aURL, nsISupports * aConsumer)
         
         nsCOMPtr<nsIInputStreamPump> pump;
         rv = NS_NewInputStreamPump(getter_AddRefs(pump),
-          m_inputStream, -1, m_readCount);
+          m_inputStream, nsInt64(-1), m_readCount);
         if (NS_FAILED(rv)) return rv;
         
         m_request = pump; // keep a reference to the pump so we can cancel it
@@ -571,7 +605,7 @@ NS_IMETHODIMP nsMsgProtocol::GetContentType(nsACString &aContentType)
   // a part in the message that has a content type that is not message/rfc822
 
   if (m_ContentType.IsEmpty())
-    aContentType = NS_LITERAL_CSTRING("message/rfc822");
+    aContentType.AssignLiteral("message/rfc822");
   else
     aContentType = m_ContentType;
   return NS_OK;
@@ -651,55 +685,47 @@ NS_IMETHODIMP
 nsMsgProtocol::SetNotificationCallbacks(nsIInterfaceRequestor* aNotificationCallbacks)
 {
   mCallbacks = aNotificationCallbacks;
-
-  // Verify that the event sink is http
-  if (mCallbacks) 
-  {
-      nsCOMPtr<nsIProgressEventSink> progressSink;
-     (void)mCallbacks->GetInterface(NS_GET_IID(nsIProgressEventSink),
-                                   getter_AddRefs(progressSink));
-     // only replace our current progress event sink if we were given a new one..
-     if (progressSink) mProgressEventSink  = progressSink;
-  }
-  
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsMsgProtocol::OnTransportStatus(nsITransport *transport, nsresult status,
-                                 PRUint32 progress, PRUint32 progressMax)
+                                 PRUint64 progress, PRUint64 progressMax)
 {
-  if (mProgressEventSink && !(mLoadFlags & LOAD_BACKGROUND))
+  if ((mLoadFlags & LOAD_BACKGROUND) || !m_url)
+    return NS_OK;
+
+  // these transport events should not generate any status messages
+  if (status == nsISocketTransport::STATUS_RECEIVING_FROM ||
+      status == nsISocketTransport::STATUS_SENDING_TO)
+    return NS_OK;
+
+  if (!mProgressEventSink)
   {
-    // these transport events should not generate any status messages
-    if (status == nsISocketTransport::STATUS_RECEIVING_FROM ||
-        status == nsISocketTransport::STATUS_SENDING_TO)
+    NS_QueryNotificationCallbacks(mCallbacks, m_loadGroup, mProgressEventSink);
+    if (!mProgressEventSink)
+      return NS_OK;
+  }
+
+  nsCAutoString host;
+  m_url->GetHost(host);
+
+  nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(m_url);
+  if (mailnewsUrl) 
+  {
+    nsCOMPtr<nsIMsgIncomingServer> server;
+    mailnewsUrl->GetServer(getter_AddRefs(server));
+    if (server)
     {
-      // do nothing....do NOT report socket transport progress bytes either
+      char *realHostName = nsnull;
+      server->GetRealHostName(&realHostName);
+      if (realHostName)
+        host.Adopt(realHostName);
     }
-    else
-    {
-      nsCAutoString host;
-      if (m_url)
-      {
-        m_url->GetHost(host);
-        nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(m_url);
-        if (mailnewsUrl) 
-        {
-          nsCOMPtr<nsIMsgIncomingServer> server;
-          nsresult rv = mailnewsUrl->GetServer(getter_AddRefs(server));
-          if (NS_SUCCEEDED(rv) && server)
-          {
-            nsXPIDLCString realHostName;
-            rv = server->GetRealHostName(getter_Copies(realHostName));
-            if (NS_SUCCEEDED(rv))
-              host = realHostName;
-          }
-        }
-        mProgressEventSink->OnStatus(this, nsnull, status, NS_ConvertUTF8toUCS2(host).get());
-      }
-    }
-  } 
+  }
+  mProgressEventSink->OnStatus(this, nsnull, status,
+                               NS_ConvertUTF8toUTF16(host).get());
+
   return NS_OK;
 }
 
@@ -859,6 +885,90 @@ nsresult nsMsgProtocol::PostMessage(nsIURI* url, nsIFileSpec *fileSpec)
     return NS_OK;
 }
 
+nsresult nsMsgProtocol::DoGSSAPIStep1(const char *service, const char *username, nsCString &response)
+{
+    nsresult rv;
+
+    // if this fails, then it means that we cannot do GSSAPI SASL.
+    m_authModule = do_CreateInstance(NS_AUTH_MODULE_CONTRACTID_PREFIX "sasl-gssapi", &rv);
+    NS_ENSURE_SUCCESS(rv,rv);
+
+    m_authModule->Init(service, nsIAuthModule::REQ_DEFAULT, nsnull, NS_ConvertUTF8toUCS2(username).get(), nsnull);
+
+    void *outBuf;
+    PRUint32 outBufLen;
+    rv = m_authModule->GetNextToken((void *)nsnull, 0, &outBuf, &outBufLen);
+    if (NS_SUCCEEDED(rv) && outBuf)
+    {
+        char *base64Str = PL_Base64Encode((char *)outBuf, outBufLen, nsnull);
+        if (base64Str)
+            response.Adopt(base64Str);
+        else 
+            rv = NS_ERROR_OUT_OF_MEMORY;
+        nsMemory::Free(outBuf);
+    }
+
+    return rv;
+}
+
+nsresult nsMsgProtocol::DoGSSAPIStep2(nsCString &commandResponse, nsCString &response)
+{
+    nsresult rv;
+    void *inBuf, *outBuf;
+    PRUint32 inBufLen, outBufLen;
+    PRUint32 len = commandResponse.Length();
+
+    // Cyrus SASL may send us zero length tokens (grrrr)
+    if (len > 0) {
+        // decode into the input secbuffer
+        inBufLen = (len * 3)/4;      // sufficient size (see plbase64.h)
+        inBuf = nsMemory::Alloc(inBufLen);
+        if (!inBuf)
+            return NS_ERROR_OUT_OF_MEMORY;
+
+        // strip off any padding (see bug 230351)
+        const char *challenge = commandResponse.get();
+        while (challenge[len - 1] == '=')
+            len--;
+
+        // We need to know the exact length of the decoded string to give to
+        // the GSSAPI libraries. But NSPR's base64 routine doesn't seem capable
+        // of telling us that. So, we figure it out for ourselves.
+
+        // For every 4 characters, add 3 to the destination
+        // If there are 3 remaining, add 2
+        // If there are 2 remaining, add 1
+        // 1 remaining is an error
+        inBufLen = (len / 4)*3 + ((len % 4 == 3)?2:0) + ((len % 4 == 2)?1:0);
+
+        rv = (PL_Base64Decode(challenge, len, (char *)inBuf))
+             ? m_authModule->GetNextToken(inBuf, inBufLen, &outBuf, &outBufLen)
+             : NS_ERROR_FAILURE;
+
+        nsMemory::Free(inBuf);
+    }
+    else 
+    {
+        rv = m_authModule->GetNextToken(NULL, 0, &outBuf, &outBufLen);
+    }
+    if (NS_SUCCEEDED(rv)) 
+    {
+        // And in return, we may need to send Cyrus zero length tokens back
+        if (outBuf) 
+        {
+            char *base64Str = PL_Base64Encode((char *)outBuf, outBufLen, nsnull);
+            if (base64Str)
+                response.Adopt(base64Str);
+            else 
+                rv = NS_ERROR_OUT_OF_MEMORY;
+        }
+        else
+            response.Adopt((char *)nsMemory::Clone("",1));
+    }
+
+    return rv;
+}
+
 nsresult nsMsgProtocol::DoNtlmStep1(const char *username, const char *password, nsCString &response)
 {
     nsresult rv;
@@ -892,14 +1002,20 @@ nsresult nsMsgProtocol::DoNtlmStep2(nsCString &commandResponse, nsCString &respo
     nsresult rv;
     void *inBuf, *outBuf;
     PRUint32 inBufLen, outBufLen;
+    PRUint32 len = commandResponse.Length();
 
     // decode into the input secbuffer
-    inBufLen = (commandResponse.Length() * 3)/4;      // sufficient size (see plbase64.h)
+    inBufLen = (len * 3)/4;      // sufficient size (see plbase64.h)
     inBuf = nsMemory::Alloc(inBufLen);
     if (!inBuf)
         return NS_ERROR_OUT_OF_MEMORY;
 
-    rv = (PL_Base64Decode(commandResponse.get(), commandResponse.Length(), (char *)inBuf))
+    // strip off any padding (see bug 230351)
+    const char *challenge = commandResponse.get();
+    while (challenge[len - 1] == '=')
+        len--;
+
+    rv = (PL_Base64Decode(challenge, len, (char *)inBuf))
          ? m_authModule->GetNextToken(inBuf, inBufLen, &outBuf, &outBufLen)
          : NS_ERROR_FAILURE;
 
@@ -1099,6 +1215,8 @@ nsMsgAsyncWriteProtocol::~nsMsgAsyncWriteProtocol()
 
 NS_IMETHODIMP nsMsgAsyncWriteProtocol::Cancel(nsresult status)
 {
+  mGenerateProgressNotifications = PR_FALSE;
+
   if (m_request)
     m_request->Cancel(status);
 

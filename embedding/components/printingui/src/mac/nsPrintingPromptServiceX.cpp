@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -24,16 +24,16 @@
  *   Conrad Carlen <ccarlen@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -52,6 +52,8 @@
 #include "nsIPrintSettingsX.h"
 #include "nsIDirectoryService.h"
 #include "nsDirectoryServiceDefs.h"
+#include "nsAutoBuffer.h"
+
 #include "nsPDECommon.h"
 
 // Printing Progress Includes
@@ -62,10 +64,6 @@
 // OS includes
 #include <PMApplication.h>
 #include <CFPlugIn.h>
-#include <Gestalt.h>
-
-// Constants
-static const char *kPrintProgressDialogURL = "chrome://global/content/printProgress.xul";
 
 //-----------------------------------------------------------------------------
 // Static Helpers
@@ -91,6 +89,84 @@ static nsresult LoadPDEPlugIn()
         }
     }
     return gPDEPlugIn ? NS_OK : NS_ERROR_FAILURE;
+}
+
+static CFDictionaryRef ExtractCustomSettingsDict(PMPrintSettings nativePrintSettings)
+{
+    CFDictionaryRef resultDict = nsnull;
+    UInt32 bytesNeeded;
+    
+    OSStatus status = ::PMGetPrintSettingsExtendedData(nativePrintSettings, kAppPrintDialogAppOnlyKey, &bytesNeeded, NULL);
+    if (status == noErr) {
+        nsAutoBuffer<UInt8, 512> dataBuffer;
+        if (dataBuffer.EnsureElemCapacity(bytesNeeded)) {           
+            status = ::PMGetPrintSettingsExtendedData(nativePrintSettings, kAppPrintDialogAppOnlyKey, &bytesNeeded, dataBuffer.get());
+            if (status == noErr) {
+                CFDataRef xmlData = ::CFDataCreate(kCFAllocatorDefault, dataBuffer.get(), bytesNeeded);
+                if (xmlData) {
+                    resultDict = (CFDictionaryRef)::CFPropertyListCreateFromXMLData(
+                                                        kCFAllocatorDefault,
+                                                        xmlData,
+                                                        kCFPropertyListImmutable,
+                                                        NULL);
+                    CFRelease(xmlData);
+                }
+            }
+        }
+    }
+    NS_ASSERTION(resultDict, "Failed to get custom print settings dict");
+    return resultDict;
+}
+
+static PRBool
+GetDictionaryStringValue(CFDictionaryRef aDictionary, CFStringRef aKey, nsAString& aResult)
+{
+    aResult.Truncate();
+    CFTypeRef dictValue;
+    if ((dictValue = CFDictionaryGetValue(aDictionary, aKey)) &&
+        (CFGetTypeID(dictValue) == CFStringGetTypeID()))
+    {
+        CFIndex stringLen = CFStringGetLength((CFStringRef)dictValue);
+
+        nsAutoBuffer<UniChar, 256> stringBuffer;
+        if (stringBuffer.EnsureElemCapacity(stringLen + 1)) {
+            ::CFStringGetCharacters((CFStringRef)dictValue, CFRangeMake(0, stringLen), stringBuffer.get());
+            aResult.Assign(stringBuffer.get(), stringLen);
+            return PR_TRUE;
+        }
+    }
+    return PR_FALSE;
+}
+
+// returns success or failure (not the read value)
+static PRBool
+GetDictionaryBooleanValue(CFDictionaryRef aDictionary, CFStringRef aKey, PRBool& aResult)
+{
+    aResult = PR_FALSE;
+    CFTypeRef dictValue;
+    if ((dictValue = CFDictionaryGetValue(aDictionary, aKey)) &&
+        (CFGetTypeID(dictValue) == CFBooleanGetTypeID()))
+    {
+      aResult = CFBooleanGetValue((CFBooleanRef)dictValue);
+      return PR_TRUE;
+    }
+    return PR_FALSE;
+}
+
+static void
+SetDictionaryStringValue(CFMutableDictionaryRef aDictionary, CFStringRef aKey, const nsXPIDLString& aValue)
+{
+    CFStringRef cfString = CFStringCreateWithCharacters(NULL, aValue.get(), aValue.Length());
+    if (cfString) {
+        CFDictionaryAddValue(aDictionary, aKey, cfString);
+        CFRelease(cfString);
+    }
+}
+
+static void
+SetDictionaryBooleanvalue(CFMutableDictionaryRef aDictionary, CFStringRef aKey, PRBool aValue)
+{
+    CFDictionaryAddValue(aDictionary, aKey, aValue ? kCFBooleanTrue : kCFBooleanFalse);
 }
 
 //*****************************************************************************
@@ -153,76 +229,149 @@ nsPrintingPromptService::ShowPrintDialog(nsIDOMWindow *parent, nsIWebBrowserPrin
         return NS_ERROR_FAILURE;
         
     ::InitCursor();
-
-    PRBool  isOn;
-    PRInt16 howToEnableFrameUI = nsIPrintSettings::kFrameEnableNone;
-    nsPrintExtensions printData = {false,false,false,false,false,false,false,false,true,true};
-
-    // Fetch the current extended data from the print settings
-    UInt32 bytesNeeded;
-    status = ::PMGetPrintSettingsExtendedData(nativePrintSettings, kMozPDECreatorCode, &bytesNeeded, NULL);
-    if (status == noErr && bytesNeeded == sizeof(printData))
-        (void)::PMGetPrintSettingsExtendedData(nativePrintSettings, kMozPDECreatorCode,&bytesNeeded, &printData);
         
-    // set the values for the plugin here
-    printSettings->GetPrintOptions(nsIPrintSettings::kEnableSelectionRB, &isOn);
-    printData.mHaveSelection = isOn;
-    printSettings->GetHowToEnableFrameUI(&howToEnableFrameUI);
-    if (howToEnableFrameUI == nsIPrintSettings::kFrameEnableAll) {
-        printData.mHaveFrames = true;
-        printData.mHaveFrameSelected = true;
-    }
-    if (howToEnableFrameUI == nsIPrintSettings::kFrameEnableAsIsAndEach) {
-        printData.mHaveFrames = true;
-        printData.mHaveFrameSelected = false;
-    }
-    printSettings->GetShrinkToFit(&isOn);
-    printData.mShrinkToFit = isOn;
-    printSettings->GetPrintBGColors(&isOn);
-    printData.mPrintBGColors = isOn;
-    printSettings->GetPrintBGImages(&isOn);
-    printData.mPrintBGImages = isOn;
-
     rv = ::LoadPDEPlugIn();
     NS_ASSERTION(NS_SUCCEEDED(rv), "LoadPDEPlugIn() failed");
-    status = ::PMSetPrintSettingsExtendedData(nativePrintSettings, kMozPDECreatorCode, sizeof(printData),&printData);
-    NS_ASSERTION(status == noErr, "PMSetPrintSettingsExtendedData() failed");
+    
+    // Create a dictionary and store our settings into it
+    CFMutableDictionaryRef dictToPDE = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+                                    (const CFDictionaryKeyCallBacks *)&kCFTypeDictionaryKeyCallBacks,
+                                    (const CFDictionaryValueCallBacks *)&kCFTypeDictionaryValueCallBacks);
+    NS_ASSERTION(dictToPDE, "Failed to create a CFDictionary for print settings");
+    if (dictToPDE) {
+        PRBool  isOn;
+        PRInt16 howToEnableFrameUI;
+
+        printSettings->GetPrintOptions(nsIPrintSettings::kEnableSelectionRB, &isOn);
+        SetDictionaryBooleanvalue(dictToPDE, kPDEKeyHaveSelection, isOn);
+        
+        printSettings->GetHowToEnableFrameUI(&howToEnableFrameUI);
+        if (howToEnableFrameUI == nsIPrintSettings::kFrameEnableAll) {
+            CFDictionaryAddValue(dictToPDE, kPDEKeyHaveFrames, kCFBooleanTrue);
+            CFDictionaryAddValue(dictToPDE, kPDEKeyHaveFrameSelected, kCFBooleanTrue);
+        }
+        else if (howToEnableFrameUI == nsIPrintSettings::kFrameEnableAsIsAndEach) {
+            CFDictionaryAddValue(dictToPDE, kPDEKeyHaveFrames, kCFBooleanTrue);
+            CFDictionaryAddValue(dictToPDE, kPDEKeyHaveFrameSelected, kCFBooleanFalse);
+        }
+        else {
+            CFDictionaryAddValue(dictToPDE, kPDEKeyHaveFrames, kCFBooleanFalse);
+            CFDictionaryAddValue(dictToPDE, kPDEKeyHaveFrameSelected, kCFBooleanFalse);
+        }
+
+        // get the boolean values
+        printSettings->GetShrinkToFit(&isOn);
+        SetDictionaryBooleanvalue(dictToPDE, kPDEKeyShrinkToFit, isOn);
+
+        printSettings->GetPrintBGColors(&isOn);
+        SetDictionaryBooleanvalue(dictToPDE, kPDEKeyPrintBGColors, isOn);
+
+        printSettings->GetPrintBGImages(&isOn);
+        SetDictionaryBooleanvalue(dictToPDE, kPDEKeyPrintBGImages, isOn);
+
+        // read headers
+        nsXPIDLString tempString;
+        printSettings->GetHeaderStrRight(getter_Copies(tempString));
+        SetDictionaryStringValue(dictToPDE, kPDEKeyHeaderRight, tempString);
+        
+        printSettings->GetHeaderStrCenter(getter_Copies(tempString));
+        SetDictionaryStringValue(dictToPDE, kPDEKeyHeaderCenter, tempString);
+
+        printSettings->GetHeaderStrLeft(getter_Copies(tempString));
+        SetDictionaryStringValue(dictToPDE, kPDEKeyHeaderLeft, tempString);
+
+        // read footers
+        printSettings->GetFooterStrRight(getter_Copies(tempString));
+        SetDictionaryStringValue(dictToPDE, kPDEKeyFooterRight, tempString);
+
+        printSettings->GetFooterStrCenter(getter_Copies(tempString));
+        SetDictionaryStringValue(dictToPDE, kPDEKeyFooterCenter, tempString);
+
+        printSettings->GetFooterStrLeft(getter_Copies(tempString));
+        SetDictionaryStringValue(dictToPDE, kPDEKeyFooterLeft, tempString);
+        
+        CFDataRef xmlData = CFPropertyListCreateXMLData(kCFAllocatorDefault, dictToPDE);
+        NS_ASSERTION(xmlData, "Could not create print settings CFData from CFDictionary");
+        if (xmlData) {
+            status = ::PMSetPrintSettingsExtendedData(nativePrintSettings, kAppPrintDialogAppOnlyKey, CFDataGetLength(xmlData), (void *)CFDataGetBytePtr(xmlData));
+            NS_ASSERTION(status == noErr, "PMSetPrintSettingsExtendedData() failed");
+            CFRelease(xmlData);
+        }
+        CFRelease(dictToPDE);
+    }
 
     Boolean accepted;
     status = ::PMSessionPrintDialog(printSession, nativePrintSettings, pageFormat, &accepted);
     if (status == noErr && accepted) {
-
         int pageRange = -1;
-        status = ::PMGetPrintSettingsExtendedData(nativePrintSettings, kMozPDECreatorCode, &bytesNeeded, NULL);
-        if (status == noErr && bytesNeeded == sizeof(printData)) {
-            status = ::PMGetPrintSettingsExtendedData(nativePrintSettings, kMozPDECreatorCode,&bytesNeeded, &printData);        
-
-            // set the correct data fields
-            if (printData.mPrintSelection) {
-                printSettings->SetPrintRange(nsIPrintSettings::kRangeSelection);
-                pageRange = nsIPrintSettings::kRangeSelection;
+        
+        CFDictionaryRef dictFromPDE = ExtractCustomSettingsDict(nativePrintSettings);
+        if (dictFromPDE) {
+            //CFShow(dictFromPDE);
+            
+            PRBool printSelectionOnly;
+            if (GetDictionaryBooleanValue(dictFromPDE, kPDEKeyPrintSelection, printSelectionOnly)) {
+                if (printSelectionOnly) {
+                    printSettings->SetPrintRange(nsIPrintSettings::kRangeSelection);
+                    pageRange = nsIPrintSettings::kRangeSelection;
+                }
+                else {
+                    printSettings->SetPrintRange(nsIPrintSettings::kRangeAllPages);
+                    pageRange = nsIPrintSettings::kRangeAllPages;
+                }
             }
-            else {
-                printSettings->SetPrintRange(nsIPrintSettings::kRangeAllPages);
-                pageRange = nsIPrintSettings::kRangeAllPages;
+            
+            CFTypeRef dictValue;
+            if ((dictValue = CFDictionaryGetValue(dictFromPDE, kPDEKeyPrintFrameType)) &&
+                (CFGetTypeID(dictValue) == CFStringGetTypeID())) {
+                if (CFEqual(dictValue, kPDEValueFramesAsIs))
+                    printSettings->SetPrintFrameType(nsIPrintSettings::kFramesAsIs);
+                else if (CFEqual(dictValue, kPDEValueSelectedFrame))
+                    printSettings->SetPrintFrameType(nsIPrintSettings::kSelectedFrame);
+                else if (CFEqual(dictValue, kPDEValueEachFrameSep))
+                    printSettings->SetPrintFrameType(nsIPrintSettings::kEachFrameSep);
             }
 
-            if (printData.mPrintFrameAsIs)
-                printSettings->SetPrintFrameType(nsIPrintSettings::kFramesAsIs);
-            if (printData.mPrintSelectedFrame)
-                printSettings->SetPrintFrameType(nsIPrintSettings::kSelectedFrame);
-            if (printData.mPrintFramesSeparately)
-                printSettings->SetPrintFrameType(nsIPrintSettings::kEachFrameSep);
+            PRBool tempBool;
+            if (GetDictionaryBooleanValue(dictFromPDE, kPDEKeyShrinkToFit, tempBool))
+                printSettings->SetShrinkToFit(tempBool);
+            
+            if (GetDictionaryBooleanValue(dictFromPDE, kPDEKeyPrintBGColors, tempBool))
+                printSettings->SetPrintBGColors(tempBool);
 
-            printSettings->SetShrinkToFit(printData.mShrinkToFit);
-            printSettings->SetPrintBGColors(printData.mPrintBGColors);
-            printSettings->SetPrintBGImages(printData.mPrintBGImages);
+            if (GetDictionaryBooleanValue(dictFromPDE, kPDEKeyPrintBGImages, tempBool))
+                printSettings->SetPrintBGImages(tempBool);
+
+            nsAutoString stringFromDict;
+            
+            // top headers
+            if (GetDictionaryStringValue(dictFromPDE, kPDEKeyHeaderLeft, stringFromDict))
+                printSettings->SetHeaderStrLeft(stringFromDict.get());
+
+            if (GetDictionaryStringValue(dictFromPDE, kPDEKeyHeaderCenter, stringFromDict))
+                printSettings->SetHeaderStrCenter(stringFromDict.get());
+
+            if (GetDictionaryStringValue(dictFromPDE, kPDEKeyHeaderRight, stringFromDict))
+                printSettings->SetHeaderStrRight(stringFromDict.get());
+
+            // bottom footers
+            if (GetDictionaryStringValue(dictFromPDE, kPDEKeyFooterLeft, stringFromDict))
+                printSettings->SetFooterStrLeft(stringFromDict.get());
+
+            if (GetDictionaryStringValue(dictFromPDE, kPDEKeyFooterCenter, stringFromDict))
+                printSettings->SetFooterStrCenter(stringFromDict.get());
+
+            if (GetDictionaryStringValue(dictFromPDE, kPDEKeyFooterRight, stringFromDict))
+                printSettings->SetFooterStrRight(stringFromDict.get());
+        
+            CFRelease(dictFromPDE);
         }
-
+        
         if (pageRange == -1) {
             printSettings->SetPrintRange(nsIPrintSettings::kRangeAllPages);
             pageRange = nsIPrintSettings::kRangeAllPages;
         }
+
         if (pageRange != nsIPrintSettings::kRangeSelection) {
             UInt32 firstPage, lastPage;
             status = ::PMGetFirstPage(nativePrintSettings, &firstPage);
@@ -256,46 +405,7 @@ nsPrintingPromptService::ShowProgress(nsIDOMWindow*            parent,
                                       nsIPrintProgressParams** printProgressParams,
                                       PRBool*                  notifyOnOpen)
 {
-    NS_ENSURE_ARG(webProgressListener);
-    NS_ENSURE_ARG(printProgressParams);
-    NS_ENSURE_ARG(notifyOnOpen);
-
-    *notifyOnOpen = PR_FALSE;
-
-    // If running on OS X, the printing manager displays a nice progress dialog
-    // so we don't need to do this. Keeping this code here in order to support
-    // running TARGET_CARBON builds on OS 9.
-    
-    long version;
-    if (::Gestalt(gestaltSystemVersion, &version) == noErr && version >= 0x00001000)
-        return NS_ERROR_NOT_IMPLEMENTED;
-        
-    nsPrintProgress* prtProgress = new nsPrintProgress();
-    nsresult rv = prtProgress->QueryInterface(NS_GET_IID(nsIPrintProgress), (void**)getter_AddRefs(mPrintProgress));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = prtProgress->QueryInterface(NS_GET_IID(nsIWebProgressListener), (void**)getter_AddRefs(mWebProgressListener));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsPrintProgressParams* prtProgressParams = new nsPrintProgressParams();
-    rv = prtProgressParams->QueryInterface(NS_GET_IID(nsIPrintProgressParams), (void**)printProgressParams);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    if (printProgressParams) 
-    {
-        if (mWatcher) 
-        {
-            nsCOMPtr<nsIDOMWindow> active;
-            mWatcher->GetActiveWindow(getter_AddRefs(active));
-            nsCOMPtr<nsIDOMWindowInternal> parent(do_QueryInterface(active));
-            mPrintProgress->OpenProgressDialog(parent, kPrintProgressDialogURL, *printProgressParams, openDialogObserver, notifyOnOpen);
-        }
-    }
-
-    *webProgressListener = NS_STATIC_CAST(nsIWebProgressListener*, this);
-    NS_ADDREF(*webProgressListener);
-
-    return rv;
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP 
@@ -352,13 +462,10 @@ nsPrintingPromptService::ShowPrinterProperties(nsIDOMWindow *parent, const PRUni
 NS_IMETHODIMP 
 nsPrintingPromptService::OnStateChange(nsIWebProgress *aWebProgress, nsIRequest *aRequest, PRUint32 aStateFlags, nsresult aStatus)
 {
-    if ((aStateFlags & STATE_STOP) && mWebProgressListener) 
-    {
+    if ((aStateFlags & STATE_STOP) && mWebProgressListener) {
         mWebProgressListener->OnStateChange(aWebProgress, aRequest, aStateFlags, aStatus);
         if (mPrintProgress) 
-        {
-            mPrintProgress->CloseProgressDialog(PR_TRUE);
-        }
+          mPrintProgress->CloseProgressDialog(PR_TRUE);
         mPrintProgress       = nsnull;
         mWebProgressListener = nsnull;
     }

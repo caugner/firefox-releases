@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +14,26 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- * Seth Spitzer <sspitzer@netscape.com>
- * Bhuvan Racham <racham@netscape.com>
+ *   Seth Spitzer <sspitzer@netscape.com>
+ *   Bhuvan Racham <racham@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -96,65 +96,41 @@ nsMessengerOS2Integration::Init()
   rv = accountManager->AddRootFolderListener(this);
   NS_ENSURE_SUCCESS(rv,rv);
 
-  nsCOMPtr<nsIMsgMailSession> mailSession = do_GetService(NS_MSGMAILSESSION_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  // because we care if the unread total count changes
-  rv = mailSession->AddFolderListener(this, nsIFolderListener::boolPropertyChanged | nsIFolderListener::intPropertyChanged);
-  NS_ENSURE_SUCCESS(rv,rv);
-
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMessengerOS2Integration::OnItemPropertyChanged(nsISupports *, nsIAtom *, char const *, char const *)
+nsMessengerOS2Integration::OnItemPropertyChanged(nsIRDFResource *, nsIAtom *, char const *, char const *)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMessengerOS2Integration::OnItemUnicharPropertyChanged(nsISupports *, nsIAtom *, const PRUnichar *, const PRUnichar *)
+nsMessengerOS2Integration::OnItemUnicharPropertyChanged(nsIRDFResource *, nsIAtom *, const PRUnichar *, const PRUnichar *)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMessengerOS2Integration::OnItemRemoved(nsISupports *, nsISupports *, const char *)
+nsMessengerOS2Integration::OnItemRemoved(nsIRDFResource *, nsISupports *)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMessengerOS2Integration::OnItemPropertyFlagChanged(nsISupports *item, nsIAtom *property, PRUint32 oldFlag, PRUint32 newFlag)
-{
-  if (newFlag == nsIMsgFolder::nsMsgBiffState_NewMail) 
-  {
-     APIRET rc;
-     PULONG pUnreadCount = NULL;
-     printf("Change icon to newmail\n");
-     rc = DosGetNamedSharedMem((PVOID *)&pUnreadCount, "\\sharemem\\inbox.mem", PAG_READ | PAG_WRITE);
-     *pUnreadCount = 1;
-  }
-  else if (newFlag == nsIMsgFolder::nsMsgBiffState_NoMail)
-  {
-     APIRET rc;
-     PULONG pUnreadCount = NULL;
-     printf("Change icon to newmail\n");
-     rc = DosGetNamedSharedMem((PVOID *)&pUnreadCount, "\\sharemem\\inbox.mem", PAG_READ | PAG_WRITE);
-     *pUnreadCount = 0;
-     printf("Change icon to nomail\n");
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMessengerOS2Integration::OnItemAdded(nsISupports *, nsISupports *, const char *)
+nsMessengerOS2Integration::OnItemPropertyFlagChanged(nsIMsgDBHdr *item, nsIAtom *property, PRUint32 oldFlag, PRUint32 newFlag)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMessengerOS2Integration::OnItemBoolPropertyChanged(nsISupports *aItem,
+nsMessengerOS2Integration::OnItemAdded(nsIRDFResource *, nsISupports *)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMessengerOS2Integration::OnItemBoolPropertyChanged(nsIRDFResource *aItem,
                                                          nsIAtom *aProperty,
                                                          PRBool aOldValue,
                                                          PRBool aNewValue)
@@ -169,8 +145,24 @@ nsMessengerOS2Integration::OnItemEvent(nsIMsgFolder *, nsIAtom *)
 }
 
 NS_IMETHODIMP
-nsMessengerOS2Integration::OnItemIntPropertyChanged(nsISupports *aItem, nsIAtom *aProperty, PRInt32 aOldValue, PRInt32 aNewValue)
+nsMessengerOS2Integration::OnItemIntPropertyChanged(nsIRDFResource *aItem, nsIAtom *aProperty, PRInt32 aOldValue, PRInt32 aNewValue)
 {
+  if (aNewValue == nsIMsgFolder::nsMsgBiffState_NewMail) 
+  {
+     APIRET rc;
+     PULONG pUnreadCount = NULL;
+     printf("Change icon to newmail\n");
+     rc = DosGetNamedSharedMem((PVOID *)&pUnreadCount, "\\sharemem\\inbox.mem", PAG_READ | PAG_WRITE);
+     *pUnreadCount = 1;
+  }
+  else if (aNewValue == nsIMsgFolder::nsMsgBiffState_NoMail)
+  {
+     APIRET rc;
+     PULONG pUnreadCount = NULL;
+     printf("Change icon to nomail\n");
+     rc = DosGetNamedSharedMem((PVOID *)&pUnreadCount, "\\sharemem\\inbox.mem", PAG_READ | PAG_WRITE);
+     *pUnreadCount = 0;
+  }
   return NS_OK;
 }
 

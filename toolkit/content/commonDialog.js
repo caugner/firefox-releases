@@ -1,10 +1,10 @@
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -13,28 +13,28 @@
  *
  * The Original Code is Mozilla Communicator client code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Alec Flett  <alecf@netscape.com>
- *  Ben Goodger <ben@netscape.com>
- *  Blake Ross  <blakeross@telocity.com>
- *  Joe Hewitt <hewitt@netscape.com>
+ *   Alec Flett  <alecf@netscape.com>
+ *   Ben Goodger <ben@netscape.com>
+ *   Blake Ross  <blakeross@telocity.com>
+ *   Joe Hewitt <hewitt@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -98,8 +98,12 @@ function setLabelForNode(aNode, aLabel, aIsLabelFlag)
 
 function commonDialogOnLoad()
 {
-  // set the window title
-  window.title = gCommonDialogParam.GetString(12);
+  // set the document title
+#ifdef XP_MACOSX
+  setElementText("info.title", gCommonDialogParam.GetString(12), true);
+#else
+  document.title = gCommonDialogParam.GetString(12);
+#endif
 
   // set the number of command buttons
   var nButtons = gCommonDialogParam.GetInt(2);
@@ -163,28 +167,12 @@ function commonDialogOnLoad()
 
   if (gCommonDialogParam.GetInt(3) == 0) // If no text fields
   {
-    var dButton;
-    var defaultButton = gCommonDialogParam.GetInt(5);
-    switch (defaultButton) {
-      case 3:
-        dButton = document.documentElement.getButton("extra2");
-        break;
-      case 2:
-        dButton = document.documentElement.getButton("extra1");
-        break;
-      case 1:
-        dButton = document.documentElement.getButton("cancel");
-        break;
-      default:
-      case 0:
-        dButton = document.documentElement.getButton("accept");
-        break;
-    }
-    // move the default attribute and focus from the accept button
-    // to the one specified in the dialog params
-    document.documentElement.getButton("accept").setAttribute("default",false);
-    dButton.setAttribute("default", true);
-    dButton.focus();
+    var dlgButtons = ['accept', 'cancel', 'extra1', 'extra2'];
+
+    // Set the default button and focus it
+    var dButton = dlgButtons[gCommonDialogParam.GetInt(5)];
+    document.documentElement.defaultButton = dButton;
+    document.documentElement.getButton(dButton).focus();
   }
 
   if (gCommonDialogParam.GetInt(6) != 0) // delay button enable
@@ -201,16 +189,51 @@ function commonDialogOnLoad()
     document.documentElement.getButton("extra2").disabled = true;
 
     setTimeout(commonDialogReenableButtons, delayInterval);
+    
+    addEventListener("blur", commonDialogBlur, false);
+    addEventListener("focus", commonDialogFocus, false);
   }
 
   getAttention();
 }
 
+var gDelayExpired = false;
+var gBlurred = false;
+
+function commonDialogBlur(aEvent)
+{
+  if (aEvent.target != document)
+    return;
+  gBlurred = true;
+  document.documentElement.getButton("accept").disabled = true;
+  document.documentElement.getButton("extra1").disabled = true;
+  document.documentElement.getButton("extra2").disabled = true;
+}
+
+function commonDialogFocus(aEvent)
+{
+  if (aEvent.target != document)
+    return;
+  gBlurred = false;
+  // When refocusing the window, don't enable the buttons unless the countdown
+  // delay has expired. 
+  if (gDelayExpired) {
+    var script = "document.documentElement.getButton('accept').disabled = false; ";
+    script += "document.documentElement.getButton('extra1').disabled = false; ";
+    script += "document.documentElement.getButton('extra2').disabled = false;";
+    setTimeout(script, 250);
+  }
+}
+
 function commonDialogReenableButtons()
 {
-  document.documentElement.getButton("accept").disabled = false;
-  document.documentElement.getButton("extra1").disabled = false;
-  document.documentElement.getButton("extra2").disabled = false;
+  // Don't automatically enable the buttons if we're not in the foreground
+  if (!gBlurred) {
+    document.documentElement.getButton("accept").disabled = false;
+    document.documentElement.getButton("extra1").disabled = false;
+    document.documentElement.getButton("extra2").disabled = false;
+  }
+  gDelayExpired = true;
 }
 
 function initTextbox(aName, aLabelIndex, aValueIndex, aAlwaysLabel)

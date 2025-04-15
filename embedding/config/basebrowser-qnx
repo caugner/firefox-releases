@@ -27,6 +27,7 @@ libmozjs.so
 ; XPCOM:
 ; 
 libxpcom.so 
+libxpcom_core.so 
 components/xpcom_base.xpt
 components/xpcom_components.xpt
 components/xpcom_ds.xpt
@@ -47,6 +48,7 @@ components/xpconnect.xpt
 
 libgkgfx.so 
 libxlibrgb.so
+libgfxpsshar.so
 components/libgfxps.so
 components/libgfxxprint.so
 components/gfx.xpt 
@@ -64,6 +66,7 @@ res/dtd/xhtml11.dtd
 components/libgklayout.so                   
 components/libhtmlpars.so                 
 components/layout_base.xpt              
+components/layout_printing.xpt              
 components/layout_xul.xpt
 components/layout_xul_tree.xpt               
 components/content_base.xpt
@@ -152,9 +155,6 @@ components/dom_views.xpt
 components/dom_xbl.xpt
 components/dom_xul.xpt
 
-; "javascript:" URLs
-components/jsurl.xpt
-
 ; editor
 components/libeditor.so                   
 components/editor.xpt
@@ -170,7 +170,6 @@ components/necko_about.xpt
 components/necko_data.xpt               
 components/necko_dns.xpt                
 components/necko_http.xpt               
-components/necko_jar.xpt                
 components/necko_res.xpt                
 components/necko_strconv.xpt
 
@@ -238,14 +237,13 @@ chrome/embed.jar
 res/html.css   
 res/quirk.css
 res/viewsource.css
+res/hiddenWindow.html
 res/ua.css
 res/forms.css
-res/platform-forms.css
 res/arrow.gif
 res/arrowd.gif
 res/loading-image.gif
 res/broken-image.gif
-res/builtin/*
 res/entityTables/html40Special.properties
 res/entityTables/htmlEntityVersion.properties
 res/entityTables/html40Latin1.properties

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,24 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998-1999
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -80,7 +79,9 @@ public:
    * @param aURL the URL or filename for error messages
    * @param aLineNo the starting line number of the script for error messages
    * @param aVersion the script language version to use when executing
-   * @param aRetValue the result of executing the script
+   * @param aRetValue the result of executing the script, or null for no result.
+   *        If this is a JS context, it's the caller's responsibility to
+   *        preserve aRetValue from GC across this call
    * @param aIsUndefined true if the result of executing the script is the
    *                     undefined value
    *
@@ -93,7 +94,7 @@ public:
                                   const char *aURL,
                                   PRUint32 aLineNo,
                                   const char* aVersion,
-                                  nsAString& aRetValue,
+                                  nsAString *aRetValue,
                                   PRBool* aIsUndefined) = 0;
 
   virtual nsresult EvaluateStringWithValue(const nsAString& aScript,
@@ -161,6 +162,7 @@ public:
    * @param aName an nsIAtom pointer naming the function; it must be lowercase
    *        and ASCII, and should not be longer than 63 chars.  This bound on
    *        length is enforced only by assertions, so caveat caller!
+   * @param aEventName the name that the event object should be bound to
    * @param aBody the event handler function's body
    * @param aURL the URL or filename for error messages
    * @param aLineNo the starting line number of the script for error messages
@@ -177,6 +179,7 @@ public:
    */
   virtual nsresult CompileEventHandler(void* aTarget,
                                        nsIAtom* aName,
+                                       const char* aEventName,
                                        const nsAString& aBody,
                                        const char* aURL,
                                        PRUint32 aLineNo,
@@ -309,11 +312,13 @@ public:
   /**
    * Called to specify a function that should be called when the current
    * script (if there is one) terminates. Generally used if breakdown
-   * of script state needs to be happen, but should be deferred till
+   * of script state needs to happen, but should be deferred till
    * the end of script evaluation.
+   *
+   * @throws NS_ERROR_OUT_OF_MEMORY if that happens
    */
-  virtual void SetTerminationFunction(nsScriptTerminationFunc aFunc,
-                                      nsISupports* aRef) = 0;
+  virtual nsresult SetTerminationFunction(nsScriptTerminationFunc aFunc,
+                                          nsISupports* aRef) = 0;
 
   /**
    * Called to disable/enable script execution in this context.
@@ -332,6 +337,24 @@ public:
    * Tell the context whether or not to GC when destroyed.
    */
   virtual void SetGCOnDestruction(PRBool aGCOnDestruction) = 0;
+
+  /**
+   * Initialize DOM classes on aGlobalObj, always call
+   * WillInitializeContext() before calling InitContext(), and always
+   * call DidInitializeContext() when a context is fully
+   * (successfully) initialized.
+   */
+  virtual nsresult InitClasses(JSObject *aGlobalObj) = 0;
+
+  /**
+   * Tell the context we're about to be reinitialize it.
+   */
+  virtual void WillInitializeContext() = 0;
+
+  /**
+   * Dell the context we're done reinitializing it.
+   */
+  virtual void DidInitializeContext() = 0;
 };
 
 inline nsIScriptContext *

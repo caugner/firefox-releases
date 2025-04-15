@@ -243,6 +243,9 @@ nsXPCWrappedJSClass::CallQueryInterfaceOnJSObject(XPCCallContext& ccx,
     if(!OBJ_GET_PROPERTY(cx, jsobj, funid, &fun) || JSVAL_IS_PRIMITIVE(fun))
         return nsnull;
 
+    // protect fun so that we're sure it's alive when we call it
+    AUTO_MARK_JSVAL(ccx, fun);
+
     // Ensure that we are asking for a scriptable interface.
     // We so often ask for nsISupports that we can short-circuit the test...
     if(!aIID.Equals(NS_GET_IID(nsISupports)))
@@ -513,7 +516,7 @@ nsXPCWrappedJSClass::DelegatedQueryInterface(nsXPCWrappedJS* self,
 
 #ifdef XPC_IDISPATCH_SUPPORT
     // If IDispatch is enabled and we're QI'ing to IDispatch
-    else if(nsXPConnect::IsIDispatchEnabled() && aIID.Equals(NSID_IDISPATCH))
+    if(nsXPConnect::IsIDispatchEnabled() && aIID.Equals(NSID_IDISPATCH))
     {
         return XPCIDispatchExtension::IDispatchQIWrappedJS(self, aInstancePtr);
     }
@@ -584,10 +587,37 @@ nsXPCWrappedJSClass::DelegatedQueryInterface(nsXPCWrappedJS* self,
     // else we do the more expensive stuff...
 
     // check if the JSObject claims to implement this interface
-    JSObject* jsobj = CallQueryInterfaceOnJSObject(ccx, self->GetJSObject(), aIID);
-    if(jsobj && XPCConvert::JSObject2NativeInterface(ccx, aInstancePtr, jsobj,
-                                                     &aIID, nsnull, nsnull))
-        return NS_OK;
+    JSObject* jsobj = CallQueryInterfaceOnJSObject(ccx, self->GetJSObject(),
+                                                   aIID);
+    if(jsobj)
+    {
+        // protect jsobj until it is actually attached
+        AUTO_MARK_JSVAL(ccx, OBJECT_TO_JSVAL(jsobj));
+
+        // We can't use XPConvert::JSObject2NativeInterface() here
+        // since that can find a XPCWrappedNative directly on the
+        // proto chain, and we don't want that here. We need to find
+        // the actual JS object that claimed it supports the interface
+        // we're looking for or we'll potentially bypass security
+        // checks etc by calling directly through to a native found on
+        // the prototype chain.
+        //
+        // Instead, simply do the nsXPCWrappedJS part of
+        // XPConvert::JSObject2NativeInterface() here to make sure we
+        // get a new (or used) nsXPCWrappedJS.
+        nsXPCWrappedJS* wrapper;
+        nsresult rv = nsXPCWrappedJS::GetNewOrUsed(ccx, jsobj, aIID, nsnull,
+                                                   &wrapper);
+        if(NS_SUCCEEDED(rv) && wrapper)
+        {
+            // We need to go through the QueryInterface logic to make
+            // this return the right thing for the various 'special'
+            // interfaces; e.g.  nsIPropertyBag.
+            rv = wrapper->QueryInterface(aIID, aInstancePtr);
+            NS_RELEASE(wrapper);
+            return rv;
+        }
+    }
 
     // else...
     // no can do
@@ -1104,7 +1134,7 @@ nsXPCWrappedJSClass::CallMethod(nsXPCWrappedJS* wrapper, uint16 methodIndex,
                                 JSBool ok =
                                   XPCConvert::NativeInterface2JSObject(ccx,
                                         getter_AddRefs(holder), newThis,
-                                        newWrapperIID, obj, nsnull);
+                                        newWrapperIID, obj, PR_FALSE, nsnull);
                                 if(newWrapperIID != &NS_GET_IID(nsISupports))
                                     nsMemory::Free(newWrapperIID);
                                 if(!ok ||
@@ -1118,7 +1148,7 @@ nsXPCWrappedJSClass::CallMethod(nsXPCWrappedJS* wrapper, uint16 methodIndex,
                 }
             }
         }
-        else if(!JS_GetProperty(cx, obj, name, &fval))
+        else if(!JS_GetMethod(cx, obj, name, &thisObj, &fval))
         {
             // XXX We really want to factor out the error reporting better and
             // specifically report the failure to find a function with this name.

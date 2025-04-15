@@ -1,25 +1,41 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is mozilla.org code.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 2001 Netscape Communications Corporation. All
- * Rights Reserved.
- * 
- * Contributor(s): 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2001
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
  *   Stuart Parmenter <pavlov@netscape.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "gfxImageFrame.h"
 #include "nsIServiceManager.h"
@@ -42,8 +58,8 @@ gfxImageFrame::~gfxImageFrame()
   /* destructor code */
 }
 
-/* void init (in nscoord aX, in nscoord aY, in nscoord aWidth, in nscoord aHeight, in gfx_format aFormat); */
-NS_IMETHODIMP gfxImageFrame::Init(nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight, gfx_format aFormat,gfx_depth aDepth)
+/* void init (in PRInt32 aX, in PRInt32 aY, in PRInt32 aWidth, in PRInt32 aHeight, in gfx_format aFormat); */
+NS_IMETHODIMP gfxImageFrame::Init(PRInt32 aX, PRInt32 aY, PRInt32 aWidth, PRInt32 aHeight, gfx_format aFormat,gfx_depth aDepth)
 {
   if (mInitalized)
     return NS_ERROR_FAILURE;
@@ -54,15 +70,13 @@ NS_IMETHODIMP gfxImageFrame::Init(nscoord aX, nscoord aY, nscoord aWidth, nscoor
   }
 
   /* check to make sure we don't overflow a 32-bit */
-  nscoord tmp = aWidth * aHeight;
+  PRInt32 tmp = aWidth * aHeight;
   if (tmp / aHeight != aWidth) {
-    fprintf(stderr, "erp\n");
     NS_ASSERTION(0, "width or height too large\n");
     return NS_ERROR_FAILURE;
   }
   tmp = tmp * 4;
   if (tmp / 4 != aWidth * aHeight) {
-    fprintf(stderr, "erp2\n");
     NS_ASSERTION(0, "width or height too large\n");
     return NS_ERROR_FAILURE;
   }
@@ -156,8 +170,8 @@ NS_IMETHODIMP gfxImageFrame::SetMutable(PRBool aMutable)
   return NS_OK;
 }
 
-/* readonly attribute nscoord x; */
-NS_IMETHODIMP gfxImageFrame::GetX(nscoord *aX)
+/* readonly attribute PRInt32 x; */
+NS_IMETHODIMP gfxImageFrame::GetX(PRInt32 *aX)
 {
   if (!mInitalized)
     return NS_ERROR_NOT_INITIALIZED;
@@ -166,8 +180,8 @@ NS_IMETHODIMP gfxImageFrame::GetX(nscoord *aX)
   return NS_OK;
 }
 
-/* readonly attribute nscoord y; */
-NS_IMETHODIMP gfxImageFrame::GetY(nscoord *aY)
+/* readonly attribute PRInt32 y; */
+NS_IMETHODIMP gfxImageFrame::GetY(PRInt32 *aY)
 {
   if (!mInitalized)
     return NS_ERROR_NOT_INITIALIZED;
@@ -177,8 +191,8 @@ NS_IMETHODIMP gfxImageFrame::GetY(nscoord *aY)
 }
 
 
-/* readonly attribute nscoord width; */
-NS_IMETHODIMP gfxImageFrame::GetWidth(nscoord *aWidth)
+/* readonly attribute PRInt32 width; */
+NS_IMETHODIMP gfxImageFrame::GetWidth(PRInt32 *aWidth)
 {
   if (!mInitalized)
     return NS_ERROR_NOT_INITIALIZED;
@@ -187,8 +201,8 @@ NS_IMETHODIMP gfxImageFrame::GetWidth(nscoord *aWidth)
   return NS_OK;
 }
 
-/* readonly attribute nscoord height; */
-NS_IMETHODIMP gfxImageFrame::GetHeight(nscoord *aHeight)
+/* readonly attribute PRInt32 height; */
+NS_IMETHODIMP gfxImageFrame::GetHeight(PRInt32 *aHeight)
 {
   if (!mInitalized)
     return NS_ERROR_NOT_INITIALIZED;
@@ -198,7 +212,7 @@ NS_IMETHODIMP gfxImageFrame::GetHeight(nscoord *aHeight)
 }
 
 /* void getRect(in nsRectRef rect); */
-NS_IMETHODIMP gfxImageFrame::GetRect(nsRect &aRect)
+NS_IMETHODIMP gfxImageFrame::GetRect(nsIntRect &aRect)
 {
   if (!mInitalized)
     return NS_ERROR_NOT_INITIALIZED;
@@ -217,6 +231,19 @@ NS_IMETHODIMP gfxImageFrame::GetFormat(gfx_format *aFormat)
   *aFormat = mFormat;
   return NS_OK;
 }
+
+/* readonly attribute boolean needsBackground; */
+NS_IMETHODIMP gfxImageFrame::GetNeedsBackground(PRBool *aNeedsBackground)
+{
+  if (!mInitalized)
+    return NS_ERROR_NOT_INITIALIZED;
+
+  *aNeedsBackground = (mFormat != gfxIFormats::RGB && 
+                       mFormat != gfxIFormats::BGR) ||
+                      !mImage->GetIsImageComplete();
+  return NS_OK;
+}
+
 
 /* readonly attribute unsigned long imageBytesPerRow; */
 NS_IMETHODIMP gfxImageFrame::GetImageBytesPerRow(PRUint32 *aBytesPerRow)
@@ -272,9 +299,8 @@ NS_IMETHODIMP gfxImageFrame::SetImageData(const PRUint8 *aData, PRUint32 aLength
   PRInt32 imgLen = row_stride * mSize.height;
 
   PRInt32 newOffset;
-#if defined(XP_WIN) || defined(XP_OS2)
+#ifdef MOZ_PLATFORM_IMAGES_BOTTOM_TO_TOP
   // Adjust: We need offset to be top-down rows & LTR within each row
-  //    On win32 & os/2, it's passed in as bottom-up rows & LTR within each row
   PRUint32 yOffset = ((PRUint32)(aOffset / row_stride)) * row_stride;
   newOffset = ((mSize.height - 1) * row_stride) - yOffset + (aOffset % row_stride);
 #else
@@ -296,7 +322,7 @@ NS_IMETHODIMP gfxImageFrame::SetImageData(const PRUint8 *aData, PRUint32 aLength
 
   // adjust for aLength < row_stride
   PRInt32 numnewrows = ((aLength - 1) / row_stride) + 1;
-  nsRect r(0, row, mSize.width, numnewrows);
+  nsIntRect r(0, row, mSize.width, numnewrows);
   mImage->ImageUpdated(nsnull, nsImageUpdateFlags_kBitsChanged, &r);
 
   return NS_OK;
@@ -371,9 +397,8 @@ NS_IMETHODIMP gfxImageFrame::SetAlphaData(const PRUint8 *aData, PRUint32 aLength
   PRInt32 alphaLen = row_stride * mSize.height;
 
   PRInt32 offset;
-#if defined(XP_WIN) || defined(XP_OS2)
+#ifdef MOZ_PLATFORM_IMAGES_BOTTOM_TO_TOP
   // Adjust: We need offset to be top-down rows & LTR within each row
-  //    On win32 & os/2, it's passed in as bottom-up rows & LTR within each row
   PRUint32 yOffset = ((PRUint32)(aOffset / row_stride)) * row_stride;
   offset = ((mSize.height - 1) * row_stride) - yOffset + (aOffset % row_stride);
 #else
@@ -416,7 +441,7 @@ NS_IMETHODIMP gfxImageFrame::UnlockAlphaData()
 
 
 /* void drawTo */
-NS_IMETHODIMP gfxImageFrame::DrawTo(gfxIImageFrame* aDst, nscoord aDX, nscoord aDY, nscoord aDWidth, nscoord aDHeight)
+NS_IMETHODIMP gfxImageFrame::DrawTo(gfxIImageFrame* aDst, PRInt32 aDX, PRInt32 aDY, PRInt32 aDWidth, PRInt32 aDHeight)
 {
   if (!mInitalized)
     return NS_ERROR_NOT_INITIALIZED;

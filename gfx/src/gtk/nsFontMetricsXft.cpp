@@ -43,7 +43,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsISupportsUtils.h"
-#include "nsIServiceManagerUtils.h"
+#include "nsServiceManagerUtils.h"
 #include "nsIPref.h"
 #include "nsFontMetricsXft.h"
 #include "prenv.h"
@@ -64,6 +64,7 @@
 #include "nsNetUtil.h"
 #include "nsClassHashtable.h"
 #include "nsAutoBuffer.h"
+#include "nsFontConfigUtils.h"
 
 #include <gdk/gdkx.h>
 #include <freetype/tttables.h>
@@ -84,6 +85,9 @@ public:
     nsFontXft(FcPattern *aPattern, FcPattern *aFontName);
     virtual ~nsFontXft() = 0;
 
+    // Callers outside of FindFont and DoMatch (which deal directly with
+    // mLoadedFonts) do not need to call this; they can access mXftFont
+    // directly since it is guaranteed to be non-null.
     XftFont   *GetXftFont (void);
     virtual nsresult GetTextExtents32 (const FcChar32 *aString, PRUint32 aLen, 
                                        XGlyphInfo &aGlyphInfo);
@@ -194,26 +198,6 @@ class nsFontXftInfo {
     FT_Encoding                 mFT_Encoding;
 };
 
-struct MozXftLangGroup {
-    const char    *mozLangGroup;
-    FcChar32       character;
-    const FcChar8 *XftLang;
-};
-
-static const MozXftLangGroup MozXftLangGroups[] = {
-    { "x-western",      0x0041, (const FcChar8 *)"en" },
-    { "x-central-euro", 0x0100, (const FcChar8 *)"pl" },
-    { "x-cyrillic",     0x0411, (const FcChar8 *)"ru" },
-    { "x-baltic",       0x0104, (const FcChar8 *)"lv" },
-    { "x-devanagari",   0x0905, (const FcChar8 *)"hi" },
-    { "x-tamil",        0x0B85, (const FcChar8 *)"ta" },
-    { "x-unicode",      0x0000,                  0    },
-    { "x-user-def",     0x0000,                  0    },
-};
-
-#define NUM_XFT_LANG_GROUPS (sizeof (MozXftLangGroups) / \
-                             sizeof (MozXftLangGroups[0]))
-
 struct DrawStringData {
     nscoord                x;
     nscoord                y;
@@ -236,20 +220,10 @@ struct BoundingMetricsData {
 #define AUTO_BUFFER_SIZE 3000
 typedef nsAutoBuffer<FcChar32, AUTO_BUFFER_SIZE> nsAutoFcChar32Buffer;
 
-static int      CalculateSlant   (PRUint8  aStyle);
-static int      CalculateWeight  (PRUint16 aWeight);
-static void     AddLangGroup     (FcPattern *aPattern, nsIAtom *aLangGroup);
-static void     AddFFRE          (FcPattern *aPattern, nsCString *aFamily,
-                                  PRBool aWeak);
-static void     FFREToFamily     (nsACString &aFFREName, nsACString &oFamily);
-static int      FFRECountHyphens (nsACString &aFFREName);
 static int      CompareFontNames (const void* aArg1, const void* aArg2,
                                   void* aClosure);
-static PRBool   IsASCIIFontName  (const nsString& aName);
 static nsresult EnumFontsXft     (nsIAtom* aLangGroup, const char* aGeneric,
                                   PRUint32* aCount, PRUnichar*** aResult);
-
-static const MozXftLangGroup* FindFCLangGroup (nsACString &aLangGroup);
 
 static        void ConvertCharToUCS4    (const char *aString,
                                          PRUint32 aLength,
@@ -348,8 +322,6 @@ nsFontMetricsXft::nsFontMetricsXft(): mMiniFont(nsnull)
 
 nsFontMetricsXft::~nsFontMetricsXft()
 {
-    delete mFont;
-
     if (mDeviceContext)
         mDeviceContext->FontMetricsDeleted(this);
 
@@ -381,14 +353,14 @@ NS_IMETHODIMP
 nsFontMetricsXft::Init(const nsFont& aFont, nsIAtom* aLangGroup,
                        nsIDeviceContext *aContext)
 {
-    mFont = new nsFont(aFont);
+    mFont = aFont;
     mLangGroup = aLangGroup;
 
     // Hang onto the device context
     mDeviceContext = aContext;
 
     float app2dev = mDeviceContext->AppUnitsToDevUnits();
-    mPixelSize = NSTwipsToFloatPixels(mFont->size, app2dev);
+    mPixelSize = NSTwipsToFloatPixels(mFont.size, app2dev);
 
     // Make sure to clamp the pixel size to something reasonable so we
     // don't make the X server blow up.
@@ -396,7 +368,7 @@ nsFontMetricsXft::Init(const nsFont& aFont, nsIAtom* aLangGroup,
     mPixelSize = PR_MIN(screenPixels * FONT_MAX_FONT_SCALE, mPixelSize);
 
     // enumerate over the font names passed in
-    mFont->EnumerateFamilies(nsFontMetricsXft::EnumFontCallback, this);
+    mFont.EnumerateFamilies(nsFontMetricsXft::EnumFontCallback, this);
 
     nsCOMPtr<nsIPref> prefService;
     prefService = do_GetService(NS_PREF_CONTRACTID);
@@ -404,10 +376,14 @@ nsFontMetricsXft::Init(const nsFont& aFont, nsIAtom* aLangGroup,
         return NS_ERROR_FAILURE;
         
     nsXPIDLCString value;
+    const char* langGroup;
+    mLangGroup->GetUTF8String(&langGroup);
 
     // Set up the default font name if it's not set
     if (!mGenericFont) {
-        prefService->CopyCharPref("font.default", getter_Copies(value));
+        nsCAutoString name("font.default.");
+        name.Append(langGroup);
+        prefService->CopyCharPref(name.get(), getter_Copies(value));
 
         if (value.get())
             mDefaultFont = value.get();
@@ -427,10 +403,6 @@ nsFontMetricsXft::Init(const nsFont& aFont, nsIAtom* aLangGroup,
             name.Append("variable");
 
         name.Append(char('.'));
-
-        const char* langGroup;
-        mLangGroup->GetUTF8String(&langGroup);
-
         name.Append(langGroup);
 
         PRInt32 minimum = 0;
@@ -449,14 +421,13 @@ nsFontMetricsXft::Init(const nsFont& aFont, nsIAtom* aLangGroup,
     // Make sure that the pixel size is at least greater than zero
     if (mPixelSize < 1) {
 #ifdef DEBUG
-        printf("*** Warning: nsFontMetricsXft was passed a pixel size of %d\n",
+        printf("*** Warning: nsFontMetricsXft was passed a pixel size of %f\n",
                mPixelSize);
 #endif
         mPixelSize = 1;
     }
     if (!gInitialized) {
-        nsServiceManager::GetService(kCharsetConverterManagerCID,
-        NS_GET_IID(nsICharsetConverterManager), (nsISupports**) &gCharsetManager);
+        CallGetService(kCharsetConverterManagerCID, &gCharsetManager);
         if (!gCharsetManager) {
             FreeGlobals();
             return NS_ERROR_FAILURE;
@@ -486,13 +457,6 @@ nsFontMetricsXft::Destroy()
 }
 
 NS_IMETHODIMP
-nsFontMetricsXft::GetFont(const nsFont *&aFont)
-{
-    aFont = mFont;
-    return NS_OK;
-}
-
-NS_IMETHODIMP
 nsFontMetricsXft::GetLangGroup(nsIAtom** aLangGroup)
 {
     *aLangGroup = mLangGroup;
@@ -516,9 +480,8 @@ nsFontMetricsXft::GetWidth(const char* aString, PRUint32 aLength,
 {
     NS_TIMELINE_MARK_FUNCTION("GetWidth");
 
-    XftFont *font = mWesternFont->GetXftFont();
-    if (!font)
-        return NS_ERROR_NOT_AVAILABLE;
+    XftFont *font = mWesternFont->mXftFont;
+    NS_ASSERTION(font, "FindFont returned a bad font");
 
     XGlyphInfo glyphInfo;
 
@@ -766,6 +729,48 @@ nsFontMetricsXft::GetCurrentGDKFont(void)
     return nsnull;
 }
 
+nsresult
+nsFontMetricsXft::SetRightToLeftText(PRBool aIsRTL)
+{
+    return NS_OK;
+}
+
+nsresult
+nsFontMetricsXft::GetClusterInfo(const PRUnichar *aText,
+                                 PRUint32 aLength,
+                                 PRUint8 *aClusterStarts)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+PRInt32
+nsFontMetricsXft::GetPosition(const PRUnichar *aText,
+                              PRUint32 aLength,
+                              nsPoint aPt)
+{
+    return -1;
+}
+
+nsresult
+nsFontMetricsXft::GetRangeWidth(const PRUnichar *aText,
+                                PRUint32 aLength,
+                                PRUint32 aStart,
+                                PRUint32 aEnd,
+                                PRUint32 &aWidth)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+nsresult
+nsFontMetricsXft::GetRangeWidth(const char *aText,
+                                PRUint32 aLength,
+                                PRUint32 aStart,
+                                PRUint32 aEnd,
+                                PRUint32 &aWidth)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 PRUint32
 nsFontMetricsXft::GetHints(void)
 {
@@ -803,9 +808,8 @@ nsFontMetricsXft::CacheFontMetrics(void)
     // Get our font face
     FT_Face face;
     TT_OS2 *os2;
-    XftFont *xftFont = mWesternFont->GetXftFont();
-    if (!xftFont)
-        return NS_ERROR_NOT_AVAILABLE;
+    XftFont *xftFont = mWesternFont->mXftFont;
+    NS_ASSERTION(xftFont, "FindFont returned a bad font");
 
     face = XftLockFace(xftFont);
     os2 = (TT_OS2 *) FT_Get_Sfnt_Table(face, ft_sfnt_os2);
@@ -953,9 +957,13 @@ nsFontMetricsXft::FindFont(PRUint32 aChar)
         return nsnull;
     }
 
+    PRBool removeFirstFont = PR_FALSE;
     nsFontXft *font = (nsFontXft *)mLoadedFonts.ElementAt(0);
-    if (font->HasChar(aChar))
-        return font;
+    if (font->HasChar(aChar)) {
+        if (font->GetXftFont())
+            return font;
+        removeFirstFont = PR_TRUE;
+    }
 
     // We failed to find the character in the best-match font, so load
     // _all_ matching fonts if we haven't already done so.
@@ -963,12 +971,26 @@ nsFontMetricsXft::FindFont(PRUint32 aChar)
     if (mMatchType == eBestMatch)
         DoMatch(PR_TRUE);
 
-    // Now check the remaining fonts
+    PRInt32 i = 1;
+    if (removeFirstFont) {
+        // The first font was bad, so remove it (see below).  But do this
+        // after |DoMatch| since otherwise it will get re-added.
+        mLoadedFonts.RemoveElementAt(0);
+        i = 0;
+    }
 
-    for (PRInt32 i = 1, end = mLoadedFonts.Count(); i < end; ++i) {
+    // Now check the remaining fonts
+    for (; i < mLoadedFonts.Count(); ++i) {
         nsFontXft *font = (nsFontXft *)mLoadedFonts.ElementAt(i);
-        if (font->HasChar(aChar))
-            return font;
+        if (font->HasChar(aChar)) {
+            if (font->GetXftFont())
+                return font;
+            // This is a bad font, so remove it from mLoadedFonts.  This
+            // could happen if it's in fc.cache-1 but the font doesn't exist
+            // (https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=111973)
+            // or isn't readable.
+            mLoadedFonts.RemoveElementAt(i--);
+        }
     }
 
     // If we got this far, none of the fonts support this character.
@@ -1022,66 +1044,37 @@ nsFontMetricsXft::SetupFCPattern(void)
             break;;
 
         nsCString *familyName = mFontList.CStringAt(i);
-        AddFFRE(mPattern, familyName, PR_FALSE);
+        NS_AddFFRE(mPattern, familyName, PR_FALSE);
     }
 
     // Add the language group.  Note that we do this before adding any
     // generics.  That's because the language is more important than
     // any generic font.
-    AddLangGroup (mPattern, mLangGroup);
+    NS_AddLangGroup (mPattern, mLangGroup);
 
     // If there's a generic add a pref for the generic if there's one
     // set.
-    if (mGenericFont && !mFont->systemFont) {
-        nsCString name;
-        name += "font.name.";
-        name += mGenericFont->get();
-        name += ".";
-
-        nsString langGroup;
-        mLangGroup->ToString(langGroup);
-
-        name.AppendWithConversion(langGroup);
-
-        nsCOMPtr<nsIPref> pref;
-        pref = do_GetService(NS_PREF_CONTRACTID);
-        if (pref) {
-            nsresult rv;
-            nsXPIDLCString value;
-            rv = pref->GetCharPref(name.get(), getter_Copies(value));
-
-            // we ignore prefs that have three hypens since they are X
-            // style prefs.
-            if (FFRECountHyphens(value) < 3) {
-                nsCString tmpstr;
-                tmpstr.Append(value);
-
-                if (PR_LOG_TEST(gXftFontLoad, PR_LOG_DEBUG)) {
-                    printf("\tadding generic font from preferences: %s\n",
-                           tmpstr.get());
-                }
-
-                AddFFRE(mPattern, &tmpstr, PR_FALSE);
-            }
-        }
+    if (mGenericFont && !mFont.systemFont) {
+        NS_AddGenericFontFromPref(mGenericFont, mLangGroup, mPattern,
+                                  gXftFontLoad);
     }
 
     // Add the generic if there is one.
-    if (mGenericFont && !mFont->systemFont)
-        AddFFRE(mPattern, mGenericFont, PR_FALSE);
+    if (mGenericFont && !mFont.systemFont)
+        NS_AddFFRE(mPattern, mGenericFont, PR_FALSE);
 
     if (PR_LOG_TEST(gXftFontLoad, PR_LOG_DEBUG)) {
         // generic font
-        if (mGenericFont && !mFont->systemFont) {
+        if (mGenericFont && !mFont.systemFont) {
             printf("\tadding generic family: %s\n", mGenericFont->get());
         }
 
         // pixel size
-        printf("\tpixel,twip size: %f,%d\n", mPixelSize, mFont->size);
+        printf("\tpixel,twip size: %f,%d\n", mPixelSize, mFont.size);
 
         // slant type
         printf("\tslant: ");
-        switch(mFont->style) {
+        switch(mFont.style) {
         case NS_FONT_STYLE_ITALIC:
             printf("italic\n");
             break;
@@ -1095,7 +1088,7 @@ nsFontMetricsXft::SetupFCPattern(void)
 
         // weight
         printf("\tweight: (orig,calc) %d,%d\n",
-               mFont->weight, CalculateWeight(mFont->weight));
+               mFont.weight, NS_CalculateWeight(mFont.weight));
 
     }        
 
@@ -1107,11 +1100,11 @@ nsFontMetricsXft::SetupFCPattern(void)
 
     // Add the slant type
     FcPatternAddInteger(mPattern, FC_SLANT,
-                        CalculateSlant(mFont->style));
+                        NS_CalculateSlant(mFont.style));
 
     // Add the weight
     FcPatternAddInteger(mPattern, FC_WEIGHT,
-                        CalculateWeight(mFont->weight));
+                        NS_CalculateWeight(mFont.weight));
 
     // Set up the default substitutions for this font
     FcConfigSubstitute(0, mPattern, FcMatchPattern);
@@ -1255,9 +1248,8 @@ nsFontMetricsXft::SetupMiniFont(void)
 
     FcPattern *pattern = nsnull;
     XftFont *font = nsnull;
-    XftFont *xftFont = mWesternFont->GetXftFont();
-    if (!xftFont)
-        return NS_ERROR_NOT_AVAILABLE;
+    XftFont *xftFont = mWesternFont->mXftFont;
+    NS_ASSERTION(xftFont, "FindFont returned a bad font");
 
     mMiniFontAscent = xftFont->ascent;
     mMiniFontDescent = xftFont->descent;
@@ -1274,7 +1266,7 @@ nsFontMetricsXft::SetupMiniFont(void)
     FcPatternAddInteger(pattern, FC_PIXEL_SIZE, int(0.5 * mPixelSize));
 
     FcPatternAddInteger(pattern, FC_WEIGHT,
-                        CalculateWeight(mFont->weight));
+                        NS_CalculateWeight(mFont.weight));
 
     FcConfigSubstitute(0, pattern, FcMatchPattern);
     XftDefaultSubstitute(GDK_DISPLAY(), DefaultScreen(GDK_DISPLAY()),
@@ -1690,10 +1682,8 @@ nsresult
 nsFontMetricsXft::FamilyExists(nsIDeviceContext *aDevice,
                                const nsString &aName)
 {
-    if (!IsASCIIFontName(aName))
-        return NS_ERROR_FAILURE;
-
-    NS_ConvertUCS2toUTF8 name(aName);
+    // fontconfig family name is always in UTF-8
+    NS_ConvertUTF16toUTF8 name(aName);
 
     FcFontSet *set = nsnull;
     FcObjectSet *os = nsnull;
@@ -1706,7 +1696,7 @@ nsFontMetricsXft::FamilyExists(nsIDeviceContext *aDevice,
     
     // Build a list of familes and walk the list looking to see if we
     // have it.
-    os = FcObjectSetBuild(FC_FAMILY, 0);
+    os = FcObjectSetBuild(FC_FAMILY, NULL);
     if (!os)
         goto end;
 
@@ -1746,13 +1736,12 @@ PRBool
 nsFontMetricsXft::EnumFontCallback(const nsString &aFamily, PRBool aIsGeneric,
                                    void *aData)
 {
-    // make sure it's an ascii name, if not then return and continue
-    // enumerating
-    if (!IsASCIIFontName(aFamily))
-        return PR_TRUE;
+    NS_ConvertUTF16toUTF8 name(aFamily);
 
-    nsCAutoString name;
-    name.AssignWithConversion(aFamily.get());
+    // The newest fontconfig does the full Unicode case folding so that 
+    // we're being lazy here by calling |ToLowerCase| after converting
+    // to UTF-8  assuming that in virtually all cases, we just have to
+    // fold [A-Z].  (bug 223653). 
     ToLowerCase(name);
     nsFontMetricsXft *metrics = (nsFontMetricsXft *)aData;
     metrics->mFontList.AppendCString(name);
@@ -1846,7 +1835,7 @@ nsFontEnumeratorXft::GetDefaultFont(const char *aLangGroup,
 
   if (aLangGroup && *aLangGroup) {
     nsCOMPtr<nsIAtom> langGroup = do_GetAtom(aLangGroup);
-    AddLangGroup(match_pattern, langGroup);
+    NS_AddLangGroup(match_pattern, langGroup);
   }
 
   FcConfigSubstitute(0, match_pattern, FcMatchPattern); 
@@ -1951,8 +1940,7 @@ nsresult
 nsFontXft::GetTextExtents32(const FcChar32 *aString, PRUint32 aLen, 
                             XGlyphInfo &aGlyphInfo)
 {
-    if (!mXftFont && !GetXftFont())
-            return NS_ERROR_NOT_AVAILABLE;
+    NS_PRECONDITION(mXftFont, "FindFont should not return bad fonts");
 
     // NS_CONST_CAST needed for older versions of Xft
     XftTextExtents32(GDK_DISPLAY(), mXftFont,
@@ -1994,18 +1982,14 @@ nsFontXft::GetBoundingMetrics32(const FcChar32*    aString,
 PRInt16
 nsFontXft::GetMaxAscent(void)
 {
-    if (!mXftFont && !GetXftFont())
-            return 0;
-
+    NS_PRECONDITION(mXftFont, "FindFont should not return bad fonts");
     return mXftFont->ascent;
 }
 
 PRInt16
 nsFontXft::GetMaxDescent(void)
 {
-    if (!mXftFont && !GetXftFont())
-            return 0;
-
+    NS_PRECONDITION(mXftFont, "FindFont should not return bad fonts");
     return mXftFont->descent;
 }
 
@@ -2019,10 +2003,8 @@ nsFontXft::CharToGlyphIndex(FcChar32 aChar)
 nsresult
 nsFontXft::DrawStringSpec(FcChar32 *aString, PRUint32 aLen, void *aData)
 {
+    NS_PRECONDITION(mXftFont, "FindFont should not return bad fonts");
     DrawStringData *data = (DrawStringData *)aData;
-
-    if (!mXftFont && !GetXftFont())
-            return NS_ERROR_NOT_AVAILABLE;
 
     FcChar32 *pstr = aString;
     const FcChar32 *end = aString + aLen;
@@ -2082,6 +2064,8 @@ nsresult
 nsFontXftCustom::GetTextExtents32(const FcChar32 *aString, PRUint32 aLen, 
                                   XGlyphInfo &aGlyphInfo)
 {
+    NS_PRECONDITION(mXftFont, "FindFont should not return bad fonts");
+
     nsAutoFcChar32Buffer buffer;
     nsresult rv;
     PRUint32 destLen = aLen;
@@ -2094,9 +2078,6 @@ nsFontXftCustom::GetTextExtents32(const FcChar32 *aString, PRUint32 aLen,
     NS_ENSURE_SUCCESS(rv, rv);
       
     FcChar32 *str = buffer.get();
-
-    if (!mXftFont && !GetXftFont())
-            return NS_ERROR_NOT_AVAILABLE;
 
     // short cut for the common case
     if (isWide) { 
@@ -2141,6 +2122,8 @@ nsresult
 nsFontXftCustom::DrawStringSpec(FcChar32* aString, PRUint32 aLen,
                                 void* aData)
 {
+    NS_PRECONDITION(mXftFont, "FindFont should not return bad fonts");
+
     nsresult rv = NS_OK;
     nsAutoFcChar32Buffer buffer;
     PRUint32 destLen = aLen;
@@ -2149,9 +2132,6 @@ nsFontXftCustom::DrawStringSpec(FcChar32* aString, PRUint32 aLen,
     rv = ConvertUCS4ToCustom(aString, aLen, destLen, mFontInfo->mConverter, 
                              isWide, buffer);
     NS_ENSURE_SUCCESS(rv, rv);
-
-    if (!mXftFont && !GetXftFont())
-            return NS_ERROR_NOT_AVAILABLE;
 
     if (!isWide) {
         // For some narrow fonts(Mathematica, Symbol, and MTExtra),  
@@ -2173,8 +2153,7 @@ nsFontXftCustom::DrawStringSpec(FcChar32* aString, PRUint32 aLen,
 nsresult
 nsFontXftCustom::SetFT_FaceCharmap(void)
 {
-    if (!mXftFont && !GetXftFont())
-            return NS_ERROR_NOT_AVAILABLE;
+    NS_PRECONDITION(mXftFont, "FindFont should not return bad fonts");
 
     if (mFT_Face)
         return NS_OK;
@@ -2231,172 +2210,12 @@ nsAutoDrawSpecBuffer::Flush()
 
 /* static */
 int
-CalculateSlant(PRUint8 aStyle)
-{
-    int fcSlant;
-
-    switch(aStyle) {
-    case NS_FONT_STYLE_ITALIC:
-        fcSlant = FC_SLANT_ITALIC;
-        break;
-    case NS_FONT_STYLE_OBLIQUE:
-        fcSlant = FC_SLANT_OBLIQUE;
-        break;
-    default:
-        fcSlant = FC_SLANT_ROMAN;
-        break;
-    }
-
-    return fcSlant;
-}
-
-/* static */
-int
-CalculateWeight (PRUint16 aWeight)
-{
-    /*
-     * weights come in two parts crammed into one
-     * integer -- the "base" weight is weight / 100,
-     * the rest of the value is the "offset" from that
-     * weight -- the number of steps to move to adjust
-     * the weight in the list of supported font weights,
-     * this value can be negative or positive.
-     */
-    PRInt32 baseWeight = (aWeight + 50) / 100;
-    PRInt32 offset = aWeight - baseWeight * 100;
-
-    /* clip weights to range 0 to 9 */
-    if (baseWeight < 0)
-        baseWeight = 0;
-    if (baseWeight > 9)
-        baseWeight = 9;
-
-    /* Map from weight value to fcWeights index */
-    static int fcWeightLookup[10] = {
-        0, 0, 0, 0, 1, 1, 2, 3, 3, 4,
-    };
-
-    PRInt32 fcWeight = fcWeightLookup[baseWeight];
-
-    /*
-     * adjust by the offset value, make sure we stay inside the 
-     * fcWeights table
-     */
-    fcWeight += offset;
-
-    if (fcWeight < 0)
-        fcWeight = 0;
-    if (fcWeight > 4)
-        fcWeight = 4;
-
-    /* Map to final FC_WEIGHT value */
-    static int fcWeights[5] = {
-        FC_WEIGHT_LIGHT,      /* 0 */
-        FC_WEIGHT_MEDIUM,     /* 1 */
-        FC_WEIGHT_DEMIBOLD,   /* 2 */
-        FC_WEIGHT_BOLD,       /* 3 */
-        FC_WEIGHT_BLACK,      /* 4 */
-    };
-
-    return fcWeights[fcWeight];
-
-}
-
-/* static */
-void
-AddLangGroup(FcPattern *aPattern, nsIAtom *aLangGroup)
-{
-    // Find the FC lang group for this lang group
-    nsCAutoString cname;
-    aLangGroup->ToUTF8String(cname);
-
-    // see if the lang group needs to be translated from mozilla's
-    // internal mapping into fontconfig's
-    const struct MozXftLangGroup *langGroup;
-    langGroup = FindFCLangGroup(cname);
-
-    // if there's no lang group, just use the lang group as it was
-    // passed to us
-    //
-    // we're casting away the const here for the strings - should be
-    // safe.
-    if (!langGroup)
-        FcPatternAddString(aPattern, FC_LANG, (FcChar8 *)cname.get());
-    else if (langGroup->XftLang) 
-        FcPatternAddString(aPattern, FC_LANG, (FcChar8 *)langGroup->XftLang);
-}
-
-/* static */
-void
-AddFFRE(FcPattern *aPattern, nsCString *aFamily, PRBool aWeak)
-{
-    nsCAutoString family;
-    FFREToFamily(*aFamily, family);
-
-    FcValue v;
-    v.type = FcTypeString;
-    // casting away the const here, should be safe
-    v.u.s = (FcChar8 *)family.get();
-
-    if (aWeak)
-        FcPatternAddWeak(aPattern, FC_FAMILY, v, FcTrue);
-    else
-        FcPatternAdd(aPattern, FC_FAMILY, v, FcTrue);
-}
-
-/* static */
-void
-FFREToFamily(nsACString &aFFREName, nsACString &oFamily)
-{
-  if (FFRECountHyphens(aFFREName) == 3) {
-      PRInt32 familyHyphen = aFFREName.FindChar('-') + 1;
-      PRInt32 registryHyphen = aFFREName.FindChar('-',familyHyphen);
-      oFamily.Append(Substring(aFFREName, familyHyphen,
-                               registryHyphen-familyHyphen));
-  }
-  else {
-      oFamily.Append(aFFREName);
-  }
-}
-
-/* static */
-int
-FFRECountHyphens (nsACString &aFFREName)
-{
-    int h = 0;
-    PRInt32 hyphen = 0;
-    while ((hyphen = aFFREName.FindChar('-', hyphen)) >= 0) {
-        ++h;
-        ++hyphen;
-    }
-    return h;
-}
-
-/* static */
-int
 CompareFontNames (const void* aArg1, const void* aArg2, void* aClosure)
 {
     const PRUnichar* str1 = *((const PRUnichar**) aArg1);
     const PRUnichar* str2 = *((const PRUnichar**) aArg2);
 
     return nsCRT::strcmp(str1, str2);
-}
-
-PRBool
-IsASCIIFontName(const nsString& aName)
-{
-    PRUint32 len = aName.Length();
-    const PRUnichar* str = aName.get();
-    for (PRUint32 i = 0; i < len; i++) {
-        /*
-         * X font names are printable ASCII, ignore others (for now)
-         */
-        if ((str[i] < 0x20) || (str[i] > 0x7E)) {
-            return PR_FALSE;
-        }
-    }
-  
-    return PR_TRUE;
 }
 
 /* static */
@@ -2420,24 +2239,19 @@ EnumFontsXft(nsIAtom* aLangGroup, const char* aGeneric,
     if (!pat)
         goto end;
 
-    os = FcObjectSetBuild(FC_FAMILY, FC_FOUNDRY, 0);
+    os = FcObjectSetBuild(FC_FAMILY, FC_FOUNDRY, NULL);
     if (!os)
         goto end;
 
     // take the pattern and add the lang group to it
     if (aLangGroup)
-        AddLangGroup(pat, aLangGroup);
+        NS_AddLangGroup(pat, aLangGroup);
 
     // get the font list
     fs = FcFontList(0, pat, os);
 
     if (!fs)
         goto end;
-
-    if (!fs->nfont) {
-        rv = NS_OK;
-        goto end;
-    }
 
     // Fontconfig supports 3 generic fonts, "serif", "sans-serif", and
     // "monospace", slightly different from CSS's 5.
@@ -2483,7 +2297,6 @@ EnumFontsXft(nsIAtom* aLangGroup, const char* aGeneric,
 
     for (int i=0; i < fs->nfont; ++i) {
         char *family;
-        PRUnichar *name;
 
         // if there's no family, just move to the next iteration
         if (FcPatternGetString (fs->fonts[i], FC_FAMILY, 0,
@@ -2491,17 +2304,11 @@ EnumFontsXft(nsIAtom* aLangGroup, const char* aGeneric,
             continue;
         }
 
-        name = NS_STATIC_CAST(PRUnichar *,
-                              nsMemory::Alloc ((strlen (family) + 1)
-                                               * sizeof (PRUnichar)));
+        // fontconfig always returns family names in UTF-8
+        PRUnichar* name =  UTF8ToNewUnicode(nsDependentCString(family));
 
         if (!name)
             goto end;
-
-        PRUnichar *r = name;
-        for (char *f = family; *f; ++f)
-            *r++ = *f;
-        *r = '\0';
 
         array[narray++] = name;
     }
@@ -2531,20 +2338,6 @@ EnumFontsXft(nsIAtom* aLangGroup, const char* aGeneric,
         FcFontSetDestroy(fs);
 
     return rv;
-}
-
-/* static */
-const MozXftLangGroup*
-FindFCLangGroup (nsACString &aLangGroup)
-{
-    for (unsigned int i=0; i < NUM_XFT_LANG_GROUPS; ++i) {
-        if (aLangGroup.Equals(MozXftLangGroups[i].mozLangGroup,
-                              nsCaseInsensitiveCStringComparator())) {
-            return &MozXftLangGroups[i];
-        }
-    }
-
-    return nsnull;
 }
 
 /* static */
@@ -2708,9 +2501,9 @@ GetEncoding(const char *aFontName, char **aEncoding, nsXftFontType &aType,
           
             if (NS_FAILED(rv)) 
                 aFTEncoding = ft_encoding_none;
-            else if (ftCharMap.EqualsIgnoreCase("mac_roman"))
+            else if (ftCharMap.LowerCaseEqualsLiteral("mac_roman"))
                 aFTEncoding = ft_encoding_apple_roman;
-            else if (ftCharMap.EqualsIgnoreCase("unicode"))
+            else if (ftCharMap.LowerCaseEqualsLiteral("unicode"))
                 aFTEncoding = ft_encoding_unicode;
         }
 
@@ -2734,8 +2527,7 @@ GetConverter(const char* aEncoding, nsIUnicodeEncoder **aConverter)
     nsresult rv;
 
     if (!gCharsetManager) {
-        nsServiceManager::GetService(kCharsetConverterManagerCID,
-        NS_GET_IID(nsICharsetConverterManager), (nsISupports**)&gCharsetManager);
+        CallGetService(kCharsetConverterManagerCID, &gCharsetManager);
         if (!gCharsetManager) {
             FreeGlobals();
             return NS_ERROR_FAILURE;

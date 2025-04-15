@@ -1,31 +1,48 @@
 <?xml version="1.0"?> <!-- -*- Mode: HTML; indent-tabs-mode: nil -*- --> 
 
-<!-- The contents of this file are subject to the Netscape Public
-License Version 1.1 (the "License"); you may not use this file
-except in compliance with the License. You may obtain a copy of
-the License at http://www.mozilla.org/NPL/
+<!-- ***** BEGIN LICENSE BLOCK *****
+ Version: MPL 1.1/GPL 2.0/LGPL 2.1
 
-Software distributed under the License is distributed on an "AS
-IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
-implied. See the License for the specific language governing
-rights and limitations under the License.
+ The contents of this file are subject to the Mozilla Public License Version
+ 1.1 (the "License"); you may not use this file except in compliance with
+ the License. You may obtain a copy of the License at
+ http://www.mozilla.org/MPL/
 
-The Original Code is Mozilla Communicator client code, released
-March 31, 1998.
+ Software distributed under the License is distributed on an "AS IS" basis,
+ WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ for the specific language governing rights and limitations under the
+ License.
 
-The Initial Developer of the Original Code is Netscape
-Communications Corporation. Portions created by Netscape are
-Copyright (C) 1998-2000 Netscape Communications Corporation. All
-Rights Reserved.
+ The Original Code is Mozilla Communicator client code, released
+ March 31, 1998.
 
-Contributor(s):
-	Dean Tessman <dean_tessman@hotmail.com>
--->
+ The Initial Developer of the Original Code is
+ Netscape Communications Corporation.
+ Portions created by the Initial Developer are Copyright (C) 1998-2000
+ the Initial Developer. All Rights Reserved.
+
+ Contributor(s):
+   Dean Tessman <dean_tessman@hotmail.com>
+
+ Alternatively, the contents of this file may be used under the terms of
+ either of the GNU General Public License Version 2 or later (the "GPL"),
+ or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ in which case the provisions of the GPL or the LGPL are applicable instead
+ of those above. If you wish to allow use of your version of this file only
+ under the terms of either the GPL or the LGPL, and not to allow others to
+ use your version of this file under the terms of the MPL, indicate your
+ decision by deleting the provisions above and replace them with the notice
+ and other provisions required by the GPL or the LGPL. If you do not delete
+ the provisions above, a recipient may use your version of this file under
+ the terms of any one of the MPL, the GPL or the LGPL.
+
+ ***** END LICENSE BLOCK ***** -->
 
 
 <?xml-stylesheet href="chrome://navigator/skin/" type="text/css"?> 
 
 <?xul-overlay href="chrome://navigator/content/navigatorOverlay.xul"?>
+<?xul-overlay href="chrome://navigator/content/mailNavigatorOverlay.xul"?>
 <?xul-overlay href="chrome://navigator/content/navExtraOverlay.xul"?>
 <?xul-overlay href="chrome://navigator/content/linkToolbarOverlay.xul"?>
 <?xul-overlay href="chrome://communicator/content/contentAreaContextOverlay.xul"?>
@@ -35,7 +52,7 @@ Contributor(s):
 
 
 <!DOCTYPE window [
-<!ENTITY % brandDTD SYSTEM "chrome://global/locale/brand.dtd" >
+<!ENTITY % brandDTD SYSTEM "chrome://branding/locale/brand.dtd" >
 %brandDTD;
 <!ENTITY % buildDTD SYSTEM "chrome://global/content/build.dtd" >
 %buildDTD;
@@ -72,7 +89,6 @@ Contributor(s):
   <script type="application/x-javascript" src="chrome://communicator/content/contentAreaDD.js"/>
   <script type="application/x-javascript" src="chrome://communicator/content/findUtils.js"/>
   <script type="application/x-javascript" src="chrome://communicator/content/printing.js"/>
-  <script type="application/x-javascript" src="chrome://global/content/XPCNativeWrapper.js"/>
 
   <!-- Shared Bookmarks Utility Library -->
   <script type="application/x-javascript" src="chrome://communicator/content/bookmarks/bookmarks.js"/>
@@ -87,7 +103,7 @@ Contributor(s):
   <!-- hook for stringbundle overlays -->
   <stringbundleset id="stringbundleset">
     <stringbundle id="bundle_navigator" src="chrome://navigator/locale/navigator.properties"/>
-    <stringbundle id="bundle_brand" src="chrome://global/locale/brand.properties"/>
+    <stringbundle id="bundle_brand" src="chrome://branding/locale/brand.properties"/>
     <stringbundle id="bundle_navigator_region" src="chrome://navigator-region/locale/region.properties"/>
     <stringbundle id="bundle_brand_region" src="chrome://global-region/locale/region.properties"/>
     <stringbundle id="findBundle" src="chrome://global/locale/finddialog.properties"/>
@@ -160,6 +176,9 @@ Contributor(s):
  
       <hbox id="nav-bar-inner" flex="1">
         <observes element="nav-bar" attribute="buttonstyle"/>
+        <!-- Need hidden label on textbox for accessibility, because what 
+             receives focus needs a text name -->
+        <label control="urlbar" hidden="true" value="&locationBar.title;"/>
         <textbox id="urlbar" class="chromeclass-location uri-element" flex="1"
                  type="autocomplete" searchSessions="history" 
                  timeout="50" maxrows="6" alwaysopenpopup="true"
@@ -195,7 +214,7 @@ Contributor(s):
 
         <button id="go-button" class="button-toolbar chromeclass-location"
                 label="&goButton.label;" hidden="true"
-                oncommand="addToUrlbarHistory(); BrowserLoadURL(event);"
+                oncommand="addToUrlbarHistory(gURLBar.value); BrowserLoadURL(event);"
                 ondragover="nsDragAndDrop.dragOver(event, goButtonObserver);"
                 ondragdrop="nsDragAndDrop.drop(event, goButtonObserver);"
                 ondragexit="nsDragAndDrop.dragExit(event, goButtonObserver);"
@@ -203,7 +222,7 @@ Contributor(s):
 
         <button id="search-button" class="button-toolbar chromeclass-location"
                 label="&searchButton.label;"
-                oncommand="OpenSearch('internet',false, QualifySearchTerm());" 
+                oncommand="OpenSearch('internet', QualifySearchTerm());" 
                 ondragover="nsDragAndDrop.dragOver(event, searchButtonObserver);"
                 ondragdrop="nsDragAndDrop.drop(event, searchButtonObserver);"
                 ondragexit="nsDragAndDrop.dragExit(event, searchButtonObserver);"
@@ -229,13 +248,16 @@ Contributor(s):
       
       <hbox id="window-controls" hidden="true" fullscreencontrol="true">
         <toolbarbutton id="minimize-button" class="toolbarbutton-1"
+                       tooltiptext="&minimizeButton.tooltip;"
                        oncommand="window.minimize();"/>
 
         <toolbarbutton id="restore-button" class="toolbarbutton-1"
+                       tooltiptext="&restoreButton.tooltip;"
                        oncommand="BrowserFullScreen();"/>
 
         <toolbarbutton id="close-button" class="toolbarbutton-1"
-                       oncommand="window.close();"/>
+                       tooltiptext="&closeWindow.label;"
+                       oncommand="BrowserTryToCloseWindow();"/>
       </hbox>
     </toolbar>
   
@@ -252,7 +274,8 @@ Contributor(s):
       </tooltip>
       <toolbarbutton id="home-button" class="bookmark-item"
                      label="&homeButton.label;"
-                     oncommand="BrowserHome(); event.preventBubble()"
+                     oncommand="BrowserHome(event);"
+                     onclick="if (event.button == 1) BrowserHome(event);"
                      tooltip="home-button-tooltip"
                      ondraggesture="nsDragAndDrop.startDrag(event, homeButtonObserver)"
                      ondragdrop="nsDragAndDrop.drop(event, homeButtonObserver); event.preventBubble()"
@@ -267,7 +290,8 @@ Contributor(s):
                      label="&bookmarksButton.label;"
                      datasources="rdf:bookmarks rdf:files rdf:localsearch rdf:internetsearch"
                      ref="NC:BookmarksRoot" container="true" flags="dont-test-empty"
-                     oncommand="BookmarksMenu.loadBookmark(event.target, this.database)" 
+                     oncommand="BookmarksMenu.loadBookmark(event, this.database)" 
+                     onclick="BookmarksMenu.loadBookmarkMiddleClick(event, this.database)" 
                      template="bookmarksMenuTemplate"
                      ondraggesture="if (event.target.id=='bookmarks-button') event.preventBubble()">
         <menupopup onpopupshowing="updateGroupmarkMenuitem('PT_bookmarks_groupmark');">
@@ -285,7 +309,8 @@ Contributor(s):
             context="bookmarks-context-menu" template="bookmarksMenuTemplate"
             datasources="rdf:bookmarks rdf:files rdf:localsearch rdf:internetsearch"
             ref="NC:PersonalToolbarFolder" flags="dont-test-empty"
-            oncommand="BookmarksMenu.loadBookmark(event.target, this.database)"
+            oncommand="BookmarksUtils.loadBookmarkBrowser(event, this.database)"
+            onclick="BookmarksMenu.loadBookmarkMiddleClick(event, this.database)"
             rdf:type="http://home.netscape.com/NC-rdf#Folder">
       </hbox>
       <hbox class="bookmarks-toolbar-overflow-items" mousethrough="always">
@@ -295,7 +320,8 @@ Contributor(s):
                        datasources="rdf:bookmarks rdf:files rdf:localsearch rdf:internetsearch"
                        template="bookmarksMenuTemplate" 
                        ref="NC:PersonalToolbarFolder" flags="dont-test-empty"
-                       oncommand="BookmarksUtils.loadBookmarkBrowser(event, event.target, this.database)">
+                       oncommand="BookmarksUtils.loadBookmarkBrowser(event, this.database)"
+                       onclick="BookmarksMenu.loadBookmarkMiddleClick(event, this.database)">
           <menupopup id="bookmarks-chevron-popup"
                      onpopupshowing="if (event.target == this) BookmarksToolbar.updateOverflowMenu(this);"/>
         </toolbarbutton>
@@ -320,6 +346,7 @@ Contributor(s):
                     contentcontextmenu="contentAreaContextMenu"
                     onnewtab="BrowserOpenTab();"
                     onbookmarkgroup="addGroupmarkAs();"
+                    onmousedown="return contentAreaMouseDown(event);"
                     onclick="return contentAreaClick(event);"/>
       </hbox>
     </vbox>  
@@ -329,14 +356,23 @@ Contributor(s):
              ondragdrop="nsDragAndDrop.drop(event, contentAreaDNDObserver);">
     <statusbarpanel id="component-bar"/>
     <statusbarpanel id="statusbar-display" label="&statusText.label;" flex="1"/>
-    <statusbarpanel class="statusbarpanel-progress">
+    <statusbarpanel class="statusbarpanel-progress" id="progress-panel" hidden="true">
       <progressmeter class="progressmeter-statusbar" id="statusbar-icon" mode="normal" value="0"/>
     </statusbarpanel>
-    <statusbarpanel id="popupIcon" class="statusbarpanel-iconic" hidden="true" oncommand="StatusbarViewPopupManager()" tooltiptext="&popupIcon.tooltiptext;"/>
+    <statusbarpanel id="popupIcon" class="statusbarpanel-iconic" hidden="true"
+                    oncommand="StatusbarViewPopupManager()"
+                    tooltiptext="&popupIcon.tooltiptext;"
+                    context="popupBlockerMenu"/>
     <statusbarpanel class="statusbarpanel-iconic" id="offline-status"/>
     <statusbarpanel class="statusbarpanel-iconic" id="security-button"
-                    onclick="BrowserPageInfo(null, 'securityTab')"/>
+                    oncommand="BrowserPageInfo(null, 'securityTab')"/>
   </statusbar> 
+  <popupset>
+    <menupopup id="popupBlockerMenu"
+               oncommand="popupBlockerMenuCommand(event.target);"
+               onpopupshowing="return popupBlockerMenuShowing(event)"/>
+    <!-- Items are generated, see popupBlockerMenuShowing() -->
+  </popupset>
   <popupset>
     <popup id="networkProperties"/>
   </popupset>

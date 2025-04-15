@@ -1,26 +1,42 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is Mozilla Communicator client code, released
  * March 31, 1998.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation. Portions created by Netscape are
- * Copyright (C) 1998-1999 Netscape Communications Corporation. All
- * Rights Reserved.
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998-1999
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Jan Varga (varga@nixcorp.com)
+ *   Jan Varga (varga@ku.sk)
  *   Håkan Waara (hwaara@chello.se)
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 /*
  * widget-specific wrapper glue. There should be one function for every
@@ -47,7 +63,7 @@ function ConvertDOMListToResourceArray(nodeList)
 function GetSelectedFolderURI()
 {
     var folderTree = GetFolderTree();
-    var selection = folderTree.treeBoxObject.selection;
+    var selection = folderTree.view.selection;
     if (selection.count == 1)
     {
         var startIndex = {};
@@ -90,7 +106,7 @@ function RenameFolder(name,uri)
 
       ClearThreadPane();
       ClearMessagePane();
-      folderTree.treeBoxObject.selection.clearSelection();
+      folderTree.view.selection.clearSelection();
 
       try
       {
@@ -119,7 +135,7 @@ function MsgEmptyTrash()
     var folderTree = GetFolderTree();
     var startIndex = {};
     var endIndex = {};
-    folderTree.treeBoxObject.selection.getRangeAt(0, startIndex, endIndex);
+    folderTree.view.selection.getRangeAt(0, startIndex, endIndex);
     if (startIndex.value >= 0)
     {
         var folderResource = GetFolderResource(folderTree, startIndex.value);
@@ -176,9 +192,54 @@ function MsgCompactFolder(isAll)
   }
 }
 
+function openNewVirtualFolderDialogWithArgs(defaultViewName, aSearchTerms)
+{
+  var folderURI = GetSelectedFolderURI();
+  var folderTree = GetFolderTree();
+  var name = GetFolderNameFromUri(folderURI, folderTree);
+  name += "-" + defaultViewName;
+
+  var dialog = window.openDialog("chrome://messenger/content/virtualFolderProperties.xul", "",
+                                 "chrome,titlebar,modal,centerscreen",
+                                 {preselectedURI:folderURI,
+                                  searchTerms:aSearchTerms,
+                                  newFolderName:name});
+}
+
+
+function MsgVirtualFolderProperties(aEditExistingVFolder)
+{
+  var preselectedFolder = GetFirstSelectedMsgFolder();
+  var preselectedURI;
+  if(preselectedFolder)
+  {
+    var preselectedFolderResource = preselectedFolder.QueryInterface(Components.interfaces.nsIRDFResource);
+    if(preselectedFolderResource)
+      preselectedURI = preselectedFolderResource.Value;
+  }
+
+  var dialog = window.openDialog("chrome://messenger/content/virtualFolderProperties.xul", "",
+                                 "chrome,titlebar,modal,centerscreen",
+                                 {preselectedURI:preselectedURI,
+                                  editExistingFolder: aEditExistingVFolder,
+                                  onOKCallback:onEditVirtualFolderPropertiesCallback,
+                                  msgWindow:msgWindow});
+}
+
+function onEditVirtualFolderPropertiesCallback(aVirtualFolderURI)
+{
+  // we need to reload the folder if it is the currently loaded folder...
+  if (gMsgFolderSelected && aVirtualFolderURI == gMsgFolderSelected.URI)
+  {
+    gMsgFolderSelected = null; // force the folder pane to reload the virtual folder
+    FolderPaneSelectionChange();
+  }
+}
+
+
 function MsgFolderProperties() 
 {
-	var preselectedURI = GetSelectedFolderURI();
+  var preselectedURI = GetSelectedFolderURI();
   var msgFolder = GetMsgFolderFromUri(preselectedURI, true);
 
   // if a server is selected, view settings for that account
@@ -187,24 +248,34 @@ function MsgFolderProperties()
     return;
   }
 
-	var serverType = msgFolder.server.type;
-	var folderTree = GetFolderTree();
+  var serverType = msgFolder.server.type;
+  var folderTree = GetFolderTree();
 
-	var name = GetFolderNameFromUri(preselectedURI, folderTree);
+  if (msgFolder.flags & MSG_FOLDER_FLAG_VIRTUAL)
+  { 
+    // virtual folders get their own property dialog that contains all of the
+    // search information related to the virtual folder.
+    MsgVirtualFolderProperties(true);
+    return;
+  }
 
-	var windowTitle = gMessengerBundle.getString("folderProperties");
-	var dialog = window.openDialog(
-                    "chrome://messenger/content/folderProps.xul",
-                    "",
-                    "chrome,centerscreen,titlebar,modal",
-                    {preselectedURI:preselectedURI, serverType:serverType,
-                    msgWindow:msgWindow, title:windowTitle,
-                    okCallback:FolderProperties, 
-                    tabID:"", tabIndex:0, name:name});
+  var name = GetFolderNameFromUri(preselectedURI, folderTree);
+
+  var windowTitle = gMessengerBundle.getString("folderProperties");
+  var dialog = window.openDialog(
+              "chrome://messenger/content/folderProps.xul",
+              "",
+              "chrome,centerscreen,titlebar,modal",
+              {preselectedURI:preselectedURI, serverType:serverType,
+              msgWindow:msgWindow, title:windowTitle,
+              okCallback:FolderProperties, 
+              tabID:"", tabIndex:0, name:name});
 }
 
-function FolderProperties(name, uri)
+function FolderProperties(name, oldName, uri)
 {
+  if (name != oldName)
+    RenameFolder(name, uri);
 }
 
 function MsgToggleMessagePane()

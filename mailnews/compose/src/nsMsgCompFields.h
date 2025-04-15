@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,16 +22,16 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -85,8 +85,8 @@ public:
   nsresult SetAsciiHeader(MsgHeaderID header, const char *value);
   const char* GetAsciiHeader(MsgHeaderID header); //just return the address of the internal header variable, don't dispose it
 
-  nsresult SetUnicodeHeader(MsgHeaderID header, const PRUnichar *value);
-  nsresult GetUnicodeHeader(MsgHeaderID header, PRUnichar **_retval); //Will return a copy of the header, must be free using PR_Free() 
+  nsresult SetUnicodeHeader(MsgHeaderID header, const nsAString &value);
+  nsresult GetUnicodeHeader(MsgHeaderID header, nsAString &_retval); 
 
   /* Convenience routines to get and set header's value...
   
@@ -115,6 +115,7 @@ public:
   nsresult SetFcc2(const char *value) {return SetAsciiHeader(MSG_FCC2_HEADER_ID, value);}
   const char* GetFcc2() {return GetAsciiHeader(MSG_FCC2_HEADER_ID);}
 
+  nsresult SetNewsgroups(const char *aValue) {return SetAsciiHeader(MSG_NEWSGROUPS_HEADER_ID, aValue);}
   const char* GetNewsgroups() {return GetAsciiHeader(MSG_NEWSGROUPS_HEADER_ID);}
 
   const char* GetNewshost() {return GetAsciiHeader(MSG_NEWSPOSTURL_HEADER_ID);}
@@ -161,6 +162,7 @@ public:
   PRBool GetUseMultipartAlternative() {return m_useMultipartAlternative;}
   PRBool GetUuEncodeAttachments() {return m_uuEncodeAttachments;}
   PRBool GetBodyIsAsciiOnly() {return m_bodyIsAsciiOnly;}
+  PRBool GetForceMsgEncoding() {return m_forceMsgEncoding;}
 
   nsresult SetBody(const char *value);
   const char* GetBody();
@@ -169,7 +171,7 @@ public:
 
 protected:
   char*       m_headers[MSG_MAX_HEADERS];
-  char*       m_body;
+  nsCString   m_body;
   nsCOMPtr<nsISupportsArray>  m_attachments;
   PRBool      m_attachVCard;
   PRBool      m_forcePlainText;
@@ -177,9 +179,10 @@ protected:
   PRBool      m_uuEncodeAttachments;
   PRBool      m_returnReceipt;
   PRBool      m_bodyIsAsciiOnly;
+  PRBool      m_forceMsgEncoding;
   PRInt32     m_receiptHeaderType;        /* receipt header type */
-  nsCString   m_internalCharSet;
   nsCString   m_DefaultCharacterSet;
+  PRBool      m_needToCheckCharset;
 
   nsCOMPtr<nsISupports> mSecureCompFields;
 };

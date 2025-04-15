@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,27 +14,27 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001-2003
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Seth Spitzer <sspitzer@netscape.com>
- *  Dan Mosedale <dmose@netscape.com>
- *  David Bienvenu <bienvenu@mozilla.org>
+ *   Seth Spitzer <sspitzer@netscape.com>
+ *   Dan Mosedale <dmose@netscape.com>
+ *   David Bienvenu <bienvenu@mozilla.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -60,7 +60,6 @@
 #include "nsIDOMElement.h"
 #include "nsIAtom.h"
 #include "nsIImapIncomingServer.h"
-#include "nsIPref.h"
 #include "nsIWeakReference.h"
 #include "nsIObserver.h"
 #include "nsIMsgFilterPlugin.h"
@@ -105,6 +104,9 @@ public:
   NS_DECL_NSIOBSERVER
   NS_DECL_NSIJUNKMAILCLASSIFICATIONLISTENER
 
+  nsMsgViewIndex GetInsertIndexHelper(nsIMsgDBHdr *msgHdr, nsMsgKeyArray *keys,
+                                        nsMsgViewSortOrderValue sortOrder,
+                                        nsMsgViewSortTypeValue sortType);
 protected:
   static nsrefcnt gInstanceCount;
   // atoms used for styling the view. we're going to have a lot of
@@ -149,6 +151,8 @@ protected:
   static PRUnichar* kForwardedString;
   static PRUnichar* kNewString;
 
+  static PRUnichar* kKiloByteString;
+
   nsCOMPtr<nsITreeBoxObject> mTree;
   nsCOMPtr<nsITreeSelection> mTreeSelection;
   PRUint32 mNumSelectedRows; // we cache this to determine when to push command status notifications.
@@ -159,15 +163,15 @@ protected:
   PRPackedBool  mCommandsNeedDisablingBecauseOfSelection;
   PRPackedBool  mSuppressChangeNotification;
   virtual const char * GetViewName(void) {return "MsgDBView"; }
-  nsresult FetchAuthor(nsIMsgHdr * aHdr, PRUnichar ** aAuthorString);
-  nsresult FetchRecipients(nsIMsgHdr * aHdr, PRUnichar ** aRecipientsString);
-  nsresult FetchSubject(nsIMsgHdr * aMsgHdr, PRUint32 aFlags, PRUnichar ** aValue);
-  nsresult FetchDate(nsIMsgHdr * aHdr, PRUnichar ** aDateString);
+  nsresult FetchAuthor(nsIMsgDBHdr * aHdr, PRUnichar ** aAuthorString);
+  nsresult FetchRecipients(nsIMsgDBHdr * aHdr, PRUnichar ** aRecipientsString);
+  nsresult FetchSubject(nsIMsgDBHdr * aMsgHdr, PRUint32 aFlags, PRUnichar ** aValue);
+  nsresult FetchDate(nsIMsgDBHdr * aHdr, PRUnichar ** aDateString);
   nsresult FetchStatus(PRUint32 aFlags, PRUnichar ** aStatusString);
-  nsresult FetchSize(nsIMsgHdr * aHdr, PRUnichar ** aSizeString);
-  nsresult FetchPriority(nsIMsgHdr *aHdr, PRUnichar ** aPriorityString);
-  nsresult FetchLabel(nsIMsgHdr *aHdr, PRUnichar ** aLabelString);
-  nsresult FetchAccount(nsIMsgHdr * aHdr, PRUnichar ** aAccount);
+  nsresult FetchSize(nsIMsgDBHdr * aHdr, PRUnichar ** aSizeString);
+  nsresult FetchPriority(nsIMsgDBHdr *aHdr, PRUnichar ** aPriorityString);
+  nsresult FetchLabel(nsIMsgDBHdr *aHdr, PRUnichar ** aLabelString);
+  nsresult FetchAccount(nsIMsgDBHdr * aHdr, PRUnichar ** aAccount);
   nsresult CycleThreadedColumn(nsIDOMElement * aElement);
 
   // Save and Restore Selection are a pair of routines you should
@@ -178,8 +182,8 @@ protected:
   // When you are done changing the view, 
   // call RestoreSelection passing in the same array
   // and we'll restore the selection AND unfreeze selection in the UI.
-  nsresult SaveAndClearSelection(nsMsgKeyArray * aMsgKeyArray);
-  nsresult RestoreSelection(nsMsgKeyArray * aMsgKeyArray);
+  nsresult SaveAndClearSelection(nsMsgKey *aCurrentMsgKey, nsMsgKeyArray *aMsgKeyArray);
+  nsresult RestoreSelection(nsMsgKey aCurrentmsgKey, nsMsgKeyArray *aMsgKeyArray);
 
   // this is not safe to use when you have a selection
   // RowCountChanged() will call AdjustSelection() 
@@ -209,7 +213,7 @@ protected:
   // helper routines for thread expanding and collapsing.
   nsresult		GetThreadCount(nsMsgKey messageKey, PRUint32 *pThreadCount);
   nsMsgViewIndex GetIndexOfFirstDisplayedKeyInThread(nsIMsgThread *threadHdr);
-  nsresult GetFirstMessageHdrToDisplayInThread(nsIMsgThread *threadHdr, nsIMsgDBHdr **result);
+  virtual nsresult GetFirstMessageHdrToDisplayInThread(nsIMsgThread *threadHdr, nsIMsgDBHdr **result);
   virtual nsMsgViewIndex ThreadIndexOfMsg(nsMsgKey msgKey, 
 				  nsMsgViewIndex msgIndex = nsMsgViewIndex_None,
 				  PRInt32 *pThreadCount = nsnull,
@@ -217,7 +221,7 @@ protected:
   virtual nsresult GetThreadContainingMsgHdr(nsIMsgDBHdr *msgHdr, nsIMsgThread **pThread);
   nsMsgKey GetKeyOfFirstMsgInThread(nsMsgKey key);
   PRInt32 CountExpandedThread(nsMsgViewIndex index);
-  nsresult ExpansionDelta(nsMsgViewIndex index, PRInt32 *expansionDelta);
+  virtual  nsresult ExpansionDelta(nsMsgViewIndex index, PRInt32 *expansionDelta);
   nsresult ReverseSort();
   nsresult ReverseThreads();
   nsresult SaveSortInfo(nsMsgViewSortTypeValue sortType, nsMsgViewSortOrderValue sortOrder);
@@ -232,7 +236,7 @@ protected:
   virtual nsresult GetFolders(nsISupportsArray **folders);
   virtual nsresult GetFolderFromMsgURI(const char *aMsgURI, nsIMsgFolder **aFolder);
 
-  nsresult ListIdsInThread(nsIMsgThread *threadHdr, nsMsgViewIndex viewIndex, PRUint32 *pNumListed);
+  virtual nsresult ListIdsInThread(nsIMsgThread *threadHdr, nsMsgViewIndex viewIndex, PRUint32 *pNumListed);
   nsresult ListUnreadIdsInThread(nsIMsgThread *threadHdr, nsMsgViewIndex startOfThreadViewIndex, PRUint32 *pNumListed);
   nsMsgViewIndex FindParentInThread(nsMsgKey parentKey, nsMsgViewIndex startOfThreadViewIndex);
   nsresult ListIdsInThreadOrder(nsIMsgThread *threadHdr, nsMsgKey parentKey, PRInt32 level, nsMsgViewIndex *viewIndex, PRUint32 *pNumListed);
@@ -256,10 +260,9 @@ protected:
   virtual nsresult CopyMessages(nsIMsgWindow *window, nsMsgViewIndex *indices, PRInt32 numIndices, PRBool isMove, nsIMsgFolder *destFolder);
   virtual nsresult DeleteMessages(nsIMsgWindow *window, nsMsgViewIndex *indices, PRInt32 numIndices, PRBool deleteStorage);
   nsresult SetStringPropertyByIndex(nsMsgViewIndex index, const char *aProperty, const char *aValue);
-  nsresult SetJunkScoreByIndex(nsIJunkMailPlugin *aJunkPlugin, 
+  nsresult SetAsJunkByIndex(nsIJunkMailPlugin *aJunkPlugin, 
                                nsMsgViewIndex aIndex,
-                               nsMsgJunkStatus aNewClassification,
-                               PRBool aIsLastInBatch);
+                               nsMsgJunkStatus aNewClassification);
   nsresult ToggleReadByIndex(nsMsgViewIndex index);
   nsresult SetReadByIndex(nsMsgViewIndex index, PRBool read);
   nsresult SetThreadOfMsgReadByIndex(nsMsgViewIndex index, nsMsgKeyArray &keysMarkedRead, PRBool read);
@@ -271,8 +274,6 @@ protected:
 	virtual nsresult RemoveByIndex(nsMsgViewIndex index);
   virtual void		OnExtraFlagChanged(nsMsgViewIndex /*index*/, PRUint32 /*extraFlag*/) {}
 	virtual void		OnHeaderAddedOrDeleted() {}	
-  nsresult ToggleThreadIgnored(nsIMsgThread *thread, nsMsgViewIndex threadIndex);
-  nsresult ToggleThreadWatched(nsIMsgThread *thread, nsMsgViewIndex index);
   nsresult ToggleWatched( nsMsgViewIndex* indices,	PRInt32 numIndices);
   nsresult SetThreadWatched(nsIMsgThread *thread, nsMsgViewIndex index, PRBool watched);
   nsresult SetThreadIgnored(nsIMsgThread *thread, nsMsgViewIndex threadIndex, PRBool ignored);
@@ -282,10 +283,10 @@ protected:
 
   // for sorting
   nsresult GetFieldTypeAndLenForSort(nsMsgViewSortTypeValue sortType, PRUint16 *pMaxLen, eFieldType *pFieldType);
-  nsresult GetCollationKey(nsIMsgHdr *msgHdr, nsMsgViewSortTypeValue sortType, PRUint8 **result, PRUint32 *len);
+  nsresult GetCollationKey(nsIMsgDBHdr *msgHdr, nsMsgViewSortTypeValue sortType, PRUint8 **result, PRUint32 *len);
   nsresult GetLongField(nsIMsgDBHdr *msgHdr, nsMsgViewSortTypeValue sortType, PRUint32 *result);
-  nsresult GetStatusSortValue(nsIMsgHdr *msgHdr, PRUint32 *result);
-  nsresult GetLocationCollationKey(nsIMsgHdr *msgHdr, PRUint8 **result, PRUint32 *len);
+  nsresult GetStatusSortValue(nsIMsgDBHdr *msgHdr, PRUint32 *result);
+  nsresult GetLocationCollationKey(nsIMsgDBHdr *msgHdr, PRUint8 **result, PRUint32 *len);
 
   // for view navigation
   nsresult NavigateFromPos(nsMsgNavigationTypeValue motion, nsMsgViewIndex startIndex, nsMsgKey *pResultKey, 
@@ -299,7 +300,7 @@ protected:
   nsresult MarkThreadOfMsgRead(nsMsgKey msgId, nsMsgViewIndex msgIndex, nsMsgKeyArray &idsMarkedRead, PRBool bRead);
   nsresult MarkThreadRead(nsIMsgThread *threadHdr, nsMsgViewIndex threadIndex, nsMsgKeyArray &idsMarkedRead, PRBool bRead);
   PRBool IsValidIndex(nsMsgViewIndex index);
-  nsresult ToggleIgnored(nsMsgViewIndex * indices, PRInt32 numIndices, PRBool *resultToggleState);
+  nsresult ToggleIgnored(nsMsgViewIndex * indices, PRInt32 numIndices, nsMsgViewIndex *resultIndex, PRBool *resultToggleState);
   PRBool OfflineMsgSelected(nsMsgViewIndex * indices, PRInt32 numIndices);
   PRBool NonDummyMsgSelected(nsMsgViewIndex * indices, PRInt32 numIndices);
   PRUnichar * GetString(const PRUnichar *aStringName);
@@ -315,8 +316,6 @@ protected:
   virtual PRInt32 FindLevelInThread(nsIMsgDBHdr *msgHdr, nsMsgViewIndex startOfThread, nsMsgViewIndex viewIndex);
   nsresult GetImapDeleteModel(nsIMsgFolder *folder);
   nsresult UpdateDisplayMessage(nsMsgViewIndex viewPosition);
-  nsresult LoadMessageByViewIndexHelper(nsMsgViewIndex aViewIndex, PRBool forceAllParts);
-  nsresult ReloadMessageHelper(PRBool forceAllParts);
 
   PRBool AdjustReadFlag(nsIMsgDBHdr *msgHdr, PRUint32 *msgFlags);
   void FreeAll(nsVoidArray *ptrs);
@@ -372,11 +371,18 @@ protected:
   // used to cache the atoms created for each color to be displayed
   static nsIAtom* mLabelPrefColorAtoms[PREF_LABELS_MAX];
 
-  // used to know to finish out the junk mail classification batch when the 
-  // last classification callback happens
-  nsCString mLastJunkUriInBatch;
-  PRUint8 mOutstandingJunkBatches;
+  // used to determine when to start and end
+  // junk plugin batches
+  PRUint32 mNumMessagesRemainingInBatch;
+
+  // these are the indices of the messages in the current
+  // batch/series of batches of messages manually marked
+  // as junk
+  nsMsgViewIndex *mJunkIndices;
+  PRUint32 mNumJunkIndices;
+  
   nsUInt32Array mIndicesToNoteChange;
+
 
 protected:
   static nsresult   InitDisplayFormats();
@@ -387,10 +393,8 @@ private:
   static nsDateFormatSelector  m_dateFormatToday;
   PRBool ServerSupportsFilterAfterTheFact();
 
-  nsMsgKeyArray	mJunkKeys;
-  nsCOMPtr <nsIMsgFolder> mJunkTargetFolder;
-  nsresult PerformActionOnJunkMsgs();
-  nsresult SaveJunkMsgForAction(nsIMsgIncomingServer *aServer, const char *aMsgURI, nsMsgJunkStatus aClassification);
+  nsresult PerformActionsOnJunkMsgs();
+  nsresult DetermineActionsForJunkMsgs(PRBool* movingJunkMessages, PRBool* markingJunkMessagesRead, nsIMsgFolder** junkTargetFolder);
 
 };
 

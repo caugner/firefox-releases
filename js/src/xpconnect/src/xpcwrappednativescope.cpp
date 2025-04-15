@@ -41,6 +41,7 @@
 /* Class used to manage the wrapped native objects within a JS scope. */
 
 #include "xpcprivate.h"
+#include "XPCNativeWrapper.h"
 
 /***************************************************************************/
 
@@ -182,6 +183,7 @@ XPCWrappedNativeScope::SetGlobal(XPCCallContext& ccx, JSObject* aGlobal)
 
         jsval val;
         jsid idObj = mRuntime->GetStringID(XPCJSRuntime::IDX_OBJECT);
+        jsid idFun = mRuntime->GetStringID(XPCJSRuntime::IDX_FUNCTION);
         jsid idProto = mRuntime->GetStringID(XPCJSRuntime::IDX_PROTOTYPE);
 
         if(OBJ_GET_PROPERTY(ccx, aGlobal, idObj, &val) &&
@@ -193,10 +195,19 @@ XPCWrappedNativeScope::SetGlobal(XPCCallContext& ccx, JSObject* aGlobal)
         }
         else
         {
-#if defined(DEBUG_jband) || defined(DEBUG_jst)
-//            NS_ERROR("Can't get globalObject.Object.prototype");
-            NS_WARNING("Can't get globalObject.Object.prototype");
-#endif
+            NS_ERROR("Can't get globalObject.Object.prototype");
+        }
+
+        if(OBJ_GET_PROPERTY(ccx, aGlobal, idFun, &val) &&
+           !JSVAL_IS_PRIMITIVE(val) &&
+           OBJ_GET_PROPERTY(ccx, JSVAL_TO_OBJECT(val), idProto, &val) &&
+           !JSVAL_IS_PRIMITIVE(val))
+        {
+            mPrototypeJSFunction = JSVAL_TO_OBJECT(val);
+        }
+        else
+        {
+            NS_ERROR("Can't get globalObject.Function.prototype");
         }
     }
 }
@@ -537,7 +548,6 @@ void DEBUG_CheckForComponentsInScope(XPCCallContext& ccx, JSObject* obj,
         return;
 
     static const char msg[] =
-    "\n"
     "XPConnect is being called on a scope without a 'Components' property!\n"
     "\n"
     "This is pretty much always bad. It usually means that native code is\n"

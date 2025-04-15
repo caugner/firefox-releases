@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,24 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): Bradley Baetz <bbaetz@student.usyd.edu.au>
+ * Contributor(s):
+ *   Bradley Baetz <bbaetz@student.usyd.edu.au>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -54,6 +55,7 @@
 #include "nsIStreamListener.h"
 #include "nsCRT.h"
 #include "nsMimeTypes.h"
+#include "nsAutoPtr.h"
 
 #include "ParseFTPList.h"
 
@@ -83,8 +85,8 @@ NS_IMPL_THREADSAFE_ISUPPORTS3(nsFTPDirListingConv,
 // nsIStreamConverter implementation
 NS_IMETHODIMP
 nsFTPDirListingConv::Convert(nsIInputStream *aFromStream,
-                             const PRUnichar *aFromType,
-                             const PRUnichar *aToType,
+                             const char *aFromType,
+                             const char *aToType,
                              nsISupports *aCtxt, nsIInputStream **_retval) {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -92,7 +94,7 @@ nsFTPDirListingConv::Convert(nsIInputStream *aFromStream,
 
 // Stream converter service calls this to initialize the actual stream converter (us).
 NS_IMETHODIMP
-nsFTPDirListingConv::AsyncConvertData(const PRUnichar *aFromType, const PRUnichar *aToType,
+nsFTPDirListingConv::AsyncConvertData(const char *aFromType, const char *aToType,
                                       nsIStreamListener *aListener, nsISupports *aCtxt) {
     NS_ASSERTION(aListener && aFromType && aToType, "null pointer passed into FTP dir listing converter");
     nsresult rv;
@@ -113,8 +115,7 @@ nsFTPDirListingConv::AsyncConvertData(const PRUnichar *aFromType, const PRUnicha
     rv = NS_NewInputStreamChannel(&mPartChannel,
                                   uri,
                                   nsnull,
-                                  NS_LITERAL_CSTRING(APPLICATION_HTTP_INDEX_FORMAT),
-                                  EmptyCString());
+                                  NS_LITERAL_CSTRING(APPLICATION_HTTP_INDEX_FORMAT));
     NS_RELEASE(uri);
     if (NS_FAILED(rv)) return rv;
 
@@ -134,16 +135,18 @@ nsFTPDirListingConv::OnDataAvailable(nsIRequest* request, nsISupports *ctxt,
     nsresult rv;
 
     nsCOMPtr<nsIChannel> channel = do_QueryInterface(request, &rv);
-    if (NS_FAILED(rv)) return rv;
+    NS_ENSURE_SUCCESS(rv, rv);
     
     PRUint32 read, streamLen;
 
     rv = inStr->Available(&streamLen);
-    if (NS_FAILED(rv)) return rv;
+    NS_ENSURE_SUCCESS(rv, rv);
 
-    char *buffer = (char*)nsMemory::Alloc(streamLen + 1);
+    nsAutoArrayPtr<char> buffer(new char[streamLen + 1]);
+    NS_ENSURE_TRUE(buffer, NS_ERROR_OUT_OF_MEMORY);
+
     rv = inStr->Read(buffer, streamLen, &read);
-    if (NS_FAILED(rv)) return rv;
+    NS_ENSURE_SUCCESS(rv, rv);
 
     // the dir listings are ascii text, null terminate this sucker.
     buffer[streamLen] = '\0';
@@ -154,26 +157,29 @@ nsFTPDirListingConv::OnDataAvailable(nsIRequest* request, nsISupports *ctxt,
         // we have data left over from a previous OnDataAvailable() call.
         // combine the buffers so we don't lose any data.
         mBuffer.Append(buffer);
-        nsMemory::Free(buffer);
-        buffer = ToNewCString(mBuffer);
+
+        buffer = new char[mBuffer.Length()+1];
+        NS_ENSURE_TRUE(buffer, NS_ERROR_OUT_OF_MEMORY);
+
+        strncpy(buffer, mBuffer.get(), mBuffer.Length()+1);
         mBuffer.Truncate();
     }
 
 #ifndef DEBUG_dougt
-    PR_LOG(gFTPDirListConvLog, PR_LOG_DEBUG, ("::OnData() received the following %d bytes...\n\n%s\n\n", streamLen, buffer) );
+    PR_LOG(gFTPDirListConvLog, PR_LOG_DEBUG, ("::OnData() received the following %d bytes...\n\n%s\n\n", streamLen, buffer.get()) );
 #else
     printf("::OnData() received the following %d bytes...\n\n%s\n\n", streamLen, buffer);
 #endif // DEBUG_dougt
 
-    nsCString indexFormat;
+    nsCAutoString indexFormat;
     if (!mSentHeading) {
         // build up the 300: line
         nsCOMPtr<nsIURI> uri;
         rv = channel->GetURI(getter_AddRefs(uri));
-        if (NS_FAILED(rv)) return rv;
+        NS_ENSURE_SUCCESS(rv, rv);
 
         rv = GetHeaders(indexFormat, uri);
-        if (NS_FAILED(rv)) return rv;
+        NS_ENSURE_SUCCESS(rv, rv);
 
         mSentHeading = PR_TRUE;
     }
@@ -186,6 +192,8 @@ nsFTPDirListingConv::OnDataAvailable(nsIRequest* request, nsISupports *ctxt,
         indexFormat.Length(), indexFormat.get()) );
 #else
     char *unescData = ToNewCString(indexFormat);
+    NS_ENSURE_TRUE(unescData, NS_ERROR_OUT_OF_MEMORY);
+    
     nsUnescape(unescData);
     printf("::OnData() sending the following %d bytes...\n\n%s\n\n", indexFormat.Length(), unescData);
     nsMemory::Free(unescData);
@@ -198,18 +206,15 @@ nsFTPDirListingConv::OnDataAvailable(nsIRequest* request, nsISupports *ctxt,
             PL_strlen(line), line) );
     }
 
-    nsMemory::Free(buffer);
-
     // send the converted data out.
     nsCOMPtr<nsIInputStream> inputData;
 
     rv = NS_NewCStringInputStream(getter_AddRefs(inputData), indexFormat);
-    if (NS_FAILED(rv)) return rv;
+    NS_ENSURE_SUCCESS(rv, rv);
 
     rv = mFinalListener->OnDataAvailable(mPartChannel, ctxt, inputData, 0, indexFormat.Length());
-    if (NS_FAILED(rv)) return rv;
 
-    return NS_OK;
+    return rv;
 }
 
 
@@ -276,7 +281,7 @@ nsFTPDirListingConv::GetHeaders(nsACString& headers,
 {
     nsresult rv = NS_OK;
     // build up 300 line
-    headers.Append("300: ");
+    headers.AppendLiteral("300: ");
 
     // Bug 111117 - don't print the password
     nsCAutoString pw;
@@ -300,7 +305,7 @@ nsFTPDirListingConv::GetHeaders(nsACString& headers,
     // END 300:
 
     // build up the column heading; 200:
-    headers.Append("200: filename content-length last-modified file-type\n");
+    headers.AppendLiteral("200: filename content-length last-modified file-type\n");
     // END 200:
     return rv;
 }
@@ -343,7 +348,7 @@ nsFTPDirListingConv::DigestBufferLines(char *aBuffer, nsCString &aString) {
         }
 
         // blast the index entry into the indexFormat buffer as a 201: line.
-        aString.Append("201: ");
+        aString.AppendLiteral("201: ");
         // FILENAME
 
 
@@ -353,11 +358,11 @@ nsFTPDirListingConv::DigestBufferLines(char *aBuffer, nsCString &aString) {
         }
 
         nsCAutoString buf;
-        aString.Append(NS_LITERAL_CSTRING("\"") + 
-                       NS_EscapeURL(Substring(result.fe_fname, 
+        aString.Append('\"');
+        aString.Append(NS_EscapeURL(Substring(result.fe_fname, 
                                               result.fe_fname+result.fe_fnlen),
-                                    esc_Minimal|esc_OnlyASCII|esc_Forced,buf)
-                       + NS_LITERAL_CSTRING("\" "));
+                                    esc_Minimal|esc_OnlyASCII|esc_Forced,buf));
+        aString.AppendLiteral("\" ");
  
         // CONTENT LENGTH
         
@@ -372,7 +377,7 @@ nsFTPDirListingConv::DigestBufferLines(char *aBuffer, nsCString &aString) {
             aString.Append(' ');
         }
         else
-            aString.Append("0 ");
+            aString.AppendLiteral("0 ");
 
 
         // MODIFIED DATE
@@ -391,11 +396,11 @@ nsFTPDirListingConv::DigestBufferLines(char *aBuffer, nsCString &aString) {
 
         // ENTRY TYPE
         if (type == 'd')
-            aString.Append("DIRECTORY");
+            aString.AppendLiteral("DIRECTORY");
         else if (type == 'l')
-            aString.Append("SYMBOLIC-LINK");
+            aString.AppendLiteral("SYMBOLIC-LINK");
         else
-            aString.Append("FILE");
+            aString.AppendLiteral("FILE");
         
         aString.Append(' ');
 

@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -22,21 +22,21 @@
  * Contributor(s):
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
-
 #include "nsIUnicharInputStream.h"
+#include "nsIInputStream.h"
 #include "nsIByteBuffer.h"
 #include "nsIUnicharBuffer.h"
 #include "nsIServiceManager.h"
@@ -52,37 +52,36 @@
 
 class StringUnicharInputStream : public nsIUnicharInputStream {
 public:
-  StringUnicharInputStream(nsString* aString);
+  StringUnicharInputStream(const nsAString* aString,
+                           PRBool aTakeOwnership);
 
   NS_DECL_ISUPPORTS
+  NS_DECL_NSIUNICHARINPUTSTREAM
 
-  NS_IMETHOD Read(PRUnichar* aBuf,
-                  PRUint32 aCount,
-                  PRUint32 *aReadCount);
-  NS_IMETHOD ReadSegments(nsWriteUnicharSegmentFun aWriter,
-                          void* aClosure,
-                          PRUint32 aCount, PRUint32* aReadCount);
-  NS_IMETHOD Close();
-
-  nsString* mString;
+  const nsAString* mString;
   PRUint32 mPos;
   PRUint32 mLen;
+  PRBool mOwnsString;
 
 private:
   ~StringUnicharInputStream();
 };
 
-StringUnicharInputStream::StringUnicharInputStream(nsString* aString)
+StringUnicharInputStream::StringUnicharInputStream(const nsAString* aString,
+                                                   PRBool aTakeOwnership)
+  : mString(aString),
+    mPos(0),
+    mLen(aString->Length()),
+    mOwnsString(aTakeOwnership)
 {
-  mString = aString;
-  mPos = 0;
-  mLen = aString->Length();
 }
 
 StringUnicharInputStream::~StringUnicharInputStream()
 {
-  if (nsnull != mString) {
-    delete mString;
+  if (mString && mOwnsString) {
+    // Some compilers dislike deleting const pointers
+    nsAString* mutable_string = NS_CONST_CAST(nsAString*, mString);
+    delete mutable_string;
   }
 }
 
@@ -95,8 +94,9 @@ StringUnicharInputStream::Read(PRUnichar* aBuf,
     *aReadCount = 0;
     return NS_OK;
   }
-  const PRUnichar* us = mString->get();
-  NS_ASSERTION(mLen >= mPos, "unsigned madness");
+  nsAString::const_iterator iter;
+  mString->BeginReading(iter);
+  const PRUnichar* us = iter.get();
   PRUint32 amount = mLen - mPos;
   if (amount > aCount) {
     amount = aCount;
@@ -118,8 +118,11 @@ StringUnicharInputStream::ReadSegments(nsWriteUnicharSegmentFun aWriter,
   nsresult rv;
   aCount = PR_MIN(mString->Length() - mPos, aCount);
   
+  nsAString::const_iterator iter;
+  mString->BeginReading(iter);
+  
   while (aCount) {
-    rv = aWriter(this, aClosure, mString->get() + mPos,
+    rv = aWriter(this, aClosure, iter.get() + mPos,
                  totalBytesWritten, aCount, &bytesWritten);
     
     if (NS_FAILED(rv)) {
@@ -137,13 +140,33 @@ StringUnicharInputStream::ReadSegments(nsWriteUnicharSegmentFun aWriter,
   return NS_OK;
 }
 
+NS_IMETHODIMP
+StringUnicharInputStream::ReadString(PRUint32 aCount, nsAString& aString,
+                                     PRUint32* aReadCount)
+{
+  if (mPos >= mLen) {
+    *aReadCount = 0;
+    return NS_OK;
+  }
+  PRUint32 amount = mLen - mPos;
+  if (amount > aCount) {
+    amount = aCount;
+  }
+  aString = Substring(*mString, mPos, amount);
+  mPos += amount;
+  *aReadCount = amount;
+  return NS_OK;
+}
+
 nsresult StringUnicharInputStream::Close()
 {
   mPos = mLen;
-  if (nsnull != mString) {
-    delete mString;
-    mString = 0;
+  if (mString && mOwnsString) {
+    // Some compilers dislike deleting const pointers
+    nsAString* mutable_string = NS_CONST_CAST(nsAString*, mString);
+    delete mutable_string;
   }
+  mString = nsnull;
   return NS_OK;
 }
 
@@ -151,21 +174,20 @@ NS_IMPL_ISUPPORTS1(StringUnicharInputStream, nsIUnicharInputStream)
 
 NS_COM nsresult
 NS_NewStringUnicharInputStream(nsIUnicharInputStream** aInstancePtrResult,
-                               nsString* aString)
+                               const nsAString* aString,
+                               PRBool aTakeOwnership)
 {
-  NS_PRECONDITION(nsnull != aString, "null ptr");
-  NS_PRECONDITION(nsnull != aInstancePtrResult, "null ptr");
-  if ((nsnull == aString) || (nsnull == aInstancePtrResult)) {
-    return NS_ERROR_NULL_POINTER;
-  }
+  NS_ENSURE_ARG_POINTER(aString);
+  NS_PRECONDITION(aInstancePtrResult, "null ptr");
 
-  StringUnicharInputStream* it = new StringUnicharInputStream(aString);
-  if (nsnull == it) {
+  StringUnicharInputStream* it = new StringUnicharInputStream(aString,
+                                                              aTakeOwnership);
+  if (!it) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  return it->QueryInterface(NS_GET_IID(nsIUnicharInputStream),
-                            (void**) aInstancePtrResult);
+  NS_ADDREF(*aInstancePtrResult = it);
+  return NS_OK;
 }
 
 //----------------------------------------------------------------------
@@ -176,14 +198,7 @@ public:
   nsresult Init(nsIInputStream* aStream, PRUint32 aBufSize);
 
   NS_DECL_ISUPPORTS
-  NS_IMETHOD Read(PRUnichar* aBuf,
-                  PRUint32 aCount,
-                  PRUint32 *aReadCount);
-  NS_IMETHOD ReadSegments(nsWriteUnicharSegmentFun aWriter,
-                          void* aClosure,
-                          PRUint32 aCount,
-                          PRUint32 *aReadCount);
-  NS_IMETHOD Close();
+  NS_DECL_NSIUNICHARINPUTSTREAM
 
 private:
   ~UTF8InputStream();
@@ -247,23 +262,23 @@ nsresult UTF8InputStream::Read(PRUnichar* aBuf,
                                PRUint32 *aReadCount)
 {
   NS_ASSERTION(mUnicharDataLength >= mUnicharDataOffset, "unsigned madness");
-  PRUint32 rv = mUnicharDataLength - mUnicharDataOffset;
+  PRUint32 readCount = mUnicharDataLength - mUnicharDataOffset;
   nsresult errorCode;
-  if (0 == rv) {
+  if (0 == readCount) {
     // Fill the unichar buffer
-    rv = Fill(&errorCode);
-    if (rv <= 0) {
+    readCount = Fill(&errorCode);
+    if (readCount <= 0) {
       *aReadCount = 0;
       return errorCode;
     }
   }
-  if (rv > aCount) {
-    rv = aCount;
+  if (readCount > aCount) {
+    readCount = aCount;
   }
   memcpy(aBuf, mUnicharData->GetBuffer() + mUnicharDataOffset,
-         rv * sizeof(PRUnichar));
-  mUnicharDataOffset += rv;
-  *aReadCount = rv;
+         readCount * sizeof(PRUnichar));
+  mUnicharDataOffset += readCount;
+  *aReadCount = readCount;
   return NS_OK;
 }
 
@@ -309,6 +324,35 @@ UTF8InputStream::ReadSegments(nsWriteUnicharSegmentFun aWriter,
   
   return NS_OK;
 }
+
+NS_IMETHODIMP
+UTF8InputStream::ReadString(PRUint32 aCount, nsAString& aString,
+                            PRUint32* aReadCount)
+{
+  NS_ASSERTION(mUnicharDataLength >= mUnicharDataOffset, "unsigned madness");
+  PRUint32 readCount = mUnicharDataLength - mUnicharDataOffset;
+  nsresult errorCode;
+  if (0 == readCount) {
+    // Fill the unichar buffer
+    readCount = Fill(&errorCode);
+    if (readCount <= 0) {
+      *aReadCount = 0;
+      return errorCode;
+    }
+  }
+  if (readCount > aCount) {
+    readCount = aCount;
+  }
+  const PRUnichar* buf = NS_REINTERPRET_CAST(const PRUnichar*, 
+                                             mUnicharData->GetBuffer() +
+                                             mUnicharDataOffset);
+  aString.Assign(buf, readCount);
+
+  mUnicharDataOffset += readCount;
+  *aReadCount = readCount;
+  return NS_OK;
+}
+
 
 PRInt32 UTF8InputStream::Fill(nsresult * aErrorCode)
 {

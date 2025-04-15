@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,25 +14,25 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 2001
  * the Initial Developer. All Rights Reserved.
  *
- * Original Author:
- *   Seth Spitzer <sspitzer@netscape.com>
+ * Contributor(s):
+ *   Paul Sandoz <paul.sandoz@sun.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -50,10 +50,10 @@
 #include "nsAbBaseCID.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
+#include "nsITreeColumns.h"
 
 #include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
-#include "nsIPrefBranchInternal.h"
+#include "nsIPrefBranch2.h"
 #include "nsIStringBundle.h"
 #include "nsIPrefLocalizedString.h"
 
@@ -102,7 +102,7 @@ NS_IMETHODIMP nsAbView::Close()
   mTreeSelection = nsnull;
   mSearchView = PR_FALSE;
 
-  nsresult rv = NS_OK;
+  nsresult rv;
 
   rv = RemovePrefObservers();
   NS_ENSURE_SUCCESS(rv,rv);
@@ -156,14 +156,10 @@ NS_IMETHODIMP nsAbView::GetURI(char **aURI)
 nsresult nsAbView::SetGeneratedNameFormatFromPrefs()
 {
   nsresult rv;
-  nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+  nsCOMPtr<nsIPrefBranch2> prefBranchInt(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv,rv);
 
-  nsCOMPtr<nsIPrefBranch> prefBranch;
-  rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  rv = prefBranch->GetIntPref(PREF_MAIL_ADDR_BOOK_LASTNAMEFIRST, &mGeneratedNameFormat);
+  rv = prefBranchInt->GetIntPref(PREF_MAIL_ADDR_BOOK_LASTNAMEFIRST, &mGeneratedNameFormat);
   NS_ENSURE_SUCCESS(rv, rv);
   return rv;
 }
@@ -172,18 +168,10 @@ nsresult nsAbView::AddPrefObservers()
 {
   nsresult rv;
 
-  nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  nsCOMPtr<nsIPrefBranch> prefBranch;
-  rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  nsCOMPtr<nsIPrefBranchInternal> pbi = do_QueryInterface(prefBranch, &rv);
+  nsCOMPtr<nsIPrefBranch2> pbi(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv,rv);
 
   rv = pbi->AddObserver(PREF_MAIL_ADDR_BOOK_LASTNAMEFIRST, this, PR_FALSE);
-  NS_ENSURE_SUCCESS(rv,rv);
   return rv;
 }
 
@@ -191,14 +179,7 @@ nsresult nsAbView::RemovePrefObservers()
 {
   nsresult rv;
 
-  nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  nsCOMPtr<nsIPrefBranch> prefBranch;
-  rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
-  NS_ENSURE_SUCCESS(rv,rv);
-
-  nsCOMPtr<nsIPrefBranchInternal> pbi = do_QueryInterface(prefBranch, &rv);
+  nsCOMPtr<nsIPrefBranch2> pbi(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv,rv);
 
   rv = pbi->RemoveObserver(PREF_MAIL_ADDR_BOOK_LASTNAMEFIRST, this);
@@ -226,21 +207,21 @@ NS_IMETHODIMP nsAbView::Init(const char *aURI, PRBool aSearchView, nsIAbViewList
   if (!mDirectory || mSearchView != aSearchView)
   {
     mSearchView = aSearchView;
-  rv = AddPrefObservers();
-  NS_ENSURE_SUCCESS(rv,rv);
+    rv = AddPrefObservers();
+    NS_ENSURE_SUCCESS(rv,rv);
 
-  rv = SetGeneratedNameFormatFromPrefs();
-  NS_ENSURE_SUCCESS(rv,rv);
+    rv = SetGeneratedNameFormatFromPrefs();
+    NS_ENSURE_SUCCESS(rv,rv);
 
-  nsCOMPtr <nsIRDFService> rdfService = do_GetService("@mozilla.org/rdf/rdf-service;1",&rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr <nsIRDFService> rdfService = do_GetService("@mozilla.org/rdf/rdf-service;1",&rv);
+    NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr <nsIRDFResource> resource;
-  rv = rdfService->GetResource(nsDependentCString(aURI), getter_AddRefs(resource));
-  NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr <nsIRDFResource> resource;
+    rv = rdfService->GetResource(nsDependentCString(aURI), getter_AddRefs(resource));
+    NS_ENSURE_SUCCESS(rv, rv);
 
-  mDirectory = do_QueryInterface(resource, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+    mDirectory = do_QueryInterface(resource, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
   else
   {
@@ -280,7 +261,7 @@ NS_IMETHODIMP nsAbView::Init(const char *aURI, PRBool aSearchView, nsIAbViewList
   NS_ENSURE_SUCCESS(rv,rv);
 
   // this listener cares about all events
-  rv = abSession->AddAddressBookListener(this, nsIAbListener::all);
+  rv = abSession->AddAddressBookListener(this, nsIAddrBookSession::all);
   NS_ENSURE_SUCCESS(rv,rv);
   
   if (mAbViewListener && !mSuppressCountChange) {
@@ -364,13 +345,15 @@ NS_IMETHODIMP nsAbView::GetRowProperties(PRInt32 index, nsISupportsArray *proper
     return NS_OK;
 }
 
-NS_IMETHODIMP nsAbView::GetCellProperties(PRInt32 row, const PRUnichar *colID, nsISupportsArray *properties)
+NS_IMETHODIMP nsAbView::GetCellProperties(PRInt32 row, nsITreeColumn* col, nsISupportsArray *properties)
 {
   NS_ENSURE_TRUE(row >= 0, NS_ERROR_UNEXPECTED);
 
   if (mCards.Count() <= row)
     return NS_OK;
 
+  const PRUnichar* colID;
+  col->GetIdConst(&colID);
   // "G" == "GeneratedName"
   if (colID[0] != PRUnichar('G'))
     return NS_OK;
@@ -389,7 +372,7 @@ NS_IMETHODIMP nsAbView::GetCellProperties(PRInt32 row, const PRUnichar *colID, n
   return NS_OK;
 }
 
-NS_IMETHODIMP nsAbView::GetColumnProperties(const PRUnichar *colID, nsIDOMElement *colElt, nsISupportsArray *properties)
+NS_IMETHODIMP nsAbView::GetColumnProperties(nsITreeColumn* col, nsISupportsArray *properties)
 {
     return NS_OK;
 }
@@ -421,12 +404,7 @@ NS_IMETHODIMP nsAbView::IsSorted(PRBool *_retval)
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsAbView::CanDropOn(PRInt32 index, PRBool *_retval)
-{
-    return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP nsAbView::CanDropBeforeAfter(PRInt32 index, PRBool before, PRBool *_retval)
+NS_IMETHODIMP nsAbView::CanDrop(PRInt32 index, PRInt32 orientation, PRBool *_retval)
 {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -453,17 +431,17 @@ NS_IMETHODIMP nsAbView::GetLevel(PRInt32 index, PRInt32 *_retval)
   return NS_OK;
 }
 
-NS_IMETHODIMP nsAbView::GetImageSrc(PRInt32 row, const PRUnichar *colID, nsAString& _retval)
+NS_IMETHODIMP nsAbView::GetImageSrc(PRInt32 row, nsITreeColumn* col, nsAString& _retval)
 {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsAbView::GetProgressMode(PRInt32 row, const PRUnichar *colID, PRInt32* _retval)
+NS_IMETHODIMP nsAbView::GetProgressMode(PRInt32 row, nsITreeColumn* col, PRInt32* _retval)
 {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsAbView::GetCellValue(PRInt32 row, const PRUnichar *colID, nsAString& _retval)
+NS_IMETHODIMP nsAbView::GetCellValue(PRInt32 row, nsITreeColumn* col, nsAString& _retval)
 {
   return NS_OK;
 }
@@ -514,9 +492,9 @@ nsresult nsAbView::RefreshTree()
   // if neither the primary nor the secondary sorts are GeneratedName (or kPhoneticNameColumn), 
   // all we have to do is invalidate (to show the new GeneratedNames), 
   // but the sort will not change.
-  if (mSortColumn.Equals(NS_LITERAL_STRING(GENERATED_NAME_COLUMN_ID)) ||
-      mSortColumn.Equals(NS_LITERAL_STRING(kPriEmailColumn)) ||
-      mSortColumn.Equals(NS_LITERAL_STRING(kPhoneticNameColumn))) {
+  if (mSortColumn.EqualsLiteral(GENERATED_NAME_COLUMN_ID) ||
+      mSortColumn.EqualsLiteral(kPriEmailColumn) ||
+      mSortColumn.EqualsLiteral(kPhoneticNameColumn)) {
     rv = SortBy(mSortColumn.get(), mSortDirection.get());
   }
   else {
@@ -526,12 +504,14 @@ nsresult nsAbView::RefreshTree()
   return rv;
 }
 
-NS_IMETHODIMP nsAbView::GetCellText(PRInt32 row, const PRUnichar *colID, nsAString& _retval)
+NS_IMETHODIMP nsAbView::GetCellText(PRInt32 row, nsITreeColumn* col, nsAString& _retval)
 {
-  NS_ENSURE_TRUE(row >= 0, NS_ERROR_UNEXPECTED);
+  NS_ENSURE_TRUE(row >= 0 && row < mCards.Count(), NS_ERROR_UNEXPECTED);
 
   nsIAbCard *card = ((AbCard *)(mCards.ElementAt(row)))->card;
   // XXX fix me by converting GetCardValue to take an nsAString&
+  const PRUnichar* colID;
+  col->GetIdConst(&colID);
   nsXPIDLString cellText;
   nsresult rv = GetCardValue(card, colID, getter_Copies(cellText));
   _retval.Assign(cellText);
@@ -549,7 +529,7 @@ NS_IMETHODIMP nsAbView::ToggleOpenState(PRInt32 index)
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsAbView::CycleHeader(const PRUnichar *colID, nsIDOMElement *elt)
+NS_IMETHODIMP nsAbView::CycleHeader(nsITreeColumn* col)
 {
   return NS_OK;
 }
@@ -574,17 +554,22 @@ NS_IMETHODIMP nsAbView::SelectionChanged()
   return NS_OK;
 }
 
-NS_IMETHODIMP nsAbView::CycleCell(PRInt32 row, const PRUnichar *colID)
+NS_IMETHODIMP nsAbView::CycleCell(PRInt32 row, nsITreeColumn* col)
 {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsAbView::IsEditable(PRInt32 row, const PRUnichar *colID, PRBool *_retval)
+NS_IMETHODIMP nsAbView::IsEditable(PRInt32 row, nsITreeColumn* col, PRBool* _retval)
 {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsAbView::SetCellText(PRInt32 row, const PRUnichar *colID, const PRUnichar *value)
+NS_IMETHODIMP nsAbView::SetCellValue(PRInt32 row, nsITreeColumn* col, const nsAString& value)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP nsAbView::SetCellText(PRInt32 row, nsITreeColumn* col, const nsAString& value)
 {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -599,7 +584,7 @@ NS_IMETHODIMP nsAbView::PerformActionOnRow(const PRUnichar *action, PRInt32 row)
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsAbView::PerformActionOnCell(const PRUnichar *action, PRInt32 row, const PRUnichar *colID)
+NS_IMETHODIMP nsAbView::PerformActionOnCell(const PRUnichar *action, PRInt32 row, nsITreeColumn* col)
 {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -852,7 +837,7 @@ NS_IMETHODIMP nsAbView::Observe(nsISupports *aSubject, const char *aTopic, const
   if (!nsCRT::strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID)) {
     nsDependentString prefName(someData);
     
-    if (prefName.Equals(NS_LITERAL_STRING(PREF_MAIL_ADDR_BOOK_LASTNAMEFIRST))) {
+    if (prefName.EqualsLiteral(PREF_MAIL_ADDR_BOOK_LASTNAMEFIRST)) {
       rv = SetGeneratedNameFormatFromPrefs();
       NS_ENSURE_SUCCESS(rv,rv);
 
@@ -1184,27 +1169,23 @@ NS_IMETHODIMP nsAbView::SwapFirstNameLastName()
   PRBool displayNameAutoGeneration;
   PRBool displayNameLastnamefirst = PR_FALSE;
 
-  nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+  nsCOMPtr<nsIPrefBranch2> pPrefBranchInt(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIPrefBranch> prefBranch;
-  rv = prefs->GetBranch(nsnull, getter_AddRefs(prefBranch));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = prefBranch->GetBoolPref(PREF_MAIL_ADDR_BOOK_DISPLAYNAME_AUTOGENERATION, &displayNameAutoGeneration);
+  rv = pPrefBranchInt->GetBoolPref(PREF_MAIL_ADDR_BOOK_DISPLAYNAME_AUTOGENERATION, &displayNameAutoGeneration);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIStringBundle> bundle;
   if (displayNameAutoGeneration)
   {
     nsCOMPtr<nsIPrefLocalizedString> pls;
-    rv = prefBranch->GetComplexValue(PREF_MAIL_ADDR_BOOK_DISPLAYNAME_LASTNAMEFIRST,
-                    NS_GET_IID(nsIPrefLocalizedString), getter_AddRefs(pls));
+    rv = pPrefBranchInt->GetComplexValue(PREF_MAIL_ADDR_BOOK_DISPLAYNAME_LASTNAMEFIRST,
+                                         NS_GET_IID(nsIPrefLocalizedString), getter_AddRefs(pls));
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsXPIDLString str;
     pls->ToString(getter_Copies(str));
-    displayNameLastnamefirst = str.Equals(NS_LITERAL_STRING("true"));
+    displayNameLastnamefirst = str.EqualsLiteral("true");
     nsCOMPtr<nsIStringBundleService> bundleService = do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
 

@@ -195,7 +195,7 @@ function createShortcuts()
 
     /* log this so if the user turns on turbo mode in the browser the uninstaller will undo it */
 
-    logComment( "store registry value string: HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run [Mozilla Quick Launch]");
+    logComment( "store registry value string: HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run [SeaMonkey Quick Launch]");
     if (regvalue && regvalue != undefined && regvalue.length != 0) 
     {
         var value = new String(regvalue);
@@ -208,7 +208,7 @@ function createShortcuts()
                 turboarg = value.slice(index2 + 1, index2 + 2);
                 winreg.setRootKey(winreg.HKEY_CURRENT_USER);
                 subkey = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-                valname = "Mozilla Quick Launch";
+                valname = "SeaMonkey Quick Launch";
                 if ( turboarg == "Y" || turboarg == "y") 
                 {
                     fTemp = fileExe;
@@ -278,7 +278,7 @@ function registerMainKeys(winreg)
   // "SOFTWARE\\Mozilla" must not be localized!
   subkey  = "SOFTWARE\\Mozilla\\$ProductName$ $UserAgentShort$";
   winreg.createKey(subkey,"");
-  err     = winreg.setValueString(subkey, "GeckoVer", "1.0.1");
+  err     = winreg.setValueString(subkey, "GeckoVer", "$GreVersion$");
 
   subkey  = "SOFTWARE\\Mozilla\\$ProductName$ $UserAgentShort$\\Extensions";
   winreg.createKey(subkey,"");
@@ -389,6 +389,7 @@ function upgradeCleanup()
   deleteThisFile("Program",    "defaults/pref/initpref.js");
   deleteThisFile("Program",    "defaults/pref/psm-glue.js");
   deleteThisFile("Program",    "defaults/pref/typeaheadfind.js");
+  deleteThisFile("Program",    "defaults/pref/bug307259.js");
   deleteThisFile("Program",    "defaults/wallet/URLFieldSchema.tbl");
   deleteThisFile("Program",    "res/samples/collapsing.css");
   deleteThisFile("Program",    "res/samples/collapsing.xul");
@@ -443,6 +444,8 @@ function upgradeCleanup()
   deleteThisFile("Components", "xpti.dat");
   deleteThisFile("Components", "xptitemp.dat");
   deleteThisFile("Chrome",     "chrome.rdf");
+  deleteThisFile("Chrome",     "overlays.rdf");
+  deleteThisFile("Chrome",     "stylesheets.rdf");
   deleteThisFile("Chrome",     "forms.jar");
   deleteThisFile("Chrome",     "typeaheadfind.jar");
   deleteThisFolder("Chrome",   "overlayinfo");
@@ -473,6 +476,7 @@ function upgradeCleanup()
     deleteThisFile("Program",    "softokn3.dll");
     deleteThisFile("Program",    "ssl3.dll");
     deleteThisFile("Program",    "xpcom.dll");
+    deleteThisFile("Program",    "xpcom_core.dll");
     deleteThisFile("Program",    "xpistub.dll");
     deleteThisFile("Program",    "zlib.dll");
     deleteThisFile("Program",    "mozz.dll");
@@ -498,6 +502,7 @@ function upgradeCleanup()
     deleteThisFile("Components", "jar.xpt");
     deleteThisFile("Components", "jsurl.xpt");
     deleteThisFile("Components", "layout_base.xpt");
+    deleteThisFile("Components", "layout_printing.xpt");
     deleteThisFile("Components", "layout_xul.xpt");
     deleteThisFile("Components", "locale.xpt");
     deleteThisFile("Components", "necko_about.xpt");
@@ -656,7 +661,9 @@ if(verifyDiskSpace(fProgram, srDest))
     registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/wallet/");
     registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","content-packs.jar"), "content/content-packs/");
     registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/communicator/");
+    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/communicator/downloadmanager/");
     registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/communicator-region/");
+    registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/branding/");
     registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/editor/");
     registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/editor-region/");
     registerChrome(CONTENT | DELAYED_CHROME, getFolder("Chrome","comm.jar"),"content/navigator/");
@@ -704,27 +711,8 @@ if(verifyDiskSpace(fProgram, srDest))
     logComment("Create Folder: " + fProgram + "chrome");
     logComment("Installing: "    + fProgram + "chrome\\installed-chrome.txt");
     logComment("Installing: "    + fProgram + "chrome\\chrome.rdf");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\cookie");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\cookie\\content");
-    logComment("Installing: "    + fProgram + "chrome\\overlayinfo\\cookie\\content\\overlays.rdf");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\inspector");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\inspector\\content");
-    logComment("Installing: "    + fProgram + "chrome\\overlayinfo\\inspector\\content\\overlays.rdf");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\communicator");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\communicator\\content");
-    logComment("Installing: "    + fProgram + "chrome\\overlayinfo\\communicator\\content\\overlays.rdf");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\editor");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\editor\\content");
-    logComment("Installing: "    + fProgram + "chrome\\overlayinfo\\editor\\content\\overlays.rdf");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\messenger");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\messenger\\content");
-    logComment("Installing: "    + fProgram + "chrome\\overlayinfo\\messenger\\content\\overlays.rdf");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\navigator");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\navigator\\content");
-    logComment("Installing: "    + fProgram + "chrome\\overlayinfo\\navigator\\content\\overlays.rdf");
-    logComment("Create Folder: " + fProgram + "chrome\\overlayinfo\\navigator\\skin");
-    logComment("Installing: "    + fProgram + "chrome\\overlayinfo\\navigator\\skin\\stylesheets.rdf");
+    logComment("Installing: "    + fProgram + "chrome\\overlays.rdf");
+    logComment("Installing: "    + fProgram + "chrome\\stylesheets.rdf");
 
     err = getLastError();
     if (err == SUCCESS)

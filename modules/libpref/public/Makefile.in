@@ -32,6 +32,7 @@ GRE_MODULE	= 1
 SDK_XPIDLSRCS   = \
               nsIPrefService.idl \
               nsIPrefBranch.idl \
+              nsIPrefBranch2.idl \
               nsIPrefLocalizedString.idl \
               $(NULL)
 
@@ -41,6 +42,10 @@ XPIDLSRCS	= \
               nsISecurityPref.idl \
               nsIRelativeFilePref.idl \
               $(NULL)
+
+EXPORTS = \
+          nsPrefsCID.h \
+          $(NULL)
 
 include $(topsrcdir)/config/rules.mk
 

@@ -1,10 +1,10 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ----- BEGIN LICENSE BLOCK -----
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -14,27 +14,27 @@
  *
  * The Original Code is the Mozilla SVG project.
  *
- * The Initial Developer of the Original Code is Alex Fritze.
- * 
+ * The Initial Developer of the Original Code is
+ * Alex Fritze.
  * Portions created by the Initial Developer are Copyright (C) 2002
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *    Alex Fritze <alex@croczilla.com> (original author)
+ *   Alex Fritze <alex@croczilla.com> (original author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
- * ----- END LICENSE BLOCK ----- */
+ * ***** END LICENSE BLOCK ***** */
 
 
 #include "nsCOMPtr.h"
@@ -44,7 +44,7 @@
 #include "nsIRenderingContext.h"
 #include "nsIDeviceContext.h"
 #include "nsTransform2D.h"
-#include "nsIPresContext.h"
+#include "nsPresContext.h"
 #include "nsRect.h"
 #include "libart-incs.h"
 
@@ -61,7 +61,7 @@ class nsSVGLibartCanvas : public nsISVGLibartCanvas
 public:
   nsSVGLibartCanvas();
   ~nsSVGLibartCanvas();
-  nsresult Init(nsIRenderingContext* ctx, nsIPresContext* presContext,
+  nsresult Init(nsIRenderingContext* ctx, nsPresContext* presContext,
                 const nsRect & dirtyRect);
 
   // nsISupports interface:
@@ -78,7 +78,7 @@ public:
   
 private:
   nsCOMPtr<nsIRenderingContext> mRenderingContext;
-  nsCOMPtr<nsIPresContext> mPresContext;
+  nsCOMPtr<nsPresContext> mPresContext;
   nsCOMPtr<nsISVGLibartBitmap> mBitmap;
   nsRect mDirtyRect;
 
@@ -99,7 +99,7 @@ nsSVGLibartCanvas::~nsSVGLibartCanvas()
 
 nsresult
 nsSVGLibartCanvas::Init(nsIRenderingContext* ctx,
-                        nsIPresContext* presContext,
+                        nsPresContext* presContext,
                         const nsRect & dirtyRect)
 {
   mPresContext = presContext;
@@ -121,7 +121,7 @@ nsSVGLibartCanvas::Init(nsIRenderingContext* ctx,
 nsresult
 NS_NewSVGLibartCanvas(nsISVGRendererCanvas **result,
                       nsIRenderingContext *ctx,
-                      nsIPresContext *presContext,
+                      nsPresContext *presContext,
                       const nsRect & dirtyRect)
 {
   nsSVGLibartCanvas* pg = new nsSVGLibartCanvas();
@@ -175,9 +175,9 @@ nsSVGLibartCanvas::UnlockRenderingContext()
   return NS_OK;
 }
 
-/** Implements nsIPresContext getPresContext(); */
+/** Implements nsPresContext getPresContext(); */
 NS_IMETHODIMP
-nsSVGLibartCanvas::GetPresContext(nsIPresContext **_retval)
+nsSVGLibartCanvas::GetPresContext(nsPresContext **_retval)
 {
   *_retval = mPresContext;
   NS_IF_ADDREF(*_retval);
@@ -218,11 +218,33 @@ nsSVGLibartCanvas::Clear(nscolor color)
     case nsISVGLibartBitmap::PIXEL_FORMAT_32_ABGR:
     {
       NS_ASSERTION(mBitmap->GetLineStride() == 4*mBitmap->GetWidth(), "strange pixel format");
-      PRUint32 pixel = (blue<<16)+(green<<8)+red;
+      PRUint32 pixel = (blue<<24)+(green<<16)+(red<<8)+0xff;
       PRUint32 *dest = (PRUint32*)mBitmap->GetBits();
       PRUint32 *end  = dest+mBitmap->GetWidth()*mBitmap->GetHeight();
       while (dest!=end)
         *dest++ = pixel;
+      break;
+    }
+    case nsISVGLibartBitmap::PIXEL_FORMAT_32_RGBA:
+    {
+      PRInt32 stride = mBitmap->GetLineStride();
+      PRInt32 width  = mBitmap->GetWidth();
+      PRUint8* buf = mBitmap->GetBits();
+      PRUint8* end = buf + stride*mBitmap->GetHeight();
+      for ( ; buf<end; buf += stride) {
+        art_rgb_run_alpha(buf, red, green, blue, 0x100, width);
+      }
+      break;
+    }
+    case nsISVGLibartBitmap::PIXEL_FORMAT_32_BGRA:
+    {
+      PRInt32 stride = mBitmap->GetLineStride();
+      PRInt32 width  = mBitmap->GetWidth();
+      PRUint8* buf = mBitmap->GetBits();
+      PRUint8* end = buf + stride*mBitmap->GetHeight();
+      for ( ; buf<end; buf += stride) {
+        art_rgb_run_alpha(buf, blue, green, red, 0x100, width);
+      }
       break;
     }
     default:
@@ -246,6 +268,15 @@ nsSVGLibartCanvas::Flush()
 NS_IMETHODIMP_(ArtRender*)
 nsSVGLibartCanvas::NewRender()
 {
+  ArtAlphaType alphaType = ART_ALPHA_NONE;
+
+  if (mBitmap->GetPixelFormat()==nsISVGLibartBitmap::PIXEL_FORMAT_32_ABGR ||
+      mBitmap->GetPixelFormat()==nsISVGLibartBitmap::PIXEL_FORMAT_32_RGBA ||
+      mBitmap->GetPixelFormat()==nsISVGLibartBitmap::PIXEL_FORMAT_32_BGRA)
+  {
+      alphaType = ART_ALPHA_SEPARATE;
+  }
+
   return art_render_new(mDirtyRect.x, mDirtyRect.y, // x0,y0
                         mDirtyRect.x+mDirtyRect.width, // x1
                         mDirtyRect.y+mDirtyRect.height, // y1
@@ -253,7 +284,7 @@ nsSVGLibartCanvas::NewRender()
                         mBitmap->GetLineStride(), // rowstride
                         3, // n_chan
                         8, // depth
-                        mBitmap->GetPixelFormat()==nsISVGLibartBitmap::PIXEL_FORMAT_32_ABGR ? ART_ALPHA_SEPARATE : ART_ALPHA_NONE, // alpha_type
+                        alphaType, // alpha_type
                         NULL //alphagamma
                         );
 }
@@ -276,12 +307,21 @@ nsSVGLibartCanvas::NewRender(int x0, int y0, int x1, int y1)
 
   int offset = 3*(rx0-mDirtyRect.x) + mBitmap->GetLineStride()*(ry0-mDirtyRect.y);
   
+  ArtAlphaType alphaType = ART_ALPHA_NONE;
+
+  if (mBitmap->GetPixelFormat()==nsISVGLibartBitmap::PIXEL_FORMAT_32_ABGR ||
+      mBitmap->GetPixelFormat()==nsISVGLibartBitmap::PIXEL_FORMAT_32_RGBA ||
+      mBitmap->GetPixelFormat()==nsISVGLibartBitmap::PIXEL_FORMAT_32_BGRA)
+  {
+      alphaType = ART_ALPHA_SEPARATE;
+  }
+
   return art_render_new(rx0, ry0, rx1, ry1,
                         mBitmap->GetBits()+offset, // pixels
                         mBitmap->GetLineStride(),  // rowstride
                         3, // n_chan
                         8, // depth
-                        mBitmap->GetPixelFormat()==nsISVGLibartBitmap::PIXEL_FORMAT_32_ABGR ? ART_ALPHA_SEPARATE : ART_ALPHA_NONE, // alpha_type
+                        alphaType, // alpha_type
                         NULL //alphagamma
                         );
 }
@@ -297,23 +337,98 @@ nsSVGLibartCanvas::GetArtColor(nscolor rgb, ArtColor& artColor)
 {
   switch (mBitmap->GetPixelFormat()) {
     case nsISVGLibartBitmap::PIXEL_FORMAT_24_RGB:
+    case nsISVGLibartBitmap::PIXEL_FORMAT_32_RGBA:
       artColor[0] = ART_PIX_MAX_FROM_8(NS_GET_R(rgb));
       artColor[1] = ART_PIX_MAX_FROM_8(NS_GET_G(rgb));
       artColor[2] = ART_PIX_MAX_FROM_8(NS_GET_B(rgb));
       break;
     case nsISVGLibartBitmap::PIXEL_FORMAT_24_BGR:
+    case nsISVGLibartBitmap::PIXEL_FORMAT_32_ABGR:
+    case nsISVGLibartBitmap::PIXEL_FORMAT_32_BGRA:
       artColor[0] = ART_PIX_MAX_FROM_8(NS_GET_B(rgb));
       artColor[1] = ART_PIX_MAX_FROM_8(NS_GET_G(rgb));
       artColor[2] = ART_PIX_MAX_FROM_8(NS_GET_R(rgb));
-      break;
-    case nsISVGLibartBitmap::PIXEL_FORMAT_32_ABGR:
-      artColor[3] = ART_PIX_MAX_FROM_8(NS_GET_R(rgb));
-      artColor[2] = ART_PIX_MAX_FROM_8(NS_GET_G(rgb));
-      artColor[1] = ART_PIX_MAX_FROM_8(NS_GET_B(rgb));
       break;
     default:
       NS_ERROR("unknown pixel format");
       break;
   }
+}
+
+NS_IMETHODIMP
+nsSVGLibartCanvas::GetRenderMode(PRUint16 *aMode)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsSVGLibartCanvas::SetRenderMode(PRUint16 mode)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+/** Implements void flush(); */
+NS_IMETHODIMP
+nsSVGLibartCanvas::PushClip()
+{
+  // XXX
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+/** Implements pushClip(); */
+NS_IMETHODIMP
+nsSVGLibartCanvas::PopClip()
+{
+  // XXX
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+/** Implements setClipRect(in nsIDOMSVGMatrix canvasTM, in float x, in float y,
+    in float width, in float height); */
+NS_IMETHODIMP
+nsSVGLibartCanvas::SetClipRect(nsIDOMSVGMatrix *aCTM, float aX, float aY,
+                               float aWidth, float aHeight)
+{
+  // XXX
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+
+/** Implements pushSurface(in nsISVGRendereerSurface surface); */
+NS_IMETHODIMP
+nsSVGLibartCanvas::PushSurface(nsISVGRendererSurface *aSurface)
+{
+  // XXX
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+/** Implements popSurface(); */
+NS_IMETHODIMP
+nsSVGLibartCanvas::PopSurface()
+{
+  // XXX
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+/** Implements  void compositeSurface(in nsISVGRendererSurface surface,
+                                      in unsigned long x, in unsigned long y,
+                                      in float opacity); */
+NS_IMETHODIMP
+nsSVGLibartCanvas::CompositeSurface(nsISVGRendererSurface *aSurface,
+                                    PRUint32 aX, PRUint32 aY, float aOpacity)
+{
+  // XXX
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+/** Implements  void compositeSurface(in nsISVGRendererSurface surface,
+                                      in nsIDOMSVGMatrix canvasTM,
+                                      in float opacity); */
+NS_IMETHODIMP
+nsSVGLibartCanvas::CompositeSurfaceMatrix(nsISVGRendererSurface *aSurface,
+                                          nsIDOMSVGMatrix *aCTM, float aOpacity)
+{
+  // XXX
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 

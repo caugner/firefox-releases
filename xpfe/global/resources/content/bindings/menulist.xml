@@ -6,7 +6,7 @@
    xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
    xmlns:xbl="http://www.mozilla.org/xbl">
 
-  <binding id="menulist-base">
+  <binding id="menulist-base" extends="chrome://global/content/bindings/general.xml#basecontrol">
     <resources>
       <stylesheet src="chrome://global/skin/menulist.css"/>
     </resources>
@@ -35,6 +35,14 @@
             this.menuBoxObject.activeChild = this.selectedInternal;
         ]]>
       </handler>
+
+      <handler event="keypress" phase="target">
+        <![CDATA[
+          this.menuBoxObject.activeChild = this.selectedInternal;
+          if (this.menuBoxObject.handleKeyPress(event))
+            this.menuBoxObject.activeChild.doCommand();
+        ]]>
+      </handler>
     </handlers>
 
     <implementation implements="nsIDOMXULMenuListElement, nsIAccessibleProvider">
@@ -49,10 +57,10 @@
             if (popup) {
               var arr = popup.getElementsByAttribute('selected', 'true');
 
-              if (!arr.length && this.value)
+              if (!arr.item(0) && this.value)
                 arr = popup.getElementsByAttribute('value', this.value);
                 
-              if (arr.length)
+              if (arr.item(0))
                 this.selectedItem = arr[0];
               else
                 this.selectedIndex = 0;
@@ -69,7 +77,7 @@
             if (popup)
               arr = popup.getElementsByAttribute('value', val);
 
-            if (arr && arr.length)
+            if (arr && arr.item(0))
               this.selectedItem = arr[0];
             else
               this.setAttribute('value', val);
@@ -83,12 +91,9 @@
                             onget="return this.getAttribute('crop');"/>
       <property name="src"  onset="this.setAttribute('src',val); return val;"
                             onget="return this.getAttribute('src');"/>
-      <property name="label" onset="this.setAttribute('label',val); return val;"
-                             onget="return this.getAttribute('label');"/>
-      <property name="disabled" onset="if (val) this.setAttribute('disabled',true); 
-                                       else this.removeAttribute('disabled');
-                                       return val;"
-                                onget="return this.hasAttribute('disabled');"/>
+      <property name="label" readonly="true" onget="return this.getAttribute('label');"/>
+      <property name="description" onset="this.setAttribute('description',val); return val;"
+                             onget="return this.getAttribute('description');"/>
 
       <property name="open" onset="this.menuBoxObject.openMenu(val);
                                    return val;"
@@ -162,6 +167,7 @@
               this.removeAttribute('value');
               this.removeAttribute('src');
               this.removeAttribute('label');
+              this.removeAttribute('description');
               return val;
             }
              
@@ -170,7 +176,12 @@
             this.setAttribute('value', val.getAttribute('value'));
             this.setAttribute('src', val.getAttribute('src'));
             this.setAttribute('label', val.getAttribute('label'));
+            this.setAttribute('description', val.getAttribute('description'));
 
+            var event = document.createEvent("Events");
+            event.initEvent("ValueChange", true, true);
+            this.dispatchEvent(event);
+            
             return val;
           ]]>
         </setter>
@@ -179,6 +190,7 @@
       <method name="appendItem">
         <parameter name="label"/>
         <parameter name="value"/>
+        <parameter name="description"/>
         <body>
         <![CDATA[
           const XULNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
@@ -187,6 +199,9 @@
           var item = document.createElementNS(XULNS, "menuitem");
           item.setAttribute("label", label);
           item.setAttribute("value", value);
+          if (description)
+            item.setAttribute("description", description);
+
           popup.appendChild(item);
           return item;
         ]]>
@@ -197,6 +212,7 @@
         <parameter name="index"/>
         <parameter name="label"/>
         <parameter name="value"/>
+        <parameter name="description"/>
         <body>
         <![CDATA[
           const XULNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
@@ -205,6 +221,9 @@
           var item = document.createElementNS(XULNS, "menuitem");
           item.setAttribute("label", label);
           item.setAttribute("value", value);
+          if (description)
+            item.setAttribute("description", description);
+
           if (index < popup.childNodes.length)
             popup.insertBefore(item, popup.childNodes[index]);
           else
@@ -255,7 +274,7 @@
     <content sizetopopup="pref">
       <xul:hbox class="menulist-editable-box textbox-input-box" xbl:inherits="context" flex="1">
         <html:input class="menulist-editable-input" flex="1" anonid="input" allowevents="true"
-                    xbl:inherits="value=label,disabled"/>
+                    xbl:inherits="value=label,disabled,tabindex"/>
       </xul:hbox>
       <xul:dropmarker class="menulist-dropmarker" type="menu"/>
       <children includes="menupopup"/>
@@ -279,10 +298,7 @@
           if (popup)
             arr = popup.getElementsByAttribute('label', this.inputField.value);
 
-          if (arr && arr.length)
-            this.setSelectionInternal(arr[0]);
-          else
-            this.setSelectionInternal(null);
+          this.setSelectionInternal(arr ? arr.item(0) : null);
         ]]>
         </body>
       </method>
@@ -439,5 +455,17 @@
       <children includes="menupopup"/>
     </content>
   </binding>
-  
+
+  <binding id="menulist-description" display="xul:menu" 
+           extends="chrome://global/content/bindings/menulist.xml#menulist">
+    <content sizetopopup="pref">
+      <xul:hbox class="menulist-label-box" flex="1">
+        <xul:image class="menulist-icon" xbl:inherits="src"/>
+        <xul:label class="menulist-label" xbl:inherits="value=label,crop,accesskey" crop="right" flex="1"/>
+        <xul:label class="menulist-label menulist-description" xbl:inherits="value=description" crop="right" flex="10000"/>
+      </xul:hbox>
+      <xul:dropmarker class="menulist-dropmarker" type="menu"/>
+      <children includes="menupopup"/>
+    </content>
+  </binding>
 </bindings>

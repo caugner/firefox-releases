@@ -1,6 +1,6 @@
-/Makefile.in/1.4/Tue Dec  9 05:55:02 2003//TFIREFOX_1_0_RELEASE
-/nsDownloadManager.cpp/1.26.2.2.2.3/Mon Oct  4 07:04:22 2004//TFIREFOX_1_0_RELEASE
-/nsDownloadManager.h/1.9.2.1/Thu May  6 03:37:10 2004//TFIREFOX_1_0_RELEASE
-/nsDownloadProxy.h/1.6.10.1/Thu May  6 03:37:10 2004//TFIREFOX_1_0_RELEASE
-/old.cpp/1.2/Thu Nov 27 00:51:37 2003//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.10.2.1/Fri Sep 16 19:51:37 2005//TFIREFOX_1_5_RELEASE
+/nsDownloadManager.cpp/1.53.2.2/Fri Sep 16 19:51:37 2005//TFIREFOX_1_5_RELEASE
+/nsDownloadManager.h/1.17.4.1/Fri Sep 16 19:51:37 2005//TFIREFOX_1_5_RELEASE
+/nsDownloadProxy.h/1.15/Wed Jul  6 23:32:10 2005//TFIREFOX_1_5_RELEASE
+/old.cpp/1.2/Thu Nov 27 00:51:37 2003//TFIREFOX_1_5_RELEASE
 D

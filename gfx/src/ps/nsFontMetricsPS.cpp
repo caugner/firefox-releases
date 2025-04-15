@@ -1,11 +1,10 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,26 +13,28 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
  *   Roland Mainz <roland.mainz@informatik.med.uni-giessen.de>
- *
+ *   Ervin Yan <Ervin.Yan@sun.com>
+ *   Christopher Blizzard <blizzard@mozilla.org>
+ *   Jungshik Shin <jshin@mailaps.org>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -47,21 +48,34 @@
 #include "nsIPref.h"
 #include "nsVoidArray.h"
 #include "nsReadableUtils.h"
-#ifdef MOZ_ENABLE_FREETYPE2
-#include "nsType8.h"
+#if defined(MOZ_ENABLE_FREETYPE2) || defined(MOZ_ENABLE_XFT)
+#include "nsType1.h"
 #endif
 #include "prlog.h"
 
+#ifdef MOZ_ENABLE_FREETYPE2
 #include "nsArray.h"
+#endif
+
+const PRUint16 nsPSFontGenerator::kSubFontSize = 255; 
 
 extern nsIAtom *gUsersLocale;
 #define NS_IS_BOLD(weight) ((weight) > 400 ? 1 : 0)
 
+#ifdef MOZ_ENABLE_XFT
+
+#include "nsFontConfigUtils.h"
+
+static nsFontPS* CreateFontPS(nsXftEntry*, const nsFont&,
+                              nsFontMetricsPS*);
+
+#else
 #ifdef MOZ_ENABLE_FREETYPE2
 static nsFontPS* CreateFontPS(nsITrueTypeFontCatalogEntry*, const nsFont&,
                               nsFontMetricsPS*);
 
 static NS_DEFINE_CID(kFCSCID, NS_FONTCATALOGSERVICE_CID);
+#endif
 #endif
 
 #ifdef PR_LOGGING
@@ -82,22 +96,26 @@ nsFontMetricsPS :: nsFontMetricsPS()
  */
 nsFontMetricsPS :: ~nsFontMetricsPS()
 {
-  if (nsnull != mFont){
-    delete mFont;
-    mFont = nsnull;
-  }
-  
   if (mFontsPS) {
     int i;
     for (i=0; i<mFontsPS->Count(); i++) {
       fontps *fontPS = (fontps *)mFontsPS->ElementAt(i);
       if (!fontPS)
         continue;
-      NS_IF_RELEASE(fontPS->entry);
       if (fontPS->fontps)
         delete fontPS->fontps;
+#ifdef MOZ_ENABLE_XFT
+      if (fontPS->entry)
+        delete fontPS->entry;
+      if (fontPS->charset)
+        FcCharSetDestroy(fontPS->charset);
+#else
+#ifdef MOZ_ENABLE_FREETYPE2
+      NS_IF_RELEASE(fontPS->entry);
       if (fontPS->ccmap)
         FreeCCMap(fontPS->ccmap);
+#endif
+#endif
       delete fontPS;
     }
     delete mFontsPS;
@@ -126,7 +144,8 @@ nsFontMetricsPS :: Init(const nsFont& aFont, nsIAtom* aLangGroup,
 {
   mLangGroup = aLangGroup;
 
-  mFont = new nsFont(aFont);
+  mFont = aFont;
+
   //don't addref this to avoid circular refs
   mDeviceContext = (nsDeviceContextPS *)aContext;
 
@@ -158,14 +177,14 @@ nsFontMetricsPS :: Destroy()
 void
 nsFontMetricsPS::RealizeFont()
 {
-  if (mFont && mDeviceContext) {
+  if (mDeviceContext) {
     float dev2app;
     dev2app = mDeviceContext->DevUnitsToAppUnits();
     fontps *font = (fontps*)mFontsPS->ElementAt(0);
-#ifdef MOZ_ENABLE_FREETYPE2
+#if defined(MOZ_ENABLE_FREETYPE2) || defined(MOZ_ENABLE_XFT)
     NS_ASSERTION(font && font->entry, "no font available");
     if (font && !font->fontps && font->entry)
-      font->fontps = CreateFontPS(font->entry, *mFont, this);
+      font->fontps = CreateFontPS(font->entry, mFont, this);
 #endif
     NS_ASSERTION(font && font->fontps, "no font available");
     if (font && font->fontps)
@@ -353,17 +372,6 @@ nsFontMetricsPS :: GetSpaceWidth(nscoord &aSpaceWidth)
   return NS_OK;
 }
 
-/** ---------------------------------------------------
- *  See documentation in nsFontMetricsPS.h
- *	@update 2/26/99 dwc
- */
-NS_IMETHODIMP
-nsFontMetricsPS :: GetFont(const nsFont *&aFont)
-{
-  aFont = mFont;
-  return NS_OK;
-}
-
 NS_IMETHODIMP
 nsFontMetricsPS :: GetLangGroup(nsIAtom** aLangGroup)
 {
@@ -398,12 +406,12 @@ nsFontMetricsPS :: GetStringWidth(const char *aString,nscoord& aWidth,nscoord aL
   aWidth = 0;
   if (aLength == 0)
     return NS_OK;
-  nsFontPS* fontPS = nsFontPS::FindFont(aString[0], *mFont, this);
+  nsFontPS* fontPS = nsFontPS::FindFont(aString[0], mFont, this);
   NS_ENSURE_TRUE(fontPS, NS_ERROR_FAILURE);
 
   nscoord i, start = 0;
   for (i=0; i<aLength; i++) {
-    nsFontPS* fontThisChar = nsFontPS::FindFont(aString[i], *mFont, this);
+    nsFontPS* fontThisChar = nsFontPS::FindFont(aString[i], mFont, this);
     NS_ASSERTION(fontThisChar,"failed to find a font");
     NS_ENSURE_TRUE(fontThisChar, NS_ERROR_FAILURE);
     if (fontThisChar != fontPS) {
@@ -431,12 +439,12 @@ nsFontMetricsPS :: GetStringWidth(const PRUnichar *aString,nscoord& aWidth,nscoo
   aWidth = 0;
   if (aLength == 0)
     return NS_OK;
-  nsFontPS* fontPS = nsFontPS::FindFont(aString[0], *mFont, this);
+  nsFontPS* fontPS = nsFontPS::FindFont(aString[0], mFont, this);
   NS_ENSURE_TRUE(fontPS, NS_ERROR_FAILURE);
 
   nscoord i, start = 0;
   for (i=0; i<aLength; i++) {
-    nsFontPS* fontThisChar = nsFontPS::FindFont(aString[i], *mFont, this);
+    nsFontPS* fontThisChar = nsFontPS::FindFont(aString[i], mFont, this);
     NS_ASSERTION(fontThisChar,"failed to find a font");
     NS_ENSURE_TRUE(fontThisChar, NS_ERROR_FAILURE);
     if (fontThisChar != fontPS) {
@@ -468,11 +476,15 @@ nsFontPS::FindFont(PRUnichar aChar, const nsFont& aFont,
 {
   nsFontPS* fontPS;
 
-#ifdef MOZ_ENABLE_FREETYPE2
+#if defined(MOZ_ENABLE_FREETYPE2) || defined(MOZ_ENABLE_XFT)
   nsDeviceContextPS* dc = aFontMetrics->GetDeviceContext();
   NS_ENSURE_TRUE(dc, nsnull);
   if (dc->mFTPEnable) {
+#ifdef MOZ_ENABLE_XFT
+    fontPS = nsFontPSXft::FindFont(aChar, aFont, aFontMetrics);
+#else
     fontPS = nsFontPSFreeType::FindFont(aChar, aFont, aFontMetrics);
+#endif
     if (fontPS)
       return fontPS;
   }
@@ -488,9 +500,15 @@ nsFontPS::FindFont(PRUnichar aChar, const nsFont& aFont,
     fontPS = nsFontPSAFM::FindFont(aFont, aFontMetrics);
     fontps *fps = new fontps;
     NS_ENSURE_TRUE(fps, nsnull);
-    fps->entry  = nsnull;
     fps->fontps = fontPS;
+#if defined(MOZ_ENABLE_XFT) || defined(MOZ_ENABLE_FREETYPE2) 
+    fps->entry  = nsnull;
+#ifdef MOZ_ENABLE_XFT
+    fps->charset = nsnull;
+#else
     fps->ccmap  = nsnull;
+#endif
+#endif
     aFontMetrics->GetFontsPS()->AppendElement(fps);
   }
   return fontPS;
@@ -548,7 +566,7 @@ nsFontPSAFM::nsFontPSAFM(const nsFont& aFont, nsAFMObject* aAFMInfo,
 nsFontPS(aFont, aFontMetrics), mAFMInfo(aAFMInfo), mFontIndex(fontIndex)
 {
   if (!(mFont && mAFMInfo)) return;
-  mFamilyName.AssignWithConversion((char*)mAFMInfo->mPSFontInfo->mFamilyName);
+  AppendASCIItoUTF16(mAFMInfo->mPSFontInfo->mFamilyName, mFamilyName);
 }
 
 nsFontPSAFM::~nsFontPSAFM()
@@ -693,9 +711,707 @@ nsFontPSAFM::GetBoundingMetrics(const PRUnichar*   aString,
 }
 #endif
 
-#ifdef MOZ_ENABLE_FREETYPE2
+#if defined(MOZ_ENABLE_FREETYPE2) || defined(MOZ_ENABLE_XFT)
 
 #define WIDEN_8_TO_16_BUF_SIZE 1024
+
+#ifdef MOZ_ENABLE_XFT
+
+nsXftEntry::nsXftEntry(FcPattern *aFontPattern)
+{
+  mFace = nsnull;
+  mFaceIndex = 0;
+
+  char *fcResult;
+
+  if (FcPatternGetString(aFontPattern, FC_FILE, 0, (FcChar8 **) &fcResult)
+      == FcResultMatch)     
+    mFontFileName = fcResult;
+
+  if (FcPatternGetString(aFontPattern, FC_FAMILY, 0, (FcChar8 **) &fcResult)
+      == FcResultMatch)     
+    mFamilyName = fcResult;
+
+  if (FcPatternGetString(aFontPattern, FC_STYLE, 0, (FcChar8 **) &fcResult)
+      == FcResultMatch)
+    mStyleName = fcResult;
+}
+
+
+static nsFontPS*
+CreateFontPS(nsXftEntry *aEntry, const nsFont& aFont,
+             nsFontMetricsPS* aFontMetrics)
+{
+  nsresult rv;
+  nsDeviceContextPS* dc = aFontMetrics->GetDeviceContext();
+  NS_ENSURE_TRUE(dc, nsnull);
+
+  nsCAutoString fileName(aEntry->mFontFileName);
+  nsCAutoString familyName(aEntry->mFamilyName);
+  nsCAutoString styleName(aEntry->mStyleName);
+  ToLowerCase(familyName);
+  ToLowerCase(styleName);
+  
+  nsCAutoString fontName;
+  fontName.Append(familyName);
+  fontName.Append("-");
+  fontName.Append(styleName);
+  nsCStringKey key(fontName);
+
+  nsHashtable *psFGList = dc->GetPSFontGeneratorList();
+  NS_ENSURE_TRUE(psFGList, nsnull);
+  
+  nsPSFontGenerator* psFontGen = (nsPSFontGenerator*) psFGList->Get(&key);
+  if (!psFontGen) {
+    psFontGen = new nsXftType1Generator;
+    NS_ENSURE_TRUE(psFontGen, nsnull);
+    rv = ((nsXftType1Generator*)psFontGen)->Init(aEntry);
+    if (NS_FAILED(rv)) {
+      delete psFontGen;
+      return nsnull;
+    }
+    psFGList->Put(&key, (void *) psFontGen);
+  }
+  nsFontPSXft* font = new nsFontPSXft(aFont, aFontMetrics);
+  NS_ENSURE_TRUE(font, nsnull);
+  rv = font->Init(aEntry, psFontGen);
+  if (NS_FAILED(rv)) {
+    delete font;
+    return nsnull;
+  }
+  return font;
+}
+
+/* static */
+PRBool
+nsFontPSXft::CSSFontEnumCallback(const nsString& aFamily, PRBool aIsGeneric,
+                                      void* aFpi)
+{
+    fontPSInfo *fpi = (fontPSInfo *)aFpi;
+
+
+    // fontconfig always returns family names in UTF-8 so that we
+    // should do the same here.
+    NS_ConvertUTF16toUTF8 name(aFamily);
+
+    // The newest fontconfig does the full Unicode case folding so that 
+    // we're being lazy here by calling |ToLowerCase| after converting
+    // to UTF-8  assuming that in virtually all cases, we just have to
+    // fold [A-Z].  (bug 223653). 
+    ToLowerCase(name);
+    fpi->mFontList.AppendCString(name);
+    fpi->mFontIsGeneric.AppendElement((void *)aIsGeneric);
+    if (aIsGeneric) {
+        fpi->mGenericFont =
+            fpi->mFontList.CStringAt(fpi->mFontList.Count() - 1);
+        return PR_FALSE; // stop processing
+    }
+
+    return PR_TRUE; // keep processing
+}
+
+nsFontPS*
+nsFontPSXft::FindFont(PRUnichar aChar, const nsFont& aFont, 
+                           nsFontMetricsPS* aFontMetrics)
+{
+  PRBool inited = PR_FALSE;
+  nsCOMPtr<nsIAtom> langGroup;
+  fontPSInfo fpi;
+  fpi.fontps = aFontMetrics->GetFontsPS();
+  int i = 0;
+
+  while (1) {
+    //
+    // see if it is already in the list of fonts
+    //
+    for (; i<fpi.fontps->Count(); i++) {
+      fontps *fi = (fontps *)fpi.fontps->ElementAt(i);
+      if (!fi->entry || !fi->charset) {
+        NS_ASSERTION(fi->entry, "invalid entry");
+        NS_ASSERTION(fi->charset, "invalid charset");
+        continue;
+      }
+      if (FcCharSetHasChar(fi->charset, aChar)) {
+        if (!fi->fontps) {
+#ifdef PR_LOGGING
+          if (PR_LOG_TEST(gFontMetricsPSM, PR_LOG_DEBUG)) {
+            PR_LogPrint("CreateFontPS %s/%s\n",
+                fi->entry->mFamilyName.get(), fi->entry->mStyleName.get());
+          }
+#endif
+          fi->fontps = CreateFontPS(fi->entry, aFont, aFontMetrics);
+        }
+        if (fi->fontps)
+          return fi->fontps;
+      }
+    }
+
+    // if already get all matched fonts and not found suitable
+    // then return nsnull
+    if (fpi.fontps->Count() > 0)
+      return nsnull;
+
+    //
+    // it is not already in the list of fonts
+    // so add more fonts to the list
+    //
+    if (inited)
+      return nsnull;
+ 
+    inited = PR_TRUE;
+
+    fpi.nsfont = &aFont;
+    fpi.alreadyLoaded = aFontMetrics->GetFontsAlreadyLoadedList();
+    fpi.mGenericFont = nsnull;
+
+    aFontMetrics->GetLangGroup(getter_AddRefs(langGroup));
+    if (!langGroup)
+      langGroup = NS_NewAtom("x-western");
+
+    // enumerate over the font names passed in
+    aFont.EnumerateFamilies(nsFontPSXft::CSSFontEnumCallback, &fpi);
+
+    nsCOMPtr<nsIPref> prefService;
+    prefService = do_GetService(NS_PREF_CONTRACTID);
+    if (!prefService)
+      return nsnull;
+
+    nsXPIDLCString value;
+    nsCAutoString  defaultFont;
+
+    nsAutoString langGroupStr;
+    langGroup->ToString(langGroupStr);
+
+    // Set up the default font name if it's not set
+    if (!fpi.mGenericFont) {
+      nsCAutoString name("font.default.");
+      LossyAppendUTF16toASCII(langGroupStr, name);
+      prefService->CopyCharPref(name.get(), getter_Copies(value));
+
+      if (value.get())
+        defaultFont = value.get();
+      else
+        defaultFont = "serif";
+
+      fpi.mGenericFont = &defaultFont;
+    }
+
+    // If pattern is null, set up the base bits of it so we can
+    // match.  If we need to match later we don't have to set it up
+    // again.
+    FcPattern *pattern = nsnull;
+
+    pattern = FcPatternCreate();
+    if (!pattern)
+      return nsnull;
+
+    // XXX need to add user defined family
+
+    // Add CSS names - walk the list of fonts, adding the generic as
+    // the last font
+    for (int i=0; i < fpi.mFontList.Count(); ++i) {
+      // if this was a generic name, break out of the loop since we
+      // don't want to add it to the pattern yet
+      if (fpi.mFontIsGeneric[i])
+        break;;
+
+      nsCString *familyName = fpi.mFontList.CStringAt(i);
+      NS_AddFFRE(pattern, familyName, PR_FALSE);
+    }
+
+    // Add the language group.  Note that we do this before adding any
+    // generics.  That's because the language is more important than
+    // any generic font.
+    NS_AddLangGroup(pattern, langGroup);
+
+    // If there's a generic add a pref for the generic if there's one
+    // set.
+    if (fpi.mGenericFont && !aFont.systemFont) {
+      NS_AddGenericFontFromPref(fpi.mGenericFont, langGroup, pattern,
+#ifdef PR_LOGGING
+                                gFontMetricsPSM); 
+#else 
+                                nsnull);
+#endif
+    }
+
+    // Add the generic if there is one.
+    if (fpi.mGenericFont && !aFont.systemFont)
+      NS_AddFFRE(pattern, fpi.mGenericFont, PR_FALSE);
+
+    // Add the slant type
+    FcPatternAddInteger(pattern, FC_SLANT, NS_CalculateSlant(aFont.style));
+
+    // Add the weight
+    FcPatternAddInteger(pattern, FC_WEIGHT, NS_CalculateWeight(aFont.weight));
+
+    // Set up the default substitutions for this font
+    FcConfigSubstitute(0, pattern, FcMatchPattern);
+    FcDefaultSubstitute(pattern);
+
+    FcResult   result;
+    FcFontSet *set = FcFontSort(0, pattern, FcTrue, 0, &result);
+    if (!set) {
+       return nsnull;
+    }
+
+    // Create a list of new font objects based on the fonts returned
+    // as part of the query
+    for (int i=0; i < set->nfont; ++i) {
+        FcBool fc_outline;
+        FcChar8 *fc_family;
+        FcChar8 *fc_style;
+        FcCharSet *fc_charset;
+
+        // skip if the fonts is not outline font files.
+        result = FcPatternGetBool (set->fonts[i], FC_OUTLINE, 0, &fc_outline);
+        if (!fc_outline)
+          continue;
+
+        result = FcPatternGetString (set->fonts[i], FC_FAMILY, 0, &fc_family);
+        if (result != FcResultMatch || fc_family == nsnull)
+          continue;
+
+        result = FcPatternGetString (set->fonts[i], FC_STYLE, 0, &fc_style);
+        if (result != FcResultMatch || fc_style == nsnull)
+          continue;
+
+        result = FcPatternGetCharSet(set->fonts[i], FC_CHARSET, 0, &fc_charset);
+        if (result != FcResultMatch || fc_charset == nsnull)
+          continue;
+
+        nsXftEntry *xftEntry = new nsXftEntry(set->fonts[i]);
+        if (!xftEntry)
+          continue;
+
+        fontps *fps = new fontps;
+        fps->entry = xftEntry;
+        fps->charset = fc_charset;
+        fps->fontps = nsnull;
+        fpi.fontps->AppendElement(fps);
+    }
+
+    // we're done with the set now
+    FcFontSetDestroy(set);
+
+    FcPatternDestroy(pattern);
+  }
+
+  return nsnull;
+}
+
+nsFontPSXft::nsFontPSXft(const nsFont& aFont,
+                                   nsFontMetricsPS* aFontMetrics)
+  :nsFontPS(aFont, aFontMetrics)
+{
+}
+
+nsresult
+nsFontPSXft::Init(nsXftEntry* aEntry,
+                       nsPSFontGenerator* aPSFontGen)
+{
+  NS_ENSURE_TRUE(aEntry && aPSFontGen, NS_ERROR_FAILURE);
+  mEntry = aEntry;
+  mPSFontGenerator = aPSFontGen;
+
+  float app2dev;
+  nsIDeviceContext* dc = mFontMetrics->GetDeviceContext();
+  NS_ENSURE_TRUE(dc, NS_ERROR_NULL_POINTER);
+  app2dev = dc->AppUnitsToDevUnits();
+  
+  mPixelSize = NSToIntRound(app2dev * mFont->size);
+
+  FT_Error fterror; 
+  fterror = FT_Init_FreeType(&mFreeTypeLibrary);
+  if (fterror) {
+    NS_ERROR("failed to initialize FreeType library");
+    mFreeTypeLibrary = nsnull;
+    return NS_ERROR_FAILURE;
+  }
+  return NS_OK;
+}
+
+nsFontPSXft::~nsFontPSXft()
+{
+  if (mEntry->mFace) 
+    FT_Done_Face(mEntry->mFace);
+
+  if (FT_Done_FreeType(mFreeTypeLibrary))
+    return;
+
+  mEntry = nsnull;
+}
+
+FT_Face
+nsFontPSXft::getFTFace()
+{
+  FT_Face face = mEntry->mFace;
+
+  if (face)
+    return (face);
+
+  if (FT_New_Face(mFreeTypeLibrary, mEntry->mFontFileName.get(), 
+                  mEntry->mFaceIndex, &face) ||
+      FT_Set_Pixel_Sizes(face, mPixelSize, 0))
+    return nsnull;
+
+  mEntry->mFace = face;
+  return face;
+}
+
+nscoord
+nsFontPSXft::GetWidth(const char* aString, PRUint32 aLength)
+{
+  return GetWidth(NS_ConvertASCIItoUTF16(aString, aLength).get(), aLength);
+}
+
+nscoord
+nsFontPSXft::GetWidth(const PRUnichar* aString, PRUint32 aLength)
+{
+  // get the face/size from the FreeType cache
+  FT_Face face = getFTFace();
+  NS_ASSERTION(face, "failed to get face/size");
+  if (!face)
+    return 0;
+
+  // XXX : we might need some caching here
+  double em_size = 1.0 * face->units_per_EM;
+  double x_scale = face->size->metrics.x_ppem / em_size;
+  double origin_x = 0;
+  for (PRUint32 i=0; i<aLength; i++) {
+    FT_UInt glyph_index = FT_Get_Char_Index((FT_Face)face, aString[i]);
+    if (FT_Load_Glyph(face, glyph_index, FT_LOAD_NO_SCALE ))
+      origin_x += face->size->metrics.x_ppem/2 + 2;
+    else
+      origin_x += (face->glyph->advance.x) * x_scale;
+  }
+
+  NS_ENSURE_TRUE(mFontMetrics, 0);
+
+  nsDeviceContextPS* dc = mFontMetrics->GetDeviceContext();
+  NS_ENSURE_TRUE(dc, 0);
+
+  origin_x *= dc->DevUnitsToAppUnits();
+
+  return NSToCoordRound((nscoord)origin_x);
+}
+
+nscoord
+nsFontPSXft::DrawString(nsRenderingContextPS* aContext,
+                        nscoord aX, nscoord aY,
+                        const char* aString, PRUint32 aLength)
+{
+  NS_ENSURE_TRUE(aContext, 0);
+  return DrawString(aContext, aX, aY, 
+                    NS_ConvertASCIItoUTF16(aString, aLength).get(), aLength);
+}
+
+nscoord
+nsFontPSXft::DrawString(nsRenderingContextPS* aContext,
+                        nscoord aX, nscoord aY,
+                        const PRUnichar* aString, PRUint32 aLength)
+{
+  NS_ENSURE_TRUE(aContext && aLength, 0);
+  nsPostScriptObj* psObj = aContext->GetPostScriptObj();
+  NS_ENSURE_TRUE(psObj, 0);
+
+  psObj->moveto(aX, aY);
+
+  PRInt32 currSubFont, prevSubFont = -1;
+  PRUint32 start = 0;
+  PRUint32 i;
+
+  // XXX : ignore surrogate pairs for now
+  nsString *subSet = mPSFontGenerator->GetSubset();
+  for (i = 0; i < aLength; ++i) {
+    currSubFont = mPSFontGenerator->AddToSubset(aString[i]);
+    if (prevSubFont != currSubFont) {
+      if (prevSubFont != -1)
+        psObj->show(&aString[start], i - start, *subSet, prevSubFont);
+      NS_ASSERTION(!mFontNameBase.IsEmpty(),
+                  "font base name shouldn't be empty");
+      psObj->setfont(mFontNameBase, mHeight, currSubFont);
+      prevSubFont = currSubFont;
+      start = i;
+    }
+  }
+
+  if (prevSubFont != -1)
+    psObj->show(&aString[start], i - start, *subSet, prevSubFont); 
+  
+  return GetWidth(aString, aLength);
+}
+
+int
+nsFontPSXft::ascent()
+{
+  FT_Face face = getFTFace();
+  NS_ASSERTION(face, "failed to get face/size");
+  NS_ENSURE_TRUE(face, 0);
+  return FT_DESIGN_UNITS_TO_PIXELS(face->ascender, face->size->metrics.y_scale);
+}
+
+int
+nsFontPSXft::descent()
+{
+  FT_Face face = getFTFace();
+  NS_ASSERTION(face, "failed to get face/size");
+  NS_ENSURE_TRUE(face, 0);
+  return FT_DESIGN_UNITS_TO_PIXELS(-face->descender, face->size->metrics.y_scale);
+}
+
+int
+nsFontPSXft::max_ascent()
+{
+  FT_Face face = getFTFace();
+  NS_ASSERTION(face, "failed to get face/size");
+  NS_ENSURE_TRUE(face, 0);
+  TT_OS2 *tt_os2 = (TT_OS2 *) FT_Get_Sfnt_Table(face, ft_sfnt_os2);
+  NS_ASSERTION(tt_os2, "unable to get OS2 table");
+  if (tt_os2)
+     return FT_DESIGN_UNITS_TO_PIXELS(tt_os2->sTypoAscender,
+                                      face->size->metrics.y_scale);
+  else
+     return FT_DESIGN_UNITS_TO_PIXELS(face->bbox.yMax,
+                                      face->size->metrics.y_scale);
+}
+
+int
+nsFontPSXft::max_descent()
+{
+  FT_Face face = getFTFace();
+  NS_ASSERTION(face, "failed to get face/size");
+  NS_ENSURE_TRUE(face, 0);
+  TT_OS2 *tt_os2 = (TT_OS2 *) FT_Get_Sfnt_Table(face, ft_sfnt_os2);
+  NS_ASSERTION(tt_os2, "unable to get OS2 table");
+  if (tt_os2)
+     return FT_DESIGN_UNITS_TO_PIXELS(-tt_os2->sTypoDescender,
+                                      face->size->metrics.y_scale);
+  else
+     return FT_DESIGN_UNITS_TO_PIXELS(-face->bbox.yMin,
+                                      face->size->metrics.y_scale);
+}
+
+int
+nsFontPSXft::max_width()
+{
+  FT_Face face = getFTFace();
+  NS_ASSERTION(face, "failed to get face/size");
+  NS_ENSURE_TRUE(face, 0);
+  return FT_DESIGN_UNITS_TO_PIXELS(face->max_advance_width,
+                                   face->size->metrics.x_scale);
+}
+
+PRBool
+nsFontPSXft::getXHeight(unsigned long &aVal)
+{
+  FT_Face face = getFTFace();
+  NS_ASSERTION(face, "failed to get face/size");
+  if (!face || !aVal)
+    return PR_FALSE;
+  aVal = FT_DESIGN_UNITS_TO_PIXELS(face->height, face->size->metrics.y_scale);
+
+  return PR_TRUE;
+}
+
+PRBool
+nsFontPSXft::underlinePosition(long &aVal)
+{
+  FT_Face face = getFTFace();
+  NS_ASSERTION(face, "failed to get face/size");
+  if (!face)
+    return PR_FALSE;
+  aVal = FT_DESIGN_UNITS_TO_PIXELS(-face->underline_position,
+                                   face->size->metrics.y_scale);
+  return PR_TRUE;
+}
+
+PRBool
+nsFontPSXft::underline_thickness(unsigned long &aVal)
+{
+  FT_Face face = getFTFace();
+  NS_ASSERTION(face, "failed to get face/size");
+  if (!face)
+    return PR_FALSE;
+  aVal = FT_DESIGN_UNITS_TO_PIXELS(face->underline_thickness,
+                                   face->size->metrics.x_scale);
+  return PR_TRUE;
+}
+
+PRBool
+nsFontPSXft::superscript_y(long &aVal)
+{
+  aVal = 0;
+  FT_Face face = getFTFace();
+  NS_ASSERTION(face, "failed to get face/size");
+  if (!face)
+    return PR_FALSE;
+
+  TT_OS2 *tt_os2 = (TT_OS2 *) FT_Get_Sfnt_Table(face, ft_sfnt_os2);
+  NS_ASSERTION(tt_os2, "unable to get OS2 table");
+  if (!tt_os2)
+    return PR_FALSE;
+
+  aVal = FT_DESIGN_UNITS_TO_PIXELS(tt_os2->ySuperscriptYOffset,
+                                  face->size->metrics.y_scale);
+  return PR_TRUE;
+}
+
+PRBool
+nsFontPSXft::subscript_y(long &aVal)
+{
+  aVal = 0;
+  FT_Face face = getFTFace();
+  NS_ASSERTION(face, "failed to get face/size");
+  if (!face)
+    return PR_FALSE;
+
+  TT_OS2 *tt_os2 = (TT_OS2 *) FT_Get_Sfnt_Table(face, ft_sfnt_os2);
+  NS_ASSERTION(tt_os2, "unable to get OS2 table");
+  if (!tt_os2)
+    return PR_FALSE;
+
+  aVal = FT_DESIGN_UNITS_TO_PIXELS(tt_os2->ySubscriptYOffset,
+                                  face->size->metrics.y_scale);
+
+  // some fonts have the sign wrong. it should be always positive.
+  aVal = (aVal < 0) ? -aVal : aVal;
+  return PR_TRUE;
+}
+
+nsresult
+nsFontPSXft::RealizeFont(nsFontMetricsPS* aFontMetrics, float dev2app)
+{
+ 
+  nscoord leading, emHeight, emAscent, emDescent;
+  nscoord maxHeight, maxAscent, maxDescent, maxAdvance;
+  nscoord xHeight, spaceWidth, aveCharWidth;
+  nscoord underlineOffset, underlineSize, superscriptOffset, subscriptOffset;
+  nscoord strikeoutOffset, strikeoutSize;
+
+  int lineSpacing = ascent() + descent();
+  if (lineSpacing > mPixelSize) {
+    leading = nscoord((lineSpacing - mPixelSize) * dev2app);
+  }
+  else {
+    leading = 0;
+  }
+  emHeight = PR_MAX(1, nscoord(mPixelSize * dev2app));
+  emAscent = nscoord(ascent() * mPixelSize * dev2app / lineSpacing);
+  emDescent = emHeight - emAscent;
+
+  maxHeight  = nscoord((max_ascent() + max_descent()) * dev2app);
+  maxAscent  = nscoord(max_ascent() * dev2app) ;
+  maxDescent = nscoord(max_descent() * dev2app);
+  maxAdvance = nscoord(max_width() * dev2app);
+
+  // 56% of ascent, best guess for non-true type
+  xHeight = NSToCoordRound((float)ascent()* dev2app * 0.56f);
+
+  PRUnichar space = (PRUnichar)' ';
+  spaceWidth = NSToCoordRound(GetWidth(&space, 1));
+  PRUnichar averageX = (PRUnichar)'x';
+  aveCharWidth = NSToCoordRound(GetWidth(&averageX, 1));
+  
+  unsigned long pr = 0;
+  if (getXHeight(pr)) {
+    xHeight = (nscoord(pr * dev2app));
+  }
+
+  float height;
+  long val;
+  
+  height = ascent() + descent();
+  underlineOffset = -NSToIntRound(
+                    PR_MAX (1, floor (0.1 * height + 0.5)) * dev2app);
+
+  if (underline_thickness(pr)) {
+    /* this will only be provided from adobe .afm fonts */
+    underlineSize = nscoord(PR_MAX(dev2app, NSToIntRound(pr * dev2app)));
+  }
+  else {
+    height = ascent() + descent();
+    underlineSize = NSToIntRound(
+                    PR_MAX(1, floor (0.05 * height + 0.5)) * dev2app);
+  }
+
+  if (superscript_y(val)) {
+    superscriptOffset = nscoord(PR_MAX(dev2app, NSToIntRound(val * dev2app)));
+  }
+  else {
+    superscriptOffset = xHeight;
+  }
+
+  if (subscript_y(val)) {
+    subscriptOffset = nscoord(PR_MAX(dev2app, NSToIntRound(val * dev2app)));
+  }
+  else {
+   subscriptOffset = xHeight;
+  }
+
+  /* need better way to calculate this */
+  strikeoutOffset = NSToCoordRound(xHeight / 2.0);
+  strikeoutSize = underlineSize;
+  
+  // TODO: leading never used, does it equal to "Height"?
+  aFontMetrics->SetHeight(emHeight);
+  aFontMetrics->SetEmHeight(emHeight);
+  aFontMetrics->SetEmAscent(emAscent);
+  aFontMetrics->SetEmDescent(emDescent);
+  aFontMetrics->SetMaxHeight(maxHeight);
+  aFontMetrics->SetMaxAscent(maxAscent);
+  aFontMetrics->SetMaxDescent(maxDescent);
+  aFontMetrics->SetMaxAdvance(maxAdvance);
+  aFontMetrics->SetXHeight(xHeight);
+  aFontMetrics->SetSpaceWidth(spaceWidth);
+  aFontMetrics->SetAveCharWidth(aveCharWidth);
+  aFontMetrics->SetUnderline(underlineOffset, underlineSize);
+  aFontMetrics->SetSuperscriptOffset(superscriptOffset);
+  aFontMetrics->SetSubscriptOffset(subscriptOffset);
+  aFontMetrics->SetStrikeout(strikeoutOffset, strikeoutSize);
+
+  return NS_OK;
+}
+
+nsresult
+nsFontPSXft::SetupFont(nsRenderingContextPS* aContext)
+{
+  NS_ENSURE_TRUE(aContext, NS_ERROR_FAILURE);
+  nsPostScriptObj* psObj = aContext->GetPostScriptObj();
+  NS_ENSURE_TRUE(psObj, NS_ERROR_FAILURE);
+
+  mFontMetrics->GetHeight(mHeight);
+
+  if (mFontNameBase.IsEmpty()) {
+    int wmode = 0;
+    FT_Face face = getFTFace();
+    NS_ENSURE_TRUE(face, NS_ERROR_NULL_POINTER);
+    if (NS_FAILED(FT2ToType1FontName(face, wmode, mFontNameBase)))
+      return NS_ERROR_FAILURE;
+  }
+
+  return NS_OK;
+}
+
+#ifdef MOZ_MATHML
+nsresult
+nsFontPSXft::GetBoundingMetrics(const char*        aString,
+                                     PRUint32           aLength,
+                                     nsBoundingMetrics& aBoundingMetrics)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+nsresult
+nsFontPSXft::GetBoundingMetrics(const PRUnichar*   aString,
+                                     PRUint32           aLength,
+                                     nsBoundingMetrics& aBoundingMetrics)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+#endif //MOZ_MATHML
+
+#else
 
 PRBool
 nsFontPSFreeType::CSSFontEnumCallback(const nsString& aFamily, PRBool aGeneric,
@@ -713,7 +1429,7 @@ nsFontPSFreeType::CSSFontEnumCallback(const nsString& aFamily, PRBool aGeneric,
     nsCOMPtr<nsIPref> pref(do_GetService(NS_PREF_CONTRACTID, &rv));
     NS_ENSURE_SUCCESS(rv, PR_TRUE); // keep trying
     nsCAutoString name("font.name.");
-    name.AppendWithConversion(aFamily.get());
+    LossyAppendUTF16toASCII(aFamily, name);
     name.Append(char('.'));
     name.Append(fpi->lang);
     pref->CopyCharPref(name.get(), getter_Copies(value));
@@ -734,7 +1450,7 @@ nsFontPSFreeType::CSSFontEnumCallback(const nsString& aFamily, PRBool aGeneric,
         ("generic font \"%s\" -> \"%s\"\n", name.get(), familyname.get()));
   }
   else
-    familyname.AppendWithConversion(aFamily);
+    LossyAppendUTF16toASCII(aFamily, familyname);
 
   AddFontEntries(familyname, fpi->lang, fpi->weight, 
                  nsIFontCatalogService::kFCWidthAny, fpi->slant,
@@ -755,11 +1471,13 @@ nsFontPSFreeType::AddUserPref(nsIAtom *aLang, const nsFont& aFont,
   NS_ENSURE_SUCCESS(rv, PR_FALSE);
 
   nsXPIDLCString value;
-  pref->CopyCharPref("font.default", getter_Copies(value));
+  nsCAutoString name("font.default.");
+  name.Append(fpi->lang);
+  pref->CopyCharPref(name.get(), getter_Copies(value));
   if (!value.get())
     return PR_FALSE;
 
-  nsCAutoString name("font.name.");
+  name.Assign("font.name.");
   name.Append(value);
   name.Append(char('.'));
   name.Append(fpi->lang);
@@ -817,9 +1535,9 @@ CreateFontPS(nsITrueTypeFontCatalogEntry *aEntry, const nsFont& aFont,
   
   nsPSFontGenerator* psFontGen = (nsPSFontGenerator*) psFGList->Get(&key);
   if (!psFontGen) {
-    psFontGen = new nsFT2Type8Generator;
+    psFontGen = new nsFT2Type1Generator;
     NS_ENSURE_TRUE(psFontGen, nsnull);
-    rv = ((nsFT2Type8Generator*)psFontGen)->Init(aEntry);
+    rv = ((nsFT2Type1Generator*)psFontGen)->Init(aEntry);
     if (NS_FAILED(rv)) {
       delete psFontGen;
       return nsnull;
@@ -1162,20 +1880,8 @@ nsFontPSFreeType::~nsFontPSFreeType()
 nscoord
 nsFontPSFreeType::GetWidth(const char* aString, PRUint32 aLength)
 {
-  PRUnichar unichars[WIDEN_8_TO_16_BUF_SIZE];
-  PRUint32 len, width = 0;
-  while ( aLength > 0 ) {
-    len = PR_MIN(aLength, WIDEN_8_TO_16_BUF_SIZE);
-    for (PRUint32 i=0; i < len; i++) {
-      unichars[i] = (PRUnichar)((unsigned char)aString[i]);
-    }
-    width += GetWidth(unichars, len);
-    aString += len;
-    aLength -= len;
-  }
-  return width;
+  return GetWidth(NS_ConvertASCIItoUTF16(aString, aLength).get(), aLength);
 }
-
 
 nscoord
 nsFontPSFreeType::GetWidth(const PRUnichar* aString, PRUint32 aLength)
@@ -1242,27 +1948,8 @@ nsFontPSFreeType::DrawString(nsRenderingContextPS* aContext,
                              const char* aString, PRUint32 aLength)
 {
   NS_ENSURE_TRUE(aContext, 0);
-  nsPostScriptObj* psObj = aContext->GetPostScriptObj();
-  NS_ENSURE_TRUE(psObj, 0);
-  nscoord width = 0;
-  
-  psObj->moveto(aX, aY);
-
-  PRUnichar unichars[WIDEN_8_TO_16_BUF_SIZE];
-  PRUint32 len;
-  
-  while ( aLength > 0 ) {
-    len = PR_MIN(aLength, WIDEN_8_TO_16_BUF_SIZE);
-    for (PRUint32 i=0; i < len; i++) {
-      unichars[i] = (PRUnichar)((unsigned char)aString[i]);
-    }
-    psObj->show(unichars, len, "", 1);
-    mPSFontGenerator->AddToSubset(unichars, len);
-    width += GetWidth(unichars, len);
-    aString += len;
-    aLength -= len;
-  }
-  return width;
+  return DrawString(aContext, aX, aY, 
+                    NS_ConvertASCIItoUTF16(aString, aLength).get(), aLength);
 }
 
 nscoord
@@ -1270,14 +1957,34 @@ nsFontPSFreeType::DrawString(nsRenderingContextPS* aContext,
                              nscoord aX, nscoord aY,
                              const PRUnichar* aString, PRUint32 aLength)
 {
-  NS_ENSURE_TRUE(aContext, 0);
+  NS_ENSURE_TRUE(aContext && aLength, 0);
   nsPostScriptObj* psObj = aContext->GetPostScriptObj();
   NS_ENSURE_TRUE(psObj, 0);
 
   psObj->moveto(aX, aY);
-  psObj->show(aString, aLength, "", 1);
+
+  PRInt32 currSubFont, prevSubFont = -1;
+  PRUint32 start = 0;
+  PRUint32 i;
+
+  // XXX : ignore surrogate pairs for now
+  nsString *subSet = mPSFontGenerator->GetSubset();
+  for (i = 0; i < aLength; ++i) {
+    currSubFont = mPSFontGenerator->AddToSubset(aString[i]);
+    if (prevSubFont != currSubFont) {
+      if (prevSubFont != -1)
+        psObj->show(&aString[start], i - start, *subSet, prevSubFont); 
+      NS_ASSERTION(!mFontNameBase.IsEmpty(),
+                  "font base name shouldn't be empty");
+      psObj->setfont(mFontNameBase, mHeight, currSubFont);
+      prevSubFont = currSubFont;
+      start = i;
+    }
+  }
+
+  if (prevSubFont != -1)
+    psObj->show(&aString[start], i - start, *subSet, prevSubFont);
   
-  mPSFontGenerator->AddToSubset(aString, aLength);
   return GetWidth(aString, aLength);
 }
 
@@ -1525,18 +2232,15 @@ nsFontPSFreeType::SetupFont(nsRenderingContextPS* aContext)
   nsPostScriptObj* psObj = aContext->GetPostScriptObj();
   NS_ENSURE_TRUE(psObj, NS_ERROR_FAILURE);
 
-  nscoord fontHeight = 0;
-  mFontMetrics->GetHeight(fontHeight);
+  mFontMetrics->GetHeight(mHeight);
 
-  nsCString fontName;
-  int wmode = 0;
-  FT_Face face = getFTFace();
-  NS_ENSURE_TRUE(face, NS_ERROR_NULL_POINTER);
-  char *cidFontName = FT2ToType8CidFontName(face, wmode);
-  NS_ENSURE_TRUE(cidFontName, NS_ERROR_FAILURE);
-  fontName.Assign(cidFontName);
-  psObj->setfont(fontName, fontHeight);
-  PR_Free(cidFontName);
+  if (mFontNameBase.IsEmpty()) {
+    int wmode = 0;
+    FT_Face face = getFTFace();
+    NS_ENSURE_TRUE(face, NS_ERROR_NULL_POINTER);
+    if (NS_FAILED(FT2ToType1FontName(face, wmode, mFontNameBase)))
+      return NS_ERROR_FAILURE;
+  }
   
   return NS_OK;
 }
@@ -1560,6 +2264,7 @@ nsFontPSFreeType::GetBoundingMetrics(const PRUnichar*   aString,
 #endif //MOZ_MATHML
 
 #endif //MOZ_ENABLE_FREETYPE2
+#endif //MOZ_ENABLE_XFT
 
 // Implementation of nsPSFontGenerator
 nsPSFontGenerator::nsPSFontGenerator()
@@ -1575,31 +2280,83 @@ void nsPSFontGenerator::GeneratePSFont(FILE* aFile)
   NS_ERROR("should never call nsPSFontGenerator::GeneratePSFont");
 }
 
-void nsPSFontGenerator::AddToSubset(const PRUnichar* aString, PRUint32 aLength)
+// Add a Unicode character to mSubset which will be divided into 
+// multiple chunks (subfonts) of 255 (kSubFontSize) characters each. 
+// Each chunk will be converted to a Type 1 font. Return the index of 
+// a subfont (chunk) this character belongs to.
+PRInt32
+nsPSFontGenerator::AddToSubset(PRUnichar aChar)
 {
-  for (PRUint32 i=0; i < aLength; i++) {
-    if (mSubset.FindChar(aString[i]) == -1 )
-      mSubset.Append(aString[i]);
+  PRInt32 index = mSubset.FindChar(aChar);
+  if (index == kNotFound) {
+    mSubset.Append(aChar);
+    index = mSubset.Length() - 1;
   }
+  return index / kSubFontSize;
 }
 
-void nsPSFontGenerator::AddToSubset(const char* aString, PRUint32 aLength)
+nsString *nsPSFontGenerator::GetSubset()
 {
-  PRUnichar unichar;
-  for (PRUint32 i=0; i < aLength; i++) {
-    unichar = (PRUnichar)((unsigned char)aString[i]);
-    if (mSubset.FindChar(unichar) == -1 )
-      mSubset.Append(unichar);
-  }
+  return &mSubset;
 }
 
-#ifdef MOZ_ENABLE_FREETYPE2
-nsFT2Type8Generator::nsFT2Type8Generator()
+#ifdef MOZ_ENABLE_XFT
+nsXftType1Generator::nsXftType1Generator()
 {
 }
 
 nsresult
-nsFT2Type8Generator::Init(nsITrueTypeFontCatalogEntry* aEntry)
+nsXftType1Generator::Init(nsXftEntry* aEntry)
+{
+  NS_ENSURE_TRUE(aEntry, NS_ERROR_FAILURE);
+  mEntry = aEntry;
+
+  FT_Error error = FT_Init_FreeType(&mFreeTypeLibrary);
+  NS_ASSERTION(!error, "failed to initialize FreeType library");
+  if (error) {
+    mFreeTypeLibrary = nsnull;
+    return NS_ERROR_FAILURE;
+  }
+
+  return NS_OK;
+}
+
+nsXftType1Generator::~nsXftType1Generator()
+{
+  if (mEntry->mFace) 
+    FT_Done_Face(mEntry->mFace);
+
+  if (FT_Done_FreeType(mFreeTypeLibrary))
+    return;
+
+  mEntry = nsnull;
+}
+
+void nsXftType1Generator::GeneratePSFont(FILE* aFile)
+{
+  FT_Face face = mEntry->mFace;
+
+  if (face == nsnull) {
+    if (FT_New_Face(mFreeTypeLibrary, mEntry->mFontFileName.get(), mEntry->mFaceIndex, &face) ||
+        face == nsnull /* || FT_Set_Pixel_Sizes(face, 16, 0) */) 
+       return;
+     mEntry->mFace = face;
+  }
+
+  int wmode = 0;
+  if (!mSubset.IsEmpty())
+    FT2SubsetToType1FontSet(face, mSubset, wmode, aFile);
+}
+
+#else
+#ifdef MOZ_ENABLE_FREETYPE2
+
+nsFT2Type1Generator::nsFT2Type1Generator()
+{
+}
+
+nsresult
+nsFT2Type1Generator::Init(nsITrueTypeFontCatalogEntry* aEntry)
 {
   NS_ENSURE_TRUE(aEntry, NS_ERROR_FAILURE);
   mEntry = aEntry;
@@ -1611,12 +2368,12 @@ nsFT2Type8Generator::Init(nsITrueTypeFontCatalogEntry* aEntry)
   return NS_OK;
 }
 
-nsFT2Type8Generator::~nsFT2Type8Generator()
+nsFT2Type1Generator::~nsFT2Type1Generator()
 {
   mEntry = nsnull;
 }
 
-void nsFT2Type8Generator::GeneratePSFont(FILE* aFile)
+void nsFT2Type1Generator::GeneratePSFont(FILE* aFile)
 {
   nsCAutoString fontName, styleName;
   mEntry->GetFamilyName(fontName);
@@ -1637,7 +2394,8 @@ void nsFT2Type8Generator::GeneratePSFont(FILE* aFile)
  
   int wmode = 0;
   if (!mSubset.IsEmpty())
-    FT2SubsetToType8(face, mSubset.get(), mSubset.Length(), wmode, aFile);
+    FT2SubsetToType1FontSet(face, mSubset, wmode, aFile);
 }
-#endif //MOZ_ENABLE_FREETYPE2
 
+#endif //MOZ_ENABLE_FREETYPE2
+#endif //MOZ_ENABLE_XFT

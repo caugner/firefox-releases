@@ -1,26 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/*
- * The contents of this file are subject to the Netscape Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/NPL/
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
- * The Original Code is Mozilla Communicator client code, 
- * released March 31, 1998. 
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
  *
- * The Initial Developer of the Original Code is Netscape Communications 
- * Corporation.  Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation. All
- * Rights Reserved.
+ * The Original Code is Mozilla Communicator client code, released
+ * March 31, 1998.
  *
- * Contributor(s): 
- *     Samir Gehani <sgehani@netscape.com>
- */
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Samir Gehani <sgehani@netscape.com>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsSocket.h"
 #include "nsHTTPConn.h"
@@ -84,53 +99,49 @@ nsInstallDlg::Back(GtkWidget *aWidget, gpointer aData)
 {
     DUMP("Back");
     if (aData != gCtx->idlg) return;
+#ifdef MOZ_WIDGET_GTK
     if (gCtx->bMoving)
     {
         gCtx->bMoving = FALSE;
         return;
     }
+#endif
 
     // hide this notebook page
-    gCtx->idlg->Hide(nsXInstallerDlg::BACKWARD_MOVE);
-
-    // disconnect this dlg's nav btn signal handlers
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
-    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
+    gCtx->idlg->Hide();
 
     // show the last dlg
     if (gCtx->opt->mSetupType == (gCtx->sdlg->GetNumSetupTypes() - 1))
-        gCtx->cdlg->Show(nsXInstallerDlg::BACKWARD_MOVE);
+    {
+        gCtx->cdlg->Show();
+        // only set bMoving for component dlg since setuptype has no "back"
+#ifdef MOZ_WIDGET_GTK
+        gCtx->bMoving = TRUE;
+#endif
+    }
     else
-        gCtx->sdlg->Show(nsXInstallerDlg::BACKWARD_MOVE);
-    gCtx->bMoving = TRUE;
+    {
+        gCtx->sdlg->Show();
+    }
 }
 
 void
 nsInstallDlg::Next(GtkWidget *aWidget, gpointer aData)
 {
     DUMP("Next");
-    int bCus;
-    nsComponentList *comps = NULL;
     GtkWidget *pauseLabel, *resumeLabel;
 
     if (aData != gCtx->idlg) return;
+#ifdef MOZ_WIDGET_GTK
     if (gCtx->bMoving)
     {
         gCtx->bMoving = FALSE;
         DUMP("Moving done!");
         return;
     }
-
-    bCus = (gCtx->opt->mSetupType == (gCtx->sdlg->GetNumSetupTypes() - 1));
-    comps = gCtx->sdlg->GetSelectedSetupType()->GetComponents();
+#endif
 
     // initialize progress bar cleanly
-    int totalComps = 0;
-    if (nsXIEngine::ExistAllXPIs(bCus, comps, &totalComps))
-        bDownload = FALSE;
-    else
-        bDownload = TRUE;
-
     if (gCtx->opt->mMode != nsXIOptions::MODE_SILENT) {
         gtk_progress_set_activity_mode(GTK_PROGRESS(sMajorProgBar), FALSE);
         gtk_progress_bar_update(GTK_PROGRESS_BAR(sMajorProgBar), (gfloat) 0);
@@ -183,11 +194,20 @@ nsInstallDlg::Next(GtkWidget *aWidget, gpointer aData)
     }
 
     PerformInstall();
+    while (bDLPause) {
+        // event loop ends with resume or cancel
+        gtk_main();
+        if (!bDLCancel)
+            PerformInstall();
+    }
+
     // mode auto has no call to gtk_main()
     if (gCtx->opt->mMode == nsXIOptions::MODE_DEFAULT)
-         gtk_main_quit();
+        gtk_main_quit();
     
+#ifdef MOZ_WIDGET_GTK
     gCtx->bMoving = TRUE;
+#endif
     return;
 }
 
@@ -320,7 +340,7 @@ nsInstallDlg::RunApps(nsRunApp *aRunAppList, int aSequential)
     nsRunApp *currRunApp = aRunAppList;
     char *argv[3], *dest;
     char apppath[MAXPATHLEN];
-    extern char **environ; /* globally available to all processes */
+    extern NS_IMPORT_(char **) environ; /* globally available to all processes */
 
     dest = gCtx->opt->mDestination;
     if (chdir(dest) < 0) 
@@ -358,24 +378,20 @@ nsInstallDlg::RunApps(nsRunApp *aRunAppList, int aSequential)
 }
 
 int
-nsInstallDlg::Show(int aDirection)
+nsInstallDlg::Show()
 {
     int err = OK;
-    int totalComps = 0;
     GtkWidget *hbox = NULL;
     GtkWidget *vbox = NULL;
     GtkWidget *dlFrame, *dlCheckbox, *dlProxyBtn;
+    int bCus;
+    nsComponentList *comps = NULL;
 
     XI_VERIFY(gCtx);
     XI_VERIFY(gCtx->notebook);
 
     if (mWidgetsInit == FALSE)
     {
-        int bCus = 
-            (gCtx->opt->mSetupType == (gCtx->sdlg->GetNumSetupTypes() - 1));
-        nsComponentList *comps = 
-            gCtx->sdlg->GetSelectedSetupType()->GetComponents(); 
-
         // create a new table and add it as a page of the notebook
         mTable = gtk_table_new(4, 1, FALSE);
         gtk_notebook_append_page(GTK_NOTEBOOK(gCtx->notebook), mTable, NULL);
@@ -392,38 +408,35 @@ nsInstallDlg::Show(int aDirection)
 			GTK_FILL, 20, 20);
         gtk_widget_show(sMsg0Label);
 
-        if (!nsXIEngine::ExistAllXPIs(bCus, comps, &totalComps))
-        {
-            // insert a [ x ] heterogenous table
-            sDLTable = gtk_table_new(2, 2, FALSE);
-            gtk_widget_show(sDLTable);
+        // Proxy Settings
+        // insert a [ x ] heterogenous table
+        sDLTable = gtk_table_new(2, 2, FALSE);
 
-            gtk_table_attach(GTK_TABLE(mTable), sDLTable, 0, 1, 1, 4, 
-                static_cast<GtkAttachOptions>(GTK_FILL | GTK_EXPAND),
-    			GTK_FILL, 20, 20);
+        gtk_table_attach(GTK_TABLE(mTable), sDLTable, 0, 1, 1, 4, 
+            static_cast<GtkAttachOptions>(GTK_FILL | GTK_EXPAND),
+            GTK_FILL, 20, 20);
             
-            // download settings groupbox
-            dlFrame = gtk_frame_new(gCtx->Res("DL_SETTINGS"));
-            gtk_table_attach_defaults(GTK_TABLE(sDLTable), dlFrame, 0, 2, 0, 2);
-            gtk_widget_show(dlFrame);
+        // download settings groupbox
+        dlFrame = gtk_frame_new(gCtx->Res("DL_SETTINGS"));
+        gtk_table_attach_defaults(GTK_TABLE(sDLTable), dlFrame, 0, 2, 0, 2);
+        gtk_widget_show(dlFrame);
     
-            // save installer modules checkbox and label
-            dlCheckbox = gtk_check_button_new_with_label(
-                            gCtx->Res("SAVE_MODULES"));
-            gtk_widget_show(dlCheckbox);
-            gtk_table_attach(GTK_TABLE(sDLTable), dlCheckbox, 0, 2, 0, 1,
-                GTK_FILL, GTK_FILL, 10, 20);
-            gtk_signal_connect(GTK_OBJECT(dlCheckbox), "toggled",
-                GTK_SIGNAL_FUNC(SaveModulesToggled), NULL);
+        // save installer modules checkbox and label
+        dlCheckbox = gtk_check_button_new_with_label(
+                        gCtx->Res("SAVE_MODULES"));
+        gtk_widget_show(dlCheckbox);
+        gtk_table_attach(GTK_TABLE(sDLTable), dlCheckbox, 0, 2, 0, 1,
+            GTK_FILL, GTK_FILL, 10, 20);
+        gtk_signal_connect(GTK_OBJECT(dlCheckbox), "toggled",
+            GTK_SIGNAL_FUNC(SaveModulesToggled), NULL);
 
-            // proxy settings button
-            dlProxyBtn = gtk_button_new_with_label(gCtx->Res("PROXY_SETTINGS"));
-            gtk_widget_show(dlProxyBtn);
-            gtk_table_attach(GTK_TABLE(sDLTable), dlProxyBtn, 0, 1, 1, 2,
-                GTK_FILL, GTK_FILL, 10, 10);
-            gtk_signal_connect(GTK_OBJECT(dlProxyBtn), "clicked",
-                   GTK_SIGNAL_FUNC(ShowProxySettings), NULL);
-        }
+        // proxy settings button
+        dlProxyBtn = gtk_button_new_with_label(gCtx->Res("PROXY_SETTINGS"));
+        gtk_widget_show(dlProxyBtn);
+        gtk_table_attach(GTK_TABLE(sDLTable), dlProxyBtn, 0, 1, 1, 2,
+            GTK_FILL, GTK_FILL, 10, 10);
+        gtk_signal_connect(GTK_OBJECT(dlProxyBtn), "clicked",
+            GTK_SIGNAL_FUNC(ShowProxySettings), NULL);
 
         // vbox with two widgets packed in: label0 / progmeter0 (major)
         vbox = gtk_vbox_new(FALSE, 0);
@@ -472,6 +485,19 @@ nsInstallDlg::Show(int aDirection)
         gtk_widget_show(mTable);
     }
 
+    bCus = (gCtx->opt->mSetupType == (gCtx->sdlg->GetNumSetupTypes() - 1));
+    comps = gCtx->sdlg->GetSelectedSetupType()->GetComponents();
+
+    if (!nsXIEngine::ExistAllXPIs(bCus, comps))
+    {
+        bDownload = TRUE;
+        gtk_widget_show(sDLTable);
+    }
+    else
+    {
+        bDownload = FALSE;
+    }
+
     // signal connect the buttons
     gCtx->backID = gtk_signal_connect(GTK_OBJECT(gCtx->back), "clicked",
                    GTK_SIGNAL_FUNC(nsInstallDlg::Back), gCtx->idlg);
@@ -484,20 +510,48 @@ nsInstallDlg::Show(int aDirection)
         gtk_widget_show(gCtx->back);
     }
 
-    // always change title of next button to "Install"
-    gtk_container_remove(GTK_CONTAINER(gCtx->next), gCtx->nextLabel); 
+    GTK_WIDGET_SET_FLAGS(gCtx->next, GTK_CAN_DEFAULT);
+    gtk_widget_grab_default(gCtx->next);
+    gtk_widget_grab_focus(gCtx->next);
+
+    // show back and next button, but make title of next button "Install"
+    gCtx->backLabel = gtk_label_new(gCtx->Res("BACK"));
     gCtx->installLabel = gtk_label_new(gCtx->Res("INSTALL"));
+    gtk_container_add(GTK_CONTAINER(gCtx->back), gCtx->backLabel);
     gtk_container_add(GTK_CONTAINER(gCtx->next), gCtx->installLabel);
+    gtk_widget_show(gCtx->backLabel);
     gtk_widget_show(gCtx->installLabel);
+    gtk_widget_show(gCtx->back);
     gtk_widget_show(gCtx->next);
+
+    if (!mShowDlg)
+    {
+       gCtx->bMoving = FALSE;
+       nsInstallDlg::Next((GtkWidget *)NULL, gCtx->idlg);
+       return err;
+    }
+   
 
     return err;
 }
 
 int
-nsInstallDlg::Hide(int aDirection)
+nsInstallDlg::Hide()
 {
+    if (bDownload && sDLTable)
+        gtk_widget_hide(sDLTable);
+
     gtk_widget_hide(mTable);
+
+    // disconnect and remove this dlg's nav btns
+    gtk_signal_disconnect(GTK_OBJECT(gCtx->back), gCtx->backID);
+    gtk_signal_disconnect(GTK_OBJECT(gCtx->next), gCtx->nextID);
+
+    gtk_container_remove(GTK_CONTAINER(gCtx->back), gCtx->backLabel); 
+    gtk_container_remove(GTK_CONTAINER(gCtx->next), gCtx->installLabel); 
+
+    gtk_widget_hide(gCtx->back);
+    gtk_widget_hide(gCtx->next);
 
     return OK;
 }
@@ -563,40 +617,38 @@ nsInstallDlg::PerformInstall()
     nsComponentList *comps = NULL;
     nsComponent *xpiengine = NULL;
     int bCus = (gCtx->opt->mSetupType == (gCtx->sdlg->GetNumSetupTypes() - 1));
-    comps = gCtx->sdlg->GetSelectedSetupType()->GetComponents(); 
-    if (!comps)
-    {
-        ErrorHandler(E_NO_COMPONENTS);
-        return E_NO_COMPONENTS;
-    }
+    comps = gCtx->sdlg->GetSelectedSetupType()->GetComponents();
     
     if (!sXPInstallEngine) return E_PARAM;
     xpiengine = comps->GetCompByArchive(sXPInstallEngine);
 
     // 1> download
-    err = engine->Download(bCus, comps);
-    if (err == E_DL_DROP_CXN)
+    if (bDownload)
     {
-        ShowCxnDroppedDlg();
-        if (gCtx->opt->mMode != nsXIOptions::MODE_SILENT)
-            DLPause(NULL, NULL);
-        return err;
-    }
-    else if (err == E_CRC_FAILED)
-    {
-        ShowCRCFailedDlg();
-        goto BAIL;
-    }
-    else if (err == E_DL_PAUSE || err == E_DL_CANCEL)
-    {
-        DUMP("Pause or Cancel pressed");
-        goto BAIL;
-    }
-    else if (err != OK)
-    {
-        DUMP("dammit... hopped into the wrong hole!");
-        ErrorHandler(err);
-        goto BAIL;
+        err = engine->Download(bCus, comps);
+        if (err == E_DL_DROP_CXN)
+        {
+            ShowCxnDroppedDlg();
+            if (gCtx->opt->mMode != nsXIOptions::MODE_SILENT)
+                DLPause(NULL, NULL);
+            return err;
+        }
+        else if (err == E_CRC_FAILED)
+        {
+            ErrorHandler(err);
+            goto BAIL;
+        }
+        else if (err == E_DL_PAUSE || err == E_DL_CANCEL)
+        {
+            DUMP("Pause or Cancel pressed");
+            goto BAIL;
+        }
+        else if (err != OK)
+        {
+            DUMP("dammit... hopped into the wrong hole!");
+            ErrorHandler(err);
+            goto BAIL;
+        }
     }
 
     // prepare install UI
@@ -917,13 +969,14 @@ nsInstallDlg::SaveModulesToggled(GtkWidget *aWidget, gpointer aData)
 void
 nsInstallDlg::ShowProxySettings(GtkWidget *aWidget, gpointer aData)
 {
-    GtkWidget *psDlg, *psTable, *packer;
+    GtkWidget *psDlg, *psTable;
     GtkWidget *okButton, *cancelButton;
     GtkWidget *psLabel[NUM_PS_ENTRIES];
     int i;
     char resName[16], *text = nsnull;
 
     psDlg = gtk_dialog_new();
+    gtk_window_set_modal(GTK_WINDOW(psDlg), TRUE);
     gtk_window_set_title(GTK_WINDOW(psDlg), gCtx->opt->mTitle);
     gtk_window_set_position(GTK_WINDOW(psDlg), GTK_WIN_POS_CENTER);
 
@@ -938,12 +991,9 @@ nsInstallDlg::ShowProxySettings(GtkWidget *aWidget, gpointer aData)
         psLabel[i] = gtk_label_new(gCtx->Res(resName));
         gtk_widget_show(psLabel[i]);
 
-        packer = gtk_packer_new();
-        gtk_packer_add_defaults(GTK_PACKER(packer), psLabel[i], GTK_SIDE_RIGHT,
-            GTK_ANCHOR_CENTER, GTK_FILL_X);
-        gtk_widget_show(packer);
+        gtk_misc_set_alignment(GTK_MISC(psLabel[i]), 1, 0.5);
 
-        gtk_table_attach(GTK_TABLE(psTable), packer, 0, 1, i, i + 1,
+        gtk_table_attach(GTK_TABLE(psTable), psLabel[i], 0, 1, i, i + 1,
             static_cast<GtkAttachOptions>(GTK_FILL | GTK_EXPAND),
             static_cast<GtkAttachOptions>(GTK_FILL | GTK_EXPAND), 5, 5);
     }
@@ -981,6 +1031,8 @@ nsInstallDlg::ShowProxySettings(GtkWidget *aWidget, gpointer aData)
         okButton);
     gtk_signal_connect(GTK_OBJECT(okButton), "clicked",
                    GTK_SIGNAL_FUNC(PSDlgOK), psDlg);
+    GTK_WIDGET_SET_FLAGS(okButton, GTK_CAN_DEFAULT);
+    gtk_widget_grab_default(okButton);
     gtk_widget_show(okButton);
 
     cancelButton = gtk_button_new_with_label(gCtx->Res("CANCEL_LABEL"));
@@ -998,53 +1050,58 @@ nsInstallDlg::PSDlgOK(GtkWidget *aWidget, gpointer aData)
 {
     GtkWidget *dlg = (GtkWidget *) aData;
     char *text;
+    char *proxyHost=NULL, *proxyPort=NULL, *proxyUser=NULL, *proxyPswd=NULL;
 
     // grab proxy host field
-    if (sPSTextEntry[0])
-    {
-        text = gtk_editable_get_chars(GTK_EDITABLE(sPSTextEntry[0]), 0, -1);
-        if (text)
-        {
-            XI_IF_FREE(gCtx->opt->mProxyHost);
-            gCtx->opt->mProxyHost = text;
-        }
-    }
+    text = gtk_editable_get_chars(GTK_EDITABLE(sPSTextEntry[0]), 0, -1);
+    if (text && *text)
+        proxyHost = text;
+    else
+        XI_IF_FREE(text);
 
     // grab proxy port field
-    if (sPSTextEntry[1])
-    {
-        text = gtk_editable_get_chars(GTK_EDITABLE(sPSTextEntry[1]), 0, -1);
-        if (text)
-        {
-            XI_IF_FREE(gCtx->opt->mProxyPort);
-            gCtx->opt->mProxyPort = text;
-        }
-    }
+    text = gtk_editable_get_chars(GTK_EDITABLE(sPSTextEntry[1]), 0, -1);
+    if (text && *text)
+        proxyPort = text;
+    else
+        XI_IF_FREE(text);
 
     // grab proxy user field
-    if (sPSTextEntry[2])
-    {
-        text = gtk_editable_get_chars(GTK_EDITABLE(sPSTextEntry[2]), 0, -1);
-        if (text)
-        {
-            XI_IF_FREE(gCtx->opt->mProxyUser);
-            gCtx->opt->mProxyUser = text;
-        }
-    }
+    text = gtk_editable_get_chars(GTK_EDITABLE(sPSTextEntry[2]), 0, -1);
+    if (text && *text)
+        proxyUser = text;
+    else
+        XI_IF_FREE(text);
 
     // grab proxy pswd field
-    if (sPSTextEntry[3])
-    {
-        text = gtk_editable_get_chars(GTK_EDITABLE(sPSTextEntry[3]), 0, -1);
-        if (text)
-        {
-            XI_IF_FREE(gCtx->opt->mProxyPswd);
-            gCtx->opt->mProxyPswd = text;
-        }
-    }
+    text = gtk_editable_get_chars(GTK_EDITABLE(sPSTextEntry[3]), 0, -1);
+    if (text && *text)
+        proxyPswd = text;
+    else
+        XI_IF_FREE(text);
 
-    if (dlg)
+    if ( (proxyHost || proxyPort || proxyUser || proxyPswd)
+          && (!proxyHost || !proxyPort) )
+    {
+        XI_IF_FREE(proxyHost);
+        XI_IF_FREE(proxyPort);
+        XI_IF_FREE(proxyUser);
+        XI_IF_FREE(proxyPswd);
+        ErrorHandler(E_INVALID_PROXY);
+    }
+    else
+    {
+        XI_IF_FREE(gCtx->opt->mProxyHost);
+        XI_IF_FREE(gCtx->opt->mProxyPort);
+        XI_IF_FREE(gCtx->opt->mProxyUser);
+        XI_IF_FREE(gCtx->opt->mProxyPswd);
+
+        gCtx->opt->mProxyHost = proxyHost;
+        gCtx->opt->mProxyPort = proxyPort;
+        gCtx->opt->mProxyUser = proxyUser;
+        gCtx->opt->mProxyPswd = proxyPswd;
         gtk_widget_destroy(dlg);
+    }
 }
 
 void
@@ -1069,8 +1126,6 @@ nsInstallDlg::DLPause(GtkWidget *aWidget, gpointer aData)
 
     // enable resume button
     gtk_widget_set_sensitive(gCtx->next, TRUE);
-
-    gtk_main();
 }
 
 void
@@ -1094,10 +1149,6 @@ nsInstallDlg::DLResume(GtkWidget *aWidget, gpointer aData)
     gtk_widget_set_sensitive(gCtx->back, TRUE);
 
     gtk_main_quit();
-
-    PerformInstall();
- 
-    return;
 }
 
 void
@@ -1119,7 +1170,8 @@ nsInstallDlg::DLCancel(GtkWidget *aWidget, gpointer aData)
     // already paused then take explicit action to quit
     if (bDLPause)
     {
-         gtk_main_quit();
+        bDLPause = FALSE;
+        gtk_main_quit();
     }
 }
 
@@ -1145,7 +1197,7 @@ static GtkWidget *crcDlg = (GtkWidget *) NULL;
 void
 nsInstallDlg::ShowCRCDlg()
 {
-    GtkWidget *label, *okButton, *packer;
+    GtkWidget *label, *okButton;
 
     if (gCtx->opt->mMode == nsXIOptions::MODE_SILENT) {
        ErrorHandler(E_CRC_FAILED);
@@ -1156,23 +1208,23 @@ nsInstallDlg::ShowCRCDlg()
        // throw up dialog informing user to press resume
        // or to cancel out
        crcDlg = gtk_dialog_new();
+       gtk_window_set_modal(GTK_WINDOW(crcDlg), TRUE);
        label = gtk_label_new(gCtx->Res("CRC_CHECK"));
        okButton = gtk_button_new_with_label(gCtx->Res("OK_LABEL"));
-       packer = gtk_packer_new();
-
-       if (crcDlg && label && okButton && packer)
+       if (crcDlg && label && okButton )
        {
-           gtk_packer_set_default_border_width(GTK_PACKER(packer), 20);
-           gtk_packer_add_defaults(GTK_PACKER(packer), label, GTK_SIDE_BOTTOM,
-                                   GTK_ANCHOR_CENTER, GTK_FILL_X);
+           gtk_misc_set_padding(GTK_MISC(label), 20, 20);
+           gtk_misc_set_alignment(GTK_MISC(label), 0.5, 1);
            gtk_window_set_title(GTK_WINDOW(crcDlg), gCtx->opt->mTitle);
            gtk_window_set_position(GTK_WINDOW(crcDlg), GTK_WIN_POS_CENTER);
            gtk_container_add(GTK_CONTAINER(GTK_DIALOG(crcDlg)->vbox), 
-                             packer);
+                             label);
            gtk_container_add(GTK_CONTAINER(GTK_DIALOG(crcDlg)->action_area),
                              okButton);
            gtk_signal_connect(GTK_OBJECT(okButton), "clicked",
                               GTK_SIGNAL_FUNC(CRCOKCb), crcDlg);
+           GTK_WIDGET_SET_FLAGS(okButton, GTK_CAN_DEFAULT);
+           gtk_widget_grab_default(okButton);
            gtk_widget_show_all(crcDlg);
        }
     }
@@ -1180,47 +1232,9 @@ nsInstallDlg::ShowCRCDlg()
 }
 
 int
-nsInstallDlg::ShowCRCFailedDlg()
-{
-    GtkWidget *crcFailedDlg, *label, *okButton, *packer;
-
-    // throw up dialog informing user to press resume
-    // or to cancel out
-    if (gCtx->opt->mMode == nsXIOptions::MODE_SILENT) {
-       ErrorHandler(E_CRC_FAILED);
-       return OK;
-    }
-
-    crcFailedDlg = gtk_dialog_new();
-    label = gtk_label_new(gCtx->Res("CRC_FAILED"));
-    okButton = gtk_button_new_with_label(gCtx->Res("OK_LABEL"));
-    packer = gtk_packer_new();
-
-    if (crcFailedDlg && label && okButton && packer)
-    {
-        gtk_packer_set_default_border_width(GTK_PACKER(packer), 20);
-        gtk_packer_add_defaults(GTK_PACKER(packer), label, GTK_SIDE_BOTTOM,
-                                GTK_ANCHOR_CENTER, GTK_FILL_X);
-        gtk_window_set_modal(GTK_WINDOW(crcFailedDlg), TRUE);
-        gtk_window_set_title(GTK_WINDOW(crcFailedDlg), gCtx->opt->mTitle);
-        gtk_window_set_position(GTK_WINDOW(crcFailedDlg), GTK_WIN_POS_CENTER);
-        gtk_container_add(GTK_CONTAINER(GTK_DIALOG(crcFailedDlg)->vbox), 
-                          packer);
-        gtk_container_add(GTK_CONTAINER(GTK_DIALOG(crcFailedDlg)->action_area),
-                          okButton);
-        gtk_signal_connect(GTK_OBJECT(okButton), "clicked",
-                           GTK_SIGNAL_FUNC(CRCFailedOK), crcFailedDlg);
-        gtk_widget_show_all(crcFailedDlg);
-    }
-    XI_GTK_UPDATE_UI();
-
-    return OK;
-}
-
-int
 nsInstallDlg::ShowCxnDroppedDlg()
 {
-    GtkWidget *cxnDroppedDlg, *label, *okButton, *packer;
+    GtkWidget *cxnDroppedDlg, *label, *okButton;
 
     // throw up dialog informing user to press resume
     // or to cancel out
@@ -1230,36 +1244,30 @@ nsInstallDlg::ShowCxnDroppedDlg()
     }
     
     cxnDroppedDlg = gtk_dialog_new();
+    gtk_window_set_modal(GTK_WINDOW(cxnDroppedDlg), TRUE);
     label = gtk_label_new(gCtx->Res("CXN_DROPPED"));
     okButton = gtk_button_new_with_label(gCtx->Res("OK_LABEL"));
-    packer = gtk_packer_new();
 
-    if (cxnDroppedDlg && label && okButton && packer)
+    if (cxnDroppedDlg && label && okButton )
     {
-        gtk_packer_set_default_border_width(GTK_PACKER(packer), 20);
-        gtk_packer_add_defaults(GTK_PACKER(packer), label, GTK_SIDE_BOTTOM,
-                                GTK_ANCHOR_CENTER, GTK_FILL_X);
+        gtk_misc_set_padding(GTK_MISC(label), 20, 20);
+        gtk_misc_set_alignment(GTK_MISC(label), 0.5, 1);
         gtk_window_set_modal(GTK_WINDOW(cxnDroppedDlg), TRUE);
         gtk_window_set_title(GTK_WINDOW(cxnDroppedDlg), gCtx->opt->mTitle);
         gtk_window_set_position(GTK_WINDOW(cxnDroppedDlg), GTK_WIN_POS_CENTER);
         gtk_container_add(GTK_CONTAINER(GTK_DIALOG(cxnDroppedDlg)->vbox), 
-                          packer);
+                          label);
         gtk_container_add(GTK_CONTAINER(GTK_DIALOG(cxnDroppedDlg)->action_area),
                           okButton);
         gtk_signal_connect(GTK_OBJECT(okButton), "clicked",
                            GTK_SIGNAL_FUNC(CxnDroppedOK), cxnDroppedDlg);
+        GTK_WIDGET_SET_FLAGS(okButton, GTK_CAN_DEFAULT);
+        gtk_widget_grab_default(okButton);
         gtk_widget_show_all(cxnDroppedDlg);
     }
     XI_GTK_UPDATE_UI();
 
     return OK;
-}
-
-void
-nsInstallDlg::CRCFailedOK(GtkWidget *aWidget, gpointer aData)
-{
-  gtk_main_quit();
-  return;
 }
 
 void
@@ -1440,7 +1448,7 @@ nsInstallDlg::TotalDLSize()
                 total += (archiveSize - currentSize);
             }
         }
-        currComp = currComp->GetNext();
+        currComp = comps->GetNext();
     }
 
     return total;

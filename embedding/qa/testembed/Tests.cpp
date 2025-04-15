@@ -1,11 +1,12 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim:set ts=4 sw=4 sts=4 cindent noexpandtab: */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -22,8 +23,7 @@
  * Contributor(s):
  *   David Epstein <depstein@netscape.com>
  *   Dharma Sirnapalli <dsirnapalli@netscape.com>
- *	 Ashish Bhatt <ashishbhatt@netscape.com>
- *
+ *   Ashish Bhatt <ashishbhatt@netscape.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -31,11 +31,11 @@
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -106,6 +106,7 @@ BEGIN_MESSAGE_MAP(CTests, CWnd)
 	ON_COMMAND(ID_TOOLS_REMOVEGHPAGE, OnToolsRemoveGHPage)
 	ON_COMMAND(ID_TOOLS_REMOVEALLGH, OnToolsRemoveAllGH)
 	ON_COMMAND(ID_TOOLS_VIEWLOGFILE, OnToolsViewLogfile)
+	ON_COMMAND(ID_TOOLS_DELETELOGFILE, OnToolsDeleteLogfile)
 	ON_COMMAND(ID_TOOLS_TESTYOURMETHOD, OnToolsTestYourMethod)
 	ON_COMMAND(ID_TOOLS_TESTYOURMETHOD2, OnToolsTestYourMethod2)
 	ON_COMMAND(ID_VERIFYBUGS_70228, OnVerifybugs70228)
@@ -585,7 +586,7 @@ void CTests::OnTestsAddUriContentListenerByOpenUri()
 		rv = NS_NewURI(getter_AddRefs(theURI), theStr);
 		RvTestResult(rv, "For OpenURI(): NS_NewURI() test", 1);
 		FormatAndPrintOutput("theStr = ", theStr, 1);
-		GetTheUri(theURI, 1);
+		GetTheURI(theURI, 1);
 		rv = NS_NewChannel(getter_AddRefs(theChannel), theURI, nsnull, nsnull);
 		RvTestResult(rv, "For OpenURI(): NS_NewChannel() test", 1);
 	}
@@ -594,8 +595,7 @@ void CTests::OnTestsAddUriContentListenerByOpenUri()
 		return;
 	}
 
-	nsCOMPtr<nsISupports> mySupports = do_QueryInterface(NS_STATIC_CAST(nsIURIContentListener*, qaBrowserImpl));
-	rv = myLoader->OpenURI(theChannel, PR_TRUE, mySupports);
+	rv = myLoader->OpenURI(theChannel, PR_TRUE, qaBrowserImpl);
 	RvTestResult(rv, "nsIUriLoader->OpenURI() test", 2);
 }
 
@@ -623,17 +623,11 @@ void CTests::OnTestsNSNewChannelAndAsyncOpen()
 		   return;
 		}
 
-		QAOutput("AynchOpen() test.", 2);
-		nsCOMPtr<nsIStreamListener> listener(NS_STATIC_CAST(nsIStreamListener*, qaBrowserImpl));
-		nsCOMPtr<nsIWeakReference> thisListener(do_GetWeakReference(listener));
-		qaWebBrowser->AddWebBrowserListener(thisListener, NS_GET_IID(nsIStreamListener));
-
-		if (!listener)
-			QAOutput("listener object is null for AsyncOpen().", 1);
+		QAOutput("AynchOpen() test:", 2);
 
 		// this calls nsIStreamListener::OnDataAvailable()
-		rv = theChannel->AsyncOpen(listener, nsnull);
-		RvTestResult(rv, "AsyncOpen()", 2);
+		CnsIChannelTests  *channelTests = new CnsIChannelTests(qaWebBrowser, qaBrowserImpl);
+		channelTests->AsyncOpenTest(theChannel, 2);;
 	}
 }
 
@@ -659,7 +653,7 @@ void CTests::OnTestsIOServiceNewURI()
 		if (!theURI)
 			QAOutput("We didn't get the nsIURI object for IOService test.", 2);
 		else {
-			retURI = GetTheUri(theURI, 1);
+			retURI = GetTheURI(theURI, 1);
 			FormatAndPrintOutput("The ioService->NewURI() output uri = ", retURI, 2);
 		}
 	}
@@ -681,6 +675,7 @@ void CTests::OnTestsProtocolHandlerNewURI()
 		nsCAutoString theStr, retStr;
 		nsCOMPtr<nsIURI> theOriginalURI;
 		nsIURI *theReturnURI = nsnull;
+		nsIChannel *theReturnChannel = nsnull;
 		const char *theProtocol;
 
 		nsCOMPtr<nsIProtocolHandler> protocolHandler;
@@ -703,13 +698,48 @@ void CTests::OnTestsProtocolHandlerNewURI()
 
 		RvTestResult(rv, "protocolHandler->NewURI() test", 2);
 
-	    retStr = GetTheUri(theReturnURI, 1);
+	    retStr = GetTheURI(theReturnURI, 1);
 
 	   // simple string compare to see if input & output URLs match
 	    if (strcmp(myDialog.m_urlfield, retStr.get()) == 0)
 		   QAOutput("The in/out URIs MATCH.", 1);
 	    else
 		   QAOutput("The in/out URIs don't MATCH.", 1);
+
+		// other protocol handler tests:
+
+		// GetScheme() test
+		nsCAutoString theScheme;
+		rv = protocolHandler->GetScheme(theScheme);
+		RvTestResult(rv, "protocolHandler->GetScheme() test", 1);
+		FormatAndPrintOutput("GetScheme() = ", theScheme, 1);
+
+		// GetDefaultPort() test
+		PRInt32 theDefaultPort;
+		rv = protocolHandler->GetDefaultPort(&theDefaultPort);
+		RvTestResult(rv, "protocolHandler->GetDefaultPort() test", 1);
+		FormatAndPrintOutput("GetDefaultPort() = ", theDefaultPort, 1);
+
+		// GetProtocolFlags() test
+		PRUint32 theProtocolFlags;
+		rv = protocolHandler->GetProtocolFlags(&theProtocolFlags);
+		RvTestResult(rv, "protocolHandler->GetDefaultPort() test", 1);
+		FormatAndPrintOutput("GetProtocolFlags() = ", theProtocolFlags, 1);
+
+		// NewChannel() test
+		rv = protocolHandler->NewChannel(theReturnURI, &theReturnChannel);
+		RvTestResult(rv, "protocolHandler->NewChannel() test", 1);
+		if (!theReturnChannel)
+			QAOutput("We didn't get the returned nsIChannel object.", 1);
+
+
+		// AllowPort() test
+		PRBool retPort;
+		rv = protocolHandler->AllowPort(theDefaultPort, "http", &retPort);
+		RvTestResult(rv, "protocolHandler->AllowPort() test", 1);
+		FormatAndPrintOutput("AllowPort() boolean = ", retPort, 1);
+
+		
 	}
 }
 
@@ -742,8 +772,18 @@ void CTests::OnToolsRemoveGHPage()
 		myGHistory->IsVisited(myDialog.m_urlfield, &theRetVal);
 		if (theRetVal)
 		{
-			rv = myHistory->RemovePage(myDialog.m_urlfield);
-			RvTestResult(rv, "RemovePage() test (url removal from GH file)", 2);
+			nsCOMPtr<nsIIOService> ios = do_GetIOService();
+			if (ios)
+			{
+				nsCOMPtr<nsIURI> uri;
+				ios->NewURI(nsDependentCString(myDialog.m_urlfield), nsnull, nsnull,
+							getter_AddRefs(uri));
+				if (uri)
+				{
+					rv = myHistory->RemovePage(uri);
+					RvTestResult(rv, "RemovePage() test (url removal from GH file)", 2);
+				}
+			}
 		}
 		else
 		{
@@ -781,11 +821,34 @@ void CTests::OnToolsRemoveAllGH()
 
 void CTests::OnToolsViewLogfile()
 {
-	char theUri[1024];
+	char theURI[1024];
 
-	strcpy(theUri, "file://C|/temp/TestOutput.txt");
-	rv = qaWebNav->LoadURI(NS_ConvertASCIItoUCS2(theUri).get(),
+	CStdioFile myFile; 
+    CFileException e; 
+    CString strFileName = "c:\\temp\\TestOutput.txt"; 
+	myFile.Open( strFileName, CStdioFile::modeCreate | CStdioFile::modeWrite
+			   | CStdioFile::modeNoTruncate, &e );               
+	myFile.Close();
+
+	strcpy(theURI, "file://C|/temp/TestOutput.txt");
+	rv = qaWebNav->LoadURI(NS_ConvertASCIItoUCS2(theURI).get(),
 		 nsIWebNavigation::LOAD_FLAGS_NONE, nsnull,nsnull, nsnull);
+}
+
+void CTests::OnToolsDeleteLogfile()
+{
+	CStdioFile myFile; 
+    CFileException e; 
+    CString strFileName = "c:\\temp\\TestOutput.txt"; 
+	myFile.Open( strFileName, CStdioFile::modeCreate | CStdioFile::modeWrite
+			   | CStdioFile::modeNoTruncate, &e );       
+	myFile.Close();
+
+	nsCOMPtr<nsILocalFile> theOriginalFile(do_CreateInstance(NS_LOCAL_FILE_CONTRACTID));
+
+	rv = theOriginalFile->InitWithNativePath(NS_LITERAL_CSTRING("c:\\temp\\TestOutput.txt"));
+    nsCOMPtr<nsIFile> theTestFile = do_QueryInterface(theOriginalFile);
+	rv = theTestFile->Remove(PR_FALSE);
 }
 
 // ***********************************************************************
@@ -841,13 +904,12 @@ void CTests::OnVerifybugs169617()
 	rv = NS_NewURI(getter_AddRefs(theURI), theStr);
 	RvTestResult(rv, "NS_NewURI() test for file url", 1);
 
-	GetTheUri(theURI, 1);
+	GetTheURI(theURI, 1);
 
 	rv = NS_NewChannel(getter_AddRefs(theChannel), theURI, nsnull, nsnull);
 	RvTestResult(rv, "NS_NewChannel() test for file url", 1);
 
-	nsCOMPtr<nsISupports> mySupports = do_QueryInterface(NS_STATIC_CAST(nsIURIContentListener*, qaBrowserImpl));
-	rv = myLoader->OpenURI(theChannel, PR_TRUE, mySupports);
+	rv = myLoader->OpenURI(theChannel, PR_TRUE, qaBrowserImpl);
 	RvTestResult(rv, "nsIUriLoader->OpenURI() test for file url", 2);
 
 }
@@ -863,13 +925,12 @@ void CTests::OnVerifybugs170274()
 	rv = NS_NewURI(getter_AddRefs(theURI), theStr);
 	RvTestResult(rv, "NS_NewURI() test for data url", 1);
 
-	GetTheUri(theURI, 1);
+	GetTheURI(theURI, 1);
 
 	rv = NS_NewChannel(getter_AddRefs(theChannel), theURI, nsnull, nsnull);
 	RvTestResult(rv, "NS_NewChannel() test for data url", 1);
 
-	nsCOMPtr<nsISupports> mySupports = do_QueryInterface(NS_STATIC_CAST(nsIURIContentListener*, qaBrowserImpl));
-	rv = myLoader->OpenURI(theChannel, PR_TRUE, mySupports);
+	rv = myLoader->OpenURI(theChannel, PR_TRUE, qaBrowserImpl);
 	RvTestResult(rv, "nsIUriLoader->OpenURI() test for data url", 2);
 }
 

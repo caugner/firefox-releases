@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -46,6 +46,7 @@
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsNetCID.h"
+#include "nsAboutProtocolUtils.h"
 
 static NS_DEFINE_CID(kSimpleURICID,     NS_SIMPLEURI_CID);
 
@@ -91,7 +92,7 @@ nsAboutProtocolHandler::Create(nsISupports *aOuter, REFNSIID aIID, void **aResul
 NS_IMETHODIMP
 nsAboutProtocolHandler::GetScheme(nsACString &result)
 {
-    result = "about";
+    result.AssignLiteral("about");
     return NS_OK;
 }
 
@@ -118,10 +119,9 @@ nsAboutProtocolHandler::NewURI(const nsACString &aSpec,
     nsresult rv;
 
     nsIURI* url;
-    rv = nsComponentManager::CreateInstance(kSimpleURICID, nsnull,
-                                            NS_GET_IID(nsIURI),
-                                            (void**)&url);
+    rv = CallCreateInstance(kSimpleURICID, &url);
     if (NS_FAILED(rv)) return rv;
+
     rv = url->SetSpec(aSpec);
     if (NS_FAILED(rv)) {
         NS_RELEASE(url);
@@ -137,27 +137,12 @@ nsAboutProtocolHandler::NewChannel(nsIURI* uri, nsIChannel* *result)
 {
     // about:what you ask?
     nsresult rv;
-    nsCAutoString what;
-    rv = uri->GetPath(what);
+    nsCAutoString contractID;
+    rv = NS_GetAboutModuleName(uri, contractID);
     if (NS_FAILED(rv)) return rv;
-    
-    // look up a handler to deal with "whatStr"
-    nsCAutoString contractID(NS_ABOUT_MODULE_CONTRACTID_PREFIX);
 
-    // only take up to a question-mark if there is one:
-    nsACString::const_iterator begin, end;
-    what.BeginReading(begin);
-    what.EndReading(end);
-    FindCharInReadable('?', begin, end); // moves begin to first '?' or to end
-    end = begin;
-    what.BeginReading(begin);
-    FindCharInReadable('#', begin, end); // moves begin to first '#' or to end
-    end = begin;
-    what.BeginReading(begin);
-    contractID.Append(Substring(begin, end));
-
-    // convert to lowercase, as all about: modules are lowercase
-    ToLowerCase(contractID);
+    // look up a handler to deal with "what"
+    contractID.Insert(NS_LITERAL_CSTRING(NS_ABOUT_MODULE_CONTRACTID_PREFIX), 0);
 
     nsCOMPtr<nsIAboutModule> aboutMod(do_GetService(contractID.get(), &rv));
     if (NS_SUCCEEDED(rv)) {

@@ -1,36 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * 
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the mozilla.org LDAP XPCOM SDK.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
- * Contributor(s): Dan Mosedale <dmose@mozilla.org>
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 2000
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *   Dan Mosedale <dmose@mozilla.org>
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 #include "nsLDAP.h"
 #include "nsLDAPOperation.h"
@@ -39,6 +44,8 @@
 #include "nsIComponentManager.h"
 #include "nsXPIDLString.h"
 #include "nspr.h"
+#include "nsISimpleEnumerator.h"
+#include "nsLDAPControl.h"
 
 // constructor
 nsLDAPOperation::nsLDAPOperation()
@@ -50,7 +57,16 @@ nsLDAPOperation::~nsLDAPOperation()
 {
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS1(nsLDAPOperation, nsILDAPOperation)
+
+NS_IMPL_THREADSAFE_ADDREF(nsLDAPOperation)
+NS_IMPL_THREADSAFE_RELEASE(nsLDAPOperation)
+NS_INTERFACE_MAP_BEGIN(nsLDAPOperation)
+  NS_INTERFACE_MAP_ENTRY(nsILDAPOperation)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsILDAPOperation)
+  NS_IMPL_QUERY_CLASSINFO(nsLDAPOperation)
+NS_INTERFACE_MAP_END_THREADSAFE
+NS_IMPL_CI_INTERFACE_GETTER1(nsLDAPOperation, nsILDAPOperation)
+
 
 /**
  * Initializes this operation.  Must be called prior to use. 
@@ -165,7 +181,7 @@ nsLDAPOperation::SimpleBind(const nsACString& passwd)
            ("nsLDAPOperation::SimpleBind(): called; bindName = '%s'; ",
             bindName.get()));
 
-    // Uf this is a second try at binding, remove the operation from pending ops
+    // If this is a second try at binding, remove the operation from pending ops
     // because msg id has changed...
     if (originalMsgID)
       NS_STATIC_CAST(nsLDAPConnection *, 
@@ -226,55 +242,92 @@ nsLDAPOperation::SimpleBind(const nsACString& passwd)
     return NS_OK;
 }
 
-// wrappers for ldap_search_ext
-//
-int
-nsLDAPOperation::SearchExt(const nsACString& base, // base DN to search
-                           int scope, // SCOPE_{BASE,ONELEVEL,SUBTREE}
-                           const nsACString& filter, // search filter
-                           char **attrs, // attribute types to be returned
-                           int attrsOnly, // attrs only, or values too?
-                           LDAPControl **serverctrls, 
-                           LDAPControl **clientctrls,
-                           struct timeval *timeoutp, // how long to wait
-                           int sizelimit) // max # of entries to return
+/**
+ * Given an nsIArray of nsILDAPControls, return the appropriate
+ * zero-terminated array of LDAPControls ready to pass in to the C SDK.
+ */
+static nsresult
+convertControlArray(nsIArray *aXpcomArray, LDAPControl ***aArray)
 {
-    if (mMessageListener == 0) {
+    // get the size of the original array
+    PRUint32 length;
+    nsresult rv  = aXpcomArray->GetLength(&length);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // don't allocate an array if someone passed us in an empty one
+    if (!length) {
+        *aArray = 0;
+        return NS_OK;
+    }
+
+    // allocate a local array of the form understood by the C-SDK;
+    // +1 is to account for the final null terminator.  PR_Calloc is
+    // is used so that ldap_controls_free will work anywhere during the
+    // iteration
+    LDAPControl **controls = 
+        NS_STATIC_CAST(LDAPControl **,
+                       PR_Calloc(length+1, sizeof(LDAPControl)));
+
+    // prepare to enumerate the array
+    nsCOMPtr<nsISimpleEnumerator> enumerator;
+    rv = aXpcomArray->Enumerate(getter_AddRefs(enumerator));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    PRBool moreElements;
+    rv = enumerator->HasMoreElements(&moreElements);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    PRUint32 i = 0;
+    while (moreElements) {
+
+        // get the next array element
+        nsCOMPtr<nsISupports> isupports;
+        rv = enumerator->GetNext(getter_AddRefs(isupports));
+        if (NS_FAILED(rv)) {
+            ldap_controls_free(controls);
+            return rv;
+        }
+        nsCOMPtr<nsILDAPControl> control = do_QueryInterface(isupports, &rv);
+        if (NS_FAILED(rv)) {
+            ldap_controls_free(controls);
+            return NS_ERROR_INVALID_ARG; // bogus element in the array
+        }
+        nsLDAPControl *ctl = NS_STATIC_CAST(nsLDAPControl *,
+                                            NS_STATIC_CAST(nsILDAPControl *,
+                                                           control.get()));
+
+        // convert it to an LDAPControl structure placed in the new array
+        rv = ctl->ToLDAPControl(&controls[i]);
+        if (NS_FAILED(rv)) {
+            ldap_controls_free(controls);
+            return rv;
+        }
+
+        // on to the next element
+        rv = enumerator->HasMoreElements(&moreElements);
+        if (NS_FAILED(rv)) {
+            ldap_controls_free(controls);
+            return NS_ERROR_UNEXPECTED;
+        }
+        ++i;
+    }
+
+    *aArray = controls;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsLDAPOperation::SearchExt(const nsACString& aBaseDn, PRInt32 aScope, 
+                           const nsACString& aFilter, 
+                           PRUint32 aAttrCount, const char **aAttributes,
+                           PRIntervalTime aTimeOut, PRInt32 aSizeLimit) 
+{
+    if (!mMessageListener) {
         NS_ERROR("nsLDAPOperation::SearchExt(): mMessageListener not set");
         return NS_ERROR_NOT_INITIALIZED;
     }
 
-    return ldap_search_ext(mConnectionHandle, PromiseFlatCString(base).get(),
-                           scope, PromiseFlatCString(filter).get(), attrs,
-                           attrsOnly, serverctrls, clientctrls, timeoutp,
-                           sizelimit, &mMsgID);
-}
-
-
-/**
- * wrapper for ldap_search_ext(): kicks off an async search request.
- *
- * @param aBaseDn               Base DN to search
- * @param aScope                One of SCOPE_{BASE,ONELEVEL,SUBTREE}
- * @param aFilter               Search filter
- * @param aAttrCount            Number of attributes we request (0 for all)
- * @param aAttributes           Array of strings, holding the attributes we need
- * @param aTimeOut              How long to wait
- * @param aSizeLimit            Maximum number of entries to return.
- *
- * XXX doesn't currently handle LDAPControl params
- *
- * void searchExt(in AUTF8String aBaseDn, in PRInt32 aScope,
- *                in AUTF8String aFilter, PRUint32 aAttrCount,
- *                const char **aAttributes, in PRIntervalTime aTimeOut,
- *                in PRInt32 aSizeLimit);
- */
-NS_IMETHODIMP
-nsLDAPOperation::SearchExt(const nsACString& aBaseDn, PRInt32 aScope, 
-                           const nsACString& aFilter, PRUint32 aAttrCount,
-                           const char **aAttributes, PRIntervalTime aTimeOut,
-                           PRInt32 aSizeLimit) 
-{
+    // XXX add control logging
     PR_LOG(gLDAPLogModule, PR_LOG_DEBUG, 
            ("nsLDAPOperation::SearchExt(): called with aBaseDn = '%s'; "
             "aFilter = '%s', aAttrCounts = %u, aSizeLimit = %d", 
@@ -298,11 +351,48 @@ nsLDAPOperation::SearchExt(const nsACString& aBaseDn, PRInt32 aScope,
         attrs[aAttrCount] = 0;
     }
 
-    // XXX deal with timeouts
-    //
-    int retVal = SearchExt(aBaseDn, aScope, aFilter,
-                           attrs, 0, 0, 0, 0, aSizeLimit);
+    LDAPControl **serverctls = 0;
+    nsresult rv;
+    if (mServerControls) {
+        rv = convertControlArray(mServerControls, &serverctls);
+        if (NS_FAILED(rv)) {
+            PR_LOG(gLDAPLogModule, PR_LOG_ERROR,
+                   ("nsLDAPOperation::SearchExt(): error converting server "
+                    "control array: %x", rv));
 
+            if (attrs) {
+                nsMemory::Free(attrs);
+            }
+            return rv;
+        }
+    }
+
+
+    LDAPControl **clientctls = 0;
+    if (mClientControls) {
+        rv = convertControlArray(mClientControls, &clientctls);
+        if (NS_FAILED(rv)) {
+            PR_LOG(gLDAPLogModule, PR_LOG_ERROR,
+                   ("nsLDAPOperation::SearchExt(): error converting client "
+                    "control array: %x", rv));
+            if (attrs) {
+                nsMemory::Free(attrs);
+            }
+            ldap_controls_free(serverctls);
+            return rv;
+        }
+    }
+
+    // XXX deal with timeout here
+    int retVal = ldap_search_ext(mConnectionHandle, 
+                                 PromiseFlatCString(aBaseDn).get(),
+                                 aScope, PromiseFlatCString(aFilter).get(), 
+                                 attrs, 0, serverctls, clientctls, 0,
+                                 aSizeLimit, &mMsgID);
+
+    // clean up
+    ldap_controls_free(serverctls);        
+    ldap_controls_free(clientctls);
     if (attrs) {
         nsMemory::Free(attrs);
     }
@@ -338,7 +428,7 @@ nsLDAPOperation::SearchExt(const nsACString& aBaseDn, PRInt32 aScope,
     // make sure the connection knows where to call back once the messages
     // for this operation start coming in
     //
-    nsresult rv = NS_STATIC_CAST(nsLDAPConnection *, NS_STATIC_CAST(
+    rv = NS_STATIC_CAST(nsLDAPConnection *, NS_STATIC_CAST(
         nsILDAPConnection *, mConnection.get()))->AddPendingOperation(this);
     if (NS_FAILED(rv)) {
         switch (rv) {
@@ -372,9 +462,8 @@ nsLDAPOperation::GetMessageID(PRInt32 *aMsgID)
 // as far as I can tell from reading the LDAP C SDK code, abandoning something
 // that has already been abandoned does not return an error
 //
-nsresult
-nsLDAPOperation::AbandonExt(LDAPControl **serverctrls,
-                            LDAPControl **clientctrls)
+NS_IMETHODIMP
+nsLDAPOperation::AbandonExt()
 {
     nsresult rv;
     nsresult retStatus = NS_OK;
@@ -385,8 +474,12 @@ nsLDAPOperation::AbandonExt(LDAPControl **serverctrls,
         return NS_ERROR_NOT_INITIALIZED;
     }
 
-    rv = ldap_abandon_ext(mConnectionHandle, mMsgID, serverctrls, 
-                          clientctrls);
+    // XXX handle controls here
+    if (mServerControls || mClientControls) {
+        return NS_ERROR_NOT_IMPLEMENTED;
+    }
+
+    rv = ldap_abandon_ext(mConnectionHandle, mMsgID, 0, 0);
     switch (rv) {
 
     case LDAP_SUCCESS:
@@ -426,7 +519,7 @@ nsLDAPOperation::AbandonExt(LDAPControl **serverctrls,
           nsILDAPConnection *, mConnection.get()))->RemovePendingOperation(this);
 
       if (NS_FAILED(rv)) {
-          // XXXdmose should we use keep Abandon from happening on multiple 
+          // XXXdmose should we keep AbandonExt from happening on multiple 
           // threads at the same time?  that's when this condition is most 
           // likely to occur.  i _think_ the LDAP C SDK is ok with this; need 
           // to verify.
@@ -440,7 +533,27 @@ nsLDAPOperation::AbandonExt(LDAPControl **serverctrls,
 }
 
 NS_IMETHODIMP
-nsLDAPOperation::Abandon(void)
+nsLDAPOperation::GetClientControls(nsIMutableArray **aControls)
 {
-    return nsLDAPOperation::AbandonExt(0, 0);
+    NS_IF_ADDREF(*aControls = mClientControls);
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsLDAPOperation::SetClientControls(nsIMutableArray *aControls)
+{
+    mClientControls = aControls;
+    return NS_OK;
+}
+
+NS_IMETHODIMP nsLDAPOperation::GetServerControls(nsIMutableArray **aControls)
+{
+    NS_IF_ADDREF(*aControls = mServerControls);
+    return NS_OK;
+}
+
+NS_IMETHODIMP nsLDAPOperation::SetServerControls(nsIMutableArray *aControls)
+{
+    mServerControls = aControls;
+    return NS_OK;
 }

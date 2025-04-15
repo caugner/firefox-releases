@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -14,7 +14,7 @@
  *
  * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is 
+ * The Initial Developer of the Original Code is
  * Netscape Communications Corporation.
  * Portions created by the Initial Developer are Copyright (C) 1998
  * the Initial Developer. All Rights Reserved.
@@ -23,16 +23,16 @@
  *   Pierre Phaneuf <pp@ludusdesign.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or 
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 #include "prlog.h"
@@ -55,7 +55,8 @@
 #include "plstr.h"
 #include "prmem.h"
 #include "mimemoz2.h"
-#include "nsIPref.h"
+#include "nsIPrefService.h"
+#include "nsIPrefBranch.h"
 #include "nsIServiceManager.h"
 #include "nsFileSpec.h"
 #include "comi18n.h"
@@ -100,7 +101,6 @@
 // </for>
 
 
-static NS_DEFINE_CID(kPrefCID, NS_PREF_CID);
 static NS_DEFINE_CID(kIOServiceCID, NS_IOSERVICE_CID);
 // <for functions="HTML2Plaintext,HTMLSantinize">
 static NS_DEFINE_CID(kParserCID, NS_PARSER_CID);
@@ -195,8 +195,6 @@ ProcessBodyAsAttachment(MimeObject *obj, nsMsgAttachmentData **data)
       // if this is an IMAP part. 
       tmpURL = mime_set_url_imap_part(url, id_imap, id);
       rv = nsMimeNewURI(&(tmp->url), tmpURL, nsnull);
-
-      tmp->notDownloaded = PR_TRUE;
     }
     else
     {
@@ -281,13 +279,13 @@ ValidateRealName(nsMsgAttachmentData *aAttach, MimeHeaders *aHdrs)
     nsCOMPtr<nsIMIMEService> mimeFinder (do_GetService(NS_MIMESERVICE_CONTRACTID, &rv));
     if (NS_SUCCEEDED(rv)) 
     {
-      nsXPIDLCString fileExtension;
-      rv = mimeFinder->GetPrimaryExtension(contentType.get(), nsnull, getter_Copies(fileExtension));
+      nsCAutoString fileExtension;
+      rv = mimeFinder->GetPrimaryExtension(contentType, EmptyCString(), fileExtension);
 
       if (NS_SUCCEEDED(rv) && !fileExtension.IsEmpty())
       {
         newAttachName.Append(PRUnichar('.'));
-        newAttachName.AppendWithConversion(fileExtension);
+        AppendUTF8toUTF16(fileExtension, newAttachName);
       }
     }
 
@@ -304,6 +302,7 @@ GenerateAttachmentData(MimeObject *object, const char *aMessageURL, MimeDisplayO
   nsXPIDLCString imappart;
   nsXPIDLCString part;
   PRBool isIMAPPart;
+  PRBool isExternalAttachment = PR_FALSE;
 
   /* be sure the object has not be marked as Not to be an attachment */
   if (object->dontShowAsAttachment)
@@ -333,7 +332,15 @@ GenerateAttachmentData(MimeObject *object, const char *aMessageURL, MimeDisplayO
       PR_Free(no_part_url);
     }
     else
-      urlSpec = mime_set_url_part(aMessageURL, part.get(), PR_TRUE);
+    {
+      // if the mime object contains an external attachment URL, then use it, otherwise
+      // fall back to creating an attachment url based on the message URI and the 
+      // part number.
+      urlSpec = mime_external_attachment_url(object);
+      isExternalAttachment = urlSpec ? PR_TRUE : PR_FALSE;
+      if (!urlSpec)
+        urlSpec = mime_set_url_part(aMessageURL, part.get(), PR_TRUE);
+    }
   }
 
   if (!urlSpec)
@@ -341,6 +348,7 @@ GenerateAttachmentData(MimeObject *object, const char *aMessageURL, MimeDisplayO
 
   if ((options->format_out == nsMimeOutput::nsMimeMessageBodyDisplay) && (nsCRT::strncasecmp(aMessageURL, urlSpec, strlen(urlSpec)) == 0))
     return NS_OK;
+  
   nsMsgAttachmentData *tmp = &(aAttachData[attIndex++]);
   nsresult rv = nsMimeNewURI(&(tmp->url), urlSpec, nsnull);
 
@@ -351,6 +359,7 @@ GenerateAttachmentData(MimeObject *object, const char *aMessageURL, MimeDisplayO
 
   tmp->real_type = object->content_type ? nsCRT::strdup(object->content_type) : nsnull;
   tmp->real_encoding = object->encoding ? nsCRT::strdup(object->encoding) : nsnull;
+  tmp->isExternalAttachment = isExternalAttachment;
   
   PRInt32 i;
   char *charset = nsnull;
@@ -452,13 +461,6 @@ GenerateAttachmentData(MimeObject *object, const char *aMessageURL, MimeDisplayO
       tmp->real_name = mime_part_address(object);
   }
   ValidateRealName(tmp, object->headers);
-
-  if (isIMAPPart)
-  {
-    // If we get here, we should mark this attachment as not being
-    // downloaded. 
-    tmp->notDownloaded = PR_TRUE;
-  }
 
   return NS_OK;
 }
@@ -629,13 +631,13 @@ NotifyEmittersOfAttachmentList(MimeDisplayOptions     *opt,
     if ( tmp->url ) 
       tmp->url->GetSpec(spec);
 
-    mimeEmitterStartAttachment(opt, tmp->real_name, tmp->real_type, spec.get(), tmp->notDownloaded);
+    mimeEmitterStartAttachment(opt, tmp->real_name, tmp->real_type, spec.get(), tmp->isExternalAttachment);
     mimeEmitterAddAttachmentField(opt, HEADER_X_MOZILLA_PART_URL, spec.get());
 
     if ( (opt->format_out == nsMimeOutput::nsMimeMessageQuoting) || 
          (opt->format_out == nsMimeOutput::nsMimeMessageBodyQuoting) || 
          (opt->format_out == nsMimeOutput::nsMimeMessageSaveAs) || 
-         (opt->format_out == nsMimeOutput::nsMimeMessagePrintOutput) )
+         (opt->format_out == nsMimeOutput::nsMimeMessagePrintOutput))
     {
       mimeEmitterAddAttachmentField(opt, HEADER_CONTENT_DESCRIPTION, tmp->description);
       mimeEmitterAddAttachmentField(opt, HEADER_CONTENT_TYPE, tmp->real_type);
@@ -724,8 +726,11 @@ mime_file_type (const char *filename, void *stream_closure)
   {
     ext++;
     nsCOMPtr<nsIMIMEService> mimeFinder (do_GetService(NS_MIMESERVICE_CONTRACTID, &rv));
-    if (NS_SUCCEEDED(rv) && mimeFinder) 
-      mimeFinder->GetTypeFromExtension(ext, &retType);
+    if (mimeFinder) {
+      nsCAutoString type;
+      mimeFinder->GetTypeFromExtension(nsDependentCString(ext), type);
+      retType = ToNewCString(type);
+    }
   }
 
   return retType;
@@ -951,10 +956,6 @@ mime_display_stream_complete (nsMIMESession *stream)
     int       status;
     PRBool    abortNow = PR_FALSE;
 
-    // Release the prefs service
-    if ( (obj->options) && (obj->options->prefs) )
-      nsServiceManager::ReleaseService(kPrefCID, obj->options->prefs);
-    
     if ((obj->options) && (obj->options->headers == MimeHeadersOnly))
       abortNow = PR_TRUE;
 
@@ -1151,7 +1152,7 @@ mime_image_begin(const char *image_url, const char *content_type,
           // we may need to convert the image_url into just a part url - in any case,
           // it has to be the same as what imglib will be asking imap for later
           // on so that we'll find this in the memory cache.
-          rv = memCacheSession->OpenCacheEntry(image_url, nsICache::ACCESS_READ_WRITE, nsICache::BLOCKING, getter_AddRefs(entry));
+          rv = memCacheSession->OpenCacheEntry(nsDependentCString(image_url), nsICache::ACCESS_READ_WRITE, nsICache::BLOCKING, getter_AddRefs(entry));
           nsCacheAccessMode access;
           if (entry)
           {
@@ -1367,13 +1368,13 @@ PRBool MimeObjectChildIsMessageBody(MimeObject *obj,
 //
 
 // Get the connnection to prefs service manager 
-nsIPref *
-GetPrefServiceManager(MimeDisplayOptions *opt)
+nsIPrefBranch *
+GetPrefBranch(MimeDisplayOptions *opt)
 {
   if (!opt) 
     return nsnull;
 
-  return opt->prefs;
+  return opt->m_prefBranch;
 }
 
 // Get the text converter...
@@ -1389,7 +1390,6 @@ GetTextConverter(MimeDisplayOptions *opt)
 MimeDisplayOptions::MimeDisplayOptions()
 {
   conv = nsnull;        // For text conversion...
-  prefs = nsnull;       /* Connnection to prefs service manager */
   format_out = 0;   // The format out type
   url = nsnull;	
 
@@ -1534,20 +1534,18 @@ mime_bridge_create_display_stream(
 //  memset(msd->options, 0, sizeof(*msd->options));
   msd->options->format_out = format_out;     // output format
 
-  rv = nsServiceManager::GetService(kPrefCID, NS_GET_IID(nsIPref), (nsISupports**)&(msd->options->prefs));
-  if (! (msd->options->prefs && NS_SUCCEEDED(rv)))
-	{
+  msd->options->m_prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
+  if (NS_FAILED(rv))
+  {
     PR_FREEIF(msd);
     return nsnull;
   }
 
   // Need the text converter...
-  rv = nsComponentManager::CreateInstance(MOZ_TXTTOHTMLCONV_CONTRACTID,
-                                          NULL, NS_GET_IID(mozITXTToHTMLConv),
-                                          (void **)&(msd->options->conv));
+  rv = CallCreateInstance(MOZ_TXTTOHTMLCONV_CONTRACTID, &(msd->options->conv));
   if (NS_FAILED(rv))
-	{
-    nsServiceManager::ReleaseService(kPrefCID, msd->options->prefs);
+  {
+    msd->options->m_prefBranch = 0;
     PR_FREEIF(msd);
     return nsnull;
   }
@@ -1559,28 +1557,31 @@ mime_bridge_create_display_stream(
   msd->options->write_html_p = PR_TRUE;
   switch (format_out) 
   {
-		case nsMimeOutput::nsMimeMessageSplitDisplay:   // the wrapper HTML output to produce the split header/body display
-		case nsMimeOutput::nsMimeMessageHeaderDisplay:  // the split header/body display
-		case nsMimeOutput::nsMimeMessageBodyDisplay:    // the split header/body display
+    case nsMimeOutput::nsMimeMessageSplitDisplay:   // the wrapper HTML output to produce the split header/body display
+    case nsMimeOutput::nsMimeMessageHeaderDisplay:  // the split header/body display
+    case nsMimeOutput::nsMimeMessageBodyDisplay:    // the split header/body display
       msd->options->fancy_headers_p = PR_TRUE;
       msd->options->output_vcard_buttons_p = PR_TRUE;
       msd->options->fancy_links_p = PR_TRUE;
       break;
 
-	case nsMimeOutput::nsMimeMessageSaveAs:         // Save As operations
-	case nsMimeOutput::nsMimeMessageQuoting:        // all HTML quoted/printed output
-  case nsMimeOutput::nsMimeMessagePrintOutput:
+    case nsMimeOutput::nsMimeMessageSaveAs:         // Save As operations
+    case nsMimeOutput::nsMimeMessageQuoting:        // all HTML quoted/printed output
+    case nsMimeOutput::nsMimeMessagePrintOutput:
       msd->options->fancy_headers_p = PR_TRUE;
       msd->options->fancy_links_p = PR_TRUE;
       break;
 
-	case nsMimeOutput::nsMimeMessageBodyQuoting:        // only HTML body quoted output
+    case nsMimeOutput::nsMimeMessageBodyQuoting:        // only HTML body quoted output
       MIME_HeaderType = MimeHeadersNone;
       break;
 
+    case nsMimeOutput::nsMimeMessageAttach:           // handling attachment storage
+        msd->options->write_html_p = PR_FALSE;
+        break;
     case nsMimeOutput::nsMimeMessageRaw:              // the raw RFC822 data (view source) and attachments
-		case nsMimeOutput::nsMimeMessageDraftOrTemplate:  // Loading drafts & templates
-		case nsMimeOutput::nsMimeMessageEditorTemplate:   // Loading templates into editor
+    case nsMimeOutput::nsMimeMessageDraftOrTemplate:  // Loading drafts & templates
+    case nsMimeOutput::nsMimeMessageEditorTemplate:   // Loading templates into editor
     case nsMimeOutput::nsMimeMessageFilterSniffer:    // generating an output that can be scan by a message filter
       break;
 
@@ -1594,15 +1595,27 @@ mime_bridge_create_display_stream(
   // Now, get the libmime prefs...
   ////////////////////////////////////////////////////////////
   
-  /* This pref is written down in with the
-  opposite sense of what we like to use... */
   MIME_WrapLongLines = PR_TRUE;
-  if (msd->options->prefs)
-    msd->options->prefs->GetBoolPref("mail.wrap_long_lines", &MIME_WrapLongLines);
-
   MIME_VariableWidthPlaintext = PR_TRUE;
-  if (msd->options->prefs)
-    msd->options->prefs->GetBoolPref("mail.fixed_width_messages", &MIME_VariableWidthPlaintext);
+  msd->options->force_user_charset = PR_FALSE;
+
+  if (msd->options->m_prefBranch)
+  {
+    msd->options->m_prefBranch->GetBoolPref("mail.wrap_long_lines", &MIME_WrapLongLines);
+    msd->options->m_prefBranch->GetBoolPref("mail.fixed_width_messages", &MIME_VariableWidthPlaintext);
+      // 
+      // Charset overrides takes place here
+      //
+      // We have a bool pref (mail.force_user_charset) to deal with attachments.
+      // 1) If true - libmime does NO conversion and just passes it through to raptor
+      // 2) If false, then we try to use the charset of the part and if not available, 
+      //    the charset of the root message 
+      //
+    msd->options->m_prefBranch->GetBoolPref("mail.force_user_charset", &(msd->options->force_user_charset));
+    msd->options->m_prefBranch->GetBoolPref("mail.inline_attachments", &(msd->options->show_attachment_inline_p));
+  }
+  /* This pref is written down in with the
+     opposite sense of what we like to use... */
   MIME_VariableWidthPlaintext = !MIME_VariableWidthPlaintext;
 
   msd->options->wrap_long_lines_p = MIME_WrapLongLines;
@@ -1643,26 +1656,10 @@ mime_bridge_create_display_stream(
   
   msd->options->variable_width_plaintext_p = MIME_VariableWidthPlaintext;
 
-  // 
-  // Charset overrides takes place here
-  //
-  // We have a bool pref (mail.force_user_charset) to deal with attachments.
-  // 1) If true - libmime does NO conversion and just passes it through to raptor
-  // 2) If false, then we try to use the charset of the part and if not available, 
-  //    the charset of the root message 
-  //
-  msd->options->force_user_charset = PR_FALSE;
-
-  if (msd->options->prefs)
-    msd->options->prefs->GetBoolPref("mail.force_user_charset", &(msd->options->force_user_charset));
-
   // If this is a part, then we should emit the HTML to render the data
   // (i.e. embedded images)
   if (msd->options->part_to_load && msd->options->format_out != nsMimeOutput::nsMimeMessageBodyDisplay)
     msd->options->write_html_p = PR_FALSE;
-
-  if (msd->options->prefs)
-    msd->options->prefs->GetBoolPref("mail.inline_attachments", &(msd->options->show_attachment_inline_p));
 
   obj = mime_new ((MimeObjectClass *)&mimeMessageClass, (MimeHeaders *) NULL, MESSAGE_RFC822);
   if (!obj)
@@ -1804,7 +1801,7 @@ mimeEmitterAddAllHeaders(MimeDisplayOptions *opt, const char *allheaders, const 
 
 extern "C" nsresult     
 mimeEmitterStartAttachment(MimeDisplayOptions *opt, const char *name, const char *contentType, const char *url,
-                           PRBool aNotDownloaded)
+                           PRBool aIsExternalAttachment)
 {
   // Check for draft processing...
   if (NoEmitterProcessing(opt->format_out))
@@ -1817,7 +1814,7 @@ mimeEmitterStartAttachment(MimeDisplayOptions *opt, const char *name, const char
   if (msd->output_emitter)
   {
     nsIMimeEmitter *emitter = (nsIMimeEmitter *)msd->output_emitter;
-    return emitter->StartAttachment(name, contentType, url, aNotDownloaded);
+    return emitter->StartAttachment(name, contentType, url, aIsExternalAttachment);
   }
 
   return NS_ERROR_FAILURE;
@@ -2088,8 +2085,8 @@ nsresult GetMailNewsFont(MimeObject *obj, PRBool styleFixed,  PRInt32 *fontPixel
 {
   nsresult rv = NS_OK;
 
-  nsIPref *prefs = GetPrefServiceManager(obj->options);
-  if (prefs) {
+  nsIPrefBranch *prefBranch = GetPrefBranch(obj->options);
+  if (prefBranch) {
     MimeInlineText  *text = (MimeInlineText *) obj;
     nsCAutoString charset;
 
@@ -2123,13 +2120,21 @@ nsresult GetMailNewsFont(MimeObject *obj, PRBool styleFixed,  PRInt32 *fontPixel
     // get a font size from pref
     prefStr.Assign(!styleFixed ? "font.size.variable." : "font.size.fixed.");
     prefStr.Append(fontLang);
-    rv = prefs->GetIntPref(prefStr.get(), fontPixelSize);
+    rv = prefBranch->GetIntPref(prefStr.get(), fontPixelSize);
     if (NS_FAILED(rv))
+      return rv;
+
+    nsCOMPtr<nsIPrefBranch> prefDefBranch;
+    nsCOMPtr<nsIPrefService> prefSvc(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
+    if(prefSvc)
+      rv = prefSvc->GetDefaultBranch("", getter_AddRefs(prefDefBranch));
+
+    if(!prefDefBranch)
       return rv;
 
     // get original font size
     PRInt32 originalSize;
-    rv = prefs->GetDefaultIntPref(prefStr.get(), &originalSize);
+    rv = prefDefBranch->GetIntPref(prefStr.get(), &originalSize);
     if (NS_FAILED(rv))
       return rv;
 
@@ -2148,7 +2153,7 @@ nsresult GetMailNewsFont(MimeObject *obj, PRBool styleFixed,  PRInt32 *fontPixel
    flags: see nsIDocumentEncoder.h
 */
 // TODO: |printf|s?
-/* <copy from="mozilla/htmlparser/test/outsinks/Convert.cpp"
+/* <copy from="mozilla/parser/htmlparser/test/outsinks/Convert.cpp"
          author="akk"
          adapted-by="Ben Bucksch"
          comment=" 'This code would not have been possible without akk.' ;-P.

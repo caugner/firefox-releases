@@ -1,23 +1,39 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "MPL"); you may not use this file
- * except in compliance with the MPL. You may obtain a copy of
- * the MPL at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the MPL is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the MPL for the specific language governing
- * rights and limitations under the MPL.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is XMLterm.
- * 
- * The Initial Developer of the Original Code is Ramalingam Saravanan.
- * Portions created by Ramalingam Saravanan <svn@xmlterm.org> are
- * Copyright (C) 1999 Ramalingam Saravanan. All Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Ramalingam Saravanan.
+ * Portions created by the Initial Developer are Copyright (C) 1999
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
  *   Pierre Phaneuf <pp@ludusdesign.com>
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 // mozLineTerm.cpp: class implementing mozILineTerm/mozILineTermAux interfaces,
 // providing an XPCOM/XPCONNECT wrapper for the LINETERM module
@@ -105,7 +121,7 @@ mozLineTerm::mozLineTerm() :
   mSuspended(PR_FALSE),
   mEchoFlag(PR_TRUE),
   mObserver(nsnull),
-  mCookie(nsAutoString()),
+  mCookie(EmptyString()),
   mLastTime(LL_ZERO)
 {
   mLTerm = lterm_new();
@@ -177,7 +193,7 @@ NS_IMETHODIMP mozLineTerm::ArePrefsSecure(PRBool *_retval)
   XMLT_LOG(mozLineTerm::ArePrefsSecure,32,
            ("secLevelString=%s\n", secLevelString.get()));
 
-  *_retval = secLevelString.Equals(NS_LITERAL_CSTRING("sameOrigin"));
+  *_retval = secLevelString.EqualsLiteral("sameOrigin");
 
   if (!(*_retval)) {
     XMLT_ERROR("mozLineTerm::ArePrefsSecure: Error - Please add the line\n"
@@ -198,8 +214,6 @@ NS_IMETHODIMP mozLineTerm::GetSecurePrincipal(nsIDOMDocument *domDoc,
 {
   XMLT_LOG(mozLineTerm::GetSecurePrincipal,30,("\n"));
 
-  nsresult result;
-
   if (!aPrincipalStr)
     return NS_ERROR_FAILURE;
 
@@ -214,9 +228,8 @@ NS_IMETHODIMP mozLineTerm::GetSecurePrincipal(nsIDOMDocument *domDoc,
   if (!principal) 
     return NS_ERROR_FAILURE;
 
-#if 0  // Temporarily comented out, because ToString is not immplemented
-  result = principal->ToString(aPrincipalStr);
-  if (NS_FAILED(result) || !*aPrincipalStr)
+#if 0  // Temporarily commented out, because |ToString()| is not implemented.
+  if (NS_FAILED(principal->ToString(aPrincipalStr)) || !*aPrincipalStr)
     return NS_ERROR_FAILURE;
 #else
   const char temStr[] = "unknown";
@@ -343,8 +356,7 @@ NS_IMETHODIMP mozLineTerm::OpenAux(const PRUnichar *command,
   XMLT_LOG(mozLineTerm::Open,22, ("mCookie=%s\n", cookieCStr));
 
   // Convert initInput to CString
-  nsCAutoString initCStr;
-  initCStr.AssignWithConversion(initInput);
+  NS_LossyConvertUTF16toASCII initCStr(initInput); // XXX ASCII?
   XMLT_LOG(mozLineTerm::Open,22, ("initInput=%s\n", initCStr.get()));
 
   // List of prompt delimiters

@@ -1,35 +1,38 @@
-/*
- * The contents of this file are subject to the Mozilla Public
- * License Version 1.1 (the "License"); you may not use this file
- * except in compliance with the License. You may obtain a copy of
- * the License at http://www.mozilla.org/MPL/
- * 
- * Software distributed under the License is distributed on an "AS
- * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * rights and limitations under the License.
- * 
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
  * The Original Code is the Netscape security libraries.
- * 
- * The Initial Developer of the Original Code is Netscape
- * Communications Corporation.  Portions created by Netscape are 
- * Copyright (C) 1994-2000 Netscape Communications Corporation.  All
- * Rights Reserved.
- * 
+ *
+ * The Initial Developer of the Original Code is
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1994-2000
+ * the Initial Developer. All Rights Reserved.
+ *
  * Contributor(s):
- * 
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU General Public License Version 2 or later (the
- * "GPL"), in which case the provisions of the GPL are applicable 
- * instead of those above.  If you wish to allow use of your 
- * version of this file only under the terms of the GPL and not to
- * allow others to use your version of this file under the MPL,
- * indicate your decision by deleting the provisions above and
- * replace them with the notice and other provisions required by
- * the GPL.  If you do not delete the provisions above, a recipient
- * may use your version of this file under either the MPL or the
- * GPL.
- */
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 /* 
  *  The following code handles the storage of PKCS 11 modules used by the
  * NSS. This file is written to abstract away how the modules are
@@ -45,83 +48,83 @@
 #define FREE_CLEAR(p) if (p) { PORT_Free(p); p = NULL; }
 
 static void
-secmod_parseTokenFlags(char *tmp, pk11_token_parameters *parsed) { 
-    parsed->readOnly = pk11_argHasFlag("flags","readOnly",tmp);
-    parsed->noCertDB = pk11_argHasFlag("flags","noCertDB",tmp);
-    parsed->noKeyDB = pk11_argHasFlag("flags","noKeyDB",tmp);
-    parsed->forceOpen = pk11_argHasFlag("flags","forceOpen",tmp);
-    parsed->pwRequired = pk11_argHasFlag("flags","passwordRequired",tmp);
-    parsed->optimizeSpace = pk11_argHasFlag("flags","optimizeSpace",tmp);
+secmod_parseTokenFlags(char *tmp, sftk_token_parameters *parsed) { 
+    parsed->readOnly = secmod_argHasFlag("flags","readOnly",tmp);
+    parsed->noCertDB = secmod_argHasFlag("flags","noCertDB",tmp);
+    parsed->noKeyDB = secmod_argHasFlag("flags","noKeyDB",tmp);
+    parsed->forceOpen = secmod_argHasFlag("flags","forceOpen",tmp);
+    parsed->pwRequired = secmod_argHasFlag("flags","passwordRequired",tmp);
+    parsed->optimizeSpace = secmod_argHasFlag("flags","optimizeSpace",tmp);
     return;
 }
 
 static void
-secmod_parseFlags(char *tmp, pk11_parameters *parsed) { 
-    parsed->noModDB = pk11_argHasFlag("flags","noModDB",tmp);
-    parsed->readOnly = pk11_argHasFlag("flags","readOnly",tmp);
+secmod_parseFlags(char *tmp, sftk_parameters *parsed) { 
+    parsed->noModDB = secmod_argHasFlag("flags","noModDB",tmp);
+    parsed->readOnly = secmod_argHasFlag("flags","readOnly",tmp);
     /* keep legacy interface working */
-    parsed->noCertDB = pk11_argHasFlag("flags","noCertDB",tmp);
-    parsed->forceOpen = pk11_argHasFlag("flags","forceOpen",tmp);
-    parsed->pwRequired = pk11_argHasFlag("flags","passwordRequired",tmp);
-    parsed->optimizeSpace = pk11_argHasFlag("flags","optimizeSpace",tmp);
+    parsed->noCertDB = secmod_argHasFlag("flags","noCertDB",tmp);
+    parsed->forceOpen = secmod_argHasFlag("flags","forceOpen",tmp);
+    parsed->pwRequired = secmod_argHasFlag("flags","passwordRequired",tmp);
+    parsed->optimizeSpace = secmod_argHasFlag("flags","optimizeSpace",tmp);
     return;
 }
 
 CK_RV
-secmod_parseTokenParameters(char *param, pk11_token_parameters *parsed) 
+secmod_parseTokenParameters(char *param, sftk_token_parameters *parsed) 
 {
     int next;
     char *tmp;
     char *index;
-    index = pk11_argStrip(param);
+    index = secmod_argStrip(param);
 
     while (*index) {
-	PK11_HANDLE_STRING_ARG(index,parsed->configdir,"configDir=",;)
-	PK11_HANDLE_STRING_ARG(index,parsed->certPrefix,"certPrefix=",;)
-	PK11_HANDLE_STRING_ARG(index,parsed->keyPrefix,"keyPrefix=",;)
-	PK11_HANDLE_STRING_ARG(index,parsed->tokdes,"tokenDescription=",;)
-	PK11_HANDLE_STRING_ARG(index,parsed->slotdes,"slotDescription=",;)
-	PK11_HANDLE_STRING_ARG(index,tmp,"minPWLen=", 
+	SECMOD_HANDLE_STRING_ARG(index,parsed->configdir,"configDir=",;)
+	SECMOD_HANDLE_STRING_ARG(index,parsed->certPrefix,"certPrefix=",;)
+	SECMOD_HANDLE_STRING_ARG(index,parsed->keyPrefix,"keyPrefix=",;)
+	SECMOD_HANDLE_STRING_ARG(index,parsed->tokdes,"tokenDescription=",;)
+	SECMOD_HANDLE_STRING_ARG(index,parsed->slotdes,"slotDescription=",;)
+	SECMOD_HANDLE_STRING_ARG(index,tmp,"minPWLen=", 
 			if(tmp) { parsed->minPW=atoi(tmp); PORT_Free(tmp); })
-	PK11_HANDLE_STRING_ARG(index,tmp,"flags=", 
+	SECMOD_HANDLE_STRING_ARG(index,tmp,"flags=", 
 	   if(tmp) { secmod_parseTokenFlags(param,parsed); PORT_Free(tmp); })
-	PK11_HANDLE_FINAL_ARG(index)
+	SECMOD_HANDLE_FINAL_ARG(index)
    }
    return CKR_OK;
 }
 
 static void
-secmod_parseTokens(char *tokenParams, pk11_parameters *parsed)
+secmod_parseTokens(char *tokenParams, sftk_parameters *parsed)
 {
     char *tokenIndex;
-    pk11_token_parameters *tokens = NULL;
+    sftk_token_parameters *tokens = NULL;
     int i=0,count = 0,next;
 
     if ((tokenParams == NULL) || (*tokenParams == 0))  return;
 
     /* first count the number of slots */
-    for (tokenIndex = pk11_argStrip(tokenParams); *tokenIndex;
-		tokenIndex = pk11_argStrip(pk11_argSkipParameter(tokenIndex))) {
+    for (tokenIndex = secmod_argStrip(tokenParams); *tokenIndex;
+	 tokenIndex = secmod_argStrip(secmod_argSkipParameter(tokenIndex))) {
 	count++;
     }
 
     /* get the data structures */
-    tokens = (pk11_token_parameters *) 
-			PORT_ZAlloc(count*sizeof(pk11_token_parameters));
+    tokens = (sftk_token_parameters *) 
+			PORT_ZAlloc(count*sizeof(sftk_token_parameters));
     if (tokens == NULL) return;
 
-    for (tokenIndex = pk11_argStrip(tokenParams), i = 0;
+    for (tokenIndex = secmod_argStrip(tokenParams), i = 0;
 					*tokenIndex && i < count ; i++ ) {
 	char *name;
-	name = pk11_argGetName(tokenIndex,&next);
+	name = secmod_argGetName(tokenIndex,&next);
 	tokenIndex += next;
 
-	tokens[i].slotID = pk11_argDecodeNumber(name);
+	tokens[i].slotID = secmod_argDecodeNumber(name);
         tokens[i].readOnly = PR_TRUE;
 	tokens[i].noCertDB = PR_TRUE;
 	tokens[i].noKeyDB = PR_TRUE;
-	if (!pk11_argIsBlank(*tokenIndex)) {
-	    char *args = pk11_argFetchValue(tokenIndex,&next);
+	if (!secmod_argIsBlank(*tokenIndex)) {
+	    char *args = secmod_argFetchValue(tokenIndex,&next);
 	    tokenIndex += next;
 	    if (args) {
 		secmod_parseTokenParameters(args,&tokens[i]);
@@ -129,7 +132,7 @@ secmod_parseTokens(char *tokenParams, pk11_parameters *parsed)
 	    }
 	}
 	if (name) PORT_Free(name);
-	tokenIndex = pk11_argStrip(tokenIndex);
+	tokenIndex = secmod_argStrip(tokenIndex);
     }
     parsed->token_count = i;
     parsed->tokens = tokens;
@@ -137,7 +140,7 @@ secmod_parseTokens(char *tokenParams, pk11_parameters *parsed)
 }
 
 CK_RV
-secmod_parseParameters(char *param, pk11_parameters *parsed, PRBool isFIPS) 
+secmod_parseParameters(char *param, sftk_parameters *parsed, PRBool isFIPS) 
 {
     int next;
     char *tmp;
@@ -147,39 +150,39 @@ secmod_parseParameters(char *param, pk11_parameters *parsed, PRBool isFIPS)
     char *slotdes = NULL, *pslotdes = NULL;
     char *fslotdes = NULL, *fpslotdes = NULL;
     char *minPW = NULL;
-    index = pk11_argStrip(param);
+    index = secmod_argStrip(param);
 
-    PORT_Memset(parsed, 0, sizeof(pk11_parameters));
+    PORT_Memset(parsed, 0, sizeof(sftk_parameters));
 
     while (*index) {
-	PK11_HANDLE_STRING_ARG(index,parsed->configdir,"configDir=",;)
-	PK11_HANDLE_STRING_ARG(index,parsed->secmodName,"secmod=",;)
-	PK11_HANDLE_STRING_ARG(index,parsed->man,"manufacturerID=",;)
-	PK11_HANDLE_STRING_ARG(index,parsed->libdes,"libraryDescription=",;)
+	SECMOD_HANDLE_STRING_ARG(index,parsed->configdir,"configDir=",;)
+	SECMOD_HANDLE_STRING_ARG(index,parsed->secmodName,"secmod=",;)
+	SECMOD_HANDLE_STRING_ARG(index,parsed->man,"manufacturerID=",;)
+	SECMOD_HANDLE_STRING_ARG(index,parsed->libdes,"libraryDescription=",;)
 	/* constructed values, used so legacy interfaces still work */
-	PK11_HANDLE_STRING_ARG(index,certPrefix,"certPrefix=",;)
-        PK11_HANDLE_STRING_ARG(index,keyPrefix,"keyPrefix=",;)
-        PK11_HANDLE_STRING_ARG(index,tokdes,"cryptoTokenDescription=",;)
-        PK11_HANDLE_STRING_ARG(index,ptokdes,"dbTokenDescription=",;)
-        PK11_HANDLE_STRING_ARG(index,slotdes,"cryptoSlotDescription=",;)
-        PK11_HANDLE_STRING_ARG(index,pslotdes,"dbSlotDescription=",;)
-        PK11_HANDLE_STRING_ARG(index,fslotdes,"FIPSSlotDescription=",;)
-        PK11_HANDLE_STRING_ARG(index,minPW,"FIPSTokenDescription=",;)
-	PK11_HANDLE_STRING_ARG(index,tmp,"minPWLen=",;)
+	SECMOD_HANDLE_STRING_ARG(index,certPrefix,"certPrefix=",;)
+        SECMOD_HANDLE_STRING_ARG(index,keyPrefix,"keyPrefix=",;)
+        SECMOD_HANDLE_STRING_ARG(index,tokdes,"cryptoTokenDescription=",;)
+        SECMOD_HANDLE_STRING_ARG(index,ptokdes,"dbTokenDescription=",;)
+        SECMOD_HANDLE_STRING_ARG(index,slotdes,"cryptoSlotDescription=",;)
+        SECMOD_HANDLE_STRING_ARG(index,pslotdes,"dbSlotDescription=",;)
+        SECMOD_HANDLE_STRING_ARG(index,fslotdes,"FIPSSlotDescription=",;)
+        SECMOD_HANDLE_STRING_ARG(index,minPW,"FIPSTokenDescription=",;)
+	SECMOD_HANDLE_STRING_ARG(index,tmp,"minPWLen=",;)
 
-	PK11_HANDLE_STRING_ARG(index,tmp,"flags=", 
+	SECMOD_HANDLE_STRING_ARG(index,tmp,"flags=", 
 		if(tmp) { secmod_parseFlags(param,parsed); PORT_Free(tmp); })
-	PK11_HANDLE_STRING_ARG(index,tmp,"tokens=", 
+	SECMOD_HANDLE_STRING_ARG(index,tmp,"tokens=", 
 		if(tmp) { secmod_parseTokens(tmp,parsed); PORT_Free(tmp); })
-	PK11_HANDLE_FINAL_ARG(index)
+	SECMOD_HANDLE_FINAL_ARG(index)
     }
     if (parsed->tokens == NULL) {
 	int  count = isFIPS ? 1 : 2;
 	int  index = count-1;
-	pk11_token_parameters *tokens = NULL;
+	sftk_token_parameters *tokens = NULL;
 
-	tokens = (pk11_token_parameters *) 
-			PORT_ZAlloc(count*sizeof(pk11_token_parameters));
+	tokens = (sftk_token_parameters *) 
+			PORT_ZAlloc(count*sizeof(sftk_token_parameters));
 	if (tokens == NULL) {
 	    goto loser;
 	}
@@ -232,7 +235,7 @@ loser:
 }
 
 void
-secmod_freeParams(pk11_parameters *params)
+secmod_freeParams(sftk_parameters *params)
 {
     int i;
 
@@ -261,18 +264,18 @@ secmod_getSecmodName(char *param, char **appName, char **filename,PRBool *rw)
     char *value = NULL;
     char *save_params = param;
     const char *lconfigdir;
-    param = pk11_argStrip(param);
+    param = secmod_argStrip(param);
 	
 
     while (*param) {
-	PK11_HANDLE_STRING_ARG(param,configdir,"configDir=",;)
-	PK11_HANDLE_STRING_ARG(param,secmodName,"secmod=",;)
-	PK11_HANDLE_FINAL_ARG(param)
+	SECMOD_HANDLE_STRING_ARG(param,configdir,"configDir=",;)
+	SECMOD_HANDLE_STRING_ARG(param,secmodName,"secmod=",;)
+	SECMOD_HANDLE_FINAL_ARG(param)
    }
 
    *rw = PR_TRUE;
-   if (pk11_argHasFlag("flags","readOnly",save_params) ||
-	pk11_argHasFlag("flags","noModDB",save_params)) *rw = PR_FALSE;
+   if (secmod_argHasFlag("flags","readOnly",save_params) ||
+	secmod_argHasFlag("flags","noModDB",save_params)) *rw = PR_FALSE;
 
    if (!secmodName || *secmodName == '\0') {
 	if (secmodName) PORT_Free(secmodName);
@@ -280,7 +283,7 @@ secmod_getSecmodName(char *param, char **appName, char **filename,PRBool *rw)
    }
    *filename = secmodName;
 
-   lconfigdir = pk11_EvaluateConfigDir(configdir, appName);
+   lconfigdir = sftk_EvaluateConfigDir(configdir, appName);
 
    if (lconfigdir) {
 	value = PR_smprintf("%s" PATH_SEPARATOR "%s",lconfigdir,secmodName);
@@ -296,9 +299,9 @@ static SECStatus secmod_MakeKey(DBT *key, char * module) {
     int len = 0;
     char *commonName;
 
-    commonName = pk11_argGetParamValue("name",module);
+    commonName = secmod_argGetParamValue("name",module);
     if (commonName == NULL) {
-	commonName = pk11_argGetParamValue("library",module);
+	commonName = secmod_argGetParamValue("library",module);
     }
     if (commonName == NULL) return SECFailure;
     len = PORT_Strlen(commonName);
@@ -390,7 +393,7 @@ secmod_EncodeData(DBT *data, char * module)
     PK11PreSlotInfo *slotInfo = NULL;
     SECStatus rv = SECFailure;
 
-    rv = pk11_argParseModuleSpec(module,&dllName,&commonName,&param,&nss);
+    rv = secmod_argParseModuleSpec(module,&dllName,&commonName,&param,&nss);
     if (rv != SECSuccess) return rv;
     rv = SECFailure;
 
@@ -407,8 +410,8 @@ secmod_EncodeData(DBT *data, char * module)
 	len3 = PORT_Strlen(param);
     }
 
-    slotParams = pk11_argGetParamValue("slotParams",nss); 
-    slotInfo = pk11_argParseSlotInfo(NULL,slotParams,&count);
+    slotParams = secmod_argGetParamValue("slotParams",nss); 
+    slotInfo = secmod_argParseSlotInfo(NULL,slotParams,&count);
     if (slotParams) PORT_Free(slotParams);
 
     if (count && slotInfo == NULL) {
@@ -432,24 +435,26 @@ secmod_EncodeData(DBT *data, char * module)
     encoded->major = SECMOD_DB_VERSION_MAJOR;
     encoded->minor = SECMOD_DB_VERSION_MINOR;
     encoded->internal = (unsigned char) 
-			(pk11_argHasFlag("flags","internal",nss) ? 1 : 0);
+			(secmod_argHasFlag("flags","internal",nss) ? 1 : 0);
     encoded->fips = (unsigned char) 
-			(pk11_argHasFlag("flags","FIPS",nss) ? 1 : 0);
+			(secmod_argHasFlag("flags","FIPS",nss) ? 1 : 0);
     encoded->isModuleDB = (unsigned char) 
-			(pk11_argHasFlag("flags","isModuleDB",nss) ? 1 : 0);
+			(secmod_argHasFlag("flags","isModuleDB",nss) ? 1 : 0);
     encoded->isModuleDBOnly = (unsigned char) 
-			(pk11_argHasFlag("flags","isModuleDBOnly",nss) ? 1 : 0);
+		    (secmod_argHasFlag("flags","isModuleDBOnly",nss) ? 1 : 0);
     encoded->isCritical = (unsigned char) 
-			(pk11_argHasFlag("flags","critical",nss) ? 1 : 0);
+			(secmod_argHasFlag("flags","critical",nss) ? 1 : 0);
 
-    order = pk11_argReadLong("trustOrder",nss, PK11_DEFAULT_TRUST_ORDER, NULL);
+    order = secmod_argReadLong("trustOrder", nss, SFTK_DEFAULT_TRUST_ORDER, 
+                               NULL);
     SECMOD_PUTLONG(encoded->trustOrder,order);
-    order = pk11_argReadLong("cipherOrder",nss,PK11_DEFAULT_CIPHER_ORDER,NULL);
+    order = secmod_argReadLong("cipherOrder", nss, SFTK_DEFAULT_CIPHER_ORDER, 
+                               NULL);
     SECMOD_PUTLONG(encoded->cipherOrder,order);
 
    
-    ciphers = pk11_argGetParamValue("ciphers",nss); 
-    pk11_argSetNewCipherFlags(&ssl[0], ciphers);
+    ciphers = secmod_argGetParamValue("ciphers",nss); 
+    secmod_argSetNewCipherFlags(&ssl[0], ciphers);
     SECMOD_PUTLONG(encoded->ssl,ssl[0]);
     SECMOD_PUTLONG(&encoded->ssl[4],ssl[1]);
     if (ciphers) PORT_Free(ciphers);
@@ -546,8 +551,8 @@ secmod_DecodeData(char *defParams, DBT *data, PRBool *retInternal)
     unsigned long slotID;
     unsigned long defaultFlags;
     unsigned long timeout;
-    unsigned long trustOrder	=PK11_DEFAULT_TRUST_ORDER;
-    unsigned long cipherOrder	=PK11_DEFAULT_CIPHER_ORDER;
+    unsigned long trustOrder	=SFTK_DEFAULT_TRUST_ORDER;
+    unsigned long cipherOrder	=SFTK_DEFAULT_CIPHER_ORDER;
     unsigned short len;
     unsigned short namesOffset  = 0;	/* start of the names block */
     unsigned long namesRunningOffset;	/* offset to name we are 
@@ -723,14 +728,14 @@ secmod_DecodeData(char *defParams, DBT *data, PRBool *retInternal)
 	hasRootCerts = slots->hasRootCerts;
 	if (isOldVersion && internal && (slotID != 2)) {
 		unsigned long internalFlags=
-			pk11_argSlotFlags("slotFlags",SECMOD_SLOT_FLAGS);
+			secmod_argSlotFlags("slotFlags",SECMOD_SLOT_FLAGS);
 		defaultFlags |= internalFlags;
 	}
 	if (hasRootCerts && !extended) {
 	    trustOrder = 100;
 	}
 
-	slotStrings[i] = pk11_mkSlotString(slotID, defaultFlags, timeout, 
+	slotStrings[i] = secmod_mkSlotString(slotID, defaultFlags, timeout, 
 	                                   (unsigned char)slots->askpw, 
 	                                   hasRootCerts, hasRootTrust);
 	if (slotStrings[i] == NULL) {
@@ -739,13 +744,13 @@ secmod_DecodeData(char *defParams, DBT *data, PRBool *retInternal)
 	}
     }
 
-    nss = pk11_mkNSS(slotStrings, slotCount, internal, isFIPS, isModuleDB, 
+    nss = secmod_mkNSS(slotStrings, slotCount, internal, isFIPS, isModuleDB, 
 		     isModuleDBOnly, internal, trustOrder, cipherOrder, 
 		     ssl0, ssl1);
     secmod_FreeSlotStrings(slotStrings,slotCount);
     /* it's permissible (and normal) for nss to be NULL. it simply means
      * there are no NSS specific parameters in the database */
-    moduleSpec = pk11_mkNewModuleSpec(dllName,commonName,parameters,nss);
+    moduleSpec = secmod_mkNewModuleSpec(dllName,commonName,parameters,nss);
     PR_smprintf_free(nss);
     PORT_FreeArena(arena,PR_TRUE);
     return moduleSpec;
@@ -852,7 +857,7 @@ secmod_addEscape(const char *string, char quote)
 }
 
 #define SECMOD_STEP 10
-#define PK11_DEFAULT_INTERNAL_INIT "library= name=\"NSS Internal PKCS #11 Module\" parameters=\"%s\" NSS=\"Flags=internal,critical trustOrder=75 cipherOrder=100 slotParams=(1={%s askpw=any timeout=30})\""
+#define SFTK_DEFAULT_INTERNAL_INIT "library= name=\"NSS Internal PKCS #11 Module\" parameters=\"%s\" NSS=\"Flags=internal,critical trustOrder=75 cipherOrder=100 slotParams=(1={%s askpw=any timeout=30})\""
 /*
  * Read all the existing modules in
  */
@@ -902,7 +907,7 @@ done:
     if (!moduleList[0]) {
 	char * newparams = secmod_addEscape(params,'"');
 	if (newparams) {
-	    moduleList[0] = PR_smprintf(PK11_DEFAULT_INTERNAL_INIT,newparams,
+	    moduleList[0] = PR_smprintf(SFTK_DEFAULT_INTERNAL_INIT,newparams,
 						SECMOD_SLOT_FLAGS);
 	    PORT_Free(newparams);
 	}

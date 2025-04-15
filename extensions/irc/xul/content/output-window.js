@@ -1,37 +1,41 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  *
- * The contents of this file are subject to the Mozilla Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/ 
- * 
+ * ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
  * for the specific language governing rights and limitations under the
- * License. 
+ * License.
  *
- * The Original Code is ChatZilla
- * 
+ * The Original Code is ChatZilla.
+ *
  * The Initial Developer of the Original Code is
- * Netscape Communications Corporation
- * Portions created by Netscape are
- * Copyright (C) 1998 Netscape Communications Corporation.
- *
- * Alternatively, the contents of this file may be used under the
- * terms of the GNU Public License (the "GPL"), in which case the
- * provisions of the GPL are applicable instead of those above.
- * If you wish to allow use of your version of this file only
- * under the terms of the GPL and not to allow others to use your
- * version of this file under the MPL, indicate your decision by
- * deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL.  If you do not delete
- * the provisions above, a recipient may use your version of this
- * file under either the MPL or the GPL.
+ * Netscape Communications Corporation.
+ * Portions created by the Initial Developer are Copyright (C) 1998
+ * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *  Robert Ginda, <rginda@netscape.com>, original author
+ *   Robert Ginda, <rginda@netscape.com>, original author
  *
- */
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
 
 var initialized = false;
 
@@ -71,6 +75,18 @@ var headers = {
         fields: ["container", "url-anchor", "serverstr", "title",
                  "descnodes"],
         update: updateUser
+    },
+    
+    IRCDCCChat: {
+        prefix: "dcc-chat-",
+        fields: ["container", "url-anchor", "remotestr", "title"],
+        update: updateDCCChat
+    },
+    
+    IRCDCCFileTransfer: {
+        prefix: "dcc-file-",
+        fields: ["container", "file", "progress", "progressbar"],
+        update: updateDCCFile
     }
 };
 
@@ -100,6 +116,19 @@ function stock_initOutputWindow(newClient, newView, newClickHandler)
     getObjectDetails = mainWindow.getObjectDetails;
     dd = mainWindow.dd;
 
+    // Wheee... localize stuff!
+    //var nodes = document.getElementsByAttribute("localize", "*");
+    var nodes = document.getElementsByTagName("*");
+    for (var i = 0; i < nodes.length; i++)
+    {
+        if (nodes[i].hasAttribute("localize"))
+        {
+            var msg = nodes[i].getAttribute("localize");
+            msg = getMsg("msg." + msg);
+            nodes[i].appendChild(document.createTextNode(msg));
+        }
+    }
+
     changeCSS(view.prefs["motif.current"]);
     
     var output = document.getElementById("output");
@@ -116,8 +145,6 @@ function stock_initOutputWindow(newClient, newView, newClickHandler)
     var name;
     if ("unicodeName" in view)
         name = view.unicodeName;
-    else if ("properNick" in view)
-        name = view.properNick;
     else
         name = view.name;
     splash.appendChild(document.createTextNode(name));
@@ -156,13 +183,13 @@ function onTopicKeypress(e)
             break;
             
         default:
-            client.mainWindow.onInputKeypress(header["topicinput"]);
+            client.mainWindow.onInputKeyPress(e);
     }
 }
 
 function startTopicEdit()
 {
-    var me = view.getUser(view.parent.me.nick);
+    var me = view.getUser(view.parent.me.unicodeName);
     if (!me || (!view.mode.publicTopic && !me.isOp && !me.isHalfOp) ||
         !header["topicinput"].hasAttribute("hidden"))
     {
@@ -278,6 +305,8 @@ function setHeaderState(state)
 
 function updateHeader()
 {
+    document.title = view.getURL();
+    
     if (!header || hasAttribute("container", "hidden"))
         return;
 
@@ -320,7 +349,7 @@ function updateClient()
 
 function updateNetwork()
 {
-    if (view.connecting)
+    if (view.state == client.mainWindow.NET_CONNECTING)
     {
         setText("status", MSG_CONNECTING);
         setAttribute("status","condition", "yellow");
@@ -332,7 +361,7 @@ function updateNetwork()
         setText("status", MSG_CONNECTED);
         setAttribute("status","condition", "green");
         setAttribute("status", "title",
-                     getMsg(MSG_CONNECT_VIA, view.primServ.name));
+                     getMsg(MSG_CONNECT_VIA, view.primServ.unicodeName));
         if (view.primServ.lag != -1)
             setText("lag", getMsg(MSG_FMT_SECONDS, view.primServ.lag));
         else
@@ -400,7 +429,7 @@ function updateUser()
     else
         setText("serverstr", null, true);
 
-    setText("title", getMsg(MSG_TITLE_USER, [view.properNick, source]));
+    setText("title", getMsg(MSG_TITLE_USER, [view.unicodeName, source]));
 
     header["descnodes"].removeChild(header["descnodes"].firstChild);
     if (typeof view.desc != "undefined")
@@ -413,4 +442,31 @@ function updateUser()
     {
         setText("descnodes", "");
     }
+}
+
+function updateDCCChat()
+{
+    var source;
+    if (view.user)
+        source = view.user.displayName;
+    else
+        source = MSG_UNKNOWN;
+
+    if (view.state == 3)
+        setText("remotestr", view.remoteIP + ":" + view.port, true);
+    else
+        setText("remotestr", null, true);
+
+    setText("title", getMsg(MSG_TITLE_USER, [view.user.displayName, source]));
+}
+
+function updateDCCFile()
+{
+    var pcent = Math.floor(100 * view.position / view.size);
+    
+    setText("file", view.filename);
+    setText("progress", getMsg(MSG_DCCFILE_PROGRESS,
+                               [pcent, view.position, view.size]));
+
+    setAttribute("progressbar", "width", pcent + "%");
 }

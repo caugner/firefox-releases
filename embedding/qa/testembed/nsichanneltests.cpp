@@ -1,11 +1,11 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
- * Version: NPL 1.1/GPL 2.0/LGPL 2.1
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
- * The contents of this file are subject to the Netscape Public License
- * Version 1.1 (the "License"); you may not use this file except in
- * compliance with the License. You may obtain a copy of the License at
- * http://www.mozilla.org/NPL/
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
  * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
@@ -22,18 +22,17 @@
  * Contributor(s):
  *   David Epstein <depstein@netscape.com>
  *
- *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
  * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the NPL, indicate your
+ * use your version of this file under the terms of the MPL, indicate your
  * decision by deleting the provisions above and replace them with the notice
  * and other provisions required by the GPL or the LGPL. If you do not delete
  * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the NPL, the GPL or the LGPL.
+ * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
 
@@ -155,7 +154,7 @@ void CnsIChannelTests::GetOriginalURITest(nsIChannel *theChannel, PRInt16 displa
 	   QAOutput("Didn't get URI object. GetOriginalURITest failed.", displayMode);
 	   return;
 	}
-	GetTheUri(theURI);
+	GetTheURI(theURI);
 }
 
 void CnsIChannelTests::GetURITest(nsIChannel *theChannel, PRInt16 displayMode)
@@ -174,7 +173,7 @@ void CnsIChannelTests::GetURITest(nsIChannel *theChannel, PRInt16 displayMode)
 	   QAOutput("Didn't get URI object. GetURITest failed.", displayMode);
 	   return;
 	}
-	GetTheUri(theURI);
+	GetTheURI(theURI);
 }
 
 void CnsIChannelTests::SetOwnerTest(nsIChannel *theChannel, PRInt16 displayMode)
@@ -371,15 +370,24 @@ void CnsIChannelTests::AsyncOpenTest(nsIChannel *theChannel, PRInt16 displayMode
 	if (!theSupports)
 	   QAOutput("Didn't get the nsISupports object. AsyncOpen() failed.", displayMode);
 
+	SaveObject(theSupports);
+
 	rv = theChannel->AsyncOpen(listener, theSupports);
 	RvTestResult(rv, "AsyncOpen()", displayMode);
 	if (displayMode == 1)
 		RvTestResultDlg(rv, "AsyncOpen()");
 }
 
-void CnsIChannelTests::PostAsyncTests(nsIChannel *theChannel, PRInt16 displayMode)
+void CnsIChannelTests::PostAsyncOpenTests(nsIChannel *theChannel, PRInt16 displayMode)
 {
-	//  tests which need to be run after the channel is opened (using AsyncOpen())
+	// These tests are run after the channel is opened (using AsyncOpen())
+	// To run them in TestEmbed, select Tests > asyncOpen menu and enter complete URL with protocol
+		GetOriginalURITest(theChannel, displayMode);
+		GetURITest(theChannel, displayMode);
+		SetOwnerTest(theChannel, displayMode);
+		GetOwnerTest(theChannel, displayMode);
+		SetNotificationsTest(theChannel, displayMode);
+		GetNotificationsTest(theChannel, displayMode);
 		GetSecurityInfoTest(theChannel, displayMode);
 		SetContentTypeTest(theChannel, displayMode);
 		GetContentTypeTest(theChannel, displayMode);
@@ -474,7 +482,7 @@ void CnsIChannelTests::RunAllTests()
 		   QAOutput("Didn't get nsIChannel object. RunAllTests not run.", 2);
 		   return;
 		}
-
+		QAOutput("\nStart nsIChannel Tests: ");
 		SetOriginalURITest(theChannel, theSpec, 1);
 		GetOriginalURITest(theChannel, 1);
 		GetURITest(theChannel, 1);
@@ -483,8 +491,7 @@ void CnsIChannelTests::RunAllTests()
 		SetNotificationsTest(theChannel, 1);
 		GetNotificationsTest(theChannel, 1);
 		AsyncOpenTest(theChannel, 1);
-	 // PostAsyncTests() called from nsIRequestObservor::OnStartRequest (in BrowserImpl.cpp)
-		OpenTest(theChannel, 1);
+	 // PostAsyncOpenTests() called from nsIRequestObserver::OnStartRequest (in BrowserImpl.cpp)
 		QAOutput("\n");
 	}
 }
